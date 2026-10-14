@@ -1991,6 +1991,15 @@ public class ExpoCallKitModule: Module {
       // [CALL-CLOSE callId-scope 2026-05-27] Scope to the ended callId so a
       // stale/duplicate remote call_end for an OLD call cannot dismiss the
       // CallViewController of the call we just answered.
+      // [2026-10-14 leave-first] Remote end: LEAVE the call's Rooms now (the
+      // dismissed 1:1 VC only disconnected in deinit — or never). A group call
+      // that goes on for others (people still in it) is left alone.
+      let groupLive = GroupCallViewController.activeInstance.map {
+        $0.roomName == callId && $0.shouldIgnoreRemoteCallEnd
+      } ?? false
+      if !groupLive {
+        LKLeave.leaveCall(callId: callId, reason: "remote_call_end")
+      }
       ProviderDelegate.dismissActiveCallSurfaces(reason: "remote_call_end", forCallId: callId)
     }
 
@@ -2252,6 +2261,10 @@ public class ExpoCallKitModule: Module {
   /// until its own internal timeout (~30-90s).
   @objc private func handleAppWillTerminate() {
     NSLog("[ExpoCallKit][WAVE163] willTerminate — failing any in-flight outgoing calls")
+    // [2026-10-14 leave-first] App killed mid-call: send LiveKit LEAVE for every
+    // live Room first (blocks ≤ 1.5 s of the ~5 s iOS grants) so the SFU drops
+    // us now instead of ~21 s later (ghost for whoever stays on the line).
+    LKLeave.leaveEverythingBlocking(reason: "app_terminate")
     let snapshot: [String: UUID] = safeStateSync { activeCalls }
     let prov = self.provider ?? ExpoCallKitModule.sharedProvider
     guard let provider = prov else {
@@ -3207,6 +3220,14 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+    // [2026-10-14 leave-first] Resolve the call whose Rooms must LEAVE before
+    // CallKit ends it — only when this UUID is THE live UUID of that callId
+    // (a duplicate / stale UUID must never kill the call that is up).
+    let leaveCallId: String? = {
+      guard let cid = self.module?.callIdForUUID(action.callUUID), !cid.isEmpty else { return nil }
+      if let mapped = ExpoCallKitModule.sharedCallKitUUID(forCallId: cid), mapped != action.callUUID { return nil }
+      return cid
+    }()
     // [2026-05-21] Purge App Group side-channel state for this callId BEFORE
     // calling callEnded() drops the UUID → callId reverse map. Without this
     // cleanup, callAvatar:<cid> / lk_token_<cid> / lk_url_<cid> entries leak
@@ -3256,6 +3277,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     //      Same issue as (2) — JS handles onCallEnded but native modal stays.
     // Find the topmost presented VC and, if it's our call surface, dismiss.
     // Idempotent: dismiss-while-already-dismissing is a UIKit no-op.
+    // [2026-10-14 leave-first] LEAVE is started BEFORE the UI goes away (it
+    // runs synchronously when we are on main) and CallKit is only told the
+    // end once it went out — bounded to 1.5 s so CallKit is never stuck.
+    // Lock-screen / system-pill / "end & accept" ends used to dismiss + fulfill
+    // first and leave the Room to the VC deinit (often never, app suspended).
+    if let cid = leaveCallId {
+      LKLeave.leaveCall(callId: cid, reason: "cx_end") {
+        action.fulfill()
+      }
+    }
     DispatchQueue.main.async {
       ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_end_call_action")
     }
@@ -3265,7 +3296,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // the system's deactivation flow, which on some devices caused a
     // brief audio glitch when ending a call back-to-back. Let CallKit
     // own the deactivation lifecycle.
-    action.fulfill()
+    if leaveCallId == nil { action.fulfill() }
   }
 
   /// [#1179 cleanup, 2026-05-19] Walk the presented-VC stack and dismiss any

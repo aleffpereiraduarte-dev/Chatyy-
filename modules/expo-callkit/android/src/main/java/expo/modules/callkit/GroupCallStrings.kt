@@ -93,10 +93,26 @@ object GroupCallStrings {
     "hi" to mapOf("pk.title" to "कॉल में जोड़ें", "pk.search" to "नाम, @यूज़रनेम या फ़ोन खोजें", "pk.recent" to "हाल की चैट", "pk.contacts" to "संपर्क", "pk.results" to "नतीजे", "pk.inCall" to "कॉल में", "pk.ringing" to "कॉल हो रही है…", "pk.add" to "जोड़ें", "pk.addN" to "जोड़ें ({n})", "pk.emptyTitle" to "अभी कोई संपर्क नहीं", "pk.emptyBody" to "कॉल में लोगों को जोड़ने के लिए किसी से चैट करें या अपने संपर्क सिंक करें।", "pk.noResults" to "“{q}” के लिए कोई नहीं मिला", "pk.loadError" to "आपके संपर्क लोड नहीं हो सके।", "pk.retry" to "फिर कोशिश करें", "pk.errNotAllowed" to "आप सिर्फ़ उन्हीं लोगों को जोड़ सकते हैं जिनसे आप पहले से चैट करते हैं या जो आपके संपर्कों में हैं।", "pk.errBlocked" to "{name} को कॉल नहीं की जा सकती।", "pk.errNotInCall" to "यह कॉल पहले ही खत्म हो चुकी है।", "pk.errParental" to "पैरेंटल कंट्रोल {name} को जोड़ने की अनुमति नहीं देता।", "pk.errRateLimited" to "बहुत ज़्यादा कोशिशें। थोड़ा रुककर फिर कोशिश करें।", "pk.errOffline" to "{name} अभी कॉल नहीं ले सकते।", "pk.errLimit" to "कॉल प्रतिभागियों की सीमा तक पहुँच गई है।", "pk.errNetwork" to "कनेक्शन नहीं है। इंटरनेट जाँचें और फिर कोशिश करें।", "pk.errGeneric" to "{name} को कॉल नहीं हो सकी। फिर कोशिश करें।", "pk.close" to "बंद करें"),
   )
 
+  /** [2026-10-14 group-ui] Grade/lista/avisos da ligação em grupo (GroupCallActivity
+   *  e grade do 1:1). Mesma tabela do iOS (GroupCallStrings.swift, gxTable). */
+  private val GX: Map<String, Map<String, String>> = mapOf(
+    "pt-BR" to mapOf("gx.joined" to "{name} entrou", "gx.left" to "{name} saiu", "gx.muted" to "Mudo", "gx.screenOf" to "Tela de {name}"),
+    "pt-PT" to mapOf("gx.joined" to "{name} entrou", "gx.left" to "{name} saiu", "gx.muted" to "Sem som", "gx.screenOf" to "Ecrã de {name}"),
+    "en" to mapOf("gx.joined" to "{name} joined", "gx.left" to "{name} left", "gx.muted" to "Muted", "gx.screenOf" to "{name}’s screen"),
+    "es" to mapOf("gx.joined" to "{name} se unió", "gx.left" to "{name} salió", "gx.muted" to "Silenciado", "gx.screenOf" to "Pantalla de {name}"),
+    "fr" to mapOf("gx.joined" to "{name} a rejoint l’appel", "gx.left" to "{name} a quitté l’appel", "gx.muted" to "Muet", "gx.screenOf" to "Écran de {name}"),
+    "de" to mapOf("gx.joined" to "{name} ist beigetreten", "gx.left" to "{name} hat den Anruf verlassen", "gx.muted" to "Stumm", "gx.screenOf" to "Bildschirm von {name}"),
+    "it" to mapOf("gx.joined" to "{name} si è unito alla chiamata", "gx.left" to "{name} ha lasciato la chiamata", "gx.muted" to "Muto", "gx.screenOf" to "Schermo di {name}"),
+    "ja" to mapOf("gx.joined" to "{name}さんが参加しました", "gx.left" to "{name}さんが退出しました", "gx.muted" to "ミュート中", "gx.screenOf" to "{name}さんの画面"),
+    "ar" to mapOf("gx.joined" to "انضم {name}", "gx.left" to "غادر {name}", "gx.muted" to "مكتوم", "gx.screenOf" to "شاشة {name}"),
+    "id" to mapOf("gx.joined" to "{name} bergabung", "gx.left" to "{name} keluar", "gx.muted" to "Dibisukan", "gx.screenOf" to "Layar {name}"),
+    "hi" to mapOf("gx.joined" to "{name} शामिल हुए", "gx.left" to "{name} चले गए", "gx.muted" to "म्यूट है", "gx.screenOf" to "{name} की स्क्रीन"),
+  )
+
   /** Texto da chave no idioma atual; {n}/{name} substituídos por [args]. */
   fun s(key: String, vararg args: Pair<String, String>): String {
     val l = lang()
-    var out = T[l]?.get(key) ?: PK[l]?.get(key) ?: T["en"]?.get(key) ?: PK["en"]?.get(key) ?: key
+    var out = T[l]?.get(key) ?: PK[l]?.get(key) ?: GX[l]?.get(key) ?: T["en"]?.get(key) ?: PK["en"]?.get(key) ?: GX["en"]?.get(key) ?: key
     for ((k, v) in args) out = out.replace("{" + k + "}", v)
     return out
   }

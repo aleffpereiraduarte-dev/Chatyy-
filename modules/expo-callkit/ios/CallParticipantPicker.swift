@@ -274,6 +274,9 @@ struct CallParticipantPickerView: View {
     /// Identities already in the call (lowercased emails) — pill "Na chamada".
     let alreadyInCall: Set<String>
     let onDismiss: () -> Void
+    /// [2026-10-14 group-ui] Reachable people the backend is now ringing INTO
+    /// the call (lowercased email → display name) → "Tocando…" tiles.
+    var onInvited: (([String: String]) -> Void)? = nil
 
     private struct PickerSection: Identifiable {
         let id: String
@@ -702,6 +705,9 @@ struct CallParticipantPickerView: View {
                 for s in res.skipped { problems.append(CallParticipantsAPI.errorText(s.reason, name: displayName(s.email))) }
                 for i in res.invited where !i.reachable { problems.append(CallParticipantsAPI.errorText("offline", name: displayName(i.email))) }
                 for i in res.invited { ringing.insert(i.email) }
+                var rung: [String: String] = [:]
+                for i in res.invited where i.reachable { rung[i.email.lowercased()] = displayName(i.email) }
+                if !rung.isEmpty { onInvited?(rung) }
                 selected = [:]
                 selectionOrder = []
                 if problems.isEmpty {

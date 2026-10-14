@@ -116,6 +116,12 @@ class GroupCallActivity : ComponentActivity() {
     private const val NO_ANSWER_MS = 60_000L
     private const val REORDER_THROTTLE_MS = 1_500L
     private const val SPOKE_RECENT_MS = 4_000L
+    /** [2026-10-14 group-ui] Screen-share tile key = SCREEN_PREFIX + owner identity. */
+    private const val SCREEN_PREFIX = "screen:"
+    /** Unanswered invite → "Tocando…" tile dropped (or turned normal) after this. */
+    private const val RINGING_TIMEOUT_MS = 60_000L
+    /** Joined without any media for this long = ring preconnect → "Tocando…". */
+    private const val SILENT_JOIN_RINGING_MS = 1_500L
 
     fun bareEmail(identity: String): String =
       identity.substringBefore('#').trim().lowercase()
@@ -184,6 +190,39 @@ class GroupCallActivity : ComponentActivity() {
       return true
     }
 
+    /** [2026-10-14 leave-first] A 1:1 call [callId] was accepted while this
+     *  group is live → leave the group first. */
+    @JvmStatic
+    fun endForOtherCall(callId: String) {
+      val a = live() ?: return
+      if (callId.isEmpty() || a.roomName == callId) return
+      a.runOnUiThread { try { a.finishCall("replaced_by_new_call") } catch (_: Throwable) {} }
+    }
+
+    /** [2026-10-14 leave-first] Telecom ended this group call. */
+    @JvmStatic
+    fun hangupFor(callId: String, reason: String): Boolean {
+      val a = live() ?: return false
+      if (callId.isNotEmpty() && a.roomName != callId) return false
+      a.runOnUiThread { try { a.finishCall(reason) } catch (_: Throwable) {} }
+      return true
+    }
+
+    /** [2026-10-14 leave-first] Live group Room (app being removed). */
+    @JvmStatic
+    fun roomForLeave(): Room? = live()?.room
+
+    /** [2026-10-14 group-ui] WS call_declined for an invitee of THIS group room
+     *  (CallSignalWs, declined_by_email) → drop their "Tocando…" tile now. */
+    @JvmStatic
+    fun onInviteDeclined(callId: String, email: String) {
+      val a = live() ?: return
+      if (callId.isEmpty() || a.roomName != callId || email.isBlank()) return
+      a.runOnUiThread {
+        try { a.handleInviteDeclined(email) } catch (t: Throwable) { Log.w(TAG, "onInviteDeclined: ${t.message}") }
+      }
+    }
+
     @JvmStatic
     fun ongoingHangup(): Boolean {
       val a = live() ?: return false
@@ -222,6 +261,12 @@ class GroupCallActivity : ComponentActivity() {
     val avatar: TextView? = null,
     val handBadge: View? = null,
     var displayName: String = "",
+    // [2026-10-14 group-ui] "Tocando…" under the avatar (invitee not answered).
+    val ringLabel: TextView? = null,
+    // [2026-10-14 group-ui] Per-tile network quality (shown when not excellent).
+    val qualityBars: LinearLayout? = null,
+    // [2026-10-14 group-ui] Dedicated screen-share tile (key SCREEN_PREFIX + owner).
+    val isScreen: Boolean = false,
   )
 
   /** [2026-10-08 call-video-fix] Show the live video (true) or the avatar. */
@@ -282,6 +327,30 @@ class GroupCallActivity : ComponentActivity() {
     }
   }
 
+  // [2026-10-14 group-ui] Ringing invitees (bare email → name): roster of an
+  // outgoing call, "Adicionar", or someone in the Room without media (callees
+  // pre-connect subscribe-only while ringing). Cleared on first media / leave /
+  // decline / RINGING_TIMEOUT_MS.
+  private val pendingInvites: HashMap<String, String> = HashMap()
+  /** Identities that had media ("Fulano entrou" said) → "saiu" on leave. */
+  private val announcedJoins: HashSet<String> = HashSet()
+  /** Screen-share tile key → its remote track. */
+  private val screenTracks: HashMap<String, VideoTrack> = HashMap()
+  private var rootLayout: FrameLayout? = null
+  private var toastView: TextView? = null
+  private val hideToast = Runnable { toastView?.animate()?.alpha(0f)?.setDuration(250)?.start() }
+  // Full-screen screen viewer (pinch to zoom).
+  private var fullscreenKey: String? = null
+  private var fullscreenOverlay: FrameLayout? = null
+  private var fullscreenRenderer: io.livekit.android.renderer.TextureViewRenderer? = null
+  private var fullscreenTrack: VideoTrack? = null
+  // Local screen share (MediaProjection, same flow as the 1:1 CallActivity).
+  private var screenSharing = false
+  private var screenShareInFlight = false
+  private var screenBtn: ImageButton? = null
+  /** The consent dialog is OUR activity leaving → no auto-PiP meanwhile. */
+  private var suppressPipUntil = 0L
+
   // Spotlight / speaker ordering.
   private var pinnedIdentity: String? = null
   private val lastSpokeAt: HashMap<String, Long> = HashMap()
@@ -315,6 +384,19 @@ class GroupCallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-14 leave-first] Joining this group while another call is live →
+    // end that one first (call_end + LiveKit LEAVE), never two calls at once.
+    val newRoom = intent?.extras?.getString(EXTRA_ROOM_NAME) ?: ""
+    try {
+      val prev = liveRef?.get()
+      if (prev != null && prev !== this && !prev.finished && newRoom.isNotEmpty() && prev.roomName != newRoom) {
+        prev.finishCall("replaced_by_new_call")
+      }
+      if (newRoom.isNotEmpty()) {
+        val oneToOne = CallActivity.roomForLeave()
+        if (oneToOne != null) CallActivity.hangupFor("", "replaced_by_new_call")
+      }
+    } catch (t: Throwable) { Log.w(TAG, "end previous call failed: ${t.message}") }
     liveRef = java.lang.ref.WeakReference(this) // [2026-10-11 ongoing-call]
     // [2026-10-10 group-call-i18n] Idioma do app (espelhado pelo JS) p/ os textos.
     GroupCallStrings.load(applicationContext)
@@ -359,6 +441,12 @@ class GroupCallActivity : ComponentActivity() {
     invited.forEach { p ->
       if (!tilesByIdentity.containsKey(p.email)) {
         addTile(identity = p.email, displayName = p.name)
+      }
+      // [2026-10-14 group-ui] Outgoing: the roster is who we are ringing.
+      if (isOutgoing) {
+        pendingInvites[p.email] = p.name
+        tilesByIdentity[p.email]?.let { setTileRinging(it, true) }
+        scheduleRingingExpiry(p.email)
       }
     }
     relayoutGrid()
@@ -501,6 +589,13 @@ class GroupCallActivity : ComponentActivity() {
             r.remoteParticipants.values.forEach { rp -> onParticipantPresent(rp) }
             // Late join: attach tracks that were already subscribed.
             r.remoteParticipants.values.forEach { rp -> attachExistingTracks(rp) }
+            // [2026-10-14 group-ui] Already here with media = in the call (no
+            // notice); without media = still ringing (ring preconnect).
+            r.remoteParticipants.values.forEach { rp ->
+              val rid = rp.identity?.value ?: return@forEach
+              if (rp.trackPublications.isNotEmpty()) noteRemoteMedia(rid, rp, announce = false)
+              else markRingingIfSilent(rid, rp)
+            }
             if (r.remoteParticipants.isNotEmpty()) {
               stopRingback(); ui.removeCallbacks(noAnswerRunnable)
             }
@@ -524,6 +619,12 @@ class GroupCallActivity : ComponentActivity() {
                   renderStatus()
                 }
               }
+            } else {
+              // [2026-10-14 group-ui] Per-tile quality (was local only).
+              val rid = event.participant.identity?.value ?: ""
+              val qn = event.quality.name.uppercase()
+              val score = when (qn) { "EXCELLENT" -> 3; "GOOD" -> 2; "POOR" -> 1; else -> 0 }
+              tilesByIdentity[rid]?.let { setTileQuality(it, score) }
             }
           }
           is RoomEvent.Reconnecting -> {
@@ -551,27 +652,45 @@ class GroupCallActivity : ComponentActivity() {
             stopRingback()
             ui.removeCallbacks(noAnswerRunnable)
             onParticipantPresent(event.participant)
+            // [2026-10-14 group-ui] Media already = "entrou"; none = maybe ringing.
+            val pid = event.participant.identity?.value ?: ""
+            if (event.participant.trackPublications.isNotEmpty()) {
+              noteRemoteMedia(pid, event.participant, announce = true)
+            } else {
+              val joined = event.participant
+              ui.postDelayed({ if (!finished) markRingingIfSilent(pid, joined) }, SILENT_JOIN_RINGING_MS)
+            }
             renderStatus()
           }
           is RoomEvent.ParticipantDisconnected -> {
             val id = event.participant.identity?.value ?: ""
             Log.d(TAG, "ParticipantDisconnected $id")
+            // [2026-10-14 group-ui] "Fulano saiu" for someone who was in the call;
+            // an invitee that never answered (declined / ring ended) just goes.
+            val leftName = tilesByIdentity[id]?.displayName ?: displayNameFor(id, event.participant)
+            val wasInCall = announcedJoins.remove(id)
+            pendingInvites.remove(bareEmail(id))
+            detachScreen(id)
             removeTile(id)
+            if (wasInCall && leftName.isNotEmpty()) showToastPill(GroupCallStrings.s("gx.left", "name" to leftName))
             renderStatus()
           }
           is RoomEvent.TrackSubscribed -> {
             val t = event.track
             val id = event.participant.identity?.value ?: ""
+            noteRemoteMedia(id, event.participant, announce = true) // [2026-10-14 group-ui]
             if (t is VideoTrack) {
-              // Screen share only takes the tile when the camera is off
-              // (dedicated screen tile = follow-up).
               val isScreen = event.publication.source == Track.Source.SCREEN_SHARE
-              val tile = tileFor(id, event.participant)
-              val cameraLive = event.participant.getTrackPublication(Track.Source.CAMERA)
-                ?.let { !it.muted && it.track != null } ?: false
-              if (tile != null && !(isScreen && cameraLive)) {
-                t.addRenderer(tile.renderer)
-                setTileVideo(tile, !event.publication.muted)
+              if (isScreen) {
+                // [2026-10-14 group-ui] Screen share = its OWN tile (was: only
+                // when the camera was off); the camera stays on the person's tile.
+                if (!event.publication.muted) attachScreen(id, event.participant, t)
+              } else {
+                val tile = tileFor(id, event.participant)
+                if (tile != null) {
+                  t.addRenderer(tile.renderer)
+                  setTileVideo(tile, !event.publication.muted)
+                }
               }
             } else {
               tilesByIdentity[id]?.let { tile ->
@@ -582,7 +701,9 @@ class GroupCallActivity : ComponentActivity() {
           is RoomEvent.TrackUnsubscribed -> {
             val t = event.track
             val id = event.participant.identity?.value ?: ""
-            if (t is VideoTrack) {
+            if (t is VideoTrack && (event.publications.source == Track.Source.SCREEN_SHARE || screenTracks[SCREEN_PREFIX + id] === t)) {
+              detachScreen(id) // [2026-10-14 group-ui]
+            } else if (t is VideoTrack) {
               tilesByIdentity[id]?.let { tile ->
                 try { t.removeRenderer(tile.renderer) } catch (_: Throwable) {}
                 setTileVideo(tile, false)
@@ -594,7 +715,9 @@ class GroupCallActivity : ComponentActivity() {
           is RoomEvent.TrackMuted -> if (event.participant !is LocalParticipant) {
             val pub = event.publication
             val tile = tilesByIdentity[event.participant.identity?.value ?: ""]
-            if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+            if (pub.source == Track.Source.SCREEN_SHARE) {
+              detachScreen(event.participant.identity?.value ?: "") // [2026-10-14 group-ui]
+            } else if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
               tile?.let { setTileVideo(it, false) }
             } else if (pub.source == Track.Source.MICROPHONE) {
               tile?.micBadge?.visibility = View.VISIBLE
@@ -603,7 +726,11 @@ class GroupCallActivity : ComponentActivity() {
           is RoomEvent.TrackUnmuted -> if (event.participant !is LocalParticipant) {
             val pub = event.publication
             val tile = tilesByIdentity[event.participant.identity?.value ?: ""]
-            if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+            val screenTrack = pub.track as? VideoTrack
+            if (pub.source == Track.Source.SCREEN_SHARE) {
+              // [2026-10-14 group-ui]
+              if (screenTrack != null) attachScreen(event.participant.identity?.value ?: "", event.participant, screenTrack)
+            } else if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
               tile?.let { tt ->
                 val vt = pub.track as? VideoTrack
                 if (vt != null) { try { vt.addRenderer(tt.renderer) } catch (_: Throwable) {} }
@@ -616,7 +743,17 @@ class GroupCallActivity : ComponentActivity() {
           // Local camera publish → bind the floating preview.
           is RoomEvent.TrackPublished -> if (event.participant is LocalParticipant) {
             val track = event.publication.track
-            if (track is LocalVideoTrack) bindLocalVideoTrack(track)
+            // [2026-10-14 group-ui] Only the CAMERA goes to the self-view (our
+            // own screen share must not replace it).
+            if (track is LocalVideoTrack && event.publication.source != Track.Source.SCREEN_SHARE) bindLocalVideoTrack(track)
+            if (event.publication.source == Track.Source.SCREEN_SHARE) { screenSharing = true; refreshControlStates() }
+          } else {
+            noteRemoteMedia(event.participant.identity?.value ?: "", event.participant, announce = true)
+          }
+          is RoomEvent.TrackUnpublished -> if (event.participant is LocalParticipant &&
+            event.publication.source == Track.Source.SCREEN_SHARE) {
+            screenSharing = false
+            refreshControlStates()
           }
           is RoomEvent.ActiveSpeakersChanged -> onActiveSpeakers(event.speakers)
           is RoomEvent.DataReceived -> onDataReceived(event.data, event.participant?.identity?.value)
@@ -710,6 +847,7 @@ class GroupCallActivity : ComponentActivity() {
       placeholder.displayName = name
       placeholder.nameLabel.text = name
       if (pinnedIdentity == bare) pinnedIdentity = identity
+      setTileRinging(placeholder, pendingInvites.containsKey(bare)) // [2026-10-14 group-ui]
       return placeholder
     }
     addTile(identity = identity, displayName = displayNameFor(identity, p))
@@ -749,7 +887,7 @@ class GroupCallActivity : ComponentActivity() {
       tile.frame.foreground = if (ids.contains(id)) speakerRing() else null
     }
     // Big grids: keep the people talking on screen.
-    if (tilesByIdentity.size > 9 && pinnedIdentity == null && now - lastReorderAt > REORDER_THROTTLE_MS) {
+    if (tilesByIdentity.size > 9 && spotlightKey() == null && now - lastReorderAt > REORDER_THROTTLE_MS) {
       val firstPage = tilesByIdentity.keys.take(6).toSet()
       val recent = tilesByIdentity.keys.filter { now - (lastSpokeAt[it] ?: 0L) < SPOKE_RECENT_MS }
       if (recent.any { it !in firstPage }) {
@@ -815,14 +953,15 @@ class GroupCallActivity : ComponentActivity() {
       .start()
   }
 
-  private fun addTile(identity: String, displayName: String) {
+  private fun addTile(identity: String, displayName: String, isScreen: Boolean = false) {
     val frame = FrameLayout(this).apply {
       background = GradientDrawable().apply {
         cornerRadius = dp(12).toFloat()
-        setColor(Color.parseColor("#1C1C1E"))
+        setColor(if (isScreen) Color.BLACK else Color.parseColor("#1C1C1E"))
       }
       clipToOutline = true
-      setOnClickListener { togglePin(identity) }
+      // [2026-10-14 group-ui] Screen tile → full screen (pinch); person → pin.
+      setOnClickListener { if (isScreen) openScreenFullscreen(identity) else togglePin(identity) }
     }
 
     val renderer = SurfaceViewRenderer(this).apply {
@@ -831,7 +970,10 @@ class GroupCallActivity : ComponentActivity() {
         ViewGroup.LayoutParams.MATCH_PARENT
       )
       // [video-quality 2026-10-06] fill the tile (no letterbox bars).
-      try { setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
+      // [2026-10-14 group-ui] Screen share: FIT (whole screen legible).
+      try {
+        setScalingType(if (isScreen) RendererCommon.ScalingType.SCALE_ASPECT_FIT else RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+      } catch (_: Throwable) {}
     }
     frame.addView(renderer)
     room?.initVideoRenderer(renderer)
@@ -907,11 +1049,325 @@ class GroupCallActivity : ComponentActivity() {
     }
     frame.addView(hand)
 
-    tilesByIdentity[identity] = Tile(frame, renderer, name, mic, hasVideo = false, avatar = avatar, handBadge = hand, displayName = displayName)
+    // [2026-10-14 group-ui] "Tocando…" under the initial (invitee not answered).
+    val ring = TextView(this).apply {
+      text = CallStrings.s("ringing")
+      setTextColor(Color.parseColor("#BDBDBD"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+      visibility = View.GONE
+      layoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.CENTER
+        topMargin = dp(58)
+      }
+    }
+    frame.addView(ring)
+
+    // [2026-10-14 group-ui] Network quality bars (bottom-right), hidden when excellent.
+    val bars = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.BOTTOM
+      visibility = View.GONE
+      background = GradientDrawable().apply {
+        cornerRadius = dp(8).toFloat()
+        setColor(Color.parseColor("#99000000"))
+      }
+      setPadding(dp(5), dp(4), dp(5), dp(4))
+      layoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.BOTTOM or Gravity.END
+        rightMargin = dp(8)
+        bottomMargin = dp(8)
+      }
+    }
+    for (i in 0 until 3) {
+      bars.addView(View(this).apply {
+        setBackgroundColor(Color.WHITE)
+      }, LinearLayout.LayoutParams(dp(3), dp(5 + i * 3)).apply { if (i > 0) marginStart = dp(2) })
+    }
+    frame.addView(bars)
+
+    if (isScreen) avatar.text = ""
+
+    tilesByIdentity[identity] = Tile(
+      frame, renderer, name, mic, hasVideo = false, avatar = avatar, handBadge = hand,
+      displayName = displayName, ringLabel = ring, qualityBars = bars, isScreen = isScreen,
+    )
     grid.addView(frame)
   }
 
+  // ─── [2026-10-14 group-ui] Ringing · screen tiles · notices ───────────────
+
+  /** "Tocando…" state of a person tile (avatar + name + label, no mic badge). */
+  private fun setTileRinging(tile: Tile, on: Boolean) {
+    if (tile.isScreen) return
+    tile.ringLabel?.visibility = if (on) View.VISIBLE else View.GONE
+    tile.avatar?.alpha = if (on) 0.85f else 1f
+    if (on) tile.micBadge.visibility = View.GONE
+  }
+
+  private fun setTileQuality(tile: Tile, score: Int) {
+    val bars = tile.qualityBars ?: return
+    bars.visibility = if (score < 3 && !tile.isScreen) View.VISIBLE else View.GONE
+    for (i in 0 until bars.childCount) {
+      bars.getChildAt(i).alpha = if (i < score.coerceAtLeast(0)) 1f else 0.3f
+    }
+  }
+
+  /** First media from [identity] = really in the call: ringing → normal tile
+   *  and (when [announce]) "Fulano entrou". */
+  private fun noteRemoteMedia(identity: String, p: Participant?, announce: Boolean) {
+    if (identity.isEmpty()) return
+    val bare = bareEmail(identity)
+    val wasRinging = pendingInvites.remove(bare) != null
+    if (announcedJoins.add(identity) && announce) {
+      showToastPill(GroupCallStrings.s("gx.joined", "name" to displayNameFor(identity, p)))
+    }
+    if (wasRinging) tilesByIdentity[identity]?.let { setTileRinging(it, false) }
+  }
+
+  /** In the Room but no media (ring preconnect) → "Tocando…" until it answers. */
+  private fun markRingingIfSilent(identity: String, p: Participant) {
+    if (identity.isEmpty() || announcedJoins.contains(identity)) return
+    if (p.trackPublications.isNotEmpty()) return
+    if (room?.remoteParticipants?.values?.any { it.identity?.value == identity } != true) return
+    val bare = bareEmail(identity)
+    if (pendingInvites.containsKey(bare)) return
+    pendingInvites[bare] = displayNameFor(identity, p)
+    tilesByIdentity[identity]?.let { setTileRinging(it, true) }
+    scheduleRingingExpiry(bare)
+  }
+
+  private fun scheduleRingingExpiry(bare: String) {
+    ui.postDelayed({
+      if (!finished && pendingInvites.remove(bare) != null) dropOrRefreshTile(bare)
+    }, RINGING_TIMEOUT_MS)
+  }
+
+  /** Unanswered: never joined → tile removed; in the Room but silent → normal tile. */
+  private fun dropOrRefreshTile(bare: String) {
+    val key = tilesByIdentity.keys.firstOrNull { !it.startsWith(SCREEN_PREFIX) && bareEmail(it) == bare } ?: return
+    val live = room?.remoteParticipants?.values?.any { bareEmail(it.identity?.value ?: "") == bare } == true
+    if (live) {
+      tilesByIdentity[key]?.let { setTileRinging(it, false) }
+    } else {
+      removeTile(key)
+      invited.removeAll { it.email == bare }
+    }
+  }
+
+  private fun handleInviteDeclined(email: String) {
+    val bare = bareEmail(email)
+    if (pendingInvites.remove(bare) == null) return
+    CallDiag.log("group_invite_declined", roomName, "by=$bare", applicationContext)
+    val key = tilesByIdentity.keys.firstOrNull { !it.startsWith(SCREEN_PREFIX) && bareEmail(it) == bare } ?: return
+    removeTile(key)
+    invited.removeAll { it.email == bare }
+  }
+
+  /** Someone's screen share → its own tile ("Tela de Fulano"), highlighted on top. */
+  private fun attachScreen(identity: String, p: Participant, track: VideoTrack) {
+    if (identity.isEmpty()) return
+    val key = SCREEN_PREFIX + identity
+    var tile = tilesByIdentity[key]
+    if (tile == null) {
+      val owner = tilesByIdentity[identity]?.displayName ?: displayNameFor(identity, p)
+      addTile(identity = key, displayName = GroupCallStrings.s("gx.screenOf", "name" to owner), isScreen = true)
+      tile = tilesByIdentity[key]
+      relayoutGrid()
+    }
+    val t = tile ?: return
+    val old = screenTracks[key]
+    if (old !== track) {
+      try { old?.removeRenderer(t.renderer) } catch (_: Throwable) {}
+      try { track.addRenderer(t.renderer) } catch (_: Throwable) {}
+      screenTracks[key] = track
+    }
+    setTileVideo(t, true)
+  }
+
+  private fun detachScreen(identity: String) {
+    if (identity.isEmpty()) return
+    val key = SCREEN_PREFIX + identity
+    val track = screenTracks.remove(key)
+    if (fullscreenKey == key) closeScreenFullscreen()
+    tilesByIdentity[key]?.let { t -> try { track?.removeRenderer(t.renderer) } catch (_: Throwable) {} }
+    if (tilesByIdentity.containsKey(key)) removeTile(key)
+  }
+
+  /** Pinned tile, else the first screen share — big on top, rest below. */
+  private fun spotlightKey(): String? {
+    if (tilesByIdentity.size < 2) return null
+    pinnedIdentity?.let { if (tilesByIdentity.containsKey(it)) return it }
+    return tilesByIdentity.keys.firstOrNull { it.startsWith(SCREEN_PREFIX) }
+  }
+
+  /** Discreet top notice ("Fulano entrou / saiu"). */
+  private fun showToastPill(text: String) {
+    val tv = toastView ?: return
+    if (text.isBlank() || isInPictureInPictureMode) return
+    tv.text = text
+    tv.bringToFront()
+    tv.animate().cancel()
+    tv.visibility = View.VISIBLE
+    tv.animate().alpha(1f).setDuration(200).start()
+    ui.removeCallbacks(hideToast)
+    ui.postDelayed(hideToast, 2_600L)
+  }
+
+  /** Full-screen viewer for a shared screen: aspect-fit, pinch 1×–4×, drag
+   *  to pan while zoomed, double tap 1×↔2×, back / ✕ closes. */
+  private fun openScreenFullscreen(key: String) {
+    val track = screenTracks[key] ?: return
+    val r = room ?: return
+    val root = rootLayout ?: return
+    closeScreenFullscreen()
+    val overlay = FrameLayout(this).apply {
+      setBackgroundColor(Color.BLACK)
+      isClickable = true
+      layoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+      )
+    }
+    val tv = io.livekit.android.renderer.TextureViewRenderer(this).apply {
+      layoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+      )
+    }
+    try {
+      r.initVideoRenderer(tv)
+      tv.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+    } catch (t: Throwable) {
+      Log.w(TAG, "fullscreen renderer init failed: ${t.message}")
+      return
+    }
+    overlay.addView(tv)
+    var scale = 1f
+    fun clampPan() {
+      val maxX = (scale - 1f) * tv.width / 2f
+      val maxY = (scale - 1f) * tv.height / 2f
+      tv.translationX = tv.translationX.coerceIn(-maxX, maxX)
+      tv.translationY = tv.translationY.coerceIn(-maxY, maxY)
+    }
+    val scaleDetector = android.view.ScaleGestureDetector(this,
+      object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: android.view.ScaleGestureDetector): Boolean {
+          scale = (scale * detector.scaleFactor).coerceIn(1f, 4f)
+          tv.scaleX = scale
+          tv.scaleY = scale
+          clampPan()
+          return true
+        }
+      })
+    val gestureDetector = android.view.GestureDetector(this,
+      object : android.view.GestureDetector.SimpleOnGestureListener() {
+        override fun onScroll(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+          if (scale <= 1.01f) return false
+          tv.translationX -= distanceX
+          tv.translationY -= distanceY
+          clampPan()
+          return true
+        }
+
+        override fun onDoubleTap(e: android.view.MotionEvent): Boolean {
+          scale = if (scale > 1.01f) 1f else 2f
+          tv.animate().scaleX(scale).scaleY(scale).translationX(0f).translationY(0f).setDuration(180).start()
+          return true
+        }
+      })
+    overlay.setOnTouchListener { _, ev ->
+      scaleDetector.onTouchEvent(ev)
+      gestureDetector.onTouchEvent(ev)
+      true
+    }
+    val title = TextView(this).apply {
+      text = tilesByIdentity[key]?.displayName ?: ""
+      setTextColor(Color.WHITE)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+      maxLines = 1
+      background = GradientDrawable().apply {
+        cornerRadius = dp(14).toFloat()
+        setColor(Color.parseColor("#99000000"))
+      }
+      setPadding(dp(12), dp(6), dp(12), dp(6))
+      layoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        leftMargin = dp(16)
+        topMargin = dp(40)
+      }
+    }
+    overlay.addView(title)
+    val close = roundButton(40, Color.parseColor("#99000000"),
+      android.R.drawable.ic_menu_close_clear_cancel, Color.WHITE, GroupCallStrings.s("pk.close")) {
+      closeScreenFullscreen()
+    }
+    overlay.addView(close, FrameLayout.LayoutParams(dp(40), dp(40)).apply {
+      gravity = Gravity.TOP or Gravity.END
+      rightMargin = dp(16)
+      topMargin = dp(36)
+    })
+    try { track.addRenderer(tv) } catch (t: Throwable) { Log.w(TAG, "fullscreen addRenderer: ${t.message}") }
+    root.addView(overlay)
+    fullscreenOverlay = overlay
+    fullscreenRenderer = tv
+    fullscreenTrack = track
+    fullscreenKey = key
+  }
+
+  private fun closeScreenFullscreen() {
+    val overlay = fullscreenOverlay ?: return
+    val tv = fullscreenRenderer
+    try { if (tv != null) fullscreenTrack?.removeRenderer(tv) } catch (_: Throwable) {}
+    try { tv?.release() } catch (_: Throwable) {}
+    try { rootLayout?.removeView(overlay) } catch (_: Throwable) {}
+    fullscreenOverlay = null
+    fullscreenRenderer = null
+    fullscreenTrack = null
+    fullscreenKey = null
+  }
+
+  /** Participant list: name · state (Tocando… / Conectado / Mudo) + Adicionar. */
+  private fun showParticipantsList() {
+    val rows = ArrayList<String>()
+    rows.add(GroupCallStrings.s("you") + " · " +
+      (if (micEnabled) GroupCallStrings.s("connected") else GroupCallStrings.s("gx.muted")))
+    tilesByIdentity.forEach { (k, t) ->
+      if (t.isScreen) return@forEach
+      val state = when {
+        pendingInvites.containsKey(bareEmail(k)) -> CallStrings.s("ringing")
+        t.micBadge.visibility == View.VISIBLE -> GroupCallStrings.s("gx.muted")
+        else -> GroupCallStrings.s("connected")
+      }
+      rows.add("${t.displayName} · $state")
+    }
+    try {
+      AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        .setTitle(GroupCallStrings.s("participantsList", "n" to rows.size.toString()))
+        .setItems(rows.toTypedArray(), null)
+        .setPositiveButton(GroupCallStrings.s("add")) { d, _ ->
+          d.dismiss()
+          showAddParticipant()
+        }
+        .setNegativeButton(GroupCallStrings.s("pk.close"), null)
+        .show()
+    } catch (t: Throwable) {
+      Log.w(TAG, "participants dialog failed: ${t.message}")
+    }
+  }
+
   private fun removeTile(identity: String) {
+    if (identity.isNotEmpty() && !identity.startsWith(SCREEN_PREFIX) && screenTracks.containsKey(SCREEN_PREFIX + identity)) {
+      detachScreen(identity) // [2026-10-14 group-ui] their screen tile goes too
+    }
     val tile = tilesByIdentity.remove(identity) ?: return
     try { grid.removeView(tile.frame) } catch (_: Throwable) {}
     try { tile.renderer.release() } catch (_: Throwable) {}
@@ -933,9 +1389,10 @@ class GroupCallActivity : ComponentActivity() {
   private fun rebuildGridChildren() {
     try {
       grid.removeAllViews()
-      val pinned = pinnedIdentity?.let { tilesByIdentity[it] }
+      val spot = spotlightKey() // [2026-10-14 group-ui] pinned or screen share
+      val pinned = spot?.let { tilesByIdentity[it] }
       if (pinned != null) grid.addView(pinned.frame)
-      tilesByIdentity.forEach { (k, t) -> if (k != pinnedIdentity) grid.addView(t.frame) }
+      tilesByIdentity.forEach { (k, t) -> if (k != spot) grid.addView(t.frame) }
     } catch (t: Throwable) {
       Log.w(TAG, "rebuildGridChildren failed: ${t.message}")
     }
@@ -956,7 +1413,8 @@ class GroupCallActivity : ComponentActivity() {
       return
     }
     val gutter = dp(3)
-    val pinned = pinnedIdentity?.takeIf { tilesByIdentity.containsKey(it) && n >= 2 }
+    // [2026-10-14 group-ui] A screen share is highlighted like a pinned tile.
+    val pinned = spotlightKey()?.takeIf { n >= 2 }
     if (pinned != null) {
       val others = n - 1
       val cols = others.coerceIn(1, 3)
@@ -1038,7 +1496,8 @@ class GroupCallActivity : ComponentActivity() {
     if (!::statusText.isInitialized) return
     val override = statusOverride
     if (override != null) { statusText.text = override; return }
-    val count = (room?.remoteParticipants?.size ?: 0) + 1
+    // [2026-10-14 group-ui] People really in the call (ringing preconnects excluded).
+    val count = (room?.remoteParticipants?.values?.count { !pendingInvites.containsKey(bareEmail(it.identity?.value ?: "")) } ?: 0) + 1
     val secs = if (connectedAtMs > 0) ((System.currentTimeMillis() - connectedAtMs) / 1000).toInt() else 0
     val mmss = String.format(java.util.Locale.US, "%02d:%02d", secs / 60, secs % 60)
     statusText.text = if (count <= 1) GroupCallStrings.s("waitingOthers") else "$mmss · ${GroupCallStrings.participants(count)}"
@@ -1088,6 +1547,12 @@ class GroupCallActivity : ComponentActivity() {
       b.imageTintList = ColorStateList.valueOf(if (speakerOn) Color.BLACK else Color.WHITE)
     }
     localRenderer?.visibility = if (hasVideo && camEnabled && boundLocalTrack != null) View.VISIBLE else View.GONE
+    // [2026-10-14 group-ui] Screen share: highlighted (white) while sharing.
+    screenBtn?.let { b ->
+      (b.background as? GradientDrawable)?.setColor(if (screenSharing) Color.WHITE else Color.parseColor("#2C2C2E"))
+      b.imageTintList = ColorStateList.valueOf(if (screenSharing) Color.BLACK else Color.WHITE)
+      b.contentDescription = if (screenSharing) CallStrings.s("stopSharing") else CallStrings.s("shareScreen")
+    }
   }
 
   private fun buildRootView(): View {
@@ -1098,6 +1563,7 @@ class GroupCallActivity : ComponentActivity() {
         ViewGroup.LayoutParams.MATCH_PARENT
       )
     }
+    rootLayout = root
 
     // Grid area between the header and the controls.
     val gridScroll = android.widget.ScrollView(this).apply {
@@ -1159,6 +1625,19 @@ class GroupCallActivity : ComponentActivity() {
     titles.addView(titleText)
     titles.addView(statusText)
     header.addView(titles, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    // [2026-10-14 group-ui] Participant list + "Adicionar" up top (WhatsApp);
+    // the bottom row now holds screen share instead of add.
+    val people = roundButton(40, Color.parseColor("#2C2C2E"),
+      drawable("gc_people", android.R.drawable.ic_menu_myplaces), Color.WHITE,
+      GroupCallStrings.s("participantsList", "n" to "").replace("()", "").trim()) {
+      showParticipantsList()
+    }
+    header.addView(people, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) })
+    val addTop = roundButton(40, Color.parseColor("#2C2C2E"),
+      drawable("gc_person_add", android.R.drawable.ic_menu_add), Color.WHITE, GroupCallStrings.s("addPerson")) {
+      showAddParticipant()
+    }
+    header.addView(addTop, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) })
     // [2026-10-11 ongoing-call] "Mensagem": open the group chat + minimize.
     if (conversationId.isNotEmpty()) {
       val chat = roundButton(40, Color.parseColor("#2C2C2E"),
@@ -1196,6 +1675,28 @@ class GroupCallActivity : ComponentActivity() {
       )
     }
     root.addView(reactionLayer)
+
+    // [2026-10-14 group-ui] "Fulano entrou / saiu" pill (top, non-interactive).
+    toastView = TextView(this).apply {
+      setTextColor(Color.WHITE)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+      maxLines = 1
+      alpha = 0f
+      isClickable = false
+      background = GradientDrawable().apply {
+        cornerRadius = dp(18).toFloat()
+        setColor(Color.parseColor("#B8000000"))
+      }
+      setPadding(dp(14), dp(8), dp(14), dp(8))
+      layoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      ).apply {
+        gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        topMargin = dp(98)
+      }
+    }
+    root.addView(toastView)
 
     // Controls: mic · camera · flip · speaker · add · hang up.
     val controls = LinearLayout(this).apply {
@@ -1278,10 +1779,13 @@ class GroupCallActivity : ComponentActivity() {
     addCtl(spk, 52)
     speakerBtn = spk
 
-    val add = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_person_add", android.R.drawable.ic_menu_add), Color.WHITE, GroupCallStrings.s("addPerson")) {
-      showAddParticipant()
+    // [2026-10-14 group-ui] Screen share (MediaProjection, same as the 1:1);
+    // "Adicionar" moved to the header.
+    val share = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_screen_share", android.R.drawable.ic_menu_slideshow), Color.WHITE, CallStrings.s("shareScreen")) {
+      toggleScreenShare()
     }
-    addCtl(add, 52)
+    addCtl(share, 52)
+    screenBtn = share
 
     val hangupBtn = roundButton(60, Color.parseColor("#E53935"), drawable("phone_end", android.R.drawable.ic_menu_close_clear_cancel), Color.WHITE, GroupCallStrings.s("leaveCall")) {
       finishCall(reason = "user_hangup")
@@ -1312,13 +1816,142 @@ class GroupCallActivity : ComponentActivity() {
       var changed = false
       rung.forEach { (email, name) ->
         val bare = bareEmail(email)
-        if (tilesByIdentity.keys.none { bareEmail(it) == bare }) {
+        val existingKey = tilesByIdentity.keys.firstOrNull { !it.startsWith(SCREEN_PREFIX) && bareEmail(it) == bare }
+        // Already in the call with media → nothing to ring.
+        if (existingKey != null && announcedJoins.contains(existingKey)) return@forEach
+        if (existingKey == null) {
           invited.add(InvitedParticipant(bare, name, null))
           addTile(identity = bare, displayName = name)
           changed = true
         }
+        // [2026-10-14 group-ui] "Tocando…" until they answer / decline / 60 s.
+        pendingInvites[bare] = name
+        tilesByIdentity[existingKey ?: bare]?.let { setTileRinging(it, true) }
+        scheduleRingingExpiry(bare)
       }
       if (changed) relayoutGrid()
+    }
+  }
+
+  // ─── [2026-10-14 group-ui] Screen share (MediaProjection) ─────────────────
+  //
+  // Same flow as CallActivity (1:1): system consent → LiveKit
+  // setScreenShareEnabled(true, ScreenCaptureParams) — LK runs its own
+  // ScreenCaptureService (foregroundServiceType=mediaProjection) with OUR
+  // notification; the system "Stop sharing" chip fires onStop → unpublish.
+  private val screenCaptureLauncher = registerForActivityResult(
+    androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+  ) { res ->
+    suppressPipUntil = 0L
+    val data = res.data
+    if (res.resultCode == RESULT_OK && data != null) {
+      startScreenShareWith(data)
+    } else {
+      CallDiag.log("group_screen_share_denied", roomName, "code=${res.resultCode}", applicationContext)
+    }
+  }
+
+  private fun toggleScreenShare() {
+    if (screenShareInFlight || finished) return
+    if (screenSharing) {
+      stopScreenShare("user")
+      return
+    }
+    val r = room
+    if (r == null || r.state != Room.State.CONNECTED) {
+      try { Toast.makeText(this, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+      CallDiag.log("group_screen_share_error", roomName, "reason=room_not_connected", applicationContext)
+      return
+    }
+    try {
+      val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+      suppressPipUntil = System.currentTimeMillis() + 30_000L
+      screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
+    } catch (t: Throwable) {
+      suppressPipUntil = 0L
+      Log.w(TAG, "screen capture intent failed: ${t.message}")
+      CallDiag.log("group_screen_share_error", roomName, "err=${t.message?.take(100)}", applicationContext)
+      try { Toast.makeText(this, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+    }
+  }
+
+  private fun buildScreenShareNotification(): android.app.Notification {
+    val iconRes = try {
+      resources.getIdentifier("ic_notification", "drawable", packageName).takeIf { it != 0 } ?: applicationInfo.icon
+    } catch (_: Throwable) { applicationInfo.icon }
+    val channelId = "chatyy_screen_share"
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      try {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (nm.getNotificationChannel(channelId) == null) {
+          nm.createNotificationChannel(
+            android.app.NotificationChannel(channelId, CallStrings.s("sharingScreen"), android.app.NotificationManager.IMPORTANCE_LOW)
+          )
+        }
+      } catch (_: Throwable) {}
+    }
+    val open = try {
+      android.app.PendingIntent.getActivity(
+        this, 7313,
+        Intent(this, GroupCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+      )
+    } catch (_: Throwable) { null }
+    return androidx.core.app.NotificationCompat.Builder(this, channelId)
+      .setSmallIcon(iconRes)
+      .setContentTitle(CallStrings.s("sharingScreen"))
+      .setContentText(title)
+      .setOngoing(true)
+      .setOnlyAlertOnce(true)
+      .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+      .apply { if (open != null) setContentIntent(open) }
+      .build()
+  }
+
+  private fun startScreenShareWith(data: Intent) {
+    val r = room ?: return
+    screenShareInFlight = true
+    lifecycleScope.launch {
+      try {
+        val params = io.livekit.android.room.track.screencapture.ScreenCaptureParams(
+          mediaProjectionPermissionResultData = data,
+          notificationId = 7314,
+          notification = buildScreenShareNotification(),
+          onStop = {
+            runOnUiThread {
+              if (screenSharing) {
+                CallDiag.log("group_screen_share_stopped_by_system", roomName, "", applicationContext)
+                stopScreenShare("system")
+              }
+            }
+          },
+        )
+        val ok = r.localParticipant.setScreenShareEnabled(true, params)
+        screenSharing = ok
+        CallDiag.log(if (ok) "group_screen_share_published" else "group_screen_share_error", roomName, "mediaprojection", applicationContext)
+        if (!ok) {
+          try { Toast.makeText(this@GroupCallActivity, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "setScreenShareEnabled(true) failed: ${t.message}")
+        CallDiag.log("group_screen_share_error", roomName, "err=${t.message?.take(100)}", applicationContext)
+        screenSharing = false
+        try { Toast.makeText(this@GroupCallActivity, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+      } finally {
+        screenShareInFlight = false
+        refreshControlStates()
+      }
+    }
+  }
+
+  private fun stopScreenShare(why: String) {
+    val r = room
+    screenSharing = false
+    refreshControlStates()
+    if (r == null) return
+    lifecycleScope.launch {
+      try { r.localParticipant.setScreenShareEnabled(false) } catch (t: Throwable) { Log.w(TAG, "stop screen share: ${t.message}") }
+      CallDiag.log("group_screen_share_unpublished", roomName, "why=$why", applicationContext)
     }
   }
 
@@ -1352,6 +1985,7 @@ class GroupCallActivity : ComponentActivity() {
       try { ExpoCallKitModule.emitCallEnded(roomName) } catch (_: Throwable) {}
     }
     try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).teardown() } catch (_: Throwable) {}
+    closeScreenFullscreen() // [2026-10-14 group-ui]
     tilesByIdentity.values.forEach { tile ->
       try { tile.renderer.release() } catch (_: Throwable) {}
     }
@@ -1375,6 +2009,11 @@ class GroupCallActivity : ComponentActivity() {
     ongoingSvcIntent = null
     eventsJob?.cancel()
     connectJob?.cancel()
+    // [2026-10-14 leave-first] LiveKit LEAVE now (was only in onDestroy, in a
+    // GlobalScope coroutine that can die with the process → ghost on the SFU).
+    val leaving = room
+    room = null
+    LkLeave.leave(leaving, roomName, "group_$reason", applicationContext)
     endTelecom(reason)
     // Leaving ≠ ending for everyone: no call_end. JS closes our history row.
     ExpoCallKitModule.emitCallEnded(roomName)
@@ -1431,6 +2070,8 @@ class GroupCallActivity : ComponentActivity() {
 
   @Deprecated("Back = minimize (the call keeps running)")
   override fun onBackPressed() {
+    // [2026-10-14 group-ui] Back closes the full-screen screen viewer first.
+    if (fullscreenOverlay != null) { closeScreenFullscreen(); return }
     minimizeCall()
   }
 
@@ -1466,6 +2107,8 @@ class GroupCallActivity : ComponentActivity() {
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
     if (!hasVideo || finished) return
+    // [2026-10-14 group-ui] Screen-share consent dialog = our own launch.
+    if (System.currentTimeMillis() < suppressPipUntil) return
     enterPip()
   }
 

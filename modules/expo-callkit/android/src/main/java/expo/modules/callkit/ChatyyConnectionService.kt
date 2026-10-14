@@ -458,6 +458,11 @@ class ChatyyConnection(
     // [2026-10-06 android-incoming] Drop from the registry on every
     // Telecom-driven teardown too (here, onAbort, rejectInternal).
     IncomingCallRegistry.unregisterConnection(callId, this)
+    // [2026-10-14 leave-first] Telecom-driven end (BT headset, Wear, Auto,
+    // "end & answer" of a GSM call): only JS was told — with JS asleep the
+    // call screen + LiveKit Room stayed up (ghost). End natively: the screen's
+    // finishCall sends call_end + LEAVE; a bare preconnect just leaves.
+    endNativeCallFor("telecom_disconnect")
     ExpoCallKitModule.emitCallEnded(callId)
     // [WAVE 116 2026-05-21] Issue 4 — purge the cached LK token/url that
     // JS pre-stashed via persistPendingLkToken. Called after Telecom
@@ -561,7 +566,19 @@ class ChatyyConnection(
     stopResumeWatcher()
     setDisconnected(DisconnectCause(DisconnectCause.OTHER))
     IncomingCallRegistry.unregisterConnection(callId, this) // [2026-10-06 android-incoming]
+    endNativeCallFor("telecom_abort") // [2026-10-14 leave-first]
     destroy()
+  }
+
+  /** [2026-10-14 leave-first] See onDisconnect. */
+  private fun endNativeCallFor(reason: String) {
+    if (callId.isEmpty()) return
+    try {
+      val handled = CallActivity.hangupFor(callId, reason) || GroupCallActivity.hangupFor(callId, reason)
+      if (!handled && NativeCallRoom.currentCallId() == callId) NativeCallRoom.disconnect()
+    } catch (t: Throwable) {
+      Log.w(TAG, "endNativeCallFor($reason) failed: ${t.message}")
+    }
   }
 
   /** [2026-10-09 system-mute] Last CallAudioState.isMuted seen (null = none yet). */

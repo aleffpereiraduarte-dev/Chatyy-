@@ -218,6 +218,27 @@ class CallOngoingService : Service() {
         }
     }
 
+    /**
+     * [2026-10-14 leave-first] App swiped away from Recents mid-call: the call
+     * screens die with the task and the process can follow right after — send
+     * LiveKit LEAVE for every live Room NOW (blocking ≤ 1.5 s) so the SFU drops
+     * us immediately (not ~21 s later as a ghost), then run the normal hangups
+     * (call_end to the peer).
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        try {
+            LkLeave.leaveBlocking(
+                listOf(CallActivity.roomForLeave(), GroupCallActivity.roomForLeave(), NativeCallRoom.roomForLeave()),
+                reason = "task_removed",
+            )
+            CallActivity.ongoingHangup()
+            GroupCallActivity.ongoingHangup()
+        } catch (t: Throwable) {
+            Log.w(TAG, "onTaskRemoved leave failed: ${t.message}")
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         // [#1179 cleanup, 2026-05-19] Explicit stopForeground(REMOVE) so the
         // "Chamada em andamento" notification disappears immediately when

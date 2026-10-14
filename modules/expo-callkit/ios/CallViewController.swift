@@ -133,6 +133,48 @@ final class CallSessionState: ObservableObject {
 /// check-and-publish (called concurrently from Task.detached ring-window kicks).
 private let kPreconnectRoomLock = NSLock()
 
+/// [2026-10-14 publish-wait] "Publisher is nil" / LiveKitError 101/104 (iOS
+/// stage_a camera, fresh-connect mic, gate publish, group VC): publishing
+/// (setMicrophone / setCamera / publish(videoTrack:)) while the Room is not
+/// `.connected` — still joining, or `.reconnecting` right after the join —
+/// throws. Wait for `.connected` (RoomStateWaiter, bounded, no polling) before
+/// EACH attempt and retry shortly. A `.disconnected` Room is left to the
+/// caller's rejoin path (gives up at once). Free function = no actor
+/// isolation (callers run in MainActor Tasks of the call view controllers).
+func lkPublishWhenConnected<T>(_ r: Room,
+                               callId: String,
+                               label: String,
+                               attempts: Int = 3,
+                               _ op: () async throws -> T) async throws -> T {
+    var lastError: Error?
+    let total = max(1, attempts)
+    for attempt in 1...total {
+        if r.connectionState != .connected {
+            let st = await RoomStateWaiter.wait(room: r, timeout: 8.0)
+            if st != .connected {
+                nativeCallDiag("publish_wait_not_connected", callId,
+                               "what=\(label) attempt=\(attempt) lk=\(NativeCallRoom.stateName(st))")
+                lastError = NSError(domain: "ChatyyCallPublish", code: -1,
+                                    userInfo: [NSLocalizedDescriptionKey: "not_connected lk=\(NativeCallRoom.stateName(st)) (\(label))"])
+                if st == .disconnected { break }
+                continue
+            }
+        }
+        do {
+            let out = try await op()
+            if attempt > 1 { nativeCallDiag("publish_ok_after_retry", callId, "what=\(label) attempt=\(attempt)") }
+            return out
+        } catch {
+            lastError = error
+            nativeCallDiag("publish_retry", callId,
+                           "what=\(label) attempt=\(attempt) lk=\(NativeCallRoom.stateName(r.connectionState)) err=\(String(String(describing: error).prefix(140)))")
+            if attempt < total { try? await Task.sleep(nanoseconds: 500_000_000) }
+        }
+    }
+    throw lastError ?? NSError(domain: "ChatyyCallPublish", code: -2,
+                               userInfo: [NSLocalizedDescriptionKey: "publish_failed (\(label))"])
+}
+
 final class CallViewController: UIViewController, @unchecked Sendable {
 
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
@@ -316,6 +358,34 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var remoteAnsweredObserver: NSObjectProtocol?
 
     private var remoteParticipantCount: Int = 0
+
+    // [2026-10-14 group-ui] 1:1 → GRID once a 3rd person is in (or being rung
+    // into) the call — same SwiftUI grid as the group screen (GroupGridView):
+    // 2 stacked, 3-4 in 2×2, 5-9 in 3 columns, 10+ scrolls; name + mic-muted
+    // per tile, white ring on whoever speaks, own tile for a screen share,
+    // "Tocando…" tiles. The 1:1 call logic (Room, CallKit, ringback, PiP,
+    // hangup) is untouched — the grid only REPLACES the 1:1 visuals.
+    private let gridSession = GroupCallSessionState(participants: [], status: "", micEnabled: true, camEnabled: false, speakerOn: false)
+    private var gridHost: UIHostingController<GroupGridView>?
+    private var gridHeaderLabel: UILabel?
+    private var gridHeaderTimer: Timer?
+    private var gridActive = false
+    /// First-seen order of remote identities (stable tiles).
+    private var gridOrder: [String] = []
+    private var gridSpeaking: Set<String> = []
+    private var gridQuality: [String: Int] = [:]
+    /// bare email → name of people being rung INTO this call (picker, or present
+    /// without media = ring preconnect). Cleared on media / leave / decline / 60 s.
+    private var gridRinging: [String: String] = [:]
+    /// bare email → display name learned from the picker.
+    private var gridNames: [String: String] = [:]
+    /// Identities that had media ("entrou" said) → "saiu" on leave.
+    private var gridAnnounced: Set<String> = []
+    private var gridPeopleCount: Int = 0
+    private var gridRebuildPending = false
+    private weak var gridToastView: UIView?
+    private var gridToastWork: DispatchWorkItem?
+    private var gridDeclineObserver: NSObjectProtocol?
 
     // [2026-10-12 peer-gone] 1:1 parity with Android CallActivity
     // (PEER_GONE_GRACE_MS): when the only remote leaves the SFU after media
@@ -746,6 +816,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 var lastError: Error?
                 for attempt in 1...3 {
                     guard let r2 = self.room, !self.didHangup else { return }
+                    // [2026-10-14 publish-wait] Answer can land while the Room is
+                    // still joining / resuming → wait for .connected first.
+                    if r2.connectionState != .connected {
+                        let st = await RoomStateWaiter.wait(room: r2, timeout: 8.0)
+                        if st != .connected {
+                            lastError = NSError(domain: "ChatyyCallPublish", code: -1,
+                                                userInfo: [NSLocalizedDescriptionKey: "not_connected lk=\(NativeCallRoom.stateName(st))"])
+                            if st == .disconnected { break }
+                            continue
+                        }
+                    }
                     do {
                         let pub: LocalTrackPublication?
                         if let preview = preview, attempt < 3 {
@@ -789,13 +870,23 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
         let desired = self.session.micEnabled
         guard desired else { return }
+        // [2026-10-14 publish-wait] Still in the INITIAL join (.connecting): the
+        // post-connect publish in viewDidLoad reads the now-open gate and
+        // publishes once — publishing here too would race it (2 mic tracks).
+        if r.connectionState == .connecting {
+            nativeCallDiag("outgoing_mic_gate_publish_left_to_connect", callId, reason)
+            return
+        }
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                let micPub = try await r.localParticipant.setMicrophone(
-                    enabled: true,
-                    captureOptions: Self.defaultAudioCaptureOptions()
-                )
+                // .reconnecting (resume) → wait for .connected; 101/104 → retry.
+                let micPub = try await lkPublishWhenConnected(r, callId: self.callId, label: "gate_mic") {
+                    try await r.localParticipant.setMicrophone(
+                        enabled: true,
+                        captureOptions: Self.defaultAudioCaptureOptions()
+                    )
+                }
                 if let track = micPub?.track as? LocalAudioTrack {
                     await MainActor.run { self.localAudioTrackRef = track }
                 }
@@ -1453,6 +1544,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
                 if newStatus == "Conectado" && self.callConnectedAt == nil {
                     self.callConnectedAt = Date()
+                    // [2026-10-14 group-ui] Invites rung before connect → grid now.
+                    if !self.gridRinging.isEmpty { self.requestGridRebuild() }
                     // [2026-10-07 ios-native] Live Activity / Dynamic Island
                     // ("Em ligação com Fulano · 03:12"). No-op unless the build
                     // has the ChatyyCallActivity extension (CHATYY_LIVE_ACTIVITY=1).
@@ -1613,10 +1706,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         // nil". Leave it to the watchdog rejoin in that case.
                         if micPub == nil && !P2PCallBridge.ownsMedia(self.callId) {
                             if r.connectionState == .connected {
-                                micPub = try await r.localParticipant.setMicrophone(
-                                    enabled: true,
-                                    captureOptions: Self.defaultAudioCaptureOptions()
-                                )
+                                // [2026-10-14 publish-wait] short retry on 101/104.
+                                micPub = try await lkPublishWhenConnected(r, callId: self.callId, label: "stage_a_mic") {
+                                    try await r.localParticipant.setMicrophone(
+                                        enabled: true,
+                                        captureOptions: Self.defaultAudioCaptureOptions()
+                                    )
+                                }
                             } else {
                                 nativeCallDiag("adopt_mic_skip_not_connected", self.callId,
                                                "lk=\(NativeCallRoom.stateName(r.connectionState))")
@@ -1641,11 +1737,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         // defense-in-depth in case the sink raced setupVideoViews.
                         // applyLocalVideoTrack is idempotent.
                         do {
-                            let pub = try await r.localParticipant.setCamera(
-                                enabled: true,
-                                captureOptions: captureOpts,
-                                publishOptions: publishOpts
-                            )
+                            // [2026-10-14 publish-wait] Was a direct setCamera on
+                            // the adopted Room — "Publisher is nil" (101/104)
+                            // whenever it was still joining / resuming at Accept.
+                            let pub = try await lkPublishWhenConnected(r, callId: self.callId, label: "stage_a_cam") {
+                                try await r.localParticipant.setCamera(
+                                    enabled: true,
+                                    captureOptions: captureOpts,
+                                    publishOptions: publishOpts
+                                )
+                            }
                             if let track = pub?.track as? LocalVideoTrack {
                                 await MainActor.run {
                                     self.session.camEnabled = true
@@ -1791,10 +1892,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         // [2026-10-09 p2p-ios] P2P dono da mídia — LiveKit em espera.
                         print("[CallVC] mic publish skipped — P2P owns media callId=\(self.callId)")
                     } else {
-                    let micPub = try await r.localParticipant.setMicrophone(
-                        enabled: true,
-                        captureOptions: Self.defaultAudioCaptureOptions()
-                    )
+                    // [2026-10-14 publish-wait] connect() returned, but a resume
+                    // right after the join throws "Publisher is nil" → wait for
+                    // .connected + short retry before giving up ("Erro").
+                    let micPub = try await lkPublishWhenConnected(r, callId: self.callId, label: "fresh_mic") {
+                        try await r.localParticipant.setMicrophone(
+                            enabled: true,
+                            captureOptions: Self.defaultAudioCaptureOptions()
+                        )
+                    }
                     // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] Cache the
                     // local mic track so subsequent applyMicEnabled toggles
                     // take the track.mute() / unmute() fast-path. setMicrophone
@@ -1825,11 +1931,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         // call defense-in-depth.
                         let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
                         let publishOpts = Self.defaultVideoPublishOptions()
-                        if let pub = try? await r.localParticipant.setCamera(
-                            enabled: true,
-                            captureOptions: captureOpts,
-                            publishOptions: publishOpts
-                        ), let track = pub.track as? LocalVideoTrack {
+                        if let pub = try? await lkPublishWhenConnected(r, callId: self.callId, label: "fresh_cam", {
+                            try await r.localParticipant.setCamera(
+                                enabled: true,
+                                captureOptions: captureOpts,
+                                publishOptions: publishOpts
+                            )
+                        }), let track = pub.track as? LocalVideoTrack {
                             await MainActor.run {
                                 self.session.localVideoTrack = track
                             }
@@ -1845,6 +1953,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // (the legacy path) which is fine for the error case.
                     // [2026-10-11 publisher-nil] Only if it still is OUR Room.
                     NativeCallRoom.shared.clear(ifCurrent: r, reason: "callvc_connect_failed")
+                    // [2026-10-14 leave-first] A half-joined Room must leave too.
+                    LKLeave.leave(r, callId: self.callId, reason: "connect_failed")
                     await MainActor.run {
                         self.session.status = "Erro"
                     }
@@ -2013,30 +2123,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // breaks the @MainActor isolation chain inherited from
             // CallViewController so the disconnect doesn't race the audio
             // session teardown that CallKit does in provider:didDeactivate:.
-            let goodbyeData = goodbye
-            Task.detached(priority: .userInitiated) {
-                if let gb = goodbyeData, r.connectionState == .connected {
-                    // Bounded: never delay the leave by more than 400 ms.
-                    await withTaskGroup(of: Void.self) { g in
-                        g.addTask { try? await r.localParticipant.publish(data: gb) }
-                        g.addTask { try? await Task.sleep(nanoseconds: 400_000_000) }
-                        _ = await g.next()
-                        g.cancelAll()
-                    }
-                }
-                await withTaskGroup(of: Void.self) { group in
-                    group.addTask { await r.disconnect() }
-                    group.addTask {
-                        try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    }
-                    _ = await group.next()
-                    group.cancelAll()
-                }
-                if r.connectionState != .disconnected {
-                    print("[CallVC] handleHangup: LK disconnect retry — connectionState=\(r.connectionState)")
-                    await r.disconnect()
-                }
-            }
+            // [2026-10-14 leave-first] LKLeave: goodbye (≤300 ms) + LEAVE under
+            // a background-task assertion (the CallKit end below deactivates
+            // audio and the app can be suspended right after — the old
+            // detached Task then never sent the leave → SFU ghost ~21 s), real
+            // ≤1.5 s budget (task groups wait for a hung child), #757 retry.
+            LKLeave.leave(r, callId: callId, reason: reason, goodbye: goodbye)
         }
         // [#1184 dismiss fix, 2026-05-19] Fire CXEndCallAction so CallKit
         // tears down its own state (system call bar, lock-screen UI, the
@@ -3039,6 +3131,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             alreadyInCall: presentIds,
             onDismiss: { [weak self] in
                 self?.presentedViewController?.dismiss(animated: true)
+            },
+            // [2026-10-14 group-ui] Rung into the call → "Tocando…" grid tiles.
+            onInvited: { [weak self] rung in
+                self?.gridAddInvites(rung)
             }
         )
         let host = UIHostingController(rootView: picker)
@@ -3913,6 +4009,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// [2026-10-11 call-parity] True when a 1:1 call screen for `callId` exists
     /// (an incoming CallVC is only presented AFTER answer) — used to tell a
     /// pre-answer DECLINE from a hangup of an answered call.
+    /// [2026-10-14 leave-first] Rooms of the live / minimized 1:1 screens for
+    /// `callId` (MAIN THREAD — liveInstances is main-only).
+    static func roomsForLeave(callId: String) -> [Room] {
+        var out: [Room] = []
+        for vc in liveInstances.allObjects where vc.callId == callId {
+            if let r = vc.room { out.append(r) }
+        }
+        if let vc = minimizedInstance, vc.callId == callId, let r = vc.room { out.append(r) }
+        return out
+    }
+
+    /// [2026-10-14 leave-first] Every 1:1 Room (app terminating). MAIN THREAD.
+    static func allRoomsForLeave() -> [Room] {
+        var out: [Room] = liveInstances.allObjects.compactMap { $0.room }
+        if let r = minimizedInstance?.room { out.append(r) }
+        return out
+    }
+
     static func hasCallScreen(callId: String) -> Bool {
         guard !callId.isEmpty else { return false }
         if let vc = minimizedInstance, vc.callId == callId { return true }
@@ -4703,6 +4817,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             broadcastStopToken = nil
         }
         stopOutgoingCameraPreview() // [2026-10-14 self-view]
+        gridHeaderTimer?.invalidate() // [2026-10-14 group-ui]
+        if let tok = gridDeclineObserver { NotificationCenter.default.removeObserver(tok) }
         // [minimize-drop fix 2026-05-26] CRITICAL: do NOT disconnect the Room
         // when this dealloc is the result of a MINIMIZE. The incoming-answer
         // path presents this VC as a plain modal, so when handleMinimize() (or
@@ -4741,7 +4857,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // clear() on an already-empty singleton is a no-op print.
             // [2026-10-11 publisher-nil] Scoped to OUR Room (see clear(ifCurrent:)).
             NativeCallRoom.shared.clear(ifCurrent: r, reason: "callvc_deinit")
-            Task { await r.disconnect() }
+            LKLeave.leave(r, callId: callId, reason: "callvc_deinit") // [2026-10-14 leave-first]
         } else if isMinimizing || cededToJs {
             print("[CallVC] deinit while \(cededToJs ? "ceding to JS" : "minimizing") — keeping Room alive (owned by NativeCallRoom.shared) callId=\(callId)")
         }
@@ -4972,7 +5088,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // Scoped: clear(ifCurrent:) never touches the new call's Room.
             if let oldRoom = stale.room {
                 NativeCallRoom.shared.clear(ifCurrent: oldRoom, reason: "callvc_replaced")
-                Task { await oldRoom.disconnect() }
+                LKLeave.leave(oldRoom, callId: stale.callId, reason: "replaced_by_new_call") // [2026-10-14 leave-first]
             }
             let presentNew = {
                 // Idempotent: the dedup guard at the top skips a 2nd present
@@ -5489,6 +5605,393 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         present(sheet, animated: true, completion: nil)
     }
 
+    // MARK: - [2026-10-14 group-ui] 1:1 → grid (3+ people)
+
+    private var myBareEmail: String {
+        let e = UserDefaults(suiteName: "group.com.onemundo.mail")?.string(forKey: "user_email") ?? ""
+        return GroupCallViewController.bareEmail(e)
+    }
+
+    private var peerBareEmail: String {
+        return GroupCallViewController.bareEmail(callerEmail)
+    }
+
+    private func gridName(identity: String, lkName: String?) -> String {
+        let bare = GroupCallViewController.bareEmail(identity)
+        if bare == peerBareEmail, !callerName.isEmpty { return callerName }
+        if let n = gridNames[bare], !n.isEmpty { return n }
+        if let n = lkName, !n.isEmpty, n != identity, !n.contains("#") { return n }
+        let local = bare.split(separator: "@").first.map(String.init) ?? bare
+        return local.isEmpty ? identity : local
+    }
+
+    /// Coalesced rebuild (MAIN THREAD): many LiveKit events land together.
+    private func requestGridRebuild() {
+        guard !gridRebuildPending else { return }
+        gridRebuildPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.gridRebuildPending = false
+            self.rebuildGrid()
+        }
+    }
+
+    /// Rebuild the grid model from the Room (remote people, one tile per email —
+    /// a callee's 2nd device ringing must not look like a 3rd person), screen
+    /// shares, and invitees that did not join yet; switch grid mode on/off.
+    private func rebuildGrid() {
+        guard !didHangup, let r = room else { return }
+        let me = myBareEmail
+        var byIdentity: [String: RemoteParticipant] = [:]
+        for rp in r.remoteParticipants.values {
+            guard let identity = rp.identity?.stringValue, !identity.isEmpty else { continue }
+            byIdentity[identity] = rp
+            if !gridOrder.contains(identity) { gridOrder.append(identity) }
+        }
+        gridOrder = gridOrder.filter { byIdentity[$0] != nil }
+
+        // One representative identity per email: the one with media, else the first.
+        var repForBare: [String: String] = [:]
+        var bareOrder: [String] = []
+        for identity in gridOrder {
+            guard let rp = byIdentity[identity] else { continue }
+            let bare = GroupCallViewController.bareEmail(identity)
+            if bare.isEmpty || bare == me { continue }
+            if let cur = repForBare[bare] {
+                let curHasMedia = !(byIdentity[cur]?.trackPublications.isEmpty ?? true)
+                if !curHasMedia && !rp.trackPublications.isEmpty { repForBare[bare] = identity }
+            } else {
+                repForBare[bare] = identity
+                bareOrder.append(bare)
+            }
+        }
+
+        var screens: [GroupParticipant] = []
+        var people: [GroupParticipant] = []
+        var ringingTiles: [GroupParticipant] = []
+        var inCall = 0
+        for bare in bareOrder {
+            guard let identity = repForBare[bare], let rp = byIdentity[identity] else { continue }
+            let name = gridName(identity: identity, lkName: rp.name)
+            let ringing = gridRinging[bare] != nil && rp.trackPublications.isEmpty
+            let camPub = rp.videoTracks.first(where: { $0.source != .screenShareVideo })
+            let camTrack: VideoTrack? = (camPub?.isMuted == false) ? (camPub?.track as? VideoTrack) : nil
+            let tile = GroupParticipant(
+                id: "remote:" + bare,
+                identity: identity,
+                name: name,
+                videoTrack: ringing ? nil : camTrack,
+                audioMuted: rp.audioTracks.first?.isMuted ?? false,
+                isLocal: false,
+                isSpeaking: gridSpeaking.contains(identity),
+                handRaised: false,
+                connectionQuality: gridQuality[identity] ?? 3,
+                isRinging: ringing
+            )
+            if ringing { ringingTiles.append(tile) } else { people.append(tile); inCall += 1 }
+            if let sp = rp.videoTracks.first(where: { $0.source == .screenShareVideo }),
+               !sp.isMuted, let st = sp.track as? VideoTrack {
+                let sid = GroupParticipant.screenPrefix + identity
+                screens.append(GroupParticipant(
+                    id: sid,
+                    identity: sid,
+                    name: GroupCallStrings.s("gx.screenOf", ["name": name]),
+                    videoTrack: st,
+                    isScreen: true
+                ))
+            }
+        }
+        // Rung via "Adicionar" but not in the Room yet.
+        for (bare, name) in gridRinging.sorted(by: { $0.key < $1.key }) where repForBare[bare] == nil && bare != me {
+            ringingTiles.append(GroupParticipant(id: "ring:" + bare, identity: bare, name: name, isRinging: true))
+        }
+
+        let tiles = screens + people + ringingTiles
+        gridPeopleCount = inCall + 1
+        // Grid only once the call is up (ringing / 1:1 screens unchanged) and
+        // there are 2+ other people (in the call or being rung).
+        let wantGrid = callConnectedAt != nil && (people.count + ringingTiles.count) >= 2
+        if let pin = gridSession.pinnedIdentity, !tiles.contains(where: { $0.identity == pin }) {
+            gridSession.pinnedIdentity = nil
+        }
+        if let fid = gridSession.fullscreenId, !tiles.contains(where: { $0.id == fid }) {
+            gridSession.fullscreenId = nil
+        }
+        gridSession.participants = tiles
+        if wantGrid != gridActive { setGridActive(wantGrid) }
+        updateGridHeader()
+    }
+
+    private func setGridActive(_ on: Bool) {
+        gridActive = on
+        nativeCallDiag("call_grid_mode", callId, "on=\(on ? 1 : 0) tiles=\(gridSession.participants.count)")
+        if on {
+            // Controls always visible in grid mode (no video auto-hide / scrim).
+            exitVideoControlsMode()
+            if videoSwapped { restoreVideoSwap() }
+            let host: UIHostingController<GroupGridView>
+            if let h = gridHost {
+                host = h
+            } else {
+                let root = GroupGridView(session: gridSession, waitingSubtitle: "", onTogglePin: { [weak self] identity in
+                    self?.toggleGridPin(identity)
+                })
+                host = UIHostingController(rootView: root)
+                host.view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x0B/255.0, blue: 0x0D/255.0, alpha: 1.0)
+                host.view.translatesAutoresizingMaskIntoConstraints = false
+                gridHost = host
+            }
+            if host.view.superview == nil {
+                addChild(host)
+                view.addSubview(host.view)
+                NSLayoutConstraint.activate([
+                    host.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 76),
+                    host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+                    host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+                    host.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -132),
+                ])
+                host.didMove(toParent: self)
+            }
+            let header = ensureGridHeader()
+            host.view.alpha = 0
+            header.alpha = 0
+            frontGridChrome()
+            UIView.animate(withDuration: 0.25) {
+                host.view.alpha = 1
+                header.alpha = 1
+                // The 1:1 avatar / name / status block lives under the grid.
+                for tag in [9000, 9001, 9040, 9045, 9020] {
+                    if let v = self.view.viewWithTag(tag), v.superview === self.view { v.alpha = 0 }
+                }
+                self.avatarContainerView()?.alpha = 0
+            }
+            gridHeaderTimer?.invalidate()
+            gridHeaderTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.updateGridHeader()
+            }
+        } else {
+            gridHeaderTimer?.invalidate()
+            gridHeaderTimer = nil
+            gridSession.pinnedIdentity = nil
+            gridSession.fullscreenId = nil
+            if let host = gridHost {
+                UIView.animate(withDuration: 0.2, animations: {
+                    host.view.alpha = 0
+                    self.gridHeaderLabel?.alpha = 0
+                }, completion: { _ in
+                    guard !self.gridActive else { return }
+                    host.willMove(toParent: nil)
+                    host.view.removeFromSuperview()
+                    host.removeFromParent()
+                })
+            }
+            for tag in [9000, 9001, 9045] {
+                if let v = view.viewWithTag(tag), v.superview === view { v.alpha = 1 }
+            }
+            if session.isGroup, let v = view.viewWithTag(9040) { v.alpha = 1 }
+            avatarContainerView()?.alpha = 1
+            // Back to 1:1: show the remaining person's live video (the 1:1 path
+            // nils remoteVideoTrack whenever ANY participant leaves).
+            var restore: VideoTrack? = nil
+            if let r = room {
+                let me = myBareEmail
+                for rp in r.remoteParticipants.values {
+                    let bare = GroupCallViewController.bareEmail(rp.identity?.stringValue ?? "")
+                    if bare.isEmpty || bare == me { continue }
+                    if let pub = rp.videoTracks.first(where: { $0.source == .screenShareVideo && !$0.isMuted && $0.track != nil })
+                        ?? rp.videoTracks.first(where: { !$0.isMuted && $0.track != nil }),
+                       let vt = pub.track as? VideoTrack {
+                        restore = vt
+                        break
+                    }
+                }
+            }
+            session.remoteVideoTrack = restore // sink → applyRemoteVideoTrack (avatar if nil)
+        }
+    }
+
+    /// Grid above the 1:1 visuals, call chrome (controls, top bar, self-view,
+    /// "Conexão fraca", sharing chip, notices) above the grid.
+    private func frontGridChrome() {
+        guard gridActive, let gv = gridHost?.view, gv.superview === view else { return }
+        view.bringSubviewToFront(gv)
+        if let header = gridHeaderLabel { view.bringSubviewToFront(header) }
+        // Tag 9008 is ALSO the top-bar message button → match the bar stack itself.
+        if let bar = view.subviews.first(where: { $0 is UIStackView && $0.tag == 9008 }) {
+            view.bringSubviewToFront(bar)
+        }
+        if let bars = view.viewWithTag(9010), let topBar = bars.superview, topBar.superview === view {
+            view.bringSubviewToFront(topBar)
+        }
+        if let chip = view.subviews.first(where: { $0.tag == 9012 }) { view.bringSubviewToFront(chip) }
+        if let pill = weakPill, pill.superview === view { view.bringSubviewToFront(pill) }
+        if let pip = localPipContainer { view.bringSubviewToFront(pip) }
+        if let t = gridToastView { view.bringSubviewToFront(t) }
+    }
+
+    /// applyRemoteVideoTrack fronts the remote video (1:1 path) — keep it, and
+    /// the avatar labels, UNDER the grid while grid mode is on.
+    private func keepGridOnTop() {
+        guard gridActive, let gv = gridHost?.view, gv.superview === view else { return }
+        if let remote = remoteVideoView, remote.superview === view { view.insertSubview(remote, belowSubview: gv) }
+        for tag in [9000, 9001, 9040, 9045] {
+            if let v = view.viewWithTag(tag), v.superview === view {
+                view.insertSubview(v, belowSubview: gv)
+                v.alpha = 0
+            }
+        }
+        avatarContainerView()?.alpha = 0
+    }
+
+    private func ensureGridHeader() -> UILabel {
+        if let l = gridHeaderLabel { return l }
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.textColor = UIColor.white.withAlphaComponent(0.8)
+        l.font = .monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+        l.textAlignment = .center
+        l.isUserInteractionEnabled = false
+        view.addSubview(l)
+        NSLayoutConstraint.activate([
+            l.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 50),
+            l.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            l.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            l.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+        ])
+        gridHeaderLabel = l
+        return l
+    }
+
+    /// "3 participantes · 04:12" over the grid (the 1:1 status label is hidden).
+    private func updateGridHeader() {
+        guard gridActive, let l = gridHeaderLabel else { return }
+        var text = GroupCallStrings.participants(gridPeopleCount)
+        if let t0 = callConnectedAt {
+            let secs = max(0, Int(Date().timeIntervalSince(t0)))
+            let h = secs / 3600, m = (secs % 3600) / 60, sec = secs % 60
+            let dur = h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%02d:%02d", m, sec)
+            text += " · " + dur
+        }
+        if session.connectionQuality <= 1 { text = CallStrings.s("weakConnection") }
+        l.text = text
+    }
+
+    private func toggleGridPin(_ identity: String) {
+        guard gridSession.participants.count >= 2 || gridSession.pinnedIdentity != nil else { return }
+        gridSession.pinnedIdentity = (gridSession.pinnedIdentity == identity) ? nil : identity
+    }
+
+    /// Picker rang these people INTO the call → "Tocando…" tiles right away.
+    private func gridAddInvites(_ rung: [String: String]) {
+        let me = myBareEmail
+        var added = false
+        for (email, name) in rung {
+            let bare = GroupCallViewController.bareEmail(email)
+            guard !bare.isEmpty, bare != me else { continue }
+            gridNames[bare] = name
+            // Already in the call with media → nothing to ring.
+            let inCallWithMedia = room?.remoteParticipants.values.contains(where: {
+                GroupCallViewController.bareEmail($0.identity?.stringValue ?? "") == bare && !$0.trackPublications.isEmpty
+            }) ?? false
+            if inCallWithMedia { continue }
+            gridRinging[bare] = name
+            added = true
+            scheduleGridRingingExpiry(bare)
+        }
+        if added {
+            installGridDeclineObserver()
+            requestGridRebuild()
+        }
+    }
+
+    private func scheduleGridRingingExpiry(_ bare: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+            guard let self = self, !self.didHangup else { return }
+            if self.gridRinging.removeValue(forKey: bare) != nil { self.requestGridRebuild() }
+        }
+    }
+
+    /// WS call_declined from an invitee (declined_by_email) → drop the tile.
+    /// A refusal of the 1:1 itself never reaches here with a live grid (the
+    /// call was already connected).
+    private func installGridDeclineObserver() {
+        guard gridDeclineObserver == nil else { return }
+        gridDeclineObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("CallKitCallDeclinedRemote"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self, (note.userInfo?["callId"] as? String) == self.callId else { return }
+            let who = GroupCallViewController.bareEmail((note.userInfo?["declinedByEmail"] as? String) ?? "")
+            guard !who.isEmpty, self.gridRinging.removeValue(forKey: who) != nil else { return }
+            nativeCallDiag("call_grid_invite_declined", self.callId, "by=\(who)")
+            self.requestGridRebuild()
+        }
+    }
+
+    /// First media from `identity` (MAIN THREAD): stop "Tocando…" and, for
+    /// someone other than the 1:1 peer, say "Fulano entrou".
+    private func gridNoteMedia(identity: String, lkName: String?) {
+        guard !identity.isEmpty, identity != "?" else { return }
+        let bare = GroupCallViewController.bareEmail(identity)
+        if bare.isEmpty || bare == myBareEmail { return }
+        gridRinging.removeValue(forKey: bare)
+        if !gridAnnounced.contains(identity) {
+            gridAnnounced.insert(identity)
+            if bare != peerBareEmail && callConnectedAt != nil {
+                showGridToast(GroupCallStrings.s("gx.joined", ["name": gridName(identity: identity, lkName: lkName)]))
+            }
+        }
+        requestGridRebuild()
+    }
+
+    /// Discreet top notice ("Fulano entrou / saiu"), auto-hides.
+    private func showGridToast(_ text: String) {
+        gridToastWork?.cancel()
+        let container: UIView
+        let label: UILabel
+        if let c = gridToastView, let l = c.subviews.first as? UILabel {
+            container = c
+            label = l
+        } else {
+            let c = UIView()
+            c.translatesAutoresizingMaskIntoConstraints = false
+            c.backgroundColor = UIColor.black.withAlphaComponent(0.72)
+            c.layer.cornerRadius = 17
+            c.layer.borderWidth = 0.5
+            c.layer.borderColor = UIColor.white.withAlphaComponent(0.14).cgColor
+            c.isUserInteractionEnabled = false
+            let l = UILabel()
+            l.translatesAutoresizingMaskIntoConstraints = false
+            l.textColor = .white
+            l.font = .systemFont(ofSize: 14, weight: .medium)
+            l.numberOfLines = 1
+            c.addSubview(l)
+            view.addSubview(c)
+            NSLayoutConstraint.activate([
+                l.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 14),
+                l.trailingAnchor.constraint(equalTo: c.trailingAnchor, constant: -14),
+                l.topAnchor.constraint(equalTo: c.topAnchor, constant: 8),
+                l.bottomAnchor.constraint(equalTo: c.bottomAnchor, constant: -8),
+                c.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                c.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 72),
+                c.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -48),
+            ])
+            c.alpha = 0
+            gridToastView = c
+            container = c
+            label = l
+        }
+        label.text = text
+        view.bringSubviewToFront(container)
+        UIView.animate(withDuration: 0.2) { container.alpha = 1 }
+        let work = DispatchWorkItem { [weak container] in
+            UIView.animate(withDuration: 0.25) { container?.alpha = 0 }
+        }
+        gridToastWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6, execute: work)
+    }
+
     private func updateParticipantCountLabel() {
         guard let lbl = view.viewWithTag(9040) as? UILabel else { return }
         let total = remoteParticipantCount + 1
@@ -5968,6 +6471,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // Leave video controls mode → controls stay visible (no auto-hide).
             exitVideoControlsMode()
         }
+        keepGridOnTop() // [2026-10-14 group-ui] no-op outside grid mode
     }
 
     /// The avatar wrapper UIView. We don't tag it, so locate it via the tagged
@@ -6152,6 +6656,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     // ── Video-mode controls: scrim + auto-hide + tap-to-toggle ───────────────
     private func enterVideoControlsMode() {
+        // [2026-10-14 group-ui] Grid mode: controls stay put (no scrim/auto-hide).
+        guard !gridActive else { return }
         // Install a translucent bottom scrim behind the controls so the glass
         // buttons stay legible over arbitrary camera frames.
         if controlsScrim == nil {
@@ -6225,7 +6731,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     /// Restart the 5s inactivity timer (video mode only).
     private func resetControlsAutoHide() {
-        guard remoteVideoActive else { return }
+        guard remoteVideoActive, !gridActive else { return }
         setControlsHidden(false, animated: true)
         controlsHideTimer?.invalidate()
         controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
@@ -6234,7 +6740,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     @objc private func handleVideoScreenTap() {
-        guard remoteVideoActive else { return }
+        guard remoteVideoActive, !gridActive else { return }
         if controlsHidden {
             setControlsHidden(false, animated: true)
             resetControlsAutoHide()
@@ -6573,6 +7079,8 @@ extension CallViewController: RoomDelegate {
         // caller's device shortly after the callee answers.
         NSLog("[CallTrace][9/12] RoomEvent type=ParticipantConnected identity=\(identity) callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] participantDidConnect — identity=\(identity)")
+        let hasMedia = !participant.trackPublications.isEmpty // [2026-10-14 group-ui]
+        let lkName = participant.name
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             // [2026-10-10 call-states] ringback stop moved into the post-answer
@@ -6621,6 +7129,26 @@ extension CallViewController: RoomDelegate {
             }
             self.remoteParticipantCount += 1
             self.updateParticipantCountLabel()
+            // [2026-10-14 group-ui] Grid bookkeeping. Joined without media =
+            // ring preconnect (or an answer whose mic lands in a moment): still
+            // silent after 1.5 s and not the 1:1 peer → "Tocando…".
+            if hasMedia {
+                self.gridNoteMedia(identity: identity, lkName: lkName)
+            } else {
+                let bare = GroupCallViewController.bareEmail(identity)
+                if bare != self.peerBareEmail && bare != self.myBareEmail {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self = self, !self.didHangup else { return }
+                        guard !self.gridAnnounced.contains(identity), self.gridRinging[bare] == nil,
+                              let rp = self.room?.remoteParticipants.values.first(where: { $0.identity?.stringValue == identity }),
+                              rp.trackPublications.isEmpty else { return }
+                        self.gridRinging[bare] = self.gridName(identity: identity, lkName: lkName)
+                        self.scheduleGridRingingExpiry(bare)
+                        self.requestGridRebuild()
+                    }
+                }
+            }
+            self.requestGridRebuild()
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS chat header / call grid
         // can mark the peer as joined.
@@ -6633,6 +7161,7 @@ extension CallViewController: RoomDelegate {
         // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — peer left the SFU.
         NSLog("[CallTrace][9/12] RoomEvent type=ParticipantDisconnected identity=\(identity) callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] participantDidDisconnect — identity=\(identity)")
+        let lkName = participant.name // [2026-10-14 group-ui]
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             // 1:1 fallback: clear the remote video track when the peer leaves.
@@ -6642,6 +7171,20 @@ extension CallViewController: RoomDelegate {
             self.mutedRemoteVideoTrack = nil
             self.remoteParticipantCount = max(0, self.remoteParticipantCount - 1)
             self.updateParticipantCountLabel()
+            // [2026-10-14 group-ui] "Fulano saiu" when someone who was really in
+            // the call leaves and the call goes on; never-answered → just drop.
+            let bare = GroupCallViewController.bareEmail(identity)
+            let wasInCall = self.gridAnnounced.remove(identity) != nil
+            self.gridRinging.removeValue(forKey: bare)
+            let me = self.myBareEmail
+            let othersLeft = self.room?.remoteParticipants.values.contains(where: {
+                let b = GroupCallViewController.bareEmail($0.identity?.stringValue ?? "")
+                return !b.isEmpty && b != bare && b != me
+            }) ?? false
+            if wasInCall && othersLeft {
+                self.showGridToast(GroupCallStrings.s("gx.left", ["name": self.gridName(identity: identity, lkName: lkName)]))
+            }
+            self.requestGridRebuild()
             // [2026-10-12 peer-gone] 1:1: last remote gone after media → grace.
             self.startPeerGoneGrace(identity: identity)
         }
@@ -6678,8 +7221,11 @@ extension CallViewController: RoomDelegate {
         // statusObserver sink (→ callConnectedAt + stops the "Chamando…" dots
         // timer); guarded so a later WS/participantDidConnect flip is a no-op,
         // and stopRingbackTone is guarded by ringbackActive.
+        let subName = participant.name // [2026-10-14 group-ui]
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            // [2026-10-14 group-ui] First media = in the call (grid tile / notice).
+            self.gridNoteMedia(identity: identity, lkName: subName)
             self.openOutgoingMicGate(reason: "remote_track_subscribed")
             self.stopRingbackTone(reason: "didSubscribeTrack_mediaTruth")
             // [2026-10-06 native-only outgoing] First remote media = Conectado
@@ -6754,6 +7300,7 @@ extension CallViewController: RoomDelegate {
         NativeCallRoom.shared.trackUnsubscribed(participantId: identity,
                                                 trackSid: "\(publication.sid)",
                                                 kind: kind)
+        DispatchQueue.main.async { [weak self] in self?.requestGridRebuild() } // [2026-10-14 group-ui]
         guard publication.kind == .video else { return }
         print("[CallVC] didUnsubscribeTrack — remote video gone")
         DispatchQueue.main.async { [weak self] in
@@ -6783,6 +7330,18 @@ extension CallViewController: RoomDelegate {
             }
             // [2026-10-14 pip-frozen] no remote video left → avatar card in PiP now.
             if self.pipAttachedTrack == nil { self.refreshPiPPlaceholder() }
+        }
+    }
+
+    /// [2026-10-14 group-ui] A remote published (mic/camera/screen) = they are
+    /// in the call → grid tile leaves "Tocando…", notice, refresh.
+    func room(_ room: Room,
+              participant: RemoteParticipant,
+              didPublishTrack publication: RemoteTrackPublication) {
+        let identity = participant.identity?.stringValue ?? "?"
+        let lkName = participant.name
+        DispatchQueue.main.async { [weak self] in
+            self?.gridNoteMedia(identity: identity, lkName: lkName)
         }
     }
 
@@ -6836,6 +7395,11 @@ extension CallViewController: RoomDelegate {
               participant: Participant,
               trackPublication: TrackPublication,
               didUpdateIsMuted isMuted: Bool) {
+        // [2026-10-14 group-ui] Grid tiles show mic-muted / camera-off for all.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.gridActive || !self.gridRinging.isEmpty else { return }
+            self.requestGridRebuild()
+        }
         // Only care about REMOTE video here. Local mic/cam + remote audio are
         // handled elsewhere (mute button, speaking ring).
         guard trackPublication.kind == .video else { return }
@@ -6891,8 +7455,14 @@ extension CallViewController: RoomDelegate {
     /// GroupCallViewController has its own delegate.
     func room(_ room: Room, didUpdateSpeakingParticipants speakers: [Participant]) {
         let remoteSpeaking = speakers.contains { ($0 as? RemoteParticipant) != nil }
+        let speakingIds = Set(speakers.compactMap { $0.identity?.stringValue }) // [2026-10-14 group-ui]
         DispatchQueue.main.async { [weak self] in
-            self?.session.remoteIsActiveSpeaker = remoteSpeaking
+            guard let self = self else { return }
+            self.session.remoteIsActiveSpeaker = remoteSpeaking
+            if self.gridSpeaking != speakingIds {
+                self.gridSpeaking = speakingIds
+                if self.gridActive { self.requestGridRebuild() }
+            }
         }
     }
 
@@ -6921,8 +7491,21 @@ extension CallViewController: RoomDelegate {
         case .poor, .lost: isWeak = true
         default: isWeak = false // .unknown
         }
+        // [2026-10-14 group-ui] Per-tile quality bars in grid mode.
+        let gridScore: Int
+        switch quality {
+        case .excellent: gridScore = 3
+        case .good:      gridScore = 2
+        case .poor:      gridScore = 1
+        default:         gridScore = 0
+        }
         DispatchQueue.main.async { [weak self] in
-            self?.setWeakConnection(local: isLocal, isWeak: isWeak)
+            guard let self = self else { return }
+            self.setWeakConnection(local: isLocal, isWeak: isWeak)
+            if !isLocal, self.gridQuality[identity] != gridScore {
+                self.gridQuality[identity] = gridScore
+                if self.gridActive { self.requestGridRebuild() }
+            }
         }
         // Only react locally for the local participant; remote participants'
         // quality bars don't surface in the 1:1 UI.

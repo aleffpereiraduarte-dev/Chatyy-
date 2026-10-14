@@ -384,6 +384,9 @@ object NativeCallRoom {
 
     fun currentCallId(): String? = callId
 
+    /** [2026-10-14 leave-first] Live Room (any call) — app-shutdown leave. */
+    fun roomForLeave(): Room? = room
+
     /**
      * Snapshot consumed by `adoptNativeRoom(callId)`. Returns null only when
      * there is no Room object at all — if the Room exists but is still
@@ -1058,6 +1061,60 @@ object NativeCallRoom {
  *   RemoteTrackPublication.setVideoQuality(VideoQuality) (no-op when
  *   adaptiveStream manages the track)
  */
+/**
+ * [2026-10-14 leave-first] LiveKit LEAVE before any call teardown.
+ *
+ * 7 of 11 real PEER_CONNECTION_DISCONNECTED on the SFU were the app ending a
+ * call WITHOUT telling LiveKit (Room left to onDestroy / a coroutine that died
+ * with the process, or never disconnected on a Telecom-driven end) — the SFU
+ * dropped us ~21 s later and whoever stayed saw a ghost. Room.disconnect() in
+ * LK Android 2.24 is synchronous: it queues the LEAVE on the signal socket and
+ * closes it gracefully (OkHttp flushes queued frames before the close), so it
+ * only has to RUN while the process is alive. Idempotent per Room.
+ */
+object LkLeave {
+  private const val TAG = "LkLeave"
+  private val leaving: MutableSet<Room> =
+    java.util.Collections.newSetFromMap(java.util.WeakHashMap<Room, Boolean>())
+
+  private fun firstTime(r: Room): Boolean = synchronized(leaving) { leaving.add(r) }
+
+  private fun alreadyGone(r: Room): Boolean =
+    try { r.state == Room.State.DISCONNECTED } catch (_: Throwable) { false }
+
+  /** Fire-and-forget LEAVE on a worker thread (never blocks the caller). */
+  fun leave(r: Room?, callId: String, reason: String, ctx: Context? = null) {
+    if (r == null || alreadyGone(r) || !firstTime(r)) return
+    val t0 = System.currentTimeMillis()
+    val th = Thread({
+      try { r.disconnect() } catch (t: Throwable) { Log.w(TAG, "disconnect threw: ${t.message}") }
+      val ms = System.currentTimeMillis() - t0
+      Log.d(TAG, "leave callId=$callId reason=$reason ms=$ms")
+      try { if (ctx != null) CallDiag.log("lk_leave", callId, "reason=$reason ms=$ms", ctx) } catch (_: Throwable) {}
+    }, "chatyy-lk-leave")
+    th.isDaemon = true
+    th.start()
+  }
+
+  /** LEAVE every Room and wait at most [timeoutMs] (process about to die). */
+  fun leaveBlocking(rooms: List<Room?>, reason: String, timeoutMs: Long = 1_500L) {
+    val todo = rooms.filterNotNull().distinct().filter { !alreadyGone(it) && firstTime(it) }
+    if (todo.isEmpty()) return
+    val threads = todo.map { r ->
+      Thread({
+        try { r.disconnect() } catch (t: Throwable) { Log.w(TAG, "disconnect threw: ${t.message}") }
+      }, "chatyy-lk-leave-blocking").apply { isDaemon = true; start() }
+    }
+    val deadline = System.currentTimeMillis() + timeoutMs
+    for (th in threads) {
+      val left = deadline - System.currentTimeMillis()
+      if (left <= 0) break
+      try { th.join(left) } catch (_: InterruptedException) { break }
+    }
+    Log.d(TAG, "leaveBlocking reason=$reason rooms=${todo.size}")
+  }
+}
+
 object CallVideoQuality {
     private const val TAG = "CallVideoQuality"
     private const val PREFS = "chatyy_call_prefs"

@@ -560,6 +560,18 @@ object CallSignalWs {
                     Log.d(TAG, "$type $cancelId: we answered locally — self-suppress (reason=$reason)")
                     return
                 }
+                // [2026-10-14 group-ui] An invitee of our GROUP call declined →
+                // drop their "Tocando…" tile (GroupCallActivity ignores the
+                // CLOSE_CALL_ACTIVITY broadcast below — leaving a group never
+                // ends it for the others).
+                if (type != "call_cancel") {
+                    val by = obj.optString("declined_by_email").ifEmpty { obj.optString("callee_email") }
+                    if (cancelId.isNotEmpty() && by.isNotEmpty()) {
+                        try { GroupCallActivity.onInviteDeclined(cancelId, by) } catch (t: Throwable) {
+                            Log.w(TAG, "GroupCallActivity.onInviteDeclined: ${t.message}")
+                        }
+                    }
+                }
                 Log.d(TAG, "$type — treating as call_end equivalent")
                 handleIncomingCallEnd(obj, if (type == "call_cancel") "cancel" else "declined")
             }

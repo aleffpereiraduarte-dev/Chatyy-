@@ -380,6 +380,22 @@ class CallActivity : ComponentActivity() {
      * Explicit end = instant, in grace, in rejoin, anywhere.
      * Returns true when a live call screen for [callId] took it.
      */
+    /** [2026-10-14 leave-first] Telecom ended THIS call (BT headset, Wear,
+     *  Auto, system): run the same hangup as our red button. */
+    @JvmStatic
+    fun hangupFor(callId: String, reason: String): Boolean {
+      val a = live() ?: return false
+      if (callId.isNotEmpty() && a.callId.isNotEmpty() && a.callId != callId) return false
+      a.runOnUiThread {
+        try { a.finishCall(reason = reason) } catch (t: Throwable) { Log.w(TAG, "hangupFor: ${t.message}") }
+      }
+      return true
+    }
+
+    /** [2026-10-14 leave-first] Live 1:1 Room (app being removed). */
+    @JvmStatic
+    fun roomForLeave(): Room? = live()?.room
+
     @JvmStatic
     fun remoteEnded(callId: String, reason: String, src: String): Boolean {
       val a = live() ?: return false
@@ -792,6 +808,19 @@ class CallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-14 leave-first] A NEW call screen while another call is live
+    // (accepted a 2nd call): end the old one FIRST — its finishCall sends
+    // call_end + LiveKit LEAVE — instead of two calls / a ghost on the SFU.
+    val newCallId = intent?.extras?.getString(EXTRA_CALL_ID) ?: ""
+    try {
+      val prev = liveRef?.get()
+      if (prev != null && prev !== this && !prev.finishing && !prev.isFinishing &&
+          newCallId.isNotEmpty() && prev.callId.isNotEmpty() && prev.callId != newCallId) {
+        Log.w(TAG, "onCreate: new call $newCallId while ${prev.callId} is live — ending the old one")
+        prev.finishCall(reason = "replaced_by_new_call")
+      }
+      if (newCallId.isNotEmpty()) GroupCallActivity.endForOtherCall(newCallId)
+    } catch (t: Throwable) { Log.w(TAG, "end previous call failed: ${t.message}") }
     liveRef = java.lang.ref.WeakReference(this) // [2026-10-11 ongoing-call]
 
     // [WAVE 142 GPT-5.5-pro] Parte 5 — Edge-to-edge so the gradient/blur paints
@@ -1579,7 +1608,10 @@ class CallActivity : ComponentActivity() {
     // `adoptNativeRoom()` returns null after the call ends. Idempotent —
     // safe even if publish() was never called (e.g., bringUpRoom never
     // ran because token resolution failed).
-    NativeCallRoom.clear()
+    // [2026-10-14 leave-first] Scoped: a replaced call's late onDestroy must
+    // not wipe the NEW call's singleton state.
+    val nrCall = NativeCallRoom.currentCallId()
+    if (nrCall == null || nrCall == callId) NativeCallRoom.clear()
     super.onDestroy()
   }
 
@@ -1615,7 +1647,20 @@ class CallActivity : ComponentActivity() {
 
     val incomingCallId = extras.getString(EXTRA_CALL_ID) ?: ""
     if (incomingCallId.isNotEmpty() && incomingCallId != callId) {
-      Log.w(TAG, "onNewIntent: ignoring re-launch for different callId=$incomingCallId (active=$callId)")
+      // [2026-10-14 leave-first] A different call was accepted while this one
+      // is on screen (singleTop delivered it here): it used to be IGNORED —
+      // the old call kept running, the new one never showed. End this call
+      // (call_end + LiveKit LEAVE) and relaunch the new intent once we're gone.
+      Log.w(TAG, "onNewIntent: new callId=$incomingCallId while $callId is live — switching")
+      val relaunch = Intent(newIntent).apply {
+        setClass(applicationContext, CallActivity::class.java)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      val app = applicationContext
+      finishCall(reason = "replaced_by_new_call")
+      android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        try { app.startActivity(relaunch) } catch (t: Throwable) { Log.w(TAG, "relaunch new call failed: ${t.message}") }
+      }, 450L)
       return
     }
 
@@ -3556,6 +3601,15 @@ class CallActivity : ComponentActivity() {
     } catch (t: Throwable) {
       Log.w(TAG, "NativeCallRoom.disconnect() in finishCall failed: ${t.message}")
     }
+    // [2026-10-14 leave-first] Our own Room when NativeCallRoom does not own it
+    // (it only disconnects ITS Room): LEAVE now, not in onDestroy (a coroutine
+    // there dies with the process → SFU ghost ~21 s).
+    try {
+      val own = room
+      if (own != null && !NativeCallRoom.isCurrent(own)) {
+        LkLeave.leave(own, callId, "finish_$reason", applicationContext)
+      }
+    } catch (_: Throwable) {}
     // [2026-10-06 android-incoming] Telecom: the self-managed ChatyyConnection
     // (incoming or outgoing) was never disconnected on hangup from this
     // screen → it stayed ACTIVE/RINGING in Telecom after the call ended.

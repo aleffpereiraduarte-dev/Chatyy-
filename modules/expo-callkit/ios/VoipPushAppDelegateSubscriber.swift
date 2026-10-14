@@ -1434,12 +1434,20 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
             }
             return ""
         }()
-        NativeCallRoom.shared.disconnect(ifCallId: endingRoomCallId, reason: "stub_cxend")
-
         // Do NOT manually setActive(false) here. CallKit fires didDeactivate
         // automatically after fulfill(); calling setActive ourselves competes
         // with the WebRTC audio engine and races with the module's path.
-        action.fulfill()
+        // [2026-10-14 leave-first] Known call → LEAVE every Room of it (1:1
+        // screen, group screen, ring preconnect) FIRST, fulfill after it went
+        // out (≤ 1.5 s). Unknown callId keeps the old guarded disconnect.
+        if endingRoomCallId.isEmpty {
+            NativeCallRoom.shared.disconnect(ifCallId: endingRoomCallId, reason: "stub_cxend")
+            action.fulfill()
+        } else {
+            LKLeave.leaveCall(callId: endingRoomCallId, reason: "stub_cxend") {
+                action.fulfill()
+            }
+        }
     }
 
     // [2026-10-09 system-integration] Incoming calls live on earlyProvider, so

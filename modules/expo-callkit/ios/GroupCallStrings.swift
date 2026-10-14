@@ -73,10 +73,33 @@ enum GroupCallStrings {
         "hi": ["pk.title": "कॉल में जोड़ें", "pk.search": "नाम, @यूज़रनेम या फ़ोन खोजें", "pk.recent": "हाल की चैट", "pk.contacts": "संपर्क", "pk.results": "नतीजे", "pk.inCall": "कॉल में", "pk.ringing": "कॉल हो रही है…", "pk.add": "जोड़ें", "pk.addN": "जोड़ें ({n})", "pk.emptyTitle": "अभी कोई संपर्क नहीं", "pk.emptyBody": "कॉल में लोगों को जोड़ने के लिए किसी से चैट करें या अपने संपर्क सिंक करें।", "pk.noResults": "“{q}” के लिए कोई नहीं मिला", "pk.loadError": "आपके संपर्क लोड नहीं हो सके।", "pk.retry": "फिर कोशिश करें", "pk.errNotAllowed": "आप सिर्फ़ उन्हीं लोगों को जोड़ सकते हैं जिनसे आप पहले से चैट करते हैं या जो आपके संपर्कों में हैं।", "pk.errBlocked": "{name} को कॉल नहीं की जा सकती।", "pk.errNotInCall": "यह कॉल पहले ही खत्म हो चुकी है।", "pk.errParental": "पैरेंटल कंट्रोल {name} को जोड़ने की अनुमति नहीं देता।", "pk.errRateLimited": "बहुत ज़्यादा कोशिशें। थोड़ा रुककर फिर कोशिश करें।", "pk.errOffline": "{name} अभी कॉल नहीं ले सकते।", "pk.errLimit": "कॉल प्रतिभागियों की सीमा तक पहुँच गई है।", "pk.errNetwork": "कनेक्शन नहीं है। इंटरनेट जाँचें और फिर कोशिश करें।", "pk.errGeneric": "{name} को कॉल नहीं हो सकी। फिर कोशिश करें।", "pk.close": "बंद करें"],
     ]
 
+    /// [2026-10-14 group-ui] Grade/lista/avisos da ligação em grupo e da grade do
+    /// 1:1 (3+ pessoas). Mesma tabela do Android (GroupCallStrings.kt, GX).
+    private static let gxTable: [String: [String: String]] = [
+        "pt-BR": ["gx.joined": "{name} entrou", "gx.left": "{name} saiu", "gx.muted": "Mudo", "gx.screenOf": "Tela de {name}"],
+        "pt-PT": ["gx.joined": "{name} entrou", "gx.left": "{name} saiu", "gx.muted": "Sem som", "gx.screenOf": "Ecrã de {name}"],
+        "en": ["gx.joined": "{name} joined", "gx.left": "{name} left", "gx.muted": "Muted", "gx.screenOf": "{name}’s screen"],
+        "es": ["gx.joined": "{name} se unió", "gx.left": "{name} salió", "gx.muted": "Silenciado", "gx.screenOf": "Pantalla de {name}"],
+        "fr": ["gx.joined": "{name} a rejoint l’appel", "gx.left": "{name} a quitté l’appel", "gx.muted": "Muet", "gx.screenOf": "Écran de {name}"],
+        "de": ["gx.joined": "{name} ist beigetreten", "gx.left": "{name} hat den Anruf verlassen", "gx.muted": "Stumm", "gx.screenOf": "Bildschirm von {name}"],
+        "it": ["gx.joined": "{name} si è unito alla chiamata", "gx.left": "{name} ha lasciato la chiamata", "gx.muted": "Muto", "gx.screenOf": "Schermo di {name}"],
+        "ja": ["gx.joined": "{name}さんが参加しました", "gx.left": "{name}さんが退出しました", "gx.muted": "ミュート中", "gx.screenOf": "{name}さんの画面"],
+        "ar": ["gx.joined": "انضم {name}", "gx.left": "غادر {name}", "gx.muted": "مكتوم", "gx.screenOf": "شاشة {name}"],
+        "id": ["gx.joined": "{name} bergabung", "gx.left": "{name} keluar", "gx.muted": "Dibisukan", "gx.screenOf": "Layar {name}"],
+        "hi": ["gx.joined": "{name} शामिल हुए", "gx.left": "{name} चले गए", "gx.muted": "म्यूट है", "gx.screenOf": "{name} की स्क्रीन"],
+    ]
+
     /// Texto da chave no idioma atual; {n}/{name} substituídos por `args`.
     static func s(_ key: String, _ args: [String: String] = [:]) -> String {
         let l = lang
-        var out = table[l]?[key] ?? pickerTable[l]?[key] ?? table["en"]?[key] ?? pickerTable["en"]?[key] ?? key
+        // Sequential lookups (a 7-term `??` chain is slow for the type checker).
+        var found: String? = table[l]?[key]
+        if found == nil { found = pickerTable[l]?[key] }
+        if found == nil { found = gxTable[l]?[key] }
+        if found == nil { found = table["en"]?[key] }
+        if found == nil { found = pickerTable["en"]?[key] }
+        if found == nil { found = gxTable["en"]?[key] }
+        var out: String = found ?? key
         for (k, v) in args { out = out.replacingOccurrences(of: "{" + k + "}", with: v) }
         return out
     }

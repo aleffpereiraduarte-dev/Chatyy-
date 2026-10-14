@@ -253,7 +253,7 @@ public enum NativeCallRoomEvent {
             nativeCallDiag("room_disconnect_skip_unknown_end", active, "reason=\(reason)")
             return
         }
-        Task { await r.disconnect() }
+        LKLeave.leave(r, callId: active, reason: reason) // [2026-10-14 leave-first]
     }
 
     public func currentCallId() -> String? { return _callId }
@@ -274,7 +274,7 @@ public enum NativeCallRoomEvent {
         guard answeredIncomingCallId != callId else { return }
         nativeCallDiag("preconnect_teardown", callId, "reason=\(reason) state=\(state.rawValue)")
         clear()
-        Task { await r.disconnect() }
+        LKLeave.leave(r, callId: callId, reason: "preconnect_" + reason) // [2026-10-14 leave-first]
     }
 
     // [2026-10-08 call-connect-fast] See `answeredIncomingCallId` docs.
@@ -697,6 +697,12 @@ public enum NativeCallRoomEvent {
     /// track-subscribed events.
     public func currentRoom() -> Room? { return room }
 
+    /// [2026-10-14 leave-first] The singleton's Room when it belongs to `callId`.
+    public func roomForLeave(callId: String) -> Room? {
+        guard !callId.isEmpty, let r = room, (_callId ?? "") == callId else { return nil }
+        return r
+    }
+
     /// [STAGE-A 2026-05-20] GAP #2 — Bind a RoomDelegate to the preconnected
     /// Room. Idempotent: LiveKit's `Room.add(delegate:)` is a multicast set.
     public func attachDelegate(_ delegate: RoomDelegate) {
@@ -718,7 +724,7 @@ public enum NativeCallRoomEvent {
             print("[NativeCallRoom] disconnect: no room to disconnect")
             return
         }
-        Task { await r.disconnect() }
+        LKLeave.leave(r, callId: _callId ?? "", reason: "js_lkDisconnect") // [2026-10-14 leave-first]
     }
 
     public func setMicEnabled(_ enabled: Bool) {
@@ -1136,5 +1142,234 @@ public class NativeCallTokenFetcher {
         P2PCallBridge.rememberConfig(envelope["p2p"], iceServers: envelope["iceServers"], callId: roomName)
         NSLog("[CallTrace][7b/12] LkTokenFetcher result success=true url=\(lkUrl) ice=\(ice.count) elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
         return TokenResult(token: token, url: lkUrl, iceServers: ice)
+    }
+}
+
+// MARK: - [2026-10-14 leave-first] LiveKit LEAVE before any call teardown
+//
+// 7 of 11 real PEER_CONNECTION_DISCONNECTED on the SFU were this app tearing a
+// call down WITHOUT telling LiveKit: the end path dismissed the UI / ended
+// CallKit and the Room was only disconnected later (VC deinit, fire-and-forget
+// Task) — or never, because CallKit's end deactivated audio and the app was
+// suspended (lock screen) before the Task ran. The SFU then noticed ~21 s later
+// and whoever stayed on the line saw a "ghost" participant.
+//
+// LKLeave.leave(room) = send LEAVE (room.disconnect()) FIRST, under a
+// background-task assertion, idempotent per Room (a 2nd call just waits for
+// the 1st), completion after the leave or `timeout` (≤ 1.5 s, so CallKit is
+// never blocked), whichever comes first. The disconnect keeps running after a
+// timeout (and retries once, LiveKit Swift #757) while the bg task lives.
+
+final class LKOnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    /// true only for the first caller.
+    func fire() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
+}
+
+final class LKBgTaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var id: UIBackgroundTaskIdentifier = .invalid
+    private var ended = false
+
+    static func begin(_ name: String) -> LKBgTaskBox {
+        let box = LKBgTaskBox()
+        let start = {
+            let id = UIApplication.shared.beginBackgroundTask(withName: name) { box.end() }
+            box.lock.lock()
+            if box.ended {
+                box.lock.unlock()
+                if id != .invalid { UIApplication.shared.endBackgroundTask(id) }
+                return
+            }
+            box.id = id
+            box.lock.unlock()
+        }
+        if Thread.isMainThread { start() } else { DispatchQueue.main.async(execute: start) }
+        return box
+    }
+
+    func end() {
+        lock.lock()
+        let already = ended
+        ended = true
+        let tid = id
+        id = .invalid
+        lock.unlock()
+        guard !already, tid != .invalid else { return }
+        let stop = { UIApplication.shared.endBackgroundTask(tid) }
+        if Thread.isMainThread { stop() } else { DispatchQueue.main.async(execute: stop) }
+    }
+}
+
+final class LKLeave: @unchecked Sendable {
+    private final class Entry {
+        var waiters: [() -> Void] = []
+        var released = false
+    }
+    private static let lock = NSLock()
+    private static var inFlight: [ObjectIdentifier: Entry] = [:]
+
+    /// Send LEAVE for `r` now. `completion` (main thread) runs once the leave
+    /// went out or after `timeout`. Safe from any thread, any number of times.
+    static func leave(_ r: Room,
+                      callId: String,
+                      reason: String,
+                      timeout: TimeInterval = 1.5,
+                      goodbye: Data? = nil,
+                      completion: (() -> Void)? = nil) {
+        let key = ObjectIdentifier(r)
+        LKLeave.lock.lock()
+        if let e = LKLeave.inFlight[key] {
+            if let c = completion {
+                if e.released {
+                    LKLeave.lock.unlock()
+                    DispatchQueue.main.async { c() }
+                    return
+                }
+                e.waiters.append(c)
+            }
+            LKLeave.lock.unlock()
+            return
+        }
+        if r.connectionState == .disconnected {
+            LKLeave.lock.unlock()
+            if let c = completion { DispatchQueue.main.async { c() } }
+            return
+        }
+        let entry = Entry()
+        if let c = completion { entry.waiters.append(c) }
+        LKLeave.inFlight[key] = entry
+        LKLeave.lock.unlock()
+
+        let bg = LKBgTaskBox.begin("chatyy_lk_leave")
+        let t0 = Date()
+        nativeCallDiag("lk_leave_start", callId, "reason=\(reason) lk=\(NativeCallRoom.stateName(r.connectionState))")
+        let once = LKOnceFlag()
+        let release: (Bool) -> Void = { ok in
+            guard once.fire() else { return }
+            nativeCallDiag("lk_leave_done", callId,
+                           "reason=\(reason) ok=\(ok ? 1 : 0) ms=\(Int(Date().timeIntervalSince(t0) * 1000))")
+            LKLeave.lock.lock()
+            entry.released = true
+            let waiters = entry.waiters
+            entry.waiters = []
+            LKLeave.lock.unlock()
+            if !waiters.isEmpty {
+                DispatchQueue.main.async { waiters.forEach { $0() } }
+            }
+        }
+        Task.detached(priority: .userInitiated) {
+            if let gb = goodbye, r.connectionState == .connected {
+                // Goodbye frame ({type:call_end}) so the peer ends instantly;
+                // bounded to 300 ms inside the leave budget.
+                await LKLeave.race(seconds: 0.3) {
+                    _ = try? await r.localParticipant.publish(data: gb)
+                }
+            }
+            await r.disconnect()
+            if r.connectionState != .disconnected {
+                // LiveKit Swift #757: leave lost during a reconnect → again.
+                await r.disconnect()
+            }
+            release(r.connectionState == .disconnected)
+            LKLeave.lock.lock()
+            LKLeave.inFlight.removeValue(forKey: key)
+            LKLeave.lock.unlock()
+            bg.end()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { release(false) }
+        // Never hold the bg task forever if disconnect() hangs (#729).
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+            LKLeave.lock.lock()
+            LKLeave.inFlight.removeValue(forKey: key)
+            LKLeave.lock.unlock()
+            bg.end()
+        }
+    }
+
+    /// Every Room that belongs to `callId` (1:1 screens, the group screen
+    /// unless `includeLiveGroup` is false, the ring-window preconnect) → LEAVE.
+    /// MAIN-thread work (hops if needed). Completion on main.
+    static func leaveCall(callId: String, reason: String, includeLiveGroup: Bool = true,
+                          completion: (() -> Void)? = nil) {
+        let work = {
+            guard !callId.isEmpty else {
+                completion?()
+                return
+            }
+            var rooms: [Room] = CallViewController.roomsForLeave(callId: callId)
+            if includeLiveGroup { rooms += GroupCallViewController.roomsForLeave(callId: callId) }
+            if let r = NativeCallRoom.shared.roomForLeave(callId: callId) { rooms.append(r) }
+            LKLeave.leaveAll(rooms, callId: callId, reason: reason, completion: completion)
+        }
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
+    }
+
+    /// Leave several Rooms, one completion when all are done (or timed out).
+    static func leaveAll(_ rooms: [Room], callId: String, reason: String,
+                         timeout: TimeInterval = 1.5, completion: (() -> Void)? = nil) {
+        var unique: [Room] = []
+        for r in rooms where !unique.contains(where: { $0 === r }) { unique.append(r) }
+        guard !unique.isEmpty else {
+            if let c = completion { DispatchQueue.main.async { c() } }
+            return
+        }
+        let group = DispatchGroup()
+        for r in unique {
+            group.enter()
+            leave(r, callId: callId, reason: reason, timeout: timeout) { group.leave() }
+        }
+        if let c = completion { group.notify(queue: .main) { c() } }
+    }
+
+    /// App is being terminated: send every LEAVE now and block the caller
+    /// (willTerminate, main thread) at most `timeout`. The disconnect runs on
+    /// detached tasks; completions are not used (main is blocked).
+    static func leaveAllBlocking(_ rooms: [Room], reason: String, timeout: TimeInterval = 1.5) {
+        var unique: [Room] = []
+        for r in rooms where !unique.contains(where: { $0 === r }) && r.connectionState != .disconnected {
+            unique.append(r)
+        }
+        guard !unique.isEmpty else { return }
+        let sem = DispatchSemaphore(value: 0)
+        for r in unique {
+            Task.detached(priority: .userInitiated) {
+                await r.disconnect()
+                sem.signal()
+            }
+        }
+        let deadline = DispatchTime.now() + timeout
+        for _ in unique {
+            if sem.wait(timeout: deadline) == .timedOut { break }
+        }
+        nativeCallDiag("lk_leave_terminate", "", "reason=\(reason) rooms=\(unique.count)")
+    }
+
+    /// Every live call Room (1:1 screens, group screen, preconnect), blocking
+    /// ≤ `timeout`. MAIN THREAD (willTerminate).
+    static func leaveEverythingBlocking(reason: String, timeout: TimeInterval = 1.5) {
+        var rooms: [Room] = CallViewController.allRoomsForLeave() + GroupCallViewController.allRoomsForLeave()
+        if let r = NativeCallRoom.shared.currentRoom() { rooms.append(r) }
+        leaveAllBlocking(rooms, reason: reason, timeout: timeout)
+    }
+
+    /// Runs `op`, returns after it finishes or after `seconds`.
+    static func race(seconds: TimeInterval, _ op: @escaping @Sendable () async -> Void) async {
+        let once = LKOnceFlag()
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            Task.detached {
+                await op()
+                if once.fire() { c.resume() }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                if once.fire() { c.resume() }
+            }
+        }
     }
 }

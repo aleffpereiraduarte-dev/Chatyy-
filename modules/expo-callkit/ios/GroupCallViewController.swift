@@ -108,6 +108,17 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     /// Strong holder while a group call is alive (minimize keeps the Room).
     static var activeInstance: GroupCallViewController?
 
+    /// [2026-10-14 leave-first] The live group Room for `callId` (MAIN).
+    static func roomsForLeave(callId: String) -> [Room] {
+        guard let vc = activeInstance, vc.roomName == callId, let r = vc.room else { return [] }
+        return [r]
+    }
+
+    static func allRoomsForLeave() -> [Room] {
+        guard let r = activeInstance?.room else { return [] }
+        return [r]
+    }
+
     // MARK: - Instance
 
     let roomName: String
@@ -139,6 +150,17 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     private var lastReorderAt = Date.distantPast
     /// bare email (lowercased) → display name from the JS roster.
     private var rosterNames: [String: String] = [:]
+    /// [2026-10-14 group-ui] bare email → name of people still RINGING for this
+    /// call: roster of an outgoing call, "Adicionar", or someone present in the
+    /// Room without any media (callees pre-connect subscribe-only while their
+    /// phone rings). Their tile shows "Tocando…"; cleared on first media,
+    /// leave/decline, or after `kRingingTimeout`.
+    private var pendingInvites: [String: String] = [:]
+    /// Identities announced with "Fulano entrou" (had media) → "saiu" on leave.
+    private var announcedJoins: Set<String> = []
+    private var toastWork: DispatchWorkItem?
+    private var inviteDeclinedObserver: NSObjectProtocol?
+    private static let kRingingTimeout: TimeInterval = 60
 
     init(roomName: String,
          lkUrl: String,
@@ -163,8 +185,12 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             self.conversationId = ""
         }
         self.displayTitle = title.isEmpty ? GroupCallStrings.groupCall : title
+        // [2026-10-14 group-ui] Outgoing: the roster is who we are ringing.
+        let seededRoster: [GroupParticipant] = isOutgoing
+            ? initialRoster.map { GroupCallViewController.copy($0, isRinging: true) }
+            : initialRoster
         self.session = GroupCallSessionState(
-            participants: initialRoster,
+            participants: seededRoster,
             status: GroupCallStrings.connecting,
             micEnabled: true,
             camEnabled: hasVideo,
@@ -174,6 +200,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         for p in initialRoster {
             let bare = GroupCallViewController.bareEmail(p.identity)
             if !bare.isEmpty && p.name != p.identity { rosterNames[bare] = p.name }
+            if isOutgoing && !bare.isEmpty { pendingInvites[bare] = p.name }
         }
         self.modalPresentationStyle = .fullScreen
         self.isModalInPresentation = true
@@ -186,6 +213,23 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     static func bareEmail(_ identity: String) -> String {
         let base = identity.split(separator: "#").first.map(String.init) ?? identity
         return base.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    /// Same tile with another ringing flag (GroupParticipant is immutable).
+    static func copy(_ p: GroupParticipant, isRinging: Bool) -> GroupParticipant {
+        return GroupParticipant(
+            id: p.id,
+            identity: p.identity,
+            name: p.name,
+            videoTrack: p.videoTrack,
+            audioMuted: p.audioMuted,
+            isLocal: p.isLocal,
+            isSpeaking: p.isSpeaking,
+            handRaised: p.handRaised,
+            connectionQuality: p.connectionQuality,
+            isScreen: p.isScreen,
+            isRinging: isRinging
+        )
     }
 
     private func displayName(identity: String, name: String?) -> String {
@@ -246,6 +290,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         host.didMove(toParent: self)
 
         installSystemMuteObserver()
+        // [2026-10-14 group-ui] Ringing tiles: drop on decline / timeout.
+        installInviteDeclinedObserver()
+        for bare in pendingInvites.keys { scheduleRingingExpiry(bare) }
 
         // [2026-10-11 noise] RNNoise on LiveKit's capture APM before any mic
         // publish (fresh join or adopted preconnect). Pref `rnnoise_enabled`
@@ -326,20 +373,34 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             guard let self = self else { return }
             do {
                 try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
-                // [Wave B audio] Pin AudioCaptureOptions (AEC+AGC+NS).
-                try await r.localParticipant.setMicrophone(
-                    enabled: wantMic,
-                    captureOptions: CallViewController.defaultAudioCaptureOptions()
-                )
-                print("[GroupCallVC] mic published (aec+agc+ns) — room=\(self.roomName)")
-                if wantCam {
-                    await self.publishCamera(on: r)
-                }
-                await MainActor.run { self.seedExistingParticipants(r) }
             } catch {
-                print("[GroupCallVC] connect/mic failed: \(error)")
+                print("[GroupCallVC] connect failed: \(error)")
                 await MainActor.run { self.handleConnectFailure() }
+                return
             }
+            // [2026-10-14 publish-wait] "Publisher is nil" / LiveKitError
+            // 101/104: publish only on a CONNECTED Room (a resume right after
+            // join flips it to .reconnecting), with short retries — a single
+            // throw used to force a full rejoin.
+            do {
+                // [Wave B audio] Pin AudioCaptureOptions (AEC+AGC+NS).
+                _ = try await lkPublishWhenConnected(r, callId: self.roomName, label: "group_mic") {
+                    try await r.localParticipant.setMicrophone(
+                        enabled: wantMic,
+                        captureOptions: CallViewController.defaultAudioCaptureOptions()
+                    )
+                }
+                print("[GroupCallVC] mic published (aec+agc+ns) — room=\(self.roomName)")
+            } catch {
+                print("[GroupCallVC] mic publish failed after retries: \(error)")
+                nativeCallDiag("group_mic_publish_failed", self.roomName, String(String(describing: error).prefix(160)))
+                await MainActor.run { self.handleConnectFailure() }
+                return
+            }
+            if wantCam {
+                await self.publishCamera(on: r)
+            }
+            await MainActor.run { self.seedExistingParticipants(r) }
         }
     }
 
@@ -351,6 +412,17 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         // camera and no self tile for the whole call. 3 tries + diag.
         var lastError: Error?
         for attempt in 1...3 {
+            // [2026-10-14 publish-wait] Never publish on a Room that is not
+            // .connected (adopted preconnect still joining / resuming).
+            if r.connectionState != .connected {
+                let st = await RoomStateWaiter.wait(room: r, timeout: 8.0)
+                if st != .connected {
+                    lastError = NSError(domain: "ChatyyGroupCall", code: -1,
+                                        userInfo: [NSLocalizedDescriptionKey: "not_connected lk=\(NativeCallRoom.stateName(st))"])
+                    if st == .disconnected { break }
+                    continue
+                }
+            }
             do {
                 let pub = try await r.localParticipant.setCamera(
                     enabled: true,
@@ -434,14 +506,32 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         for p in r.remoteParticipants.values {
             let identity = p.identity?.stringValue ?? ""
             if identity.isEmpty { continue }
-            let videoPub = p.videoTracks.first(where: { $0.source == .camera }) ?? p.videoTracks.first
+            let name = displayName(identity: identity, name: p.name)
+            // [2026-10-14 group-ui] Present without any media = still ringing
+            // (ring-window preconnect); with media = in the call (no toast for
+            // people already here when we joined).
+            if p.trackPublications.isEmpty {
+                let bare = GroupCallViewController.bareEmail(identity)
+                if pendingInvites[bare] == nil {
+                    pendingInvites[bare] = name
+                    scheduleRingingExpiry(bare)
+                }
+            } else {
+                noteRemoteMedia(identity: identity, name: p.name, announce: false)
+            }
+            // Camera only — a screen share gets its own tile below.
+            let videoPub = p.videoTracks.first(where: { $0.source != .screenShareVideo })
             let vt = (videoPub?.isMuted == false) ? (videoPub?.track as? VideoTrack) : nil
             let audioMuted = p.audioTracks.first?.isMuted ?? false
             upsertRemote(identity: identity,
-                         name: displayName(identity: identity, name: p.name),
+                         name: name,
                          videoTrack: vt,
                          clearVideo: vt == nil,
                          audioMuted: audioMuted)
+            if let sp = p.videoTracks.first(where: { $0.source == .screenShareVideo }),
+               !sp.isMuted, let st = sp.track as? VideoTrack {
+                upsertScreen(owner: identity, track: st)
+            }
         }
         flags.liveRemotes = r.remoteParticipants.count
         if !r.remoteParticipants.isEmpty { cancelNoAnswerTimer() }
@@ -463,7 +553,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 if let old = oldRoom {
                     self.room = nil
                     old.remove(delegate: self)
-                    Task { await old.disconnect() }
+                    LKLeave.leave(old, callId: self.roomName, reason: "group_rejoin") // [2026-10-14 leave-first]
                 }
                 if self.adoptedPreconnect {
                     // [2026-10-11] Scoped: never wipe another call's Room.
@@ -519,6 +609,11 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             NotificationCenter.default.removeObserver(tok)
             systemMuteObserver = nil
         }
+        if let tok = inviteDeclinedObserver {
+            NotificationCenter.default.removeObserver(tok)
+            inviteDeclinedObserver = nil
+        }
+        toastWork?.cancel()
         OngoingCallBarOverlayController.shared.uninstall()
         // [Wave B audio] Clear AVAudioSession route override + listener.
         AudioRouter.shared.teardown()
@@ -533,15 +628,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         if let r = self.room {
             self.room = nil
             if adoptedPreconnect { NativeCallRoom.shared.clear(ifCurrent: r, reason: "group_leave") }
-            // Same bounded-disconnect pattern as CallViewController (#583/#729).
-            Task.detached(priority: .userInitiated) {
-                await withTaskGroup(of: Void.self) { group in
-                    group.addTask { await r.disconnect() }
-                    group.addTask { try? await Task.sleep(nanoseconds: 3_000_000_000) }
-                    _ = await group.next()
-                    group.cancelAll()
-                }
-            }
+            // [2026-10-14 leave-first] LEAVE first, bg-task protected, ≤1.5 s
+            // (the CXEnd below can suspend the app before a plain Task runs).
+            LKLeave.leave(r, callId: roomName, reason: "group_" + reason)
         }
         // End the CallKit call (incoming answered via CallKit). Outgoing
         // group calls launched from JS have no CallKit entry → no-op.
@@ -848,6 +937,10 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             alreadyInCall: presentIds,
             onDismiss: { [weak self] in
                 self?.presentedViewController?.dismiss(animated: true)
+            },
+            // [2026-10-14 group-ui] "Tocando…" tiles for whoever is now ringing.
+            onInvited: { [weak self] rung in
+                Task { @MainActor [weak self] in self?.addRingingInvites(rung) }
             }
         )
         let host = UIHostingController(rootView: picker)
@@ -860,7 +953,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             sheet.prefersGrabberVisible = true
             sheet.preferredCornerRadius = 22
         }
-        present(host, animated: true, completion: nil)
+        // [2026-10-14 group-ui] A SwiftUI sheet (participant list) may still be
+        // up — present from the top-most controller.
+        GroupCallViewController.topMostViewController(from: self).present(host, animated: true, completion: nil)
         // Keep the legacy notification for any JS listener.
         NotificationCenter.default.post(
             name: Notification.Name("ExpoCallKitNativeAddMember"),
@@ -947,7 +1042,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     /// 1.5 s so fast back-and-forth doesn't reshuffle the grid.
     @MainActor
     private func reorderBySpeakingIfNeeded() {
-        let remotes = session.participants.filter { !$0.isLocal }
+        // [2026-10-14 group-ui] Screen-share tiles stay first, never reordered.
+        let screens = session.participants.filter { $0.isScreen }
+        let remotes = session.participants.filter { !$0.isLocal && !$0.isScreen }
         guard remotes.count > 9 else { return }
         let now = Date()
         guard now.timeIntervalSince(lastReorderAt) > 1.5 else { return }
@@ -963,7 +1060,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         let speakers = remotes.filter(recent)
         let others = remotes.filter { !recent($0) }
         let locals = session.participants.filter { $0.isLocal }
-        session.participants = speakers + others + locals
+        session.participants = screens + speakers + others + locals
     }
 
     // MARK: - Roster mutation helpers (main actor only)
@@ -1018,8 +1115,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         // Roster placeholders are keyed by bare email; LiveKit identities are
         // "<email>#<device>" → match either form, then adopt the LK identity.
         let bare = GroupCallViewController.bareEmail(identity)
-        let idx = arr.firstIndex(where: { !$0.isLocal && $0.identity == identity })
-            ?? arr.firstIndex(where: { !$0.isLocal && $0.identity == bare })
+        let ringing = pendingInvites[bare] != nil
+        let idx = arr.firstIndex(where: { !$0.isLocal && !$0.isScreen && $0.identity == identity })
+            ?? arr.firstIndex(where: { !$0.isLocal && !$0.isScreen && $0.identity == bare })
         if let idx = idx {
             let cur = arr[idx]
             arr[idx] = GroupParticipant(
@@ -1032,7 +1130,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 isLocal: false,
                 isSpeaking: isSpeaking ?? cur.isSpeaking,
                 handRaised: handRaised ?? cur.handRaised,
-                connectionQuality: connectionQuality ?? cur.connectionQuality
+                connectionQuality: connectionQuality ?? cur.connectionQuality,
+                isRinging: ringing
             )
         } else {
             arr.append(GroupParticipant(
@@ -1044,7 +1143,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 isLocal: false,
                 isSpeaking: isSpeaking ?? false,
                 handRaised: handRaised ?? false,
-                connectionQuality: connectionQuality ?? 3
+                connectionQuality: connectionQuality ?? 3,
+                isRinging: ringing
             ))
         }
         session.participants = arr
@@ -1052,9 +1152,159 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
 
     @MainActor
     private func removeRemote(identity: String) {
-        session.participants.removeAll { $0.identity == identity && !$0.isLocal }
+        session.participants.removeAll { $0.identity == identity && !$0.isLocal && !$0.isScreen }
         if session.pinnedIdentity == identity { session.pinnedIdentity = nil }
         lastSpokeAt.removeValue(forKey: identity)
+        removeScreen(owner: identity)
+    }
+
+    // MARK: - [2026-10-14 group-ui] Screen tiles · ringing · join/leave notices
+
+    /// Screen share = its own tile ("Tela de Fulano"), first in the grid
+    /// (GroupGridView highlights it on top), the person's camera stays on
+    /// their own tile.
+    @MainActor
+    private func upsertScreen(owner: String, track: VideoTrack) {
+        let sid = GroupParticipant.screenPrefix + owner
+        let ownerName = session.participants.first(where: { !$0.isLocal && !$0.isScreen && $0.identity == owner })?.name
+            ?? displayName(identity: owner, name: nil)
+        let tile = GroupParticipant(
+            id: sid,
+            identity: sid,
+            name: GroupCallStrings.s("gx.screenOf", ["name": ownerName]),
+            videoTrack: track,
+            isScreen: true
+        )
+        var arr = session.participants
+        if let i = arr.firstIndex(where: { $0.id == sid }) {
+            arr[i] = tile
+        } else {
+            arr.insert(tile, at: 0)
+        }
+        session.participants = arr
+    }
+
+    @MainActor
+    private func removeScreen(owner: String) {
+        let sid = GroupParticipant.screenPrefix + owner
+        guard session.participants.contains(where: { $0.id == sid }) else { return }
+        session.participants.removeAll { $0.id == sid }
+        if session.fullscreenId == sid { session.fullscreenId = nil }
+        if session.pinnedIdentity == sid { session.pinnedIdentity = nil }
+    }
+
+    /// First media from `identity` = they are really in the call: ringing tile
+    /// → normal tile and (when `announce`) "Fulano entrou".
+    @MainActor
+    private func noteRemoteMedia(identity: String, name: String?, announce: Bool) {
+        guard !identity.isEmpty, identity != "?" else { return }
+        let bare = GroupCallViewController.bareEmail(identity)
+        let wasRinging = pendingInvites.removeValue(forKey: bare) != nil
+        if !announcedJoins.contains(identity) {
+            announcedJoins.insert(identity)
+            if announce {
+                showToast(GroupCallStrings.s("gx.joined", ["name": displayName(identity: identity, name: name)]))
+            }
+        }
+        if wasRinging, session.participants.contains(where: { !$0.isLocal && !$0.isScreen && $0.identity == identity }) {
+            upsertRemote(identity: identity)
+        }
+    }
+
+    @MainActor
+    private func showToast(_ text: String) {
+        toastWork?.cancel()
+        session.toast = text
+        let work = DispatchWorkItem { [weak self] in self?.session.toast = nil }
+        toastWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6, execute: work)
+    }
+
+    /// People the picker just rang INTO this room → "Tocando…" tiles.
+    @MainActor
+    private func addRingingInvites(_ rung: [String: String]) {
+        let me = myEmail
+        for (email, name) in rung {
+            let bare = GroupCallViewController.bareEmail(email)
+            guard !bare.isEmpty, bare != me else { continue }
+            let existing = session.participants.first(where: {
+                !$0.isLocal && !$0.isScreen && GroupCallViewController.bareEmail($0.identity) == bare
+            })
+            // Already in the call with media → nothing to ring.
+            if let e = existing, !e.isRinging { continue }
+            pendingInvites[bare] = name
+            rosterNames[bare] = name
+            if let e = existing {
+                upsertRemote(identity: e.identity)
+            } else {
+                session.participants.append(GroupParticipant(
+                    id: "remote:" + bare,
+                    identity: bare,
+                    name: name,
+                    isRinging: true
+                ))
+            }
+            scheduleRingingExpiry(bare)
+        }
+    }
+
+    /// Unanswered after `kRingingTimeout`: a placeholder that never joined is
+    /// removed; someone connected but silent becomes a normal tile.
+    private func scheduleRingingExpiry(_ bare: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + GroupCallViewController.kRingingTimeout) { [weak self] in
+            // Hop explicitly: dropOrRefreshTile / upsertRemote are @MainActor.
+            Task { @MainActor [weak self] in
+                guard let self = self, !self.flags.didHangup else { return }
+                guard self.pendingInvites.removeValue(forKey: bare) != nil else { return }
+                self.dropOrRefreshTile(bare: bare)
+            }
+        }
+    }
+
+    @MainActor
+    private func dropOrRefreshTile(bare: String) {
+        guard let p = session.participants.first(where: {
+            !$0.isLocal && !$0.isScreen && GroupCallViewController.bareEmail($0.identity) == bare
+        }) else { return }
+        let live = room?.remoteParticipants.values.contains(where: {
+            GroupCallViewController.bareEmail($0.identity?.stringValue ?? "") == bare
+        }) ?? false
+        if live {
+            upsertRemote(identity: p.identity)
+        } else {
+            removeRemote(identity: p.identity)
+        }
+    }
+
+    /// WS call_declined for this room (CallSignalWs → CallKitCallDeclinedRemote)
+    /// with the invitee's email → drop their ringing tile right away.
+    private func installInviteDeclinedObserver() {
+        guard inviteDeclinedObserver == nil else { return }
+        inviteDeclinedObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("CallKitCallDeclinedRemote"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let cid = (note.userInfo?["callId"] as? String) ?? ""
+            let who = GroupCallViewController.bareEmail((note.userInfo?["declinedByEmail"] as? String) ?? "")
+            Task { @MainActor [weak self] in
+                guard let self = self, cid == self.roomName else { return }
+                self.handleInviteDeclined(who)
+            }
+        }
+    }
+
+    @MainActor
+    private func handleInviteDeclined(_ who: String) {
+        guard !who.isEmpty, pendingInvites.removeValue(forKey: who) != nil else { return }
+        nativeCallDiag("group_invite_declined", roomName, "by=\(who)")
+        // Declined: the tile goes now (their ring preconnect, if any, is
+        // leaving the Room anyway; media from another device re-adds it).
+        if let p = session.participants.first(where: {
+            !$0.isLocal && !$0.isScreen && GroupCallViewController.bareEmail($0.identity) == who
+        }) {
+            removeRemote(identity: p.identity)
+        }
     }
 
     @MainActor
@@ -1082,8 +1332,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-06 screen-share iOS] Darwin observer holds an unretained token.
         if let tok = broadcastStopToken { ScreenShareSupport.stopObserving(tok) }
         if let tok = systemMuteObserver { NotificationCenter.default.removeObserver(tok) }
+        if let tok = inviteDeclinedObserver { NotificationCenter.default.removeObserver(tok) }
         noAnswerTimer?.invalidate()
-        if let r = self.room { Task { await r.disconnect() } }
+        if let r = self.room { LKLeave.leave(r, callId: roomName, reason: "group_deinit") } // [2026-10-14 leave-first]
     }
 
     // MARK: - Presentation helpers
@@ -1243,11 +1494,30 @@ extension GroupCallViewController: RoomDelegate {
         let identity = participant.identity?.stringValue ?? "?"
         let name = participant.name
         let count = room.remoteParticipants.count
+        let hasMedia = !participant.trackPublications.isEmpty
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             self.flags.liveRemotes = count
             self.cancelNoAnswerTimer()
             self.upsertRemote(identity: identity, name: self.displayName(identity: identity, name: name))
+            if hasMedia {
+                self.noteRemoteMedia(identity: identity, name: name, announce: true)
+            } else {
+                // [2026-10-14 group-ui] Joined without media: a callee's ring
+                // preconnect (phone still ringing) — or someone answering whose
+                // mic publishes in a moment. Still silent after 1.5 s → ringing.
+                let bare = GroupCallViewController.bareEmail(identity)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    guard let self = self, !self.flags.didHangup else { return }
+                    guard !self.announcedJoins.contains(identity), self.pendingInvites[bare] == nil else { return }
+                    guard let rp = self.room?.remoteParticipants.values.first(where: { $0.identity?.stringValue == identity }),
+                          rp.trackPublications.isEmpty else { return }
+                    self.pendingInvites[bare] = self.displayName(identity: identity, name: name)
+                    self.scheduleRingingExpiry(bare)
+                    self.upsertRemote(identity: identity)
+                }
+            }
         }
     }
 
@@ -1255,30 +1525,58 @@ extension GroupCallViewController: RoomDelegate {
         let identity = participant.identity?.stringValue ?? "?"
         let count = room.remoteParticipants.count
         Task { @MainActor [weak self] in
-            self?.flags.liveRemotes = count
-            self?.removeRemote(identity: identity)
+            guard let self = self else { return }
+            self.flags.liveRemotes = count
+            let name = self.session.participants.first(where: { !$0.isLocal && !$0.isScreen && $0.identity == identity })?.name
+            let wasInCall = self.announcedJoins.remove(identity) != nil
+            // Never answered (declined / ring ended) → just drop the tile.
+            self.pendingInvites.removeValue(forKey: GroupCallViewController.bareEmail(identity))
+            self.removeRemote(identity: identity)
+            if wasInCall, let n = name, !n.isEmpty {
+                self.showToast(GroupCallStrings.s("gx.left", ["name": n]))
+            }
+        }
+    }
+
+    /// [2026-10-14 group-ui] A remote published something = they answered.
+    func room(_ room: Room,
+              participant: RemoteParticipant,
+              didPublishTrack publication: RemoteTrackPublication) {
+        let identity = participant.identity?.stringValue ?? "?"
+        let name = participant.name
+        Task { @MainActor [weak self] in
+            self?.noteRemoteMedia(identity: identity, name: name, announce: true)
         }
     }
 
     func room(_ room: Room,
               participant: RemoteParticipant,
               didSubscribeTrack publication: RemoteTrackPublication) {
-        guard publication.kind == .video else { return }
-        // Screen share wins the tile only when there's no camera (keeps the
-        // face visible; a dedicated screen tile is a follow-up).
-        if publication.source == .screenShareVideo,
-           participant.videoTracks.contains(where: { $0.source == .camera && !$0.isMuted && $0.track != nil }) {
-            return
-        }
-        guard let track = publication.track as? VideoTrack else { return }
         let identity = participant.identity?.stringValue ?? "?"
+        let name = participant.name
+        let isVideo = publication.kind == .video
+        let isScreen = publication.source == .screenShareVideo
+        let track = publication.track as? VideoTrack
         // [2026-10-08 call-video-fix] Arrived muted (camera off) → avatar.
         let muted = publication.isMuted
         Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.noteRemoteMedia(identity: identity, name: name, announce: true)
+            guard isVideo, let track = track else { return }
+            // [2026-10-14 group-ui] Screen share = its OWN tile (was: only shown
+            // when the person's camera was off). Camera stays on their tile.
+            if isScreen {
+                if muted {
+                    self.removeScreen(owner: identity)
+                } else {
+                    self.upsertScreen(owner: identity, track: track)
+                }
+                return
+            }
             if muted {
-                self?.upsertRemote(identity: identity, clearVideo: true)
+                self.upsertRemote(identity: identity, clearVideo: true)
             } else {
-                self?.upsertRemote(identity: identity, videoTrack: track)
+                self.upsertRemote(identity: identity, videoTrack: track)
             }
         }
     }
@@ -1288,9 +1586,14 @@ extension GroupCallViewController: RoomDelegate {
               didUnsubscribeTrack publication: RemoteTrackPublication) {
         guard publication.kind == .video else { return }
         let identity = participant.identity?.stringValue ?? "?"
-        // Fall back to another live video of the same person (camera ↔ screen).
+        if publication.source == .screenShareVideo {
+            Task { @MainActor [weak self] in self?.removeScreen(owner: identity) }
+            return
+        }
+        // Fall back to another live CAMERA of the same person (never the screen,
+        // which has its own tile).
         let other = participant.videoTracks.first(where: {
-            $0.sid != publication.sid && !$0.isMuted && $0.track != nil
+            $0.sid != publication.sid && $0.source != .screenShareVideo && !$0.isMuted && $0.track != nil
         })?.track as? VideoTrack
         Task { @MainActor [weak self] in
             if let o = other {
@@ -1311,6 +1614,16 @@ extension GroupCallViewController: RoomDelegate {
             guard (participant as? RemoteParticipant) != nil else { return }
             let identity = participant.identity?.stringValue ?? "?"
             let track = trackPublication.track as? VideoTrack
+            if trackPublication.source == .screenShareVideo {
+                Task { @MainActor [weak self] in
+                    if isMuted || track == nil {
+                        self?.removeScreen(owner: identity)
+                    } else if let t = track {
+                        self?.upsertScreen(owner: identity, track: t)
+                    }
+                }
+                return
+            }
             Task { @MainActor [weak self] in
                 if isMuted || track == nil {
                     self?.upsertRemote(identity: identity, clearVideo: true)
@@ -1352,7 +1665,9 @@ extension GroupCallViewController: RoomDelegate {
                     isLocal: p.isLocal,
                     isSpeaking: speaking,
                     handRaised: p.handRaised,
-                    connectionQuality: p.connectionQuality
+                    connectionQuality: p.connectionQuality,
+                    isScreen: p.isScreen,
+                    isRinging: p.isRinging
                 )
             }
             if let dominant = speakers.first(where: { !($0 is LocalParticipant) })?.identity?.stringValue {
