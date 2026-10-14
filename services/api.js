@@ -1587,7 +1587,23 @@ if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
   window.addEventListener('pagehide', _persist);
 }
 
+// [2026-10-14 lista-eco-envio] Geração por action: uma leitura que SAIU antes de
+// uma invalidação (ex.: badge pede chat_list enquanto o chat_mark_read ainda está
+// em voo) não pode gravar a resposta velha no cache DEPOIS da invalidação — era
+// assim que a lista voltava da conversa com a linha em negrito/contador/prévia do
+// outro por até 60 s. Também solta o in-flight, p/ ninguém "pegar carona" nele.
+const _swrGen = new Map(); // action → n
+let _swrGenAll = 0;
+function _swrGenOf(action) { return _swrGenAll + ':' + (_swrGen.get(action) || 0); }
+
 export function swrInvalidate(action, params) {
+  try {
+    if (!action) _swrGenAll++;
+    else _swrGen.set(action, (_swrGen.get(action) || 0) + 1);
+    for (const k of Array.from(_inflight.keys())) {
+      if (!action || k.startsWith(action + '|')) { _inflight.delete(k); _inflightAt.delete(k); }
+    }
+  } catch {}
   if (!action) {
     _swrCache.clear();
     // Also drop the web persistence copy so an account switch / re-login in
@@ -1834,10 +1850,11 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
         if (!cached.revalidating) {
           const _reval = () => {
             cached.revalidating = true;
+            const _g0 = _swrGenOf(action); // [2026-10-14 lista-eco-envio]
             _apiCallImpl(action, params, method).then((r) => {
               // Only overwrite the warm cache with a SUCCESSFUL revalidation.
               // A failed/network-error body must not clobber the good copy.
-              if (_swrCacheable(r)) {
+              if (_swrCacheable(r) && _swrGenOf(action) === _g0) {
                 _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
               } else {
                 cached.revalidating = false;
@@ -1860,10 +1877,11 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
       }
     }
 
+    const _gStart = _swrGenOf(action); // [2026-10-14 lista-eco-envio] invalidado em voo → não grava
     const promise = (async () => {
       try {
         const r = await _apiCallImpl(action, params, method);
-        if (swrEnabled && _swrCacheable(r)) {
+        if (swrEnabled && _swrCacheable(r) && _swrGenOf(action) === _gStart) {
           _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
           if (_swrCache.size > _SWR_MAX) {
             // Evict oldest half when the map grows past the cap.
@@ -5008,6 +5026,13 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     }
   }
   _webNoteSendOutcome(conversationId, stableCMI, result, opts);
+  // [2026-10-14 lista-eco-envio] O envio pelo hub (native_send, frame WS) e o Rust
+  // não passam pelo apiCall → o chat_list do SWR (60 s) NÃO era invalidado. Ao voltar
+  // p/ a lista, o refresh de foco recebia o snapshot de ANTES do envio (prévia do
+  // outro, não lida, negrito) e sobrescrevia a linha otimista "Você: …".
+  if (result && (result.success || result.data?.id != null)) {
+    try { swrInvalidate('chat_list'); } catch {}
+  }
 
   // [2026-10-10 regional-accept] Edge aceitou (id tmp_…, spool durável) mas o
   // id numérico ainda vem do US → o outbox segura a linha ('accepted') até o
@@ -5609,13 +5634,23 @@ export async function chatRead(conversationId, messageId) {
       await _db?.dbUpdateConversationLastReadMessageId?.(conversationId, messageId);
     } catch {}
   }
-  const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
-  // Bump the app-icon badge down right after the read POST lands. Without
-  // this, the badge keeps the stale unread count until the next foreground
-  // sync — visible on iOS/Android lockscreens.
-  try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
-  if (rust) return rust;
-  return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
+  // [2026-10-14 lista-eco-envio] O refreshBadgeCount rodava ANTES do POST e pedia
+  // chat_list (pré-leitura, unread>0) em paralelo; a resposta caía no SWR depois da
+  // invalidação do mark_read e a lista voltava da conversa em negrito por até 60 s.
+  // Agora: invalida já, lê no servidor, e só então recalcula o badge.
+  try { swrInvalidate('chat_list'); } catch {}
+  try {
+    const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
+    if (rust) return rust;
+    return await apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
+  } finally {
+    // Bump the app-icon badge down right after the read POST lands. Without
+    // this, the badge keeps the stale unread count until the next foreground
+    // sync — visible on iOS/Android lockscreens.
+    // Invalida de novo: qualquer chat_list lido enquanto o POST estava em voo é pré-leitura.
+    try { swrInvalidate('chat_list'); } catch {}
+    try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
+  }
 }
 
 // Send delivery acknowledgment for messages (WhatsApp-style double check).

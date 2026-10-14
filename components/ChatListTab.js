@@ -170,6 +170,86 @@ function _rcMergeListRow(old, c) {
   const lm = _rcMergeListLm(old.last_message, c.last_message);
   return lm === c.last_message ? c : { ...c, last_message: lm };
 }
+// [2026-10-14 lista-eco-envio] "Mandei e voltei p/ lista → parece que RECEBI"
+// (negrito/contador/prévia do outro sem ✓ por alguns segundos). O refresh de foco
+// trocava a linha local pela resposta do chat_list SEM olhar a idade: um snapshot
+// de ANTES do envio (SWR de 60 s não invalidado pelo native_send do hub / leitura
+// em voo / réplica do edge) apagava a prévia otimista "Você: …" e repunha o unread
+// pré-leitura. Regras (WhatsApp):
+//  - snapshot mais VELHO que a linha local → mantém a última msg local; se ela é
+//    MINHA, unread fica o local (0: enviar = ler tudo antes);
+//  - snapshot igual/mais novo → servidor manda (recibos não rebaixam), salvo
+//    leitura local recente que cobre a última msg do snapshot (réplica atrasada).
+const _selfReadMarks = new Map(); // String(convId) → { at, ms }  (TTL 2 min)
+const _SELF_READ_TTL = 120000;
+function _noteSelfRead(convId, row) {
+  if (convId == null) return;
+  try {
+    const ms = Math.max(row ? _convActivityMs(row) : 0, Date.now());
+    _selfReadMarks.set(String(convId), { at: Date.now(), ms });
+    if (_selfReadMarks.size > 300) _selfReadMarks.delete(_selfReadMarks.keys().next().value);
+  } catch {}
+}
+function _selfReadCovers(convId, c) {
+  const m = _selfReadMarks.get(String(convId));
+  if (!m) return false;
+  if (Date.now() - m.at > _SELF_READ_TTL) { _selfReadMarks.delete(String(convId)); return false; }
+  const n = _convActivityMs(c);
+  // Folga de 3 s p/ relógio do aparelho x servidor; msg do snapshot mais nova
+  // que a leitura local = chegou depois → conta. Só zera quando a linha local já
+  // estava em 0 (quem chama checa) — um WS de msg nova sobe o local e desarma isto.
+  return n > 0 && n <= m.ms + 3000;
+}
+function _lmIsMine(lm, meLc) {
+  const s = String((lm && (lm.sender_email || lm.sender)) || '').trim().toLowerCase();
+  return !!(s && meLc && s === meLc);
+}
+function _sameLm(a, b, meLc) {
+  if (!a || !b) return false;
+  if (a.id != null && b.id != null && String(a.id) === String(b.id)) return true;
+  if (a.client_message_id && b.client_message_id && a.client_message_id === b.client_message_id) return true;
+  // Linha otimista (id tmp_…/negativo) x linha do servidor da MESMA msg minha.
+  const aTmp = !(Number(a.id) > 0);
+  if (aTmp && _lmIsMine(a, meLc) && _lmIsMine(b, meLc)
+      && String(a.content || '') === String(b.content || '')
+      && Math.abs(_tsMs(a.created_at) - _tsMs(b.created_at)) < 120000) return true;
+  return false;
+}
+function _mergeServerConvRow(old, c, meLc) {
+  if (!c) return c;
+  if (!old) {
+    if ((c.unread_count || 0) > 0 && _selfReadCovers(c.id, c)) return { ...c, unread_count: 0 };
+    return c;
+  }
+  const oldLm = old.last_message && typeof old.last_message === 'object' ? old.last_message : null;
+  const newLm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+  let keepOld = false;
+  if (oldLm && !_sameLm(oldLm, newLm, meLc)) {
+    const oMs = _convActivityMs(old);
+    const nMs = _convActivityMs(c);
+    if (oMs !== nMs) keepOld = oMs > nMs;
+    else if (typeof oldLm.id === 'number' && newLm && typeof newLm.id === 'number') keepOld = oldLm.id > newLm.id;
+  }
+  let base;
+  if (keepOld) {
+    base = {
+      ...c,
+      last_message: old.last_message,
+      last_message_at: old.last_message_at,
+      last_message_sender: old.last_message_sender ?? c.last_message_sender,
+      last_message_type: old.last_message_type ?? c.last_message_type,
+      unread_count: _lmIsMine(oldLm, meLc)
+        ? (old.unread_count || 0)
+        : Math.max(c.unread_count || 0, old.unread_count || 0),
+    };
+  } else {
+    base = _rcMergeListRow(old, c);
+    if ((base.unread_count || 0) > 0 && (old.unread_count || 0) === 0 && _selfReadCovers(c.id, c)) {
+      base = { ...base, unread_count: 0 };
+    }
+  }
+  return base;
+}
 // [2026-10-14 grupo-nome] Nome de grupo/canal: `name` do servidor é a verdade. display_name
 // de grupo só existe em placeholder local (WS/push/bgJournal — às vezes o nome de QUEM MANDOU),
 // então para grupo ele nunca vence o `name`. Sem emailToDisplayName (mudava caixa/quebrava
@@ -3469,6 +3549,9 @@ function _reuseConvRows(prev, next) {
 
 function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0 }) {
   { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.list++; }
+  // [2026-10-14 lista-eco-envio] e-mail da conta (minúsculo) sempre atual p/ closures antigas.
+  const _meLcRef = useRef('');
+  _meLcRef.current = String(user?.email || (() => { try { return api.getActiveAccountEmail?.() || ''; } catch { return ''; } })()).trim().toLowerCase();
   // [2026-10-08 chat-beauty-list] Neutral B&W surface for everything the list
   // paints (rows, chips, sheets): near-black #0b0b0b in dark instead of the
   // global navy, neutral greys instead of the bluish WhatsApp text tones.
@@ -4114,31 +4197,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         setConversations(prev => {
           if (!Array.isArray(prev) || prev.length === 0) return _active;
           const prevById = new Map(prev.map(p => [String(p.id), p]));
+          // Prefer the newer last message. [2026-10-13 lista-estavel] Pela DATA
+          // (parse tolerante), não pelo id: mensagem importada do WhatsApp tem id
+          // ALTO e data ANTIGA. [2026-10-14 lista-eco-envio] Regra única em
+          // _mergeServerConvRow: o Math.max(unread) incondicional daqui grudava o
+          // contador velho quando o servidor já dizia 0 (linha em negrito "presa").
+          const _meLc = _meLcRef.current;
           return _reuseConvRows(prev, _keepBeyondPage(prev, _active.map(c => {
             const old = prevById.get(String(c.id));
-            if (!old) return c;
-            const oldLm = old.last_message || {};
-            const newLm = c.last_message || {};
-            // Prefer the newer last message. [2026-10-13 lista-estavel] Pela DATA
-            // (parse tolerante), não pelo id: mensagem importada do WhatsApp tem id
-            // ALTO e data ANTIGA — o id deixava a prévia velha "ganhar" e a conversa
-            // afundava. Id só desempata o mesmo instante; string crua nunca (formatos
-            // mistos de created_at comparavam errado).
-            let keepOld;
-            const oMs = _convActivityMs(old);
-            const nMs = _convActivityMs(c);
-            if (oMs !== nMs) {
-              keepOld = oMs > nMs;
-            } else if (typeof oldLm.id === 'number' && typeof newLm.id === 'number') {
-              keepOld = oldLm.id > newLm.id;
-            } else {
-              keepOld = false;
-            }
-            const base = keepOld
-              ? { ...c, last_message: old.last_message, last_message_at: old.last_message_at }
-              : { ..._rcMergeListRow(old, c) };
-            base.unread_count = Math.max(c.unread_count || 0, old.unread_count || 0);
-            return _keepKnownName(old, base); // [2026-10-14 grupo-nome] nunca regride p/ vazio
+            if (!old) return _mergeServerConvRow(null, c, _meLc);
+            return _keepKnownName(old, _mergeServerConvRow(old, c, _meLc)); // [2026-10-14 grupo-nome] nunca regride p/ vazio
           }), convs.length, _archIds));
         });
         setArchivedConversations(prev => _reuseConvRows(prev, _arch));
@@ -4178,7 +4246,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               setConversations(prev => {
                 // [2026-10-14 recibos-mono] mesma última msg → não rebaixa o tick.
                 const _pById = new Map((Array.isArray(prev) ? prev : []).map(p => [String(p.id), p]));
-                const _actM = _act.map(c => { const _o = _pById.get(String(c.id)); return _keepKnownName(_o, _rcMergeListRow(_o, c)); });
+                const _meLc = _meLcRef.current; // [2026-10-14 lista-eco-envio]
+                const _actM = _act.map(c => { const _o = _pById.get(String(c.id)); return _keepKnownName(_o, _mergeServerConvRow(_o, c, _meLc)); });
                 return _keepBeyondPage(prev, _actM, convs.length, _aIds);
               });
             }
@@ -4528,7 +4597,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // [2026-10-14 recibos-mono] volta da conversa (azul) + chat_list do edge
               // atrasado → a prévia não rebaixa p/ cinza.
               const _pById = new Map((Array.isArray(prev) ? prev : []).map(p => [String(p.id), p]));
-              return _reuseConvRows(prev, _active.map(c => _rcMergeListRow(_pById.get(String(c.id)), c)));
+              // [2026-10-14 lista-eco-envio] snapshot velho não apaga a prévia "Você: …" nem repõe unread.
+              const _meLc = _meLcRef.current;
+              return _reuseConvRows(prev, _active.map(c => _keepKnownName(_pById.get(String(c.id)), _mergeServerConvRow(_pById.get(String(c.id)), c, _meLc))));
             });
             setArchivedConversations(prev => _reuseConvRows(prev, _arch));
             cacheConversations(convs).catch(() => {});
@@ -4829,11 +4900,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // Don't bump unread for messages we sent ourselves (echoed back
           // by relay) — without this, the badge counts the user's own
           // outgoing messages.
-          const senderEmail = (data.sender_email || data.sender || '').toLowerCase();
+          const senderEmail = String(data.sender_email || data.sender || data.from || '').trim().toLowerCase();
           // [2026-10-13] Ecos locais do próprio envio (sendWorker/_local) contam como
           // enviados mesmo se a linha vier sem sender_email.
-          const isSelf = !!(rawData?._self || data._self || data._local || rawData?._local)
-            || !!(senderEmail && user?.email && senderEmail === String(user.email).toLowerCase());
+          // [2026-10-14 lista-eco-envio] Compara normalizado (trim/minúsculas) contra
+          // TODAS as identidades da conta ativa (user.email + conta ativa do api).
+          let _activeLc = '';
+          try { _activeLc = String(api.getActiveAccountEmail?.() || '').trim().toLowerCase(); } catch {}
+          const _meNow = _meLcRef.current;
+          const isSelf = !!(rawData?._self || data._self || data._local || rawData?._local || data.is_mine === true || data.is_own === true)
+            || !!(senderEmail && ((_meNow && senderEmail === _meNow) || (_activeLc && senderEmail === _activeLc)));
+          // Lista mudou → o chat_list em cache (SWR 60 s) ficou velho; o próximo refresh de foco busca de novo.
+          try { api.swrInvalidate?.('chat_list'); } catch {}
+          // Enviar = ler tudo antes (o servidor avança last_read no envio): esta
+          // conversa fica com 0 não lidas mesmo que um snapshot atrasado diga o contrário.
+          if (isSelf) _noteSelfRead(data.conversation_id, null);
           // Sound + soft haptic when someone else's message lands and the
           // user is NOT inside that conversation (chat-conversation fires
           // its own receive sound for the open thread). Throttled to 1/1.2s.
@@ -4908,18 +4989,19 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   // the thread correctly showed ✓. Same fix in all 4
                   // last_message constructions below.
                   id: data.id ?? data.message_id ?? null,
+                  client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                  sender_email: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender), // [2026-10-14 lista-eco-envio]
                   sender_name: data.sender_name || data.sender_email || data.sender,
                   created_at: data.created_at || new Date().toISOString(),
                 },
                 last_message_type: data.type || 'text',
-                last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                last_message_sender: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender),
                 last_message_at: data.created_at || new Date().toISOString(),
-                unread_count: (isSelf || senderLc === meLc) ? (nextArch[ai].unread_count || 0) : ((nextArch[ai].unread_count || 0) + 1),
+                unread_count: (isSelf || senderLc === meLc) ? 0 : ((nextArch[ai].unread_count || 0) + 1), // [2026-10-14 lista-eco-envio] enviar = ler
               };
               return nextArch;
             }
@@ -4946,16 +5028,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 last_message: {
                   ...(unarchivedConv.last_message || {}),
                   id: data.id ?? data.message_id ?? null,
+                  client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                  sender_email: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender), // [2026-10-14 lista-eco-envio]
                   sender_name: data.sender_name || data.sender_email || data.sender,
                   created_at: data.created_at || new Date().toISOString(),
                 },
                 last_message_type: data.type || 'text',
-                last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                last_message_sender: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender),
                 last_message_at: data.created_at || new Date().toISOString(),
                 unread_count: (isSelf || senderLc === meLc) ? 0 : ((unarchivedConv.unread_count || 0) + 1),
               };
@@ -4985,16 +5068,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
                 last_message: {
                   id: data.id ?? data.message_id ?? null,
+                  client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
-                  sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                  sender_email: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender), // [2026-10-14 lista-eco-envio]
                   sender_name: data.sender_name || data.sender_email || data.sender,
                   created_at: data.created_at || new Date().toISOString(),
                 },
                 last_message_at: data.created_at || new Date().toISOString(),
-                last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                last_message_sender: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender),
                 last_message_type: data.type || 'text',
                 unread_count: (isSelf || senderLc === meLc) ? 0 : 1,
                 muted: 0,
@@ -5008,16 +5092,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               last_message: {
                 ...(prev[idx].last_message || {}),
                 id: data.id ?? data.message_id ?? null,
+                client_message_id: data.client_message_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior
                 read_at: data.read_at || null,
                 delivered_at: data.delivered_at || null,
                 content: data.content || data.message,
                 type: data.type || 'text',
-                sender_email: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+                sender_email: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender), // [2026-10-14 lista-eco-envio]
                 sender_name: data.sender_name || data.sender_email || data.sender,
                 created_at: data.created_at || new Date().toISOString(),
               },
               last_message_type: data.type || 'text',
-              last_message_sender: data.sender_email || data.sender || (isSelf ? user?.email : undefined),
+              last_message_sender: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender),
               last_message_at: data.created_at || new Date().toISOString(),
               // Don't bump unread for a message landing IN the chat the user
               // is currently inside — they're reading it now, so the badge
@@ -5027,7 +5112,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // user backed out and saw "ghost" unread for a chat they had
               // just been reading. activeConvId is set by chat-conversation.js
               // on mount and cleared on unmount.
-              unread_count: (isSelf || (() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })()) ? (prev[idx].unread_count || 0) : ((prev[idx].unread_count || 0) + 1),
+              // [2026-10-14 lista-eco-envio] Minha msg (este ou outro aparelho meu) = li tudo antes → 0.
+              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })() ? (prev[idx].unread_count || 0) : ((prev[idx].unread_count || 0) + 1)),
             };
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
@@ -5136,6 +5222,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       unsubs.push(mailWs.on('chat_read', (data) => {
         const meLower = (user?.email || '').toLowerCase();
         const readerLower = (data?.reader_email || data?.email || '').toLowerCase();
+        if (readerLower && readerLower === meLower) { try { api.swrInvalidate?.('chat_list'); } catch {} } // [2026-10-14 lista-eco-envio]
         // Who did the reading: me (just opened my own chat) OR the peer
         // (read my outbound). In the peer case we bump last_message.read_at
         // so the purple ✓✓ appears in the list without waiting for a fresh
@@ -5153,6 +5240,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             // event. Missing email now falls through (no-op) instead.
             if (readerLower && readerLower === meLower) {
               next.unread_count = 0;
+              _noteSelfRead(c.id, c); // [2026-10-14 lista-eco-envio] snapshot atrasado não repõe o contador
             } else if (c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower
                        && !c.last_message.read_at
@@ -5241,6 +5329,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             if (readerLower && readerLower === meLower) {
               // Me reading on ANOTHER device — zero the badge here too.
               next.unread_count = 0;
+              _noteSelfRead(c.id, c); // [2026-10-14 lista-eco-envio]
             } else if (readerLower && c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower
                        && !c.last_message.read_at
@@ -8023,7 +8112,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // Antes o tap em search result navegava com param errado → tela abria
           // com id=0 e nada renderizava. Passa também `type` + `name` pra header
           // não ficar em branco enquanto resolve a conversa.
-          const hitType = hit.conv_type || hit.conversation_type || hit.type || 'direct';
+          const hitType = hit.conv_type || hit.conversation_type || (_hitConv && _hitConv.type) || ''; // [2026-10-14 tipo-conv] sem 'direct' cego (hit.type = tipo da MENSAGEM); vazio → openConversation/tela resolvem
           const peerEmail = hit.peer_email || hit.other_email || hit.contact_email || hit.sender_email || '';
           return (
             <TouchableOpacity
@@ -8035,8 +8124,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   // object params are encoded by the router — encoding here
                   // too showed "Ana%20Paula" in the conversation header.
                   name: convName || '',
-                  type: hitType,
-                  ...(peerEmail ? { email: peerEmail } : {}),
+                  ...(hitType ? { type: hitType } : {}),
+                  ...(peerEmail && (!hitType || hitType === 'direct') ? { email: peerEmail } : {}),
                   scrollToMessageId: String(hit.id),
                   highlightMessageId: String(hit.id),
                 },

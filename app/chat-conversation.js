@@ -10145,7 +10145,16 @@ function ChatConversationInner() {
     try { initSyncCache?.()?.catch?.(() => {}); } catch {}
   }, []);
 
-  const conversationType = params.type || 'direct';
+  // [2026-10-14 tipo-conv] Rota sem `type` (push/deep link/busca) tratava grupo como direct
+  // (toque no topo abria "Dados do contato" de um membro). Resolve pela conversa conhecida
+  // (handoff da lista / snapshot) no 1º frame; servidor (chat_conversations/chat_members) corrige depois.
+  const [_resolvedConvType, _setResolvedConvType] = _useStateT(() => {
+    if (params.type) return String(params.type);
+    try { const c = peekOpenConversation(conversationId); if (c && c.type) return String(c.type); } catch {}
+    return '';
+  });
+  const _adoptConvType = (tp) => { if (!params.type && tp && typeof tp === 'string') _setResolvedConvType(prev => (prev === tp ? prev : tp)); };
+  const conversationType = params.type || _resolvedConvType || 'direct';
   // Saved-mode flag — set when this screen is opened via /saved-messages.
   // Surfaces an extra tabs strip (Tudo / Fotos / Vídeos / Documentos /
   // Áudio / Links), a search-within bar, and the "Cabeçalho" +
@@ -10205,6 +10214,7 @@ function ChatConversationInner() {
     const { getCachedConversations } = require('../services/chatCache');
     const _applyConvName = (conv) => {
       if (!conv) return;
+      _adoptConvType(conv.type); // [2026-10-14 tipo-conv]
       // For direct conversations, prefer the user's local nickname for the
       // peer over the server-stored display name.
       let nn = '';
@@ -14967,7 +14977,8 @@ function ChatConversationInner() {
     api.chatMembers(conversationId).then(r => {
       if (r.success) setMembers(r.data?.members || []);
       // [2026-10-07 group-admin] same payload carries the group flags.
-      if (r.success && conversationType === 'group') { try { applyGroupFlagsRef.current?.(r.data); } catch {} }
+      if (r.success) _adoptConvType(r.data?.type); // [2026-10-14 tipo-conv]
+      if (r.success && (conversationType === 'group' || (!params.type && r.data?.type === 'group'))) { try { applyGroupFlagsRef.current?.(r.data); } catch {} }
     }).catch(() => {});
     // Check block status for direct conversations
     if (conversationType === 'direct' && params.email) {
@@ -18318,6 +18329,9 @@ function ChatConversationInner() {
       mailWs._emit?.('chat_local_outbound', {
         conversation_id: conversationId,
         id: tempId,
+        // [2026-10-14 lista-eco-envio] cmi: o chat_list/eco do servidor da MESMA msg
+        // é reconhecido e troca o id tmp pelo real (sem "voltar" a prévia anterior).
+        client_message_id: msgId,
         sender_email: currentEmail,
         sender_name: user?.name || currentEmail,
         content: text,
@@ -27770,7 +27784,9 @@ function ChatConversationInner() {
                   onPress={() => handleTranscribeAudio(msg)}
                   disabled={isTranscribing}
                   activeOpacity={0.6}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, paddingVertical: 3 }}
+                  // [2026-10-14 vis-audit] era texto sublinhado (cara de link) → chip discreto P&B c/ ícone de texto
+                  style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, marginTop: 6, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, borderColor: isOwn ? 'rgba(255,255,255,0.35)' : (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)') }}
+                  hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
                   accessibilityRole="button"
                   accessibilityLabel={t('chat.transcribe') || 'Transcrever'}
                 >
@@ -27783,8 +27799,8 @@ function ChatConversationInner() {
                     </>
                   ) : (
                     <>
-                      <IconSparkles size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : otherInk} />
-                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : otherInk, fontWeight: '500', textDecorationLine: 'underline' }}>
+                      <IconFileText size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : otherInk} />
+                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : otherInk, fontWeight: '500' }}>
                         {transcribeErr === 'unavailable'
                           ? (t('chat.transcribeUnavailable') || 'Transcrição indisponível')
                           : transcribeErr
