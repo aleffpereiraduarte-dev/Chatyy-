@@ -185,6 +185,11 @@ function CreatorDashboard() {
     if (w?.success && w.data) setDiamondBalance(Number(w.data.diamond_balance) || 0);
     const e = earn.status === 'fulfilled' ? earn.value : null;
     if (e?.success && e.data && Array.isArray(e.data.timeline)) setRecent(e.data.timeline.slice(0, 5));
+    // [2026-10-13 diamantes-religados] "A receber" = disponível p/ saque do resumo novo (BRL).
+    if (e?.success && e.data && e.data.available_cents != null) {
+      const av = Number(e.data.available_cents) || 0;
+      setData(prev => ({ ...prev, pending_payout_cents: av }));
+    }
     setLoading(false);
     setRefreshing(false);
   }, []);

@@ -24,8 +24,16 @@
 // diamonds/wallet OFF até polir.
 export const MONETIZATION_ENABLED = true;
 
-export const WALLET_ENABLED       = false;
-export const DIAMONDS_ENABLED     = false;
+// [2026-10-13 diamantes-religados] founder: "liga e faz funcionar nível TikTok".
+// Servidor tem kill-switch próprio (DIAMONDS_ENABLED no env → 410 feature_disabled);
+// o app trata 410 escondendo compra/presente sem precisar de OTA.
+export const WALLET_ENABLED       = true;
+export const DIAMONDS_ENABLED     = true;
+// Compra de diamantes por IAP (StoreKit/Play) — SEPARADA do IAP_ENABLED global,
+// que também liberaria assinatura/armazenamento por IAP (preços antigos na loja).
+// iOS: só IAP (diretriz 3.1.1). Android: Play Billing ("Em breve" sem catálogo).
+// Web: Stripe (não depende desta flag).
+export const DIAMONDS_IAP_ENABLED = true;
 export const PLANS_ENABLED        = true;
 export const IAP_ENABLED          = false;
 export const STRIPE_ENABLED       = true;

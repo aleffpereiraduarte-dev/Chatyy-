@@ -32,7 +32,7 @@ import * as api from '../services/api';
 import { formatMoneyActive } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
 import AvatarCircle from '../components/AvatarCircle';
-import { IconReceipt } from '../components/Icons';
+import { IconReceipt, IconDiamond } from '../components/Icons';
 import {
   Button, Card, ListRow, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn,
   ScreenEmptyState, Type, Space, Radius, Layout,
@@ -58,9 +58,10 @@ function GiftGlyph({ size = 16, color }) {
 
 function sourceLabel(t, refKind) {
   const k = String(refKind || '');
-  if (k === 'live_gift' || k === 'live') return tr(t, 'creatorEarnings.source.live', 'Ao vivo');
+  if (k === 'live_gift' || k === 'live' || k === 'live_react') return tr(t, 'creatorEarnings.source.live', 'Ao vivo');
   if (k === 'reel_tip' || k === 'reel') return tr(t, 'creatorEarnings.source.reel', 'Reel');
-  if (k === 'feed_tip' || k === 'feed_post') return tr(t, 'creatorEarnings.source.feed', 'Post');
+  if (k === 'feed_tip' || k === 'feed_post' || k === 'post' || k === 'post_gift') return tr(t, 'creatorEarnings.source.feed', 'Post');
+  if (k === 'chat' || k === 'chat_gift') return tr(t, 'gifts.sourceChat', 'Chat');
   return tr(t, 'creatorEarnings.source.other', 'Direto');
 }
 
@@ -104,6 +105,8 @@ function CreatorEarnings() {
     pending_payout_cents: 0, lifetime_payout_cents: 0, month_payout_cents: 0,
     gifts_count_30d: 0, gifts_count_lifetime: 0, top_fans: [], timeline: [],
     min_cashout_cents: MIN_CASHOUT_CENTS,
+    available_cents: null, on_hold_cents: 0, hold_days: 0, cashout_eligible: null, cashout_block_reason: null,
+    payout_per_diamond_millicents: 0, account_min_age_days: 0, daily_limit_cents: 0,
   });
   const [cashouts, setCashouts] = useState(null); // null = desconhecido
 
@@ -124,6 +127,15 @@ function CreatorEarnings() {
         top_fans: Array.isArray(d.top_fans) ? d.top_fans : [],
         timeline: Array.isArray(d.timeline) ? d.timeline : [],
         min_cashout_cents: Number(d.min_cashout_cents) || MIN_CASHOUT_CENTS,
+        // [2026-10-13 diamantes-religados] resumo novo do servidor (BRL, sem ×5 no cliente).
+        available_cents: d.available_cents != null ? Number(d.available_cents) || 0 : null,
+        on_hold_cents: Number(d.on_hold_cents) || 0,
+        hold_days: Number(d.hold_days) || 0,
+        cashout_eligible: typeof d.cashout_eligible === 'boolean' ? d.cashout_eligible : null,
+        cashout_block_reason: d.cashout_block_reason || null,
+        payout_per_diamond_millicents: Number(d.payout_per_diamond_millicents) || 0,
+        account_min_age_days: Number(d.account_min_age_days) || 0,
+        daily_limit_cents: Number(d.daily_limit_cents) || 0,
       });
       setFailed(false);
     } else {
@@ -139,9 +151,20 @@ function CreatorEarnings() {
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
 
   const min = data.min_cashout_cents || MIN_CASHOUT_CENTS;
-  const pending = data.pending_payout_cents;
+  // Disponível = já liberado (fora do prazo de liberação). Servidor antigo → pending.
+  const pending = data.available_cents != null ? data.available_cents : data.pending_payout_cents;
   const reachedMin = pending >= min;
-  const canCashout = WALLET_ENABLED && reachedMin;
+  const canCashout = WALLET_ENABLED && (data.cashout_eligible != null ? data.cashout_eligible : reachedMin);
+  const blockReason = (() => {
+    const r = data.cashout_block_reason;
+    if (!WALLET_ENABLED || r === 'disabled') return tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.');
+    if (r === 'account_too_new') return tr(t, 'earn.blockAccountNew', 'Sua conta precisa ter pelo menos {n} dias para sacar.').replace('{n}', String(data.account_min_age_days || 30));
+    if (r === 'minor') return tr(t, 'earn.blockMinor', 'Saques não estão disponíveis para contas supervisionadas.');
+    if (r === 'negative_balance') return tr(t, 'earn.blockNegative', 'Há um estorno pendente na sua carteira. Regularize para sacar.');
+    if (r === 'pending_exists') return tr(t, 'earn.blockPending', 'Você já tem um saque em análise.');
+    return '';
+  })();
+  const perDiamond = data.payout_per_diamond_millicents > 0 ? data.payout_per_diamond_millicents / 1000 : 0; // centavos por diamante
   const progress = Math.max(0, Math.min(1, pending / min));
   const go = (path) => () => { try { router.push(path); } catch {} };
   const title = tr(t, 'creatorEarnings.title', 'Meus Ganhos');
@@ -174,6 +197,12 @@ function CreatorEarnings() {
           accessibilityLabel={`${tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}: ${money(pending)}`}>
           {money(pending)}
         </Text>
+        {data.on_hold_cents > 0 ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+            {tr(t, 'earn.onHold', '{amount} em liberação (presentes dos últimos {days} dias)')
+              .replace('{amount}', money(data.on_hold_cents)).replace('{days}', String(data.hold_days || 7))}
+          </Text>
+        ) : null}
         {!reachedMin ? (
           <View style={{ marginTop: Space.md }}>
             <View style={[styles.track, { backgroundColor: s.fill }]}
@@ -200,12 +229,12 @@ function CreatorEarnings() {
           onPress={go('/wallet-cashout')}
           style={{ marginTop: Space.lg }}
           accessibilityLabel={!canCashout
-            ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${!WALLET_ENABLED ? tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.') : tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}`
+            ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${blockReason || tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}`
             : undefined}
         />
-        {!WALLET_ENABLED ? (
+        {blockReason ? (
           <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm, textAlign: 'center' }]}>
-            {tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.')}
+            {blockReason}
           </Text>
         ) : null}
       </Card>
@@ -247,7 +276,15 @@ function CreatorEarnings() {
                 {tr(t, 'creatorEarnings.giftCount', '{n} presentes').replace('{n}', formatInt(fan.gift_count || 0, language))}
               </Text>
             </View>
-            <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>{money(fan.total_amount)}</Text>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>{money(fan.payout_cents != null ? fan.payout_cents : fan.total_amount)}</Text>
+              {fan.total_diamonds != null ? (
+                <View style={styles.amount}>
+                  <IconDiamond size={10} />
+                  <Text style={[Type.caption2, { color: s.textSecondary }]}>{formatInt(fan.total_diamonds, language)}</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         )) : (
           <ScreenEmptyState compact kind="contacts"
@@ -261,23 +298,25 @@ function CreatorEarnings() {
       <Card padding={0}>
         {data.timeline.length > 0 ? data.timeline.map((item, idx) => {
           const when = fmtDate(item.created_at_ts);
-          const isMoney = item.kind === 'tip_recv' || item.kind === 'live_gift_recv';
+          // Novo: payout_cents + diamonds; legado (tip_recv/live_gift_recv antigos): amount = centavos.
+          const isMoney = item.payout_cents != null || item.kind === 'tip_recv' || item.kind === 'live_gift_recv';
+          const earned = item.payout_cents != null ? item.payout_cents : item.amount;
           return (
             <View key={String(item.id ?? idx)}
               style={[styles.personRow, idx < data.timeline.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
               <AvatarCircle email={item.counterparty} size={36} colors={colors} />
               <View style={{ flex: 1, minWidth: 0, marginLeft: Space.md }}>
                 <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>
-                  {handleOf(item.counterparty) || tr(t, 'creatorEarnings.someone', 'Alguém')}
+                  {item.counterparty_name || handleOf(item.counterparty) || tr(t, 'creatorEarnings.someone', 'Alguém')}
                 </Text>
                 <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
-                  {sourceLabel(t, item.ref_kind)}{when ? ' · ' + when : ''}
+                  {sourceLabel(t, item.ref_kind)}{item.diamonds ? ' · ' + formatInt(item.diamonds, language) + ' ' + tr(t, 'wallet.diamondsLabel', 'diamantes') : ''}{when ? ' · ' + when : ''}
                 </Text>
               </View>
               <View style={styles.amount}>
                 <GiftGlyph size={14} color={s.textSecondary} />
                 <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]}>
-                  +{isMoney ? money(item.amount) : formatInt(item.amount || 0, language)}
+                  +{isMoney ? money(earned) : formatInt(item.amount || 0, language)}
                 </Text>
               </View>
             </View>
@@ -296,7 +335,10 @@ function CreatorEarnings() {
       ) : null}
 
       <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', marginTop: Space.sm, paddingHorizontal: Space.lg }]}>
-        {tr(t, 'creatorEarnings.tos', 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.')}
+        {perDiamond > 0
+          ? tr(t, 'earn.tosPerDiamond', 'Cada diamante recebido vale {value} para você. Presentes ficam {days} dias em liberação (prazo de reembolso das lojas) antes de entrar no saldo de saque. Saques via Pix passam por análise manual.')
+            .replace('{value}', formatMoneyActive(perDiamond)).replace('{days}', String(data.hold_days || 7))
+          : tr(t, 'creatorEarnings.tos', 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.')}
       </Text>
     </>
   );

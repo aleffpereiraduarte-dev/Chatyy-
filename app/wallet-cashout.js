@@ -161,13 +161,30 @@ export default function WalletCashoutScreen() {
   const [step, setStep] = useState('form'); // form | review | sending | done
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  // [2026-10-13 diamantes-religados] regras do servidor (resumo de ganhos).
+  const [rules, setRules] = useState({ onHold: 0, holdDays: 0, block: null, minAgeDays: 30, dailyLimit: 0, kyc: null, maxCents: MAX_CENTS });
 
-  const paused = !WALLET_ENABLED || serverDisabled;
+  const paused = !WALLET_ENABLED || serverDisabled || rules.block === 'disabled';
 
   const loadAll = useCallback(async () => {
-    const [bal, list] = await Promise.allSettled([api.walletBalance?.(), api.walletCashoutList?.()]);
+    const [bal, list, sum] = await Promise.allSettled([api.walletBalance?.(), api.walletCashoutList?.(), api.creatorEarningsSummary?.({ limit: 1 })]);
     const b = bal.status === 'fulfilled' ? bal.value : null;
-    if (b?.success && b.data) setAvailable(Number(b.data.pending_payout_cents) || 0);
+    if (b?.success && b.data) setAvailable(b.data.available_cents != null ? Number(b.data.available_cents) || 0 : Number(b.data.pending_payout_cents) || 0);
+    if (b?.data?.feature_disabled) setServerDisabled(true);
+    const sm = sum.status === 'fulfilled' ? sum.value : null;
+    if (sm?.success && sm.data) {
+      const d = sm.data;
+      setRules({
+        onHold: Number(d.on_hold_cents) || 0,
+        holdDays: Number(d.hold_days) || 0,
+        block: d.cashout_block_reason && d.cashout_block_reason !== 'below_min' ? d.cashout_block_reason : null,
+        minAgeDays: Number(d.account_min_age_days) || 30,
+        dailyLimit: Number(d.daily_limit_cents) || 0,
+        kyc: d.kyc && typeof d.kyc === 'object' ? d.kyc : null,
+        maxCents: Number(d.max_cashout_cents) || MAX_CENTS,
+      });
+      if (d.kyc && d.kyc.full_name) setFullName(prev => prev || String(d.kyc.full_name));
+    }
     const l = list.status === 'fulfilled' ? list.value : null;
     if (l?.success && Array.isArray(l.data?.items)) setHistory(l.data.items);
     setLoading(false);
@@ -188,7 +205,9 @@ export default function WalletCashoutScreen() {
       : amountCents > MAX_CENTS ? tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_CENTS))
       : amountCents > available ? tr(t, 'cashout2.errOver', 'Acima do disponível ({available}).').replace('{available}', money(available))
       : '',
-    pixKey: validPixKey(pixType, pixKey) ? '' : tr(t, `cashout2.errKey.${pixType}`, {
+    pixKey: (validPixKey(pixType, pixKey) && pixType === 'cpf' && isValidCpf(cpf) && digits(pixKey) !== digits(cpf))
+      ? tr(t, 'cashout3.errHolder', 'A chave Pix precisa ser do titular (mesmo CPF informado).')
+      : validPixKey(pixType, pixKey) ? '' : tr(t, `cashout2.errKey.${pixType}`, {
       cpf: 'CPF da chave inválido.', email: 'E-mail inválido.', phone: 'Telefone inválido (DDD + número).', random: 'Chave aleatória inválida (32 caracteres).',
     }[pixType]),
     fullName: fullName.trim().split(/\s+/).filter(Boolean).length >= 2 && fullName.trim().length >= 3
@@ -217,7 +236,7 @@ export default function WalletCashoutScreen() {
         amountCents, pixKey: pixType === 'cpf' ? digits(pixKey) : pixKey.trim(), pixKeyType: pixType, fullName, cpf,
       });
       if (r?.success && r.data) {
-        setAvailable(Number(r.data.pending_payout_cents) || 0);
+        setAvailable(r.data.available_cents != null ? Number(r.data.available_cents) || 0 : Number(r.data.pending_payout_cents) || 0);
         setResult({ amount: Number(r.data.amount_cents) || amountCents });
         setAmountText('');
         setTouched({});
@@ -229,6 +248,7 @@ export default function WalletCashoutScreen() {
       const code = r?.data?.code;
       if (r?.data?.feature_disabled) { setServerDisabled(true); setStep('form'); return; }
       if (code === 'insufficient_pending' && r?.data?.pending_payout_cents != null) setAvailable(Number(r.data.pending_payout_cents) || 0);
+      if ((code === 'insufficient_available' || msg === 'insufficient_available') && r?.data?.available_cents != null) setAvailable(Number(r.data.available_cents) || 0);
       const map = {
         min_cashout: tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_CENTS)),
         max_cashout: tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_CENTS)),
@@ -237,14 +257,24 @@ export default function WalletCashoutScreen() {
         pix_key_invalid: tr(t, 'wallet.cashoutKeyError', 'Chave PIX inválida.'),
         too_many_pending: tr(t, 'wallet.cashoutRateLimit', 'Você já tem 3 saques em análise. Aguarde a aprovação.'),
         insufficient_pending: tr(t, 'wallet.cashoutInsufficient', 'Saldo de saque insuficiente.'),
+        insufficient_available: tr(t, 'cashout3.errAvailable', 'Valor acima do disponível. Presentes recentes ainda estão em liberação.'),
+        daily_limit: tr(t, 'cashout3.errDaily', 'Limite diário de saque atingido. Tente amanhã.'),
+        pix_key_not_holder: tr(t, 'cashout3.errHolder', 'A chave Pix precisa ser do titular (mesmo CPF informado).'),
+        kyc_mismatch: tr(t, 'cashout3.errKyc', 'O CPF precisa ser o mesmo do seu primeiro saque. Fale com o suporte para alterar.'),
+        cpf_in_use: tr(t, 'cashout3.errCpfInUse', 'Este CPF já está vinculado a outra conta.'),
+        account_too_new: tr(t, 'earn.blockAccountNew', 'Sua conta precisa ter pelo menos {n} dias para sacar.').replace('{n}', String(rules.minAgeDays || 30)),
+        minor_blocked: tr(t, 'earn.blockMinor', 'Saques não estão disponíveis para contas supervisionadas.'),
+        disabled: tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.'),
+        rate_limit: tr(t, 'wallet.cashoutRateLimit', 'Você já tem 3 saques em análise. Aguarde a aprovação.'),
       };
+      if (msg === 'disabled') { setServerDisabled(true); setStep('form'); return; }
       setError(map[msg] || map[code] || tr(t, 'wallet.cashoutFailed', 'Falha ao solicitar saque.'));
       setStep('review');
     } catch (e) {
       setError(tr(t, 'cashout2.errNetwork', 'Sem conexão. Confira a internet e tente de novo.'));
       setStep('review');
     }
-  }, [amountCents, pixKey, pixType, fullName, cpf, t, loadAll]);
+  }, [amountCents, pixKey, pixType, fullName, cpf, t, loadAll, rules.minAgeDays]);
 
   const copyReceipt = async (row) => {
     const lines = [
@@ -279,12 +309,22 @@ export default function WalletCashoutScreen() {
           <IconCheckCircle size={40} color={s.success} />
           <Text style={[Type.title3, { color: s.text, marginTop: Space.md }]}>{tr(t, 'wallet.cashoutSent', 'Saque solicitado')}</Text>
           <Text style={[Type.subhead, { color: s.textSecondary, textAlign: 'center', marginTop: Space.xs }]}>
-            {tr(t, 'cashout2.sentBody', '{amount} via Pix em até 48h úteis. Acompanhe o status abaixo.').replace('{amount}', brl(result.amount))}
+            {tr(t, 'cashout3.sentBody', '{amount} em análise. Após a aprovação, o Pix cai em até 3 dias úteis. Acompanhe o status abaixo.').replace('{amount}', brl(result.amount))}
           </Text>
           <Button title={tr(t, 'common.done', 'Concluir')} variant="secondary" style={{ marginTop: Space.lg }} fullWidth
             onPress={() => { setStep('form'); setResult(null); }} />
         </View>
       </Card>
+    );
+  } else if (rules.block && step !== 'done') {
+    const bm = {
+      account_too_new: tr(t, 'earn.blockAccountNew', 'Sua conta precisa ter pelo menos {n} dias para sacar.').replace('{n}', String(rules.minAgeDays || 30)),
+      minor: tr(t, 'earn.blockMinor', 'Saques não estão disponíveis para contas supervisionadas.'),
+      negative_balance: tr(t, 'earn.blockNegative', 'Há um estorno pendente na sua carteira. Regularize para sacar.'),
+      pending_exists: tr(t, 'earn.blockPending', 'Você já tem um saque em análise.'),
+    };
+    formBlock = (
+      <Notice s={s} icon={IconInfo} title={bm[rules.block] || tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.')} />
     );
   } else if (!reachedMin) {
     formBlock = (
@@ -390,7 +430,9 @@ export default function WalletCashoutScreen() {
         </Field>
 
         <Field s={s} label={tr(t, 'wallet.cashoutCpf', 'CPF')} error={shown('cpf')}
-          hint={tr(t, 'cashout2.cpfHint', 'CPF do titular da conta que recebe o Pix.')}>
+          hint={rules.kyc?.cpf_masked
+            ? tr(t, 'cashout3.cpfKycHint', 'Use o mesmo CPF dos saques anteriores ({cpf}).').replace('{cpf}', String(rules.kyc.cpf_masked))
+            : tr(t, 'cashout2.cpfHint', 'CPF do titular da conta que recebe o Pix.')}>
           <TextInput
             value={cpf}
             onChangeText={(v) => setCpf(fmtCpf(v))}
@@ -406,7 +448,7 @@ export default function WalletCashoutScreen() {
 
         <Button title={tr(t, 'cashout2.continue', 'Continuar')} size="lg" fullWidth onPress={goReview} style={{ marginTop: Space.xl }} />
         <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', marginTop: Space.md }]}>
-          {tr(t, 'cashout2.tos', 'Pagamento via Pix em até 48h úteis após análise. A taxa de plataforma (30%) já foi descontada do saldo.')}
+          {tr(t, 'cashout3.tos', 'Cada saque passa por análise manual (titularidade do CPF e da chave Pix) antes do pagamento via Pix, em até 3 dias úteis. Taxas já descontadas do saldo.')}
         </Text>
       </Card>
     );
@@ -422,8 +464,14 @@ export default function WalletCashoutScreen() {
           {money(available)}
         </Text>
         <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
-          {tr(t, 'cashout2.heroSub', 'Mínimo {min} · Pix em até 48h úteis').replace('{min}', money(MIN_CENTS))}
+          {tr(t, 'cashout3.heroSub', 'Mínimo {min} · análise manual · Pix em até 3 dias úteis').replace('{min}', money(MIN_CENTS))}
         </Text>
+        {rules.onHold > 0 ? (
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs }]}>
+            {tr(t, 'earn.onHold', '{amount} em liberação (presentes dos últimos {days} dias)')
+              .replace('{amount}', money(rules.onHold)).replace('{days}', String(rules.holdDays || 7))}
+          </Text>
+        ) : null}
       </Card>
 
       {formBlock}

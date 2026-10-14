@@ -28,6 +28,10 @@ import LivePollOverlay from '../components/live/LivePollOverlay';
 // [lives-engage 2026-10-10] curtidas totais/top fãs/Q&A/presentes do lado do host.
 import LiveEngageLayer, { LiveHostEngageBar } from '../components/live/LiveEngageLayer';
 import { useLiveEngageController } from '../components/live/liveEngageStore';
+import { giftMeta as _lgMeta, giftLabel as _lgLabel } from '../components/live/liveEngageConfig';
+// [2026-10-13 diamantes-religados] LiveTopGifters/LiveGiftAnimation antigos
+// desligados — LiveEngageLayer (banners/tela cheia/top fãs) é a única camada.
+const LEGACY_LIVE_GIFT_UI = false;
 // [multi-guest 2026-10-10] Palco multi-convidados (TikTok Multi-guest).
 import useLiveStage, { emailFromIdentity as _mgEmailFromIdentity } from '../hooks/useLiveStage';
 import LiveGuestStage from '../components/liveGuests/LiveGuestStage';
@@ -1088,9 +1092,13 @@ function LiveBroadcastScreen() {
               name: msg.sender_name || (msg.sender_email || '').split('@')[0] || '?',
               email: msg.sender_email,
               type: 'gift',
-              gift: msg.gift_type || msg.gift,
+              gift: msg.gift_sku || msg.gift_type || msg.gift,
               amount: msg.diamonds || msg.amount || 1,
-              giftLabel: (msg.gift_type || msg.gift) ? ((t('live.sentGift') || 'enviou') + ' ' + (msg.gift_type || msg.gift)) : (t('live.sentGift') || 'enviou um presente'),
+              giftLabel: (() => {
+                const _m = _lgMeta(msg.gift_sku || msg.gift_type || msg.gift);
+                const _q = Number(msg.quantity) || 1;
+                return (t('live.sentGift') || 'enviou') + ' ' + _lgLabel(t, msg.icon || _m.icon, msg.label || _m.label) + (_q > 1 ? ' x' + _q : '');
+              })(),
               entry,
             });
             Animated.spring(entry, { toValue: 1, friction: 6, tension: 120, useNativeDriver: true }).start();
@@ -1104,14 +1112,14 @@ function LiveBroadcastScreen() {
               diamonds: msg.diamonds || msg.amount || 1,
             };
             // Queue if another animation is running so they don't overlap.
-            setActiveGiftAnim(prev => {
+            if (LEGACY_LIVE_GIFT_UI) setActiveGiftAnim(prev => {
               if (prev) {
                 pendingGiftsRef.current.push(giftEvent);
                 return prev;
               }
               return giftEvent;
             });
-            setGiftRefreshKey(k => k + 1);
+            if (LEGACY_LIVE_GIFT_UI) setGiftRefreshKey(k => k + 1);
           }
           break;
         case 'live_guest_offer':
@@ -4493,7 +4501,7 @@ function LiveBroadcastScreen() {
 
       {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
           Top gifters leaderboard on the host POV. */}
-      {DIAMONDS_ENABLED && sessionId ? (
+      {LEGACY_LIVE_GIFT_UI && DIAMONDS_ENABLED && sessionId ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -4519,7 +4527,7 @@ function LiveBroadcastScreen() {
           a `live_gift` WS event arrives. Uses a key derived from the
           incoming event so React mounts a fresh animation each time.
           [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
-      {DIAMONDS_ENABLED && activeGiftAnim ? (
+      {LEGACY_LIVE_GIFT_UI && DIAMONDS_ENABLED && activeGiftAnim ? (
         <LiveGiftAnimation
           key={activeGiftAnim.key}
           gift={activeGiftAnim}

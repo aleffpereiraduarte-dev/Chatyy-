@@ -49,6 +49,11 @@ import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
+// [2026-10-13 diamantes-religados] UI antiga de presente (LiveTopGifters/
+// LiveGiftAnimation/LiveGiftPicker/DiamondTopUpSheet) fica desligada: a camada
+// nova (LiveEngageLayer: banners com combo, tela cheia por tier, GiftSheet,
+// top fãs) é a única — senão o mesmo presente animava 2x.
+const LEGACY_LIVE_GIFT_UI = false;
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import ConnectionBars from '../components/ConnectionBars';
 // Round 67 #1158 (2026-05-18) — keep the display on while watching a
@@ -1922,11 +1927,13 @@ export default function LiveViewerScreen() {
             gift_type: msg.gift_type || msg.gift,
             diamonds: msg.diamonds || msg.amount || 1,
           };
-          setActiveGiftAnim(prev => {
-            if (prev) { pendingGiftsRef.current.push(giftEvent); return prev; }
-            return giftEvent;
-          });
-          setGiftRefreshKey(k => k + 1);
+          if (LEGACY_LIVE_GIFT_UI) {
+            setActiveGiftAnim(prev => {
+              if (prev) { pendingGiftsRef.current.push(giftEvent); return prev; }
+              return giftEvent;
+            });
+            setGiftRefreshKey(k => k + 1);
+          }
           break;
         }
         case 'live_join_approve':
@@ -3952,7 +3959,7 @@ export default function LiveViewerScreen() {
           Top gifters leaderboard + center-screen gift animation overlay.
           Component imports stay so flipping the flag restores both with
           no rebuild. */}
-      {DIAMONDS_ENABLED && paramSessionId ? (
+      {LEGACY_LIVE_GIFT_UI && DIAMONDS_ENABLED && paramSessionId ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -3974,7 +3981,7 @@ export default function LiveViewerScreen() {
         </View>
       ) : null}
 
-      {DIAMONDS_ENABLED && activeGiftAnim ? (
+      {LEGACY_LIVE_GIFT_UI && DIAMONDS_ENABLED && activeGiftAnim ? (
         <LiveGiftAnimation
           key={activeGiftAnim.key}
           gift={activeGiftAnim}
@@ -4018,7 +4025,7 @@ export default function LiveViewerScreen() {
         chatHidden={chatHidden}
         onHeartPress={handleHeartTap}
         onHeartLongPress={handleHeartLongPress}
-        onDiamondPress={DIAMONDS_ENABLED ? handleDiamondTap : undefined}
+        onDiamondPress={LIVE_GIFTS_ENABLED ? () => likeEngage.openSheet('gift') : (LEGACY_LIVE_GIFT_UI ? handleDiamondTap : undefined)}
         onToggleChat={() => setChatHidden(h => !h)}
         onSnapshot={handleScreenshot}
         onShare={handleShare}
@@ -4362,14 +4369,14 @@ export default function LiveViewerScreen() {
           DiamondTopUpSheet + LiveGiftPicker. With the buttons that trigger
           them gated above, these never open anyway; we still gate the JSX
           so React doesn't waste cycles mounting hidden modals. */}
-      {DIAMONDS_ENABLED && (
+      {LEGACY_LIVE_GIFT_UI && DIAMONDS_ENABLED && (
         <DiamondTopUpSheet
           visible={topUpVisible}
           onClose={() => setTopUpVisible(false)}
         />
       )}
 
-      {DIAMONDS_ENABLED && (
+      {LEGACY_LIVE_GIFT_UI && DIAMONDS_ENABLED && (
         <LiveGiftPicker
           visible={giftPickerVisible}
           onClose={() => setGiftPickerVisible(false)}

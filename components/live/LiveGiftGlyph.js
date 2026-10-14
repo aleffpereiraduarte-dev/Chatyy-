@@ -1,7 +1,7 @@
 /**
  * LiveGiftGlyph — arte dos presentes da live em SVG puro (sem emoji, sem
  * imagem remota). Linguagem P&B premium: prata/branco com contorno grafite,
- * brilho especular sutil. Mesma arte no sheet, nos banners e na animação de
+ * brilho especular sutil. Exceção: 'diamond' é azul (cor só p/ o diamante). Mesma arte no sheet, nos banners e na animação de
  * tela cheia (escala vetorial).
  */
 import { memo } from 'react';
@@ -73,6 +73,46 @@ function LiveGiftGlyph({ icon, size = 40 }) {
           <Circle cx="24" cy="18" r="4" fill="#fff" stroke={INK} strokeWidth={1.3} />
           <Path d="M14 34l-6 8 6-2 2 4 2-6M34 34l6 8-6-2-2 4-2-6" fill="#fff" stroke={INK} strokeWidth={1.2} strokeLinejoin="round" />
           <Path d="M21 38c0 3 1 6 3 8 2-2 3-5 3-8" fill="#fff" stroke={INK} strokeWidth={1.1} />
+        </G>
+      );
+      break;
+    case 'sparkle':
+      body = (
+        <G>
+          <Circle cx="24" cy="24" r="19" fill={`url(#${id}g)`} />
+          <Path d="M24 5c1.6 9 4.6 12.4 14 14-9.4 1.6-12.4 5-14 14-1.6-9-4.6-12.4-14-14 9.4-1.6 12.4-5 14-14Z" fill={fill} stroke={INK} strokeWidth={1.4} strokeLinejoin="round" />
+          <Path d="M38 30c.6 3.4 1.8 4.6 5 5.2-3.2.6-4.4 1.8-5 5.2-.6-3.4-1.8-4.6-5-5.2 3.2-.6 4.4-1.8 5-5.2Z" fill="#fff" stroke={INK} strokeWidth={1.1} strokeLinejoin="round" />
+          <Path d="M11 31c.5 2.6 1.4 3.5 4 4-2.6.5-3.5 1.4-4 4-.5-2.6-1.4-3.5-4-4 2.6-.5 3.5-1.4 4-4Z" fill="#fff" stroke={INK} strokeWidth={1} strokeLinejoin="round" />
+        </G>
+      );
+      break;
+    case 'diamond':
+      // Único presente colorido: o diamante é a "moeda" do app.
+      body = (
+        <G>
+          <Defs>
+            <LinearGradient id={`${id}d`} x1="0" y1="0" x2="1" y2="1">
+              <Stop offset="0" stopColor="#E0F4FF" />
+              <Stop offset="0.5" stopColor="#7CC8FF" />
+              <Stop offset="1" stopColor="#2F80ED" />
+            </LinearGradient>
+          </Defs>
+          <Circle cx="24" cy="24" r="20" fill={`url(#${id}g)`} />
+          <Path d="M14 8h20l9 11-19 23L5 19l9-11Z" fill={`url(#${id}d)`} stroke="#0B3A75" strokeWidth={1.4} strokeLinejoin="round" />
+          <Path d="M5 19h38M14 8l6 11 4-11 4 11 6-11M20 19l4 23 4-23" fill="none" stroke="#0B3A75" strokeWidth={1.1} strokeLinejoin="round" />
+          <Path d="M16 11l3 6" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" />
+        </G>
+      );
+      break;
+    case 'castle':
+      body = (
+        <G>
+          <Circle cx="24" cy="24" r="21" fill={`url(#${id}g)`} />
+          <Path d="M7 42V20h5v4h4v-4h4v4h8v-4h4v4h4v-4h5v22H7Z" fill={fill} stroke={INK} strokeWidth={1.4} strokeLinejoin="round" />
+          <Path d="M18 20V10h12v10" fill={fill} stroke={INK} strokeWidth={1.4} strokeLinejoin="round" />
+          <Path d="M24 10V4l6 2.5-6 2.5" fill="#fff" stroke={INK} strokeWidth={1.1} strokeLinejoin="round" />
+          <Path d="M20 42v-8a4 4 0 0 1 8 0v8" fill="#fff" stroke={INK} strokeWidth={1.3} />
+          <Path d="M11 28h3v4h-3zM34 28h3v4h-3zM22.5 13h3v4h-3z" fill="#fff" stroke={INK} strokeWidth={1} />
         </G>
       );
       break;

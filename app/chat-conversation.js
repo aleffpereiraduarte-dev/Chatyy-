@@ -152,7 +152,13 @@ import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthCo
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, LetterSpacing, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/responsive';
-import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
+import { SCAN_DOCUMENT_ENABLED, DIAMONDS_ENABLED } from '../constants/featureFlags';
+// [2026-10-13 diamantes] presente no chat 1:1 (diamond_gift_send context 'chat';
+// o servidor grava a mensagem type 'gift' e ela chega pelo sync/WS normais).
+import GiftSheet from '../components/gifts/GiftSheet';
+import GiftBubble from '../components/gifts/GiftBubble';
+import { giftPreviewText } from '../components/gifts/giftCatalog';
+import { IconGiftBox as _IconGiftBox } from '../components/Icons';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 
@@ -4223,6 +4229,8 @@ function describeReplyTarget(rt, ref, t) {
       const q = String((m.poll && m.poll.question) || (_rtJSON(m.content) || {}).question || _rtField(content, 'question') || '').trim();
       return { Icon: IconBarChart, label: q || tr('chat.poll', 'Enquete'), lines: 1, thumb: null };
     }
+    case 'gift':
+      return { Icon: _IconGiftBox, label: giftPreviewText(t, m.content), lines: 1, thumb: null };
     case 'call_card': {
       const j = _rtJSON(m.content) || {};
       const isVideo = (m.call_type || j.call_type || _rtField(content, 'call_type')) === 'video';
@@ -5226,12 +5234,12 @@ function getCtxListStyles() {
 function AttachmentMenu(props) {
   const { t } = useLanguage();
   if (ATTACH_SHEET_NATIVE && AttachSheetNative) {
-    return <AttachSheetNative {...props} items={buildAttachItems(t)} />;
+    return <AttachSheetNative {...props} items={buildAttachItems(t, { gift: !!props.giftEnabled })} />;
   }
   return <AttachmentMenuLegacy {...props} />;
 }
 
-function AttachmentMenuLegacy({ visible, onClose, onPick, colors }) {
+function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled }) {
   const { t } = useLanguage();
   const sheetAnim = useRef(new Animated.Value(0)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
@@ -5253,7 +5261,7 @@ function AttachmentMenuLegacy({ visible, onClose, onPick, colors }) {
   }, [visible]);
 
   if (!show) return null;
-  const items = buildAttachItems(t);
+  const items = buildAttachItems(t, { gift: !!giftEnabled });
 
   const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [350, 0] });
   const scale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
@@ -5293,7 +5301,7 @@ function AttachmentMenuLegacy({ visible, onClose, onPick, colors }) {
 
 // Attachment sheet items — shared by the legacy sheet (web) and the native
 // UI-thread sheet. [2026-10-08 chat-native] extracted, contents unchanged.
-function buildAttachItems(t) {
+function buildAttachItems(t, opts = {}) {
   // Attachment sheet — câmera e áudio foram removidos: já existem como
   // botões dedicados no input bar (atalho de câmera + microfone), ficavam
   // redundantes aqui.
@@ -5325,6 +5333,8 @@ function buildAttachItems(t) {
     // [2026-10-08 chat-native] Calendar glyph — was a 2nd MapPin, identical to "Localização".
     { key: 'meetup', icon: IconCalendar, label: t('chatConv.meetup') || 'Encontro', color: '#111111' },
     { key: 'playlist', icon: IconMusic || IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#111111' },
+    // [2026-10-13 diamantes] Presente — só em conversa 1:1 (servidor recusa grupo).
+    ...(opts.gift ? [{ key: 'gift', icon: _IconGiftBox, label: t('gifts.attachLabel') || 'Presente', color: '#111111' }] : []),
     // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
     // when the feature flag is on (isShortVideoInChatEnabled returns true).
     // Returns null otherwise so the grid silently drops the slot for users
@@ -19017,6 +19027,7 @@ function ChatConversationInner() {
   // ATTACHMENT HANDLERS
   // ============================================================
 
+  const [showGiftSheet, setShowGiftSheet] = useState(false);
   const handlePickAttachment = async (type) => {
     // AttachmentMenu is now a plain <View> overlay (not a <Modal>), so we can
     // fire the picker modal immediately without waiting for a dismiss animation.
@@ -19046,6 +19057,7 @@ function ChatConversationInner() {
       case 'poll':         return setShowPollCreator(true);
       case 'meetup':       return setShowMeetupCreator(true);
       case 'playlist':     return setShowPlaylistCreator(true);
+      case 'gift':         return setShowGiftSheet(true);
       // 2026-05-18: in-chat short video (Reels-style). Flag-gated — when off
       // the menu item isn't even rendered. The recorder orchestrates capture
       // → compress → upload → send via shortVideoRecord.js. We surface a
@@ -28266,6 +28278,16 @@ function ChatConversationInner() {
           );
         }
 
+        case 'gift':
+          return (
+            <GiftBubble
+              content={msg.content}
+              isOwn={isOwn}
+              t={t}
+              textColor={isOwn ? ownTextColor : colors.text}
+              subColor={isOwn ? ownTextColor : (colors.textSecondary || colors.text)}
+            />
+          );
         case 'call_card': {
           // Call card: { call_type, call_status, duration, started_at, participant_email }
           let callData;
@@ -34341,7 +34363,18 @@ function ChatConversationInner() {
         onPick={handlePickAttachment}
         onSendMedia={handleAttachRecentMedia}
         colors={colors}
+        giftEnabled={DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId}
       />
+
+      {showGiftSheet && conversationId ? (
+        <GiftSheet
+          visible
+          onClose={() => setShowGiftSheet(false)}
+          context="chat"
+          targetId={conversationId}
+          recipientName={params.name || (params.email ? String(params.email).split('@')[0] : '')}
+        />
+      ) : null}
 
       {/* Poll Creator Modal — only mounted when open (lazy) */}
       {showPollCreator && (

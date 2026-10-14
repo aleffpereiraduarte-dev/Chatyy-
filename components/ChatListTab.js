@@ -1,4 +1,5 @@
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import { giftPreviewText as _giftPreviewText } from './gifts/giftCatalog'; // [2026-10-13 diamantes]
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
@@ -849,7 +850,7 @@ const ConversationRow = React.memo(function ConversationRow({
     // formatting in previews. Remove pairs of *…*, **…**, _…_, ~…~, ```…```.
     // [2026-10-08 qa] System tokens ("__sys.user_left__|x") must reach the
     // decoder below intact — the _italic_ strip mangled them into "_sys.userleft__|x".
-    if (!(lastMsg.type === 'system' || content.startsWith('__sys.'))) content = content
+    if (!(lastMsg.type === 'system' || lastMsg.type === 'gift' || content.startsWith('__sys.'))) content = content
       .replace(/```([\s\S]*?)```/g, '$1')          // code block
       .replace(/\|\|([^|]+)\|\|/g, '$1')           // spoiler ||x||
       .replace(/\*\*([^*]+)\*\*/g, '$1')           // **bold**
@@ -892,6 +893,11 @@ const ConversationRow = React.memo(function ConversationRow({
           } else {
             content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada de voz');
           }
+        }
+        // [2026-10-13 diamantes] presente do chat 1:1 (type 'gift', content JSON)
+        // → "Presente: Rosa ×3" (nunca o JSON cru).
+        else if (lastMsg.type === 'gift' || (parsed && parsed.gift_sku && parsed.v)) {
+          content = _giftPreviewText(t, parsed);
         }
         // Location msgs carry the type only on lastMsg.type (DB column) —
         // the JSON payload is `{latitude, longitude, live, ...}` with NO
@@ -9150,7 +9156,9 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                 try {
                   const parsed = JSON.parse(body);
                   const isCall = m.type === 'call_card' || parsed.call_id || parsed.call_type !== undefined || parsed.caller_email;
-                  if (isCall) {
+                  if (m.type === 'gift' || parsed.gift_sku) {
+                    body = _giftPreviewText(t, typeof m.content === 'string' ? m.content : parsed);
+                  } else if (isCall) {
                     const isVideo = parsed.call_type === 'video' || parsed.video === true;
                     const st = parsed.status || '';
                     if (st === 'missed' || st === 'declined' || st === 'rejected' || st === 'no_answer') {

@@ -1365,6 +1365,25 @@ function AppInit({ onNotification, setOtaToast }) {
         } catch {}
         wsDiamondUnsub = ws.on('diamond_received', (data) => {
           try {
+            // [2026-10-13 diamantes-religados] Presente de live: o host já vê os
+            // banners/animação; de chat: a bolha chega na conversa. Nada de
+            // Alert modal (host em live recebia dezenas). Post/reel → toast leve.
+            const _kind = String(data?.kind || '');
+            if (_kind === 'live_gift' || _kind === 'chat_gift') return;
+            if (_kind === 'post_gift') {
+              try {
+                const _t = _tRef.current;
+                const _nm = data?.from_name || (data?.from_email || '').split('@')[0] || '';
+                const _n = Number(data?.amount) || 0;
+                let _txt = `${_nm} enviou um presente (${_n} diamantes)`;
+                if (typeof _t === 'function') {
+                  const v = _t('gifts.receivedToast');
+                  if (v && v !== 'gifts.receivedToast') _txt = v.replace('{name}', _nm).replace('{n}', String(_n));
+                }
+                require('../components/ui').showToast?.({ message: _txt, kind: 'success' });
+              } catch {}
+              return;
+            }
             const fromName = data?.from_name || (data?.from_email || '').split('@')[0] || ((typeof _tRef.current === 'function' && _tRef.current('creatorEarnings.someone')) || 'Alguém');
             const amount = Number(data?.amount) || 0;
             const msg = data?.message ? `\n${data.message}` : '';

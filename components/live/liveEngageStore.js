@@ -94,30 +94,72 @@ function createController() {
     set({ giftBig: next });
   };
 
+  // Ranking por diamantes (REST) — atualizado na hora com sender_total do
+  // evento/retorno; refetch com debounce quando o evento não traz o total.
+  let giftersTimer = null;
+  const refetchGifters = () => {
+    if (!LIVE_GIFTS_ENABLED || !opts.sessionId) return;
+    if (giftersTimer) clearTimeout(giftersTimer);
+    giftersTimer = setTimeout(() => {
+      giftersTimer = null;
+      engApi.topGifters(opts.sessionId).then((r) => {
+        const list = r?.data?.gifters || r?.gifters;
+        if (Array.isArray(list)) set({ gifters: list });
+      }).catch(() => {});
+    }, 1500);
+  };
+  const upsertGifter = (email, name, avatar, total) => {
+    if (!email || !(total > 0)) { refetchGifters(); return; }
+    set((s) => {
+      const list = (s.gifters || []).slice();
+      const i = list.findIndex(g => String(g.email || '').toLowerCase() === email);
+      if (i >= 0) list[i] = { ...list[i], total_diamonds: Math.max(Number(list[i].total_diamonds) || 0, total) };
+      else list.push({ email, name, avatar_url: avatar || undefined, total_diamonds: total, gift_count: 1 });
+      list.sort((a, b) => (Number(b.total_diamonds) || 0) - (Number(a.total_diamonds) || 0));
+      return { gifters: list.slice(0, 100) };
+    });
+  };
+
+  const seenGiftIds = new Set();
   const pushGift = (msg) => {
-    const giftType = String(msg.gift_type || msg.gift || msg.gift_sku || '').toLowerCase();
+    const gid = msg.gift_id != null ? String(msg.gift_id) : '';
+    if (gid) {
+      if (seenGiftIds.has(gid)) return;
+      seenGiftIds.add(gid);
+      if (seenGiftIds.size > 500) seenGiftIds.clear();
+    }
+    const giftType = String(msg.gift_sku || msg.gift_type || msg.gift || '').toLowerCase();
     const meta = giftMeta(giftType);
-    const diamonds = Number(msg.diamonds || msg.amount || meta.diamonds || 1);
+    const icon = msg.icon && typeof msg.icon === 'string' ? msg.icon : meta.icon;
+    const qty = Math.max(1, Number(msg.quantity) || 1);
+    const unit = Number(msg.unit_diamonds) || meta.diamonds || 1;
+    const diamonds = Number(msg.diamonds || msg.amount) || unit * qty;
+    const tier = msg.tier || meta.tier;
     const email = String(msg.sender_email || '').toLowerCase();
     const name = msg.sender_name || (email.split('@')[0] || '?');
-    const key = email + '|' + meta.icon;
+    const comboId = msg.combo_id ? String(msg.combo_id) : '';
+    const serverCount = Number(msg.combo_count) || 0;
+    const key = comboId ? 'c|' + comboId : email + '|' + icon;
     const now = Date.now();
     set((s) => {
       const banners = s.giftBanners.slice();
       const idx = banners.findIndex(b => b.key === key && now - b.ts < GIFT_COMBO_WINDOW_MS);
       if (idx >= 0) {
-        banners[idx] = { ...banners[idx], count: banners[idx].count + 1, ts: now };
+        const next = serverCount > 0 ? Math.max(banners[idx].count, serverCount) : banners[idx].count + qty;
+        banners[idx] = { ...banners[idx], count: next, ts: now };
       } else {
-        banners.push({ key, id: key + '|' + now, email, name, icon: meta.icon, label: meta.label, diamonds, count: 1, ts: now });
+        banners.push({ key, id: key + '|' + now, email, name, icon, label: msg.label || meta.label, diamonds, count: serverCount > 0 ? serverCount : qty, ts: now });
         while (banners.length > MAX_GIFT_BANNERS) banners.shift();
       }
       return { giftBanners: banners };
     });
-    if (diamonds >= BIG_GIFT_DIAMONDS) {
-      const ev = { id: 'big_' + now + '_' + Math.random().toString(36).slice(2, 6), email, name, icon: meta.icon, label: meta.label, diamonds };
+    const big = tier === 'large' || tier === 'legendary' || (!msg.tier && unit >= BIG_GIFT_DIAMONDS);
+    if (big) {
+      const ev = { id: 'big_' + now + '_' + Math.random().toString(36).slice(2, 6), email, name, icon, label: msg.label || meta.label, diamonds, tier, quantity: qty };
       if (!state.giftBig) set({ giftBig: ev });
       else if (bigQueue.length < MAX_BIG_QUEUE) bigQueue.push(ev);
     }
+    upsertGifter(email, name, msg.sender_avatar, Number(msg.sender_total) || 0);
   };
 
   const qaRefresh = async () => {
@@ -158,6 +200,7 @@ function createController() {
     },
     dispose() {
       if (likeTimer) { clearTimeout(likeTimer); likeTimer = null; }
+      if (giftersTimer) { clearTimeout(giftersTimer); giftersTimer = null; }
       if (likePend) flushLikes();
       listeners.clear();
     },
@@ -286,6 +329,13 @@ function createController() {
     },
     bigGiftDone() { playNextBig(); },
     sendGift(sku) { return engApi.giftSend(opts.sessionId, sku); },
+    // Retorno do diamond_gift_send de quem enviou: sobe no ranking na hora
+    // (o banner/animação chegam pelo eco live_gift do hub).
+    noteSelfGift(data) {
+      const me = meEmail();
+      const total = Number(data?.sender_total) || 0;
+      if (me && total > 0) upsertGifter(me, opts.me?.name || me.split('@')[0], undefined, total);
+    },
 
     // ── Q&A ─────────────────────────────────────────────────────────────
     qaRefresh,

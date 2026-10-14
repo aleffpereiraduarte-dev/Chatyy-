@@ -329,9 +329,23 @@ export function getStoreProduct(productId) {
 /** Send the purchase to our backend for Apple-signed verification +
  *  plan activation. Finish the transaction afterwards (required or
  *  Apple will auto-refund after ~24h). */
+// [2026-10-13 diamantes] Respostas do wallet_topup_verify que são DEFINITIVAS:
+// a loja já cobrou, mas o servidor nunca vai creditar esta transação nesta conta
+// (sandbox/TestFlight de conta não-QA, tx já usada por outra conta, menor de
+// idade). Finaliza a transação (senão a loja reentrega para sempre) e avisa.
+// 410 (diamantes desligados), rede e 5xx NÃO entram: fica pendente p/ retry.
+const _DIAMOND_TERMINAL = new Set(['sandbox_not_allowed', 'already_claimed', 'minor_blocked', 'product_mismatch', 'order_id_mismatch', 'invalid_package_name']);
+function _diamondErrCode(r) {
+  const d = (r && r.data) || {};
+  if (d.code) return String(d.code);
+  const m = typeof r?.message === 'string' ? r.message : '';
+  return /^[a-z_]+$/.test(m) ? m : '';
+}
+
 async function _finalizePurchase(purchase) {
   let verified = false;
   let resultData = null;
+  let terminalCode = '';
   const pid = typeof purchase?.productId === 'string' ? purchase.productId : '';
   const isDiamond = pid.indexOf('chatyy_diamond') === 0 || pid.indexOf('chatyy_topup_') === 0;
   // WAVE 75 — storage subscriptions route through iap_validate_storage
@@ -381,6 +395,10 @@ async function _finalizePurchase(purchase) {
       }, 'POST');
       verified = !!r?.success;
       resultData = r?.data || null;
+      if (!verified && isDiamond) {
+        const code = _diamondErrCode(r);
+        if (_DIAMOND_TERMINAL.has(code)) terminalCode = code;
+      }
     }
   } catch (e) {
     if (__DEV__) console.warn('[IAP] verify failed:', e?.message);
@@ -388,6 +406,19 @@ async function _finalizePurchase(purchase) {
   // Só finaliza a transação se o backend confirmou. Senão deixa pendente
   // pra retry no próximo listener/restore — finishTransaction sem verify
   // bem-sucedido fazia o usuário pagar e ficar sem upgrade.
+  if (!verified && terminalCode) {
+    try {
+      const mod = _getIAP();
+      if (mod?.finishTransaction) await mod.finishTransaction({ purchase, isConsumable: true });
+    } catch (e) {
+      if (__DEV__) console.warn('[IAP] finishTransaction (terminal) failed:', e?.message);
+    }
+    if (_pendingTopupCallback) {
+      try { _pendingTopupCallback({ success: false, message: terminalCode }); } catch {}
+      _pendingTopupCallback = null;
+    }
+    return;
+  }
   if (!verified) {
     if (isDiamond && _pendingTopupCallback) {
       try { _pendingTopupCallback({ success: false, message: 'verify_failed' }); } catch {}
@@ -671,6 +702,29 @@ export async function purchaseSubscription(productId) {
  *  purchase the user closed the app on (network drop after Play sheet
  *  closed but before our listener fired). _finalizePurchase is
  *  idempotent via transaction_id, so re-running it is safe. */
+/** [2026-10-13 diamantes] "Restaurar/pendentes" da loja de diamantes: reenvia
+ *  ao servidor toda compra que a loja ainda tem em aberto (o servidor é
+ *  idempotente por transaction_id — nunca credita 2x). iOS também reentrega
+ *  as não-finalizadas via listener ao conectar. */
+export async function restoreDiamondPurchases() {
+  if (Platform.OS === 'web') return { success: false, message: 'web' };
+  if (!_available) { try { await initIAP(); } catch {} }
+  const mod = _getIAP();
+  if (!mod || !_available) return { success: false, message: 'iap_unavailable' };
+  try {
+    const purchases = await mod.getAvailablePurchases();
+    let count = 0;
+    for (const p of purchases || []) {
+      const pid = typeof p?.productId === 'string' ? p.productId : '';
+      if (pid.indexOf('chatyy_diamond') !== 0 && pid.indexOf('chatyy_topup_') !== 0) continue;
+      try { await _finalizePurchase(p); count++; } catch {}
+    }
+    return { success: true, count };
+  } catch (e) {
+    return { success: false, message: e?.message || 'restore_failed' };
+  }
+}
+
 export async function restorePurchases() {
   const mod = _getIAP();
   if ((Platform.OS === 'ios' || Platform.OS === 'android') && mod && _available) {

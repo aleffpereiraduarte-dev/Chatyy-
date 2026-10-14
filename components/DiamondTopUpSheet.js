@@ -1,274 +1,53 @@
-// DiamondTopUpSheet — bottom sheet that lets the user buy diamond packs
-// via real StoreKit IAP. Used from Live, Feed, Reels, and the creator
-// dashboard. Pure JS UI — the heavy lifting (initConnection, request,
-// listener, receipt verify) lives in services/iap.js.
-//
-// Pricing ladder (2026-10-13 — IDs reais do ASC; número do SKU = total entregue):
-//   chatyy_diamonds_100    R$  4,99 →    100 ◆
-//   chatyy_diamonds_550    R$ 19,99 →    550 ◆  (+10 % bonus)
-//   chatyy_diamonds_1700   R$ 49,99 →  1 700 ◆  (+13 %)
-//   chatyy_diamonds_6000   R$149,99 →  6 000 ◆  (+20 %)
-//   chatyy_diamonds_19500  R$399,99 → 19 500 ◆  (+30 %)
-//
-// Apple expects these registered as Consumable products in App Store Connect.
-// Google Play needs the same SKU IDs as Managed/Consumable products. Until
-// the SKUs propagate (24-48h post-create), purchases will fail with
-// USER_CANCELLED / product_not_found; the sheet shows a friendly hint.
-
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  View, Text, Modal, TouchableOpacity, StyleSheet, ActivityIndicator,
-  ScrollView, Platform, Alert,
-} from 'react-native';
+/**
+ * DiamondTopUpSheet — recarga rápida de diamantes (sheet) sobre a mesma loja
+ * da tela /diamond-shop (components/diamonds/DiamondStorePanel): iOS só IAP,
+ * Android só Play Billing, web Stripe; preço local da loja; "Em breve";
+ * restaurar pendentes; menor de idade bloqueado.
+ * [2026-10-13 diamantes-religados] — antes era no-op (return null).
+ */
+import React from 'react';
+import { Modal, View, Text, TouchableOpacity, Pressable, StyleSheet, ScrollView, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconX, IconDiamond } from './Icons';
-import { formatInt } from '../utils/dateFormat';
-import { Linking } from 'react-native';
-import * as api from '../services/api';
-import {
-  DIAMOND_PACKS, getDiamondLocalizedPrice, getDiamondCheckoutUrl, initIAP, isDiamondSkuAvailable,
-  purchaseDiamonds,
-} from '../services/iap';
+import { IconX } from './Icons';
+import DiamondStorePanel from './diamonds/DiamondStorePanel';
+import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 
-function formatBrl(value) {
-  const n = Number(value) || 0;
-  return `R$ ${n.toFixed(2).replace('.', ',')}`;
-}
+function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
 
 export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange }) {
-  // DIAMANTE DESLIGADO — compra de diamantes removida (não é armazenamento/plano).
-  // Backend retorna 410; o sheet vira no-op (nunca renderiza / nunca abre).
-  return null;
-  // eslint-disable-next-line no-unreachable
-  const { colors, isDark } = useTheme();
-  const { t, language } = useLanguage();
-
-  const [balance, setBalance] = useState(0);
-  const [loadingBal, setLoadingBal] = useState(false);
-  const [pendingSku, setPendingSku] = useState(null);
-  const [iapReady, setIapReady] = useState(false);
-
-  // Lazy IAP init: fires on first open, not on app boot, so the
-  // StoreKit/Play Billing observer doesn't grab cycles before the user
-  // has any intent. 2026-05-19 — Android Play Billing wired via the
-  // same expo-iap surface as iOS (#1203). Web still bails.
-  useEffect(() => {
-    if (!visible) return;
-    if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      initIAP().then(ok => setIapReady(!!ok)).catch(() => setIapReady(false));
-    } else {
-      setIapReady(false);
-    }
-  }, [visible]);
-
-  // Refresh balance whenever the sheet opens — server is source of truth.
-  useEffect(() => {
-    if (!visible) return;
-    let alive = true;
-    setLoadingBal(true);
-    (async () => {
-      try {
-        const r = await api.walletBalance?.();
-        if (alive && r?.success && r.data) {
-          const b = Number(r.data.diamond_balance) || 0;
-          setBalance(b);
-          onBalanceChange?.(b);
-        }
-      } catch {}
-      if (alive) setLoadingBal(false);
-    })();
-    return () => { alive = false; };
-  }, [visible, onBalanceChange]);
-
-  // Filter packs to what the billing client actually returned. If a SKU
-  // was never registered in App Store Connect / Play Console (or is still
-  // propagating after a create), `requestPurchase` throws "SKU not found"
-  // — we'd rather hide the tile than render a button that always errors.
-  // `iapReady` triggers the re-eval once fetchProducts resolves. Web
-  // keeps every pack visible (clicking deep-links to web checkout).
-  // [2026-10-13] Igual ao StorageShopSheet: com a loja conectada, só é tocável
-  // o pacote que voltou no catálogo (preço local); o resto fica "Em breve"
-  // (nunca mais "em aprovação" depois do toque). Antes de conectar: tudo visível.
-  const packs = DIAMOND_PACKS;
-  const isPackAvailable = (p) => Platform.OS === 'web' || !iapReady || isDiamondSkuAvailable(p.sku);
-
-  const onBuy = useCallback(async (pack) => {
-    if (pendingSku) return;
-    if (Platform.OS === 'web') {
-      // Web has no billing client; deep-link to the canonical checkout.
-      // Same backend wallet_topup_verify lands the balance.
-      try { Linking.openURL(getDiamondCheckoutUrl({ sku: pack.sku })); } catch {}
-      return;
-    }
-    setPendingSku(pack.sku);
-    try {
-      const r = await purchaseDiamonds(pack.sku);
-      if (r?.success) {
-        if (typeof r.diamondBalance === 'number') {
-          setBalance(r.diamondBalance);
-          onBalanceChange?.(r.diamondBalance);
-        }
-        Alert.alert(
-          t('wallet.topupSuccessTitle') || 'Diamantes creditados',
-          (t('wallet.topupSuccessBody') || 'Você ganhou {d} diamantes.').replace('{d}', r.diamondsAdded ?? pack.diamonds),
-        );
-      } else if (r?.message === 'cancelled') {
-        // User dismissed StoreKit — silent.
-      } else if (r?.message === 'web_fallback' || r?.message === 'iap_unavailable') {
-        // [WAVE 36 2026-05-20] On Android — IAP is still rolling out via Play
-        // Billing. Instead of dead-ending the user with "try again later", offer
-        // a deeplink to chatyy.com.br/diamantes where Stripe handles checkout.
-        // iOS doesn't get this branch — App Store policy bans steering off-platform.
-        if (Platform.OS === 'android') {
-          const buyUrl = getDiamondCheckoutUrl({ sku: pack?.sku });
-          Alert.alert(
-            t('wallet.topupUnavailableTitle') || 'Compra indisponível',
-            t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
-            [
-              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-              { text: t('wallet.openWebStore') || 'Abrir loja web', onPress: () => { try { Linking.openURL(buyUrl); } catch {} } },
-            ],
-          );
-        } else {
-          Alert.alert(
-            t('wallet.topupUnavailableTitle') || 'Compra indisponível',
-            t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
-          );
-        }
-      } else if (r?.message === 'sku_not_in_catalog') {
-        // [2026-10-13] Pacote fora do catálogo da loja → "Em breve" (sem "em aprovação").
-        Alert.alert(
-          t('common.comingSoon') || 'Em breve',
-          t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
-        );
-      } else {
-        Alert.alert(
-          t('common.error') || 'Erro',
-          r?.message || t('wallet.topupFailed') || 'Falha na compra. Tente novamente.',
-        );
-      }
-    } catch (e) {
-      Alert.alert(t('common.error') || 'Erro', e?.message || 'Falha na compra');
-    } finally {
-      setPendingSku(null);
-    }
-  }, [pendingSku, t, onBalanceChange]);
-
+  const { colors } = useTheme();
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
+  if (!visible || !DIAMONDS_ENABLED) return null;
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.scrim}>
-        <View style={[styles.sheet, { backgroundColor: isDark ? '#0b0b0b' : '#F8FAFC' }]}>
-          <View style={styles.head}>
-            <Text style={[styles.title, { color: colors.text }]}>
-              {t('wallet.topup') || 'Comprar diamantes'}
-            </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
-              <IconX size={18} color={colors.text} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.balanceRow}>
-            <Text style={[styles.balanceLabel, { color: colors.textSecondary }]}>
-              {t('wallet.currentBalance') || 'Saldo atual'}:
-            </Text>
-            {loadingBal ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <View style={styles.balValRow}>
-                <IconDiamond size={14} color={colors.primary} />
-                <Text style={[styles.balanceVal, { color: colors.text }]}>{formatInt(balance, language)}</Text>
-              </View>
-            )}
-          </View>
-
-          <ScrollView style={{ maxHeight: 440 }} contentContainerStyle={{ paddingBottom: 8 }}>
-            {packs.map(p => {
-              const localizedFromStore = getDiamondLocalizedPrice(p.sku);
-              const priceLabel = localizedFromStore || formatBrl(p.priceBrl);
-              const isLoading = pendingSku === p.sku;
-              const unavailable = !isPackAvailable(p);
-              const bonusBadge = p.bonusPct > 0
-                ? (t('wallet.topupBonus') || 'Bônus +{p}%').replace('{p}', p.bonusPct)
-                : null;
-              return (
-                <TouchableOpacity
-                  key={p.sku}
-                  onPress={() => onBuy(p)}
-                  disabled={!!pendingSku || unavailable}
-                  style={[styles.packRow, { borderColor: isDark ? 'rgba(17, 17, 17,0.25)' : 'rgba(17, 17, 17,0.18)', backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.04)', opacity: (pendingSku && !isLoading) || unavailable ? 0.5 : 1 }]}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${p.diamonds} ${t('wallet.diamondsLabel') || 'diamantes'} ${priceLabel}`}
-                >
-                  <View style={styles.packLeft}>
-                    <IconDiamond size={18} color={colors.primary} />
-                    <Text style={[styles.packDiamonds, { color: colors.text }]}>
-                      {formatInt(p.diamonds, language)}
-                    </Text>
-                    {bonusBadge ? (
-                      <View style={styles.bonusBadge}>
-                        <Text style={styles.bonusBadgeText}>{bonusBadge}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <View style={styles.packRight}>
-                    {isLoading ? (
-                      <ActivityIndicator color={colors.primary} />
-                    ) : (
-                      <Text style={[styles.packPrice, { color: unavailable ? colors.textSecondary : colors.text }]}>{unavailable ? (t('common.comingSoon') || 'Em breve') : priceLabel}</Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {!iapReady && (Platform.OS === 'ios' || Platform.OS === 'android') ? (
-            <Text style={[styles.iapHint, { color: colors.textTertiary }]}>
-              {Platform.OS === 'ios'
-                ? (t('wallet.topupConnecting') || 'Conectando à App Store…')
-                : (t('wallet.topupConnectingAndroid') || 'Conectando ao Google Play…')}
-            </Text>
-          ) : null}
-
-          <Text style={[styles.tosNote, { color: colors.textTertiary }]}>
-            {t('wallet.topupTos') || 'Diamantes não são reembolsáveis e não podem ser convertidos em dinheiro.'}
-          </Text>
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
+      <View style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        <View style={[styles.handle, { backgroundColor: colors.border || 'rgba(0,0,0,0.2)' }]} />
+        <View style={styles.head}>
+          <Text style={[styles.title, { color: colors.text }]}>{tr(t, 'wallet.topup', 'Comprar diamantes')}</Text>
+          <TouchableOpacity onPress={onClose} style={styles.x} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
+            <IconX size={20} color={colors.text} />
+          </TouchableOpacity>
         </View>
+        <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
+          <DiamondStorePanel compact onBalanceChange={onBalanceChange} />
+        </ScrollView>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 30,
-    minHeight: 420,
+    borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 16, paddingTop: 8,
+    ...(Platform.OS === 'web' ? { maxWidth: 560, width: '100%', alignSelf: 'center' } : null),
   },
-  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  title: { fontSize: 17, fontWeight: '700' },
-  closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  balanceLabel: { fontSize: 13 },
-  balValRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  balanceVal: { fontSize: 16, fontWeight: '800' },
-  packRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 14, paddingHorizontal: 14,
-    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 10,
-  },
-  packLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  packRight: { minWidth: 90, alignItems: 'flex-end' },
-  packDiamonds: { fontSize: 17, fontWeight: '800' },
-  packPrice: { fontSize: 16, fontWeight: '700' },
-  bonusBadge: {
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-    backgroundColor: '#10B981',
-  },
-  bonusBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  iapHint: { fontSize: 11, marginTop: 6, textAlign: 'center' },
-  tosNote: { fontSize: 11, marginTop: 12, textAlign: 'center', lineHeight: 14 },
+  handle: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, marginBottom: 8 },
+  head: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  title: { flex: 1, fontSize: 17, fontWeight: '800' },
+  x: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

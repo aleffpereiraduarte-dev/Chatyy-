@@ -22,16 +22,17 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconPlus, IconVolume2, IconVolumeX, IconEye,
-  IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders,
+  IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders, IconGiftBox,
 } from './Icons';
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
-// as Live gifts. We render a local TipSheetWrapper (defined below) that
-// mirrors LivePaidGiftSheet's grid but calls feed_post_tip instead of
-// the live-only live_gift_send endpoint.
+// as Live gifts. The gift panel is components/gifts/GiftSheet (context 'post' →
+// diamond_gift_send), the same panel used in lives and the 1:1 chat.
 import * as api from '../services/api';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
-import { giftLabel } from './live/liveEngageConfig';
+import { giftLabel, giftMeta } from './live/liveEngageConfig';
+import GiftSheet from './gifts/GiftSheet';
+import LiveGiftGlyph from './live/LiveGiftGlyph';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 // [reels-v1 2026-10-13] sinais de comportamento (só dentro do Reels) + cold start de interesses
 import { trackReelEvent, trackReelView, flushReelSignals } from '../services/reelsSignals';
@@ -890,145 +891,14 @@ const MusicMarquee = memo(function MusicMarquee({ text: musicText, active = true
   );
 });
 
-// ── Tip Sheet Wrapper (reuses paid-gift UI for per-reel tipping) ──
-// Mirrors LivePaidGiftSheet's grid but wires the Send button to
-// api.feedPostTip(postId, sku) instead of liveGiftSend(sessionId, sku).
-// We load the same catalog (liveGiftCatalog) so SKUs + diamond costs stay
-// in lockstep with Live monetization. Diamond balance pulled from
-// api.walletBalance().
-const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId, onTipSent, t }) {
-  const [gifts, setGifts] = useState([
-    { sku: 'gift_rose',   label: 'Rose',   diamonds_cost: 100 },
-    { sku: 'gift_star',   label: 'Star',   diamonds_cost: 300 },
-    { sku: 'gift_crown',  label: 'Crown',  diamonds_cost: 1000 },
-    { sku: 'gift_rocket', label: 'Rocket', diamonds_cost: 2000 },
-    { sku: 'gift_galaxy', label: 'Galaxy', diamonds_cost: 5000 },
-    { sku: 'gift_legend', label: 'Legend', diamonds_cost: 10000 },
-  ]);
-  const [balance, setBalance] = useState(0);
-  const [sending, setSending] = useState(false);
-
-  useEffect(() => {
-    if (!visible) return;
-    (async () => {
-      try {
-        const c = await api.liveGiftCatalog?.();
-        if (c?.success && Array.isArray(c.data?.gifts) && c.data.gifts.length) setGifts(c.data.gifts);
-      } catch {}
-      try {
-        const b = await api.walletBalance?.();
-        if (b?.success && b.data) setBalance(Number(b.data.diamond_balance) || 0);
-      } catch {}
-    })();
-  }, [visible]);
-
-  const onSend = useCallback(async (gift) => {
-    if (!postId || !gift?.sku || sending) return;
-    if (balance < (gift.diamonds_cost || 0)) {
-      // Insufficient — bubble up to user; LivePaidGiftSheet handles the
-      // top-up flow if they tap "Comprar" on the next try.
-      try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', t?.('feed.tipInsufficient') || 'Diamantes insuficientes'); } catch {}
-      return;
-    }
-    setSending(true);
-    try {
-      const res = await api.feedPostTip?.(postId, gift.sku);
-      if (res?.success) {
-        if (res.data?.diamond_balance != null) setBalance(Number(res.data.diamond_balance));
-        onTipSent?.(gift.sku);
-        onClose?.();
-      } else if (res?.data?.code === 'insufficient_diamonds') {
-        setBalance(Number(res.data.diamond_balance) || 0);
-        try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', t?.('feed.tipInsufficient') || 'Diamantes insuficientes'); } catch {}
-      } else {
-        // Surface the actual error so the user knows the tap didn't silently
-        // succeed. Previously this branch was empty + a silent catch — server
-        // 401 / 500 / "Post not found" all looked like "nothing happens" to
-        // the user. Bug report 2026-05-19: "clico em mandar diamante e nada
-        // acontece".
-        const msg = res?.message || res?.error || (t?.('common.error') || 'Erro ao enviar diamante');
-        try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', String(msg)); } catch {}
-      }
-    } catch (e) {
-      try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', t?.('common.networkError') || 'Falha de conexão'); } catch {}
-    } finally {
-      setSending(false);
-    }
-  }, [balance, onClose, onTipSent, postId, sending, t]);
-
-  if (!visible) return null;
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
-        onPress={onClose}
-      >
-        <Pressable
-          onPress={(e) => e.stopPropagation && e.stopPropagation()}
-          style={{ backgroundColor: '#111111', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 30, minHeight: 320 }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
-              {t?.('feed.tipSheetTitle') || 'Mandar diamante'}
-            </Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconX size={18} color="#fff" />
-            </TouchableOpacity>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
-              {t?.('live.diamondBalance') || 'Saldo'}:
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>{balance}</Text>
-              <IconDiamond size={13} color="#fff" />
-            </View>
-          </View>
-          <FlatList
-            data={gifts}
-            keyExtractor={(g) => g.sku}
-            numColumns={3}
-            columnWrapperStyle={{ gap: 10, justifyContent: 'space-between' }}
-            scrollEnabled={false}
-            renderItem={({ item }) => {
-              const affordable = balance >= (item.diamonds_cost || 0);
-              return (
-                <TouchableOpacity
-                  onPress={() => onSend(item)}
-                  disabled={sending}
-                  style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${giftLabel(t, item.icon || String(item.sku || '').replace(/^gift_/, ''), item.label)} ${item.diamonds_cost} ${t?.('wallet.diamondsLabel') || 'diamantes'}`}
-                >
-                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
-                    <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>{(item.icon || item.label || '?').toString().charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{giftLabel(t, item.icon || String(item.sku || '').replace(/^gift_/, ''), item.label)}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2 }}>
-                    <Text style={{ color: '#FBBF24', fontSize: 13, fontWeight: '800' }}>{item.diamonds_cost}</Text>
-                    <IconDiamond size={12} color="#FBBF24" />
-                  </View>
-                </TouchableOpacity>
-              );
-            }}
-          />
-          {sending ? (
-            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-              <ActivityIndicator color="#fff" />
-            </View>
-          ) : null}
-        </Pressable>
-      </Pressable>
-    </Modal>
-  );
-});
+// [2026-10-13 diamantes] TipSheetWrapper removido — presente em reel usa
+// components/gifts/GiftSheet.js (context 'post', mesmo painel da live).
 
 // ── Floating Diamond (tip animation) ──
 // When the user sends a tip (or someone else does via WS), we mount this
 // component with a unique key. It rises from the bottom-right of the reel,
 // fading out after ~1.4s. Multiple simultaneous tips stack visually.
-const FloatingDiamond = memo(function FloatingDiamond({ label }) {
+const FloatingDiamond = memo(function FloatingDiamond({ label, icon }) {
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 
@@ -1061,9 +931,9 @@ const FloatingDiamond = memo(function FloatingDiamond({ label }) {
         transform: [{ translateY }],
       }}
     >
-      <IconDiamond size={16} color="#fff" />
-      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>
-        {label || 'Diamante'}
+      {icon ? <LiveGiftGlyph icon={icon} size={28} /> : <IconDiamond size={16} />}
+      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', maxWidth: 200 }} numberOfLines={1}>
+        {label || ''}
       </Text>
     </Animated.View>
   );
@@ -1637,10 +1507,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     }
   }, [reel?.author_email]);
 
-  const pushDiamondBurst = useCallback((label) => {
+  const pushDiamondBurst = useCallback((label, icon) => {
     burstSeqRef.current += 1;
     const key = burstSeqRef.current;
-    setDiamondBursts(prev => [...prev, { key, label }]);
+    setDiamondBursts(prev => [...prev, { key, label, icon }].slice(-6));
     // GC the burst after the animation completes (1500ms ≈ animation length).
     setTimeout(() => {
       setDiamondBursts(prev => prev.filter(b => b.key !== key));
@@ -1658,14 +1528,18 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     try { mailWs.subscribe(channel); } catch {}
     unsub = mailWs.on('feed_post_tip', (data) => {
       if (!data || Number(data.post_id) !== Number(reel.id)) return;
+      // [2026-10-13 diamantes] o meu presente já animou no onSent — ignora o eco.
+      if (user?.email && String(data.sender_email || '').toLowerCase() === String(user.email).toLowerCase()) return;
       const who = data.sender_name || data.sender_email?.split('@')[0] || '?';
-      pushDiamondBurst(String(who)); // [2026-10-08 apps-native] sem emoji (FloatingDiamond já desenha IconDiamond)
+      const meta = giftMeta(data.gift_sku || data.gift_type || data.gift);
+      const q = Number(data.quantity) || 1;
+      pushDiamondBurst(`${who} · ${giftLabel(t, data.icon || meta.icon, data.label || meta.label)}${q > 1 ? ' x' + q : ''}`, data.icon || meta.icon);
     });
     return () => {
       try { unsub?.(); } catch {}
       try { mailWs.unsubscribe?.(channel); } catch {}
     };
-  }, [reel?.id, pushDiamondBurst]);
+  }, [reel?.id, pushDiamondBurst, user?.email, t]);
 
   // Tip click → open the existing paid-gift sheet. Override onClose so we
   // can intercept the send: LivePaidGiftSheet auto-fires liveGiftSend by
@@ -2335,10 +2209,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             onPress={handleOpenTip}
             activeOpacity={0.85}
             scaleTo={0.88}
-            accessibilityLabel={t?.('feed.tipCreator') || 'Mandar diamante'}
+            accessibilityLabel={t?.('gifts.sendGift') || 'Enviar presente'}
             accessibilityRole="button"
           >
-            <IconDiamond size={26} color="#fff" />
+            <IconGiftBox size={27} color="#fff" />
           </PressableScale>
         )}
 
@@ -2484,7 +2358,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
       {/* Floating diamond bursts — mounted briefly on each tip event. */}
       {diamondBursts.map(b => (
-        <FloatingDiamond key={b.key} label={b.label} />
+        <FloatingDiamond key={b.key} label={b.label} icon={b.icon} />
       ))}
 
       {/* Tip sheet — reuses LivePaidGiftSheet UI. We intercept onClose so we
@@ -2493,16 +2367,19 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           via a wrapping side-effect — when the sheet closes we check
           its last-selected gift and fire the tip ourselves. */}
       {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag */}
-      {DIAMONDS_ENABLED && <TipSheetWrapper
-        visible={tipSheetOpen}
-        onClose={() => setTipSheetOpen(false)}
-        postId={reel?.id}
-        onTipSent={(giftSku) => {
-          pushDiamondBurst(user?.name || user?.email?.split('@')[0] || 'Você'); // [2026-10-08 apps-native] sem emoji
-          try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Success); } catch {}
-        }}
-        t={t}
-      />}
+      {DIAMONDS_ENABLED && tipSheetOpen && reel?.id ? (
+        <GiftSheet
+          visible
+          onClose={() => setTipSheetOpen(false)}
+          context="post"
+          targetId={reel.id}
+          recipientName={reel.author_name || (reel.author_email || '').split('@')[0]}
+          onSent={(_d, gift, qty) => {
+            const me = user?.name || user?.email?.split('@')[0] || '';
+            pushDiamondBurst(`${me} · ${giftLabel(t, gift.icon, gift.label)}${qty > 1 ? ' x' + qty : ''}`, gift.icon);
+          }}
+        />
+      ) : null}
 
       {/* ── DRAGGABLE SCRUBBER ── (tap to jump / drag to seek) */}
       <Scrubber

@@ -66,13 +66,14 @@ import { haptic } from '../constants/theme'; // [2026-10-08 apps-native]
 import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
-  IconBookmark, IconBookmarkFilled, IconMoreHorizontal, IconTrash,
+  IconBookmark, IconBookmarkFilled, IconMoreHorizontal, IconTrash, IconGiftBox,
   IconMapPin, IconPlay, IconPause, IconPin, IconMusic, IconImage, IconLink,
 } from './Icons';
 import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
-import { MONETIZATION_ENABLED } from '../constants/featureFlags';
+import { MONETIZATION_ENABLED, DIAMONDS_ENABLED } from '../constants/featureFlags';
+import GiftSheet from './gifts/GiftSheet';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const ACCENT = '#111111';
@@ -715,6 +716,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   // flips, prop churn), so memoize to avoid re-parsing every render.
   const mediaUrls = useMemo(() => parseMediaUrls(post.media_urls), [post.media_urls]);
   const isOwner = user?.email === post.author_email;
+  // [2026-10-13 diamantes] presente no post (mesmo painel da live/reels).
+  const [giftOpen, setGiftOpen] = useState(false);
   const isWeb = Platform.OS === 'web';
   const cardWidth = Math.min(SCREEN_WIDTH, MAX_CARD_WIDTH);
 
@@ -1619,6 +1622,17 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           >
             <IconShare size={24} color={colors.text} />
           </TouchableOpacity>
+          {DIAMONDS_ENABLED && !isOwner && post?.id ? (
+            <TouchableOpacity
+              onPress={() => setGiftOpen(true)}
+              style={styles.actionBtn}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityLabel={t('gifts.sendGift') || 'Enviar presente'}
+              accessibilityRole="button"
+            >
+              <IconGiftBox size={25} color={colors.text} />
+            </TouchableOpacity>
+          ) : null}
         </View>
         <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
           <TouchableOpacity
@@ -2092,6 +2106,15 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         submitting={promoteSubmitting}
         setSubmitting={setPromoteSubmitting}
       />}
+      {DIAMONDS_ENABLED && giftOpen && post?.id ? (
+        <GiftSheet
+          visible
+          onClose={() => setGiftOpen(false)}
+          context="post"
+          targetId={post.id}
+          recipientName={post.author_name || String(post.author_email || '').split('@')[0]}
+        />
+      ) : null}
     </View>
   );
 }

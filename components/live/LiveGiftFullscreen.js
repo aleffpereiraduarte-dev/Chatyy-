@@ -1,6 +1,6 @@
 /**
  * LiveGiftFullscreen — animação de tela cheia para presentes grandes
- * (>= BIG_GIFT_DIAMONDS). RN Animated + SVG puro, sem dependência nativa.
+ * (tier large/legendary; legendary fica ~4s e maior). RN Animated + SVG puro.
  *
  * Linha do tempo (~2.9s): véu escuro sobe → arte entra com mola (0.2→1.15→1)
  * → anel de raios gira → 10 faíscas se espalham → legenda "Fulano enviou X"
@@ -14,7 +14,7 @@ import LiveGiftGlyph from './LiveGiftGlyph';
 import { giftLabel } from './liveEngageConfig';
 import { useEngageSelector, selGiftBig } from './liveEngageStore';
 
-const SPARKS = 10;
+const SPARKS = 14;
 
 function Rays({ size }) {
   const lines = [];
@@ -46,7 +46,7 @@ const BigGift = memo(function BigGift({ g, onDone }) {
   const pop = useRef(new Animated.Value(0)).current;
   const spin = useRef(new Animated.Value(0)).current;
   const spark = useRef(new Animated.Value(0)).current;
-  const size = Math.min(W, H) * 0.5;
+  const size = Math.min(W, H) * (g.tier === 'legendary' ? 0.62 : 0.5);
   const sparks = useMemo(() => Array.from({ length: SPARKS }, (_, i) => {
     const a = (Math.PI * 2 * i) / SPARKS + Math.random() * 0.4;
     const d = size * (0.55 + Math.random() * 0.35);
@@ -62,14 +62,14 @@ const BigGift = memo(function BigGift({ g, onDone }) {
         Animated.spring(pop, { toValue: 1, friction: 5, tension: 70, useNativeDriver: true }),
         Animated.timing(spark, { toValue: 1, duration: 1100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       ]),
-      Animated.delay(1300),
+      Animated.delay(g.tier === 'legendary' ? 2700 : 1300),
       Animated.parallel([
         Animated.timing(veil, { toValue: 0, duration: 320, useNativeDriver: true }),
         Animated.timing(pop, { toValue: 0, duration: 320, useNativeDriver: true }),
       ]),
     ]).start(() => { spinLoop.stop(); onDone(); });
     return () => spinLoop.stop();
-  }, [veil, pop, spin, spark, onDone]);
+  }, [veil, pop, spin, spark, onDone, g.tier]);
 
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   return (
@@ -101,7 +101,7 @@ const BigGift = memo(function BigGift({ g, onDone }) {
         </Animated.View>
         <Animated.View style={[styles.caption, { opacity: veil, transform: [{ translateY: pop.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }]}>
           <Text style={styles.name} numberOfLines={1}>{g.name}</Text>
-          <Text style={styles.sub} numberOfLines={1}>{`${t('liveEng.giftSent')} ${giftLabel(t, g.icon, g.label)}`}</Text>
+          <Text style={styles.sub} numberOfLines={1}>{`${t('liveEng.giftSent')} ${giftLabel(t, g.icon, g.label)}${g.quantity > 1 ? ' x' + g.quantity : ''}`}</Text>
         </Animated.View>
       </View>
     </View>
