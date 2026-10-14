@@ -399,8 +399,10 @@ function _webEngine(uri, startMs, rate, token, item) {
     const wasBlob = typeof audio.src === 'string' && audio.src.startsWith('blob:');
     if (wasBlob && !retried && item?.url && /^https?:/.test(item.url)) {
       retried = true;
-      try { require('./audioCache').invalidateWebAudio?.(item.url); } catch {}
-      audio.src = item.url;
+      let _src = item.url;
+      try { const mc = require('./mediaCache'); if (mc.playableAudioUrl) _src = mc.playableAudioUrl(item.url); } catch {} // [2026-10-14 wa-audio-m4a]
+      try { require('./audioCache').invalidateWebAudio?.(_src); } catch {}
+      audio.src = _src;
       audio.playbackRate = _state.rate;
       audio.play().catch(() => {});
       return;

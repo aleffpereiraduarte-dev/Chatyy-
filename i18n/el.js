@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Το φωνητικό μήνυμα δεν αναπαράχθηκε",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Ο ήχος δεν είναι διαθέσιμος — δοκιμάστε ξανά',
+  'chatConv.audioOfflineRetry': 'Χωρίς σύνδεση — πατήστε για νέα προσπάθεια',
 };

@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "ხმოვანი შეტყობინება არ არის მოსმენილი",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'აუდიო მიუწვდომელია — ხელახლა ცდა',
+  'chatConv.audioOfflineRetry': 'ინტერნეტი არ არის — შეეხეთ ხელახლა საცდელად',
 };

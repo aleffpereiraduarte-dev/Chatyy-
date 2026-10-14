@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Häälsõnum esitamata",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Heli pole saadaval — proovi uuesti',
+  'chatConv.audioOfflineRetry': 'Internet puudub — puuduta, et uuesti proovida',
 };

@@ -272,8 +272,14 @@ async function evictIfNeeded() {
  * @param {function} onProgress - Optional callback: (progress: 0-1) => void
  * @returns {Promise<string>} Local or blob URI for playback
  */
-export async function getCachedAudioUri(remoteUrl, messageId, onProgress) {
+export async function getCachedAudioUri(remoteUrl, messageId, onProgress, opts) {
   if (!remoteUrl) return remoteUrl;
+  // [2026-10-14 wa-audio-m4a] Nota de voz importada do WhatsApp (OGG/Opus, não
+  // toca no iOS) → pede a cópia .m4a ao servidor (URL/chave próprias).
+  try {
+    const mc = require('./mediaCache');
+    if (typeof mc.playableAudioUrl === 'function') remoteUrl = mc.playableAudioUrl(remoteUrl);
+  } catch {}
 
   // Se já é um path local (file:// ou content:// no Android), retorna direto
   // — antes content:// era tratado como remoto e o downloadAsync falhava.
@@ -310,19 +316,44 @@ export async function getCachedAudioUri(remoteUrl, messageId, onProgress) {
   const fs = getFS();
   if (!fs) return remoteUrl;
 
-  if (!_index) await buildIndex();
-  await ensureDir();
-
   const fileName = cacheFileName(remoteUrl, messageId);
   const localPath = getCacheDir() + fileName;
 
-  // Check if already cached
+  // Check if already cached (pasta legada audio-cache/ — downloads antigos)
   try {
     const info = await fs.getInfoAsync(localPath);
     if (info.exists && info.size > 0) {
       return localPath;
     }
   } catch {}
+
+  // [2026-10-14 offline-media] Download NOVO vai p/ o store permanente do
+  // mediaCache (documentDirectory/media/<conta>/<conversa>/<msgId>.<ext>):
+  // mesma política de foto/vídeo (sem o LRU de 200 arquivos/100 MB desta
+  // pasta, contado em Configurações › Armazenamento por conversa). Se o store
+  // não estiver disponível (sem conta ativa), cai no caminho legado abaixo.
+  try {
+    const mc = require('./mediaCache');
+    const st = require('./mediaStore');
+    if (typeof mc.cacheMedia === 'function' && st && typeof st.isEnabled === 'function' && st.isEnabled()) {
+      if (onProgress) onProgress(0.05);
+      const conv = opts && opts.conversationId != null && opts.conversationId !== '' ? opts.conversationId : undefined;
+      const got = await mc.cacheMedia(remoteUrl, {
+        force: true,
+        messageId: messageId != null && messageId !== '' ? messageId : undefined,
+        conversationId: conv,
+        mediaType: 'audio',
+      });
+      if (typeof got === 'string' && got.startsWith('file://')) {
+        if (onProgress) onProgress(1);
+        return got;
+      }
+      return remoteUrl;
+    }
+  } catch {}
+
+  if (!_index) await buildIndex();
+  await ensureDir();
 
   // [2026-10-10] Internet fraca: (1) um download por arquivo — o pré-cache do
   // balão e o toque do usuário compartilham a MESMA promessa (antes eram 2
@@ -515,6 +546,8 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
   if (Array.isArray(wavePeaks) && wavePeaks.length > 0) {
     setVoiceWaveform(remoteUrl, wavePeaks, messageId);
   }
+  // [2026-10-14 wa-audio-m4a] nota importada do WhatsApp → baixa a cópia .m4a (mesma chave do player).
+  try { const mc0 = require('./mediaCache'); if (mc0.playableAudioUrl) remoteUrl = mc0.playableAudioUrl(remoteUrl); } catch {}
   // [#1218 2026-05-20] WhatsApp-parity voice-note pre-fetch.
   // WhatsApp ALWAYS pre-fetches voice notes (they're tiny, typically <200KB)
   // regardless of the auto-download matrix — this is what makes "in the
@@ -591,7 +624,10 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
   try {
     const mc = require('./mediaCache');
     if (mc && typeof mc.saveMediaPermanent === 'function') {
-      const result = await mc.saveMediaPermanent(remoteUrl);
+      const result = await mc.saveMediaPermanent(remoteUrl, {
+        messageId: messageId != null && messageId !== '' ? messageId : undefined,
+        conversationId: opts.conversationId != null ? opts.conversationId : undefined,
+      });
       if (typeof result === 'string' && result.startsWith('file://')) {
         // [#1218 2026-05-20 BUG#1 fix] Write-back the local file:// path into
         // SQLite so the bubble can show it offline. Without this, audioCache

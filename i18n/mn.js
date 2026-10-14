@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "Дуут мессеж тоглуулаагүй",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Аудио боломжгүй — дахин оролдох',
+  'chatConv.audioOfflineRetry': 'Интернет алга — дахин оролдохын тулд дарна уу',
 };

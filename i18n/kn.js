@@ -1723,4 +1723,6 @@ export default {
   "chatConv.voiceNotHeard": "ಧ್ವನಿ ಸಂದೇಶ ಪ್ಲೇ ಮಾಡಿಲ್ಲ",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ಆಡಿಯೋ ಲಭ್ಯವಿಲ್ಲ — ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ',
+  'chatConv.audioOfflineRetry': 'ಇಂಟರ್ನೆಟ್ ಇಲ್ಲ — ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಲು ಟ್ಯಾಪ್ ಮಾಡಿ',
 };

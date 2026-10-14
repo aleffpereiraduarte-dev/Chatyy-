@@ -935,4 +935,6 @@ export default {
   "chatConv.voiceNotHeard": "صوتی پیغام نہیں چلایا گیا",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'آڈیو دستیاب نہیں — دوبارہ کوشش کریں',
+  'chatConv.audioOfflineRetry': 'انٹرنیٹ نہیں — دوبارہ کوشش کے لیے ٹیپ کریں',
 };

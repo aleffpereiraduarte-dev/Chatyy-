@@ -11975,4 +11975,6 @@ export default {
   "chatConv.voiceNotHeard": "वॉइस मैसेज नहीं चलाया गया",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ऑडियो उपलब्ध नहीं — फिर से कोशिश करें',
+  'chatConv.audioOfflineRetry': 'इंटरनेट नहीं — फिर से कोशिश के लिए टैप करें',
 };

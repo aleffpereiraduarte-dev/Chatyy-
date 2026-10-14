@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Hlasová správa neprehraná",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Zvuk nie je dostupný — skúsiť znova',
+  'chatConv.audioOfflineRetry': 'Bez internetu — ťuknutím skúsite znova',
 };

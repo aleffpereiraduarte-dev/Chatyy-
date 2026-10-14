@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "အသံမက်ဆေ့ချ် မဖွင့်ရသေး",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'အသံ မရနိုင်ပါ — ထပ်ကြိုးစားပါ',
+  'chatConv.audioOfflineRetry': 'အင်တာနက် မရှိပါ — ထပ်ကြိုးစားရန် နှိပ်ပါ',
 };

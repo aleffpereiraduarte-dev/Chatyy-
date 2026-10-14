@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "የድምፅ መልዕክት አልተጫወተም",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ድምፅ አይገኝም — እንደገና ይሞክሩ',
+  'chatConv.audioOfflineRetry': 'ኢንተርኔት የለም — እንደገና ለመሞከር ይንኩ',
 };

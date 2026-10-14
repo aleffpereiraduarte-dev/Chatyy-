@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Balss ziņa nav atskaņota",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Audio nav pieejams — mēģināt vēlreiz',
+  'chatConv.audioOfflineRetry': 'Nav interneta — pieskarieties, lai mēģinātu vēlreiz',
 };

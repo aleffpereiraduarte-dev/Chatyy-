@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "پیام صوتی پخش نشده",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'صدا در دسترس نیست — دوباره تلاش کنید',
+  'chatConv.audioOfflineRetry': 'اینترنت وصل نیست — برای تلاش دوباره ضربه بزنید',
 };

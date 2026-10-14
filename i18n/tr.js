@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Sesli mesaj oynatılmadı",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Ses kullanılamıyor — tekrar dene',
+  'chatConv.audioOfflineRetry': 'İnternet yok — tekrar denemek için dokun',
 };

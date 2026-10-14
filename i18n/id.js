@@ -11197,4 +11197,6 @@ export default {
   "chatConv.voiceNotHeard": "Pesan suara belum diputar",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Audio tidak tersedia — coba lagi',
+  'chatConv.audioOfflineRetry': 'Tidak ada internet — ketuk untuk mencoba lagi',
 };

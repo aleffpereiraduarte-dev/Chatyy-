@@ -11222,4 +11222,6 @@ export default {
   "chatConv.voiceNotHeard": "Mensagem de voz não reproduzida",
   'chatConv.seenAt': 'Visto',
   'chatConv.seenBy': 'Visto por',
+  'chatConv.audioUnavailableRetry': 'Áudio indisponível — tentar novamente',
+  'chatConv.audioOfflineRetry': 'Sem internet — toque para tentar novamente',
 };

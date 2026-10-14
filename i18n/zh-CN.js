@@ -8412,4 +8412,6 @@ export default {
   "chatConv.voiceNotHeard": "语音消息未播放",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': '音频不可用 — 重试',
+  'chatConv.audioOfflineRetry': '无网络 — 轻点重试',
 };

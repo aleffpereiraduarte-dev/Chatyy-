@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "ההודעה הקולית לא הושמעה",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'האודיו לא זמין — לנסות שוב',
+  'chatConv.audioOfflineRetry': 'אין אינטרנט — הקש לנסות שוב',
 };

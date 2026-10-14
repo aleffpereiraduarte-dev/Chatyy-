@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Balso žinutė nepaleista",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Garsas nepasiekiamas — bandyti dar kartą',
+  'chatConv.audioOfflineRetry': 'Nėra interneto — palieskite, kad bandytumėte dar kartą',
 };

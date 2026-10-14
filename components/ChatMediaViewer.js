@@ -1027,6 +1027,25 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
       if (!player) return;
       try { if (isActive) player.play(); else player.pause(); } catch {}
     }, [isActive, player]);
+    // [2026-10-14 offline-media] Vídeo remoto sem internet → expo-video ficava
+    // "carregando" p/ sempre. Erro do player + offline = aviso no lugar.
+    const { t: _tv } = useLanguage();
+    const [_vidOfflineErr, _setVidOfflineErr] = useState(false);
+    useEffect(() => {
+      if (!player || typeof player.addListener !== 'function') return undefined;
+      let sub = null;
+      try {
+        sub = player.addListener('statusChange', (ev) => {
+          const st = ev && ev.status;
+          if (st === 'readyToPlay') { _setVidOfflineErr(false); return; }
+          if (st !== 'error') return;
+          let online = true;
+          try { const oc = require('../services/offlineCache'); if (typeof oc.isOnline === 'function') online = !!oc.isOnline(); } catch {}
+          if (!online && !(typeof url === 'string' && url.startsWith('file://'))) _setVidOfflineErr(true);
+        });
+      } catch {}
+      return () => { try { sub?.remove?.(); } catch {} };
+    }, [player, url]);
 
     // Wave 14 — pinch-to-scrub. Uses react-native-gesture-handler's
     // PinchGestureHandler so the gesture composes cleanly with the
@@ -1081,6 +1100,13 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
             {videoNode}
           </PinchHandler>
         ) : videoNode}
+        {_vidOfflineErr ? (
+          <View pointerEvents="none" style={{ position: 'absolute', left: 24, right: 24, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', fontSize: 15, textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, overflow: 'hidden' }}>
+              {_tv?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.'}
+            </Text>
+          </View>
+        ) : null}
       </View>
     );
   }
@@ -2113,9 +2139,13 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // natively on Safari — Chrome/Firefox/Edge would show a dead player, so they
   // keep the progressive MP4.
   const _webHlsOk = Platform.OS !== 'web' || _canPlayHlsNatively();
-  let url = (_active?.type === 'video' && _active?.hlsUrl && _webHlsOk)
+  // [2026-10-14 offline-media] MP4 já baixado no aparelho vence o HLS remoto
+  // (antes, sem manifesto HLS offline, o vídeo salvo NÃO abria em modo avião).
+  const _mp4Url = getFullUrl(_active?.fileUrl);
+  const _mp4Local = typeof _mp4Url === 'string' && _mp4Url.startsWith('file://');
+  let url = (_active?.type === 'video' && _active?.hlsUrl && _webHlsOk && !_mp4Local)
     ? getFullUrl(_active.hlsUrl)
-    : getFullUrl(_active?.fileUrl);
+    : _mp4Url;
   if (_active?.type === 'video' && _hlsLocalUri && typeof _hlsLocalUri === 'string'
       && _hlsLocalUri.startsWith('file://')) {
     url = _hlsLocalUri;

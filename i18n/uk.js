@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Голосове повідомлення не прослухано",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Аудіо недоступне — спробувати ще',
+  'chatConv.audioOfflineRetry': 'Немає інтернету — торкніться, щоб спробувати ще',
 };

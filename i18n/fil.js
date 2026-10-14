@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Hindi pa na-play ang voice message",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Hindi available ang audio — subukan ulit',
+  'chatConv.audioOfflineRetry': 'Walang internet — i-tap para subukan ulit',
 };

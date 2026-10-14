@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Mesaj vocal neredat",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Audio indisponibil — încearcă din nou',
+  'chatConv.audioOfflineRetry': 'Fără internet — atinge pentru a încerca din nou',
 };

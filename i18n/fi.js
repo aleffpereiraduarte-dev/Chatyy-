@@ -9152,4 +9152,6 @@ export default {
   "chatConv.voiceNotHeard": "Ääniviestiä ei toistettu",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Ääni ei saatavilla — yritä uudelleen',
+  'chatConv.audioOfflineRetry': 'Ei internetiä — yritä uudelleen napauttamalla',
 };

@@ -4743,6 +4743,11 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
   const playLockRef = useRef(false);
   const isMountedRef = useIsMounted();
   const waveRef = useRef(null);
+  // [2026-10-14 wa-audio-m4a] Erro mostrado NA BOLHA (não mais Alert):
+  // 'codec' = arquivo não tocou; 'offline' = sem internet e ainda não baixado.
+  const [audioErr, setAudioErr] = useState(null);
+  const codecRetriedRef = useRef(false);
+  const togglePlayRef = useRef(null);
   // Best-known duration in ms: engine-reported wins over the message field.
   const durMsRef = useRef(Math.max(0, (Number(duration) || 0) * 1000));
   if (!(durMsRef.current > 0) && Number(duration) > 0) durMsRef.current = Number(duration) * 1000;
@@ -4775,14 +4780,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         const oc = require('../services/offlineCache');
         if (typeof oc.isOnline === 'function') online = !!oc.isOnline();
       } catch {}
-      const msg = online
-        ? (t?.('chatConv.audioLoadFailed') || t?.('common.genericError') || 'Não foi possível tocar este áudio.')
-        : (t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.');
-      if (Platform.OS === 'web') {
-        try { window.alert?.(msg); } catch {}
-      } else {
-        try { Alert.alert(t?.('common.error') || 'Erro', msg); } catch {}
-      }
+      if (isMountedRef.current) setAudioErr(online ? 'codec' : 'offline');
     } catch {}
   }, [t]);
 
@@ -4806,8 +4804,27 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         const u = lastPlayUriRef.current;
         const wasLocal = typeof u === 'string' && (u.startsWith('file://') || u.startsWith('content://'));
         if (wasLocal && Platform.OS !== 'web') {
-          const codecMsg = t?.('media.codecError') || t?.('chatConv.audioLoadFailed') || 'Não foi possível tocar este áudio (formato não suportado).';
-          try { Alert.alert(t?.('common.error') || 'Erro', codecMsg); } catch {}
+          // [2026-10-14 wa-audio-m4a] Arquivo local que não toca (ex.: .opus/.bin
+          // baixado antes da conversão no servidor) → apaga a cópia local, baixa
+          // de novo (o servidor entrega .m4a) e tenta 1×; se falhar de novo,
+          // mostra "Áudio indisponível — tentar de novo" na bolha.
+          cachedUriRef.current = null;
+          if (!codecRetriedRef.current) {
+            codecRetriedRef.current = true;
+            (async () => {
+              try {
+                const mc = require('../services/mediaCache');
+                await mc.deleteCachedUrl?.(mc.playableAudioUrl ? mc.playableAudioUrl(url) : url);
+                if (u && u.startsWith('file://')) {
+                  let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
+                  try { await fs.deleteAsync(u, { idempotent: true }); } catch {}
+                }
+              } catch {}
+              if (isMountedRef.current) togglePlayRef.current?.();
+            })();
+          } else if (isMountedRef.current) {
+            setAudioErr('codec');
+          }
         } else if (e.error !== 'autoplay_blocked') {
           _surfaceOfflineMiss();
         }
@@ -4825,7 +4842,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
       }
       _setSec(Math.floor(pos / 1000));
     });
-  }, [messageId, _setSec, _surfaceOfflineMiss, t]);
+  }, [messageId, _setSec, _surfaceOfflineMiss, t, url]);
 
   const cycleSpeed = useCallback(() => {
     // Monotonic 1x → 1.5x → 2x wheel (WhatsApp). Global + persisted.
@@ -4866,7 +4883,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     if (url) {
       getCachedAudioUri(url, messageId, (p) => {
         if (!cancelled) setCacheProgress(p);
-      }).then(localUri => {
+      }, { conversationId }).then(localUri => {
         if (cancelled || !localUri) return;
         const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
         if (isLocal) cachedUriRef.current = localUri;
@@ -4893,7 +4910,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     cachingRef.current = true;
     setCaching(true);
     try {
-      const localUri = await getCachedAudioUri(url, messageId, (p) => { if (isMountedRef.current) setCacheProgress(p); });
+      const localUri = await getCachedAudioUri(url, messageId, (p) => { if (isMountedRef.current) setCacheProgress(p); }, { conversationId });
       const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
       if (isLocal) cachedUriRef.current = localUri;
       return localUri || url;
@@ -4903,13 +4920,14 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
       if (isMountedRef.current) setCaching(false);
       cachingRef.current = false;
     }
-  }, [url, messageId]);
+  }, [url, messageId, conversationId]);
 
   const togglePlay = async () => {
     // Already the active note → plain pause / resume in the global player.
     if (vs.active) { VoiceNote.toggleVoiceNote({ messageId }); return; }
     if (playLockRef.current) return; // ignore re-entrant taps while resolving
     playLockRef.current = true;
+    if (audioErr) setAudioErr(null);
     try {
       const playUri = await resolvePlayUri();
       if (!isMountedRef.current) return;
@@ -4961,6 +4979,14 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     }
   };
 
+  togglePlayRef.current = togglePlay;
+  // Toque em "tentar de novo": zera o estado e tenta do zero (1 nova chance de re-download).
+  const retryAudio = useCallback(() => {
+    codecRetriedRef.current = false;
+    setAudioErr(null);
+    togglePlayRef.current?.();
+  }, []);
+
   // Net-recover hook: uncached bubble + network comes back → silently fetch
   // so the next tap is instant (WhatsApp "your messages are ready").
   useEffect(() => {
@@ -4975,7 +5001,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           if (cachedUriRef.current) return;
           try {
             const { prefetchAudioMessage } = require('../services/mediaCache');
-            prefetchAudioMessage?.(url).then((localUri) => {
+            prefetchAudioMessage?.(url, { conversationId, messageId }).then((localUri) => {
               if (typeof localUri === 'string' && localUri.startsWith('file://')) {
                 cachedUriRef.current = localUri;
               }
@@ -5062,6 +5088,22 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           initialRatio={initialRatio}
         />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          {audioErr ? (
+            <TouchableOpacity
+              onPress={retryAudio}
+              style={{ flexShrink: 1, paddingVertical: 2, marginRight: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={audioErr === 'offline'
+                ? (t('chatConv.audioOfflineRetry') || 'Sem internet — toque para tentar de novo')
+                : (t('chatConv.audioUnavailableRetry') || 'Áudio indisponível — tentar de novo')}
+            >
+              <Text numberOfLines={2} style={{ fontSize: 12, fontWeight: '600', color: isOwn ? ownCtrlSoft : (isDarkMode ? '#FF8A80' : '#C62828') }}>
+                {audioErr === 'offline'
+                  ? (t('chatConv.audioOfflineRetry') || 'Sem internet — toque para tentar de novo')
+                  : (t('chatConv.audioUnavailableRetry') || 'Áudio indisponível — tentar de novo')}
+              </Text>
+            </TouchableOpacity>
+          ) : (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
               {formatDuration(displayTime)}
@@ -5088,6 +5130,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
               <IconPhone size={11} color={isOwn ? ownMetaColor : (colors.textTertiary || '#9ca3af')} />
             ) : null}
           </View>
+          )}
           <TouchableOpacity
             onPress={cycleSpeed}
             accessibilityLabel={`${t ? (t('chatConv.playbackSpeed') || 'Playback speed') : 'Playback speed'} ${speed}x`}
@@ -32063,6 +32106,9 @@ function ChatConversationInner() {
               })()}
               uri={conversationType === 'group' ? conversationAvatar : undefined}
               size={38}
+              // [2026-10-14 avatar-instant] pré-carrega a foto GRANDE (size=1024) ao abrir a
+              // conversa → o toque abaixo abre o visualizador já nítido.
+              prefetchFull
               onPress={() => {
                 // WAVE 95: tap the header avatar → fullscreen lightbox of the
                 // friend's profile photo (WhatsApp parity). The outer

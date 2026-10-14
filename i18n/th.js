@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "ยังไม่ได้เล่นข้อความเสียง",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ไม่สามารถใช้เสียงได้ — ลองอีกครั้ง',
+  'chatConv.audioOfflineRetry': 'ไม่มีอินเทอร์เน็ต — แตะเพื่อลองอีกครั้ง',
 };

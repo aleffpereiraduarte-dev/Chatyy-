@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Missatge de veu no reproduït",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Àudio no disponible — torna-ho a provar',
+  'chatConv.audioOfflineRetry': 'Sense internet — toca per tornar-ho a provar',
 };

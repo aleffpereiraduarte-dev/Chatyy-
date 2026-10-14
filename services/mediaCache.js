@@ -8,6 +8,8 @@ const PERMANENT_DIR = 'chat-media-saved'; // Permanent storage (not cleared by O
 // the LRU sweep — heavier users bump via setMediaCacheCapMb (1GB / 5GB /
 // 10GB / Infinity for "unlimited").
 const MAX_CACHE_MB_DEFAULT = 500;
+// [2026-10-14 offline-media] Piso do limite do store permanente (mídia aberta).
+const STORE_MIN_CAP_MB = 2048;
 // 0 (or any non-positive number) is the sentinel for "unlimited" — skip the
 // LRU sweep entirely. Capped above (~64GB) so a typo doesn't blow the math.
 const MAX_CACHE_MB_CEILING = 64 * 1024;
@@ -26,7 +28,41 @@ function _store() {
 // Status/feed/reels/GIF externos seguem no cacheDirectory (transitório).
 function _isChatMediaUrl(url) {
   if (typeof url !== 'string') return false;
-  return /\/data\/chat-files\//.test(url) || /^https?:\/\/media\.chatyy\.com\.br\/chat\//i.test(url);
+  return /\/data\/chat-files\//.test(url) || /^https?:\/\/media\.chatyy\.com\.br\/chat\//i.test(url)
+    // [2026-10-14 offline-media] mídia importada do WhatsApp também é de conversa
+    // → store permanente (antes ia p/ o cacheDirectory purgável pelo iOS).
+    || /[?&]action=wa_import_file(&|$)/.test(url);
+}
+
+// [2026-10-14 wa-audio-m4a] Áudio importado do WhatsApp (OGG/Opus) não toca no
+// iOS. O servidor serve uma cópia AAC (.m4a) — pedimos explicitamente com
+// &fmt=m4a: URL nova = chave de cache nova (o .opus antigo já baixado no
+// aparelho é ignorado) e o arquivo local ganha a extensão .m4a.
+export function playableAudioUrl(url) {
+  if (typeof url !== 'string' || !url) return url;
+  if (!/[?&]action=wa_import_file(&|$)/.test(url) || /[?&]fmt=/.test(url)) return url;
+  const i = url.indexOf('#');
+  return i >= 0 ? url.slice(0, i) + '&fmt=m4a' + url.slice(i) : url + '&fmt=m4a';
+}
+
+// Content-Type → extensão (p/ arquivo baixado de URL sem extensão).
+const _CT_EXT = {
+  'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+  'image/heic': 'heic', 'image/heif': 'heif', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/3gpp': '3gp',
+  'video/webm': 'webm', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac', 'audio/mpeg': 'mp3',
+  'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/amr': 'amr', 'application/pdf': 'pdf', 'text/vcard': 'vcf',
+  'text/plain': 'txt', 'text/csv': 'csv', 'application/zip': 'zip',
+  'application/msword': 'doc', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt', 'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+};
+function _extFromContentType(ct) {
+  const k = String(ct || '').split(';')[0].trim().toLowerCase();
+  return _CT_EXT[k] || null;
+}
+function _extFromFileName(name) {
+  const m = String(name || '').toLowerCase().match(/\.([a-z0-9]{2,5})$/);
+  return m ? m[1] : null;
 }
 
 // ── Sync in-memory index: url → local file:// path ─────────────────────
@@ -247,9 +283,11 @@ function urlToKey(url) {
       if (keep) base = base + '?' + keep;
     }
   }
-  const ext = base.split('?')[0].match(
+  let ext = base.split('?')[0].match(
     /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|webm|mkv|m4v|3gp|avi|mp3|m4a|ogg|opus|wav|aac|flac|tgs|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv|json)$/i
   )?.[1] || 'bin';
+  // [2026-10-14 wa-audio-m4a] endpoint dinâmico com formato pedido (&fmt=m4a).
+  if (ext === 'bin') { const f = base.match(/[?&]fmt=(m4a|mp4)(&|$)/i); if (f) ext = f[1].toLowerCase(); }
   return _hash128(base) + '.' + ext;
 }
 
@@ -358,8 +396,64 @@ export function initSyncCache() {
     try { setTimeout(() => { runViewOnceCacheCleanupOnce().catch(() => {}); }, 12000); } catch {}
     // [2026-10-13 delete-for-all] mídia de mensagens apagadas que ficou no disco.
     try { setTimeout(() => { runDeletedMediaSweep().catch(() => {}); }, 15000); } catch {}
+    // [2026-10-14 offline-media] arquivos ".bin" antigos (mídia importada) → extensão real.
+    try { setTimeout(() => { _fixBinExtOnce().catch(() => {}); }, 20000); } catch {}
   })();
   return syncInitPromise;
+}
+
+// [2026-10-14 offline-media] Store com arquivos "<id>.bin" (URL sem extensão,
+// ex.: wa_import_file) → o iOS não abre vídeo/documento/áudio .bin. Detecta o
+// tipo pelos primeiros bytes e renomeia (1× por sessão, em lotes).
+let _binFixDone = false;
+function _extFromMagic(b64) {
+  let bin = '';
+  try { bin = typeof atob === 'function' ? atob(b64) : ''; } catch { bin = ''; }
+  if (!bin && typeof Buffer !== 'undefined') { try { bin = Buffer.from(b64, 'base64').toString('binary'); } catch {} }
+  if (!bin || bin.length < 12) return null;
+  const at = (i) => bin.charCodeAt(i);
+  const str = (i, n) => bin.substr(i, n);
+  if (at(0) === 0xFF && at(1) === 0xD8) return 'jpg';
+  if (str(1, 3) === 'PNG') return 'png';
+  if (str(0, 4) === 'GIF8') return 'gif';
+  if (str(0, 4) === 'RIFF' && str(8, 4) === 'WEBP') return 'webp';
+  if (str(0, 4) === 'RIFF' && str(8, 4) === 'WAVE') return 'wav';
+  if (str(0, 4) === '%PDF') return 'pdf';
+  if (str(0, 4) === 'OggS') return 'ogg';
+  if (str(0, 3) === 'ID3' || (at(0) === 0xFF && (at(1) & 0xE0) === 0xE0)) return 'mp3';
+  if (str(4, 4) === 'ftyp') {
+    const brand = str(8, 4);
+    if (brand === 'M4A ' || brand === 'M4B ') return 'm4a';
+    if (brand === 'qt  ') return 'mov';
+    if (/^(heic|heix|mif1|msf1)$/.test(brand)) return 'heic';
+    return 'mp4';
+  }
+  if (str(0, 5) === 'BEGIN') return 'vcf';
+  return null;
+}
+async function _fixBinExtOnce() {
+  if (_binFixDone || Platform.OS === 'web') return;
+  _binFixDone = true;
+  const fs = getFS(); const st = _store();
+  if (!fs || !st || typeof st.listBinEntries !== 'function') return;
+  const list = st.listBinEntries(500);
+  const renamed = [];
+  for (const it of list) {
+    try {
+      if (!it.abs) continue;
+      const head = await fs.readAsStringAsync(it.abs, { encoding: 'base64', position: 0, length: 16 });
+      const ext = _extFromMagic(head);
+      if (!ext) continue;
+      const to = it.abs.replace(/\.bin$/i, '.' + ext);
+      await fs.moveAsync({ from: it.abs, to });
+      const nAbs = st.setEntryExt(it.c, it.k, ext);
+      if (nAbs && it.urlKey) syncIndex.set(it.urlKey, nAbs);
+      renamed.push(it.abs.split('/').slice(-2).join('/'));
+    } catch {}
+  }
+  // local_path antigo (".bin") no SQLite → NULL (o render resolve pelo índice).
+  if (renamed.length) { try { require('./db').dbClearLocalPathByFilenames?.(renamed)?.catch?.(() => {}); } catch {} }
+  _schedulePersistIndex();
 }
 
 // Re-register a single URL → local path (called after every successful
@@ -377,7 +471,7 @@ export async function getCachedUri(url) {
   if (!fs) return url;
 
   const key = urlToKey(url);
-  try { const sp = _store()?.lookupByUrlKey(key); if (sp) return sp; } catch {}
+  try { const _s0 = _store(); const sp = _s0?.lookupByUrlKey(key); if (sp) { try { _s0.touch?.(key); } catch {} return sp; } } catch {}
   // Fast path: if syncIndex already knows where the file lives (e.g. scanned
   // by initSyncCache at boot or registered by cacheMedia mid-session), skip
   // the fs.getInfoAsync round-trip and the getSavedDir fallback below.
@@ -1548,7 +1642,9 @@ function _planStore(url, key, opts) {
     }
     const mid = (opts && opts.messageId != null && opts.messageId !== '') ? opts.messageId : null;
     if (conv == null && mid == null && !_isChatMediaUrl(url) && !st.lookupByUrlKey(key)) return null;
-    return st.planPath({ urlKey: key, conversationId: conv, messageId: mid });
+    // [2026-10-14 offline-media] chave .bin (URL sem extensão) → extensão do nome do arquivo da mensagem.
+    const extHint = key.endsWith('.bin') ? (_extFromFileName(opts && opts.fileName) || null) : null;
+    return st.planPath({ urlKey: key, conversationId: conv, messageId: mid, ext: extHint });
   } catch { return null; }
 }
 
@@ -2073,7 +2169,7 @@ export async function cacheMedia(url, opts = {}) {
     if (storeHit) {
       try {
         const info = await fs.getInfoAsync(storeHit);
-        if (info.exists && info.size > 0) { registerSyncKey(url, storeHit); return storeHit; }
+        if (info.exists && info.size > 0) { registerSyncKey(url, storeHit); try { _st.touch?.(key); } catch {} return storeHit; }
       } catch {}
       try { _st.forgetUrlKey(key); } catch {}
     }
@@ -2312,13 +2408,27 @@ export async function cacheMedia(url, opts = {}) {
               if (okSize && _expected > 0 && st.size !== _expected) okSize = false;
             } catch { okSize = false; }
             if (okSize) {
-              registerSyncKey(url, localPath);
+              // [2026-10-14 offline-media] URL sem extensão (wa_import_file) → o
+              // arquivo do store ganha a extensão do Content-Type (iOS AVPlayer /
+              // QuickLook não abrem ".bin"). A chave de lookup não muda.
+              let _finalPath = localPath;
+              let _finalPlan = _plan;
+              if (_plan && _st && /\.bin$/i.test(localPath) && typeof _st.withExt === 'function') {
+                const _ext = _extFromContentType(_headerCI(download.headers, 'content-type'));
+                if (_ext) {
+                  const _p2 = _st.withExt(_plan, _ext);
+                  if (_p2 && _p2.abs !== localPath) {
+                    try { await fs.moveAsync({ from: localPath, to: _p2.abs }); _finalPath = _p2.abs; _finalPlan = _p2; } catch {}
+                  }
+                }
+              }
+              registerSyncKey(url, _finalPath);
               _dlFailStatus.delete(key);
-              if (_plan && _st) { try { _st.record(_plan, { urlKey: key, messageId: opts.messageId, size: _gotSize, own: !!opts.own }); } catch {} }
+              if (_finalPlan && _st) { try { _st.record(_finalPlan, { urlKey: key, messageId: opts.messageId, size: _gotSize, own: !!opts.own }); } catch {} }
               // Count the downloaded bytes toward the network-usage total
               // (settings.js getNetStats). Fire-and-forget stat.
-              _countDownloadedBytes(fs, localPath);
-              return localPath;
+              _countDownloadedBytes(fs, _finalPath);
+              return _finalPath;
             }
             // Corrupt/empty download — remove the partial and retry.
             try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
@@ -2803,6 +2913,7 @@ export function prefetchIncomingMessageMedia(message) {
 // pick up the cached file on its next mount via getCachedAudioUri.
 export function prefetchAudioMessage(remoteUrl, opts = {}) {
   if (!remoteUrl || Platform.OS === 'web') return Promise.resolve(remoteUrl);
+  remoteUrl = playableAudioUrl(remoteUrl); // [2026-10-14 wa-audio-m4a] mesma chave do player
   try { console.log('[audio_offline] prefetch', String(remoteUrl).slice(0, 80)); } catch {}
   // saveMediaPermanent writes to documentDirectory (the "saved" dir) — same
   // location getCachedAudioUri checks via the mediaCache consolidation hook,
@@ -3052,6 +3163,28 @@ export async function evictIfNeeded(opts) {
   _evictInflight = (async () => {
     try {
       const limitBytes = capMb * 1024 * 1024;
+      // [2026-10-14 offline-media] Store permanente (mídia de conversa já
+      // aberta/baixada): evicção SÓ acima do limite — mín. 2 GB (o limite do
+      // usuário vale se maior; "Ilimitado" = nunca) — LRU por última abertura,
+      // nunca o que foi aberto nos últimos 14 dias nem conversa "Manter sempre".
+      try {
+        const st = _store();
+        if (st && typeof st.evictLRU === 'function') {
+          const storeLimit = Math.max(limitBytes, STORE_MIN_CAP_MB * 1024 * 1024);
+          const r = await st.evictLRU({
+            limitBytes: storeLimit,
+            protectConvs: { has: (c) => { try { return isConversationKeepAlways(c); } catch { return false; } } },
+          });
+          if (r && r.removed && r.removed.length) {
+            const names = [];
+            for (const x of r.removed) {
+              if (x.urlKey) syncIndex.delete(x.urlKey);
+              if (x.abs) names.push(x.abs.split('/').slice(-2).join('/'));
+            }
+            try { const nativeDb = require('./db'); nativeDb.dbClearLocalPathByFilenames?.(names)?.catch?.(() => {}); } catch {}
+          }
+        }
+      } catch {}
       const entries = [];
       // [P0 DATA LOSS 2026-05-26] PRIMARY GUARD: the LRU sweep walks ONLY the
       // OS-purgeable cache dir, never getSavedDir(). The saved/permanent dir

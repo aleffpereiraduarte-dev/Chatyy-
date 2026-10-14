@@ -4124,4 +4124,6 @@ export default {
   "chatConv.voiceNotHeard": "குரல் செய்தி இயக்கப்படவில்லை",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ஆடியோ கிடைக்கவில்லை — மீண்டும் முயலவும்',
+  'chatConv.audioOfflineRetry': 'இணையம் இல்லை — மீண்டும் முயல தட்டவும்',
 };

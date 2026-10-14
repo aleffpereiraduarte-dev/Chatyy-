@@ -923,4 +923,6 @@ export default {
   "chatConv.voiceNotHeard": "ਵੌਇਸ ਸੁਨੇਹਾ ਨਹੀਂ ਚਲਾਇਆ",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ਆਡੀਓ ਉਪਲਬਧ ਨਹੀਂ — ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ',
+  'chatConv.audioOfflineRetry': 'ਇੰਟਰਨੈੱਟ ਨਹੀਂ — ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਲਈ ਟੈਪ ਕਰੋ',
 };

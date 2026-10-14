@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "ຂໍ້ຄວາມສຽງຍັງບໍ່ໄດ້ຫຼິ້ນ",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ບໍ່ສາມາດໃຊ້ສຽງໄດ້ — ລອງໃໝ່',
+  'chatConv.audioOfflineRetry': 'ບໍ່ມີອິນເຕີເນັດ — ແຕະເພື່ອລອງໃໝ່',
 };

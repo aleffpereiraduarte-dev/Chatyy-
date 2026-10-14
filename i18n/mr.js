@@ -6525,4 +6525,6 @@ export default {
   "chatConv.voiceNotHeard": "व्हॉइस मेसेज प्ले केला नाही",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ऑडिओ उपलब्ध नाही — पुन्हा प्रयत्न करा',
+  'chatConv.audioOfflineRetry': 'इंटरनेट नाही — पुन्हा प्रयत्नासाठी टॅप करा',
 };

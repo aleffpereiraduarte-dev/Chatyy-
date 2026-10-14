@@ -11976,4 +11976,6 @@ export default {
   "chatConv.voiceNotHeard": "لم يتم تشغيل الرسالة الصوتية",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'الصوت غير متاح — أعد المحاولة',
+  'chatConv.audioOfflineRetry': 'لا يوجد اتصال — اضغط لإعادة المحاولة',
 };

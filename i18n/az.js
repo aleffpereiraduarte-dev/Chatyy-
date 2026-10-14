@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "Səsli mesaj dinlənilməyib",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Səs əlçatan deyil — yenidən cəhd edin',
+  'chatConv.audioOfflineRetry': 'İnternet yoxdur — yenidən cəhd üçün toxunun',
 };

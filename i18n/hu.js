@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Hangüzenet nincs lejátszva",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'A hang nem érhető el — próbáld újra',
+  'chatConv.audioOfflineRetry': 'Nincs internet — koppints az újrapróbáláshoz',
 };

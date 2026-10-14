@@ -9152,4 +9152,6 @@ export default {
   "chatConv.voiceNotHeard": "Голосовое сообщение не прослушано",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Аудио недоступно — повторить',
+  'chatConv.audioOfflineRetry': 'Нет интернета — нажмите, чтобы повторить',
 };

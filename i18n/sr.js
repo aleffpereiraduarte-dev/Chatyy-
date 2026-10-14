@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Glasovna poruka nije puštena",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Звук није доступан — покушај поново',
+  'chatConv.audioOfflineRetry': 'Нема интернета — додирни за поновни покушај',
 };

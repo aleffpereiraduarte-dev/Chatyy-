@@ -6523,4 +6523,6 @@ export default {
   "chatConv.voiceNotHeard": "વૉઇસ સંદેશ વગાડ્યો નથી",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ઑડિયો ઉપલબ્ધ નથી — ફરી પ્રયાસ કરો',
+  'chatConv.audioOfflineRetry': 'ઇન્ટરનેટ નથી — ફરી પ્રયાસ માટે ટૅપ કરો',
 };

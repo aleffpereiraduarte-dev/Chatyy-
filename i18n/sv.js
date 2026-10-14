@@ -9152,4 +9152,6 @@ export default {
   "chatConv.voiceNotHeard": "Röstmeddelande inte uppspelat",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Ljud ej tillgängligt — försök igen',
+  'chatConv.audioOfflineRetry': 'Inget internet — tryck för att försöka igen',
 };

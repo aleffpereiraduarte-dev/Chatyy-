@@ -922,4 +922,6 @@ export default {
   "chatConv.voiceNotHeard": "भ्वाइस सन्देश बजाइएको छैन",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'अडियो उपलब्ध छैन — फेरि प्रयास गर्नुहोस्',
+  'chatConv.audioOfflineRetry': 'इन्टरनेट छैन — फेरि प्रयास गर्न ट्याप गर्नुहोस्',
 };

@@ -11198,4 +11198,6 @@ export default {
   "chatConv.voiceNotHeard": "音声メッセージ未再生",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': '音声を再生できません — 再試行',
+  'chatConv.audioOfflineRetry': 'インターネットに接続されていません — タップして再試行',
 };

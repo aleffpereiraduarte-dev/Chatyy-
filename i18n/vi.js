@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Chưa phát tin nhắn thoại",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Không phát được âm thanh — thử lại',
+  'chatConv.audioOfflineRetry': 'Không có mạng — chạm để thử lại',
 };

@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "ভয়েস মেসেজ চালানো হয়নি",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'অডিও পাওয়া যাচ্ছে না — আবার চেষ্টা করুন',
+  'chatConv.audioOfflineRetry': 'ইন্টারনেট নেই — আবার চেষ্টা করতে ট্যাপ করুন',
 };

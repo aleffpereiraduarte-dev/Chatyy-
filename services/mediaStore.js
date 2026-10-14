@@ -218,7 +218,7 @@ export function isStorePath(path) {
 
 // Decide o caminho de destino. Retorna { abs, rel, dir, convSeg, entryKey } ou null.
 //   urlKey: chave do mediaCache (hash.ext)  ext: extensão sem ponto
-export function planPath({ urlKey, conversationId, messageId } = {}) {
+export function planPath({ urlKey, conversationId, messageId, ext: extHint } = {}) {
   if (!urlKey) return null;
   const slug = ensureAccount();
   const r = rootDir();
@@ -234,7 +234,11 @@ export function planPath({ urlKey, conversationId, messageId } = {}) {
   }
   const convSeg = conversationId != null && conversationId !== '' ? _safeSeg(conversationId) : '_';
   const dot = urlKey.lastIndexOf('.');
-  const ext = dot > 0 ? urlKey.slice(dot + 1) : 'bin';
+  let ext = dot > 0 ? urlKey.slice(dot + 1) : 'bin';
+  // [2026-10-14 offline-media] URL sem extensão (ex.: wa_import_file&m=ID) → a
+  // chave termina em .bin; o ARQUIVO no disco ganha a extensão real (iOS
+  // AVPlayer/QuickLook decidem o formato pela extensão — .bin não abre).
+  if (ext === 'bin' && typeof extHint === 'string' && /^[a-z0-9]{2,5}$/i.test(extHint)) ext = extHint.toLowerCase();
   let fileName;
   let entryKey;
   if (messageId != null && messageId !== '' && !String(messageId).startsWith('temp')) {
@@ -251,7 +255,7 @@ export function planPath({ urlKey, conversationId, messageId } = {}) {
       entryKey = 'm' + mid;
     }
   } else {
-    fileName = 'u_' + urlKey;
+    fileName = 'u_' + (ext !== 'bin' && urlKey.endsWith('.bin') ? urlKey.slice(0, -3) + ext : urlKey);
     entryKey = 'u' + urlKey;
   }
   const dirRel = slug + '/' + convSeg + '/';
@@ -279,6 +283,91 @@ export function record(plan, { urlKey, messageId, size, own } = {}) {
   _indexEntry(c, plan.entryKey, e);
   _dirty.add(c);
   _schedulePersist();
+}
+
+// [2026-10-14 offline-media] Arquivo baixado com extensão errada (.bin) →
+// devolve o plano com a extensão real (o chamador renomeia ANTES do record).
+export function withExt(plan, ext) {
+  if (!plan || !plan.abs || typeof ext !== 'string' || !/^[a-z0-9]{2,5}$/i.test(ext)) return plan;
+  if (!/\.bin$/i.test(plan.abs)) return plan;
+  const e = ext.toLowerCase();
+  return { ...plan, abs: plan.abs.replace(/\.bin$/i, '.' + e), rel: plan.rel.replace(/\.bin$/i, '.' + e) };
+}
+
+// [2026-10-14 offline-media] Entradas gravadas como ".bin" (antes da correção
+// de extensão) e renomeação in-place (o mediaCache detecta o tipo pelos bytes).
+export function listBinEntries(max = 500) {
+  const out = [];
+  if (!ensureAccount()) return out;
+  for (const [c, m] of _convs.entries()) {
+    for (const [k, e] of m.entries()) {
+      if (e && typeof e.r === 'string' && /\.bin$/i.test(e.r)) { out.push({ c, k, abs: _abs(e.r), urlKey: e.u || null }); if (out.length >= max) return out; }
+    }
+  }
+  return out;
+}
+export function setEntryExt(c, k, ext) {
+  const e = _convs.get(c)?.get(k);
+  if (!e || !/\.bin$/i.test(e.r) || !/^[a-z0-9]{2,5}$/i.test(String(ext))) return null;
+  e.r = e.r.replace(/\.bin$/i, '.' + String(ext).toLowerCase());
+  _dirty.add(c);
+  _schedulePersist();
+  return _abs(e.r);
+}
+
+// [2026-10-14 offline-media] "Abriu/tocou agora" → atualiza o t da entrada (LRU).
+// Barato: só grava se o t tem mais de 6 h (não martela o MMKV a cada render).
+const TOUCH_MIN_MS = 6 * 3600 * 1000;
+export function touch(urlKey) {
+  if (!urlKey || !ensureAccount()) return;
+  const hit = _byUrl.get(urlKey);
+  if (!hit) return;
+  const e = _convs.get(hit.c)?.get(hit.k);
+  if (!e) return;
+  const now = Date.now();
+  if (now - (Number(e.t) || 0) < TOUCH_MIN_MS) return;
+  e.t = now;
+  _dirty.add(hit.c);
+  _schedulePersist();
+}
+
+// [2026-10-14 offline-media] Evicção do store SÓ por limite (LRU pelo t = último
+// download/abertura). Nunca apaga o que foi aberto nos últimos `protectMs`
+// (padrão 14 dias) nem conversas em `protectConvs` (Manter sempre). Devolve
+// { freedBytes, removed: [{ abs, urlKey, m }] } — o mediaCache limpa índices.
+export async function evictLRU({ limitBytes, protectMs = 14 * 24 * 3600 * 1000, protectConvs = null } = {}) {
+  const res = { freedBytes: 0, removed: [] };
+  const lim = Number(limitBytes);
+  if (!(lim > 0) || !ensureAccount()) return res;
+  const all = [];
+  let total = 0;
+  for (const [c, m] of _convs.entries()) {
+    for (const [k, e] of m.entries()) {
+      const sz = Number(e.s) || 0;
+      total += sz;
+      all.push({ c, k, e, sz });
+    }
+  }
+  if (total <= lim) return res;
+  const cutoff = Date.now() - protectMs;
+  all.sort((a, b) => (Number(a.e.t) || 0) - (Number(b.e.t) || 0));
+  const fs = _fs();
+  for (const it of all) {
+    if (total - res.freedBytes <= lim) break;
+    if ((Number(it.e.t) || 0) >= cutoff) break; // daqui p/ frente tudo é recente
+    if (protectConvs && protectConvs.has(String(it.c))) continue;
+    const abs = _abs(it.e.r);
+    try { if (fs && abs) await fs.deleteAsync(abs, { idempotent: true }); } catch { continue; }
+    const m = _convs.get(it.c);
+    if (m) m.delete(it.k);
+    if (it.e.u) { const bu = _byUrl.get(it.e.u); if (bu && bu.c === it.c && bu.k === it.k) _byUrl.delete(it.e.u); }
+    if (it.e.m != null) { const bm = _byMsg.get(String(it.e.m)); if (bm && bm.k === it.k) _byMsg.delete(String(it.e.m)); }
+    _dirty.add(it.c);
+    res.freedBytes += it.sz;
+    res.removed.push({ abs, urlKey: it.e.u || null, m: it.e.m != null ? String(it.e.m) : null });
+  }
+  if (res.removed.length) { _dirty.add('__convs'); _schedulePersist(); }
+  return res;
 }
 
 export function lookupByUrlKey(urlKey) {

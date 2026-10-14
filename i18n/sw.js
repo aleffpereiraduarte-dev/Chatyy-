@@ -8374,4 +8374,6 @@ export default {
   "chatConv.voiceNotHeard": "Ujumbe wa sauti haujachezwa",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Sauti haipatikani — jaribu tena',
+  'chatConv.audioOfflineRetry': 'Hakuna intaneti — gusa ili ujaribu tena',
 };

@@ -9152,4 +9152,6 @@ export default {
   "chatConv.voiceNotHeard": "Wiadomość głosowa nieodtworzona",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Dźwięk niedostępny — spróbuj ponownie',
+  'chatConv.audioOfflineRetry': 'Brak internetu — dotknij, aby spróbować ponownie',
 };

@@ -925,4 +925,6 @@ export default {
   "chatConv.voiceNotHeard": "വോയ്സ് സന്ദേശം പ്ലേ ചെയ്തിട്ടില്ല",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'ഓഡിയോ ലഭ്യമല്ല — വീണ്ടും ശ്രമിക്കുക',
+  'chatConv.audioOfflineRetry': 'ഇന്റർനെറ്റ് ഇല്ല — വീണ്ടും ശ്രമിക്കാൻ ടാപ്പ് ചെയ്യുക',
 };

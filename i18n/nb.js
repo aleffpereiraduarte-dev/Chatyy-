@@ -9152,4 +9152,6 @@ export default {
   "chatConv.voiceNotHeard": "Talemelding ikke avspilt",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Lyd utilgjengelig — prøv igjen',
+  'chatConv.audioOfflineRetry': 'Ingen internett — trykk for å prøve igjen',
 };

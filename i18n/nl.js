@@ -9152,4 +9152,6 @@ export default {
   "chatConv.voiceNotHeard": "Spraakbericht niet afgespeeld",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Audio niet beschikbaar — opnieuw proberen',
+  'chatConv.audioOfflineRetry': 'Geen internet — tik om opnieuw te proberen',
 };

@@ -8370,4 +8370,6 @@ export default {
   "chatConv.voiceNotHeard": "Дауыстық хабар тыңдалмады",
   'chatConv.seenAt': 'Seen',
   'chatConv.seenBy': 'Seen by',
+  'chatConv.audioUnavailableRetry': 'Аудио қолжетімсіз — қайталап көріңіз',
+  'chatConv.audioOfflineRetry': 'Интернет жоқ — қайталау үшін түртіңіз',
 };
