@@ -287,6 +287,8 @@ const _chatSettingsFetch = { acct: '', at: 0, rev: -1 };
 // the full original while the original isn't on disk; fullscreen keeps the
 // original. Ids whose variant failed fall back to the original for the session.
 const _dispFailedIds = new Set();
+// [2026-10-14 dl-progress] Vídeos cujo download local falhou → toque cai no streaming do visualizador.
+const _vidDlFailedIds = new Set();
 const _LOCAL_MEDIA_TYPES = new Set(['image','video','audio','voice','gif','sticker','file']);
 const _isRemoteMediaRef = (u) => typeof u === 'string' && !!u && !/^(file|content|ph|asset|assets-library|blob|data):/i.test(u);
 // Local file for a media row from the canonical index only (sync, zero I/O).
@@ -2446,16 +2448,23 @@ function _waMetaGhost({ time, own, edited, icons }) {
 // linhas (onTextLayout no nativo; Range.getClientRects no web) e fixa a largura
 // = linha mais longa (+ paddingRight 3 do msgText + 1 de arredondamento). S\u00F3
 // encolhe; zera quando o texto/fonte muda (hugKey).
+// [2026-10-14 bubble-hug-guard] Nativo: se, com a largura fixada, o texto
+// passar a quebrar em MAIS linhas do que sem ela (arredondamento de glifos,
+// textBreakStrategy do Android, fonte trocada), desiste da largura para essa
+// chave — nunca entra em cascata de encolher nem corta palavra.
 function WaHugText({ hugKey, style, children, ...rest }) {
   const [hug, setHug] = useState(null);
-  const w = hug && hug.k === hugKey ? hug.w : null;
+  const cur = hug && hug.k === hugKey ? hug : null;
+  const w = cur && !cur.off ? cur.w : null;
   const ref = useRef(null);
   const apply = (widths) => {
-    if (!widths || widths.length < 2) return;
+    if (!widths || !widths.length || (cur && cur.off)) return;
+    if (w != null && cur.n && widths.length > cur.n) { setHug({ k: hugKey, off: true }); return; }
+    if (widths.length < 2) return;
     let m = 0; for (const x of widths) if (x > m) m = x;
     if (!(m > 0)) return;
     const nw = Math.ceil(m) + 4;
-    if (w == null || nw < w - 1) setHug({ k: hugKey, w: nw });
+    if (w == null || nw < w - 1) setHug({ k: hugKey, w: nw, n: (cur && cur.n) || widths.length });
   };
   const onTextLayout = Platform.OS === 'web' ? undefined : (e) => {
     try { apply((e?.nativeEvent?.lines || []).map(l => l.width)); } catch {}
@@ -5563,6 +5572,13 @@ function buildAttachItems(t, opts = {}) {
       color: '#111111',
     }] : []),
   ];
+}
+
+// [2026-10-14 info-grupo] Lista de recibos do grupo: View quando curta (evita o
+// formSheet do iOS adotar o ScrollView e jogar a lista por cima do cabeçalho).
+function _MsgInfoListWrap({ count, children }) {
+  if ((count || 0) <= 12) return <View>{children}</View>;
+  return <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>{children}</ScrollView>;
 }
 
 // Staggered spring for each attachment icon
@@ -13461,6 +13477,66 @@ function ChatConversationInner() {
     } catch {}
     return () => { try { unsub && unsub(); } catch {} };
   }, []);
+
+  // [2026-10-14 dl-progress] Founder: "quando chega um vídeo deveria mostrar o
+  // vídeo com a porcentagem baixando, igual WhatsApp". O auto-download (WS /
+  // abertura da conversa) e o toque em "baixar" passam por mediaCache.cacheMedia,
+  // que agora publica o progresso dos downloads grandes (vídeo/documento). Aqui
+  // cada evento vira o overlay `dl` (0-100) da mensagem — o mesmo que a bolha de
+  // vídeo/documento já desenhava (antes só no toque, e preso em 0%).
+  const _dlKeyByMsgRef = useRef(new Map()); // msg.id → chave de cache da URL
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let unsub = null;
+    let mc = null;
+    try { mc = require('../services/mediaCache'); } catch {}
+    if (!mc || typeof mc.subscribeDownloadProgress !== 'function') return undefined;
+    const idsFor = (e) => {
+      const out = [];
+      const list = messagesRef.current || [];
+      const cache = _dlKeyByMsgRef.current;
+      for (const m of list) {
+        if (!m || !m.file_url || (m.type !== 'video' && m.type !== 'file')) continue;
+        if (e.messageId != null && String(m.id) === String(e.messageId)) { out.push(m.id); continue; }
+        let k = cache.get(m.id);
+        if (k === undefined) {
+          try { k = mc.mediaUrlKey(api.getMediaUrl(m.file_url)) || null; } catch { k = null; }
+          cache.set(m.id, k);
+          if (cache.size > 3000) cache.delete(cache.keys().next().value);
+        }
+        if (k && k === e.key) out.push(m.id);
+      }
+      return out;
+    };
+    const onEv = (e) => {
+      if (!e || !e.key || !mountedRef.current) return;
+      const ids = idsFor(e);
+      if (!ids.length) return;
+      if (e.state === 'queued' || e.state === 'progress') {
+        const pct = Math.max(0, Math.min(99, Math.floor(Number(e.pct) || 0)));
+        setDownloadProgress(prev => {
+          let n = null;
+          for (const id of ids) if (prev[id] !== pct) { if (!n) n = { ...prev }; n[id] = pct; }
+          return n || prev;
+        });
+        return;
+      }
+      setDownloadProgress(prev => {
+        let n = null;
+        for (const id of ids) if (prev[id] !== undefined) { if (!n) n = { ...prev }; delete n[id]; }
+        return n || prev;
+      });
+      if (e.state === 'done' && typeof e.local === 'string' && e.url) {
+        setCachedUris(p => (p[e.url] === e.local ? p : { ...p, [e.url]: e.local }));
+      }
+    };
+    try {
+      unsub = mc.subscribeDownloadProgress(onEv);
+      // Downloads que já estavam rolando antes de abrir a conversa.
+      for (const e of (mc.listDownloadProgress?.() || [])) onEv(e);
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, [conversationId]);
 
   // Toggle E2E for this conversation
   const handleToggleE2E = useCallback(async () => {
@@ -26383,6 +26459,8 @@ function ChatConversationInner() {
                 senderName: m.sender_name || (m.sender_email || '').split('@')[0] || '',
                 senderEmail: m.sender_email || '',
                 createdAt: m.created_at || m.createdAt || null,
+                // [2026-10-14 viewer-album-only] passa só entre as mídias DESTE álbum.
+                albumIds: items.filter(x => x && !x.deleted_at && x.file_url).map(x => x.id),
               });
             }}
             style={cellStyle(w, h)}
@@ -27643,11 +27721,48 @@ function ChatConversationInner() {
           const vidIsLocal = typeof videoUrl === 'string' && (videoUrl.startsWith('file://') || videoUrl.startsWith('blob:') || videoUrl.startsWith('data:'));
           const vidDlProgress = __ov.dl; // 0-100 ou undefined
           const vidIsDownloading = vidDlProgress !== undefined && vidDlProgress < 100;
+          // [2026-10-14 dl-progress] WhatsApp: vídeo recebido que ainda não está
+          // no aparelho mostra "baixar + tamanho"; baixando → anel com % e
+          // "3,2 / 12 MB" + X p/ cancelar; play só com o arquivo local (ou se o
+          // download local falhou → streaming no visualizador).
+          const _vidRemote = (() => {
+            if (!msg.file_url) return null;
+            try { return api.getMediaUrl(msg.file_url); }
+            catch { return msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`; }
+          })();
+          const vidNeedsDl = Platform.OS !== 'web' && !vidUploading && !vidIsLocal && !!_vidRemote && !msg._failed && !_vidDlFailedIds.has(msg.id);
+          const startVidDownload = () => {
+            if (!_vidRemote) return;
+            setDownloadProgress(prev => (prev[msg.id] === undefined ? { ...prev, [msg.id]: 0 } : prev));
+            try {
+              const { cacheMedia } = require('../services/mediaCache');
+              cacheMedia(_vidRemote, { force: true, conversationId, messageId: msg.id, received: !isOwn, mediaType: 'video', fileSize: msg.file_size || 0 }).then(local => {
+                if (!mountedRef.current) return;
+                setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                if (typeof local === 'string' && local.startsWith('file://')) {
+                  setCachedUris(p => (p[_vidRemote] === local ? p : { ...p, [_vidRemote]: local }));
+                } else if (local === _vidRemote) {
+                  // Não deu p/ gravar no aparelho (sem espaço / origem fora) —
+                  // não prende o usuário: o próximo toque abre em streaming.
+                  _vidDlFailedIds.add(msg.id);
+                  setCachedUris(p => ({ ...p }));
+                }
+              }).catch(() => {
+                _vidDlFailedIds.add(msg.id);
+                if (mountedRef.current) setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+              });
+            } catch {}
+          };
+          const cancelVidDownload = () => {
+            try { require('../services/mediaCache').cancelDownload(_vidRemote); } catch {}
+            setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+          };
           return (
             <TouchableOpacity
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
                 if (msg._uploading || !msg.file_url) return;
+                if (vidNeedsDl && !vidIsDownloading) { startVidDownload(); return; }
                 setMediaViewer({
                   visible: true,
                   fileUrl: videoUrl || msg.file_url,
@@ -27851,14 +27966,39 @@ function ChatConversationInner() {
                     failedLabel={t('chatConv.sendFailed') || 'Falha no envio'}
                   />
                   {vidUploading ? null : vidIsDownloading ? (
-                    // [WAVE 34 2026-05-20] Downloading state CENTERED via
-                    // absolute fill (was inline so it pushed off the visual
-                    // center). Same purple-tinted glow as the play btn so
-                    // the transition download→play→play feels of-a-piece.
+                    // [2026-10-14 dl-progress] Baixando: mesmo visual do envio
+                    // (P&B, anel fino) — % no centro, "3,2 / 12 MB" embaixo e
+                    // toque no anel cancela. Toque fora do anel abre o
+                    // visualizador em streaming (WhatsApp deixa assistir
+                    // enquanto baixa).
+                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.38)' }}>
+                      <TouchableOpacity
+                        activeOpacity={0.75}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        onPress={(e) => { e?.stopPropagation?.(); cancelVidDownload(); }}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('chatConv.cancelDownload') || 'Cancelar download'}
+                        style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(0,0,0,0.42)', alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <CircularProgressArc pct={Math.max(3, vidDlProgress || 0)} size={64} strokeWidth={3} style={{ position: 'absolute' }} />
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{Math.round(vidDlProgress || 0)}%</Text>
+                      </TouchableOpacity>
+                      {msg.file_size > 0 ? (
+                        <Text pointerEvents="none" style={{ color: 'rgba(255,255,255,0.92)', fontSize: 11.5, fontWeight: '600', marginTop: 8, fontVariant: ['tabular-nums'] }}>
+                          {`${formatBytes(Math.round(msg.file_size * (vidDlProgress || 0) / 100))} / ${formatBytes(msg.file_size)}`}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : vidNeedsDl ? (
+                    // [2026-10-14 dl-progress] Ainda não baixado (política de
+                    // auto-download não baixou, ou cancelado): ícone de baixar +
+                    // tamanho. Toque em qualquer lugar da bolha baixa.
                     <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                      <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(17, 17, 17,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.7, shadowRadius: 14 }, android: { elevation: 8 } }) }}>
-                        <CircularProgressArc pct={vidDlProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
-                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 10, paddingRight: 14, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.6)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }}>
+                        <View style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconDownload size={16} color="#fff" />
+                        </View>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] }}>{vidSizeStr || (t('common.tapToDownload') || 'Baixar')}</Text>
                       </View>
                     </View>
                   ) : (
@@ -27915,7 +28055,7 @@ function ChatConversationInner() {
                       while it's still loading. Reuses the same mediaShimmerAnim
                       driver as the photo bubble so we don't spawn a new RAF loop.
                       Hidden once download completes or upload finishes. */}
-                  {!vidUploading && !vidIsDownloading && !vidIsLocal && __ov.dl === undefined && (
+                  {!vidUploading && !vidIsDownloading && !vidIsLocal && !vidNeedsDl && __ov.dl === undefined && (
                     <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200, overflow: 'hidden' }}>
                       <Animated.View
                         style={{
@@ -36151,7 +36291,9 @@ function ChatConversationInner() {
             ) : conversationType === 'group' ? (
               // GROUP: WhatsApp-style 3 buckets — Read / Delivered (not yet read) / Pending (not even delivered).
               // Sorted by ts desc inside each section so most-recent receipt is on top.
-              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              // [2026-10-14 info-grupo] No iOS o formSheet "adota" o 1º ScrollView e o
+              // posiciona no topo (sobrepunha título/Enviado). Lista curta = View simples.
+              <_MsgInfoListWrap count={(messageInfoModal?.receipts || []).length}>
                 {(() => {
                   const all = (messageInfoModal?.receipts || []).map(x => { const c = _rcClampReceipt(messageInfoModal?.sent_at, x.delivered_at || x.read_at, x.read_at); return { ...x, delivered_at: c.delivered, read_at: c.read }; }); // [2026-10-14 recibos-info]
                   // [2026-10-14 recibos] read_at do recibo vem SEM fuso ("… 01:38:57.89")
@@ -36209,7 +36351,7 @@ function ChatConversationInner() {
                     </>
                   );
                 })()}
-              </ScrollView>
+              </_MsgInfoListWrap>
             ) : (
               // DIRECT chat: WhatsApp-style status rows with ✓✓ double-check
               // marks — grey ✓✓ for delivered, bold ✓✓ for read ("visto").
@@ -36280,20 +36422,23 @@ function ChatConversationInner() {
 
       {/* Keyboard spacer removed — KeyboardAvoidingView already handles this */}
 
-      {/* Media viewer modal — Instagram-pattern swipe between images.
-          When the tapped item isn't view-once, we collect every image/video
-          from the current thread (oldest → newest) and pass them as a
-          mediaList. The viewer renders a paging FlatList + preloads the
-          neighbors. View-once stays single-item so the next bubble doesn't
-          accidentally count as opened. */}
+      {/* Media viewer modal.
+          [2026-10-14 viewer-album-only] Founder: "se a pessoa só mandou 1 vídeo
+          ou uma foto, não deveria passar pro lado como um álbum". Antes juntava
+          TODA mídia da conversa ("5 / 5"). Agora: item avulso abre sozinho (sem
+          contador); célula de ÁLBUM passa `albumIds` e o swipe fica só entre as
+          mídias daquele álbum ("2 / 4"). A galeria "Mídia, links e docs"
+          (MediaGallery) monta a própria lista e continua com navegação completa.
+          View-once sempre item único. */}
       {(() => {
         const mv = mediaViewer;
         let mediaList = null;
         let initialIndex = 0;
-        if (mv.visible && !mv.viewOnce) {
+        const _albumIdSet = Array.isArray(mv.albumIds) && mv.albumIds.length > 1 ? new Set(mv.albumIds.map(String)) : null;
+        if (mv.visible && !mv.viewOnce && _albumIdSet) {
           try {
             const all = (messagesRef.current || messages || [])
-              .filter(m => !m._pending && (m.type === 'image' || m.type === 'video') && m.file_url && !_isViewOnceMsg(m))
+              .filter(m => _albumIdSet.has(String(m.id)) && (m.type === 'image' || m.type === 'video') && m.file_url && !_isViewOnceMsg(m))
               .map(m => {
                 // Compute thumbUri (server-side small variant) from image_variants
                 // JSON the same way the bubble does so the viewer's neighbor

@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "@{handle} tiada di Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akaun {email} telah dialih keluar daripada peranti ini",
+  "chatConv.cancelDownload": "Batalkan muat turun",
 };

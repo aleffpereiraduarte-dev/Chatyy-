@@ -8346,4 +8346,5 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-д байхгүй",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} бүртгэлийг энэ төхөөрөмжөөс хассан",
+  "chatConv.cancelDownload": "Татахыг цуцлах",
 };

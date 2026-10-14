@@ -8346,4 +8346,5 @@ export default {
   "profile.notFoundMsg": "@{handle} មិនមាននៅលើ Chatyy ទេ",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "គណនី {email} ត្រូវបានដកចេញពីឧបករណ៍នេះ",
+  "chatConv.cancelDownload": "បោះបង់ការទាញយក",
 };

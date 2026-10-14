@@ -6501,4 +6501,5 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy वर अस्तित्वात नाही",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} खाते या डिव्हाइसवरून काढले गेले",
+  "chatConv.cancelDownload": "डाउनलोड रद्द करा",
 };

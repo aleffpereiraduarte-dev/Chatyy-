@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "@{handle} hayupo kwenye Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akaunti {email} imeondolewa kwenye kifaa hiki",
+  "chatConv.cancelDownload": "Ghairi upakuaji",
 };

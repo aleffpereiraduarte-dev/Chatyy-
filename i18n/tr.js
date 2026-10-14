@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy'de yok",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} hesabı bu cihazdan kaldırıldı",
+  "chatConv.cancelDownload": "İndirmeyi iptal et",
 };

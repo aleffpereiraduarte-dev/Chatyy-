@@ -9128,4 +9128,5 @@ export default {
   "profile.notFoundMsg": "@{handle} ei ole Chatyyssa",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Tili {email} poistettiin tästä laitteesta",
+  "chatConv.cancelDownload": "Peruuta lataus",
 };

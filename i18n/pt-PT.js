@@ -11198,4 +11198,5 @@ export default {
   "profile.notFoundMsg": "@{handle} não existe no Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "A conta {email} foi removida deste dispositivo",
+  "chatConv.cancelDownload": "Cancelar transferência",
 };

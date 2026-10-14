@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "@{handle} không tồn tại trên Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Tài khoản {email} đã bị xóa khỏi thiết bị này",
+  "chatConv.cancelDownload": "Hủy tải xuống",
 };

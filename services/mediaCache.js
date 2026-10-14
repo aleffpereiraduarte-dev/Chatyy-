@@ -418,6 +418,51 @@ export async function getCachedUri(url) {
 // the image appears uncached on next open.
 const _inflightDownloads = new Map(); // key → Promise<localPath | url>
 
+// [2026-10-14 dl-progress] Progresso de download (vídeo/documento grandes) p/ a
+// bolha mostrar o anel com % + "3,2 / 12 MB" igual WhatsApp — antes o auto-
+// download (WS/lista) baixava em silêncio e a bolha só mostrava o play.
+// Eventos: { key, url, messageId, state:'queued'|'progress'|'done'|'failed'|'cancelled',
+//            pct (0-100), loaded, total, local }.
+const _dlProgress = new Map(); // key → último evento (só enquanto em andamento)
+const _dlProgressSubs = new Set();
+const _dlCancelFns = new Map(); // key → () => void
+const _dlUserCancelled = new Set(); // keys canceladas pelo usuário → auto-download não religa
+function _emitDlProgress(key, ev) {
+  const e = { key, ...ev };
+  if (e.state === 'done' || e.state === 'failed' || e.state === 'cancelled') _dlProgress.delete(key);
+  else {
+    const prev = _dlProgress.get(key);
+    // Throttle: só re-emite quando o % inteiro muda (bg/resumable chamam várias vezes/s).
+    if (prev && prev.state === e.state && Math.floor(prev.pct || 0) === Math.floor(e.pct || 0)) { _dlProgress.set(key, e); return; }
+    _dlProgress.set(key, e);
+  }
+  for (const cb of Array.from(_dlProgressSubs)) { try { cb(e); } catch {} }
+}
+export function subscribeDownloadProgress(cb) {
+  if (typeof cb !== 'function') return () => {};
+  _dlProgressSubs.add(cb);
+  return () => { _dlProgressSubs.delete(cb); };
+}
+/** Chave de cache da URL (a mesma dos eventos de progresso). */
+export function mediaUrlKey(url) {
+  try { return url ? urlToKey(url) : null; } catch { return null; }
+}
+export function listDownloadProgress() { return Array.from(_dlProgress.values()); }
+export function getDownloadProgress(url) {
+  const k = mediaUrlKey(url);
+  return k ? (_dlProgress.get(k) || null) : null;
+}
+/** Usuário tocou no X do anel: aborta o download em andamento (bg nativo ou
+ *  resumable JS), apaga o parcial e impede o auto-download de religar. */
+export function cancelDownload(url) {
+  const k = mediaUrlKey(url);
+  if (!k) return false;
+  _dlUserCancelled.add(k);
+  const fn = _dlCancelFns.get(k);
+  if (fn) { try { fn(); } catch {} return true; }
+  return false;
+}
+
 // [#1218 2026-05-20] WhatsApp-parity reconnect sweep.
 // When the network is 'none' or 'unknown', cacheMedia's auto-download gate
 // returns the remote URL (= unsaved). WhatsApp records these and flushes
@@ -1995,6 +2040,11 @@ export async function cacheMedia(url, opts = {}) {
   }
 
   const key = urlToKey(url);
+  // [2026-10-14 dl-progress] Cancelado pelo usuário → só um toque (force) religa.
+  if (_dlUserCancelled.has(key)) {
+    if (!opts.force) return url;
+    _dlUserCancelled.delete(key);
+  }
 
   // [HOT PATH 2026-05-26] In-flight dedup BEFORE any filesystem stat. A
   // fast-scrolling list (or several bubbles bound to the same URL) can call
@@ -2100,6 +2150,22 @@ export async function cacheMedia(url, opts = {}) {
   const _dlPriority = (opts.priority === 'low' || (opts.received && !opts.force))
     ? 'low'
     : 'high';
+  // [2026-10-14 dl-progress] Só mídia grande (vídeo/doc) publica progresso.
+  const _bigForProgress = (() => { const b = _bucketForUrl(url); return b === 'videos' || b === 'docs'; })();
+  const _total0 = Number(opts.fileSize || opts.size) || 0;
+  const _dlCtl = { cancelled: false, abort: null, resumable: null };
+  const _progEv = (state, extra) => {
+    if (!_bigForProgress) return;
+    _emitDlProgress(key, { url, messageId: opts.messageId != null ? opts.messageId : null, state, ...extra });
+  };
+  if (_bigForProgress) {
+    _dlCancelFns.set(key, () => {
+      _dlCtl.cancelled = true;
+      try { _dlCtl.abort && _dlCtl.abort(); } catch {}
+      try { _dlCtl.resumable && _dlCtl.resumable.cancelAsync && _dlCtl.resumable.cancelAsync(); } catch {}
+    });
+    _progEv('queued', { pct: 0, loaded: 0, total: _total0 });
+  }
   const dlPromise = (async () => {
     // Throttle: wait for a free slot before hitting the network. The slot
     // is held only for the actual download — getInfoAsync / mkdir are
@@ -2112,6 +2178,8 @@ export async function cacheMedia(url, opts = {}) {
     } catch {}
     await _acquireDownloadSlot(_dlPriority);
     try {
+      if (_dlCtl.cancelled) throw new Error('dl_cancelled');
+      _progEv('progress', { pct: 0, loaded: 0, total: _total0 });
       // Retry com exponential backoff em 5xx / network failures. 4xx
       // (404, 410, 403) são bug nosso ou link expirado — retry só queima
       // bateria. Backoff: 0ms → 500ms → 1500ms (3 tentativas no total).
@@ -2144,6 +2212,7 @@ export async function cacheMedia(url, opts = {}) {
         if (BACKOFFS_MS[attempt] > 0) {
           await new Promise(r => setTimeout(r, BACKOFFS_MS[attempt]));
         }
+        if (_dlCtl.cancelled) throw new Error('dl_cancelled');
         try {
           let download;
           // [2026-10-09 media-native] Big media, first attempt → OS-owned
@@ -2155,14 +2224,26 @@ export async function cacheMedia(url, opts = {}) {
             try {
               const bgT = require('./bgTransfer');
               if (bgT.isBgTransferAvailable()) {
-                const r = await bgT.downloadInBackground({ id: 'dl-' + key, url: srcUrl, dest: localPath, title: opts.title || null });
+                let _ac = null;
+                try { if (typeof AbortController !== 'undefined') _ac = new AbortController(); } catch {}
+                if (_ac) _dlCtl.abort = () => { try { _ac.abort(); } catch {} };
+                const r = await bgT.downloadInBackground({
+                  id: 'dl-' + key, url: srcUrl, dest: localPath, title: opts.title || null,
+                  signal: _ac ? _ac.signal : undefined,
+                  onProgress: (f) => {
+                    const pct = Math.max(0, Math.min(99, (Number(f) || 0) * 100));
+                    _progEv('progress', { pct, loaded: _total0 ? Math.round(_total0 * pct / 100) : 0, total: _total0 });
+                  },
+                });
+                _dlCtl.abort = null;
+                if (_dlCtl.cancelled) throw new Error('dl_cancelled');
                 if (r && r.handled) {
                   if (!r.ok && !r.status) throw new Error('bg_download_network');
                   download = { status: r.ok ? (r.status || 200) : r.status, headers: r.contentType ? { 'content-type': r.contentType } : {} };
                 }
               }
             } catch (e) {
-              if (e && e.message === 'bg_download_network') throw e;
+              if (e && (e.message === 'bg_download_network' || e.message === 'dl_cancelled')) throw e;
             }
           }
           if (download) {
@@ -2172,8 +2253,15 @@ export async function cacheMedia(url, opts = {}) {
             // attempt calls downloadAsync(); subsequent attempts call
             // resumeAsync() to continue from the partial file on disk.
             if (!resumable) {
-              resumable = fs.createDownloadResumable(srcUrl, localPath);
+              resumable = fs.createDownloadResumable(srcUrl, localPath, {}, (dp) => {
+                try {
+                  const w = Number(dp?.totalBytesWritten) || 0;
+                  const tt = Number(dp?.totalBytesExpectedToWrite) || _total0 || 0;
+                  if (tt > 0) _progEv('progress', { pct: Math.min(99, (w / tt) * 100), loaded: w, total: tt });
+                } catch {}
+              });
             }
+            _dlCtl.resumable = resumable;
             let timer = null;
             const timeout = new Promise((_, rej) => {
               timer = setTimeout(() => {
@@ -2244,7 +2332,8 @@ export async function cacheMedia(url, opts = {}) {
           // Abort em 4xx — não vai mudar com retry. Recursos ausentes /
           // tokens inválidos são bug, não flaky network.
           if (lastStatus >= 400 && lastStatus < 500) break;
-        } catch {
+        } catch (_e) {
+          if (_dlCtl.cancelled) throw new Error('dl_cancelled');
           // Network/timeout — vale tentar de novo. For big media we KEEP the
           // partial file + resumable so the next attempt resumes; for small
           // media we delete so it restarts clean.
@@ -2276,6 +2365,16 @@ export async function cacheMedia(url, opts = {}) {
     return url;
   })();
   _inflightDownloads.set(key, dlPromise);
+  if (_bigForProgress) {
+    dlPromise.then((res) => {
+      _dlCancelFns.delete(key);
+      const ok = typeof res === 'string' && res.startsWith('file://');
+      _progEv(ok ? 'done' : (_dlCtl.cancelled ? 'cancelled' : 'failed'), { pct: ok ? 100 : 0, loaded: 0, total: _total0, local: ok ? res : null });
+    }, () => {
+      _dlCancelFns.delete(key);
+      _progEv(_dlCtl.cancelled ? 'cancelled' : 'failed', { pct: 0, loaded: 0, total: _total0 });
+    });
+  }
   try {
     const result = await dlPromise;
     // [2026-10-13 delete-for-all] Apagada p/ todos enquanto baixava → descarta

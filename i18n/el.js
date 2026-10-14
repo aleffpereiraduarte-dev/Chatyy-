@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "Ο @{handle} δεν υπάρχει στο Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Ο λογαριασμός {email} αφαιρέθηκε από αυτήν τη συσκευή",
+  "chatConv.cancelDownload": "Ακύρωση λήψης",
 };

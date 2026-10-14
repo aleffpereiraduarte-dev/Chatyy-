@@ -1699,4 +1699,5 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy ನಲ್ಲಿ ಇಲ್ಲ",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ಖಾತೆಯನ್ನು ಈ ಸಾಧನದಿಂದ ತೆಗೆದುಹಾಕಲಾಗಿದೆ",
+  "chatConv.cancelDownload": "ಡೌನ್‌ಲೋಡ್ ರದ್ದುಮಾಡಿ",
 };

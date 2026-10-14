@@ -9128,4 +9128,5 @@ export default {
   "profile.notFoundMsg": "@{handle} bestaat niet op Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Het account {email} is van dit apparaat verwijderd",
+  "chatConv.cancelDownload": "Download annuleren",
 };

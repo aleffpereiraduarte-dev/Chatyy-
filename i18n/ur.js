@@ -911,4 +911,5 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy پر موجود نہیں",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "اکاؤنٹ {email} اس ڈیوائس سے ہٹا دیا گیا",
+  "chatConv.cancelDownload": "ڈاؤن لوڈ منسوخ کریں",
 };

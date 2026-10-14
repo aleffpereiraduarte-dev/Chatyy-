@@ -8388,4 +8388,5 @@ export default {
   "profile.notFoundMsg": "Chatyy 上不存在 @{handle}",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "帐号 {email} 已从此设备移除",
+  "chatConv.cancelDownload": "取消下载",
 };

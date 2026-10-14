@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "@{handle} ne obstaja v Chatyyju",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Račun {email} je bil odstranjen s te naprave",
+  "chatConv.cancelDownload": "Prekliči prenos",
 };

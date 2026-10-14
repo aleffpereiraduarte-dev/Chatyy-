@@ -8350,4 +8350,5 @@ export default {
   "profile.notFoundMsg": "@{handle} v Chatyy neexistuje",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Účet {email} byl z tohoto zařízení odebrán",
+  "chatConv.cancelDownload": "Zrušit stahování",
 };

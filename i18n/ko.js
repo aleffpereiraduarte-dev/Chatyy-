@@ -8388,4 +8388,5 @@ export default {
   "profile.notFoundMsg": "@{handle}은(는) Chatyy에 없습니다",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} 계정이 이 기기에서 삭제되었습니다",
+  "chatConv.cancelDownload": "다운로드 취소",
 };
