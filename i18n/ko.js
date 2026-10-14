@@ -8388,7 +8388,23 @@ export default {
   "profile.notFoundMsg": "@{handle}은(는) Chatyy에 없습니다",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} 계정이 이 기기에서 삭제되었습니다",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "다운로드 취소",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "기본",
+  "status.text.fontSerif": "명조",
+  "status.text.fontMono": "타자기",
+  "status.text.fontScript": "손글씨",
+  "status.text.fontCondensed": "좁게",
+  "status.text.changeFont": "글꼴 변경",
+  "status.text.changeColor": "색상 변경",
+  "status.text.placeholder": "상태를 입력하세요",
+  "status.text.linkDetected": "링크가 감지됨",
+  "status.text.counter": "{n}/{max}자",
+  "status.text.openEditor": "텍스트",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "상태 보기",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "재생함",
   "chatConv.playedBy": "재생한 사람",
   "chatConv.notPlayed": "재생 안 함",

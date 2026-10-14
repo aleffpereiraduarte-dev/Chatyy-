@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} በChatyy ላይ የለም",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "መለያው {email} ከዚህ መሣሪያ ተወግዷል",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ማውረድን ሰርዝ",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ነባሪ",
+  "status.text.fontSerif": "ሰሪፍ",
+  "status.text.fontMono": "የጽሕፈት መኪና",
+  "status.text.fontScript": "የእጅ ጽሑፍ",
+  "status.text.fontCondensed": "ጠባብ",
+  "status.text.changeFont": "ፊደል ቀይር",
+  "status.text.changeColor": "ቀለም ቀይር",
+  "status.text.placeholder": "ሁኔታ ይጻፉ",
+  "status.text.linkDetected": "አገናኝ ተገኝቷል",
+  "status.text.counter": "ከ{max} {n} ቁምፊዎች",
+  "status.text.openEditor": "ጽሑፍ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "ሁኔታን ይመልከቱ",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "ተጫውቷል",
   "chatConv.playedBy": "የተጫወተው በ",
   "chatConv.notPlayed": "አልተጫወተም",

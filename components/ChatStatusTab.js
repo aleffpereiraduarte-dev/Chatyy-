@@ -42,6 +42,8 @@ import { segmentVideoForStatus } from '../services/statusVideoSegments';
 // [2026-10-09 status-composer] Estúdio nível Instagram (filtros reais, texto,
 // figurinhas, público) + fila durável com progresso no anel do "Seu status".
 import StatusStudio from './status/StatusStudio';
+import { TextStatusThumb, isTextStatusItem, textStatusDurationMs, itemBg, itemFontStyle } from './status/textStatus'; // [status-texto 2026-10-14]
+import { registerTextStatusOpener } from './status/statusRingStore';
 import { formatTime, formatDateTime } from '../utils/dateFormat'; // [2026-10-13 status-viewers]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
@@ -1391,6 +1393,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const [cameraVisible, setCameraVisible] = useState(false);
   // [2026-10-09 status-composer] seed do estúdio: { items:[{uri,type,width,height,filter}], mode?, music?, isBoomerang? }
   const [studioSeed, setStudioSeed] = useState(null);
+  // [status-texto 2026-10-14] câmeras de status fora desta aba (lista de conversas, perfil) abrem o editor de texto por aqui.
+  useEffect(() => registerTextStatusOpener(() => setStudioSeed({ mode: 'text', items: [] })), []);
   // Press lock: TouchableOpacity onPress + onLongPress can both fire on slow
   // devices when the user releases right at the long-press threshold. We saw
   // status creation open StatusCamera AND the system gallery picker at once
@@ -2293,7 +2297,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // Voice/audio statuses hold 30s so the recorded note isn't cut off by the
     // 5s image cadence (mirrors StoryViewer's _isVoiceStatus duration floor).
     const isVoiceItem = item?.type === 'voice' || item?.type === 'audio';
-    const dur = isVid && videoDurationMs > 0 ? videoDurationMs : (isVoiceItem ? 30000 : STATUS_DURATION);
+    // [status-texto 2026-10-14] texto: 5–10 s proporcional ao tamanho.
+    const dur = isVid && videoDurationMs > 0 ? videoDurationMs : (isVoiceItem ? 30000 : (isTextStatusItem(item) && !item?._placeholder ? textStatusDurationMs(item?.content) : STATUS_DURATION));
 
     // Same identity as the deps that mean "different story window" — any of
     // these changing resets elapsed to 0; a pure isPaused flip preserves it,
@@ -2419,6 +2424,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const openCreator = useCallback((mode = 'text') => {
     if (Date.now() < statusPressLockRef.current) return;
     statusPressLockRef.current = Date.now() + 600;
+    // [status-texto 2026-10-14] Texto → editor novo (tela cheia, cor/fonte,
+    // auto-ajuste, 700 caracteres) do StatusStudio; o compositor antigo de
+    // texto deste arquivo não é mais aberto.
+    if (mode === 'text') { setStudioSeed({ mode: 'text', items: [] }); return; }
     setTextContent('');
     setPhotoUri(null);
     setPhotoFile(null);
@@ -3143,6 +3152,19 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       ? () => { try { Haptics.selectionAsync?.(); } catch {} handleShowViewers(currentViewerItem.id); }
       : () => { try { replyInputRef.current?.focus?.(); } catch {} };
 
+  // [status-texto 2026-10-14] Miniatura do status de TEXTO: fundo colorido +
+  // primeiras palavras (item real do status_list ou prévia do manifest).
+  const textThumbFor = (item, size) => {
+    if (!item) return null;
+    if (isTextStatusItem(item) && !item._placeholder) {
+      return <TextStatusThumb text={item.content} bg={itemBg(item)} font={itemFontStyle(item)} size={size} />;
+    }
+    if (item._preview_text) {
+      return <TextStatusThumb text={item._preview_text} bg={item._preview_bg} font={item._preview_font} size={size} />;
+    }
+    return null;
+  };
+
   const renderStatusRow = (statusGroup) => {
     const latestItem = statusGroup.items[statusGroup.items.length - 1];
     const time = timeAgo(latestItem?.timestamp, t);
@@ -3206,7 +3228,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             closeFriends={rowCloseFriends}
             isDark={isDark}
           />
-          <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />
+          {textThumbFor(latestItem, 52) || <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />}
         </Animated.View>
         <View style={styles.statusInfo}>
           <Text style={[styles.statusName, { color: colors.text }]} numberOfLines={1}>
@@ -3536,7 +3558,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     <SvgCircle cx="54" cy="54" r="51" stroke={isDark ? '#F5F5F7' : ACCENT} strokeWidth={2.5} strokeDasharray="6 5" fill="none" opacity={0.65} />
                   </Svg>
                 )}
-                <AvatarCircle name={currentName} email={currentEmail} size={96} />
+                {(hasMyStatus && textThumbFor(myStatuses[myStatuses.length - 1], 96)) || <AvatarCircle name={currentName} email={currentEmail} size={96} />}
                 {!hasMyStatus && (
                   <View style={[styles.plusBadgeHero, {
                     borderColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
@@ -3852,6 +3874,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           visible={cameraVisible}
           onClose={() => setCameraVisible(false)}
           onCapture={handleCameraCapture}
+          // [status-texto 2026-10-14] botão "Texto" da câmera → editor de status de texto
+          onOpenText={() => {
+            setCameraVisible(false);
+            setTimeout(() => setStudioSeed({ mode: 'text', items: [] }), Platform.OS === 'ios' ? 450 : 0);
+          }}
           t={t}
           directToEditor
         />

@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} သည် Chatyy တွင် မရှိပါ",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} အကောင့်ကို ဤစက်မှ ဖယ်ရှားလိုက်ပါပြီ",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ဒေါင်းလုဒ်ကို ပယ်ဖျက်ရန်",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "မူလ",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "လက်နှိပ်စက်",
+  "status.text.fontScript": "လက်ရေး",
+  "status.text.fontCondensed": "ကျဉ်း",
+  "status.text.changeFont": "ဖောင့်ပြောင်းရန်",
+  "status.text.changeColor": "အရောင်ပြောင်းရန်",
+  "status.text.placeholder": "အခြေအနေ ရေးပါ",
+  "status.text.linkDetected": "လင့်ခ်တွေ့ရှိသည်",
+  "status.text.counter": "{max} အနက် {n} လုံး",
+  "status.text.openEditor": "စာသား",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "အခြေအနေကြည့်ရန်",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "ဖွင့်ပြီး",
   "chatConv.playedBy": "ဖွင့်သူများ",
   "chatConv.notPlayed": "မဖွင့်ရသေး",

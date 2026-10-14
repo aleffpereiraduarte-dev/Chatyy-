@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} ບໍ່ມີຢູ່ໃນ Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "ບັນຊີ {email} ຖືກລຶບອອກຈາກອຸປະກອນນີ້ແລ້ວ",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ຍົກເລີກການດາວໂຫຼດ",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ຄ່າເລີ່ມຕົ້ນ",
+  "status.text.fontSerif": "ເຊຣິຟ",
+  "status.text.fontMono": "ພິມດີດ",
+  "status.text.fontScript": "ລາຍມື",
+  "status.text.fontCondensed": "ແຄບ",
+  "status.text.changeFont": "ປ່ຽນຟອນ",
+  "status.text.changeColor": "ປ່ຽນສີ",
+  "status.text.placeholder": "ພິມສະຖານະ",
+  "status.text.linkDetected": "ພົບລິ້ງ",
+  "status.text.counter": "{n} ຈາກ {max} ຕົວອັກສອນ",
+  "status.text.openEditor": "ຂໍ້ຄວາມ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "ເບິ່ງສະຖານະ",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "ຫຼິ້ນແລ້ວ",
   "chatConv.playedBy": "ຫຼິ້ນໂດຍ",
   "chatConv.notPlayed": "ຍັງບໍ່ໄດ້ຫຼິ້ນ",

@@ -9128,7 +9128,23 @@ export default {
   "profile.notFoundMsg": "@{handle} finns inte på Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Kontot {email} har tagits bort från den här enheten",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Avbryt nedladdning",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Standard",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Skrivmaskin",
+  "status.text.fontScript": "Handskrift",
+  "status.text.fontCondensed": "Smal",
+  "status.text.changeFont": "Byt typsnitt",
+  "status.text.changeColor": "Byt färg",
+  "status.text.placeholder": "Skriv en status",
+  "status.text.linkDetected": "Länk hittad",
+  "status.text.counter": "{n} av {max} tecken",
+  "status.text.openEditor": "Text",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Visa status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Uppspelat",
   "chatConv.playedBy": "Uppspelat av",
   "chatConv.notPlayed": "Inte uppspelat",

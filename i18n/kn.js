@@ -1699,7 +1699,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy ನಲ್ಲಿ ಇಲ್ಲ",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ಖಾತೆಯನ್ನು ಈ ಸಾಧನದಿಂದ ತೆಗೆದುಹಾಕಲಾಗಿದೆ",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ಡೌನ್‌ಲೋಡ್ ರದ್ದುಮಾಡಿ",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ಡೀಫಾಲ್ಟ್",
+  "status.text.fontSerif": "ಸೆರಿಫ್",
+  "status.text.fontMono": "ಟೈಪ್‌ರೈಟರ್",
+  "status.text.fontScript": "ಕೈಬರಹ",
+  "status.text.fontCondensed": "ಕಿರಿದು",
+  "status.text.changeFont": "ಫಾಂಟ್ ಬದಲಿಸಿ",
+  "status.text.changeColor": "ಬಣ್ಣ ಬದಲಿಸಿ",
+  "status.text.placeholder": "ಸ್ಟೇಟಸ್ ಬರೆಯಿರಿ",
+  "status.text.linkDetected": "ಲಿಂಕ್ ಪತ್ತೆಯಾಗಿದೆ",
+  "status.text.counter": "{max} ರಲ್ಲಿ {n} ಅಕ್ಷರಗಳು",
+  "status.text.openEditor": "ಪಠ್ಯ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "ಸ್ಟೇಟಸ್ ನೋಡಿ",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "ಪ್ಲೇ ಮಾಡಲಾಗಿದೆ",
   "chatConv.playedBy": "ಪ್ಲೇ ಮಾಡಿದವರು",
   "chatConv.notPlayed": "ಪ್ಲೇ ಮಾಡಿಲ್ಲ",

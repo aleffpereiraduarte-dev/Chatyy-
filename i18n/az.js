@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-də mövcud deyil",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} hesabı bu cihazdan silindi",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Endirməni ləğv et",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Standart",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Yazı makinası",
+  "status.text.fontScript": "Əl yazısı",
+  "status.text.fontCondensed": "Dar",
+  "status.text.changeFont": "Şrifti dəyiş",
+  "status.text.changeColor": "Rəngi dəyiş",
+  "status.text.placeholder": "Status yazın",
+  "status.text.linkDetected": "Keçid aşkarlandı",
+  "status.text.counter": "{n}/{max} simvol",
+  "status.text.openEditor": "Mətn",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Statusa bax",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Dinlənilib",
   "chatConv.playedBy": "Dinləyənlər",
   "chatConv.notPlayed": "Dinlənilməyib",

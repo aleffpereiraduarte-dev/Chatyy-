@@ -34,6 +34,7 @@ import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
 import AvatarLightbox from './AvatarLightbox';
 import StoryRingAvatar from './status/StoryRingAvatar';
+import { useStatusRing, primeStatusRings } from './status/statusRingStore'; // [status-rever 2026-10-14]
 import StoryViewer from './status/StoryViewer';
 import StatusCamera from './StatusCamera';
 import ProfilePostViewer from './ProfilePostViewer';
@@ -1582,6 +1583,11 @@ export default function Profile({
   const commonChats = (data?.common_chats || []).filter(c => c?.type === 'group');
   const emailPreview = data?.email_preview || [];
   const stories = data?.stories || [];
+  // [status-rever 2026-10-14] visto/não visto vem do mesmo store da lista de conversas (status_list).
+  const _profileStatusRing = useStatusRing(identity?.email || '');
+  useEffect(() => {
+    if (identity?.email && !_profileStatusRing) { try { primeStatusRings(); } catch {} }
+  }, [identity?.email, data?.stories, _profileStatusRing]);
 
   // Presence text
   const presenceText = useMemo(() => {
@@ -2399,7 +2405,11 @@ export default function Profile({
                 name={identity.name}
                 email={identity.email}
                 size={AVATAR_SIZE}
-                ringStyle="solid"
+                // [status-rever 2026-10-14] segmentado por status (WhatsApp); cinza quando já visto — continua tocável p/ ver de novo
+                ringStyle={!actions?.is_self && _profileStatusRing?.count > 1 ? 'segmented' : 'solid'}
+                segments={_profileStatusRing?.count || 1}
+                itemsViewed={!actions?.is_self ? (_profileStatusRing?.viewed || null) : null}
+                allViewed={!actions?.is_self && !!_profileStatusRing?.allViewed}
                 isDark={isDark}
                 colors={colors}
                 isLive={isLive}
@@ -3963,6 +3973,16 @@ export default function Profile({
         visible={statusCameraOpen}
         onClose={() => setStatusCameraOpen(false)}
         onCapture={handleAvatarCameraCapture}
+        // [status-texto 2026-10-14] "Texto" → editor de status de texto (hospedado na aba de conversas)
+        onOpenText={() => {
+          setStatusCameraOpen(false);
+          setTimeout(() => {
+            try {
+              const R = require('./status/statusRingStore');
+              if (!R.openTextStatusComposer()) router?.push?.('/chat?tab=status&new=1&text=1');
+            } catch {}
+          }, Platform.OS === 'ios' ? 450 : 0);
+        }}
         t={t}
       />
     </ProfileStatusCameraBoundary>

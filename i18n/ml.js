@@ -901,7 +901,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-യിൽ ഇല്ല",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} അക്കൗണ്ട് ഈ ഉപകരണത്തിൽ നിന്ന് നീക്കം ചെയ്തു",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ഡൗൺലോഡ് റദ്ദാക്കുക",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ഡിഫോൾട്ട്",
+  "status.text.fontSerif": "സെരിഫ്",
+  "status.text.fontMono": "ടൈപ്പ്റൈറ്റർ",
+  "status.text.fontScript": "കൈയക്ഷരം",
+  "status.text.fontCondensed": "ഇടുങ്ങിയ",
+  "status.text.changeFont": "ഫോണ്ട് മാറ്റുക",
+  "status.text.changeColor": "നിറം മാറ്റുക",
+  "status.text.placeholder": "സ്റ്റാറ്റസ് എഴുതുക",
+  "status.text.linkDetected": "ലിങ്ക് കണ്ടെത്തി",
+  "status.text.counter": "{max}-ൽ {n} അക്ഷരങ്ങൾ",
+  "status.text.openEditor": "ടെക്സ്റ്റ്",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "സ്റ്റാറ്റസ് കാണുക",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "പ്ലേ ചെയ്തു",
   "chatConv.playedBy": "പ്ലേ ചെയ്തവർ",
   "chatConv.notPlayed": "പ്ലേ ചെയ്തിട്ടില്ല",

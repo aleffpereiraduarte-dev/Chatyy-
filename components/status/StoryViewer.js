@@ -32,6 +32,8 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, 
 // Shared text-status gradient presets + resolver — single source of truth so
 // StoryViewer, AnimatedStatusText and ChatStatusTab never drift apart.
 import { resolveTextGradient as _resolveTextGradient } from './textGradients';
+import AnimatedStatusText from './AnimatedStatusText'; // [status-texto 2026-10-14]
+import { textStatusDurationMs } from './textStatus';
 import { cachedVideoSource } from '../../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const WEB = Platform.OS === 'web';
@@ -510,35 +512,16 @@ const StoryMedia = React.memo(function StoryMedia({
       // = the "status sem foto/sem visual" bug. Accept both keys (matches the
       // ChatStatusTab pattern: cur?.background || cur?.bg_color).
       const _bg = cur.bg_color || cur.background;
-      const gradient = _resolveTextGradient(_bg);
-      const stops = gradient
-        ? (gradient.colors.length > 1 ? gradient.colors : [gradient.colors[0], gradient.colors[0]])
-        : null;
+      // [status-texto 2026-10-14] Mesmo card do viewer da aba Status: cor/gradiente,
+      // fonte salva (meta.font_style), auto-ajuste e links tocáveis.
       return (
-        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (_bg || '#111111'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          {gradient ? (
-            <Svg
-              pointerEvents="none"
-              style={StyleSheet.absoluteFill}
-              width="100%" // [2026-10-10 qa-sweep] web: sem isso o <svg> fica 1:1 (viewBox) e o gradiente não cobre o card
-              height="100%"
-              preserveAspectRatio="none"
-              viewBox="0 0 1 1"
-            >
-              <Defs>
-                <SvgLinearGradient id={`storyTextGrad_${gradient.id}`} x1="0" y1="0" x2="1" y2="1">
-                  {stops.map((c, i) => (
-                    <Stop key={i} offset={`${Math.round((i / (stops.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
-                  ))}
-                </SvgLinearGradient>
-              </Defs>
-              <SvgRect x="0" y="0" width="1" height="1" fill={`url(#storyTextGrad_${gradient.id})`} />
-            </Svg>
-          ) : null}
-          <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', lineHeight: 34 }}>
-            {cur.content || ''}
-          </Text>
-        </View>
+        <AnimatedStatusText
+          animKey={cur.id || 0}
+          text={cur.content || ''}
+          bgColor={_bg || '#111111'}
+          fontStyle={cur.font_style || cur.meta?.font_style || 'sans'}
+          animation={cur.text_animation || cur.meta?.text_animation || 'none'}
+        />
       );
     }
     if (!mediaUrl) {
@@ -1782,7 +1765,9 @@ export default function StoryViewer({
     // 30s floor is the safe JS-only approximation until duration is plumbed.)
     const _isVoiceStatus = (cur.type === 'voice' || cur.type === 'audio')
       || (!!cur.media_url && cur.type !== 'image' && cur.type !== 'video' && /\.(m4a|mp3|aac|wav|ogg|opus|webm)(\?|$)/i.test(String(cur.media_url)));
-    const duration = _isVoiceStatus ? 30000 : (replyGraceRef.current ? Math.max(STORY_DURATION_MS, 5000) : STORY_DURATION_MS);
+    // [status-texto 2026-10-14] texto: 5–10 s proporcional ao tamanho.
+    const _baseDur = (cur.type === 'text' && !cur.media_url) ? textStatusDurationMs(cur.content) : STORY_DURATION_MS;
+    const duration = _isVoiceStatus ? 30000 : (replyGraceRef.current ? Math.max(_baseDur, 5000) : _baseDur);
     // [deep-20260801] Resume-aware: on a pause release (isNewItem=false) the
     // bar sits wherever the cleanup stopped it — arm the timer for the
     // REMAINING fraction only, so resume continues instead of stretching a

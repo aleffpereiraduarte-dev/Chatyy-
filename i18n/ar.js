@@ -11952,7 +11952,23 @@ export default {
   "profile.notFoundMsg": "@{handle} غير موجود على Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "تمت إزالة الحساب {email} من هذا الجهاز",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "إلغاء التنزيل",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "افتراضي",
+  "status.text.fontSerif": "مذيّل",
+  "status.text.fontMono": "آلة كاتبة",
+  "status.text.fontScript": "خط يد",
+  "status.text.fontCondensed": "مضغوط",
+  "status.text.changeFont": "تغيير الخط",
+  "status.text.changeColor": "تغيير اللون",
+  "status.text.placeholder": "اكتب حالة",
+  "status.text.linkDetected": "تم اكتشاف رابط",
+  "status.text.counter": "{n} من {max} حرفًا",
+  "status.text.openEditor": "نص",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "عرض الحالة",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "تم التشغيل",
   "chatConv.playedBy": "تم التشغيل بواسطة",
   "chatConv.notPlayed": "لم يتم التشغيل",

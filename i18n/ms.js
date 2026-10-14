@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} tiada di Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akaun {email} telah dialih keluar daripada peranti ini",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Batalkan muat turun",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Lalai",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Mesin taip",
+  "status.text.fontScript": "Tulisan tangan",
+  "status.text.fontCondensed": "Sempit",
+  "status.text.changeFont": "Tukar fon",
+  "status.text.changeColor": "Tukar warna",
+  "status.text.placeholder": "Taip status",
+  "status.text.linkDetected": "Pautan dikesan",
+  "status.text.counter": "{n} daripada {max} aksara",
+  "status.text.openEditor": "Teks",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Lihat status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Dimainkan",
   "chatConv.playedBy": "Dimainkan oleh",
   "chatConv.notPlayed": "Belum dimainkan",

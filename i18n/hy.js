@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle}-ը Chatyy-ում գոյություն չունի",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} հաշիվը հեռացվել է այս սարքից",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Չեղարկել ներբեռնումը",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Լռելյայն",
+  "status.text.fontSerif": "Սերիֆ",
+  "status.text.fontMono": "Գրամեքենա",
+  "status.text.fontScript": "Ձեռագիր",
+  "status.text.fontCondensed": "Նեղ",
+  "status.text.changeFont": "Փոխել տառատեսակը",
+  "status.text.changeColor": "Փոխել գույնը",
+  "status.text.placeholder": "Գրեք կարգավիճակ",
+  "status.text.linkDetected": "Հղում է հայտնաբերվել",
+  "status.text.counter": "{n}/{max} նիշ",
+  "status.text.openEditor": "Տեքստ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Դիտել կարգավիճակը",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Լսված",
   "chatConv.playedBy": "Լսել են",
   "chatConv.notPlayed": "Չլսված",

@@ -8388,7 +8388,23 @@ export default {
   "profile.notFoundMsg": "Chatyy 上不存在 @{handle}",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "帐号 {email} 已从此设备移除",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "取消下载",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "默认",
+  "status.text.fontSerif": "衬线",
+  "status.text.fontMono": "打字机",
+  "status.text.fontScript": "手写",
+  "status.text.fontCondensed": "窄体",
+  "status.text.changeFont": "更换字体",
+  "status.text.changeColor": "更换颜色",
+  "status.text.placeholder": "输入状态",
+  "status.text.linkDetected": "检测到链接",
+  "status.text.counter": "{n}/{max} 个字符",
+  "status.text.openEditor": "文字",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "查看状态",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "已播放",
   "chatConv.playedBy": "播放者",
   "chatConv.notPlayed": "未播放",

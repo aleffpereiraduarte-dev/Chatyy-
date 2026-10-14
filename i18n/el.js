@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "Ο @{handle} δεν υπάρχει στο Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Ο λογαριασμός {email} αφαιρέθηκε από αυτήν τη συσκευή",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Ακύρωση λήψης",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Προεπιλογή",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Γραφομηχανή",
+  "status.text.fontScript": "Χειρόγραφη",
+  "status.text.fontCondensed": "Στενή",
+  "status.text.changeFont": "Αλλαγή γραμματοσειράς",
+  "status.text.changeColor": "Αλλαγή χρώματος",
+  "status.text.placeholder": "Γράψτε μια κατάσταση",
+  "status.text.linkDetected": "Εντοπίστηκε σύνδεσμος",
+  "status.text.counter": "{n} από {max} χαρακτήρες",
+  "status.text.openEditor": "Κείμενο",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Προβολή κατάστασης",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Αναπαράχθηκε",
   "chatConv.playedBy": "Αναπαράχθηκε από",
   "chatConv.notPlayed": "Δεν αναπαράχθηκε",

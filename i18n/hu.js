@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} nem létezik a Chatyy-n",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "A(z) {email} fiók el lett távolítva erről az eszközről",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Letöltés megszakítása",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Alapértelmezett",
+  "status.text.fontSerif": "Talpas",
+  "status.text.fontMono": "Írógép",
+  "status.text.fontScript": "Kézírás",
+  "status.text.fontCondensed": "Keskeny",
+  "status.text.changeFont": "Betűtípus váltása",
+  "status.text.changeColor": "Szín váltása",
+  "status.text.placeholder": "Írj egy állapotot",
+  "status.text.linkDetected": "Link észlelve",
+  "status.text.counter": "{n}/{max} karakter",
+  "status.text.openEditor": "Szöveg",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Állapot megtekintése",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Lejátszva",
   "chatConv.playedBy": "Lejátszotta",
   "chatConv.notPlayed": "Nincs lejátszva",

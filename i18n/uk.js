@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} немає в Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Обліковий запис {email} видалено з цього пристрою",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Скасувати завантаження",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Звичайний",
+  "status.text.fontSerif": "Із засічками",
+  "status.text.fontMono": "Друкарська машинка",
+  "status.text.fontScript": "Рукописний",
+  "status.text.fontCondensed": "Вузький",
+  "status.text.changeFont": "Змінити шрифт",
+  "status.text.changeColor": "Змінити колір",
+  "status.text.placeholder": "Напишіть статус",
+  "status.text.linkDetected": "Виявлено посилання",
+  "status.text.counter": "{n} з {max} символів",
+  "status.text.openEditor": "Текст",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Переглянути статус",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Прослухано",
   "chatConv.playedBy": "Прослухали",
   "chatConv.notPlayed": "Не прослухано",

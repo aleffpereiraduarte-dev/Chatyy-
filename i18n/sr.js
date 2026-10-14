@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} не постоји на Chatyy-ју",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Налог {email} је уклоњен са овог уређаја",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Откажи преузимање",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Подразумевани",
+  "status.text.fontSerif": "Серифни",
+  "status.text.fontMono": "Писаћа машина",
+  "status.text.fontScript": "Рукопис",
+  "status.text.fontCondensed": "Узак",
+  "status.text.changeFont": "Промени фонт",
+  "status.text.changeColor": "Промени боју",
+  "status.text.placeholder": "Напишите статус",
+  "status.text.linkDetected": "Пронађен линк",
+  "status.text.counter": "{n} од {max} знакова",
+  "status.text.openEditor": "Текст",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Погледај статус",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Pušteno",
   "chatConv.playedBy": "Pustili",
   "chatConv.notPlayed": "Nije pušteno",

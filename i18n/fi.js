@@ -9128,7 +9128,23 @@ export default {
   "profile.notFoundMsg": "@{handle} ei ole Chatyyssa",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Tili {email} poistettiin tästä laitteesta",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Peruuta lataus",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Oletus",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Kirjoituskone",
+  "status.text.fontScript": "Käsiala",
+  "status.text.fontCondensed": "Kapea",
+  "status.text.changeFont": "Vaihda fonttia",
+  "status.text.changeColor": "Vaihda väriä",
+  "status.text.placeholder": "Kirjoita tila",
+  "status.text.linkDetected": "Linkki havaittu",
+  "status.text.counter": "{n}/{max} merkkiä",
+  "status.text.openEditor": "Teksti",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Näytä tila",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Toistettu",
   "chatConv.playedBy": "Toistaneet",
   "chatConv.notPlayed": "Ei toistettu",

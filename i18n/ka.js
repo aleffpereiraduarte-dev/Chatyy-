@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-ზე არ არსებობს",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "ანგარიში {email} ამ მოწყობილობიდან წაიშალა",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ჩამოტვირთვის გაუქმება",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ნაგულისხმევი",
+  "status.text.fontSerif": "სერიფი",
+  "status.text.fontMono": "საბეჭდი მანქანა",
+  "status.text.fontScript": "ხელნაწერი",
+  "status.text.fontCondensed": "ვიწრო",
+  "status.text.changeFont": "შრიფტის შეცვლა",
+  "status.text.changeColor": "ფერის შეცვლა",
+  "status.text.placeholder": "დაწერეთ სტატუსი",
+  "status.text.linkDetected": "ბმული აღმოჩენილია",
+  "status.text.counter": "{n} / {max} სიმბოლო",
+  "status.text.openEditor": "ტექსტი",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "სტატუსის ნახვა",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "მოსმენილია",
   "chatConv.playedBy": "მოუსმინეს",
   "chatConv.notPlayed": "არ არის მოსმენილი",

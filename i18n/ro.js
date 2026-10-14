@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} nu există pe Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Contul {email} a fost eliminat de pe acest dispozitiv",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Anulează descărcarea",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Implicit",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Mașină de scris",
+  "status.text.fontScript": "De mână",
+  "status.text.fontCondensed": "Condensat",
+  "status.text.changeFont": "Schimbă fontul",
+  "status.text.changeColor": "Schimbă culoarea",
+  "status.text.placeholder": "Scrie un status",
+  "status.text.linkDetected": "Link detectat",
+  "status.text.counter": "{n} din {max} caractere",
+  "status.text.openEditor": "Text",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Vezi statusul",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Redat",
   "chatConv.playedBy": "Redat de",
   "chatConv.notPlayed": "Neredat",

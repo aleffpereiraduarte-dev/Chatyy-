@@ -4100,7 +4100,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-இல் இல்லை",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} கணக்கு இந்தச் சாதனத்திலிருந்து அகற்றப்பட்டது",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "பதிவிறக்கத்தை ரத்துசெய்",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "இயல்பு",
+  "status.text.fontSerif": "செரிஃப்",
+  "status.text.fontMono": "தட்டச்சுப்பொறி",
+  "status.text.fontScript": "கையெழுத்து",
+  "status.text.fontCondensed": "குறுகிய",
+  "status.text.changeFont": "எழுத்துரு மாற்று",
+  "status.text.changeColor": "நிறம் மாற்று",
+  "status.text.placeholder": "நிலையை எழுதுங்கள்",
+  "status.text.linkDetected": "இணைப்பு கண்டறியப்பட்டது",
+  "status.text.counter": "{max} இல் {n} எழுத்துகள்",
+  "status.text.openEditor": "உரை",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "நிலையைப் பார்",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "இயக்கப்பட்டது",
   "chatConv.playedBy": "இயக்கியவர்கள்",
   "chatConv.notPlayed": "இயக்கப்படவில்லை",

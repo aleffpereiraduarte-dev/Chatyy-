@@ -11174,7 +11174,23 @@ export default {
   "profile.notFoundMsg": "@{handle} は Chatyy に存在しません",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "アカウント {email} はこの端末から削除されました",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ダウンロードをキャンセル",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "標準",
+  "status.text.fontSerif": "明朝",
+  "status.text.fontMono": "タイプライター",
+  "status.text.fontScript": "手書き",
+  "status.text.fontCondensed": "細身",
+  "status.text.changeFont": "フォントを変更",
+  "status.text.changeColor": "色を変更",
+  "status.text.placeholder": "ステータスを入力",
+  "status.text.linkDetected": "リンクを検出しました",
+  "status.text.counter": "{n}/{max}文字",
+  "status.text.openEditor": "テキスト",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "ステータスを見る",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "再生済み",
   "chatConv.playedBy": "再生した人",
   "chatConv.notPlayed": "未再生",

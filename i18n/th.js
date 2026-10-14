@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "ไม่มี @{handle} ใน Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "บัญชี {email} ถูกนำออกจากอุปกรณ์นี้แล้ว",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ยกเลิกการดาวน์โหลด",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ค่าเริ่มต้น",
+  "status.text.fontSerif": "มีเชิง",
+  "status.text.fontMono": "พิมพ์ดีด",
+  "status.text.fontScript": "ลายมือ",
+  "status.text.fontCondensed": "แคบ",
+  "status.text.changeFont": "เปลี่ยนแบบอักษร",
+  "status.text.changeColor": "เปลี่ยนสี",
+  "status.text.placeholder": "พิมพ์สถานะ",
+  "status.text.linkDetected": "พบลิงก์",
+  "status.text.counter": "{n} จาก {max} ตัวอักษร",
+  "status.text.openEditor": "ข้อความ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "ดูสถานะ",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "เล่นแล้ว",
   "chatConv.playedBy": "เล่นโดย",
   "chatConv.notPlayed": "ยังไม่ได้เล่น",

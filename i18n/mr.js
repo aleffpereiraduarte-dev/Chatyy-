@@ -6501,7 +6501,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy वर अस्तित्वात नाही",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} खाते या डिव्हाइसवरून काढले गेले",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "डाउनलोड रद्द करा",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "डीफॉल्ट",
+  "status.text.fontSerif": "सेरिफ",
+  "status.text.fontMono": "टाइपरायटर",
+  "status.text.fontScript": "हस्तलिखित",
+  "status.text.fontCondensed": "अरुंद",
+  "status.text.changeFont": "फॉन्ट बदला",
+  "status.text.changeColor": "रंग बदला",
+  "status.text.placeholder": "स्टेटस लिहा",
+  "status.text.linkDetected": "लिंक आढळली",
+  "status.text.counter": "{max} पैकी {n} अक्षरे",
+  "status.text.openEditor": "मजकूर",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "स्टेटस पहा",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "प्ले केले",
   "chatConv.playedBy": "यांनी प्ले केले",
   "chatConv.notPlayed": "प्ले केले नाही",

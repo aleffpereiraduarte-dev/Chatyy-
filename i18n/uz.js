@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy’da mavjud emas",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} hisobi ushbu qurilmadan olib tashlandi",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Yuklab olishni bekor qilish",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Standart",
+  "status.text.fontSerif": "Serifli",
+  "status.text.fontMono": "Yozuv mashinkasi",
+  "status.text.fontScript": "Qo‘lyozma",
+  "status.text.fontCondensed": "Tor",
+  "status.text.changeFont": "Shriftni almashtirish",
+  "status.text.changeColor": "Rangni almashtirish",
+  "status.text.placeholder": "Status yozing",
+  "status.text.linkDetected": "Havola aniqlandi",
+  "status.text.counter": "{n}/{max} belgi",
+  "status.text.openEditor": "Matn",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Statusni ko‘rish",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Tinglangan",
   "chatConv.playedBy": "Tinglaganlar",
   "chatConv.notPlayed": "Tinglanmagan",

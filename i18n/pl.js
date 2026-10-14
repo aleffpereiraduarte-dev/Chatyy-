@@ -9128,7 +9128,23 @@ export default {
   "profile.notFoundMsg": "@{handle} nie istnieje w Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Konto {email} zostało usunięte z tego urządzenia",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Anuluj pobieranie",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Domyślna",
+  "status.text.fontSerif": "Szeryfowa",
+  "status.text.fontMono": "Maszynowa",
+  "status.text.fontScript": "Odręczna",
+  "status.text.fontCondensed": "Wąska",
+  "status.text.changeFont": "Zmień czcionkę",
+  "status.text.changeColor": "Zmień kolor",
+  "status.text.placeholder": "Wpisz status",
+  "status.text.linkDetected": "Wykryto link",
+  "status.text.counter": "{n} z {max} znaków",
+  "status.text.openEditor": "Tekst",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Zobacz status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Odtworzono",
   "chatConv.playedBy": "Odtworzone przez",
   "chatConv.notPlayed": "Nie odtworzono",

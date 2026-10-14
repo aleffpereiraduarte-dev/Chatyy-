@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy neeksistē",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Konts {email} tika noņemts no šīs ierīces",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Atcelt lejupielādi",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Noklusējuma",
+  "status.text.fontSerif": "Serifu",
+  "status.text.fontMono": "Rakstāmmašīna",
+  "status.text.fontScript": "Rokraksts",
+  "status.text.fontCondensed": "Šaurs",
+  "status.text.changeFont": "Mainīt fontu",
+  "status.text.changeColor": "Mainīt krāsu",
+  "status.text.placeholder": "Ierakstiet statusu",
+  "status.text.linkDetected": "Atrasta saite",
+  "status.text.counter": "{n} no {max} rakstzīmēm",
+  "status.text.openEditor": "Teksts",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Skatīt statusu",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Atskaņots",
   "chatConv.playedBy": "Atskaņoja",
   "chatConv.notPlayed": "Nav atskaņots",

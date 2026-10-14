@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} در Chatyy وجود ندارد",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "حساب {email} از این دستگاه حذف شد",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "لغو دانلود",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "پیش‌فرض",
+  "status.text.fontSerif": "سریف",
+  "status.text.fontMono": "ماشین تحریر",
+  "status.text.fontScript": "دست‌نویس",
+  "status.text.fontCondensed": "فشرده",
+  "status.text.changeFont": "تغییر قلم",
+  "status.text.changeColor": "تغییر رنگ",
+  "status.text.placeholder": "یک وضعیت بنویسید",
+  "status.text.linkDetected": "پیوند شناسایی شد",
+  "status.text.counter": "{n} از {max} نویسه",
+  "status.text.openEditor": "متن",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "مشاهده وضعیت",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "پخش شد",
   "chatConv.playedBy": "پخش‌شده توسط",
   "chatConv.notPlayed": "پخش نشده",

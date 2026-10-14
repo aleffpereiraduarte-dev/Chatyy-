@@ -11173,7 +11173,23 @@ export default {
   "profile.notFoundMsg": "@{handle} tidak ada di Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akun {email} telah dihapus dari perangkat ini",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Batalkan unduhan",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Default",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Mesin tik",
+  "status.text.fontScript": "Tulisan tangan",
+  "status.text.fontCondensed": "Ramping",
+  "status.text.changeFont": "Ganti font",
+  "status.text.changeColor": "Ganti warna",
+  "status.text.placeholder": "Ketik status",
+  "status.text.linkDetected": "Tautan terdeteksi",
+  "status.text.counter": "{n} dari {max} karakter",
+  "status.text.openEditor": "Teks",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Lihat status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Diputar",
   "chatConv.playedBy": "Diputar oleh",
   "chatConv.notPlayed": "Belum diputar",

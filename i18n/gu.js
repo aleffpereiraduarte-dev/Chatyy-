@@ -6499,7 +6499,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy પર અસ્તિત્વમાં નથી",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} એકાઉન્ટ આ ઉપકરણમાંથી દૂર કરવામાં આવ્યું",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ડાઉનલોડ રદ કરો",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ડિફોલ્ટ",
+  "status.text.fontSerif": "સેરિફ",
+  "status.text.fontMono": "ટાઇપરાઇટર",
+  "status.text.fontScript": "હસ્તલિખિત",
+  "status.text.fontCondensed": "સાંકડું",
+  "status.text.changeFont": "ફોન્ટ બદલો",
+  "status.text.changeColor": "રંગ બદલો",
+  "status.text.placeholder": "સ્ટેટસ લખો",
+  "status.text.linkDetected": "લિંક મળી",
+  "status.text.counter": "{max} માંથી {n} અક્ષરો",
+  "status.text.openEditor": "ટેક્સ્ટ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "સ્ટેટસ જુઓ",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "વગાડ્યું",
   "chatConv.playedBy": "વગાડનાર",
   "chatConv.notPlayed": "વગાડ્યું નથી",

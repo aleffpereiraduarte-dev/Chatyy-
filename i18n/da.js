@@ -9128,7 +9128,23 @@ export default {
   "profile.notFoundMsg": "@{handle} findes ikke på Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Kontoen {email} er fjernet fra denne enhed",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Annuller download",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Standard",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Skrivemaskine",
+  "status.text.fontScript": "Håndskrift",
+  "status.text.fontCondensed": "Smal",
+  "status.text.changeFont": "Skift skrifttype",
+  "status.text.changeColor": "Skift farve",
+  "status.text.placeholder": "Skriv en status",
+  "status.text.linkDetected": "Link fundet",
+  "status.text.counter": "{n} af {max} tegn",
+  "status.text.openEditor": "Tekst",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Se status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Afspillet",
   "chatConv.playedBy": "Afspillet af",
   "chatConv.notPlayed": "Ikke afspillet",

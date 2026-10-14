@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy'de yok",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} hesabı bu cihazdan kaldırıldı",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "İndirmeyi iptal et",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Varsayılan",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Daktilo",
+  "status.text.fontScript": "El yazısı",
+  "status.text.fontCondensed": "Dar",
+  "status.text.changeFont": "Yazı tipini değiştir",
+  "status.text.changeColor": "Rengi değiştir",
+  "status.text.placeholder": "Bir durum yaz",
+  "status.text.linkDetected": "Bağlantı algılandı",
+  "status.text.counter": "{n}/{max} karakter",
+  "status.text.openEditor": "Metin",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Durumu gör",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Oynatıldı",
   "chatConv.playedBy": "Oynatanlar",
   "chatConv.notPlayed": "Oynatılmadı",

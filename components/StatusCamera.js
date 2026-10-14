@@ -20,7 +20,7 @@ import CachedImage from './CachedImage';
 import * as api from '../services/api';
 import {
   IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
-  IconImage, IconUndo2, IconMusic, IconCheck,
+  IconImage, IconUndo2, IconMusic, IconCheck, IconPencil,
 } from './Icons';
 // AR face-filter pipeline — SINGLE SESSION (react-native-vision-camera v4 +
 // Skia frame processor + MLKit face-detector plugin). StatusVisionCamera owns
@@ -126,7 +126,7 @@ function FilterThumb({ filter, uri, selected, onPress }) {
 // estúdio com filtros reais → galeria vai direto pra ele (sem o preview antigo
 // de filtros "pintados") e a faixa de galeria recente substitui os chips de
 // filtro ao vivo (que eram só uma película colorida, nunca aplicada no arquivo).
-export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null, directToEditor = false }) {
+export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null, directToEditor = false, onOpenText = null }) {
   // Safe-area insets — the absolute overlays (close button, music pill,
   // right-side action stack) used a fixed Platform.OS check that fell short
   // on Android edge-to-edge windows (close was tucking under the status
@@ -1559,6 +1559,19 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
 
       {/* Mode tabs — TikTok-style with active underline (Feature 4) */}
       <View style={s.modeBar}>
+        {/* [status-texto 2026-10-14] "Texto" na fileira de modos (como "Texto" do
+            WhatsApp / "Criar" do Instagram) — abre o editor de status de texto. */}
+        {typeof onOpenText === 'function' && !recording ? (
+          <TouchableOpacity
+            onPress={() => { haptic('light'); onOpenText(); }}
+            style={s.modeItem}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('status.text.openEditor') || 'Texto'}
+            testID="status-camera-text-tab"
+          >
+            <Text style={s.modeTxt}>{t?.('status.text.openEditor') || 'Texto'}</Text>
+          </TouchableOpacity>
+        ) : null}
         {MODES.map((m) => {
           const active = captureMode === m;
           return (
@@ -1639,8 +1652,21 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           </View>
         </Pressable>
 
-        {/* Right-side spacer for symmetry (actions live on rightStack column) */}
-        <View style={{ width: 50, height: 50 }} pointerEvents="none" />
+        {/* [status-texto 2026-10-14] "Texto" (WhatsApp): abre o editor de status de
+            texto. Sem onOpenText fica o espaçador de simetria de antes. */}
+        {typeof onOpenText === 'function' && !recording ? (
+          <TouchableOpacity
+            onPress={() => { haptic('light'); onOpenText(); }}
+            style={s.textModeBtn}
+            accessibilityLabel={t?.('status.text.openEditor') || 'Texto'}
+            accessibilityRole="button"
+            testID="status-camera-text"
+          >
+            <IconPencil size={22} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 50, height: 50 }} pointerEvents="none" />
+        )}
       </View>
 
       {/* Music picker — Pixabay royalty-free catalog (Wave 14 backend).
@@ -1983,6 +2009,7 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   galleryThumbImg: { width: '100%', height: '100%' },
+  textModeBtn: { width: 50, height: 50, borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' },
   galleryThumbFallback: {
     width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.12)',

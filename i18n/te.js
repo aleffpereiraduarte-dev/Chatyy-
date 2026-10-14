@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyyలో లేరు",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ఖాతా ఈ పరికరం నుండి తీసివేయబడింది",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "డౌన్‌లోడ్ రద్దు చేయి",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "డిఫాల్ట్",
+  "status.text.fontSerif": "సెరిఫ్",
+  "status.text.fontMono": "టైప్‌రైటర్",
+  "status.text.fontScript": "చేతిరాత",
+  "status.text.fontCondensed": "ఇరుకైన",
+  "status.text.changeFont": "ఫాంట్ మార్చు",
+  "status.text.changeColor": "రంగు మార్చు",
+  "status.text.placeholder": "స్టేటస్ రాయండి",
+  "status.text.linkDetected": "లింక్ కనుగొనబడింది",
+  "status.text.counter": "{max}లో {n} అక్షరాలు",
+  "status.text.openEditor": "టెక్స్ట్",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "స్టేటస్ చూడండి",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "ప్లే అయింది",
   "chatConv.playedBy": "ప్లే చేసినవారు",
   "chatConv.notPlayed": "ప్లే కాలేదు",

@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} не съществува в Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Профилът {email} беше премахнат от това устройство",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Отказ на изтеглянето",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Стандартен",
+  "status.text.fontSerif": "Серифен",
+  "status.text.fontMono": "Пишеща машина",
+  "status.text.fontScript": "Ръкописен",
+  "status.text.fontCondensed": "Сбит",
+  "status.text.changeFont": "Смяна на шрифта",
+  "status.text.changeColor": "Смяна на цвета",
+  "status.text.placeholder": "Напишете статус",
+  "status.text.linkDetected": "Открита връзка",
+  "status.text.counter": "{n} от {max} знака",
+  "status.text.openEditor": "Текст",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Виж статуса",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Прослушано",
   "chatConv.playedBy": "Прослушано от",
   "chatConv.notPlayed": "Непрослушано",

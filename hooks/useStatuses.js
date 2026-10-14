@@ -418,6 +418,12 @@ export default function useStatuses(currentEmail, opts = {}) {
     : { groups: [], mine: [], others: [] };
 
   const [groups, setGroups] = useState(_initialNorm.groups);
+  // [status-rever 2026-10-14] alimenta o anel (visto/não visto) da lista de
+  // conversas, cabeçalho e perfil — mesma fonte/privacidade do status_list.
+  useEffect(() => {
+    if (!enabled || !currentEmail) return;
+    try { require('../components/status/statusRingStore').setStatusRingsFromGroups(groups, currentEmail); } catch {}
+  }, [groups, enabled, currentEmail]);
   const [mine, setMine] = useState(_initialNorm.mine);
   const [others, setOthers] = useState(_initialNorm.others);
   // [WAVE 43B 2026-05-20] loading=false quando temos preload (MMKV ou disk).
@@ -517,6 +523,14 @@ export default function useStatuses(currentEmail, opts = {}) {
             views: 0,
             meta: null,
             _placeholder: true,
+            // [status-texto 2026-10-14] prévia do status de TEXTO mais recente
+            // (status_manifest latest_*) — só p/ a miniatura colorida da lista;
+            // o viewer continua esperando o item real (status_list).
+            ...(i === total - 1 && u.latest_type === 'text' ? {
+              _preview_text: String(u.latest_text || ''),
+              _preview_bg: String(u.latest_bg || ''),
+              _preview_font: String(u.latest_font || ''),
+            } : null),
           });
         }
         if (items.length === 0) continue;
@@ -746,6 +760,7 @@ export default function useStatuses(currentEmail, opts = {}) {
 
   const markViewed = useCallback((statusId) => {
     const stamp = new Date().toISOString();
+    try { require('../components/status/statusRingStore').markRingItemViewed(statusId); } catch {} // [status-rever 2026-10-14]
     try { _broadcastViewed(statusId, stamp, _applyViewedRef.current); } catch {}
     // [P2 2026-05-26] If we're offline, the actual status_view receipt is
     // sitting in the offline queue (StoryViewer queues it on failure). Surface

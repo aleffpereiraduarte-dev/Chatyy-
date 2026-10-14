@@ -898,7 +898,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy හි නොමැත",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ගිණුම මෙම උපාංගයෙන් ඉවත් කරන ලදී",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "බාගැනීම අවලංගු කරන්න",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "පෙරනිමි",
+  "status.text.fontSerif": "සෙරිෆ්",
+  "status.text.fontMono": "යතුරු ලියනය",
+  "status.text.fontScript": "අත් අකුරු",
+  "status.text.fontCondensed": "පටු",
+  "status.text.changeFont": "අකුරු වෙනස් කරන්න",
+  "status.text.changeColor": "වර්ණය වෙනස් කරන්න",
+  "status.text.placeholder": "තත්ත්වයක් ලියන්න",
+  "status.text.linkDetected": "සබැඳියක් හමු විය",
+  "status.text.counter": "{max} න් {n} අක්ෂර",
+  "status.text.openEditor": "පෙළ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "තත්ත්වය බලන්න",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "වාදනය කළා",
   "chatConv.playedBy": "වාදනය කළේ",
   "chatConv.notPlayed": "වාදනය කර නැත",

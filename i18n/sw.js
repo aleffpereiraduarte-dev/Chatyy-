@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} hayupo kwenye Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Akaunti {email} imeondolewa kwenye kifaa hiki",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Ghairi upakuaji",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Chaguo-msingi",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Taipureta",
+  "status.text.fontScript": "Mwandiko wa mkono",
+  "status.text.fontCondensed": "Nyembamba",
+  "status.text.changeFont": "Badilisha fonti",
+  "status.text.changeColor": "Badilisha rangi",
+  "status.text.placeholder": "Andika hali",
+  "status.text.linkDetected": "Kiungo kimegunduliwa",
+  "status.text.counter": "Herufi {n} kati ya {max}",
+  "status.text.openEditor": "Maandishi",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Tazama hali",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Imechezwa",
   "chatConv.playedBy": "Imechezwa na",
   "chatConv.notPlayed": "Haijachezwa",

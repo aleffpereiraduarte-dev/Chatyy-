@@ -11198,7 +11198,23 @@ export default {
   "profile.notFoundMsg": "@{handle} não existe no Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "A conta {email} foi removida deste dispositivo",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Cancelar transferência",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Padrão",
+  "status.text.fontSerif": "Serifa",
+  "status.text.fontMono": "Máquina",
+  "status.text.fontScript": "Manuscrita",
+  "status.text.fontCondensed": "Condensada",
+  "status.text.changeFont": "Mudar tipo de letra",
+  "status.text.changeColor": "Mudar cor",
+  "status.text.placeholder": "Escreva um estado",
+  "status.text.linkDetected": "Ligação detetada",
+  "status.text.counter": "{n} de {max} caracteres",
+  "status.text.openEditor": "Texto",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Ver estado",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Reproduzido",
   "chatConv.playedBy": "Reproduzido por",
   "chatConv.notPlayed": "Não reproduzido",

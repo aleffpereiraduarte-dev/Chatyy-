@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} v Chatyy neexistuje",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Účet {email} byl z tohoto zařízení odebrán",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Zrušit stahování",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Výchozí",
+  "status.text.fontSerif": "Patkové",
+  "status.text.fontMono": "Psací stroj",
+  "status.text.fontScript": "Ručně psané",
+  "status.text.fontCondensed": "Zúžené",
+  "status.text.changeFont": "Změnit písmo",
+  "status.text.changeColor": "Změnit barvu",
+  "status.text.placeholder": "Napište status",
+  "status.text.linkDetected": "Nalezen odkaz",
+  "status.text.counter": "{n} z {max} znaků",
+  "status.text.openEditor": "Text",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Zobrazit status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Přehráno",
   "chatConv.playedBy": "Přehráli",
   "chatConv.notPlayed": "Nepřehráno",

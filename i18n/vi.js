@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} không tồn tại trên Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Tài khoản {email} đã bị xóa khỏi thiết bị này",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Hủy tải xuống",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Mặc định",
+  "status.text.fontSerif": "Có chân",
+  "status.text.fontMono": "Máy đánh chữ",
+  "status.text.fontScript": "Viết tay",
+  "status.text.fontCondensed": "Hẹp",
+  "status.text.changeFont": "Đổi phông chữ",
+  "status.text.changeColor": "Đổi màu",
+  "status.text.placeholder": "Nhập trạng thái",
+  "status.text.linkDetected": "Đã phát hiện liên kết",
+  "status.text.counter": "{n}/{max} ký tự",
+  "status.text.openEditor": "Văn bản",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Xem trạng thái",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Đã phát",
   "chatConv.playedBy": "Đã phát bởi",
   "chatConv.notPlayed": "Chưa phát",

@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} ei ole Chatyys olemas",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Konto {email} eemaldati sellest seadmest",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Tühista allalaadimine",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Vaikimisi",
+  "status.text.fontSerif": "Seriifidega",
+  "status.text.fontMono": "Kirjutusmasin",
+  "status.text.fontScript": "Käekiri",
+  "status.text.fontCondensed": "Kitsas",
+  "status.text.changeFont": "Muuda fonti",
+  "status.text.changeColor": "Muuda värvi",
+  "status.text.placeholder": "Kirjuta olek",
+  "status.text.linkDetected": "Link tuvastatud",
+  "status.text.counter": "{n}/{max} märki",
+  "status.text.openEditor": "Tekst",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Vaata olekut",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Esitatud",
   "chatConv.playedBy": "Esitanud",
   "chatConv.notPlayed": "Esitamata",

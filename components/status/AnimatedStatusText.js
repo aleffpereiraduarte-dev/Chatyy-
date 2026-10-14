@@ -14,7 +14,7 @@
  * Falls back to plain text if value is unknown — never blocks render.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Dimensions, Easing, StyleSheet, Text, View } from 'react-native';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
 // [2026-06-10 tela-branca fix] The composer persists gradient presets as a
 // `gradient:<id>` token in bg_color. Passing that token straight into
@@ -22,6 +22,8 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect }
 // every white-on-color element dissolved into a blank/white screen. Resolve
 // the token to real stops via the shared preset map (single source of truth).
 import { resolveTextGradient as _resolveGradient } from './textGradients';
+// [status-texto 2026-10-14] fonte/auto-ajuste/links compartilhados com o compositor.
+import { textStatusFontStyle, autoFitFontSize, splitLinks, openTextStatusLink } from './textStatus';
 
 // Any other non-paintable string (unknown token, empty, etc.) must never
 // reach backgroundColor raw — fall back to the brand purple.
@@ -32,24 +34,9 @@ function _safeSolid(bgColor) {
 
 const TEXT_BASE = {
   color: '#fff',
-  fontSize: 34,
-  fontWeight: '700',
   textAlign: 'center',
   paddingHorizontal: 24,
 };
-
-function pickFontStyle(fontStyle) {
-  if (fontStyle === 'serif') {
-    return {
-      fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-      fontStyle: 'italic',
-    };
-  }
-  if (fontStyle === 'mono') {
-    return { fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' };
-  }
-  return null;
-}
 
 export default function AnimatedStatusText({
   text = '',
@@ -102,12 +89,23 @@ export default function AnimatedStatusText({
     return undefined;
   }, [animKey, animation, text]);
 
+  // [status-texto 2026-10-14] auto-ajuste pelo tamanho REAL do card (mesma
+  // conta do compositor) — texto curto grande, texto longo menor, sempre cabe.
+  const [box, setBox] = useState(() => { const w = Dimensions.get('window'); return { w: w.width, h: w.height * 0.8 }; });
+  const fs = autoFitFontSize(text, { width: box.w, height: box.h, max: 44, min: 14, font: fontStyle });
   const display = animation === 'typewriter' ? text.slice(0, typedLen) : text;
+  const parts = splitLinks(display);
   const caret = animation === 'typewriter' && typedLen < text.length ? '▌' : '';
 
   const grad = _resolveGradient(bgColor);
   return (
-    <View style={[styles.card, { backgroundColor: grad ? grad.colors[grad.colors.length - 1] : _safeSolid(bgColor) }]}>
+    <View
+      style={[styles.card, { backgroundColor: grad ? grad.colors[grad.colors.length - 1] : _safeSolid(bgColor) }]}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout || {};
+        if (width > 0 && height > 0 && (Math.abs(width - box.w) > 2 || Math.abs(height - box.h) > 2)) setBox({ w: width, h: height });
+      }}
+    >
       {grad ? (
         <Svg
           pointerEvents="none"
@@ -133,11 +131,14 @@ export default function AnimatedStatusText({
       <Animated.Text
         style={[
           TEXT_BASE,
-          pickFontStyle(fontStyle),
+          { fontSize: fs, lineHeight: Math.round(fs * 1.25) },
+          textStatusFontStyle(fontStyle),
           { transform: [{ scale }], opacity },
         ]}
       >
-        {display}
+        {parts.map((p, i) => (p.url ? (
+          <Text key={i} style={{ textDecorationLine: 'underline' }} onPress={() => openTextStatusLink(p.url)} accessibilityRole="link" suppressHighlighting>{p.text}</Text>
+        ) : p.text))}
         {caret ? <Text style={{ opacity: 0.6 }}>{caret}</Text> : null}
       </Animated.Text>
     </View>

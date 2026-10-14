@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} មិនមាននៅលើ Chatyy ទេ",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "គណនី {email} ត្រូវបានដកចេញពីឧបករណ៍នេះ",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "បោះបង់ការទាញយក",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "លំនាំដើម",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "ម៉ាស៊ីនអង្គុលីលេខ",
+  "status.text.fontScript": "សរសេរដៃ",
+  "status.text.fontCondensed": "តូចចង្អៀត",
+  "status.text.changeFont": "ប្ដូរពុម្ពអក្សរ",
+  "status.text.changeColor": "ប្ដូរពណ៌",
+  "status.text.placeholder": "សរសេរស្ថានភាព",
+  "status.text.linkDetected": "រកឃើញតំណ",
+  "status.text.counter": "{n} នៃ {max} តួអក្សរ",
+  "status.text.openEditor": "អត្ថបទ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "មើលស្ថានភាព",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "បានចាក់",
   "chatConv.playedBy": "បានចាក់ដោយ",
   "chatConv.notPlayed": "មិនទាន់ចាក់",

@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy neegzistuoja",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Paskyra {email} pašalinta iš šio įrenginio",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Atšaukti atsisiuntimą",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Numatytasis",
+  "status.text.fontSerif": "Serifinis",
+  "status.text.fontMono": "Rašomoji mašinėlė",
+  "status.text.fontScript": "Ranka rašytas",
+  "status.text.fontCondensed": "Siauras",
+  "status.text.changeFont": "Keisti šriftą",
+  "status.text.changeColor": "Keisti spalvą",
+  "status.text.placeholder": "Įrašykite būseną",
+  "status.text.linkDetected": "Rasta nuoroda",
+  "status.text.counter": "{n} iš {max} simbolių",
+  "status.text.openEditor": "Tekstas",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Žiūrėti būseną",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Paleista",
   "chatConv.playedBy": "Paleido",
   "chatConv.notPlayed": "Nepaleista",

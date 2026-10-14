@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "Walang @{handle} sa Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Inalis ang account na {email} sa device na ito",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Kanselahin ang pag-download",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Default",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Makinilya",
+  "status.text.fontScript": "Sulat-kamay",
+  "status.text.fontCondensed": "Makitid",
+  "status.text.changeFont": "Palitan ang font",
+  "status.text.changeColor": "Palitan ang kulay",
+  "status.text.placeholder": "Mag-type ng status",
+  "status.text.linkDetected": "May nakitang link",
+  "status.text.counter": "{n} sa {max} na karakter",
+  "status.text.openEditor": "Teksto",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Tingnan ang status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Na-play",
   "chatConv.playedBy": "Na-play ni",
   "chatConv.notPlayed": "Hindi pa na-play",

@@ -60,6 +60,9 @@ import useStatuses from '../hooks/useStatuses';
 // purple ring, +/↩ badge, optional Notes overlay. Same look the user
 // already loves on home, just one source of truth now.
 import StoryRingAvatar from './status/StoryRingAvatar';
+import { textPreviewOf } from './status/textStatus'; // [status-texto 2026-10-14]
+import { useStatusRing, openStatusFor, registerStatusOpener } from './status/statusRingStore'; // [status-rever 2026-10-14]
+import AvatarStatusRing from './status/AvatarStatusRing';
 // [2026-10-09 lighter-app] StoryViewer (~170 KB de fonte) só é avaliado no 1º
 // status aberto — a lista de conversas é a 1ª tela do boot. O viewer já
 // devolve null com visible=false; montar direto com visible=true roda os
@@ -877,6 +880,9 @@ const ConversationRow = React.memo(function ConversationRow({
   { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.row++; }
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
+  // [status-rever 2026-10-14] anel de status no avatar (direct): destacado se há
+  // status novo, cinza se já visto; tocar no avatar abre o status.
+  const _statusRing = useStatusRing((!isGroup && !isChannel) ? (conversation.other_email || conversation.contact_email || conversation.email || '') : '');
   // For direct chats, check if the user has set a local nickname for the peer.
   // Applies only to direct convs (groups keep server-side name). Sync read
   // from MMKV cache so the row doesn't flicker on scroll.
@@ -1607,16 +1613,22 @@ const ConversationRow = React.memo(function ConversationRow({
                     web-dark glow around avatars — WhatsApp avatars are flat.
                     Unread is carried by the bold name + count pill. Flatter,
                     cleaner column of avatars. */}
+                {/* [status-rever 2026-10-14] arco (segmentado por status) em volta da foto */}
+                <AvatarStatusRing size={ROW_AVATAR - 8} ring={_statusRing} isDark={isDark} gap={2} inset={4} testID="row-status-ring" />
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
-                  size={ROW_AVATAR}
+                  size={_statusRing ? ROW_AVATAR - 8 : ROW_AVATAR}
+                  style={_statusRing ? { margin: 4 } : undefined}
                   // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
                   // chats; group/channel avatars don't have a single photo to
                   // enlarge — the row tap still opens the conversation).
                   // Disabled in selection mode so multi-select gestures still
                   // work without ambiguity.
-                  onPress={selectionMode ? undefined : (onAvatarPress ? () => onAvatarPress({ name: displayName, email: otherEmail }) : undefined)}
+                  onPress={selectionMode ? undefined : (_statusRing
+                    ? () => { if (!openStatusFor(otherEmail) && onAvatarPress) onAvatarPress({ name: displayName, email: otherEmail }); }
+                    : (onAvatarPress ? () => onAvatarPress({ name: displayName, email: otherEmail }) : undefined))}
+                  accessibilityLabel={_statusRing ? (t?.('status.ring.viewStatus') || 'Ver status') : undefined}
                 />
               </View>
             )}
@@ -2468,9 +2480,15 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // user's profile page (Recentes highlight). A group is "fully viewed" when
   // every status inside it was seen (`viewed: true`); unread stays on top,
   // viewed falls to the end and is trimmed.
-  const otherStatuses = statuses
-    .filter(s => s.email !== user?.email && s.items?.length > 0)
-    .filter(s => (s.items || []).some(it => !it.viewed));
+  // [status-rever 2026-10-14] Founder: "depois que vejo o status, deveria poder
+  // ver de novo". Os já vistos NÃO somem mais da faixa: ficam DEPOIS dos novos,
+  // com anel cinza (seção "Vistos" do WhatsApp), até expirar.
+  const otherStatuses = (() => {
+    const all = statuses.filter(s => s.email !== user?.email && s.items?.length > 0);
+    const fresh = all.filter(s => (s.items || []).some(it => !it.viewed));
+    const seen = all.filter(s => !(s.items || []).some(it => !it.viewed));
+    return fresh.concat(seen);
+  })();
 
   // Merge: for each contact, if they have a status → status; else if they have a note → note
   const notesByEmail = new Map(notes.filter(n => n.email !== user?.email).map(n => [n.email, n]));
@@ -2792,6 +2810,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             badgeAccessibilityLabel={t('status.ring.newStatus')}
             uploadProgress={pubProgress}
             uploadFailed={pubFailed}
+            textPreview={myStatus ? textPreviewOf(myStatus.items) : null /* [status-texto 2026-10-14] */}
             note={!myStatus && myNote?.content ? myNote.content : null}
             isDark={isDark}
             colors={colors}
@@ -2911,6 +2930,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   // [2026-10-11 qa-sweep2] Close-friends items get the green ring
                   // here too (the Status tab already did; the strip didn't).
                   closeFriends={!isLive && (s.items || []).some(it => (it?.meta?.privacy || it?.privacy) === 'close_friends')}
+                  textPreview={isLive ? null : textPreviewOf(s.items) /* [status-texto 2026-10-14] */}
                 />
                 <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
                   {/* [2026-10-11 qa-sweep2] humanized like the rows ("apitest" → "Apitest") */}
@@ -3159,6 +3179,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       {Platform.OS !== 'web' && showCustomCamera && (
         <Suspense fallback={null}>
           <StatusCamera
+            // [status-texto 2026-10-14] "Texto" na câmera → editor de status de texto
+            onOpenText={() => {
+              setShowCustomCamera(false);
+              setTimeout(() => {
+                try {
+                  const R = require('./status/statusRingStore');
+                  if (!R.openTextStatusComposer()) { try { requestNewStatus?.(); } catch {} setTimeout(() => { try { R.openTextStatusComposer(); } catch {} }, 900); }
+                } catch {}
+              }, Platform.OS === 'ios' ? 450 : 0);
+            }}
             visible={showCustomCamera}
             t={t}
             initialSeed={repostSeed}
@@ -3586,6 +3616,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   }), [_themeColors, P]);
   const confirm = useConfirm();
   const { language } = useLanguage();
+  // [status-rever 2026-10-14] avatar com anel (linhas da lista) abre o status pelo mesmo caminho da faixa.
+  useEffect(() => registerStatusOpener(typeof requestOpenStatus === 'function' ? requestOpenStatus : null), [requestOpenStatus]);
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.

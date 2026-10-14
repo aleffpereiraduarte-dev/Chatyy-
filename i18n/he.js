@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} לא קיים ב-Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "החשבון {email} הוסר מהמכשיר הזה",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ביטול ההורדה",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ברירת מחדל",
+  "status.text.fontSerif": "סריף",
+  "status.text.fontMono": "מכונת כתיבה",
+  "status.text.fontScript": "כתב יד",
+  "status.text.fontCondensed": "צר",
+  "status.text.changeFont": "החלפת גופן",
+  "status.text.changeColor": "החלפת צבע",
+  "status.text.placeholder": "כתבו סטטוס",
+  "status.text.linkDetected": "זוהה קישור",
+  "status.text.counter": "{n} מתוך {max} תווים",
+  "status.text.openEditor": "טקסט",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "צפייה בסטטוס",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "הושמע",
   "chatConv.playedBy": "הושמע על ידי",
   "chatConv.notPlayed": "לא הושמע",

@@ -8346,7 +8346,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-д байхгүй",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} бүртгэлийг энэ төхөөрөмжөөс хассан",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Татахыг цуцлах",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Үндсэн",
+  "status.text.fontSerif": "Сериф",
+  "status.text.fontMono": "Бичгийн машин",
+  "status.text.fontScript": "Гар бичмэл",
+  "status.text.fontCondensed": "Нарийн",
+  "status.text.changeFont": "Фонт солих",
+  "status.text.changeColor": "Өнгө солих",
+  "status.text.placeholder": "Төлөв бичнэ үү",
+  "status.text.linkDetected": "Холбоос илэрлээ",
+  "status.text.counter": "{max}-аас {n} тэмдэгт",
+  "status.text.openEditor": "Текст",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Төлөв харах",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Тоглуулсан",
   "chatConv.playedBy": "Тоглуулсан хүмүүс",
   "chatConv.notPlayed": "Тоглуулаагүй",

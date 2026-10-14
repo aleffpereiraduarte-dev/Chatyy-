@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} ne postoji na Chatyyju",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "Račun {email} uklonjen je s ovog uređaja",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Odustani od preuzimanja",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Zadano",
+  "status.text.fontSerif": "Serifno",
+  "status.text.fontMono": "Pisaći stroj",
+  "status.text.fontScript": "Rukopis",
+  "status.text.fontCondensed": "Usko",
+  "status.text.changeFont": "Promijeni font",
+  "status.text.changeColor": "Promijeni boju",
+  "status.text.placeholder": "Napišite status",
+  "status.text.linkDetected": "Pronađena poveznica",
+  "status.text.counter": "{n} od {max} znakova",
+  "status.text.openEditor": "Tekst",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Pogledaj status",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Reproducirano",
   "chatConv.playedBy": "Reproducirali",
   "chatConv.notPlayed": "Nije reproducirano",

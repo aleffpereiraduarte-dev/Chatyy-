@@ -899,7 +899,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy 'ਤੇ ਮੌਜੂਦ ਨਹੀਂ ਹੈ",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} ਖਾਤਾ ਇਸ ਡਿਵਾਈਸ ਤੋਂ ਹਟਾ ਦਿੱਤਾ ਗਿਆ",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ਡਾਊਨਲੋਡ ਰੱਦ ਕਰੋ",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ਡਿਫਾਲਟ",
+  "status.text.fontSerif": "ਸੇਰਿਫ",
+  "status.text.fontMono": "ਟਾਈਪਰਾਈਟਰ",
+  "status.text.fontScript": "ਹੱਥ ਲਿਖਤ",
+  "status.text.fontCondensed": "ਤੰਗ",
+  "status.text.changeFont": "ਫੌਂਟ ਬਦਲੋ",
+  "status.text.changeColor": "ਰੰਗ ਬਦਲੋ",
+  "status.text.placeholder": "ਸਟੇਟਸ ਲਿਖੋ",
+  "status.text.linkDetected": "ਲਿੰਕ ਮਿਲਿਆ",
+  "status.text.counter": "{max} ਵਿੱਚੋਂ {n} ਅੱਖਰ",
+  "status.text.openEditor": "ਟੈਕਸਟ",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "ਸਟੇਟਸ ਦੇਖੋ",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "ਚਲਾਇਆ ਗਿਆ",
   "chatConv.playedBy": "ਚਲਾਉਣ ਵਾਲੇ",
   "chatConv.notPlayed": "ਨਹੀਂ ਚਲਾਇਆ",

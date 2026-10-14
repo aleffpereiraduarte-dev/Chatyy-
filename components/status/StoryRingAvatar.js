@@ -31,6 +31,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
+import { TextStatusThumb } from './textStatus'; // [status-texto 2026-10-14]
 import { IconPlus, IconReply } from '../Icons';
 
 function StoryRingAvatar({
@@ -68,7 +69,13 @@ function StoryRingAvatar({
   // uploadFailed pinta o anel tracejado (tocar tenta de novo — quem chama trata).
   uploadProgress = null,
   uploadFailed = false,
+  // [status-texto 2026-10-14] { text, bg, font } → o miolo do anel vira a
+  // miniatura colorida do status de texto mais recente (WhatsApp) em vez da foto.
+  textPreview = null,
 }) {
+  const _face = textPreview && textPreview.text
+    ? <TextStatusThumb text={textPreview.text} bg={textPreview.bg} font={textPreview.font} size={size} />
+    : <AvatarCircle name={name} email={email} size={size} />;
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = colors?.background || (isDark ? '#000' : '#fff');
   // [2026-10-10 polish-list] P&B: the default ink ring/badge (#111111) vanished
@@ -187,7 +194,7 @@ function StoryRingAvatar({
             borderWidth: 2.5, borderColor: _dim,
           }} />
         )}
-        <AvatarCircle name={name} email={email} size={size} />
+        {_face}
       </Animated.View>
     );
   } else if (ringStyle === 'segmented') {
@@ -247,7 +254,7 @@ function StoryRingAvatar({
             })}
           </Svg>
         </View>
-        <AvatarCircle name={name} email={email} size={size} />
+        {_face}
       </Animated.View>
     );
   } else {
@@ -255,7 +262,7 @@ function StoryRingAvatar({
     // doesn't shift between has-story and no-story neighbors.
     inner = (
       <View style={{ padding: 2.5 }}>
-        <AvatarCircle name={name} email={email} size={size} />
+        {_face}
       </View>
     );
   }

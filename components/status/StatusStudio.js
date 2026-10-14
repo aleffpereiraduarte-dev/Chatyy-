@@ -33,7 +33,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   IconX, IconType, IconSmile, IconBrush, IconCrop, IconSliders, IconSparkles,
   IconRotateCw, IconUndo, IconTrash, IconAtSign, IconMapPin, IconLink, IconGlobe, IconUsers,
-  IconStar, IconEyeOff, IconChevronDown, IconImage, IconCamera, IconSend, IconFilter,
+  IconStar, IconEyeOff, IconChevronDown, IconImage, IconCamera, IconSend, IconFilter, IconPalette,
 } from '../Icons';
 import { useTheme } from '../../context/ThemeContext';
 import * as api from '../../services/api';
@@ -45,7 +45,9 @@ import {
   filtersAvailable, prepareBase, makeThumb, sampleStats, exportFiltered, captureStage,
   toUploadFile, FilteredStage, FilterThumbs,
 } from './studioEngine';
-import { TEXT_BG_GRADIENTS } from './textGradients';
+import {
+  TEXT_STATUS_COLORS, TEXT_STATUS_FONTS, TEXT_STATUS_MAX, textStatusFontStyle, autoFitFontSize, estimateTextLines, firstLink,
+} from './textStatus'; // [status-texto 2026-10-14]
 import { enqueueStatusPublish } from '../../services/statusPublishQueue';
 
 let StickerPicker = null;
@@ -313,7 +315,11 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   // texto
   const [textDraft, setTextDraft] = useState(null); // { id?, text, font, color, bg, align }
   // status de texto
-  const [txt, setTxt] = useState({ text: '', grad: 0, font: 'classic' });
+  // [status-texto 2026-10-14] cor sólida da paleta (índice) + fonte (sans/serif/mono/script/condensed)
+  const [txt, setTxt] = useState({ text: '', color: 0, font: 'sans' });
+  const [fontFlash, setFontFlash] = useState(null);
+  const fontFlashTimer = useRef(null);
+  const [kbH, setKbH] = useState(0); // iOS: altura do teclado p/ o auto-ajuste do texto
   // desenho
   const [brush, setBrush] = useState({ color: '#FFFFFF', w: 8 });
   const [liveStroke, setLiveStroke] = useState(null);
@@ -354,7 +360,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
     setTool(its.length && its[0].type !== 'video' && filtersAvailable() ? 'filters' : null);
     setCaption('');
     setTextDraft(null);
-    setTxt({ text: '', grad: Math.floor(Math.random() * TEXT_BG_GRADIENTS.length), font: 'classic' });
+    setTxt({ text: '', color: Math.floor(Math.random() * TEXT_STATUS_COLORS.length), font: 'sans' });
     setPublishing(false);
     setCapturing(null);
     // Público lembrado
@@ -605,9 +611,9 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
     if (mode === 'text') {
       const text = txt.text.trim();
       if (!text) return;
-      const g = TEXT_BG_GRADIENTS[txt.grad] || TEXT_BG_GRADIENTS[0];
-      const font_style = txt.font === 'serif' ? 'serif' : txt.font === 'mono' ? 'mono' : undefined;
-      await enqueueStatusPublish({ email, kind: 'text', content: text, background: `gradient:${g.id}`, meta: { ...base, ...(font_style ? { font_style } : {}) } });
+      // [status-texto 2026-10-14] fundo sólido da paleta + fonte escolhida (servidor valida ambos).
+      const bg = TEXT_STATUS_COLORS[txt.color] || TEXT_STATUS_COLORS[0];
+      await enqueueStatusPublish({ email, kind: 'text', content: Array.from(text).slice(0, TEXT_STATUS_MAX).join(''), background: bg, meta: { ...base, font_style: txt.font || 'sans' } });
       try { _Haptics?.notificationAsync?.(_Haptics.NotificationFeedbackType?.Success); } catch {}
       onClose?.({ published: true });
       return;
@@ -693,6 +699,15 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
     return () => tms.forEach(clearTimeout);
   }, [visible, mode]);
 
+  // [status-texto 2026-10-14] iOS: altura do teclado entra no auto-ajuste do texto.
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !visible) return undefined;
+    const a = Keyboard.addListener('keyboardWillShow', (e) => setKbH(e?.endCoordinates?.height || 0));
+    const b = Keyboard.addListener('keyboardWillHide', () => setKbH(0));
+    return () => { try { a.remove(); b.remove(); } catch {} };
+  }, [visible]);
+  useEffect(() => () => { if (fontFlashTimer.current) clearTimeout(fontFlashTimer.current); }, []);
+
   // ── adicionar mídia a partir do modo texto / mais fotos ──
   const pickFromGallery = useCallback(async () => {
     try {
@@ -746,25 +761,6 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   );
 
   const renderStageMedia = () => {
-    if (mode === 'text') {
-      const g = TEXT_BG_GRADIENTS[txt.grad] || TEXT_BG_GRADIENTS[0];
-      return (
-        <View style={{ width: stageW, height: stageH, alignItems: 'center', justifyContent: 'center' }}>
-          <GradientFill colors={g.colors} id={`stg_${g.id}`} />
-          <TextInput
-            ref={textInputRef}
-            value={txt.text}
-            onChangeText={(v) => setTxt(s => ({ ...s, text: v.slice(0, 700) }))}
-            placeholder={t('status.studio.textPlaceholder')}
-            placeholderTextColor="rgba(255,255,255,0.6)"
-            multiline
-            autoFocus={Platform.OS !== 'web'}
-            style={[{ color: '#FFFFFF', fontSize: txt.text.length > 120 ? 22 : txt.text.length > 50 ? 28 : 34, textAlign: 'center', paddingHorizontal: 24, width: '100%', maxHeight: stageH * 0.8, zIndex: 1 },
-              Platform.OS === 'web' ? { outlineStyle: 'none' } : null, fontStyleFor(txt.font)]}
-          />
-        </View>
-      );
-    }
     if (!cur) return null;
     if (isVideo) {
       return getVideoMod() ? <VideoStage uri={cur.uri} width={stageW} height={stageH} /> : <Image source={{ uri: cur.uri }} style={{ width: stageW, height: stageH }} resizeMode="contain" />;
@@ -819,28 +815,6 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   const filterItems = STATUS_FILTERS.map(f => ({ key: f.id, matrix: compose(f.m, adjustMatrix(ed?.adjust)) }));
 
   const renderToolPanel = () => {
-    if (mode === 'text') {
-      return (
-        <View style={st.panel}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 10, alignItems: 'center' }}>
-            {TEXT_BG_GRADIENTS.map((g, i) => (
-              <TouchableOpacity key={g.id} onPress={() => { tick(); setTxt(s => ({ ...s, grad: i })); }} accessibilityLabel={g.id}
-                style={[st.gradDot, txt.grad === i && { borderColor: '#FFFFFF', borderWidth: 2.5 }]}>
-                <View style={{ flex: 1, borderRadius: 16, overflow: 'hidden' }}><GradientFill colors={g.colors} id={`dot_${g.id}`} /></View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 10 }}>
-            {FONTS.filter(f => f.id === 'classic' || f.id === 'serif' || f.id === 'mono').map(f => (
-              <TouchableOpacity key={f.id} onPress={() => setTxt(s => ({ ...s, font: f.id }))}
-                style={[st.chip, txt.font === f.id && st.chipOn]}>
-                <Text style={[st.chipTxt, txt.font === f.id && st.chipTxtOn, fontStyleFor(f.id), { textTransform: 'none' }]}>{t(f.labelKey)}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      );
-    }
     if (tool === 'filters' && ed?.thumbUri && filtersOn) {
       return (
         <View style={st.panel}>
@@ -932,12 +906,104 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
     return null;
   };
 
+  // ── [status-texto 2026-10-14] Status de TEXTO nível WhatsApp ──────────────
+  // Tela cheia na cor escolhida, texto grande centralizado que diminui sozinho
+  // (auto-ajuste), fonte e cor alternadas por toque, contador 0/700, link
+  // detectado, público igual ao das fotos. Teclado nunca cobre o texto: KAV no
+  // iOS (+ altura do teclado no auto-ajuste) e inset do teclado no Android.
+  const cycleFont = () => {
+    tick();
+    const i = TEXT_STATUS_FONTS.findIndex(f => f.id === txt.font);
+    const next = TEXT_STATUS_FONTS[(i + 1) % TEXT_STATUS_FONTS.length];
+    setTxt(s => ({ ...s, font: next.id }));
+    setFontFlash(next.labelKey);
+    if (fontFlashTimer.current) clearTimeout(fontFlashTimer.current);
+    fontFlashTimer.current = setTimeout(() => setFontFlash(null), 900);
+  };
+  const cycleColor = () => { tick(); setTxt(s => ({ ...s, color: (s.color + 1) % TEXT_STATUS_COLORS.length })); };
+  const renderTextComposer = () => {
+    const len = Array.from(txt.text).length;
+    const bottomBarH = 64;
+    const kb = Platform.OS === 'ios' ? kbH : Platform.OS === 'android' ? androidKb : 0;
+    const areaH = Math.max(120, WIN.height - insets.top - insets.bottom - topBarH - bottomBarH - kb - 24);
+    const fs = autoFitFontSize(txt.text, { width: WIN.width, height: areaH, max: 40, min: 14, font: txt.font });
+    const lineH = Math.round(fs * 1.25);
+    const lines = estimateTextLines(txt.text || 'x', { width: WIN.width, fontSize: fs, font: txt.font });
+    const inputH = Math.min(areaH, Math.max(lineH + 8, lines * lineH + 8));
+    const link = firstLink(txt.text);
+    const linkHost = link ? link.replace(/^https?:\/\//i, '').replace(/\/$/, '') : '';
+    const canSend = !!txt.text.trim() && !publishing;
+    return (
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[{ flex: 1 }, Platform.OS === 'android' && androidKb > 0 ? { paddingBottom: androidKb } : null]}>
+        <View style={[st.topBar, { height: topBarH }]}>
+          <GlassBtn onPress={() => onClose?.()} label={t('common.close')}><IconX size={20} color={chrome} /></GlassBtn>
+          <View style={{ flex: 1 }} />
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <GlassBtn onPress={cycleFont} label={t('status.text.changeFont')}>
+              <Text style={[{ color: chrome, fontSize: 16, includeFontPadding: false }, textStatusFontStyle(txt.font), { textTransform: 'none' }]}>Aa</Text>
+            </GlassBtn>
+            <GlassBtn onPress={cycleColor} label={t('status.text.changeColor')}><IconPalette size={19} color={chrome} /></GlassBtn>
+            <GlassBtn onPress={pickFromGallery} label={t('status.gallery')}><IconImage size={19} color={chrome} /></GlassBtn>
+            {Platform.OS !== 'web' && onOpenCamera ? (
+              <GlassBtn onPress={() => { onClose?.(); setTimeout(() => onOpenCamera?.(), Platform.OS === 'ios' ? 500 : 200); }} label={t('status.camera')}><IconCamera size={19} color={chrome} /></GlassBtn>
+            ) : null}
+          </View>
+        </View>
+        <Pressable style={{ flex: 1, justifyContent: 'center' }} onPress={() => { try { textInputRef.current?.focus?.(); } catch {} }} accessible={false}>
+          <TextInput
+            ref={textInputRef}
+            value={txt.text}
+            onChangeText={(v) => setTxt(s => ({ ...s, text: Array.from(v).slice(0, TEXT_STATUS_MAX).join('') }))}
+            placeholder={t('status.text.placeholder')}
+            placeholderTextColor="rgba(255,255,255,0.6)"
+            multiline
+            autoFocus={Platform.OS !== 'web'}
+            scrollEnabled
+            textAlignVertical="center"
+            selectionColor="#FFFFFF"
+            accessibilityLabel={t('status.text.placeholder')}
+            testID="text-status-input"
+            style={[{ color: '#FFFFFF', fontSize: fs, lineHeight: lineH, textAlign: 'center', paddingHorizontal: 24, width: '100%' },
+              Platform.OS === 'web' ? { outlineStyle: 'none', height: inputH, resize: 'none' } : { maxHeight: areaH },
+              textStatusFontStyle(txt.font)]}
+          />
+          {fontFlash ? (
+            <View pointerEvents="none" style={st.fontFlash}><Text style={st.fontFlashTxt}>{t(fontFlash)}</Text></View>
+          ) : null}
+        </Pressable>
+        {link ? (
+          <View style={st.linkPill} accessibilityLabel={t('status.text.linkDetected')}>
+            <IconLink size={14} color="#fff" />
+            <Text style={st.linkPillTxt} numberOfLines={1}>{linkHost}</Text>
+          </View>
+        ) : null}
+        <View style={[st.bottomRow, { height: bottomBarH }]}>
+          <TouchableOpacity onPress={() => { try { Keyboard.dismiss(); } catch {} setTool('audience'); }} style={[st.audPill, { backgroundColor: 'rgba(0,0,0,0.22)' }]} accessibilityRole="button" accessibilityLabel={t('status.audience.title')}>
+            <AudIcon size={15} color="#fff" />
+            <Text style={st.audTxt} numberOfLines={1}>{audienceLabel}</Text>
+            <IconChevronDown size={14} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+          <Text style={[st.counter, len >= TEXT_STATUS_MAX - 50 && { color: '#FFFFFF', fontWeight: '800' }]} accessibilityLabel={t('status.text.counter', { n: len, max: TEXT_STATUS_MAX })}>{len}/{TEXT_STATUS_MAX}</Text>
+          <TouchableOpacity
+            onPress={publish}
+            disabled={!canSend}
+            style={[st.sendRound, !canSend && { opacity: 0.45 }]}
+            accessibilityRole="button" accessibilityLabel={t('status.studio.share')} testID="text-status-send"
+          >
+            {publishing ? <ActivityIndicator color="#000" /> : <IconSend size={20} color="#000" />}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  };
+
   const showFilterHint = mode === 'media' && !isVideo && filtersOn && (!tool || tool === 'filters') && !captionFocus
     && ed?.suggestion && ed.filterId !== ed.suggestion.id;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => (tool ? setTool(null) : onClose?.())} statusBarTranslucent>
-      <View style={[st.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      <View style={[st.root, { paddingTop: insets.top, paddingBottom: insets.bottom }, mode === 'text' ? { backgroundColor: TEXT_STATUS_COLORS[txt.color] || TEXT_STATUS_COLORS[0] } : null]}>
+        {mode === 'text' ? renderTextComposer() : (<>
         {/* Topo */}
         <View style={[st.topBar, { height: topBarH }]}>
           <GlassBtn onPress={() => (tool && tool !== 'filters' ? setTool(null) : onClose?.())} label={t('common.close')}>
@@ -1080,6 +1146,7 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
             </TouchableOpacity>
           </View>
         </View>
+        </>)}
 
         {/* ── Editor de texto (sobre tudo) ── */}
         {tool === 'textEdit' && textDraft ? (
@@ -1362,4 +1429,11 @@ const st = StyleSheet.create({
   audIcon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
   radioDot: { width: 11, height: 11, borderRadius: 6 },
+  // [status-texto 2026-10-14]
+  counter: { color: 'rgba(255,255,255,0.75)', fontSize: 12.5, fontWeight: '600', fontVariant: ['tabular-nums'], marginLeft: 'auto' },
+  sendRound: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  linkPill: { alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6, maxWidth: '80%', marginBottom: 4 },
+  linkPillTxt: { color: '#fff', fontSize: 13, fontWeight: '600', textDecorationLine: 'underline', flexShrink: 1 },
+  fontFlash: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
+  fontFlashTxt: { color: '#fff', fontSize: 13, fontWeight: '800', backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, overflow: 'hidden' },
 });

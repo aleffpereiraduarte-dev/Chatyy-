@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} no existeix a Chatyy",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "El compte {email} s'ha eliminat d'aquest dispositiu",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "Cancel·la la baixada",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "Predeterminada",
+  "status.text.fontSerif": "Serif",
+  "status.text.fontMono": "Màquina",
+  "status.text.fontScript": "Manuscrita",
+  "status.text.fontCondensed": "Condensada",
+  "status.text.changeFont": "Canvia la font",
+  "status.text.changeColor": "Canvia el color",
+  "status.text.placeholder": "Escriu un estat",
+  "status.text.linkDetected": "Enllaç detectat",
+  "status.text.counter": "{n} de {max} caràcters",
+  "status.text.openEditor": "Text",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "Mostra l'estat",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "Reproduït",
   "chatConv.playedBy": "Reproduït per",
   "chatConv.notPlayed": "No reproduït",

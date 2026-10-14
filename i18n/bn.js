@@ -8350,7 +8350,23 @@ export default {
   "profile.notFoundMsg": "@{handle} Chatyy-তে নেই",
   // [incidente-sessao 2026-10-14]
   "account.removedFromDevice": "{email} অ্যাকাউন্টটি এই ডিভাইস থেকে সরানো হয়েছে",
+  // [dl-progress 2026-10-14]
   "chatConv.cancelDownload": "ডাউনলোড বাতিল করুন",
+  // [status-texto 2026-10-14]
+  "status.text.fontSans": "ডিফল্ট",
+  "status.text.fontSerif": "সেরিফ",
+  "status.text.fontMono": "টাইপরাইটার",
+  "status.text.fontScript": "হাতের লেখা",
+  "status.text.fontCondensed": "সরু",
+  "status.text.changeFont": "ফন্ট বদলান",
+  "status.text.changeColor": "রং বদলান",
+  "status.text.placeholder": "একটি স্ট্যাটাস লিখুন",
+  "status.text.linkDetected": "লিংক পাওয়া গেছে",
+  "status.text.counter": "{max}-এর মধ্যে {n} অক্ষর",
+  "status.text.openEditor": "টেক্সট",
+  // [status-rever 2026-10-14]
+  "status.ring.viewStatus": "স্ট্যাটাস দেখুন",
+  // [voz-reproduzido 2026-10-14]
   "chatConv.playedAt": "চালানো হয়েছে",
   "chatConv.playedBy": "যারা চালিয়েছেন",
   "chatConv.notPlayed": "চালানো হয়নি",
