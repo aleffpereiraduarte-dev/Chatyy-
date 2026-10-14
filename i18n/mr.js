@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "नाव किंवा @वापरकर्तानावाने लोक शोधा",
+  "chatConv.groupMembersCount": "{n} सदस्य",
+  "calls.scheduledList": "नियोजित",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2756,7 +2760,7 @@ export default {
   'profile.photoUploadFailed': 'फोटो अपलोड करण्यात अयशस्वी',
   'profile.namePh': 'तुमचे नाव',
   'profile.usernamePh': 'वापरकर्ता',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'तुमच्याबद्दल काहीतरी सांगा',
   'profile.website': 'लिंक',
   'profile.saveFailed': 'जतन करण्यात अयशस्वी',
@@ -6459,4 +6463,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "नाव बदला",
+  "chat.listOptionsMsg": "या सूचीचे नाव बदलायचे की ती हटवायची?",
 };

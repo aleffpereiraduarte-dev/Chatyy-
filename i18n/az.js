@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "İnsanları ad və ya @istifadəçi adı ilə axtarın",
+  "chatConv.groupMembersCount": "{n} üzv",
+  "calls.scheduledList": "Planlaşdırılmış",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2666,10 +2670,10 @@ export default {
   'profile.notAvailable': 'Mövcud deyil',
   'profile.verified': 'Təsdiqlənmiş',
   'profile.email': 'E-poçtlar',
-  'profile.name': 'AD',
+  'profile.name': 'Ad',
   'profile.namePlaceholder': 'Sənin adın',
   'profile.phone': 'Telefon',
-  'profile.username': 'İSTİFADƏÇİ',
+  'profile.username': 'İstifadəçi',
   'profile.usernameAdd': 'İstifadəçi adını əlavə et',
   'profile.usernameTitle': 'Sənin istifadəçi adın',
   'profile.usernameSubtitle': '@username ilə telefonun olmadan tapıla bilərsən. 4-32 simvol: hərflər, rəqəmlər və _.',
@@ -2756,9 +2760,9 @@ export default {
   'profile.photoUploadFailed': 'Şəkil yüklənmədi',
   'profile.namePh': 'Sənin adın',
   'profile.usernamePh': 'istifadəçi',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Özün haqqında bir şey yaz',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Saxlamaq mümkün olmadı',
   'profile.sentByYou': 'Sənin göndərdiyin',
   'profile.receivedFrom': 'Alınan',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Adını dəyiş",
+  "chat.listOptionsMsg": "Bu siyahının adı dəyişdirilsin, yoxsa silinsin?",
 };

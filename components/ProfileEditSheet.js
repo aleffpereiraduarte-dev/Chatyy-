@@ -591,7 +591,7 @@ export default function ProfileEditSheet({
                   button to swap. Preview (coverPreview) wins over coverUrl
                   during upload so the user sees the new banner instantly.
                   Empty state shows a faint purple wash + camera prompt. */}
-              <View style={{ width: '100%', height: 150, backgroundColor: 'rgba(17, 17, 17,0.08)', position: 'relative' }}>
+              <View style={{ width: '100%', height: 150, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.06)', position: 'relative' }}>{/* [2026-10-14 vis3] tons neutros por tema — #111 translúcido sumia no escuro */}
                 {(coverPreview || coverUrl) ? (
                   <ExpoImage
                     source={{ uri: coverPreview || coverUrl }}
@@ -600,8 +600,8 @@ export default function ProfileEditSheet({
                   />
                 ) : (
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <IconCamera size={28} color="rgba(17, 17, 17,0.4)" />
-                    <Text style={{ fontSize: 12, color: 'rgba(17, 17, 17,0.6)', marginTop: 6, fontWeight: '600' }}>
+                    <IconCamera size={28} color={colors?.textSecondary || '#667781'} />
+                    <Text style={{ fontSize: 12, color: colors?.textSecondary || '#667781', marginTop: 6, fontWeight: '600' }}>
                       {t?.('profile.cover') || 'Capa'}
                     </Text>
                   </View>
@@ -642,7 +642,7 @@ export default function ProfileEditSheet({
                 {/* Soft purple wash sitting behind the avatar */}
                 <View pointerEvents="none" style={{
                   position: 'absolute', top: 0, left: 0, right: 0, height: 140,
-                  backgroundColor: 'rgba(17, 17, 17,0.05)',
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(17, 17, 17,0.03)',
                 }} />
                 <TouchableOpacity
                   onPress={handlePickAvatar}
@@ -653,13 +653,12 @@ export default function ProfileEditSheet({
                   style={{
                     width: 104, height: 104, borderRadius: 52,
                     alignItems: 'center', justifyContent: 'center',
-                    backgroundColor: 'rgba(17, 17, 17,0.10)',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
                     // Defined brand ring around the avatar puck so it reads as
                     // a deliberate "edit photo" target (Instagram-grade) rather
                     // than a flat tinted blob.
                     borderWidth: 1.5,
-                    borderColor: isDark ? 'rgba(17, 17, 17,0.35)' : 'rgba(17, 17, 17,0.22)',
-                    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(17, 17, 17,0.18)' } : {}),
+                    borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.16)',
                   }}
                 >
                   <View style={{

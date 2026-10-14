@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "ค้นหาผู้คนด้วยชื่อหรือ @ชื่อผู้ใช้",
+  "chatConv.groupMembersCount": "สมาชิก {n} คน",
+  "calls.scheduledList": "ที่นัดหมายไว้",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2760,7 +2764,7 @@ export default {
   'profile.photoUploadFailed': 'การอัปโหลดรูปภาพล้มเหลว',
   'profile.namePh': 'ชื่อของคุณ',
   'profile.usernamePh': 'ชื่อผู้ใช้',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'บอกอะไรเกี่ยวกับคุณ',
   'profile.website': 'ลิงก์',
   'profile.saveFailed': 'ไม่สามารถบันทึกได้',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "เปลี่ยนชื่อ",
+  "chat.listOptionsMsg": "เปลี่ยนชื่อหรือลบรายการนี้?",
 };

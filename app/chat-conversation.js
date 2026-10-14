@@ -9179,7 +9179,7 @@ function GroupSectionLabel({ children, colors }) {
   return (
     <Text style={{
       fontSize: 12, fontWeight: '700', letterSpacing: 0.4,
-      color: colors.textTertiary, textTransform: 'uppercase',
+      color: colors.textSecondary, textTransform: 'uppercase', // [2026-10-14 vis3] era textTertiary (2.7:1 no claro)
       marginLeft: 6, marginBottom: 7,
     }}>{children}</Text>
   );
@@ -16098,7 +16098,16 @@ function ChatConversationInner() {
           // local rows hold numbers (matches onWsEdit/onWsReaction). Without
           // this the deleted bubble was never tombstoned live — content/media
           // stayed visible until a manual refetch.
-          if (String(row.id) !== String(m.id)) return row;
+          if (String(row.id) !== String(m.id)) {
+            // [e2e 2026-10-14] Respostas que citam a msg apagada: a citação seguia
+            // mostrando o texto apagado por 2-4 s (até o próximo sync) — igual ao
+            // caminho TCP (onChatDelete) e ao chatSync, vira lápide na hora.
+            const rt = row.reply_to;
+            if (rt && typeof rt === 'object' && String(rt.id) === String(m.id) && !rt.deleted_at) {
+              return { ...row, reply_quote_text: row.reply_quote_text ? '' : row.reply_quote_text, reply_to: { ...rt, content: '', file_url: null, thumb_b64: null, deleted_at: m.deleted_at || new Date().toISOString() } };
+            }
+            return row;
+          }
           priorFileUrl = row.file_url || '';
           return {
             ...row,
@@ -36147,7 +36156,8 @@ function ChatConversationInner() {
         animationType="slide"
         onRequestClose={() => setShowContactInfo(false)}
       >
-        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+        <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
+        <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
             <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -36377,6 +36387,7 @@ function ChatConversationInner() {
               );
             })()}
           </ScrollView>
+        </View>
         </View>
       </Modal>
       )}
@@ -36794,7 +36805,8 @@ function ChatConversationInner() {
         animationType="slide"
         onRequestClose={() => setShowGroupInfo(false)}
       >
-        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+        <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
+        <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfoTitle') || 'Dados do grupo'}</Text>
             <TouchableOpacity onPress={() => setShowGroupInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -36836,7 +36848,7 @@ function ChatConversationInner() {
                 {conversationName}
               </Text>
               <Text style={{ fontSize: 13.5, color: colors.textSecondary, fontWeight: '500' }}>
-                {t('chatConv.group') || 'Grupo'} · {membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : members.length} {t('chatConv.members') || 'participantes'}{/* [2026-10-07 group-admin] real count when roster hidden */}
+                {t('chatConv.group') || 'Grupo'} · {t('chatConv.groupMembersCount', { n: membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : members.length }) || `${membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : members.length} membros`}{/* [2026-10-07 group-admin] real count when roster hidden */}
               </Text>
               {/* WhatsApp-style action buttons row (4 round, tinted) */}
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 24 }}>
@@ -37095,9 +37107,10 @@ function ChatConversationInner() {
                         <TouchableOpacity
                           activeOpacity={0.65}
                           onPress={() => handleToggleAdmin(m.email, m.role)}
-                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: m.role === 'admin' ? (isDark ? 'rgba(255,255,255,0.08)' : '#f0f2f5') : GI_ACCENT + '1A' }}
+                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : '#f0f2f5' }}
                         >
-                          <Text style={{ fontSize: 11.5, color: m.role === 'admin' ? colors.textSecondary : GI_ACCENT, fontWeight: '600' }}>
+                          {/* [2026-10-14 vis3] texto grafite #636366 sumia no escuro (≈3:1) → tokens do tema */}
+                          <Text style={{ fontSize: 11.5, color: m.role === 'admin' ? colors.textSecondary : colors.text, fontWeight: '600' }}>
                             {m.role === 'admin' ? (t('chatConv.demote') || 'Remover admin') : (t('chatConv.promote') || 'Tornar admin')}
                           </Text>
                         </TouchableOpacity>
@@ -37610,6 +37623,7 @@ function ChatConversationInner() {
             </GroupCard>
             </View>
           </ScrollView>
+        </View>
         </View>
       </Modal>
 
@@ -39344,6 +39358,7 @@ const styles = StyleSheet.create({
     flex: 1, marginTop: 80, borderTopLeftRadius: 26, borderTopRightRadius: 26,
     ...Shadow.lg,
   },
+  infoSheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
   forwardHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     padding: Spacing.md, paddingTop: Spacing.lg, borderBottomWidth: StyleSheet.hairlineWidth,

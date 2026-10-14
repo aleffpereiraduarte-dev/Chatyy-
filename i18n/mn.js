@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Хүмүүсийг нэр эсвэл @хэрэглэгчийн нэрээр хайх",
+  "chatConv.groupMembersCount": "{n} гишүүн",
+  "calls.scheduledList": "Товлосон",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2666,10 +2670,10 @@ export default {
   'profile.notAvailable': 'Боломжгүй',
   'profile.verified': 'Шалгасан',
   'profile.email': 'И-мэйл',
-  'profile.name': 'НЭР',
+  'profile.name': 'Нэр',
   'profile.namePlaceholder': 'Таны нэр',
   'profile.phone': 'Утас',
-  'profile.username': 'ХЭРЭГЛЭГЧ',
+  'profile.username': 'Хэрэглэгч',
   'profile.usernameAdd': 'Хэрэглэгчийн нэр нэмэх',
   'profile.usernameTitle': 'Таны хэрэглэгчийн нэр',
   'profile.usernameSubtitle': '@username-ээр таныг олох боломжтой, утасны дугаар шаардлагагүй. 4-32 тэмдэгт: үсэг, тоо ба _.',
@@ -2756,9 +2760,9 @@ export default {
   'profile.photoUploadFailed': 'Зураг илгээхэд алдаа гарлаа',
   'profile.namePh': 'Таны нэр',
   'profile.usernamePh': 'хэрэглэгч',
-  'profile.bio': 'БИО',
+  'profile.bio': 'Био',
   'profile.bioPh': 'Өөрийнхөө тухай юу нэг зүйл бичээрэй',
-  'profile.website': 'ХОЛБООС',
+  'profile.website': 'Холбоос',
   'profile.saveFailed': 'Хадгалах боломжгүй',
   'profile.sentByYou': 'Таны илгээсэн',
   'profile.receivedFrom': 'Хүлээн авсан',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Нэр өөрчлөх",
+  "chat.listOptionsMsg": "Энэ жагсаалтын нэрийг өөрчлөх үү, устгах уу?",
 };

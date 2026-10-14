@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "പേര് അല്ലെങ്കിൽ @ഉപയോക്തൃനാമം ഉപയോഗിച്ച് ആളുകളെ തിരയുക",
+  "chatConv.groupMembersCount": "{n} അംഗങ്ങൾ",
+  "calls.scheduledList": "ഷെഡ്യൂൾ ചെയ്തവ",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -857,4 +861,8 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "പേരുമാറ്റുക",
+  "chat.listOptionsMsg": "ഈ ലിസ്റ്റിന്റെ പേര് മാറ്റണോ അതോ ഇല്ലാതാക്കണോ?",
+  "common.done": "പൂർത്തിയായി",
+  "common.save": "സേവ് ചെയ്യുക",
 };

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "ਨਾਮ ਜਾਂ @ਯੂਜ਼ਰਨੇਮ ਨਾਲ ਲੋਕ ਲੱਭੋ",
+  "chatConv.groupMembersCount": "{n} ਮੈਂਬਰ",
+  "calls.scheduledList": "ਤਹਿ ਕੀਤੀਆਂ",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -855,4 +859,8 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "ਨਾਮ ਬਦਲੋ",
+  "chat.listOptionsMsg": "ਕੀ ਇਸ ਸੂਚੀ ਦਾ ਨਾਮ ਬਦਲਣਾ ਹੈ ਜਾਂ ਮਿਟਾਉਣਾ ਹੈ?",
+  "common.done": "ਹੋ ਗਿਆ",
+  "common.save": "ਸੇਵ ਕਰੋ",
 };

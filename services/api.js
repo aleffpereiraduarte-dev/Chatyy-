@@ -6817,11 +6817,17 @@ export async function chatRemoveMember(conversationId, targetEmail) {
 // worker fires push reminders 15min and 1min before the slot. Joining is
 // gated to ±5min around scheduled_at.
 export async function callSchedule({ participants, title, scheduledAt, durationMin = 30 }) {
+  // [paridade-wa 2026-10-14] fuso do aparelho → a msg "Chamada agendada … em DD/MM HH:MM"
+  // sai no horário local de quem agendou (antes: UTC, 3h adiantado no Brasil).
+  let tz = '';
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
   return apiCall('call_schedule', {
     participants,
     title,
     scheduled_at: scheduledAt,
     duration_min: durationMin,
+    tz,
+    tz_offset_min: -new Date(scheduledAt).getTimezoneOffset(),
   }, 'POST');
 }
 export async function callScheduleList() {

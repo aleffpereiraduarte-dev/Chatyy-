@@ -1048,14 +1048,9 @@ function ChatHub() {
         </TouchableOpacity>
       );
     }
-    if (activeTab === 'feed') {
-      return (
-        <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={t('a11y.search')}
-          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
-          <IconSearch size={18} color={headerIconColor} />
-        </TouchableOpacity>
-      );
-    }
+    // [2026-10-14 vis3] feed: sem lupa no topo — o feed já tem o campo "Buscar pessoas"
+    // logo abaixo (2 buscas empilhadas na mesma tela). Espaçador mantém a altura do header.
+    if (activeTab === 'feed') return <View style={styles.headerIconBtn} pointerEvents="none" />;
     return null;
   };
 

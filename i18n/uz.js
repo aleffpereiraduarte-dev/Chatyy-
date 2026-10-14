@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Odamlarni ism yoki @foydalanuvchi nomi bo'yicha qidiring",
+  "chatConv.groupMembersCount": "{n} a'zo",
+  "calls.scheduledList": "Rejalashtirilgan",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2666,7 +2670,7 @@ export default {
   'profile.notAvailable': 'Mavjud emas',
   'profile.verified': 'Tasdiqlangan',
   'profile.email': 'Elektron pochta',
-  'profile.name': 'ISM',
+  'profile.name': 'Ism',
   'profile.namePlaceholder': 'Ismingiz',
   'profile.phone': 'Telefon',
   'profile.username': 'Foydalanuvchi nomi',
@@ -2756,9 +2760,9 @@ export default {
   'profile.photoUploadFailed': 'Rasmni yuklashda xato',
   'profile.namePh': 'Ismingiz',
   'profile.usernamePh': 'foydalanuvchi',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'O\'zingiz haqingizda biror narsa yozing',
-  'profile.website': 'HAVOLA',
+  'profile.website': 'Havola',
   'profile.saveFailed': 'Saqlash mumkin emas',
   'profile.sentByYou': 'Siz yubordingiz',
   'profile.receivedFrom': 'Olingan',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Nomini oʻzgartirish",
+  "chat.listOptionsMsg": "Bu roʻyxat nomi oʻzgartirilsinmi yoki oʻchirilsinmi?",
 };

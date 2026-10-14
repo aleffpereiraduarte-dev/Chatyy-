@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Caută persoane după nume sau @utilizator",
+  "chatConv.groupMembersCount": "{n} membri",
+  "calls.scheduledList": "Programate",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Indisponibil',
   'profile.verified': 'Verificat',
   'profile.email': 'Emailuri',
-  'profile.name': 'NUME',
+  'profile.name': 'Nume',
   'profile.namePlaceholder': 'Numele tău',
   'profile.phone': 'Telefon',
-  'profile.username': 'UTILIZATOR',
+  'profile.username': 'Utilizator',
   'profile.usernameAdd': 'Adaugă username',
   'profile.usernameTitle': 'Username-ul tău',
   'profile.usernameSubtitle': 'Oamenii te pot găsi după @username fără să aibă nevoie de telefonul tău. 4-32 caractere: litere, cifre și _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Încărcarea pozei a eșuat',
   'profile.namePh': 'Numele tău',
   'profile.usernamePh': 'utilizator',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Spune ceva despre tine',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Nu s-a putut salva',
   'profile.sentByYou': 'Trimis de tine',
   'profile.receivedFrom': 'Recepționat',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Redenumește",
+  "chat.listOptionsMsg": "Redenumești sau ștergi această listă?",
 };

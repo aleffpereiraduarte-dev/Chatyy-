@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "ಹೆಸರು ಅಥವಾ @ಬಳಕೆದಾರಹೆಸರಿನಿಂದ ಜನರನ್ನು ಹುಡುಕಿ",
+  "chatConv.groupMembersCount": "{n} ಸದಸ್ಯರು",
+  "calls.scheduledList": "ನಿಗದಿತ",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -1656,4 +1660,7 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "ಮರುಹೆಸರಿಸಿ",
+  "chat.listOptionsMsg": "ಈ ಪಟ್ಟಿಯನ್ನು ಮರುಹೆಸರಿಸಬೇಕೇ ಅಥವಾ ಅಳಿಸಬೇಕೇ?",
+  "common.done": "ಮುಗಿದಿದೆ",
 };

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Търсете хора по име или @потребителско име",
+  "chatConv.groupMembersCount": "{n} членове",
+  "calls.scheduledList": "Насрочени",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Не е наличен',
   'profile.verified': 'Потвърден',
   'profile.email': 'Имейли',
-  'profile.name': 'ИМЕ',
+  'profile.name': 'Име',
   'profile.namePlaceholder': 'Твоето име',
   'profile.phone': 'Телефон',
-  'profile.username': 'ПОТРЕБИТЕЛ',
+  'profile.username': 'Потребител',
   'profile.usernameAdd': 'Добави потребителско име',
   'profile.usernameTitle': 'Твоето потребителско име',
   'profile.usernameSubtitle': 'Хората могат да те намерят по @username, без да им е нужен телефонът ти. 4-32 символа: букви, цифри и _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Неуспешно качване на снимка',
   'profile.namePh': 'Твоето име',
   'profile.usernamePh': 'потребител',
-  'profile.bio': 'БИО',
+  'profile.bio': 'Био',
   'profile.bioPh': 'Кажи нещо за себе си',
-  'profile.website': 'ЛИНК',
+  'profile.website': 'Линк',
   'profile.saveFailed': 'Не можа да запазиш',
   'profile.sentByYou': 'Изпратено от теб',
   'profile.receivedFrom': 'Получено от',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Преименуване",
+  "chat.listOptionsMsg": "Преименуване или изтриване на този списък?",
 };

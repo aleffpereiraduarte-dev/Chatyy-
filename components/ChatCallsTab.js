@@ -639,7 +639,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   // (lowercase, dot/underscore separated, e.g. "sara.costa") was shown as-is
   // because hasSavedName was true — but it should read "Sara Costa". Prettify
   // those too; real names (with spaces or mixed case) are left untouched.
-  const _isRawHandle = (n) => typeof n === 'string' && /^[a-z0-9]+([._-][a-z0-9]+)+$/.test(String(n).trim());
+  // [2026-10-14 vis3] handle de 1 palavra minúscula ("qa2") também → "Qa2", igual à lista de conversas.
+  const _isRawHandle = (n) => typeof n === 'string' && /^[a-z0-9]+([._-][a-z0-9]+)*$/.test(String(n).trim()) && !/^\d+$/.test(String(n).trim());
   const displayName = lookedUp
     || ((hasSavedName && !_isRawHandle(rawName)) ? rawName : prettifyHandle(rawName));
 
@@ -870,7 +871,8 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
   const isChatyy = item.source === 'chat';
   const country = detectCountry(item.to_number);
   const rawName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
-  const displayName = (item.contactName || item.contact_name)
+  const _savedNm = item.contactName || item.contact_name;
+  const displayName = (_savedNm && !/^[a-z0-9]+([._-][a-z0-9]+)*$/.test(String(_savedNm).trim()))
     ? rawName
     : prettifyHandle(rawName);
 
@@ -3446,10 +3448,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                 paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
                 backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)',
               }}
-              accessibilityLabel={t?.('calls.scheduled') || 'Agendadas'}
+              accessibilityLabel={t?.('calls.scheduledList') || 'Agendadas'}
             >
+              {/* [2026-10-14 vis3] chip abre a LISTA → "Agendadas" (era "Chamada agendada", singular) */}
               <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 13, fontWeight: '600' }}>
-                {t?.('calls.scheduled') || 'Agendadas'}
+                {t?.('calls.scheduledList') || 'Agendadas'}
               </Text>
             </TouchableOpacity>
           )}
@@ -3484,59 +3487,6 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
       )}
 
-      {/* Silence unknown callers */}
-      <View style={{
-        flexDirection: 'row', alignItems: 'center',
-        marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
-        // [2026-10-10 visual] was #f2f2f7 = same as the light page bg (card vanished)
-        backgroundColor: cardBg,
-      }}>
-        <View style={{ flex: 1, marginRight: 12 }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
-            {t?.('calls.silenceUnknown') || 'Silenciar chamadas desconhecidas'}
-          </Text>
-          <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
-            {t?.('calls.silenceUnknownDesc') || 'Chamadas de números fora dos contatos serão silenciadas'}
-          </Text>
-        </View>
-        <SilenceToggle isDark={isDark} />
-      </View>
-
-      {/* Create shareable call link (WhatsApp parity) */}
-      <TouchableOpacity
-        onPress={handleCreateCallLink}
-        activeOpacity={0.7}
-        disabled={creatingLink}
-        style={{
-          flexDirection: 'row', alignItems: 'center',
-          marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
-          backgroundColor: cardBg,
-          opacity: creatingLink ? 0.6 : 1,
-        }}
-        accessibilityRole="button"
-        accessibilityLabel={t?.('calls.createCallLink') || 'Criar link de chamada'}
-      >
-        <View style={{
-          width: 40, height: 40, borderRadius: 20, marginRight: 12,
-          alignItems: 'center', justifyContent: 'center',
-          backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.07)',
-        }}>
-          {creatingLink
-            ? <ActivityIndicator size="small" color={isDark ? '#F5F5F7' : '#111111'} />
-            : <IconLink size={20} color={isDark ? '#F5F5F7' : '#111111'} />}
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
-            {t?.('calls.createCallLink') || 'Criar link de chamada'}
-          </Text>
-          <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
-            {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
-          </Text>
-        </View>
-      </TouchableOpacity>
-
       {/* Call history */}
       <ScrollView
         style={s.scrollView}
@@ -3544,6 +3494,60 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         showsVerticalScrollIndicator={false}
         onScrollBeginDrag={renderLimit === Infinity ? undefined : expandRenderLimit}
       >
+        {/* [2026-10-14 vis3] os 2 cartões agora rolam junto com o histórico (antes ficavam fixos e
+            comiam ~170px da lista em telas pequenas). */}
+        {/* Silence unknown callers */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center',
+          marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
+          // [2026-10-10 visual] was #f2f2f7 = same as the light page bg (card vanished)
+          backgroundColor: cardBg,
+        }}>
+          <View style={{ flex: 1, marginRight: 12 }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
+              {t?.('calls.silenceUnknown') || 'Silenciar chamadas desconhecidas'}
+            </Text>
+            <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
+              {t?.('calls.silenceUnknownDesc') || 'Chamadas de números fora dos contatos serão silenciadas'}
+            </Text>
+          </View>
+          <SilenceToggle isDark={isDark} />
+        </View>
+
+        {/* Create shareable call link (WhatsApp parity) */}
+        <TouchableOpacity
+          onPress={handleCreateCallLink}
+          activeOpacity={0.7}
+          disabled={creatingLink}
+          style={{
+            flexDirection: 'row', alignItems: 'center',
+            marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+            paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
+            backgroundColor: cardBg,
+            opacity: creatingLink ? 0.6 : 1,
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t?.('calls.createCallLink') || 'Criar link de chamada'}
+        >
+          <View style={{
+            width: 40, height: 40, borderRadius: 20, marginRight: 12,
+            alignItems: 'center', justifyContent: 'center',
+            backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.07)',
+          }}>
+            {creatingLink
+              ? <ActivityIndicator size="small" color={isDark ? '#F5F5F7' : '#111111'} />
+              : <IconLink size={20} color={isDark ? '#F5F5F7' : '#111111'} />}
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
+              {t?.('calls.createCallLink') || 'Criar link de chamada'}
+            </Text>
+            <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
+              {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
+            </Text>
+          </View>
+        </TouchableOpacity>
         {isLoading ? (
           <CallListSkeleton count={6} />
         ) : filteredHistory.length === 0 ? (

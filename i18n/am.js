@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "ሰዎችን በስም ወይም በ@የተጠቃሚ ስም ይፈልጉ",
+  "chatConv.groupMembersCount": "{n} አባላት",
+  "calls.scheduledList": "የታቀዱ",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2756,9 +2760,9 @@ export default {
   'profile.photoUploadFailed': 'ፎቶ ላክ ማለት አልቻልኩም',
   'profile.namePh': 'የእርስዎ ስም',
   'profile.usernamePh': 'ተጠቃሚ',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'ስለ እርስዎ አንድ ነገር ይነግሩ',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'ማስቀመጥ አልቻልኩም',
   'profile.sentByYou': 'ከእርስዎ ተላክ',
   'profile.receivedFrom': 'ተቀባ',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "እንደገና ሰይም",
+  "chat.listOptionsMsg": "ይህን ዝርዝር እንደገና ልሰይመው ወይስ ልሰርዘው?",
 };

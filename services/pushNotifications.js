@@ -2846,6 +2846,11 @@ function _navigateForNotification(data) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
       return;
     }
+    // [paridade-wa 2026-10-14] lembrete de chamada agendada (cron-scheduled-calls) → Agendadas
+    if (data.type === 'call_schedule_reminder' || data.kind === 'call_schedule_reminder') {
+      router.push('/call-schedule');
+      return;
+    }
     // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor ou local offline) → abre a nota
     if (data.type === 'note_reminder' && data.note_id) {
       router.push(`/notes?open=${encodeURIComponent(String(data.note_id))}`);

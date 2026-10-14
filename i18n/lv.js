@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Meklējiet cilvēkus pēc vārda vai @lietotājvārda",
+  "chatConv.groupMembersCount": "Dalībnieki: {n}",
+  "calls.scheduledList": "Ieplānotie",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Nav pieejams',
   'profile.verified': 'Pārbaudīts',
   'profile.email': 'E-pasti',
-  'profile.name': 'VĀRDS',
+  'profile.name': 'Vārds',
   'profile.namePlaceholder': 'Tavs vārds',
   'profile.phone': 'Telefons',
-  'profile.username': 'LIETOTĀJS',
+  'profile.username': 'Lietotājs',
   'profile.usernameAdd': 'Pievienot lietotājvārdu',
   'profile.usernameTitle': 'Tavs lietotājvārds',
   'profile.usernameSubtitle': 'Cilvēki var tevi atrast pēc @username, neizmantojot tavu telefonu. 4-32 rakstzīmes: burti, skaitļi un _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Neizdevās augšupielādēt foto',
   'profile.namePh': 'Tavs vārds',
   'profile.usernamePh': 'lietotājvārds',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Pastāsti kaut ko par sevi',
-  'profile.website': 'SAITE',
+  'profile.website': 'Saite',
   'profile.saveFailed': 'Neizdevās saglabāt',
   'profile.sentByYou': 'Nosūtījis tu',
   'profile.receivedFrom': 'Saņemts',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Pārdēvēt",
+  "chat.listOptionsMsg": "Pārdēvēt vai dzēst šo sarakstu?",
 };

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Otsi inimesi nime või @kasutajanime järgi",
+  "chatConv.groupMembersCount": "{n} liiget",
+  "calls.scheduledList": "Ajastatud",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Ei ole saadaval',
   'profile.verified': 'Kinnitatud',
   'profile.email': 'E-post',
-  'profile.name': 'NIMI',
+  'profile.name': 'Nimi',
   'profile.namePlaceholder': 'Sinu nimi',
   'profile.phone': 'Telefon',
-  'profile.username': 'KASUTAJA',
+  'profile.username': 'Kasutaja',
   'profile.usernameAdd': 'Lisa kasutajanimi',
   'profile.usernameTitle': 'Sinu kasutajanimi',
   'profile.usernameSubtitle': 'Inimesed saavad sind leida @username kaudu, ilma et peaksid sinu telefoni teadma. 4-32 tähemärki: tähed, numbrid ja _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Foto üleslaadimine ebaõnnestus',
   'profile.namePh': 'Sinu nimi',
   'profile.usernamePh': 'kasutajanimi',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Räägi midagi enda kohta',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Salvestamine ebaõnnestus',
   'profile.sentByYou': 'Saadetud sinult',
   'profile.receivedFrom': 'Saadud',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Nimeta ümber",
+  "chat.listOptionsMsg": "Kas nimetada see loend ümber või kustutada?",
 };

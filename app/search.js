@@ -13,7 +13,6 @@ import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
 
-const ACCENT = '#111111';
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
 // the matching backend endpoint (search_users, trending_hashtags + feed
@@ -160,7 +159,7 @@ export default function SearchScreen() {
       keyboardShouldPersistTaps="handled"
       renderItem={({ item: u }) => (
         <TouchableOpacity
-          style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}
+          style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.surface }]}
           activeOpacity={0.75}
           onPress={() => router.push(`/u/${encodeURIComponent(u.email)}`)}
           accessibilityRole="button"
@@ -179,7 +178,17 @@ export default function SearchScreen() {
       )}
       ListEmptyComponent={!loading && query.trim().length >= 2 ? (
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('feed.noResults') || 'Sem resultados'}</Text>
-      ) : null}
+      ) : (!loading ? (
+        // [2026-10-14 vis3] estado vazio inicial — antes a tela ficava em branco.
+        <View style={{ alignItems: 'center', paddingTop: 72, paddingHorizontal: 32, gap: 12 }}>
+          <View style={{ width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}>
+            <IconSearch size={26} color={colors.textSecondary} />
+          </View>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+            {t('search.peopleHint') || 'Busque pessoas pelo nome ou @usuário'}
+          </Text>
+        </View>
+      ) : null)}
     />
   );
 
@@ -198,14 +207,14 @@ export default function SearchScreen() {
         ) : null}
         renderItem={({ item: h }) => (
           <TouchableOpacity
-            style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}
+            style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.surface }]}
             activeOpacity={0.75}
             onPress={() => router.push(`/hashtag?tag=${encodeURIComponent(h.tag)}`)}
             accessibilityRole="button"
             accessibilityLabel={'#' + h.tag}
           >
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)' }]}>
-              <IconHash size={22} color={ACCENT} />
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}>
+              <IconHash size={22} color={colors.text} />
             </View>
             <View style={styles.rowText}>
               <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
@@ -242,7 +251,7 @@ export default function SearchScreen() {
           const label = s.sound_label || `${s.title || s.name || '?'} — ${s.artist || ''}`.replace(/^ — /, '').replace(/ — $/, '');
           return (
             <TouchableOpacity
-              style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}
+              style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.surface }]}
               activeOpacity={0.75}
               onPress={() => {
                 if (!sid) return;
@@ -254,7 +263,7 @@ export default function SearchScreen() {
               {s.image_url || s.artwork_url ? (
                 <FastImage source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} recyclingKey={s.image_url || s.artwork_url} />
               ) : (
-                <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)', borderRadius: 8 }]}>
+                <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)', borderRadius: 8 }]}>
                   <IconMusic size={20} color={colors.primary} />
                 </View>
               )}
@@ -289,7 +298,7 @@ export default function SearchScreen() {
       keyboardShouldPersistTaps="handled"
       renderItem={({ item: l }) => (
         <TouchableOpacity
-          style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}
+          style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.surface }]}
           activeOpacity={0.75}
           onPress={() => router.push({
             pathname: '/live-viewer',
@@ -328,11 +337,11 @@ export default function SearchScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header — back chevron + search input. Auto-focuses the input on
           mount so the user can start typing immediately. */}
       <View style={[styles.header, {
-        backgroundColor: isDark ? colors.background : '#f6f8fa',
+        backgroundColor: colors.background,
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       }]}>
         <TouchableOpacity
@@ -346,11 +355,11 @@ export default function SearchScreen() {
         <View style={[styles.searchWrap, {
           backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
         }]}>
-          <IconSearch size={18} color={isDark ? '#888' : '#999'} />
+          <IconSearch size={18} color={colors.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
             placeholder={t('search.placeholder') || 'Pesquisar pessoas, hashtags, sons…'}
-            placeholderTextColor={isDark ? '#666' : '#999'}
+            placeholderTextColor={colors.textSecondary}
             value={query}
             onChangeText={setQuery}
             autoFocus
@@ -361,7 +370,7 @@ export default function SearchScreen() {
           />
           {query.length > 0 && (
             <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconX size={18} color={isDark ? '#888' : '#999'} />
+              <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
         </View>
@@ -386,17 +395,17 @@ export default function SearchScreen() {
               key={tb.key}
               onPress={() => setTab(tb.key)}
               style={[styles.tabPill, {
-                backgroundColor: active
-                  ? (isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.12)')
-                  : 'transparent',
-                borderColor: active ? ACCENT : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                // [2026-10-14 vis3] ativo = pílula sólida (primary/onPrimary), igual aos filtros da home.
+                // Antes: texto #111 sobre #111 translúcido → "Pessoas" invisível no escuro.
+                backgroundColor: active ? colors.primary : 'transparent',
+                borderColor: active ? colors.primary : (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)'),
               }]}
               activeOpacity={0.75}
               accessibilityRole="tab"
               accessibilityLabel={t(tb.labelKey) || tb.fallback}
               accessibilityState={{ selected: active }}
             >
-              <Text numberOfLines={1} style={{ color: active ? ACCENT : colors.text, fontWeight: active ? '700' : '500', fontSize: 13 }}>
+              <Text numberOfLines={1} style={{ color: active ? colors.onPrimary : colors.text, fontWeight: active ? '600' : '500', fontSize: 13 }}>
                 {t(tb.labelKey) || tb.fallback}
               </Text>
             </TouchableOpacity>
@@ -406,7 +415,7 @@ export default function SearchScreen() {
 
       {loading && (
         <View style={{ paddingVertical: 10 }}>
-          <ActivityIndicator size="small" color={ACCENT} />
+          <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
       )}
 

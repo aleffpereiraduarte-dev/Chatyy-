@@ -168,7 +168,8 @@ export function AccentColorGroup() {
     <SettingsGroup header={t('settings.accentColor')}>
       <SettingsCardContent>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          {ACCENT_PRESETS.map(p => {
+          {/* [2026-10-14 vis3] green/teal têm o mesmo hex (#111) → 2 bolinhas pretas idênticas, ambas marcadas. Uma por cor. */}
+          {ACCENT_PRESETS.filter((p, i, arr) => arr.findIndex(q => q.hex === p.hex) === i).map(p => {
             const selected = accentColor === p.hex;
             return (
               <Pressable

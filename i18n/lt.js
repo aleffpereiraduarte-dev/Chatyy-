@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Ieškokite žmonių pagal vardą arba @naudotojo vardą",
+  "chatConv.groupMembersCount": "Nariai: {n}",
+  "calls.scheduledList": "Suplanuoti",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Nėra prieinama',
   'profile.verified': 'Patvirtinta',
   'profile.email': 'El. paštai',
-  'profile.name': 'VARDAS',
+  'profile.name': 'Vardas',
   'profile.namePlaceholder': 'Tavo vardas',
   'profile.phone': 'Telefonas',
-  'profile.username': 'VARTOTOJO VARDAS',
+  'profile.username': 'Vartotojo vardas',
   'profile.usernameAdd': 'Pridėti vartotojo vardą',
   'profile.usernameTitle': 'Tavo vartotojo vardas',
   'profile.usernameSubtitle': 'Žmonės gali tave rasti pagal @username, nereikės tavo telefono. 4-32 simboliai: raidės, skaičiai ir _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Nepavyko įkelti nuotraukos',
   'profile.namePh': 'Tavo vardas',
   'profile.usernamePh': 'vartotojo vardas',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Pasakyk ką nors apie save',
-  'profile.website': 'NUORODA',
+  'profile.website': 'Nuoroda',
   'profile.saveFailed': 'Nepavyko išsaugoti',
   'profile.sentByYou': 'Išsiųsta tavęs',
   'profile.receivedFrom': 'Gauta',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Pervardyti",
+  "chat.listOptionsMsg": "Pervardyti ar ištrinti šį sąrašą?",
 };

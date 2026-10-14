@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Cerca persones pel nom o @usuari",
+  "chatConv.groupMembersCount": "{n} membres",
+  "calls.scheduledList": "Programades",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'No disponible',
   'profile.verified': 'Verificat',
   'profile.email': 'Emails',
-  'profile.name': 'NOM',
+  'profile.name': 'Nom',
   'profile.namePlaceholder': 'El teu nom',
   'profile.phone': 'Telèfon',
-  'profile.username': 'USUARI',
+  'profile.username': 'Usuari',
   'profile.usernameAdd': 'Afegir username',
   'profile.usernameTitle': 'El teu username',
   'profile.usernameSubtitle': 'Les persones et poden trobar per @username sense necessitat del teu telèfon. 4-32 caràcters: lletres, números i _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Error en pujar la foto',
   'profile.namePh': 'El teu nom',
   'profile.usernamePh': 'usuari',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Explica\'ns alguna cosa sobre tu',
-  'profile.website': 'ENLLAÇ',
+  'profile.website': 'Enllaç',
   'profile.saveFailed': 'No s\'ha pogut desar',
   'profile.sentByYou': 'Enviat per tu',
   'profile.receivedFrom': 'Rebut',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Canvia el nom",
+  "chat.listOptionsMsg": "Vols canviar el nom d’aquesta llista o suprimir-la?",
 };

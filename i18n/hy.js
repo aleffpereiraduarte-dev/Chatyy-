@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Որոնեք մարդկանց անունով կամ @օգտանունով",
+  "chatConv.groupMembersCount": "{n} անդամ",
+  "calls.scheduledList": "Պլանավորված",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2756,9 +2760,9 @@ export default {
   'profile.photoUploadFailed': 'Լուսանկարի ուղարկումը ձախողվեց',
   'profile.namePh': 'Ձեր անունը',
   'profile.usernamePh': 'օգտագործող',
-  'profile.bio': 'ԲԻՕ',
+  'profile.bio': 'Բիօ',
   'profile.bioPh': 'Ասեք ինչ-որ բան ձեր մասին',
-  'profile.website': 'ՀԱՄԱՁԱՅՆ',
+  'profile.website': 'Հղում',
   'profile.saveFailed': 'Չի հաջողվել պահպանել',
   'profile.sentByYou': 'Ուղարկված ձեզ կողմից',
   'profile.receivedFrom': 'Ստացված',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Վերանվանել",
+  "chat.listOptionsMsg": "Վերանվանե՞լ, թե՞ ջնջել այս ցանկը",
 };

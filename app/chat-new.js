@@ -1885,7 +1885,7 @@ export default function ChatNewScreen() {
         borderBottomColor: colors.headerBorder,
         borderBottomWidth: StyleSheet.hairlineWidth,
       }]}>
-        <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }]} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
+        <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { borderRadius: 20 }]} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[sty.headerTitle, { color: colors.text }]}>{t('chat.newConversation')}</Text>
@@ -1954,7 +1954,7 @@ export default function ChatNewScreen() {
       {(mode === 'group' || mode === 'channel') && (
         <View style={[sty.groupNameWrap, { borderBottomColor: colors.border }]}>
           <TextInput
-            style={[sty.groupNameInput, { color: colors.text, borderColor: isDark ? '#333' : '#e0e0e0', backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7' }]}
+            style={[sty.groupNameInput, { color: colors.text, borderColor: groupNameError ? (colors.error || '#E5484D') : 'transparent', backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}
             ref={groupNameInputRef}
             placeholder={mode === 'channel' ? (t('chat.channelName') || 'Nome do canal') : t('chat.groupNamePlaceholder')}
             placeholderTextColor={colors.textTertiary}
@@ -2314,8 +2314,9 @@ export default function ChatNewScreen() {
                     </View>
                   )}
 
-                  {/* Quick actions */}
-                  {!onlyChatyy && (
+                  {/* Quick actions — [2026-10-14 vis3] só no modo Direto: no Grupo/Canal o usuário está
+                      escolhendo membros e "Mensagens Salvas"/convite tiravam ele do fluxo. */}
+                  {!onlyChatyy && mode === 'direct' && (
                   <View style={sty.quickActions}>
                     {/* Saved Messages — chat with self (Telegram-style) */}
                     <TouchableOpacity
@@ -2873,7 +2874,8 @@ const sty = StyleSheet.create({
     borderBottomWidth: 0,
   },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3, flex: 1, textAlign: 'center' },
+  // [2026-10-14 vis3] título à esquerda, igual Ligações/Feed/Contatos/Configurações (era o único centralizado)
+  headerTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3, flex: 1, textAlign: 'left', marginLeft: 4 },
   toggleRow: {
     flexDirection: 'row', marginHorizontal: Spacing.md, marginTop: 12,
     borderRadius: 14, padding: 4, gap: 4,
@@ -2895,21 +2897,13 @@ const sty = StyleSheet.create({
   },
   toggleText: { fontSize: 13, fontWeight: '600' },
   groupNameWrap: {
-    paddingHorizontal: Spacing.md, paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.md, paddingTop: 10, paddingBottom: 0,
   },
+  // [2026-10-14 vis3] mesmo campo "preenchido" da busca logo abaixo (antes: borda + sombra = 2 estilos de input na mesma tela)
   groupNameInput: {
-    fontSize: 15, paddingHorizontal: 16, height: 48,
-    borderRadius: 14, borderWidth: 1,
-    ...Platform.select({
-      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
-      default: {},
-    }),
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
+    fontSize: 15, paddingHorizontal: 14, height: 44,
+    borderRadius: 16, borderWidth: 1.5,
+    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   selectedRow: {
     borderBottomWidth: StyleSheet.hairlineWidth,

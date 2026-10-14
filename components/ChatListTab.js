@@ -78,6 +78,7 @@ import ChatListSmartEmpty from './onboarding/ChatListSmartEmpty'; // [2026-10-07
 import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
 import PressableRow from './PressableRow';
+import ListNamePromptModal from './ListNamePromptModal'; // [paridade-wa 2026-10-14]
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import FadeSlideIn from './FadeSlideIn';
 import { haptic } from '../constants/theme';
@@ -3736,6 +3737,24 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showDiscoverChannels, setShowDiscoverChannels] = useState(false);
   const [chatFolders, setChatFolders] = useState([]);
+  // [paridade-wa 2026-10-14] lpActions é montado num effect que NÃO depende de
+  // chatFolders → "Adicionar a lista" via listas velhas ([] no cold start).
+  const chatFoldersRef = useRef([]);
+  chatFoldersRef.current = chatFolders;
+  // Prompt de nome (Android não tem Alert.prompt) — { title, initial, resolve }
+  const [listNamePrompt, setListNamePrompt] = useState(null);
+  const askListName = useCallback((title, initial) => new Promise((resolve) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
+      try { resolve(window.prompt(title, initial || '')); } catch { resolve(null); }
+    } else if (Platform.OS === 'ios' && Alert.prompt) {
+      Alert.prompt(title, '', [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(null) },
+        { text: t('common.save') || 'Salvar', onPress: (txt) => resolve(txt) },
+      ], 'plain-text', initial || '');
+    } else {
+      setListNamePrompt({ title, initial: initial || '', resolve });
+    }
+  }), [t]);
 
   // Instagram Notes state
   const [notes, setNotes] = useState([]);
@@ -6031,7 +6050,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           ]
         );
       },
-      onAddToList: (conv) => {
+      onAddToList: (conv, opts) => {
         // Lester QA #34 2026-05-28: o handler antigo navegava pra
         // /chat-folders?addId=... mas esse route NUNCA existiu (app/chat-folders.js
         // não foi criado) → Unmatched Route → "page error". Folders na verdade
@@ -6039,7 +6058,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // então o que o usuário precisa é só escolher um folder (ou criar) e
         // a gente faz chatFoldersUpdate com o convId concatenado.
         try {
-          const folders = Array.isArray(chatFolders) ? chatFolders : [];
+          const folders = Array.isArray(chatFoldersRef.current) ? chatFoldersRef.current : [];
           // Já está nessa folder? Filtra pra mostrar só as que ainda não têm
           // esse convId — evita o usuário clicar e "nada acontecer".
           const eligible = folders.filter(f => {
@@ -6077,29 +6096,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               }
             } catch {}
           };
+          // [paridade-wa 2026-10-14] nome digitado em TODAS as plataformas (Android
+          // ganhou prompt próprio; antes virava "Lista N" sem como renomear).
+          const createFlow = async () => {
+            const nm = await askListName(t('chat.newListName') || 'Nome da lista', '');
+            createNewListWithName(nm);
+          };
+          if (opts?.createOnly) { createFlow(); return; }
           buttons.push({
             text: t('chat.createNewList') || 'Criar nova lista',
-            onPress: () => {
-              if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
-                createNewListWithName(window.prompt(t('chat.newListName') || 'Nome da lista'));
-              } else if (Platform.OS === 'ios' && Alert.prompt) {
-                Alert.prompt(
-                  t('chat.newListName') || 'Nome da lista',
-                  '',
-                  [
-                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                    { text: t('common.create') || 'Criar', onPress: (txt) => createNewListWithName(txt) },
-                  ],
-                  'plain-text',
-                  ''
-                );
-              } else {
-                // Android: no native input picker — auto-name + open
-                // /chat-folders so user can rename + add more.
-                const defaultName = `${t('chat.list') || 'Lista'} ${(chatFolders?.length || 0) + 1}`;
-                createNewListWithName(defaultName);
-              }
-            },
+            onPress: () => { createFlow(); },
           });
           buttons.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel' });
           safeAlert(
@@ -6115,6 +6121,20 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // Sheet only surfaces this entry when conv.pinned, so we don't need a
       // guard here.
       onReorderPinned: () => setPinnedEditMode(true),
+      // [paridade-wa 2026-10-14] passo "Listas" no sheet: marca/desmarca a conversa em cada lista.
+      getFolders: () => (Array.isArray(chatFoldersRef.current) ? chatFoldersRef.current : []),
+      onToggleList: async (conv, f) => {
+        try {
+          const cur = (Array.isArray(f?.conversation_ids) ? f.conversation_ids : []).map(Number);
+          const has = cur.includes(Number(conv.id));
+          const nextIds = has ? cur.filter(x => x !== Number(conv.id)) : [...cur, Number(conv.id)];
+          setChatFolders(prev => prev.map(x => x.id === f.id ? { ...x, conversation_ids: nextIds } : x));
+          const r = await api.chatFoldersUpdate(f.id, { conversation_ids: nextIds });
+          if (r && r.success === false) {
+            setChatFolders(prev => prev.map(x => x.id === f.id ? { ...x, conversation_ids: cur } : x));
+          } else { try { haptic.light?.(); } catch {} }
+        } catch {}
+      },
       // Spam report — confirm-then-fire. Optimistic: we don't change list state,
       // just notify backend and rely on shadowban tally server-side.
       onReportSpam: async (conv) => {
@@ -6128,7 +6148,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         try { await api.chatReportSpam(conv.id, ''); } catch (e) { console.warn('[chatReportSpam]', e?.message); }
       },
     };
-  }, [t, handlePinConversation, handleMuteConversation, handleMarkUnreadConversation, handleArchiveConversation, handleDeleteConversation, enterSelectionMode, router]);
+  }, [t, handlePinConversation, handleMuteConversation, handleMarkUnreadConversation, handleArchiveConversation, handleDeleteConversation, enterSelectionMode, router, askListName]);
 
   // Legacy ActionSheetIOS / Alert path lived here — replaced by the custom
   // WhatsApp-style sheet rendered below (state-driven via lpMenuConv). The
@@ -6998,11 +7018,26 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const handleDeleteFolderChip = useCallback((folder) => {
     if (!folder?.id) return;
     haptic.medium();
-    safeAlert(
-      t('chat.deleteListTitle') || 'Excluir lista',
-      (t('chat.deleteListMsg') || 'Tem certeza que deseja excluir a lista') + ` "${folder.name}"?`,
+    // [paridade-wa 2026-10-14] 3 botões → alerta compartilhado (web: diálogo do app c/ 3+ botões;
+    // o safeAlert local do web só executa o 1º botão não-cancel).
+    require('../services/alerts').safeAlert(
+      String(folder.name || '') || (t('chat.list') || 'Lista'),
+      t('chat.listOptionsMsg') || 'Renomear ou excluir esta lista?',
       [
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        // [paridade-wa 2026-10-14] renomear lista (antes só dava p/ excluir)
+        {
+          text: t('chat.renameList') || 'Renomear',
+          onPress: async () => {
+            const nm = String((await askListName(t('chat.renameList') || 'Renomear', String(folder.name || ''))) || '').trim().slice(0, 40);
+            if (!nm || nm === folder.name) return;
+            setChatFolders(prev => prev.map(x => x.id === folder.id ? { ...x, name: nm } : x));
+            try {
+              const r = await api.chatFoldersUpdate(folder.id, { name: nm });
+              if (r && r.success === false) setChatFolders(prev => prev.map(x => x.id === folder.id ? { ...x, name: folder.name } : x));
+            } catch {}
+          },
+        },
         {
           text: t('common.delete') || 'Excluir',
           style: 'destructive',
@@ -7016,7 +7051,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         },
       ]
     );
-  }, [t]);
+  }, [t, askListName]);
 
   const FilterChip = useCallback(({ label, value, count, folder }) => {
     const active = filter === value;
@@ -8576,6 +8611,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         typingUsers={typingUsers}
         presencesRef={presencesRef}
       />
+      {listNamePrompt ? <ListNamePromptModal prompt={listNamePrompt} onDone={() => setListNamePrompt(null)} /> : null}
     </View>
   );
 }
@@ -8599,6 +8635,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
   // [2026-10-11 qa-sweep2] "Silenciar" opens a duration step inside the sheet.
   const [muteStep, setMuteStep] = React.useState(false);
   React.useEffect(() => { setMuteStep(false); }, [conv]);
+  // [paridade-wa 2026-10-14] passo "Listas" (marcar/desmarcar em cada lista personalizada)
+  const [listStep, setListStep] = React.useState(false);
+  const [listTick, setListTick] = React.useState(0);
+  React.useEffect(() => { setListStep(false); }, [conv]);
   // Fix 3 — track async-refresh state so the peek shows skeleton bubbles
   // (instead of "Sem mensagens ainda") while api.chatMessages is in flight
   // on cold cache + missing last_message.
@@ -8815,6 +8855,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
         <Path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       </Svg>
     ),
+    // [paridade-wa 2026-10-14] lista marcada no passo "Listas"
+    Check: (props) => (
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M20 6L9 17l-5-5" />
+      </Svg>
+    ),
   };
 
   const _nowSec = Math.floor(Date.now() / 1000);
@@ -8832,7 +8878,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     { label: isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar'), icon: Ic.Bell, color: text, keepOpen: !isMuted, onPress: () => (isMuted ? actions.onMute?.(conv) : setMuteStep(true)) },
     { label: isLocked ? (t('chat.unlockChat') || 'Desbloquear chat') : (t('chat.lockChat') || 'Bloquear chat'), icon: Ic.Lock, color: text, onPress: () => actions.onLockToggle?.(conv) },
     { label: t('chat.archive') || 'Arquivar', icon: Ic.Archive, color: text, onPress: () => actions.onArchive?.(conv) },
-    { label: t('chat.addToList') || 'Adicionar a lista', icon: Ic.List, color: text, onPress: () => actions.onAddToList?.(conv) },
+    { label: t('chat.addToList') || 'Adicionar a lista', icon: Ic.List, color: text, keepOpen: true, onPress: () => setListStep(true) },
     { label: t('chat.selectMore') || 'Selecionar várias', icon: Ic.Users, color: text, onPress: () => actions.onSelect?.(conv) },
     { divider: true },
     ...(peerEmail ? [{ label: `${t('chat.block') || 'Bloquear'} ${firstName}`.trim(), icon: Ic.Ban, color: danger, onPress: () => actions.onBlock?.(conv) }] : []),
@@ -8842,7 +8888,23 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     { label: t('chat.clearChat') || 'Limpar conversa', icon: Ic.XCircle, color: danger, onPress: () => actions.onClear?.(conv) },
     { label: t('chat.delete') || 'Excluir', icon: Ic.Trash, color: danger, onPress: () => actions.onDelete?.(conv) },
   ];
-  const items = muteStep ? muteItems : mainItems;
+  // listTick força re-render após marcar (as listas vêm do ref do pai)
+  void listTick;
+  const _folders = (listStep && typeof actions.getFolders === 'function') ? (actions.getFolders() || []) : [];
+  const listItems = [
+    ..._folders.map(f => {
+      const inList = (Array.isArray(f?.conversation_ids) ? f.conversation_ids : []).map(Number).includes(Number(conv?.id));
+      return {
+        label: String(f?.name || ''),
+        icon: inList ? Ic.Check : Ic.List, color: text, keepOpen: true,
+        onPress: async () => { await actions.onToggleList?.(conv, f); setListTick(n => n + 1); },
+      };
+    }),
+    { label: t('chat.createNewList') || 'Criar nova lista', icon: Ic.List, color: text, onPress: () => actions.onAddToList?.(conv, { createOnly: true }) },
+    { divider: true },
+    { label: t('common.done') || 'Concluído', icon: null, color: subText, keepOpen: true, onPress: () => setListStep(false) },
+  ];
+  const items = muteStep ? muteItems : (listStep ? listItems : mainItems);
 
   const handleTap = (fn) => {
     onClose();
@@ -8928,7 +8990,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                 : (isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6');
               return (
                 <PressableRow
-                  key={`${muteStep ? 'm' : 'a'}-${i}`}
+                  key={`${muteStep ? 'm' : (listStep ? 'l' : 'a')}-${i}`}
                   onPress={() => (it.keepOpen ? it.onPress?.() : handleTap(it.onPress))}
                   highlightColor={isDark ? '#2c2c2e' : '#f1f2f4'}
                   style={{

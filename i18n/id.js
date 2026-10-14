@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Cari orang berdasarkan nama atau @nama pengguna",
+  "chatConv.groupMembersCount": "{n} anggota",
+  "calls.scheduledList": "Terjadwal",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2864,10 +2868,10 @@ export default {
   'profile.notAvailable': 'Tidak tersedia',
   'profile.verified': 'Terverifikasi',
   'profile.email': 'Email',
-  'profile.name': 'NAMA',
+  'profile.name': 'Nama',
   'profile.namePlaceholder': 'Nama Anda',
   'profile.phone': 'Telepon',
-  'profile.username': 'PENGGUNA',
+  'profile.username': 'Pengguna',
   'profile.usernameAdd': 'Tambahkan username',
   'profile.usernameTitle': 'Username Anda',
   'profile.usernameSubtitle': 'Orang dapat menemukan Anda dengan @username tanpa perlu nomor telepon Anda. 4-32 karakter: huruf, angka, dan _.',
@@ -2954,9 +2958,9 @@ export default {
   'profile.photoUploadFailed': 'Gagal mengunggah foto',
   'profile.namePh': 'Nama kamu',
   'profile.usernamePh': 'pengguna',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Ceritakan tentang dirimu',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Gagal menyimpan',
   'profile.sentByYou': 'Dikirim oleh kamu',
   'profile.receivedFrom': 'Diterima',
@@ -11132,4 +11136,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Ganti nama",
+  "chat.listOptionsMsg": "Ganti nama atau hapus daftar ini?",
 };

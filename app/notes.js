@@ -1961,15 +1961,19 @@ export default function NotesScreen() {
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity onPress={() => openEditor()} style={[s.headerBtn, s.addBtn, {
-            backgroundColor: colors.primary,
-            ...(Platform.OS === 'web' ? {
-              background: `linear-gradient(135deg, ${colors.primary}, ${colors.primary}cc)`,
-              boxShadow: `0 3px 12px ${colors.primary}44`,
-            } : {}),
-          }]}>
-            <IconPlus size={20} color={colors.onPrimary || '#fff'} />
-          </TouchableOpacity>
+          {/* [2026-10-14 vis3] no celular (modo lista) o FAB "+" já cria nota — esconder o "+" do topo
+              (eram 4 botões de criar na mesma tela: topo, estado vazio, "Nota rápida" e FAB). */}
+          {(isDesktop || editorVisible || viewMode !== 'list') && (
+            <TouchableOpacity onPress={() => openEditor()} style={[s.headerBtn, s.addBtn, {
+              backgroundColor: colors.primary,
+              ...(Platform.OS === 'web' ? {
+                background: `linear-gradient(135deg, ${colors.primary}, ${colors.primary}cc)`,
+                boxShadow: `0 3px 12px ${colors.primary}44`,
+              } : {}),
+            }]}>
+              <IconPlus size={20} color={colors.onPrimary || '#fff'} />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
       )}

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Tafuta watu kwa jina au @jina la mtumiaji",
+  "chatConv.groupMembersCount": "Wanachama {n}",
+  "calls.scheduledList": "Zilizopangwa",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Haipatikani',
   'profile.verified': 'Imethibitishwa',
   'profile.email': 'Barua pepe',
-  'profile.name': 'JINA',
+  'profile.name': 'Jina',
   'profile.namePlaceholder': 'Jina lako',
   'profile.phone': 'Simu',
-  'profile.username': 'MTUMIAJI',
+  'profile.username': 'Mtumiaji',
   'profile.usernameAdd': 'Ongeza jina la mtumiaji',
   'profile.usernameTitle': 'Jina lako la mtumiaji',
   'profile.usernameSubtitle': 'Watu wanaweza kukupata kwa @username bila nambari yako ya simu. Herufi 4-32: herufi, nambari na _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Kushindwa kupakia picha',
   'profile.namePh': 'Jina lako',
   'profile.usernamePh': 'mtumiaji',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Semeni kitu kuhusu wewe',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Haiwezekani kuokoa',
   'profile.sentByYou': 'Imetumwa na wewe',
   'profile.receivedFrom': 'Imepokelewa',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Badilisha jina",
+  "chat.listOptionsMsg": "Ubadilishe jina au ufute orodha hii?",
 };

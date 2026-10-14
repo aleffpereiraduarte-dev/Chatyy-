@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Maghanap ng tao ayon sa pangalan o @username",
+  "chatConv.groupMembersCount": "{n} miyembro",
+  "calls.scheduledList": "Naka-iskedyul",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Hindi available',
   'profile.verified': 'Naka-verify',
   'profile.email': 'Mga email',
-  'profile.name': 'PANGALAN',
+  'profile.name': 'Pangalan',
   'profile.namePlaceholder': 'Iyong pangalan',
   'profile.phone': 'Telepono',
-  'profile.username': 'GUMAGAMIT',
+  'profile.username': 'Gumagamit',
   'profile.usernameAdd': 'Magdagdag ng username',
   'profile.usernameTitle': 'Iyong username',
   'profile.usernameSubtitle': 'Maaaring makahanap sa iyo ang mga tao gamit ang @username nang hindi kailangan ang iyong telepono. 4-32 na karakter: mga letra, numero at _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Nabigong mag-upload ng larawan',
   'profile.namePh': 'Iyong pangalan',
   'profile.usernamePh': 'username',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Sabihin ang tungkol sa iyo',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Hindi ma-save',
   'profile.sentByYou': 'Ipinadala mo',
   'profile.receivedFrom': 'Natanggap mula',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Palitan ang pangalan",
+  "chat.listOptionsMsg": "Palitan ang pangalan o burahin ang listahang ito?",
 };

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "名前または@ユーザー名で人を検索",
+  "chatConv.groupMembersCount": "メンバー{n}人",
+  "calls.scheduledList": "予定済み",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2954,7 +2958,7 @@ export default {
   "profile.photoUploadFailed": "写真のアップロードに失敗しました",
   "profile.namePh": "あなたの名前",
   "profile.usernamePh": "ユーザー名",
-  "profile.bio": "BIO",
+  "profile.bio": "Bio",
   "profile.bioPh": "あなたについて何かを書いてください",
   "profile.website": "リンク",
   "profile.saveFailed": "保存できませんでした",
@@ -11133,4 +11137,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "名前を変更",
+  "chat.listOptionsMsg": "このリストの名前を変更しますか？削除しますか？",
 };

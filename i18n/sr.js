@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Тражите људе по имену или @корисничком имену",
+  "chatConv.groupMembersCount": "Чланови: {n}",
+  "calls.scheduledList": "Заказани",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Nije dostupno',
   'profile.verified': 'Verifikovano',
   'profile.email': 'Emailovi',
-  'profile.name': 'IME',
+  'profile.name': 'Ime',
   'profile.namePlaceholder': 'Tvoje ime',
   'profile.phone': 'Telefon',
-  'profile.username': 'KORISNIK',
+  'profile.username': 'Korisnik',
   'profile.usernameAdd': 'Dodaj korisničko ime',
   'profile.usernameTitle': 'Tvoje korisničko ime',
   'profile.usernameSubtitle': 'Ljudi te mogu pronaći po @username bez tvog telefona. 4-32 karaktera: slova, brojevi i _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Slanje fotografije nije uspelo',
   'profile.namePh': 'Tvoje ime',
   'profile.usernamePh': 'korisničko ime',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Reci nešto o sebi',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Nije moguće sačuvati',
   'profile.sentByYou': 'Poslao si ti',
   'profile.receivedFrom': 'Primljeno',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Преименуј",
+  "chat.listOptionsMsg": "Преименовати или избрисати ову листу?",
 };

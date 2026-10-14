@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Tìm người theo tên hoặc @tên người dùng",
+  "chatConv.groupMembersCount": "{n} thành viên",
+  "calls.scheduledList": "Đã lên lịch",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Không khả dụng',
   'profile.verified': 'Đã xác minh',
   'profile.email': 'Email',
-  'profile.name': 'HỌ TÊN',
+  'profile.name': 'Họ tên',
   'profile.namePlaceholder': 'Tên của bạn',
   'profile.phone': 'Điện thoại',
-  'profile.username': 'TÊN NGƯỜI DÙNG',
+  'profile.username': 'Tên người dùng',
   'profile.usernameAdd': 'Thêm tên người dùng',
   'profile.usernameTitle': 'Tên người dùng của bạn',
   'profile.usernameSubtitle': 'Mọi người có thể tìm bạn qua @username mà không cần số điện thoại. 4-32 ký tự: chữ cái, số và _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Tải ảnh lên thất bại',
   'profile.namePh': 'Tên của bạn',
   'profile.usernamePh': 'tên người dùng',
-  'profile.bio': 'GIỚI THIỆU',
+  'profile.bio': 'Giới thiệu',
   'profile.bioPh': 'Nói về bạn...',
-  'profile.website': 'LIÊN KẾT',
+  'profile.website': 'Liên kết',
   'profile.saveFailed': 'Không thể lưu',
   'profile.sentByYou': 'Gửi bởi bạn',
   'profile.receivedFrom': 'Nhận từ',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Đổi tên",
+  "chat.listOptionsMsg": "Đổi tên hoặc xóa danh sách này?",
 };

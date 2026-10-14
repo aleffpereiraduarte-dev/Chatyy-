@@ -1625,7 +1625,8 @@ function InboxScreenInner() {
           {isDesktop ? (
             <Text style={[s.logoText, { color: colors.text }]}>Chatyy</Text>
           ) : (
-            <View>
+            // [2026-10-14 vis3] flex+minWidth:0 → o título trunca com "…" em vez de passar por baixo do ✓ do header
+            <View style={{ flex: 1, minWidth: 0 }}>
               {/* [2026-10-13 redesign P&B] Título = pasta atual (Apple Mail), não
                   mais a saudação "Bom dia, Fulano" (founder pediu fora). */}
               <Text style={[s.greetingText, { color: colors.text }]} numberOfLines={1}>
@@ -2639,7 +2640,7 @@ const s = StyleSheet.create({
     WebkitBackdropFilter: 'blur(28px) saturate(200%)',
   } : {},
   menuBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 14 },
-  logoWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: Spacing.md },
+  logoWrap: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', marginRight: Spacing.sm },
   // [beauty2 2026-05-31] Slightly larger, crisper connection pip so the
   // status color reads clearly against the white mail icon.
   wsDot: { position: 'absolute', bottom: -1, right: 4, width: 9, height: 9, borderRadius: 4.5, borderWidth: 2 },

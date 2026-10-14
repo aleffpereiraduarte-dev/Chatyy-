@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Αναζητήστε άτομα με όνομα ή @όνομα χρήστη",
+  "chatConv.groupMembersCount": "{n} μέλη",
+  "calls.scheduledList": "Προγραμματισμένες",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Μη διαθέσιμο',
   'profile.verified': 'Επιβεβαιωμένο',
   'profile.email': 'Emails',
-  'profile.name': 'ΟΝΟΜΑ',
+  'profile.name': 'Όνομα',
   'profile.namePlaceholder': 'Το όνομά σου',
   'profile.phone': 'Τηλέφωνο',
-  'profile.username': 'ΧΡΗΣΤΗΣ',
+  'profile.username': 'Χρήστης',
   'profile.usernameAdd': 'Προσθήκη username',
   'profile.usernameTitle': 'Το username σου',
   'profile.usernameSubtitle': 'Οι άνθρωποι μπορούν να σε βρουν με το @username χωρίς να χρειάζονται το τηλέφωνό σου. 4-32 χαρακτήρες: γράμματα, αριθμούς και _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Αποτυχία αποστολής φωτογραφίας',
   'profile.namePh': 'Το όνομά σου',
   'profile.usernamePh': 'χρήστης',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Πες κάτι για σένα',
-  'profile.website': 'ΣΥΝΔΕΣΜΟΣ',
+  'profile.website': 'Σύνδεσμος',
   'profile.saveFailed': 'Δεν ήταν δυνατή η αποθήκευση',
   'profile.sentByYou': 'Αποστάλθηκε από εσένα',
   'profile.receivedFrom': 'Λήφθηκε',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Μετονομασία",
+  "chat.listOptionsMsg": "Μετονομασία ή διαγραφή αυτής της λίστας;",
 };

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Keress embereket név vagy @felhasználónév alapján",
+  "chatConv.groupMembersCount": "{n} tag",
+  "calls.scheduledList": "Ütemezett",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Nem elérhető',
   'profile.verified': 'Ellenőrizve',
   'profile.email': 'E-mailek',
-  'profile.name': 'NÉV',
+  'profile.name': 'Név',
   'profile.namePlaceholder': 'A te neved',
   'profile.phone': 'Telefon',
-  'profile.username': 'FELHASZNÁLÓNÉV',
+  'profile.username': 'Felhasználónév',
   'profile.usernameAdd': 'Felhasználónév hozzáadása',
   'profile.usernameTitle': 'A te felhasználóneved',
   'profile.usernameSubtitle': 'Az emberek @username alapján találhatnak meg, nem szükséges a telefonod. 4-32 karakter: betűk, számok és _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Kép feltöltése sikertelen',
   'profile.namePh': 'A neved',
   'profile.usernamePh': 'felhasználónév',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Mondj valamit magadról',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.saveFailed': 'Mentés nem sikerült',
   'profile.sentByYou': 'Tőled küldve',
   'profile.receivedFrom': 'Kapott',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Átnevezés",
+  "chat.listOptionsMsg": "Átnevezed vagy törlöd ezt a listát?",
 };

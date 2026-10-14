@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Шукайте людей за ім'ям або @ім'ям користувача",
+  "chatConv.groupMembersCount": "Учасники: {n}",
+  "calls.scheduledList": "Заплановані",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Недоступно',
   'profile.verified': 'Перевірено',
   'profile.email': 'Електронна пошта',
-  'profile.name': 'ІМ\'Я',
+  'profile.name': 'Ім\'я',
   'profile.namePlaceholder': 'Твоє ім\'я',
   'profile.phone': 'Телефон',
-  'profile.username': 'ІМ\'Я КОРИСТУВАЧА',
+  'profile.username': 'Ім\'я користувача',
   'profile.usernameAdd': 'Додати ім\'я користувача',
   'profile.usernameTitle': 'Твоє ім\'я користувача',
   'profile.usernameSubtitle': 'Люди можуть знайти тебе за @username без потреби в твоєму телефоні. 4-32 символи: літери, цифри та _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Не вдалося надіслати фото',
   'profile.namePh': 'Твоє ім\'я',
   'profile.usernamePh': 'користувач',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Розкажи щось про себе',
-  'profile.website': 'ПОСИЛАННЯ',
+  'profile.website': 'Посилання',
   'profile.saveFailed': 'Не вдалося зберегти',
   'profile.sentByYou': 'Надіслано тобою',
   'profile.receivedFrom': 'Отримано',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Перейменувати",
+  "chat.listOptionsMsg": "Перейменувати чи видалити цей список?",
 };

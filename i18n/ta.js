@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "பெயர் அல்லது @பயனர்பெயர் மூலம் நபர்களைத் தேடுங்கள்",
+  "chatConv.groupMembersCount": "{n} உறுப்பினர்கள்",
+  "calls.scheduledList": "திட்டமிடப்பட்டவை",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2759,7 +2763,7 @@ export default {
   'profile.photoUploadFailed': 'படத்தை பதிவேற்றுவதில் தோல்வி',
   'profile.namePh': 'உங்கள் பெயர்',
   'profile.usernamePh': 'பயனர்',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'உங்கள் பற்றி ஏதாவது கூறுங்கள்',
   'profile.website': 'இணைப்பு',
   'profile.saveFailed': 'சேமிக்க முடியவில்லை',
@@ -4058,4 +4062,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "பெயர் மாற்று",
+  "chat.listOptionsMsg": "இந்தப் பட்டியலின் பெயரை மாற்றவா அல்லது நீக்கவா?",
 };

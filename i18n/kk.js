@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Адамдарды аты немесе @пайдаланушы аты бойынша іздеңіз",
+  "chatConv.groupMembersCount": "{n} қатысушы",
+  "calls.scheduledList": "Жоспарланған",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2666,10 +2670,10 @@ export default {
   'profile.notAvailable': 'Қол жетімді емес',
   'profile.verified': 'Тексерілген',
   'profile.email': 'Электронды пошта',
-  'profile.name': 'АТЫ',
+  'profile.name': 'Аты',
   'profile.namePlaceholder': 'Сіздің атыңыз',
   'profile.phone': 'Телефон',
-  'profile.username': 'ПАЙДАЛАНУШЫ',
+  'profile.username': 'Пайдаланушы',
   'profile.usernameAdd': 'Пайдаланушы атын қосу',
   'profile.usernameTitle': 'Сіздің пайдаланушы атыңыз',
   'profile.usernameSubtitle': '@username арқылы телефонсыз таба алады. 4-32 таңба: әріптер, сандар және _.',
@@ -2756,9 +2760,9 @@ export default {
   'profile.photoUploadFailed': 'Суретті жүктеу сәтсіз аяқталды',
   'profile.namePh': 'Сіздің атыңыз',
   'profile.usernamePh': 'пайдаланушы',
-  'profile.bio': 'БИО',
+  'profile.bio': 'Био',
   'profile.bioPh': 'Өзіңіз туралы бір нәрсе жазыңыз',
-  'profile.website': 'СІЛТЕМЕ',
+  'profile.website': 'Сілтеме',
   'profile.saveFailed': 'Сақтау мүмкін болмады',
   'profile.sentByYou': 'Сіз жібердіңіз',
   'profile.receivedFrom': 'Алынды',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Атын өзгерту",
+  "chat.listOptionsMsg": "Бұл тізімнің атын өзгерту немесе жою керек пе?",
 };

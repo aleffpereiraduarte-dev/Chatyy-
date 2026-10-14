@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Hľadajte ľudí podľa mena alebo @používateľského mena",
+  "chatConv.groupMembersCount": "Členovia: {n}",
+  "calls.scheduledList": "Naplánované",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Nedostupné',
   'profile.verified': 'Overené',
   'profile.email': 'E-maily',
-  'profile.name': 'MENO',
+  'profile.name': 'Meno',
   'profile.namePlaceholder': 'Tvoje meno',
   'profile.phone': 'Telefón',
-  'profile.username': 'UŽÍVATEĽ',
+  'profile.username': 'Užívateľ',
   'profile.usernameAdd': 'Pridať užívateľské meno',
   'profile.usernameTitle': 'Tvoje užívateľské meno',
   'profile.usernameSubtitle': 'Ľudia ťa môžu nájsť cez @username bez potreby tvojho telefónu. 4-32 znakov: písmená, čísla a _.',
@@ -2760,7 +2764,7 @@ export default {
   'profile.photoUploadFailed': 'Nahrávanie fotky zlyhalo',
   'profile.namePh': 'Tvoje meno',
   'profile.usernamePh': 'užívateľské meno',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Povedz niečo o sebe',
   'profile.website': 'Odkaz',
   'profile.saveFailed': 'Nepodarilo sa uložiť',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Premenovať",
+  "chat.listOptionsMsg": "Premenovať alebo odstrániť tento zoznam?",
 };

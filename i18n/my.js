@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "အမည် သို့မဟုတ် @အသုံးပြုသူအမည်ဖြင့် လူများကို ရှာပါ",
+  "chatConv.groupMembersCount": "အဖွဲ့ဝင် {n} ဦး",
+  "calls.scheduledList": "အချိန်ဇယားဆွဲထားသော",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2756,7 +2760,7 @@ export default {
   'profile.photoUploadFailed': 'ပုံတင်မရပါ',
   'profile.namePh': 'သင့်နာမည်',
   'profile.usernamePh': 'အသုံးပြုသူ',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'သင့်အကြောင်းတစ်ခုခုရေးပါ',
   'profile.website': 'လင့်ခ်',
   'profile.saveFailed': 'သိမ်းမရပါ',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "အမည်ပြောင်းရန်",
+  "chat.listOptionsMsg": "ဤစာရင်းကို အမည်ပြောင်းမလား သို့မဟုတ် ဖျက်မလား?",
 };

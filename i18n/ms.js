@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Cari orang mengikut nama atau @nama pengguna",
+  "chatConv.groupMembersCount": "{n} ahli",
+  "calls.scheduledList": "Dijadualkan",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Tidak tersedia',
   'profile.verified': 'Disahkan',
   'profile.email': 'Emel',
-  'profile.name': 'NAMA',
+  'profile.name': 'Nama',
   'profile.namePlaceholder': 'Nama anda',
   'profile.phone': 'Telefon',
-  'profile.username': 'PENGGUNA',
+  'profile.username': 'Pengguna',
   'profile.usernameAdd': 'Tambah nama pengguna',
   'profile.usernameTitle': 'Nama pengguna anda',
   'profile.usernameSubtitle': 'Orang boleh mencari anda dengan @username tanpa perlu nombor telefon anda. 4-32 aksara: huruf, nombor dan _.',
@@ -2760,7 +2764,7 @@ export default {
   'profile.photoUploadFailed': 'Gagal memuat naik foto',
   'profile.namePh': 'Nama anda',
   'profile.usernamePh': 'pengguna',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Katakan sesuatu tentang anda',
   'profile.website': 'Pautan',
   'profile.saveFailed': 'Tidak dapat menyimpan',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Namakan semula",
+  "chat.listOptionsMsg": "Namakan semula atau padam senarai ini?",
 };

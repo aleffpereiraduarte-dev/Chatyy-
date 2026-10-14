@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Busca personas por nombre o @usuario",
+  "chatConv.groupMembersCount": "{n} miembros",
+  "calls.scheduledList": "Programadas",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Recordarme",
   "noteReminder.subtitle": "Recibirás una notificación en todos tus dispositivos.",
@@ -3689,13 +3693,13 @@ export default {
   'profile.photoPermissionTitle': 'Acceso a las fotos',
   'profile.photoPermissionMessage': 'Para elegir una foto, Chatyy necesita acceso a tu galería. Actívalo en los Ajustes del dispositivo.',
   'profile.photoUploadFailed': 'Error al subir foto',
-  'profile.name': 'NOMBRE',
+  'profile.name': 'Nombre',
   'profile.namePh': 'Tu nombre',
-  'profile.username': 'USUARIO',
+  'profile.username': 'Usuario',
   'profile.usernamePh': 'usuario',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Cuenta algo sobre ti',
-  'profile.website': 'ENLACE',
+  'profile.website': 'Enlace',
   'profile.about': 'Info',
   'profile.aboutPh': 'Disponible',
   'profile.aboutPresetAvailable': 'Disponible',
@@ -11880,4 +11884,6 @@ export default {
   "walletV3.emptyGiftsSub": "Envía un regalo en un directo, reel, publicación o chat.",
   "walletV3.emptyEarningsSub": "Los regalos que recibas aparecen aquí.",
   "walletV3.emptyCashoutsSub": "Tus retiros por Pix aparecen aquí.",
+  "chat.renameList": "Cambiar nombre",
+  "chat.listOptionsMsg": "¿Cambiar el nombre o eliminar esta lista?",
 };

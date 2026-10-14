@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "ស្វែងរកមនុស្សតាមឈ្មោះ ឬ @ឈ្មោះអ្នកប្រើ",
+  "chatConv.groupMembersCount": "សមាជិក {n} នាក់",
+  "calls.scheduledList": "បានកំណត់ពេល",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2756,7 +2760,7 @@ export default {
   'profile.photoUploadFailed': 'បរាជ័យក្នុងការផ្ទុករូបភាព',
   'profile.namePh': 'ឈ្មោះរបស់អ្នក',
   'profile.usernamePh': 'អ្នកប្រើ',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'និយាយអំពីខ្លួនអ្នក',
   'profile.website': 'តំណភ្ជាប់',
   'profile.saveFailed': 'រក្សាទុកមិនបាន',
@@ -8305,4 +8309,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "ប្ដូរឈ្មោះ",
+  "chat.listOptionsMsg": "ប្ដូរឈ្មោះ ឬលុបបញ្ជីនេះ?",
 };

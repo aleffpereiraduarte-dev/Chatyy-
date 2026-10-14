@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Hledejte lidi podle jména nebo @uživatelského jména",
+  "chatConv.groupMembersCount": "Členové: {n}",
+  "calls.scheduledList": "Naplánované",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2670,10 +2674,10 @@ export default {
   'profile.notAvailable': 'Není k dispozici',
   'profile.verified': 'Ověřeno',
   'profile.email': 'E-maily',
-  'profile.name': 'JMÉNO',
+  'profile.name': 'Jméno',
   'profile.namePlaceholder': 'Tvé jméno',
   'profile.phone': 'Telefon',
-  'profile.username': 'UŽIVATEL',
+  'profile.username': 'Uživatel',
   'profile.usernameAdd': 'Přidat uživatelské jméno',
   'profile.usernameTitle': 'Tvé uživatelské jméno',
   'profile.usernameSubtitle': 'Lidé tě mohou najít podle @uživatelské_jméno bez potřeby tvého telefonu. 4-32 znaků: písmena, čísla a _.',
@@ -2760,9 +2764,9 @@ export default {
   'profile.photoUploadFailed': 'Nahrání fotky selhalo',
   'profile.namePh': 'Tvé jméno',
   'profile.usernamePh': 'uživatel',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Něco o tobě',
-  'profile.website': 'ODKAZ',
+  'profile.website': 'Odkaz',
   'profile.saveFailed': 'Uložení se nezdařilo',
   'profile.sentByYou': 'Odesláno tebou',
   'profile.receivedFrom': 'Přijato',
@@ -8309,4 +8313,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Přejmenovat",
+  "chat.listOptionsMsg": "Přejmenovat, nebo smazat tento seznam?",
 };

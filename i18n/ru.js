@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Ищите людей по имени или @имени пользователя",
+  "chatConv.groupMembersCount": "Участники: {n}",
+  "calls.scheduledList": "Запланированные",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -2944,13 +2948,13 @@ export default {
   'profile.photoPermissionTitle': 'Доступ к фото',
   'profile.photoPermissionMessage': 'Чтобы выбрать фото, Chatyy нужно доступ к вашей галерее. Включите в настройках устройства.',
   'profile.photoUploadFailed': 'Ошибка при загрузке фото',
-  'profile.name': 'ИМЯ',
+  'profile.name': 'Имя',
   'profile.namePh': 'Ваше имя',
-  'profile.username': 'ПОЛЬЗОВАТЕЛЬ',
+  'profile.username': 'Пользователь',
   'profile.usernamePh': 'пользователь',
-  'profile.bio': 'БИО',
+  'profile.bio': 'Био',
   'profile.bioPh': 'Напишите что-то о себе',
-  'profile.website': 'ССЫЛКА',
+  'profile.website': 'Ссылка',
   'profile.saveFailed': 'Не удалось сохранить',
   'profile.sentByYou': 'Отправлено вами',
   'profile.receivedFrom': 'Получено',
@@ -9087,4 +9091,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Переименовать",
+  "chat.listOptionsMsg": "Переименовать или удалить этот список?",
 };

@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-14 vis3] auditoria visual
+  "search.peopleHint": "Search people by name or @username",
+  "chatConv.groupMembersCount": "{n} members",
+  "calls.scheduledList": "Scheduled",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
@@ -3644,13 +3648,13 @@ export default {
   'profile.photoPermissionTitle': 'Photo access',
   'profile.photoPermissionMessage': 'To pick a photo, Chatyy needs access to your gallery. Turn it on in your device Settings.',
   'profile.photoUploadFailed': 'Failed to upload photo',
-  'profile.name': 'NAME',
+  'profile.name': 'Name',
   'profile.namePh': 'Your name',
-  'profile.username': 'USERNAME',
+  'profile.username': 'Username',
   'profile.usernamePh': 'username',
-  'profile.bio': 'BIO',
+  'profile.bio': 'Bio',
   'profile.bioPh': 'Tell something about you',
-  'profile.website': 'LINK',
+  'profile.website': 'Link',
   'profile.about': 'About',
   'profile.aboutPh': 'Available',
   'profile.aboutPresetAvailable': 'Available',
@@ -11881,4 +11885,6 @@ export default {
   "walletV3.emptyGiftsSub": "Send a gift in a live, reel, post or chat.",
   "walletV3.emptyEarningsSub": "Gifts you receive show up here.",
   "walletV3.emptyCashoutsSub": "Your Pix withdrawals show up here.",
+  "chat.renameList": "Rename",
+  "chat.listOptionsMsg": "Rename or delete this list?",
 };
