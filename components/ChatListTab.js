@@ -5096,7 +5096,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 last_message_type: data.type || 'text',
                 last_message_sender: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender),
                 last_message_at: data.created_at || new Date().toISOString(),
-                unread_count: (isSelf || senderLc === meLc) ? 0 : ((nextArch[ai].unread_count || 0) + 1), // [2026-10-14 lista-eco-envio] enviar = ler
+                unread_count: (isSelf || senderLc === meLc || (() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })()) ? 0 : ((nextArch[ai].unread_count || 0) + 1), // [2026-10-14 lista-eco-envio] enviar = ler
               };
               return nextArch;
             }
@@ -5135,7 +5135,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 last_message_type: data.type || 'text',
                 last_message_sender: isSelf ? (user?.email || data.sender_email || data.sender) : (data.sender_email || data.sender),
                 last_message_at: data.created_at || new Date().toISOString(),
-                unread_count: (isSelf || senderLc === meLc) ? 0 : ((unarchivedConv.unread_count || 0) + 1),
+                unread_count: (isSelf || senderLc === meLc || (() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })()) ? 0 : ((unarchivedConv.unread_count || 0) + 1),
               };
               const pinned = prev.filter(c => !!c.pinned);
               const unpinned = prev.filter(c => !c.pinned);
@@ -5208,7 +5208,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // just been reading. activeConvId is set by chat-conversation.js
               // on mount and cleared on unmount.
               // [2026-10-14 lista-eco-envio] Minha msg (este ou outro aparelho meu) = li tudo antes → 0.
-              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })() ? (prev[idx].unread_count || 0) : ((prev[idx].unread_count || 0) + 1)),
+              // [2026-10-14 lida-na-hora] conversa aberta = lendo agora → 0 (antes mantinha o
+              // contador antigo) + marca leitura local p/ o refresh do servidor (que chega antes
+              // do chat_mark_read) não trazer "não lida" de volta por alguns segundos.
+              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); const open = a && String(a) === String(data.conversation_id); if (open) { try { _noteSelfRead(data.conversation_id, null); } catch {} } return open; })() ? 0 : ((prev[idx].unread_count || 0) + 1)),
             };
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
