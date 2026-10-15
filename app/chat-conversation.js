@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, useSyncExternalStore } from 'react';
 import { regionalLocale } from '../utils/dateFormat'; // [2026-10-09 geo-qa]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
   Alert, Modal, Pressable, Linking, Animated, Easing, ScrollView, PanResponder, Share, BackHandler,
-  KeyboardAvoidingView, AppState, Vibration, ActionSheetIOS, useWindowDimensions,
+  KeyboardAvoidingView, AppState, ActionSheetIOS, useWindowDimensions,
 } from 'react-native';
 // FlashList reverted to FlatList
 // Native UICollectionView chat view (iOS only) — WhatsApp-style instant render.
@@ -139,10 +139,13 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 // [VISTO AZUL FALSO causa-raiz 2026-10-06] useIsFocused: recibo de leitura SÓ
 // quando esta tela é a focada na pilha (não há modal/outra tela por cima).
 import { useIsFocused } from '@react-navigation/native';
+import { useSharedNow } from '../hooks/useSharedNow';
 // [2026-10-14 adv-privacy] Privacidade avançada da conversa.
 import useConversationPrivacy from '../components/chat/useConversationPrivacy';
 import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
+import LazyMount from '../components/chat/LazyMount';
+import NowTicker from '../components/chat/NowTicker'; // [2026-10-15 conv-lite] // [2026-10-15 conv-lite] sheets/modais montados só na 1ª abertura
 import { USE_NATIVE_SHEETS, NativeSheet } from '../components/NativeSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
@@ -154,14 +157,14 @@ import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-u
 import { BlurBackdrop, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
 // [2026-10-08 chat-native] lifted-bubble long-press menu + native attach sheet
 import {
-  LIFT_AVAILABLE, LIFT_REACT_H, LIFT_LIST_STYLES, captureBubbleAnchor, releaseBubbleAnchor,
+  LIFT_AVAILABLE, LIFT_LIST_STYLES, captureBubbleAnchor, releaseBubbleAnchor,
   computeLiftLayout, LiftedBubble, LiftReactionBar,
 } from '../components/chat/MessageLiftOverlay';
 import AttachSheetNative, { ATTACH_SHEET_NATIVE } from '../components/chat/AttachSheet';
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 native-ui-build] group info toggles
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, LetterSpacing, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/responsive';
 import { SCAN_DOCUMENT_ENABLED, DIAMONDS_ENABLED } from '../constants/featureFlags';
 // [2026-10-13 diamantes] presente no chat 1:1 (diamond_gift_send context 'chat';
@@ -191,18 +194,18 @@ import * as e2eService from '../services/e2e';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import {
-  IconArrowLeft, IconSend, IconUsers, IconMoreVert, IconVideo, IconPhone, IconPhoneOff,
+  IconArrowLeft, IconSend, IconUsers, IconMoreVert, IconVideo, IconPhone,
   IconX, IconEdit, IconTrash, IconReply, IconPaperclip, IconImage, IconFileText,
-  IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconStop, IconVideoNote,
+  IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconVideoNote,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
-  IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
-  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconChevronLeft, IconWifiOff,
+  IconHeart,
+  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconChevronLeft,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
-  IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
-  IconReceipt, IconPackage, IconHelpCircle,
+  IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus,
+  IconReceipt, IconHelpCircle,
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
-  IconLink, IconAlertCircle, IconPenTool,
+  IconLink, IconPenTool,
   IconChevronRight, IconLogOut, IconGrid, IconRefresh,
   IconFlag, // [2026-10-06 UX2] contact info sheet → Denunciar
   IconStickyNote, // [2026-10-08 sticker-maker]
@@ -216,7 +219,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import AvatarLightbox from '../components/AvatarLightbox';
 import WallpaperPicker, { WallpaperBackground } from '../components/WallpaperPicker';
 import OngoingCallChip from '../components/OngoingCallChip';
-import { registerAudioPlayer, stopAllAudio, stopOtherAudio } from '../services/audioManager';
+import { stopAllAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
 // [2026-10-07 voice-native] global voice-note player + UI-thread waveform/meter
 import * as VoiceNote from '../services/voiceNotePlayer';
@@ -239,6 +242,8 @@ import StickerMaker from '../components/stickers/StickerMaker';
 import StickerActionSheet, { StickerDropSheet } from '../components/stickers/StickerActionSheet';
 import MessageEffectPicker from '../components/MessageEffectPicker';
 import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScreenEffect';
+// [2026-10-15 conv-lite] Overlay só imperativo (ref.play) e sem props → memo: não re-renderiza a cada render da tela.
+const MessageScreenEffectMemo = React.memo(MessageScreenEffect);
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
 import ExportConversationModal from '../components/ExportConversationModal';
@@ -296,6 +301,27 @@ function _afterOpenSettled(fn, maxMs = 700) {
 // re-fetch only when stale (10 min) or after a local chat_update_settings
 // (api.js bumps globalThis.__chatyy_chat_settings_rev).
 const _chatSettingsFetch = { acct: '', at: 0, rev: -1 };
+// [2026-10-15 conv-lite] Último plano visto por conta (só p/ o burst de reação premium):
+// a 2ª+ abertura já nasce com o valor certo → o planInfo de revalidação não re-renderiza a tela.
+const _premiumByAcct = Object.create(null);
+// [2026-10-15 conv-lite] Membros da última abertura por (conta, conversa): a reabertura nasce com
+// eles e o chat_members da abertura só re-renderiza a tela se algo mudou. Escopo por conta (sem
+// vazar entre contas); teto de 60 conversas.
+const _membersCache = new Map();
+function _membersKey(acct, convId) { return String(acct || '').toLowerCase() + '|' + String(convId || ''); }
+function _membersPut(acct, convId, list) {
+  try {
+    if (!convId || !Array.isArray(list)) return;
+    const k = _membersKey(acct, convId);
+    _membersCache.delete(k); _membersCache.set(k, list);
+    if (_membersCache.size > 60) _membersCache.delete(_membersCache.keys().next().value);
+  } catch {}
+}
+function _sameMembers(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+}
 // [2026-10-11 open-perf] Photo bubbles paint the server's medium DISPLAY
 // variant (image_variants.display, ≤1280px JPEG made by chat_upload) instead of
 // the full original while the original isn't on disk; fullscreen keeps the
@@ -368,7 +394,7 @@ const __ExpoImageAvailable = !_ExpoImageLoadFailed;
 // break the entire chat screen.
 let _LinearGradient = null;
 try { _LinearGradient = require('expo-linear-gradient').LinearGradient; } catch {}
-import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
+import { cacheMessages, getCachedMessages, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
 import messageOutbox, { OUTBOX_V2_ONLY } from '../services/messageOutbox';
 import mediaSendQueue from '../services/mediaSendQueue'; // [2026-10-07 send-media]
 import { userScopedKey } from '../services/cache';
@@ -380,7 +406,7 @@ import SyncBar from '../components/SyncBar';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { heroRef as _heroRef } from '../services/mediaHero'; // [2026-10-15 hero] miniatura → viewer nativo
 // Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
-import { coverageStyleFor, boraStyleUrl, boraMapHtml, boraStaticMapUrl } from '../components/BoraMap';
+import { boraStyleUrl } from '../components/BoraMap';
 // [2026-10-13 web-focus] Web com mouse+teclado (desktop). Web mobile/touch = false.
 const _IS_DESKTOP_WEB = (() => {
   if (Platform.OS !== 'web') return false;
@@ -400,6 +426,9 @@ try { const _cc = require('../components/chat/ChatCamera'); ChatCamera = _cc.def
 // Binário sem o módulo / web / globalThis.__chatyy_native_attach === false → tudo como antes.
 let NativeAttachBridge = null;
 try { NativeAttachBridge = require('../components/chat/NativeAttachSheet'); } catch {}
+// [2026-10-15 native-effects] Efeitos de tela cheia NATIVOS (modules/expo-chat-effects).
+// Sem o módulo / web / globalThis.__chatyy_native_effects === false → MessageScreenEffect JS.
+let _fxBridge = null; try { _fxBridge = require('../components/chat/NativeEffectsBridge'); } catch {}
 // WhatsApp-style mic trigger — bigger circle, ambient pulse, haptic.
 // Extracted so we can tune the visuals without touching the chat surface.
 let VoiceMicButton = null; try { VoiceMicButton = require('../components/chat/VoiceMicButton').default; } catch {}
@@ -416,7 +445,6 @@ let AISummarizeModal = null; try { AISummarizeModal = require('../components/cha
 let ConversationSummarySheet = null; try { ConversationSummarySheet = require('../components/chat/ConversationSummarySheet').default; } catch {}
 // [wa-import-v2 2026-10-13] faixa de importação do WhatsApp em 2º plano.
 let WaImportBanner = null; try { WaImportBanner = require('../components/WaImportBanner').default; } catch {}
-let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
 // [2026-05-31] Group invite QR — render the QR LOCALLY with react-native-qrcode-svg
 // (same lazy-require used in profile-qr.js / WalletReceiveSheet.js). The old modal
 // fetched the QR image from the external api.qrserver.com endpoint, so on any device
@@ -513,30 +541,6 @@ function renderMarkdownLite(text, baseStyle) {
   return <Text style={baseStyle}>{nodes}</Text>;
 }
 
-// ============================================================
-// ANIMATED PRESSABLE (scale-on-press micro-interaction)
-// ============================================================
-function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, style, activeOpacity = 0.9, ...props }) {
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  // CLEAN 2026: match the canonical components/PressableScale feel used
-  // everywhere else — softer snap-down (tension 340, scale 0.97) that reads
-  // responsive but light instead of the harder "tapa" of the old 460/0.95.
-  const handlePressIn = () => {
-    if (isReduceMotionEnabled()) return; // Reduce Motion: no press scale
-    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, tension: 340, friction: 12 }).start();
-  };
-  const handlePressOut = () => {
-    if (isReduceMotionEnabled()) return;
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 220, friction: 13 }).start();
-  };
-  return (
-    <TouchableOpacity onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={activeOpacity} {...props}>
-      <Animated.View style={[style, { transform: [{ scale: scaleAnim }] }]}>
-        {children}
-      </Animated.View>
-    </TouchableOpacity>
-  );
-}
 
 // ============================================================
 // HELPERS
@@ -2077,98 +2081,7 @@ function TypingBubbleHost({ user, recording, colors, t, entries = null }) {
   return <TypingBubble name={renderUser} colors={colors} recording={recording} t={t} active={!!user} entries={renderEntries} />;
 }
 
-// ============================================================
-// LIVE LOCATION pulsing dot (WhatsApp-style overlay on the map preview)
-// ============================================================
-// Online presence dot with a subtle pulsing halo. The dot itself stays solid
-// so the status is always legible; a faint green ring behind it expands +
-// fades at a slow 2s loop to read as "alive" — matches WhatsApp's online
-// indicator feel. Previously the dot was static and read as stamped-on.
-// Soft violet halo around the WHOLE avatar — breathes when the peer is
-// online. Sits BEHIND the AvatarCircle (zIndex: -1). Designed to feel like
-// a living "vibe" cue: subtle (max 0.32 opacity) and slow (1.6s cycle), so
-// users register "this person is alive on the other end" without it being
-// noisy. Pairs with the small green dot (PresencePulse) at bottom-right.
-function AvatarHalo({ size = 36 }) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(scale, { toValue: 1.18, duration: 1600, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-          Animated.timing(scale, { toValue: 1, duration: 0, useNativeDriver: true }),
-        ]),
-        Animated.sequence([
-          Animated.timing(opacity, { toValue: 0.32, duration: 200, useNativeDriver: true }),
-          Animated.timing(opacity, { toValue: 0, duration: 1400, useNativeDriver: true }),
-        ]),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, []);
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={{
-        position: 'absolute',
-        top: -3, left: -3,
-        width: size + 6, height: size + 6, borderRadius: (size + 6) / 2,
-        borderWidth: 2,
-        borderColor: '#111111',
-        opacity,
-        transform: [{ scale }],
-      }}
-    />
-  );
-}
 
-function PresencePulse({ isDark }) {
-  const ringScale = useRef(new Animated.Value(1)).current;
-  const ringOpacity = useRef(new Animated.Value(0.35)).current;
-  useEffect(() => {
-    // Pulse menor (1.6x em vez de 2.2x) pra não overlap no título/subtítulo
-    // quando o green dot está no canto bottom-right do avatar. 2.2x empurrava
-    // o halo uns 14px pra fora do avatar, cruzando com "visto por último".
-    const loop = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(ringScale, { toValue: 1.6, duration: 1800, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-          Animated.timing(ringScale, { toValue: 1, duration: 0, useNativeDriver: true }),
-        ]),
-        Animated.sequence([
-          Animated.timing(ringOpacity, { toValue: 0, duration: 1800, useNativeDriver: true }),
-          Animated.timing(ringOpacity, { toValue: 0.35, duration: 0, useNativeDriver: true }),
-        ]),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, []);
-  return (
-    <View pointerEvents="none" style={{ position: 'absolute', bottom: 0, right: 0, width: 13, height: 13, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View
-        style={{
-          position: 'absolute',
-          width: 13, height: 13, borderRadius: 6.5,
-          backgroundColor: '#22c55e',
-          opacity: ringOpacity,
-          transform: [{ scale: ringScale }],
-        }}
-      />
-      <View style={{
-        width: 13, height: 13, borderRadius: 6.5,
-        backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#111111',
-        ...Platform.select({
-          ios: { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 4 },
-          web: { boxShadow: '0 0 6px rgba(34,197,94,0.5)' },
-          default: {},
-        }),
-      }} />
-    </View>
-  );
-}
 
 function LiveLocationPulse({ size = 14, color = '#22c55e' }) {
   const ringScale = useRef(new Animated.Value(1)).current;
@@ -2288,22 +2201,6 @@ function formatLiveTimeRemaining(liveUntilTs, t) {
   return m === 0 ? `${h} h ${remainingLabel}` : `${h} h ${m} min ${remainingLabel}`;
 }
 
-// Open coordinates in the OS-native maps app (Apple Maps on iOS, Google Maps
-// elsewhere). Falls back to https URL on any platform if the scheme fails.
-function openLocationInNativeMaps(lat, lng, label) {
-  if (!lat || !lng) return;
-  const q = encodeURIComponent(label || 'Localização');
-  const httpsUrl = `https://maps.google.com/?q=${lat},${lng}`;
-  let primary = httpsUrl;
-  if (Platform.OS === 'ios') {
-    primary = `maps:0,0?q=${q}@${lat},${lng}`;
-  } else if (Platform.OS === 'android') {
-    primary = `geo:${lat},${lng}?q=${lat},${lng}(${q})`;
-  }
-  Linking.openURL(primary).catch(() => {
-    Linking.openURL(httpsUrl).catch(() => {});
-  });
-}
 
 // ============================================================
 // RICH TEXT FORMATTING (WhatsApp-style)
@@ -2846,7 +2743,7 @@ function _renderBlocks(text, style, colors) {
           return (
             <View key={i} style={{ flexDirection: 'row', marginVertical: 1, maxWidth: '100%' }}>
               <View style={{ width: 3, borderRadius: 2, backgroundColor: accent, marginRight: 8, alignSelf: 'stretch', opacity: 0.85 }} />
-              <Text style={[style, { color: muted, flexShrink: 1 }]} selectable={true}>
+              <Text style={[style, { color: muted, flexShrink: 1 }]} selectable={_MSG_SELECTABLE}>
                 {_renderInline(_segmentInline(q[1]), [style, { color: muted }], colors, `q${i}`)}
               </Text>
             </View>
@@ -2857,7 +2754,7 @@ function _renderBlocks(text, style, colors) {
           return (
             <View key={i} style={{ flexDirection: 'row', maxWidth: '100%', marginVertical: 0.5, paddingLeft: b[1] ? 12 : 0 }}>
               <Text style={[style, { marginRight: 6 }]}>{'•'}</Text>
-              <Text style={[style, { flexShrink: 1 }]} selectable={true}>{_renderInline(_segmentInline(b[2]), style, colors, `b${i}`)}</Text>
+              <Text style={[style, { flexShrink: 1 }]} selectable={_MSG_SELECTABLE}>{_renderInline(_segmentInline(b[2]), style, colors, `b${i}`)}</Text>
             </View>
           );
         }
@@ -2866,12 +2763,12 @@ function _renderBlocks(text, style, colors) {
           return (
             <View key={i} style={{ flexDirection: 'row', maxWidth: '100%', marginVertical: 0.5, paddingLeft: n[1] ? 12 : 0 }}>
               <Text style={[style, { marginRight: 6 }]}>{`${n[2]}.`}</Text>
-              <Text style={[style, { flexShrink: 1 }]} selectable={true}>{_renderInline(_segmentInline(n[3]), style, colors, `n${i}`)}</Text>
+              <Text style={[style, { flexShrink: 1 }]} selectable={_MSG_SELECTABLE}>{_renderInline(_segmentInline(n[3]), style, colors, `n${i}`)}</Text>
             </View>
           );
         }
         if (line === '') return <Text key={i} style={style}>{' '}</Text>;
-        return <Text key={i} style={style} selectable={true}>{_renderInline(_segmentInline(line), style, colors, `p${i}`)}</Text>;
+        return <Text key={i} style={style} selectable={_MSG_SELECTABLE}>{_renderInline(_segmentInline(line), style, colors, `p${i}`)}</Text>;
       })}
     </View>
   );
@@ -2953,9 +2850,9 @@ const FormattedText = React.memo(function FormattedText({ text, style, colors })
     // a single <Text> with inline <Image> children works on both native and
     // web (RN supports <Image> as <Text> child since 0.71+).
     const ce = _splitCustomEmoji(text);
-    if (ce.length === 1 && ce[0].text) return <Text style={style} selectable={true}>{text}</Text>;
+    if (ce.length === 1 && ce[0].text) return <Text style={style} selectable={_MSG_SELECTABLE}>{text}</Text>;
     return (
-      <Text style={style} selectable={true}>
+      <Text style={style} selectable={_MSG_SELECTABLE}>
         {ce.map((seg, i) =>
           seg.ce ? (
             <Image key={i} source={{ uri: seg.ce, cache: 'force-cache' /* [2026-10-11 open-perf] iOS: serve from URL cache without revalidating; RN Image kept because it is the only image view RN lays out INLINE inside <Text> */ }}
@@ -2989,7 +2886,7 @@ const FormattedText = React.memo(function FormattedText({ text, style, colors })
   }
 
   return (
-    <Text style={style} selectable={true}>
+    <Text style={style} selectable={_MSG_SELECTABLE}>
       {parts.map((p, i) => {
         if (p.spoiler) return <SpoilerText key={i} style={style}>{p.text}</SpoilerText>;
         // Inline custom emoji rendering for non-formatted segments.
@@ -3028,13 +2925,13 @@ function _escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, 
 const SearchHighlightText = React.memo(function SearchHighlightText({ text, term, style, markBg, markInk }) {
   const str = typeof text === 'string' ? text : '';
   const q = typeof term === 'string' ? term.trim() : '';
-  if (!q || !str) return <Text style={style} selectable={true}>{str}</Text>;
+  if (!q || !str) return <Text style={style} selectable={_MSG_SELECTABLE}>{str}</Text>;
   let parts;
   try { parts = str.split(new RegExp(`(${_escapeRegExp(q)})`, 'gi')); } catch { parts = [str]; }
-  if (parts.length === 1) return <Text style={style} selectable={true}>{str}</Text>;
+  if (parts.length === 1) return <Text style={style} selectable={_MSG_SELECTABLE}>{str}</Text>;
   const ql = q.toLowerCase();
   return (
-    <Text style={style} selectable={true}>
+    <Text style={style} selectable={_MSG_SELECTABLE}>
       {parts.map((p, i) => (p && p.toLowerCase() === ql)
         ? <Text key={i} style={{ backgroundColor: markBg, color: markInk, fontWeight: '700', borderRadius: 3 }}>{p}</Text>
         : (p ? <Text key={i}>{p}</Text> : null))}
@@ -3448,7 +3345,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
     );
   };
   return (
-    <Text style={style} selectable={true}>
+    <Text style={style} selectable={_MSG_SELECTABLE}>
       {urlParts.map((part, i) =>
         /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
@@ -3914,12 +3811,6 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style, on
   );
 }
 
-function getInitials(name) {
-  if (!name) return '?';
-  const parts = name.trim().split(/[\s@]+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return name[0].toUpperCase();
-}
 
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
@@ -3970,45 +3861,10 @@ function formatLastSeenCompact(dateStr, t) {
   return `${seenWord} ${d.toLocaleDateString(_appLocale || undefined, { month: 'short', day: 'numeric' })} ${timeStr}`;
 }
 
-function formatLastSeen(dateStr, t) {
-  const _t = typeof t === 'function' ? t : (k) => '';
-  if (!dateStr) return '';
-  let d;
-  if (typeof dateStr === 'number') {
-    d = new Date(dateStr);
-  } else {
-    let s = String(dateStr);
-    if (!s.includes('T')) s = s.replace(' ', 'T');
-    // Fix PostgreSQL timezone format: +00 → +00:00
-    s = s.replace(/([+-]\d{2})$/, '$1:00');
-    if (!s.includes('Z') && !s.includes('+') && !s.includes('-', 10)) s += 'Z';
-    d = new Date(s);
-  }
-  if (isNaN(d.getTime())) return '';
-  const now = new Date();
-  const diffMs = now - d;
-  const diffMin = Math.floor(diffMs / 60000);
 
-  if (diffMin < 1) return _t('chat.justNow') || 'agora';
-
-  const timeStr = d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
-
-  // Same calendar day
-  if (d.toDateString() === now.toDateString()) {
-    return `${_t('time.today') || 'hoje'} ${_t('time.at') || 'as'} ${timeStr}`;
-  }
-
-  // Yesterday
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) {
-    return `${_t('time.yesterday') || 'ontem'} ${_t('time.at') || 'as'} ${timeStr}`;
-  }
-
-  // Older - show date
-  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${_t('time.at') || 'as'} ${timeStr}`;
-}
-
+// [2026-10-15] No celular, segurar a bolha abre o NOSSO menu (com Copiar); texto selecionável fazia o iOS
+// mostrar o balão "Copy" do sistema por cima. Web mantém seleção com mouse.
+const _MSG_SELECTABLE = Platform.OS === 'web';
 const QUICK_REACTIONS_DEFAULT = ['🔥', '❤️', '👍', '😂', '😢', '🙏'];
 
 // Read top-6 emojis from MMKV `emoji_usage` (object {emoji: count}).
@@ -4120,10 +3976,6 @@ const _prefetchedURLs = new Set();
 let _expoImagePrefetch = null;
 try { _expoImagePrefetch = require('expo-image').Image?.prefetch?.bind(require('expo-image').Image); } catch {}
 
-const REACTION_ICON_MAP = {
-  thumbsup: IconThumbsUp, heart: IconHeart, laugh: IconLaughFace,
-  surprise: IconSurpriseFace, sad: IconSadFace, pray: IconPrayHands,
-};
 const REACTION_EMOJI_MAP = { thumbsup: '👍', heart: '❤️', laugh: '😂', surprise: '😮', sad: '😢', fire: '🔥', pray: '🙏', clap: '👏' };
 
 // ============================================================
@@ -4260,100 +4112,6 @@ function TypingDotsFade({ visible, color }) {
   );
 }
 
-// Header subtitle presence pip — the small dot next to "online"/"visto por
-// último". Two upgrades over the old static <View>:
-//   1. When ONLINE it PULSES — a green halo scales 1→2.6 behind the dot, the
-//      same living cue the avatar's PresencePulse and the chat-list dot use,
-//      so the header matches the rest of the app.
-//   2. It stays MOUNTED across the online↔offline transition and cross-fades
-//      colour/opacity (green ↔ muted grey) instead of popping in/out — mirrors
-//      the TypingDotsFade fade pattern so the whole presence line settles
-//      together. `online` here means "live online" (peer online AND our socket
-//      up); anything else renders the muted grey dot. While typing the pip is
-//      faded out (typing has its own animated dots beside the text).
-function HeaderPresencePip({ online, dimmedOnline, hidden }) {
-  const ringScale = useRef(new Animated.Value(1)).current;
-  const ringOpacity = useRef(new Animated.Value(0)).current;
-  // Cross-fade target colour for the solid dot (green when live, grey when
-  // socket down). Driven via a 0→1 progress value so we can interpolate.
-  const colorProg = useRef(new Animated.Value(online ? 1 : 0)).current;
-  const wrapOpacity = useRef(new Animated.Value(hidden ? 0 : 1)).current;
-
-  // Fade the whole pip in/out (typing hides it) without unmounting.
-  useEffect(() => {
-    Animated.timing(wrapOpacity, {
-      toValue: hidden ? 0 : 1,
-      duration: hidden ? 180 : 200,
-      useNativeDriver: Platform.OS !== 'web',
-    }).start();
-  }, [hidden, wrapOpacity]);
-
-  // Smoothly transition the dot colour on the online↔offline (grey) flip.
-  useEffect(() => {
-    Animated.timing(colorProg, {
-      toValue: online ? 1 : 0,
-      duration: 260,
-      // colour interpolation can't use the native driver.
-      useNativeDriver: false,
-    }).start();
-  }, [online, colorProg]);
-
-  // Pulse the halo only while live-online (and not hidden). Loop scales the
-  // ring 1→2.6 + fades it out, like the list/avatar dots. Native driver.
-  useEffect(() => {
-    let loop;
-    const active = online && !hidden;
-    if (active) {
-      ringScale.setValue(1);
-      ringOpacity.setValue(0.45);
-      loop = Animated.loop(
-        Animated.parallel([
-          Animated.sequence([
-            Animated.timing(ringScale, { toValue: 2.6, duration: 1800, easing: Easing.out(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(ringScale, { toValue: 1, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
-          ]),
-          Animated.sequence([
-            Animated.timing(ringOpacity, { toValue: 0, duration: 1800, useNativeDriver: Platform.OS !== 'web' }),
-            Animated.timing(ringOpacity, { toValue: 0.45, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
-          ]),
-        ])
-      );
-      loop.start();
-    } else {
-      ringOpacity.setValue(0);
-    }
-    return () => { try { loop?.stop?.(); } catch {} };
-  }, [online, hidden, ringScale, ringOpacity]);
-
-  const dotColor = colorProg.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(255,255,255,0.45)', dimmedOnline ? 'rgba(255,255,255,0.45)' : '#4ade80'],
-  });
-
-  return (
-    <Animated.View style={{ width: 7, height: 7, alignItems: 'center', justifyContent: 'center', opacity: wrapOpacity }}>
-      {/* Pulsing halo (only visible while live-online) */}
-      <Animated.View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          width: 7, height: 7, borderRadius: 3.5,
-          backgroundColor: '#4ade80',
-          opacity: ringOpacity,
-          transform: [{ scale: ringScale }],
-        }}
-      />
-      {/* Solid dot — colour cross-fades green↔grey on the presence flip */}
-      <Animated.View
-        style={{
-          width: 7, height: 7, borderRadius: 3.5,
-          backgroundColor: dotColor,
-          ...(Platform.OS === 'web' && online && !dimmedOnline ? { boxShadow: '0 0 6px rgba(74, 222, 128, 0.6)' } : {}),
-        }}
-      />
-    </Animated.View>
-  );
-}
 
 // [2026-10-06 thread-tech] Memoized JSON.parse for per-bubble payloads.
 // renderMessage parsed the same strings on EVERY row render (image_variants
@@ -4397,23 +4155,6 @@ function _memoJSONSafe(str) {
   return v === _JSON_FAIL ? null : v;
 }
 
-// [2026-10-06 thread-tech] Location bubble map: the HTML (MapLibre page) was
-// rebuilt on EVERY row render and handed to <WebView> as a NEW source object.
-// The BoraUm static-PNG / raster endpoints are 404 (verified 2026-10-06:
-// /styles/<id>/static/... and /styles/<id>/{z}/{x}/{y}.png), so we can't swap
-// to an <Image>; instead cache ONE stable `{ html }` object per coordinate so
-// re-renders never hand the WebView a new source (no reload / re-layout).
-const _LOC_MAP_SRC = new Map();
-function _locMapSource(lat, lng) {
-  const k = `${Number(lat).toFixed(6)},${Number(lng).toFixed(6)}`;
-  let v = _LOC_MAP_SRC.get(k);
-  if (!v) {
-    v = { html: boraMapHtml({ lat, lng, zoom: 15, interactive: false, markerColor: '#EF4444' }) };
-    if (_LOC_MAP_SRC.size > 200) { const first = _LOC_MAP_SRC.keys().next().value; _LOC_MAP_SRC.delete(first); }
-    _LOC_MAP_SRC.set(k, v);
-  }
-  return v;
-}
 
 // [2026-10-06 thread-tech] markdown / @mention / :emoji: detector for the
 // iOS RichTextOverlay gate (was a screen-level useMemo on inputText).
@@ -4601,24 +4342,6 @@ function generateWaveformBars(url, count = 40) {
   return bars;
 }
 
-// Tiny thumbnail for quoted-message previews (image/video replies). Uses
-// onError to stop retrying on broken URLs — without this, a 404'd media URL
-// inside a reply_to triggers the same render-loop that tanked the feed
-// grid (see SafeGridImage in user-profile.js).
-function ReplyThumb({ uri }) {
-  const [failed, setFailed] = useState(false);
-  if (failed || !uri) return null;
-  return (
-    <ExpoImage
-      source={{ uri }}
-      style={{ width: '100%', height: '100%' }}
-      contentFit="cover"
-      cachePolicy="memory-disk"
-      recyclingKey={uri}
-      onError={() => setFailed(true)}
-    />
-  );
-}
 
 // [2026-10-12 reply-wa] Citação nível WhatsApp — UMA descrição por tipo usada
 // pela citação dentro da bolha E pela barra acima do composer:
@@ -5778,49 +5501,6 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
   );
 }
 
-// ============================================================
-// CALL MESSAGE COMPONENT (WhatsApp-style)
-// ============================================================
-
-function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
-  let callData;
-  try { callData = JSON.parse(content); } catch { return null; }
-  if (!callData?.call_type) return null;
-
-  const isVideo = callData.call_type === 'video';
-  const isCaller = callData.caller_email === currentEmail;
-  const isIncoming = !isCaller;
-  const ownTextColor = isDarkMode ? '#F5F5F7' : '#111B21';
-  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}>
-      <View style={{
-        width: 32, height: 32, borderRadius: 16,
-        backgroundColor: isIncoming ? '#10b98120' : '#3b82f620',
-        alignItems: 'center', justifyContent: 'center',
-      }}>
-        {isVideo
-          ? <IconVideo size={16} color={isIncoming ? '#10b981' : '#3b82f6'} />
-          : <IconPhone size={16} color={isIncoming ? '#10b981' : '#3b82f6'} />
-        }
-      </View>
-      <View>
-        <Text style={{ fontSize: 13, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>
-          {isVideo
-            ? (isIncoming ? 'Videochamada recebida' : 'Videochamada')
-            : (isIncoming ? 'Chamada recebida' : 'Chamada de voz')
-          }
-        </Text>
-        {callData.started_at && (
-          <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>
-            {formatTime(callData.started_at)}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
 
 // ============================================================
 // ATTACHMENT MENU (+ Button)
@@ -9954,6 +9634,165 @@ function InfoMediaStrip({ items, colors, onPress, title }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [2026-10-15 conv-lite] Estado de "digitando" fora da ChatConversationInner.
+// Cada começar/parar de digitar (e cada timeout de limpeza) era um setState da
+// tela inteira (~40 mil linhas de hooks/closures + header/composer/modais).
+// Agora vive num store pequeno; só quem mostra assina: o subtítulo do header
+// (ConvHeaderTitleStack, memo) e a bolha (ConvTypingBubble).
+function _createValueStore(initial) {
+  let value = initial;
+  const subs = new Set();
+  return {
+    get: () => value,
+    // mesma semântica do setState: valor ou updater (prev => next); identidade igual = nada
+    set: (u) => {
+      const next = typeof u === 'function' ? u(value) : u;
+      if (next === value) return;
+      value = next;
+      subs.forEach((fn) => { try { fn(); } catch {} });
+    },
+    subscribe: (fn) => { subs.add(fn); return () => { subs.delete(fn); }; },
+  };
+}
+function useTypingInfo(store, t) {
+  const typingUsers = useSyncExternalStore(store.subscribe, store.get, store.get);
+  const typingEntries = useMemo(
+    () => [...typingUsers.entries()].map(([email, v]) => ({ email, name: v?.name, recording: !!v?.recording })),
+    [typingUsers]
+  );
+  const typingUser = useMemo(() => {
+    if (typingEntries.length === 0) return null;
+    // 1 user: "X está digitando..."
+    // 2 users: "X e Y estão digitando..."
+    // 3+ users: "X, Y e mais N estão digitando..."
+    // We return only the names portion ("X" / "X e Y" / "X, Y e mais N").
+    // The "está/estão digitando..." suffix is appended by the bubble label
+    // (TypingBubble already shows the dots, not text). Header subtitle
+    // re-formats below using the same shape.
+    if (typingEntries.length === 1) return typingEntries[0].name;
+    if (typingEntries.length === 2) {
+      const sep = t('chatConv.typingAnd') || 'e';
+      return `${typingEntries[0].name} ${sep} ${typingEntries[1].name}`;
+    }
+    const more = typingEntries.length - 2;
+    const sep = t('chatConv.typingAnd') || 'e';
+    const moreLabel = t('chatConv.typingMore') || 'mais';
+    return `${typingEntries[0].name}, ${typingEntries[1].name} ${sep} ${moreLabel} ${more}`;
+  }, [typingEntries, t]);
+  const typingIsRecording = useMemo(() => {
+    if (typingUsers.size === 0) return false;
+    return [...typingUsers.values()].some(e => e.recording);
+  }, [typingUsers]);
+  return { typingUsers, typingEntries, typingUser, typingIsRecording };
+}
+function ConvTypingBubble({ store, colors, t }) {
+  const { typingUser, typingIsRecording, typingEntries } = useTypingInfo(store, t);
+  return <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} />;
+}
+// Nome + subtítulo (digitando / online / visto por último / membros) do header.
+// Mesmo JSX e mesma regra de antes (presenceText), só que com estado próprio.
+const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
+  typingStore, conversationType, presenceStore, members, t, wsConnected, currentEmail, presenceUpdatedAtRef,
+  colors, conversationName, e2eEnabled, advPrivEnabled,
+}) {
+  const presence = useSyncExternalStore(presenceStore.subscribe, presenceStore.get, presenceStore.get);
+  const { typingUsers, typingUser, typingIsRecording } = useTypingInfo(typingStore, t);
+  const isTyping = !!typingUser;
+  const presenceText = useMemo(() => {
+    // GROUP: typing/recording > member names > fallback
+    if (conversationType === 'group') {
+      if (typingUser) {
+        const typerCount = typingUsers.size;
+        if (typingIsRecording) {
+          return `${typingUser} ${t('chat.recording') || 'gravando áudio...'}`;
+        }
+        if (typerCount === 1) return `${typingUser} ${t('chat.typing') || 'digitando...'}`;
+        // [2026-10-14 grupo-rajada] 3+ ao mesmo tempo: "3 pessoas digitando…"
+        // (cabe no header estreito; 2 = "Ana e João estão digitando…").
+        if (typerCount >= 3) return t('chatConv.typingPeople', { n: typerCount }) || `${typerCount} pessoas digitando...`;
+        return `${typingUser} ${t('chat.typingMultiple') || 'estão digitando...'}`;
+      }
+      if (members.length > 0) {
+        // [2026-10-10 qa-sweep] WhatsApp: "Qa2, Mariana, Você" — antes saía o
+        // local-part cru ("apitest, qa2") e o próprio usuário pelo e-mail.
+        const _me = String(currentEmail || '').toLowerCase();
+        let _hasMe = false;
+        const names = members.map(m => {
+          const em = String(m.email || '').toLowerCase();
+          if (_me && em === _me) { _hasMe = true; return ''; }
+          let nn = '';
+          if (em) { try { nn = require('../services/nicknames').getNickname?.(em) || ''; } catch {} }
+          return (nn || emailToDisplayName(m.display_name || m.email || '') || '').split(' ')[0];
+        }).filter(Boolean);
+        if (_hasMe) { const _y = String(t('chat.you') || 'Você'); if (_y) names.push(_y.charAt(0).toUpperCase() + _y.slice(1)); }
+        if (names.length <= 4) return names.join(', ');
+        return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
+      }
+      return t('chatConv.group') || 'grupo';
+    }
+    // DIRECT: typing/recording > online > last seen
+    if (typingUser) {
+      if (typingIsRecording) return t('chat.recording') || 'gravando áudio...';
+      return t('chat.typing') || 'digitando...';
+    }
+    if (presence) {
+      // Only claim "online" when (a) our own socket is up — otherwise we can't
+      // be receiving live presence and showing green would be a lie — and (b)
+      // the presence data is fresh (<35s old). Stale/disconnected → fall back
+      // to the last-seen text without mutating the presence state itself.
+      const presenceFresh = (Date.now() - presenceUpdatedAtRef.current) < 35000;
+      if (presence.status === 'online' && wsConnected && presenceFresh) {
+        return t('chatConv.online') || 'online';
+      }
+      if (presence.last_seen) {
+        // Compact form: "visto ontem 19:04" / "visto há 2h" / "visto 28 abr 19:04"
+        // The previous "visto por último ontem as 19:04" overflowed the header
+        // and showed truncated as "visto por último ontem..." with no time.
+        const compact = formatLastSeenCompact(presence.last_seen, t);
+        if (compact) return compact;
+      }
+    }
+    return '';
+  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected, currentEmail]);
+  return (
+          <HeaderStackReveal hasSub={presenceText !== ''} style={_HDR_STACK_STYLE}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                {conversationName}
+              </Text>
+              {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
+              {advPrivEnabled && <IconShield size={12} color={colors.textSecondary} />}
+            </View>
+            {(presenceText !== '') && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {/* Online status pip — small green dot WhatsApp/Telegram-style.
+                    Only shown when actually online (not while typing — typing
+                    has its own animated dots beside the text). Adds a quick
+                    visual scan: dot present = available now. */}
+                {/* Green pip ONLY when our socket is up (live online). When our
+                    WS is down we can't trust "online" — render a muted gray dot
+                    instead so we never falsely signal availability. */}
+                {/* [2026-10-08 chat-fix-composer-location] pip verde antes de
+                    "online" REMOVIDO (duplicava a bolinha do avatar). Status =
+                    só texto, como no WhatsApp. */}
+                {/* [2026-10-08 chat-beauty-chrome] monocromático: status em
+                    cinza secundário; "digitando…" sobe pra cor do texto (sem
+                    itálico). */}
+                <PresenceTextFade
+                  text={presenceText}
+                  style={[styles.headerSubtitle, {
+                    color: isTyping ? colors.text : colors.textSecondary,
+                    flexShrink: 1,
+                  }]}
+                />
+                <TypingDotsFade visible={isTyping} color={colors.textSecondary} />
+              </View>
+            )}
+          </HeaderStackReveal>
+  );
+});
+
 // [2026-06-10 desktop 2-col] The conversation screen body. On phone-sized
 // viewports (and always on native) this renders alone, exactly as before.
 // The desktop-web split wrapper below mounts it as the RIGHT pane next to a
@@ -10810,16 +10649,16 @@ function ChatConversationInner() {
   // ficava marcada como unread no servidor.
   useEffect(() => {
     if (!conversationId) return;
+    // [2026-10-15 unread-instant] Zera NA HORA linha da lista (JS+nativa, via
+    // evento local chat_read), aba "Conversas", ícone do app e banners desta
+    // conversa (services/unreadBadge). Mesmo gate de visibilidade do recibo:
+    // montada sem estar na tela (2º plano/wake) → fica para o flush do foco.
     try {
-      const mailWs = require('../services/websocket').default;
-      const meLc = (user?.email || '').toLowerCase();
-      mailWs._emit?.('chat_read', {
-        conversation_id: conversationId,
-        reader_email: meLc,
-        email: meLc,
-        last_read_id: 0,
-        _local: true,
-      });
+      if (canAckReadNowRef.current()) {
+        require('../services/unreadBadge').markConversationReadLocal(conversationId, { email: (user?.email || '').toLowerCase() });
+      } else {
+        deferredReadRef.current.all = true;
+      }
     } catch {}
     // Persist on backend after a tiny delay so messages have time to load.
     // We use 0 as last_read_id which the server interprets as "all current"
@@ -10986,6 +10825,9 @@ function ChatConversationInner() {
     };
     if (_localConv) {
       _applyCachedConv(_localConv);
+      // [2026-10-15 conv-lite] Meta local completa → resolvido no MESMO lote de setState
+      // do watermark (antes: 1 re-render extra da tela inteira no microtask seguinte).
+      if (_localHasMeta) setConvMetaResolved(true);
     } else {
       getCachedConversations().then(cached => {
         _applyCachedConv((cached || []).find(c => c.id === conversationId || String(c.id) === String(conversationId)));
@@ -11396,11 +11238,6 @@ function ChatConversationInner() {
       }
     } catch {}
   }
-  const _saveToNativeCache = (msgs) => {
-    if (!conversationId || !Array.isArray(msgs) || msgs.length === 0) return;
-    // SmartCache (pure JS, MMKV/localStorage backed) — zero crash surface.
-    try { SmartCache.cacheMessages(conversationId, msgs); } catch {}
-  };
   // Wrap cacheSingleMessage so every callsite below also writes to native.
   // Keeps the JS persistence (chatCache.js → expo-sqlite) intact for Android/web.
   // Returns a Promise so callers can await before calling reload().
@@ -11708,7 +11545,6 @@ function ChatConversationInner() {
   const rsvpInflightRef = useRef(new Set()); // Pending meetup RSVPs (de-dupes rapid taps)
   const inflightReactionMsgIdsRef = useRef(new Set()); // msgIds with an in-flight local reaction — WS broadcast must not clobber our optimistic state until own HTTP reconciles
   const pollVoteLocksRef = useRef(new Set()); // Per-poll-id mutex for vote requests
-  const clearInflightRef = useRef(false); // Guard for chat_clear action
   const webBlobUrlsRef = useRef(new Set()); // Revokable blob URLs from web file picks
   // [2026-10-06 thread-tech] Composer text moved OUT of screen state: the live
   // value lives in composerStore and only <ThreadComposerHost> re-renders per
@@ -11723,8 +11559,6 @@ function ChatConversationInner() {
   // (99% do tempo) deixamos o TextInput nativo pintar sozinho = instantâneo.
   // [2026-10-06 thread-tech] now computed inside the composer render (per
   // keystroke, composer-only) — see _RICH_INPUT_RE / ThreadComposerHost.
-  const [aiQuickReplies, setAiQuickReplies] = _useStateT([]);
-  const lastQuickReplyMsgId = useRef(null);
   const [chatLeakWarning, setChatLeakWarning] = _useStateT(null);
   const [chatToneWarning, setChatToneWarning] = _useStateT(null);
   const chatSendBypassGuards = useRef(false);
@@ -11765,8 +11599,12 @@ function ChatConversationInner() {
   // useEffect flushes it once the overlay mounts. We also retry a couple of
   // ticks as a belt-and-suspenders for the WS-arrives-mid-render case.
   const pendingScreenEffectRef = useRef(null);
+  const _fxDarkRef = useRef(isDark); // [2026-10-15 native-effects]
+  _fxDarkRef.current = isDark;
   const playScreenEffect = useCallback((effect) => {
     if (!effect || !SCREEN_EFFECT_IDS.has(effect)) return;
+    // [2026-10-15 native-effects] nativo assume (overlay na janela, 120 Hz); senão JS abaixo.
+    try { if (_fxBridge && _fxBridge.playNativeEffect(effect, { dark: !!_fxDarkRef.current })) return; } catch {}
     const fire = () => {
       const ref = screenEffectRef.current;
       if (ref?.play) {
@@ -11932,12 +11770,7 @@ function ChatConversationInner() {
   // 1-second tick used to repaint the "Apagar para todos · Disponível por X
   // mais" countdown inside the long-press menu while it's open. Without this
   // the subtitle would freeze on the value at open time and never tick down.
-  const [longPressNow, setLongPressNow] = _useStateT(() => Date.now());
-  useEffect(() => {
-    if (!selectedMsg) return undefined;
-    const id = setInterval(() => setLongPressNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [selectedMsg]);
+  // [2026-10-15 conv-lite] → <NowTicker> dentro do próprio item do menu (só ele re-renderiza).
   // Long-press menu micro-confirm: the heavy haptic fired on long-press start
   // (handleLongPress) is the "I felt the press"; this lighter selection click
   // fires when the menu actually mounts so the user gets a second beat that
@@ -11947,7 +11780,6 @@ function ChatConversationInner() {
     if (Platform.OS === 'web') return;
     try { Haptics.selectionAsync(); } catch {}
   }, [selectedMsg ? selectedMsg.id : null]);
-  const [showReactions, setShowReactions] = _useStateT(null);
   const [reactionDetail, setReactionDetail] = _useStateT(null);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = _useStateT(false);
   // Reaction picker tab: 'emoji' (default), 'mine' (user's custom animated
@@ -12502,6 +12334,7 @@ function ChatConversationInner() {
     const id = d.id; const all = d.all;
     deferredReadRef.current = { id: 0, all: false };
     if (all && conversationId) {
+      try { require('../services/unreadBadge').markConversationReadLocal(conversationId, { email: (user?.email || '').toLowerCase() }); } catch {} // [2026-10-15 unread-instant]
       try { api.chatRead?.(conversationId, 0).catch(() => {}); } catch {}
     }
     if (id) markReadUpTo(id);
@@ -12663,7 +12496,6 @@ function ChatConversationInner() {
   const wsDisconnectTimerRef = useRef(null);
   const hasEverConnectedRef = useRef(false); // Only show banner after first successful connection + disconnect
   const offlineQueueRef = useRef([]); // Queue of messages to send when back online
-  const lastTypingSentRef = useRef(0); // Debounce typing indicator
   const inputSelectionRef = useRef({ start: 0, end: 0 }); // Selection without re-renders
   const wsConnectedRef = useRef(true); // Track WS connection for polling gate
   const readDebounceRef = useRef(null); // Debounce chatRead calls
@@ -12673,21 +12505,32 @@ function ChatConversationInner() {
   // starting at null made the "online / visto há" line appear ~100-300 ms
   // after the screen pushed and shove the name up (header jump). The 35 s
   // freshness gate below still decides whether "online" may be claimed.
-  const _presenceSeed = (() => {
+  // [2026-10-15 conv-lite] Presença do peer = store próprio (não é mais estado da tela): cada
+  // online/offline/visto mexia na tela inteira; agora só o subtítulo do header (assinante) re-renderiza.
+  const presenceStoreRef = useRef(null);
+  const presenceUpdatedAtRef = useRef(0);
+  if (!presenceStoreRef.current) {
+    let _presenceSeed = null;
     try {
-      if ((params.type || 'direct') !== 'direct' || !params.email) return null;
-      return getCachedPresence(params.email);
-    } catch { return null; }
-  })();
-  const [presence, setPresence] = _useStateT(() => (_presenceSeed ? { status: _presenceSeed.status, last_seen: _presenceSeed.last_seen } : null)); // { status, last_seen }
-  // Wall-clock of the last time we received a fresh presence update. Used to
-  // gate the "online" label so we never falsely claim a peer is available when
-  // the data is stale (no presence push for >35s).
-  const presenceUpdatedAtRef = useRef((_presenceSeed && Number(_presenceSeed.at)) || 0);
+      if ((params.type || 'direct') === 'direct' && params.email) _presenceSeed = getCachedPresence(params.email);
+    } catch { _presenceSeed = null; }
+    presenceStoreRef.current = _createValueStore(_presenceSeed ? { status: _presenceSeed.status, last_seen: _presenceSeed.last_seen } : null); // { status, last_seen }
+    // Wall-clock of the last time we received a fresh presence update. Used to
+    // gate the "online" label so we never falsely claim a peer is available when
+    // the data is stale (no presence push for >35s).
+    presenceUpdatedAtRef.current = (_presenceSeed && Number(_presenceSeed.at)) || 0;
+  }
+  const presenceStore = presenceStoreRef.current;
+  const setPresence = presenceStore.set;
   useEffect(() => {
-    if (!presence || (params.type || 'direct') !== 'direct' || !params.email) return;
-    try { setCachedPresence(params.email, presence, presenceUpdatedAtRef.current); } catch {}
-  }, [presence, params.email, params.type]);
+    const save = () => {
+      const presence = presenceStore.get();
+      if (!presence || (params.type || 'direct') !== 'direct' || !params.email) return;
+      try { setCachedPresence(params.email, presence, presenceUpdatedAtRef.current); } catch {}
+    };
+    save();
+    return presenceStore.subscribe(save);
+  }, [presenceStore, params.email, params.type]);
   const [mediaViewer, setMediaViewer] = _useStateT({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
   // Round video note viewer — stays circular (WhatsApp parity, never rect fullscreen).
   const [roundVideoViewer, setRoundVideoViewer] = _useStateT({ visible: false, uri: null });
@@ -13158,7 +13001,9 @@ function ChatConversationInner() {
   // *italic*, ~strike~, and bare URLs come through as the user expects.
   const [conversationDescription, setConversationDescription] = _useStateT('');
   const [burst, setBurst] = _useStateT(null); // { emoji, key, premium }
-  const [isPremium, setIsPremium] = _useStateT(false);
+  const [isPremium, setIsPremium] = _useStateT(() => {
+    try { return _premiumByAcct[String(user?.email || api.getActiveAccountEmail?.() || '').toLowerCase()] === true; } catch { return false; }
+  });
   const [e2eBannerDismissed, setE2eBannerDismissed] = _useStateT(false);
   // Per-conversation dismiss flag for the amber "vanish timer" banner. Storage
   // key includes the timer value so any policy change re-surfaces the banner —
@@ -13209,7 +13054,9 @@ function ChatConversationInner() {
         const r = await api.planInfo?.();
         if (alive && r?.success) {
           const p = r.data?.plan || r.plan;
-          setIsPremium(p === 'one' || p === 'plus' || p === 'family');
+          const prem = p === 'one' || p === 'plus' || p === 'family';
+          try { _premiumByAcct[String(user?.email || api.getActiveAccountEmail?.() || '').toLowerCase()] = prem; } catch {}
+          setIsPremium(prem);
         }
       } catch {}
     })();
@@ -13248,7 +13095,9 @@ function ChatConversationInner() {
   // pra eu ver". Opens a dedicated lightbox (not ChatMediaViewer — see the
   // comment block in components/AvatarLightbox.js for the rationale).
   const [avatarLightbox, setAvatarLightbox] = _useStateT(null); // { name, email, uri }
-  const [members, setMembers] = _useStateT([]);
+  const [members, setMembers] = _useStateT(() => {
+    try { return _membersCache.get(_membersKey(user?.email || api.getActiveAccountEmail?.() || '', conversationId)) || []; } catch { return []; }
+  });
   const membersRef = useRef([]);
   useEffect(() => { membersRef.current = members; }, [members]);
   // [2026-10-14 mention-real] alimenta o registry de menções resolvíveis.
@@ -13325,7 +13174,6 @@ function ChatConversationInner() {
   // label. Cheap — top-level state change re-runs the row enrichment but
   // MemoizedMessageRow's comparator filters out rows that don't render the
   // countdown.
-  const [vanishTickNow, setVanishTickNow] = _useStateT(() => Date.now());
   // [2026-07-02] Gate the 30s ticker. It used to run in EVERY open conversation
   // forever, forcing a full-list re-render twice a minute even when nothing on
   // screen is counting down. We only need it when something time-sensitive is
@@ -13356,17 +13204,16 @@ function ChatConversationInner() {
     }
     return false;
   }, [disappearingTimer, vanishMode, liveLocActive, messages]);
-  useEffect(() => {
-    if (!needsVanishTick) return undefined;
-    const id = setInterval(() => setVanishTickNow(Date.now()), 30000);
-    return () => clearInterval(id);
-  }, [needsVanishTick]);
+  // [2026-10-15 ticker-unico] relógio compartilhado de 30 s, só com a conversa focada e o app ativo.
+  const vanishTickNow = useSharedNow(30000, needsVanishTick);
 
   // Message effects
   const [activeEffect, setActiveEffect] = _useStateT(null); // 'confetti' | 'hearts' | 'fire' | null
   const effectTimeoutRef = useRef(null);
 
   const triggerMessageEffect = useCallback((effect) => {
+    // [2026-10-15 native-effects] ❤️/🔥/🎉 em nativo quando o binário tem o módulo.
+    try { if (_fxBridge && _fxBridge.playNativeKeywordEffect(effect, { dark: !!_fxDarkRef.current })) return; } catch {}
     if (effectTimeoutRef.current) clearTimeout(effectTimeoutRef.current);
     setActiveEffect(effect);
     effectTimeoutRef.current = setTimeout(() => setActiveEffect(null), 2500);
@@ -13432,8 +13279,10 @@ function ChatConversationInner() {
       try {
         const AS = require('@react-native-async-storage/async-storage').default;
         const v = await AS.getItem(`chatyy_wallpaper_${conversationId}`);
-        if (alive) setPerConvWallpaper(prev => prev === v ? prev : v);
-      } catch { if (alive) setPerConvWallpaper(null); }
+        // [2026-10-15 conv-lite] undefined (MMKV vazio) ≡ null (sem fundo) — só a verdade importa
+        // (wallpaperColor) → não re-renderiza a tela inteira por undefined→null.
+        if (alive) setPerConvWallpaper(prev => (prev === v || (prev == null && v == null)) ? prev : v);
+      } catch { if (alive) setPerConvWallpaper(prev => (prev == null ? prev : null)); }
     })(); });
     return () => { alive = false; try { _cancelWp(); } catch {} };
   }, [conversationId]);
@@ -13487,30 +13336,7 @@ function ChatConversationInner() {
   };
   // Real server-computed stats (chat_conversation_stats). Loaded on open so
   // the modal reflects the FULL conversation history, not the rendered window.
-  const [statsData, setStatsData] = _useStateT(null);
-  const [statsLoading, setStatsLoading] = _useStateT(false);
-  const [statsError, setStatsError] = _useStateT('');
-  const loadConversationStats = useCallback(async () => {
-    if (!conversationId) return;
-    setStatsLoading(true);
-    setStatsError('');
-    try {
-      const r = await api.chatConversationStats(conversationId);
-      if (r?.success && r.data) {
-        setStatsData(r.data);
-      } else {
-        setStatsError(r?.message || 'failed');
-      }
-    } catch (e) {
-      setStatsError(e?.message || 'failed');
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [conversationId]);
   // Fetch whenever the modal opens.
-  useEffect(() => {
-    if (showStatsModal) loadConversationStats();
-  }, [showStatsModal, loadConversationStats]);
   const [aiSummary, setAiSummary] = _useStateT({ visible: false, loading: false, text: '', error: '', messageCount: 0 });
   const [showWebSearch, setShowWebSearch] = _useStateT(false);
   const [webSearchQuery, setWebSearchQuery] = _useStateT('');
@@ -13569,12 +13395,6 @@ function ChatConversationInner() {
   // userScopedKey the chat lock password leaks between accounts.
   const chatLockKey = userScopedKey(`chat_lock_${conversationId}`);
 
-  const getChatLockStorage = useCallback(() => {
-    if (Platform.OS === 'web') {
-      return localStorage.getItem(chatLockKey);
-    }
-    return null; // AsyncStorage handled in effect
-  }, [chatLockKey]);
 
   useEffect(() => {
     const checkLock = async () => {
@@ -14322,7 +14142,8 @@ function ChatConversationInner() {
       }
       if (p) {
         presenceUpdatedAtRef.current = Date.now();
-        setPresence({ status: p.status, last_seen: p.last_seen });
+        // [2026-10-15 conv-lite] Mesma presença → mantém a identidade (sem re-render da tela inteira).
+        setPresence(prev => (prev && prev.status === p.status && prev.last_seen === p.last_seen) ? prev : { status: p.status, last_seen: p.last_seen });
       }
     });
 
@@ -15854,7 +15675,11 @@ function ChatConversationInner() {
     });
     // Load members on mount (needed for mentions, calls, group info)
     api.chatMembers(conversationId).then(r => {
-      if (r.success) setMembers(r.data?.members || []);
+      if (r.success) {
+        const _ml = r.data?.members || [];
+        _membersPut(user?.email || api.getActiveAccountEmail?.() || '', conversationId, _ml);
+        setMembers(prev => (_sameMembers(prev, _ml) ? prev : _ml)); // [2026-10-15 conv-lite]
+      }
       // [2026-10-07 group-admin] same payload carries the group flags.
       if (r.success) _adoptConvType(r.data?.type); // [2026-10-14 tipo-conv]
       if (r.success && (conversationType === 'group' || (!params.type && r.data?.type === 'group'))) { try { applyGroupFlagsRef.current?.(r.data); } catch {} }
@@ -15978,7 +15803,13 @@ function ChatConversationInner() {
   }, [conversationId, messages.length > 0]);
 
   // WebSocket real-time messages + slow polling fallback
-  const [typingUsers, setTypingUsers] = _useStateT(new Map()); // Map<email, { name, recording, timer }>
+  // [2026-10-15 conv-lite] "digitando" NÃO é mais estado da tela: store próprio (mesma semântica
+  // de updater funcional) assinado só pelo subtítulo do header e pela bolha de digitando —
+  // começar/parar de digitar não re-renderiza mais a tela inteira.
+  const typingStoreRef = useRef(null);
+  if (!typingStoreRef.current) typingStoreRef.current = _createValueStore(new Map()); // Map<email, { name, recording, timer }>
+  const typingStore = typingStoreRef.current;
+  const setTypingUsers = typingStore.set;
   // @ChatyyAI inline mention — when user types `@chatyy <pergunta>`, a tiny
   // typing indicator from the bot shows while we wait for the API response.
   // Cleared on success or 30s safety timeout.
@@ -16233,33 +16064,7 @@ function ChatConversationInner() {
   // Map keys are the typer email; values hold { name, recording, timer }.
   // The avatar stack needs the email to load the correct profile pic, so
   // we re-shape into [{ email, name, recording }] here.
-  const typingEntries = useMemo(
-    () => [...typingUsers.entries()].map(([email, v]) => ({ email, name: v?.name, recording: !!v?.recording })),
-    [typingUsers]
-  );
-  const typingUser = useMemo(() => {
-    if (typingEntries.length === 0) return null;
-    // 1 user: "X está digitando..."
-    // 2 users: "X e Y estão digitando..."
-    // 3+ users: "X, Y e mais N estão digitando..."
-    // We return only the names portion ("X" / "X e Y" / "X, Y e mais N").
-    // The "está/estão digitando..." suffix is appended by the bubble label
-    // (TypingBubble already shows the dots, not text). Header subtitle
-    // re-formats below using the same shape.
-    if (typingEntries.length === 1) return typingEntries[0].name;
-    if (typingEntries.length === 2) {
-      const sep = t('chatConv.typingAnd') || 'e';
-      return `${typingEntries[0].name} ${sep} ${typingEntries[1].name}`;
-    }
-    const more = typingEntries.length - 2;
-    const sep = t('chatConv.typingAnd') || 'e';
-    const moreLabel = t('chatConv.typingMore') || 'mais';
-    return `${typingEntries[0].name}, ${typingEntries[1].name} ${sep} ${moreLabel} ${more}`;
-  }, [typingEntries, t]);
-  const typingIsRecording = useMemo(() => {
-    if (typingUsers.size === 0) return false;
-    return [...typingUsers.values()].some(e => e.recording);
-  }, [typingUsers]);
+  // [2026-10-15 conv-lite] typingEntries/typingUser/typingIsRecording → useTypingInfo (store).
   useEffect(() => {
     let wsUnsubs = [];
     // [2026-10-11 fluidez-2] Eventos de tempo real que mexem no estado da
@@ -19787,11 +19592,6 @@ function ChatConversationInner() {
   // SEND GIF
   // ============================================================
   // Picker tap → open the caption sheet (WhatsApp lets you caption a GIF).
-  const openGifCaption = (gif) => {
-    setShowGifPicker(false);
-    const previewUri = gif?.medium || gif?.tiny || gif?.url;
-    setCaptionPreview({ visible: true, kind: 'gif', file: null, gif, gifUri: previewUri });
-  };
 
   // [2026-10-07 send-media] Durable send for rich messages that need no upload
   // (GIF, sticker, static location): SQLite outbox 'msg' lane + sendWorker —
@@ -23179,7 +22979,6 @@ function ChatConversationInner() {
     } finally {
       inflightReactionMsgIdsRef.current.delete(String(msgId));
     }
-    setShowReactions(null);
   };
 
   const handleEdit = (msg) => {
@@ -23510,7 +23309,6 @@ function ChatConversationInner() {
   // ---- Pinned messages ----
   // WhatsApp parity: when pinning a NEW message, ask how long via ActionSheet
   // (24h / 7d / 30d, default 7d). Unpinning is a single confirm-less tap.
-  const _pinPicker = useRef({ msg: null, resolve: null });
   const [pinDurationModal, setPinDurationModal] = _useStateT(null); // { msg } when open
   const [liveLocDurationSheet, setLiveLocDurationSheet] = _useStateT(false); // [2026-10-12 srv-audit] web
   const _executePin = useCallback(async (msg, durationSeconds) => {
@@ -24647,49 +24445,6 @@ function ChatConversationInner() {
 
   // Single-tap forward fallback (kept for backwards compat — unused after the
   // modal refactor, but external callers might still hit it).
-  const handleForwardTo = async (targetConvId) => {
-    if (!forwardMsg) return;
-    const msgId = forwardMsg.id;
-    if (typeof msgId !== 'number' || !(msgId > 0)) {
-      safeAlert(
-        t('chatConv.forwardError') || 'Não foi possível encaminhar',
-        t('chatConv.forwardWaitSend') || 'Aguarde a mensagem ser enviada antes de encaminhar.'
-      );
-      return;
-    }
-    const _caid = api.chatNewActionId ? api.chatNewActionId() : '';
-    const _queue1 = () => {
-      try {
-        const { queueOfflineAction } = require('../services/offlineCache');
-        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: [targetConvId], client_action_ids: _caid ? { [String(targetConvId)]: _caid } : null, hide_origin: false }).catch(() => {});
-      } catch {}
-    };
-    try {
-      const r = await api.chatForward(msgId, targetConvId, { clientActionId: _caid });
-      if (r?.success) {
-        setForwardMsg(null);
-        setForwardSearch('');
-        setForwardSelected(new Set());
-      } else if (api.chatIsTransportFailure && api.chatIsTransportFailure(r)) {
-        // [2026-10-12 srv-audit] sem rede → fila (mesmo id), sem alerta de falha.
-        _queue1();
-        setForwardMsg(null);
-        setForwardSearch('');
-        setForwardSelected(new Set());
-      } else if (api.chatErrorCode && api.chatErrorCode(r) === 'forward_limit') {
-        safeAlert(
-          t('chatConv.forwardCapTitle') || 'Limite de encaminhamento',
-          _mt('chatConv.forwardLimitReached', 'Limite de encaminhamento: no máximo 5 conversas, ou 1 para mensagens encaminhadas com frequência.')
-        );
-      } else {
-        safeAlert(t('chatConv.forwardError') || 'Erro', r?.message || r?.error || '');
-      }
-    } catch (e) {
-      // Network failure — enqueue for durable offline replay (unified under the
-      // chat_forward_multi action with a single-target conversation list).
-      _queue1();
-    }
-  };
 
   // [2026-10-14 recibos] "Dados da mensagem" AO VIVO (WhatsApp): com a folha
   // aberta, qualquer recibo novo desta conversa (entregue/lido, WS do hub ou do
@@ -25399,72 +25154,9 @@ function ChatConversationInner() {
   // PRESENCE SUBTITLE
   // ============================================================
 
-  const isTyping = !!typingUser;
+  // [2026-10-15 conv-lite] isTyping/presenceText → ConvHeaderTitleStack (só o header re-renderiza com digitando/presença).
 
-  const presenceText = useMemo(() => {
-    // GROUP: typing/recording > member names > fallback
-    if (conversationType === 'group') {
-      if (typingUser) {
-        const typerCount = typingUsers.size;
-        if (typingIsRecording) {
-          return `${typingUser} ${t('chat.recording') || 'gravando áudio...'}`;
-        }
-        if (typerCount === 1) return `${typingUser} ${t('chat.typing') || 'digitando...'}`;
-        // [2026-10-14 grupo-rajada] 3+ ao mesmo tempo: "3 pessoas digitando…"
-        // (cabe no header estreito; 2 = "Ana e João estão digitando…").
-        if (typerCount >= 3) return t('chatConv.typingPeople', { n: typerCount }) || `${typerCount} pessoas digitando...`;
-        return `${typingUser} ${t('chat.typingMultiple') || 'estão digitando...'}`;
-      }
-      if (members.length > 0) {
-        // [2026-10-10 qa-sweep] WhatsApp: "Qa2, Mariana, Você" — antes saía o
-        // local-part cru ("apitest, qa2") e o próprio usuário pelo e-mail.
-        const _me = String(currentEmail || '').toLowerCase();
-        let _hasMe = false;
-        const names = members.map(m => {
-          const em = String(m.email || '').toLowerCase();
-          if (_me && em === _me) { _hasMe = true; return ''; }
-          let nn = '';
-          if (em) { try { nn = require('../services/nicknames').getNickname?.(em) || ''; } catch {} }
-          return (nn || emailToDisplayName(m.display_name || m.email || '') || '').split(' ')[0];
-        }).filter(Boolean);
-        if (_hasMe) { const _y = String(t('chat.you') || 'Você'); if (_y) names.push(_y.charAt(0).toUpperCase() + _y.slice(1)); }
-        if (names.length <= 4) return names.join(', ');
-        return `${names.slice(0, 3).join(', ')} +${names.length - 3}`;
-      }
-      return t('chatConv.group') || 'grupo';
-    }
-    // DIRECT: typing/recording > online > last seen
-    if (typingUser) {
-      if (typingIsRecording) return t('chat.recording') || 'gravando áudio...';
-      return t('chat.typing') || 'digitando...';
-    }
-    if (presence) {
-      // Only claim "online" when (a) our own socket is up — otherwise we can't
-      // be receiving live presence and showing green would be a lie — and (b)
-      // the presence data is fresh (<35s old). Stale/disconnected → fall back
-      // to the last-seen text without mutating the presence state itself.
-      const presenceFresh = (Date.now() - presenceUpdatedAtRef.current) < 35000;
-      if (presence.status === 'online' && wsConnected && presenceFresh) {
-        return t('chatConv.online') || 'online';
-      }
-      if (presence.last_seen) {
-        // Compact form: "visto ontem 19:04" / "visto há 2h" / "visto 28 abr 19:04"
-        // The previous "visto por último ontem as 19:04" overflowed the header
-        // and showed truncated as "visto por último ontem..." with no time.
-        const compact = formatLastSeenCompact(presence.last_seen, t);
-        if (compact) return compact;
-      }
-    }
-    return '';
-  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected, currentEmail]);
-
-  const presenceColor = useMemo(() => {
-    if (!presence || conversationType === 'group') return colors.textTertiary;
-    // [2026-10-10 conv-polish] online = tinta do texto (#111 fixo sumia no header escuro); ausente = secundária (P&B, era âmbar).
-    if (presence.status === 'online') return colors.text;
-    if (presence.status === 'away') return colors.textSecondary;
-    return colors.textTertiary;
-  }, [presence, conversationType, colors.text, colors.textSecondary, colors.textTertiary]);
+  // [2026-10-15 conv-lite] presenceColor removido (useMemo sem nenhum uso).
 
   // ============================================================
   // GROUP MESSAGES BY DATE
@@ -25713,6 +25405,10 @@ function ChatConversationInner() {
     for (let i = 0; i < messages.length; i++) {
       if (suppressIdx.has(i)) continue;
       const msg = messages[i];
+      // [status-resposta 2026-10-15] reação a status desfeita/trocada: o servidor apaga a mensagem
+      // (WS 'delete' + DELETE físico) — some da conversa em vez de virar lápide "mensagem apagada".
+      if (msg && msg.deleted_at && msg.type === 'status_reply' && (msg.status_reply?.reaction
+        || (typeof msg.meta === 'string' ? msg.meta.includes('"status_reaction"') : msg.meta?.kind === 'status_reaction'))) continue;
       const ca = msg.created_at || '';
       const d = new Date(_normalizeIso(ca));
       // Include the message index so each separator has a UNIQUE key even
@@ -26236,26 +25932,6 @@ function ChatConversationInner() {
 
   // Pre-compute smart quick-reply suggestions so the render path doesn't do a
   // linear messages.find() scan on every keystroke/state update.
-  const smartReplySuggestions = useMemo(() => {
-    if (!messages || messages.length === 0) return null;
-    const lastMsg = messages[messages.length - 1];
-    if (!lastMsg || lastMsg.sender_email === currentEmail) {
-      // Walk backwards to find the last OTHER person's message
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i];
-        if (m.sender_email !== currentEmail && !m.deleted_at && m.type === 'text' && m.content) {
-          const msgTime = new Date(_normalizeIso(m.created_at));
-          if (isNaN(msgTime.getTime()) || Date.now() - msgTime.getTime() > 300000) return null;
-          return { content: (m.content || '').toLowerCase(), id: m.id };
-        }
-      }
-      return null;
-    }
-    if (lastMsg.deleted_at || lastMsg.type !== 'text' || !lastMsg.content) return null;
-    const msgTime = new Date(_normalizeIso(lastMsg.created_at));
-    if (isNaN(msgTime.getTime()) || Date.now() - msgTime.getTime() > 300000) return null;
-    return { content: (lastMsg.content || '').toLowerCase(), id: lastMsg.id };
-  }, [messages, currentEmail]);
 
   // (Sistema de AI quick replies já é setado pelo useEffect de linha 4541
   // — não duplicar aqui.)
@@ -26604,9 +26280,9 @@ function ChatConversationInner() {
       {aiTyping ? (
         <TypingBubbleHost user="Chatyy AI" recording={false} colors={colors} t={t} />
       ) : null}
-      <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} />
+      <ConvTypingBubble store={typingStore} colors={colors} t={t} />
     </>
-  ), [aiTyping, typingUser, typingIsRecording, typingEntries, colors, t]);
+  ), [aiTyping, typingStore, colors, t]);
 
   // PERF: ListFooterComponent — same story as listHeader. The "load more"
   // spinner only ever has 2 states (visible/hidden) but the inline form
@@ -29438,7 +29114,7 @@ function ChatConversationInner() {
               {audioTx ? (
                 <View style={{ marginTop: 6 }}>
                   {!msg._txHidden && (
-                    <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, lineHeight: 17, opacity: 0.92 }} selectable>
+                    <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, lineHeight: 17, opacity: 0.92 }} selectable={_MSG_SELECTABLE}>
                       {audioTx}
                     </Text>
                   )}
@@ -29524,7 +29200,7 @@ function ChatConversationInner() {
                         ? `  ${tx.sourceLang.toUpperCase()} → ${tx.targetLang.toUpperCase()}`
                         : (tx.targetLang ? `  → ${tx.targetLang.toUpperCase()}` : '')}
                     </Text>
-                    <Text style={{ fontSize: 13, lineHeight: 17, color: isOwn ? ownTextColor : colors.text }} selectable>
+                    <Text style={{ fontSize: 13, lineHeight: 17, color: isOwn ? ownTextColor : colors.text }} selectable={_MSG_SELECTABLE}>
                       {tx.text}
                     </Text>
                   </View>
@@ -30380,13 +30056,18 @@ function ChatConversationInner() {
             return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{replyText}</Text>;
           }
           const st = payload.status;
-          const mediaUrl = st.media_url
-            ? (st.media_url.startsWith('/') ? api.getMediaUrl(st.media_url) : st.media_url)
-            : '';
+          // [status-resposta 2026-10-15] miniatura: st.thumb (capa do vídeo / a foto) > media_url;
+          // thumb_b64 embutido pelo servidor = placeholder e fallback depois que o status expira.
+          const _srAbs = (u) => (u ? (u.startsWith('/') ? api.getMediaUrl(u) : u) : '');
+          const _srB64 = msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : '';
+          const isReaction = !!payload.reaction; // reação ao status (status_react) vs resposta
           const snippet = (st.content || '').split('\n')[0] || '';
-          const label = isOwn
-            ? (t('status.replyFromOwner') || 'Respondeu ao seu status')
-            : (t('status.replyToOwner') || 'Você respondeu ao status');
+          // isOwn = EU mandei → "Você respondeu"; o dono do status vê "Respondeu ao seu status".
+          const label = isReaction
+            ? (isOwn ? (t('status.youReactedToStatus') || 'Você reagiu ao status') : (t('status.reactedToYourStatus') || 'Reagiu ao seu status'))
+            : isOwn
+              ? (t('status.replyToOwner') || 'Você respondeu ao status')
+              : (t('status.replyFromOwner') || 'Respondeu ao seu status');
           const isImage = st.type === 'image';
           const isVideo = st.type === 'video';
           const fallbackTypeLabel = isImage
@@ -30408,6 +30089,8 @@ function ChatConversationInner() {
             ? Date.parse(st.created_at)
             : (msg.created_at ? Date.parse(msg.created_at) : Date.now());
           const isStatusExpired = !isNaN(stCreatedAt) && (Date.now() - stCreatedAt) > 24 * 60 * 60 * 1000;
+          // Expirado: a mídia foi apagada no servidor → usa a miniatura embutida (se houver).
+          const mediaUrl = (isStatusExpired && _srB64) ? _srB64 : (_srAbs(st.thumb) || _srAbs(st.media_url) || _srB64);
 
           // Tap flow:
           //  1) snapshot age >24h → show "Status nao disponivel" toast
@@ -30476,7 +30159,7 @@ function ChatConversationInner() {
                     multiple times achando que e bug. */}
                 {mediaUrl ? (
                   <View style={{ width: 44, height: 56, borderRadius: 6, overflow: 'hidden', backgroundColor: '#222' }}>
-                    <ExpoImage source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%', opacity: isStatusExpired ? 0.55 : 1 }} contentFit="cover" cachePolicy="memory-disk" recyclingKey={String(msg.id || mediaUrl)} transition={0} /* [2026-10-06 thread-tech] */ />
+                    <ExpoImage source={{ uri: mediaUrl }} placeholder={_srB64 && _srB64 !== mediaUrl ? { uri: _srB64 } : undefined} style={{ width: '100%', height: '100%', opacity: isStatusExpired ? 0.55 : 1 }} contentFit="cover" cachePolicy="memory-disk" recyclingKey={String(msg.id || mediaUrl)} transition={0} /* [2026-10-06 thread-tech] */ />
                     {isVideo && !isStatusExpired ? (
                       <View style={{
                         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -30539,8 +30222,8 @@ function ChatConversationInner() {
                   ) : null}
                 </View>
               </TouchableOpacity>
-              <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>
-                {payload.reply_text}
+              <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }, isReaction ? { fontSize: 34, lineHeight: 42 } : null]}>
+                {isReaction ? payload.reaction : payload.reply_text}
               </Text>
             </View>
           );
@@ -31727,7 +31410,7 @@ function ChatConversationInner() {
                   return (
                     // [2026-10-14 meta-inline] decisão inline/quebra por medida (WaMetaText).
                     // hugKey = só o que muda a QUEBRA do texto (meta é medida à parte).
-                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={true} minW={(msg.reply_to || msg.reply_to_id || msg.forwarded || msg.is_forwarded) ? _WA_TEXT_AVAIL : 0}
+                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={_MSG_SELECTABLE} minW={(msg.reply_to || msg.reply_to_id || msg.forwarded || msg.is_forwarded) ? _WA_TEXT_AVAIL : 0}
                       ghost={(
                         <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
                           {_waMetaGhost({
@@ -33543,40 +33226,11 @@ function ChatConversationInner() {
                 (P&B). PresencePulse segue definido p/ outros usos. */}
           </View>
           {/* [2026-10-14 motion] linha de presença que chega depois desliza (sem salto do nome) */}
-          <HeaderStackReveal hasSub={presenceText !== ''} style={_HDR_STACK_STYLE}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
-                {conversationName}
-              </Text>
-              {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
-              {_advPriv.enabled && <IconShield size={12} color={colors.textSecondary} />}
-            </View>
-            {(presenceText !== '') && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {/* Online status pip — small green dot WhatsApp/Telegram-style.
-                    Only shown when actually online (not while typing — typing
-                    has its own animated dots beside the text). Adds a quick
-                    visual scan: dot present = available now. */}
-                {/* Green pip ONLY when our socket is up (live online). When our
-                    WS is down we can't trust "online" — render a muted gray dot
-                    instead so we never falsely signal availability. */}
-                {/* [2026-10-08 chat-fix-composer-location] pip verde antes de
-                    "online" REMOVIDO (duplicava a bolinha do avatar). Status =
-                    só texto, como no WhatsApp. */}
-                {/* [2026-10-08 chat-beauty-chrome] monocromático: status em
-                    cinza secundário; "digitando…" sobe pra cor do texto (sem
-                    itálico). */}
-                <PresenceTextFade
-                  text={presenceText}
-                  style={[styles.headerSubtitle, {
-                    color: isTyping ? colors.text : colors.textSecondary,
-                    flexShrink: 1,
-                  }]}
-                />
-                <TypingDotsFade visible={isTyping} color={colors.textSecondary} />
-              </View>
-            )}
-          </HeaderStackReveal>
+          <ConvHeaderTitleStack
+            typingStore={typingStore} conversationType={conversationType} presenceStore={presenceStore} members={members}
+            t={t} wsConnected={wsConnected} currentEmail={currentEmail} presenceUpdatedAtRef={presenceUpdatedAtRef}
+            colors={colors} conversationName={conversationName} e2eEnabled={e2eEnabled} advPrivEnabled={!!_advPriv.enabled}
+          />
         </TouchableOpacity>
         {/* Pin counter chip — only when there are pinned messages AND the
             banner is dismissed. Tap re-opens the banner so the user can
@@ -34819,7 +34473,7 @@ function ChatConversationInner() {
           already drains the queue. Web uses a native datetime-local
           input; native uses a quick chip menu (1h / tonight / tomorrow
           / next week) so we don't have to hard-bundle a date picker. */}
-      <Modal visible={showSavedReminder} transparent animationType="fade" onRequestClose={() => setShowSavedReminder(false)}>
+      <LazyMount when={showSavedReminder}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => setShowSavedReminder(false)}>
         <Pressable
           onPress={() => setShowSavedReminder(false)}
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}
@@ -34880,10 +34534,10 @@ function ChatConversationInner() {
             </TouchableOpacity>
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Contact Picker (WhatsApp-style) */}
-      <Modal visible={showContactPicker} animationType="slide" onRequestClose={() => setShowContactPicker(false)}>
+      <LazyMount when={showContactPicker}>{(_lmV) => (<Modal visible={_lmV} animationType="slide" onRequestClose={() => setShowContactPicker(false)}>
         <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
           {/* Header */}
           <View style={{
@@ -34993,7 +34647,7 @@ function ChatConversationInner() {
             }
           />
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Floating "Citar" pill — web-only. Appears above the user's text
           selection so they can quote an arbitrary substring of a bubble
@@ -35111,8 +34765,8 @@ function ChatConversationInner() {
       )}
 
       {/* Edit history modal */}
-      <Modal
-        visible={editHistoryModal.visible}
+      <LazyMount when={editHistoryModal.visible}>{(_lmV) => (<Modal
+        visible={_lmV}
         animationType="fade"
         transparent
         onRequestClose={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })}
@@ -35188,7 +34842,7 @@ function ChatConversationInner() {
             )}
           </View>
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Floating today/date pill — appears while scrolling.
           Top must clear safe-area + header (~56) + small breath, otherwise
@@ -36488,9 +36142,9 @@ function ChatConversationInner() {
       </>);
       }} />
 
-      <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
-      <ReminderSheet
-        visible={!!reminderSheet}
+      <LazyMount when={!!scheduleToast}>{(_lmV) => (<ScheduleToast visible={_lmV} message={scheduleToast} colors={colors} />)}</LazyMount>
+      <LazyMount when={!!reminderSheet}>{(_lmV) => (<ReminderSheet
+        visible={_lmV}
         onClose={() => setReminderSheet(null)}
         text={reminderSheet?.text || ''}
         initialWhen={reminderSheet?.when}
@@ -36514,9 +36168,9 @@ function ChatConversationInner() {
           setTimeout(() => setScheduleToast(''), 3500);
           return rec;
         }}
-      />
-      <CustomScheduleModal visible={showCustomSchedule} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />
-      <ScheduledMessagesModal visible={showScheduledMessages} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />
+      />)}</LazyMount>
+      <LazyMount when={showCustomSchedule}>{(_lmV) => (<CustomScheduleModal visible={_lmV} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />)}</LazyMount>
+      <LazyMount when={showScheduledMessages}>{(_lmV) => (<ScheduledMessagesModal visible={_lmV} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />)}</LazyMount>
 
       {/* Chat 2026 — Video Note recorder modal. Mounted at component root
           so it can render over the entire chat surface (not clipped by the
@@ -36554,8 +36208,8 @@ function ChatConversationInner() {
 
       {/* Auto-translate locale picker — Telegram parity. Lets user choose
           the language to auto-translate inbound messages into. Empty = off. */}
-      <NativeSheetDialog
-        visible={showAutoTranslatePicker}
+      <LazyMount when={showAutoTranslatePicker}>{(_lmV) => (<NativeSheetDialog
+        visible={_lmV}
         onClose={() => setShowAutoTranslatePicker(false)}
         overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
         panelStyle={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 28 }}
@@ -36598,9 +36252,9 @@ function ChatConversationInner() {
                 </TouchableOpacity>
               );
             })}
-      </NativeSheetDialog>
-      <MessageEffectPicker
-        visible={showEffectPicker}
+      </NativeSheetDialog>)}</LazyMount>
+      <LazyMount when={showEffectPicker}>{(_lmV) => (<MessageEffectPicker
+        visible={_lmV}
         onClose={() => setShowEffectPicker(false)}
         onPick={(effect) => {
           setStagedEffect(effect);
@@ -36612,11 +36266,11 @@ function ChatConversationInner() {
         messageText={composerStore.get() /* [2026-10-06 thread-tech] read when picker renders */}
         t={t}
         isDark={isDark}
-      />
-      <MessageScreenEffect ref={screenEffectRef} />
+      />)}</LazyMount>
+      <MessageScreenEffectMemo ref={screenEffectRef} />
 
-      <LocationPickerSheet
-        visible={showLocationPickerSheet}
+      <LazyMount when={showLocationPickerSheet}>{(_lmV) => (<LocationPickerSheet
+        visible={_lmV}
         onClose={() => setShowLocationPickerSheet(false)}
         onSend={(loc) => {
           setShowLocationPickerSheet(false);
@@ -36636,17 +36290,17 @@ function ChatConversationInner() {
         onStopLive={stopLiveLocationNow}
         colors={colors}
         t={t}
-      />
+      />)}</LazyMount>
 
       {/* Safety-number / E2E verification sheet — direct chats only.
           The sheet itself handles loading + key fetch + QR scan; we just
           wire the open/close state from the encryption banner tap. */}
-      <SafetyNumberSheet
-        visible={showSafetyNumber}
+      <LazyMount when={showSafetyNumber}>{(_lmV) => (<SafetyNumberSheet
+        visible={_lmV}
         onClose={() => setShowSafetyNumber(false)}
         peerEmail={params?.email || ''}
         peerName={params?.name || ''}
-      />
+      />)}</LazyMount>
 
       {/* AI Leak / Tone Warnings */}
       {chatLeakWarning && (
@@ -36872,12 +36526,12 @@ function ChatConversationInner() {
       ) : null}
 
       {/* [2026-10-10 stickers-import] folha da figurinha + arrastar/colar .webp (web) */}
-      <StickerActionSheet
-        visible={!!stickerSheet}
+      <LazyMount when={!!stickerSheet}>{(_lmV) => (<StickerActionSheet
+        visible={_lmV}
         messageId={stickerSheet?.messageId || null}
         url={stickerSheet?.url || ''}
         onClose={() => setStickerSheet(null)}
-      />
+      />)}</LazyMount>
       {stickerDrop ? (
         <StickerDropSheet
           visible
@@ -36927,34 +36581,34 @@ function ChatConversationInner() {
       {/* (FormatToolbar movida pra ACIMA do campo — ver composer) */}
 
       {/* Media Gallery */}
-      <MediaGallery
-        visible={showMediaGallery}
+      <LazyMount when={showMediaGallery}>{(_lmV) => (<MediaGallery
+        visible={_lmV}
         onClose={() => setShowMediaGallery(false)}
         conversationId={conversationId}
         colors={colors}
         t={t}
-      />
+      />)}</LazyMount>
 
       {/* Export Modal — WhatsApp-style sheet (components/ExportConversationModal).
           Format choice (zip/txt/json) + optional date range, real backend
           export via chat_export / chat_export_zip with share/download. */}
-      <ExportConversationModal
-        visible={showExportModal}
+      <LazyMount when={showExportModal}>{(_lmV) => (<ExportConversationModal
+        visible={_lmV}
         onClose={() => setShowExportModal(false)}
         conversationId={conversationId}
         conversationName={conversationName}
         colors={colors}
         t={t}
-      />
+      />)}</LazyMount>
 
       {/* Reaction Detail Modal */}
-      <ReactionDetailModal
-        visible={!!reactionDetail}
+      <LazyMount when={!!reactionDetail}>{(_lmV) => (<ReactionDetailModal
+        visible={_lmV}
         onClose={() => setReactionDetail(null)}
         emoji={reactionDetail?.emoji}
         reactors={reactionDetail?.reactors || []}
         colors={colors}
-      />
+      />)}</LazyMount>
 
       {/* Attachment Menu Modal */}
       <AttachmentMenu
@@ -37061,8 +36715,8 @@ function ChatConversationInner() {
       )}
 
       {/* Message Action Modal — Modern Frosted Glass Context Menu */}
-      <Modal
-        visible={!!selectedMsg}
+      <LazyMount when={!!selectedMsg}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="none"
         // [2026-10-08 chat-native] full-screen on Android too, so the lifted
@@ -37555,6 +37209,8 @@ function ChatConversationInner() {
                   } catch { return 0; }
                 })();
                 if (!cAt) return null;
+                // [2026-10-15 conv-lite] relógio local (antes: setState da tela inteira a cada 1 s)
+                return (<NowTicker everyMs={1000}>{(longPressNow) => {
                 const elapsed = longPressNow - cAt;
                 const within = elapsed < winMs;
                 const remaining = Math.max(0, winMs - elapsed);
@@ -37589,6 +37245,7 @@ function ChatConversationInner() {
                     </Text>
                   </View>
                 );
+                }}</NowTicker>);
               })()}
               {/* Pin/Unpin */}
               {!selectedMsg?.deleted_at && (
@@ -37802,9 +37459,9 @@ function ChatConversationInner() {
             )}
           </Animated.View>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
       {/* Message Info Modal (delivered to / read by) */}
-      <Modal visible={!!messageInfo} transparent animationType="slide" onRequestClose={() => setMessageInfo(null)}>
+      <LazyMount when={!!messageInfo}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setMessageInfo(null)}>
         <Pressable style={styles.modalOverlay} onPress={() => setMessageInfo(null)}>
           <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.3)', alignSelf: 'center', marginBottom: 12 }} />
@@ -37861,11 +37518,11 @@ function ChatConversationInner() {
             </ScrollView>
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Full Emoji Picker Modal */}
-      <Modal
-        visible={showFullEmojiPicker}
+      <LazyMount when={showFullEmojiPicker}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="slide"
         onRequestClose={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}
@@ -38055,10 +37712,10 @@ function ChatConversationInner() {
             </ScrollView>
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
       {/* Message Info Modal (delivery/read timestamps) */}
-      <NativeSheetDialog
-        visible={!!messageInfoModal}
+      <LazyMount when={!!messageInfoModal}>{(_lmV) => (<NativeSheetDialog
+        visible={_lmV}
         onClose={() => setMessageInfoModal(null)}
         animationType="slide"
         overlayStyle={styles.modalOverlay}
@@ -38272,7 +37929,7 @@ function ChatConversationInner() {
                 {t('chatConv.notDelivered')}
               </Text>
             )}
-      </NativeSheetDialog>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Keyboard spacer removed — KeyboardAvoidingView already handles this */}
 
@@ -38470,8 +38127,8 @@ function ChatConversationInner() {
       ) : null}
 
 {/* Desktop-web webcam capture modal */}
-      <WebcamCapture
-        visible={showWebcam}
+      <LazyMount when={showWebcam}>{(_lmV) => (<WebcamCapture
+        visible={_lmV}
         colors={colors}
         t={t}
         onClose={() => setShowWebcam(false)}
@@ -38480,14 +38137,14 @@ function ChatConversationInner() {
           if (!file) return;
           setMediaPreview({ visible: true, files: [file] });
         }}
-      />
+      />)}</LazyMount>
 
       {/* Media preview before send (WhatsApp style, multi-thumb) */}
-      <MediaPreview
+      <LazyMount when={mediaPreview.visible}>{(_lmV) => (<MediaPreview
         hdMode={hdMode}
         videoHdDefault={(() => { try { return require('../services/mediaUploadQuality').defaultVideoHd(); } catch { return false; } })()}
         onToggleHD={(cur) => setHdMode(typeof cur === 'boolean' ? !cur : (v => !v))}
-        visible={mediaPreview.visible}
+        visible={_lmV}
         files={mediaPreview.files || []}
         colors={colors}
         onClose={() => setMediaPreview({ visible: false, files: [] })}
@@ -38620,7 +38277,7 @@ function ChatConversationInner() {
             }));
           })().catch(() => {});
         }}
-      />
+      />)}</LazyMount>
 
       {/* WAVE 95 (2026-05-21) — Fullscreen avatar lightbox.
           Triggered by tapping the avatar in the chat header (and the sender
@@ -38628,13 +38285,13 @@ function ChatConversationInner() {
           Profile sheet: this is purely a photo viewer with pinch-zoom and
           swipe-down-to-dismiss. WhatsApp/Telegram parity for the "tap the
           friend's photo to see it big" gesture users expect. */}
-      <AvatarLightbox
-        visible={!!avatarLightbox}
+      <LazyMount when={!!avatarLightbox}>{(_lmV) => (<AvatarLightbox
+        visible={_lmV}
         email={avatarLightbox?.email}
         uri={avatarLightbox?.uri}
         name={avatarLightbox?.name}
         onClose={() => setAvatarLightbox(null)}
-      />
+      />)}</LazyMount>
 
       {/* [2026-10-10 contact-info] "Dados do contato" — fonte ÚNICA das opções
           da conversa 1:1 (o menu ⋮ ficou só com atalhos). Nível WhatsApp iOS,
@@ -38643,8 +38300,8 @@ function ChatConversationInner() {
           grupos em comum, "Mais", e ações destrutivas com texto vermelho.
           Toda linha delega aos MESMOS handlers/modais já existentes. */}
       {conversationType === 'direct' && (
-      <Modal
-        visible={showContactInfo}
+      <LazyMount when={showContactInfo}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="slide"
         onRequestClose={() => setShowContactInfo(false)}
@@ -38916,7 +38573,7 @@ function ChatConversationInner() {
           </ProfileScrollHost>
         </View>
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
       )}
 
       {/* Profile viewer modal */}
@@ -38924,9 +38581,9 @@ function ChatConversationInner() {
           but now backed by /api/profile_get — 1 fetch, real shared media,
           common chats, follower stats. "Ver perfil completo" routes to
           /u/[username] which renders the full-screen layout. */}
-      <Profile
+      <LazyMount when={!!profileViewer}>{(_lmV) => (<Profile
         mode="peek"
-        visible={!!profileViewer}
+        visible={_lmV}
         email={profileViewer?.email}
         onClose={() => {
           setProfileViewer(null);
@@ -38947,11 +38604,11 @@ function ChatConversationInner() {
         isDark={isDark}
         t={t}
         router={router}
-      />
+      />)}</LazyMount>
 
       {/* Header More Menu — WhatsApp/Telegram-grade polish: spring entrance,
           group dividers, tinted icon containers, premium AI highlight. */}
-      <Modal visible={showHeaderMenu} transparent animationType="fade" onRequestClose={() => setShowHeaderMenu(false)}>
+      <LazyMount when={showHeaderMenu}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => setShowHeaderMenu(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setShowHeaderMenu(false)}>
           <Animated.View
             style={{
@@ -39122,11 +38779,11 @@ function ChatConversationInner() {
           </Pressable>
           </Animated.View>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Forward picker — WhatsApp-style: avatars, recents on top, search */}
-      <Modal
-        visible={!!forwardMsg}
+      <LazyMount when={!!forwardMsg}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="slide"
         onRequestClose={() => setForwardMsg(null)}
@@ -39324,10 +38981,10 @@ function ChatConversationInner() {
             );
           })()}
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
       {/* Group Info Modal */}
-      <Modal
-        visible={showGroupInfo}
+      <LazyMount when={showGroupInfo}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="slide"
         onRequestClose={() => setShowGroupInfo(false)}
@@ -40191,11 +39848,11 @@ function ChatConversationInner() {
           </ProfileScrollHost>
         </View>
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Pending Group Join Requests — admin reviews each requester
           and approves or rejects. List refreshes optimistically on action. */}
-      <Modal visible={showPendingModal} transparent animationType="slide" onRequestClose={() => setShowPendingModal(false)}>
+      <LazyMount when={showPendingModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowPendingModal(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowPendingModal(false)}>
           <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -40257,10 +39914,10 @@ function ChatConversationInner() {
             )}
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Slow Mode Picker */}
-      <NativeSheetDialog visible={showSlowModePicker} onClose={() => setShowSlowModePicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
+      <LazyMount when={showSlowModePicker}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowSlowModePicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chat.slowMode') || 'Modo lento'}</Text>
@@ -40292,10 +39949,10 @@ function ChatConversationInner() {
                 {slowModeSeconds === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
-      </NativeSheetDialog>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Topics Modal */}
-      <Modal visible={showTopicsModal} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
+      <LazyMount when={showTopicsModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicsModal(false)}>
@@ -40404,23 +40061,23 @@ function ChatConversationInner() {
           </Pressable>
         </Pressable>
         </SheetKeyboardAvoider>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Per-conversation notification settings sheet (Notificações entry in header menu) */}
-      <ChatNotificationSettingsSheet
-        visible={showNotifSettingsSheet}
+      <LazyMount when={showNotifSettingsSheet}>{(_lmV) => (<ChatNotificationSettingsSheet
+        visible={_lmV}
         onClose={() => setShowNotifSettingsSheet(false)}
         conversationId={conversationId}
         conversationType={conversationType}
         colors={colors}
         isDark={isDark}
         t={t}
-      />
+      />)}</LazyMount>
 
       {/* Topic Create Modal — admin-only sheet launched from the "+" button
           on the topics row. Color picker + emoji + name input. Optimistic
           append so the new topic shows up instantly. */}
-      <Modal visible={showTopicCreate} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
+      <LazyMount when={showTopicCreate}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicCreate(false)}>
@@ -40518,7 +40175,7 @@ function ChatConversationInner() {
           </Pressable>
         </Pressable>
         </SheetKeyboardAvoider>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Custom roles / permissions sheet — opened from the "Editar
           permissões" link on each admin row. Toggles are persisted both
@@ -40526,7 +40183,7 @@ function ChatConversationInner() {
           backend via chat_group_admin's `permissions` payload, which
           writes the JSONB column chat_conversation_members.permissions
           (see chat.php L2657-2680). chatHasPermission() reads it. */}
-      <Modal visible={!!roleEditTarget} transparent animationType="slide" onRequestClose={() => setRoleEditTarget(null)}>
+      <LazyMount when={!!roleEditTarget}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setRoleEditTarget(null)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setRoleEditTarget(null)}>
           <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -40618,14 +40275,14 @@ function ChatConversationInner() {
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Mute Chat Modal — quick-snooze chips (Telegram parity).
           Renders 30m / 1h / 8h / 1 semana / Sempre + a Cancelar mute pill
           when the conv is already muted. handleMuteChat takes care of
           mirroring the picked value to chat_user_conv_settings + showing
           a confirmation toast. */}
-      <NativeSheetDialog visible={showMuteModal} onClose={() => setShowMuteModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
+      <LazyMount when={showMuteModal}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowMuteModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatConv.muteChat') || 'Silenciar conversa'}</Text>
@@ -40668,11 +40325,11 @@ function ChatConversationInner() {
                 </Text>
               </TouchableOpacity>
             ) : null}
-      </NativeSheetDialog>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Chat Lock Setup Modal */}
-      <Modal
-        visible={showLockSetup}
+      <LazyMount when={showLockSetup}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="fade"
         onRequestClose={() => setShowLockSetup(false)}
@@ -40718,10 +40375,10 @@ function ChatConversationInner() {
           </View>
         </View>
         </SheetKeyboardAvoider>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Disappearing Messages Modal */}
-      <NativeSheetDialog visible={showDisappearingModal} onClose={() => setShowDisappearingModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
+      <LazyMount when={showDisappearingModal}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowDisappearingModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chat.disappearing')}</Text>
@@ -40753,15 +40410,15 @@ function ChatConversationInner() {
               </TouchableOpacity>
               );
             })}
-      </NativeSheetDialog>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Pin Duration sheet (Android / web) — iOS uses native ActionSheetIOS
           in handlePinMessage. Same 3 buckets WhatsApp exposes:
           24h / 7d (default) / 30d. [2026-10-12 srv-audit] folha P&B; a
           duração vai como duration '24h'|'7d'|'30d' (servidor novo grava
           pinned_until; o antigo ignora). */}
-      <BWOptionSheet
-        visible={!!pinDurationModal}
+      <LazyMount when={!!pinDurationModal}>{(_lmV) => (<BWOptionSheet
+        visible={_lmV}
         onClose={() => { setPinDurationModal(null); setSelectedMsg(null); }}
         title={t('chatConv.pinDuration') || 'Por quanto tempo?'}
         subtitle={_mt('chatConv.pinDurationHint', 'Você pode desafixar quando quiser.')}
@@ -40779,12 +40436,12 @@ function ChatConversationInner() {
             if (m) _executePin(m, opt.key);
           },
         }))}
-      />
+      />)}</LazyMount>
 
       {/* [2026-10-12 srv-audit] Localização ao vivo — duração (web; nativo usa o
           alerta do sistema). Substitui o window.prompt fixo em pt-BR. */}
-      <BWOptionSheet
-        visible={!!liveLocDurationSheet}
+      <LazyMount when={!!liveLocDurationSheet}>{(_lmV) => (<BWOptionSheet
+        visible={_lmV}
         onClose={() => setLiveLocDurationSheet(false)}
         title={t('chatConv.liveLocation') || 'Localização ao vivo'}
         subtitle={t('chatConv.liveLocationDuration') || 'Compartilhar por quanto tempo?'}
@@ -40795,10 +40452,10 @@ function ChatConversationInner() {
           label: d.label,
           onPress: () => { setLiveLocDurationSheet(false); startLiveLocation(d.value); },
         }))}
-      />
+      />)}</LazyMount>
 
       {/* Report User Modal */}
-      <Modal visible={showReportModal} transparent animationType="fade" onRequestClose={() => setShowReportModal(false)}>
+      <LazyMount when={showReportModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => setShowReportModal(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowReportModal(false)}>
           <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 20, width: 300 }} onPress={e => e.stopPropagation()}>
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 4 }}>{t('chat.reportUser')}</Text>
@@ -40822,13 +40479,13 @@ function ChatConversationInner() {
             </TouchableOpacity>
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* Wallpaper Picker Modal */}
       {/* [2026-10-07 native-maps] native viewer; falls back to MapModal (WebView) on old binaries/web */}
-      <LocationViewerModal
+      <LazyMount when={!!mapModalData}>{(_lmV) => (<LocationViewerModal
         Fallback={MapModal}
-        visible={!!mapModalData}
+        visible={_lmV}
         onClose={() => setMapModalData(null)}
         lat={mapModalData?.lat}
         lng={mapModalData?.lng}
@@ -40838,14 +40495,14 @@ function ChatConversationInner() {
         isUnlimited={mapModalData?.isUnlimited}
         messageId={mapModalData?.messageId}
         conversationId={mapModalData?.conversationId || conversationId}
-      />
+      />)}</LazyMount>
 
       {/* Group Invite QR Modal — WhatsApp-style: shows the invite link as a
           scannable QR for in-person joins. Renders LOCALLY via InviteQRCode
           (react-native-qrcode-svg); api.qrserver.com is only the no-svg
           fallback (e.g. web SSR). */}
-      <Modal
-        visible={showInviteQr}
+      <LazyMount when={showInviteQr}>{(_lmV) => (<Modal
+        visible={_lmV}
         transparent
         animationType="fade"
         onRequestClose={() => setShowInviteQr(false)}
@@ -40917,7 +40574,7 @@ function ChatConversationInner() {
             </View>
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {showWallpaperPicker && (
         <WallpaperPicker
@@ -40937,7 +40594,7 @@ function ChatConversationInner() {
       )}
 
       {/* Chat Stats Modal — redesigned with hero cards, colorful bars */}
-      <Modal visible={showStatsModal} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
+      <LazyMount when={showStatsModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
           <Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} />
           <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '85%', overflow: 'hidden' }}>
@@ -41108,7 +40765,7 @@ function ChatConversationInner() {
             </ScrollView>
           </View>
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* [2026-10-13 bia-summary] "Resumir com a Bia" — folha extraída p/
           components/chat/ConversationSummarySheet.js (cabeçalho fixo de fundo
@@ -41203,16 +40860,16 @@ function ChatConversationInner() {
           );
         }
         return (
-      <Modal visible={showStarredModal} transparent animationType="slide" onRequestClose={() => setShowStarredModal(false)}>
+      <LazyMount when={showStarredModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowStarredModal(false)}>
         <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
           {_stBody}
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
         );
       })()}
 
       {/* ─── AI Assistant Modal ─── */}
-      <Modal visible={showAiModal} transparent animationType="fade" onRequestClose={() => { setShowAiModal(false); setAiResult(null); }}>
+      <LazyMount when={showAiModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => { setShowAiModal(false); setAiResult(null); }}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => { setShowAiModal(false); setAiResult(null); }}>
           <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 340, maxWidth: '90%', padding: 20 }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -41301,10 +40958,10 @@ function ChatConversationInner() {
             )}
           </Pressable>
         </Pressable>
-      </Modal>
+      </Modal>)}</LazyMount>
 
       {/* ─── Notification Sound Picker Modal ─── */}
-      <NativeSheetDialog visible={showNotifSoundPicker} onClose={() => setShowNotifSoundPicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
+      <LazyMount when={showNotifSoundPicker}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowNotifSoundPicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconBell size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatNotif.title') || 'Notification sound'}</Text>
@@ -41339,7 +40996,7 @@ function ChatConversationInner() {
                 {chatNotifSound === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
-      </NativeSheetDialog>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Web Search bar overlay */}
       {showWebSearch && (
@@ -41378,7 +41035,7 @@ function ChatConversationInner() {
       )}
 
       {/* Web Search Results WebView modal */}
-      <Modal visible={showWebSearchResults} transparent={false} animationType="slide" onRequestClose={() => setShowWebSearchResults(false)}>
+      <LazyMount when={showWebSearchResults}>{(_lmV) => (<Modal visible={_lmV} transparent={false} animationType="slide" onRequestClose={() => setShowWebSearchResults(false)}>
         <View style={{ flex: 1, backgroundColor: colors.background }}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingBottom: 8,
@@ -41422,7 +41079,7 @@ function ChatConversationInner() {
             />
           ) : null}
         </View>
-      </Modal>
+      </Modal>)}</LazyMount>
     </ThreadKeyboardAvoider>
   );
 }

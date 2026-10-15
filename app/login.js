@@ -19,19 +19,13 @@ import {
   IconUsers, IconCheck, IconX, IconPhone, IconLock,
   IconChevronRight, IconChevronDown, IconRefresh,
 } from '../components/Icons';
-import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import SignupIntro from '../components/SignupIntro';
-import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
-import OwnBackupRestorePrompt from '../components/OwnBackupRestorePrompt';
-import RestoreHistoryPrompt from '../components/RestoreHistoryPrompt';
-import ChangePasswordModal from '../components/ChangePasswordModal';
 import { LANGUAGES } from '../i18n';
 import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import { useSmsOtpAutofill } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts]
-import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
 // local COUNTRY_CODES list above (dial-keyed) handles the picker chip; we
@@ -60,6 +54,18 @@ import {
 
 // Tiny wrapper so haptic calls never throw on web or older devices.
 const safeHaptic = (fn) => { try { fn?.(); } catch {} };
+
+// [2026-10-15 login-fast] Modais que so aparecem DEPOIS de uma acao (ajuda/termos/
+// privacidade, troca de senha forcada, restaurar backup/historico) nao sao mais
+// avaliados na abertura do /login: require na 1a vez que ficam visiveis e ficam
+// montados dali em diante (a animacao de fechar continua igual).
+function useLazyComponent(active, load) {
+  const ref = useRef(null);
+  if (active && !ref.current) {
+    try { ref.current = load() || null; } catch { ref.current = null; }
+  }
+  return ref.current;
+}
 
 /* ─── Premium login — polished, animated, modern ─── */
 
@@ -1346,8 +1352,9 @@ export default function LoginScreen() {
             // this device in future. Fire-and-forget — non-fatal if the
             // network call fails; phone will re-fetch on next foreground.
             try {
-              const did = await getE2eDeviceId();
-              const pub = await getE2eDevicePublicKey();
+              const _e2e = require('../services/e2e'); // [2026-10-15 login-fast] lazy
+              const did = await _e2e.getDeviceId();
+              const pub = await _e2e.getDevicePublicKey();
               const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
               api.chatDeviceKeyPublish(did, pub, kind).catch(() => {});
             } catch (e) { /* non-fatal */ }
@@ -1910,6 +1917,21 @@ export default function LoginScreen() {
       useNativeDriver: true,
     }).start();
   };
+
+  // [2026-10-15 login-fast] Componentes lazy (ver useLazyComponent).
+  const LzChangePassword = useLazyComponent(forcePwChange, () => require('../components/ChangePasswordModal').default);
+  const _lzLoginModals = useLazyComponent(showHelp || showPrivacy || showTerms, () => require('../components/LoginModals'));
+  const LzOwnRestore = useLazyComponent(!!ownRestore, () => require('../components/OwnBackupRestorePrompt').default);
+  const LzRestoreBackup = useLazyComponent(showRestorePrompt, () => require('../components/RestoreBackupPrompt').default);
+  const LzRestoreHistory = useLazyComponent(showHistoryPrompt, () => require('../components/RestoreHistoryPrompt').default);
+  // [2026-10-15 login-fast] app/index.js agora troca para /login SEM a animacao de
+  // marca quando nao ha sessao: o splash nativo fica ate o 1o frame desta tela.
+  useEffect(() => {
+    let raf = null;
+    const hide = () => { try { require('../services/bootTrace').hideNativeSplash('login'); } catch {} };
+    try { raf = requestAnimationFrame(hide); } catch { hide(); }
+    return () => { try { if (raf != null) cancelAnimationFrame(raf); } catch {} };
+  }, []);
 
   // Telegram-style intro carousel for first-time users on mobile —
   // matches the approved /mockups/login-unified.html flow. Onboarding
@@ -2956,7 +2978,7 @@ export default function LoginScreen() {
           </View>
       </LoginKeyboardScroll>
 
-      <ChangePasswordModal
+      {LzChangePassword ? <LzChangePassword
         visible={forcePwChange}
         forced
         onChanged={() => {
@@ -2965,10 +2987,12 @@ export default function LoginScreen() {
           if (go) go();
         }}
         onClose={() => {}}
-      />
-      <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
-      <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
-      <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+      /> : null}
+      {_lzLoginModals ? <>
+        <_lzLoginModals.HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
+        <_lzLoginModals.PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
+        <_lzLoginModals.TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+      </> : null}
 
       {/* Country code picker modal */}
       {/* [2026-10-11 android-back] sem onRequestClose o Voltar do Android não fechava o seletor */}
@@ -3183,17 +3207,17 @@ export default function LoginScreen() {
       {/* Restore-from-backup prompt — surfaces on new-device login when
           the user has chat backups in iCloud (iOS) / Google Drive (Android)
           but no local SQLite data yet. See components/RestoreBackupPrompt. */}
-      <OwnBackupRestorePrompt
+      {LzOwnRestore ? <LzOwnRestore
         visible={!!ownRestore}
         candidate={ownRestore}
         onClose={() => { setOwnRestore(null); handleRestorePromptClose(); }}
-      />
-      <RestoreBackupPrompt
+      /> : null}
+      {LzRestoreBackup ? <LzRestoreBackup
         visible={showRestorePrompt}
         backups={restoreBackups}
         onClose={handleRestorePromptClose}
         onRestored={() => { /* no-op — onClose still fires after the user taps "Pronto" and that handles navigation */ }}
-      />
+      /> : null}
 
       {/* Full-history download prompt (#1240, 2026-05-20). Fires only when
           no cloud/server CYB2 backup was found AND services/fullHistorySync
@@ -3201,7 +3225,7 @@ export default function LoginScreen() {
           Tap "Baixar agora" runs forceFullHistoryDownload() with the
           includeAllMedia override; "Mais tarde" persists @chatyy_skip_history
           so we don't pester again. */}
-      <RestoreHistoryPrompt
+      {LzRestoreHistory ? <LzRestoreHistory
         visible={showHistoryPrompt}
         email={historyPromptEmail}
         onClose={() => {
@@ -3217,7 +3241,7 @@ export default function LoginScreen() {
             }, 100);
           }
         }}
-      />
+      /> : null}
 
       {/* Success overlay — pops a big check after auth, holds for ~440ms,
           then the existing setTimeout routes to /inbox. Telegram-grade

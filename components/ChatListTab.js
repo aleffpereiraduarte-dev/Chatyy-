@@ -1017,6 +1017,13 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
           content = '\uD83D\uDCCD ' + (parsed.live ? (t('chat.liveLocation') || 'Localização ao vivo') : (t('chat.location') || 'Localização'));
         }
         else if (parsed.type === 'contact' || lastMsg.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
+        // [status-resposta 2026-10-15] resposta/rea\u00E7\u00E3o a status: nunca o JSON cru na lista.
+        else if (parsed.status && typeof parsed.status === 'object' && parsed.reply_text !== undefined) {
+          const _srOwn = (lastMsg.sender_email || '').toLowerCase() === _me;
+          content = parsed.reaction
+            ? (parsed.reaction + ' ' + (_srOwn ? (t('status.youReactedToStatus') || 'Voc\u00EA reagiu ao status') : (t('status.reactedToYourStatus') || 'Reagiu ao seu status')))
+            : ('\u21A9 ' + (String(parsed.reply_text || '').trim() || (t('status.statusLabel') || 'Status')));
+        }
         else if (parsed.file_url || parsed.attachment_url || parsed.media_url || (parsed.url && parsed.mime_type)) {
           content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
         }
@@ -3765,6 +3772,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       const { setChatUnread } = require('../services/webBadge');
       setChatUnread(total);
     } catch {}
+    // [2026-10-15 unread-instant] store local único: aba "Conversas" + ícone do app.
+    try { require('../services/unreadBadge').publishListUnread(conversations || []); } catch {}
   }, [conversations]);
   // Debounce lock for conversation taps so a double-tap doesn't push the
   // same chat onto the stack twice (user complaint: "tenho que clicar 2 vez
@@ -4432,6 +4441,47 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // 973: 23592/23593 sem entrega, lista azul). Agora: evento do próprio
       // usuário é ignorado, e por AUTOR (grupo agrega por membro via _rcListMark —
       // 1 membro recebeu ≠ ✓✓).
+      // [2026-10-15 unread-instant] ...MAS o 'read' do PRÓPRIO usuário vindo de
+      // OUTRO aparelho/web (WS caído → só chega pelo chat_sync) zera a linha:
+      // contador, negrito e "@". O evento carrega o maior id de TERCEIROS lido
+      // (recibos-autor) → cobre a linha se a última msg é minha ou id <= mid.
+      try {
+        const selfReads = new Map();
+        for (const c of perConv) {
+          if (c?.id == null || !Array.isArray(c?.events)) continue;
+          for (const ev of c.events) {
+            if (ev?.type !== 'read') continue;
+            const actor = String(ev?.actor || ev?.payload?.email || '').toLowerCase();
+            if (actor !== meLower) continue;
+            const mid = Number(ev?.payload?.message_id) || 0;
+            if (mid > (selfReads.get(String(c.id)) || 0)) selfReads.set(String(c.id), mid);
+          }
+        }
+        if (selfReads.size) {
+          const covers = (c) => {
+            const mid = selfReads.get(String(c?.id));
+            if (!mid || !((c.unread_count || 0) > 0 || (c.unread_mentions || 0) > 0)) return false;
+            const lm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+            const lmId = Number(lm?.id) || 0;
+            const mine = !!(lm && String(lm.sender_email || '').toLowerCase() === meLower);
+            return mine || (lmId > 0 && lmId <= mid);
+          };
+          const zeroed = (conversationsRef.current || []).filter(covers).map(c => c.id);
+          if (zeroed.length) {
+            setConversations(prev => {
+              let ch = false;
+              const nx = prev.map(c => {
+                if (!covers(c)) return c;
+                ch = true;
+                try { _noteSelfRead(c.id, c); } catch {}
+                return { ...c, unread_count: 0, unread_mentions: 0 };
+              });
+              return ch ? nx : prev;
+            });
+            for (const id of zeroed) { try { require('../services/unreadBadge').markConversationReadLocal(id, { emitList: false }); } catch {} }
+          }
+        }
+      } catch {}
       const marks = new Map();
       for (const c of perConv) {
         const cid = c?.id;
@@ -5252,7 +5302,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // [2026-10-14 lida-na-hora] conversa aberta = lendo agora → 0 (antes mantinha o
               // contador antigo) + marca leitura local p/ o refresh do servidor (que chega antes
               // do chat_mark_read) não trazer "não lida" de volta por alguns segundos.
-              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); const open = a && String(a) === String(data.conversation_id); if (open) { try { _noteSelfRead(data.conversation_id, null); } catch {} } return open; })() ? 0 : ((prev[idx].unread_count || 0) + 1)),
+              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); const open = a && String(a) === String(data.conversation_id); if (open) { try { _noteSelfRead(data.conversation_id, null); } catch {} } else { try { require('../services/unreadBadge').noteIncomingUnread(data.conversation_id); } catch {} } return open; })() ? 0 : ((prev[idx].unread_count || 0) + 1)),
             };
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
@@ -5362,6 +5412,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         const meLower = (user?.email || '').toLowerCase();
         const readerLower = (data?.reader_email || data?.email || '').toLowerCase();
         if (readerLower && readerLower === meLower) { try { api.swrInvalidate?.('chat_list'); } catch {} } // [2026-10-14 lista-eco-envio]
+        // [2026-10-15 unread-instant] Lida AQUI ou em OUTRO aparelho/web da conta →
+        // banners da conversa somem e o ícone/aba recalculam do estado local já.
+        if (readerLower && readerLower === meLower && data?.conversation_id != null) {
+          try { require('../services/unreadBadge').markConversationReadLocal(data.conversation_id, { emitList: false }); } catch {}
+        }
         // Who did the reading: me (just opened my own chat) OR the peer
         // (read my outbound). In the peer case we bump last_message.read_at
         // so the purple ✓✓ appears in the list without waiting for a fresh
@@ -5379,6 +5434,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             // event. Missing email now falls through (no-op) instead.
             if (readerLower && readerLower === meLower) {
               next.unread_count = 0;
+              if (next.unread_mentions) next.unread_mentions = 0; // [2026-10-15 unread-instant] "@" some junto
               _noteSelfRead(c.id, c); // [2026-10-14 lista-eco-envio] snapshot atrasado não repõe o contador
             } else if (c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower
@@ -5890,8 +5946,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // round-trip or the next list sync. The server read-ack + next delta sync
     // reconcile the real count; if this was a locked-chat auth that gets
     // cancelled the next focus sync restores the badge.
-    if ((conv.unread_count || 0) > 0) {
-      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0 } : c));
+    if ((conv.unread_count || 0) > 0 || (conv.unread_mentions || 0) > 0) {
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0, unread_mentions: 0 } : c));
     }
     // Haptic click on row-open — WhatsApp pattern, confirms the tap took.
     haptic.select();
@@ -9673,7 +9729,9 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                               : stType === 'video' ? (t?.('status.typeVideo') || 'Vídeo')
                               : (t?.('status.statusLabel') || 'Status');
                     const txt = String(sr.reply_text || '').trim();
-                    body = txt ? ('↩ ' + txt + ' · ' + tag) : ('↩ ' + tag);
+                    body = sr.reaction // [status-resposta 2026-10-15]
+                      ? (sr.reaction + ' ' + (isOwn ? (t?.('status.youReactedToStatus') || 'Você reagiu ao status') : (t?.('status.reactedToYourStatus') || 'Reagiu ao seu status')) + ' · ' + tag)
+                      : txt ? ('↩ ' + txt + ' · ' + tag) : ('↩ ' + tag);
                   }
                 } catch {}
               } else if (body.startsWith('{')) {

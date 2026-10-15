@@ -674,6 +674,10 @@ function EmailRow({
 
 export default memo(EmailRow);
 
+// [2026-10-15 native-inbox] Reaproveitados pela caixa de entrada nativa
+// (components/email/emailNativeAdapter.js) — mesmas regras de exibição.
+export { cleanPreview, formatRelativeDate };
+
 const s = StyleSheet.create({
   row: {
     flexDirection: 'row', alignItems: 'center',

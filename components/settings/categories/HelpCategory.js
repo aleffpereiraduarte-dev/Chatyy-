@@ -1,0 +1,144 @@
+// [2026-10-15 settings-split] Categoria "Ajuda e sobre": suporte, sobre
+// (versão + atualizar agora), diagnóstico (dev) e legal.
+import { useState } from 'react';
+import { View, Text, TouchableOpacity, Linking, Platform, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import Constants from 'expo-constants';
+import { useTheme } from '../../../context/ThemeContext';
+import { useLanguage } from '../../../context/LanguageContext';
+import { IconChevronRight } from '../../Icons';
+import NativeSheetDialog from '../../NativeSheetDialog';
+import { USE_NATIVE_SHEETS } from '../../NativeSheet';
+import { PrivacyModal, TermsModal } from '../../LoginModals';
+import { SettingsGroup, SettingsRow } from '../SettingsKit';
+import { useSettingsHost, useSection } from './shared';
+
+export function appVersionLabel() {
+  const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
+  const build = Constants?.expoConfig?.ios?.buildNumber || Constants?.expoConfig?.android?.versionCode || '';
+  return build ? `${ver} (${build})` : String(ver);
+}
+
+export default function HelpCategory() {
+  const { colors } = useTheme();
+  const { t } = useLanguage();
+  const router = useRouter();
+  const { registerAnchor } = useSettingsHost();
+  const blob = useSection('settings');
+  const [aboutOpen, setAboutOpenState] = useState(false);
+  const [aboutMounted, setAboutMounted] = useState(false);
+  const setAboutOpen = (v) => { if (v) setAboutMounted(true); setAboutOpenState(v); };
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
+  // Procura e aplica a atualização (OTA) na hora — sem fechar/abrir 2x.
+  const [upd, setUpd] = useState('idle'); // idle|checking|downloading|ready|latest|error
+  const updInfo = (() => {
+    try {
+      const U = require('expo-updates');
+      const id = U?.updateId ? String(U.updateId).slice(0, 8) : null;
+      const at = U?.createdAt ? new Date(U.createdAt) : null;
+      return { id, at };
+    } catch { return { id: null, at: null }; }
+  })();
+  const checkUpdate = async () => {
+    if (upd === 'checking' || upd === 'downloading') return;
+    if (Platform.OS === 'web') {
+      try { setUpd('downloading'); window.location.reload(); } catch { setUpd('error'); }
+      return;
+    }
+    let U = null;
+    try { U = require('expo-updates'); } catch {}
+    if (!U || !U.isEnabled) { setUpd('error'); return; }
+    try {
+      setUpd('checking');
+      const r = await U.checkForUpdateAsync();
+      if (!r?.isAvailable) { setUpd('latest'); return; }
+      setUpd('downloading');
+      await U.fetchUpdateAsync();
+      setUpd('ready');
+      setTimeout(() => { U.reloadAsync().catch(() => setUpd('error')); }, 900);
+    } catch { setUpd('error'); }
+  };
+  const updSubtitle = (() => {
+    switch (upd) {
+      case 'checking': return t('settings.update.checking');
+      case 'downloading': return t('settings.update.downloading');
+      case 'ready': return t('settings.update.ready');
+      case 'latest': return t('settings.update.latest');
+      case 'error': return t('settings.update.error');
+      default: {
+        const parts = [];
+        if (updInfo.id) parts.push(updInfo.id);
+        if (updInfo.at && !isNaN(updInfo.at)) parts.push(updInfo.at.toLocaleDateString());
+        return parts.length ? `${t('settings.update.current')}: ${parts.join(' · ')}` : t('settings.update.tap');
+      }
+    }
+  })();
+  const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
+  const build = Constants?.expoConfig?.ios?.buildNumber || Constants?.expoConfig?.android?.versionCode || '';
+  const verLabel = (t('settings.about.version') || 'Versão {ver}').replace('{ver}', ver);
+  // Modal irmão só depois do sheet nativo descer.
+  const after = (fn) => { setAboutOpen(false); setTimeout(fn, USE_NATIVE_SHEETS ? 520 : 200); };
+
+  return (
+    <View ref={registerAnchor('help')}>
+      <SettingsGroup header={t('settings.rd2.help') || 'Ajuda'}>
+        <SettingsRow
+          title={t('settings.help.contactSupport') || 'Falar com o suporte'}
+          subtitle="support@chatyy.com.br"
+          onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
+        />
+      </SettingsGroup>
+      <SettingsGroup header={t('settings.about.title') || 'Sobre'}>
+        <SettingsRow title={t('settings.rd2.aboutApp') || 'Sobre o Chatyy'} value={appVersionLabel()} onPress={() => setAboutOpen(true)} />
+        <SettingsRow
+          title={t('settings.update.title')}
+          subtitle={updSubtitle}
+          value={(upd === 'checking' || upd === 'downloading') ? '…' : undefined}
+          onPress={checkUpdate}
+        />
+        {(__DEV__ || blob?.developer_mode) && (
+          <SettingsRow
+            title={t('settings.rd2.callDiag') || 'Diagnóstico de chamadas'}
+            subtitle={t('settings.rd2.callDiagDesc') || 'Últimos 100 eventos do ciclo de vida das chamadas'}
+            onPress={() => router.push('/call-diagnose')}
+          />
+        )}
+      </SettingsGroup>
+      <SettingsGroup header={t('settings.legal')}>
+        <SettingsRow title={t('settings.privacyPolicy')} onPress={() => setShowPrivacy(true)} />
+        <SettingsRow title={t('settings.termsOfService')} onPress={() => setShowTerms(true)} />
+      </SettingsGroup>
+
+      {aboutMounted && (
+        <NativeSheetDialog
+          visible={aboutOpen}
+          onClose={() => setAboutOpen(false)}
+          animationType="slide"
+          overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
+          panelStyle={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
+        >
+          <Text style={{ color: colors.text, fontWeight: '800', fontSize: 20, marginBottom: 6 }}>{t('settings.about.title') || 'Sobre'}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>{build ? `${verLabel} • build ${build}` : verLabel}</Text>
+          <TouchableOpacity onPress={() => after(() => setShowTerms(true))} style={[st.link, { borderBottomColor: colors.borderLight }]}>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
+            <IconChevronRight size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => after(() => setShowPrivacy(true))} style={[st.link, { borderBottomColor: colors.borderLight }]}>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.privacy') || 'Política de privacidade'}</Text>
+            <IconChevronRight size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setAboutOpen(false)} style={{ marginTop: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}>
+            <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
+          </TouchableOpacity>
+        </NativeSheetDialog>
+      )}
+      <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
+      <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+    </View>
+  );
+}
+
+const st = StyleSheet.create({
+  link: { paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+});

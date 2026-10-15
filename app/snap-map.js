@@ -50,6 +50,7 @@ import {
   ScrollView, Dimensions, Modal, Pressable, ActivityIndicator, Alert,
   Linking, StatusBar, AppState, TextInput,
 } from 'react-native';
+import { useSharedNow } from '../hooks/useSharedNow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -1168,11 +1169,8 @@ export default function SnapMapScreen() {
   // "disconnect" — the pin stuck with an old timestamp). 10s is cheap: it
   // only re-runs the pinsPayload useMemo, the WebView diff is a no-op when
   // coords/labels are unchanged.
-  const [nowTick, setNowTick] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 10000);
-    return () => clearInterval(t);
-  }, []);
+  // [2026-10-15 ticker-unico] relógio compartilhado: só tica com a tela focada e o app ativo.
+  const nowTick = useSharedNow(10000);
 
   const sharesRef = useRef([]);
   sharesRef.current = shares;

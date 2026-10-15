@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-effects",
+  "version": "1.0.0",
+  "description": "Chatyy native full-screen message effects (iMessage/Telegram-level): iOS Core Animation overlay on the key window, Android particle overlay on the DecorView.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

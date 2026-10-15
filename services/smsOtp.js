@@ -77,3 +77,23 @@ export function useSmsOtpAutofill(active, onCode, rearmKey) {
     return stop;
   }, [active, rearmKey]);
 }
+
+// [2026-10-15 phone-hint] Android: Phone Number Hint API (Google Identity) — folha
+// nativa do sistema com o numero do chip, sem permissao. Binario antigo (sem a
+// funcao no modulo) / iOS / web -> null, sem erro. Resolve "+55119..." ou null.
+export function isPhoneHintSupported() {
+  const m = getModule();
+  if (!m || typeof m.requestPhoneHint !== 'function') return false;
+  try { return m.isPhoneHintAvailable?.() !== false; } catch { return false; }
+}
+
+export async function requestPhoneHint() {
+  if (!isPhoneHintSupported()) return null;
+  try {
+    const n = await getModule().requestPhoneHint();
+    const s = typeof n === 'string' ? n.trim() : '';
+    return /^\+?\d{8,16}$/.test(s.replace(/[\s()-]/g, '')) ? s : null;
+  } catch {
+    return null;
+  }
+}

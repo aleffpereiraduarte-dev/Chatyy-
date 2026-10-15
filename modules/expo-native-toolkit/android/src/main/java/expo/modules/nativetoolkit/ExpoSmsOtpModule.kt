@@ -8,9 +8,12 @@ import android.content.IntentFilter
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.os.BundleCompat
+import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest
+import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.auth.api.phone.SmsRetriever
 import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.Status
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -35,6 +38,7 @@ class ExpoSmsOtpModule : Module() {
   companion object {
     private const val TAG = "ExpoSmsOtp"
     private const val REQ_CONSENT = 0x5E0C
+    private const val REQ_PHONE_HINT = 0x5E0D
     private const val EVENT = "onSmsOtp"
     private val CODE_6 = Regex("(?<!\\d)(\\d{6})(?!\\d)")
     private val CODE_3_3 = Regex("(?<!\\d)(\\d{3})[\\s-](\\d{3})(?!\\d)")
@@ -52,6 +56,8 @@ class ExpoSmsOtpModule : Module() {
   private var receiver: BroadcastReceiver? = null
   private var receiverCtx: Context? = null
   private var consentPending = false
+  // [2026-10-15 phone-hint] Promise pendente do seletor de numero (1 por vez).
+  private var hintPromise: Promise? = null
 
   override fun definition() = ModuleDefinition {
     Name("ExpoSmsOtp")
@@ -92,7 +98,62 @@ class ExpoSmsOtpModule : Module() {
       consentPending = false
     }
 
-    OnActivityResult { _, payload ->
+    // [2026-10-15 phone-hint] Phone Number Hint API (Google Identity): folha nativa do
+    // sistema com o(s) numero(s) do chip; sem permissao READ_PHONE_NUMBERS. Resolve com
+    // o numero em E.164 ("+5511...") ou null (cancelou / sem chip / sem Play Services).
+    Function("isPhoneHintAvailable") {
+      var ok = false
+      try {
+        Class.forName("com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest")
+        ok = true
+      } catch (_: Throwable) {
+        ok = false
+      }
+      ok
+    }
+
+    AsyncFunction("requestPhoneHint") { promise: Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null || hintPromise != null) {
+        promise.resolve(null)
+        return@AsyncFunction
+      }
+      hintPromise = promise
+      try {
+        val request = GetPhoneNumberHintIntentRequest.builder().build()
+        Identity.getSignInClient(activity).getPhoneNumberHintIntent(request)
+          .addOnSuccessListener { pending ->
+            try {
+              activity.startIntentSenderForResult(pending.intentSender, REQ_PHONE_HINT, null, 0, 0, 0)
+            } catch (t: Throwable) {
+              Log.w(TAG, "phone hint launch failed: ${t.message}")
+              resolveHint(null)
+            }
+          }
+          .addOnFailureListener { e ->
+            Log.w(TAG, "phone hint unavailable: ${e.message}")
+            resolveHint(null)
+          }
+      } catch (t: Throwable) {
+        Log.w(TAG, "phone hint failed: ${t.message}")
+        resolveHint(null)
+      }
+    }
+
+    OnActivityResult { activity, payload ->
+      if (payload.requestCode == REQ_PHONE_HINT) {
+        var number: String? = null
+        val data = payload.data
+        if (payload.resultCode == Activity.RESULT_OK && data != null) {
+          try {
+            number = Identity.getSignInClient(activity).getPhoneNumberFromIntent(data)
+          } catch (t: Throwable) {
+            Log.w(TAG, "phone hint parse failed: ${t.message}")
+          }
+        }
+        resolveHint(number)
+        return@OnActivityResult
+      }
       if (payload.requestCode != REQ_CONSENT) return@OnActivityResult
       consentPending = false
       if (payload.resultCode == Activity.RESULT_OK) {
@@ -112,6 +173,16 @@ class ExpoSmsOtpModule : Module() {
 
     OnDestroy {
       unregisterReceiverSafe()
+      resolveHint(null)
+    }
+  }
+
+  private fun resolveHint(number: String?) {
+    val p = hintPromise ?: return
+    hintPromise = null
+    try {
+      p.resolve(if (number.isNullOrBlank()) null else number)
+    } catch (_: Throwable) {
     }
   }
 

@@ -112,3 +112,53 @@ export function getNativePinnedStripView(): any {
 export function isPinnedStripAvailable(): boolean {
   return !!getNativePinnedStripView();
 }
+
+// ── [2026-10-15 native-lists] Outras listas grandes em NATIVO ────────────────
+// Mesmo pacote (reaproveita avatar/imagem/tema/glifos), um módulo por view.
+// Binário sem a view → null e a tela mantém a FlashList/FlatList JS.
+//   ChatyyEmailList    — caixa de entrada do e-mail (app/inbox.js)
+//   ChatyyCallList     — aba Ligações (components/ChatCallsTab.js)
+//   ChatyyStatusList   — aba Status (components/ChatStatusTab.js)
+//   ChatyyContactList  — contatos / nova conversa (app/contacts.js, app/chat-new.js)
+export const EMAIL_LIST_VIEW_NAME = 'ChatyyEmailList';
+export const CALL_LIST_VIEW_NAME = 'ChatyyCallList';
+export const STATUS_LIST_VIEW_NAME = 'ChatyyStatusList';
+export const CONTACT_LIST_VIEW_NAME = 'ChatyyContactList';
+// [2026-10-15 settings-native] Raiz das Configurações (app/settings.js via
+// components/settings/NativeSettingsList.js).
+export const SETTINGS_LIST_VIEW_NAME = 'ChatyySettingsList';
+
+const _extraViews: Record<string, any> = {};
+
+function _probeNamed(name: string): any {
+  if (Object.prototype.hasOwnProperty.call(_extraViews, name)) return _extraViews[name];
+  _extraViews[name] = null;
+  if (Platform.OS === 'web') return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function'
+      ? core.requireOptionalNativeModule(name)
+      : null;
+    if (!mod) return null;
+    let api = 0;
+    try { api = typeof mod.apiVersion === 'function' ? Number(mod.apiVersion()) || 0 : 0; } catch { api = 0; }
+    if (api < 1) return null;
+    const req = core.requireNativeViewManager || core.requireNativeView;
+    if (typeof req === 'function') _extraViews[name] = req(name);
+  } catch {
+    _extraViews[name] = null;
+  }
+  return _extraViews[name];
+}
+
+export function getNativeEmailListView(): any { return _probeNamed(EMAIL_LIST_VIEW_NAME); }
+export function isEmailListAvailable(): boolean { return !!getNativeEmailListView(); }
+export function getNativeCallListView(): any { return _probeNamed(CALL_LIST_VIEW_NAME); }
+export function isCallListAvailable(): boolean { return !!getNativeCallListView(); }
+export function getNativeStatusListView(): any { return _probeNamed(STATUS_LIST_VIEW_NAME); }
+export function isStatusListAvailable(): boolean { return !!getNativeStatusListView(); }
+export function getNativeContactListView(): any { return _probeNamed(CONTACT_LIST_VIEW_NAME); }
+export function isContactListAvailable(): boolean { return !!getNativeContactListView(); }
+export function getNativeSettingsListView(): any { return _probeNamed(SETTINGS_LIST_VIEW_NAME); }
+export function isSettingsListAvailable(): boolean { return !!getNativeSettingsListView(); }

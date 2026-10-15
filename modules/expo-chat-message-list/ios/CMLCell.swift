@@ -40,6 +40,8 @@ final class CMLCell: UICollectionViewCell {
   var onVideoNote: ((String, String) -> Void)?
   private var revealed = false
   private var lifted = false
+  /// [2026-10-15 native-effects] emoji grande aguardando o willDisplay p/ animar 1×
+  private var jumboPending = false
 
   private(set) var key: String = ""
   private(set) var row: CMLRow?
@@ -130,12 +132,21 @@ final class CMLCell: UICollectionViewCell {
     highlight.layer.removeAllAnimations()
     highlight.alpha = 0
     progress.stop()
+    textView.layer.removeAnimation(forKey: CMLJumboFX.animKey)
+    jumboPending = false
     mediaToken = ""
     albumTokens = []
     media.image = nil
     reply.thumb.image = nil
     reply.thumbToken = ""
     for iv in albumViews { iv.image = nil }
+  }
+
+  /// [2026-10-15 native-effects] chamado no willDisplay da lista.
+  func willAppear() {
+    guard jumboPending, let r = row else { return }
+    jumboPending = false
+    if CMLJumboFX.claim(key) { CMLJumboFX.play(textView, text: r.text) }
   }
 
   // MARK: configure
@@ -347,6 +358,8 @@ final class CMLCell: UICollectionViewCell {
     textView.spoiler = sp
     textView.layout = L.text
     place(textView, L.textFrame, L.text != nil)
+    // [2026-10-15 native-effects] emoji grande anima ao aparecer (1× por mensagem)
+    if prevKey != key { jumboPending = row.kind == .msg && row.jumbo > 0 && !row.deleted }
 
     // [fase 2] blocos (cartões / pre / post)
     if let B = L.blocks, !B.isEmpty {

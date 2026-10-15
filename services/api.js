@@ -398,12 +398,19 @@ try {
 
 // Checa a cada 5 min (barato: só re-probe quando o TTL de 30 min expira).
 // Stored so we can cancel on logout / app background to avoid battery drain.
-let _edgeDetectInterval = setInterval(detectFastestServer, 300000);
+// [2026-10-15 app-leve] tick pulado com o app em 2º plano (Android mantém o JS
+// vivo: a cada TTL o probe acordava o rádio p/ 4 hosts sem ninguém olhando). A
+// troca de rede e o próximo tick em 1º plano reavaliam normalmente.
+function _edgeDetectTick() {
+  try { if (require('react-native').AppState.currentState === 'background') return; } catch {}
+  detectFastestServer();
+}
+let _edgeDetectInterval = setInterval(_edgeDetectTick, 300000);
 export function stopEdgeDetection() {
   if (_edgeDetectInterval) { clearInterval(_edgeDetectInterval); _edgeDetectInterval = null; }
 }
 export function startEdgeDetection() {
-  if (!_edgeDetectInterval) _edgeDetectInterval = setInterval(detectFastestServer, 300000);
+  if (!_edgeDetectInterval) _edgeDetectInterval = setInterval(_edgeDetectTick, 300000);
 }
 
 // Export for components that need to know the current edge
@@ -808,6 +815,10 @@ async function storeToken(token) {
       const { persistBackupCreds } = require('./autoBackup');
       persistBackupCreds?.();
     }
+  } catch {}
+  // [2026-10-15 photos-native] motor nativo de backup: token novo/troca de conta → reconfigura; saiu → para e isola.
+  try {
+    if (Platform.OS !== 'web') require('./photosBackupNative').onTokenChanged(token || null);
   } catch {}
 
   // Mirror the new token into the Android/iOS native-call SharedPrefs/App-Group
@@ -1741,6 +1752,8 @@ const POST_READ_SWR = new Set([
   'status_archive_list', 'follow_suggestions', 'feed_list',
 ]);
 const POST_READ_DEDUP = new Set([
+  // [2026-10-15 boot-dedupe] leituras puras via POST que repetiam no boot.
+  'chat_nickname_list', 'chat_currency_rates', 'wallet_balance', 'chat_call_history_list',
   'chat_starred_messages', 'chat_pinned_messages', 'chat_pending_members',
   'chat_scheduled_list', 'chat_blocked_list', 'chat_bot_list',
   'chat_check_blocked', 'common_contacts',
@@ -1759,7 +1772,92 @@ function _isReadablePost(action) {
 const CHAT_READ_NO_INVALIDATE = new Set([
   ...POST_READ_SWR, ...POST_READ_DEDUP,
   'chat_get_locked', 'chat_check_pin', 'chat_draft_get',
+  // [2026-10-15 boot-dedupe] Leituras/efeitos que NÃO mudam a lista de conversas
+  // mas, por serem POST chat_*, derrubavam o cache da chat_list no boot (web QA:
+  // chat_list ×3-5 por abertura — device_key_publish/call_history/nickname/
+  // currency/keywords/sender_context disparavam um refetch cada).
+  'chat_device_key_publish', 'chat_device_keys_list', 'chat_call_history_list',
+  'chat_nickname_list', 'chat_currency_rates', 'chat_user_keywords_list',
+  'chat_sender_context', 'chat_get_auto_translate', 'chat_typing_set',
+  'chat_storage_usage', 'chat_get_notes',
+  // chat_sync: só invalida quando trouxe eventos (ver _apiCallCore).
+  'chat_sync',
 ]);
+
+// [2026-10-15 boot-dedupe] Janela de revalidação por action. O fresh-path do
+// SWR revalida em background toda leitura de cópia com ≥2,5 s — no boot frio
+// 4-6 chamadores independentes (layout, initialSync, onlineRecovery, telas,
+// prefetch de Configs) liam o mesmo dado em 2-10 s e cada rajada virava mais
+// um GET (chat_get_settings ×3, profile_get ×2, wallet_balance ×3, chat_list
+// ×2-5). Nessas actions a revalidação só ocorre depois de `reval` ms e SEM
+// timer agendado (a próxima leitura após a janela atualiza); mutações
+// relacionadas derrubam a chave (_MUTATION_INVALIDATES). chat_list: janela de
+// 8 s — a lista ao vivo vem do store + WS; mutações chat_* e chat_sync com
+// eventos seguem invalidando.
+const _SWR_TUNE = {
+  chat_list: { reval: 8000 },
+  chat_get_settings: { reval: 30000 },
+  chat_privacy_get: { reval: 30000 },
+  chat_get_user_defaults: { reval: 30000 },
+  chat_user_defaults_get: { reval: 30000 },
+  chat_user_notif_prefs_get: { reval: 30000 },
+  chat_folders_list: { reval: 30000 },
+  chat_get_notes: { reval: 15000 },
+  chat_nickname_list: { reval: 30000 },
+  chat_currency_rates: { reval: 300000, ttl: 600000 },
+  get_profile: { reval: 30000 },
+  profile_get: { reval: 20000 },
+  plan_info: { reval: 30000 },
+  wallet_balance: { reval: 20000, ttl: 30000 },
+  get_settings: { reval: 30000 },
+};
+// Ações que só ganham SWR nesta leva (não estão em SWR_ALLOW/POST_READ_SWR).
+// profile_get só para o PRÓPRIO perfil (perfis alheios seguem sempre frescos).
+const _SWR_EXTRA = new Set(['chat_get_notes', 'plan_info', 'wallet_balance', 'chat_nickname_list', 'chat_currency_rates']);
+function _swrExtraEnabled(action, params) {
+  if (_SWR_EXTRA.has(action)) return true;
+  if (action === 'profile_get') {
+    try {
+      const me = String(getActiveAccountEmail() || '').toLowerCase();
+      return !!me && String((params && params.email) || '').toLowerCase() === me;
+    } catch { return false; }
+  }
+  return false;
+}
+// Mutação (POST não-leitura) → chaves SWR derrubadas. Mantém a frescura das
+// actions acima, que agora revalidam com menos frequência.
+const _MUTATION_INVALIDATES = [
+  [/folder/, ['chat_folders_list']],
+  [/note/, ['chat_get_notes']],
+  [/settings|wallpaper|theme|font|enter_send|media_quality/, ['chat_get_settings', 'get_settings']],
+  [/privacy|last_seen|read_receipt_pref|discoverable/, ['chat_privacy_get']],
+  [/defaults|auto_download/, ['chat_get_user_defaults', 'chat_user_defaults_get']],
+  [/notif_pref/, ['chat_user_notif_prefs_get']],
+  [/nickname/, ['chat_nickname_list']],
+  [/profile|avatar|bio|username|cover|display_name|set_name|follow|status_text|about/, ['profile_get', 'get_profile']],
+  [/wallet|gift|iap|diamond|payout|purchase|redeem|withdraw|tip|coin/, ['wallet_balance']],
+  [/plan|subscri|iap|stripe|purchase|trial|upgrade|downgrade/, ['plan_info']],
+];
+const _READ_NAME_RE = /(^get_|_get$|_list$|history|_count$|_rates$|insights|_info$|_status$|_check|search|_balance$|_manifest$)/;
+function _invalidateForMutation(action) {
+  try {
+    if (_READ_NAME_RE.test(action)) return; // POST de leitura (wallet_history…) não derruba nada
+    for (const [re, keys] of _MUTATION_INVALIDATES) {
+      if (re.test(action)) for (const k of keys) swrInvalidate(k);
+    }
+  } catch {}
+}
+// chat_sync só mexe na lista quando trouxe eventos/mensagens.
+function _chatSyncHasEvents(r) {
+  try {
+    const convs = r && r.data && Array.isArray(r.data.conversations) ? r.data.conversations : null;
+    if (!convs) return !!(r && r.success); // formato desconhecido → conservador
+    for (const c of convs) {
+      if (c && ((Array.isArray(c.events) && c.events.length) || (Array.isArray(c.messages) && c.messages.length))) return true;
+    }
+    return false;
+  } catch { return true; }
+}
 
 // Persist SWR cache to sessionStorage on web so navigating back to the app
 // after a page reload still paints from memory instantly. sessionStorage
@@ -1803,6 +1901,8 @@ if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
       let i = 0;
       for (const [k, v] of _swrCache.entries()) {
         if (i++ > _SWR_MAX) break;
+        // [2026-10-15] saldo/plano mudam fora do app (Stripe/IAP + reload) → nunca restaurar do sessionStorage.
+        if (k.startsWith('plan_info|') || k.startsWith('wallet_balance|')) continue;
         obj[k] = { data: v.data, at: v.at };
       }
       sessionStorage.setItem(_SWR_PERSIST_KEY, JSON.stringify(obj));
@@ -1824,6 +1924,23 @@ if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
 const _swrGen = new Map(); // action → n
 let _swrGenAll = 0;
 function _swrGenOf(action) { return _swrGenAll + ':' + (_swrGen.get(action) || 0); }
+
+// [2026-10-15 boot-dedupe] Derruba a action só se houver cópia mais velha que
+// `maxAgeMs` (ou maxAgeMs<=0). Cópia jovem / leitura em voo = reaproveita —
+// era o settingsCache.revalidate() que, no boot frio, apagava o chat_get_settings/
+// plan_info/privacy recém-baixados e buscava tudo de novo ~4 s depois.
+export function swrInvalidateIfOlder(action, maxAgeMs) {
+  if (!action) return;
+  if (!(maxAgeMs > 0)) { swrInvalidate(action); return; }
+  const now = Date.now();
+  let old = false;
+  try {
+    for (const [k, v] of _swrCache.entries()) {
+      if (k.startsWith(action + '|') && v && now - v.at > maxAgeMs) { old = true; break; }
+    }
+  } catch { old = true; }
+  if (old) swrInvalidate(action);
+}
 
 export function swrInvalidate(action, params) {
   try {
@@ -2064,8 +2181,11 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
     // that is readable only via POST_READ_DEDUP (and not SWR_ALLOW) gets
     // in-flight dedup but no caching, so it always hits network and never
     // serves a stale copy right after the user mutated it.
-    const swrEnabled = opts.swr === true || SWR_ALLOW.has(action) || POST_READ_SWR.has(action);
-    const ttl = opts.swrTtl || _SWR_TTL_DEFAULT;
+    const swrEnabled = opts.swr !== false && (opts.swr === true || SWR_ALLOW.has(action) || POST_READ_SWR.has(action) || _swrExtraEnabled(action, params));
+    const _tune = _SWR_TUNE[action] || null; // [2026-10-15 boot-dedupe]
+    const _revalMin = (_tune && _tune.reval) || _SWR_REVALIDATE_MIN_AGE_MS;
+    const _revalTimer = !_tune || _tune.timer === true;
+    const ttl = opts.swrTtl || (_tune && _tune.ttl) || _SWR_TTL_DEFAULT;
     if (swrEnabled) {
       const cached = _swrCache.get(key);
       const fresh = cached && (Date.now() - cached.at < ttl);
@@ -2096,15 +2216,15 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
             }).catch(() => { cached.revalidating = false; });
           };
           const _age = Date.now() - cached.at;
-          if (_age >= _SWR_REVALIDATE_MIN_AGE_MS) {
+          if (_age >= _revalMin) {
             if (cached.revalTimer) { try { clearTimeout(cached.revalTimer); } catch {} cached.revalTimer = null; }
             _reval();
-          } else if (!cached.revalTimer) {
+          } else if (!cached.revalTimer && _revalTimer) {
             cached.revalTimer = setTimeout(() => {
               cached.revalTimer = null;
               // Skip if a newer fetch/invalidation replaced this entry meanwhile.
               if (_swrCache.get(key) === cached && !cached.revalidating) _reval();
-            }, _SWR_REVALIDATE_MIN_AGE_MS - _age);
+            }, _revalMin - _age);
           }
         }
         return cached.data;
@@ -2142,6 +2262,16 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
     if (!CHAT_READ_NO_INVALIDATE.has(action)) swrInvalidate('chat_list');
   }
   else if (EMAIL_MUTATION_ACTIONS.has(action)) { swrInvalidate('inbox'); swrInvalidate('folders'); }
+  _invalidateForMutation(action); // [2026-10-15 boot-dedupe]
+  if (action === 'chat_sync') {
+    // [2026-10-15 boot-dedupe] chat_sync é leitura de delta: só derruba a
+    // chat_list quando realmente trouxe eventos (antes: todo sync — inclusive a
+    // sonda de cursor e o catch-up vazio — forçava refetch da lista inteira).
+    return _apiCallImpl(action, params, method).then((r) => {
+      if (_chatSyncHasEvents(r)) swrInvalidate('chat_list');
+      return r;
+    });
+  }
   return _apiCallImpl(action, params, method);
 }
 
@@ -5974,7 +6104,9 @@ export async function chatRead(conversationId, messageId) {
     // sync — visible on iOS/Android lockscreens.
     // Invalida de novo: qualquer chat_list lido enquanto o POST estava em voo é pré-leitura.
     try { swrInvalidate('chat_list'); } catch {}
-    try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
+    // [2026-10-15 unread-instant] o ícone já foi recalculado do estado local na
+    // hora da leitura (services/unreadBadge) → sem novo GET aqui.
+    try { require('./pushNotifications').refreshBadgeCount?.({ preferLocal: true }); } catch {}
   }
 }
 
@@ -8154,15 +8286,59 @@ export async function inboxUnreadCount() {
   return { success: !!r?.success, data: { unread: Number.isFinite(n) ? n : 0 } };
 }
 
+// Single-flight + 1,5 s: várias telas pedindo o badge juntas = 1 request.
+let _ucInflight = null;
+let _ucLast = null; // { at, r }
+function _chatUnreadCountLight() {
+  if (_ucLast && Date.now() - _ucLast.at < 1500) return Promise.resolve(_ucLast.r);
+  if (_ucInflight) return _ucInflight;
+  _ucInflight = apiCall('chat_unread_count', { by_conv: 1 }).then((r) => {
+    if (r && r.success) _ucLast = { at: Date.now(), r };
+    return r;
+  }).finally(() => { _ucInflight = null; });
+  return _ucInflight;
+}
+
 export async function chatUnreadCount(opts = null) {
   // [2026-10-13 P2-8] excludeConversationId = conversa aberta agora (o chat_read
-  // dela ainda está em voo): não conta no badge e não usa a lista em cache.
+  // dela ainda está em voo): não conta no badge.
+  // [2026-10-15 unread-instant] Antes baixava o chat_list INTEIRO só p/ somar
+  // (1 das causas de 2-5 chat_list por abertura de conversa). Agora:
+  //   1) chat_unread_count?by_conv=1 (servidor leve, edge-local; mesmas regras do
+  //      badge do push: sem silenciadas/call_card/system/import WA) e as exclusões
+  //      (conversa aberta + lidas LOCALMENTE há < 20 s — avaliadas DEPOIS da
+  //      resposta, então um read feito com o GET em voo também vale);
+  //   2) servidor sem by_conv (patch ainda não aplicado) e nada a excluir → total;
+  //   3) senão o caminho antigo (chat_list) com as exclusões.
   const _ex = opts && opts.excludeConversationId != null ? String(opts.excludeConversationId) : null;
+  let _ub = null;
+  try { _ub = require('./unreadBadge'); } catch {}
+  const _skip = (cid) => (_ex != null && String(cid) === _ex) || !!(_ub && _ub.wasReadLocallyRecently(cid));
+  // Logo após uma leitura local o store (lista + reads locais) já é a verdade:
+  // não vai à rede (o poll de 60 s / volta ao 1º plano reconciliam com o servidor).
+  if (opts && opts.preferLocal && _ub && _ub.hasLocalList()) {
+    const lt = _ub.getLocalUnreadTotal();
+    if (lt != null) return { success: true, data: { unread_count: Math.max(0, lt) } };
+  }
+  let r0 = null;
+  try { r0 = await _chatUnreadCountLight(); } catch { r0 = null; }
+  const d0 = r0 && r0.success ? r0.data : null;
+  if (d0 && d0.by_conv && typeof d0.by_conv === 'object') {
+    let total = 0;
+    for (const k of Object.keys(d0.by_conv)) if (!_skip(k)) total += Math.max(0, Number(d0.by_conv[k]) || 0);
+    return { success: true, data: { unread_count: total } };
+  }
+  if (d0 && d0.unread_count != null && _ex == null && !(_ub && _ub.recentLocalReadIds().length)) {
+    return { success: true, data: { unread_count: Math.max(0, Number(d0.unread_count) || 0) } };
+  }
   if (_ex) { try { swrInvalidate('chat_list'); } catch {} }
-  // Use chat_list and sum up unread counts client-side
   const r = await apiCall('chat_list');
   if (r.success && r.data?.conversations) {
-    const total = r.data.conversations.reduce((sum, c) => sum + ((_ex && String(c.id ?? c.conversation_id) === _ex) ? 0 : (c.unread_count || 0)), 0);
+    const total = r.data.conversations.reduce((sum, c) => {
+      const _cid = String(c.id ?? c.conversation_id);
+      if (_skip(_cid)) return sum;
+      return sum + (c.muted ? 0 : (c.unread_count || 0));
+    }, 0);
     return { success: true, data: { unread_count: total } };
   }
   return r;

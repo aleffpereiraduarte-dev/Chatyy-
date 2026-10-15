@@ -28,7 +28,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
-import { useSmsOtpAutofill } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts]
+import { useSmsOtpAutofill, requestPhoneHint } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts] [2026-10-15 phone-hint]
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone, toE164, E164_RE, countryDisplayName } from '../constants/countries'; // [2026-10-06 UX2] countryDisplayName
@@ -694,6 +694,30 @@ export default function SignupPhone() {
     setCode(smsCode);
     setTimeout(() => { try { checkOtpRef.current?.(smsCode); } catch {} }, 150);
   }, resendCountdown > 0);
+  // [2026-10-15 phone-hint] Android: seletor nativo do Google com o numero do chip
+  // (Phone Number Hint API) — 1 vez por tela, so com o campo vazio. Escolheu ->
+  // preenche pais + numero pelo MESMO parsePhoneInput do campo. Binario antigo = no-op.
+  const phoneHintAskedRef = useRef(false);
+  const phoneHintStateRef = useRef({ phone, countryCode });
+  phoneHintStateRef.current = { phone, countryCode };
+  useEffect(() => {
+    if (Platform.OS !== 'android' || step !== 'phone' || phoneHintAskedRef.current) return undefined;
+    if (phoneHintStateRef.current.phone) return undefined;
+    phoneHintAskedRef.current = true;
+    let off = false;
+    const tm = setTimeout(async () => {
+      if (phoneHintStateRef.current.phone) return; // rascunho restaurado / ja digitou
+      const num = await requestPhoneHint();
+      if (off || !num || !mountedRef.current) return;
+      const cur = phoneHintStateRef.current;
+      if (cur.phone) return; // ja digitou enquanto a folha estava aberta
+      const parsed = parsePhoneInput(num, cur.countryCode, COUNTRIES);
+      if (parsed.countryCode !== cur.countryCode) setCountryCode(parsed.countryCode);
+      setPhone(parsed.digits);
+      try { Haptics.selectionAsync(); } catch {}
+    }, 400);
+    return () => { off = true; clearTimeout(tm); };
+  }, [step]);
 
   const goName = () => {
     const fn = (firstName || '').trim();

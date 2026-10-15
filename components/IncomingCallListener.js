@@ -472,7 +472,7 @@ function IncomingCallListenerWeb() {
     }
 
     // Fade in
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
 
     // Pulsing rings (staggered)
     const createPulse = (anim, delay) => {
@@ -480,9 +480,9 @@ function IncomingCallListenerWeb() {
         Animated.sequence([
           Animated.delay(delay),
           Animated.parallel([
-            Animated.timing(anim, { toValue: 1, duration: 2000, easing: Easing.out(Easing.ease), useNativeDriver: false }),
+            Animated.timing(anim, { toValue: 1, duration: 2000, easing: Easing.out(Easing.ease), useNativeDriver: true }),
           ]),
-          Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: false }),
+          Animated.timing(anim, { toValue: 0, duration: 0, useNativeDriver: true }),
         ])
       );
     };
@@ -497,8 +497,8 @@ function IncomingCallListenerWeb() {
     // Accept button gentle pulse
     const acceptPulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(acceptScale, { toValue: 1.1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(acceptScale, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(acceptScale, { toValue: 1.1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(acceptScale, { toValue: 1, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ])
     );
     acceptPulse.start();

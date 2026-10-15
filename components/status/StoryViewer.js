@@ -1036,6 +1036,15 @@ function StoryViewerJS({
   // double-tap pair that fires the "❤️" reaction. Reset to 0 after each
   // successful pair so a slow third tap can't accidentally chain.
   const lastTapRef = useRef(0);
+  // [status-resposta 2026-10-15] Reação atual por status (o servidor alterna: mesmo emoji de novo =
+  // desfaz e apaga a mensagem "Reagiu ao seu status" da conversa). Duplo toque só CURTE, nunca descurte.
+  const myReactRef = useRef({});
+  const _reactSent = (it, emoji) => {
+    const k = String(it?.id ?? '');
+    if (!k) return;
+    const prev = myReactRef.current[k] ?? it?.my_reaction ?? '';
+    myReactRef.current[k] = prev === emoji ? '' : emoji;
+  };
   useEffect(() => {
     if (rippleAt) {
       rippleAnim.setValue(0);
@@ -2813,7 +2822,10 @@ function StoryViewerJS({
               _haptic('medium');
               setReactPop('❤️');
               setTimeout(() => setReactPop(null), 900);
-              try { onReact?.(cur, '❤️'); } catch {}
+              try {
+                const _k = String(cur?.id ?? '');
+                if ((myReactRef.current[_k] ?? cur?.my_reaction ?? '') !== '❤️') { _reactSent(cur, '❤️'); onReact?.(cur, '❤️'); }
+              } catch {}
             } catch {}
           }}
           onPressOut={() => setPaused(false)}
@@ -3063,7 +3075,7 @@ function StoryViewerJS({
                       // == tap on them) so the gesture stays predictable.
                       onLongPress={isHeart ? () => {
                         _haptic('medium');
-                        try { onReact?.(cur, emoji); } catch {}
+                        try { _reactSent(cur, emoji); onReact?.(cur, emoji); } catch {}
                         const now = Date.now();
                         const burst = Array.from({ length: 5 }).map((_, i) => ({
                           id: `${now}-${i}`,
@@ -3093,7 +3105,7 @@ function StoryViewerJS({
                         setTimeout(() => setEmojiPulse(null), 260);
                         setReactPop(emoji);
                         setTimeout(() => setReactPop(null), 900);
-                        try { onReact?.(cur, emoji); } catch {}
+                        try { _reactSent(cur, emoji); onReact?.(cur, emoji); } catch {}
                       }}
                       hitSlop={8}
                       style={{

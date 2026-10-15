@@ -21,6 +21,7 @@
       "enabled": true,
       "fallbackToCacheTimeout": 3000,
       "checkAutomatically": "ON_LOAD",
+      "enableBsdiffPatchSupport": true,
       "url": "https://u.expo.dev/c95f3d04-7288-4f3d-8da3-42a128986467",
       "requestHeaders": {
         "expo-channel-name": "production"
@@ -395,6 +396,7 @@
       "./plugins/with-notification-service",
       "./plugins/with-associated-domains",
       "./plugins/with-bg-chat-sync",
+      "./plugins/with-photos-backup",
       "./plugins/with-broadcast-extension",
       "./plugins/with-live-activity",
       "expo-asset",

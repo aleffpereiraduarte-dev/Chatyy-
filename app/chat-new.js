@@ -28,6 +28,10 @@ import BroadcastModal from '../components/BroadcastModal';
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import { ListSkeleton } from '../components/SkeletonLoader';
 import PressableScale from '../components/PressableScale'; // [2026-10-11] primary CTAs
+// [2026-10-15 native-contacts] Lista padrão em NATIVO (seções fixas + índice A–Z
+// com haptic). Binário sem a view / web / kill switch → SectionList abaixo.
+import NativeContactList, { nativeContactsEnabled } from '../components/contacts/NativeContactList';
+import { buildFlatRows, contactTile } from '../components/contacts/contactListAdapter';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -1872,6 +1876,516 @@ export default function ChatNewScreen() {
   // used across chat.js / inbox.js (light tap target on a white bar).
   const headerBtnBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)';
 
+  // [2026-10-15 native-contacts] Lista padrão nativa. Desligar:
+  // globalThis.__chatyy_native_contacts = false. Erro → volta à SectionList.
+  const [_nativeContactsFailed, _setNativeContactsFailed] = useState(() => !!globalThis.__chatyy_native_contacts_failed);
+  const _useNativeContacts = Platform.OS !== 'web' && !_nativeContactsFailed && nativeContactsEnabled();
+  const _onNativeContactsFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_contacts_failed = true; console.warn('[native-contacts] fallback SectionList:', msg); } catch {}
+    _setNativeContactsFailed(true);
+  }, []);
+  const _nativeSections = useMemo(
+    () => (onlyChatyy ? sections.filter(sec => String(sec.key).startsWith('phone_chatyy')) : sections),
+    [onlyChatyy, sections]
+  );
+  const _nativeNewList = useMemo(() => {
+    if (!_useNativeContacts) return { rows: [], meta: new Map() };
+    const titleColor = isDark ? '#F5F5F7' : '#111111';
+    const glyphBg = colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111';
+    const inviteLabel = t('chat.invite');
+    const picking = mode === 'group' || mode === 'channel';
+    const selectedSet = new Set((selectedMembers || []).map(m => m && m.email).filter(Boolean));
+    return buildFlatRows(
+      _nativeSections,
+      (sec) => (sec._letterBucket ? {
+        t: String(sec.title || ''), sbg: isDark ? '#0d0d0d' : '#fafafc', sfg: titleColor,
+        fs: 13, fw: 700, ls: 0.5, pt: 4, pb: 4, ph: Spacing.md, hl: true,
+        ix: String(sec.title || ''),
+      } : {
+        t: String(sec.title || ''), sbg: isDark ? '#111' : '#f8f8fa', sfg: titleColor,
+        up: true, fs: 12, fw: 700, ls: 0.8, pt: 8, pb: 8, ph: Spacing.md,
+      }),
+      (item) => {
+        if (!item || item._isSearchHeader) return null;
+        if (item._isPhoneInvite) {
+          return { key: 'phone:' + (item.phone || ''), row: {
+            t: item.display || item.phone || '', tw: 700, gl: 'userPlus', gbg: glyphBg,
+            sb: t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy', sbt: 1,
+            pl: inviteLabel, pf: true, pi: true, tap: false,
+          } };
+        }
+        if (item._isMessageYourself) {
+          return { key: 'me', row: {
+            t: item.name || '', tw: 700, sx: `(${t('chat.youSelf') || t('common.you') || 'Você'})`,
+            sb: t('chat.messageYourself') || 'Message yourself', sbt: 1,
+            tiles: contactTile(item.email, item.name), av: 40, ar: true,
+            a11y: t('chat.messageYourself') || 'Message yourself',
+          } };
+        }
+        if (item._isInvitePlaceholder) {
+          return { key: 'invite-placeholder', row: {
+            t: t('chat.inviteFriend'), tw: 500, gl: 'userPlus', gbg: glyphBg,
+            sb: t('chat.inviteFriendDesc'), sbt: 1, pl: t('chat.invite'), pf: true, pi: true, tap: false,
+          } };
+        }
+        if (item.isRegistered !== true) {
+          return { key: item.email || item.phone, row: {
+            t: item.name || item.phone || '?', tw: 500,
+            sb: item.email || item.phone || '', sbt: 1,
+            tiles: contactTile(item.email || '', item.name || item.phone || '?'), av: 46,
+            pl: inviteLabel, pf: true, pi: true, pb: invitingEmail != null && invitingEmail === item.email,
+            tap: false,
+          } };
+        }
+        const name = item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '');
+        let s2 = '';
+        let s2t = 0;
+        if (item.about) { s2 = String(item.about); s2t = 0; }
+        else if (item.last_seen) { s2 = `${t('chat.lastSeen')} ${formatLastSeen(item.last_seen, t)}`; s2t = 1; }
+        return { key: item.email || item.phone, row: {
+          t: name, tw: 700, vb: true,
+          nb: item._justJoined ? (t('chat.newOnChatyy') || 'NOVO') : '',
+          sb: item.email || '', sbt: 1, un: item.username ? String(item.username) : '',
+          s2, s2t, s2i: !!s2,
+          tiles: contactTile(item.email, item.name || prettifyHandle(item.email)), av: 40, ar: true,
+          on: !!item.online,
+          ck: picking && item.email ? (selectedSet.has(item.email) ? 2 : 1) : 0,
+        } };
+      },
+    );
+  }, [_useNativeContacts, _nativeSections, isDark, colors.onPrimary, t, mode, selectedMembers, invitingEmail]);
+  const _nativeContactColors = useMemo(() => ({
+    dark: !!isDark,
+    bg: colors.background, text: colors.text, sub: colors.textSecondary, faint: colors.textTertiary,
+    hair: colors.border, primary: colors.primary, onPrimary: colors.onPrimary || '#fff',
+    warning: colors.warning, error: colors.error,
+    press: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.045)',
+    border: colors.border, indexText: colors.primary,
+  }), [colors, isDark]);
+  const _nativeContactMetrics = useMemo(() => ({
+    padH: Spacing.md, padV: 14, gap: 14, minH: 0,
+    nameSize: 16, subSize: 13, sub2Size: 12, metaSize: 10,
+  }), []);
+  // Mesmas ações do ContactRow (JS).
+  const _onNativeContactPress = useCallback((item) => {
+    if (item?._isMessageYourself) handleMessageYourself();
+    else if (item && item.isRegistered === true) onSelectRow(item);
+  }, [handleMessageYourself, onSelectRow]);
+  const _onNativeContactAction = useCallback((action, item) => {
+    if (!item) return;
+    if (action !== 'pill' && action !== 'pillLong') return;
+    if (item._isInvitePlaceholder) { setShowInviteInput(true); return; }
+    if (item._isPhoneInvite) { onInvitePhoneRow(item); return; }
+    const hasEmail = !!item.email;
+    if (action === 'pill') {
+      if (hasEmail) onInviteByEmailRow(item.email, item.name);
+      else onInviteShareRow(item);
+      return;
+    }
+    // pillLong — mesmo menu do toque longo na pílula
+    const hasPhone = !!item.phone && Platform.OS !== 'web';
+    if (Platform.OS === 'ios') {
+      const opts = [];
+      const actions = [];
+      if (hasEmail) { opts.push(t('chat.inviteByEmail') || 'Convidar por email'); actions.push(() => onInviteByEmailRow(item.email, item.name)); }
+      if (hasPhone) { opts.push('WhatsApp'); actions.push(() => onInviteViaWhatsAppRow(item)); }
+      opts.push(t('chat.inviteShare') || 'Compartilhar link');
+      actions.push(() => onInviteShareRow(item));
+      opts.push(t('common.cancel') || 'Cancelar');
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: opts, cancelButtonIndex: opts.length - 1 },
+        (idx) => { if (idx >= 0 && idx < actions.length) actions[idx](); }
+      );
+    } else {
+      onInviteShareRow(item);
+    }
+  }, [onInviteByEmailRow, onInviteShareRow, onInviteViaWhatsAppRow, onInvitePhoneRow, t]);
+
+  // [2026-10-15 native-contacts] Cabeçalho/rodapé/vazio da lista padrão — os
+  // MESMOS elementos servem à SectionList (JS) e à lista nativa.
+  const _newListHeaderComponent = (
+    <View onLayout={(e) => { alphaHeaderHRef.current = e.nativeEvent.layout.height; _updateAlphaTop(); }}>
+      {/* [2026-10-09 find-contacts] WhatsApp-style shortcuts at the
+          very top: Novo grupo · Novo contato · Escanear QR · Meu QR. */}
+      {mode === 'direct' && !pickMode && (
+        <View style={sty.shortcutRow}>
+          <ShortcutTile label={t('chat.newGroup')} colors={colors} isDark={isDark} onPress={() => { setSelectedMembers([]); setMode('group'); }}>
+            <IconUsers size={20} color="#fff" />
+          </ShortcutTile>
+          {Platform.OS !== 'web' && (
+            <ShortcutTile label={t('chat.findNewContact')} colors={colors} isDark={isDark} onPress={handleNewContact}>
+              <IconUserPlus size={20} color="#fff" />
+            </ShortcutTile>
+          )}
+          <ShortcutTile label={t('chat.findScanQr')} colors={colors} isDark={isDark} onPress={handleOpenQrScanner}>
+            <IconCamera size={20} color="#fff" />
+          </ShortcutTile>
+          <ShortcutTile label={t('chat.findMyQr')} colors={colors} isDark={isDark} onPress={handleQrPress}>
+            <IconQrCode size={20} color="#fff" />
+          </ShortcutTile>
+        </View>
+      )}
+
+      {/* [2026-10-09 find-contacts] Agenda not connected → explain + one
+          tap to connect (consent + OS prompt happen on tap, never
+          silently). Hidden once access is granted. */}
+      {Platform.OS !== 'web' && !pickMode && contactsAccess === 'denied' && phoneContacts.length === 0 && !syncingContacts && (
+        <View style={[sty.findCta, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
+          <Text style={[sty.findCtaTitle, { color: colors.text }]}>{t('chat.findContactsCtaTitle')}</Text>
+          <Text style={[sty.findCtaDesc, { color: colors.textSecondary }]}>{t('chat.findContactsCtaDesc')}</Text>
+          <TouchableOpacity
+            onPress={doContactSync}
+            style={[sty.findCtaBtn, { backgroundColor: colors.primary }]}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+          >
+            <Text style={[sty.findCtaBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.findContactsCtaBtn')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Contacts-on-Chatyy count chip — sits above "Pessoas que você
+          pode conhecer" so users immediately see how much of their
+          phone book overlaps with the network. */}
+      {phoneContacts.length > 0 && (
+        <View style={{ alignItems: 'center', paddingVertical: 8 }}>
+          {/* [2026-10-10] Founder: "se eu clicar nisso deveria aparecer
+              meus contatos" — o chip agora rola até a seção
+              "Contatos no Chatyy". */}
+          <TouchableOpacity
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={() => {
+              setOnlyChatyy(v => !v);
+              try { sectionListRef.current?.getScrollResponder?.()?.scrollTo?.({ y: 0, animated: false }); } catch {}
+            }}
+            style={{
+              backgroundColor: colors.primary,
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 999,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
+              {(t('chat.contactsOnChatyyCount') ||
+                `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
+                .replace('{count}', String(phoneContacts.length))
+                .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
+            </Text>
+            {onlyChatyy
+              ? <IconX size={14} color={colors.onPrimary || '#fff'} />
+              : <IconChevronDown size={14} color={colors.onPrimary || '#fff'} />}
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Recently contacted (horizontal scroll) */}
+      {!onlyChatyy && recentContacts.length > 0 && (
+        <View style={sty.recentSection}>
+          <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
+            <View style={sty.sectionAccentLine} />
+            <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
+              {t('chat.recentContacts')}
+            </Text>
+          </View>
+          <FlatList
+            horizontal
+            data={recentContacts.slice(0, 8)}
+            keyExtractor={(item) => 'recent-' + item.email}
+            renderItem={renderRecentItem}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={sty.recentList}
+          />
+        </View>
+      )}
+
+      {/* Quick actions — [2026-10-14 vis3] só no modo Direto: no Grupo/Canal o usuário está
+          escolhendo membros e "Mensagens Salvas"/convite tiravam ele do fluxo. */}
+      {!onlyChatyy && mode === 'direct' && (
+      <View style={sty.quickActions}>
+        {/* Saved Messages — chat with self (Telegram-style) */}
+        <TouchableOpacity
+          style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+          onPress={async () => {
+            try {
+              const r = await api.chatSaved();
+              if (r?.success && r.data?.id) {
+                require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } }, { replace: true });
+              }
+            } catch {}
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
+            <IconMessageSquare size={18} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.savedMessages') || 'Mensagens Salvas'}</Text>
+            <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.savedMessagesDesc') || 'Notas, links e arquivos que só você vê'}</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Invite by email */}
+        <TouchableOpacity
+          style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+          onPress={() => setShowInviteInput(!showInviteInput)}
+          activeOpacity={0.7}
+        >
+          <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
+            <IconMail size={18} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
+            <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Inline invite input */}
+        {showInviteInput && (
+          <View style={[sty.inviteInputWrap, { backgroundColor: colors.surface }]}>
+            <TextInput
+              style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0' }]}
+              placeholder={t('chat.emailPlaceholder')}
+              placeholderTextColor={colors.textTertiary}
+              value={inviteEmail}
+              onChangeText={setInviteEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            <TouchableOpacity
+              style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? colors.primary : colors.border }]}
+              disabled={!inviteEmail.includes('@') || !!invitingEmail}
+              onPress={() => {
+                handleInviteByEmail(inviteEmail.trim());
+                setInviteEmail('');
+              }}
+            >
+              {invitingEmail ? (
+                <ActivityIndicator size={14} color={inviteEmail.includes('@') ? (colors.onPrimary || '#fff') : colors.textTertiary} />
+              ) : (
+                <Text style={{ color: inviteEmail.includes('@') ? (colors.onPrimary || '#fff') : colors.textTertiary, fontSize: 14, fontWeight: '600' }}>
+                  {t('chat.sendInvite')}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Share invite link */}
+        <TouchableOpacity
+          style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
+          onPress={() => handleInviteShare({})}
+          activeOpacity={0.7}
+        >
+          <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
+            <IconUserPlus size={18} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.shareLink')}</Text>
+            <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.shareLinkDesc')}</Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+      )}
+
+      {/* Invite count for non-Chatyy contacts */}
+      {!onlyChatyy && otherContacts.length > 0 && (
+        <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)' }]}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+            {t('chat.contactsNotOnChatyy', { count: otherContacts.length })}
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+  const _newListFooterComponent = (
+    <View style={{ paddingTop: 12 }}>
+      {/* Tópicos populares — Telegram-style trending hashtags
+          from public channels (last 7 days). Renders nothing
+          when the server returns no tags yet. */}
+      {mode === 'direct' && !pickMode && renderTrendingTagsBlock()}
+
+      {/* Comunidades — Telegram-style supergroups (announcement
+          channel + sub-groups + admin tools). Sits ABOVE
+          "Descobrir canais" so users discover the bigger feature
+          first. Hidden in member-pick flows. */}
+      {mode === 'direct' && !pickMode && (
+        <TouchableOpacity
+          onPress={() => router.push('/community/discover')}
+          activeOpacity={0.7}
+          style={{
+            marginHorizontal: Spacing.md,
+            marginTop: 8,
+            marginBottom: 4,
+            padding: 14,
+            borderRadius: 12,
+            backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
+          <View style={{
+            width: 40, height: 40, borderRadius: 20,
+            backgroundColor: colors.primary,
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <IconUsers size={20} color={colors.onPrimary || '#fff'} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+              {t('chat.communitiesTitle') || 'Comunidades'}
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+              {t('chat.communitiesSubtitle') || 'Grupos grandes com canal de avisos e sub-grupos'}
+            </Text>
+          </View>
+          <IconChevronRight size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+      )}
+
+      {/* Descobrir canais — Telegram-style public channel feed.
+          Only on the default "direct" mode (when picking who to
+          chat with). Hidden in group/channel-create flows where
+          the user is selecting members. */}
+      {mode === 'direct' && !pickMode && renderDiscoverBlock(publicChannels)}
+
+      {/* Listas de transmissão — Telegram parity. Section
+          shows the user's saved broadcast lists with a
+          "+ Nova lista" CTA at the top. Tapping a list opens
+          the contact picker pre-loaded with its members so
+          the user can edit and resend; tapping the CTA opens
+          a fresh BroadcastModal. Hidden in pickMode (the
+          add-member-to-group flow doesn't need this). */}
+      {!pickMode && mode === 'direct' && (
+        <View style={{ paddingHorizontal: Spacing.md, marginTop: 6, marginBottom: 4 }}>
+          <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingHorizontal: 0, paddingBottom: 6 }]}>
+            <View style={sty.sectionAccentLine} />
+            <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
+              {t('chat.broadcastList') || 'Listas de transmissão'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => setShowBroadcastModal(true)}
+            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row', alignItems: 'center',
+              padding: 12, borderRadius: 12, gap: 12,
+              backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+            }}
+          >
+            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+              <IconBroadcastGlyph size={20} color={colors.onPrimary || '#fff'} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                {t('chat.newBroadcast') || 'Nova lista'}
+              </Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                {t('chat.broadcastListHint') || 'Envie uma mensagem para vários contatos de uma vez'}
+              </Text>
+            </View>
+            <IconPlus size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+          {broadcastLists.length > 0 && broadcastLists.map((bl) => {
+            const count = (bl.recipients || []).length;
+            return (
+              <TouchableOpacity
+                key={`bl-${bl.id}`}
+                activeOpacity={0.7}
+                onPress={() => {
+                  // No dedicated /chat-broadcast-send screen yet; use
+                  // a native prompt as the lightweight composer. The
+                  // backend's chat_broadcast_send fans the text out
+                  // to each recipient's direct thread, which already
+                  // surfaces in the chat list. Cancel = no-op.
+                  const promptTitle = bl.name || (t('chat.broadcastList') || 'Lista de transmissão');
+                  const sendIt = (text) => {
+                    const v = (text || '').trim();
+                    if (!v) return;
+                    api.chatBroadcastSend(bl.id, v).then(r => {
+                      if (r?.success) {
+                        safeAlert(
+                          t('chat.broadcastSent') || 'Enviado',
+                          `${r.data?.sent ?? count} / ${r.data?.total ?? count}`
+                        );
+                      }
+                    }).catch(() => {});
+                  };
+                  if (Platform.OS === 'ios' && Alert.prompt) {
+                    Alert.prompt(promptTitle, t('chat.broadcastSend') || 'Mensagem para a lista', sendIt);
+                  } else if (Platform.OS === 'web') {
+                    const txt = window.prompt(`${promptTitle}\n${t('chat.broadcastSend') || 'Mensagem'}`);
+                    if (txt != null) sendIt(txt);
+                  } else {
+                    // Android: no Alert.prompt — open a real input modal that
+                    // composes the message and sends via chatBroadcastSend.
+                    setBroadcastComposeText('');
+                    setBroadcastComposeList(bl);
+                  }
+                }}
+                onLongPress={() => {
+                  // Long-press → quick delete (Telegram parity).
+                  if (!api.chatBroadcastDelete) return;
+                  const confirmDelete = () => {
+                    api.chatBroadcastDelete(bl.id).then(() => loadBroadcastLists()).catch(() => {});
+                  };
+                  if (Platform.OS === 'web') {
+                    if (window.confirm(`${t('common.delete') || 'Excluir'}?`)) confirmDelete();
+                  } else {
+                    Alert.alert(
+                      bl.name || (t('chat.broadcastList') || 'Lista de transmissão'),
+                      t('chat.deleteBroadcastConfirm') || 'Excluir esta lista?',
+                      [
+                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                        { text: t('common.delete') || 'Excluir', style: 'destructive', onPress: confirmDelete },
+                      ],
+                    );
+                  }
+                }}
+                delayLongPress={400}
+                style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingVertical: 10, gap: 12,
+                }}
+              >
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconBroadcastGlyph size={18} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>
+                    {bl.name || (t('chat.broadcastList') || 'Lista de transmissão')}
+                  </Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
+                    {count} {t('chat.broadcastMembers') || 'membros'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
+    </View>
+  );
+  const _newListEmptyComponent = (
+    !isLoading ? (
+      <View style={sty.emptyResults}>
+        <IconUsers size={48} color={colors.textTertiary} />
+        <Text style={[sty.emptyTitle, { color: colors.text, marginTop: 16 }]}>
+          {t('chat.noContactsYet')}
+        </Text>
+        <Text style={[sty.emptyText, { color: colors.textTertiary, marginTop: 4 }]}>
+          {t('chat.inviteFriendsHint')}
+        </Text>
+      </View>
+    ) : null
+  );
+
   return (
     <View style={[sty.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {/* [2026-10-07 app-feel-nav] Nativo: header do sistema (título anima com
@@ -2214,6 +2728,25 @@ export default function ChatNewScreen() {
         /* Default view: recents + contacts + invite */
         <View style={{ flex: 1, flexDirection: 'row' }} onLayout={(e) => { const h = Math.round(e.nativeEvent.layout.height); if (h !== alphaViewH) setAlphaViewH(h); }}>
           <View style={{ flex: 1 }}>
+            {_useNativeContacts ? (
+            <NativeContactList
+              rows={_nativeNewList.rows}
+              meta={_nativeNewList.meta}
+              colors={_nativeContactColors}
+              metrics={_nativeContactMetrics}
+              isDark={isDark}
+              indexEnabled={!searchText}
+              indexMin={6}
+              swipeEnabled={false}
+              bottomInset={100}
+              onPress={_onNativeContactPress}
+              onAction={_onNativeContactAction}
+              onFailure={_onNativeContactsFailure}
+              header={_newListHeaderComponent}
+              footer={_newListFooterComponent}
+              empty={_newListEmptyComponent}
+            />
+            ) : (
             <SectionList
               ref={sectionListRef}
               onScroll={_onAlphaScroll}
@@ -2236,393 +2769,16 @@ export default function ChatNewScreen() {
               updateCellsBatchingPeriod={50}
               contentContainerStyle={sty.contactList}
               stickySectionHeadersEnabled
-              ListHeaderComponent={
-                <View onLayout={(e) => { alphaHeaderHRef.current = e.nativeEvent.layout.height; _updateAlphaTop(); }}>
-                  {/* [2026-10-09 find-contacts] WhatsApp-style shortcuts at the
-                      very top: Novo grupo · Novo contato · Escanear QR · Meu QR. */}
-                  {mode === 'direct' && !pickMode && (
-                    <View style={sty.shortcutRow}>
-                      <ShortcutTile label={t('chat.newGroup')} colors={colors} isDark={isDark} onPress={() => { setSelectedMembers([]); setMode('group'); }}>
-                        <IconUsers size={20} color="#fff" />
-                      </ShortcutTile>
-                      {Platform.OS !== 'web' && (
-                        <ShortcutTile label={t('chat.findNewContact')} colors={colors} isDark={isDark} onPress={handleNewContact}>
-                          <IconUserPlus size={20} color="#fff" />
-                        </ShortcutTile>
-                      )}
-                      <ShortcutTile label={t('chat.findScanQr')} colors={colors} isDark={isDark} onPress={handleOpenQrScanner}>
-                        <IconCamera size={20} color="#fff" />
-                      </ShortcutTile>
-                      <ShortcutTile label={t('chat.findMyQr')} colors={colors} isDark={isDark} onPress={handleQrPress}>
-                        <IconQrCode size={20} color="#fff" />
-                      </ShortcutTile>
-                    </View>
-                  )}
-
-                  {/* [2026-10-09 find-contacts] Agenda not connected → explain + one
-                      tap to connect (consent + OS prompt happen on tap, never
-                      silently). Hidden once access is granted. */}
-                  {Platform.OS !== 'web' && !pickMode && contactsAccess === 'denied' && phoneContacts.length === 0 && !syncingContacts && (
-                    <View style={[sty.findCta, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
-                      <Text style={[sty.findCtaTitle, { color: colors.text }]}>{t('chat.findContactsCtaTitle')}</Text>
-                      <Text style={[sty.findCtaDesc, { color: colors.textSecondary }]}>{t('chat.findContactsCtaDesc')}</Text>
-                      <TouchableOpacity
-                        onPress={doContactSync}
-                        style={[sty.findCtaBtn, { backgroundColor: colors.primary }]}
-                        activeOpacity={0.8}
-                        accessibilityRole="button"
-                      >
-                        <Text style={[sty.findCtaBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.findContactsCtaBtn')}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* Contacts-on-Chatyy count chip — sits above "Pessoas que você
-                      pode conhecer" so users immediately see how much of their
-                      phone book overlaps with the network. */}
-                  {phoneContacts.length > 0 && (
-                    <View style={{ alignItems: 'center', paddingVertical: 8 }}>
-                      {/* [2026-10-10] Founder: "se eu clicar nisso deveria aparecer
-                          meus contatos" — o chip agora rola até a seção
-                          "Contatos no Chatyy". */}
-                      <TouchableOpacity
-                        activeOpacity={0.8}
-                        accessibilityRole="button"
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        onPress={() => {
-                          setOnlyChatyy(v => !v);
-                          try { sectionListRef.current?.getScrollResponder?.()?.scrollTo?.({ y: 0, animated: false }); } catch {}
-                        }}
-                        style={{
-                          backgroundColor: colors.primary,
-                          paddingHorizontal: 14,
-                          paddingVertical: 8,
-                          borderRadius: 999,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 6,
-                        }}
-                      >
-                        <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
-                          {(t('chat.contactsOnChatyyCount') ||
-                            `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
-                            .replace('{count}', String(phoneContacts.length))
-                            .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
-                        </Text>
-                        {onlyChatyy
-                          ? <IconX size={14} color={colors.onPrimary || '#fff'} />
-                          : <IconChevronDown size={14} color={colors.onPrimary || '#fff'} />}
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* Recently contacted (horizontal scroll) */}
-                  {!onlyChatyy && recentContacts.length > 0 && (
-                    <View style={sty.recentSection}>
-                      <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
-                        <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
-                          {t('chat.recentContacts')}
-                        </Text>
-                      </View>
-                      <FlatList
-                        horizontal
-                        data={recentContacts.slice(0, 8)}
-                        keyExtractor={(item) => 'recent-' + item.email}
-                        renderItem={renderRecentItem}
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={sty.recentList}
-                      />
-                    </View>
-                  )}
-
-                  {/* Quick actions — [2026-10-14 vis3] só no modo Direto: no Grupo/Canal o usuário está
-                      escolhendo membros e "Mensagens Salvas"/convite tiravam ele do fluxo. */}
-                  {!onlyChatyy && mode === 'direct' && (
-                  <View style={sty.quickActions}>
-                    {/* Saved Messages — chat with self (Telegram-style) */}
-                    <TouchableOpacity
-                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
-                      onPress={async () => {
-                        try {
-                          const r = await api.chatSaved();
-                          if (r?.success && r.data?.id) {
-                            require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: r.data.id, name: t('chat.savedMessages') || 'Saved Messages' } }, { replace: true });
-                          }
-                        } catch {}
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
-                        <IconMessageSquare size={18} color="#fff" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.savedMessages') || 'Mensagens Salvas'}</Text>
-                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.savedMessagesDesc') || 'Notas, links e arquivos que só você vê'}</Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    {/* Invite by email */}
-                    <TouchableOpacity
-                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
-                      onPress={() => setShowInviteInput(!showInviteInput)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
-                        <IconMail size={18} color="#fff" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
-                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
-                      </View>
-                    </TouchableOpacity>
-
-                    {/* Inline invite input */}
-                    {showInviteInput && (
-                      <View style={[sty.inviteInputWrap, { backgroundColor: colors.surface }]}>
-                        <TextInput
-                          style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0' }]}
-                          placeholder={t('chat.emailPlaceholder')}
-                          placeholderTextColor={colors.textTertiary}
-                          value={inviteEmail}
-                          onChangeText={setInviteEmail}
-                          keyboardType="email-address"
-                          autoCapitalize="none"
-                        />
-                        <TouchableOpacity
-                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? colors.primary : colors.border }]}
-                          disabled={!inviteEmail.includes('@') || !!invitingEmail}
-                          onPress={() => {
-                            handleInviteByEmail(inviteEmail.trim());
-                            setInviteEmail('');
-                          }}
-                        >
-                          {invitingEmail ? (
-                            <ActivityIndicator size={14} color={inviteEmail.includes('@') ? (colors.onPrimary || '#fff') : colors.textTertiary} />
-                          ) : (
-                            <Text style={{ color: inviteEmail.includes('@') ? (colors.onPrimary || '#fff') : colors.textTertiary, fontSize: 14, fontWeight: '600' }}>
-                              {t('chat.sendInvite')}
-                            </Text>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {/* Share invite link */}
-                    <TouchableOpacity
-                      style={[sty.quickActionRow, { borderBottomColor: colors.border }]}
-                      onPress={() => handleInviteShare({})}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[sty.quickActionIcon, isDark && sty.iconChipDark]}>
-                        <IconUserPlus size={18} color="#fff" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[sty.quickActionTitle, { color: colors.text }]}>{t('chat.shareLink')}</Text>
-                        <Text style={[sty.quickActionSub, { color: colors.textTertiary }]}>{t('chat.shareLinkDesc')}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                  )}
-
-                  {/* Invite count for non-Chatyy contacts */}
-                  {!onlyChatyy && otherContacts.length > 0 && (
-                    <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)' }]}>
-                      <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                        {t('chat.contactsNotOnChatyy', { count: otherContacts.length })}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              }
-              ListFooterComponent={
-                <View style={{ paddingTop: 12 }}>
-                  {/* Tópicos populares — Telegram-style trending hashtags
-                      from public channels (last 7 days). Renders nothing
-                      when the server returns no tags yet. */}
-                  {mode === 'direct' && !pickMode && renderTrendingTagsBlock()}
-
-                  {/* Comunidades — Telegram-style supergroups (announcement
-                      channel + sub-groups + admin tools). Sits ABOVE
-                      "Descobrir canais" so users discover the bigger feature
-                      first. Hidden in member-pick flows. */}
-                  {mode === 'direct' && !pickMode && (
-                    <TouchableOpacity
-                      onPress={() => router.push('/community/discover')}
-                      activeOpacity={0.7}
-                      style={{
-                        marginHorizontal: Spacing.md,
-                        marginTop: 8,
-                        marginBottom: 4,
-                        padding: 14,
-                        borderRadius: 12,
-                        backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 12,
-                      }}
-                    >
-                      <View style={{
-                        width: 40, height: 40, borderRadius: 20,
-                        backgroundColor: colors.primary,
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <IconUsers size={20} color={colors.onPrimary || '#fff'} />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
-                          {t('chat.communitiesTitle') || 'Comunidades'}
-                        </Text>
-                        <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                          {t('chat.communitiesSubtitle') || 'Grupos grandes com canal de avisos e sub-grupos'}
-                        </Text>
-                      </View>
-                      <IconChevronRight size={18} color={colors.textTertiary} />
-                    </TouchableOpacity>
-                  )}
-
-                  {/* Descobrir canais — Telegram-style public channel feed.
-                      Only on the default "direct" mode (when picking who to
-                      chat with). Hidden in group/channel-create flows where
-                      the user is selecting members. */}
-                  {mode === 'direct' && !pickMode && renderDiscoverBlock(publicChannels)}
-
-                  {/* Listas de transmissão — Telegram parity. Section
-                      shows the user's saved broadcast lists with a
-                      "+ Nova lista" CTA at the top. Tapping a list opens
-                      the contact picker pre-loaded with its members so
-                      the user can edit and resend; tapping the CTA opens
-                      a fresh BroadcastModal. Hidden in pickMode (the
-                      add-member-to-group flow doesn't need this). */}
-                  {!pickMode && mode === 'direct' && (
-                    <View style={{ paddingHorizontal: Spacing.md, marginTop: 6, marginBottom: 4 }}>
-                      <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingHorizontal: 0, paddingBottom: 6 }]}>
-                        <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>
-                          {t('chat.broadcastList') || 'Listas de transmissão'}
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => setShowBroadcastModal(true)}
-                        activeOpacity={0.7}
-                        style={{
-                          flexDirection: 'row', alignItems: 'center',
-                          padding: 12, borderRadius: 12, gap: 12,
-                          backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
-                        }}
-                      >
-                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
-                          <IconBroadcastGlyph size={20} color={colors.onPrimary || '#fff'} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
-                            {t('chat.newBroadcast') || 'Nova lista'}
-                          </Text>
-                          <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                            {t('chat.broadcastListHint') || 'Envie uma mensagem para vários contatos de uma vez'}
-                          </Text>
-                        </View>
-                        <IconPlus size={18} color={colors.textSecondary} />
-                      </TouchableOpacity>
-                      {broadcastLists.length > 0 && broadcastLists.map((bl) => {
-                        const count = (bl.recipients || []).length;
-                        return (
-                          <TouchableOpacity
-                            key={`bl-${bl.id}`}
-                            activeOpacity={0.7}
-                            onPress={() => {
-                              // No dedicated /chat-broadcast-send screen yet; use
-                              // a native prompt as the lightweight composer. The
-                              // backend's chat_broadcast_send fans the text out
-                              // to each recipient's direct thread, which already
-                              // surfaces in the chat list. Cancel = no-op.
-                              const promptTitle = bl.name || (t('chat.broadcastList') || 'Lista de transmissão');
-                              const sendIt = (text) => {
-                                const v = (text || '').trim();
-                                if (!v) return;
-                                api.chatBroadcastSend(bl.id, v).then(r => {
-                                  if (r?.success) {
-                                    safeAlert(
-                                      t('chat.broadcastSent') || 'Enviado',
-                                      `${r.data?.sent ?? count} / ${r.data?.total ?? count}`
-                                    );
-                                  }
-                                }).catch(() => {});
-                              };
-                              if (Platform.OS === 'ios' && Alert.prompt) {
-                                Alert.prompt(promptTitle, t('chat.broadcastSend') || 'Mensagem para a lista', sendIt);
-                              } else if (Platform.OS === 'web') {
-                                const txt = window.prompt(`${promptTitle}\n${t('chat.broadcastSend') || 'Mensagem'}`);
-                                if (txt != null) sendIt(txt);
-                              } else {
-                                // Android: no Alert.prompt — open a real input modal that
-                                // composes the message and sends via chatBroadcastSend.
-                                setBroadcastComposeText('');
-                                setBroadcastComposeList(bl);
-                              }
-                            }}
-                            onLongPress={() => {
-                              // Long-press → quick delete (Telegram parity).
-                              if (!api.chatBroadcastDelete) return;
-                              const confirmDelete = () => {
-                                api.chatBroadcastDelete(bl.id).then(() => loadBroadcastLists()).catch(() => {});
-                              };
-                              if (Platform.OS === 'web') {
-                                if (window.confirm(`${t('common.delete') || 'Excluir'}?`)) confirmDelete();
-                              } else {
-                                Alert.alert(
-                                  bl.name || (t('chat.broadcastList') || 'Lista de transmissão'),
-                                  t('chat.deleteBroadcastConfirm') || 'Excluir esta lista?',
-                                  [
-                                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                                    { text: t('common.delete') || 'Excluir', style: 'destructive', onPress: confirmDelete },
-                                  ],
-                                );
-                              }
-                            }}
-                            delayLongPress={400}
-                            style={{
-                              flexDirection: 'row', alignItems: 'center',
-                              paddingVertical: 10, gap: 12,
-                            }}
-                          >
-                            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}>
-                              <IconBroadcastGlyph size={18} color={colors.primary} />
-                            </View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>
-                                {bl.name || (t('chat.broadcastList') || 'Lista de transmissão')}
-                              </Text>
-                              <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
-                                {count} {t('chat.broadcastMembers') || 'membros'}
-                              </Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  )}
-
-                </View>
-              }
-              ListEmptyComponent={
-                !isLoading ? (
-                  <View style={sty.emptyResults}>
-                    <IconUsers size={48} color={colors.textTertiary} />
-                    <Text style={[sty.emptyTitle, { color: colors.text, marginTop: 16 }]}>
-                      {t('chat.noContactsYet')}
-                    </Text>
-                    <Text style={[sty.emptyText, { color: colors.textTertiary, marginTop: 4 }]}>
-                      {t('chat.inviteFriendsHint')}
-                    </Text>
-                  </View>
-                ) : null
-              }
+              ListHeaderComponent={_newListHeaderComponent}
+              ListFooterComponent={_newListFooterComponent}
+              ListEmptyComponent={_newListEmptyComponent}
             />
+            )}
           </View>
 
-          {/* Alphabet sidebar (only for contact list, not search) */}
-          {alphabetLetters.length > 5 && !searchText && (
+          {/* Alphabet sidebar (only for contact list, not search) — a lista
+              nativa desenha o próprio índice A–Z. */}
+          {!_useNativeContacts && alphabetLetters.length > 5 && !searchText && (
             <AlphabetSidebar
               letters={alphabetLetters}
               onPress={handleAlphabetPress}

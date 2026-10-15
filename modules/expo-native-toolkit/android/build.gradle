@@ -62,6 +62,10 @@ dependencies {
   // expo-chat-backup / firebase auth); declared explicitly so this module
   // compiles on its own. Pinned to the version already in the graph (no bump).
   implementation 'com.google.android.gms:play-services-auth-api-phone:18.0.2'
+  // [2026-10-15 phone-hint] Phone Number Hint API (Identity.getSignInClient) p/ o
+  // seletor nativo de numero no cadastro. MESMA versao que expo-chat-backup ja traz
+  // (play-services-auth 21.2.0) -> nenhuma dependencia nova no grafo.
+  implementation 'com.google.android.gms:play-services-auth:21.2.0'
 
   // [2026-10-08 sticker-maker] ExpoStickerCutoutModule — recorte do objeto
   // (subject segmentation) p/ o criador de figurinhas. Modelo NÃO vai no APK:

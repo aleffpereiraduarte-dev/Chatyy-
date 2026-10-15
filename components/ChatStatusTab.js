@@ -49,6 +49,10 @@ import { registerTextStatusOpener } from './status/statusRingStore';
 import { formatTime, formatDateTime } from '../utils/dateFormat'; // [2026-10-13 status-viewers]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 import { tryOpenNativeStories } from './status/nativeStories'; // [2026-10-15 native-story]
+// [2026-10-15 native-lists] Lista de atualizações NATIVA (ChatyyStatusList).
+// Binário sem a view / web → isStatusListAvailable() false → ScrollView JS idêntico.
+import NativeStatusList from './status/NativeStatusList';
+import { isStatusListAvailable as _nativeStatusAvailable } from '../modules/expo-chat-conversation-list';
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
@@ -1063,6 +1067,25 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // Muted section expand toggle (Instagram-style: muted users collapsed
   // until tapped). Starts collapsed so the recent/viewed dominate.
   const [showMuted, setShowMuted] = useState(false);
+
+  // [2026-10-15 native-lists] Lista nativa (iOS UICollectionView / Android
+  // RecyclerView). Desligar por OTA: globalThis.__chatyy_native_status_list = false.
+  // Erro nativo/render → volta ao ScrollView JS (e fica assim na sessão).
+  const [_nativeStatusFailed, _setNativeStatusFailed] = useState(() => !!globalThis.__chatyy_native_status_list_failed);
+  const _useNativeStatus = Platform.OS !== 'web' && !_nativeStatusFailed
+    && globalThis.__chatyy_native_status_list !== false && _nativeStatusAvailable();
+  const _onNativeStatusFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_status_list_failed = true; console.warn('[native-status] fallback JS:', msg); } catch {}
+    _setNativeStatusFailed(true);
+  }, []);
+  const _nsTimeAgo = useCallback((ts) => timeAgo(ts, t), [t]);
+  const _nsPalette = useMemo(() => ({
+    bg: isDark ? (colors?.background || '#000000') : '#f2f2f7',
+    card: isDark ? (colors?.card || '#1c1c1e') : '#ffffff',
+    text: colors?.text || (isDark ? '#F5F5F7' : '#111111'),
+    sub: colors?.textSecondary || (isDark ? '#8E8E93' : '#737373'),
+    pill: isDark ? '#2c2c2e' : '#f0f0f0',
+  }), [isDark, colors?.background, colors?.card, colors?.text, colors?.textSecondary]);
 
   // Heart-pulse Animated.Value driven by WS incoming-status events. When
   // a contact publishes while the home feed is open, we trigger a brief
@@ -3551,50 +3574,98 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     </>
   );
 
-  return (
-    <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
-      {/* Search */}
-      {showSearch && (
-        <View style={[styles.searchBar, {
-          backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
-        }]}>
-          <IconSearch size={18} color={colors.textSecondary} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder={t?.('status.searchPlaceholder') /* [2026-10-10 qa-sweep] search.placeholder duplicada no i18n */}
-            placeholderTextColor={colors.textSecondary}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoFocus
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <IconX size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={() => { setShowSearch(false); setSearchQuery(''); }} style={{ marginLeft: 8 }}>
-            <IconX size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      )}
+  // [2026-10-15 native-lists] Ações da lista nativa — mesmos efeitos da linha
+  // JS (toque → viewer, toque longo → prévia) e das pílulas da prévia
+  // (silenciar / notificar / compartilhar / reportar). "Reativar" é novo:
+  // tira o contato de "Silenciados" (status_unmute + refetch).
+  const _nsPrewarm = (statusGroup) => {
+    if (Platform.OS === 'web') return;
+    try {
+      const first = (statusGroup?.items || [])[0];
+      if (!first || first.type !== 'video') return;
+      const raw = (first.media_url || first.content || '').split('\n')[0];
+      const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
+      if (fullUrl) cacheMedia(fullUrl, { force: true }).catch(() => {});
+      const th = first.thumbnail_url;
+      if (th) {
+        const posterUrl = th.startsWith('/') ? api.getMediaUrl(th) : th;
+        try {
+          const { Image: ExpoImg } = require('expo-image');
+          ExpoImg?.prefetch?.([posterUrl]).catch(() => {});
+        } catch {}
+      }
+    } catch {}
+  };
+  const _nsRowAction = async (action, group) => {
+    if (!group) return;
+    const targetEmail = group.ownerEmail || group.email || '';
+    const targetName = group.ownerName || group.name || '';
+    const em = String(targetEmail).toLowerCase();
+    if (action === 'open') { openViewer(group); return; }
+    if (action === 'preview') {
+      try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+      setPreviewGroup(group);
+      return;
+    }
+    if (!em || em === String(currentEmail || '').toLowerCase()) return;
+    if (action === 'mute') {
+      try { await api.statusMute(targetEmail); } catch {}
+      try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
+      try { hookMuteGroup?.(targetEmail); } catch {}
+      return;
+    }
+    if (action === 'unmute') {
+      setContactStatuses(prev => (prev || []).map(g => (
+        String(g?.ownerEmail || g?.email || '').toLowerCase() === em ? { ...g, muted: false, is_muted: false } : g
+      )));
+      try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
+      try { await api.statusUnmute?.(targetEmail); } catch {}
+      try { await loadStatuses?.(); } catch {}
+      return;
+    }
+    if (action === 'report') {
+      try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Warning); } catch {}
+      try {
+        if (typeof api.statusReport === 'function') await api.statusReport(targetEmail);
+        else await api.apiCall?.('status_report', { email: targetEmail }, 'POST');
+      } catch {}
+      try { Alert.alert?.(t?.('status.reportSent') || 'Denúncia enviada', t?.('status.reportBody') || 'Obrigado. Vamos revisar este conteúdo.'); } catch {}
+      return;
+    }
+    if (action === 'share') {
+      try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
+      try {
+        const Share = require('react-native').Share;
+        await Share?.share?.({ message: `${t?.('status.shareMsg') || 'Olha o status de'} ${targetName} no Chatyy!` });
+      } catch {}
+      return;
+    }
+    if (action === 'notify') {
+      const next = !notifySubs.has(em);
+      setNotifySubs(prev => { const s2 = new Set(prev); if (next) s2.add(em); else s2.delete(em); return s2; });
+      try {
+        const r = await api.statusNotifyToggle?.(em, next);
+        if (r && r.success === false) throw new Error(r?.message || 'toggle failed');
+        try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
+        try {
+          Alert.alert?.(
+            next ? (t?.('status.notifyOn') || 'Notificar sobre stories de') + ' ' + targetName
+                 : (t?.('status.notifyOff') || 'Não notificar sobre stories de') + ' ' + targetName,
+            next ? (t?.('status.notifyEnabled') || 'Você será avisado quando postar novos stories.')
+                 : (t?.('status.notifyDisabled') || 'Notificações desativadas.'),
+          );
+        } catch {}
+      } catch (e) {
+        setNotifySubs(prev => { const s2 = new Set(prev); if (next) s2.delete(em); else s2.add(em); return s2; });
+        try { Alert.alert?.(t?.('common.error') || 'Erro', e?.message || ''); } catch {}
+      }
+    }
+  };
 
-      {!largeTitle && _searchToggleRow}
-
-      <ScrollView
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        onScroll={_lt.onScroll}
-        scrollEventThrottle={_lt.scrollEventThrottle}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onPullRefresh}
-            tintColor={isDark ? '#F5F5F7' : ACCENT}
-            colors={[ACCENT, '#111111']}
-            progressBackgroundColor={isDark ? '#1a1a1a' : '#fff'}
-          />
-        }
-      >
+  // [2026-10-15 native-lists] Topo da aba e estado vazio viram constantes para
+  // servir aos DOIS caminhos (ScrollView JS e lista nativa ChatyyStatusList).
+  const _statusTop = (
+    <>
         {!!largeTitle && <LargeTitle title={largeTitle} color={colors.text} />}
         {!!largeTitle && _searchToggleRow}
         {/* Horizontal story scroller */}
@@ -3789,6 +3860,103 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             </View>
           </View>
         </View>
+    </>
+  );
+
+  const _statusEmpty = (
+    <>
+        {/* Empty state */}
+        {recentStatuses.length === 0 && viewedStatuses.length === 0 && mutedStatuses.length === 0 && !hasMyStatus && (
+          <View style={styles.emptyContainer}>
+            <EmptyStatusIllustration isDark={isDark} />
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              {t?.('status.firstTitle') || 'Adicione seu primeiro status'}
+            </Text>
+            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>{disappearsLabel}</Text>
+            <TouchableOpacity
+              style={[styles.emptyButton, isDark && { backgroundColor: '#F5F5F7', shadowOpacity: 0 }]}
+              onPress={() => openCreator()}
+              activeOpacity={0.85}
+            >
+              <IconPlus size={18} color={isDark ? '#000' : '#fff'} />
+              <Text style={[styles.emptyButtonText, isDark && { color: '#000' }]}>{t?.('status.addStatus') || 'Adicionar status'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+    </>
+  );
+
+  return (
+    <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
+      {/* Search */}
+      {showSearch && (
+        <View style={[styles.searchBar, {
+          backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
+        }]}>
+          <IconSearch size={18} color={colors.textSecondary} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder={t?.('status.searchPlaceholder') /* [2026-10-10 qa-sweep] search.placeholder duplicada no i18n */}
+            placeholderTextColor={colors.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <IconX size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => { setShowSearch(false); setSearchQuery(''); }} style={{ marginLeft: 8 }}>
+            <IconX size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {!largeTitle && _searchToggleRow}
+
+      {_useNativeStatus ? (
+        <NativeStatusList
+          myGroup={myStatusGroup}
+          recent={recentStatuses}
+          viewed={viewedStatuses}
+          muted={mutedStatuses}
+          showMuted={showMuted}
+          isDark={isDark}
+          t={t}
+          timeAgo={_nsTimeAgo}
+          notifySubs={notifySubs}
+          palette={_nsPalette}
+          refreshing={refreshing}
+          bottomInset={120}
+          header={_statusTop}
+          footer={_statusEmpty}
+          onOpen={openViewer}
+          onPressIn={_nsPrewarm}
+          onPreview={(g) => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {} setPreviewGroup(g); }}
+          onAction={_nsRowAction}
+          onToggleMuted={() => setShowMuted(v => !v)}
+          onRefresh={onPullRefresh}
+          onCollapsedChange={(c) => { try { _lt.onScroll?.({ nativeEvent: { contentOffset: { y: c ? 9999 : 0 } } }); } catch {} }}
+          onFailure={_onNativeStatusFailure}
+        />
+      ) : (
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        onScroll={_lt.onScroll}
+        scrollEventThrottle={_lt.scrollEventThrottle}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onPullRefresh}
+            tintColor={isDark ? '#F5F5F7' : ACCENT}
+            colors={[ACCENT, '#111111']}
+            progressBackgroundColor={isDark ? '#1a1a1a' : '#fff'}
+          />
+        }
+      >
+        {_statusTop}
 
         {/* "Meus" — surfaces the user's own status as a row only when they
             have one. Sits between the hero tile and the Recentes section,
@@ -3857,27 +4025,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           </View>
         )}
 
-        {/* Empty state */}
-        {recentStatuses.length === 0 && viewedStatuses.length === 0 && mutedStatuses.length === 0 && !hasMyStatus && (
-          <View style={styles.emptyContainer}>
-            <EmptyStatusIllustration isDark={isDark} />
-            <Text style={[styles.emptyText, { color: colors.text }]}>
-              {t?.('status.firstTitle') || 'Adicione seu primeiro status'}
-            </Text>
-            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>{disappearsLabel}</Text>
-            <TouchableOpacity
-              style={[styles.emptyButton, isDark && { backgroundColor: '#F5F5F7', shadowOpacity: 0 }]}
-              onPress={() => openCreator()}
-              activeOpacity={0.85}
-            >
-              <IconPlus size={18} color={isDark ? '#000' : '#fff'} />
-              <Text style={[styles.emptyButtonText, isDark && { color: '#000' }]}>{t?.('status.addStatus') || 'Adicionar status'}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {_statusEmpty}
 
         <View style={{ height: 120 }} />
       </ScrollView>
+      )}
 
       {/* FABs — Telegram-grade glass orbs */}
       <BrandFab

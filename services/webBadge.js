@@ -50,7 +50,11 @@ function _apply() {
 }
 
 export function setChatUnread(n) {
+  const prev = _chat;
   _chat = Math.max(0, Number(n) || 0);
+  // [2026-10-15 unread-instant] Leitura (número caiu) aplica NA HORA; o throttle
+  // de 500 ms fica só para subidas em rajada.
+  if (_chat < prev && Platform.OS === 'web') { if (_applyTimer) { clearTimeout(_applyTimer); _applyTimer = null; } _apply(); return; }
   _scheduleApply();
 }
 

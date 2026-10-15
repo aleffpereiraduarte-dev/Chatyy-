@@ -181,7 +181,13 @@ export function revalidate(section, { force = false, ttl = DEFAULT_TTL_MS } = {}
     try {
       // Fila offline primeiro: não sobrescrever uma alteração local ainda não enviada.
       await flushQueue().catch(() => {});
-      try { if (def.action) api.swrInvalidate?.(def.action); } catch {}
+      // [2026-10-15 boot-dedupe] force → sempre fresco; senão reaproveita cópia SWR de ≤15 s.
+      try {
+        if (def.action) {
+          if (!force && api.swrInvalidateIfOlder) api.swrInvalidateIfOlder(def.action, 15000);
+          else api.swrInvalidate?.(def.action);
+        }
+      } catch {}
       const g0 = _gen.get(k) || 0;
       const v = await def.fetch();
       if (v === undefined) return peek(section);

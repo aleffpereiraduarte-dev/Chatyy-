@@ -6,13 +6,23 @@
   "apple": {
     "modules": [
       "ChatyyConversationListModule",
-      "ChatyyPinnedStripModule"
+      "ChatyyPinnedStripModule",
+      "ChatyyEmailListModule",
+      "ChatyyCallListModule",
+      "ChatyyStatusListModule",
+      "ChatyyContactListModule",
+      "ChatyySettingsListModule"
     ]
   },
   "android": {
     "modules": [
       "expo.modules.chatyyconversationlist.ChatyyConversationListModule",
-      "expo.modules.chatyyconversationlist.ChatyyPinnedStripModule"
+      "expo.modules.chatyyconversationlist.ChatyyPinnedStripModule",
+      "expo.modules.chatyyconversationlist.ChatyyEmailListModule",
+      "expo.modules.chatyyconversationlist.ChatyyCallListModule",
+      "expo.modules.chatyyconversationlist.ChatyyStatusListModule",
+      "expo.modules.chatyyconversationlist.ChatyyContactListModule",
+      "expo.modules.chatyyconversationlist.ChatyySettingsListModule"
     ]
   }
 }

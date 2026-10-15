@@ -1,0 +1,8 @@
+{
+  "name": "expo-photos-backup",
+  "version": "1.0.0",
+  "description": "Chatyy native photo/video backup: iOS PhotoKit + background URLSession + BGProcessingTask; Android WorkManager + MediaStore.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

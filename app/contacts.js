@@ -38,6 +38,10 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 import InviteContactSheet from '../components/InviteContactSheet'; // [2026-10-13 contacts-invite]
 import { shareInvite as shareInviteLink, prefetchInviteRef } from '../services/inviteContact';
+// [2026-10-15 native-contacts] "Meus contatos" em NATIVO (seções fixas + índice
+// A–Z com haptic). Binário sem a view / web / kill switch → SectionList abaixo.
+import NativeContactList, { nativeContactsEnabled } from '../components/contacts/NativeContactList';
+import { buildFlatRows, contactTile } from '../components/contacts/contactListAdapter';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -1455,6 +1459,75 @@ function ContactsScreenInner() {
   // the section index so each rendered row is unique.
   const myKeyExtractor = useCallback((item, index) => `${item.id || item.email || ''}-${index}`, []);
 
+  // [2026-10-15 native-contacts] Lista nativa de "Meus contatos". Desligar:
+  // globalThis.__chatyy_native_contacts = false. Erro → volta à SectionList.
+  const [_nativeContactsFailed, _setNativeContactsFailed] = useState(() => !!globalThis.__chatyy_native_contacts_failed);
+  const _useNativeContacts = Platform.OS !== 'web' && !_nativeContactsFailed && nativeContactsEnabled();
+  const _onNativeContactsFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_contacts_failed = true; console.warn('[native-contacts] fallback SectionList:', msg); } catch {}
+    _setNativeContactsFailed(true);
+  }, []);
+  const _nativeMyList = useMemo(() => {
+    if (!_useNativeContacts || activeTab !== 'my') return { rows: [], meta: new Map() };
+    const delLabel = t('common.delete');
+    const inviteLabel = t('chat.invite') || 'Convidar';
+    return buildFlatRows(
+      alphabeticalSections,
+      (sec) => ({
+        t: String(sec.title || ''),
+        bar: true, up: true, fs: 13, fw: 600, ls: 0.3,
+        pt: 12, pb: 8, ph: Spacing.lg,
+        ix: /^[A-Z#]$/.test(String(sec.title || '')) && !sec.key ? String(sec.title) : '',
+      }),
+      (c) => {
+        const email = String(c.email || '').toLowerCase();
+        const notOn = myChatyyOf(c).state === 'no';
+        return {
+          key: c.id || email,
+          row: {
+            t: c.name || email,
+            tw: 600,
+            sb: email,
+            s2: c.phone ? String(c.phone) : '',
+            s2t: 2,
+            ch: c.group ? String(c.group) : '',
+            me: c.last_contacted ? String(c._lastContactedFormatted || '') : '',
+            tiles: contactTile(c.email, c.name || c.email),
+            av: 40,
+            pl: notOn ? inviteLabel : '',
+            st: c.favorite ? 2 : 1,
+            tr: true,
+            sw: delLabel,
+            lp: true,
+            a11y: [c.name || email, email].filter(Boolean).join(', '),
+          },
+        };
+      },
+    );
+  }, [_useNativeContacts, activeTab, alphabeticalSections, myChatyyOf, t]);
+  const _nativeContactColors = useMemo(() => ({
+    dark: !!isDark,
+    bg: colors.background, text: colors.text, sub: colors.textSecondary, faint: colors.textTertiary,
+    hair: colors.borderLight, primary: colors.primary, onPrimary: colors.onPrimary,
+    warning: colors.warning, error: colors.error,
+    press: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.045)',
+    chipBg: colors.primaryLight, chipText: colors.primary,
+    border: colors.border, indexText: colors.primary,
+  }), [colors, isDark]);
+  const _nativeContactMetrics = useMemo(() => ({
+    padH: Spacing.lg, padV: Spacing.md, gap: Spacing.md, minH: 64,
+    nameSize: FontSize.lg, subSize: FontSize.sm, sub2Size: FontSize.xs, metaSize: 10,
+  }), []);
+  const _onNativeContactAction = useCallback((action, c) => {
+    if (action === 'star') toggleFavorite(c);
+    else if (action === 'delete') handleDelete(c.email);
+    else if (action === 'pill' || action === 'pillLong') openMyInvite(c);
+  }, [toggleFavorite, handleDelete, openMyInvite]);
+  const _onNativeContactsRefresh = async () => {
+    setPtrRefreshing(true);
+    try { await loadContacts(); } finally { setPtrRefreshing(false); }
+  };
+
   const isLoading = (activeTab === 'my' && loading) ||
     (activeTab === 'device' && loadingDevice) ||
     (activeTab === 'family' && loadingFamily);
@@ -1744,6 +1817,46 @@ function ContactsScreenInner() {
         </View>
       ) : isLoading && contacts.length === 0 && deviceContacts.length === 0 && familyUsers.length === 0 ? (
         <ListSkeleton count={8} />
+      ) : activeTab === 'my' && _useNativeContacts ? (
+        <NativeContactList
+          rows={_nativeMyList.rows}
+          meta={_nativeMyList.meta}
+          colors={_nativeContactColors}
+          metrics={_nativeContactMetrics}
+          isDark={isDark}
+          indexEnabled={!debouncedSearch}
+          refreshEnabled
+          refreshing={ptrRefreshing}
+          onRefresh={_onNativeContactsRefresh}
+          bottomInset={40 + insets.bottom}
+          onPress={handleMyContactPress}
+          onLongPress={handleMyContactLongPress}
+          onAction={_onNativeContactAction}
+          onFailure={_onNativeContactsFailure}
+          header={favoriteContacts.length > 0 ? (
+            <View style={[s.favoritesSection, { borderBottomColor: colors.borderLight }]}>
+              <Text style={[s.favoritesSectionTitle, { color: colors.text }]}>
+                <IconStar size={14} color={colors.warning} /> {t('contacts.favorites')}
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.favoritesScroll}>
+                {favoriteContacts.map((c, i) => renderFavoriteContact(c, i))}
+              </ScrollView>
+            </View>
+          ) : null}
+          empty={
+            <ContactsEmptyState
+              colors={colors}
+              isDark={isDark}
+              t={t}
+              searching={!!debouncedSearch}
+              onAdd={_openAddContact}
+              onClearSearch={() => setSearch('')}
+              onSync={() => setActiveTab('device')}
+              onDiscover={handleDiscover}
+              onFindFriends={() => setActiveTab('family')}
+            />
+          }
+        />
       ) : activeTab === 'my' ? (
         <SectionList
           keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"

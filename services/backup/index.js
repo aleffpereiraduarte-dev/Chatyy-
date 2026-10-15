@@ -74,6 +74,11 @@ export async function initBackup() {
  */
 export async function runBackupNow(opts = {}) {
   if (Platform.OS === 'web') return WEB_RESULT;
+  // [2026-10-15 photos-native] motor nativo é o dono → só pede uma rodada já.
+  try {
+    const pbn = require('../photosBackupNative');
+    if (pbn.nativeBackupOwns()) { await pbn.configureNative(); await pbn.runNowNative(); return { uploaded: 0, failed: 0, skipped: 0, native: true }; }
+  } catch {}
 
   if (!_initDone) await initBackup();
 
@@ -124,7 +129,10 @@ export async function getBackupSettings() {
  * Update backup settings (partial merge).
  */
 export async function setBackupSettings(patch) {
-  return saveSettings(patch);
+  const merged = await saveSettings(patch);
+  // [2026-10-15 photos-native] reflete Wi-Fi/carregando/qualidade/vídeos no motor nativo
+  try { const pbn = require('../photosBackupNative'); if (pbn.nativeBackupOwns()) pbn.configureNative().catch(() => {}); } catch {}
+  return merged;
 }
 
 /**

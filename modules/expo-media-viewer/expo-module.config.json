@@ -6,13 +6,15 @@
   "apple": {
     "modules": [
       "ChatyyMediaViewerModule",
-      "ChatyyStoryViewerModule"
+      "ChatyyStoryViewerModule",
+      "ChatyyPhotosGridModule"
     ]
   },
   "android": {
     "modules": [
       "expo.modules.chatyymediaviewer.ChatyyMediaViewerModule",
-      "expo.modules.chatyymediaviewer.ChatyyStoryViewerModule"
+      "expo.modules.chatyymediaviewer.ChatyyStoryViewerModule",
+      "expo.modules.chatyymediaviewer.ChatyyPhotosGridModule"
     ]
   }
 }

@@ -1,5 +1,6 @@
 import UIKit
 import AVFoundation
+import Photos
 
 // [2026-10-14 native-viewer] Página do viewer: foto (UIScrollView com zoom
 // 1…4 + UIImageView centralizada) ou vídeo (pôster + AVPlayerLayer).
@@ -48,6 +49,9 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
 
   private(set) var item: MVItem?
   private var token = 0
+  // [2026-10-15 photos-native] vídeo da galeria (ph://) resolvido via PhotoKit
+  private var phItem: AVPlayerItem?
+  private var phResolving = false
   private var hasFull = false
   private var imageNatural: CGSize = .zero
   private var lastZoomBounds: CGSize = .zero
@@ -202,6 +206,8 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
   override func prepareForReuse() {
     super.prepareForReuse()
     token += 1
+    phItem = nil
+    phResolving = false
     teardownPlayer()
     isActive = false
     zoomView.setZoomScale(1, animated: false)
@@ -216,6 +222,8 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
 
   func configure(_ item: MVItem) {
     token += 1
+    phItem = nil
+    phResolving = false
     let t = token
     teardownPlayer()
     self.item = item
@@ -427,9 +435,38 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
   private func startPlayer() {
     guard let item = item, item.isVideo else { return }
     if player == nil {
-      let url = MVItem.existingFileURL(item.localUri) ?? MVItem.existingFileURL(item.uri) ?? MVItem.remoteURL(item.uri)
-      guard let u = url else { showError(); return }
-      let p = AVPlayer(url: u)
+      // ph://<localIdentifier> (grade de Fotos): AVPlayerItem pelo PhotoKit (iCloud ok)
+      if phItem == nil && item.uri.hasPrefix("ph://") && MVItem.existingFileURL(item.localUri) == nil {
+        if phResolving { return }
+        phResolving = true
+        let t0 = token
+        spinner.startAnimating()
+        let localId = String(item.uri.dropFirst(5))
+        let opts = PHVideoRequestOptions()
+        opts.isNetworkAccessAllowed = true
+        opts.deliveryMode = .automatic
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localId], options: nil).firstObject else {
+          phResolving = false; showError(); return
+        }
+        PHImageManager.default().requestPlayerItem(forVideo: asset, options: opts) { [weak self] pi, _ in
+          DispatchQueue.main.async {
+            guard let self = self, self.token == t0 else { return }
+            self.phResolving = false
+            guard let pi = pi else { self.showError(); return }
+            self.phItem = pi
+            if self.isActive { self.startPlayer() }
+          }
+        }
+        return
+      }
+      let p: AVPlayer
+      if let pi = phItem {
+        p = AVPlayer(playerItem: pi)
+      } else {
+        let url = MVItem.existingFileURL(item.localUri) ?? MVItem.existingFileURL(item.uri) ?? MVItem.remoteURL(item.uri)
+        guard let u = url else { showError(); return }
+        p = AVPlayer(url: u)
+      }
       p.actionAtItemEnd = .pause
       playerView.playerLayer.player = p
       let t = token
@@ -507,6 +544,7 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
     endObs = nil
     playerView.playerLayer.player = nil
     player = nil
+    phItem = nil // AVPlayerItem não pode ir p/ outro AVPlayer
     ended = false
     if had { onPlayerChanged?(nil) }
   }

@@ -6,6 +6,7 @@ import {
 import { useRouter, useLocalSearchParams, Redirect } from 'expo-router';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED, PSTN_ENABLED } from '../constants/featureFlags';
+import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -51,7 +52,12 @@ function OneAIShowcase({ colors, isDark, t }) {
   const slideAnim = useRef(new Animated.Value(0)).current;
   const glowAnim = useRef(new Animated.Value(0.4)).current;
 
+  // [2026-10-15 web-idle] Web: brilho e troca de frase em CSS — o Animated.loop
+  // no RN-web commitava o React a 60 fps com a tela parada.
+  const webGlow = cssLoop({ '0%': { opacity: 0.4 }, '100%': { opacity: 1 } }, { duration: 2000, direction: 'alternate' });
+  const webFlipIn = cssLoop({ '0%': { opacity: 0, transform: [{ translateY: 24 }] }, '100%': { opacity: 1, transform: [{ translateY: 0 }] } }, { duration: 350, iterations: 1, easing: 'ease-out', fill: 'both' });
   useEffect(() => {
+    if (IS_WEB) return undefined;
     // Pulsing glow effect
     const loop = Animated.loop(
       Animated.sequence([
@@ -65,6 +71,10 @@ function OneAIShowcase({ colors, isDark, t }) {
 
   useEffect(() => {
     if (showAll) return;
+    if (IS_WEB) {
+      const iv = setInterval(() => setCurrentIndex(prev => (prev + 1) % ONE_AI_ACTIONS.length), 2200);
+      return () => clearInterval(iv);
+    }
     const interval = setInterval(() => {
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.out(Easing.ease), useNativeDriver: true }),
@@ -105,16 +115,16 @@ function OneAIShowcase({ colors, isDark, t }) {
         alignItems: 'center',
       }}>
         {/* Glow circle behind icon */}
-        <Animated.View style={{
+        <Animated.View style={[{
           width: 56, height: 56, borderRadius: 28,
           backgroundColor: 'rgba(17, 17, 17, 0.25)',
           alignItems: 'center', justifyContent: 'center',
           marginBottom: 14,
-          opacity: glowAnim,
+          opacity: IS_WEB ? 0.7 : glowAnim,
           ...(Platform.OS === 'web' ? {
             boxShadow: '0 0 30px rgba(17, 17, 17, 0.5), 0 0 60px rgba(99, 102, 241, 0.3)',
           } : {}),
-        }}>
+        }, webGlow]}>
           <View style={{
             width: 56, height: 56, borderRadius: 28,
             backgroundColor: 'rgba(17, 17, 17, 0.3)',
@@ -142,13 +152,17 @@ function OneAIShowcase({ colors, isDark, t }) {
         {/* Flipping text */}
         {!showAll && (
           <View style={{ alignItems: 'center' }}>
-            <Animated.View style={{
+            <Animated.View key={IS_WEB ? currentIndex : undefined} style={[IS_WEB ? {
+              marginTop: 14,
+              minHeight: 34,
+              justifyContent: 'center',
+            } : {
               marginTop: 14,
               opacity: fadeAnim,
               transform: [{ translateY: slideAnim }],
               minHeight: 34,
               justifyContent: 'center',
-            }}>
+            }, webFlipIn]}>
               <Text style={{
                 color: '#fff',
                 fontSize: 20,
@@ -162,17 +176,17 @@ function OneAIShowcase({ colors, isDark, t }) {
               </Text>
             </Animated.View>
             {/* Animated gradient line indicator */}
-            <Animated.View style={{
+            <Animated.View style={[{
               marginTop: 10,
               width: 48,
               height: 3,
               borderRadius: 1.5,
-              opacity: glowAnim,
+              opacity: IS_WEB ? 0.7 : glowAnim,
               backgroundColor: '#111111',
               ...(Platform.OS === 'web' ? {
                 backgroundImage: 'linear-gradient(90deg, #111111, #F1F3F5, #111111)',
               } : {}),
-            }} />
+            }, webGlow]} />
           </View>
         )}
 

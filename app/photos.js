@@ -48,6 +48,14 @@ try { photoBackup = require('../services/photoBackup'); } catch {}
 let autoBackupMod = null;
 try { autoBackupMod = require('../services/autoBackup'); } catch {}
 
+// [2026-10-15 photos-native] Grade de Fotos NATIVA (UICollectionView / RecyclerView)
+// + backup NATIVO (modules/expo-photos-backup). Kill switches OTA:
+// globalThis.__chatyy_native_photos / __chatyy_native_backup = false → fluxo antigo.
+import NativePhotosGrid, { isNativePhotosGridAvailable } from '../components/photos/nativePhotosGrid';
+import NativeBackupBanner from '../components/photos/NativeBackupBanner';
+let photosBackupNative = null;
+try { photosBackupNative = require('../services/photosBackupNative'); } catch {}
+
 // Gesture handlers for pinch-zoom + horizontal swipe in the viewer.
 // Safe-required so the screen still renders if the library is missing.
 let PinchGestureHandler = null;
@@ -405,6 +413,26 @@ function PhotosScreenInner() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const isDesktop = width >= 768;
+  // [2026-10-15 photos-native]
+  const nativeGridRef = useRef(null);
+  const [nativeGridFailed, setNativeGridFailed] = useState(false);
+  const useNativeGrid = Platform.OS !== 'web' && !nativeGridFailed && isNativePhotosGridAvailable();
+  const nativeBackupOwns = !!(photosBackupNative && photosBackupNative.nativeBackupOwns());
+  // textos das notificações do motor nativo no idioma do usuário (o motor guarda p/ o BG)
+  useEffect(() => {
+    if (!nativeBackupOwns || !photosBackupNative) return;
+    const _l = (k, fb) => { try { const v = t(k); return v && v !== k ? v : fb; } catch { return fb; } };
+    photosBackupNative.configureNative({ labels: {
+      channel: _l('photosNative.notifChannel', 'Backup de fotos'),
+      progressTitle: _l('photosNative.notifProgressTitle', 'Salvando fotos'),
+      progressBody: _l('photosNative.notifProgressBody', '{done} de {total}'),
+      doneTitle: _l('photosNative.notifDoneTitle', 'Backup de fotos'),
+      doneBody: _l('photosNative.notifDoneBody', '{n} itens salvos'),
+      waitingWifi: _l('photosNative.waitingWifi', 'Aguardando Wi-Fi'),
+      waitingCharger: _l('photosNative.waitingCharger', 'Aguardando carregador'),
+      pause: _l('photosNative.pause', 'Pausar'),
+    } }).catch(() => {});
+  }, [nativeBackupOwns, language]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // State
   const [activeTab, setActiveTab] = useState('photos');
@@ -657,7 +685,7 @@ function PhotosScreenInner() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   }, []);
 
   // ============================================================
@@ -877,7 +905,8 @@ function PhotosScreenInner() {
         setDevicePhotos(photos);
 
         // Generate 200x200 JPEG thumbnails in background (progressive update)
-        generateBatch(photos, (done, total) => {
+        // [2026-10-15 photos-native] grade nativa gera as próprias miniaturas (PhotoKit/MediaStore)
+        if (!isNativePhotosGridAvailable()) generateBatch(photos, (done, total) => {
           // Progress callback — not used for intermediate updates since
           // generateBatch returns all results at the end
         }).then(thumbs => {
@@ -927,7 +956,7 @@ function PhotosScreenInner() {
         deviceHasMoreRef.current = page.hasNextPage;
 
         // Generate thumbnails in background for newly loaded photos
-        generateBatch(newPhotos).then(thumbs => {
+        if (!isNativePhotosGridAvailable()) generateBatch(newPhotos).then(thumbs => {
           setDevicePhotos(prev => prev.map(p => {
             const thumb = thumbs.get(p.deviceId);
             return thumb && !p.thumbUri ? { ...p, thumbUri: thumb } : p;
@@ -1754,12 +1783,38 @@ function PhotosScreenInner() {
   const clearSelection = useCallback(() => {
     setSelectedItems(new Set());
     setSelectMode(false);
+    try { nativeGridRef.current?.setSelectionMode(false); } catch {}
   }, []);
 
   const selectAll = useCallback(() => {
+    if (nativeGridRef.current) { try { nativeGridRef.current.selectAll(); } catch {} return; }
     setSelectedItems(new Set(filteredPhotos.map(p => p.id)));
     setSelectMode(true);
   }, [filteredPhotos]);
+
+  // [2026-10-15 photos-native] seleção da grade nativa → mesmos ids da barra de ações
+  // (nuvem "c:<id>" → id numérico; aparelho "l:<id>" → "device_<id>").
+  const onNativeSelection = useCallback((count, keys) => {
+    const ids = new Set();
+    for (const k of keys || []) {
+      if (typeof k !== 'string') continue;
+      if (k.startsWith('c:')) { const n = Number(k.slice(2)); ids.add(Number.isFinite(n) ? n : k.slice(2)); }
+      else if (k.startsWith('l:')) ids.add('device_' + k.slice(2));
+    }
+    setSelectedItems(ids);
+    if (count > 0) setSelectMode(true);
+  }, []);
+  const onNativeSelectionMode = useCallback((active) => {
+    setSelectMode(!!active);
+    if (!active) setSelectedItems(new Set());
+  }, []);
+  const requestPhotoPermissionForGrid = useCallback(async () => {
+    try {
+      const ML = require('expo-media-library');
+      const r = await ML.requestPermissionsAsync(false, Platform.OS === 'ios' ? undefined : ['photo', 'video']);
+      return r?.status === 'granted' || r?.accessPrivileges === 'limited';
+    } catch { return false; }
+  }, []);
 
   const deleteSelected = useCallback(async () => {
     const ids = Array.from(selectedItems);
@@ -1777,7 +1832,7 @@ function PhotosScreenInner() {
             // why some photos "stayed" after Excluir).
             let ok = 0, fail = 0, skipped = 0;
             for (const id of ids) {
-              if (id.startsWith('device_')) { skipped++; continue; }
+              if (String(id).startsWith('device_')) { skipped++; continue; } // nunca apaga do aparelho
               try {
                 const r = await api.fileDelete(id);
                 if (r?.success === false) fail++; else ok++;
@@ -2547,10 +2602,10 @@ function PhotosScreenInner() {
   // Toggle info panel
   const toggleInfoPanel = useCallback(() => {
     if (showInfoPanel) {
-      Animated.timing(infoPanelAnim, { toValue: 0, duration: 250, useNativeDriver: false }).start(() => setShowInfoPanel(false));
+      Animated.timing(infoPanelAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start(() => setShowInfoPanel(false));
     } else {
       setShowInfoPanel(true);
-      Animated.timing(infoPanelAnim, { toValue: 1, duration: 300, useNativeDriver: false }).start();
+      Animated.timing(infoPanelAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
     }
   }, [showInfoPanel, infoPanelAnim]);
 
@@ -2617,15 +2672,15 @@ function PhotosScreenInner() {
     viewerBgOpacity.setValue(0);
     setViewerVisible(true);
     Animated.parallel([
-      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: false }),
-      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: false }),
+      Animated.spring(viewerScaleAnim, { toValue: 1, friction: 8, tension: 65, useNativeDriver: true }),
+      Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
     ]).start();
   }, [filteredPhotos, viewerScaleAnim, viewerBgOpacity]);
 
   const closeViewer = useCallback(() => {
     Animated.parallel([
-      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: false }),
-      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: false }),
+      Animated.timing(viewerScaleAnim, { toValue: 0.85, duration: 220, useNativeDriver: true }),
+      Animated.timing(viewerBgOpacity, { toValue: 0, duration: 220, useNativeDriver: true }),
     ]).start(() => {
       setViewerVisible(false);
     });
@@ -3350,6 +3405,32 @@ function PhotosScreenInner() {
   // PHOTOS TAB
   // ============================================================
   const renderPhotosTab = () => {
+    // [2026-10-15 photos-native] grade nativa (aparelho + nuvem, pinça, datas grudadas,
+    // rolagem rápida, seleção arrastando, selo de backup por item). Busca/favoritos/
+    // memória filtrada seguem na lista JS.
+    if (useNativeGrid && !searchText && !showFavorites && !presetFilter) {
+      return (
+        <View style={{ flex: 1 }}>
+          {nativeBackupOwns && backupEnabled ? (
+            <NativeBackupBanner colors={colors} isDark={isDark} t={t} onPressSettings={() => { try { router.push('/backup'); } catch {} }} />
+          ) : renderBackupBanner()}
+          <NativePhotosGrid
+            ref={nativeGridRef}
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            locale={locale}
+            insetBottom={80 + insets.bottom}
+            userEmail={user?.email || ''}
+            backupEnabled={!!backupEnabled}
+            onSelectionChange={onNativeSelection}
+            onSelectionMode={onNativeSelectionMode}
+            onPermissionNeeded={requestPhotoPermissionForGrid}
+            onFail={(why) => { console.warn('[photos] grade nativa indisponível → JS:', why); setNativeGridFailed(true); }}
+          />
+        </View>
+      );
+    }
     if (loading && cloudPhotos.length === 0) {
       return <GridSkeleton count={12} columns={3} />;
     }
@@ -3404,12 +3485,12 @@ function PhotosScreenInner() {
       // Show scrubber while scrolling (start the fade-in once, not per event)
       if (!scrubberShown.current) {
         scrubberShown.current = true;
-        Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+        Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
       }
       if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
       scrubberTimer.current = setTimeout(() => {
         scrubberShown.current = false;
-        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: false }).start();
+        Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: true }).start();
       }, 1200);
 
       // Determine which section is visible for floating date label
@@ -3427,12 +3508,12 @@ function PhotosScreenInner() {
       // Show/hide floating date label (fade-in started once per scroll burst)
       if (!scrollDateShown.current) {
         scrollDateShown.current = true;
-        Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: false }).start();
+        Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: true }).start();
       }
       if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
       scrollDateTimer.current = setTimeout(() => {
         scrollDateShown.current = false;
-        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: false }).start();
+        Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
       }, 1000);
     };
 
@@ -5937,7 +6018,7 @@ function MemoriesCarousel({
         toValue: 1,
         duration: 380,
         delay: i * 80,
-        useNativeDriver: false,
+        useNativeDriver: true,
       });
     });
     const run = Animated.parallel(anims);

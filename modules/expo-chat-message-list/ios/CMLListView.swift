@@ -659,6 +659,11 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     scheduleStickyHide()
   }
 
+  // [2026-10-15 native-effects] emoji grande anima 1× ao entrar na tela
+  public func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+    (cell as? CMLCell)?.willAppear()
+  }
+
   public func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
     (cell as? CMLCell)?.blocks.stopMedia()
   }

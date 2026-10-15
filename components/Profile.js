@@ -166,6 +166,32 @@ function _cacheSet(key, data) {
 // when re-opening a profile). Falls back to react-native Image if unavailable.
 let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch {}
+// [2026-10-15 profile-virt] Grade do perfil (modo full) virtualizada em FlashList:
+// so as linhas visiveis montam; o cabecalho vira ListHeaderComponent.
+let _FlashList = null;
+try { _FlashList = require('@shopify/flash-list').FlashList; } catch {}
+
+// [2026-10-15 profile-fast] profile_get em voo compartilhado. A rota /u/[username]
+// dispara isto na avaliacao do chunk (web: ~250 ms antes do 1o render do Profile);
+// o efeito de carga reaproveita a mesma promise em vez de abrir outra requisicao.
+const _profileInflight = new Map();
+export function prefetchProfile(key) {
+  if (!key) return null;
+  const k = String(key);
+  const hit = _profileInflight.get(k);
+  if (hit) return hit;
+  try {
+    const c = _cacheGet(k);
+    if (c && Date.now() - c.ts < PROFILE_TTL_MS) return null; // cache fresco: nada a buscar
+  } catch {}
+  let pr = null;
+  try { pr = api.profileGet(k); } catch { pr = null; }
+  if (!pr || typeof pr.then !== 'function') return null;
+  _profileInflight.set(k, pr);
+  const drop = () => { if (_profileInflight.get(k) === pr) _profileInflight.delete(k); };
+  pr.then((r) => { if (r && r.success) setTimeout(drop, 3000); else drop(); }, drop);
+  return pr;
+}
 
 // ─── Small helpers ────────────────────────────────────────────────────
 // Stat counter formatter — Instagram parity:
@@ -886,7 +912,7 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
       // erro → tile cinza "mídia indisponível" em TODO reel do grid no web.
       // Se a thumb já é imagem, pinta <img> (igual ao nativo).
       if (looksLikeVideo && thumbIsImage) {
-        return <img src={url} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
+        return <img src={url} width={size} height={size} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
       }
       if (looksLikeVideo) {
         return (
@@ -901,7 +927,7 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
           />
         );
       }
-      return <img src={url} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
+      return <img src={url} width={size} height={size} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
     }
     if (looksLikeVideo) {
       // Try the ffmpeg-generated sibling poster (`<video>.thumb.jpg`). If
@@ -911,6 +937,7 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
         return (
           <_ExpoImage
             source={{ uri: guessedPosterUrl }}
+            recyclingKey={guessedPosterUrl}
             style={{ width: '100%', height: '100%', borderRadius: 3 }}
             contentFit="cover"
             cachePolicy="memory-disk"
@@ -925,6 +952,7 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
       return (
         <_ExpoImage
           source={{ uri: url }}
+          recyclingKey={url}
           style={{ width: '100%', height: '100%', borderRadius: 3 }}
           contentFit="cover"
           cachePolicy="memory-disk"
@@ -981,6 +1009,55 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
   );
 });
 
+
+// [2026-10-15 profile-virt] Uma linha (ate 3 tiles) da grade virtualizada. memo:
+// re-render do cabecalho (presenca, live, destaques...) nao re-renderiza os tiles.
+const ProfileGridRow = memo(function ProfileGridRow({ row, size, kind, onItemPress, onItemLongPress, onCreate, createLabel, isDark, t }) {
+  return (
+    <View style={{ flexDirection: 'row' }}>
+      {row.items.map((it, i) => {
+        if (it && it.__create) {
+          return (
+            <Pressable
+              key="__create"
+              onPress={onCreate}
+              accessibilityRole="button"
+              accessibilityLabel={createLabel}
+              style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? '#2A2A2A' : '#E5E5E5', backgroundColor: isDark ? '#0A0A0A' : '#FAFAFA' }}
+            >
+              <IconPlus size={26} color={isDark ? '#F1F3F5' : '#111111'} />
+              <Text style={{ color: isDark ? '#F1F3F5' : '#111111', fontSize: 13, fontWeight: '700' }}>{createLabel}</Text>
+            </Pressable>
+          );
+        }
+        if (kind === 'lives') {
+          return (
+            <LiveGridItem
+              key={it.session_id || i}
+              rec={it}
+              size={size}
+              onPress={() => onItemPress(it, kind)}
+              onLongPress={() => onItemLongPress(it, kind)}
+              t={t}
+            />
+          );
+        }
+        const vid = it.type === 'video' || it.media_type === 'video';
+        return (
+          <GridItem
+            key={`${it.id ?? i}-${it.type || ''}`}
+            item={it}
+            size={size}
+            isReel={kind === 'reels' || (kind === 'posts' && vid)}
+            onPress={() => onItemPress(it, kind)}
+          />
+        );
+      })}
+    </View>
+  );
+});
+const _gridRowKey = (r) => r.key;
+const _EMPTY_ROWS = [];
 
 // ─── Status camera boundary ─────────────────────────────────────────
 // 2026-05-28 Lester QA: clicking "Adicionar ao status" on the avatar
@@ -1177,7 +1254,7 @@ export default function Profile({
         // dead socket on cellular handoff, etc.) leaves the user staring
         // at gray placeholders until they kill the app.
         const r = await Promise.race([
-          api.profileGet(fetchKey),
+          (prefetchProfile(fetchKey) || api.profileGet(fetchKey)), // [2026-10-15 profile-fast]
           new Promise((_, rej) => setTimeout(() => rej(new Error('profile_timeout')), 12000)),
         ]);
         if (cancelled) return;
@@ -1224,6 +1301,11 @@ export default function Profile({
   }, [fetchKey, visible, mode, retryCounter]);
 
   const identity = data?.identity;
+  // [2026-10-15 profile-fast] E-mail-alvo conhecido ANTES do profile_get quando a
+  // rota ja veio por e-mail (/u/fulano@...): apelido, privacidade, destaques, live e
+  // contatos em comum saem em paralelo ao profile_get em vez de em serie apos ele.
+  const targetEmail = String(identity?.email || (typeof fetchKey === 'string' && fetchKey.includes('@') ? fetchKey.trim() : '')).toLowerCase();
+  const _selfEmailLc = String(currentUser?.email || '').toLowerCase();
 
   // [2026-10-14 avatar-instant] Perfil aberto → pré-carrega a foto GRANDE
   // (size=1024, URL canônica) p/ o toque no avatar abrir já nítido.
@@ -1238,29 +1320,29 @@ export default function Profile({
 
   // Load saved nickname when we know which identity we're viewing.
   useEffect(() => {
-    if (!identity?.email) return;
+    if (!targetEmail) return;
     (async () => {
       try {
         const r = await api.chatNicknameList();
-        const n = r?.data?.nicknames?.[identity.email.toLowerCase()] || '';
+        const n = r?.data?.nicknames?.[targetEmail] || '';
         setNicknameValue(n);
       } catch {}
     })();
-  }, [identity?.email]);
+  }, [targetEmail]);
 
   // Load per-contact "hide status from" preference. Endpoint returns the
   // full list of overrides for the current user; we scan for an entry
   // matching this contact + field='status'. Default = 'show'.
   useEffect(() => {
-    if (!identity?.email) return;
-    if (identity.email === currentUser?.email) return; // not applicable to self
+    if (!targetEmail) return;
+    if (targetEmail === _selfEmailLc) return; // not applicable to self
     let cancelled = false;
     (async () => {
       try {
         const r = await api.chatPrivacyContactList?.();
         if (cancelled) return;
         const items = r?.data?.items || r?.items || [];
-        const target = String(identity.email).toLowerCase();
+        const target = targetEmail;
         const match = items.find(it =>
           String(it?.contact_email || '').toLowerCase() === target &&
           String(it?.field || '') === 'status'
@@ -1269,7 +1351,7 @@ export default function Profile({
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [identity?.email, currentUser?.email]);
+  }, [targetEmail, _selfEmailLc]);
 
   const handleToggleHideStatus = useCallback(async (next) => {
     if (!identity?.email) return;
@@ -1302,9 +1384,9 @@ export default function Profile({
   // splices that get clobbered. Wrapped in useCallback so the focus +
   // AppState effects below get a stable identity.
   const refetchHighlights = useCallback(async () => {
-    if (!identity?.email) return;
+    if (!targetEmail) return;
     try {
-      const r = await api.statusHighlightList?.(identity.email);
+      const r = await api.statusHighlightList?.(targetEmail);
       const list = r?.data?.highlights || r?.highlights || [];
       if (!Array.isArray(list)) return;
       // Normalize shape — cover_url is what the row renderer expects.
@@ -1349,7 +1431,7 @@ export default function Profile({
         }
         // [B.2] Persist to the in-memory cache so the next profile open within
         // TTL paints this strip without a skeleton or refetch flash.
-        try { _highlightsCache.set(String(identity.email).toLowerCase(), { list: next, ts: Date.now() }); } catch {}
+        try { _highlightsCache.set(targetEmail, { list: next, ts: Date.now() }); } catch {}
         return next;
       });
     } catch {} finally {
@@ -1358,7 +1440,7 @@ export default function Profile({
       // data — never re-trigger the skeleton flash on AppState refocus.
       setHighlightsLoading(false);
     }
-  }, [identity?.email]);
+  }, [targetEmail]);
 
   // [B.2] Hydrate the strip from cache the moment identity.email is known (for
   // username-only opens where the `email` prop wasn't available at mount). Only
@@ -1429,9 +1511,9 @@ export default function Profile({
   const liveEndedAtRef = useRef(0);
   const liveTickStartedAtRef = useRef(0);
   useEffect(() => {
-    if (!identity?.email) { setLiveSessionId(null); return undefined; }
+    if (!targetEmail) { setLiveSessionId(null); return undefined; }
     let cancelled = false;
-    const target = identity.email.toLowerCase();
+    const target = targetEmail;
     const tick = async () => {
       const startedAt = Date.now();
       liveTickStartedAtRef.current = startedAt;
@@ -1475,13 +1557,20 @@ export default function Profile({
       setLiveSessionId(prev => (prev === null ? prev : null));
     };
     tick();
-    const iv = setInterval(tick, 20000);
+    // [2026-10-15 ws-live] Era poll de 20 s. live_started/live_ended chegam
+    // pelo WS (lives_global) → o poll vira rede de segurança (sessão fantasma
+    // sem live_ended) de 90 s, só em primeiro plano, + reconsulta ao
+    // (re)autenticar o WS (eventos perdidos enquanto desconectado).
+    let _stopPoll = null;
+    try { _stopPoll = require('../utils/activeInterval').setActiveInterval(tick, 90000); } catch {}
+    const iv = _stopPoll ? null : setInterval(tick, 90000);
     // WS instant updates — when this profile's owner goes live or ends a
-    // live, flip the badge state without waiting for the 20s poll.
-    let unsubOn, unsubOff;
+    // live, flip the badge state without waiting for the poll.
+    let unsubOn, unsubOff, unsubConn;
     try {
       const mailWs = require('../services/websocket').default;
       mailWs.subscribe?.('lives_global');
+      unsubConn = mailWs.on?.('connection', (ev) => { if (ev && ev.status === 'authenticated') tick(); });
       unsubOn = mailWs.on?.('live_started', (payload) => {
         const d = payload?.data || payload || {};
         if ((d.host_email || '').toLowerCase() === target) {
@@ -1538,13 +1627,15 @@ export default function Profile({
     } catch {}
     return () => {
       cancelled = true;
-      clearInterval(iv);
+      if (iv) clearInterval(iv);
+      try { _stopPoll?.(); } catch {}
+      try { unsubConn?.(); } catch {}
       try { unsubOn?.(); } catch {}
       try { unsubOff?.(); } catch {}
       try { localSub?.remove?.(); } catch {}
       try { appSub?.remove?.(); } catch {}
     };
-  }, [identity?.email]);
+  }, [targetEmail]);
 
   // "Contatos em comum" — fetched separately because not every profileGet
   // payload includes it (older backend builds). If the endpoint isn't
@@ -1553,12 +1644,12 @@ export default function Profile({
   // is non-self (then we show the "Em breve" placeholder for parity).
   const [commonContactsData, setCommonContactsData] = useState([]);
   useEffect(() => {
-    if (!identity?.email) { setCommonContactsData([]); return undefined; }
-    if (identity.email === currentUser?.email) { setCommonContactsData([]); return undefined; }
+    if (!targetEmail) { setCommonContactsData([]); return undefined; }
+    if (targetEmail === _selfEmailLc) { setCommonContactsData([]); return undefined; }
     let cancelled = false;
     (async () => {
       try {
-        const r = await api.commonContacts(identity.email);
+        const r = await api.commonContacts(targetEmail);
         if (cancelled) return;
         const items = Array.isArray(r?.items) ? r.items : [];
         setCommonContactsData(items);
@@ -1567,7 +1658,7 @@ export default function Profile({
       }
     })();
     return () => { cancelled = true; };
-  }, [identity?.email, currentUser?.email]);
+  }, [targetEmail, _selfEmailLc]);
 
   const presence = data?.presence;
   const social = data?.social;
@@ -1666,29 +1757,81 @@ export default function Profile({
       .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
   ), [posts, reels]);
 
-  // [PERF] Progressive render window for the media grids (posts/reels/media/
-  // lives). The grids live inside the main vertical ScrollView, so a profile
-  // with hundreds of posts mounted every GridItem (each an expo-image) up front
-  // — a heavy first paint that janks the profile open. Mirror the ChatCallsTab
-  // pattern: clamp the FIRST paint to a viewport-sized window, then expand to
-  // Infinity one frame later (InteractionManager) and on the first scroll. The
-  // final content is IDENTICAL — only the initial mount is staggered.
-  const [gridRenderLimit, setGridRenderLimit] = useState(15);
-  const expandGridRenderLimit = useCallback(() => setGridRenderLimit(Infinity), []);
+  // [2026-10-15 profile-virt] A grade (posts/reels/lives/midia) saiu do ScrollView
+  // principal: no modo full ela e uma FlashList de linhas de 3 tiles (so as linhas
+  // visiveis montam; antes a janela progressiva subia para Infinity e montava tudo).
+  // Paginacao: profile_get traz no maximo 12 posts + 12 reels; ao chegar no fim da aba
+  // Posts, feed_user_posts (30/pagina) completa o resto, sem duplicar ids.
+  const [morePosts, setMorePosts] = useState([]);
+  const morePostsRef = useRef({ key: null, page: 0, hasMore: true, loading: false });
+  const [morePostsLoading, setMorePostsLoading] = useState(false);
   useEffect(() => {
-    let timer = null;
-    let task = null;
+    morePostsRef.current = { key: fetchKey, page: 0, hasMore: true, loading: false };
+    setMorePosts([]);
+  }, [fetchKey]);
+  const combinedPostsAll = useMemo(() => {
+    if (!morePosts.length) return combinedPosts;
+    const seen = new Set(combinedPosts.map(p => String(p.id)));
+    const extra = morePosts.filter(p => !seen.has(String(p.id)));
+    return extra.length ? [...combinedPosts, ...extra] : combinedPosts;
+  }, [combinedPosts, morePosts]);
+  const _canPageMore = (posts.length >= 12 || reels.length >= 12);
+  const loadMorePosts = useCallback(async () => {
+    const st = morePostsRef.current;
+    const em = identity?.email;
+    if (!em || st.loading || !st.hasMore || st.key !== fetchKey) return;
+    st.loading = true;
+    setMorePostsLoading(true);
+    const page = st.page + 1;
     try {
-      const { InteractionManager } = require('react-native');
-      task = InteractionManager.runAfterInteractions(expandGridRenderLimit);
+      const r = await api.feedUserPosts(em, page);
+      if (morePostsRef.current !== st) return; // trocou de perfil no meio
+      const list = r?.data?.posts || r?.posts || [];
+      const mapped = (Array.isArray(list) ? list : []).map((q) => {
+        const mu = Array.isArray(q.media_urls) ? q.media_urls : [];
+        return {
+          id: q.id,
+          thumbnail: q.thumbnail_url || mu[0] || '',
+          media_urls: mu,
+          media_type: q.media_type,
+          type: q.media_type,
+          caption: String(q.caption || '').slice(0, 120),
+          count: mu.length,
+          created_at: q.created_at,
+        };
+      });
+      st.page = page;
+      st.hasMore = !!(r?.data?.has_more ?? r?.has_more) && mapped.length > 0;
+      if (mapped.length) setMorePosts(prev => [...prev, ...mapped]);
     } catch {
-      timer = setTimeout(expandGridRenderLimit, 120);
+      st.hasMore = false;
+    } finally {
+      st.loading = false;
+      if (morePostsRef.current === st) setMorePostsLoading(false);
     }
-    return () => {
-      try { task?.cancel?.(); } catch {}
-      if (timer) clearTimeout(timer);
-    };
-  }, [expandGridRenderLimit]);
+  }, [identity?.email, fetchKey]);
+
+  // [2026-10-15 profile-virt] Linhas da grade da aba ativa (vazia = estado vazio /
+  // carregando continua no cabecalho, como antes). Definido ANTES do `body` (que o le
+  // via renderTabContent) — depois dele dava TDZ no web.
+  const _gridKind = (activeTab === 'posts' || activeTab === 'reels' || activeTab === 'lives' || activeTab === 'media') ? activeTab : null;
+  const _isSelf = !!actions?.is_self;
+  const gridRows = useMemo(() => {
+    if (mode !== 'full' || !_gridKind) return _EMPTY_ROWS;
+    let list = _gridKind === 'posts' ? combinedPostsAll
+      : _gridKind === 'reels' ? reels
+      : _gridKind === 'lives' ? lives
+      : sharedMedia;
+    if (!list || !list.length) return _EMPTY_ROWS;
+    if (_gridKind === 'reels' && _isSelf) list = [{ __create: true }, ...list];
+    const rows = [];
+    for (let i = 0; i < list.length; i += 3) {
+      const items = list.slice(i, i + 3);
+      const k0 = items[0] && (items[0].__create ? 'c' : (items[0].session_id || items[0].id || i));
+      rows.push({ key: `${_gridKind}:${k0}:${i}`, items });
+    }
+    return rows;
+  }, [mode, _gridKind, combinedPostsAll, reels, lives, sharedMedia, _isSelf]);
 
   // Handlers
   const handleChat = useCallback(() => { onOpenChat?.(identity?.email); onClose?.(); }, [identity, onOpenChat, onClose]);
@@ -2963,6 +3106,8 @@ export default function Profile({
       return v && v !== key ? v : fallback;
     };
     const renderTabContent = () => {
+      // [2026-10-15 profile-virt] Grade com itens = linhas da FlashList (fora do cabecalho).
+      if (gridRows.length > 0) return null;
       if (activeTab === 'posts') {
         // User reportou: stat "Posts" mostra 2 mas a tab vinha vazia. Razão:
         // postsTotal = posts.length + reels.length, então quando o user só
@@ -2986,19 +3131,7 @@ export default function Profile({
             />
           );
         }
-        return (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {(gridRenderLimit === Infinity ? combined : combined.slice(0, gridRenderLimit)).map(p => (
-              <GridItem
-                key={`${p.id}-${p.type || ''}`}
-                item={p}
-                size={gridSize}
-                isReel={p.type === 'video' || p.media_type === 'video'}
-                onPress={() => handleOpenPost(p, p.type === 'video' || p.media_type === 'video' ? 'reels' : 'posts')}
-              />
-            ))}
-          </View>
-        );
+        return null;
       }
       if (activeTab === 'reels') {
         if (!reels.length) {
@@ -3017,23 +3150,7 @@ export default function Profile({
             />
           );
         }
-        return (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {/* [2026-10-13 video-studio] "+ Criar" no próprio perfil → câmera de criação */}
-            {!!actions.is_self && (
-              <Pressable
-                onPress={() => router?.push('/video-studio/camera')}
-                accessibilityRole="button"
-                accessibilityLabel={_ti('videoStudio.create', 'Criar')}
-                style={{ width: gridSize, height: gridSize, alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? '#2A2A2A' : '#E5E5E5', backgroundColor: isDark ? '#0A0A0A' : '#FAFAFA' }}
-              >
-                <IconPlus size={26} color={isDark ? '#F1F3F5' : '#111111'} />
-                <Text style={{ color: isDark ? '#F1F3F5' : '#111111', fontSize: 13, fontWeight: '700' }}>{_ti('videoStudio.create', 'Criar')}</Text>
-              </Pressable>
-            )}
-            {(gridRenderLimit === Infinity ? reels : reels.slice(0, gridRenderLimit)).map(r => <GridItem key={r.id} item={r} size={gridSize} isReel onPress={() => handleOpenPost(r, 'reels')} />)}
-          </View>
-        );
+        return null;
       }
       if (activeTab === 'lives') {
         // Initial fetch in flight — show a brief activity indicator instead
@@ -3062,58 +3179,9 @@ export default function Profile({
             />
           );
         }
-        const onOpenLive = (rec) => {
-          if (!rec?.session_id) return;
-          router?.push(`/live-replay?id=${encodeURIComponent(rec.session_id)}`);
-        };
-        const onLongPressLive = (rec) => {
-          if (!actions.is_self) return;
-          if (!rec?.session_id) return;
-          // Own-profile only — host can delete their saved replay. Mirrors
-          // the lives-saved.js destructive-confirm pattern so behavior is
-          // consistent across the two surfaces.
-          Alert.alert(
-            t?.('liveReplay.deleteTitle') || 'Excluir replay?',
-            t?.('liveReplay.deleteConfirm') || 'Isso vai apagar permanentemente a gravação.',
-            [
-              { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-              {
-                text: t?.('liveReplay.deleteConfirmBtn') || 'Excluir',
-                style: 'destructive',
-                onPress: async () => {
-                  try {
-                    const res = await api.liveRecordingDelete(rec.session_id);
-                    if (res?.success) {
-                      setLives(prev => prev.filter(r => r.session_id !== rec.session_id));
-                    }
-                  } catch {}
-                },
-              },
-            ]
-          );
-        };
-        return (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {(gridRenderLimit === Infinity ? lives : lives.slice(0, gridRenderLimit)).map((rec) => (
-              <LiveGridItem
-                key={rec.session_id}
-                rec={rec}
-                size={gridSize}
-                onPress={() => onOpenLive(rec)}
-                onLongPress={() => onLongPressLive(rec)}
-                t={t}
-              />
-            ))}
-          </View>
-        );
+        return null;
       }
-      if (activeTab === 'media') {
-        return (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {(gridRenderLimit === Infinity ? sharedMedia : sharedMedia.slice(0, gridRenderLimit)).map(m => <GridItem key={m.id} item={m} size={gridSize} onPress={() => handleOpenPost(m, 'media')} />)}
-          </View>
-        );
-      }
+      if (activeTab === 'media') return null;
       if (activeTab === 'email') {
         return (
           <View style={{
@@ -4160,16 +4228,115 @@ export default function Profile({
       target={{ content_type: 'profile', content_id: identity.email, reported_email: identity.email }} />
   ) : null;
 
+  const _gridHandlersRef = useRef(null);
+  _gridHandlersRef.current = { handleOpenPost, router, t, isSelf: _isSelf };
+  const onGridItemPress = useCallback((it, kind) => {
+    const h = _gridHandlersRef.current;
+    if (!h || !it) return;
+    if (kind === 'lives') {
+      if (!it.session_id) return;
+      h.router?.push(`/live-replay?id=${encodeURIComponent(it.session_id)}`);
+      return;
+    }
+    if (kind === 'posts') {
+      h.handleOpenPost(it, (it.type === 'video' || it.media_type === 'video') ? 'reels' : 'posts');
+      return;
+    }
+    h.handleOpenPost(it, kind);
+  }, []);
+  const onGridItemLongPress = useCallback((rec, kind) => {
+    const h = _gridHandlersRef.current;
+    if (!h || kind !== 'lives' || !h.isSelf || !rec?.session_id) return;
+    const tt = h.t;
+    // Own-profile only — host can delete their saved replay (mesmo confirm de lives-saved.js).
+    Alert.alert(
+      tt?.('liveReplay.deleteTitle') || 'Excluir replay?',
+      tt?.('liveReplay.deleteConfirm') || 'Isso vai apagar permanentemente a gravação.',
+      [
+        { text: tt?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: tt?.('liveReplay.deleteConfirmBtn') || 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await api.liveRecordingDelete(rec.session_id);
+              if (res?.success) setLives(prev => prev.filter(r => r.session_id !== rec.session_id));
+            } catch {}
+          },
+        },
+      ]
+    );
+  }, []);
+  const onGridCreate = useCallback(() => { try { _gridHandlersRef.current?.router?.push('/video-studio/camera'); } catch {} }, []);
+  const _createLabel = (() => { const v = t?.('videoStudio.create'); return v && v !== 'videoStudio.create' ? v : 'Criar'; })();
+  const renderGridRow = useCallback(({ item }) => (
+    <ProfileGridRow
+      row={item}
+      size={gridSize}
+      kind={_gridKind}
+      onItemPress={onGridItemPress}
+      onItemLongPress={onGridItemLongPress}
+      onCreate={onGridCreate}
+      createLabel={_createLabel}
+      isDark={isDark}
+      t={t}
+    />
+  ), [gridSize, _gridKind, onGridItemPress, onGridItemLongPress, onGridCreate, _createLabel, isDark, t]);
+  // So pagina depois que a pessoa ROLOU: com a grade curta o onEndReached disparava
+  // ja na abertura (30 tiles a mais + requisicao no caminho critico).
+  const _gridUserScrolledRef = useRef(false);
+  const onGridEndReached = useCallback(() => {
+    if (_gridUserScrolledRef.current && activeTab === 'posts' && _canPageMore) loadMorePosts();
+  }, [activeTab, _canPageMore, loadMorePosts]);
+  const onGridScroll = useCallback((e) => {
+    if (_gridUserScrolledRef.current) return;
+    const ne = e?.nativeEvent;
+    if (!ne || (ne.contentOffset?.y || 0) <= 0) return;
+    _gridUserScrolledRef.current = true;
+    // ja estava perto do fim (grade curta): o onEndReached nao dispara de novo sozinho
+    const rest = (ne.contentSize?.height || 0) - (ne.contentOffset.y + (ne.layoutMeasurement?.height || 0));
+    if (rest < (ne.layoutMeasurement?.height || 0) * 0.8) onGridEndReached();
+  }, [onGridEndReached]);
+  const [_gridListW, setGridListW] = useState(0);
+  const onGridListLayout = useCallback((e) => {
+    const w = Math.round(e?.nativeEvent?.layout?.width || 0);
+    if (w) setGridListW(prev => (prev === w ? prev : w));
+  }, []);
+  const _gridPadX = _gridListW ? Math.max(0, Math.floor((_gridListW - computeContentMaxWidth(SCREEN_W)) / 2)) : 0;
+  const gridFooter = morePostsLoading && activeTab === 'posts'
+    ? <View style={{ paddingVertical: 18, alignItems: 'center' }}><ActivityIndicator color={colors?.primary} /></View>
+    : null;
+
   // ─── Render ──────────────────────────────────────────────────────────
   if (mode === 'full') {
     return (
       <>
-        <ScrollView style={{ flex: 1, backgroundColor: colors?.background }}
-          contentContainerStyle={{ paddingBottom: 60, maxWidth: computeContentMaxWidth(SCREEN_W), width: '100%', alignSelf: 'center' }}
-          onScrollBeginDrag={gridRenderLimit === Infinity ? undefined : expandGridRenderLimit}
-        >
-          {body}
-        </ScrollView>
+        {(_FlashList && !loading && !err) ? (
+          <_FlashList
+            style={{ flex: 1, backgroundColor: colors?.background }}
+            data={gridRows}
+            renderItem={renderGridRow}
+            keyExtractor={_gridRowKey}
+            ListHeaderComponent={body}
+            ListFooterComponent={gridFooter}
+            onEndReached={onGridEndReached}
+            onEndReachedThreshold={0.8}
+            onScroll={onGridScroll}
+            scrollEventThrottle={64}
+            // coluna centrada (web largo/tablet) por padding medido no layout: mesma
+            // largura maxima de antes, e a roda do mouse rola em toda a largura
+            onLayout={onGridListLayout}
+            contentContainerStyle={{ paddingBottom: 60, paddingHorizontal: _gridPadX }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          />
+        ) : (
+          <ScrollView style={{ flex: 1, backgroundColor: colors?.background }}
+            contentContainerStyle={{ paddingBottom: 60, maxWidth: computeContentMaxWidth(SCREEN_W), width: '100%', alignSelf: 'center' }}
+          >
+            {body}
+          </ScrollView>
+        )}
         {viewerNode}
         {storyViewerNode}
         {selfStatusHostNode}

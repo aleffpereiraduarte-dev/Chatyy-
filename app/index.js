@@ -36,7 +36,9 @@ export default function Index() {
       // [2026-10-09 boot-native] Separates logged-out boots (→ /login) from slow
       // returning-user boots in coldstart_marks (both used to read "brand+cap").
       try { bootMark('auth_none'); } catch {}
-      setShowBrand(true);
+      // [2026-10-15 login-fast] Sem sessao NAO toca mais a animacao de marca antes do
+      // /login (~360 ms de entrada + 220 ms de fade em serie com o replace): o splash
+      // nativo fica ate o 1o frame do login (login.js -> hideNativeSplash('login')).
     }
   }, [loading, user]);
 
@@ -47,12 +49,13 @@ export default function Index() {
     if (loading || routedRef.current) return;
     // Returning user: route immediately (no branded animation in between).
     // Logged-out / brand already showing: wait for the animation to finish.
-    if (!user || (showBrand && !splashDone)) {
-      if (!user && splashDone) {
-        routedRef.current = true;
-        markFirstPaintOther('login');
-        router.replace('/login');
-      }
+    // [2026-10-15 login-fast] Deslogado: /login direto. So espera o fade se a marca
+    // JA estava na tela (auth lenta > BRAND_AFTER_MS) — sem corte seco no meio dela.
+    if (showBrand && !splashDone) return;
+    if (!user) {
+      routedRef.current = true;
+      markFirstPaintOther('login');
+      router.replace('/login');
       return;
     }
     routedRef.current = true;

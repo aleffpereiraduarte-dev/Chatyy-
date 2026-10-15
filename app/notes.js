@@ -5,6 +5,7 @@ import {
   Modal, Alert, Animated, Dimensions, FlatList, Pressable, ActivityIndicator, RefreshControl,
   KeyboardAvoidingView, Linking, PanResponder, Easing, AppState,
 } from 'react-native';
+import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1234,6 +1235,9 @@ export default function NotesScreen() {
         useNativeDriver: true,
       }).start();
 
+      // [2026-10-15 web-idle] Web: flutuação em CSS (ver render) — o Animated.loop
+      // no RN-web re-renderizava a tela 60×/s com a lista vazia parada.
+      if (IS_WEB) return undefined;
       // Start floating animation loop
       const createFloat = (anim, dur) => {
         return Animated.loop(
@@ -2151,11 +2155,11 @@ export default function NotesScreen() {
                   ? '0 4px 16px rgba(0,0,0,0.15)'
                   : '0 4px 16px rgba(0,0,0,0.10)',
               } : {}),
-              transform: [
+              transform: IS_WEB ? [{ rotate: '-8deg' }] : [
                 { rotate: '-8deg' },
                 { translateY: floatAnim1.interpolate({ inputRange: [0, 1], outputRange: [0, -10] }) },
               ],
-            }]}>
+            }, IS_WEB ? cssLoop({ '0%': { transform: [{ rotate: '-8deg' }, { translateY: 0 }] }, '100%': { transform: [{ rotate: '-8deg' }, { translateY: -10 }] } }, { duration: 3000, direction: 'alternate', delay: 0 }) : null]}>
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.1)', width: '80%' }]} />
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.06)', width: '60%' }]} />
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.04)', width: '40%' }]} />
@@ -2170,11 +2174,11 @@ export default function NotesScreen() {
                   ? '0 4px 16px rgba(0,0,0,0.15)'
                   : '0 4px 16px rgba(0,0,0,0.10)',
               } : {}),
-              transform: [
+              transform: IS_WEB ? [{ rotate: '5deg' }] : [
                 { rotate: '5deg' },
                 { translateY: floatAnim2.interpolate({ inputRange: [0, 1], outputRange: [0, -12] }) },
               ],
-            }]}>
+            }, IS_WEB ? cssLoop({ '0%': { transform: [{ rotate: '5deg' }, { translateY: 0 }] }, '100%': { transform: [{ rotate: '5deg' }, { translateY: -12 }] } }, { duration: 3500, direction: 'alternate', delay: 500 }) : null]}>
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.1)', width: '70%' }]} />
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.06)', width: '50%' }]} />
             </Animated.View>
@@ -2188,11 +2192,11 @@ export default function NotesScreen() {
                   ? '0 4px 16px rgba(0,0,0,0.15)'
                   : '0 4px 16px rgba(0,0,0,0.10)',
               } : {}),
-              transform: [
+              transform: IS_WEB ? [{ rotate: '-3deg' }] : [
                 { rotate: '-3deg' },
                 { translateY: floatAnim3.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
               ],
-            }]}>
+            }, IS_WEB ? cssLoop({ '0%': { transform: [{ rotate: '-3deg' }, { translateY: 0 }] }, '100%': { transform: [{ rotate: '-3deg' }, { translateY: -8 }] } }, { duration: 2800, direction: 'alternate', delay: 1000 }) : null]}>
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.1)', width: '75%' }]} />
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.06)', width: '55%' }]} />
               <View style={[s.floatingNoteLine, { backgroundColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.04)', width: '35%' }]} />

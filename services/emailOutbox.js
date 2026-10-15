@@ -435,8 +435,10 @@ export function initEmailOutbox() {
     });
   } catch {}
   // Account switch / late token: poll cheaply for a changed active account.
+  // [2026-10-15 app-leve] só em 1º plano (troca de conta não acontece com o app
+  // em 2º plano; na volta ao 'active' o tick roda na hora).
   let lastAcct = _activeAccount();
-  setInterval(() => {
+  require('../utils/activeInterval').setActiveInterval(() => {
     const a = _activeAccount();
     if (a !== lastAcct) {
       lastAcct = a;

@@ -3,17 +3,27 @@
  * Accepts either a plain username ("duarte") or a full email
  * ("duarte@chatyy.com.br"); the Profile component resolves either.
  */
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, StyleSheet, Platform, StatusBar, Alert, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
-import Profile from '../../components/Profile';
+import Profile, { prefetchProfile } from '../../components/Profile';
 import { IconArrowLeft } from '../../components/Icons';
 import PressableScale from '../../components/PressableScale'; // [2026-10-08 apps-native]
 import { computeContentMaxWidth } from '../../utils/responsive';
+
+// [2026-10-15 profile-fast] Web: o chunk desta rota avalia ~250 ms antes do 1o render
+// do Profile (arvore de providers inteira montando) -> o profile_get ja sai daqui e o
+// Profile reaproveita a mesma promise (prefetchProfile). Nativo: no 1o render (abaixo).
+try {
+  if (Platform.OS === 'web' && typeof location !== 'undefined') {
+    const _m = /^\/u\/([^/?#]+)/.exec(location.pathname || '');
+    if (_m) prefetchProfile(decodeURIComponent(_m[1]));
+  }
+} catch {}
 
 export default function UserProfileScreen() {
   const { username, openStatus, openSettings } = useLocalSearchParams();
@@ -26,6 +36,8 @@ export default function UserProfileScreen() {
   // username param may be an email (we encode before push) or a plain handle
   const raw = Array.isArray(username) ? username[0] : (username || '');
   const identifier = decodeURIComponent(raw);
+  // [2026-10-15 profile-fast] dispara no render (antes dos efeitos do Profile); idempotente.
+  useState(() => { try { prefetchProfile(identifier); } catch {} return 0; });
 
   const handleChat = useCallback((email) => {
     if (!email) return;

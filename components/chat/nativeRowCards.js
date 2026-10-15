@@ -809,19 +809,26 @@ function buildStatusReply(m, row, ctx, C, own) {
     return;
   }
   const st = payload.status;
-  const mediaUrl = st.media_url ? _mediaAbs(st.media_url) : '';
+  // [status-resposta 2026-10-15] reação (status_react) vs resposta; miniatura st.thumb > media_url;
+  // thumb_b64 embutido = placeholder e fallback depois que o status expira (mídia apagada no servidor).
+  const isReaction = !!payload.reaction;
+  const b64 = m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : '';
   const snippet = (st.content || '').split('\n')[0] || '';
-  const label = own ? _tr(C, 'status.replyFromOwner', 'Respondeu ao seu status') : _tr(C, 'status.replyToOwner', 'Você respondeu ao status');
+  // own = EU mandei → "Você respondeu"; o dono do status vê "Respondeu ao seu status".
+  const label = isReaction
+    ? (own ? _tr(C, 'status.youReactedToStatus', 'Você reagiu ao status') : _tr(C, 'status.reactedToYourStatus', 'Reagiu ao seu status'))
+    : (own ? _tr(C, 'status.replyToOwner', 'Você respondeu ao status') : _tr(C, 'status.replyFromOwner', 'Respondeu ao seu status'));
   const isImage = st.type === 'image'; const isVideo = st.type === 'video';
   const fb = isImage ? _tr(C, 'status.typePhoto', 'Foto') : isVideo ? _tr(C, 'status.typeVideo', 'Vídeo') : '';
   const accent = own ? 'rgba(255,255,255,0.85)' : C.otherInk;
   const created = st.created_at ? Date.parse(st.created_at) : (m.created_at ? Date.parse(m.created_at) : Date.now());
   const expired = !isNaN(created) && (Date.now() - created) > 24 * 60 * 60 * 1000;
+  const mediaUrl = (expired && b64) ? b64 : ((st.thumb ? _mediaAbs(st.thumb) : '') || (st.media_url ? _mediaAbs(st.media_url) : '') || b64);
   const expTag = () => vstack([text(_tr(C, 'status.expiredShort', 'EXPIROU'), { fs: 8, fw: 700, c: '#FFFFFF', ls: 0.3, ml: 1 })], { pos: 'b', w: -1, bg: 'rgba(0,0,0,0.62)', p: [2, 0, 2, 0], al: 'c' });
   let thumb;
   if (mediaUrl) {
     thumb = zstack([
-      image(mediaUrl, { w: 44, h: 56, r: 6, bg: '#222222', op: expired ? 0.55 : undefined }),
+      image(mediaUrl, { w: 44, h: 56, r: 6, bg: '#222222', op: expired ? 0.55 : undefined, th: (b64 && b64 !== mediaUrl) ? b64 : undefined }),
       (isVideo && !expired) ? vstack([icon(IconPlay, { s: 14, c: '#FFFFFF' })], { pos: 'c', w: 44, h: 56, bg: 'rgba(0,0,0,0.25)', al: 'c', jc: 'c' }) : null,
       expired ? expTag() : null,
     ], { w: 44, h: 56, r: 6 });
@@ -840,9 +847,9 @@ function buildStatusReply(m, row, ctx, C, own) {
       text(fb, { fs: 12.5, c: sub }),
     ], { g: 5, al: 'c' }));
   }
-  const reply = String(payload.reply_text || '');
+  const reply = String((isReaction ? payload.reaction : payload.reply_text) || '');
   const w = _clampW(180, 300, 3 + 8 + 44 + 10 + 8 + Math.max(_estW(label, 11, true), Math.min(_estW(snippet, 12.5), 200)), _estW(reply, 16) + 4);
-  const rt = bodyText(reply); rt.mi = 1;
+  const rt = isReaction ? text(reply, { fs: 34, lh: 42, c: own ? C.ownText : col.text }) : bodyText(reply); rt.mi = 1;
   row.bl = [
     hstack([
       vstack([], { w: 3, h: 72, bg: accent }),

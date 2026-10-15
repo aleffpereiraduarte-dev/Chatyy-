@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyEffectsModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyyeffects.ChatyyEffectsModule"]
+  }
+}

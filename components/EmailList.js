@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useCallback } from 'react';
+import { useRef, useEffect, useMemo, useCallback, useState } from 'react';
 import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform, Alert } from 'react-native';
 // [2026-09-24 nível-WhatsApp] Motor de lista NATIVO (FlashList v2). O v1 travava
 // no iOS SDK55 (por isso as listas voltaram pro FlatList); a v2 é New-Arch-native
@@ -16,6 +16,11 @@ import EmailRow from './EmailRow';
 import EmptyState from './EmptyState';
 import { EmailSkeleton } from './SkeletonLoader';
 import { prefetchMessage } from '../services/api';
+// [2026-10-15 native-inbox] Linhas NATIVAS (UICollectionView / RecyclerView) —
+// só no binário que tem a view ChatyyEmailList; senão (build antigo, web) a
+// FlashList abaixo fica idêntica. Kill switch OTA: __chatyy_native_inbox=false.
+import NativeEmailList from './email/NativeEmailList';
+import { isEmailListAvailable as _nativeInboxAvailable } from '../modules/expo-chat-conversation-list';
 import {
   IconRefresh, IconChevronLeft, IconChevronRight,
   IconCheckbox, IconCheckboxChecked, IconTrash, IconArchive,
@@ -99,9 +104,17 @@ export default function EmailList({
   loadingMore,
   endOfList,
 }) {
-  const { colors, inboxType } = useTheme();
-  const { t } = useLanguage();
+  const { colors, inboxType, isDark, densityConfig } = useTheme();
+  const { t, language } = useLanguage();
   const insets = useSafeAreaInsets();
+  // [2026-10-15 native-inbox] Busca ativa (destaque do termo) fica na lista JS.
+  const [_nativeInboxFailed, _setNativeInboxFailed] = useState(() => !!globalThis.__chatyy_native_inbox_failed);
+  const _useNativeInbox = Platform.OS !== 'web' && !_nativeInboxFailed && !searchQuery
+    && globalThis.__chatyy_native_inbox !== false && _nativeInboxAvailable();
+  const _onNativeInboxFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_inbox_failed = true; console.warn('[native-inbox] fallback FlashList:', msg); } catch {}
+    _setNativeInboxFailed(true);
+  }, []);
   const dragRef = useRef({ active: false });
 
   // [2026-09-24 abrir-rápido mobile] Prefetch do corpo dos emails VISÍVEIS (só
@@ -298,6 +311,39 @@ export default function EmailList({
         <EmailSkeleton count={8} />
       ) : emails.length === 0 ? (
         <EmptyState search={search} folder={currentFolder} onRefresh={onRefresh} />
+      ) : _useNativeInbox ? (
+        <NativeEmailList
+          data={sectionedData}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          language={language}
+          densityConfig={densityConfig || DENSITY_CONFIG.comfortable}
+          spacing={Spacing}
+          selectMode={selectMode}
+          selectedUids={selectedUids}
+          selectedUid={selectedUid}
+          currentFolder={currentFolder}
+          mutedUids={mutedUids}
+          refreshing={!!refreshing || (loading && emails.length > 0)}
+          loadingMore={!!loadingMore}
+          bottomInset={insets.bottom + 80}
+          onEmailPress={onEmailPress}
+          onToggleSelect={onToggleSelect}
+          onStar={onStar}
+          onArchiveEmail={onArchiveEmail}
+          onDeleteEmail={onDeleteEmail}
+          onSnoozeEmail={onSnoozeEmail}
+          onContextMenu={onContextMenu}
+          onRefresh={onRefresh}
+          onEndReached={() => {
+            if (onLoadMore && !endOfList && !loadingMore && !loading) onLoadMore();
+          }}
+          onVisibleEmails={(list) => {
+            for (const it of list) if (it && it.uid) prefetchMessage(it.uid, folderRef.current);
+          }}
+          onFailure={_onNativeInboxFailure}
+        />
       ) : (
         <ListComponent
           data={sectionedData}

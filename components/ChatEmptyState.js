@@ -10,17 +10,24 @@ import React, { useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, Easing } from 'react-native';
 import Svg, { Path, Circle, Rect, Defs, LinearGradient as SvgGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
+import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 
 function FloatWrap({ children }) {
   const anim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.loop(
+    if (IS_WEB) return undefined; // [2026-10-15 web-idle] CSS abaixo
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(anim, { toValue: 1, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
         Animated.timing(anim, { toValue: 0, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ])
-    ).start();
+    );
+    loop.start();
+    return () => { try { loop.stop(); } catch {} }; // antes não parava no unmount
   }, [anim]);
+  if (IS_WEB) {
+    return <View style={cssLoop({ '0%': { transform: [{ translateY: 0 }] }, '100%': { transform: [{ translateY: -10 }] } }, { duration: 2200, direction: 'alternate' })}>{children}</View>;
+  }
   const translateY = anim.interpolate({ inputRange: [0, 1], outputRange: [0, -10] });
   return <Animated.View style={{ transform: [{ translateY }] }}>{children}</Animated.View>;
 }

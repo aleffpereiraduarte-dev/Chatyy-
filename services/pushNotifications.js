@@ -172,7 +172,7 @@ export function setActiveConversation(conversationId) {
 // Remove every delivered chat notification that belongs to `conversationId`
 // from the notification tray (and trim the app badge by how many we cleared).
 // Fire-and-forget; all failures are non-fatal.
-export async function dismissConversationNotifications(conversationId) {
+export async function dismissConversationNotifications(conversationId, opts = null) {
   try {
     if (Platform.OS === 'web' || conversationId == null) return;
     // [2026-10-07 recv-native] native MessagingStyle notification (Android)
@@ -196,7 +196,9 @@ export async function dismissConversationNotifications(conversationId) {
     }
     // Keep the app-icon badge honest (don't leave a count for notifications the
     // user already read). Never go below 0.
-    if (cleared > 0 && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
+    // [2026-10-15 unread-instant] keepBadge: o ícone já foi recalculado do
+    // estado local (services/unreadBadge) — "-N banners" aqui o desalinharia.
+    if (cleared > 0 && !(opts && opts.keepBadge) && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
       try {
         const cur = await Notifications.getBadgeCountAsync();
         const next = Math.max(0, (cur || 0) - cleared);
@@ -248,6 +250,9 @@ export async function applyNotifClear(raw) {
     const upTo = Number(d.up_to) || 0;
     const mid = String(d.message_id ?? '');
     if (kind === 'read') { try { _nativeChat()?.dismissChatNotification?.(cid); } catch {} }
+    // [2026-10-15 unread-instant] Lida em OUTRO aparelho/web → a linha da lista,
+    // a aba e o ícone daqui zeram já (app vivo em 2º plano / WS caído).
+    if (kind === 'read') { _localReadFromNotification(cid, { dismiss: false }); }
     // [2026-10-13 delete-for-all] push de "apagada p/ todos" (app em 2º plano /
     // suspenso) → apaga já a mídia auto-baixada + lápide anti-download/galeria.
     if (kind === 'deleted' && mid) {
@@ -3084,6 +3089,7 @@ async function handleChatReplyFromNotification(conversationId, text) {
   // (POST gravado no servidor), a fila reenviava com um `qr-…` NOVO → mensagem
   // DUPLICADA no destinatário. Mesmo formato msg_<ts>_ do app (ordem no hub).
   const cmid = 'msg_' + Date.now() + '_qr' + Math.random().toString(36).slice(2, 8);
+  _localReadFromNotification(conversationId); // [2026-10-15 unread-instant] lista/aba/ícone/banners na hora
   try {
     const { chatSend, chatRead } = require('./api');
     const r = await chatSend(conversationId, text, 'text', null, null, null, null, cmid);
@@ -3121,7 +3127,20 @@ async function handleChatReplyFromNotification(conversationId, text) {
   }
 }
 
+// [2026-10-15 unread-instant] Responder/Marcar lida pela notificação = o usuário
+// leu (ação explícita dele) → zera local ANTES da rede: linha da lista, aba,
+// ícone e banners. Antes: só após chat_send + chat_mark_read + chat_list (3 RTT
+// em série) e, se o WS não voltasse, a linha ficava em negrito até o próximo sync.
+function _localReadFromNotification(conversationId, extra = null) {
+  try {
+    let me = '';
+    try { const a = require('./api'); const v = (a.getActiveAccountEmail?.() || a.getSavedEmail?.() || ''); me = typeof v === 'string' ? v.toLowerCase() : ''; } catch {}
+    require('./unreadBadge').markConversationReadLocal(conversationId, { email: me, ...(extra || {}) });
+  } catch {}
+}
+
 async function handleMarkReadChatFromNotification(conversationId) {
+  _localReadFromNotification(conversationId);
   try {
     const { chatRead } = require('./api');
     await chatRead(conversationId, 0);
@@ -3180,6 +3199,7 @@ export async function setBadgeCount(count) {
     if (!loaded) return;
     await Notifications.setBadgeCountAsync(Math.max(0, count));
     _mirrorBadge(count);
+    try { require('./unreadBadge').noteIconBadge(count); } catch {}
   } catch {}
 }
 

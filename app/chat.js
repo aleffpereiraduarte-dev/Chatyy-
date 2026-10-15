@@ -52,6 +52,7 @@ try {
 // WhatsApp, via services/syncStatus.js (fonte única). SyncBar segue na conversa.
 import SyncStatusTitle from '../components/SyncStatusTitle';
 import { claimHomeSyncSurface } from '../services/syncStatus';
+import { trackScreenView } from '../services/analytics'; // [2026-10-15 tab-telemetry]
 import { CallListSkeleton } from '../components/SkeletonLoader'; // [2026-10-11 boot-split] lazy Calls fallback
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
 import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
@@ -687,6 +688,18 @@ function ChatHub() {
     if (activeTab === 'status' && statusBadge > 0) setStatusBadge(0);
   }, [activeTab, statusBadge]);
 
+  // [2026-10-15 unread-instant] Aba "Conversas" segue o estado LOCAL da lista
+  // (services/unreadBadge) na hora — antes só o poll de 60 s a atualizava, então
+  // ler uma conversa (aqui, pela notificação ou em outro aparelho) deixava o
+  // número velho na aba por até 1 min.
+  React.useEffect(() => {
+    if (activeTab === 'chats') return undefined;
+    let ub = null;
+    try { ub = require('../services/unreadBadge'); } catch { return undefined; }
+    try { const cur = ub.getLocalUnreadTotal(); if (cur != null) setChatsBadge(cur); } catch {}
+    return ub.subscribeUnreadTotal((n) => { try { setChatsBadge(Math.max(0, Number(n) || 0)); } catch {} });
+  }, [activeTab]);
+
   // Reset chats badge when user lands on chats — ChatListTab marks rows read
   // as the user opens conversations, so we just clear the surface state here
   // and let the next 60s tick pick up any still-unread rows.
@@ -738,7 +751,20 @@ function ChatHub() {
       } catch {}
     };
     fetchEmailUnread();
-    timer = setInterval(fetchEmailUnread, 60000);
+    // [2026-10-15 ws-badge] Era HTTP a cada 60 s. O hub já avisa e-mail novo no
+    // canal `mail_{email}` (MailContext assina) → reconta no aviso (debounce) e
+    // ao (re)autenticar o WS (cobre o que chegou desconectado). O poll vira
+    // rede de segurança de 5 min, só com o app em primeiro plano.
+    let wsRecount = null;
+    const scheduleRecount = (ms) => { if (wsRecount) clearTimeout(wsRecount); wsRecount = setTimeout(fetchEmailUnread, ms); };
+    let offWsNew = null; let offWsConn = null;
+    try {
+      const ws = require('../services/websocket').default;
+      offWsNew = ws.on('new_email', () => scheduleRecount(1500));
+      offWsConn = ws.on('connection', (ev) => { if (ev && ev.status === 'authenticated') scheduleRecount(800); });
+    } catch {}
+    const stopPoll = setActiveInterval(fetchEmailUnread, 300000);
+    timer = null;
     // [2026-10-11] Abriu/marcou e-mail → o número baixa NA HORA e é recontado
     // quando o servidor confirma (antes só mudava no próximo ciclo de 60s).
     let recount = null;
@@ -748,7 +774,12 @@ function ChatHub() {
     });
     // Voltou para o app → reconta.
     const appSub = AppState.addEventListener('change', (st) => { if (st === 'active') fetchEmailUnread(); });
-    return () => { cancelled = true; if (timer) clearInterval(timer); if (recount) clearTimeout(recount); try { sub.remove(); } catch {} try { appSub.remove(); } catch {} };
+    return () => {
+      cancelled = true; if (timer) clearInterval(timer); if (recount) clearTimeout(recount);
+      if (wsRecount) clearTimeout(wsRecount);
+      try { stopPoll(); } catch {} try { offWsNew && offWsNew(); } catch {} try { offWsConn && offWsConn(); } catch {}
+      try { sub.remove(); } catch {} try { appSub.remove(); } catch {}
+    };
   }, []);
 
   const handleTabPress = useCallback((tab) => {
@@ -975,6 +1006,17 @@ function ChatHub() {
   // (Instagram parity — was showing the feed header over the reel).
   const [feedReelsMode, setFeedReelsMode] = useState(() => _tabParam === 'reels' && !_reelsIsTab);
   const onFeedModeChange = useCallback((mode) => setFeedReelsMode(mode === 'reels'), []);
+  // [2026-10-15 tab-telemetry] Troca de aba da home -> screen_view em
+  // analytics_page_views (page '/chat/<aba>'). A abertura inicial em 'chats' ja
+  // vira pageview '/chat' no _layout; aqui so as trocas (e aba inicial != chats).
+  const _tabTrackRef = useRef(null);
+  useEffect(() => {
+    const key = activeTab === 'feed' && feedReelsMode ? 'reels' : activeTab;
+    const prev = _tabTrackRef.current;
+    _tabTrackRef.current = key;
+    if (prev === key || (prev === null && key === 'chats')) return;
+    try { trackScreenView('/chat/' + key); } catch {}
+  }, [activeTab, feedReelsMode]);
   // [2026-05-30 STATUS CONSOLIDATION] When the chat-list home strip (ChatListTab)
   // taps a story ring, it flips to the canonical `status` tab and stashes the
   // tapped email here so ChatStatusTab deep-opens that user's viewer. This
@@ -1000,6 +1042,7 @@ function ChatHub() {
   const requestOpenStatus = useCallback((email) => {
     setOpenStatusEmail(email || null);
     setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
+    try { trackScreenView('/chat/status'); } catch {} // [2026-10-15 tab-telemetry]
     // Opening a story counts as "seen" for the unread badge. The old reset
     // keyed on activeTab==='status' no longer fires since we never switch tabs.
     setStatusBadge(0);
@@ -1010,6 +1053,7 @@ function ChatHub() {
   const requestNewStatus = useCallback(() => {
     setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
     setAutoNewStatus(true);
+    try { trackScreenView('/chat/status/new'); } catch {} // [2026-10-15 tab-telemetry]
     setNewStatusNonce(Date.now());
   }, []);
   // PERF: these two were inline arrows inside the tabProps literal, so every
@@ -1816,10 +1860,12 @@ function AppTile({ item, badge, onPress, colors, isDark, t }) {
   const prevBadgeRef = useRef(badge);
   useEffect(() => {
     if (!badge) return undefined;
+    // [2026-10-15 app-leve] 3 pulsos ao mudar o badge (era loop infinito = animação
+    // a 60/120 fps enquanto houver não-lidos e o menu estiver montado).
     const loop = Animated.loop(Animated.sequence([
       Animated.timing(badgePulse, { toValue: 1.15, duration: 700, useNativeDriver: true }),
       Animated.timing(badgePulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-    ]));
+    ]), { iterations: 3 });
     loop.start();
     return () => loop.stop();
   }, [badge]);

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated, Easing } 
 import Svg, { Path, Circle, Rect, G, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 
 // ---------- Illustrations ----------
 
@@ -233,6 +234,7 @@ export default function EmptyStateIllustrated({
       }),
     ]).start();
 
+    if (IS_WEB) return undefined; // [2026-10-15 web-idle] CSS (ver render)
     const float = Animated.loop(
       Animated.sequence([
         Animated.timing(floatAnim, {
@@ -267,7 +269,9 @@ export default function EmptyStateIllustrated({
         { opacity: fadeAnim, transform: [{ scale: scaleAnim }] },
       ]}
     >
-      <Animated.View style={[styles.illustrationWrap, { transform: [{ translateY }] }]}>
+      <Animated.View style={[styles.illustrationWrap, IS_WEB
+        ? cssLoop({ '0%': { transform: [{ translateY: -4 }] }, '100%': { transform: [{ translateY: 4 }] } }, { duration: 1500, direction: 'alternate' })
+        : { transform: [{ translateY }] }]}>
         <Illustration color={primary} />
       </Animated.View>
 

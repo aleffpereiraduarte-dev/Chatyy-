@@ -1352,7 +1352,7 @@ function CallScreenInner() {
       toValue: 1,
       tension: 110,
       friction: 11,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
   }, [barEnterAnim]);
 
@@ -1439,10 +1439,10 @@ function CallScreenInner() {
   const resetControlsTimer = useCallback(() => {
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     setControlsVisible(true);
-    Animated.timing(controlsFadeAnim, { toValue: 1, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(controlsFadeAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
     controlsTimerRef.current = setTimeout(() => {
       if (videoEnabled && peerConnected) {
-        Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }).start(() => {
+        Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
           setControlsVisible(false);
         });
       }
@@ -1452,7 +1452,7 @@ function CallScreenInner() {
   const handleScreenTap = useCallback(() => {
     if (!videoEnabled || !peerConnected) return;
     if (controlsVisible) {
-      Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }).start(() => {
+      Animated.timing(controlsFadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
         setControlsVisible(false);
       });
       if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
@@ -3457,7 +3457,7 @@ function CallScreenInner() {
     const anim = new Animated.Value(0);
     setFloatingEmojis(prev => [...prev, { id, emoji: emoji.slice(0, 16), x, anim }]);
     Animated.timing(anim, {
-      toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: false,
+      toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)));
   }, []);
   const _gcApplyHand = useCallback((email, raised, name) => {
@@ -3564,7 +3564,7 @@ function CallScreenInner() {
         const anim = new Animated.Value(0);
         setFloatingEmojis(prev => [...prev, { id, emoji: data.emoji, x, anim }]);
         Animated.timing(anim, {
-          toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: false,
+          toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: true,
         }).start(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)));
         break;
       }
@@ -4379,8 +4379,8 @@ function CallScreenInner() {
     if (peerConnected) return;
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.045, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1.045, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ])
     );
     pulse.start();
@@ -5363,7 +5363,7 @@ function CallScreenInner() {
     const anim = new Animated.Value(0);
     setFloatingEmojis(prev => [...prev, { id, emoji, x, anim }]);
     Animated.timing(anim, {
-      toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: false,
+      toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)));
     if (isGroupCall) {
       // [2026-10-08 group-call-interop] shared contract on topic chatyy.call +

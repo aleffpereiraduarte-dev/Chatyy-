@@ -213,6 +213,10 @@ function lockHeartbeat() { if (lockState !== 'idle') lockAcquiredAt = Date.now()
 // Safe to call any time; no-op without a token. Exported so login flows can
 // refresh creds the moment a new token lands.
 export function persistBackupCreds() {
+  if (_nativeOwns()) {
+    try { require('./photosBackupNative').configureNative().catch(() => {}); } catch {}
+    return false;
+  }
   if (Platform.OS !== 'ios' || !NativeUpload?.setBackupCreds) return false;
   try {
     const serverUrl = api.BASE_URL;
@@ -251,8 +255,11 @@ function assetMime(asset) {
 // ============================================================
 // BACKGROUND TASK DEFINITION (must be at module level)
 // ============================================================
+// [2026-10-15 photos-native] motor nativo (modules/expo-photos-backup) é o dono → fluxo antigo inerte.
+function _nativeOwns() { try { return !!require('./photosBackupNative').nativeBackupOwns(); } catch { return false; } }
 TaskManager.defineTask(TASK_NAME, async () => {
   if (Platform.OS === 'web') return BackgroundFetch.BackgroundFetchResult.NoData;
+  if (_nativeOwns()) return BackgroundFetch.BackgroundFetchResult.NoData;
 
   try {
     // Killswitch (2026-05-18): if the user / backend flipped it on, bail
@@ -400,6 +407,15 @@ export async function startForegroundBackup(onProgress, options = {}) {
     backupDebug('autoBackup.foreground.start', { platform: Platform.OS, locked: isLocked(), userInitiated });
   } catch {}
   if (Platform.OS === 'web') return { uploaded: 0, total: 0, error: 'web_unsupported' };
+  if (_nativeOwns()) {
+    // [2026-10-15 photos-native] o motor nativo faz o trabalho; "backup agora" = runNow
+    try {
+      const pbn = require('./photosBackupNative');
+      await pbn.configureNative();
+      if (userInitiated) await pbn.startNow(); else await pbn.runNowNative();
+    } catch {}
+    return { uploaded: 0, total: 0, native: true };
+  }
 
   // Killswitch (2026-05-18): backend / settings can disable backup remotely
   // when the phantom-progress banner pathology happens. Checked on every
@@ -1227,6 +1243,11 @@ async function unregisterBackgroundTask() {
 export async function initAutoBackup() {
   if (Platform.OS === 'web') return;
   if (initialized) return;
+  // [2026-10-15 photos-native] binário com o motor nativo: ele assume (e o fluxo
+  // antigo não registra BG fetch / listeners). Kill switch → segue o antigo.
+  try {
+    if (await require('./photosBackupNative').bootNativeBackup()) { initialized = true; return; }
+  } catch {}
 
   // [P2 2026-05-26] Drop any stale server-count cache so the first
   // getBackedUpCount() after a fresh launch re-fetches from the server
@@ -1357,6 +1378,10 @@ export function stopAutoBackup() {
  */
 export async function onBackupSettingChanged(enabled) {
   if (Platform.OS === 'web') return;
+  if (_nativeOwns()) {
+    try { await require('./photosBackupNative').setNativeBackupSettings({ enabled: !!enabled }); } catch {}
+    return;
+  }
 
   if (enabled) {
     initialized = false;

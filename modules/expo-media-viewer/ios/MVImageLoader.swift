@@ -1,6 +1,7 @@
 import UIKit
 import ImageIO
 import CryptoKit
+import Photos
 
 // [2026-10-14 native-viewer] Carregador de imagem do viewer nativo.
 //   • memória: NSCache (custo = bytes decodificados);
@@ -56,6 +57,15 @@ final class MVImageLoader {
     waiters[k] = [completion]
     trimDiskOnce()
     let allowAnimated = maxPixel >= MVImageLoader.fullMaxPixel
+    // [2026-10-15 photos-native] ph://<localIdentifier> = foto da galeria (grade de Fotos).
+    if uri.hasPrefix("ph://") {
+      loadPhotoAsset(String(uri.dropFirst(5)), maxPixel: maxPixel) { [weak self] img in
+        guard let self = self else { return }
+        if let img = img { self.memory.setObject(img, forKey: k as NSString, cost: MVImageLoader.cost(img)) }
+        self.finish(k, img)
+      }
+      return
+    }
     resolveSource(uri) { [weak self] source in
       guard let self = self else { return }
       guard let source = source else { self.finish(k, nil); return }
@@ -78,7 +88,36 @@ final class MVImageLoader {
   // MARK: - Internals
 
   private func key(_ uri: String, _ maxPixel: CGFloat) -> String {
-    return "\(Int(maxPixel))|\(uri)"
+    return "\(Int(maxPixel))|\(MVImageLoader.stableURI(uri))"
+  }
+
+  /// [2026-10-15 photos-native] URL assinada do CDN muda `exp`/`sig` a cada janela
+  /// de 6 h; o conteúdo é o mesmo → chave de cache sem esses parâmetros.
+  static func stableURI(_ uri: String) -> String {
+    guard uri.hasPrefix("http"), let q = uri.firstIndex(of: "?") else { return uri }
+    let base = uri[..<q]
+    let params = uri[uri.index(after: q)...].split(separator: "&").filter {
+      !$0.hasPrefix("exp=") && !$0.hasPrefix("sig=")
+    }
+    return params.isEmpty ? String(base) : String(base) + "?" + params.joined(separator: "&")
+  }
+
+  /// Foto da galeria via PhotoKit (iCloud permitido); completion na main.
+  private func loadPhotoAsset(_ localId: String, maxPixel: CGFloat, _ done: @escaping (UIImage?) -> Void) {
+    let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    guard st == .authorized || st == .limited,
+          let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localId], options: nil).firstObject else {
+      done(nil); return
+    }
+    let o = PHImageRequestOptions()
+    o.deliveryMode = .highQualityFormat
+    o.resizeMode = .fast
+    o.isNetworkAccessAllowed = true
+    o.isSynchronous = false
+    let size = CGSize(width: maxPixel, height: maxPixel)
+    PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFit, options: o) { img, _ in
+      if Thread.isMainThread { done(img) } else { DispatchQueue.main.async { done(img) } }
+    }
   }
 
   private func finish(_ k: String, _ img: UIImage?) {
@@ -105,7 +144,7 @@ final class MVImageLoader {
       return
     }
     guard let remote = MVItem.remoteURL(uri) else { done(nil); return }
-    let dest = diskDir.appendingPathComponent(MVImageLoader.sha256(uri))
+    let dest = diskDir.appendingPathComponent(MVImageLoader.sha256(MVImageLoader.stableURI(uri)))
     if FileManager.default.fileExists(atPath: dest.path) {
       try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: dest.path)
       done(.file(dest))

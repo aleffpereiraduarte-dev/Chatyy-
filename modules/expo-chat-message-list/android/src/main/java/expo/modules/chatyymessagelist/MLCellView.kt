@@ -179,6 +179,11 @@ class MLCellView(context: Context) : ViewGroup(context) {
   private var barFrom = HashMap<String, Float>()
   private var barT = 1f
   private var revealAnim: ValueAnimator? = null
+  // [2026-10-15 native-effects] emoji grande: anima 1× ao entrar na tela
+  private var jumboPending = false
+  private var jumboAnim: ValueAnimator? = null
+  private var jumboScale = 1f
+  private var jumboRot = 0f
   var pressedAction = -1
     set(v) { if (field != v) { field = v; invalidate() } }
   var snapshotMode = false
@@ -208,6 +213,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     this.style = style
     this.audio = audio
     if (changedRow) {
+      jumboAnim?.cancel(); jumboAnim = null; jumboScale = 1f; jumboRot = 0f
+      jumboPending = row.kind == MLKind.MSG && row.jumbo > 0f && !row.deleted
       swipeX = 0f
       flashAnim?.cancel(); flashAlpha = 0f
       selAnim?.cancel(); selProgress = 1f; selFrom = 0f; checkScale = 1f
@@ -257,6 +264,32 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if ((uploading && md?.up == -1) || lay.hasLoader) startSpinner() else stopSpinner()
     requestLayout()
     invalidate()
+    if (jumboPending && isAttachedToWindow) post { startJumbo() }
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    if (jumboPending) post { startJumbo() }
+  }
+
+  private fun startJumbo() {
+    if (!jumboPending || !isAttachedToWindow) return
+    jumboPending = false
+    val r = row ?: return
+    if (!MLJumboFX.claim(key)) return
+    val heart = MLJumboFX.isHeart(r.text)
+    jumboAnim?.cancel()
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = MLJumboFX.duration(heart)
+    a.interpolator = DecelerateInterpolator(1.2f)
+    a.addUpdateListener { v ->
+      val p = v.animatedValue as Float
+      jumboScale = MLJumboFX.scale(heart, p)
+      jumboRot = MLJumboFX.rotation(heart, p)
+      invalidate()
+    }
+    jumboAnim = a
+    a.start()
   }
 
   fun setAudio(a: MLAudioState?) { audio = a; invalidate() }
@@ -270,6 +303,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     pressedAction = -1
     stopSpinner()
     flashAnim?.cancel(); flashAlpha = 0f
+    jumboAnim?.cancel(); jumboAnim = null; jumboScale = 1f; jumboRot = 0f; jumboPending = false
     swipeX = 0f
   }
 
@@ -639,9 +673,16 @@ class MLCellView(context: Context) : ViewGroup(context) {
     }
     // texto
     L.text?.let { t ->
+      val jfx = !snap && (jumboScale != 1f || jumboRot != 0f)
+      if (jfx) {
+        // pivô a 30% da altura: cresce mais p/ baixo (sobre a hora) do que p/ cima (célula recorta)
+        val px = L.textFrame.centerX(); val py = L.textFrame.top + L.textFrame.height() * 0.3f
+        c.save(); c.scale(jumboScale, jumboScale, px, py); if (jumboRot != 0f) c.rotate(jumboRot, px, py)
+      }
       if (L.deletedIcon) drawDeleted(c, L.textFrame.left - s.dp(19f), L.textFrame.top + (s.lineHeightPx - s.dp(15f)) / 2, s.dp(15f), if (r.own) th.ownMeta else th.otherMeta)
       drawText(c, t, L.textFrame.left, L.textFrame.top)
       if (t.spoilers.isNotEmpty()) { c.save(); c.translate(L.textFrame.left, L.textFrame.top); MLSpoilerDraw.draw(c, t, t.particleColor, s.density); c.restore() }
+      if (jfx) c.restore()
     }
     if (r.audio != null && !L.audioFrame.isEmpty) drawAudio(c, L, r, s)
     if (r.file != null && !L.fileFrame.isEmpty) drawFile(c, L, r, s)

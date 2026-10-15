@@ -2430,13 +2430,21 @@ export function AuthProvider({ children }) {
     // (e.g. React Native builds where EventTarget exists but Event doesn't
     // actually reach registered listeners — observed as "chat empty after
     // token expiry, only fixes after Sair").
-    const iv = setInterval(() => {
-      if (globalThis.__chatyy_authFailure && globalThis.__chatyy_authFailure > (Date.now() - 10000)) {
+    // [2026-10-15 app-leve] Só em 1º plano (era 1.5 s SEMPRE = ~2400 wakeups/h com o
+    // app em 2º plano no Android). Na volta ao 'active' o tick roda na hora; um
+    // sinal emitido enquanto estava em 2º plano conta se for mais novo que o
+    // último tick (antes: janela fixa de 10 s, que ainda vale com o app aberto).
+    let lastTickAt = Date.now();
+    const stopPoll = require('../utils/activeInterval').setActiveInterval(() => {
+      const f = globalThis.__chatyy_authFailure;
+      const since = Math.min(Date.now() - 10000, lastTickAt);
+      lastTickAt = Date.now();
+      if (f && f > since) {
         globalThis.__chatyy_authFailure = 0;
         handleAuthFailure();
       }
     }, 1500);
-    return () => { removeListener(); clearInterval(iv); };
+    return () => { removeListener(); stopPoll(); };
   }, [doLogout]);
 
   // Allow profile screen to update user data (e.g., name) without full re-auth

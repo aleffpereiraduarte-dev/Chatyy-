@@ -29,6 +29,7 @@
 // of the avatar with the user's text-only ephemeral.
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
+import { cssPulseScale, IS_WEB } from '../../utils/webCssLoop';
 import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { TextStatusThumb } from './textStatus'; // [status-texto 2026-10-14]
@@ -92,14 +93,20 @@ function StoryRingAvatar({
   // scale is one of the few props that runs off-thread), so it costs nothing
   // even when 50 rings are visible at once.
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const _pulseOn = !(!pulse || (allViewed && !isLive) || (ringStyle === 'none' && !isLive));
+  // [2026-10-15 web-idle] Web: pulso em CSS (o Animated.loop no RN-web commitava o React a 60 fps).
+  const _webPulse = _pulseOn ? cssPulseScale(isLive ? 1.05 : 1.025, isLive ? 700 : 1300, { iterations: isLive ? 'infinite' : 6 }) : null;
   useEffect(() => {
     if (!pulse || (allViewed && !isLive) || (ringStyle === 'none' && !isLive)) return undefined;
+    if (IS_WEB) return undefined; // CSS cuida (ver _webPulse)
     // Live state pulses faster + harder to draw the eye (Instagram parity).
     const dur = isLive ? 700 : 1300;
+    // [2026-10-15 app-leve] Não-visto: 3 pulsos e para (era infinito em CADA anel
+    // não visto = display link rodando sem parar na lista/status). Ao vivo segue infinito.
     const loop = Animated.loop(Animated.sequence([
       Animated.timing(pulseAnim, { toValue: 1, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       Animated.timing(pulseAnim, { toValue: 0, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]));
+    ]), isLive ? undefined : { iterations: 3 });
     loop.start();
     return () => { try { loop.stop(); } catch {} };
   }, [pulse, allViewed, ringStyle, pulseAnim, isLive]);
@@ -115,11 +122,11 @@ function StoryRingAvatar({
     const ringSize = size + 10;
     const radius = (ringSize / 2) - 1.5;
     inner = (
-      <Animated.View style={{
+      <Animated.View style={[{
         width: ringSize, height: ringSize,
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
-      }}>
+      }, _webPulse]}>
         <View style={{ position: 'absolute', top: 0, left: 0 }}>
           <Svg width={ringSize} height={ringSize}>
             <Defs>
@@ -150,11 +157,11 @@ function StoryRingAvatar({
     const ringSize = size + 10;
     const radius = (ringSize / 2) - 1.5;
     inner = (
-      <Animated.View style={{
+      <Animated.View style={[{
         width: ringSize, height: ringSize,
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
-      }}>
+      }, _webPulse]}>
         {!allViewed && (() => {
           // Suffix the gradient id with the palette + size so we never get
           // an id collision between a close-friends green ring and a brand
@@ -214,11 +221,11 @@ function StoryRingAvatar({
     // doesn't share its Defs (only the LAST rendered Defs would win).
     const segGid = `segRing_${closeFriends ? 'cf' : 'br'}_${size}`;
     inner = (
-      <Animated.View style={{
+      <Animated.View style={[{
         width: ringSize, height: ringSize,
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
-      }}>
+      }, _webPulse]}>
         <View style={{ position: 'absolute', top: 0, left: 0 }}>
           <Svg width={ringSize} height={ringSize}>
             <Defs>

@@ -164,7 +164,11 @@ export async function registerBackgroundBackup() {
   // Replaces the JS TaskManager.defineTask path that Android battery
   // saver was killing within minutes. WorkManager runs in the system
   // process and survives swipe-to-kill / doze.
-  if (Platform.OS === 'android') {
+  // [2026-10-15 photos-native] motor nativo novo é o dono → não agenda o BackupWorker antigo.
+  let _pbnOwns = false;
+  try { _pbnOwns = require('./photosBackupNative').nativeBackupOwns(); } catch {}
+  if (_pbnOwns) { try { await require('./photosBackupNative').configureNative(); } catch {} }
+  if (Platform.OS === 'android' && !_pbnOwns) {
     try {
       const native = require('../modules/expo-background-upload').default;
       if (native && typeof native.scheduleBackup === 'function') {
@@ -244,7 +248,10 @@ export async function setBackupSettings(settings) {
     const merged = await backup.setBackupSettings(settings);
     // [2026-10-08 upload-br] Android WorkManager constraints (UNMETERED /
     // charging) are fixed at schedule time → re-schedule when they change.
-    if (Platform.OS === 'android' && merged?.enabled && settings
+    let _pbnOwns = false;
+    try { _pbnOwns = require('./photosBackupNative').nativeBackupOwns(); } catch {}
+    if (_pbnOwns) { try { await require('./photosBackupNative').configureNative(); } catch {} }
+    if (Platform.OS === 'android' && !_pbnOwns && merged?.enabled && settings
         && ('wifiOnly' in settings || 'chargingPreferred' in settings)) {
       try {
         const native = require('../modules/expo-background-upload').default;

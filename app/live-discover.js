@@ -17,6 +17,7 @@ import {
   RefreshControl, ScrollView, Image, Platform, Animated, Easing, Modal, Pressable,
   useWindowDimensions,
 } from 'react-native';
+import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 import Svg, {
   Circle, Path, Rect, G, Defs, Line, Polyline,
   LinearGradient as SvgLinearGradient, Stop,
@@ -184,7 +185,11 @@ export default function LiveDiscoverScreen() {
   // live" nudge — wired statically for now per the task brief (no
   // inactivity timer yet).
   const heroPulse = useRef(new Animated.Value(0)).current;
+  // [2026-10-15 web-idle] Web: os pulsos viram @keyframes (Animated.loop no RN-web = 60 commits/s parado).
+  const webHeroCta = cssLoop({ '0%': { transform: [{ scale: 1 }] }, '100%': { transform: [{ scale: 1.045 }] } }, { duration: 900, direction: 'alternate' });
+  const webHeroHalo = cssLoop({ '0%': { transform: [{ scale: 1 }], opacity: 0.65 }, '100%': { transform: [{ scale: 1.55 }], opacity: 0 } }, { duration: 900, direction: 'alternate' });
   useEffect(() => {
+    if (IS_WEB) return undefined;
     const loop = Animated.loop(Animated.sequence([
       Animated.timing(heroPulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       Animated.timing(heroPulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
@@ -406,7 +411,7 @@ export default function LiveDiscoverScreen() {
 
             {/* Go-Live CTA — subtle pulse when user is "stale" (per brief
                 the inactivity timer isn't wired yet, so it always pulses). */}
-            <Animated.View style={{ transform: [{ scale: heroCtaScale }] }}>
+            <Animated.View style={IS_WEB ? webHeroCta : { transform: [{ scale: heroCtaScale }] }}>
               <TouchableOpacity
                 onPress={onGoLive}
                 activeOpacity={0.85}
@@ -431,7 +436,7 @@ export default function LiveDiscoverScreen() {
           <View style={styles.heroBigBadge}>
             <View style={styles.heroBigBadgeDotWrap}>
               <Animated.View
-                style={[styles.heroBigBadgeHalo, {
+                style={[styles.heroBigBadgeHalo, IS_WEB ? webHeroHalo : {
                   transform: [{ scale: liveHaloScale }],
                   opacity: liveHaloOpacity,
                 }]}
@@ -590,13 +595,18 @@ function LiveCard({ item, index, isDark, t, width, onPress, onLongPress }) {
   // dot. Loops 0→1→0 at 900ms each leg so the badge "breathes" without
   // demanding attention. Drives opacity + scale on the inner dot.
   const pulse = useRef(new Animated.Value(0)).current;
+  const webDot = cssLoop({ '0%': { opacity: 0.55, transform: [{ scale: 0.9 }] }, '100%': { opacity: 1, transform: [{ scale: 1.15 }] } }, { duration: 900, direction: 'alternate' });
   useEffect(() => {
-    Animated.loop(
+    if (IS_WEB) return undefined; // [2026-10-15 web-idle] CSS (webDot)
+    // [2026-10-15] guarda o loop p/ parar no unmount (antes ficava rodando órfão).
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ])
-    ).start();
+    );
+    loop.start();
+    return () => { try { loop.stop(); } catch {} };
   }, []);
   const dotOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
   const dotScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.15] });
@@ -654,7 +664,7 @@ function LiveCard({ item, index, isDark, t, width, onPress, onLongPress }) {
 
           {/* AO VIVO badge (top-left, breathing). */}
           <View style={styles.liveBadge}>
-            <Animated.View style={[styles.liveDot, { opacity: dotOpacity, transform: [{ scale: dotScale }] }]} />
+            <Animated.View style={[styles.liveDot, IS_WEB ? webDot : { opacity: dotOpacity, transform: [{ scale: dotScale }] }]} />
             <Text style={styles.liveBadgeText}>{t('live.live') || 'AO VIVO'}</Text>
           </View>
 
@@ -757,7 +767,9 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
 
   // Halo pulse animation for the primary CTA.
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const webCtaHalo = cssLoop({ '0%': { transform: [{ scale: 1 }], opacity: 0.16 }, '100%': { transform: [{ scale: 1.12 }], opacity: 0 } }, { duration: 1400, easing: 'ease-out' });
   useEffect(() => {
+    if (IS_WEB) return undefined; // [2026-10-15 web-idle] CSS (webCtaHalo)
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -869,7 +881,7 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           pointerEvents="none"
           style={[
             styles.ctaHalo,
-            { backgroundColor: ctaBg, transform: [{ scale: haloScale }], opacity: haloOpacity },
+            IS_WEB ? [{ backgroundColor: ctaBg }, webCtaHalo] : { backgroundColor: ctaBg, transform: [{ scale: haloScale }], opacity: haloOpacity },
           ]}
         />
         <TouchableOpacity

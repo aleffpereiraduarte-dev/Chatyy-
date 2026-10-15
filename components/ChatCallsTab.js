@@ -23,6 +23,11 @@ import { LargeTitle, useLargeTitleCollapse } from './LargeTitleHeader'; // [2026
 import PressableScale from './PressableScale'; // [2026-10-15 nav-motion]
 import FadeSlideIn from './FadeSlideIn'; // [2026-10-15 nav-motion]
 const _NOFLEX = { flex: 0 };
+// [2026-10-15 native-calls] Histórico em lista NATIVA (UICollectionView /
+// RecyclerView). Binário sem a view → isCallListAvailable() false → ScrollView
+// JS abaixo (idêntico ao antigo). Desligar por OTA: globalThis.__chatyy_native_calls = false.
+import NativeCallList from './calls/NativeCallList';
+import { isCallListAvailable as _nativeCallsAvailable } from '../modules/expo-chat-conversation-list';
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
@@ -543,7 +548,7 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
       toValue: 0.93,
       tension: 300,
       friction: 10,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
   }, [scaleAnim]);
 
@@ -552,7 +557,7 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
       toValue: 1,
       tension: 200,
       friction: 10,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
   }, [scaleAnim]);
 
@@ -763,6 +768,55 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   if ((a.source || '') !== (b.source || '')) return false;
   return true;
 });
+
+// [2026-10-15 native-calls] Mesmas regras de exibição do CallHistoryRow, em
+// dados planos para a lista nativa (components/calls/NativeCallList.js).
+function _describeCallRow(item, t, language) {
+  const direction = callDirection(item);
+  const isMissed = direction === 'missed';
+  const isVideoCall = callIsVideo(item);
+  const country = detectCountry(item.to_number || item.contactEmail);
+  const isChatyy = item.source === 'chat';
+  const rawName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
+  const hasSavedName = !!(item.contactName || item.contact_name) && !/^\+?\d[\d\s\-()]{3,}$/.test(String(rawName).trim());
+  const phoneForLookup = item.to_number || (typeof rawName === 'string' && /^\+?\d/.test(rawName) ? rawName : '');
+  const lookedUp = !hasSavedName && phoneForLookup ? lookupDeviceContactName(phoneForLookup) : null;
+  const _isRawHandle = (n) => typeof n === 'string' && /^[a-z0-9]+([._-][a-z0-9]+)*$/.test(String(n).trim()) && !/^\d+$/.test(String(n).trim());
+  const title = lookedUp
+    || ((hasSavedName && !_isRawHandle(rawName)) ? rawName : prettifyHandle(rawName));
+  const sub = isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : getCallLabel(direction, t));
+  const dur = formatDuration(item.duration);
+  const time = formatCallTime(item.timestamp || item.created_at, t, language);
+  const label = getCallLabel(direction, t);
+  return {
+    title: String(title || '?'),
+    dir: isMissed ? 'missed' : (direction === 'outgoing' ? 'out' : 'in'),
+    video: isVideoCall,
+    sub,
+    dur,
+    vm: !!(item.has_voicemail || item.voicemail_id),
+    time,
+    count: Number(item.count || item.call_count || 0) || 0,
+    isChatyy: isChatyy && !!(item.contactName || item.contactEmail),
+    avatarName: item.contactName || item.contactEmail || '?',
+    avatarEmail: item.contactEmail || '',
+    flag: country?.flag || '',
+    a11y: [title, label, isVideoCall ? (t?.('calls.video') || 'Vídeo') : '', dur, time].filter(Boolean).join(', '),
+  };
+}
+
+// Mesmo agrupamento do groupedCalls (Hoje / Ontem / Esta Semana / Anteriores).
+function _callSectionLabel(item, t) {
+  const d = new Date(item?.timestamp);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return t?.('calls.today') || 'Hoje';
+  if (d.toDateString() === yesterday.toDateString()) return t?.('calls.yesterday') || 'Ontem';
+  const diffDays = Math.floor((today - d) / (1000 * 60 * 60 * 24));
+  if (diffDays < 7) return t?.('calls.thisWeek') || 'Esta Semana';
+  return t?.('calls.earlier') || 'Anteriores';
+}
 
 // ============================================================
 // EMPTY ILLUSTRATION — phone with three pulsing signal rings.
@@ -1155,8 +1209,8 @@ function ActiveCallScreen({
     }
     const ringPulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseRingAnim, { toValue: 1, duration: 1200, useNativeDriver: false }),
-        Animated.timing(pulseRingAnim, { toValue: 0, duration: 1200, useNativeDriver: false }),
+        Animated.timing(pulseRingAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(pulseRingAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
       ])
     );
     ringPulse.start();
@@ -1171,8 +1225,8 @@ function ActiveCallScreen({
     }
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 900, useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1.08, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
       ])
     );
     pulse.start();
@@ -2813,6 +2867,23 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   // and later refreshes render in full (the limit only clamps the first paint).
   const [renderLimit, setRenderLimit] = useState(24);
   const expandRenderLimit = useCallback(() => setRenderLimit(Infinity), []);
+  // [2026-10-15 native-calls] lista nativa: falha → volta ao ScrollView JS (sessão inteira).
+  const [_nativeCallsFailed, _setNativeCallsFailed] = useState(() => !!globalThis.__chatyy_native_calls_failed);
+  const _onNativeCallsFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_calls_failed = true; console.warn('[native-calls] fallback JS:', msg); } catch {}
+    _setNativeCallsFailed(true);
+  }, []);
+  const _nativeDescribe = useCallback((item) => _describeCallRow(item, t, language), [t, language]);
+  const _nativeSectionOf = useCallback((item) => _callSectionLabel(item, t), [t]);
+  const _nativeCallLabels = useMemo(() => ({
+    callBack: t?.('calls.callBack') || 'Ligar de volta',
+    info: t?.('calls.callInfo') || 'Info',
+    delete: t?.('common.delete') || 'Apagar',
+    block: t?.('calls.blockCaller') || 'Bloquear contato',
+    report: t?.('calls.reportSpam') || 'Denunciar spam',
+    addContact: t?.('calls.addToContacts') || 'Adicionar aos contatos',
+    copyNumber: t?.('calls.copyNumber') || 'Copiar número',
+  }), [t]);
   useEffect(() => {
     let timer = null;
     let task = null;
@@ -3018,6 +3089,59 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     setChatCalls(prev => Array.isArray(prev) ? prev.filter(c => c.id !== item.id) : prev);
   }, []);
 
+  // [2026-10-15 native-calls] Ações do menu da linha por chave — usadas pelo
+  // ActionSheet/Alert (JS) e pelo menu nativo da lista (NativeCallList).
+  const runRowMenuAction = useCallback(async (kind, item) => {
+    if (!item) return;
+    const caller = item.contactEmail || item.contact_email || '';
+    const number = item.to_number || '';
+    const name = item.contactName || item.contact_name || '';
+    if (kind === 'delete') return handleDeleteEntry(item);
+    if (kind === 'copyNumber') {
+      try {
+        const Clipboard = require('expo-clipboard');
+        await Clipboard.setStringAsync(number || caller || '');
+      } catch {}
+      return;
+    }
+    if (kind === 'block') {
+      // Block surfaces via existing voipBlockCaller / addBlockedCaller helper
+      // when present; fallback Alert if not wired.
+      try {
+        const api = require('../services/api');
+        if (typeof api.voipBlockCaller === 'function') {
+          await api.voipBlockCaller(caller || number);
+        } else if (typeof api.addBlockedCaller === 'function') {
+          await api.addBlockedCaller(caller || number);
+        }
+      } catch {}
+      return;
+    }
+    if (kind === 'report') {
+      try {
+        const api = require('../services/api');
+        if (typeof api.voipReportSpam === 'function') {
+          await api.voipReportSpam(caller || number);
+        } else if (typeof api.reportSpamCaller === 'function') {
+          await api.reportSpamCaller(caller || number);
+        }
+      } catch {}
+      return;
+    }
+    if (kind === 'addContact') {
+      try {
+        const Contacts = require('expo-contacts');
+        if (Contacts?.presentFormAsync) {
+          await Contacts.presentFormAsync(null, {
+            [Contacts.Fields.Name]: name || '',
+            [Contacts.Fields.PhoneNumbers]: number ? [{ number, label: 'mobile' }] : [],
+            [Contacts.Fields.Emails]: caller ? [{ email: caller, label: 'work' }] : [],
+          });
+        }
+      } catch {}
+    }
+  }, [handleDeleteEntry]);
+
   const handleRowLongPress = useCallback((item) => {
     if (!item) return;
     const caller = item.contactEmail || item.contact_email || '';
@@ -3030,52 +3154,12 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     const optDelete = t?.('common.delete') || 'Apagar';
     const cancel = t?.('common.cancel') || 'Cancelar';
 
-    const handleSelected = async (label) => {
-      if (label === optDelete) return handleDeleteEntry(item);
-      if (label === optCopyNumber) {
-        try {
-          const Clipboard = require('expo-clipboard');
-          await Clipboard.setStringAsync(number || caller || '');
-        } catch {}
-        return;
-      }
-      if (label === optBlock) {
-        // Block surfaces via existing voipBlockCaller / addBlockedCaller helper
-        // when present; fallback Alert if not wired.
-        try {
-          const api = require('../services/api');
-          if (typeof api.voipBlockCaller === 'function') {
-            await api.voipBlockCaller(caller || number);
-          } else if (typeof api.addBlockedCaller === 'function') {
-            await api.addBlockedCaller(caller || number);
-          }
-        } catch {}
-        return;
-      }
-      if (label === optReport) {
-        try {
-          const api = require('../services/api');
-          if (typeof api.voipReportSpam === 'function') {
-            await api.voipReportSpam(caller || number);
-          } else if (typeof api.reportSpamCaller === 'function') {
-            await api.reportSpamCaller(caller || number);
-          }
-        } catch {}
-        return;
-      }
-      if (label === optAddContact) {
-        try {
-          const Contacts = require('expo-contacts');
-          if (Contacts?.presentFormAsync) {
-            await Contacts.presentFormAsync(null, {
-              [Contacts.Fields.Name]: name || '',
-              [Contacts.Fields.PhoneNumbers]: number ? [{ number, label: 'mobile' }] : [],
-              [Contacts.Fields.Emails]: caller ? [{ email: caller, label: 'work' }] : [],
-            });
-          }
-        } catch {}
-        return;
-      }
+    const handleSelected = (label) => {
+      if (label === optDelete) return runRowMenuAction('delete', item);
+      if (label === optCopyNumber) return runRowMenuAction('copyNumber', item);
+      if (label === optBlock) return runRowMenuAction('block', item);
+      if (label === optReport) return runRowMenuAction('report', item);
+      if (label === optAddContact) return runRowMenuAction('addContact', item);
     };
 
     if (Platform.OS === 'ios') {
@@ -3110,7 +3194,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         { cancelable: true }
       );
     }
-  }, [t, handleDeleteEntry]);
+  }, [t, runRowMenuAction]);
 
   // Memory #832: tap on the green phone icon in a call history row should
   // redial the Chatyy call directly (WhatsApp parity), NOT just re-open the
@@ -3508,6 +3592,72 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     </>
   );
 
+  // [2026-10-15 native-calls] Cartões "Silenciar desconhecidas" e "Criar link":
+  // os mesmos na lista JS (ScrollView) e no cabeçalho da lista nativa.
+  const _topCards = (
+    <>
+      {/* Silence unknown callers */}
+      <View style={{
+        flexDirection: 'row', alignItems: 'center',
+        marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+        paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
+        // [2026-10-10 visual] was #f2f2f7 = same as the light page bg (card vanished)
+        backgroundColor: cardBg,
+      }}>
+        <View style={{ flex: 1, marginRight: 12 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
+            {t?.('calls.silenceUnknown') || 'Silenciar chamadas desconhecidas'}
+          </Text>
+          <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
+            {t?.('calls.silenceUnknownDesc') || 'Chamadas de números fora dos contatos serão silenciadas'}
+          </Text>
+        </View>
+        <SilenceToggle isDark={isDark} />
+      </View>
+
+      {/* Create shareable call link (WhatsApp parity) */}
+      <PressableScale
+        onPress={handleCreateCallLink}
+        activeOpacity={0.7}
+        disabled={creatingLink}
+        style={{
+          flexDirection: 'row', alignItems: 'center',
+          marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
+          backgroundColor: cardBg,
+          opacity: creatingLink ? 0.6 : 1,
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={t?.('calls.createCallLink') || 'Criar link de chamada'}
+      >
+        <View style={{
+          width: 40, height: 40, borderRadius: 20, marginRight: 12,
+          alignItems: 'center', justifyContent: 'center',
+          backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.07)',
+        }}>
+          {creatingLink
+            ? <ActivityIndicator size="small" color={isDark ? '#F5F5F7' : '#111111'} />
+            : <IconLink size={20} color={isDark ? '#F5F5F7' : '#111111'} />}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
+            {t?.('calls.createCallLink') || 'Criar link de chamada'}
+          </Text>
+          <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
+            {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
+          </Text>
+        </View>
+      </PressableScale>
+    </>
+  );
+
+  // [2026-10-15 native-calls] Lista nativa só com histórico carregado e não
+  // vazio (esqueleto/vazio seguem no ScrollView JS). Kill switch por OTA:
+  // globalThis.__chatyy_native_calls = false. Erro → volta ao JS na hora.
+  const _useNativeCalls = Platform.OS !== 'web' && !_nativeCallsFailed
+    && globalThis.__chatyy_native_calls !== false && !isLoading && filteredHistory.length > 0
+    && _nativeCallsAvailable();
+
   return (
     <View style={[s.container, { backgroundColor: bgColor }]}>
       {/* [2026-10-15 nav-motion] chips/segmento/plano: fixos em cima (sem título
@@ -3515,6 +3665,30 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       {!largeTitle && _headerChrome}
 
       {/* Call history */}
+      {_useNativeCalls ? (
+        <NativeCallList
+          calls={filteredHistory}
+          isDark={isDark}
+          labels={_nativeCallLabels}
+          describe={_nativeDescribe}
+          sectionOf={_nativeSectionOf}
+          bottomInset={100}
+          header={(
+            <>
+              {!!largeTitle && <LargeTitle title={largeTitle} color={textColor} />}
+              {!!largeTitle && _headerChrome}
+              {_topCards}
+            </>
+          )}
+          onPress={handleHistoryPress}
+          onCallBack={handleHistoryCallBack}
+          onInfoPress={setInfoItem}
+          onDelete={handleDeleteEntry}
+          onMenuAction={runRowMenuAction}
+          onCollapsedChange={largeTitle ? onLargeTitleCollapsedChange : undefined}
+          onFailure={_onNativeCallsFailure}
+        />
+      ) : (
       <ScrollView
         style={s.scrollView}
         contentContainerStyle={s.scrollContent}
@@ -3527,58 +3701,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         {!!largeTitle && _headerChrome}
         {/* [2026-10-14 vis3] os 2 cartões agora rolam junto com o histórico (antes ficavam fixos e
             comiam ~170px da lista em telas pequenas). */}
-        {/* Silence unknown callers */}
-        <View style={{
-          flexDirection: 'row', alignItems: 'center',
-          marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
-          // [2026-10-10 visual] was #f2f2f7 = same as the light page bg (card vanished)
-          backgroundColor: cardBg,
-        }}>
-          <View style={{ flex: 1, marginRight: 12 }}>
-            <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
-              {t?.('calls.silenceUnknown') || 'Silenciar chamadas desconhecidas'}
-            </Text>
-            <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
-              {t?.('calls.silenceUnknownDesc') || 'Chamadas de números fora dos contatos serão silenciadas'}
-            </Text>
-          </View>
-          <SilenceToggle isDark={isDark} />
-        </View>
-
-        {/* Create shareable call link (WhatsApp parity) */}
-        <PressableScale
-          onPress={handleCreateCallLink}
-          activeOpacity={0.7}
-          disabled={creatingLink}
-          style={{
-            flexDirection: 'row', alignItems: 'center',
-            marginHorizontal: 16, marginTop: 8, marginBottom: 4,
-            paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 64,
-            backgroundColor: cardBg,
-            opacity: creatingLink ? 0.6 : 1,
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={t?.('calls.createCallLink') || 'Criar link de chamada'}
-        >
-          <View style={{
-            width: 40, height: 40, borderRadius: 20, marginRight: 12,
-            alignItems: 'center', justifyContent: 'center',
-            backgroundColor: isDark ? 'rgba(255, 255, 255,0.10)' : 'rgba(17, 17, 17,0.07)',
-          }}>
-            {creatingLink
-              ? <ActivityIndicator size="small" color={isDark ? '#F5F5F7' : '#111111'} />
-              : <IconLink size={20} color={isDark ? '#F5F5F7' : '#111111'} />}
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
-              {t?.('calls.createCallLink') || 'Criar link de chamada'}
-            </Text>
-            <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
-              {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
-            </Text>
-          </View>
-        </PressableScale>
+        {_topCards}
         {isLoading ? (
           <CallListSkeleton count={6} />
         ) : filteredHistory.length === 0 ? (
@@ -3654,6 +3777,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         )}
         <View style={{ height: 100 }} />
       </ScrollView>
+      )}
 
       {/* FAB - Dialer button (Telegram-grade glass orb, green tint) */}
       {PSTN_ENABLED && (

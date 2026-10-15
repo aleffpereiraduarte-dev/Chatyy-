@@ -1,580 +1,151 @@
-import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
-import ErrorBoundary from "../components/ErrorBoundary";
-import { memo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+// /settings — hub das Configurações.
+//
+// [2026-10-15 settings-split] A raiz agora só renderiza o HERO (perfil +
+// cartões Chatyy One/Carteira/Contas/Dispositivos) e a LISTA de categorias
+// (+ busca). Cada categoria é um componente em components/settings/categories/
+// carregado sob demanda, com estado LOCAL — antes este arquivo tinha 5 mil
+// linhas e 104 useState num componente só (qualquer toggle re-renderizava a
+// tela inteira; a abertura montava todas as categorias escondidas).
+//
+// Lista da raiz NATIVA (iOS UICollectionView em cartões / Android
+// RecyclerView) via modules/expo-chat-conversation-list (view
+// ChatyySettingsList) — o hero continua JS como cabeçalho (filho RN), como a
+// home. Desligar por OTA: globalThis.__chatyy_native_settings = false; erro
+// nativo/render → volta sozinho para a lista JS (mesmo visual).
+import ErrorBoundary from '../components/ErrorBoundary';
+import { Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
-  Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
-  BackHandler, Keyboard, RefreshControl, Animated, Easing,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, BackHandler, RefreshControl, Animated,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
-import AvatarCircle from '../components/AvatarCircle';
+import { HapticsCompat as Haptics } from '../services/haptics';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
-import PressableScale from '../components/PressableScale';
-import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
-// [2026-10-08 settings-redesign] grouped inset lists (iOS/WhatsApp Settings)
-import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, SettingsIconTile, OptionSheet, useGroupedColors } from '../components/settings/SettingsKit';
-import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
-import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
-import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
-import SettingsSegmented from '../components/SettingsSegmented';
-// [2026-10-11 settings-unify] painéis únicos (antes duplicados no ProfileSettingsSheet / ChatProfileTab)
-import { PrivacyExtrasGroup, PushMasterSwitchRow, AccentColorGroup, WallpaperRow } from '../components/settings/SettingsPanels';
-import { SettingsHero, SettingsSpecialCards } from '../components/settings/SettingsHero'; // [2026-10-15 settings-2026]
-import { SettingsSearchContext } from '../components/settings/SettingsKit';
+import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } from '../components/settings/SettingsKit';
+import { SettingsHero, SettingsSpecialCards } from '../components/settings/SettingsHero';
 import { isReduceMotionEnabled } from '../components/reducedMotion';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResponsive } from '../utils/responsive';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { SELECTABLE_LOCALES, LANGUAGES as I18N_LANGUAGES } from '../i18n';
-import { useCurrency } from '../context/CurrencyContext';
-import { FontSize, Spacing, BorderRadius, Shadow, LetterSpacing } from '../constants/theme';
-import {
-  IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
-  IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
-  IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
-  IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase, IconRefresh,
-  IconX, IconChevronDown, IconBrush, IconHelpCircle, IconSearch, IconDownload,
-  IconUserPlus, IconType,
-} from '../components/Icons';
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
-import { useBiometric } from '../context/BiometricContext';
-import { PASSKEYS_ENABLED } from '../constants/featureFlags';
-import { useConfirm } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
-import FilterRuleEditor from '../components/FilterRuleEditor';
-import { PrivacyModal, TermsModal } from '../components/LoginModals';
+import { useConfirm } from '../components/ConfirmModal';
+import { SELECTABLE_LOCALES, LANGUAGES as I18N_LANGUAGES } from '../i18n';
+import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/theme';
+import {
+  IconArrowLeft, IconSparkles, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
+  IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
+} from '../components/Icons';
 import * as api from '../services/api';
-import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
-import { getCached, setCache } from '../services/cache';
-import { SettingsSkeleton, Shimmer } from '../components/SkeletonLoader';
+import * as settingsCache from '../services/settingsCache';
 import Constants from 'expo-constants';
+import {
+  CATEGORY_GROUPS, GROUP_HEADER_KEYS, CATEGORY_META, categoryTitle, sectionToCategory,
+  getCategoryComponent, preloadCategory,
+} from '../components/settings/categories';
+import { SettingsHostContext, normalizePrivacy, privacyValueLabel, pushLevelOf, emitSettingsRefresh, useSection } from '../components/settings/categories/shared';
+import { buildSearchIndex, filterSearchIndex } from '../components/settings/categories/searchIndex';
+import NativeSettingsList, { isNativeSettingsListAvailable } from '../components/settings/NativeSettingsList';
 
-function getStorage(key) {
-  if (Platform.OS === 'web') {
-    try { return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null; } catch { return null; }
-  }
-  return null; // async handled separately
-}
-function setStorage(key, val) {
-  if (Platform.OS === 'web') {
-    try { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); } catch {}
-  } else {
-    import('@react-native-async-storage/async-storage').then(m => m.default.setItem(key, val)).catch(() => {});
-  }
-}
-
-// History download / missing-media UI used inside the Storage section of
-// SettingsScreenInner. Hooks pull theme + i18n; SQLite counters come from
-// services/db.getSyncStats() refreshed on mount + every 4s while a download
-// is running. Manual triggers route to services/fullHistorySync.
-const HistoryDownloadRow = memo(function HistoryDownloadRow() {
-  const { colors } = useTheme();
-  const { t } = useLanguage();
-  const [stats, setStats] = useState(null);
-  const [busyHistory, setBusyHistory] = useState(false);
-  const [busyMedia, setBusyMedia] = useState(false);
-  const [mediaProgress, setMediaProgress] = useState(null); // {loaded,total,percent}
-  const [historyProgress, setHistoryProgress] = useState(null);
-  // #1247 (2026-05-21): live progress from the background media auto-sync
-  // loop. When phase='syncing', the row morphs into "Sincronizando X/Y"
-  // (vs the alarming "Mídias faltantes: Y"); when nothing is pending and
-  // the loop has settled, it shows "Sincronizado ✓".
-  const [autoSync, setAutoSync] = useState(null);
-  const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
-
-  const refreshStats = useCallback(async () => {
-    if (Platform.OS === 'web') return;
-    try {
-      const dbMod = require('../services/db');
-      const r = await dbMod.getSyncStats?.();
-      if (aliveRef.current) setStats(r || null);
-    } catch {}
-  }, []);
-  useEffect(() => { refreshStats(); }, [refreshStats]);
-
-  // Poll stats every 4s while a download is running so the counters reflect
-  // progress in near-real-time.
-  useEffect(() => {
-    if (!busyHistory && !busyMedia) return undefined;
-    const id = setInterval(refreshStats, 4000);
-    return () => clearInterval(id);
-  }, [busyHistory, busyMedia, refreshStats]);
-
-  // Subscribe to bootstrap progress for live convs counter.
-  useEffect(() => {
-    if (Platform.OS === 'web' || !busyHistory) return undefined;
-    let ws = null;
-    try { ws = require('../services/websocket').default; } catch {}
-    const handler = (payload) => {
-      setHistoryProgress({
-        convDone: payload.convDone || 0,
-        convTotal: payload.convTotal || 0,
-        phase: payload.phase,
-      });
-      if (payload.phase === 'done') {
-        setBusyHistory(false);
-        refreshStats();
-      }
-    };
-    try { ws?.on?.('chat_bootstrap_progress', handler); } catch {}
-    return () => { try { ws?.off?.('chat_bootstrap_progress', handler); } catch {} };
-  }, [busyHistory, refreshStats]);
-
-  // [#1247] Subscribe to media auto-sync progress. Always-on so the row
-  // reflects whatever the background loop is doing. Seed with current
-  // snapshot so a mid-pass open shows progress immediately.
-  useEffect(() => {
-    if (Platform.OS === 'web') return undefined;
-    let ws = null;
-    try { ws = require('../services/websocket').default; } catch {}
-    try {
-      const mas = require('../services/mediaAutoSync');
-      const snap = mas.getAutoSyncProgress?.();
-      if (snap) setAutoSync(snap);
-    } catch {}
-    const handler = (payload) => {
-      if (!aliveRef.current) return;
-      setAutoSync({ ...(payload || {}) });
-      if (payload?.phase === 'done') refreshStats();
-    };
-    try { ws?.on?.('media_auto_sync_progress', handler); } catch {}
-    return () => { try { ws?.off?.('media_auto_sync_progress', handler); } catch {} };
-  }, [refreshStats]);
-
-  const onDownloadAll = useCallback(async () => {
-    if (busyHistory) return;
-    setBusyHistory(true);
-    setHistoryProgress(null);
-    try {
-      const api = require('../services/api');
-      const { forceFullHistoryDownload } = require('../services/fullHistorySync');
-      const email = api.getActiveAccountEmail?.() || '';
-      await forceFullHistoryDownload(api.apiCall, email, { includeAllMedia: true });
-    } catch {}
-    setBusyHistory(false);
-    refreshStats();
-  }, [busyHistory, refreshStats]);
-
-  const onDownloadMissing = useCallback(async () => {
-    if (busyMedia) return;
-    setBusyMedia(true);
-    setMediaProgress({ loaded: 0, total: 0, percent: 0 });
-    // Also nudge the background auto-sync — user pressed "Sincronizar agora",
-    // so push it past any cellular gate.
-    try {
-      const mas = require('../services/mediaAutoSync');
-      mas.nudgeMediaAutoSync?.('settings-manual');
-    } catch {}
-    try {
-      const { downloadMissingMediaOnly } = require('../services/fullHistorySync');
-      await downloadMissingMediaOnly({
-        onProgress: (p) => {
-          if (aliveRef.current) setMediaProgress(p);
-        },
-      });
-    } catch {}
-    setBusyMedia(false);
-    refreshStats();
-  }, [busyMedia, refreshStats]);
-
-  if (Platform.OS === 'web') return null;
-
-  const msgsTotal = Number(stats?.msgsTotal || 0);
-  const mediaPending = Number(stats?.mediaPending || 0);
-  // [#1247] Derived UI state. Priority: live syncing > pending > all-synced.
-  const autoSyncing = autoSync?.phase === 'syncing' && (autoSync?.total || 0) > 0;
-  const allSynced = mediaPending === 0 && !autoSyncing;
-
-  // [2026-10-08 settings-redesign] grouped list (was ad-hoc rows inside the storage card)
-  const syncValue = autoSyncing
-    ? `${(autoSync?.loaded || 0).toLocaleString()}/${(autoSync?.total || 0).toLocaleString()}`
-    : allSynced
-      ? (t('settings.storage.allSynced') || 'Sincronizado')
-      : `${mediaPending.toLocaleString()} ${t('settings.storage.pending') || 'pendentes'}`;
-  return (
-    <SettingsGroup header={t('settings.rd.history') || 'Histórico'}>
-      <SettingsRow
-        title={t('settings.storage.msgsOnDevice') || 'Mensagens no celular'}
-        value={msgsTotal.toLocaleString()}
-      />
-      <SettingsRow
-        title={t('settings.storage.mediaSyncStatus') || 'Mídias'}
-        right={autoSyncing ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={colors.text} style={{ marginRight: 6 }} />
-            <Text style={{ fontSize: 16, color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>{syncValue}</Text>
-          </View>
-        ) : allSynced ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <IconCheck size={16} color={colors.success || '#10b981'} style={{ marginRight: 4 }} />
-            <Text style={{ fontSize: 16, color: colors.textSecondary }}>{syncValue}</Text>
-          </View>
-        ) : (
-          <Text style={{ fontSize: 16, color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>{syncValue}</Text>
-        )}
-      />
-      <SettingsRow
-        title={busyHistory
-          ? (historyProgress && historyProgress.convTotal
-              ? `${t('settings.storage.downloadingMsgs') || 'Baixando histórico…'} ${historyProgress.convDone}/${historyProgress.convTotal}`
-              : (t('settings.storage.downloadingMsgs') || 'Baixando histórico…'))
-          : (t('settings.storage.downloadAll') || 'Baixar histórico completo')}
-        onPress={onDownloadAll}
-        disabled={busyHistory}
-        chevron={false}
-        right={busyHistory ? <ActivityIndicator size="small" color={colors.text} /> : <IconDownload size={18} color={colors.textTertiary} />}
-        accessibilityLabel={t('settings.storage.downloadAll')}
-      />
-      <SettingsRow
-        title={busyMedia
-          ? (mediaProgress && mediaProgress.total
-              ? `${t('settings.storage.downloadingMedia') || 'Baixando mídias…'} ${mediaProgress.loaded}/${mediaProgress.total} (${mediaProgress.percent || 0}%)`
-              : (t('settings.storage.downloadingMedia') || 'Baixando mídias…'))
-          : (t('settings.storage.syncNow') || 'Sincronizar agora')}
-        onPress={onDownloadMissing}
-        disabled={busyMedia}
-        chevron={false}
-        right={busyMedia ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={18} color={colors.textTertiary} />}
-        accessibilityLabel={t('settings.storage.syncNow') || t('settings.storage.downloadMedia')}
-      />
-    </SettingsGroup>
-  );
-});
-
-// Collapsible group header that shows/hides its children. Each group owns one
-// useState. When `forceOpen` is true (search query active) it ignores the
-// collapsed state so search results stay visible. SVG chevron rotates via a
-// simple conditional (no Animated dep — keeps the in-file component light).
-function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = false, hideHeader = false, children }) {
-  const { colors } = useTheme();
-  const [open, setOpen] = useState(defaultOpen);
-  const visible = forceOpen || open;
-  // [2026-10-08 settings-redesign] Inside a category sub-page the native
-  // header already carries the title — a second collapsible "Email ⌄"
-  // header duplicated it. Only search results keep the group header.
-  if (hideHeader) return <View>{children}</View>;
-  return (
-    <View style={{ marginBottom: Spacing.md }}>
-      <TouchableOpacity
-        onPress={() => setOpen(o => !o)}
-        activeOpacity={0.7}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: visible }}
-        accessibilityLabel={title}
-        style={{
-          flexDirection: 'row', alignItems: 'center', minHeight: 44,
-          paddingVertical: 10, paddingHorizontal: 16,
-        }}
-      >
-        {Icon ? <Icon size={18} color={colors.text} style={{ marginRight: 10 }} /> : null}
-        <Text style={{ flex: 1, color: colors.text, fontSize: 17, fontWeight: '600', letterSpacing: -0.2 }}>
-          {title}
-        </Text>
-        {/* Chevron points down when open, right when collapsed. */}
-        {visible
-          ? <IconChevronDown size={18} color={colors.textTertiary} />
-          : <IconChevronRight size={18} color={colors.textTertiary} />}
-      </TouchableOpacity>
-      {visible ? <View>{children}</View> : null}
-    </View>
-  );
-}
-
-// [2026-10-11 settings-unify] ?section=<âncora|categoria> → categoria do hub.
-// Mantém compatíveis as âncoras antigas (ProfileSettingsSheet usava
-// ?section=security; QuickSettings/links usam notifications/storage…).
-const SECTION_TO_CATEGORY = {
-  account: 'account', profile: 'account', security: 'account', devices: 'account', one: 'account',
-  privacy: 'privacy', privacy_granular: 'privacy', defaultDisappearing: 'privacy', blocked: 'privacy',
-  chat: 'chat', chats: 'chat', appearance: 'chat', theme: 'chat', wallpaper: 'chat', mutedWords: 'chat',
-  notifications: 'notifications',
-  storage: 'storage_data', storage_data: 'storage_data', mediaAutoDownload: 'storage_data', data: 'storage_data',
-  accessibility: 'accessibility', reading: 'accessibility', fontSize: 'accessibility',
-  language: 'language',
-  email: 'email', vacation: 'email', forwarding: 'email',
-  bia: 'bia', ai: 'bia',
-  help: 'help', about: 'help', support: 'help',
-  invite: 'invite', referral: 'invite',
+const CAT_ICONS = {
+  user: IconUser, shield: IconShield, message: IconMessageSquare, bell: IconBell, database: IconDatabase,
+  type: IconType, globe: IconGlobe, mail: IconMail, sparkles: IconSparkles, help: IconHelpCircle, userPlus: IconUserPlus,
 };
-function sectionToCategory(section) {
-  if (!section || typeof section !== 'string') return null;
-  return SECTION_TO_CATEGORY[section] || null;
+
+function appVersionLabel() {
+  const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
+  const build = Constants?.expoConfig?.ios?.buildNumber || Constants?.expoConfig?.android?.versionCode || '';
+  return build ? `${ver} (${build})` : String(ver);
+}
+
+// Seção do settingsCache só p/ subtítulos da raiz: revalida no TTL padrão
+// (5 min) — as categorias revalidam o que mostram ao abrir (30 s).
+// storage_stats é só local (o scan roda na categoria) → sem revalidar.
+function usePeek(section) {
+  return useSection(section, section === 'storage_stats' ? false : settingsCache.DEFAULT_TTL_MS);
+}
+
+// Categoria aberta: chunk sob demanda (web) / módulo avaliado no 1º uso (nativo).
+function CategoryHost({ cat }) {
+  // Fixo por montagem (o preload do web troca lazy → componente pronto).
+  const [Comp] = useState(() => getCategoryComponent(cat));
+  if (!Comp) return null;
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<View style={{ minHeight: 240 }} />}>
+        <Comp />
+      </Suspense>
+    </ErrorBoundary>
+  );
 }
 
 function SettingsScreenInner() {
-  // [2026-10-11 settings-unify] BUG: as leituras de preferências são SWR
-  // (services/api POST_READ_SWR, persistido no sessionStorage no web) e os
-  // *_set não invalidam o *_get → ao reabrir Configurações o switch mostrava o
-  // valor ANTIGO (ex.: "Não perturbe" desligado aparecia ligado). Invalida no
-  // 1º render, antes dos effects de carga.
-  // [2026-10-13 settings-instant] Agora services/settingsCache: render com o
-  // último valor salvo no aparelho (por conta) + revalidação em 2º plano que
-  // descarta o SWR do api.js antes de buscar (o *_set atualiza o snapshot).
-  const { colors, isDark, toggle, density, setDensity, themeMode, setThemeMode: setThemeModeCtx } = useTheme();
-  const gc = useGroupedColors(); // [2026-10-08 settings-redesign]
-  const { t, language, changeLanguage } = useLanguage();
-  const { currency: userCurrency, setCurrency: setUserCurrency, resetCurrency: resetUserCurrency, autoDetected: currencyAutoDetected, supported: supportedCurrencies, symbols: currencySymbols } = useCurrency();
-  const { biometricEnabled, biometricAvailable, toggleBiometric, autoLockInterval, setAutoLockInterval } = useBiometric();
-  // Modal state for the auto-lock interval picker. Surface lives in the
-  // Security section below the biometric toggle so users find it where
-  // they enable the lock.
-  const [autoLockOpen, setAutoLockOpen] = useState(false);
-  // E2E backup escrow modal — collects the passphrase, encrypts the
-  // user's local key material, and uploads via e2eeBackupEscrowPut. The
-  // ACTUAL key gathering is delegated to services/e2ee at submit time so
-  // this surface only owns the passphrase UX.
-  const [e2eBackupOpen, setE2eBackupOpen] = useState(false);
-  const [e2eBackupPass, setE2eBackupPass] = useState('');
-  const [e2eBackupPass2, setE2eBackupPass2] = useState('');
-  const [e2eBackupBusy, setE2eBackupBusy] = useState(false);
-  const [e2eBackupMsg, setE2eBackupMsg] = useState('');
+  const { colors, isDark, themeMode } = useTheme();
+  const gc = useGroupedColors();
+  const { t, language } = useLanguage();
   const { logout, user, accounts } = useAuth();
-  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
   const confirm = useConfirm();
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  // [2026-10-07 native-ui-build] iOS: header de vidro (transparente+blur) → conteúdo começa abaixo dele via padding.
-  const blurTopRaw = useBlurHeaderInset(USE_NATIVE_HEADER); // [2026-10-08 settings-redesign] só sub-páginas usam vidro
-  // Responsividade: em tablet/desktop/web centraliza a coluna de settings numa
-  // largura confortável (contentMaxWidth) em vez de esticar de ponta a ponta.
+  const blurTopRaw = useBlurHeaderInset(USE_NATIVE_HEADER);
   const { contentMaxWidth, width: _winW } = useResponsive();
-  // [2026-10-11 settings-unify] Desktop/web largo: hub em 2 painéis
-  // (categorias à esquerda, detalhe à direita), como WhatsApp Desktop.
+  // Desktop/web largo: 2 painéis (categorias à esquerda, detalhe à direita).
   const twoPane = Platform.OS === 'web' && (_winW || 0) >= 900;
-
-  // Scroll-to-section when opened from ProfileSettingsSheet with ?section=X.
-  // onLayout y-coords are relative to the PARENT view, which doesn't work
-  // when the target row is nested inside a section card. We stash a ref for
-  // each named anchor and measure it against the ScrollView's native handle
-  // so we get an absolute offset. Runs once the node is mounted *and* the
-  // requested section matches.
-  const scrollRef = useRef(null);
-  const blurTopRef = useRef(0); // [2026-10-07 native-ui-build] anchor scroll desconta o header de vidro
-  const sectionRefs = useRef({});
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
   const requestedSection = typeof params?.section === 'string' ? params.section : null;
-  const registerSectionRef = useCallback((key) => (node) => {
-    if (!node) return;
-    sectionRefs.current[key] = node;
-    if (key === requestedSection && scrollRef.current) {
-      // Defer until layout settles — RN measureLayout against a freshly-
-      // mounted ScrollView can yield stale coords on the first call.
+  const [activeCategory, setActiveCategory] = useState(() => sectionToCategory(requestedSection));
+  const IOS_AUTO_INSET = USE_NATIVE_HEADER && Platform.OS === 'ios';
+  const blurTopRef = useRef(0);
+  blurTopRef.current = IOS_AUTO_INSET ? blurTopRaw : 0;
+
+  // ── Âncoras: ?section=X (ou resultado de busca) rola até o bloco certo ──
+  const scrollRef = useRef(null);
+  const [pendingAnchor, setPendingAnchor] = useState(requestedSection);
+  const pendingAnchorRef = useRef(pendingAnchor);
+  pendingAnchorRef.current = pendingAnchor;
+  const registerAnchor = useCallback((key) => {
+    if (!key || key !== pendingAnchorRef.current) return undefined;
+    return (node) => {
+      if (!node) return;
       setTimeout(() => {
         try {
-          const scrollNode = scrollRef.current?.getInnerViewNode?.()
-            || scrollRef.current?._nativeRef
-            || scrollRef.current;
+          const sv = scrollRef.current;
+          const scrollNode = sv?.getInnerViewNode?.() || sv?._nativeRef || sv;
           if (!scrollNode || !node.measureLayout) return;
           node.measureLayout(
             scrollNode,
-            (_x, y) => { scrollRef.current?.scrollTo?.({ y: Math.max(0, y - 12 - blurTopRef.current), animated: true }); },
+            (_x, y) => {
+              sv?.scrollTo?.({ y: Math.max(0, y - 12 - blurTopRef.current), animated: true });
+              // Rola uma vez só (re-renders da categoria não puxam a tela de volta).
+              setPendingAnchor((cur) => (cur === key ? null : cur));
+            },
             () => {}
           );
         } catch {}
       }, 120);
-    }
-  }, [requestedSection]);
-  const [undoDelay, setUndoDelay] = useState(5);
-  const [smartComposeOn, setSmartComposeOn] = useState(true);
-  const [showPrivacy, setShowPrivacy] = useState(false);
-  const [showTerms, setShowTerms] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState(false);
-  const [deletePassword, setDeletePassword] = useState('');
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState('');
-  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
-  const [deleteTypedWord, setDeleteTypedWord] = useState('');
-  // Defensive nav for Security rows. iOS QA (2026-05-28) reported that
-  // change-phone, activity-log, advanced-key, advanced-privacy "did
-  // nothing" when tapped. Symptoms suggest the route push was dropped
-  // (modal-over-modal race, lingering present transition, or unhandled
-  // throw in the row's onPress). This wrapper: (1) gives haptic feedback
-  // so the user knows the press registered, (2) schedules the push on
-  // the NEXT frame so the current event handler returns cleanly before
-  // the navigation animation starts (prevents the silent UIKit "drop
-  // 2nd presentation" iOS bug), (3) surfaces any sync throw via Alert
-  // so failures are visible instead of silent.
-  const safeNav = useCallback((path) => {
-    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    const fire = () => {
-      try { router.push(path); }
-      catch (e) {
-        try { Alert.alert(t('uiG.settings.navError'), `${path}\n${String(e?.message || e)}`); } catch {}
-      }
     };
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire);
-    else setTimeout(fire, 0);
-  }, [router, t]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAnchor]);
 
-  // Alterar senha — modal state
-  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
-  const [cpCurrent, setCpCurrent] = useState('');
-  const [cpNew, setCpNew] = useState('');
-  const [cpConfirm, setCpConfirm] = useState('');
-  const [cpLoading, setCpLoading] = useState(false);
-  const [cpError, setCpError] = useState('');
-  const [cpSuccess, setCpSuccess] = useState(false);
-  // 2FA PIN modal state
-  const [twoFAOpen, setTwoFAOpen] = useState(false);
-  const [twoFADigits, setTwoFADigits] = useState(['', '', '', '']);
-  const twoFARefs = useRef([null, null, null, null]);
-  const [twoFALoading, setTwoFALoading] = useState(false);
-  const [twoFAError, setTwoFAError] = useState('');
-  const [twoFASuccess, setTwoFASuccess] = useState(false);
-  // Registration Lock (anti-SIM-swap) PIN modal — same shape as 2FA but
-  // writes to a different backend key (registration_lock vs 2fa_pin) and
-  // gates phone-OTP login instead of password login.
-  const [regLockOpen, setRegLockOpen] = useState(false);
-  const [regLockDigits, setRegLockDigits] = useState(['', '', '', '']);
-  const regLockRefs = useRef([null, null, null, null]);
-  const [regLockLoading, setRegLockLoading] = useState(false);
-  const [regLockError, setRegLockError] = useState('');
-  const [regLockSuccess, setRegLockSuccess] = useState(false);
-  const [oneEnabled, setOneEnabled] = useState(true);
-  const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent' — for One AI
-  const [pushNotifLevel, setPushNotifLevel] = useState('all'); // 'all', 'urgent', 'silent' — global push delivery
-  // ── New WhatsApp-grade preference rows (15-gap closer 2026-05-18) ──
-  // Each lives in AsyncStorage / localStorage via getStorage/setStorage so
-  // the source-of-truth is the device — backend sync only if/when a feature
-  // calls for it (e.g. theme follows device on mobile, bubble shape is
-  // device-local). Defaults match the per-row spec in the task brief.
-  // themeMode + setThemeMode now come from ThemeContext (3-state setter is
-  // real). The local shadow state was removed — the active pill reads
-  // `themeMode` from context and the picker calls setThemeModeCtx().
-  const [enterSends, setEnterSends] = useState(Platform.OS === 'web');
-  const [autocorrectOn, setAutocorrectOn] = useState(true);
-  const [doubleTapReact, setDoubleTapReact] = useState(true); // [2026-10-14 feel] toque duplo = ❤
-  const [voiceSpeedDefault, setVoiceSpeedDefault] = useState(1); // 0.5 | 1 | 1.5 | 2
-  const [betaFeatures, setBetaFeatures] = useState(false);
-  const [languageAuto, setLanguageAuto] = useState(false);
-  const [dataSaver, setDataSaver] = useState(false);
-  const [bubbleShape, setBubbleShape] = useState('rounded'); // 'rounded' | 'square' | 'classic'
-  const [notifLedColor, setNotifLedColor] = useState('#111111');
-  const [mediaRoaming, setMediaRoaming] = useState(false);
-  // [gap C3 2026-05-20] WhatsApp parity — "Usar menos dados em chamadas".
-  // Caps video at 200kbps / 15fps / 360p with 2-layer simulcast (180p+360p).
-  // app/call.js reads `chatyy_low_data_calls` before setCameraEnabled. Even
-  // when this is OFF the auto-roaming detector force-enables low-data when
-  // NetInfo flags an expensive cellular link.
-  const [lowDataCalls, setLowDataCalls] = useState(false);
-  // [2026-10-11 video-fullhd] "Qualidade de envio de mídia" (Padrão / HD).
-  const [mediaUploadQuality, setMediaUploadQualityUI] = useState(() => {
-    try { return require('../services/mediaUploadQuality').getMediaUploadQuality(); } catch { return 'hd'; }
-  });
-  useEffect(() => {
-    try { return require('../services/mediaUploadQuality').onMediaUploadQualityChange(setMediaUploadQualityUI); } catch { return undefined; }
-  }, []);
-  // [2026-10-11 full-hd] Calls are Full HD adaptive by default (no manual
-  // resolution, WhatsApp model). "Usar menos dados em chamadas" is the ONLY
-  // knob; on native it lives in the pref the call engine reads at call start
-  // (Android SharedPreferences chatyy_call_prefs/chatyy_call_data_saver, iOS
-  // UserDefaults chatyy_call_data_saver) — the in-call "Mais opções ›
-  // Economizar dados" flips the SAME pref, so native is the source of truth.
-  // AsyncStorage `chatyy_low_data_calls` is mirrored for web call.js/backup.
-  const nativeCallDataSaver = useRef(null); // null = bridge unavailable (web / old binary)
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    try {
-      const ck = require('../modules/expo-callkit');
-      if (typeof ck.isCallDataSaverAvailable === 'function' && ck.isCallDataSaverAvailable()) {
-        const v = !!ck.getCallDataSaver();
-        nativeCallDataSaver.current = v;
-        setLowDataCalls(v);
-        setStorage('chatyy_low_data_calls', String(v));
-      }
-    } catch {}
-  }, []);
-  // [WhatsApp "Media visibility" 2026-05-26] Auto-save received photos/videos
-  // into the phone gallery / camera roll. Default ON, like WhatsApp. Persisted
-  // under `autoSaveMediaToGallery`; mediaCache reads the same key + mirrors it
-  // so cacheMedia's inbound download success path saves to the OS gallery
-  // without an app restart.
-  const [autoSaveGallery, setAutoSaveGallery] = useState(true);
-  // Default = Chatyy purple (was WhatsApp green '#075E54'). Stored as a
-  // hex so chat-conversation.js renders it correctly — gradient swatches
-  // below are previews; the dominant hex is what we actually persist.
-  const [wallpaperDefault, setWallpaperDefault] = useState('#111111');
-  // Modal state
-  const [aboutOpen, setAboutOpen] = useState(false);
-  const [backupKeyOpen, setBackupKeyOpen] = useState(false);
-  const [backupKeyPass, setBackupKeyPass] = useState('');
-  const [backupKeyPass2, setBackupKeyPass2] = useState('');
-  const [backupKeyBusy, setBackupKeyBusy] = useState(false);
-  const [backupKeyMsg, setBackupKeyMsg] = useState('');
-  // Network usage stats — placeholder values pulled from media_dl_stats
-  // (lifetime up/down bytes for chat media). When the service hasn't been
-  // wired the rows show "—".
-  const [netStats, setNetStats] = useState(null);
-  // Palavras silenciadas (mute words) — user's per-feed blocklist. Posts
-  // whose caption contains any of these words are filtered server-side
-  // inside feed_list. CRUD via feed_muted_words_* endpoints.
-  const [mutedWords, setMutedWords] = useState(() => { const c = settingsCache.peek('muted_words'); return Array.isArray(c) ? c : []; });
-  const [mutedWordsInput, setMutedWordsInput] = useState('');
-  const [mutedWordsLoading, setMutedWordsLoading] = useState(false);
-  // Login alerts — opt-in push when a NEW device signs into this account.
-  // Hydrates from chat_user_defaults.login_alerts_enabled (default ON). The
-  // history modal pulls last 30d of sign-in events via getLoginHistory().
-  const [loginAlertsEnabled, setLoginAlertsEnabled] = useState(true);
-  const [loginHistoryOpen, setLoginHistoryOpen] = useState(false);
-  const [loginHistory, setLoginHistory] = useState([]);
-  const [loginHistoryLoading, setLoginHistoryLoading] = useState(false);
-  const [avatarKey, setAvatarKey] = useState(Date.now());
-  // [2026-10-11 settings-unify] Identidade p/ o cartão do topo (nome, recado,
-  // @usuário). Recarrega ao voltar do /edit-profile.
-  const [myProfile, setMyProfile] = useState(() => settingsCache.peek('profile'));
-  const _profileFetchedAt = useRef(0);
-  useFocusEffect(useCallback(() => {
-    if (!user?.email) return undefined;
-    const now = Date.now();
-    if (now - _profileFetchedAt.current < 3000) return undefined;
-    // 1º foco: respeita o TTL (prefetch do boot já trouxe); voltas (ex.: do
-    // /edit-profile) forçam a revalidação. O valor chega via subscribe.
-    const force = _profileFetchedAt.current !== 0;
-    _profileFetchedAt.current = now;
-    settingsCache.revalidate('profile', { force }).catch(() => {});
-    return undefined;
-  }, [user?.email]));
-  // [2026-10-11 settings-unify] Switches de IA (antes só no ProfileSettingsSheet).
-  // Chaves locais ai_smart_reply / ai_summary / ai_enhance (default ON).
-  const [aiFlags, setAiFlags] = useState({ ai_smart_reply: true, ai_summary: true, ai_enhance: true });
-  useEffect(() => {
-    const KEYS = ['ai_smart_reply', 'ai_summary', 'ai_enhance'];
-    const apply = (vals) => setAiFlags(prev => {
-      const next = { ...prev };
-      KEYS.forEach((k, i) => { if (vals[i] === 'false') next[k] = false; });
-      return next;
-    });
-    if (Platform.OS === 'web') apply(KEYS.map(k => getStorage(k)));
-    else import('@react-native-async-storage/async-storage').then(m => Promise.all(KEYS.map(k => m.default.getItem(k)))).then(apply).catch(() => {});
-  }, []);
-  const setAiFlag = useCallback((k, v) => {
-    setAiFlags(prev => ({ ...prev, [k]: !!v }));
-    setStorage(k, v ? 'true' : 'false');
-  }, []);
-  // Live search across settings rows. Filters out sections whose section
-  // title and row labels don't match the typed query (case-insensitive).
-  // Empty query = no filtering. Provides a fast jump-to-config without
-  // making the user remember which sub-section a toggle lives in.
+  // ── Busca (web: barra inline que expande; nativo: barra do header) ──────
   const [searchQuery, setSearchQuery] = useState('');
   const _q = (searchQuery || '').trim().toLowerCase();
-  // [2026-10-15 settings-2026] busca que expande (web) + hero que encolhe ao
-  // rolar + saldo de diamantes p/ o cartão da Carteira (some se desativado).
+  const searching = !!_q;
   const [searchFocused, setSearchFocused] = useState(false);
   const searchInputRef = useRef(null);
   const searchAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
+    if (Platform.OS !== 'web') return;
     const to = searchFocused || !!searchQuery ? 1 : 0;
     if (isReduceMotionEnabled()) { searchAnim.setValue(to); return; }
     Animated.spring(searchAnim, { toValue: to, useNativeDriver: false, tension: 220, friction: 24 }).start();
   }, [searchFocused, searchQuery, searchAnim]);
   const heroScrollY = useRef(new Animated.Value(0)).current;
   const onHeroScroll = useRef(Animated.event([{ nativeEvent: { contentOffset: { y: heroScrollY } } }], { useNativeDriver: true })).current;
+
+  // ── Saldo de diamantes p/ o cartão da Carteira (some se desativado) ─────
   const [walletDiamonds, setWalletDiamonds] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -587,1031 +158,94 @@ function SettingsScreenInner() {
     }, 500);
     return () => { alive = false; clearTimeout(tm); };
   }, [user?.email]);
-  // `searching` = user typed something in the search box. When true the
-  // category layer is bypassed and every section that matches the query is
-  // shown (search works ACROSS all categories).
-  const searching = !!_q;
-  // Category navigation (WhatsApp/iOS style). null = show the category LIST
-  // (home). A value = show only the sections that belong to that category.
-  // [2026-10-11 settings-unify] ?section=X (deep link de qualquer entrada:
-  // perfil, /profile?section=, notificações…) abre DIRETO a categoria certa
-  // do hub. Antes o hub abria na raiz com a seção escondida (a âncora só
-  // existia dentro da categoria) → "?section=security" não levava a nada.
-  const [activeCategory, setActiveCategory] = useState(() => sectionToCategory(requestedSection));
-  // [2026-10-08 settings-redesign] Raiz = header opaco c/ busca nativa (sem inset); sub-páginas = vidro.
-  // [2026-10-08 settings-cut-fix] iOS: o conteúdo era CORTADO sob o header
-  // nativo da raiz (título + barra de busca UISearchController). A raiz
-  // assumia header opaco → paddingTop 0; mas no iOS 26 o UINavigationBar é
-  // translúcido (scroll-edge "liquid glass") e a view da tela começa em y=0,
-  // POR BAIXO do header — e a altura real inclui a barra de busca (~52pt),
-  // que o HeaderHeightContext nem reporta. Fix: o ScrollView usa
-  // contentInsetAdjustmentBehavior="automatic" → o UIKit calcula o inset
-  // (status bar + nav bar + search bar, e acompanha a barra encolhendo) em
-  // TODAS as páginas (raiz e categorias). Sem padding manual. A troca de
-  // categoria remonta o ScrollView (key) em vez de scrollTo({y:0}) — o
-  // scrollTo do RN ignora o inset ajustado e esconderia o topo.
-  const IOS_AUTO_INSET = USE_NATIVE_HEADER && Platform.OS === 'ios';
-  blurTopRef.current = IOS_AUTO_INSET ? blurTopRaw : 0;
-  // Collect every label string we know about (gathered DURING render via
-  // sectionMatches calls below) so the next render can show a flat
-  // "results" strip at the top of the scroll. We use useRef to span
-  // renders — first render after a query change populates, second render
-  // displays the strip. The 1-frame lag is invisible because RN batches.
-  const _allLabelsRef = useRef([]);
-  const sectionMatches = (...labels) => {
-    // Track every label string we've seen across renders so we can
-    // search the catalog up-front rather than waiting on render order.
-    for (const l of labels) {
-      if (l && !_allLabelsRef.current.includes(String(l))) {
-        _allLabelsRef.current.push(String(l));
-      }
-    }
-    if (!_q) return true;
-    for (const l of labels) {
-      if (l && String(l).toLowerCase().includes(_q)) return true;
-    }
-    return false;
-  };
-  // Derive the flat list of matched labels from the (cumulative) catalog
-  // and the current query. Re-evaluated every render — cheap, the catalog
-  // is ~30 strings.
-  const _matchedLabels = !_q ? [] : _allLabelsRef.current.filter(
-    l => String(l).toLowerCase().includes(_q)
-  );
-  // Referral system
-  const [referralCode, setReferralCode] = useState(() => { const c = settingsCache.peek('referral'); return (c && c.code) || ''; });
-  const [referralCount, setReferralCount] = useState(() => { const c = settingsCache.peek('referral'); return (c && c.referred_count) || 0; });
-  const [referralLoading, setReferralLoading] = useState(false);
 
-  // Auto-reply (vacation responder) — loads via vacation_get, saves via
-  // vacation_set. Previously the UI wrote to settings.auto_reply* which went
-  // nowhere; now it persists server-side.
-  const _vacationFrom = (d) => ({
-    enabled: !!d.enabled,
-    subject: d.subject || '',
-    body: d.body || '',
-    start_date: d.start_date || null,
-    end_date: d.end_date || null,
-  });
-  const [vacation, setVacation] = useState(() => {
-    const c = settingsCache.peek('vacation');
-    return c && typeof c === 'object' ? _vacationFrom(c) : { enabled: false, subject: '', body: '', start_date: null, end_date: null };
-  });
-  const _vacationSaveTimer = useRef(null);
-  // [2026-10-13 settings-instant] Hidratação/revalidação no bloco único de
-  // settingsCache (useLayoutEffect mais abaixo). Ignora o eco do servidor
-  // enquanto houver um save pendente (não apaga o que a pessoa digita).
-  const applyVacation = useCallback((d) => {
-    if (!d || typeof d !== 'object' || _vacationSaveTimer.current) return;
-    setVacation(_vacationFrom(d));
-  }, []);
-  const saveVacation = useCallback((patch) => {
-    setVacation(prev => {
-      const next = { ...prev, ...patch };
-      if (_vacationSaveTimer.current) clearTimeout(_vacationSaveTimer.current);
-      _vacationSaveTimer.current = setTimeout(() => {
-        _vacationSaveTimer.current = null;
-        const body = {
-          enabled: next.enabled,
-          subject: next.subject,
-          body: next.body,
-          start_date: next.start_date,
-          end_date: next.end_date,
-          only_contacts: false,
-        };
-        settingsCache.commit('vacation', { patch: body, action: 'vacation_set', params: body })
-          .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); })
-          .catch(() => {});
-      }, 500);
-      return next;
-    });
-  }, [t]);
-  useEffect(() => () => { if (_vacationSaveTimer.current) clearTimeout(_vacationSaveTimer.current); }, []);
-
-  // ── Notification preferences (server-backed) ────────────────────────
-  // chat_user_notif_prefs_get/set is the single source of truth for:
-  //   push_notif_level, hide_reactions_in_notifs, led_color_default,
-  //   morning_briefing, font_size.
-  // We hydrate these on mount (overriding the local-storage defaults set
-  // elsewhere) and write through chatSetNotifPrefs on change. Helper below
-  // is used by every consumer so the backend always sees the change.
-  // [2026-10-13 settings-instant] Otimista via settingsCache.commit: snapshot
-  // local na hora; recusa do servidor desfaz (o subscribe re-aplica o valor
-  // anterior) + aviso; sem rede → fila offline reenviada ao reconectar.
-  const saveNotifPref = useCallback((patch) => {
-    settingsCache.commit('notif', { patch, action: 'chat_user_notif_prefs_set', params: patch })
-      .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); })
-      .catch(() => {});
-  }, [t]);
-  // [2026-10-08 contact-joined-push] "Contatos que entraram no Chatyy" (default ON).
-  const [contactJoinedPush, setContactJoinedPush] = useState(true);
-  const applyNotif = useCallback((d) => {
-    {
-      if (!d || typeof d !== 'object') return;
-      if (typeof d.push_notif_level === 'string') setPushNotifLevel(d.push_notif_level);
-      if (typeof d.led_color_default === 'string' && /^#[0-9a-fA-F]{6}$/.test(d.led_color_default)) setNotifLedColor(d.led_color_default);
-      if (d.hide_reactions_in_notifs !== undefined && d.hide_reactions_in_notifs !== null) {
-        setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!d.hide_reactions_in_notifs }));
-      }
-      if (d.contact_joined_push !== undefined && d.contact_joined_push !== null) setContactJoinedPush(!!d.contact_joined_push);
-      // [2026-10-11 settings-unify] DND vem de chat_user_notif_prefs (o mesmo
-      // que o gate de push e /notification-preferences usam).
-      if (d.dnd_enabled !== undefined) {
-        setDnd(prev => ({
-          ...prev,
-          enabled: !!d.dnd_enabled,
-          start_time: d.dnd_start_time || prev.start_time,
-          end_time: d.dnd_end_time || prev.end_time,
-        }));
-      }
-      const _mb = d.morning_briefing !== undefined && d.morning_briefing !== null;
-      const _fs = typeof d.font_size === 'string';
-      if ((_mb || _fs) && !_autoSaveTimer.current) {
-        // Hidratação (não é edição da pessoa) → não ecoa no auto-save.
-        _skipAutosaveRef.current = true;
-        setSettings(prev => {
-          const next = { ...prev };
-          if (_mb) next.morning_briefing = !!d.morning_briefing;
-          if (_fs) next.font_size = d.font_size;
-          return next;
-        });
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      const oe = getStorage('one_enabled');
-      if (oe === 'false') setOneEnabled(false);
-      const ol = getStorage('one_notif_level');
-      if (ol) setOneNotifLevel(ol);
-      const pl = getStorage('push_notif_level');
-      // [2026-10-13 settings-instant] o snapshot do servidor (settingsCache) vence o espelho local.
-      if (pl && !settingsCache.peek('notif')?.push_notif_level) setPushNotifLevel(pl);
-    } else {
-      import('@react-native-async-storage/async-storage').then(m => {
-        Promise.all([
-          m.default.getItem('one_enabled'),
-          m.default.getItem('one_notif_level'),
-          m.default.getItem('push_notif_level'),
-        ]).then(([enabled, level, pushLevel]) => {
-          if (enabled === 'false') setOneEnabled(false);
-          if (level) setOneNotifLevel(level);
-          if (pushLevel && !settingsCache.peek('notif')?.push_notif_level) setPushNotifLevel(pushLevel);
-        }).catch(() => {});
-      }).catch(() => {});
-    }
-  }, []);
-
-  // ── Hydrate the new 15-gap prefs from local storage ────────────────
-  // All are device-local; we read them once on mount and write through
-  // setStorage on every change. The themeMode key shadows the ThemeContext
-  // boolean toggle: `light`/`dark` force the value, `system` lets the
-  // existing toggle drive (we don't subscribe to Appearance changes since
-  // ThemeContext owns that — this row is purely a forcing-knob).
-  useEffect(() => {
-    const apply = (kv) => {
-      // theme_mode is owned by ThemeContext now — no local hydration here.
-      if (kv.enter_sends === 'true') setEnterSends(true);
-      else if (kv.enter_sends === 'false') setEnterSends(false);
-      if (kv.autocorrect_enabled === 'false') setAutocorrectOn(false);
-      if (kv.double_tap_react === 'false') setDoubleTapReact(false);
-      const vs = parseFloat(kv.voice_speed_default);
-      if (Number.isFinite(vs) && [0.5, 1, 1.5, 2].includes(vs)) setVoiceSpeedDefault(vs);
-      if (kv.beta_features === 'true') setBetaFeatures(true);
-      if (kv.language_auto === 'true') setLanguageAuto(true);
-      if (kv.data_saver === 'true') setDataSaver(true);
-      if (kv.bubble_shape === 'rounded' || kv.bubble_shape === 'square' || kv.bubble_shape === 'classic') setBubbleShape(kv.bubble_shape);
-      if (typeof kv.notif_led_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(kv.notif_led_color)) setNotifLedColor(kv.notif_led_color);
-      if (kv.media_auto_dl_roaming === 'true') setMediaRoaming(true);
-      if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) setWallpaperDefault(kv.wallpaper_default);
-      if ((kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') && nativeCallDataSaver.current === null) setLowDataCalls(true);
-      // Default ON — only an explicit 'false' turns it off.
-      if (kv.autoSaveMediaToGallery === 'false' || kv.autoSaveMediaToGallery === '0') setAutoSaveGallery(false);
-    };
-    const KEYS = [
-      'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
-      'beta_features', 'language_auto', 'data_saver', 'bubble_shape',
-      'notif_led_color', 'media_auto_dl_roaming', 'wallpaper_default',
-      'chatyy_low_data_calls', 'autoSaveMediaToGallery', 'double_tap_react',
-    ];
-    if (Platform.OS === 'web') {
-      const kv = {};
-      for (const k of KEYS) kv[k] = getStorage(k);
-      apply(kv);
-    } else {
-      import('@react-native-async-storage/async-storage').then(m => {
-        Promise.all(KEYS.map(k => m.default.getItem(k))).then(vals => {
-          const kv = {};
-          KEYS.forEach((k, i) => { kv[k] = vals[i]; });
-          apply(kv);
-        }).catch(() => {});
-      }).catch(() => {});
-    }
-
-    // Network usage stats — try services/mediaCache.getNetStats then fall
-    // back to a stashed media_dl_stats blob. Either returns { up, down }
-    // in bytes; missing keys leave the placeholder dashes in place.
-    (async () => {
-      try {
-        if (Platform.OS !== 'web') {
-          const mc = require('../services/mediaCache');
-          if (typeof mc.getNetStats === 'function') {
-            const r = await mc.getNetStats();
-            if (r && (Number.isFinite(r.up) || Number.isFinite(r.down))) {
-              setNetStats({ up: r.up || 0, down: r.down || 0 });
-              return;
-            }
-          }
-        }
-        // Fallback: serialized blob in storage written by other services.
-        let raw = null;
-        if (Platform.OS === 'web') raw = getStorage('media_dl_stats');
-        else {
-          const m = await import('@react-native-async-storage/async-storage');
-          raw = await m.default.getItem('media_dl_stats');
-        }
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed && (Number.isFinite(parsed.up) || Number.isFinite(parsed.down))) {
-              setNetStats({ up: parsed.up || 0, down: parsed.down || 0 });
-            }
-          } catch {}
-        }
-      } catch {}
-    })();
-  }, []);
-
-  const [_settingsLastKnown] = useState(() => {
-    try { return require('../services/api').getOfflineLastKnown?.('get_settings') || null; } catch { return null; }
-  });
-  const [settings, setSettings] = useState({
-    signature: '',
-    emails_per_page: 20,
-    notifications: true,
-    notification_sound: true,
-    notification_vibration: true,
-    language: 'pt-BR',
-    auto_reply: false,
-    auto_reply_message: '',
-    forwarding_email: '',
-    forwarding_enabled: false,
-    font_size: 'medium',
-    // [2026-10-08 offline-first] Paint the last-known server settings for
-    // THIS account on frame 1 (api.js offline last-known store) instead of a
-    // skeleton → defaults; the network refresh below still wins.
-    ...(_settingsLastKnown && _settingsLastKnown.data && typeof _settingsLastKnown.data === 'object' ? _settingsLastKnown.data : {}),
-    // [2026-10-13 settings-instant] snapshot do aparelho (settingsCache) vence.
-    ...((() => { const c = settingsCache.peek('settings'); return c && typeof c === 'object' ? c : {}; })()),
-  });
-  // [2026-10-13 settings-instant] Sem skeleton de tela cheia: a tela abre na
-  // hora com o último valor salvo (ou os padrões na 1ª vez na vida) e a
-  // revalidação atualiza em 2º plano. `loading` fica só p/ compat.
-  const [loading, setLoading] = useState(false);
-  // Hidratação vinda do cache/servidor não é edição → não dispara auto-save.
-  const _skipAutosaveRef = useRef(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const savedTimerRef = require('react').useRef(null);
-  const initialSettingsRef = require('react').useRef(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [notifPermission, setNotifPermission] = useState(
-    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
-  );
-
-  // Wave 4: Do-Not-Disturb schedule. Pulls chat_user_dnd on mount + on
-  // toggle/save. UI lives in the desktopNotifs section below. Defaults
-  // 22:00 → 07:00 — most common "quiet evening" pattern in product
-  // research. tz_offset is captured client-side once via Date#getTimezoneOffset
-  // (note: JS returns minutes *behind* UTC, so we flip the sign before
-  // sending so the backend can store minutes *east* of UTC).
-  const [dnd, setDnd] = useState({ enabled: false, start_time: '22:00', end_time: '07:00', tz_offset: 0 });
-  const [dndSaving, setDndSaving] = useState(false);
-  // [dedupe 2026-05-25] The push gate honors chat_user_defaults.dnd_* (set by
-  // /notification-preferences), NOT the legacy chat_user_dnd table that
-  // chatDndGet/Set wrote to. Switched this inline DND UI to read/write
-  // chat_user_defaults.{dnd_enabled,dnd_start_time,dnd_end_time} via
-  // chatUserDefaultsGet/Set so the toggle here actually mutes pushes.
-  // [2026-10-11 settings-unify] BUG: lia/gravava DND via chat_user_defaults_get/
-  // chat_user_defaults_set — o get não devolve dnd_* e o set NÃO EXISTE no
-  // backend ("Unknown action") → o switch "Não perturbe" daqui nunca salvava.
-  // Agora hidrata no effect de chatGetNotifPrefs (acima) e grava via
-  // chat_user_notif_prefs_set, igual a /notification-preferences.
-  const saveDnd = useCallback(async (patch) => {
-    setDnd(prev => {
-      const next = { ...prev, ...patch };
-      (async () => {
-        setDndSaving(true);
-        try {
-          const body = {
-            dnd_enabled: next.enabled,
-            dnd_start_time: next.start_time,
-            dnd_end_time: next.end_time,
-          };
-          const res = await settingsCache.commit('notif', { patch: body, action: 'chat_user_notif_prefs_set', params: body });
-          if (res && res.ok === false) settingsCache.notifySaveFailed(t);
-        } catch {}
-        setDndSaving(false);
-      })();
-      return next;
-    });
-  }, [t]);
-
-  // ── Chat user defaults: media auto-download + default disappearing ──
-  // Loaded from /chat.php?action=chat_user_defaults_get on mount; mutations
-  // debounced by 500ms before PATCHing back via chat_user_defaults_set.
-  // Mirrored into AsyncStorage via setMediaDownloadPrefs so mediaCache's
-  // cellular gate picks up the new prefs instantly.
-  const [chatDefaults, setChatDefaults] = useState({
-    default_disappearing: 0,
-    media_auto_dl_photos: 'wifi',
-    media_auto_dl_audio:  'wifi',
-    media_auto_dl_videos: 'never',
-    media_auto_dl_docs:   'never',
-  });
-  const _chatDefaultsHydrated = useRef(false);
-  const _chatDefaultsSaveTimer = useRef(null);
-  // [2026-05-18] Pending coalesced patch — see updateChatDefault comments.
-  const _chatDefaultsPendingPatch = useRef({});
-
-  const applyDefaults = useCallback((data) => {
-    {
-      try {
-        const r = { success: true, data };
-        if (r?.success && r.data) {
-          // [2026-10-11 settings-unify] BUG: lia `default_disappearing` e
-          // `media_auto_dl_*`, que chat_get_user_defaults NÃO devolve → a tela
-          // sempre mostrava os padrões. O servidor devolve
-          // default_disappearing_seconds + auto_download_policy (matriz 4×3,
-          // a MESMA que o gate do mediaCache usa no boot).
-          const pol = (r.data.auto_download_policy && typeof r.data.auto_download_policy === 'object') ? r.data.auto_download_policy : null;
-          const modeOf = (b, fb) => {
-            const row = pol && pol[b];
-            if (!row) return fb;
-            if (row.mobile) return 'mobile';
-            if (row.wifi) return 'wifi';
-            return 'never';
-          };
-          const dd = r.data.default_disappearing_seconds ?? r.data.default_disappearing;
-          const next = {
-            default_disappearing: Number.isFinite(+dd) ? +dd : 0,
-            media_auto_dl_photos: modeOf('photos', 'mobile'),
-            media_auto_dl_audio:  modeOf('audio', 'mobile'),
-            media_auto_dl_videos: modeOf('videos', 'wifi'),
-            media_auto_dl_docs:   modeOf('documents', 'wifi'),
-          };
-          if (pol) { try { require('../services/mediaCache').setAutoDownloadPolicy?.(pol); } catch {} }
-          setChatDefaults(next);
-          // Login alerts persist under the same chat_user_defaults blob —
-          // backend column `login_alerts_enabled` (boolean, default true).
-          // Falls back to ON if the column was added after the user's row
-          // was created and still reads NULL.
-          if (r.data.login_alerts_enabled !== undefined && r.data.login_alerts_enabled !== null) {
-            setLoginAlertsEnabled(!!r.data.login_alerts_enabled);
-          }
-        }
-      } catch {}
-      _chatDefaultsHydrated.current = true;
-    }
-  }, []);
-
-  // Debounced save: any change to chatDefaults schedules a PATCH 500ms later.
-  // Coalesces rapid toggles (e.g. user cycling through wifi → mobile → never)
-  // into a single backend roundtrip.
-  const updateChatDefault = useCallback((patch) => {
-    setChatDefaults(prev => {
-      const next = { ...prev, ...patch };
-      // Mirror media keys into mediaCache instantly.
-      const mediaPatch = {};
-      for (const k of ['media_auto_dl_photos','media_auto_dl_audio','media_auto_dl_videos','media_auto_dl_docs']) {
-        if (k in patch) mediaPatch[k] = next[k];
-      }
-      if (Object.keys(mediaPatch).length) {
-        try {
-          const mc = require('../services/mediaCache');
-          mc.setMediaDownloadPrefs?.(mediaPatch);
-        } catch {}
-      }
-      // [2026-05-18] Debounce backend save — COALESCE patches into a single
-      // PATCH body. Previously the closure captured only the most recent
-      // `patch` arg, so when the user toggled photos→wifi then videos→never
-      // within 500ms, the timer was cleared+rescheduled and only the LAST
-      // patch (videos) was sent — photos was lost on next page reload.
-      // Now we merge into `_chatDefaultsPendingPatch.current` and flush the
-      // accumulated patch when the timer fires. The frontend state was
-      // already correct via `setChatDefaults(prev => next)`; this fix just
-      // makes the backend match.
-      // [2026-10-11 settings-unify] BUG: o PATCH ia p/ chat_user_defaults_set,
-      // ação que NÃO existe no backend → nada era salvo no servidor (só o
-      // espelho local). Agora usa as ações reais, as mesmas do resto do app:
-      //   media_auto_dl_* → chat_set_auto_download_policy (célula a célula)
-      //   default_disappearing → chat_set_default_disappearing
-      const BUCKET = { media_auto_dl_photos: 'photos', media_auto_dl_audio: 'audio', media_auto_dl_videos: 'videos', media_auto_dl_docs: 'documents' };
-      for (const k of Object.keys(patch)) {
-        if (BUCKET[k]) {
-          const mode = patch[k];
-          const mobile = mode === 'mobile' ? 1 : 0;
-          const wifi = mode === 'never' ? 0 : 1;
-          // [2026-10-13 settings-instant] snapshot local (matriz igual à do servidor) + envio c/ fila offline.
-          const b = BUCKET[k];
-          const polPatch = (prevD) => {
-            const base = prevD && typeof prevD === 'object' ? prevD : {};
-            const pol = { ...(base.auto_download_policy && typeof base.auto_download_policy === 'object' ? base.auto_download_policy : {}) };
-            pol[b] = { ...(pol[b] || {}), mobile: !!mobile, wifi: !!wifi };
-            return { ...base, auto_download_policy: pol };
-          };
-          settingsCache.commit('defaults', { patch: polPatch, action: 'chat_set_auto_download_policy', params: { bucket: b, column: 'mobile', value: mobile } })
-            .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); }).catch(() => {});
-          settingsCache.commit('defaults', { action: 'chat_set_auto_download_policy', params: { bucket: b, column: 'wifi', value: wifi } }).catch(() => {});
-        } else if (k === 'default_disappearing') {
-          const sec = Number(patch[k]) || 0;
-          settingsCache.commit('defaults', { patch: { default_disappearing_seconds: sec }, action: 'chat_set_default_disappearing', params: { seconds: sec } })
-            .then((res) => { if (res && res.ok === false) settingsCache.notifySaveFailed(t); }).catch(() => {});
-        }
-      }
-      return next;
-    });
-  }, [t]);
-
-  useEffect(() => () => { if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current); }, []);
-
-  // ── Chat granular privacy ──────────────────────────────────────────
-  // Backend already exposes chat_privacy_get/set against PG table
-  // chat_user_privacy. UI surfaces 5 controls: last_seen, profile_photo,
-  // read_receipts (bool), status (mapped to backend's story_privacy column),
-  // groups (mapped to backend's group_add column). Each control opens a
-  // bottom-sheet picker (Everyone / My contacts / Nobody) — except
-  // read_receipts which is a simple Switch. Save is fire-and-forget.
-  const [chatPrivacy, setChatPrivacy] = useState({
-    last_seen: 'everyone',
-    profile_photo: 'everyone',
-    // [keep_archived 2026-06-10] WhatsApp default: an archived chat stays
-    // archived even when a new message arrives. Toggle OFF to un-archive on
-    // new messages. Server-stored on chat_user_privacy.keep_archived.
-    keep_archived: true,
-    // [online/invisible 2026-06-10] last-seen/online visibility. 'nobody'
-    // = invisible mode (appear offline). Distinct backend column from
-    // last_seen so the two can diverge.
-    online: 'everyone',
-    // [status_except 2026-06-10] global "hide my status from these people"
-    // list (array of lowercase emails). Managed via the picker screen.
-    status_except: [],
-    // Privacy-safe default: read receipts stay OFF until the server value
-    // loads. Defaulting to `true` pre-sync would briefly leak read state on
-    // a slow/failed chatPrivacyGet. The real value hydrates below.
-    read_receipts: false,
-    story_privacy: 'everyone',
-    group_add: 'everyone',
-    // [#gap_notifications 2026-05-19] Suppress push notifications for
-    // chat_reaction events (emoji-only reactions). Stored server-side on
-    // chat_user_defaults via chat_privacy_set. Default OFF.
-    hide_reactions_in_notifs: false,
-    // [mute-call-ringtone, 2026-05-19] "Modo silencioso para ligações" —
-    // when ON the JS ringtone (services/ringtone.js) and Android channel
-    // sound stay silent. The UI modal still surfaces so the user can pick
-    // up; this only kills the audible/haptic ring. Stored server-side on
-    // chat_user_defaults so it follows the account across devices.
-    mute_call_ringtone: false,
-    // [2026-10-09 wa-real #12] "Bloquear mensagens de desconhecidos"
-    // (chat_user_defaults.block_unknown, aplicado no servidor no chat_send).
-    block_unknown: false,
-    // [2026-10-11 settings-unify] vieram do ProfileSettingsSheet (só existiam lá).
-    phone_visibility: 'contacts',
-    about: 'everyone',
-    cloud_chats_default: true,
-  });
-  const [privacyPickerOpen, setPrivacyPickerOpen] = useState(null); // 'last_seen' | 'profile_photo' | 'story_privacy' | 'group_add' | null
-  const applyPrivacy = useCallback((data) => {
-    {
-      try {
-        const r = { success: true, data };
-        if (r?.success && r.data) {
-          setChatPrivacy(prev => ({
-            ...prev,
-            last_seen:     r.data.last_seen     || 'everyone',
-            profile_photo: r.data.profile_photo || 'everyone',
-            // keep_archived defaults TRUE (WhatsApp parity) — only flip OFF
-            // when the server explicitly returns false.
-            keep_archived: r.data.keep_archived !== undefined ? !!r.data.keep_archived : true,
-            online:        r.data.online        || 'everyone',
-            status_except: Array.isArray(r.data.status_except) ? r.data.status_except : [],
-            read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : false,
-            // Backend exposes story_privacy for "Status" and group_add for
-            // "Grupos". Defaults reflect the chat_privacy_set valid set.
-            story_privacy: r.data.story_privacy || 'everyone',
-            group_add:     r.data.group_add     || 'everyone',
-            hide_reactions_in_notifs:
-              r.data.hide_reactions_in_notifs !== undefined ? !!r.data.hide_reactions_in_notifs : false,
-            mute_call_ringtone:
-              r.data.mute_call_ringtone !== undefined ? !!r.data.mute_call_ringtone : false,
-            block_unknown: r.data.block_unknown === true,
-            phone_visibility: r.data.phone_visibility || 'contacts',
-            about: r.data.about || 'everyone',
-            cloud_chats_default: r.data.cloud_chats_default !== false,
-          }));
-          // [2026-10-06 rt-client] Espelha o gate de typing no WS (typing agora
-          // é só via socket; o gate do PHP chat_typing deixou de ser chamado).
-          try {
-            require('../services/websocket').default?.setTypingPrivacy?.({
-              read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : undefined,
-              last_seen: r.data.last_seen,
-              online: r.data.online,
-            });
-          } catch {}
-          // [mute-call-ringtone, 2026-05-19] Mirror to local storage so
-          // services/ringtone.js can read it synchronously on the next
-          // inbound ring (it ships before the next chat_privacy_get
-          // round-trip lands).
-          try {
-            if (Platform.OS === 'web') {
-              if (typeof localStorage !== 'undefined') {
-                localStorage.setItem('mute_call_ringtone', r.data.mute_call_ringtone ? 'true' : 'false');
-              }
-            } else {
-              import('@react-native-async-storage/async-storage').then(m => {
-                m.default.setItem('mute_call_ringtone', r.data.mute_call_ringtone ? 'true' : 'false').catch(() => {});
-              }).catch(() => {});
-            }
-          } catch {}
-        }
-      } catch {}
-    }
-  }, []);
-  const saveChatPrivacy = useCallback((patch) => {
-    setChatPrivacy(prev => {
-      const next = { ...prev, ...patch };
-      // Only ship the keys that changed — chat_privacy_set merges unspecified
-      // columns to their existing values so partial PATCHes are safe.
-      // [mute-call-ringtone, 2026-05-19] Mirror the toggle to local storage so
-      // services/ringtone.js (which has no observer on the network response)
-      // sees the new value before the next inbound ring — but ONLY after the
-      // API confirms. Writing the mirror unconditionally before the call meant
-      // a failed chatPrivacySet left the local mirror desynced from the server
-      // (ringtone honored a value the account never actually saved).
-      const _mirrorMuteRingtone = () => {
-        if (!Object.prototype.hasOwnProperty.call(patch, 'mute_call_ringtone')) return;
-        try {
-          const v = patch.mute_call_ringtone ? 'true' : 'false';
-          if (Platform.OS === 'web') {
-            if (typeof localStorage !== 'undefined') localStorage.setItem('mute_call_ringtone', v);
-          } else {
-            import('@react-native-async-storage/async-storage').then(m => {
-              m.default.setItem('mute_call_ringtone', v).catch(() => {});
-            }).catch(() => {});
-          }
-        } catch {}
-      };
-      // [2026-10-06 rt-client] read_receipts / last_seen / online também gateiam o
-      // typing via WS — espelha no websocket.js quando o servidor confirmar.
-      const _mirrorTypingPrivacy = () => {
-        if (!('read_receipts' in patch) && !('last_seen' in patch) && !('online' in patch)) return;
-        try { require('../services/websocket').default?.setTypingPrivacy?.(patch); } catch {}
-      };
-      // [2026-10-13 settings-instant] commit otimista (snapshot local + fila
-      // offline). Recusa do servidor → snapshot desfeito → applyPrivacy (via
-      // subscribe) devolve o switch ao valor anterior + aviso.
-      settingsCache.commit('privacy', { patch, action: 'chat_privacy_set', params: patch }).then((res) => {
-        if (res && res.ok === false) { settingsCache.notifySaveFailed(t); return; }
-        _mirrorMuteRingtone(); _mirrorTypingPrivacy();
-      }).catch(() => {});
-      return next;
-    });
-  }, [t]);
-
-  // ── Storage stats (Settings → Storage section) ──────────────────────
-  // Scans the local mediaCache dirs (cache + saved-permanent) once on mount
-  // and aggregates total bytes + per-bucket breakdown. Re-runs when the user
-  // taps "Clear cache" so the card reflects the empty state immediately.
-  // Web platforms get a null result and the section is hidden — there's no
-  // on-disk store in the browser, only IndexedDB which isn't user-relevant
-  // here.
-  // [2026-10-13 settings-instant] Último resultado salvo (por conta) → a linha
-  // mostra o valor na hora; o scan (pesado) só roda com a categoria aberta.
-  const [storageStats, setStorageStats] = useState(() => (Platform.OS === 'web' ? null : settingsCache.peek('storage_stats')));
-  const [storageBusy, setStorageBusy] = useState(false);
-  // [2026-10-08 media-local-store] nomes das conversas p/ "Mídia por conversa"
-  // (lista local da conta ativa) + expandir lista + limpeza em andamento.
-  const [storageConvNames, setStorageConvNames] = useState({});
-  const [storageShowAllChats, setStorageShowAllChats] = useState(false);
-  const [storageClearingConv, setStorageClearingConv] = useState(null);
-
-  const refreshStorageStats = useCallback(async () => {
-    if (Platform.OS === 'web') return;
-    try {
-      const mc = require('../services/mediaCache');
-      if (typeof mc.getStorageStats !== 'function') return;
-      const stats = await mc.getStorageStats();
-      setStorageStats(stats);
-      try { if (stats && typeof stats === 'object') settingsCache.put('storage_stats', stats); } catch {}
-      if (stats && Array.isArray(stats.conversations) && stats.conversations.length) {
-        try {
-          const cc = require('../services/chatCache');
-          const list = (await cc.getCachedConversations?.()) || [];
-          const names = {};
-          for (const c of list) {
-            if (!c || c.id == null) continue;
-            const nm = c.display_name || c.name || c.title || c.other_name || c.peer_name || c.other_email || '';
-            if (nm) names[String(c.id)] = String(nm);
-          }
-          setStorageConvNames(names);
-        } catch {}
-      }
-    } catch {}
-  }, []);
-
-  // Sob demanda: só escaneia quando a categoria Armazenamento está visível
-  // (ou a busca pode mostrá-la) — não mais a cada abertura do hub.
-  const _storageVisible = activeCategory === 'storage_data' || !!_q;
-  const _storageScanAtRef = useRef(0);
-  useEffect(() => {
-    if (!_storageVisible || Platform.OS === 'web') return;
+  // ── Perfil do hero (recarrega ao voltar do /edit-profile) ───────────────
+  const [myProfile, setMyProfile] = useState(() => settingsCache.peek('profile'));
+  const [avatarKey, setAvatarKey] = useState(Date.now());
+  useEffect(() => settingsCache.subscribe('profile', (v) => {
+    if (v && typeof v === 'object') { setMyProfile(v); setAvatarKey(Date.now()); }
+  }), []);
+  const _profileFetchedAt = useRef(0);
+  useFocusEffect(useCallback(() => {
+    if (!user?.email) return undefined;
     const now = Date.now();
-    if (now - _storageScanAtRef.current > 30000) {
-      _storageScanAtRef.current = now;
-      refreshStorageStats();
-    }
-  }, [_storageVisible, refreshStorageStats]);
+    if (now - _profileFetchedAt.current < 3000) return undefined;
+    const force = _profileFetchedAt.current !== 0;
+    _profileFetchedAt.current = now;
+    settingsCache.revalidate('profile', { force }).catch(() => {});
+    return undefined;
+  }, [user?.email]));
 
-  // [2026-05-18] Re-scan storage every time the screen regains focus.
-  // User clears a chat / saves a media file in another screen → coming back
-  // to settings should reflect the new totals without a manual tap. Mobile
-  // only — web has no on-disk store so the stats are always zero.
-  // [2026-10-09 native-sheets] pickers viram rota (formSheet) → cada fechar
-  // re-foca a tela; throttle p/ não repetir o scan de armazenamento a cada picker.
-  useFocusEffect(
-    useCallback(() => {
-      if (Platform.OS !== 'web' && _storageVisible) {
-        const now = Date.now();
-        if (now - _storageScanAtRef.current > 30000) {
-          _storageScanAtRef.current = now;
-          refreshStorageStats();
-        }
-      }
-      return undefined;
-    }, [refreshStorageStats, _storageVisible])
-  );
+  // ── Subtítulos de estado (snapshot local; sem montar as categorias) ─────
+  const privData = usePeek('privacy');
+  const notifData = usePeek('notif');
+  const referral = usePeek('referral');
+  const storageStats = usePeek('storage_stats');
+  const settingsData = usePeek('settings');
 
+  const safeNav = useCallback((path) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    const fire = () => { try { router.push(path); } catch {} };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire);
+    else setTimeout(fire, 0);
+  }, [router]);
+
+  const openCategory = useCallback((key, anchor) => {
+    try { Haptics.selectionAsync?.(); } catch {}
+    setPendingAnchor(anchor || null);
+    setSearchQuery('');
+    setSearchFocused(false);
+    setActiveCategory(key);
+    if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
+  }, [IOS_AUTO_INSET]);
+  const openAccountSwitcher = useCallback(() => { try { Haptics.selectionAsync?.(); } catch {} setAccountSwitcherOpen(true); }, []);
+  const hostValue = useMemo(() => ({ registerAnchor, openCategory, openAccountSwitcher, twoPane }), [registerAnchor, openCategory, openAccountSwitcher, twoPane]);
+
+  // Web: baixa os chunks das categorias quando a raiz já está ociosa → a
+  // categoria abre sem esperar a rede (a raiz continua leve no 1º paint).
   useEffect(() => {
-    // [2026-10-13 settings-instant] get_settings: ver bloco settingsCache.
-    // Load undo delay + smart compose + notif prefs
-    if (Platform.OS === 'web') {
-      const d = getStorage('undo_send_delay');
-      if (d != null && d !== '' && !isNaN(parseInt(d, 10))) setUndoDelay(Math.max(0, parseInt(d, 10)));
-      const sc = getStorage('smart_compose');
-      if (sc === 'false') setSmartComposeOn(false);
-      try {
-        const np = getStorage('notif_prefs');
-        if (np) {
-          const parsed = JSON.parse(np);
-          _skipAutosaveRef.current = true;
-          setSettings(prev => ({ ...prev, ...parsed }));
-        }
-      } catch {}
-    } else {
-      import('@react-native-async-storage/async-storage').then(m => {
-        m.default.getItem('undo_send_delay').then(d => {
-          if (d != null && d !== '' && !isNaN(parseInt(d, 10))) setUndoDelay(Math.max(0, parseInt(d, 10)));
-        }).catch(() => {});
-        m.default.getItem('smart_compose').then(v => {
-          if (v === 'false') setSmartComposeOn(false);
-        }).catch(() => {});
-        m.default.getItem('notif_prefs').then(v => {
-          if (v) {
-            try {
-              const parsed = JSON.parse(v);
-              _skipAutosaveRef.current = true;
-              setSettings(prev => ({ ...prev, ...parsed }));
-            } catch {}
-          }
-        }).catch(() => {});
-      }).catch(() => {});
-    }
+    if (Platform.OS !== 'web') return undefined;
+    const run = () => { for (const keys of CATEGORY_GROUPS) for (const k of keys) preloadCategory(k); };
+    const id = setTimeout(run, 400);
+    return () => clearTimeout(id);
   }, []);
 
+  // 2 painéis: sempre há uma categoria aberta à direita (padrão: Conta).
   useEffect(() => {
-    return () => {
-      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-    };
-  }, []);
+    if (twoPane && activeCategory === null) setActiveCategory('account');
+  }, [twoPane, activeCategory]);
 
-  // Android hardware back: if we're inside a category sub-page, pop back to
-  // the category list instead of leaving the screen.
-  // [2026-10-12 settings-back] useFocusEffect (não useEffect): com uma sub-tela
-  // pushada por cima (/notification-preferences, /settings-one…) este listener
-  // continuava ativo e era o 1º a responder → o voltar do aparelho mexia na
-  // categoria das Configurações escondida em vez de fechar a sub-tela.
+  // Voltar: dentro de uma categoria aberta pela lista → volta à lista; com
+  // ?section= (link) → sai da tela; sem histórico → conversas.
+  const inCategorySubpage = activeCategory !== null && !twoPane && !requestedSection;
+  const exitSettings = () => {
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    try { router.replace('/chat'); } catch {}
+  };
+  const handleBack = () => {
+    if (inCategorySubpage) { setActiveCategory(null); setPendingAnchor(null); return; }
+    exitSettings();
+  };
+  // Android: voltar do aparelho (useFocusEffect: sub-telas pushadas por cima
+  // não podem ter o voltar capturado por esta tela escondida).
   useFocusEffect(useCallback(() => {
     if (Platform.OS !== 'android') return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (activeCategory !== null && !requestedSection) { setActiveCategory(null); return true; }
-      // Sem histórico, o voltar padrão fechava o app → leva às conversas.
+      if (activeCategory !== null && !requestedSection) { setActiveCategory(null); setPendingAnchor(null); return true; }
       try { if (!router.canGoBack?.()) { router.replace('/chat'); return true; } } catch {}
       return false;
     });
     return () => { try { sub.remove(); } catch {} };
   }, [activeCategory, requestedSection]));
 
-  // [2026-10-13 settings-instant] Referral + palavras silenciadas: hidratam
-  // do settingsCache (useState acima) e revalidam no bloco único abaixo.
-
-  const handleAddMutedWord = useCallback(async () => {
-    const w = mutedWordsInput.trim().toLowerCase();
-    if (!w || mutedWords.includes(w)) {
-      setMutedWordsInput('');
-      return;
-    }
-    setMutedWordsLoading(true);
-    // Optimistic — prepend and clear input; revert on failure.
-    setMutedWords(prev => [w, ...prev]);
-    setMutedWordsInput('');
-    const _cachePut = (fn) => { try { const c = settingsCache.peek('muted_words'); settingsCache.put('muted_words', fn(Array.isArray(c) ? c : [])); } catch {} };
-    try {
-      const r = await api.feedMutedWordsAdd(w);
-      if (!r?.success) { setMutedWords(prev => prev.filter(x => x !== w)); settingsCache.notifySaveFailed(t); }
-      else _cachePut(list => [w, ...list.filter(x => x !== w)]);
-    } catch {
-      setMutedWords(prev => prev.filter(x => x !== w));
-      settingsCache.notifySaveFailed(t);
-    } finally {
-      setMutedWordsLoading(false);
-    }
-  }, [mutedWordsInput, mutedWords, t]);
-
-  const handleRemoveMutedWord = useCallback(async (word) => {
-    setMutedWords(prev => prev.filter(x => x !== word));
-    try {
-      const r = await api.feedMutedWordsRemove(word);
-      if (r?.success !== false) {
-        const c = settingsCache.peek('muted_words');
-        settingsCache.put('muted_words', (Array.isArray(c) ? c : []).filter(x => x !== word));
-      }
-    } catch {}
-  }, []);
-
-  const handleShareReferral = async () => {
-    const link = `https://chatyy.com.br/signup?ref=${referralCode}`;
-    const msg = t('referral.shareMessage').replace('{code}', referralCode).replace('{link}', link);
-    if (Platform.OS === 'web') {
-      try {
-        await navigator.clipboard.writeText(msg);
-        if (Platform.OS === 'web') Alert.alert(t('referral.copied'));
-      } catch {
-        try { await navigator.share({ text: msg }); } catch {}
-      }
-    } else {
-      try { await Share.share({ message: msg }); } catch {}
-    }
-  };
-
-  // [2026-10-13 settings-instant] Aplica o blob get_settings (snapshot local
-  // ou revalidação). Não sobrescreve uma edição ainda não salva (auto-save
-  // pendente) e não ecoa de volta ao servidor.
-  const applySettings = useCallback((data) => {
-    if (!data || typeof data !== 'object') return;
-    if (_autoSaveTimer.current) return;
-    _skipAutosaveRef.current = true;
-    setSettings(prev => {
-      const merged = { ...prev, ...data };
-      initialSettingsRef.current = JSON.stringify(merged);
-      return merged;
-    });
-  }, []);
-
-  const isDirty = () => {
-    try { return initialSettingsRef.current && JSON.stringify(settings) !== initialSettingsRef.current; } catch { return false; }
-  };
-  // [2026-10-12] Founder: "o botão voltar nas configurações não está funcionando".
-  // router.back() não faz nada quando Configurações abriu sem histórico (link direto,
-  // recarga no web, ou aberta por replace) → cai para as conversas.
-  const inCategorySubpage = activeCategory !== null && !twoPane && !requestedSection;
-  // Sem histórico (link direto, push, aberta por replace) o header nativo não
-  // tem botão voltar nenhum → usamos o nosso, que leva às conversas.
-  let canGoBackNow = true;
-  try { canGoBackNow = !!router.canGoBack?.(); } catch {}
-  const exitSettings = () => {
-    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
-    try { router.replace('/chat'); } catch {}
-  };
-  const handleBack = () => {
-    // Inside a category sub-page: back returns to the category LIST first,
-    // not out of the screen — exceto quando a seção veio por link (?section=),
-    // aí o voltar sai direto para onde a pessoa estava.
-    if (inCategorySubpage) { setActiveCategory(null); return; }
-    // [2026-10-12 settings-back] Tudo aqui é salvo automaticamente (auto-save
-    // com debounce de 700 ms). O antigo alerta "Alterações não salvas" só
-    // aparecia quando a pessoa voltava antes do debounce (ou quando um save
-    // falhava → isDirty preso em true → TODO voltar abria o alerta, e no
-    // swipe/back nativo nem aparecia). Agora: grava na hora e sai.
-    if (isDirty()) { try { if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current); } catch {} handleSave().catch?.(() => {}); }
-    exitSettings();
-  };
-  const handleSave = async () => {
-    setSaving(true);
-    setSaved(false);
-    try {
-      // [2026-10-13 settings-instant] commit: snapshot local + fila offline.
-      const res = await settingsCache.commit('settings', { patch: settings, action: 'update_settings', params: settings });
-      if (res?.ok === false) settingsCache.notifySaveFailed(t);
-      if (res?.ok !== false) {
-        setSaved(true);
-        initialSettingsRef.current = JSON.stringify(settings);
-        if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
-        savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
-        // A successful settings save can change the display name surfaced on
-        // the profile. Invalidate the cached profile blob (set by
-        // AuthContext.prefetchProfile with a 600s TTL) so the profile screen
-        // and /u/{email} reflect the change instead of stale data.
-        try {
-          const { invalidate } = await import('../services/cache');
-          invalidate?.('user_profile');
-        } catch {}
-      }
-      // Persist notification prefs locally + update MailContext
-      const notifPrefs = {
-        notification_sound: settings.notification_sound,
-        notification_vibration: settings.notification_vibration,
-      };
-      const json = JSON.stringify(notifPrefs);
-      setStorage('notif_prefs', json);
-      try {
-        const { updateNotifSettings } = await import('../context/MailContext');
-        updateNotifSettings(notifPrefs);
-      } catch {}
-    } catch {} finally {
-      setSaving(false);
-    }
-  };
-
-  // Auto-save: the former "Salvar" button in the header was removed. The
-  // fields that live in the `settings` blob (signature, emails_per_page,
-  // notifications, notification_sound, notification_vibration, language,
-  // font_size…) are mutated in place by their rows and now persist
-  // automatically here, debounced, whenever `settings` changes. Fields that
-  // already had their own server round-trip (vacation/auto-reply,
-  // forwarding, notif prefs, chat prefs, theme, biometric) persist on change
-  // via their own handlers and are unaffected by this.
-  const _autoSaveTimer = useRef(null);
-  const _autoSaveArmed = useRef(false);
-  useEffect(() => {
-    if (loading) return undefined;
-    // Skip the first run after the initial load so hydrating server data
-    // doesn't immediately echo straight back to the server.
-    if (!_autoSaveArmed.current) { _autoSaveArmed.current = true; return undefined; }
-    // [2026-10-13 settings-instant] mudança veio da hidratação (cache/servidor).
-    if (_skipAutosaveRef.current) { _skipAutosaveRef.current = false; return undefined; }
-    if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current);
-    // Sem cleanup que cancele: uma hidratação no meio do debounce não pode
-    // descartar a edição pendente (applySettings/applyNotif a respeitam).
-    _autoSaveTimer.current = setTimeout(() => { _autoSaveTimer.current = null; handleSave(); }, 700);
-    return undefined;
-  }, [settings, loading]);
-
-  // ── [2026-10-13 settings-instant] Bloco único de hidratação + revalidação ──
-  // ANTES: 8 leituras de rede independentes a cada abertura (get_settings,
-  // chat_user_notif_prefs_get, chat_privacy_get, chat_user_defaults_get,
-  // vacation_get, profile_get, get_referral_code, feed_muted_words_list), o
-  // SWR invalidado no 1º render (= sempre rede), switches começando nos
-  // PADRÕES e trocando quando cada resposta chegava, e skeleton de tela cheia
-  // até o get_settings voltar.
-  // AGORA: useLayoutEffect aplica o snapshot local (por conta) ANTES da 1ª
-  // pintura; as seções vencidas (TTL 5 min) revalidam em PARALELO
-  // (settingsCache.prefetchAll → Promise.all) e chegam via subscribe sem piscar.
-  const _sectionAppliers = useRef(null);
-  _sectionAppliers.current = {
-    settings: applySettings,
-    notif: applyNotif,
-    privacy: applyPrivacy,
-    defaults: applyDefaults,
-    vacation: applyVacation,
-    profile: (v) => { if (v && typeof v === 'object') { setMyProfile(v); setAvatarKey(Date.now()); } },
-    referral: (v) => { if (v && typeof v === 'object') { setReferralCode(v.code || ''); setReferralCount(v.referred_count || 0); } },
-    muted_words: (v) => { if (Array.isArray(v)) setMutedWords(v); },
-  };
-  useLayoutEffect(() => {
-    const appliers = _sectionAppliers.current;
-    const unsubs = [];
-    for (const sec of Object.keys(appliers)) {
-      // profile/referral/muted_words já entraram pelos useState iniciais.
-      if (sec !== 'profile' && sec !== 'referral' && sec !== 'muted_words') {
-        const v = settingsCache.peek(sec);
-        if (v != null) { try { appliers[sec](v); } catch {} }
-      }
-      unsubs.push(settingsCache.subscribe(sec, (v) => { if (v != null) { try { _sectionAppliers.current[sec]?.(v); } catch {} } }));
-    }
-    // Ao ABRIR a tela o TTL é curto (30 s): outras telas/aparelhos podem ter
-    // mudado algo — a revalidação é silenciosa (sem spinner, sem piscar).
-    settingsCache.prefetchAll({ ttl: 30000 }).catch(() => {});
-    return () => { unsubs.forEach((u) => { try { u(); } catch {} }); };
-  }, []);
-  // Puxar para baixo = força revalidar tudo (em paralelo).
+  // Puxar p/ baixo = revalida tudo (paralelo) + avisa a categoria aberta.
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const onPullRefresh = useCallback(() => {
     setPullRefreshing(true);
+    emitSettingsRefresh();
     settingsCache.prefetchAll({ force: true }).finally(() => setPullRefreshing(false));
-    if (activeCategory === 'storage_data') refreshStorageStats();
-  }, [activeCategory, refreshStorageStats]);
+  }, []);
 
-  const handleChangePhoto = async () => {
-    try {
-      try { Keyboard.dismiss(); } catch {} // [2026-10-11 android-kav] antes da galeria
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return;
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-      if (!result.canceled && result.assets?.[0]) {
-        const asset = result.assets[0];
-        // Reject huge files at the client edge — upload silently times out
-        // for files >25MB and the user gets no feedback.
-        if (asset.fileSize && asset.fileSize > 25 * 1024 * 1024) {
-          Alert.alert(t('common.error') || 'Erro', t('settings.avatarTooBig') || 'Foto muito grande (máx 25MB).');
-          return;
-        }
-        const { uploadAvatar } = await import('../services/api');
-        const file = { uri: asset.uri, name: 'avatar.jpg', type: 'image/jpeg' };
-        try {
-          const r = await uploadAvatar(file);
-          if (r?.success) {
-            setAvatarKey(Date.now());
-            // Invalidate the cached profile blob so /u/{email} (and the
-            // profile screen) don't serve a stale avatar for the full 600s
-            // TTL set by AuthContext.prefetchProfile.
-            try {
-              const { invalidate } = await import('../services/cache');
-              invalidate?.('user_profile');
-            } catch {}
-            // Also drop the per-email profile_v1 MMKV cache used by the
-            // profile viewer component (Profile.js) so it re-fetches.
-            try {
-              const { invalidateProfileCache } = await import('../components/Profile');
-              if (typeof invalidateProfileCache === 'function') {
-                invalidateProfileCache(null);
-              }
-            } catch {}
-          } else {
-            Alert.alert(t('common.error') || 'Erro', r?.message || (t('settings.avatarUploadFailed') || 'Falha ao salvar foto.'));
-          }
-        } catch (e) {
-          Alert.alert(t('common.error') || 'Erro', e?.message || (t('settings.avatarUploadFailed') || 'Falha ao salvar foto.'));
-        }
-      }
-    } catch (e) {
-      console.warn('[settings/avatar]', e?.message || e);
-    }
-  };
-
-  // ── Category catalog (WhatsApp/iOS-style home list) ──────────────────
-  // Each entry maps to the `activeCategory` key used by the section gates
-  // below. `icon` is an already-imported SVG component. Titles/subtitles are
-  // routed through t() (keys added under `settings.cat.*` to pt-BR/en/es, so
-  // the en→pt-BR fallback chain covers every other locale — no raw-key leak).
-  // Inline pt-BR kept as a `||` fallback belt-and-suspenders.
-  const categoryList = [
-    // [2026-10-11 settings-unify] Modelo WhatsApp: Conta · Privacidade ·
-    // Conversas · Notificações · Armazenamento e dados · Acessibilidade ·
-    // Idioma do app · (Email · Bia) · Ajuda · Convidar amigo. "Aparência"
-    // virou parte de Conversas (tema/cor/papel de parede) e Idioma tem
-    // página própria; Segurança mudou de Privacidade para Conta.
-    { key: 'accessibility', Icon: IconType,        title: t('settings.cat.accessibility'), sub: '' },
-    { key: 'language',     Icon: IconGlobe,        title: t('settings.cat.language'), sub: '' },
-    { key: 'invite',       Icon: IconUserPlus,     title: t('settings.cat.invite'), sub: '' },
-    { key: 'chats',        Icon: IconMessageSquare,title: t('settings.cat.chats'), sub: '' },
-    { key: 'privacyOnly',  Icon: IconShield,       title: t('settings.cat.privacyOnly'), sub: '' },
-    { key: 'account',      Icon: IconUser,         title: t('settings.cat.account') || 'Conta',                   sub: t('settings.cat.accountSub') || 'Perfil, foto, trocar conta' },
-    { key: 'appearance',   Icon: IconBrush,        title: t('settings.cat.appearance') || 'Aparência',            sub: t('settings.cat.appearanceSub') || 'Tema e idioma' },
-    { key: 'notifications',Icon: IconBell,         title: t('settings.cat.notifications') || 'Notificações',      sub: t('settings.cat.notificationsSub') || 'Alertas e preferências' },
-    { key: 'privacy',      Icon: IconShield,       title: t('settings.cat.privacy') || 'Privacidade e segurança', sub: t('settings.cat.privacySub') || 'Visto por último, bloqueio, encaminhamento' },
-    { key: 'chat',         Icon: IconMessageSquare,title: t('settings.cat.chat') || 'Chat',                       sub: t('settings.cat.chatSub') || 'Preferências e temporárias' },
-    { key: 'email',        Icon: IconMail,         title: t('settings.cat.email') || 'Email',                     sub: t('settings.cat.emailSub') || 'Assinaturas, filtros, leitura' },
-    { key: 'bia',          Icon: IconSparkles,     title: t('settings.cat.bia') || 'Bia',                         sub: t('settings.cat.biaSub') || 'Seu assistente de IA' },
-    { key: 'storage_data', Icon: IconDatabase,     title: t('settings.cat.storageData') || 'Armazenamento e dados', sub: t('settings.cat.storageDataSub') || 'Mídia e armazenamento' },
-    { key: 'help',         Icon: IconHelpCircle,   title: t('settings.cat.help') || 'Ajuda e sobre',              sub: t('settings.cat.helpSub') || 'Central de ajuda, sobre, legal' },
-  ];
-  const activeCategoryTitle = (categoryList.find(c => c.key === ({ privacy: 'privacyOnly', chat: 'chats' }[activeCategory] || activeCategory)) || {}).title || t('settings.title');
-
-  // [2026-10-08 settings-redesign] Root groups (iOS Settings layout): the
-  // profile card on top, then the categories split into three inset groups.
-  // [2026-10-11 settings-unify] 'privacy' e 'chat' mantêm as chaves internas
-  // (gates abaixo); só o rótulo mudou (privacyOnly/chats). Armazenamento e
-  // dados agora tem conteúdo no web (qualidade de envio, chamadas, nuvem).
-  const _catAlias = { privacy: 'privacyOnly', chat: 'chats' };
-  const categoryGroups = [
-    ['account', 'privacy', 'chat', 'notifications', 'storage_data'],
-    ['accessibility', 'language'],
-    ['email', 'bia'],
-    ['help', 'invite'],
-  ].map(keys => keys.map(k => {
-    const c = categoryList.find(x => x.key === (_catAlias[k] || k));
-    return c ? { ...c, key: k } : null;
-  }).filter(Boolean));
-  const displayName = (user?.name || user?.display_name || '').trim()
-    || (user?.email ? user.email.split('@')[0] : '');
-  // [2026-10-09 settings-logout] Sair da conta direto da raiz das Configurações.
-  // Mesma função de logout do Perfil/Inbox: AuthContext.logout() + /login.
   const handleSettingsLogout = async () => {
     const title = t('settings.logoutConfirmTitle');
     const msg = t('settings.logoutConfirmMessage');
@@ -1625,186 +259,8 @@ function SettingsScreenInner() {
     try { await logout(); } catch {}
     try { router.replace('/login'); } catch {}
   };
-  // 2 painéis: sempre há uma categoria aberta à direita (padrão: Conta).
-  useEffect(() => {
-    if (twoPane && activeCategory === null) setActiveCategory('account');
-  }, [twoPane, activeCategory]);
-  const openCategory = (key) => {
-    try { Haptics.selectionAsync?.(); } catch {}
-    setActiveCategory(key);
-    if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
-  };
-  const currencyName = (code) => {
-    const k = 'settings.currency.' + code;
-    const v = t(k);
-    return v && v !== k ? v : code;
-  };
-  // [2026-10-08 settings-redesign2] Rótulos/opções das linhas de privacidade
-  // (valor à direita + sheet com checkmark). Mesmo mapeamento do picker antigo.
-  const privacyValueLabel = (field) => {
-    const v = chatPrivacy[field];
-    if (field === 'story_privacy') {
-      if (v === 'all' || v === 'everyone') return t('settings.privacyEveryone');
-      if (v === 'contacts') return t('settings.privacyContacts');
-      if (v === 'close_friends') return t('settings.privacyCloseFriends');
-      if (v === 'except') return t('settings.privacyStatusExcept');
-      return t('settings.privacyNobody');
-    }
-    if (v === 'everyone') return t('settings.privacyEveryone');
-    if (v === 'contacts') return t('settings.privacyContacts');
-    return field === 'online' ? t('settings.privacyInvisible') : t('settings.privacyNobody');
-  };
-  const privacyOptionsFor = (field) => (
-    field === 'online' ? [
-      { value: 'everyone', label: t('settings.privacyEveryone') },
-      { value: 'contacts', label: t('settings.privacyContacts') },
-      { value: 'nobody',   label: t('settings.privacyInvisible') },
-    ] : field === 'story_privacy' ? [
-      { value: 'all',           label: t('settings.privacyEveryone') },
-      { value: 'contacts',      label: t('settings.privacyContacts') },
-      { value: 'close_friends', label: t('settings.privacyCloseFriends') },
-      { value: 'except',        label: t('settings.privacyStatusExcept') },
-    ] : [
-      { value: 'everyone', label: t('settings.privacyEveryone') },
-      { value: 'contacts', label: t('settings.privacyContacts') },
-      { value: 'nobody',   label: t('settings.privacyNobody') },
-    ]
-  );
-  const privacyFieldTitle = (field) => (
-    field === 'last_seen' ? t('settings.privacyLastSeen')
-      : field === 'profile_photo' ? t('settings.privacyProfilePhoto')
-      : field === 'online' ? t('settings.privacyOnline')
-      : field === 'story_privacy' ? t('settings.privacyStatus')
-      : field === 'group_add' ? t('settings.privacyGroups')
-      : field === 'phone_visibility' ? t('privacy.phoneNumber')
-      : field === 'about' ? t('settings.privacyAbout')
-      : ''
-  );
-  const AUTO_LOCK_OPTIONS = [
-    { value: '0',     label: t('biometric.lockImmediate') || 'Imediatamente' },
-    { value: '60',    label: t('biometric.lock1Min')      || 'Após 1 minuto' },
-    { value: '300',   label: t('biometric.lock5Min')      || 'Após 5 minutos' },
-    { value: '900',   label: t('biometric.lock15Min')     || 'Após 15 minutos' },
-    { value: 'never', label: t('biometric.lockNever')     || 'Nunca' },
-  ];
-  const appVersionLabel = (() => {
-    const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
-    const build = Constants?.expoConfig?.ios?.buildNumber || Constants?.expoConfig?.android?.versionCode || '';
-    return build ? `${ver} (${build})` : String(ver);
-  })();
-  // [2026-10-12] Founder: "Ajuda e sobre deveria ter uma opção de atualização".
-  // Procura e aplica a atualização (OTA) na hora — sem precisar fechar/abrir 2x.
-  const [updState, setUpdState] = useState('idle'); // idle|checking|downloading|ready|latest|error
-  const updInfo = (() => {
-    try {
-      const U = require('expo-updates');
-      const id = U?.updateId ? String(U.updateId).slice(0, 8) : null;
-      const at = U?.createdAt ? new Date(U.createdAt) : null;
-      return { id, at, embedded: !!U?.isEmbeddedLaunch };
-    } catch { return { id: null, at: null, embedded: true }; }
-  })();
-  const checkAppUpdate = async () => {
-    if (updState === 'checking' || updState === 'downloading') return;
-    if (Platform.OS === 'web') {
-      try { setUpdState('downloading'); window.location.reload(); } catch { setUpdState('error'); }
-      return;
-    }
-    let U = null;
-    try { U = require('expo-updates'); } catch {}
-    if (!U || !U.isEnabled) { setUpdState('error'); return; }
-    try {
-      setUpdState('checking');
-      const r = await U.checkForUpdateAsync();
-      if (!r?.isAvailable) { setUpdState('latest'); return; }
-      setUpdState('downloading');
-      await U.fetchUpdateAsync();
-      setUpdState('ready');
-      setTimeout(() => { U.reloadAsync().catch(() => setUpdState('error')); }, 900);
-    } catch { setUpdState('error'); }
-  };
-  const updSubtitle = (() => {
-    switch (updState) {
-      case 'checking': return t('settings.update.checking');
-      case 'downloading': return t('settings.update.downloading');
-      case 'ready': return t('settings.update.ready');
-      case 'latest': return t('settings.update.latest');
-      case 'error': return t('settings.update.error');
-      default: {
-        const parts = [];
-        if (updInfo.id) parts.push(updInfo.id);
-        if (updInfo.at && !isNaN(updInfo.at)) parts.push(updInfo.at.toLocaleDateString());
-        return parts.length ? `${t('settings.update.current')}: ${parts.join(' · ')}` : t('settings.update.tap');
-      }
-    }
-  })();
-  const openLoginHistory = async () => {
-    setLoginHistoryOpen(true);
-    setLoginHistoryLoading(true);
-    try {
-      const r = await api.getLoginHistory?.();
-      if (r?.success && Array.isArray(r?.data?.events)) setLoginHistory(r.data.events);
-      else if (Array.isArray(r?.data)) setLoginHistory(r.data);
-      else setLoginHistory([]);
-    } catch { setLoginHistory([]); }
-    finally { setLoginHistoryLoading(false); }
-  };
-  // [2026-10-09 i18n-complete] Todos os idiomas com tradução completa (≥98%,
-  // ver SELECTABLE_LOCALES / scripts/i18n-coverage.js), com o nome nativo.
-  const LANG_OPTIONS = SELECTABLE_LOCALES.map((code) => ({
-    value: code,
-    label: (I18N_LANGUAGES.find((l) => l.code === code) || {}).label || code,
-  }));
 
-  // [2026-10-11 settings-unify] Raiz do hub (cartão do perfil + categorias +
-  // Sair) e busca — reutilizados na coluna esquerda do layout de 2 painéis.
-  // [2026-10-15 settings-2026] Busca integrada (web; no nativo é a barra do
-  // header): ao focar, a barra ganha destaque e o "Cancelar" desliza para
-  // dentro com spring; o termo aparece realçado nas linhas (SettingsSearchContext).
-  const searchBarNode = (
-          <View style={s.searchWrap}>
-          <Animated.View style={[s.searchBar, {
-            backgroundColor: searchFocused ? gc.cardBg : gc.fill,
-            borderColor: searchFocused ? gc.ring : 'transparent',
-          }]}>
-            <IconSearch size={17} color={searchFocused ? gc.text : gc.secondary} />
-            <TextInput
-              ref={searchInputRef}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => { if (!searchQuery) setSearchFocused(false); }}
-              placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
-              placeholderTextColor={gc.secondary}
-              style={[s.searchInput, { color: colors.text }]}
-              autoCorrect={false}
-              autoCapitalize="none"
-              returnKeyType="search"
-              accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
-            />
-            {!!searchQuery && (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                style={{ padding: 4 }}
-                accessibilityLabel={t('common.clear') || 'Limpar'}
-                accessibilityRole="button"
-              >
-                <IconX size={15} color={gc.secondary} />
-              </TouchableOpacity>
-            )}
-          </Animated.View>
-          <Animated.View style={{ overflow: 'hidden', maxWidth: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 110] }), opacity: searchAnim }}>
-            <TouchableOpacity
-              onPress={() => { setSearchQuery(''); setSearchFocused(false); try { searchInputRef.current?.blur?.(); } catch {} }}
-              style={s.searchCancel}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.cancel') || 'Cancelar'}
-            >
-              <Text style={{ color: gc.text, fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{t('common.cancel') || 'Cancelar'}</Text>
-            </TouchableOpacity>
-          </Animated.View>
-          </View>
-  );
-  // Estado atual de cada categoria como subtítulo (ex.: "Notificações · Tudo").
+  // ── Subtítulos ──────────────────────────────────────────────────────────
   const _fmtBytesHub = (b) => {
     const bytes = Math.max(0, Number(b) || 0);
     const mb = bytes / (1024 * 1024);
@@ -1813,124 +269,229 @@ function SettingsScreenInner() {
     const gb = mb / 1024;
     return `${(gb < 10 ? gb.toFixed(1) : Math.round(gb)).toString().replace('.', (language || '').startsWith('en') ? '.' : ',')} GB`;
   };
-  const _langLabel = (LANG_OPTIONS.find(o => o.value === language) || {}).label || '';
-  const _fontLabel = settings?.font_size === 'small' ? t('settings.fontSmall') : settings?.font_size === 'large' ? t('settings.fontLarge') : t('settings.fontMedium');
-  const _themeLabel = themeMode === 'dark' ? t('settings.theme.dark') : themeMode === 'light' ? t('settings.theme.light') : t('settings.theme.system');
-  const _pushLabel = pushNotifLevel === 'urgent' ? t('settings.notifUrgent') : pushNotifLevel === 'silent' ? t('settings.notifSilent') : t('settings.notifAll');
-  const _storageSub = Platform.OS === 'web'
-    ? `${t('settings.mediaUploadQuality.title') || ''}: ${mediaUploadQuality === 'hd' ? (t('settings.mediaUploadQuality.hd') || 'HD') : (t('settings.mediaUploadQuality.standard') || 'Padrão')}`
-    : _fmtBytesHub(storageStats?.totalBytes);
+  const langLabel = (() => {
+    if (!SELECTABLE_LOCALES.includes(language)) return '';
+    return (I18N_LANGUAGES.find((l) => l.code === language) || {}).label || language;
+  })();
+  const fontSize = (notifData && typeof notifData.font_size === 'string') ? notifData.font_size : (settingsData?.font_size || 'medium');
+  const fontLabel = fontSize === 'small' ? t('settings.fontSmall') : fontSize === 'large' ? t('settings.fontLarge') : t('settings.fontMedium');
+  const themeLabel = themeMode === 'dark' ? t('settings.theme.dark') : themeMode === 'light' ? t('settings.theme.light') : t('settings.theme.system');
+  const pushLevel = pushLevelOf(notifData);
+  const pushLabel = pushLevel === 'urgent' ? t('settings.notifUrgent') : pushLevel === 'silent' ? t('settings.notifSilent') : t('settings.notifAll');
+  const storageSub = (() => {
+    if (Platform.OS !== 'web') return _fmtBytesHub(storageStats?.totalBytes);
+    let q = 'hd';
+    try { q = require('../services/mediaUploadQuality').getMediaUploadQuality(); } catch {}
+    return `${t('settings.mediaUploadQuality.title') || ''}: ${q === 'hd' ? (t('settings.mediaUploadQuality.hd') || 'HD') : (t('settings.mediaUploadQuality.standard') || 'Padrão')}`;
+  })();
+  const referralCount = (referral && referral.referred_count) || 0;
   const catSubtitle = {
     account: (myProfile?.phone || user?.email || ''),
-    privacy: `${t('settings.privacyLastSeen')}: ${privacyValueLabel('last_seen')}`,
-    chat: `${t('settings.theme.label') || ''}: ${_themeLabel}`,
-    notifications: _pushLabel,
-    storage_data: _storageSub,
-    accessibility: `${t('settings.fontSize')}: ${_fontLabel}`,
-    language: _langLabel,
+    privacy: `${t('settings.privacyLastSeen')}: ${privacyValueLabel(t, normalizePrivacy(privData), 'last_seen')}`,
+    chat: `${t('settings.theme.label') || ''}: ${themeLabel}`,
+    notifications: pushLabel,
+    storage_data: storageSub,
+    accessibility: `${t('settings.fontSize')}: ${fontLabel}`,
+    language: langLabel,
     email: user?.email || '',
     bia: t('settings.cat.biaSub') || '',
-    help: (t('settings.about.version') || 'Versão {ver}').replace('{ver}', appVersionLabel),
+    help: (t('settings.about.version') || 'Versão {ver}').replace('{ver}', appVersionLabel()),
     invite: referralCount > 0 ? String(referralCount) : '',
   };
-  const homeListNode = (
-          <View>
-            {/* [2026-10-15 settings-2026] Perfil como HERO (avatar grande +
-                anel, nome forte, @usuário · telefone, recado, pílulas) que
-                encolhe ao rolar; cartões especiais (Chatyy One / Carteira,
-                Contas c/ avatares sobrepostos, Dispositivos). */}
-            <SettingsHero
-              user={user}
-              profile={myProfile}
-              avatarKey={avatarKey}
-              scrollY={twoPane ? null : heroScrollY}
-              onEdit={() => safeNav('/edit-profile')}
-              onQr={() => safeNav('/profile-qr')}
-              onSwitch={() => { try { Haptics.selectionAsync?.(); } catch {} setAccountSwitcherOpen(true); }}
-            />
-            <SettingsSpecialCards
-              user={user}
-              accounts={accounts}
-              walletDiamonds={walletDiamonds}
-              onOne={() => safeNav('/settings-one')}
-              onWallet={() => safeNav('/wallet')}
-              onAccounts={() => { try { Haptics.selectionAsync?.(); } catch {} setAccountSwitcherOpen(true); }}
-              onDevices={() => safeNav('/linked-devices')}
-            />
-            {categoryGroups.map((grp, gi) => (
-              <SettingsGroup key={gi} inset={62} header={[t('notif.general'), t('settings.preferences'), t('chat.apps'), t('settings.support')][gi]}>
-                {grp.map((cat) => (
-                  <SettingsRow
-                    key={cat.key}
-                    icon={cat.Icon}
-                    title={cat.title}
-                    subtitle={catSubtitle[cat.key] || undefined}
-                    subtitleLines={1}
-                    titleStyle={twoPane && activeCategory === cat.key ? { fontWeight: '700' } : undefined}
-                    accessibilityState={twoPane ? { selected: activeCategory === cat.key } : undefined}
-                    testID={'settings-cat-' + cat.key}
-                    onPress={() => openCategory(cat.key)}
-                  />
-                ))}
-              </SettingsGroup>
-            ))}
-            {/* [2026-10-09 settings-logout] "Sair" só existia em Perfil → engrenagem → Zona de perigo.
-                Mesmo fluxo de logout (AuthContext.logout + /login), com confirmação. */}
-            <SettingsGroup>
-              <SettingsRow
-                title={t('settings.logoutAccount')}
-                destructive
-                center
-                onPress={handleSettingsLogout}
-              />
-            </SettingsGroup>
-          </View>
+  const activeCategoryTitle = activeCategory ? categoryTitle(t, activeCategory) : t('settings.title');
+
+  // ── Busca: índice leve (não monta categorias) ───────────────────────────
+  const searchIndex = useMemo(() => buildSearchIndex(t), [t]);
+  const catTitleOf = useCallback((k) => categoryTitle(t, k), [t]);
+  const results = useMemo(() => (searching ? filterSearchIndex(searchIndex, _q, catTitleOf) : []), [searching, searchIndex, _q, catTitleOf]);
+
+  // ── Lista nativa da raiz ────────────────────────────────────────────────
+  const [nativeFailed, setNativeFailed] = useState(() => !!globalThis.__chatyy_native_settings_failed);
+  const useNativeRoot = Platform.OS !== 'web' && !twoPane && !nativeFailed
+    && globalThis.__chatyy_native_settings !== false && isNativeSettingsListAvailable();
+  const onNativeFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_settings_failed = true; console.warn('[native-settings] fallback JS:', msg); } catch {}
+    setNativeFailed(true);
+  }, []);
+
+  const heroNode = (
+    <>
+      <SettingsHero
+        user={user}
+        profile={myProfile}
+        avatarKey={avatarKey}
+        scrollY={twoPane || useNativeRoot ? null : heroScrollY}
+        onEdit={() => safeNav('/edit-profile')}
+        onQr={() => safeNav('/profile-qr')}
+        onSwitch={openAccountSwitcher}
+      />
+      <SettingsSpecialCards
+        user={user}
+        accounts={accounts}
+        walletDiamonds={walletDiamonds}
+        onOne={() => safeNav('/settings-one')}
+        onWallet={() => safeNav('/wallet')}
+        onAccounts={openAccountSwitcher}
+        onDevices={() => safeNav('/linked-devices')}
+      />
+    </>
   );
+
+  const searchBarNode = (
+    <View style={s.searchWrap}>
+      <Animated.View style={[s.searchBar, {
+        backgroundColor: searchFocused ? gc.cardBg : gc.fill,
+        borderColor: searchFocused ? gc.ring : 'transparent',
+      }]}>
+        <IconSearch size={17} color={searchFocused ? gc.text : gc.secondary} />
+        <TextInput
+          ref={searchInputRef}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => { if (!searchQuery) setSearchFocused(false); }}
+          placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
+          placeholderTextColor={gc.secondary}
+          style={[s.searchInput, { color: colors.text }]}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+          accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
+        />
+        {!!searchQuery && (
+          <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 4 }} accessibilityLabel={t('common.clear') || 'Limpar'} accessibilityRole="button">
+            <IconX size={15} color={gc.secondary} />
+          </TouchableOpacity>
+        )}
+      </Animated.View>
+      <Animated.View style={{ overflow: 'hidden', maxWidth: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 110] }), opacity: searchAnim }}>
+        <TouchableOpacity
+          onPress={() => { setSearchQuery(''); setSearchFocused(false); try { searchInputRef.current?.blur?.(); } catch {} }}
+          style={s.searchCancel}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.cancel') || 'Cancelar'}
+        >
+          <Text style={{ color: gc.text, fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{t('common.cancel') || 'Cancelar'}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+
+  // Resultados (lista JS): uma linha por configuração, subtítulo = categoria.
+  const searchResultsNode = searching ? (
+    results.length > 0 ? (
+      <SettingsGroup header={(t('settings.matchesFound') || 'Resultados') + ` (${results.length})`}>
+        {results.map((r) => {
+          const Icon = CAT_ICONS[CATEGORY_META[r.cat]?.icon];
+          return (
+            <SettingsRow
+              key={r.id}
+              icon={Icon}
+              title={r.title}
+              subtitle={categoryTitle(t, r.cat)}
+              subtitleLines={1}
+              onPress={() => openCategory(r.cat, r.anchor)}
+            />
+          );
+        })}
+      </SettingsGroup>
+    ) : (
+      <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+        <IconSearch size={28} color={gc.tertiary} />
+        <Text style={{ color: gc.secondary, fontSize: 15, marginTop: 10 }}>{t('settings.noMatches') || 'Nenhum resultado'}</Text>
+      </View>
+    )
+  ) : null;
+
+  const categoryGroupsNode = CATEGORY_GROUPS.map((keys, gi) => (
+    <SettingsGroup key={gi} inset={62} header={t(GROUP_HEADER_KEYS[gi])}>
+      {keys.map((key) => (
+        <SettingsRow
+          key={key}
+          icon={CAT_ICONS[CATEGORY_META[key].icon]}
+          title={categoryTitle(t, key)}
+          subtitle={catSubtitle[key] || undefined}
+          subtitleLines={1}
+          titleStyle={twoPane && activeCategory === key ? { fontWeight: '700' } : undefined}
+          accessibilityState={twoPane ? { selected: activeCategory === key } : undefined}
+          testID={'settings-cat-' + key}
+          onPress={() => openCategory(key)}
+        />
+      ))}
+    </SettingsGroup>
+  ));
+  const logoutNode = (
+    <SettingsGroup>
+      <SettingsRow title={t('settings.logoutAccount')} destructive center onPress={handleSettingsLogout} />
+    </SettingsGroup>
+  );
+  const homeListNode = (
+    <View>
+      {heroNode}
+      {categoryGroupsNode}
+      {logoutNode}
+    </View>
+  );
+
+  // Linhas da lista nativa (categorias + resultados de busca + Sair).
+  const nativeSections = useMemo(() => {
+    if (!useNativeRoot) return null;
+    const rows = [];
+    CATEGORY_GROUPS.forEach((keys, gi) => {
+      for (const key of keys) {
+        rows.push({
+          id: 'c:' + key, k: 'c', sid: 'g' + gi, hd: t(GROUP_HEADER_KEYS[gi]),
+          title: categoryTitle(t, key), sub: catSubtitle[key] || '', icon: CATEGORY_META[key].icon,
+        });
+      }
+    });
+    rows.push({ id: 'a:logout', k: 'a', sid: 'logout', hd: '', title: t('settings.logoutAccount'), dest: true, center: true });
+    for (const e of searchIndex) {
+      rows.push({ id: e.id, k: 'q', sid: 'q', hd: '', title: e.title, sub: categoryTitle(t, e.cat), icon: CATEGORY_META[e.cat]?.icon || '', kw: e.kw });
+    }
+    return rows;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useNativeRoot, t, searchIndex, JSON.stringify(catSubtitle)]);
+  const searchIndexById = useMemo(() => {
+    const m = new Map();
+    for (const e of searchIndex) m.set(e.id, e);
+    return m;
+  }, [searchIndex]);
+  const onNativeRowPress = useCallback((id) => {
+    if (!id) return;
+    if (id === 'a:logout') { handleSettingsLogout(); return; }
+    if (id.startsWith('c:')) { openCategory(id.slice(2)); return; }
+    const e = searchIndexById.get(id);
+    if (e) openCategory(e.cat, e.anchor);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchIndexById, openCategory]);
+
+  const nativeLabels = useMemo(() => ({
+    results: t('settings.matchesFound') || 'Resultados',
+    noResults: t('settings.noMatches') || 'Nenhum resultado',
+  }), [t]);
+  const showNativeRoot = useNativeRoot && activeCategory === null;
+  const bottomPad = IOS_AUTO_INSET ? 40 : 80 + insets.bottom;
 
   return (
     <View style={[s.container, { backgroundColor: gc.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
-      {/* [2026-10-07 app-feel-nav] Nativo: UINavigationBar/Toolbar do
-          react-native-screens. Dentro de uma categoria o back volta p/ a
-          LISTA (headerLeft custom) e o swipe-back fica desligado.
-          [2026-10-08 settings-redesign] A busca vive SÓ na raiz, como barra
-          de busca NATIVA do header (UISearchController / SearchView) — header
-          opaco na raiz (o conteúdo começa abaixo da barra sem cálculo de
-          inset); vidro (blur) só nas sub-páginas. Web: header antigo. */}
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({
           colors,
           isDark,
-          // [2026-10-14 header-overlap] header OPACO também nas categorias: o vidro
-          // (blur) deixava as linhas do topo ("Plano, pagamento e upgrade")
-          // visíveis/cortadas por baixo do título no escuro.
           blur: false,
           title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
-          // [2026-10-12 settings-back] Swipe-back só fica desligado DENTRO de
-          // uma categoria aberta pela lista (o voltar dela leva à lista); com
-          // ?section= o voltar sai da tela → swipe nativo liberado.
+          // Swipe-back desligado só DENTRO de uma categoria aberta pela lista.
           gestureEnabled: !inCategorySubpage,
           contentStyle: { backgroundColor: gc.pageBg },
-          // [2026-10-15 nav-motion] iOS: título GRANDE na raiz (como o Ajustes do
-          // sistema) que colapsa com spring nativo ao rolar — o ScrollView já usa
-          // contentInsetAdjustmentBehavior automatic (acompanha o colapso). Nas
-          // categorias, título compacto. Explícito nos dois sentidos porque o
-          // setOptions MESCLA (senão o large ficava preso ao entrar na categoria).
+          // iOS: título GRANDE na raiz; compacto nas categorias (explícito nos
+          // dois sentidos — setOptions MESCLA).
           ...(Platform.OS === 'ios' ? {
             headerLargeTitle: activeCategory === null,
             headerLargeTitleShadowVisible: false,
             headerLargeStyle: { backgroundColor: gc.pageBg },
             headerLargeTitleStyle: { color: colors.text },
           } : {}),
-          // [2026-10-12 settings-back] Stack.Screen = navigation.setOptions, que
-          // MESCLA com as opções anteriores: sem zerar explicitamente, o
-          // headerLeft custom (closure velha com activeCategory≠null) e o
-          // headerBackVisible:false ficavam na RAIZ depois de visitar uma
-          // categoria → tocar em voltar chamava setActiveCategory(null) de
-          // novo e NADA acontecia (iOS/Android). Idem a busca da raiz vazava
-          // para dentro das categorias.
-          // [2026-10-12] UM botão só: o nosso (handleBack já resolve categoria →
-          // lista → sair/conversas). Com headerBackVisible ligado junto, o iOS
-          // mostrava DOIS "‹" lado a lado.
           headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
           headerBackVisible: false,
           ...(activeCategory !== null ? {
@@ -1945,2841 +506,94 @@ function SettingsScreenInner() {
           }),
         })} />
       ) : (
-      <View style={[s.header, { backgroundColor: gc.pageBg, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
-          <IconArrowLeft size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Animated.Text
-          style={[s.headerTitle, { color: colors.text },
-            // [2026-10-15 settings-2026] raiz: o título aparece quando o hero
-            // some ao rolar (o hero "vira" o título); categorias: fixo.
-            (activeCategory === null && !twoPane && !isReduceMotionEnabled())
-              ? { opacity: heroScrollY.interpolate({ inputRange: [90, 170], outputRange: [0, 1], extrapolate: 'clamp' }) }
-              : null]}
-          numberOfLines={1}
-          accessibilityRole="header"
-        >{activeCategory !== null && !twoPane ? activeCategoryTitle : t('settings.title')}</Animated.Text>
-        {/* Save button removed — settings now persist automatically (see the
-            auto-save effect). Spacer keeps the title centered. */}
-        <View style={s.backBtn} />
-      </View>
-      )}
-
-      {loading ? (
-        <ScrollView scrollEnabled={false} contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}><SettingsSkeleton sections={4} rows={3} /></ScrollView>
-      ) : (
-      <View style={twoPane ? s.twoPaneRow : s.flex1}>
-      {twoPane && (
-        <ScrollView
-          style={[s.twoPaneLeft, { borderRightColor: colors.border }]}
-          contentContainerStyle={[s.scroll, { paddingBottom: 40 }]}
-          keyboardShouldPersistTaps="handled"
-          testID="settings-left-pane"
-        >
-          {searchBarNode}
-          {homeListNode}
-        </ScrollView>
-      )}
-      <View style={s.flex1}>
-      <FadeSlideIn style={s.flex1}>
-      <SettingsSearchContext.Provider value={_q}>
-      <Animated.ScrollView
-        key={activeCategory || 'root'}
-        ref={scrollRef}
-        onScroll={activeCategory === null && !twoPane ? onHeroScroll : undefined}
-        scrollEventThrottle={16}
-        contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        contentContainerStyle={[s.scroll, { paddingBottom: (IOS_AUTO_INSET ? 40 : 80 + insets.bottom), maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}
-        refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={gc.secondary} colors={[colors.primary]} />}
-      >
-        {/* Web: busca inline (estilo barra de busca iOS) — SÓ na raiz. No
-            nativo a busca é a barra do header (acima). */}
-        {!twoPane && !USE_NATIVE_HEADER && activeCategory === null && searchBarNode}
-
-        {/* Search summary — one quiet line instead of a chip cloud. */}
-        {!!_q && _matchedLabels.length > 0 && (
-          <Text style={[s.searchSummary, { color: gc.header }]} numberOfLines={2}>
-            {(t('settings.matchesFound') || 'Resultados') + ` (${_matchedLabels.length})`}
-          </Text>
-        )}
-        {!!_q && _matchedLabels.length === 0 && _allLabelsRef.current.length > 0 && (
-          <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-            <IconSearch size={28} color={gc.tertiary} />
-            <Text style={{ color: gc.secondary, fontSize: 15, marginTop: 10 }}>
-              {t('settings.noMatches') || 'Nenhum resultado'}
-            </Text>
-          </View>
-        )}
-
-        {/* ── Category home list (iOS Settings): profile card + inset groups.
-            Tapping a row opens that category's sub-page (sets
-            activeCategory); the section gates below reveal its blocks. ── */}
-        {!twoPane && activeCategory === null && !searching && homeListNode}
-
-        {/* ── Conta: cabeçalho limpo (avatar, nome, email) + linhas normais.
-            "Trocar conta" deixou de ser pílula cinza com borda. ── */}
-        {/* ── Conta — [2026-10-11 settings-unify] perfil, contas, plano,
-            números, aparelhos, dados; Segurança logo abaixo (veio de
-            Privacidade). Cada item existe SÓ aqui. ── */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('settings.profile') || 'profile', t('settings.editProfile'), t('account.switch'), 'Chatyy One', t('linkedPhones.title'), t('settings.linkedDevices'), t('settings.exportData'), t('profile.creatorDashboard'), user?.email) && (
-        <View ref={registerSectionRef('account')}>
-          <SettingsGroup>
-            <SettingsRow title={t('settings.editProfile')} subtitle={t('settings.editProfileSub')} onPress={() => safeNav('/edit-profile')} testID="settings-row-edit-profile" />
-            <SettingsRow
-              title={t('account.switch') || 'Trocar conta'}
-              value={(accounts?.length || 0) > 1 ? String(accounts.length) : undefined}
-              onPress={() => setAccountSwitcherOpen(true)}
-            />
-          </SettingsGroup>
-          <SettingsGroup>
-            <SettingsRow title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={() => safeNav('/settings-one')} />
-            <SettingsRow title={t('linkedPhones.title')} onPress={() => safeNav('/linked-phones')} />
-            <SettingsRow title={t('settings.linkedDevices')} onPress={() => safeNav('/linked-devices')} />
-          </SettingsGroup>
-          <SettingsGroup>
-            <SettingsRow title={t('settings.exportData')} onPress={() => safeNav('/settings-export')} />
-            <SettingsRow title={t('profile.creatorDashboard')} onPress={() => safeNav('/profile-creator-dashboard')} />
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* Aparência — Tema = segmented (3 opções curtas). ThemeContext owns
-            the 3-state mode + persistence (theme_mode). */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.appearance'), t('settings.theme.label'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system')) && (
-        <SettingsGroup header={t('settings.theme.label') || 'Tema'} footer={t('settings.rd.themeFooter') || 'Sistema acompanha o modo claro/escuro do aparelho.'}>
-          <SettingsCardContent>
-            <SettingsSegmented
-              colors={colors}
-              isDark={isDark}
-              value={themeMode}
-              onChange={(v) => setThemeModeCtx(v)}
-              options={[
-                { value: 'light',  label: t('settings.theme.light') || 'Claro' },
-                { value: 'dark',   label: t('settings.theme.dark') || 'Escuro' },
-                { value: 'system', label: t('settings.theme.system') || 'Sistema' },
-              ]}
-            />
-          </SettingsCardContent>
-        </SettingsGroup>
-        )}
-        {/* [2026-10-11 settings-unify] Conversas: cor de destaque (vinha do
-            ProfileSettingsSheet), papel de parede padrão (só existia no
-            ChatProfileTab morto) e backup (só no menu Apps). */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.accentColor')) && (
-          <AccentColorGroup />
-        )}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('config.wallpaper'), t('sidebar.backup'), 'wallpaper', 'papel de parede', 'backup') && (
-          <SettingsGroup>
-            <WallpaperRow />
-            <SettingsRow title={t('sidebar.backup')} subtitle={t('settings.backupSub')} onPress={() => safeNav('/backup')} />
-          </SettingsGroup>
-        )}
-
-        {/* ── GROUP: Email. [2026-10-08 settings-redesign] Inset grouped lists:
-            Envio / Caixa de entrada / Notificações / Assinaturas / Ferramentas.
-            Choices with >3 options open a checkmark sheet (SettingsPickerRow)
-            instead of a chip row. Collapsible header only shows in search. ── */}
-        {(searching || activeCategory === 'email') && (
-        <CollapsibleGroup title={t('settings.group.email') || 'Email'} icon={IconMail} forceOpen={!!_q || activeCategory === 'email'} hideHeader={activeCategory === 'email' && !searching}>
-
-        {/* Undo Send */}
-        {sectionMatches(t('settings.undoSend'), t('settings.undoSendDesc')) && (
-        <SettingsGroup header={t('settings.rd.sending') || 'Envio'} footer={t('settings.undoSendDesc')}>
-          <SettingsPickerRow
-            title={t('settings.undoSend')}
-            value={undoDelay}
-            cancelLabel={t('common.cancel') || 'Cancelar'}
-            options={[0, 5, 10, 15, 30].map(n => ({
-              value: n,
-              label: n === 0 ? (t('settings.undoSendOff') || 'Desligado') : t('settings.undoSendSeconds', { n }),
-            }))}
-            onChange={(n) => { setUndoDelay(n); setStorage('undo_send_delay', String(n)); }}
-          />
-        </SettingsGroup>
-        )}
-
-        {/* Caixa de entrada */}
-        {sectionMatches(t('settings.email'), t('settings.perPage')) && (
-        <SettingsGroup header={t('settings.rd.inbox') || 'Caixa de entrada'}>
-          <SettingsPickerRow
-            title={t('settings.perPage')}
-            value={settings.emails_per_page}
-            cancelLabel={t('common.cancel') || 'Cancelar'}
-            sheetMessage={t('settings.perPageDesc')}
-            options={[20, 50, 100].map(n => ({ value: n, label: String(n) }))}
-            onChange={(n) => setSettings(prev => ({ ...prev, emails_per_page: n }))}
-          />
-        </SettingsGroup>
-        )}
-
-        {/* Notificações de email */}
-        {sectionMatches(t('settings.notifications'), t('settings.notifSound'), t('settings.notifVibration'), t('settings.dndTitle') || 'Não perturbe') && (
-        <View ref={registerSectionRef('notifications')}>
-        <SettingsGroup header={t('settings.rd.emailNotifs') || 'Notificações de email'}>
-          <SettingsSwitchRow
-            title={t('settings.notifications')}
-            subtitle={t('settings.notificationsDesc')}
-            value={settings.notifications}
-            onValueChange={(v) => setSettings(prev => ({ ...prev, notifications: v }))}
-          />
-          {settings.notifications && (
-            <SettingsRow
-              title={t('settings.rd.advancedNotifs') || 'Notificações avançadas'}
-              subtitle={t('settings.rd.advancedNotifsDesc') || 'Só menções, palavras-chave, soneca…'}
-              onPress={() => router.push('/notification-preferences')}
-            />
-          )}
-          {settings.notifications && (
-            <SettingsSwitchRow
-              title={t('settings.notifSound')}
-              value={settings.notification_sound}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, notification_sound: v }))}
-            />
-          )}
-          {settings.notifications && (
-            <SettingsSwitchRow
-              title={t('settings.notifVibration')}
-              value={settings.notification_vibration}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, notification_vibration: v }))}
-            />
-          )}
-          {/* Do-Not-Disturb schedule — backend mutes chat push fanout inside
-              the HH:MM window (validated before save). */}
-          {settings.notifications && (
-            <SettingsSwitchRow
-              title={t('settings.dndTitle') || 'Não perturbe (horário)'}
-              subtitle={t('settings.dndDesc') || 'Silencia notificações de chat dentro do horário definido.'}
-              value={dnd.enabled}
-              onValueChange={(v) => saveDnd({ enabled: v })}
-              disabled={dndSaving}
-            />
-          )}
-          {settings.notifications && dnd.enabled && (
-            <SettingsRow
-              title={t('settings.dndStart') || 'Início'}
-              right={(
-                <TextInput
-                  value={dnd.start_time}
-                  onChangeText={(v) => setDnd(prev => ({ ...prev, start_time: v }))}
-                  onBlur={() => {
-                    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.start_time || '').trim());
-                    if (m) saveDnd({ start_time: dnd.start_time.trim() });
-                    else setDnd(prev => ({ ...prev, start_time: '22:00' }));
-                  }}
-                  placeholder="22:00"
-                  placeholderTextColor={gc.secondary}
-                  style={[s.timeInput, { color: colors.text, backgroundColor: gc.fill }]}
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                  accessibilityLabel={t('settings.dndStart') || 'Início'}
-                />
-              )}
-            />
-          )}
-          {settings.notifications && dnd.enabled && (
-            <SettingsRow
-              title={t('settings.dndEnd') || 'Fim'}
-              right={(
-                <TextInput
-                  value={dnd.end_time}
-                  onChangeText={(v) => setDnd(prev => ({ ...prev, end_time: v }))}
-                  onBlur={() => {
-                    const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.end_time || '').trim());
-                    if (m) saveDnd({ end_time: dnd.end_time.trim() });
-                    else setDnd(prev => ({ ...prev, end_time: '07:00' }));
-                  }}
-                  placeholder="07:00"
-                  placeholderTextColor={gc.secondary}
-                  style={[s.timeInput, { color: colors.text, backgroundColor: gc.fill }]}
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                  accessibilityLabel={t('settings.dndEnd') || 'Fim'}
-                />
-              )}
-            />
-          )}
-        </SettingsGroup>
-        </View>
-        )}
-
-        {/* "Bom dia diário" removido da UI por decisão do founder (nicho). */}
-
-        {/* Signatures — each signature = name + body, edited in place.
-            "Adicionar assinatura" is a normal list row (no dashed web box). */}
-        {sectionMatches(t('settings.signatures'), t('settings.signatureDesc')) && (() => {
-          const baseSigs = () => [...(settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }])];
-          const sigList = settings.signatures || [{ name: t('settings.signatureDefault'), content: settings.signature || '', isDefault: true }];
-          return (
-          <SettingsGroup header={t('settings.signatures')} footer={t('settings.signatureDesc')}>
-            {sigList.map((sig, idx) => (
-              <View key={`sig-${idx}`} style={s.sigBlock}>
-                <View style={s.sigHeader}>
-                  <TextInput
-                    style={[s.sigNameInput, { color: colors.text }]}
-                    value={sig.name}
-                    onChangeText={(v) => {
-                      const sigs = baseSigs();
-                      sigs[idx] = { ...sigs[idx], name: v };
-                      setSettings(prev => ({ ...prev, signatures: sigs }));
-                    }}
-                    placeholder={t('settings.signatureName')}
-                    placeholderTextColor={gc.secondary}
-                  />
-                  <TouchableOpacity
-                    onPress={() => {
-                      const sigs = baseSigs();
-                      sigs.forEach((s, i) => { s.isDefault = i === idx; });
-                      setSettings(prev => ({ ...prev, signatures: sigs }));
-                    }}
-                    style={[s.defaultBtn, sig.isDefault ? { backgroundColor: gc.ink } : { backgroundColor: gc.fill }]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: !!sig.isDefault }}
-                    accessibilityLabel={t('settings.signatureDefault')}
-                  >
-                    <Text style={{ fontSize: 12, color: sig.isDefault ? gc.onInk : gc.secondary, fontWeight: '600' }}>
-                      {t('settings.signatureDefault')}
-                    </Text>
-                  </TouchableOpacity>
-                  {(settings.signatures || []).length > 1 && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        const sigs = (settings.signatures || []).filter((_, i) => i !== idx);
-                        if (sig.isDefault && sigs.length > 0) sigs[0].isDefault = true;
-                        setSettings(prev => ({ ...prev, signatures: sigs }));
-                      }}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      accessibilityRole="button"
-                      accessibilityLabel={t('common.delete') || 'Excluir'}
-                      style={{ marginLeft: 10 }}
-                    >
-                      <IconTrash size={18} color={colors.error} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <TextInput
-                  style={[s.signatureInput, { color: colors.text, backgroundColor: gc.fill }]}
-                  value={sig.content}
-                  onChangeText={(v) => {
-                    const sigs = baseSigs();
-                    sigs[idx] = { ...sigs[idx], content: v };
-                    setSettings(prev => ({ ...prev, signatures: sigs, signature: sigs.find(s => s.isDefault)?.content || '' }));
-                  }}
-                  placeholder={t('settings.signaturePlaceholder')}
-                  placeholderTextColor={gc.secondary}
-                  multiline
-                  numberOfLines={3}
-                  textAlignVertical="top"
-                />
-              </View>
-            ))}
-            <SettingsRow
-              icon={IconPlus}
-              iconTile={false}
-              title={t('settings.addSignature')}
-              chevron={false}
-              onPress={() => {
-                const sigs = baseSigs();
-                sigs.push({ name: '', content: '', isDefault: false });
-                setSettings(prev => ({ ...prev, signatures: sigs }));
-              }}
-            />
-          </SettingsGroup>
-          );
-        })()}
-
-        {/* Email tools — Importar / PGP / Tarefas / Bia */}
-        {(searching || activeCategory === 'email') && sectionMatches(
-          t('settings.emailToolsTitle') || 'Ferramentas de email',
-          t('settings.importFromOthers') || 'Importar de outras contas',
-          t('settings.pgpKeys') || 'Chave PGP',
-          t('settings.tasks') || 'Tarefas',
-        ) && (
-        <SettingsGroup header={t('settings.emailToolsTitle') || 'Ferramentas de email'}>
-          <SettingsRow
-            title={t('settings.importFromOthers') || 'Importar de outras contas'}
-            subtitle={t('settings.importFromOthersDesc') || 'Gmail, Outlook ou Microsoft 365'}
-            onPress={() => router.push('/email-import')}
-          />
-          <SettingsRow
-            title={t('settings.pgpKeys') || 'Chave PGP'}
-            subtitle={t('settings.pgpKeysDesc') || 'Criptografia ponta-a-ponta de emails'}
-            onPress={() => router.push('/pgp-keys')}
-          />
-          <SettingsRow
-            title={t('settings.tasks') || 'Tarefas'}
-            subtitle={t('settings.tasksDesc') || 'Tarefas pessoais e convertidas de emails'}
-            onPress={() => router.push('/tasks')}
-          />
-          {/* [2026-09-24] Bia — assistente de IA (memória/personalização) */}
-          <SettingsRow
-            title={t('settings.bia') || 'Bia — Assistente de IA'}
-            subtitle={t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'}
-            onPress={() => router.push('/bia-settings')}
-          />
-        </SettingsGroup>
-        )}
-
-        </CollapsibleGroup>
-        )}
-        {/* ── END GROUP: Email ── */}
-
-        {/* Idioma — follow-system switch + picker row (sheet) for the app
-            language; Moeda = picker row with "Automático" as first option
-            (no chip cloud, no green badge). */}
-        {(searching || activeCategory === 'language') && sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
-        <View ref={registerSectionRef('language')}>
-          <SettingsGroup header={t('settings.language')}>
-            {/* Auto-detect — when ON, clears the manual override key so the
-                app picks up the device locale on next cold start. */}
-            <SettingsSwitchRow
-              title={t('settings.language.autoDetect') || 'Seguir idioma do sistema'}
-              subtitle={t('settings.language.autoDetectDesc') || 'Detecta o idioma a partir do seu aparelho.'}
-              value={languageAuto}
-              onValueChange={(v) => {
-                setLanguageAuto(v);
-                setStorage('language_auto', String(v));
-                if (v) {
-                  if (Platform.OS === 'web') {
-                    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('app_language_manual'); } catch {}
-                  } else {
-                    import('@react-native-async-storage/async-storage').then(m => {
-                      m.default.removeItem('app_language_manual').catch(() => {});
-                    }).catch(() => {});
-                  }
-                }
-              }}
-            />
-            <SettingsPickerRow
-              title={t('settings.languageLabel')}
-              value={language}
-              disabled={languageAuto}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              options={LANG_OPTIONS}
-              displayValue={(I18N_LANGUAGES.find(o => o.code === language) || {}).label || String(language || '').toUpperCase()}
-              onChange={(v) => {
-                if (languageAuto) return;
-                changeLanguage(v);
-                setSettings(prev => ({ ...prev, language: v }));
-              }}
-            />
-          </SettingsGroup>
-
-          {/* Currency (issue #1355) — FX rates cached 24h; first launch
-              auto-detects from device locale. "Automático" = resetCurrency. */}
-          <SettingsGroup footer={t('settings.currencyDesc') || 'Usada para exibir valores no app.'}>
-            <SettingsPickerRow
-              title={t('settings.currencyLabel') || 'Moeda'}
-              value={currencyAutoDetected ? '__auto__' : userCurrency}
-              displayValue={currencyAutoDetected
-                ? `${t('settings.rd.auto') || 'Automático'} · ${userCurrency}`
-                : `${currencySymbols[userCurrency] || ''} ${userCurrency}`.trim()}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              options={[
-                { value: '__auto__', label: t('settings.rd.auto') || 'Automático', sub: (t('settings.rd.currencyAutoSub') || 'Pela região do aparelho') + ` · ${userCurrency}` },
-                ...supportedCurrencies.map(code => ({
-                  value: code,
-                  label: currencyName(code),
-                  hint: `${currencySymbols[code] || ''} ${code}`.trim(),
-                })),
-              ]}
-              onChange={(v) => {
-                if (v === '__auto__') { try { resetUserCurrency?.(); } catch {} }
-                else setUserCurrency(v);
-              }}
-            />
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* Auto-reply */}
-        {(searching || activeCategory === 'email') && sectionMatches(t('settings.autoReply'), t('settings.autoReplyEnable'), t('settings.autoReplyDesc')) && (
-        <SettingsGroup header={t('settings.autoReply')} footer={t('settings.autoReplyDesc')}>
-          <SettingsSwitchRow
-            title={t('settings.autoReplyEnable')}
-            value={vacation.enabled}
-            onValueChange={(v) => saveVacation({ enabled: v })}
-          />
-          {vacation.enabled && (
-            <View style={s.cardInputWrap}>
-              <TextInput
-                style={[s.cardInput, { color: colors.text, backgroundColor: gc.fill }]}
-                value={vacation.subject}
-                onChangeText={(v) => saveVacation({ subject: v })}
-                placeholder={t('settings.autoReplySubjectPlaceholder') || 'Assunto (opcional)'}
-                placeholderTextColor={gc.secondary}
-              />
-              <TextInput
-                style={[s.cardInput, { color: colors.text, backgroundColor: gc.fill, minHeight: 88, marginTop: 8 }]}
-                value={vacation.body}
-                onChangeText={(v) => saveVacation({ body: v })}
-                placeholder={t('settings.autoReplyPlaceholder')}
-                placeholderTextColor={gc.secondary}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-            </View>
-          )}
-        </SettingsGroup>
-        )}
-
-        {/* Filters & Rules */}
-        {(searching || activeCategory === 'email') && sectionMatches(t('settings.filters'), t('settings.manageFilters')) && (
-        <SettingsGroup header={t('settings.filters')} footer={t('settings.filtersDesc')}>
-          <SettingsRow
-            title={t('settings.manageFilters')}
-            subtitle={t('settings.manageFiltersDesc')}
-            onPress={() => setShowFilters(true)}
-          />
-        </SettingsGroup>
-        )}
-
-        {/* AI Features — what the assistant does (info rows) + Smart Compose
-            switch (was a hand-made toggle; now NativeSwitch). */}
-        {(searching || activeCategory === 'email') && sectionMatches(t('settings.ai'), t('settings.aiSmartReply'), t('settings.aiDrafts'), t('settings.aiSummary'), t('settings.aiEnhance'), t('settings.smartCompose')) && (
-        <SettingsGroup header={t('settings.ai')} footer={t('settings.aiDesc')} inset={52}>
-          {/* [2026-10-11 settings-unify] Eram linhas estáticas (sem ação); os
-              switches reais (ai_smart_reply / ai_summary / ai_enhance) só
-              existiam no ProfileSettingsSheet. Mesmas chaves locais. */}
-          <SettingsSwitchRow icon={IconMessageSquare} iconTile={false} title={t('settings.smartReply')} subtitle={t('settings.smartReplyDesc')} value={aiFlags.ai_smart_reply} onValueChange={(v) => setAiFlag('ai_smart_reply', v)} />
-          <SettingsRow icon={IconPenTool} iconTile={false} title={t('settings.aiDrafts')} />
-          <SettingsSwitchRow icon={IconDraft} iconTile={false} title={t('settings.aiSummary')} subtitle={t('settings.aiSummaryDesc')} value={aiFlags.ai_summary} onValueChange={(v) => setAiFlag('ai_summary', v)} />
-          <SettingsSwitchRow icon={IconSparkles} iconTile={false} title={t('settings.aiEnhance')} subtitle={t('settings.aiEnhanceDesc')} value={aiFlags.ai_enhance} onValueChange={(v) => setAiFlag('ai_enhance', v)} />
-          <SettingsSwitchRow
-            title={t('settings.smartCompose')}
-            subtitle={t('settings.smartComposeDesc')}
-            value={smartComposeOn}
-            onValueChange={(next) => {
-              setSmartComposeOn(next);
-              setStorage('smart_compose', String(next));
-            }}
-          />
-        </SettingsGroup>
-        )}
-
-        {/* Chat — [2026-10-08 settings-redesign2] grouped lists. Same
-            device-local keys (enter_sends / autocorrect_enabled /
-            voice_speed_default / bubble_shape); consumers read them on mount.
-            Data saver + beta live at the bottom of the page (see below). */}
-        {(searching || activeCategory === 'chat') && sectionMatches(
-          t('settings.chatPrefs.title') || 'Preferências do chat',
-          t('settings.enterSends.title') || 'Enter envia',
-          t('settings.autocorrect.title') || 'Auto-correção',
-          t('settings.voiceSpeed.title') || 'Velocidade dos áudios',
-          t('settings.bubble.title') || 'Estilo dos balões',
-          t('settings.doubleTapReact.title') || 'Toque duplo para curtir',
-        ) && (
-        <View>
-          <SettingsGroup header={t('settings.rd2.typing') || 'Digitação'}>
-            <SettingsSwitchRow
-              title={t('settings.enterSends.title') || 'Enter envia mensagem'}
-              subtitle={t('settings.enterSends.subtitle') || 'Pressione Enter pra enviar. Shift+Enter quebra linha.'}
-              value={enterSends}
-              onValueChange={(v) => { setEnterSends(v); setStorage('enter_sends', String(v)); }}
-            />
-            <SettingsSwitchRow
-              title={t('settings.autocorrect.title') || 'Auto-correção'}
-              subtitle={t('settings.autocorrect.subtitle') || 'Corrige palavras automaticamente enquanto você digita.'}
-              value={autocorrectOn}
-              onValueChange={(v) => { setAutocorrectOn(v); setStorage('autocorrect_enabled', String(v)); }}
-            />
-          </SettingsGroup>
-          <SettingsGroup header={t('settings.rd2.messages') || 'Mensagens'}>
-            <SettingsSwitchRow
-              title={t('settings.doubleTapReact.title') || 'Toque duplo para curtir'}
-              subtitle={t('settings.doubleTapReact.subtitle') || 'Toque duas vezes numa mensagem para reagir com coração.'}
-              value={doubleTapReact}
-              onValueChange={(v) => { setDoubleTapReact(v); setStorage('double_tap_react', String(v)); }}
-            />
-            <SettingsPickerRow
-              title={t('settings.voiceSpeed.title') || 'Velocidade padrão dos áudios'}
-              value={voiceSpeedDefault}
-              sheetMessage={t('settings.voiceSpeed.subtitle') || 'Aplica a todos os áudios recebidos. Você pode trocar individual no chat.'}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              options={[
-                { value: 0.5, label: t('settings.voiceSpeed.option_0_5') || '0.5×' },
-                { value: 1,   label: t('settings.voiceSpeed.option_1')   || '1×' },
-                { value: 1.5, label: t('settings.voiceSpeed.option_1_5') || '1.5×' },
-                { value: 2,   label: t('settings.voiceSpeed.option_2')   || '2×' },
-              ]}
-              onChange={(v) => { setVoiceSpeedDefault(v); setStorage('voice_speed_default', String(v)); }}
-            />
-            <SettingsPickerRow
-              title={t('settings.bubble.title') || 'Estilo dos balões'}
-              value={bubbleShape}
-              sheetMessage={t('settings.bubble.subtitle') || 'Formato visual das mensagens.'}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              options={[
-                { value: 'rounded', label: t('settings.bubble.rounded') || 'Arredondado' },
-                { value: 'square',  label: t('settings.bubble.square')  || 'Quadrado' },
-                { value: 'classic', label: t('settings.bubble.classic') || 'Clássico' },
-              ]}
-              onChange={(v) => { setBubbleShape(v); setStorage('bubble_shape', v); }}
-            />
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* [2026-10-10 wa-import] Importar conversas do WhatsApp (cópia pessoal). */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('waImport.settingsRow'), t('waImport.settingsHeader'), 'whatsapp', 'importar', 'import') && (
-          <SettingsGroup header={t('waImport.settingsHeader')}>
-            <SettingsRow
-              icon={IconDownload}
-              title={t('waImport.settingsRow')}
-              subtitle={t('waImport.settingsRowSub')}
-              onPress={() => router.push('/import-whatsapp')}
-            />
-          </SettingsGroup>
-        )}
-
-        {/* Notif LED color — Android only. Picks the LED color used by
-            the notification channel. The native module reads
-            `notif_led_color` on push delivery. Branded swatches with
-            labels + a hero preview dot showing the live selection. */}
-        {false && (searching || activeCategory === 'chat') && Platform.OS === 'android' && sectionMatches(
-          t('settings.led.title') || 'Cor do LED',
-          'led',
-        ) && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.led.title') || 'Cor do LED (Android)'}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.led.desc') || 'Cor do LED de notificação no Android.'}
-          </Text>
-          {/* Hero preview — large SVG dot with a soft outer glow halo so
-              the user "sees" what the chosen color will look like as a
-              notification LED. Pure SVG (per project rule: no emoji). */}
-          <View style={{ alignItems: 'center', marginBottom: Spacing.md }}>
-            <Svg width={84} height={84}>
-              <Defs>
-                <SvgLinearGradient id="led_halo" x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor={notifLedColor} stopOpacity="0.45" />
-                  <Stop offset="1" stopColor={notifLedColor} stopOpacity="0" />
-                </SvgLinearGradient>
-              </Defs>
-              {/* Halo */}
-              <SvgCircle cx="42" cy="42" r="40" fill="url(#led_halo)" />
-              {/* Mid ring */}
-              <SvgCircle cx="42" cy="42" r="22" fill={notifLedColor} fillOpacity="0.35" />
-              {/* Core dot */}
-              <SvgCircle cx="42" cy="42" r="12" fill={notifLedColor} />
-              {/* Specular highlight */}
-              <SvgCircle cx="38" cy="38" r="4" fill="#FFFFFF" fillOpacity="0.55" />
-            </Svg>
-          </View>
-          {/* Swatch grid with labeled colors. Six brand-aligned options. */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'flex-start' }}>
-            {[
-              { c: '#8B5CF6', label: t('settings.led.c1') || 'Roxo' },
-              { c: '#3B82F6', label: t('settings.led.c2') || 'Azul' },
-              { c: '#10B981', label: t('settings.led.c3') || 'Verde' },
-              { c: '#EF4444', label: t('settings.led.c4') || 'Vermelho' },
-              { c: '#F59E0B', label: t('settings.led.c5') || 'Âmbar' },
-              { c: '#EC4899', label: t('settings.led.c6') || 'Rosa' },
-              { c: '#06B6D4', label: t('settings.led.c7') || 'Ciano' },
-              { c: '#FFFFFF', label: t('settings.led.c8') || 'Branco' },
-            ].map(({ c, label }) => {
-              const selected = notifLedColor === c;
-              return (
-                <TouchableOpacity
-                  key={c}
-                  onPress={() => { setNotifLedColor(c); setStorage('notif_led_color', c); saveNotifPref({ led_color_default: c }); }}
-                  activeOpacity={0.7}
-                  style={{ alignItems: 'center', width: 56 }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`LED ${label}`}
-                >
-                  <View style={{
-                    width: 44, height: 44, borderRadius: 22,
-                    backgroundColor: c,
-                    borderWidth: selected ? 3 : (c === '#FFFFFF' ? 1 : 0),
-                    borderColor: selected ? colors.primary : (c === '#FFFFFF' ? colors.borderLight : 'transparent'),
-                    alignItems: 'center', justifyContent: 'center',
-                    shadowColor: c,
-                    shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: selected ? 0.55 : 0.25,
-                    shadowRadius: selected ? 8 : 4,
-                    elevation: selected ? 4 : 1,
-                  }}>
-                    {selected && <IconCheck size={18} color={c === '#FFFFFF' ? '#000' : '#fff'} />}
-                  </View>
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      fontSize: 11, color: selected ? colors.primary : colors.textSecondary,
-                      marginTop: 5, fontWeight: selected ? '700' : '500',
-                      textAlign: 'center', maxWidth: 56,
-                    }}
-                  >
-                    {label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-        )}
-
-        {/* Wallpaper global default — picks the default chat background
-            for new conversations. Curated Chatyy-branded presets with SVG
-            gradient previews. The stored value is always a single hex so
-            chat-conversation.js can render it via backgroundColor; the
-            gradient swatches here are visual previews only. Custom photo
-            upload remains supported (stored as the image URI). */}
-        {false && (searching || activeCategory === 'chat') && sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.wallpaperDefault.title') || 'Papel de parede padrão'}</Text>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-            {t('settings.wallpaperDefault.desc') || 'Aplica em conversas novas. Cada chat pode ter o seu próprio.'}
-          </Text>
-          {/* Brand-curated preset grid. Each tile is 76×76 with a 2-stop
-              SVG gradient preview, a label below, and a check overlay when
-              selected. The persisted `wallpaperDefault` is the dominant
-              hex (compatible with chat-conversation.js render path). */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: Spacing.md }}>
-            {[
-              { id: '#111111', from: '#111111', to: '#111111', label: t('settings.wallpaperDefault.p1') || 'Roxo Chatyy' },
-              { id: '#DB2777', from: '#111111', to: '#BE185D', label: t('settings.wallpaperDefault.p2') || 'Rosa' },
-              { id: '#F59E0B', from: '#FBBF24', to: '#D97706', label: t('settings.wallpaperDefault.p3') || 'Pôr-do-sol' },
-              { id: '#0EA5E9', from: '#38BDF8', to: '#0369A1', label: t('settings.wallpaperDefault.p4') || 'Oceano' },
-              { id: '#16A34A', from: '#4ADE80', to: '#15803D', label: t('settings.wallpaperDefault.p5') || 'Floresta' },
-              { id: '#1F2937', from: '#374151', to: '#0F172A', label: t('settings.wallpaperDefault.p6') || 'Carbono' },
-              { id: '#F1F3F5', from: '#F1F3F5', to: '#F1F3F5', label: t('settings.wallpaperDefault.p7') || 'Lavanda' },
-              { id: '#FECACA', from: '#FECACA', to: '#FCA5A5', label: t('settings.wallpaperDefault.p8') || 'Coral' },
-            ].map(g => {
-              const selected = wallpaperDefault === g.id;
-              return (
-                <TouchableOpacity
-                  key={g.id}
-                  onPress={() => { setWallpaperDefault(g.id); setStorage('wallpaper_default', g.id); }}
-                  activeOpacity={0.75}
-                  style={{ alignItems: 'center', width: 76 }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${t('chatConv.wallpaper')} ${g.label}`}
-                >
-                  {/* Outer ring keeps the tile a constant 70px so the
-                      selected highlight never nudges the grid layout. */}
-                  <View style={{
-                    width: 70, height: 70, borderRadius: 18, padding: selected ? 3 : 0,
-                    backgroundColor: selected ? colors.primary : 'transparent',
-                    alignItems: 'center', justifyContent: 'center',
-                    ...(Platform.OS === 'web'
-                      ? { boxShadow: '0 2px 6px rgba(0,0,0,0.12)' }
-                      : { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 2 }),
-                  }}>
-                    <View style={{
-                      flex: 1, alignSelf: 'stretch', borderRadius: 16, overflow: 'hidden',
-                      borderWidth: selected ? 0 : 1,
-                      borderColor: colors.borderLight,
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <Svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
-                        <Defs>
-                          <SvgLinearGradient id={`wp_${g.id.replace('#','')}`} x1="0" y1="0" x2="1" y2="1">
-                            <Stop offset="0" stopColor={g.from} stopOpacity="1" />
-                            <Stop offset="1" stopColor={g.to} stopOpacity="1" />
-                          </SvgLinearGradient>
-                        </Defs>
-                        <SvgRect x="0" y="0" width="100%" height="100%" fill={`url(#wp_${g.id.replace('#','')})`} />
-                      </Svg>
-                      {selected && (
-                        <View style={{
-                          width: 30, height: 30, borderRadius: 15,
-                          backgroundColor: 'rgba(0,0,0,0.4)',
-                          alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          <IconCheck size={18} color="#fff" />
-                        </View>
-                      )}
-                    </View>
-                  </View>
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      fontSize: 11.5, color: selected ? colors.primary : colors.textSecondary,
-                      marginTop: 7, fontWeight: selected ? '700' : '500',
-                      textAlign: 'center', maxWidth: 76, letterSpacing: 0.2,
-                    }}
-                  >
-                    {g.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          {/* Custom upload — reuses ImagePicker */}
-          <TouchableOpacity
-            onPress={async () => {
-              try {
-                try { Keyboard.dismiss(); } catch {} // [2026-10-11 android-kav] antes da galeria
-                const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-                if (!perm.granted) return;
-                const result = await ImagePicker.launchImageLibraryAsync({
-                  mediaTypes: ['images'],
-                  allowsEditing: false,
-                  quality: 0.85,
-                });
-                if (!result.canceled && result.assets?.[0]?.uri) {
-                  // Chat render path treats any non-`#` string as an image
-                  // URI — store the raw URI so existing Image source works.
-                  const v = result.assets[0].uri;
-                  setWallpaperDefault(v);
-                  setStorage('wallpaper_default', v);
-                }
-              } catch {}
-            }}
-            style={[s.addSigBtn, { borderColor: colors.primary, paddingVertical: 10 }]}
-          >
-            <Text style={{ color: colors.primary, fontWeight: '600' }}>
-              {t('settings.wallpaperDefault.custom') || '+ Enviar imagem própria'}
-            </Text>
+        <View style={[s.header, { backgroundColor: gc.pageBg, borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
+            <IconArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
+          <Animated.Text
+            style={[s.headerTitle, { color: colors.text },
+              (activeCategory === null && !twoPane && !isReduceMotionEnabled())
+                ? { opacity: heroScrollY.interpolate({ inputRange: [90, 170], outputRange: [0, 1], extrapolate: 'clamp' }) }
+                : null]}
+            numberOfLines={1}
+            accessibilityRole="header"
+          >{activeCategory !== null && !twoPane ? activeCategoryTitle : t('settings.title')}</Animated.Text>
+          <View style={s.backBtn} />
         </View>
-        )}
-
-        {/* Backup key rotation — DEDUPED. The standalone "Senha do backup"
-            section was merged into the Security → "Backup com criptografia"
-            row, which now offers both create AND rotate (rotate opens the
-            backupKey modal). The rotation modal at the bottom of the file is
-            reused by that row. */}
-
-        {/* Network usage stats — lifetime up/down bytes for chat media. */}
-        {false && (searching || activeCategory === 'storage_data') && sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
-        <View style={[s.section, { backgroundColor: gc.cardBg }]}>
-          <View style={s.sectionTitleRow}>
-            <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.networkUsage.title') || 'Uso de rede'}</Text>
-          </View>
-          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.sm, marginBottom: Spacing.md }]}>
-            {t('settings.networkUsage.desc') || 'Total de dados enviados e recebidos no chat desde a instalação.'}
-          </Text>
-          {(() => {
-            const fmt = (b) => {
-              if (!Number.isFinite(b)) return '—';
-              const bytes = Math.max(0, Number(b) || 0);
-              if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
-              const kb = bytes / 1024;
-              if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
-              const mb = kb / 1024;
-              if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
-              const gb = mb / 1024;
-              return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
-            };
-            return (
-              <>
-                <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingVertical: Spacing.sm }]}>
-                  <View style={s.settingInfo}>
-                    <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.networkUsage.sent') || 'Enviado'}</Text>
-                  </View>
-                  <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{netStats ? fmt(netStats.up) : '—'}</Text>
-                </View>
-                <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm }]}>
-                  <View style={s.settingInfo}>
-                    <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.networkUsage.received') || 'Recebido'}</Text>
-                  </View>
-                  <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{netStats ? fmt(netStats.down) : '—'}</Text>
-                </View>
-              </>
-            );
-          })()}
-        </View>
-        )}
-
-        {/* Ajuda e sobre — [2026-10-08 settings-redesign2] Ajuda / Sobre /
-            Legal em listas agrupadas (os 2 itens "Central de ajuda" e "Falar
-            com o suporte" abriam o MESMO mailto → uma linha só). */}
-        {(searching || activeCategory === 'help') && sectionMatches(t('settings.help.title') || 'Central de ajuda', t('settings.help.contactSupport') || 'Falar com o suporte', 'help', 'ajuda', 'support') && (
-        <SettingsGroup header={t('settings.rd2.help') || 'Ajuda'}>
-          <SettingsRow
-            title={t('settings.help.contactSupport') || 'Falar com o suporte'}
-            subtitle="support@chatyy.com.br"
-            onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
-          />
-        </SettingsGroup>
-        )}
-        {(searching || activeCategory === 'help') && sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version', t('settings.update.title'), 'atualiza', 'update') && (
-        <SettingsGroup header={t('settings.about.title') || 'Sobre'}>
-          <SettingsRow
-            title={t('settings.rd2.aboutApp') || 'Sobre o Chatyy'}
-            value={appVersionLabel}
-            onPress={() => setAboutOpen(true)}
-          />
-          <SettingsRow
-            title={t('settings.update.title')}
-            subtitle={updSubtitle}
-            value={(updState === 'checking' || updState === 'downloading') ? '…' : undefined}
-            onPress={checkAppUpdate}
-          />
-          {/* [WAVE 104F] Call diagnostics — visible in __DEV__ or developer_mode */}
-          {(__DEV__ || settings?.developer_mode) && (
-            <SettingsRow
-              title={t('settings.rd2.callDiag') || 'Diagnóstico de chamadas'}
-              subtitle={t('settings.rd2.callDiagDesc') || 'Últimos 100 eventos do ciclo de vida das chamadas'}
-              onPress={() => router.push('/call-diagnose')}
-            />
-          )}
-        </SettingsGroup>
-        )}
-        {(searching || activeCategory === 'help') && sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
-        <SettingsGroup header={t('settings.legal')}>
-          <SettingsRow title={t('settings.privacyPolicy')} onPress={() => setShowPrivacy(true)} />
-          <SettingsRow title={t('settings.termsOfService')} onPress={() => setShowTerms(true)} />
-        </SettingsGroup>
-        )}
-
-        {/* Bia — [2026-10-08 settings-redesign2] cabeçalho (ícone + nome +
-            descrição), switch nativo, canal de aviso com checkmark e atalho
-            pra personalização (/bia-settings). Chaves: one_enabled /
-            one_notif_level. */}
-        {(searching || activeCategory === 'bia') && sectionMatches('Bia', t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant', 'bia') && (
-        <View>
-          <SettingsGroup>
-            <View style={s.accountHeader}>
-              <SettingsIconTile Icon={IconSparkles} size={64} />
-              <Text style={[s.accountHeaderName, { color: colors.text }]} numberOfLines={1}>Bia</Text>
-              <Text style={[s.biaHeroDesc, { color: gc.secondary }]}>{t('settings.oneAssistantDesc')}</Text>
-            </View>
-          </SettingsGroup>
-          <SettingsGroup footer={t('settings.oneEnabledDesc')}>
-            <SettingsSwitchRow
-              title={t('settings.oneEnabled')}
-              value={oneEnabled}
-              onValueChange={(v) => { setOneEnabled(v); setStorage('one_enabled', String(v)); }}
-            />
-          </SettingsGroup>
-          {oneEnabled && (
-            <SettingsGroup header={t('settings.oneNotifPrefs')} footer={t('settings.oneNotifUrgentDesc')} inset={52}>
-              {[
-                { val: 'email', label: t('settings.oneNotifEmail'), Icon: IconMail },
-                { val: 'push', label: t('settings.oneNotifPush'), Icon: IconBell },
-                { val: 'urgent', label: t('settings.oneNotifUrgent'), Icon: IconPhone },
-              ].map(opt => (
-                <SettingsRow
-                  key={opt.val}
-                  icon={opt.Icon}
-                  iconTile={false}
-                  title={opt.label}
-                  checked={oneNotifLevel === opt.val}
-                  accessibilityRole="radio"
-                  onPress={() => { setOneNotifLevel(opt.val); setStorage('one_notif_level', opt.val); }}
-                />
-              ))}
-            </SettingsGroup>
-          )}
-          <SettingsGroup header={t('settings.rd2.personalization') || 'Personalização'}>
-            <SettingsRow
-              title={t('settings.rd2.biaVoice') || 'Tom, assinatura e estilo'}
-              subtitle={t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'}
-              onPress={() => router.push('/bia-settings')}
-            />
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* Desktop Notifications (web) — grouped list. */}
-        {(searching || activeCategory === 'notifications') && Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
-          <View ref={registerSectionRef('notifications')}>
-            <SettingsGroup header={t('settings.desktopNotifs')} footer={t('settings.desktopNotifsDesc')}>
-              <SettingsRow
-                title={notifPermission === 'granted' ? t('settings.notifsEnabled') : notifPermission === 'denied' ? t('settings.notifsBlocked') : t('settings.notifsEnable')}
-                subtitle={notifPermission === 'denied' ? t('settings.notifsBlockedDesc') : t('settings.notifsAlertDesc')}
-                value={notifPermission === 'granted' ? t('settings.notifsActive') : undefined}
-                chevron={false}
-                onPress={notifPermission !== 'granted' && notifPermission !== 'denied' ? async () => {
-                  const perm = await Notification.requestPermission();
-                  setNotifPermission(perm);
-                } : undefined}
-              />
-            </SettingsGroup>
-          </View>
-        )}
-
-        {/* Reading — font size picker (3 options, labels can be long → sheet). */}
-        {/* ── Acessibilidade — [2026-10-11 settings-unify] tamanho da fonte das
-            conversas (chat_user_defaults.font_size, lido pelo chat) +
-            densidade das listas (ThemeContext). ── */}
-        {(searching || activeCategory === 'accessibility') && sectionMatches(t('settings.cat.accessibility'), t('settings.fontSize'), t('quickSettings.density')) && (
-        <View ref={registerSectionRef('reading')}>
-          <SettingsGroup header={t('settings.cat.accessibility')} footer={t('settings.fontSizeDesc')}>
-            <SettingsPickerRow
-              title={t('settings.fontSize')}
-              value={settings.font_size}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              sheetMessage={t('settings.fontSizeDesc')}
-              options={[{ value: 'small', label: t('settings.fontSmall') }, { value: 'medium', label: t('settings.fontMedium') }, { value: 'large', label: t('settings.fontLarge') }]}
-              onChange={(v) => {
-                setSettings(prev => ({ ...prev, font_size: v }));
-                saveNotifPref({ font_size: v });
-                // BUG fix: o chat cacheia chat_get_settings por 10 min; sem
-                // invalidar, a fonte nova só aparecia depois do TTL.
-                try { globalThis.__chatyy_chat_settings_rev = (Number(globalThis.__chatyy_chat_settings_rev) || 0) + 1; } catch {}
-              }}
-            />
-            {typeof setDensity === 'function' && (
-              <SettingsPickerRow
-                title={t('quickSettings.density')}
-                value={density}
-                cancelLabel={t('common.cancel') || 'Cancelar'}
-                options={[
-                  { value: 'compact', label: t('settings.densityCompact') },
-                  { value: 'comfortable', label: t('settings.densityComfortable') },
-                  { value: 'spacious', label: t('settings.densitySpacious') },
-                ]}
-                onChange={(v) => setDensity(v)}
-              />
-            )}
-          </SettingsGroup>
-        </View>
-        )}
-        {(searching || activeCategory === 'email') && sectionMatches(t('settings.reading'), t('settings.emailReadReceipts')) && (
-          <SettingsGroup header={t('settings.reading')} footer={t('settings.emailReadReceiptsDesc')}>
-            <SettingsSwitchRow
-              title={t('settings.emailReadReceipts')}
-              value={!!settings.read_receipts}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, read_receipts: !!v }))}
-            />
-          </SettingsGroup>
-        )}
-
-        {/* ── Privacidade e segurança — [2026-10-08 settings-redesign2]
-            Listas agrupadas estilo Ajustes do iOS / WhatsApp. Os campos de
-            visibilidade mostram o valor atual à direita e abrem um sheet com
-            checkmark (OptionSheet, no fim da tela). Mesmas chaves/APIs:
-            chat_privacy_set, chat_user_defaults_set, rotas /change-phone,
-            /activity-log, /advanced-key, /advanced-privacy, /family, /parental. ── */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), t('settings.privacyOnline'), t('settings.privacyKeepArchived'), t('settings.blockUnknown'), 'privacy', 'privacidade') && (
-        <View ref={registerSectionRef('privacy_granular')}>
-          <SettingsGroup header={t('settings.rd2.whoCanSee') || 'Quem pode ver'} footer={t('settings.rd2.whoCanSeeFooter') || 'Escolha quem vê suas informações no Chatyy.'}>
-            {['last_seen', 'online', 'profile_photo', 'about', 'phone_visibility', 'story_privacy', 'group_add'].map(field => (
-              <SettingsRow
-                key={field}
-                title={privacyFieldTitle(field)}
-                value={privacyValueLabel(field)}
-                onPress={() => setPrivacyPickerOpen(field)}
-              />
-            ))}
-          </SettingsGroup>
-          <SettingsGroup footer={t('settings.privacyReadReceiptsDesc')}>
-            <SettingsSwitchRow
-              title={t('settings.privacyReadReceipts')}
-              value={!!chatPrivacy.read_receipts}
-              onValueChange={(v) => saveChatPrivacy({ read_receipts: !!v })}
-            />
-          </SettingsGroup>
-          <SettingsGroup header={t('settings.rd2.status') || 'Status'}>
-            <SettingsRow
-              title={t('settings.privacyCloseFriends')}
-              subtitle={t('settings.privacyCloseFriendsDesc')}
-              onPress={() => { try { router.push('/close-friends'); } catch {} }}
-            />
-            <SettingsRow
-              title={t('settings.privacyStatusExcept')}
-              value={(chatPrivacy.status_except?.length || 0) > 0 ? String(chatPrivacy.status_except.length) : undefined}
-              subtitle={(chatPrivacy.status_except?.length || 0) > 0 ? undefined : t('settings.privacyStatusExceptDesc')}
-              onPress={() => { try { router.push('/status-except'); } catch {} }}
-            />
-          </SettingsGroup>
-          <SettingsGroup header={t('settings.rd2.chats') || 'Conversas'} footer={t('settings.privacyKeepArchivedDesc')}>
-            <SettingsSwitchRow
-              title={t('settings.privacyKeepArchived')}
-              value={chatPrivacy.keep_archived !== false}
-              onValueChange={(v) => saveChatPrivacy({ keep_archived: !!v })}
-            />
-          </SettingsGroup>
-          <SettingsGroup footer={t('settings.blockUnknownDesc')}>
-            <SettingsSwitchRow
-              title={t('settings.blockUnknown')}
-              value={!!chatPrivacy.block_unknown}
-              onValueChange={(v) => saveChatPrivacy({ block_unknown: !!v })}
-            />
-            {/* [2026-10-11 settings-unify] lista de bloqueados: só existia no
-                ChatProfileTab (aba morta) → era inalcançável no app. */}
-            <SettingsRow title={t('settings.blockedContacts')} onPress={() => safeNav('/settings-blocked')} testID="settings-row-blocked" />
-          </SettingsGroup>
-          <PrivacyExtrasGroup
-            cloudChats={chatPrivacy.cloud_chats_default}
-            onCloudChatsChange={(v) => saveChatPrivacy({ cloud_chats_default: !!v })}
-          />
-        </View>
-        )}
-
-        {/* Segurança — bloqueio do app, acesso à conta, atividade, criptografia,
-            privacidade avançada, família. Web: só "Alterar senha" (o resto
-            depende de recursos nativos). */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey'), t('settings.loginAlerts.title') || 'Alertas de login', t('settings.advancedPrivacy') || 'Privacidade avançada', t('mod.myReports'), 'denúncia', 'denuncia', 'report', 'moderação', 'moderation') && (
-        <View ref={registerSectionRef('security')}>
-          {Platform.OS !== 'web' && biometricAvailable && (
-            <SettingsGroup header={t('settings.rd2.appLock') || 'Bloqueio do app'} footer={t('settings.biometricDesc')}>
-              <SettingsSwitchRow
-                title={t('settings.biometricLock')}
-                value={biometricEnabled}
-                onValueChange={toggleBiometric}
-              />
-              {biometricEnabled && (
-                <SettingsPickerRow
-                  title={t('settings.autoLockInterval') || 'Bloqueio automático'}
-                  value={String(autoLockInterval)}
-                  sheetMessage={t('settings.autoLockDesc') || 'Quanto tempo o app espera em segundo plano antes de pedir autenticação.'}
-                  cancelLabel={t('common.cancel') || 'Cancelar'}
-                  options={AUTO_LOCK_OPTIONS}
-                  displayValue={(AUTO_LOCK_OPTIONS.find(o => o.value === String(autoLockInterval)) || {}).label || `${autoLockInterval}s`}
-                  onChange={(v) => { setAutoLockInterval(v === 'never' ? 'never' : Number(v)); }}
-                />
-              )}
-            </SettingsGroup>
-          )}
-
-          <SettingsGroup header={t('settings.security') || 'Segurança'}>
-            <SettingsRow
-              title={t('settings.changePassword') || 'Alterar senha'}
-              subtitle={t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
-              onPress={() => setChangePasswordOpen(true)}
-            />
-            {Platform.OS !== 'web' && (
-              <SettingsRow
-                title={t('settings.twoFactor') || 'Verificação em duas etapas'}
-                subtitle={t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
-                onPress={() => {
-                  setTwoFADigits(['', '', '', '']);
-                  setTwoFAError('');
-                  setTwoFASuccess(false);
-                  setTwoFAOpen(true);
-                  setTimeout(() => { try { twoFARefs.current[0]?.focus?.(); } catch {} }, 250);
-                }}
-              />
-            )}
-            {Platform.OS !== 'web' && (
-              <SettingsRow
-                title={t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
-                subtitle={t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
-                onPress={() => {
-                  setRegLockDigits(['', '', '', '']);
-                  setRegLockError('');
-                  setRegLockSuccess(false);
-                  setRegLockOpen(true);
-                  setTimeout(() => { try { regLockRefs.current[0]?.focus?.(); } catch {} }, 250);
-                }}
-              />
-            )}
-            {Platform.OS !== 'web' && (
-              <SettingsRow
-                title={t('settings.changePhone') || 'Alterar número de telefone'}
-                subtitle={t('settings.changePhoneDesc') || 'Migre sua conta para um novo número mantendo seus chats e contatos.'}
-                onPress={() => safeNav('/change-phone')}
-              />
-            )}
-            {/* [2026-10-09 passkeys] Entrar com Face ID / digital — OFF por
-                flag (PASSKEYS_ENABLED) até o build com react-native-passkeys
-                + Associated Domains. */}
-            {PASSKEYS_ENABLED && (
-              <SettingsRow
-                title={t('settings.passkeys.title')}
-                subtitle={t('settings.passkeys.rowSub')}
-                onPress={() => safeNav('/passkeys')}
-              />
-            )}
-          </SettingsGroup>
-
-          {Platform.OS !== 'web' && (
-            <SettingsGroup header={t('settings.rd2.activity') || 'Atividade'}>
-              {/* [2026-10-11 settings-unify] Switch "Alertas de login" REMOVIDO:
-                  gravava em chat_user_defaults_set (ação inexistente) e o
-                  backend (login_alert.php) avisa SEMPRE, sem ler preferência
-                  → o switch mentia. Volta quando houver pref no servidor. */}
-              <SettingsRow
-                title={t('settings.loginAlerts.history') || 'Histórico de logins'}
-                onPress={openLoginHistory}
-              />
-              <SettingsRow
-                title={t('settings.activityLog') || 'Histórico de atividades'}
-                subtitle={t('settings.activityLogDesc') || 'Veja logins, mudanças de senha, novos dispositivos e outras ações de segurança.'}
-                onPress={() => safeNav('/activity-log')}
-              />
-            </SettingsGroup>
-          )}
-
-          {/* [central-moderacao 2026-10-14] Minhas denúncias (todos) + Moderação (só admin → painel web). */}
-          <SettingsGroup header={t('mod.reportsHeader')}>
-            <SettingsRow
-              title={t('mod.myReports')}
-              subtitle={t('mod.myReportsDesc')}
-              icon={IconShield}
-              onPress={() => safeNav('/my-reports')}
-            />
-            {String(user?.email || '').toLowerCase() === 'aleffpereiraduarte@gmail.com' ? (
-              <SettingsRow
-                title={t('mod.adminTitle')}
-                subtitle={t('mod.adminDesc')}
-                icon={IconShield}
-                onPress={async () => {
-                  const url = 'https://chatyy.com.br/api/moderacao.php';
-                  try {
-                    if (Platform.OS === 'web') { window.open(url, '_blank', 'noopener'); return; }
-                    const WB = require('expo-web-browser');
-                    await WB.openBrowserAsync(url);
-                  } catch { Linking.openURL(url).catch(() => {}); }
-                }}
-              />
-            ) : null}
-          </SettingsGroup>
-
-          {Platform.OS !== 'web' && (
-            <SettingsGroup header={t('settings.rd2.encryption') || 'Criptografia e backup'}>
-              <SettingsRow
-                title={t('settings.e2eBackup') || 'Backup com criptografia'}
-                subtitle={t('settings.e2eBackupDesc') || 'Salve suas chaves protegidas por uma frase secreta'}
-                onPress={() => setE2eBackupOpen(true)}
-              />
-              <SettingsRow
-                title={t('settings.backupKey.rotate') || 'Redefinir senha do backup'}
-                subtitle={t('settings.backupKey.subtitle') || 'Troque a frase secreta que protege seu backup criptografado. Backups antigos deixam de ser restauráveis.'}
-                subtitleLines={3}
-                onPress={() => { setBackupKeyPass(''); setBackupKeyPass2(''); setBackupKeyMsg(''); setBackupKeyOpen(true); }}
-              />
-              <SettingsRow
-                title={t('settings.advancedKey') || 'Chave avançada (BYOK)'}
-                subtitle={t('settings.advancedKeyDesc') || 'Gere uma chave mestre que só existe no seu aparelho. Frase de segurança mostrada uma única vez.'}
-                subtitleLines={3}
-                onPress={() => safeNav('/advanced-key')}
-              />
-            </SettingsGroup>
-          )}
-
-          {Platform.OS !== 'web' && (
-            <SettingsGroup footer={t('settings.advancedPrivacyDesc') || 'Proxy/Tor, bloqueio de captura de tela, descoberta por número, sugestão de VPN.'}>
-              <SettingsRow
-                title={t('settings.advancedPrivacy') || 'Privacidade avançada'}
-                onPress={() => safeNav('/advanced-privacy')}
-              />
-            </SettingsGroup>
-          )}
-
-          {Platform.OS !== 'web' && (
-            <SettingsGroup header={t('settings.rd2.family') || 'Família'}>
-              <SettingsRow
-                title={t('settings.rd2.family') || 'Família'}
-                subtitle={t('settings.rd2.familyDesc') || 'Compartilhe plano, álbum, calendário e mais com a família'}
-                onPress={() => router.push('/family')}
-              />
-              <SettingsRow
-                title={t('settings.rd2.parental') || 'Controle parental'}
-                subtitle={t('settings.rd2.parentalDesc') || 'Crie contas monitoradas para seus filhos'}
-                onPress={() => router.push('/parental')}
-              />
-            </SettingsGroup>
-          )}
-        </View>
-        )}
-
-        {/* [2026-10-13 consent-lgpd] Ajustes > Privacidade > Personalização e ofertas
-            (recomendações = legítimo interesse c/ opção de desligar; interesses das
-            conversas e ofertas = consentimentos opcionais). Tela: /privacy-personalization. */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.personalizationOffers'), t('settings.personalizationOffersDesc'), t('consents.personalizedTitle'), t('consents.marketingTitle'), 'privacy', 'privacidade', 'reels', 'lgpd') && (
-          <SettingsGroup>
-            <SettingsRow
-              title={t('settings.personalizationOffers')}
-              subtitle={t('settings.personalizationOffersDesc')}
-              subtitleLines={2}
-              onPress={() => safeNav('/privacy-personalization')}
-            />
-          </SettingsGroup>
-        )}
-
-        {/* Encaminhamento de email (privacy page, all platforms). */}
-        {(searching || activeCategory === 'email') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
-        <SettingsGroup header={t('settings.forwarding')} footer={t('settings.forwardingDesc')}>
-          <SettingsSwitchRow
-            title={t('settings.forwardingEnable')}
-            value={settings.forwarding_enabled}
-            onValueChange={(v) => setSettings(prev => ({ ...prev, forwarding_enabled: v }))}
-          />
-          {settings.forwarding_enabled && (
-            <View style={s.cardInputWrap}>
-              <TextInput
-                style={[s.cardInput, { color: colors.text, backgroundColor: gc.fill }]}
-                value={settings.forwarding_email}
-                onChangeText={(v) => setSettings(prev => ({ ...prev, forwarding_email: v }))}
-                placeholder={t('settings.forwardingPlaceholder')}
-                placeholderTextColor={gc.secondary}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </View>
-          )}
-        </SettingsGroup>
-        )}
-
-        {/* ── Notificações — [2026-10-08 settings-redesign2] nível de entrega
-            (lista com checkmark), conversas/chamadas (switches) e atalhos.
-            "Ocultar reações" e "Modo silencioso p/ ligações" vieram da página
-            de Privacidade (são preferências de notificação); mesmas chaves:
-            chat_user_notif_prefs_set / chat_privacy_set. ── */}
-        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
-        <>
-        {Platform.OS !== 'web' && (
-          <SettingsGroup footer={t('notif.pushDesc')}>
-            <PushMasterSwitchRow />
-          </SettingsGroup>
-        )}
-        <SettingsGroup header={t('settings.notificationsTitle')} footer={t('settings.rd2.pushFooter') || 'Vale para todas as notificações push do app.'}>
-          {[
-            { val: 'all', label: t('settings.notifAll'), sub: t('settings.notifAllSub') },
-            { val: 'urgent', label: t('settings.notifUrgent'), sub: t('settings.notifUrgentSub') },
-            { val: 'silent', label: t('settings.notifSilent'), sub: t('settings.notifSilentSub') },
-          ].map(opt => (
-            <SettingsRow
-              key={opt.val}
-              title={opt.label}
-              subtitle={opt.sub}
-              checked={pushNotifLevel === opt.val}
-              accessibilityRole="radio"
-              onPress={() => {
-                setPushNotifLevel(opt.val);
-                setStorage('push_notif_level', opt.val);
-                saveNotifPref({ push_notif_level: opt.val });
-              }}
-            />
-          ))}
-        </SettingsGroup>
-        </>
-        )}
-        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.privacyHideReactions'), t('settings.rd2.muteCalls') || 'Modo silencioso para ligações', t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas', t('settings.contactJoinedPush')) && (
-        <SettingsGroup header={t('settings.rd2.chatsAndCalls') || 'Conversas e chamadas'}>
-          <SettingsSwitchRow
-            title={t('settings.privacyHideReactions')}
-            subtitle={t('settings.privacyHideReactionsDesc')}
-            value={!!chatPrivacy.hide_reactions_in_notifs}
-            onValueChange={(v) => {
-              // Local UI state + persisted via chat_user_notif_prefs_set (push gate).
-              setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!v }));
-              saveNotifPref({ hide_reactions_in_notifs: !!v });
-            }}
-          />
-          {/* [mute-call-ringtone, 2026-05-19] chat_privacy_set + local mirror (services/ringtone.js). */}
-          <SettingsSwitchRow
-            title={t('settings.rd2.muteCalls') || 'Modo silencioso para ligações'}
-            subtitle={t('settings.rd2.muteCallsDesc') || 'Silencia o toque e a vibração de chamadas recebidas. A tela continua aparecendo.'}
-            value={!!chatPrivacy.mute_call_ringtone}
-            onValueChange={(v) => saveChatPrivacy({ mute_call_ringtone: !!v })}
-          />
-          {/* [2026-10-08 contact-joined-push] push "Fulano entrou no Chatyy!" quando
-              alguém da agenda cria conta. chat_user_notif_prefs_set.contact_joined_push. */}
-          <SettingsSwitchRow
-            title={t('settings.contactJoinedPush')}
-            subtitle={t('settings.contactJoinedPushDesc')}
-            value={!!contactJoinedPush}
-            onValueChange={(v) => { setContactJoinedPush(!!v); saveNotifPref({ contact_joined_push: !!v }); }}
-          />
-        </SettingsGroup>
-        )}
-        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.rd.advancedNotifs') || 'Notificações avançadas', t('settings.rd.emailNotifs') || 'Notificações de email') && (
-        <SettingsGroup header={t('settings.rd2.more') || 'Mais'}>
-          <SettingsRow
-            title={t('settings.rd.advancedNotifs') || 'Notificações avançadas'}
-            subtitle={t('settings.rd.advancedNotifsDesc') || 'Só menções, palavras-chave, soneca…'}
-            onPress={() => router.push('/notification-preferences')}
-          />
-          <SettingsRow
-            title={t('settings.rd.emailNotifs') || 'Notificações de email'}
-            onPress={() => openCategory('email')}
-          />
-        </SettingsGroup>
-        )}
-
-        {/* ── GROUP: Armazenamento e dados (native only — web has no cellular
-            concept nor an on-disk media store). [2026-10-08 settings-redesign]
-            WhatsApp "Armazenamento e dados" layout: auto-download = 4 picker
-            rows (Wi-Fi e dados móveis / Só Wi-Fi / Nunca) — the old 3-pill
-            control rendered as blank pills on iOS. ── */}
-        {(searching || activeCategory === 'storage_data') && (
-        <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q || activeCategory === 'storage_data'} hideHeader={activeCategory === 'storage_data' && !searching}>
-
-        {/* Mídia automática — 4 buckets × 3 modes. Writes chat_user_defaults
-            via updateChatDefault (debounced PATCH) and mirrors into
-            mediaCache so the cellular gate applies without a restart. */}
-        {sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), t('settings.mediaUploadQuality.title'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery', 'HD', 'qualidade', 'quality') && (
-        <View ref={registerSectionRef('mediaAutoDownload')}>
-          {/* [2026-10-11 settings-unify] Nuvem/plano — todas as plataformas. */}
-          <SettingsGroup header={t('storageData.cloud')}>
-            <SettingsRow title={t('storage.title')} onPress={() => safeNav('/storage')} />
-            <SettingsRow title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={() => safeNav('/settings-one')} />
-          </SettingsGroup>
-          {Platform.OS !== 'web' && (<>
-          <SettingsGroup header={t('settings.mediaAutoDownload')} footer={t('settings.mediaAutoDownloadDesc')}>
-            {[
-              { key: 'media_auto_dl_photos', label: t('settings.mediaPhotos') },
-              { key: 'media_auto_dl_audio',  label: t('settings.mediaAudio') },
-              { key: 'media_auto_dl_videos', label: t('settings.mediaVideos') },
-              { key: 'media_auto_dl_docs',   label: t('settings.mediaDocs') },
-            ].map((row) => (
-              <SettingsPickerRow
-                key={row.key}
-                title={row.label}
-                value={chatDefaults[row.key]}
-                sheetTitle={row.label}
-                sheetMessage={t('settings.rd.autoDownloadSheet') || 'Baixar automaticamente quando estiver em'}
-                cancelLabel={t('common.cancel') || 'Cancelar'}
-                options={[
-                  { value: 'mobile', label: t('settings.rd.dlWifiMobile') || 'Wi-Fi e dados móveis' },
-                  { value: 'wifi',   label: t('settings.rd.dlWifi') || 'Só Wi-Fi' },
-                  { value: 'never',  label: t('settings.mediaNever') || 'Nunca' },
-                ]}
-                onChange={(v) => updateChatDefault({ [row.key]: v })}
-              />
-            ))}
-          </SettingsGroup>
-
-          <SettingsGroup>
-            {/* Roaming gate — when OFF, `mobile` mode skips downloads while
-                roaming. Read by services/mediaCache on bootstrap. */}
-            <SettingsSwitchRow
-              title={t('settings.roaming.title') || 'Permitir em roaming'}
-              subtitle={t('settings.roaming.desc') || 'Permite baixar mídia quando estiver em roaming. Desligue pra economizar dados internacionais.'}
-              value={mediaRoaming}
-              onValueChange={(v) => {
-                setMediaRoaming(v);
-                setStorage('media_auto_dl_roaming', String(v));
-                try {
-                  const mc = require('../services/mediaCache');
-                  mc.setMediaDownloadPrefs?.({ media_auto_dl_roaming: v });
-                } catch {}
-              }}
-            />
-            {/* Auto-save received photos/videos into the gallery (default ON). */}
-            <SettingsSwitchRow
-              title={t('settings.autoSaveGallery') || 'Salvar na galeria'}
-              subtitle={t('settings.autoSaveGalleryDesc') || 'Fotos e vídeos recebidos vão para o app Fotos automaticamente.'}
-              value={autoSaveGallery}
-              onValueChange={(v) => {
-                setAutoSaveGallery(v);
-                setStorage('autoSaveMediaToGallery', String(v));
-                try {
-                  const mc = require('../services/mediaCache');
-                  mc.setAutoSaveMediaToGallery?.(v);
-                } catch {}
-              }}
-            />
-          </SettingsGroup>
-          </>)}
-
-          {/* [2026-10-11 video-fullhd] WhatsApp "Qualidade de envio de mídia".
-              Default HD = videos 1080p; Padrão = 720p. The preview HD chip
-              starts from this and flips it per send. */}
-          <SettingsGroup footer={t('settings.mediaUploadQuality.footer') || 'Vale como padrão para vídeos. No modo economia de dados ou em rede fraca, o envio usa a qualidade padrão. Você pode trocar em cada envio pelo botão HD.'}>
-            <SettingsPickerRow
-              title={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
-              value={mediaUploadQuality}
-              sheetTitle={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              options={[
-                { value: 'standard', label: t('settings.mediaUploadQuality.standard') || 'Padrão', sub: t('settings.mediaUploadQuality.standardDesc') || 'Envio mais rápido, usa menos dados (720p)' },
-                { value: 'hd', label: t('settings.mediaUploadQuality.hd') || 'HD', sub: t('settings.mediaUploadQuality.hdDesc') || 'Melhor qualidade, arquivos até 3x maiores (Full HD 1080p)' },
-              ]}
-              onChange={(v) => {
-                try { setMediaUploadQualityUI(require('../services/mediaUploadQuality').setMediaUploadQuality(v)); } catch {}
-              }}
-            />
-          </SettingsGroup>
-
-          <SettingsGroup header={t('settings.rd.calls') || 'Chamadas'}>
-            {/* [gap C3] Low-data calls — caps video at 360p/15fps. */}
-            <SettingsSwitchRow
-              title={t('settings.lowDataCalls.title') || 'Usar menos dados em chamadas'}
-              subtitle={t('settings.lowDataCalls.desc') || 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.'}
-              value={lowDataCalls}
-              onValueChange={(v) => {
-                setLowDataCalls(v);
-                setStorage('chatyy_low_data_calls', String(v));
-                // [2026-10-11 full-hd] Same native pref as the in-call
-                // "Economizar dados" (Full HD adaptive otherwise; no manual
-                // resolution row — the old "Qualidade HD" switch is gone).
-                try {
-                  const ck = require('../modules/expo-callkit');
-                  if (typeof ck.setCallDataSaver === 'function' && ck.setCallDataSaver(v)) nativeCallDataSaver.current = v;
-                } catch {}
-              }}
-            />
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* Storage — per-bucket usage + app cache + history + clear cache.
-            Stats via mediaCache.getStorageStats(); refreshed after clear. */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (() => {
-          const fmtBytes = (b) => {
-            const bytes = Math.max(0, Number(b) || 0);
-            if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
-            const kb = bytes / 1024;
-            if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
-            const mb = kb / 1024;
-            if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
-            const gb = mb / 1024;
-            return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
-          };
-          const fmtCount = (n) => {
-            const num = Number(n) || 0;
-            const key = num === 1 ? 'settings.storage.itemsSingular' : 'settings.storage.items';
-            return (t(key) || `${num} items`).replace('{n}', String(num));
-          };
-          const stats = storageStats || { totalBytes: 0, cacheBytes: 0, savedBytes: 0, byType: { image: 0, video: 0, audio: 0, document: 0 }, counts: { image: 0, video: 0, audio: 0, document: 0 } };
-          const mediaTotal = (stats.byType.image || 0) + (stats.byType.video || 0) + (stats.byType.audio || 0) + (stats.byType.document || 0);
-          const rows = [
-            { key: 'image',    label: t('settings.storage.photos'),    bytes: stats.byType.image    || 0, count: stats.counts.image    || 0 },
-            { key: 'video',    label: t('settings.storage.videos'),    bytes: stats.byType.video    || 0, count: stats.counts.video    || 0 },
-            { key: 'audio',    label: t('settings.storage.audios'),    bytes: stats.byType.audio    || 0, count: stats.counts.audio    || 0 },
-            { key: 'document', label: t('settings.storage.documents'), bytes: stats.byType.document || 0, count: stats.counts.document || 0 },
-          ];
-          const onClear = async () => {
-            const doClear = async () => {
-              setStorageBusy(true);
-              try {
-                const mc = require('../services/mediaCache');
-                if (typeof mc.clearAllCache === 'function') await mc.clearAllCache();
-              } catch {}
-              await refreshStorageStats();
-              setStorageBusy(false);
-            };
-            const ok = Platform.OS === 'web'
-              ? (typeof window !== 'undefined' && window.confirm(t('settings.storage.clearConfirm')))
-              : await confirm({
-                  title: t('settings.storage.clearConfirmTitle'),
-                  message: t('settings.storage.clearConfirm'),
-                  confirmLabel: t('settings.storage.clearCache'),
-                  destructive: true,
-                });
-            if (ok) doClear();
-          };
-          return (
-          <View ref={registerSectionRef('storage')}>
-            <SettingsGroup header={t('settings.storage.title')}>
-              {/* Total + manual refresh (stats only hydrate on mount). */}
-              <SettingsRow
-                title={t('settings.rd.mediaTotal') || 'Mídia no aparelho'}
-                onPress={storageBusy ? undefined : refreshStorageStats}
-                chevron={false}
-                accessibilityLabel={t('common.refresh') || 'Atualizar'}
-                right={(
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    {storageStats == null
-                      ? <Shimmer style={{ width: 64, height: 14, borderRadius: 7, marginRight: 8 }} />
-                      : <Text style={{ fontSize: 16, color: gc.secondary, marginRight: 8 }}>{fmtBytes(mediaTotal)}</Text>}
-                    {storageBusy ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={16} color={gc.tertiary} />}
-                  </View>
-                )}
-              />
-              {rows.map((row) => (
-                <SettingsRow key={row.key} title={row.label} subtitle={fmtCount(row.count)} value={fmtBytes(row.bytes)} />
-              ))}
-              <SettingsRow title={t('settings.storage.appCache')} value={fmtBytes(stats.totalBytes)} />
-            </SettingsGroup>
-
-            {/* [2026-10-08 media-local-store] Mídia por conversa (store
-                permanente da conta ativa) com "Limpar mídia" por conversa. */}
-            {Array.isArray(stats.conversations) && stats.conversations.length > 0 && (() => {
-              const all = stats.conversations;
-              const shown = storageShowAllChats ? all : all.slice(0, 8);
-              const onClearConv = async (convId, label) => {
-                const ok = await confirm({
-                  title: t('settings.storage.clearChatConfirmTitle') || 'Limpar mídia desta conversa?',
-                  message: (label ? label + '\n\n' : '') + (t('settings.storage.clearChatConfirm') || ''),
-                  confirmLabel: t('settings.storage.clearChatMedia') || 'Limpar mídia',
-                  destructive: true,
-                });
-                if (!ok) return;
-                setStorageClearingConv(convId);
-                try {
-                  const mc = require('../services/mediaCache');
-                  await mc.clearConversationLocalMedia?.(convId === '_' ? '_' : convId);
-                } catch {}
-                await refreshStorageStats();
-                setStorageClearingConv(null);
-              };
-              return (
-                <SettingsGroup header={t('settings.storage.byChat') || 'Mídia por conversa'} footer={t('settings.storage.byChatFooter')}>
-                  {shown.map((row) => {
-                    const cid = String(row.conversationId);
-                    const label = cid === '_'
-                      ? (t('settings.storage.unknownChat') || 'Outras mídias')
-                      : (storageConvNames[cid] || ('#' + cid));
-                    const busy = storageClearingConv === row.conversationId;
-                    return (
-                      <SettingsRow
-                        key={'cm_' + cid}
-                        title={label}
-                        subtitle={`${fmtBytes(row.bytes)} · ${fmtCount(row.count)}`}
-                        chevron={false}
-                        accessibilityLabel={`${t('settings.storage.clearChatMedia') || 'Limpar mídia'} ${label}`}
-                        onPress={busy ? undefined : () => onClearConv(row.conversationId, label)}
-                        right={busy
-                          ? <ActivityIndicator size="small" color={colors.text} />
-                          : <Text style={{ fontSize: 15, color: gc.destructive || '#FF3B30' }}>{t('settings.storage.clearChatMedia') || 'Limpar mídia'}</Text>}
-                      />
-                    );
-                  })}
-                  {!storageShowAllChats && all.length > shown.length && (
-                    <SettingsRow
-                      title={(t('settings.storage.showAllChats') || 'Ver todas ({n})').replace('{n}', String(all.length))}
-                      onPress={() => setStorageShowAllChats(true)}
-                    />
-                  )}
-                </SettingsGroup>
-              );
-            })()}
-
-            {/* History completeness (#1240) — own group. */}
-            <HistoryDownloadRow />
-
-            {/* Destructive action at the bottom — confirm before nuking. */}
-            <SettingsGroup>
-              <SettingsRow
-                title={storageBusy ? '…' : t('settings.storage.clearCache')}
-                destructive
-                disabled={storageBusy}
-                onPress={onClear}
-                accessibilityLabel={t('settings.storage.clearCache')}
-              />
-            </SettingsGroup>
-          </View>
-          );
-        })()}
-
-        </CollapsibleGroup>
-        )}
-        {/* ── END GROUP: Armazenamento e dados ── */}
-
-        {/* Mensagens temporárias por padrão — applied at chat_create time
-            only (existing convs unaffected). [2026-10-08 settings-redesign2]
-            picker row (sheet c/ checkmark) em vez de 4 linhas de rádio. */}
-        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
-        <View ref={registerSectionRef('defaultDisappearing')}>
-          <SettingsGroup header={t('settings.defaultDisappearing')} footer={t('settings.defaultDisappearingDesc')}>
-            <SettingsPickerRow
-              title={t('settings.rd2.defaultTimer') || 'Temporizador padrão'}
-              value={Number(chatDefaults.default_disappearing) || 0}
-              cancelLabel={t('common.cancel') || 'Cancelar'}
-              options={[
-                { value: 0,       label: t('settings.disappearingOff') },
-                { value: 86400,   label: t('settings.disappearing24h') },
-                { value: 604800,  label: t('settings.disappearing7d') },
-                { value: 7776000, label: t('settings.disappearing90d') },
-              ]}
-              onChange={(v) => updateChatDefault({ default_disappearing: v })}
-            />
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* Palavras silenciadas — feed muted words (feed_muted_words_*).
-            Campo + botão dentro do card; cada palavra é uma linha com lixeira. */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.mutedWords') || 'Palavras silenciadas', 'muted words', 'palavras silenciadas', 'mute', 'silenciar', 'privacy') && (
-        <View ref={registerSectionRef('mutedWords')}>
-          <SettingsGroup header={t('settings.mutedWords') || 'Palavras silenciadas'} footer={t('settings.mutedWordsDesc') || 'Posts cujo texto contenha qualquer dessas palavras não aparecem no seu feed.'}>
-            <View style={[s.cardInputWrap, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
-              <TextInput
-                value={mutedWordsInput}
-                onChangeText={setMutedWordsInput}
-                placeholder={t('settings.mutedWordsAdd') || 'Adicionar palavra…'}
-                placeholderTextColor={gc.secondary}
-                onSubmitEditing={handleAddMutedWord}
-                returnKeyType="done"
-                autoCorrect={false}
-                autoCapitalize="none"
-                style={[s.cardInput, { flex: 1, color: colors.text, backgroundColor: gc.fill }]}
-                accessibilityLabel={t('settings.mutedWordsAdd') || 'Adicionar palavra'}
-              />
-              <TouchableOpacity
-                onPress={handleAddMutedWord}
-                disabled={mutedWordsLoading || !mutedWordsInput.trim()}
-                style={[s.inkBtn, { backgroundColor: gc.ink, opacity: mutedWordsLoading || !mutedWordsInput.trim() ? 0.35 : 1 }]}
-                accessibilityRole="button"
-                accessibilityLabel={t('common.add') || 'Adicionar'}
-              >
-                <Text style={[s.inkBtnText, { color: gc.onInk }]}>{t('common.add') || 'Adicionar'}</Text>
-              </TouchableOpacity>
-            </View>
-            {mutedWords.length === 0 ? (
-              <SettingsRow title={t('settings.mutedWordsEmpty') || 'Nenhuma palavra silenciada ainda.'} titleStyle={{ color: gc.secondary, fontSize: 15 }} />
-            ) : mutedWords.map(w => (
-              <SettingsRow
-                key={w}
-                title={w}
-                right={(
-                  <TouchableOpacity
-                    onPress={() => handleRemoveMutedWord(w)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    accessibilityRole="button"
-                    accessibilityLabel={(t('settings.mutedWordsRemove') || 'Remover {w}').replace('{w}', w)}
-                  >
-                    <IconTrash size={18} color={gc.destructive} />
-                  </TouchableOpacity>
-                )}
-              />
-            ))}
-          </SettingsGroup>
-        </View>
-        )}
-
-        {/* Dados e recursos (chat page, bottom) — data_saver / beta_features. */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.dataSaver.title') || 'Modo economia', t('settings.beta.title') || 'Recursos beta') && (
-        <SettingsGroup header={t('settings.rd2.dataLabs') || 'Dados e recursos'}>
-          <SettingsSwitchRow
-            title={t('settings.dataSaver.title') || 'Modo economia de dados'}
-            subtitle={(() => {
-              // [2026-10-09 system-integration] iOS Low Data Mode / Android Data Saver.
-              let sys = false;
-              try { sys = require('../services/systemIntegration').isSystemDataSaverOn(); } catch {}
-              return sys ? t('settings.dataSaver.systemActive') : (t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.');
-            })()}
-            value={dataSaver}
-            onValueChange={(v) => { setDataSaver(v); setStorage('data_saver', String(v)); }}
-          />
-          <SettingsSwitchRow
-            title={t('settings.beta.title') || 'Recursos beta'}
-            subtitle={t('settings.beta.subtitle') || 'Ative pra testar funcionalidades em desenvolvimento. Podem ter bugs.'}
-            value={betaFeatures}
-            onValueChange={(v) => { setBetaFeatures(v); setStorage('beta_features', String(v)); }}
-          />
-        </SettingsGroup>
-        )}
-
-        {/* Convidar amigos — [2026-10-08 settings-redesign] grouped list
-            (código + compartilhar) instead of the black hero card. */}
-        {(searching || activeCategory === 'invite') && sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
-        <SettingsGroup
-          header={t('referral.inviteFriends') || 'Convidar amigos'}
-          footer={`${t('referral.subtitle') || '1 GB grátis pra cada amigo que entrar'} · ${(referralCount === 1
-            ? (t('settings.rd.referralStatsOne') || '1 amigo convidado · +1 GB')
-            : (t('settings.rd.referralStats') || '{n} amigos convidados · +{n} GB')).split('{n}').join(String(referralCount || 0))}`}
-        >
-          {referralCode ? (
-            <SettingsRow
-              title={t('referral.yourCode') || 'Seu código'}
-              accessibilityLabel={t('referral.copyCode') || 'Tocar pra copiar código'}
-              onPress={async () => {
-                try {
-                  const Clipboard = require('expo-clipboard');
-                  await Clipboard.setStringAsync(referralCode);
-                  Alert.alert(t('referral.copied') || 'Código copiado');
-                } catch {}
-              }}
-              right={(
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Text style={[s.referralCode, { color: colors.text }]}>{referralCode}</Text>
-                  <IconCopy size={17} color={gc.secondary} style={{ marginLeft: 10 }} />
-                </View>
-              )}
-            />
-          ) : (
-            <SettingsRow title={t('referral.yourCode') || 'Seu código'} right={<ActivityIndicator size="small" color={colors.text} />} />
-          )}
-          {!!referralCode && (
-            <SettingsRow
-              title={t('settings.rd.shareInvite') || 'Compartilhar convite'}
-              onPress={handleShareReferral}
-              chevron={false}
-              right={<IconShare size={18} color={gc.secondary} />}
-            />
-          )}
-        </SettingsGroup>
-        )}
-
-        {/* Danger Zone — last group of the Conta page: red text rows. */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('settings.dangerZone'), t('settings.emptyTrash'), t('settings.deleteAccount')) && (
-        <View>
-          <SettingsGroup footer={t('settings.deleteAccountDesc')}>
-            <SettingsRow
-              title={t('settings.emptyTrash')}
-              destructive
-              onPress={async () => {
-                const doEmpty = async () => {
-                  const { emptyTrash } = await import('../services/api');
-                  await emptyTrash();
-                };
-                const ok = Platform.OS === 'web'
-                  ? (typeof window !== 'undefined' && window.confirm(t('settings.emptyTrashConfirmWeb')))
-                  : await confirm({
-                      title: t('settings.emptyTrashTitle'),
-                      message: t('settings.emptyTrashConfirmNative'),
-                      confirmLabel: t('common.confirm'),
-                      destructive: true,
-                    });
-                if (ok) doEmpty();
-              }}
-            />
-            {/* Account Deletion — Apple Requirement */}
-            <SettingsRow
-              title={t('settings.deleteAccount')}
-              destructive
-              onPress={async () => {
-                const openSheet = () => {
-                  setDeleteConfirm(true);
-                  setDeletePassword('');
-                  setDeleteError('');
-                  setDeleteAcknowledged(false);
-                  setDeleteTypedWord('');
-                };
-                if (Platform.OS === 'web') { openSheet(); return; }
-                const ok = await confirm({
-                  title: t('settings.deleteAccountConfirmTitle'),
-                  message: t('settings.deleteAccountConfirmMessage'),
-                  confirmLabel: t('settings.deleteAccount'),
-                  destructive: true,
-                });
-                if (ok) openSheet();
-              }}
-            />
-          </SettingsGroup>
-
-          {deleteConfirm && (() => {
-            const confirmWord = t('settings.deleteAccountTypeWord') || 'DELETE';
-            const typedOk = (deleteTypedWord || '').trim().toUpperCase() === String(confirmWord).toUpperCase();
-            const canDelete = deleteAcknowledged && typedOk && !!deletePassword.trim() && !deleting;
-            return (
-            <View style={[s.deleteConfirmBox, { backgroundColor: colors.errorBg || (colors.error + '08'), borderColor: colors.error + '30' }]}>
-              <Text style={[s.deleteConfirmTitle, { color: colors.error }]}>{t('settings.confirmAccountDeletion')}</Text>
-
-              {/* Destructive warning banner */}
-              <View style={{
-                flexDirection: 'row', gap: 12, padding: 14,
-                backgroundColor: (colors.error || '#dc2626') + '15',
-                borderRadius: 12, borderWidth: 1,
-                borderColor: (colors.error || '#dc2626') + '40',
-                marginBottom: 16,
-              }}>
-                <IconAlertTriangle size={20} color={colors.error || '#dc2626'} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '700', marginBottom: 4 }}>
-                    {t('settings.deleteAccountWarningTitle')}
-                  </Text>
-                  <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>
-                    {t('settings.deleteAccountWarningBody')}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={[s.deleteConfirmText, { color: colors.textSecondary }]}>
-                {t('settings.deleteAccountPasswordMessage')}
-              </Text>
-              <TextInput
-                style={[s.deletePasswordInput, { color: colors.text, borderColor: colors.error + '40', backgroundColor: colors.surface }]}
-                value={deletePassword}
-                onChangeText={setDeletePassword}
-                placeholder={t('settings.yourPassword')}
-                placeholderTextColor={colors.textTertiary}
-                secureTextEntry
-              />
-
-              {/* Type-to-confirm word */}
-              <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, marginBottom: 6 }}>
-                {(t('settings.deleteAccountTypeHint') || 'Type {word} to confirm').replace('{word}', confirmWord)}
-              </Text>
-              <TextInput
-                style={[s.deletePasswordInput, {
-                  color: colors.text,
-                  borderColor: typedOk ? (colors.success || '#16a34a') + '60' : (colors.error + '40'),
-                  backgroundColor: colors.surface,
-                  marginTop: 0,
-                  letterSpacing: 1,
-                  fontWeight: '700',
-                }]}
-                value={deleteTypedWord}
-                onChangeText={setDeleteTypedWord}
-                placeholder={confirmWord}
-                placeholderTextColor={colors.textTertiary}
-                autoCapitalize="characters"
-                autoCorrect={false}
-              />
-
-              {/* Acknowledge checkbox */}
-              <TouchableOpacity
-                onPress={() => setDeleteAcknowledged(v => !v)}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, paddingVertical: 4 }}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: deleteAcknowledged }}
-              >
-                <View style={{
-                  width: 22, height: 22, borderRadius: 6,
-                  borderWidth: 2,
-                  borderColor: deleteAcknowledged ? (colors.error || '#dc2626') : colors.border,
-                  backgroundColor: deleteAcknowledged ? (colors.error || '#dc2626') : 'transparent',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {deleteAcknowledged ? <IconCheck size={14} color="#fff" /> : null}
-                </View>
-                <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 }}>
-                  {t('settings.deleteAccountConfirmCheckbox')}
-                </Text>
-              </TouchableOpacity>
-
-              {!!deleteError && <Text style={[s.deleteErrorText, { color: colors.error, marginTop: 10 }]}>{deleteError}</Text>}
-              <View style={s.deleteActions}>
-                <TouchableOpacity
-                  onPress={() => { setDeleteConfirm(false); setDeletePassword(''); setDeleteError(''); setDeleteAcknowledged(false); setDeleteTypedWord(''); }}
-                  style={[s.deleteCancelBtn, { borderColor: colors.border }]}
-                >
-                  <Text style={[s.deleteCancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={async () => {
-                    if (!canDelete) return;
-                    setDeleting(true);
-                    setDeleteError('');
-                    try {
-                      const { deleteAccount } = await import('../services/api');
-                      const r = await deleteAccount(deletePassword);
-                      if (r.success) {
-                        setDeleteConfirm(false);
-                        if (Platform.OS === 'web') {
-                          window.alert(t('settings.accountDeletedMessage'));
-                        } else {
-                          Alert.alert(t('settings.accountDeleted'), t('settings.accountDeletedMessage'));
-                        }
-                        logout();
-                      } else {
-                        setDeleteError(r.message || t('settings.deleteAccountError'));
-                      }
-                    } catch {
-                      setDeleteError(t('common.networkError'));
-                    } finally {
-                      setDeleting(false);
-                    }
-                  }}
-                  disabled={!canDelete}
-                  style={[s.deleteConfirmBtn, { backgroundColor: colors.error, opacity: canDelete ? 1 : 0.4 }]}
-                >
-                  {deleting ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={s.deleteConfirmBtnText}>{t('settings.deleteMyAccount')}</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-            );
-          })()}
-        </View>
-        )}
-      </Animated.ScrollView>
-      </SettingsSearchContext.Provider>
-      </FadeSlideIn>
-      </View>
-      </View>
       )}
 
-      <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />
-      <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
-      <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
-
-      {/* Login history modal — last 30d of sign-ins (device + ip + timestamp).
-          Data is fetched lazily when the Alertas de login row is tapped so we
-          don't roundtrip the server until the user actually asks. Stays
-          read-only — revoking a session lives in /activity-log. */}
-      <NativeSheetDialog
-        visible={loginHistoryOpen}
-        onClose={() => setLoginHistoryOpen(false)}
-        animationType="slide"
-        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-        panelStyle={{
-          backgroundColor: colors.surface,
-          borderTopLeftRadius: 20, borderTopRightRadius: 20,
-          padding: Spacing.lg,
-          paddingBottom: Spacing.lg + (USE_NATIVE_SHEETS ? 0 : insets.bottom),
-          maxHeight: '70%',
-        }}
-      >
-            <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: Spacing.md }}>
-              {t('settings.loginAlerts.history') || 'Histórico de logins'}
-            </Text>
-            {loginHistoryLoading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginVertical: Spacing.lg }} />
-            ) : loginHistory.length === 0 ? (
-              <Text style={{ color: colors.textTertiary, textAlign: 'center', paddingVertical: Spacing.lg }}>
-                {t('settings.loginAlerts.empty') || 'Nenhum login recente'}
-              </Text>
+      <SettingsHostContext.Provider value={hostValue}>
+        <View style={twoPane ? s.twoPaneRow : s.flex1}>
+          {twoPane && (
+            <Animated.ScrollView
+              style={[s.twoPaneLeft, { borderRightColor: colors.border }]}
+              contentContainerStyle={[s.scroll, { paddingBottom: 40 }]}
+              keyboardShouldPersistTaps="handled"
+              testID="settings-left-pane"
+            >
+              {searchBarNode}
+              <SettingsSearchContext.Provider value={_q}>
+                {searching ? searchResultsNode : homeListNode}
+              </SettingsSearchContext.Provider>
+            </Animated.ScrollView>
+          )}
+          <View style={s.flex1}>
+            {showNativeRoot ? (
+              <NativeSettingsList
+                rows={nativeSections}
+                query={searchQuery}
+                header={searching ? null : heroNode}
+                isDark={isDark}
+                palette={gc}
+                maxWidth={contentMaxWidth}
+                bottomInset={bottomPad}
+                autoInset={IOS_AUTO_INSET}
+                labels={nativeLabels}
+                refreshing={pullRefreshing}
+                onRefresh={onPullRefresh}
+                onRowPress={onNativeRowPress}
+                onFailure={onNativeFailure}
+              />
             ) : (
-              <ScrollView style={{ maxHeight: 400 }}>
-                {loginHistory.map((ev, idx) => {
-                  const device = ev.device || ev.user_agent || ev.client || '—';
-                  const ip = ev.ip || ev.ip_address || '';
-                  const when = ev.created_at || ev.timestamp || ev.ts || '';
-                  return (
-                    <View
-                      key={ev.id || ev.session_id || idx}
-                      style={{
-                        paddingVertical: Spacing.md,
-                        borderBottomWidth: 1,
-                        borderBottomColor: colors.borderLight,
-                      }}
-                    >
-                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
-                        {device}
-                      </Text>
-                      <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
-                        {ip}{ip && when ? ' • ' : ''}{when}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </ScrollView>
+              <FadeSlideIn style={s.flex1}>
+                <SettingsSearchContext.Provider value={activeCategory === null ? _q : ''}>
+                  <Animated.ScrollView
+                    key={activeCategory || 'root'}
+                    ref={scrollRef}
+                    onScroll={activeCategory === null && !twoPane ? onHeroScroll : undefined}
+                    scrollEventThrottle={16}
+                    contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                    contentContainerStyle={[s.scroll, { paddingBottom: bottomPad, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}
+                    refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={gc.secondary} colors={[colors.primary]} />}
+                  >
+                    {activeCategory === null && !twoPane ? (
+                      <>
+                        {!USE_NATIVE_HEADER && searchBarNode}
+                        {searching ? searchResultsNode : homeListNode}
+                      </>
+                    ) : activeCategory ? (
+                      <CategoryHost key={activeCategory} cat={activeCategory} />
+                    ) : null}
+                  </Animated.ScrollView>
+                </SettingsSearchContext.Provider>
+              </FadeSlideIn>
             )}
-            <TouchableOpacity
-              style={{ marginTop: Spacing.md, alignSelf: 'center', paddingVertical: Spacing.md, paddingHorizontal: Spacing.xl }}
-              onPress={() => setLoginHistoryOpen(false)}
-            >
-              <Text style={{ color: colors.primary, fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
-            </TouchableOpacity>
-      </NativeSheetDialog>
+          </View>
+        </View>
+      </SettingsHostContext.Provider>
 
-      {/* Privacy picker — [2026-10-08 settings-redesign2] OptionSheet (lista
-          com checkmark) reutilizado pelos 5 campos de visibilidade. Mesmo
-          comportamento: salva via saveChatPrivacy e, p/ status
-          'close_friends'/'except', abre a tela da lista. (O sheet antigo de
-          "Bloqueio automático" virou SettingsPickerRow na página.) */}
-      {!!privacyPickerOpen && (
-        <OptionSheet
-          visible={!!privacyPickerOpen}
-          title={privacyFieldTitle(privacyPickerOpen)}
-          options={privacyOptionsFor(privacyPickerOpen)}
-          value={privacyPickerOpen === 'story_privacy' && chatPrivacy.story_privacy === 'everyone' ? 'all' : chatPrivacy[privacyPickerOpen]}
-          cancelLabel={t('common.cancel') || 'Cancelar'}
-          onSelect={(v) => {
-            const field = privacyPickerOpen;
-            if (field) saveChatPrivacy({ [field]: v });
-            if (field === 'story_privacy' && v === 'close_friends') {
-              try { router.push('/close-friends'); } catch {}
-            } else if (field === 'story_privacy' && v === 'except') {
-              try { router.push('/status-except'); } catch {}
-            }
-          }}
-          onClose={() => setPrivacyPickerOpen(null)}
-        />
-      )}
-
-      {/* E2E backup escrow modal — passphrase entry + upload trigger. The
-          user types the passphrase twice; on submit we derive an
-          encryption key locally (PBKDF2/XSalsa20) from the passphrase,
-          encrypt the user's identity + chat keys, and ship ciphertext +
-          sha256(passphrase) to the server. The plaintext passphrase is
-          never sent. */}
-      <Modal
-        visible={e2eBackupOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setE2eBackupOpen(false)}
-      >
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
-          onPress={() => !e2eBackupBusy && setE2eBackupOpen(false)}
-        >
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 20 }}
-          >
-            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 6 }}>
-              {t('settings.e2eBackup') || 'Backup com criptografia'}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
-              {t('settings.e2eBackupSetPass') || 'Defina sua frase secreta'}
-            </Text>
-            <TextInput
-              value={e2eBackupPass}
-              onChangeText={setE2eBackupPass}
-              secureTextEntry
-              placeholder={t('settings.backupKey.newPass')}
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1, borderColor: colors.borderLight,
-                borderRadius: 10, padding: 12, marginBottom: 10,
-                color: colors.text, backgroundColor: colors.background,
-              }}
-              editable={!e2eBackupBusy}
-            />
-            <TextInput
-              value={e2eBackupPass2}
-              onChangeText={setE2eBackupPass2}
-              secureTextEntry
-              placeholder={t('settings.backupKey.repeatPass')}
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1, borderColor: colors.borderLight,
-                borderRadius: 10, padding: 12, marginBottom: 12,
-                color: colors.text, backgroundColor: colors.background,
-              }}
-              editable={!e2eBackupBusy}
-            />
-            {e2eBackupMsg ? (
-              <Text style={{ color: e2eBackupMsg.startsWith('OK') ? colors.success : colors.error, fontSize: 13, marginBottom: 10 }}>
-                {e2eBackupMsg.replace(/^OK /, '')}
-              </Text>
-            ) : null}
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity
-                onPress={() => !e2eBackupBusy && setE2eBackupOpen(false)}
-                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, alignItems: 'center' }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  setE2eBackupMsg('');
-                  if (!e2eBackupPass || e2eBackupPass.length < 8) {
-                    setE2eBackupMsg(t('settings.backupKey.tooShort')); return;
-                  }
-                  if (e2eBackupPass !== e2eBackupPass2) {
-                    setE2eBackupMsg(t('settings.backupKey.mismatch')); return;
-                  }
-                  setE2eBackupBusy(true);
-                  try {
-                    // 1. Derive ciphertext locally. We reuse the
-                    //    existing services/e2ee passphrase-encrypt path
-                    //    when present; fall back to a minimal tweetnacl
-                    //    XSalsa20-Poly1305 if the orchestrator doesn't
-                    //    expose a helper yet (older OTA installs).
-                    const nacl = require('tweetnacl');
-                    const naclUtil = require('tweetnacl-util');
-                    const e2e = require('../services/e2e');
-                    // Collect a coarse "what to back up" payload — for v1
-                    // we ship just the identity key + the in-memory chat
-                    // key map. Future versions can fold in device list.
-                    const ikPub = (await e2e.getPublicKeyBase64?.()) || '';
-                    const blob = JSON.stringify({ v: 1, ik_pub: ikPub, ts: Date.now() });
-                    // Derive a 32-byte key from the passphrase. Cheap
-                    // PBKDF2-via-tweetnacl-hash loop — good enough for
-                    // soft escrow, not for serious password recovery.
-                    let key = naclUtil.decodeUTF8(e2eBackupPass);
-                    for (let i = 0; i < 100000; i++) key = nacl.hash(key);
-                    key = key.slice(0, nacl.secretbox.keyLength);
-                    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-                    const ct = nacl.secretbox(naclUtil.decodeUTF8(blob), nonce, key);
-                    const ciphertextB64 = naclUtil.encodeBase64(ct);
-                    const nonceB64 = naclUtil.encodeBase64(nonce);
-                    // sha256(passphrase) — soft anti-bruteforce gate.
-                    const passBytes = naclUtil.decodeUTF8(e2eBackupPass);
-                    const passHash = Array.from(nacl.hash(passBytes).slice(0, 32))
-                      .map((b) => b.toString(16).padStart(2, '0')).join('');
-                    const salt = naclUtil.encodeBase64(nacl.randomBytes(16));
-                    const api = require('../services/api');
-                    const r = await api.e2eeBackupEscrowPut({
-                      ciphertext: ciphertextB64, salt, nonce: nonceB64,
-                      kdfIters: 100000, passphraseHash: passHash,
-                      deviceLabel: Platform.OS,
-                    });
-                    if (r?.success) {
-                      setE2eBackupMsg('OK ' + (t('settings.e2eBackupSaved') || 'Backup criado'));
-                      setE2eBackupPass(''); setE2eBackupPass2('');
-                      setTimeout(() => setE2eBackupOpen(false), 1200);
-                    } else {
-                      setE2eBackupMsg(r?.message || t('vacation.saveError'));
-                    }
-                  } catch (err) {
-                    setE2eBackupMsg(String(err?.message || err));
-                  } finally {
-                    setE2eBackupBusy(false);
-                  }
-                }}
-                disabled={e2eBackupBusy}
-                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', opacity: e2eBackupBusy ? 0.5 : 1 }}
-              >
-                {e2eBackupBusy
-                  ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
-                  : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-        </SheetKeyboardAvoider>
-      </Modal>
-
-      {/* Change Password Modal */}
-      <Modal
-        visible={changePasswordOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setChangePasswordOpen(false)}
-      >
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
-          onPress={() => setChangePasswordOpen(false)}
-        >
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
-            style={{
-              margin: 20,
-              backgroundColor: colors.surface,
-              borderRadius: 20,
-              padding: 24,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {}),
-            }}
-          >
-            <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 4 }}>
-              {t('settings.changePassword') || 'Alterar senha'}
-            </Text>
-            <Text style={{ fontSize: 13, color: colors.textTertiary, marginBottom: 20 }}>
-              {t('settings.changePasswordBody') || 'Sua nova senha precisa ter no mínimo 8 caracteres.'}
-            </Text>
-
-            {/* Current password */}
-            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.3 }}>
-              {(t('settings.currentPassword') || 'Senha atual').toUpperCase()}
-            </Text>
-            <TextInput
-              value={cpCurrent}
-              onChangeText={v => { setCpCurrent(v); setCpError(''); }}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="••••••••"
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1,
-                borderColor: cpError ? colors.error : colors.border,
-                borderRadius: 12,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                fontSize: 15,
-                color: colors.text,
-                backgroundColor: colors.surfaceVariant || colors.background,
-                marginBottom: 14,
-                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-              }}
-              editable={!cpLoading}
-            />
-
-            {/* New password */}
-            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.3 }}>
-              {(t('settings.newPassword') || 'Nova senha').toUpperCase()}
-            </Text>
-            <TextInput
-              value={cpNew}
-              onChangeText={v => { setCpNew(v); setCpError(''); }}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder={t('settings.newPasswordPlaceholder') || 'Mínimo 8 caracteres'}
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1,
-                borderColor: cpError ? colors.error : colors.border,
-                borderRadius: 12,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                fontSize: 15,
-                color: colors.text,
-                backgroundColor: colors.surfaceVariant || colors.background,
-                marginBottom: 14,
-                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-              }}
-              editable={!cpLoading}
-            />
-
-            {/* Confirm */}
-            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6, letterSpacing: 0.3 }}>
-              {(t('settings.confirmNewPassword') || 'Confirmar nova senha').toUpperCase()}
-            </Text>
-            <TextInput
-              value={cpConfirm}
-              onChangeText={v => { setCpConfirm(v); setCpError(''); }}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="••••••••"
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1,
-                borderColor: cpError ? colors.error : colors.border,
-                borderRadius: 12,
-                paddingHorizontal: 14,
-                paddingVertical: 12,
-                fontSize: 15,
-                color: colors.text,
-                backgroundColor: colors.surfaceVariant || colors.background,
-                marginBottom: 6,
-                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
-              }}
-              editable={!cpLoading}
-            />
-
-            {cpError ? (
-              <Text style={{ color: colors.error, fontSize: 13, marginTop: 4 }}>{cpError}</Text>
-            ) : null}
-            {cpSuccess ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <IconCheck size={14} color={colors.success} />
-                <Text style={{ color: colors.success, fontSize: 13, fontWeight: '600' }}>
-                  {t('settings.passwordChanged') || 'Senha alterada com sucesso'}
-                </Text>
-              </View>
-            ) : null}
-
-            {/* Actions */}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
-              <TouchableOpacity
-                onPress={() => {
-                  setChangePasswordOpen(false);
-                  setCpCurrent(''); setCpNew(''); setCpConfirm('');
-                  setCpError(''); setCpSuccess(false);
-                }}
-                disabled={cpLoading}
-                style={{
-                  flex: 1, paddingVertical: 14,
-                  borderRadius: 12,
-                  backgroundColor: colors.surfaceVariant || 'transparent',
-                  borderWidth: 1, borderColor: colors.border,
-                  alignItems: 'center', opacity: cpLoading ? 0.5 : 1,
-                }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>
-                  {t('common.cancel') || 'Cancelar'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  setCpError(''); setCpSuccess(false);
-                  if (!cpCurrent) { setCpError(t('settings.currentPasswordRequired') || 'Informe a senha atual'); return; }
-                  if (cpNew.length < 8) { setCpError(t('settings.newPasswordTooShort') || 'Nova senha precisa ter 8+ caracteres'); return; }
-                  if (cpNew !== cpConfirm) { setCpError(t('settings.passwordsDontMatch') || 'As senhas não coincidem'); return; }
-                  setCpLoading(true);
-                  // Biometric gate: changing the account password is a
-                  // sensitive action (an attacker who grabbed the phone
-                  // while the session was active could otherwise rotate
-                  // the password and lock the legit user out). Require
-                  // Face ID / fingerprint before submitting.
-                  try {
-                    const { confirmWithBiometric } = require('../services/biometricGate');
-                    const okBio = await confirmWithBiometric({
-                      reason: t('settings.changePassword') || 'Alterar senha',
-                    });
-                    if (!okBio) { setCpLoading(false); return; }
-                  } catch {}
-                  try {
-                    const { changePassword } = require('../services/api');
-                    const r = await changePassword(cpCurrent, cpNew);
-                    if (r?.success) {
-                      setCpSuccess(true);
-                      setTimeout(() => {
-                        setChangePasswordOpen(false);
-                        setCpCurrent(''); setCpNew(''); setCpConfirm('');
-                        setCpSuccess(false);
-                      }, 1400);
-                    } else {
-                      setCpError(r?.message || (t('settings.passwordChangeFailed') || 'Não foi possível alterar a senha'));
-                    }
-                  } catch (e) {
-                    setCpError(e?.message || t('common.error'));
-                  } finally {
-                    setCpLoading(false);
-                  }
-                }}
-                disabled={cpLoading}
-                style={{
-                  flex: 1, paddingVertical: 14,
-                  borderRadius: 12,
-                  backgroundColor: colors.primary,
-                  alignItems: 'center', opacity: cpLoading ? 0.6 : 1,
-                }}
-              >
-                {cpLoading ? (
-                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
-                ) : (
-                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
-                    {t('settings.save') || t('common.save') || 'Salvar'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-        </SheetKeyboardAvoider>
-      </Modal>
-
-      {/* 2FA PIN Entry Modal — 4 digit boxes */}
-      <Modal
-        visible={twoFAOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setTwoFAOpen(false)}
-      >
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
-          onPress={() => setTwoFAOpen(false)}
-        >
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
-            style={{
-              margin: 20,
-              backgroundColor: colors.surface,
-              borderRadius: 20,
-              padding: 24,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {}),
-            }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-                <IconShield size={28} color={colors.primary} />
-              </View>
-              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, textAlign: 'center' }}>
-                {t('settings.twoFactor') || 'Verificação em duas etapas'}
-              </Text>
-              <Text style={{ fontSize: 13, color: colors.textTertiary, marginTop: 6, textAlign: 'center', lineHeight: 18 }}>
-                {t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
-              </Text>
-            </View>
-
-            {/* 4 digit boxes */}
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginVertical: 18 }}>
-              {[0, 1, 2, 3].map(idx => (
-                <TextInput
-                  key={idx}
-                  ref={el => { twoFARefs.current[idx] = el; }}
-                  value={twoFADigits[idx]}
-                  onChangeText={(v) => {
-                    const digit = (v || '').replace(/\D/g, '').slice(-1);
-                    setTwoFADigits(prev => {
-                      const next = [...prev];
-                      next[idx] = digit;
-                      return next;
-                    });
-                    setTwoFAError('');
-                    if (digit && idx < 3) {
-                      try { twoFARefs.current[idx + 1]?.focus?.(); } catch {}
-                    }
-                  }}
-                  onKeyPress={(e) => {
-                    if (e?.nativeEvent?.key === 'Backspace' && !twoFADigits[idx] && idx > 0) {
-                      try { twoFARefs.current[idx - 1]?.focus?.(); } catch {}
-                    }
-                  }}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  secureTextEntry
-                  style={{
-                    width: 56, height: 64, borderRadius: 14,
-                    borderWidth: 1.5, borderColor: twoFADigits[idx] ? colors.primary : colors.border,
-                    backgroundColor: colors.surfaceVariant || colors.surface,
-                    color: colors.text, textAlign: 'center',
-                    fontSize: 26, fontWeight: '700',
-                    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-                  }}
-                />
-              ))}
-            </View>
-
-            {!!twoFAError && (
-              <Text style={{ color: colors.error || '#EF4444', fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
-                {twoFAError}
-              </Text>
-            )}
-            {twoFASuccess && (
-              <Text style={{ color: colors.success, fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
-                {t('settings.twoFactorEnabled') || 'PIN ativado com sucesso'}
-              </Text>
-            )}
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={() => { setTwoFAOpen(false); }}
-                disabled={twoFALoading}
-                style={{
-                  flex: 1, paddingVertical: 14, borderRadius: 12,
-                  backgroundColor: colors.surfaceVariant || 'transparent',
-                  borderWidth: 1, borderColor: colors.border,
-                  alignItems: 'center', opacity: twoFALoading ? 0.5 : 1,
-                }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>
-                  {t('common.cancel') || 'Cancelar'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  const pin = twoFADigits.join('');
-                  if (pin.length !== 4) {
-                    setTwoFAError(t('settings.twoFactorPinLen') || 'Digite os 4 dígitos');
-                    return;
-                  }
-                  setTwoFAError(''); setTwoFALoading(true);
-                  try {
-                    const r = await api.enable2fa(pin);
-                    if (r?.success) {
-                      setTwoFASuccess(true);
-                      setTimeout(() => { setTwoFAOpen(false); setTwoFASuccess(false); }, 1100);
-                    } else {
-                      setTwoFAError(r?.message || (t('settings.twoFactorFailed') || 'Não foi possível ativar o PIN'));
-                    }
-                  } catch (e) {
-                    setTwoFAError(e?.message || (t('settings.twoFactorFailed') || 'Não foi possível ativar o PIN'));
-                  } finally {
-                    setTwoFALoading(false);
-                  }
-                }}
-                disabled={twoFALoading}
-                style={{
-                  flex: 1, paddingVertical: 14, borderRadius: 12,
-                  backgroundColor: colors.primary,
-                  alignItems: 'center', opacity: twoFALoading ? 0.6 : 1,
-                }}
-              >
-                {twoFALoading ? (
-                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
-                ) : (
-                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
-                    {t('settings.twoFactorEnable') || 'Ativar PIN'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-        </SheetKeyboardAvoider>
-      </Modal>
-
-      {/* Registration Lock PIN Entry Modal — same shape as 2FA but writes a
-          separate backend key (registration_lock) that gates phone-OTP login
-          rather than email/password login. The PIN is the second factor on
-          phone_login_verify; without it, even a successful SIM-swap can't
-          take over the account. */}
-      <Modal
-        visible={regLockOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setRegLockOpen(false)}
-      >
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
-          onPress={() => setRegLockOpen(false)}
-        >
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
-            style={{
-              margin: 20,
-              backgroundColor: colors.surface,
-              borderRadius: 20,
-              padding: 24,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {}),
-            }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-                <IconShield size={28} color={colors.primary} />
-              </View>
-              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, textAlign: 'center' }}>
-                {t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
-              </Text>
-              <Text style={{ fontSize: 13, color: colors.textTertiary, marginTop: 6, textAlign: 'center', lineHeight: 18 }}>
-                {t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
-              </Text>
-            </View>
-
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginVertical: 18 }}>
-              {[0, 1, 2, 3].map(idx => (
-                <TextInput
-                  key={idx}
-                  ref={el => { regLockRefs.current[idx] = el; }}
-                  value={regLockDigits[idx]}
-                  onChangeText={(v) => {
-                    const digit = (v || '').replace(/\D/g, '').slice(-1);
-                    setRegLockDigits(prev => {
-                      const next = [...prev];
-                      next[idx] = digit;
-                      return next;
-                    });
-                    setRegLockError('');
-                    if (digit && idx < 3) {
-                      try { regLockRefs.current[idx + 1]?.focus?.(); } catch {}
-                    }
-                  }}
-                  onKeyPress={(e) => {
-                    if (e?.nativeEvent?.key === 'Backspace' && !regLockDigits[idx] && idx > 0) {
-                      try { regLockRefs.current[idx - 1]?.focus?.(); } catch {}
-                    }
-                  }}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  secureTextEntry
-                  style={{
-                    width: 56, height: 64, borderRadius: 14,
-                    borderWidth: 1.5, borderColor: regLockDigits[idx] ? colors.primary : colors.border,
-                    backgroundColor: colors.surfaceVariant || colors.surface,
-                    color: colors.text, textAlign: 'center',
-                    fontSize: 26, fontWeight: '700',
-                    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-                  }}
-                />
-              ))}
-            </View>
-
-            {!!regLockError && (
-              <Text style={{ color: colors.error || '#EF4444', fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
-                {regLockError}
-              </Text>
-            )}
-            {regLockSuccess && (
-              <Text style={{ color: colors.success, fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
-                {t('settings.registrationLockEnabled') || 'PIN ativado com sucesso'}
-              </Text>
-            )}
-
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={() => { setRegLockOpen(false); }}
-                disabled={regLockLoading}
-                style={{
-                  flex: 1, paddingVertical: 14, borderRadius: 12,
-                  backgroundColor: colors.surfaceVariant || 'transparent',
-                  borderWidth: 1, borderColor: colors.border,
-                  alignItems: 'center', opacity: regLockLoading ? 0.5 : 1,
-                }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>
-                  {t('common.cancel') || 'Cancelar'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  const pin = regLockDigits.join('');
-                  if (pin.length !== 4) {
-                    setRegLockError(t('settings.registrationLockPinLen') || 'Digite os 4 dígitos');
-                    return;
-                  }
-                  setRegLockError(''); setRegLockLoading(true);
-                  try {
-                    const r = await api.setRegistrationLock(pin);
-                    if (r?.success) {
-                      setRegLockSuccess(true);
-                      setTimeout(() => { setRegLockOpen(false); setRegLockSuccess(false); }, 1100);
-                    } else {
-                      setRegLockError(r?.message || (t('settings.registrationLockFailed') || 'Não foi possível ativar o PIN'));
-                    }
-                  } catch (e) {
-                    setRegLockError(e?.message || (t('settings.registrationLockFailed') || 'Não foi possível ativar o PIN'));
-                  } finally {
-                    setRegLockLoading(false);
-                  }
-                }}
-                disabled={regLockLoading}
-                style={{
-                  flex: 1, paddingVertical: 14, borderRadius: 12,
-                  backgroundColor: colors.primary,
-                  alignItems: 'center', opacity: regLockLoading ? 0.6 : 1,
-                }}
-              >
-                {regLockLoading ? (
-                  <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
-                ) : (
-                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>
-                    {t('settings.registrationLockEnable') || 'Ativar PIN'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-        </SheetKeyboardAvoider>
-      </Modal>
-
-      {/* About modal — version + build + legal links. Read-only surface;
-          the user can deep-link to Terms / Privacy (reuses the existing
-          modals) or to a licenses route. We keep it dependency-light:
-          read Constants.expoConfig.version/buildNumber/versionCode for
-          the displayed build label. */}
-      <NativeSheetDialog
-        visible={aboutOpen}
-        onClose={() => setAboutOpen(false)}
-        animationType="slide"
-        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
-        panelStyle={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
-      >
-            <Text style={{ color: colors.text, fontWeight: '800', fontSize: 20, marginBottom: 6 }}>
-              {t('settings.about.title') || 'Sobre'}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>
-              {(() => {
-                const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
-                const build = Constants?.expoConfig?.ios?.buildNumber
-                  || Constants?.expoConfig?.android?.versionCode
-                  || '';
-                const label = (t('settings.about.version') || 'Versão {ver}').replace('{ver}', ver);
-                return build ? `${label} • build ${build}` : label;
-              })()}
-            </Text>
-
-            <TouchableOpacity
-              onPress={() => { setAboutOpen(false); setTimeout(() => setShowTerms(true), USE_NATIVE_SHEETS ? 520 : 200); }} // [2026-10-09 native-sheets] Modal irmão só depois do sheet descer
-              style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
-              <IconChevronRight size={16} color={colors.textTertiary} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { setAboutOpen(false); setTimeout(() => setShowPrivacy(true), USE_NATIVE_SHEETS ? 520 : 200); }}
-              style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.privacy') || 'Política de privacidade'}</Text>
-              <IconChevronRight size={16} color={colors.textTertiary} />
-            </TouchableOpacity>
-            {/* Open-source licenses row removed: /licenses returned the SPA
-                404. Re-add with a real in-app modal if/when a licenses
-                manifest exists. */}
-
-            <TouchableOpacity
-              onPress={() => setAboutOpen(false)}
-              style={{ marginTop: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
-            >
-              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
-            </TouchableOpacity>
-      </NativeSheetDialog>
-
-      {/* Backup key rotation modal — re-uses the passphrase-pair UX from
-          the original E2E backup flow. On submit we call the same
-          e2eeBackupEscrowPut endpoint but flag the request as a rotation
-          (server invalidates previous escrow blobs). Lightweight here —
-          the real crypto lives in services/e2e on submit. */}
-      <Modal
-        visible={backupKeyOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setBackupKeyOpen(false)}
-      >
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
-          onPress={() => !backupKeyBusy && setBackupKeyOpen(false)}
-        >
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
-            style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
-          >
-            <Text style={{ color: colors.text, fontWeight: '800', fontSize: 18, marginBottom: 6 }}>
-              {t('settings.backupKey.rotate') || 'Redefinir senha do backup'}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
-              {t('settings.backupKey.warning') || 'Atenção: backups antigos deixarão de ser restauráveis com a senha anterior. Anote a nova senha em local seguro.'}
-            </Text>
-            <TextInput
-              value={backupKeyPass}
-              onChangeText={setBackupKeyPass}
-              secureTextEntry
-              placeholder={t('settings.backupKey.newPass') || 'Nova frase secreta'}
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1, borderColor: colors.borderLight,
-                borderRadius: 10, padding: 12, marginBottom: 10,
-                color: colors.text, backgroundColor: colors.background,
-              }}
-              editable={!backupKeyBusy}
-            />
-            <TextInput
-              value={backupKeyPass2}
-              onChangeText={setBackupKeyPass2}
-              secureTextEntry
-              placeholder={t('settings.backupKey.repeatPass') || 'Repita a frase'}
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                borderWidth: 1, borderColor: colors.borderLight,
-                borderRadius: 10, padding: 12, marginBottom: 12,
-                color: colors.text, backgroundColor: colors.background,
-              }}
-              editable={!backupKeyBusy}
-            />
-            {backupKeyMsg ? (
-              <Text style={{ color: backupKeyMsg.startsWith('OK') ? colors.success : colors.error, fontSize: 13, marginBottom: 10 }}>
-                {backupKeyMsg.replace(/^OK /, '')}
-              </Text>
-            ) : null}
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity
-                onPress={() => !backupKeyBusy && setBackupKeyOpen(false)}
-                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, alignItems: 'center' }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={async () => {
-                  setBackupKeyMsg('');
-                  if (!backupKeyPass || backupKeyPass.length < 8) {
-                    setBackupKeyMsg(t('settings.backupKey.tooShort') || 'Use ao menos 8 caracteres'); return;
-                  }
-                  if (backupKeyPass !== backupKeyPass2) {
-                    setBackupKeyMsg(t('settings.backupKey.mismatch') || 'As frases não coincidem'); return;
-                  }
-                  setBackupKeyBusy(true);
-                  try {
-                    // Re-use the same XSalsa20-Poly1305 escrow flow as the
-                    // initial backup. Flagging `rotate: true` lets the server
-                    // version the new blob and revoke prior ones.
-                    const nacl = require('tweetnacl');
-                    const naclUtil = require('tweetnacl-util');
-                    const e2e = require('../services/e2e');
-                    const ikPub = (await e2e.getPublicKeyBase64?.()) || '';
-                    const blob = JSON.stringify({ v: 1, ik_pub: ikPub, ts: Date.now() });
-                    let key = naclUtil.decodeUTF8(backupKeyPass);
-                    for (let i = 0; i < 100000; i++) key = nacl.hash(key);
-                    key = key.slice(0, nacl.secretbox.keyLength);
-                    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
-                    const ct = nacl.secretbox(naclUtil.decodeUTF8(blob), nonce, key);
-                    const ciphertextB64 = naclUtil.encodeBase64(ct);
-                    const nonceB64 = naclUtil.encodeBase64(nonce);
-                    const passBytes = naclUtil.decodeUTF8(backupKeyPass);
-                    const passHash = Array.from(nacl.hash(passBytes).slice(0, 32))
-                      .map((b) => b.toString(16).padStart(2, '0')).join('');
-                    const salt = naclUtil.encodeBase64(nacl.randomBytes(16));
-                    const r = await api.e2eeBackupEscrowPut?.({
-                      ciphertext: ciphertextB64, salt, nonce: nonceB64,
-                      kdfIters: 100000, passphraseHash: passHash,
-                      deviceLabel: Platform.OS, rotate: true,
-                    });
-                    if (r?.success) {
-                      setBackupKeyMsg('OK ' + (t('settings.backupKey.rotated') || 'Senha redefinida'));
-                      setBackupKeyPass(''); setBackupKeyPass2('');
-                      setTimeout(() => setBackupKeyOpen(false), 1200);
-                    } else {
-                      setBackupKeyMsg(r?.message || (t('settings.backupKey.failed') || 'Falha ao redefinir'));
-                    }
-                  } catch (err) {
-                    setBackupKeyMsg(String(err?.message || err));
-                  } finally {
-                    setBackupKeyBusy(false);
-                  }
-                }}
-                disabled={backupKeyBusy}
-                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', opacity: backupKeyBusy ? 0.5 : 1 }}
-              >
-                {backupKeyBusy
-                  ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
-                  : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-        </SheetKeyboardAvoider>
-      </Modal>
-
-      {/* Multi-account switcher sheet */}
       <AccountSwitcherSheet visible={accountSwitcherOpen} onClose={() => setAccountSwitcherOpen(false)} />
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  // [2026-10-11 settings-unify] layout 2 painéis (web largo)
   flex1: { flex: 1 },
   twoPaneRow: { flex: 1, flexDirection: 'row' },
   twoPaneLeft: { width: 360, flexGrow: 0, flexShrink: 0, borderRightWidth: StyleSheet.hairlineWidth },
   container: { flex: 1 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  // Header — [beauty2 2026-05-31] hairline divider + tighter vertical rhythm
-  // so the title sits closer to iOS large-title settings density.
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, paddingVertical: Spacing.md,
@@ -4792,239 +606,11 @@ const s = StyleSheet.create({
   },
   backBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: BorderRadius.md, marginLeft: -Spacing.xs },
   headerTitle: { flex: 1, fontSize: FontSize.title, fontWeight: '700', letterSpacing: LetterSpacing.tighter },
-  saveBtn: {
-    borderRadius: BorderRadius.md, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
-    ...Platform.select({
-      web: { background: '#111111', boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)' },
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.14, shadowRadius: 4 },
-      android: { elevation: 1 },
-    }),
-  },
-  saveBtnDisabled: { opacity: 0.6 },
-  saveBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
-  // Scroll — paddingBottom extra pra "Excluir conta" (último item da Zona
-  // perigosa) não ficar colado no safe-area inferior do iPhone, e pro modal
-  // de confirmação não ser cortado quando aparece. User reportou: "embaixo
-  // zona perigosa quebra fica tudo cortando".
   scroll: { paddingHorizontal: 16, paddingTop: Spacing.md, paddingBottom: 80 },
-  // Section — [beauty2 2026-05-31] slightly calmer corner radius + a touch
-  // more inner breathing room (paddingVertical) so grouped rows read like
-  // iOS inset-grouped cards; horizontal padding kept tight for label reach.
-  // [light 2026] inset-grouped card: clean white surface + subtle hairline
-  // (border comes from theme inline). Shadow softened to a whisper so the
-  // hairline does the separating — calmer, airier, less scroll.
-  // [clean 2026-10] flat inset-grouped card — subtle hairline does the
-  // separating (shadow dropped to none), calmer radius, tighter inner
-  // padding + smaller inter-card gap for an iOS-Settings density.
-  section: {
-    borderRadius: 12, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm,
-    marginBottom: 22,
-    ...Platform.select({
-      web: { boxShadow: 'none' },
-      ios: { shadowOpacity: 0 },
-      android: { elevation: 0 },
-    }),
-  },
-  profileSection: {
-    alignItems: 'center', paddingVertical: Spacing.xl,
-  },
-  profileEmail: {
-    fontSize: FontSize.xl, marginTop: Spacing.sm + 2, marginBottom: Spacing.sm + 1,
-    fontWeight: '700', letterSpacing: -0.3,
-  },
-  // [beauty2 2026-05-31] pill button gets a hairline border + brand-tinted
-  // feel so it reads as a calm secondary action under the avatar.
-  changePhotoBtn: {
-    marginTop: Spacing.xs, borderWidth: 1.5, borderRadius: 22,
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm + 1,
-  },
-  changePhotoBtnText: {
-    fontSize: FontSize.md, fontWeight: '700', letterSpacing: -0.1,
-  },
-  // Multi-account switcher entry — full-width pill under "Alterar foto".
-  switchAccountBtn: {
-    marginTop: Spacing.sm, borderWidth: 1, borderRadius: BorderRadius.xl,
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    alignSelf: 'stretch',
-  },
-  switchAccountLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  switchAccountRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  switchAccountText: { fontSize: FontSize.md, fontWeight: '600', letterSpacing: -0.1 },
-  accountCountBadge: {
-    minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  accountCountText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  // Section title — kept big and bold (20px) so users still see it as the
-  // card heading, but added a thin uppercase eyebrow style via `sectionEyebrow`
-  // below for sections that opt-in. Letter-spacing tightened to -0.4 (was
-  // -0.5) so it doesn't look squashed at this size.
-  // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
-  // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  // [2026-10-08 settings-redesign] calmer card heading for the categories
-  // that still use cards (chat/privacy/notificações/ajuda).
-  sectionTitle: { fontSize: 17, fontWeight: '600', marginBottom: Spacing.sm, letterSpacing: -0.2 },
-  // Eyebrow label — small uppercase brand-color tag rendered above a section
-  // title for screens that want extra navigability (iOS Settings pattern).
-  // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
-  sectionEyebrow: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4, opacity: 0.85 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.xs },
-  // Setting row — adds a soft hover state on web so each row reads as
-  // "tappable" without an explicit border. Spacing bumped slightly for
-  // a more relaxed iOS-Settings density.
-  // [beauty2 2026-05-31] hairline dividers (was 1px solid) for a crisper,
-  // lighter iOS-Settings separator; comfortable ~14px vertical density.
-  // [light 2026] tighter iOS-Settings density — ~46-50px rows, hairline
-  // dividers so the list reads compact and calm without feeling crammed.
-  settingRow: {
-    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    minHeight: 38,
-    paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
-    ...Platform.select({
-      web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
-      default: {},
-    }),
-  },
-  settingRowColumn: {
-    flexDirection: 'column', alignItems: 'flex-start',
-    paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  settingInfo: { flex: 1, minWidth: 0 },
-  settingLabel: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: LetterSpacing.tight },
-  settingDesc: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.72, lineHeight: 18, letterSpacing: LetterSpacing.normal },
-  // Per page
-  // [beauty2 2026-05-31] segmented-pill selectors — slightly rounder + tighter
-  // gap so the row of options reads as one cohesive iOS segmented control.
-  perPageBtns: { flexDirection: 'row', gap: 6, flexShrink: 0 },
-  perPageBtn: {
-    borderWidth: 1, borderRadius: BorderRadius.lg,
-    paddingHorizontal: Spacing.md, paddingVertical: 6,
-    ...Platform.select({
-      web: { transition: 'all 0.15s ease', cursor: 'pointer' },
-      default: {},
-    }),
-  },
-  perPageText: { fontSize: FontSize.base, fontWeight: '600', letterSpacing: -0.1 },
-  // Signature
-  // [2026-10-08 settings-redesign] signature block inside a grouped card
-  sigBlock: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 14 },
-  sigHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sigNameInput: {
-    flex: 1, fontSize: 16, fontWeight: '600', paddingVertical: 4,
-    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-  },
-  defaultBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  signatureInput: {
-    borderRadius: 10, marginTop: 8,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, lineHeight: 20,
-    minHeight: 72, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-  },
-  addSigBtn: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: BorderRadius.xl, paddingVertical: 12, alignItems: 'center' },
-  cardInputWrap: { paddingHorizontal: 16, paddingVertical: 12 },
-  cardInput: {
-    borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, minHeight: 44,
-    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-  },
-  timeInput: {
-    minWidth: 76, textAlign: 'center', fontSize: 16, fontVariant: ['tabular-nums'],
-    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
-    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-  },
-  // Root search (web only — native uses the header search bar)
-  // [2026-10-15 settings-2026] busca em pílula que expande (foco → cartão + Cancelar).
   searchWrap: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 12, height: 42, gap: 8, borderWidth: 1 },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 40, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
   searchCancel: { paddingLeft: 12, paddingVertical: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
-  searchSummary: { fontSize: 13, paddingHorizontal: 16, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.2 },
-  // Root profile card / Conta header
-  profileCardRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  profileCardName: { fontSize: 20, fontWeight: '600', letterSpacing: -0.3 },
-  profileCardEmail: { fontSize: 14, marginTop: 2 },
-  accountHeader: { alignItems: 'center', paddingTop: 22, paddingBottom: 18, paddingHorizontal: 16 },
-  accountHeaderName: { fontSize: 22, fontWeight: '600', letterSpacing: -0.3, marginTop: 12 },
-  accountHeaderEmail: { fontSize: 15, marginTop: 3 },
-  biaHeroDesc: { fontSize: 14, lineHeight: 19, marginTop: 6, textAlign: 'center', maxWidth: 320 },
-  inkBtn: { minHeight: 44, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  inkBtnText: { fontSize: 15, fontWeight: '600' },
-  referralCode: { fontSize: 16, fontWeight: '600', letterSpacing: 1.5, fontVariant: ['tabular-nums'] },
-  // AI Features
-  aiFeatures: { marginTop: Spacing.md, gap: 2 },
-  aiFeatureRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.sm + 1,
-  },
-  aiFeatureIconWrap: { marginRight: Spacing.md, width: 26, alignItems: 'center' },
-  aiFeatureText: { fontSize: FontSize.base, fontWeight: '500', letterSpacing: -0.1 },
-  // Toggle switch
-  toggleTrack: {
-    width: 48, height: 26, borderRadius: 13,
-    justifyContent: 'center', padding: 2,
-    ...Platform.select({
-      web: { transition: 'background-color 0.2s ease', cursor: 'pointer' },
-      default: {},
-    }),
-  },
-  toggleThumb: {
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: '#fff',
-    // [beauty2 2026-05-31] softer, more iOS-like thumb shadow on native too.
-    ...Platform.select({
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'all 0.2s ease' },
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.18, shadowRadius: 2.5 },
-      android: { elevation: 2 },
-    }),
-  },
-  toggleThumbActive: { alignSelf: 'flex-end' },
-  // Delete account
-  deleteConfirmBox: {
-    borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.lg, marginTop: Spacing.md,
-  },
-  deleteConfirmTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm },
-  deleteConfirmText: { fontSize: FontSize.sm, lineHeight: 20, marginBottom: Spacing.md },
-  deletePasswordInput: {
-    borderWidth: 1, borderRadius: BorderRadius.md,
-    paddingHorizontal: Spacing.md, paddingVertical: 10,
-    fontSize: FontSize.base, marginBottom: Spacing.sm,
-    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-  },
-  deleteErrorText: { fontSize: FontSize.sm, fontWeight: '500', marginBottom: Spacing.sm },
-  deleteActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: Spacing.sm, marginTop: Spacing.sm },
-  deleteCancelBtn: {
-    borderWidth: 1, borderRadius: BorderRadius.md,
-    paddingVertical: 10, paddingHorizontal: Spacing.xl,
-  },
-  deleteCancelText: { fontSize: FontSize.base, fontWeight: '500' },
-  deleteConfirmBtn: {
-    borderRadius: BorderRadius.md,
-    paddingVertical: 10, paddingHorizontal: Spacing.xl,
-  },
-  deleteConfirmBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
 });
-
-// [cold-start 2026-10-01] Settings opens as a modal with a heavy tree. Mounting
-// it during the present transition hitched the first frame. Defer the heavy
-// mount until the transition's interaction settles (one frame later,
-// imperceptible), painting a solid themed placeholder meanwhile so the
-// transition runs clean. Mirrors ChatCallsTab's post-interaction render.
-// Native-only — web mounts immediately (no native stack transition to protect).
-function DeferHeavyMount({ children }) {
-  const { colors } = useTheme();
-  const [ready, setReady] = useState(Platform.OS === 'web');
-  useEffect(() => {
-    if (Platform.OS === 'web') return;
-    let task = null; let timer = null;
-    try {
-      const { InteractionManager } = require('react-native');
-      task = InteractionManager.runAfterInteractions(() => setReady(true));
-    } catch {
-      timer = setTimeout(() => setReady(true), 120);
-    }
-    return () => { try { task?.cancel?.(); } catch {} if (timer) clearTimeout(timer); };
-  }, []);
-  if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
-  return children;
-}
 
 export default function SettingsScreen() { return <ErrorBoundary><SettingsScreenInner /></ErrorBoundary>; }

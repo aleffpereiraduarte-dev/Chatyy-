@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
+import { cssPulseScale, IS_WEB } from '../utils/webCssLoop';
 import { IllustrationSearch, IllustrationEmptyInbox, IconSend, IconTrash, IconArchive, IconAlertTriangle, IconClock, IconFileText, IconCompose, IconRefresh, IconMail } from './Icons';
 
 const FOLDER_EMPTY = {
@@ -48,6 +49,7 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
     ]).start();
 
     // Gentle pulse for the icon circle
+    if (IS_WEB) return undefined; // [2026-10-15 web-idle] CSS (webRingPulse)
     const pulse = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 1.06, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
@@ -79,11 +81,11 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
         <Animated.View style={[s.outerRing, {
           borderColor: colors.primary + '08',
           transform: [{ scale: pulseAnim }],
-        }]} />
+        }, IS_WEB ? cssPulseScale(1.06, 2000) : null]} />
         <Animated.View style={[s.middleRing, {
           borderColor: colors.primary + '12',
           transform: [{ scale: pulseAnim }],
-        }]} />
+        }, IS_WEB ? cssPulseScale(1.06, 2000) : null]} />
         <Animated.View style={[s.iconCircle, {
           backgroundColor: colors.primary + '10',
           transform: [{ scale: scaleAnim }],
