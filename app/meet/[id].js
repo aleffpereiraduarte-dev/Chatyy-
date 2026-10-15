@@ -1,41 +1,32 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, TouchableOpacity, AppState, Linking, KeyboardAvoidingView } from 'react-native';
+// [2026-10-15 meet-v2] Tela de REUNIÃO redesenhada (nível Meet/Zoom/FaceTime, P&B, preto verdadeiro).
+//  - Pré-visualização (mic/câmera antes de entrar) → sala.
+//  - Sala = WebView/iframe de /meet/room-v2.html (mesh WebRTC + sinalização :8095, TURN próprio).
+//    A página desenha só os vídeos (grade adaptativa, quem fala, nomes/mic, self-view flutuante);
+//    o app desenha cabeçalho (título, cronômetro, rede), barra de 6 controles que CABE em qualquer
+//    largura, sheet "Mais", conversa, participantes, cartão "Aguardando participantes" (link/QR).
+//  - room.html (v1) segue intocado p/ quem ainda roda o app antigo.
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, Pressable, AppState, Linking, KeyboardAvoidingView, Share } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { useTheme } from '../../context/ThemeContext';
 import * as api from '../../services/api';
-import MeetControls from '../../components/MeetControls';
+import MeetControlBar from '../../components/meet/MeetControlBar';
+import MeetHeader from '../../components/meet/MeetHeader';
+import MeetWaitingCard from '../../components/meet/MeetWaitingCard';
+import MeetPrejoin from '../../components/meet/MeetPrejoin';
 import MeetChatPanel from '../../components/MeetChatPanel';
 import MeetParticipantsPanel from '../../components/MeetParticipantsPanel';
 import MeetReactionsOverlay from '../../components/MeetReactionsOverlay';
-import MeetPollPanel from '../../components/MeetPollPanel';
-import MeetNotesPanel from '../../components/MeetNotesPanel';
-import MeetCaptionsOverlay from '../../components/MeetCaptionsOverlay';
-import MeetBreakoutPanel from '../../components/MeetBreakoutPanel';
 import MeetMoreMenu from '../../components/MeetMoreMenu';
 import MeetVirtualBgPicker from '../../components/MeetVirtualBgPicker';
-import { IconFlashlight, IconLock, IconUnlock, IconHome, IconImage, IconBarChart, IconEdit, IconMessageSquare, IconPaperclip, IconInfo, IconUsers, IconScreenShare, IconMicOff, IconVideoOff } from '../../components/Icons';
+import {
+  IconLock, IconUnlock, IconImage, IconInfo, IconUsers, IconScreenShare, IconMicOff, IconVideoOff,
+  IconMessageCircle, IconUserPlus, IconRaisedHand, IconGrid, IconRecord, IconX,
+} from '../../components/Icons';
 
-// Grid layout math: 1=>1x1, 2=>1x2, 3-4=>2x2, 5-9=>3x3, 10-16=>4x4, 17-25=>5x5, 26-32=>6x6
-function gridDimensions(count) {
-  if (count <= 1) return { cols: 1, rows: 1 };
-  if (count === 2) return { cols: 2, rows: 1 };
-  if (count <= 4) return { cols: 2, rows: 2 };
-  if (count <= 9) return { cols: 3, rows: 3 };
-  if (count <= 16) return { cols: 4, rows: 4 };
-  if (count <= 25) return { cols: 5, rows: 5 };
-  return { cols: 6, rows: 6 };
-}
-function layoutLabel(count, t) {
-  if (count <= 2) return null;
-  const { cols, rows } = gridDimensions(count);
-  return `${cols}x${rows}`;
-}
-
-// [2026-10-07 app-feel-webview] lock zoom + kill tap highlight / callout /
-// text selection on chrome (inputs stay selectable) in the meet room page.
+// [2026-10-07 app-feel-webview] trava zoom + tira highlight/callout na sala.
 const MEET_NATIVE_FEEL_JS = `(function(){try{
   function apply(){
     var m=document.querySelector('meta[name=viewport]');
@@ -47,24 +38,29 @@ const MEET_NATIVE_FEEL_JS = `(function(){try{
   }
   apply();document.addEventListener('DOMContentLoaded',apply);
 }catch(e){}})();true;`;
+
 let WebView = null;
 if (Platform.OS !== 'web') {
   try { WebView = require('react-native-webview').default; } catch {}
 }
 
-const MEET_BASE = 'https://chatyy.com.br/meet/room.html';
+const MEET_ORIGIN = 'https://chatyy.com.br';
+const MEET_BASE = MEET_ORIGIN + '/meet/room-v2.html';
+const HEADER_H = 60;
 
 export default function MeetScreen() {
   const { id: roomId, video } = useLocalSearchParams();
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
 
-  const [loading, setLoading] = useState(true);
+  // fases: prejoin → (senha) → sala
+  const [phase, setPhase] = useState('prejoin');
+  const [joining, setJoining] = useState(false);
+  const [joinPrefs, setJoinPrefs] = useState({ audio: true, video: video !== 'off' });
   const [error, setError] = useState('');
-  const [lobbyWaiting, setLobbyWaiting] = useState(false);
+  const [inRoom, setInRoom] = useState(false); // recebeu 'joined' da página
   const [audioMuted, setAudioMuted] = useState(false);
   const [videoMuted, setVideoMuted] = useState(video === 'off');
   const [screenSharing, setScreenSharing] = useState(false);
@@ -81,187 +77,137 @@ export default function MeetScreen() {
   const [passwordError, setPasswordError] = useState('');
   const [recording, setRecording] = useState(false);
   const [roomLocked, setRoomLocked] = useState(false);
-
-  // Participants & lobby
   const [showParticipants, setShowParticipants] = useState(false);
   const [participants, setParticipants] = useState([]);
   const [lobbyPeers, setLobbyPeers] = useState([]);
-
-  // Reactions
   const [reactions, setReactions] = useState([]);
   const reactionIdRef = useRef(0);
-
-  // Hand raised
   const [handRaised, setHandRaised] = useState(false);
-
-  // Polls
-  const [showPolls, setShowPolls] = useState(false);
-  const [polls, setPolls] = useState([]);
-
-  // Notes
-  const [showNotes, setShowNotes] = useState(false);
-  const [meetingNotes, setMeetingNotes] = useState('');
-
-  // Captions
-  const [captionsEnabled, setCaptionsEnabled] = useState(false);
-  const [captions, setCaptions] = useState([]);
-  const captionIdRef = useRef(0);
-
-  // Breakout rooms
-  const [showBreakout, setShowBreakout] = useState(false);
-  const [breakoutRooms, setBreakoutRooms] = useState([]);
-
-  // More menu
   const [showMore, setShowMore] = useState(false);
-
-  // Virtual background
   const [showVirtualBg, setShowVirtualBg] = useState(false);
   const [virtualBgEffect, setVirtualBgEffect] = useState(null);
-
-  // File sharing & spotlight
-  const [sharedFiles, setSharedFiles] = useState([]);
-  const [spotlightPeerId, setSpotlightPeerId] = useState(null);
-
-  // Mic / camera permission state — surface explicit "permission denied" UI
-  // instead of letting the call silently fail with a generic connection error.
+  const [layoutMode, setLayoutMode] = useState('auto');
+  const [net, setNet] = useState('');
+  const [startedAt, setStartedAt] = useState(0);
+  const [myPeerId, setMyPeerId] = useState('');
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [waitingDismissed, setWaitingDismissed] = useState(false);
   const [audioPermissionDenied, setAudioPermissionDenied] = useState(false);
   const [videoPermissionDenied, setVideoPermissionDenied] = useState(false);
 
-  const notesTimerRef = useRef(null);
   const pendingTimersRef = useRef([]);
   const webViewRef = useRef(null);
   const iframeRef = useRef(null);
-  // Holds the active screen MediaStream captured via getDisplayMedia (web only)
   const screenStreamRef = useRef(null);
+  const joinedApiRef = useRef(false);
 
-  // Join meeting via API
-  const attemptJoin = async (password) => {
+  const displayName = user?.name || user?.email || t('meetScreen.guest');
+  const userEmail = (user?.email || '').toLowerCase();
+  const meetLink = `${MEET_ORIGIN}/meet/${roomId}`;
+
+  // título p/ a pré-visualização (meet_info pode negar a não-convidados → fica o genérico)
+  useEffect(() => {
+    let alive = true;
+    if (!roomId) return undefined;
+    api.meetInfo(roomId).then((r) => {
+      const title = r?.data?.meeting?.title;
+      if (alive && title) setMeetingTitle(title);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [roomId]);
+
+  // ─── Entrar (API) ───
+  const attemptJoin = useCallback(async (password) => {
     try {
       const params = { room_id: roomId };
       if (password) params.password = password;
       const r = await api.apiCall('meet_join', params, 'POST');
       if (r.success) {
+        joinedApiRef.current = true;
         setNeedsPassword(false);
         setPasswordError('');
-        if (r.data?.status === 'waiting') {
-          setLobbyWaiting(true);
-          setLoading(false);
-        } else {
-          setIsHost(r.data?.is_host || r.data?.your_role === 'host' || false);
-          setMeetingTitle(r.data?.meeting?.title || '');
-          setParticipants(r.data?.participants || []);
-          setLoading(false);
-        }
-      } else if (r.data?.requires_password) {
-        setNeedsPassword(true);
-        setLoading(false);
-        // If we just submitted a password and got 400/401 back, surface inline error
-        // instead of an Alert. Detect via status code or wrong-password messaging.
-        if (password && (r.status === 400 || r.status === 401 || /password|senha|contrase/i.test(r.message || ''))) {
-          setPasswordError(t('meet.passwordWrong') || 'Senha incorreta');
-        }
-      } else {
-        setError(r.message || t('meetScreen.joinFailed'));
-        setLoading(false);
+        if (r.data?.meeting?.title) setMeetingTitle(r.data.meeting.title);
+        setIsHost(!!(r.data?.is_host || r.data?.your_role === 'host'));
+        // em sala de espera a própria sala consulta o anfitrião e mostra "Aguardando…"
+        setPhase('room');
+        return true;
       }
+      if (r.data?.requires_password) {
+        setNeedsPassword(true);
+        setPhase('password');
+        if (password && (r.status === 400 || r.status === 401 || r.status === 403 || /password|senha|contrase/i.test(r.message || ''))) {
+          setPasswordError(t('meet.passwordWrong'));
+        }
+        return false;
+      }
+      setError(r.message || t('meetScreen.joinFailed'));
+      return false;
     } catch (e) {
       try { console.warn('[meet] attemptJoin error', e); } catch {}
       setError(t('meetScreen.connectionError'));
-      setLoading(false);
+      return false;
     }
-  };
+  }, [roomId, t]);
 
-  useEffect(() => {
-    if (roomId) attemptJoin();
-  }, [roomId]);
+  const handleJoin = useCallback(async ({ audio, video: vid }) => {
+    setJoinPrefs({ audio, video: vid });
+    setAudioMuted(!audio);
+    setVideoMuted(!vid);
+    setJoining(true);
+    await attemptJoin();
+    setJoining(false);
+  }, [attemptJoin]);
 
-  // Check mic/cam permissions on mount — on web we probe via getUserMedia
-  // and surface explicit denied state. On native the WebView triggers the
-  // OS prompt; we only flip the denied flags if the WebView reports them.
+  // web: checa permissão de mic/câmera logo ao entrar na sala (no app o WebView pede ao SO)
   useEffect(() => {
+    if (Platform.OS !== 'web' || phase !== 'room') return undefined;
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return undefined;
     let cancelled = false;
-    if (Platform.OS !== 'web') return;
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
-
-    const wantsVideo = video !== 'off';
     (async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: wantsVideo });
-        // Permission granted — release tracks immediately, the iframe will
-        // request its own stream. We only used this to detect the denial.
-        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: joinPrefs.video });
+        try { stream.getTracks().forEach((x) => x.stop()); } catch {}
       } catch (err) {
         if (cancelled) return;
         const name = err?.name || '';
-        // NotAllowedError / SecurityError == user denied. Other errors
-        // (NotFoundError, NotReadableError) we treat as denial too so the
-        // user gets a clear "fix your permissions" message instead of a
-        // generic connection error.
-        if (/NotAllowed|SecurityError|Permission|NotFound|NotReadable/i.test(name) || /denied|permission/i.test(err?.message || '')) {
-          // We can't reliably tell which track failed, so flag both when
-          // we asked for both. If only audio was requested, only flip audio.
+        if (/NotAllowed|SecurityError|Permission/i.test(name) || /denied|permission/i.test(err?.message || '')) {
           setAudioPermissionDenied(true);
-          if (wantsVideo) setVideoPermissionDenied(true);
+          if (joinPrefs.video) setVideoPermissionDenied(true);
         }
       }
     })();
     return () => { cancelled = true; };
-  }, [roomId, video]);
+  }, [phase, joinPrefs.video]);
 
   const openSystemSettings = useCallback(() => {
     if (Platform.OS === 'web') {
-      // Browsers don't expose a programmatic way to jump to the site
-      // permission UI — best we can do is surface a hint and let the
-      // user fix it manually, then reload.
-      try {
-        if (typeof window !== 'undefined') {
-          window.alert(t('meet.permissionDeniedHintWeb') || 'Permita microfone/câmera nas configurações do navegador.');
-        }
-      } catch {}
+      try { window.alert(t('meet.permissionDeniedHintWeb')); } catch {}
       return;
     }
     try { Linking.openSettings(); } catch {}
   }, [t]);
 
-  // Reconnect when app returns from background
+  // volta do segundo plano: renova a presença na API (a sala religa sozinha)
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && roomId && !ended && !error) {
-        // Re-join to refresh connection state
-        attemptJoin();
+      if (state === 'active' && roomId && phase === 'room' && !ended && !error) {
+        api.apiCall('meet_join', { room_id: roomId }, 'POST').catch(() => {});
       }
     });
     return () => sub.remove();
-  }, [roomId, ended, error]);
+  }, [roomId, phase, ended, error]);
 
-  // Leave meeting + cleanup timers on unmount
-  useEffect(() => {
-    return () => {
-      api.meetLeave(roomId).catch(() => {});
-      pendingTimersRef.current.forEach(id => clearTimeout(id));
-      pendingTimersRef.current = [];
-      if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
-      // Stop any active screen share stream (web) so the OS recording indicator clears
-      if (screenStreamRef.current) {
-        screenStreamRef.current.getTracks().forEach(t => t.stop());
-        screenStreamRef.current = null;
-      }
-      if (typeof window !== 'undefined') window.__screenStream = null;
-    };
+  useEffect(() => () => {
+    if (joinedApiRef.current) api.meetLeave(roomId).catch(() => {});
+    pendingTimersRef.current.forEach((id) => clearTimeout(id));
+    pendingTimersRef.current = [];
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((x) => x.stop());
+      screenStreamRef.current = null;
+    }
   }, [roomId]);
 
-  const displayName = user?.name || user?.email || t('meetScreen.guest');
-
-  // [fix 2026-10-01] The meeting room is a WebView whose signaling WS auths with
-  // the token embedded in its URL. This used to capture `api.getAuthToken()`
-  // ONCE at render — if that bearer was stale (the recurring "fica Conectando"
-  // pattern), the room's WS auth failed silently → black room / stuck spinner,
-  // with no retry. Now we proactively refresh the bearer on mount and feed the
-  // fresh token into the URL via state. If the token was already valid,
-  // getAuthToken() returns the same string → meetUrl is unchanged → no reload;
-  // only a genuinely-stale token changes the URL and reloads the room with a
-  // working token (self-heal). ensureFreshBearer is single-flight over
-  // /auth_refresh (see services/api.js), so this is cheap.
+  // bearer sempre fresco no URL da sala (self-heal do "fica Conectando")
   const [authToken, setAuthToken] = useState(() => api.getAuthToken() || '');
   useEffect(() => {
     let alive = true;
@@ -272,153 +218,157 @@ export default function MeetScreen() {
     return () => { alive = false; };
   }, []);
 
-  // WAVE 61 (2026-05-21): backend nginx /signal -> 8095 fixed (was -> 8443 dead).
-  // TURN URLs canonicalized to turn.chatyy.com.br. room.html WS now connects end-to-end.
-  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(authToken)}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}&video=${video === 'off' ? '0' : '1'}&v=61`;
+  // insets iniciais congelados (mudar o URL recarrega a sala); depois só via setInsets()
+  const initialInsetsRef = useRef(null);
+  if (!initialInsetsRef.current) {
+    initialInsetsRef.current = { top: insets.top + HEADER_H, bottom: insets.bottom + 96 };
+  }
+  const meetUrl = useMemo(() => {
+    const ii = initialInsetsRef.current;
+    const q = [
+      `id=${encodeURIComponent(roomId)}`,
+      `token=${encodeURIComponent(authToken)}`,
+      `name=${encodeURIComponent(displayName)}`,
+      `email=${encodeURIComponent(userEmail)}`,
+      `webview=${Platform.OS !== 'web' ? '1' : '0'}`,
+      `video=${joinPrefs.video ? '1' : '0'}`,
+      `audio=${joinPrefs.audio ? '1' : '0'}`,
+      `lang=${encodeURIComponent(String(language || 'pt').slice(0, 2))}`,
+      `it=${Math.round(ii.top)}`,
+      `ib=${Math.round(ii.bottom)}`,
+      'v=2',
+    ];
+    return `${MEET_BASE}?${q.join('&')}`;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, authToken, displayName, userEmail, joinPrefs.video, joinPrefs.audio]);
 
-  // Inject JS into WebView/iframe
-  const injectJS = useCallback((code) => {
+  // ─── Ponte app → sala ───
+  const callRoom = useCallback((action, ...args) => {
     if (Platform.OS === 'web') {
       try {
-        // Parse "window.meetController.methodName(...)" into structured {action, args}
-        const stripped = code.replace('window.meetController.', '');
-        const parenIdx = stripped.indexOf('(');
-        let action, args;
-        if (parenIdx === -1) {
-          action = stripped;
-          args = [];
-        } else {
-          action = stripped.substring(0, parenIdx);
-          const argsStr = stripped.substring(parenIdx + 1, stripped.lastIndexOf(')'));
-          if (argsStr.trim()) {
-            try {
-              // Parse args as JSON array elements
-              args = JSON.parse('[' + argsStr + ']');
-            } catch {
-              args = [argsStr];
-            }
-          } else {
-            args = [];
-          }
-        }
-        const msg = { action, args };
-        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://chatyy.com.br');
+        iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ action, args }), MEET_ORIGIN);
       } catch {}
     } else if (webViewRef.current) {
-      webViewRef.current.injectJavaScript(`${code}; true;`);
+      const a = args.map((x) => JSON.stringify(x)).join(',');
+      webViewRef.current.injectJavaScript(`try{window.meetController&&window.meetController.${action}&&window.meetController.${action}(${a})}catch(e){};true;`);
     }
   }, []);
 
-  // Handle messages from WebView/iframe
+  // cabeçalho/barra ocultos (toque no vídeo) → vídeos usam a tela toda
+  const [barH, setBarH] = useState(insets.bottom + 92);
+  useEffect(() => {
+    if (phase !== 'room') return;
+    if (chromeVisible) callRoom('setInsets', insets.top + HEADER_H, barH + 4);
+    else callRoom('setInsets', insets.top + 8, insets.bottom + 8);
+  }, [chromeVisible, barH, insets.top, insets.bottom, phase, callRoom]);
+
+  // ─── Sala → app ───
   const handleMessage = useCallback((event) => {
     let msg;
     try {
       if (Platform.OS === 'web') {
+        if (event.origin && event.origin !== MEET_ORIGIN && event.origin !== window.location.origin) return;
         msg = typeof event.data === 'object' ? event.data : JSON.parse(event.data);
       } else {
         msg = JSON.parse(event.nativeEvent.data);
       }
     } catch { return; }
+    if (!msg || !msg.type) return;
 
     switch (msg.type) {
       case 'joined':
-        setParticipantCount(msg.participantCount || 1);
+        setInRoom(true);
+        setMyPeerId(msg.peerId || '');
+        setStartedAt((s) => s || Date.now());
+        if (typeof msg.isHost === 'boolean') setIsHost((h) => h || msg.isHost);
+        setParticipantCount(msg.participantCount || ((msg.peers || []).length + 1));
+        setParticipants((msg.peers || []).map((p) => ({
+          peerId: p.peerId, displayName: p.displayName, email: p.email,
+          audioMuted: !!p.audioMuted, videoMuted: p.videoMuted !== false, handRaised: !!p.handRaised,
+        })));
+        break;
+      case 'meeting_info':
+        if (msg.title) setMeetingTitle(msg.title);
+        break;
+      case 'local_media':
+        setAudioMuted(!!msg.audioMuted);
+        setVideoMuted(!!msg.videoMuted);
         break;
       case 'peer_joined':
-        setParticipantCount(prev => msg.participantCount || prev + 1);
-        setParticipants(prev => [...prev.filter(p => p.peerId !== msg.peerId), {
+        setParticipantCount((prev) => msg.participantCount || prev + 1);
+        setParticipants((prev) => [...prev.filter((p) => p.peerId !== msg.peerId), {
           peerId: msg.peerId, displayName: msg.displayName, email: msg.email,
-          audioMuted: false, videoMuted: false, handRaised: false,
+          audioMuted: false, videoMuted: true, handRaised: false,
         }]);
+        setLobbyPeers((prev) => prev.filter((p) => !msg.email || (p.email || '').toLowerCase() !== String(msg.email).toLowerCase()));
         break;
       case 'peer_left':
-        setParticipantCount(prev => msg.participantCount || Math.max(1, prev - 1));
-        setParticipants(prev => prev.filter(p => p.peerId !== msg.peerId));
+        setParticipantCount((prev) => msg.participantCount || Math.max(1, prev - 1));
+        setParticipants((prev) => prev.filter((p) => p.peerId !== msg.peerId));
         break;
       case 'audio_muted':
-        setAudioMuted(msg.muted);
+        setAudioMuted(!!msg.muted);
         break;
       case 'video_muted':
-        setVideoMuted(msg.muted);
+        setVideoMuted(!!msg.muted);
         break;
       case 'screen_share_started':
         setScreenSharing(true);
         break;
       case 'screen_share_stopped':
-        // Also stop any tracks we captured natively (web) so the browser
-        // "Stop sharing" indicator disappears from the OS toolbar.
         if (Platform.OS === 'web' && screenStreamRef.current) {
-          screenStreamRef.current.getTracks().forEach(t => t.stop());
+          screenStreamRef.current.getTracks().forEach((x) => x.stop());
           screenStreamRef.current = null;
-          if (typeof window !== 'undefined') window.__screenStream = null;
         }
         setScreenSharing(false);
         break;
-      case 'chat_message': {
-        // Skip if this is our own message echoed back (already added locally in handleSendChat)
-        const isSelf = msg.isSelf || (msg.displayName && displayName && msg.displayName === displayName);
-        if (isSelf) {
-          // Check if we already have this message locally to avoid duplication
-          setChatMessages(prev => {
-            const hasDuplicate = prev.some(m => m.isLocal && m.message === msg.message && Math.abs((m.timestamp || 0) - (msg.timestamp || Date.now())) < 5000);
-            if (hasDuplicate) return prev;
-            return [...prev, { displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp }];
-          });
-        } else {
-          setChatMessages(prev => [...prev, { displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp }]);
-        }
-        if (!showChatRef.current) setUnreadChat(prev => prev + 1);
+      case 'chat_message':
+        setChatMessages((prev) => [...prev, { id: `r_${msg.timestamp}_${prev.length}`, displayName: msg.displayName, message: msg.message, timestamp: msg.timestamp }]);
+        if (!showChatRef.current) setUnreadChat((n) => n + 1);
         break;
-      }
-      case 'left':
-        setEnded(true);
-        pendingTimersRef.current.push(setTimeout(() => router.back(), 1500));
+      case 'connection_state':
+        break;
+      case 'net_quality':
+        setNet(msg.level || '');
+        break;
+      case 'tap':
+        setChromeVisible((v) => !v);
         break;
       case 'error':
-        // Surface explicit permission-denied UI when the iframe reports
-        // getUserMedia failure, instead of a generic connection error.
-        if (msg.message && /camera|microphone|media|permission|access denied|allowed/i.test(msg.message)) {
+        if (msg.message && /camera|microphone|permission|access denied/i.test(msg.message)) {
           setAudioPermissionDenied(true);
-          if (video !== 'off') setVideoPermissionDenied(true);
-        } else {
-          setError(msg.message);
+          if (joinPrefs.video) setVideoPermissionDenied(true);
+        } else if (msg.code === 'NOT_FOUND' || msg.code === 'AUTH_REQUIRED' || msg.code === 'ROOM_FULL') {
+          setError(msg.message || t('meetScreen.joinFailed'));
         }
         break;
-
-      // ─── New handlers ───
       case 'hand_raised':
-        setParticipants(prev => prev.map(p =>
-          p.peerId === msg.peerId ? { ...p, handRaised: true } : p
-        ));
+        if (msg.self) setHandRaised(true);
+        setParticipants((prev) => prev.map((p) => (p.peerId === msg.peerId ? { ...p, handRaised: true } : p)));
         break;
       case 'hand_lowered':
-        setParticipants(prev => prev.map(p =>
-          p.peerId === msg.peerId ? { ...p, handRaised: false } : p
-        ));
+        if (msg.self) setHandRaised(false);
+        setParticipants((prev) => prev.map((p) => (p.peerId === msg.peerId ? { ...p, handRaised: false } : p)));
         break;
       case 'reaction': {
         const id = ++reactionIdRef.current;
-        const r = { id, emoji: msg.emoji, displayName: msg.displayName, timestamp: Date.now() };
-        setReactions(prev => [...prev.slice(-9), r]);
-        pendingTimersRef.current.push(setTimeout(() => setReactions(prev => prev.filter(x => x.id !== id)), 3500));
+        setReactions((prev) => [...prev.slice(-9), { id, emoji: msg.emoji, displayName: msg.displayName, timestamp: Date.now() }]);
+        pendingTimersRef.current.push(setTimeout(() => setReactions((prev) => prev.filter((x) => x.id !== id)), 3500));
         break;
       }
       case 'lobby_pending':
-        setLobbyPeers(prev => [...prev.filter(p => p.peerId !== msg.peerId),
-          { peerId: msg.peerId, displayName: msg.displayName, email: msg.email }]);
+      case 'lobby_request':
+        setLobbyPeers((prev) => [...prev.filter((p) => p.peerId !== msg.peerId),
+          { peerId: msg.peerId, displayName: msg.displayName, email: msg.email, viaApi: !!msg.viaApi }]);
         break;
-      case 'lobby_admitted':
-        setLobbyWaiting(false);
-        setLoading(false);
+      case 'lobby_resolved':
+        setLobbyPeers((prev) => prev.filter((p) => (p.email || '').toLowerCase() !== String(msg.email || '').toLowerCase()));
         break;
       case 'lobby_denied':
         setError(t('meetScreen.lobbyDenied'));
-        setLobbyWaiting(false);
         break;
       case 'mute_update':
-        setParticipants(prev => prev.map(p =>
-          p.peerId === msg.peerId ? { ...p, audioMuted: msg.audio, videoMuted: msg.video } : p
-        ));
+        setParticipants((prev) => prev.map((p) => (p.peerId === msg.peerId ? { ...p, audioMuted: !!msg.audioMuted, videoMuted: !!msg.videoMuted } : p)));
         break;
       case 'recording_started':
         setRecording(true);
@@ -432,691 +382,375 @@ export default function MeetScreen() {
       case 'room_unlocked':
         setRoomLocked(false);
         break;
+      case 'layout_changed':
+        if (msg.layout) setLayoutMode(msg.layout);
+        break;
       case 'meeting_ended':
         setEnded(true);
-        pendingTimersRef.current.push(setTimeout(() => router.back(), 2000));
+        pendingTimersRef.current.push(setTimeout(() => router.back(), 1800));
         break;
       case 'kicked':
         setEnded(true);
         setError(t('meetScreen.kicked'));
         pendingTimersRef.current.push(setTimeout(() => router.back(), 2000));
         break;
-
-      // ─── Polls ───
-      case 'poll_created':
-        setPolls(prev => [...prev, { id: msg.pollId, question: msg.question, options: msg.options.map(t => ({ text: t, votes: 0 })), active: true, myVote: null }]);
-        break;
-      case 'poll_vote':
-        setPolls(prev => prev.map(p => p.id === msg.pollId ? { ...p, options: p.options.map((o, i) => i === msg.optionIndex ? { ...o, votes: (o.votes || 0) + 1 } : o) } : p));
-        break;
-
-      // ─── Notes ───
-      case 'notes_updated':
-        setMeetingNotes(msg.text || '');
-        break;
-
-      // ─── Captions ───
-      case 'caption': {
-        const capId = ++captionIdRef.current;
-        const cap = { id: capId, speaker: msg.displayName || t('meetScreen.unknownSpeaker'), text: msg.text };
-        setCaptions(prev => [...prev.slice(-9), cap]);
-        pendingTimersRef.current.push(setTimeout(() => setCaptions(prev => prev.filter(c => c.id !== capId)), 5000));
-        break;
-      }
-
-      // ─── File sharing ───
-      case 'file_shared': {
-        const file = { name: msg.fileName, url: msg.fileUrl, sender: msg.displayName, timestamp: Date.now() };
-        setSharedFiles(prev => [...prev, file]);
-        setChatMessages(prev => [...prev, { displayName: msg.displayName, message: t('meetScreen.fileShared', { name: msg.fileName }), timestamp: Date.now() }]);
-        break;
-      }
-
-      // ─── Virtual Background ───
       case 'bg_effect_changed':
         if (msg.effect === 'none') setVirtualBgEffect(null);
-        else if (msg.effect === 'blur') setVirtualBgEffect('blur');
-        else if (msg.effect === 'blur-light') setVirtualBgEffect('blur-light');
         else if (msg.effect === 'gradient') setVirtualBgEffect('gradient:' + (msg.name || ''));
         else if (msg.effect === 'image') setVirtualBgEffect(msg.url || 'image');
+        else setVirtualBgEffect(msg.effect || null);
         break;
-
-      // ─── Spotlight ───
-      case 'spotlight':
-        setSpotlightPeerId(msg.peerId || null);
-        break;
-
-      // ─── Breakout rooms ───
-      case 'breakout_created':
-        setBreakoutRooms(msg.rooms || []);
-        break;
-      case 'breakout_ended':
-        setBreakoutRooms([]);
+      default:
         break;
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joinPrefs.video]);
 
-  // Web: listen for iframe messages
   useEffect(() => {
-    if (Platform.OS === 'web') {
-      window.addEventListener('message', handleMessage);
-      return () => window.removeEventListener('message', handleMessage);
-    }
+    if (Platform.OS !== 'web') return undefined;
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
   }, [handleMessage]);
 
-  const handleEndCall = useCallback(() => {
-    const doLeave = () => {
-      injectJS('window.meetController.leaveRoom()');
-      api.meetLeave(roomId).catch(() => {});
-      // Reset mute/video state so the next call doesn't inherit a stuck
-      // muted flag from a previous session — WhatsApp/Zoom behavior.
-      setAudioMuted(false);
-      setVideoMuted(false);
-      setEnded(true);
-      setTimeout(() => router.back(), 500);
-    };
-    if (Platform.OS === 'web') {
-      if (!window.confirm(t('meetScreen.leaveConfirm'))) return;
-      doLeave();
-    } else {
-      Alert.alert(
-        t('meetScreen.leave'),
-        t('meetScreen.leaveConfirm'),
-        [
-          { text: t('common.cancel'), style: 'cancel' },
-          { text: t('meetScreen.leave'), style: 'destructive', onPress: doLeave },
-        ]
-      );
-    }
-  }, [roomId, injectJS]);
+  // ─── Ações ───
+  const leaveNow = useCallback(() => {
+    callRoom('leaveRoom');
+    if (joinedApiRef.current) { api.meetLeave(roomId).catch(() => {}); joinedApiRef.current = false; }
+    setEnded(true);
+    pendingTimersRef.current.push(setTimeout(() => router.back(), 350));
+  }, [roomId, callRoom, router]);
 
-  const handleToggleChat = useCallback(() => {
-    setShowChat(prev => {
-      const next = !prev;
-      showChatRef.current = next;
-      if (next) { setShowParticipants(false); setShowPolls(false); setShowNotes(false); setShowBreakout(false); setShowVirtualBg(false); }
-      return next;
-    });
-    setUnreadChat(0);
+  const endForAll = useCallback(() => {
+    api.meetEnd(roomId).catch(() => {});
+    leaveNow();
+  }, [roomId, leaveNow]);
+
+  const handleLeave = useCallback(() => {
+    if (!inRoom) { leaveNow(); return; }
+    if (Platform.OS === 'web') {
+      if (isHost && participantCount > 1) {
+        // confirm() só tem 2 botões: OK = sair; o anfitrião encerra pelo menu "Mais"
+        if (!window.confirm(t('meetScreen.leaveConfirm'))) return;
+      } else if (!window.confirm(t('meetScreen.leaveConfirm'))) return;
+      leaveNow();
+      return;
+    }
+    const buttons = [{ text: t('common.cancel'), style: 'cancel' }];
+    if (isHost && participantCount > 1) buttons.push({ text: t('meetV2.endForAll'), style: 'destructive', onPress: endForAll });
+    buttons.push({ text: t('meetScreen.leave'), style: 'destructive', onPress: leaveNow });
+    Alert.alert(t('meetScreen.leave'), t('meetScreen.leaveConfirm'), buttons);
+  }, [inRoom, isHost, participantCount, leaveNow, endForAll, t]);
+
+  const openChat = useCallback(() => {
+    setShowParticipants(false); setShowVirtualBg(false);
+    setShowChat(true); showChatRef.current = true; setUnreadChat(0);
+  }, []);
+  const closeChat = useCallback(() => { setShowChat(false); showChatRef.current = false; setUnreadChat(0); }, []);
+  const openParticipants = useCallback(() => {
+    setShowChat(false); showChatRef.current = false; setShowVirtualBg(false);
+    setShowParticipants(true);
   }, []);
 
-  const handleToggleParticipants = useCallback(() => {
-    const wasOpen = showParticipants;
-    setShowParticipants(prev => !prev);
-    if (!wasOpen) { setShowChat(false); setShowPolls(false); setShowNotes(false); setShowBreakout(false); setShowVirtualBg(false); }
-  }, [showParticipants]);
-
   const handleSendChat = useCallback((text) => {
-    const msgId = 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    injectJS(`window.meetController.sendChat(${JSON.stringify(text)})`);
-    setChatMessages(prev => [...prev, { id: msgId, displayName: displayName + ' (You)', message: text, timestamp: Date.now(), isLocal: true }]);
-  }, [injectJS, displayName]);
+    callRoom('sendChat', text);
+    setChatMessages((prev) => [...prev, { id: 'l_' + Date.now() + '_' + prev.length, displayName: t('meet.you'), message: text, timestamp: Date.now(), isLocal: true }]);
+  }, [callRoom, t]);
 
-  // ─── Screen Sharing ───
-  const _stopScreenShareWeb = useCallback(() => {
-    // Stop all tracks on the captured stream
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach(t => t.stop());
-      screenStreamRef.current = null;
-    }
-    // Clean up the global stash used by the iframe
-    if (typeof window !== 'undefined') {
-      window.__screenStream = null;
-    }
-    // Tell the iframe to revert to camera track
-    injectJS('window.meetController.stopScreenShare()');
-    setScreenSharing(false);
-  }, [injectJS]);
-
-  const handleToggleScreenShare = useCallback(async () => {
-    if (Platform.OS !== 'web') {
-      // Screen sharing is not supported inside a native WebView — getDisplayMedia
-      // requires a top-level browser context and is unavailable on iOS/Android.
-      // Button is rendered disabled with a caption; this no-op is a safety net.
-      return;
-    }
-
-    if (screenSharing) {
-      _stopScreenShareWeb();
-      return;
-    }
-
-    // ── Start screen sharing (web) ──────────────────────────────────────────
-    // getDisplayMedia() must be called from a user-gesture handler in the
-    // top-level browsing context (this React app), NOT inside the iframe.
-    // We capture the stream here, stash it on window.__screenStream, then
-    // inject code into the iframe that grabs the track from window.parent
-    // and replaces the video sender — no room.html changes needed.
+  const shareInvite = useCallback(async () => {
+    const message = t('meetV2.inviteMsg', { title: meetingTitle || t('meet.title'), link: meetLink });
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { cursor: 'always' },
-        audio: false,
-      });
-
-      screenStreamRef.current = stream;
-      // Expose for the iframe to consume
-      window.__screenStream = stream;
-
-      const screenTrack = stream.getVideoTracks()[0];
-      if (!screenTrack) {
-        // No video track returned — bail out
-        stream.getTracks().forEach(t => t.stop());
-        screenStreamRef.current = null;
-        window.__screenStream = null;
+      if (Platform.OS === 'web') {
+        if (navigator.share) await navigator.share({ title: meetingTitle || '', text: message, url: meetLink });
+        else if (navigator.clipboard) { await navigator.clipboard.writeText(meetLink); window.alert(t('meetV2.linkCopied')); }
         return;
       }
+      await Share.share(Platform.OS === 'ios' ? { message, url: meetLink } : { message });
+    } catch {}
+  }, [t, meetingTitle, meetLink]);
 
-      // When the user clicks "Stop sharing" in the browser's built-in bar,
-      // the track ends automatically — mirror that here.
-      screenTrack.onended = () => {
-        _stopScreenShareWeb();
-      };
+  const stopScreenShareWeb = useCallback(() => {
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((x) => x.stop());
+      screenStreamRef.current = null;
+    }
+    callRoom('stopScreenShare');
+    setScreenSharing(false);
+  }, [callRoom]);
 
-      // Inject into iframe: grab the track from window.parent.__screenStream
-      // and replace the outbound video sender track.
-      injectJS(`(function() {
-        try {
-          var stream = window.parent.__screenStream;
-          if (!stream) return;
-          var track = stream.getVideoTracks()[0];
-          if (!track) return;
-          // Replace the outbound video track in every peer connection
-          if (window._peerConnections) {
-            window._peerConnections.forEach(function(pc) {
-              pc.getSenders().forEach(function(sender) {
-                if (sender.track && sender.track.kind === 'video') {
-                  sender.replaceTrack(track);
-                }
-              });
-            });
-          } else if (window.meetController && window.meetController._pc) {
-            // Fallback for single-peer implementations
-            var senders = window.meetController._pc.getSenders();
-            senders.forEach(function(sender) {
-              if (sender.track && sender.track.kind === 'video') {
-                sender.replaceTrack(track);
-              }
-            });
-          } else {
-            // Broadest fallback: scan all RTCPeerConnection senders via the
-            // existing stopScreenShare/startScreenShare path in room.html.
-            // Override getDisplayMedia to return our already-captured stream,
-            // then call startScreenShare normally.
-            var orig = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
-            navigator.mediaDevices.getDisplayMedia = function() {
-              navigator.mediaDevices.getDisplayMedia = orig;
-              return Promise.resolve(window.parent.__screenStream);
-            };
-            if (window.meetController && window.meetController.startScreenShare) {
-              window.meetController.startScreenShare();
-              return; // startScreenShare will post screen_share_started itself
-            }
-          }
-          // Show the screen track in the local video tile if room.html supports it
-          if (window.meetController && window.meetController._localVideo) {
-            window.meetController._localVideo.srcObject = stream;
-          }
-          // Notify the host / other peers
-          if (window.meetController && window.meetController._notifyHost) {
-            window.meetController._notifyHost({ type: 'screen_share_started' });
-          }
-        } catch(e) {}
-      })()`);
-
+  // web: a captura precisa do gesto do usuário na página do app; a sala (mesma origem) recebe o stream
+  const handleToggleScreenShare = useCallback(async () => {
+    if (Platform.OS !== 'web') return;
+    if (screenSharing) { stopScreenShareWeb(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'always' }, audio: false });
+      screenStreamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      if (track) track.onended = () => stopScreenShareWeb();
+      const win = iframeRef.current?.contentWindow;
+      let handed = false;
+      try {
+        if (win && win.navigator && win.meetController) {
+          const md = win.navigator.mediaDevices;
+          const orig = md.getDisplayMedia.bind(md);
+          md.getDisplayMedia = () => { md.getDisplayMedia = orig; return Promise.resolve(stream); };
+          win.meetController.startScreenShare();
+          handed = true;
+        }
+      } catch {}
+      if (!handed) { stream.getTracks().forEach((x) => x.stop()); screenStreamRef.current = null; window.alert(t('meetScreen.screenShareFailed')); return; }
       setScreenSharing(true);
     } catch (err) {
-      // User cancelled the picker or permission denied — not an error worth showing
-      if (err && err.name !== 'NotAllowedError') {
-        if (typeof window !== 'undefined') {
-          window.alert(t('meetScreen.screenShareFailed'));
-        }
-      }
+      if (err && err.name !== 'NotAllowedError') { try { window.alert(t('meetScreen.screenShareFailed')); } catch {} }
     }
-  }, [screenSharing, injectJS, t, _stopScreenShareWeb]);
+  }, [screenSharing, stopScreenShareWeb, t]);
 
   const handleRaiseHand = useCallback(() => {
-    setHandRaised(prev => {
-      injectJS(prev ? 'window.meetController.lowerHand()' : 'window.meetController.raiseHand()');
-      return !prev;
-    });
-  }, [injectJS]);
+    callRoom(handRaised ? 'lowerHand' : 'raiseHand');
+    setHandRaised((v) => !v);
+  }, [callRoom, handRaised]);
 
-  const handleReaction = useCallback((emoji) => {
-    injectJS(`window.meetController.sendReaction('${emoji}')`);
+  const handleReaction = useCallback((key) => {
+    callRoom('sendReaction', key);
     const id = ++reactionIdRef.current;
-    setReactions(prev => [...prev.slice(-9), { id, emoji, displayName: 'You', timestamp: Date.now() }]);
-    setTimeout(() => setReactions(prev => prev.filter(x => x.id !== id)), 3500);
-  }, [injectJS]);
+    setReactions((prev) => [...prev.slice(-9), { id, emoji: key, displayName: t('meet.you'), timestamp: Date.now() }]);
+    pendingTimersRef.current.push(setTimeout(() => setReactions((prev) => prev.filter((x) => x.id !== id)), 3500));
+  }, [callRoom, t]);
 
   const handleToggleRecording = useCallback(() => {
     if (recording) {
-      api.meetStopRecording(roomId).catch(() => {});
-      injectJS('window.meetController.stopRecording && window.meetController.stopRecording()');
+      callRoom('stopRecording');
+      setTimeout(() => api.meetStopRecording(roomId).catch(() => {}), 800);
     } else {
-      api.meetStartRecording(roomId).catch(() => {});
-      injectJS('window.meetController.startRecording && window.meetController.startRecording()');
+      api.meetStartRecording(roomId).catch(() => {}).finally(() => callRoom('startRecording'));
     }
-    setRecording(prev => !prev);
-  }, [recording, roomId, injectJS]);
+    setRecording((v) => !v);
+  }, [recording, roomId, callRoom]);
 
   const handleToggleLock = useCallback(() => {
-    if (roomLocked) {
-      api.meetUnlock(roomId).catch(() => {});
-      injectJS('window.meetController.unlockRoom()');
-    } else {
-      api.meetLock(roomId).catch(() => {});
-      injectJS('window.meetController.lockRoom()');
-    }
-    setRoomLocked(prev => !prev);
-  }, [roomLocked, roomId, injectJS]);
+    if (roomLocked) { api.meetUnlock(roomId).catch(() => {}); callRoom('unlockRoom'); }
+    else { api.meetLock(roomId).catch(() => {}); callRoom('lockRoom'); }
+    setRoomLocked((v) => !v);
+  }, [roomLocked, roomId, callRoom]);
 
-  // Participant panel callbacks
+  const lobbyByPeer = useCallback((peerId) => lobbyPeers.find((p) => p.peerId === peerId), [lobbyPeers]);
   const handleAdmit = useCallback((peerId) => {
-    injectJS(`window.meetController.admitFromLobby('${peerId}')`);
-    setLobbyPeers(prev => prev.filter(p => p.peerId !== peerId));
-  }, [injectJS]);
-
+    const p = lobbyByPeer(peerId);
+    if (p?.email) api.meetLobbyAdmit(roomId, p.email).catch(() => {});
+    if (!p?.viaApi) callRoom('admitFromLobby', peerId);
+    setLobbyPeers((prev) => prev.filter((x) => x.peerId !== peerId));
+  }, [lobbyByPeer, roomId, callRoom]);
   const handleDeny = useCallback((peerId) => {
-    injectJS(`window.meetController.denyFromLobby('${peerId}')`);
-    setLobbyPeers(prev => prev.filter(p => p.peerId !== peerId));
-  }, [injectJS]);
-
+    const p = lobbyByPeer(peerId);
+    if (p?.email) api.meetLobbyDeny(roomId, p.email).catch(() => {});
+    if (!p?.viaApi) callRoom('denyFromLobby', peerId);
+    setLobbyPeers((prev) => prev.filter((x) => x.peerId !== peerId));
+  }, [lobbyByPeer, roomId, callRoom]);
   const handleKick = useCallback((peerId) => {
-    injectJS(`window.meetController.kickParticipant('${peerId}')`);
-    setParticipants(prev => prev.filter(p => p.peerId !== peerId));
-  }, [injectJS]);
-
-  const handleMutePeer = useCallback((peerId) => {
-    injectJS(`window.meetController.muteParticipant('${peerId}')`);
-  }, [injectJS]);
-
+    const p = participants.find((x) => x.peerId === peerId);
+    callRoom('kickParticipant', peerId);
+    if (p?.email) api.meetKick(roomId, p.email).catch(() => {});
+    setParticipants((prev) => prev.filter((x) => x.peerId !== peerId));
+  }, [participants, roomId, callRoom]);
+  const handleMutePeer = useCallback((peerId) => callRoom('muteParticipant', peerId), [callRoom]);
   const handlePromote = useCallback((peerId) => {
-    const peer = participants.find(p => p.peerId === peerId);
+    const peer = participants.find((p) => p.peerId === peerId);
     if (peer?.email) api.meetPromote(roomId, peer.email).catch(() => {});
   }, [participants, roomId]);
 
-  // ─── Polls ───
-  const handleCreatePoll = useCallback((question, options) => {
-    injectJS(`window.meetController.sendData && window.meetController.sendData(${JSON.stringify({ type: 'poll_created', pollId: 'poll_' + Date.now(), question, options })})`);
-    const pollId = 'poll_' + Date.now();
-    setPolls(prev => [...prev, { id: pollId, question, options: options.map(t => ({ text: t, votes: 0 })), active: true, myVote: null }]);
-  }, [injectJS]);
-
-  const handleVotePoll = useCallback((pollId, optionIndex) => {
-    injectJS(`window.meetController.sendData && window.meetController.sendData(${JSON.stringify({ type: 'poll_vote', pollId, optionIndex })})`);
-    setPolls(prev => prev.map(p => p.id === pollId ? { ...p, myVote: optionIndex, options: p.options.map((o, i) => i === optionIndex ? { ...o, votes: (o.votes || 0) + 1 } : o) } : p));
-  }, [injectJS]);
-
-  // ─── Notes ───
-  const handleUpdateNotes = useCallback((text) => {
-    setMeetingNotes(text);
-    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
-    notesTimerRef.current = setTimeout(() => {
-      injectJS(`window.meetController.sendData && window.meetController.sendData(${JSON.stringify({ type: 'notes_updated', text })})`);
-    }, 2000);
-  }, [injectJS]);
-
-  // ─── Captions ───
-  const handleToggleCaptions = useCallback(() => {
-    setCaptionsEnabled(prev => {
-      const next = !prev;
-      injectJS(next
-        ? 'window.meetController.startCaptions && window.meetController.startCaptions()'
-        : 'window.meetController.stopCaptions && window.meetController.stopCaptions()');
-      return next;
-    });
-  }, [injectJS]);
-
-  // ─── File sharing ───
-  const handleShareFile = useCallback(async () => {
-    try {
-      if (Platform.OS === 'web') {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.onchange = async (e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          const form = new FormData();
-          form.append('file', file);
-          form.append('room_id', roomId);
-          const r = await api.apiCall('meet_upload_file', form, 'POST');
-          if (r.success) {
-            injectJS(`window.meetController.sendData && window.meetController.sendData(${JSON.stringify({ type: 'file_shared', fileName: file.name, fileUrl: r.data?.file_url })})`);
-          }
-        };
-        input.click();
-      }
-    } catch {}
-  }, [roomId, injectJS]);
-
-  // ─── Spotlight ───
-  const handleSpotlight = useCallback((peerId) => {
-    injectJS(`window.meetController.spotlightPeer && window.meetController.spotlightPeer('${peerId}')`);
-    setSpotlightPeerId(peerId);
-  }, [injectJS]);
-
-  // ─── Breakout rooms ───
-  const handleCreateBreakout = useCallback((rooms, timerSec) => {
-    const payload = JSON.stringify({ type: 'breakout_created', rooms, timerSec });
-    injectJS(`window.meetController.sendData && window.meetController.sendData(${payload})`);
-    setBreakoutRooms(rooms);
-  }, [injectJS]);
-
-  const handleEndBreakout = useCallback(() => {
-    injectJS('window.meetController.sendData && window.meetController.sendData({ type: "breakout_ended" })');
-    setBreakoutRooms([]);
-  }, [injectJS]);
-
-  // ─── Toggle helpers for panels ───
-  const closeAllPanels = useCallback(() => {
-    setShowChat(false);
-    setShowParticipants(false);
-    setShowPolls(false);
-    setShowNotes(false);
-    setShowBreakout(false);
-    setShowMore(false);
-    setShowVirtualBg(false);
-  }, []);
-
-  const handleTogglePolls = useCallback(() => {
-    setShowPolls(prev => {
-      if (!prev) { setShowChat(false); setShowParticipants(false); setShowNotes(false); setShowBreakout(false); setShowMore(false); setShowVirtualBg(false); }
-      return !prev;
-    });
-  }, []);
-
-  const handleToggleNotes = useCallback(() => {
-    setShowNotes(prev => {
-      if (!prev) { setShowChat(false); setShowParticipants(false); setShowPolls(false); setShowBreakout(false); setShowMore(false); setShowVirtualBg(false); }
-      return !prev;
-    });
-  }, []);
-
-  const handleToggleBreakout = useCallback(() => {
-    setShowBreakout(prev => {
-      if (!prev) { setShowChat(false); setShowParticipants(false); setShowPolls(false); setShowNotes(false); setShowMore(false); setShowVirtualBg(false); }
-      return !prev;
-    });
-  }, []);
-
-  const handleToggleMore = useCallback(() => {
-    setShowMore(prev => !prev);
-  }, []);
-
-  // ─── Virtual Background ───
-  const handleToggleVirtualBg = useCallback(() => {
-    setShowVirtualBg(prev => {
-      if (!prev) { setShowChat(false); setShowParticipants(false); setShowPolls(false); setShowNotes(false); setShowBreakout(false); setShowMore(false); }
-      return !prev;
-    });
-  }, []);
-
   const handleSelectVirtualBg = useCallback((type, value) => {
-    if (type === 'none') {
-      injectJS('window.meetController.setVirtualBackground("none")');
-      setVirtualBgEffect(null);
-    } else if (type === 'blur') {
-      injectJS('window.meetController.setVirtualBackground("blur")');
-      setVirtualBgEffect('blur');
-    } else if (type === 'blur-light') {
-      injectJS('window.meetController.setVirtualBackground("blur-light")');
-      setVirtualBgEffect('blur-light');
-    } else if (type === 'gradient') {
-      injectJS(`window.meetController.setVirtualBackground("gradient", ${JSON.stringify(value)})`);
-      setVirtualBgEffect('gradient:' + value);
-    } else if (type === 'image') {
-      injectJS(`window.meetController.setVirtualBackground("image", ${JSON.stringify(value)})`);
-      setVirtualBgEffect(value);
+    callRoom('setVirtualBackground', type, value);
+    setVirtualBgEffect(type === 'none' ? null : type === 'gradient' ? 'gradient:' + value : type === 'image' ? value : type);
+  }, [callRoom]);
+
+  const toggleLayout = useCallback(() => {
+    const next = layoutMode === 'speaker' ? 'grid' : 'speaker';
+    callRoom('setLayout', next);
+    setLayoutMode(next);
+  }, [layoutMode, callRoom]);
+
+  const showInfo = useCallback(() => {
+    const info = `${meetingTitle || t('meet.title')}\n${meetLink}\n${t('meet.participants')}: ${participantCount}`;
+    if (Platform.OS === 'web') window.alert(info);
+    else Alert.alert(t('meetScreen.meetingInfo'), info, [
+      { text: t('meet.copyLink'), onPress: () => { try { require('expo-clipboard').setStringAsync(meetLink); } catch {} } },
+      { text: t('common.close'), style: 'cancel' },
+    ]);
+  }, [meetingTitle, meetLink, participantCount, t]);
+
+  const allParticipants = useMemo(() => ([
+    { peerId: myPeerId || 'self', displayName, email: userEmail, audioMuted, videoMuted, handRaised, isLocal: true, role: isHost ? 'host' : undefined },
+    ...participants,
+  ]), [myPeerId, displayName, userEmail, audioMuted, videoMuted, handRaised, isHost, participants]);
+
+  const moreOptions = useMemo(() => {
+    const opts = [
+      { key: 'chat', label: t('meet.chat'), icon: IconMessageCircle, onPress: openChat, badge: unreadChat ? (unreadChat > 9 ? '9+' : String(unreadChat)) : null },
+      { key: 'people', label: t('meet.participants'), icon: IconUsers, onPress: openParticipants, value: String(participantCount), badge: lobbyPeers.length ? String(lobbyPeers.length) : null },
+      { key: 'invite', label: t('meetV2.invite'), icon: IconUserPlus, onPress: shareInvite },
+      { key: 'hand', label: handRaised ? t('meetV2.lowerHand') : t('meetV2.raiseHand'), icon: IconRaisedHand, onPress: handleRaiseHand, active: handRaised },
+      { key: 'layout', label: layoutMode === 'speaker' ? t('meetV2.layoutGrid') : t('meetV2.layoutSpeaker'), icon: IconGrid, onPress: toggleLayout },
+    ];
+    if (Platform.OS === 'web') {
+      opts.push({ key: 'screen', label: screenSharing ? t('meet.stopSharing') : t('meet.shareScreen'), icon: IconScreenShare, onPress: handleToggleScreenShare, active: screenSharing });
+      opts.push({ key: 'bg', label: virtualBgEffect ? t('meetScreen.changeBackground') : t('meetScreen.virtualBackground'), icon: IconImage, onPress: () => setShowVirtualBg(true), active: !!virtualBgEffect });
     }
-  }, [injectJS]);
+    if (isHost) {
+      opts.push({ key: 'rec', label: recording ? t('meetScreen.stopRecording') : t('meetScreen.startRecording'), icon: IconRecord, onPress: handleToggleRecording, active: recording });
+      opts.push({ key: 'lock', label: roomLocked ? t('meetScreen.unlockRoom') : t('meetScreen.lockRoom'), icon: roomLocked ? IconUnlock : IconLock, onPress: handleToggleLock, active: roomLocked });
+      if (participantCount > 1) opts.push({ key: 'end', label: t('meetV2.endForAll'), icon: IconX, onPress: endForAll, destructive: true });
+    }
+    opts.push({ key: 'info', label: t('meetScreen.meetingInfo'), icon: IconInfo, onPress: showInfo });
+    return opts;
+  }, [t, openChat, unreadChat, openParticipants, participantCount, lobbyPeers.length, shareInvite, handRaised, handleRaiseHand,
+    layoutMode, toggleLayout, screenSharing, handleToggleScreenShare, virtualBgEffect, isHost, recording, handleToggleRecording,
+    roomLocked, handleToggleLock, endForAll, showInfo]);
 
-  // ─── More menu options ───
-  const moreMenuOptions = [
-    // Collaboration
-    { section: t('meetScreen.collaboration'), label: t('meetScreen.polls'), icon: IconBarChart, onPress: handleTogglePolls },
-    { section: t('meetScreen.collaboration'), label: t('meetScreen.meetingNotes'), icon: IconEdit, onPress: handleToggleNotes },
-    { section: t('meetScreen.collaboration'), label: t('meetScreen.shareFile'), icon: IconPaperclip, onPress: handleShareFile },
-    // Media
-    { section: t('meetScreen.media'), label: virtualBgEffect ? t('meetScreen.changeBackground') : t('meetScreen.virtualBackground'), icon: IconImage, onPress: handleToggleVirtualBg },
-    { section: t('meetScreen.media'), label: captionsEnabled ? t('meetScreen.disableCaptions') : t('meetScreen.enableCaptions'), icon: IconMessageSquare, onPress: handleToggleCaptions },
-    // Host Controls
-    ...(isHost ? [
-      { section: t('meetScreen.controls'), label: spotlightPeerId ? t('meetScreen.removeSpotlight') : t('meetScreen.spotlightSpeaker'), icon: IconFlashlight, onPress: () => handleSpotlight(spotlightPeerId ? null : '') },
-      { section: t('meetScreen.controls'), label: recording ? t('meetScreen.stopRecording') : t('meetScreen.startRecording'), icon: null, onPress: handleToggleRecording },
-      { section: t('meetScreen.controls'), label: roomLocked ? t('meetScreen.unlockRoom') : t('meetScreen.lockRoom'), icon: roomLocked ? IconUnlock : IconLock, onPress: handleToggleLock },
-      { section: t('meetScreen.controls'), label: t('meetScreen.breakoutRooms'), icon: IconHome, onPress: handleToggleBreakout },
-    ] : []),
-    // Info
-    { section: t('meetScreen.info'), label: t('meetScreen.meetingInfo'), icon: IconInfo, onPress: () => {
-      const info = `${t('meetScreen.room')}: ${roomId}\n${t('meetScreen.participantsLabel')}: ${participantCount}`;
-      if (Platform.OS === 'web') window.alert(info);
-      else Alert.alert(t('meetScreen.meetingInfo'), info);
-    }},
-  ];
-
-  // ─── Password prompt ───
-  if (needsPassword) {
+  // ─── Pré-visualização ───
+  if (phase === 'prejoin' && !error) {
     return (
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-      >
-        <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-          <Text style={[s.lobbyText, { color: colors.meetText }]}>{t('meetScreen.passwordRequired')}</Text>
+      <MeetPrejoin
+        t={t}
+        insets={insets}
+        title={meetingTitle}
+        userName={displayName}
+        userEmail={userEmail}
+        initialVideo={video !== 'off'}
+        busy={joining}
+        onJoin={handleJoin}
+        onCancel={() => router.back()}
+      />
+    );
+  }
+
+  // ─── Senha ───
+  if (phase === 'password' && needsPassword) {
+    const submit = async () => { setJoining(true); await attemptJoin(passwordInput); setJoining(false); };
+    return (
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#000' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={[s.centered, { paddingTop: insets.top }]}>
+          <View style={s.iconCircle}><IconLock size={28} color="#fff" /></View>
+          <Text style={s.h1}>{t('meetScreen.passwordRequired')}</Text>
           <TextInput
-            style={[s.passwordInput, { borderColor: colors.meetBorder, color: colors.meetText }]}
+            style={s.passwordInput}
             value={passwordInput}
             onChangeText={(v) => { setPasswordInput(v); if (passwordError) setPasswordError(''); }}
             placeholder={t('meetScreen.passwordPlaceholder')}
-            placeholderTextColor="#64748b"
+            placeholderTextColor="rgba(255,255,255,0.4)"
             secureTextEntry
             autoFocus
-            accessibilityLabel={t('meet.passwordLabel') || 'Senha da sala'}
-            onSubmitEditing={() => { setLoading(true); attemptJoin(passwordInput); }}
+            accessibilityLabel={t('meet.passwordLabel')}
+            onSubmitEditing={submit}
           />
-          {passwordError ? (
-            <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
-              {passwordError}
-            </Text>
-          ) : null}
-          <TouchableOpacity
-            onPress={() => { setLoading(true); attemptJoin(passwordInput); }}
-            style={[s.lobbyBackBtn, { backgroundColor: '#3b82f6' }]}
-          >
-            <Text style={[s.lobbyBackText, { color: '#fff' }]}>{t('meetScreen.enter')}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { backgroundColor: colors.meetBtnBg }]}>
-            <Text style={[s.lobbyBackText, { color: colors.meetTextSecondary }]}>{t('common.cancel')}</Text>
-          </TouchableOpacity>
+          {passwordError ? <Text style={s.errSmall}>{passwordError}</Text> : null}
+          <Pressable onPress={submit} disabled={joining} style={({ pressed }) => [s.primaryBtn, (pressed || joining) && { opacity: 0.8 }]} accessibilityRole="button">
+            {joining ? <ActivityIndicator color="#000" /> : <Text style={s.primaryText}>{t('meetScreen.enter')}</Text>}
+          </Pressable>
+          <Pressable onPress={() => router.back()} style={s.ghostBtn} accessibilityRole="button">
+            <Text style={s.ghostText}>{t('common.cancel')}</Text>
+          </Pressable>
         </View>
       </KeyboardAvoidingView>
     );
   }
 
-  // ─── Permission denied ───
+  // ─── Permissão negada ───
   if (audioPermissionDenied || videoPermissionDenied) {
     const both = audioPermissionDenied && videoPermissionDenied;
-    const bodyKey = both
-      ? 'meet.permissionDeniedBody'
-      : (audioPermissionDenied ? 'meet.permissionDeniedBodyAudio' : 'meet.permissionDeniedBodyVideo');
-    const warning = '#f59e0b';
+    const bodyKey = both ? 'meet.permissionDeniedBody' : (audioPermissionDenied ? 'meet.permissionDeniedBodyAudio' : 'meet.permissionDeniedBodyVideo');
     return (
-      <View style={[s.centered, { backgroundColor: colors.meetBg, paddingHorizontal: 32 }]}>
-        <View style={{
-          width: 80, height: 80, borderRadius: 40,
-          backgroundColor: warning + '15',
-          alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-        }}>
-          {videoPermissionDenied && !audioPermissionDenied
-            ? <IconVideoOff size={36} color={warning} />
-            : <IconMicOff size={36} color={warning} />}
+      <View style={[s.centered, { paddingHorizontal: 32 }]}>
+        <View style={s.iconCircle}>
+          {videoPermissionDenied && !audioPermissionDenied ? <IconVideoOff size={30} color="#fff" /> : <IconMicOff size={30} color="#fff" />}
         </View>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.meetText, marginBottom: 8, textAlign: 'center' }}>
-          {t('meet.permissionDeniedTitle')}
-        </Text>
-        <Text style={{ fontSize: 14, color: colors.meetTextSecondary, textAlign: 'center', marginBottom: 20, maxWidth: 320, lineHeight: 20 }}>
-          {t(bodyKey)}
-        </Text>
-        <TouchableOpacity
-          onPress={openSystemSettings}
-          style={{ backgroundColor: '#3b82f6', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '600' }}>{t('meet.openSettings')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { backgroundColor: colors.meetBtnBg, marginTop: 12 }]}>
-          <Text style={[s.lobbyBackText, { color: colors.meetTextSecondary }]}>{t('common.cancel')}</Text>
-        </TouchableOpacity>
+        <Text style={s.h1}>{t('meet.permissionDeniedTitle')}</Text>
+        <Text style={s.body}>{t(bodyKey)}</Text>
+        <Pressable onPress={openSystemSettings} style={s.primaryBtn} accessibilityRole="button">
+          <Text style={s.primaryText}>{t('meet.openSettings')}</Text>
+        </Pressable>
+        <Pressable onPress={() => router.back()} style={s.ghostBtn} accessibilityRole="button">
+          <Text style={s.ghostText}>{t('common.cancel')}</Text>
+        </Pressable>
       </View>
     );
   }
 
-  // ─── Loading ───
-  if (loading) {
+  // ─── Erro / encerrada ───
+  if (error || ended) {
     return (
-      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-        <ActivityIndicator size="large" color="#3b82f6" />
-        <Text style={[s.statusText, { color: colors.meetTextSecondary }]}>{t('meetScreen.connecting')}</Text>
+      <View style={s.centered}>
+        <Text style={s.h1}>{error || t('meetScreen.ended')}</Text>
+        {!ended || error ? (
+          <Pressable onPress={() => router.back()} style={s.ghostBtn} accessibilityRole="button">
+            <Text style={s.ghostText}>{t('common.close')}</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
 
-  // ─── Lobby waiting ───
-  if (lobbyWaiting) {
-    return (
-      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-        <ActivityIndicator size="large" color="#3b82f6" />
-        <Text style={[s.lobbyText, { color: colors.meetText }]}>{t('meetScreen.lobbyWaiting')}</Text>
-        <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { backgroundColor: colors.meetBtnBg }]}>
-          <Text style={[s.lobbyBackText, { color: colors.meetTextSecondary }]}>{t('common.cancel')}</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const alone = inRoom && participantCount <= 1;
+  const showWaiting = alone && !waitingDismissed && !showChat && !showParticipants && !showMore;
+  const moreBadge = (unreadChat || 0) + (isHost ? lobbyPeers.length : 0);
 
-  // ─── Error ───
-  if (error && !ended) {
-    return (
-      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-        <Text style={[s.errorText, { color: colors.meetEndCall }]}>{error}</Text>
-        <Text style={[s.statusText, { color: colors.meetTextSecondary }]} onPress={() => router.back()}>{t('meetScreen.goBack')}</Text>
-      </View>
-    );
-  }
-
-  // ─── Ended ───
-  if (ended) {
-    return (
-      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-        <Text style={[s.endedText, { color: colors.meetText }]}>{t('meetScreen.ended')}</Text>
-      </View>
-    );
-  }
-
-  // ─── Recording banner ───
-  const RecordingBanner = recording ? (
-    <View style={s.recordingBanner}>
-      <View style={s.recordingDot} />
-      <Text style={s.recordingText}>REC</Text>
-    </View>
-  ) : null;
-
-  // ─── Screen sharing banner ───
-  const ScreenShareBanner = screenSharing ? (
-    <TouchableOpacity
-      style={[s.screenShareBanner, { backgroundColor: colors.meetScreenShare }]}
-      onPress={Platform.OS === 'web' ? _stopScreenShareWeb : () => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
-      activeOpacity={0.8}
-      accessibilityLabel={t('meetScreen.stopSharing')}
-      accessibilityRole="button"
-    >
-      <IconScreenShare size={16} color="#fff" />
-      <Text style={s.screenShareBannerText}>{t('meetScreen.youAreSharing')}</Text>
-      <View style={[s.stopShareBtn, { backgroundColor: colors.meetBtnBg }]}>
-        <Text style={s.stopShareBtnText}>{t('meetScreen.stopSharing')}</Text>
-      </View>
-    </TouchableOpacity>
-  ) : null;
-
-  // ─── Meeting title bar (and participant count badge) ───
-  const isGroupCall = participantCount > 2;
-  const gridLabel = layoutLabel(participantCount, t);
-  const TitleBar = (meetingTitle || isGroupCall) ? (
-    <View style={[s.titleBar, { backgroundColor: colors.meetSurfaceSolid }]}>
-      {meetingTitle ? (
-        <Text style={[s.titleText, { color: colors.meetText }]} numberOfLines={1}>{meetingTitle}</Text>
-      ) : (
-        <Text style={[s.titleText, { color: colors.meetText }]} numberOfLines={1}>
-          {isGroupCall ? (t('meetScreen.groupCall') || 'Chamada em grupo') : ''}
-        </Text>
-      )}
-      {roomLocked && <IconLock size={14} color={colors.meetText} style={{ marginLeft: 8 }} />}
-    </View>
-  ) : null;
-
-  // Participant count badge — always visible, grid-aware (1-on-1 stays minimal)
-  const ParticipantBadge = (
-    <TouchableOpacity
-      onPress={handleToggleParticipants}
-      style={[s.participantBadge, { backgroundColor: colors.meetSurface, borderColor: colors.meetBorder }]}
-      accessibilityLabel={t('meetScreen.participantsLabel') || 'Participants'}
-      accessibilityRole="button"
-    >
-      <IconUsers size={13} color={colors.meetText} />
-      <Text style={[s.participantBadgeText, { color: colors.meetText }]}>{participantCount}</Text>
-      {gridLabel && (
-        <Text style={s.participantBadgeGrid}>{gridLabel}</Text>
-      )}
-    </TouchableOpacity>
-  );
-
-  // Shared panels
-  const panels = (
+  const overlays = (
     <>
       <MeetReactionsOverlay reactions={reactions} />
-      <MeetCaptionsOverlay enabled={captionsEnabled} captions={captions} />
-      <MeetControls
-        audioMuted={audioMuted}
-        videoMuted={videoMuted}
-        screenSharing={screenSharing}
-        handRaised={handRaised}
-        isHost={isHost}
-        recording={recording}
-        onToggleAudio={() => injectJS('window.meetController.toggleAudio()')}
-        onToggleVideo={() => injectJS('window.meetController.toggleVideo()')}
-        onScreenShare={handleToggleScreenShare}
-        onStopScreenShare={Platform.OS === 'web' ? _stopScreenShareWeb : () => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
-        screenShareDisabled={Platform.OS !== 'web'}
-        screenShareDisabledLabel={Platform.OS !== 'web' ? (t('meetScreen.screenShareWebOnly') || 'Compartilhar tela disponível só na web') : undefined}
-        onEndCall={handleEndCall}
-        onToggleChat={handleToggleChat}
-        onToggleParticipants={handleToggleParticipants}
-        onRaiseHand={handleRaiseHand}
-        onReaction={handleReaction}
-        onToggleRecording={handleToggleRecording}
-        onToggleLock={handleToggleLock}
-        onTogglePolls={handleTogglePolls}
-        onToggleNotes={handleToggleNotes}
-        onToggleCaptions={handleToggleCaptions}
-        onToggleBreakout={handleToggleBreakout}
-        onToggleMore={handleToggleMore}
-        onToggleVirtualBg={handleToggleVirtualBg}
-        virtualBgActive={!!virtualBgEffect}
-        captionsEnabled={captionsEnabled}
-        participantCount={participantCount}
-        unreadChat={unreadChat}
-        lobbyCount={lobbyPeers.length}
-      />
-      <MeetChatPanel
-        visible={showChat}
-        messages={chatMessages}
-        onSend={handleSendChat}
-        onClose={() => { setShowChat(false); showChatRef.current = false; setUnreadChat(0); }}
-      />
+      {showWaiting ? (
+        <View style={[s.waitingWrap, { top: insets.top + HEADER_H, bottom: barH }]} pointerEvents="box-none">
+          <MeetWaitingCard t={t} link={meetLink} title={meetingTitle} onClose={() => setWaitingDismissed(true)} />
+        </View>
+      ) : null}
+      {inRoom ? (
+        <>
+          <MeetHeader
+            t={t}
+            visible={chromeVisible}
+            topInset={insets.top}
+            title={meetingTitle}
+            startedAt={startedAt}
+            net={net}
+            locked={roomLocked}
+            recording={recording}
+            count={participantCount}
+            onParticipants={openParticipants}
+          />
+          <MeetControlBar
+            t={t}
+            visible={chromeVisible}
+            bottomInset={insets.bottom}
+            audioMuted={audioMuted}
+            videoMuted={videoMuted}
+            handRaised={handRaised}
+            screenSharing={screenSharing}
+            onToggleAudio={() => callRoom('toggleAudio')}
+            onToggleVideo={() => callRoom('toggleVideo')}
+            onFlipCamera={() => callRoom('switchCamera')}
+            onScreenShare={handleToggleScreenShare}
+            onRaiseHand={handleRaiseHand}
+            onReaction={handleReaction}
+            onMore={() => setShowMore(true)}
+            onLeave={handleLeave}
+            moreBadge={moreBadge ? (moreBadge > 9 ? '9+' : String(moreBadge)) : null}
+            onLayout={(e) => { const h = e?.nativeEvent?.layout?.height; if (h && Math.abs(h - barH) > 2) setBarH(h); }}
+          />
+        </>
+      ) : (
+        <Pressable onPress={handleLeave} style={[s.cancelPill, { top: insets.top + 10 }]} accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
+          <IconX size={16} color="#fff" />
+          <Text style={s.cancelText}>{t('common.cancel')}</Text>
+        </Pressable>
+      )}
+      {screenSharing && Platform.OS === 'web' ? (
+        <Pressable onPress={stopScreenShareWeb} style={[s.sharePill, { top: insets.top + HEADER_H + 8 }]} accessibilityRole="button">
+          <IconScreenShare size={15} color="#000" />
+          <Text style={s.sharePillText}>{t('meetScreen.stopSharing')}</Text>
+        </Pressable>
+      ) : null}
+      <MeetChatPanel visible={showChat} messages={chatMessages} onSend={handleSendChat} onClose={closeChat} insets={insets} />
       <MeetParticipantsPanel
         visible={showParticipants}
         onClose={() => setShowParticipants(false)}
-        participants={participants}
+        participants={allParticipants}
         lobbyPeers={lobbyPeers}
         isHost={isHost}
         onAdmit={handleAdmit}
@@ -1124,88 +758,48 @@ export default function MeetScreen() {
         onKick={handleKick}
         onMute={handleMutePeer}
         onPromote={handlePromote}
+        topInset={insets.top}
       />
-      <MeetPollPanel
-        visible={showPolls}
-        onClose={() => setShowPolls(false)}
-        polls={polls}
-        onCreatePoll={handleCreatePoll}
-        onVote={handleVotePoll}
-        isHost={isHost}
-      />
-      <MeetNotesPanel
-        visible={showNotes}
-        onClose={() => setShowNotes(false)}
-        notes={meetingNotes}
-        onUpdateNotes={handleUpdateNotes}
-      />
-      <MeetBreakoutPanel
-        visible={showBreakout}
-        onClose={() => setShowBreakout(false)}
-        isHost={isHost}
-        breakoutRooms={breakoutRooms}
-        onCreateBreakout={handleCreateBreakout}
-        onEndBreakout={handleEndBreakout}
-      />
-      <MeetMoreMenu
-        visible={showMore}
-        onClose={() => setShowMore(false)}
-        isHost={isHost}
-        options={moreMenuOptions}
-      />
-      <MeetVirtualBgPicker
-        visible={showVirtualBg}
-        onClose={() => setShowVirtualBg(false)}
-        onSelect={handleSelectVirtualBg}
-        currentEffect={virtualBgEffect}
-      />
+      <MeetMoreMenu visible={showMore} onClose={() => setShowMore(false)} options={moreOptions} bottomInset={insets.bottom} title={meetingTitle || undefined} />
+      <MeetVirtualBgPicker visible={showVirtualBg} onClose={() => setShowVirtualBg(false)} onSelect={handleSelectVirtualBg} currentEffect={virtualBgEffect} />
     </>
   );
 
-  // ─── Web: iframe ───
   if (Platform.OS === 'web') {
     return (
-      <View style={[s.container, { backgroundColor: colors.meetBg }]}>
-        {TitleBar}
-        {RecordingBanner}
-        {ScreenShareBanner}
+      <View style={s.container}>
         <iframe
           ref={iframeRef}
           src={meetUrl}
-          style={{ width: '100%', flex: 1, border: 'none', background: colors.meetBg }}
-          allow="camera; microphone; display-capture; autoplay"
+          title={meetingTitle || 'meet'}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', background: '#000' }}
+          allow="camera; microphone; display-capture; autoplay; clipboard-write"
         />
-        {panels}
+        {overlays}
       </View>
     );
   }
 
-  // ─── Mobile: WebView ───
   if (!WebView) {
     return (
-      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
-        <Text style={[s.errorText, { color: colors.meetEndCall }]}>{t('groupCallD.webviewUnavailable')}</Text>
+      <View style={s.centered}>
+        <Text style={s.h1}>{t('groupCallD.webviewUnavailable')}</Text>
       </View>
     );
   }
 
   return (
-    <View style={[s.container, { backgroundColor: colors.meetBg, paddingTop: insets.top }]}>
-      {TitleBar}
-      {ParticipantBadge}
-      {RecordingBanner}
-      {ScreenShareBanner}
+    <View style={s.container}>
       <WebView
         ref={webViewRef}
         source={{ uri: meetUrl }}
         onMessage={handleMessage}
         mediaPlaybackRequiresUserAction={false}
-        allowsInlineMediaPlayback={true}
+        allowsInlineMediaPlayback
         mediaCapturePermissionGrantType="grant"
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
+        javaScriptEnabled
+        domStorageEnabled
         originWhitelist={['*']}
-        // [2026-10-07 app-feel-webview] native feel for the meeting room.
         bounces={false}
         overScrollMode="never"
         textZoom={100}
@@ -1218,73 +812,38 @@ export default function MeetScreen() {
         contentInsetAdjustmentBehavior="never"
         hideKeyboardAccessoryView
         injectedJavaScriptBeforeContentLoaded={MEET_NATIVE_FEEL_JS}
-        style={{ flex: 1, backgroundColor: colors.meetBg }}
+        style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}
+        containerStyle={{ backgroundColor: '#000' }}
       />
-      {panels}
+      {overlays}
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111827' },
-  centered: {
-    flex: 1, backgroundColor: '#111827',
-    justifyContent: 'center', alignItems: 'center', padding: 24,
-  },
-  statusText: { color: '#94a3b8', fontSize: 16, marginTop: 16 },
-  errorText: { color: '#f87171', fontSize: 18, fontWeight: '600', textAlign: 'center' },
-  endedText: { color: '#fff', fontSize: 20, fontWeight: '600' },
-  lobbyText: { color: '#e2e8f0', fontSize: 18, fontWeight: '500', marginTop: 20, textAlign: 'center' },
-  lobbyBackBtn: { marginTop: 24, paddingVertical: 10, paddingHorizontal: 24, borderRadius: 8, backgroundColor: '#374151' },
-  lobbyBackText: { color: '#94a3b8', fontSize: 16 },
+  container: { flex: 1, backgroundColor: '#000' },
+  centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  iconCircle: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  h1: { color: '#fff', fontSize: 19, fontWeight: '700', textAlign: 'center', marginBottom: 8 },
+  body: { color: 'rgba(255,255,255,0.6)', fontSize: 14.5, lineHeight: 20, textAlign: 'center', maxWidth: 320, marginBottom: 22 },
+  errSmall: { color: '#FF453A', fontSize: 13, marginTop: 8, textAlign: 'center' },
   passwordInput: {
-    width: 260, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12,
-    backgroundColor: 'rgba(255,255,255,0.05)', color: '#fff', fontSize: 16,
-    marginTop: 16, textAlign: 'center',
+    width: 280, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 13, marginTop: 14,
+    backgroundColor: '#1a1a1a', color: '#fff', fontSize: 16, textAlign: 'center',
   },
-  titleBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 8, paddingHorizontal: 16, backgroundColor: '#1f2937',
+  primaryBtn: { marginTop: 18, minWidth: 220, height: 50, borderRadius: 14, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  primaryText: { color: '#000', fontSize: 16, fontWeight: '700' },
+  ghostBtn: { marginTop: 10, paddingVertical: 12, paddingHorizontal: 24 },
+  ghostText: { color: 'rgba(255,255,255,0.7)', fontSize: 15, fontWeight: '600' },
+  waitingWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, zIndex: 60 },
+  cancelPill: {
+    position: 'absolute', left: 14, zIndex: 300, flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.14)',
   },
-  titleText: { color: '#e2e8f0', fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'center' },
-  recordingBanner: {
-    position: 'absolute', top: 60, left: 16, zIndex: 100,
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(220, 38, 38, 0.9)', borderRadius: 6,
-    paddingVertical: 4, paddingHorizontal: 10,
+  cancelText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  sharePill: {
+    position: 'absolute', alignSelf: 'center', zIndex: 95, flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 14, height: 34, borderRadius: 17, backgroundColor: '#fff',
   },
-  recordingDot: {
-    width: 8, height: 8, borderRadius: 4,
-    backgroundColor: '#fff', marginRight: 6,
-  },
-  recordingText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  screenShareBanner: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#3b82f6', paddingVertical: 8, paddingHorizontal: 16,
-    gap: 12,
-  },
-  screenShareBannerText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  stopShareBtn: {
-    backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6,
-    paddingHorizontal: 12, paddingVertical: 4,
-  },
-  stopShareBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  participantBadge: {
-    position: 'absolute', top: 60, right: 16, zIndex: 100,
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(17, 24, 39, 0.82)',
-    borderRadius: 14, paddingVertical: 5, paddingHorizontal: 10, gap: 5,
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)',
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.3)' },
-    }),
-  },
-  participantBadgeText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  participantBadgeGrid: {
-    color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: '600',
-    marginLeft: 2, borderLeftWidth: 0.5, borderLeftColor: 'rgba(255,255,255,0.2)', paddingLeft: 6,
-  },
+  sharePillText: { color: '#000', fontSize: 13.5, fontWeight: '700' },
 });

@@ -1,96 +1,97 @@
-import { TouchableOpacity, View, Text, StyleSheet, Platform, Pressable, ScrollView } from 'react-native';
-import { Colors } from '../constants/theme';
+// [2026-10-15 meet-v2] Sheet "Mais" da reunião: P&B, ícones SVG, safe-area, badges,
+// estado (ligado/desligado) à direita. Abre de baixo com animação.
+import { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Platform, Pressable, ScrollView, Animated } from 'react-native';
 
-export default function MeetMoreMenu({ visible, onClose, isHost, options }) {
+export default function MeetMoreMenu({ visible, onClose, options, bottomInset = 0, title }) {
+  const y = useRef(new Animated.Value(40)).current;
+  const o = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!visible) { y.setValue(40); o.setValue(0); return; }
+    const nd = Platform.OS !== 'web';
+    Animated.parallel([
+      Animated.spring(y, { toValue: 0, useNativeDriver: nd, speed: 22, bounciness: 3 }),
+      Animated.timing(o, { toValue: 1, duration: 160, useNativeDriver: nd }),
+    ]).start();
+  }, [visible, y, o]);
+
   if (!visible || !options?.length) return null;
 
-  // Group options by section
-  const sections = {};
-  options.forEach(opt => {
-    const sec = opt.section || 'Geral';
-    if (!sections[sec]) sections[sec] = [];
-    sections[sec].push(opt);
+  const sections = [];
+  const bySec = {};
+  options.forEach((opt) => {
+    const sec = opt.section || '';
+    if (!bySec[sec]) { bySec[sec] = []; sections.push([sec, bySec[sec]]); }
+    bySec[sec].push(opt);
   });
-  const sectionEntries = Object.entries(sections);
 
   return (
-    <Pressable style={s.backdrop} onPress={onClose}>
-      <Pressable style={s.sheet} onPress={e => e.stopPropagation()}>
-        {/* Drag handle */}
-        <View style={s.handleWrap}>
-          <View style={s.handle} />
-        </View>
-
-        <ScrollView style={s.scrollArea} showsVerticalScrollIndicator={false}>
-          {sectionEntries.map(([sectionName, items], si) => (
-            <View key={sectionName}>
-              {sectionEntries.length > 1 && (
-                <Text style={s.sectionTitle}>{sectionName}</Text>
-              )}
-              {items.map((opt, i) => (
-                <TouchableOpacity
-                  key={opt.label}
-                  style={s.row}
-                  onPress={() => { opt.onPress?.(); onClose(); }}
-                  activeOpacity={0.6}
-                >
-                  {opt.icon ? (
-                    <View style={s.iconWrap}>
-                      {(() => { const IC = opt.icon; return <IC size={20} color={Colors.meetText} />; })()}
-                    </View>
-                  ) : <View style={s.iconWrap} />}
-                  <Text style={[s.label, opt.destructive && s.destructive]}>
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-              {si < sectionEntries.length - 1 && <View style={s.divider} />}
+    <Animated.View style={[s.backdrop, { opacity: o }]}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="close" />
+      <Animated.View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 12) + 8, transform: [{ translateY: y }] }]} accessibilityViewIsModal>
+        <View style={s.handleWrap}><View style={s.handle} /></View>
+        {title ? <Text style={s.sheetTitle} numberOfLines={1}>{title}</Text> : null}
+        <ScrollView style={s.scrollArea} showsVerticalScrollIndicator={false} bounces={false}>
+          {sections.map(([sectionName, items], si) => (
+            <View key={sectionName || si}>
+              {sectionName && sections.length > 1 ? <Text style={s.sectionTitle}>{sectionName}</Text> : null}
+              <View style={s.group}>
+                {items.map((opt, i) => {
+                  const IC = opt.icon;
+                  return (
+                    <Pressable
+                      key={opt.key || opt.label}
+                      style={({ pressed }) => [s.row, i > 0 && s.rowBorder, pressed && { backgroundColor: 'rgba(255,255,255,0.06)' }]}
+                      onPress={() => { onClose?.(); opt.onPress?.(); }}
+                      accessibilityRole="button"
+                      accessibilityLabel={opt.label}
+                      accessibilityState={opt.active != null ? { selected: !!opt.active } : undefined}
+                    >
+                      <View style={[s.iconWrap, opt.active && s.iconWrapOn]}>
+                        {IC ? <IC size={19} color={opt.active ? '#000' : '#fff'} /> : null}
+                      </View>
+                      <Text style={[s.label, opt.destructive && s.destructive]} numberOfLines={1}>{opt.label}</Text>
+                      {opt.badge ? <View style={s.badge}><Text style={s.badgeText}>{opt.badge}</Text></View> : null}
+                      {opt.value ? <Text style={s.value} numberOfLines={1}>{opt.value}</Text> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
           ))}
         </ScrollView>
-      </Pressable>
-    </Pressable>
+      </Animated.View>
+    </Animated.View>
   );
 }
 
 const s = StyleSheet.create({
   backdrop: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    zIndex: 300, justifyContent: 'flex-end', alignItems: 'center',
-    backgroundColor: Colors.overlay,
+    ...StyleSheet.absoluteFillObject, zIndex: 300, justifyContent: 'flex-end', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
   sheet: {
-    backgroundColor: Colors.meetSurfaceSolid, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    width: '100%', maxWidth: 420, maxHeight: '60%',
-    ...(Platform.OS === 'web'
-      ? { boxShadow: '0 -4px 24px rgba(0,0,0,0.5)' }
-      : { elevation: 10 }),
+    backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    width: '100%', maxWidth: 520, maxHeight: '78%',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)', borderBottomWidth: 0,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.6)' } : { elevation: 12 }),
   },
-  handleWrap: {
-    alignItems: 'center', paddingVertical: 12,
-  },
-  handle: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.meetBorder,
-  },
-  scrollArea: {
-    paddingHorizontal: 8, paddingBottom: 24,
-  },
+  handleWrap: { alignItems: 'center', paddingTop: 10, paddingBottom: 6 },
+  handle: { width: 38, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.22)' },
+  sheetTitle: { color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center', paddingBottom: 6 },
+  scrollArea: { paddingHorizontal: 14 },
   sectionTitle: {
-    color: Colors.meetTextSecondary, fontSize: 11, fontWeight: '700',
-    textTransform: 'uppercase', letterSpacing: 1,
-    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6,
+    color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: '600', letterSpacing: 0.4,
+    paddingHorizontal: 6, paddingTop: 14, paddingBottom: 6,
   },
-  row: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 14, paddingHorizontal: 16,
-    borderRadius: 10, marginHorizontal: 4,
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: Colors.meetBorder,
-    marginVertical: 8, marginHorizontal: 16,
-  },
-  iconWrap: { width: 28, marginRight: 14, alignItems: 'center', justifyContent: 'center' },
-  label: { color: Colors.meetText, fontSize: 15, fontWeight: '500', flex: 1 },
-  destructive: { color: '#f87171' },
+  group: { backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 12, minHeight: 52 },
+  rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.08)' },
+  iconWrap: { width: 34, height: 34, borderRadius: 17, marginRight: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.10)' },
+  iconWrapOn: { backgroundColor: '#fff' },
+  label: { color: '#fff', fontSize: 15.5, fontWeight: '500', flex: 1 },
+  value: { color: 'rgba(255,255,255,0.5)', fontSize: 14, marginLeft: 8, maxWidth: '40%' },
+  destructive: { color: '#FF453A' },
+  badge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', marginLeft: 8 },
+  badgeText: { color: '#000', fontSize: 11, fontWeight: '800' },
 });

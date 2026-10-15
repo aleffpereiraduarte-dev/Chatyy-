@@ -3,7 +3,10 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from '
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
-import { IconX, IconMic, IconMicOff, IconVideo, IconVideoOff, IconUsers, IconRaisedHand } from './Icons';
+import { IconX, IconMic, IconMicOff, IconVideo, IconVideoOff, IconUsers, IconRaisedHand, IconMoreVert } from './Icons';
+
+// [2026-10-15 meet-v2] reunião é sempre escura (preto verdadeiro), independente do tema do app
+const MEET_DARK = { surface: '#0b0b0b', text: '#fff', textSecondary: 'rgba(255,255,255,0.6)', textTertiary: 'rgba(255,255,255,0.4)', border: 'rgba(255,255,255,0.10)', error: '#FF453A', warning: '#fff' };
 
 const AVATAR_COLORS = ['#5C5C5C', '#4A4A4A', '#6B6B6B', '#3D3D3D', '#545454', '#636363']; // [2026-10-10] P&B neutro
 
@@ -31,10 +34,10 @@ function LobbyRow({ peer, onAdmit, onDeny, colors, t }) {
         <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>{peer.displayName}</Text>
         {peer.email ? <Text style={[styles.email, { color: colors.textSecondary }]} numberOfLines={1}>{peer.email}</Text> : null}
       </View>
-      <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#16a34a' }]} onPress={() => onAdmit(peer.peerId)}>
-        <Text style={styles.actionBtnText}>{t('meetParticipants.admit')}</Text>
+      <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#fff' }]} onPress={() => onAdmit(peer.peerId)}>
+        <Text style={[styles.actionBtnText, { color: '#000' }]}>{t('meetParticipants.admit')}</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#dc2626', marginLeft: 6 }]} onPress={() => onDeny(peer.peerId)}>
+      <TouchableOpacity style={[styles.actionBtn, { backgroundColor: 'rgba(255,255,255,0.14)', marginLeft: 6 }]} onPress={() => onDeny(peer.peerId)}>
         <Text style={styles.actionBtnText}>{t('meetParticipants.deny')}</Text>
       </TouchableOpacity>
     </View>
@@ -48,29 +51,29 @@ function ParticipantRow({ participant, isHost, colors, onMute, onKick, onPromote
       <Avatar name={participant.displayName} />
       <View style={styles.rowInfo}>
         <View style={styles.nameRow}>
-          <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>{participant.displayName}</Text>
+          <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>{participant.displayName}{participant.isLocal ? ` (${t('meet.you')})` : ''}</Text>
           {(participant.role === 'host' || participant.role === 'co-host') && (
             <View style={[styles.badge, { backgroundColor: participant.role === 'host' ? '#111111' : '#111111' }]}>
               <Text style={styles.badgeText}>{participant.role === 'host' ? t('meetParticipants.host') : t('meetParticipants.coHost')}</Text>
             </View>
           )}
-          {participant.handRaised && <IconRaisedHand size={16} color="#f59e0b" />}
+          {participant.handRaised && <IconRaisedHand size={16} color="#fff" />}
         </View>
         {participant.email ? <Text style={[styles.email, { color: colors.textSecondary }]} numberOfLines={1}>{participant.email}</Text> : null}
       </View>
       <View style={styles.statusIcons}>
         {participant.audioMuted
-          ? <IconMicOff size={16} color={colors.error || '#dc2626'} />
+          ? <IconMicOff size={16} color={colors.textSecondary} />
           : <IconMic size={16} color={colors.textSecondary} />}
         <View style={{ width: 6 }} />
         {participant.videoMuted
-          ? <IconVideoOff size={16} color={colors.error || '#dc2626'} />
+          ? <IconVideoOff size={16} color={colors.textSecondary} />
           : <IconVideo size={16} color={colors.textSecondary} />}
       </View>
-      {isHost && participant.role !== 'host' && (
+      {isHost && !participant.isLocal && participant.role !== 'host' && (
         <View style={styles.hostActions}>
           <TouchableOpacity style={styles.kebab} onPress={() => setMenuOpen(!menuOpen)}>
-            <Text style={[styles.kebabDots, { color: colors.textSecondary }]}>⋮</Text>
+            <IconMoreVert size={18} color={colors.textSecondary} />
           </TouchableOpacity>
           {menuOpen && (
             <View style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -91,8 +94,12 @@ function ParticipantRow({ participant, isHost, colors, onMute, onKick, onPromote
   );
 }
 
-export default function MeetParticipantsPanel({ visible, onClose, participants = [], lobbyPeers = [], isHost, onAdmit, onDeny, onKick, onMute, onPromote }) {
-  const { colors } = useTheme();
+// strings usam {{count}} e o t() troca só {count} → sobrava "{2}"
+const tc = (t, key, count) => String(t(key) || '').replace(/\{\{\s*count\s*\}\}|\{count\}/g, String(count));
+
+export default function MeetParticipantsPanel({ visible, onClose, participants = [], lobbyPeers = [], isHost, onAdmit, onDeny, onKick, onMute, onPromote, topInset = 0 }) {
+  useTheme();
+  const colors = MEET_DARK;
   const { t } = useLanguage();
 
   if (!visible) return null;
@@ -102,10 +109,10 @@ export default function MeetParticipantsPanel({ visible, onClose, participants =
   return (
     <View style={styles.overlay}>
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-      <View style={[styles.panel, { width: panelWidth, backgroundColor: colors.surface }]}>
+      <View style={[styles.panel, { width: panelWidth, backgroundColor: colors.surface, paddingTop: Platform.OS === 'web' ? 0 : topInset }]}>
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <IconUsers size={18} color={colors.text} />
-          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetParticipants.title', { count: participants.length })}</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{tc(t, 'meetParticipants.title', participants.length)}</Text>
           <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -115,7 +122,7 @@ export default function MeetParticipantsPanel({ visible, onClose, participants =
           {isHost && lobbyPeers.length > 0 && (
             <>
               <View style={[styles.sectionHeader, { borderLeftColor: '#d97706' }]}>
-                <Text style={[styles.sectionTitle, { color: colors.warning || '#d97706' }]}>{t('meetParticipants.lobby', { count: lobbyPeers.length })}</Text>
+                <Text style={[styles.sectionTitle, { color: colors.warning || '#d97706' }]}>{tc(t, 'meetParticipants.lobby', lobbyPeers.length)}</Text>
               </View>
               {lobbyPeers.map(p => (
                 <LobbyRow key={p.peerId} peer={p} onAdmit={onAdmit} onDeny={onDeny} colors={colors} t={t} />
@@ -125,7 +132,7 @@ export default function MeetParticipantsPanel({ visible, onClose, participants =
           )}
 
           <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{t('meetParticipants.inMeeting', { count: participants.length })}</Text>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{tc(t, 'meetParticipants.inMeeting', participants.length)}</Text>
           </View>
 
           {participants.length === 0 ? (
@@ -155,7 +162,7 @@ const styles = StyleSheet.create({
   },
   panel: {
     height: '100%',
-    maxWidth: 320,
+    maxWidth: Platform.OS === 'web' ? 320 : 480,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: -2, height: 0 },

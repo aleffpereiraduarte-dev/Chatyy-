@@ -1,21 +1,22 @@
+// [2026-10-15 meet-v2] Conversa da reunião: tela cheia no celular (antes ocupava 40% = ~150 px),
+// painel lateral no web largo. P&B, bolhas, safe-area e teclado.
 import { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
-import { useTheme } from '../context/ThemeContext';
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import { useLanguage } from '../context/LanguageContext';
-import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconSend } from './Icons';
 
-export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
-  const { colors } = useTheme();
+export default function MeetChatPanel({ messages, onSend, onClose, visible, insets }) {
   const { t } = useLanguage();
+  const { width } = useWindowDimensions();
   const [text, setText] = useState('');
   const listRef = useRef(null);
+  const wide = width >= 760;
 
   useEffect(() => {
-    if (messages.length > 0 && listRef.current) {
-      setTimeout(() => listRef.current?.scrollToEnd?.({ animated: true }), 100);
+    if (visible && messages.length > 0 && listRef.current) {
+      setTimeout(() => listRef.current?.scrollToEnd?.({ animated: true }), 80);
     }
-  }, [messages.length]);
+  }, [messages.length, visible]);
 
   if (!visible) return null;
 
@@ -27,96 +28,90 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible }) {
 
   const renderMessage = ({ item }) => {
     const time = new Date(item.timestamp || Date.now());
+    const mine = !!item.isLocal;
     return (
-      <View style={s.msgContainer}>
-        <View style={s.msgHeader}>
-          <Text style={[s.sender, { color: '#60a5fa' }]}>{item.displayName || t('menu.user')}</Text>
-          <Text style={[s.time, { color: '#64748b' }]}>
-            {time.getHours().toString().padStart(2, '0')}:{time.getMinutes().toString().padStart(2, '0')}
-          </Text>
+      <View style={[s.msg, mine && s.msgMine]}>
+        {!mine ? <Text style={s.sender} numberOfLines={1}>{item.displayName || t('menu.user')}</Text> : null}
+        <View style={[s.bubble, mine ? s.bubbleMine : s.bubbleOther]}>
+          <Text style={[s.msgText, mine && { color: '#000' }]}>{item.message}</Text>
         </View>
-        <Text style={[s.msgText, { color: '#e2e8f0' }]}>{item.message}</Text>
+        <Text style={s.time}>
+          {time.getHours().toString().padStart(2, '0')}:{time.getMinutes().toString().padStart(2, '0')}
+        </Text>
       </View>
     );
   };
 
   return (
-    <View style={[s.panel, Platform.OS === 'web' && s.panelGlass]}>
-      {/* Header */}
-      <View style={s.header}>
-        <Text style={s.headerTitle}>{t('meet.chat')}</Text>
-        <TouchableOpacity onPress={onClose} style={s.closeBtn} accessibilityLabel={t('common.close')}>
-          <IconX size={18} color="#94a3b8" />
-        </TouchableOpacity>
-      </View>
-
-      {/* Messages */}
-      <FlatList
-        ref={listRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(_, i) => String(i)}
-        style={s.messageList}
-        contentContainerStyle={s.messageListContent}
-      />
-
-      {/* Input */}
-      <View style={s.inputArea}>
-        <TextInput
-          style={s.input}
-          value={text}
-          onChangeText={setText}
-          placeholder={t('chatConv.messagePlaceholder')}
-          placeholderTextColor="#64748b"
-          onSubmitEditing={handleSend}
-          returnKeyType="send"
+    <View style={[s.panel, wide ? s.panelWide : s.panelFull, { paddingTop: wide ? 0 : (insets?.top || 0) }]}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={s.header}>
+          <Text style={s.headerTitle}>{t('meet.chat')}</Text>
+          <Pressable onPress={onClose} style={s.closeBtn} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.close')}>
+            <IconX size={18} color="#fff" />
+          </Pressable>
+        </View>
+        <FlatList
+          ref={listRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(m, i) => m.id || String(i)}
+          style={s.messageList}
+          contentContainerStyle={s.messageListContent}
+          keyboardShouldPersistTaps="handled"
         />
-        <TouchableOpacity onPress={handleSend} style={s.sendBtn} activeOpacity={0.7} accessibilityLabel={t('common.send')}>
-          <IconSend size={16} color="#fff" />
-        </TouchableOpacity>
-      </View>
+        <View style={[s.inputArea, { paddingBottom: Math.max(insets?.bottom || 0, 10) }]}>
+          <TextInput
+            style={s.input}
+            value={text}
+            onChangeText={setText}
+            placeholder={t('chatConv.messagePlaceholder')}
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            onSubmitEditing={handleSend}
+            returnKeyType="send"
+            accessibilityLabel={t('chatConv.messagePlaceholder')}
+          />
+          <Pressable onPress={handleSend} disabled={!text.trim()} style={({ pressed }) => [s.sendBtn, !text.trim() && { opacity: 0.4 }, pressed && { opacity: 0.7 }]} accessibilityRole="button" accessibilityLabel={t('common.send')}>
+            <IconSend size={16} color="#000" />
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  panel: {
-    position: 'absolute', top: 0, right: 0, bottom: 0, width: 320, maxWidth: '40%',
-    backgroundColor: 'rgba(17, 24, 39, 0.95)',
-    borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.1)',
-    zIndex: 150,
+  panel: { position: 'absolute', top: 0, right: 0, bottom: 0, backgroundColor: '#0b0b0b', zIndex: 250 },
+  panelFull: { left: 0 },
+  panelWide: {
+    width: 360, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: 'rgba(255,255,255,0.12)',
+    ...Platform.select({ web: { backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', backgroundColor: 'rgba(11,11,11,0.94)' }, default: {} }),
   },
-  panelGlass: Platform.OS === 'web' ? {
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
-  } : {},
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 14,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.12)',
   },
-  headerTitle: { color: '#fff', fontSize: FontSize.lg, fontWeight: '600' },
-  closeBtn: { padding: 4 },
+  headerTitle: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  closeBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   messageList: { flex: 1 },
-  messageListContent: { padding: 12 },
-  msgContainer: { marginBottom: 14 },
-  msgHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
-  sender: { fontSize: 12, fontWeight: '600' },
-  time: { fontSize: 11 },
-  msgText: { fontSize: 14, lineHeight: 20 },
+  messageListContent: { padding: 14, paddingBottom: 8 },
+  msg: { marginBottom: 10, alignItems: 'flex-start', maxWidth: '86%' },
+  msgMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
+  sender: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '600', marginBottom: 3, marginLeft: 4 },
+  bubble: { borderRadius: 18, paddingHorizontal: 13, paddingVertical: 8 },
+  bubbleOther: { backgroundColor: '#1f1f1f', borderTopLeftRadius: 6 },
+  bubbleMine: { backgroundColor: '#fff', borderTopRightRadius: 6 },
+  time: { color: 'rgba(255,255,255,0.35)', fontSize: 10.5, marginTop: 3, marginHorizontal: 4 },
+  msgText: { color: '#fff', fontSize: 15, lineHeight: 20 },
   inputArea: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    padding: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)',
+    flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.12)',
   },
   input: {
-    flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8,
-    backgroundColor: 'rgba(255,255,255,0.05)', color: '#fff', fontSize: 14,
+    flex: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    backgroundColor: '#1a1a1a', color: '#fff', fontSize: 15,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
-  sendBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#111111',
-    alignItems: 'center', justifyContent: 'center',
-  },
+  sendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
 });

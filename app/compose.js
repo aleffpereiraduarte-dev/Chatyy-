@@ -1935,7 +1935,7 @@ export default function ComposeScreen() {
               try {
                 const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
                 if (r.success && r.data?.room_id) {
-                  const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`; // Keep chatyy.com.br - this URL goes in the email body for recipients to click
+                  const meetUrl = `https://chatyy.com.br/meet/${r.data.room_id}`; // Keep chatyy.com.br - this URL goes in the email body for recipients to click. [2026-10-15 meet-v2] rota do app (room.html?id= sem token não autenticava → sala vazia)
                   const meetBlock = `\n\n<div style="background:#F1F3F5;border:1px solid #F1F3F5;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#111111;font-weight:600">${meetUrl}</a></div>\n`;
                   setBody(prev => prev + meetBlock);
                 }

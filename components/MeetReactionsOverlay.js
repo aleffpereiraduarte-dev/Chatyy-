@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { View, Text, Animated, StyleSheet } from 'react-native';
-import { Colors } from '../constants/theme';
 import { IconThumbsUp, IconHeart, IconLaughFace, IconClap, IconSurpriseFace, IconFlame, IconThinkingFace, IconHundred } from './Icons';
 
 const ICON_MAP = {
@@ -31,7 +30,7 @@ function ReactionBubble({ emoji, displayName }) {
     <Animated.View
       style={[styles.bubble, { left: `${left}%`, opacity, transform: [{ translateY }] }]}
     >
-      {ReactionIcon ? <ReactionIcon size={36} color={Colors.meetText} /> : null}
+      <View style={styles.disc}>{ReactionIcon ? <ReactionIcon size={28} color="#000" /> : null}</View>
       <Text style={styles.name} numberOfLines={1}>{displayName}</Text>
     </Animated.View>
   );
@@ -52,18 +51,23 @@ export default function MeetReactionsOverlay({ reactions }) {
 const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    zIndex: 999,
+    zIndex: 80,
   },
   bubble: {
     position: 'absolute',
-    bottom: 120,
+    bottom: 150,
     alignItems: 'center',
+  },
+  // [2026-10-15 meet-v2] disco branco + ícone preto: legível sobre qualquer vídeo
+  disc: {
+    width: 52, height: 52, borderRadius: 26, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
   },
   name: {
     fontSize: 11,
-    color: Colors.meetText,
-    backgroundColor: Colors.meetSurface,
-    borderRadius: 4,
+    color: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 8,
     paddingHorizontal: 6,
     paddingVertical: 1,
     marginTop: 2,
