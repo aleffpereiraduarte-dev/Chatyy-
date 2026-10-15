@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Isara",
+  'nativeViewer.share': "Ibahagi",
+  'nativeViewer.save': "I-save",
+  'nativeViewer.forward': "I-forward",
+  'nativeViewer.star': "Lagyan ng star",
+  'nativeViewer.unstar': "Alisin ang star",
+  'nativeViewer.play': "I-play",
+  'nativeViewer.pause': "I-pause",
+  'nativeViewer.loadFailed': "Hindi ma-load",
+  'nativeViewer.retry': "Subukang muli",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} hindi pa nababasang mensahe",
   "chatConv.unreadMessagesOne": "1 hindi pa nababasang mensahe",

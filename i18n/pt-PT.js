@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Fechar",
+  'nativeViewer.share': "Partilhar",
+  'nativeViewer.save': "Guardar",
+  'nativeViewer.forward': "Reencaminhar",
+  'nativeViewer.star': "Marcar com estrela",
+  'nativeViewer.unstar': "Remover estrela",
+  'nativeViewer.play': "Reproduzir",
+  'nativeViewer.pause': "Pausar",
+  'nativeViewer.loadFailed': "Não foi possível carregar",
+  'nativeViewer.retry': "Tentar novamente",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} mensagens não lidas",
   "chatConv.unreadMessagesOne": "1 mensagem não lida",

@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Փակել",
+  'nativeViewer.share': "Կիսվել",
+  'nativeViewer.save': "Պահել",
+  'nativeViewer.forward': "Փոխանցել",
+  'nativeViewer.star': "Աստղանշել",
+  'nativeViewer.unstar': "Հանել աստղը",
+  'nativeViewer.play': "Նվագարկել",
+  'nativeViewer.pause': "Դադար",
+  'nativeViewer.loadFailed': "Չհաջողվեց բեռնել",
+  'nativeViewer.retry': "Կրկին փորձել",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} չկարդացված հաղորդագրություն",
   "chatConv.unreadMessagesOne": "1 չկարդացված հաղորդագրություն",

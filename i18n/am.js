@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "ዝጋ",
+  'nativeViewer.share': "አጋራ",
+  'nativeViewer.save': "አስቀምጥ",
+  'nativeViewer.forward': "አስተላልፍ",
+  'nativeViewer.star': "ኮከብ አድርግ",
+  'nativeViewer.unstar': "ኮከብ አስወግድ",
+  'nativeViewer.play': "አጫውት",
+  'nativeViewer.pause': "ለአፍታ አቁም",
+  'nativeViewer.loadFailed': "መጫን አልተቻለም",
+  'nativeViewer.retry': "እንደገና ሞክር",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} ያልተነበቡ መልዕክቶች",
   "chatConv.unreadMessagesOne": "1 ያልተነበበ መልዕክት",

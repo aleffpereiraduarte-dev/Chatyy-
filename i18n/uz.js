@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Yopish",
+  'nativeViewer.share': "Ulashish",
+  'nativeViewer.save': "Saqlash",
+  'nativeViewer.forward': "Uzatish",
+  'nativeViewer.star': "Yulduzcha qo‘yish",
+  'nativeViewer.unstar': "Yulduzchani olish",
+  'nativeViewer.play': "Ijro etish",
+  'nativeViewer.pause': "Pauza",
+  'nativeViewer.loadFailed': "Yuklab bo‘lmadi",
+  'nativeViewer.retry': "Qayta urinish",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} ta o‘qilmagan xabar",
   "chatConv.unreadMessagesOne": "1 ta o‘qilmagan xabar",

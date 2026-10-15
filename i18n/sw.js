@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Funga",
+  'nativeViewer.share': "Shiriki",
+  'nativeViewer.save': "Hifadhi",
+  'nativeViewer.forward': "Sambaza",
+  'nativeViewer.star': "Weka nyota",
+  'nativeViewer.unstar': "Ondoa nyota",
+  'nativeViewer.play': "Cheza",
+  'nativeViewer.pause': "Sitisha",
+  'nativeViewer.loadFailed': "Imeshindwa kupakia",
+  'nativeViewer.retry': "Jaribu tena",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "Ujumbe {n} haujasomwa",
   "chatConv.unreadMessagesOne": "Ujumbe 1 haujasomwa",

@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Κλείσιμο",
+  'nativeViewer.share': "Κοινοποίηση",
+  'nativeViewer.save': "Αποθήκευση",
+  'nativeViewer.forward': "Προώθηση",
+  'nativeViewer.star': "Προσθήκη αστεριού",
+  'nativeViewer.unstar': "Αφαίρεση αστεριού",
+  'nativeViewer.play': "Αναπαραγωγή",
+  'nativeViewer.pause': "Παύση",
+  'nativeViewer.loadFailed': "Δεν ήταν δυνατή η φόρτωση",
+  'nativeViewer.retry': "Δοκιμάστε ξανά",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} μη αναγνωσμένα μηνύματα",
   "chatConv.unreadMessagesOne": "1 μη αναγνωσμένο μήνυμα",

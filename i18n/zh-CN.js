@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "关闭",
+  'nativeViewer.share': "分享",
+  'nativeViewer.save': "保存",
+  'nativeViewer.forward': "转发",
+  'nativeViewer.star': "星标",
+  'nativeViewer.unstar': "取消星标",
+  'nativeViewer.play': "播放",
+  'nativeViewer.pause': "暂停",
+  'nativeViewer.loadFailed': "无法加载",
+  'nativeViewer.retry': "重试",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} 条未读消息",
   "chatConv.unreadMessagesOne": "1 条未读消息",

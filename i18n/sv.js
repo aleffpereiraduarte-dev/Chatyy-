@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Stäng",
+  'nativeViewer.share': "Dela",
+  'nativeViewer.save': "Spara",
+  'nativeViewer.forward': "Vidarebefordra",
+  'nativeViewer.star': "Stjärnmärk",
+  'nativeViewer.unstar': "Ta bort stjärna",
+  'nativeViewer.play': "Spela upp",
+  'nativeViewer.pause': "Pausa",
+  'nativeViewer.loadFailed': "Kunde inte läsas in",
+  'nativeViewer.retry': "Försök igen",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} olästa meddelanden",
   "chatConv.unreadMessagesOne": "1 oläst meddelande",

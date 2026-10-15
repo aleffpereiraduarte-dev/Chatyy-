@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Đóng",
+  'nativeViewer.share': "Chia sẻ",
+  'nativeViewer.save': "Lưu",
+  'nativeViewer.forward': "Chuyển tiếp",
+  'nativeViewer.star': "Gắn dấu sao",
+  'nativeViewer.unstar': "Bỏ dấu sao",
+  'nativeViewer.play': "Phát",
+  'nativeViewer.pause': "Tạm dừng",
+  'nativeViewer.loadFailed': "Không thể tải",
+  'nativeViewer.retry': "Thử lại",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} tin nhắn chưa đọc",
   "chatConv.unreadMessagesOne": "1 tin nhắn chưa đọc",

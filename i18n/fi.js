@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Sulje",
+  'nativeViewer.share': "Jaa",
+  'nativeViewer.save': "Tallenna",
+  'nativeViewer.forward': "Välitä",
+  'nativeViewer.star': "Merkitse tähdellä",
+  'nativeViewer.unstar': "Poista tähti",
+  'nativeViewer.play': "Toista",
+  'nativeViewer.pause': "Tauko",
+  'nativeViewer.loadFailed': "Lataus epäonnistui",
+  'nativeViewer.retry': "Yritä uudelleen",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} lukematonta viestiä",
   "chatConv.unreadMessagesOne": "1 lukematon viesti",

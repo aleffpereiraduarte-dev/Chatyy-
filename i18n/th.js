@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "ปิด",
+  'nativeViewer.share': "แชร์",
+  'nativeViewer.save': "บันทึก",
+  'nativeViewer.forward': "ส่งต่อ",
+  'nativeViewer.star': "ติดดาว",
+  'nativeViewer.unstar': "เลิกติดดาว",
+  'nativeViewer.play': "เล่น",
+  'nativeViewer.pause': "หยุดชั่วคราว",
+  'nativeViewer.loadFailed': "โหลดไม่ได้",
+  'nativeViewer.retry': "ลองอีกครั้ง",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "ข้อความที่ยังไม่ได้อ่าน {n} ข้อความ",
   "chatConv.unreadMessagesOne": "ข้อความที่ยังไม่ได้อ่าน 1 ข้อความ",

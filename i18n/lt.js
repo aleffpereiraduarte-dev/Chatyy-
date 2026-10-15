@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Uždaryti",
+  'nativeViewer.share': "Bendrinti",
+  'nativeViewer.save': "Išsaugoti",
+  'nativeViewer.forward': "Persiųsti",
+  'nativeViewer.star': "Pažymėti žvaigždute",
+  'nativeViewer.unstar': "Pašalinti žvaigždutę",
+  'nativeViewer.play': "Leisti",
+  'nativeViewer.pause': "Pristabdyti",
+  'nativeViewer.loadFailed': "Nepavyko įkelti",
+  'nativeViewer.retry': "Bandyti dar kartą",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} neperskaitytų žinučių",
   "chatConv.unreadMessagesOne": "1 neperskaityta žinutė",

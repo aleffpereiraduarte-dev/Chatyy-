@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Закрити",
+  'nativeViewer.share': "Поділитися",
+  'nativeViewer.save': "Зберегти",
+  'nativeViewer.forward': "Переслати",
+  'nativeViewer.star': "Додати в обране",
+  'nativeViewer.unstar': "Прибрати з обраного",
+  'nativeViewer.play': "Відтворити",
+  'nativeViewer.pause': "Пауза",
+  'nativeViewer.loadFailed': "Не вдалося завантажити",
+  'nativeViewer.retry': "Спробувати ще",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "Непрочитаних повідомлень: {n}",
   "chatConv.unreadMessagesOne": "1 непрочитане повідомлення",

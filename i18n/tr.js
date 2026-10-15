@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Kapat",
+  'nativeViewer.share': "Paylaş",
+  'nativeViewer.save': "Kaydet",
+  'nativeViewer.forward': "İlet",
+  'nativeViewer.star': "Yıldızla",
+  'nativeViewer.unstar': "Yıldızı kaldır",
+  'nativeViewer.play': "Oynat",
+  'nativeViewer.pause': "Duraklat",
+  'nativeViewer.loadFailed': "Yüklenemedi",
+  'nativeViewer.retry': "Tekrar dene",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} okunmamış mesaj",
   "chatConv.unreadMessagesOne": "1 okunmamış mesaj",

@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "మూసివేయి",
+  'nativeViewer.share': "షేర్ చేయి",
+  'nativeViewer.save': "సేవ్ చేయి",
+  'nativeViewer.forward': "ఫార్వర్డ్ చేయి",
+  'nativeViewer.star': "స్టార్ చేయి",
+  'nativeViewer.unstar': "స్టార్ తీసివేయి",
+  'nativeViewer.play': "ప్లే చేయి",
+  'nativeViewer.pause': "పాజ్ చేయి",
+  'nativeViewer.loadFailed': "లోడ్ కాలేదు",
+  'nativeViewer.retry': "మళ్లీ ప్రయత్నించండి",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} చదవని సందేశాలు",
   "chatConv.unreadMessagesOne": "1 చదవని సందేశం",

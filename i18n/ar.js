@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "إغلاق",
+  'nativeViewer.share': "مشاركة",
+  'nativeViewer.save': "حفظ",
+  'nativeViewer.forward': "إعادة توجيه",
+  'nativeViewer.star': "تمييز بنجمة",
+  'nativeViewer.unstar': "إلغاء التمييز",
+  'nativeViewer.play': "تشغيل",
+  'nativeViewer.pause': "إيقاف مؤقت",
+  'nativeViewer.loadFailed': "تعذّر التحميل",
+  'nativeViewer.retry': "إعادة المحاولة",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} رسائل غير مقروءة",
   "chatConv.unreadMessagesOne": "رسالة واحدة غير مقروءة",

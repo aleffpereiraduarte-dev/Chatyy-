@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "ပိတ်ရန်",
+  'nativeViewer.share': "မျှဝေရန်",
+  'nativeViewer.save': "သိမ်းရန်",
+  'nativeViewer.forward': "ထပ်ဆင့်ပို့ရန်",
+  'nativeViewer.star': "ကြယ်ပွင့်တပ်ရန်",
+  'nativeViewer.unstar': "ကြယ်ပွင့်ဖြုတ်ရန်",
+  'nativeViewer.play': "ဖွင့်ရန်",
+  'nativeViewer.pause': "ခဏရပ်ရန်",
+  'nativeViewer.loadFailed': "ဖွင့်၍မရပါ",
+  'nativeViewer.retry': "ထပ်စမ်းကြည့်ပါ",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "မဖတ်ရသေးသော မက်ဆေ့ချ် {n} ခု",
   "chatConv.unreadMessagesOne": "မဖတ်ရသေးသော မက်ဆေ့ချ် 1 ခု",

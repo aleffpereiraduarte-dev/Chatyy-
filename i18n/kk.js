@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Жабу",
+  'nativeViewer.share': "Бөлісу",
+  'nativeViewer.save': "Сақтау",
+  'nativeViewer.forward': "Қайта жіберу",
+  'nativeViewer.star': "Жұлдызша қою",
+  'nativeViewer.unstar': "Жұлдызшаны алу",
+  'nativeViewer.play': "Ойнату",
+  'nativeViewer.pause': "Кідірту",
+  'nativeViewer.loadFailed': "Жүктеу мүмкін болмады",
+  'nativeViewer.retry': "Қайталау",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} оқылмаған хабар",
   "chatConv.unreadMessagesOne": "1 оқылмаған хабар",

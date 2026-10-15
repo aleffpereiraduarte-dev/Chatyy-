@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "סגירה",
+  'nativeViewer.share': "שיתוף",
+  'nativeViewer.save': "שמירה",
+  'nativeViewer.forward': "העברה",
+  'nativeViewer.star': "סימון בכוכב",
+  'nativeViewer.unstar': "הסרת כוכב",
+  'nativeViewer.play': "הפעלה",
+  'nativeViewer.pause': "השהיה",
+  'nativeViewer.loadFailed': "לא ניתן לטעון",
+  'nativeViewer.retry': "לנסות שוב",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} הודעות שלא נקראו",
   "chatConv.unreadMessagesOne": "הודעה אחת שלא נקראה",

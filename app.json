@@ -434,7 +434,7 @@
             "minSdkVersion": 26,
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResources": true,
-            "extraProguardRules": "# [2026-10-07] R8 ofuscava classes usadas por reflection (token FCM não chegava ao Expo; headless do task-manager falhava)\n-keep class expo.modules.notifications.** { *; }\n-keep class expo.modules.adapters.react.apploader.** { *; }\n-keep class expo.modules.taskManager.** { *; }\n-keep class expo.modules.backgroundfetch.** { *; }\n-keep class expo.modules.callkit.** { *; }"
+            "extraProguardRules": "# [2026-10-07] R8 ofuscava classes usadas por reflection (token FCM não chegava ao Expo; headless do task-manager falhava)\n-keep class expo.modules.notifications.** { *; }\n-keep class expo.modules.adapters.react.apploader.** { *; }\n-keep class expo.modules.taskManager.** { *; }\n-keep class expo.modules.backgroundfetch.** { *; }\n-keep class expo.modules.callkit.** { *; }\n# [2026-10-14 native-viewer]\n-keep class expo.modules.chatyymediaviewer.** { *; }"
           }
         }
       ]

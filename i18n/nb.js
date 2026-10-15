@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Lukk",
+  'nativeViewer.share': "Del",
+  'nativeViewer.save': "Lagre",
+  'nativeViewer.forward': "Videresend",
+  'nativeViewer.star': "Stjernemerk",
+  'nativeViewer.unstar': "Fjern stjerne",
+  'nativeViewer.play': "Spill av",
+  'nativeViewer.pause': "Pause",
+  'nativeViewer.loadFailed': "Kunne ikke lastes inn",
+  'nativeViewer.retry': "Prøv igjen",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} uleste meldinger",
   "chatConv.unreadMessagesOne": "1 ulest melding",

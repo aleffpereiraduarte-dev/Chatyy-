@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "ປິດ",
+  'nativeViewer.share': "ແບ່ງປັນ",
+  'nativeViewer.save': "ບັນທຶກ",
+  'nativeViewer.forward': "ສົ່ງຕໍ່",
+  'nativeViewer.star': "ຕິດດາວ",
+  'nativeViewer.unstar': "ເອົາດາວອອກ",
+  'nativeViewer.play': "ຫຼິ້ນ",
+  'nativeViewer.pause': "ຢຸດຊົ່ວຄາວ",
+  'nativeViewer.loadFailed': "ໂຫຼດບໍ່ໄດ້",
+  'nativeViewer.retry': "ລອງໃໝ່",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "ຂໍ້ຄວາມທີ່ຍັງບໍ່ໄດ້ອ່ານ {n}",
   "chatConv.unreadMessagesOne": "ຂໍ້ຄວາມທີ່ຍັງບໍ່ໄດ້ອ່ານ 1",

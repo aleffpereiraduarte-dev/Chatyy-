@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Schließen",
+  'nativeViewer.share': "Teilen",
+  'nativeViewer.save': "Speichern",
+  'nativeViewer.forward': "Weiterleiten",
+  'nativeViewer.star': "Markieren",
+  'nativeViewer.unstar': "Markierung entfernen",
+  'nativeViewer.play': "Abspielen",
+  'nativeViewer.pause': "Pause",
+  'nativeViewer.loadFailed': "Konnte nicht geladen werden",
+  'nativeViewer.retry': "Erneut versuchen",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} ungelesene Nachrichten",
   "chatConv.unreadMessagesOne": "1 ungelesene Nachricht",

@@ -1,0 +1,8 @@
+{
+  "name": "expo-media-viewer",
+  "version": "1.0.0",
+  "description": "Chatyy native fullscreen media viewer (photos + videos): iOS UICollectionView pager + UIScrollView zoom + AVPlayerLayer; Android ViewPager2 + Matrix zoom ImageView + Media3 ExoPlayer.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

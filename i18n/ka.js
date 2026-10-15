@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "დახურვა",
+  'nativeViewer.share': "გაზიარება",
+  'nativeViewer.save': "შენახვა",
+  'nativeViewer.forward': "გადაგზავნა",
+  'nativeViewer.star': "ვარსკვლავით მონიშვნა",
+  'nativeViewer.unstar': "ვარსკვლავის მოხსნა",
+  'nativeViewer.play': "დაკვრა",
+  'nativeViewer.pause': "პაუზა",
+  'nativeViewer.loadFailed': "ვერ ჩაიტვირთა",
+  'nativeViewer.retry': "ხელახლა ცდა",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} წაუკითხავი შეტყობინება",
   "chatConv.unreadMessagesOne": "1 წაუკითხავი შეტყობინება",

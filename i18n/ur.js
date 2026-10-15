@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "بند کریں",
+  'nativeViewer.share': "شیئر کریں",
+  'nativeViewer.save': "محفوظ کریں",
+  'nativeViewer.forward': "فارورڈ کریں",
+  'nativeViewer.star': "ستارہ لگائیں",
+  'nativeViewer.unstar': "ستارہ ہٹائیں",
+  'nativeViewer.play': "چلائیں",
+  'nativeViewer.pause': "روکیں",
+  'nativeViewer.loadFailed': "لوڈ نہیں ہو سکا",
+  'nativeViewer.retry': "دوبارہ کوشش کریں",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} غیر پڑھے پیغامات",
   "chatConv.unreadMessagesOne": "1 غیر پڑھا پیغام",

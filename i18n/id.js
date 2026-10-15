@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Tutup",
+  'nativeViewer.share': "Bagikan",
+  'nativeViewer.save': "Simpan",
+  'nativeViewer.forward': "Teruskan",
+  'nativeViewer.star': "Bintangi",
+  'nativeViewer.unstar': "Hapus bintang",
+  'nativeViewer.play': "Putar",
+  'nativeViewer.pause': "Jeda",
+  'nativeViewer.loadFailed': "Tidak dapat memuat",
+  'nativeViewer.retry': "Coba lagi",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} pesan belum dibaca",
   "chatConv.unreadMessagesOne": "1 pesan belum dibaca",

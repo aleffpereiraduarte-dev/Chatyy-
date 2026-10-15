@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "닫기",
+  'nativeViewer.share': "공유",
+  'nativeViewer.save': "저장",
+  'nativeViewer.forward': "전달",
+  'nativeViewer.star': "별표",
+  'nativeViewer.unstar': "별표 해제",
+  'nativeViewer.play': "재생",
+  'nativeViewer.pause': "일시정지",
+  'nativeViewer.loadFailed': "불러올 수 없음",
+  'nativeViewer.retry': "다시 시도",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "읽지 않은 메시지 {n}개",
   "chatConv.unreadMessagesOne": "읽지 않은 메시지 1개",

@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "閉じる",
+  'nativeViewer.share': "共有",
+  'nativeViewer.save': "保存",
+  'nativeViewer.forward': "転送",
+  'nativeViewer.star': "スターを付ける",
+  'nativeViewer.unstar': "スターを外す",
+  'nativeViewer.play': "再生",
+  'nativeViewer.pause': "一時停止",
+  'nativeViewer.loadFailed': "読み込めませんでした",
+  'nativeViewer.retry': "再試行",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "未読メッセージ {n} 件",
   "chatConv.unreadMessagesOne": "未読メッセージ 1 件",

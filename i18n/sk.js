@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Zavrieť",
+  'nativeViewer.share': "Zdieľať",
+  'nativeViewer.save': "Uložiť",
+  'nativeViewer.forward': "Preposlať",
+  'nativeViewer.star': "Označiť hviezdičkou",
+  'nativeViewer.unstar': "Odstrániť hviezdičku",
+  'nativeViewer.play': "Prehrať",
+  'nativeViewer.pause': "Pozastaviť",
+  'nativeViewer.loadFailed': "Nepodarilo sa načítať",
+  'nativeViewer.retry': "Skúsiť znova",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} neprečítaných správ",
   "chatConv.unreadMessagesOne": "1 neprečítaná správa",

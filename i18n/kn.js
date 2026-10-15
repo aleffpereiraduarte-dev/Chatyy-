@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "ಮುಚ್ಚಿ",
+  'nativeViewer.share': "ಹಂಚಿಕೊಳ್ಳಿ",
+  'nativeViewer.save': "ಉಳಿಸಿ",
+  'nativeViewer.forward': "ಫಾರ್ವರ್ಡ್ ಮಾಡಿ",
+  'nativeViewer.star': "ನಕ್ಷತ್ರ ಹಾಕಿ",
+  'nativeViewer.unstar': "ನಕ್ಷತ್ರ ತೆಗೆಯಿರಿ",
+  'nativeViewer.play': "ಪ್ಲೇ ಮಾಡಿ",
+  'nativeViewer.pause': "ವಿರಾಮ",
+  'nativeViewer.loadFailed': "ಲೋಡ್ ಮಾಡಲು ಆಗಲಿಲ್ಲ",
+  'nativeViewer.retry': "ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} ಓದದ ಸಂದೇಶಗಳು",
   "chatConv.unreadMessagesOne": "1 ಓದದ ಸಂದೇಶ",

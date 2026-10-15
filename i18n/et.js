@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Sulge",
+  'nativeViewer.share': "Jaga",
+  'nativeViewer.save': "Salvesta",
+  'nativeViewer.forward': "Edasta",
+  'nativeViewer.star': "Märgi tärniga",
+  'nativeViewer.unstar': "Eemalda tärn",
+  'nativeViewer.play': "Esita",
+  'nativeViewer.pause': "Paus",
+  'nativeViewer.loadFailed': "Laadimine ebaõnnestus",
+  'nativeViewer.retry': "Proovi uuesti",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} lugemata sõnumit",
   "chatConv.unreadMessagesOne": "1 lugemata sõnum",

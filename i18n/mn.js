@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Хаах",
+  'nativeViewer.share': "Хуваалцах",
+  'nativeViewer.save': "Хадгалах",
+  'nativeViewer.forward': "Дамжуулах",
+  'nativeViewer.star': "Од тавих",
+  'nativeViewer.unstar': "Од авах",
+  'nativeViewer.play': "Тоглуулах",
+  'nativeViewer.pause': "Түр зогсоох",
+  'nativeViewer.loadFailed': "Ачаалж чадсангүй",
+  'nativeViewer.retry': "Дахин оролдох",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} уншаагүй мессеж",
   "chatConv.unreadMessagesOne": "1 уншаагүй мессеж",

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { KEYBOARD_CONTROLLER_ACTIVE as _KC_ACTIVE } from '../utils/threadKeyboard'; // [2026-10-08 photo-editor] gate do zoom UI-thread
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Modal, Image, Platform,
-  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share, ScrollView,
+  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share, ScrollView, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward, IconType, IconCopy, IconChevronLeft, IconChevronRight } from './Icons';
@@ -464,7 +464,7 @@ function getExt(filename) {
   return (filename || '').split('.').pop().toLowerCase();
 }
 
-function getFullUrl(url) {
+function getFullUrl(url, _noLocal) {
   if (!url) return '';
   // If the source is already a local file (e.g. just-recorded outbox audio),
   // hand it back untouched — no normalization, no remote prefix.
@@ -502,7 +502,7 @@ function getFullUrl(url) {
   // file:// URIs uniformly. This is the whole "tocando offline" guarantee —
   // when the radio drops mid-stream, native keeps reading from disk and
   // playback never pauses.
-  if (Platform.OS !== 'web') {
+  if (Platform.OS !== 'web' && !_noLocal) {
     try {
       const { getLocalUriIfCached } = require('../services/mediaCache');
       const local = getLocalUriIfCached(full);
@@ -1926,6 +1926,93 @@ function isAssistantSender(name, email) {
   return lp === 'one' || (name || '').trim().toLowerCase() === 'one';
 }
 
+// [2026-10-14 native-viewer] Founder: "o swipe passando de uma foto pro lado
+// ainda está muito ruim, MUITO — coloca isso em NATIVO". iOS/Android abrem o
+// visualizador NATIVO (modules/expo-media-viewer: UICollectionView + zoom
+// UIScrollView / ViewPager2 + Matrix, vídeo AVPlayer / Media3) e este
+// componente não renderiza o pager JS. Binário sem o módulo, web, view-once ou
+// lista com documento → pager JS de sempre. Kill switch OTA/console:
+// globalThis.__chatyy_native_viewer = false.
+let _NV = null;
+function _nativeViewer() {
+  if (_NV !== null) return _NV || null;
+  _NV = false;
+  if (Platform.OS === 'ios' || Platform.OS === 'android') {
+    try {
+      const m = require('../modules/expo-media-viewer');
+      if (m && typeof m.isAvailable === 'function' && m.isAvailable()) _NV = m;
+    } catch {}
+  }
+  return _NV || null;
+}
+function _nvIsMedia(it) {
+  if (!it || !it.fileUrl) return false;
+  if (it.viewOnce || it.isViewOnce || it.is_view_once) return false;
+  const e = getExt(it.fileName);
+  return it.type === 'image' || it.type === 'video' || IMAGE_EXTS.includes(e) || VIDEO_EXTS.includes(e);
+}
+function _nvEligible(list, viewOnce) {
+  try { if (globalThis.__chatyy_native_viewer === false) return false; } catch {}
+  if (viewOnce || !Array.isArray(list) || list.length === 0) return false;
+  if (!_nativeViewer()) return false;
+  return list.every(_nvIsMedia);
+}
+function _nvDate(ts) {
+  if (!ts) return '';
+  try {
+    let ms = typeof ts === 'number' ? (ts < 1e12 ? ts * 1000 : ts) : Date.parse(ts);
+    if ((!ms || isNaN(ms)) && typeof ts === 'string') {
+      let iso = ts.trim().replace(' ', 'T');
+      if (!/([zZ]|[+-]\d\d:?\d\d)$/.test(iso)) iso += 'Z';
+      ms = Date.parse(iso);
+    }
+    if (!ms || isNaN(ms)) return '';
+    const d = new Date(ms);
+    return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+      + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
+}
+function _nvItems(list, ctx) {
+  const single = list.length === 1;
+  return list.map((it) => {
+    const isVid = it.type === 'video' || VIDEO_EXTS.includes(getExt(it.fileName));
+    const fu = String(it.fileUrl || '');
+    const isLocalSrc = /^(file|content):\/\//.test(fu);
+    let local = '';
+    if (isLocalSrc) local = fu;
+    else {
+      const c = getFullUrl(fu);
+      if (typeof c === 'string' && c.startsWith('file://')) local = c;
+    }
+    const mid = it.messageId != null ? it.messageId : (it.id != null ? it.id : (single ? ctx.messageId : null));
+    if (!local && mid != null && mid !== 0) {
+      try {
+        const lp = require('../services/mediaCache').getLocalUriForMessage?.(mid);
+        if (typeof lp === 'string' && lp) local = lp.startsWith('/') ? 'file://' + lp : lp;
+      } catch {}
+    }
+    const remote = isLocalSrc ? '' : getFullUrl(fu, true);
+    let uri = remote || local;
+    // Vídeo: MP4 já no aparelho vence; senão HLS adaptativo (como o pager JS).
+    if (isVid && it.hlsUrl && !local) uri = getFullUrl(it.hlsUrl, true);
+    let th = it.thumbUri ? getFullUrl(it.thumbUri) : (it.placeholderUri || it.thumbB64Uri || '');
+    if (!th && single) th = ctx.thumbUri ? getFullUrl(ctx.thumbUri) : (ctx.placeholderUri || '');
+    const cap = String((it.caption != null ? it.caption : (single ? ctx.caption : '')) || '').trim();
+    return {
+      uri: uri || '',
+      localUri: local || '',
+      thumbUri: th || '',
+      type: isVid ? 'video' : 'image',
+      messageId: mid != null ? String(mid) : '',
+      caption: cap,
+      senderName: ctx.senderName || '',
+      dateLabel: _nvDate(it.createdAt || it.created_at || ctx.createdAt),
+      width: Number(it.width || it.videoWidth || 0) || 0,
+      height: Number(it.height || it.videoHeight || 0) || 0,
+    };
+  });
+}
+
 // ============================================================
 // MAIN MODAL
 // ============================================================
@@ -1966,7 +2053,7 @@ const _AlbumPage = memo(function _AlbumPage({ item, isActive, pageW, webH, conve
   return true;
 });
 
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors, placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2071,6 +2158,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const _list = (Array.isArray(mediaList) && mediaList.length > 0)
     ? mediaList
     : (visible ? [{ fileUrl, hlsUrl, fileName, fileSize, type }] : []);
+  // [2026-10-14 native-viewer] Sessão nativa aberta → fica nativo até fechar
+  // (mesmo se a lista mudar no meio).
+  const _nvSessionRef = useRef(0);
+  const [_nvFailed, _setNvFailed] = useState(false);
+  const _nvOn = !!visible && !_nvFailed && (_nvSessionRef.current !== 0 || _nvEligible(_list, viewOnce));
   const _initialLive = Math.max(0, Math.min(_list.length - 1, Number(initialIndex) || 0));
   // [2026-10-14 swipe-album] Índice inicial CONGELADO por abertura. O
   // chat-conversation recalcula mediaList/initialIndex a cada render dele (upload
@@ -2088,6 +2180,122 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // Reset on every open so reopening from a different index doesn't restore
   // the previous viewer position.
   useEffect(() => { if (visible) _setCurrentIdx(_initial); }, [visible, _initial]);
+
+  // [2026-10-14 native-viewer] Abre/fecha o viewer nativo; ações voltam por
+  // evento e reaproveitam os handlers deste componente (salvar na galeria,
+  // compartilhar arquivo, encaminhar).
+  const _nvSubsRef = useRef([]);
+  const _nvActRef = useRef(null);
+  const _nvCtxRef = useRef(null);
+  _nvCtxRef.current = {
+    list: _list, onClose, onForward, t, messageId, caption, createdAt,
+    placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri,
+    senderName: isAssistantSender(senderName, senderEmail) ? 'Bia' : (senderName || (senderEmail || '').split('@')[0] || ''),
+  };
+  const _nvCleanup = useCallback(() => {
+    for (const sub of _nvSubsRef.current) { try { sub.remove(); } catch {} }
+    _nvSubsRef.current = [];
+  }, []);
+  const _nvOnAction = useCallback(async (e) => {
+    const NV = _nativeViewer();
+    const ctx = _nvCtxRef.current || {};
+    const list = ctx.list || [];
+    const it = list[e?.index] || list[0];
+    if (!NV || !it) return;
+    if (e.action === 'share') {
+      NV.setActionState('share', 'busy');
+      try { await shareMediaFile({ url: getFullUrl(it.fileUrl), fileName: it.fileName }); } catch {}
+      NV.setActionState('share', 'idle');
+    } else if (e.action === 'save') {
+      NV.setActionState('save', 'busy');
+      let ok = false;
+      try {
+        const fn = _nvActRef.current && _nvActRef.current.save;
+        if (fn) ok = !!(await fn({ url: getFullUrl(it.fileUrl), active: it, fileName: it.fileName }));
+      } catch {}
+      NV.setActionState('save', ok ? 'done' : 'idle');
+    } else if (e.action === 'forward') {
+      try { if (typeof ctx.onForward === 'function') ctx.onForward(it); } catch {}
+    } else if (e.action === 'star') {
+      _setStarred(!!e.starred);
+      try { require('expo-haptics').selectionAsync?.(); } catch {}
+    }
+  }, []);
+  useEffect(() => {
+    const NV = _nativeViewer();
+    if (!visible) {
+      if (_nvSessionRef.current !== 0) {
+        _nvSessionRef.current = 0;
+        _nvCleanup();
+        if (NV) NV.close();
+      }
+      if (_nvFailed) _setNvFailed(false);
+      return undefined;
+    }
+    if (!_nvOn || !NV || _nvSessionRef.current !== 0) return undefined;
+    _nvSessionRef.current = -1; // abrindo
+    const ctx = _nvCtxRef.current || {};
+    const _tt = (k) => {
+      try {
+        const v = typeof ctx.t === 'function' ? ctx.t(k) : '';
+        return typeof v === 'string' && v && v !== k ? v : undefined;
+      } catch { return undefined; }
+    };
+    const items = _nvItems(ctx.list || [], ctx);
+    const _same = (e) => !!e && _nvSessionRef.current > 0 && e.session === _nvSessionRef.current;
+    _nvCleanup();
+    _nvSubsRef.current = [
+      NV.addListener('onIndexChange', (e) => {
+        if (_same(e) && typeof e.index === 'number') _setCurrentIdx(e.index);
+      }),
+      NV.addListener('onAction', (e) => { if (_same(e)) _nvOnAction(e); }),
+      NV.addListener('onClose', (e) => {
+        if (!_same(e)) return;
+        _nvSessionRef.current = 0;
+        _nvCleanup();
+        try { const c = _nvCtxRef.current; if (c && typeof c.onClose === 'function') c.onClose(); } catch {}
+      }),
+    ];
+    try { Keyboard.dismiss(); } catch {}
+    NV.open({
+      items,
+      index: _initial,
+      labels: {
+        close: _tt('nativeViewer.close'),
+        share: _tt('nativeViewer.share'),
+        save: _tt('nativeViewer.save'),
+        forward: _tt('nativeViewer.forward'),
+        star: _tt('nativeViewer.star'),
+        unstar: _tt('nativeViewer.unstar'),
+        play: _tt('nativeViewer.play'),
+        pause: _tt('nativeViewer.pause'),
+        loadFailed: _tt('nativeViewer.loadFailed'),
+        retry: _tt('nativeViewer.retry'),
+      },
+      allowShare: true,
+      allowSave: true,
+      allowForward: typeof ctx.onForward === 'function',
+      allowStar: true,
+    }).then((sid) => {
+      if (sid > 0) {
+        if (_nvSessionRef.current === -1) _nvSessionRef.current = sid;
+        else NV.close(); // fechado enquanto abria
+      } else if (_nvSessionRef.current === -1) {
+        // Não abriu (sem Activity/VC): cai no pager JS.
+        _nvSessionRef.current = 0;
+        _nvCleanup();
+        _setNvFailed(true);
+      }
+    });
+    return undefined;
+  }, [visible, _nvOn]);
+  useEffect(() => () => {
+    if (_nvSessionRef.current !== 0) {
+      _nvSessionRef.current = 0;
+      _nvCleanup();
+      try { _nativeViewer()?.close(); } catch {}
+    }
+  }, [_nvCleanup]);
   // [2026-10-14 album-swipe] Pager do álbum: ref p/ as setas do web + índice
   // pelo onScroll no web (RNW não emite onMomentumScrollEnd).
   const _pagerRef = useRef(null);
@@ -2228,7 +2436,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // Preload neighbors so swipe between is instant. Image.prefetch on RN +
   // ExpoImage.prefetch when available.
   useEffect(() => {
-    if (!visible || _list.length < 2) return;
+    if (!visible || _list.length < 2 || _nvOn) return;
     const neighbors = [];
     if (_currentIdx + 1 < _list.length) neighbors.push(_list[_currentIdx + 1]);
     if (_currentIdx - 1 >= 0) neighbors.push(_list[_currentIdx - 1]);
@@ -2250,7 +2458,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         try { _ei?.prefetch?.(u); } catch {}
       }
     }
-  }, [visible, _currentIdx, _list]);
+  }, [visible, _currentIdx, _list, _nvOn]);
 
   // HLS offline manifest resolution. When the active item is a video AND we
   // have a previously-downloaded m3u8 sitting at
@@ -2447,18 +2655,24 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // falls back to the single-item prop. Empty string → nothing renders.
   const _activeCaption = String((_active?.caption != null ? _active.caption : caption) || '').trim();
 
-  const handleDownload = async () => {
-    if (viewOnce) return;
+  // [2026-10-14 native-viewer] _ovr = item vindo do viewer nativo ({ url,
+  // active, fileName }); devolve true quando salvou.
+  const handleDownload = async (_ovr) => {
+    if (viewOnce) return false;
+    const _dlUrl = (_ovr && _ovr.url) || url;
+    const _dlActive = (_ovr && _ovr.active) || _active;
+    const _dlName = (_ovr && _ovr.fileName) || fileName;
+    let _dlOk = false;
     if (Platform.OS === 'web') {
       // Stream as blob to avoid opening media.chatyy in a new tab
       try {
         setSaving(true);
-        const res = await fetch(url, { credentials: 'include' });
+        const res = await fetch(_dlUrl, { credentials: 'include' });
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = blobUrl;
-        link.download = fileName || 'download';
+        link.download = _dlName || 'download';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -2467,7 +2681,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         setTimeout(() => setSaved(false), 2000);
       } catch {
         // Fallback (still in same tab)
-        window.location.href = url;
+        window.location.href = _dlUrl;
       } finally {
         setSaving(false);
       }
@@ -2491,12 +2705,12 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         let FS;
         try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
 
-        let sourceUri = url;
+        let sourceUri = _dlUrl;
 
         // [WAVE 81 2026-05-21] file:// existence guard. User report iOS:
         //   "ao salvar the file ahsgvg.jpg could not be opened because
         //    there is no such file"
-        // Root cause: url here resolves via getFullUrl(_active.fileUrl) which
+        // Root cause: url here resolves via getFullUrl(_dlActive.fileUrl) which
         // can return a stale file:// path when the chat-conversation row
         // passed `fullUri` (msg._localUri or imgLocalPath) and the underlying
         // file was evicted by iOS or deleted from chat-media-saved/. The
@@ -2507,19 +2721,19 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             const info = await FS.getInfoAsync(sourceUri);
             if (!info?.exists) {
               // Local gone — fall back to remote URL on the active item.
-              const remote = _active?.fileUrl
-                ? (_active.fileUrl.startsWith('http')
-                    ? _active.fileUrl
-                    : `https://chatyy.com.br${_active.fileUrl}`)
+              const remote = _dlActive?.fileUrl
+                ? (_dlActive.fileUrl.startsWith('http')
+                    ? _dlActive.fileUrl
+                    : `https://chatyy.com.br${_dlActive.fileUrl}`)
                 : null;
               if (remote) sourceUri = remote;
             }
           } catch {
             // getInfoAsync threw — fall back to remote if we have one.
-            const remote = _active?.fileUrl
-              ? (_active.fileUrl.startsWith('http')
-                  ? _active.fileUrl
-                  : `https://chatyy.com.br${_active.fileUrl}`)
+            const remote = _dlActive?.fileUrl
+              ? (_dlActive.fileUrl.startsWith('http')
+                  ? _dlActive.fileUrl
+                  : `https://chatyy.com.br${_dlActive.fileUrl}`)
               : null;
             if (remote) sourceUri = remote;
           }
@@ -2535,7 +2749,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           // chars in PHPhotoLibrary error messages ("ahsgvg.jpg" came from
           // a user-typed name on send).
           const urlExt = sourceUri.match(/\.(png|jpe?g|gif|webp|heic|heif|mp4|mov|m4v|webm)(\?|$)/i)?.[1];
-          const nameExt = (fileName || '').split('?')[0].split('.').pop();
+          const nameExt = (_dlName || '').split('?')[0].split('.').pop();
           const safeExt = (urlExt || (nameExt && /^[a-zA-Z0-9]{2,5}$/.test(nameExt) ? nameExt : 'jpg')).toLowerCase();
           const tempPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + safeExt;
           const download = await FS.downloadAsync(sourceUri, tempPath);
@@ -2639,11 +2853,12 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           }
         }
         if (ok) {
+          _dlOk = true;
           setSaved(true);
           setTimeout(() => setSaved(false), 2000);
         }
         // Cleanup temp file if we created one
-        if (sourceUri !== url && sourceUri.startsWith(FS.cacheDirectory)) {
+        if (sourceUri !== _dlUrl && sourceUri.startsWith(FS.cacheDirectory)) {
           FS.deleteAsync(sourceUri, { idempotent: true }).catch(() => {});
         }
       } catch (e) {
@@ -2652,6 +2867,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         setSaving(false);
       }
     }
+    return _dlOk;
   };
 
   // View-once: block context menu and screenshots on web
@@ -2661,6 +2877,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     WebkitTouchCallout: 'none',
     pointerEvents: 'auto',
   } : {};
+
+  _nvActRef.current = { save: handleDownload };
+  // [2026-10-14 native-viewer] Viewer nativo na tela → nada do pager JS.
+  if (_nvOn) return null;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
@@ -3045,7 +3265,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           )}
           {!viewOnce && (
             <TouchableOpacity
-              onPress={handleDownload}
+              onPress={() => handleDownload()}
               disabled={saving}
               style={s.actionBtn}
               hitSlop={10}

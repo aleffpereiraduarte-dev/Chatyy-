@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Bezárás",
+  'nativeViewer.share': "Megosztás",
+  'nativeViewer.save': "Mentés",
+  'nativeViewer.forward': "Továbbítás",
+  'nativeViewer.star': "Csillagozás",
+  'nativeViewer.unstar': "Csillag eltávolítása",
+  'nativeViewer.play': "Lejátszás",
+  'nativeViewer.pause': "Szünet",
+  'nativeViewer.loadFailed': "Nem sikerült betölteni",
+  'nativeViewer.retry': "Újra",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} olvasatlan üzenet",
   "chatConv.unreadMessagesOne": "1 olvasatlan üzenet",

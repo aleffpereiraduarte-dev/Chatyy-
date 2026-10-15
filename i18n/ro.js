@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Închide",
+  'nativeViewer.share': "Distribuie",
+  'nativeViewer.save': "Salvează",
+  'nativeViewer.forward': "Redirecționează",
+  'nativeViewer.star': "Marchează cu stea",
+  'nativeViewer.unstar': "Elimină steaua",
+  'nativeViewer.play': "Redă",
+  'nativeViewer.pause': "Pauză",
+  'nativeViewer.loadFailed': "Nu s-a putut încărca",
+  'nativeViewer.retry': "Încearcă din nou",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} mesaje necitite",
   "chatConv.unreadMessagesOne": "1 mesaj necitit",

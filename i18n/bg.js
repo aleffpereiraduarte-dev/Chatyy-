@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "Затвори",
+  'nativeViewer.share': "Сподели",
+  'nativeViewer.save': "Запази",
+  'nativeViewer.forward': "Препрати",
+  'nativeViewer.star': "Отбележи със звезда",
+  'nativeViewer.unstar': "Премахни звездата",
+  'nativeViewer.play': "Пусни",
+  'nativeViewer.pause': "Пауза",
+  'nativeViewer.loadFailed': "Неуспешно зареждане",
+  'nativeViewer.retry': "Опитай отново",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n} непрочетени съобщения",
   "chatConv.unreadMessagesOne": "1 непрочетено съобщение",

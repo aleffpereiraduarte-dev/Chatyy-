@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "បិទ",
+  'nativeViewer.share': "ចែករំលែក",
+  'nativeViewer.save': "រក្សាទុក",
+  'nativeViewer.forward': "បញ្ជូនបន្ត",
+  'nativeViewer.star': "ដាក់ផ្កាយ",
+  'nativeViewer.unstar': "ដកផ្កាយ",
+  'nativeViewer.play': "ចាក់",
+  'nativeViewer.pause': "ផ្អាក",
+  'nativeViewer.loadFailed': "មិនអាចផ្ទុកបានទេ",
+  'nativeViewer.retry': "ព្យាយាមម្ដងទៀត",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "សារមិនទាន់អាន {n}",
   "chatConv.unreadMessagesOne": "សារមិនទាន់អាន 1",

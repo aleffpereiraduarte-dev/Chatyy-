@@ -1,4 +1,15 @@
 export default {
+  // [2026-10-14 native-viewer]
+  'nativeViewer.close': "বন্ধ করুন",
+  'nativeViewer.share': "শেয়ার করুন",
+  'nativeViewer.save': "সেভ করুন",
+  'nativeViewer.forward': "ফরোয়ার্ড করুন",
+  'nativeViewer.star': "তারকা দিন",
+  'nativeViewer.unstar': "তারকা সরান",
+  'nativeViewer.play': "চালান",
+  'nativeViewer.pause': "বিরতি",
+  'nativeViewer.loadFailed': "লোড করা যায়নি",
+  'nativeViewer.retry': "আবার চেষ্টা করুন",
   // [2026-10-14 grupo-rajada]
   "chatConv.unreadMessagesN": "{n}টি অপঠিত বার্তা",
   "chatConv.unreadMessagesOne": "1টি অপঠিত বার্তা",
