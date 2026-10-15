@@ -502,7 +502,13 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
         contentContainerStyle={{ paddingBottom: nativeMode ? nativeSheetBottomPad(insets, 16) : Math.max(insets.bottom, 12) + 16 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
       >
+        {/* [2026-10-15 hotfix-2] No formSheet nativo, cabeçalho + busca ficam DENTRO da rolagem (uma coluna só):
+            irmãos fora do ScrollView eram sobrepostos pela lista no iPhone (título sumia, busca por cima de Recentes). */}
+        {nativeMode && headerEl}
+        {nativeMode && searchEl}
         {!qn && biaCardEl}
         {showStrip && (
           <AppsItem key="strip" enterDelay={delayFor(stripBase - 20)} style={{ marginBottom: 14 }}>
@@ -577,9 +583,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   if (USE_NATIVE_SHEETS) {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents={[0.62, 1]} backgroundColor={sheetBg}>
-        <NativeSheetKeyboardView style={{ paddingTop: 22, paddingHorizontal: 16, backgroundColor: sheetBg }}>
-          {headerEl}
-          {searchEl}
+        <NativeSheetKeyboardView style={{ flex: 1, paddingTop: 22, paddingHorizontal: 16, backgroundColor: sheetBg }}>
           {renderList(true)}
         </NativeSheetKeyboardView>
       </NativeSheet>
