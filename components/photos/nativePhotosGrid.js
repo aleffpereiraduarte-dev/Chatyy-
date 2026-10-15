@@ -22,6 +22,13 @@ import { Platform, StyleSheet } from 'react-native';
 
 let _NativeView;
 let _gridMod;
+let _gridApi = 0;
+// [2026-10-15 photos-flicker] apiVersion 1 (build 692) recarregava a grade inteira
+// (reloadData) a cada aviso de metadados do Fotos/iCloud — o backup baixando
+// originais dispara vários por segundo → miniaturas "piscando". A correção é
+// nativa (apiVersion 2). Com binário v1 a tela usa a lista JS de sempre;
+// globalThis.__chatyy_native_photos = true força a grade v1 (QA).
+const MIN_GRID_API = 2;
 
 function gridModule() {
   if (_gridMod !== undefined) return _gridMod;
@@ -30,14 +37,22 @@ function gridModule() {
   try {
     const { requireOptionalNativeModule } = require('expo-modules-core');
     const m = requireOptionalNativeModule('ChatyyPhotosGrid');
-    if (m && typeof m.apiVersion === 'function' && Number(m.apiVersion()) >= 1) _gridMod = m;
+    if (m && typeof m.apiVersion === 'function') {
+      _gridApi = Number(m.apiVersion()) || 0;
+      if (_gridApi >= 1) _gridMod = m;
+    }
   } catch { _gridMod = null; }
   return _gridMod;
 }
 
 export function isNativePhotosGridAvailable() {
-  try { if (globalThis.__chatyy_native_photos === false) return false; } catch {}
-  return !!gridModule();
+  let force = false;
+  try {
+    if (globalThis.__chatyy_native_photos === false) return false;
+    force = globalThis.__chatyy_native_photos === true;
+  } catch {}
+  if (!gridModule()) return false;
+  return force || _gridApi >= MIN_GRID_API;
 }
 
 function NativeView() {
@@ -141,7 +156,7 @@ function hexColor(c, fallback) {
   return fallback;
 }
 
-const NativePhotosGrid = forwardRef(function NativePhotosGrid(props, ref) {
+const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
   const {
     colors = {}, isDark = false, t, locale = 'pt-BR', insetTop = 0, insetBottom = 0,
     userEmail = '', backupEnabled = false, includeLocal = true, zoomLevel,
@@ -157,6 +172,13 @@ const NativePhotosGrid = forwardRef(function NativePhotosGrid(props, ref) {
   const failedRef = useRef(false);
   const tRef = useRef(t);
   tRef.current = t;
+  // [2026-10-15 photos-flicker] callbacks do pai (arrows novas a cada render) via ref:
+  // handlers da view ficam estáveis e o React.memo abaixo corta re-render da view
+  // nativa quando a tela re-renderiza (progresso do backup etc.).
+  const cbRef = useRef({});
+  cbRef.current = { onSelectionChange, onSelectionMode, onZoomChange, onFail, onReadyProp, onPermissionNeeded };
+  const askedPermRef = useRef(false);
+  const openingRef = useRef(false);
 
   useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -167,8 +189,8 @@ const NativePhotosGrid = forwardRef(function NativePhotosGrid(props, ref) {
   const fail = useCallback((why) => {
     if (failedRef.current) return;
     failedRef.current = true;
-    try { onFail && onFail(why); } catch {}
-  }, [onFail]);
+    try { const f = cbRef.current.onFail; f && f(why); } catch {}
+  }, []);
 
   // sem onReady em 4 s → JS assume (binário quebrado/sem a view)
   useEffect(() => {
@@ -237,6 +259,11 @@ const NativePhotosGrid = forwardRef(function NativePhotosGrid(props, ref) {
     let NV = null;
     try { const m = require('../../modules/expo-media-viewer'); if (m.isAvailable()) NV = m; } catch {}
     if (!NV) return;
+    // toque duplo/rápido abria 2 viewers (o 1º fechado "em silêncio" no meio da
+    // apresentação) → um por vez.
+    if (openingRef.current) return;
+    openingRef.current = true;
+    setTimeout(() => { openingRef.current = false; }, 700);
     const idx = Number(e.index) || 0;
     const from = Math.max(0, idx - 150);
     const win = (await call('getItems', from, 300)) || [];
@@ -305,16 +332,20 @@ const NativePhotosGrid = forwardRef(function NativePhotosGrid(props, ref) {
       w.forEach((r) => { try { r(); } catch {} });
     }
     const d = (e && e.nativeEvent) || {};
-    if (d.permission === 'notDetermined' && onPermissionNeeded) {
-      Promise.resolve(onPermissionNeeded()).then((granted) => { if (granted) call('reloadLocal'); }).catch(() => {});
+    const cb = cbRef.current;
+    // pede a permissão UMA vez por montagem (onReady chega a cada recarga; antes
+    // podia virar laço pedir→recarregar→onReady→pedir)
+    if (d.permission === 'notDetermined' && cb.onPermissionNeeded && !askedPermRef.current) {
+      askedPermRef.current = true;
+      Promise.resolve(cb.onPermissionNeeded()).then((granted) => { if (granted) call('reloadLocal'); }).catch(() => {});
     }
-    try { onReadyProp && onReadyProp(d); } catch {}
-  }, [call, onPermissionNeeded, onReadyProp]);
+    try { cb.onReadyProp && cb.onReadyProp(d); } catch {}
+  }, [call]);
 
   const onPress = useCallback((e) => { openViewer((e && e.nativeEvent) || {}); }, [openViewer]);
-  const onSel = useCallback((e) => { const d = (e && e.nativeEvent) || {}; onSelectionChange && onSelectionChange(d.count || 0, d.keys || []); }, [onSelectionChange]);
-  const onSelMode = useCallback((e) => { onSelectionMode && onSelectionMode(!!(e && e.nativeEvent && e.nativeEvent.active)); }, [onSelectionMode]);
-  const onZoom = useCallback((e) => { onZoomChange && onZoomChange(e && e.nativeEvent ? e.nativeEvent.level : 3); }, [onZoomChange]);
+  const onSel = useCallback((e) => { const d = (e && e.nativeEvent) || {}; const f = cbRef.current.onSelectionChange; f && f(d.count || 0, d.keys || []); }, []);
+  const onSelMode = useCallback((e) => { const f = cbRef.current.onSelectionMode; f && f(!!(e && e.nativeEvent && e.nativeEvent.active)); }, []);
+  const onZoom = useCallback((e) => { const f = cbRef.current.onZoomChange; f && f(e && e.nativeEvent ? e.nativeEvent.level : 3); }, []);
   const onErr = useCallback(() => fail('native_error'), [fail]);
 
   useImperativeHandle(ref, () => ({
@@ -356,11 +387,13 @@ const NativePhotosGrid = forwardRef(function NativePhotosGrid(props, ref) {
     yesterday: tr('photosNative.yesterday', 'Ontem'),
   }), [tr, t]);
 
+  const viewStyle = useMemo(() => [styles.fill, style], [style]);
+
   if (!V) return null;
   return (
     <V
       ref={viewRef}
-      style={[styles.fill, style]}
+      style={viewStyle}
       theme={theme}
       dark={!!isDark}
       locale={locale}
@@ -418,5 +451,19 @@ async function saveGridItem(it) {
 }
 
 const styles = StyleSheet.create({ fill: { flex: 1 } });
+
+// [2026-10-15 photos-flicker] re-render só quando muda o que a view usa — callbacks
+// do pai são lidos por ref (cbRef), então mudança só de função não conta.
+const DATA_PROPS = ['colors', 'isDark', 't', 'locale', 'insetTop', 'insetBottom', 'userEmail', 'backupEnabled', 'includeLocal', 'zoomLevel', 'style'];
+function sameGridProps(a, b) {
+  for (const k of DATA_PROPS) {
+    if (k === 'colors') {
+      const x = a.colors || {}, y = b.colors || {};
+      if (x !== y && (x.background !== y.background || x.text !== y.text || x.textSecondary !== y.textSecondary || x.primary !== y.primary)) return false;
+    } else if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+const NativePhotosGrid = React.memo(NativePhotosGridInner, sameGridProps);
 
 export default NativePhotosGrid;

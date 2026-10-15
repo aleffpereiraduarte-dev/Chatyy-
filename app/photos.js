@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput, ScrollView,
   ActivityIndicator, RefreshControl, Platform, Modal, Image,
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
-  Share, Linking, AppState,
+  Share, Linking, AppState, BackHandler,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
@@ -1780,11 +1780,24 @@ function PhotosScreenInner() {
     });
   }, []);
 
+  // [2026-10-15 photos-x] espelho síncrono do modo seleção: eventos da grade nativa
+  // que chegam DEPOIS do X (fila da ponte) não podem religar a seleção.
+  const selectModeRef = useRef(false);
+  selectModeRef.current = selectMode;
   const clearSelection = useCallback(() => {
+    selectModeRef.current = false;
     setSelectedItems(new Set());
     setSelectMode(false);
+    try { nativeGridRef.current?.clearSelection(); } catch {}
     try { nativeGridRef.current?.setSelectionMode(false); } catch {}
   }, []);
+  // Android: voltar do sistema com seleção ativa = sair da seleção (não da tela).
+  // Sem seleção, o native-stack volta normalmente (router.back).
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !selectMode) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { clearSelection(); return true; });
+    return () => { try { sub.remove(); } catch {} };
+  }, [selectMode, clearSelection]);
 
   const selectAll = useCallback(() => {
     if (nativeGridRef.current) { try { nativeGridRef.current.selectAll(); } catch {} return; }
@@ -1795,6 +1808,9 @@ function PhotosScreenInner() {
   // [2026-10-15 photos-native] seleção da grade nativa → mesmos ids da barra de ações
   // (nuvem "c:<id>" → id numérico; aparelho "l:<id>" → "device_<id>").
   const onNativeSelection = useCallback((count, keys) => {
+    // o modo seleção é ligado SÓ por onSelectionMode(true) (o nativo sempre o emite
+    // antes); evento atrasado depois do X não reabre a seleção.
+    if (!selectModeRef.current) return;
     const ids = new Set();
     for (const k of keys || []) {
       if (typeof k !== 'string') continue;
@@ -1802,9 +1818,9 @@ function PhotosScreenInner() {
       else if (k.startsWith('l:')) ids.add('device_' + k.slice(2));
     }
     setSelectedItems(ids);
-    if (count > 0) setSelectMode(true);
   }, []);
   const onNativeSelectionMode = useCallback((active) => {
+    selectModeRef.current = !!active;
     setSelectMode(!!active);
     if (!active) setSelectedItems(new Set());
   }, []);
