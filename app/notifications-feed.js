@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { swr, getCachedSync, userScopedKey } from '../services/cache';
+import { swr, getCachedEntrySync, userScopedKey } from '../services/cache';
 import { filterSocialNotifications } from '../services/notificationFilter';
 import AvatarCircle from '../components/AvatarCircle';
 import ScreenEmptyState from '../components/ScreenEmptyState';
@@ -17,6 +17,10 @@ import ScreenEmptyState from '../components/ScreenEmptyState';
 // [WAVE 100] Module-scope live store — paints instant on re-mount.
 const _liveStore = new Map();
 const FEED_KEY = 'notifications_feed_list_v1';
+// [2026-10-14 offline-first] disco (7 dias). swr grava a resposta inteira — antes lia `.notifications` na raiz (nunca pintava).
+function _readDisk() {
+  try { const e = getCachedEntrySync(FEED_KEY); const d = e && e.data; const l = d && (d.data?.notifications || d.notifications); return Array.isArray(l) ? l : null; } catch { return null; }
+}
 function _readLive() {
   try {
     const key = userScopedKey(FEED_KEY);
@@ -67,13 +71,9 @@ export default function NotificationsFeedScreen() {
   const [items, setItems] = useState(() => {
     const live = _readLive();
     if (live) return live;
-    try {
-      const cached = getCachedSync(FEED_KEY);
-      if (cached?.notifications) return cached.notifications;
-    } catch {}
-    return [];
+    return _readDisk() || [];
   });
-  const [loading, setLoading] = useState(() => !(_readLive() || getCachedSync(FEED_KEY)?.notifications));
+  const [loading, setLoading] = useState(() => !(_readLive() || _readDisk()));
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);

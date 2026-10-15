@@ -1406,13 +1406,25 @@ object CallVideoQuality {
     fun screenShareCaptureDefaults(): LocalVideoTrackOptions =
         LocalVideoTrackOptions(isScreencast = true, captureParams = SCREEN_CAPTURE)
 
-    fun screenSharePublishDefaults(): VideoTrackPublishDefaults =
-        VideoTrackPublishDefaults(
+    // [2026-10-15 screen-share WA] Adaptive screen share: top layer 1080p@15
+    // 3 Mbps + a 720p@10 0.9 Mbps simulcast (= iOS) layer, so a subscriber on a poor
+    // network gets the SFU's 720p layer instead of a stalled 1080p. LK 2.24.1
+    // computeVideoEncodings: one preset → `size >= 480 && lowPreset` adds it at
+    // scale 1920/1280 = 1.5, then the original (scale 1.0). MAINTAIN_RESOLUTION
+    // keeps text crisp (sheds fps, not pixels, under CPU/bandwidth pressure).
+    // Respects the simulcast safety net (simulcastEnabled) like the camera.
+    private val SCREEN_LOW_LAYER = CustomVideoPreset(VideoCaptureParameter(1280, 720, 10), VideoEncoding(900_000, 10))
+
+    fun screenSharePublishDefaults(): VideoTrackPublishDefaults {
+        val sim = simulcastEnabled()
+        return VideoTrackPublishDefaults(
             videoEncoding = SCREEN_ENCODING,
-            simulcast = false,
+            simulcast = sim,
             videoCodec = NativeCallRoom.preferredVideoCodec(),
-            degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION,
+            simulcastLayers = if (sim) listOf(SCREEN_LOW_LAYER) else null
         )
+    }
 
     /** One-line summary of the publish envelope for diag. */
     fun layersLabel(p: Profile = publishedProfile): String {

@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-privacy",
+  "version": "1.0.0",
+  "description": "Chatyy advanced chat privacy (iOS): opaque shield window while the screen is being recorded/mirrored (UIScreen.isCaptured) + capture-state events. Android uses expo-screen-capture (FLAG_SECURE).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

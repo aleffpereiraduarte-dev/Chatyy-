@@ -515,7 +515,7 @@ const _prefs = { view: 'prose', length: 'short' };
 
 // ───────────────────────────── componente ─────────────────────────────
 
-export default function ConversationSummarySheet({
+function ConversationSummarySheetInner({
   visible,
   onClose,
   conversationId,
@@ -1324,3 +1324,21 @@ const st = StyleSheet.create({
   primary: { flex: 1, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   primaryText: { fontSize: 15, fontWeight: '700' },
 });
+
+// [2026-10-14 adv-privacy] Conversa com privacidade avançada → não abre (o
+// servidor também recusa). Avisa e fecha.
+export default function ConversationSummarySheet(props) {
+  const _ap = require('../../services/chatPrivacy').useAdvancedPrivacy(props && props.conversationId);
+  const _blocked = !!(props && props.visible && _ap.enabled);
+  useEffect(() => {
+    if (!_blocked) return;
+    let msg = 'A Bia não pode ler esta conversa (privacidade avançada).';
+    try { const v = typeof props.t === 'function' ? props.t('advPriv.aiBlocked') : ''; if (v && v !== 'advPriv.aiBlocked') msg = v; } catch {}
+    try {
+      if (Platform.OS === 'web') window.alert?.(msg);
+      else require('react-native').Alert.alert('', msg);
+    } catch {}
+    try { props.onClose && props.onClose(); } catch {}
+  }, [_blocked]);
+  return <ConversationSummarySheetInner {...props} visible={!!(props && props.visible) && !_ap.enabled} />;
+}

@@ -1,0 +1,8 @@
+{
+  "name": "expo-media-editor",
+  "version": "1.0.0",
+  "description": "Chatyy native photo/video editor before sending (crop/rotate, draw, text, stickers, color-matrix filters, video trim/mute/cover, caption, view-once, HD).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

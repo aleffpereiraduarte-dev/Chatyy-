@@ -80,7 +80,7 @@ function sha1(s) { return crypto.createHash('sha1').update(s).digest('hex').slic
 
 function main() {
   const files = fs.readdirSync(I18N_DIR)
-    .filter((f) => f.endsWith('.js') && f !== 'index.js')
+    .filter((f) => f.endsWith('.js') && f !== 'index.js' && !f.startsWith('coreTables'))
     .map((f) => f.replace(/\.js$/, ''))
     .filter((code) => !CORE_LOCALES.includes(code))
     .sort();

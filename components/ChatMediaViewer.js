@@ -11,6 +11,9 @@ import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../ut
 import { useLanguage } from '../context/LanguageContext';
 import NativeDocPreview, { hasNativePdfView } from './NativeDocPreview'; // [2026-10-09 native-docs]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit]
+// [2026-10-14 adv-privacy] Conversa com privacidade avançada → visualizador protegido.
+import { useAdvancedPrivacy, acquireCaptureProtection } from '../services/chatPrivacy';
+import { PrivacyWatermark, viewerHandle } from './chat/useConversationPrivacy';
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
 let ParallaxPortraitView = null;
@@ -1951,10 +1954,13 @@ function _nvIsMedia(it) {
   const e = getExt(it.fileName);
   return it.type === 'image' || it.type === 'video' || IMAGE_EXTS.includes(e) || VIDEO_EXTS.includes(e);
 }
-function _nvEligible(list, viewOnce) {
+function _nvEligible(list, viewOnce, secure) {
   try { if (globalThis.__chatyy_native_viewer === false) return false; } catch {}
   if (viewOnce || !Array.isArray(list) || list.length === 0) return false;
   if (!_nativeViewer()) return false;
+  // [2026-10-14 adv-privacy] Binário sem `secure` no viewer nativo (Dialog sem
+  // FLAG_SECURE) → pager JS, que fica na janela protegida da Activity.
+  if (secure) { try { if (!_nativeViewer().supportsSecure?.()) return false; } catch { return false; } }
   return list.every(_nvIsMedia);
 }
 function _nvDate(ts) {
@@ -2053,8 +2059,13 @@ const _AlbumPage = memo(function _AlbumPage({ item, isActive, pageW, webH, conve
   return true;
 });
 
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors, placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors, placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri, secure: _secureProp }) {
   const insets = useSafeAreaInsets();
+  // [2026-10-14 adv-privacy] secure = prop OU flag da conversa (store). Protegido
+  // (view-once ou privacidade avançada) → sem salvar/compartilhar/encaminhar/OCR.
+  const _advPrivSt = useAdvancedPrivacy(conversationId);
+  const _secure = !!_secureProp || !!_advPrivSt.enabled;
+  const _locked = !!viewOnce || _secure;
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   // WAVE 60: WhatsApp/IG-grade viewer chrome. The ugly "IMG_1234.jpg 299KB"
@@ -2162,7 +2173,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // (mesmo se a lista mudar no meio).
   const _nvSessionRef = useRef(0);
   const [_nvFailed, _setNvFailed] = useState(false);
-  const _nvOn = !!visible && !_nvFailed && (_nvSessionRef.current !== 0 || _nvEligible(_list, viewOnce));
+  const _nvOn = !!visible && !_nvFailed && (_nvSessionRef.current !== 0 || _nvEligible(_list, viewOnce, _secure));
   const _initialLive = Math.max(0, Math.min(_list.length - 1, Number(initialIndex) || 0));
   // [2026-10-14 swipe-album] Índice inicial CONGELADO por abertura. O
   // chat-conversation recalcula mediaList/initialIndex a cada render dele (upload
@@ -2188,7 +2199,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const _nvActRef = useRef(null);
   const _nvCtxRef = useRef(null);
   _nvCtxRef.current = {
-    list: _list, onClose, onForward, t, messageId, caption, createdAt,
+    list: _list, onClose, onForward, t, messageId, caption, createdAt, secure: _secure,
     placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri,
     senderName: isAssistantSender(senderName, senderEmail) ? 'Bia' : (senderName || (senderEmail || '').split('@')[0] || ''),
   };
@@ -2271,11 +2282,13 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         pause: _tt('nativeViewer.pause'),
         loadFailed: _tt('nativeViewer.loadFailed'),
         retry: _tt('nativeViewer.retry'),
+        protected: _tt('advPriv.protectedTitle'),
       },
-      allowShare: true,
-      allowSave: true,
-      allowForward: typeof ctx.onForward === 'function',
+      allowShare: !ctx.secure,
+      allowSave: !ctx.secure,
+      allowForward: !ctx.secure && typeof ctx.onForward === 'function',
       allowStar: true,
+      secure: !!ctx.secure,
     }).then((sid) => {
       if (sid > 0) {
         if (_nvSessionRef.current === -1) _nvSessionRef.current = sid;
@@ -2383,6 +2396,18 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // captures the overlay and is identifiable. Cleanup releases the flag
   // on unmount so other screens (gallery, etc.) stay screenshottable.
   const [_watermarkVisible, _setWatermarkVisible] = useState(false);
+  // [2026-10-14 adv-privacy] Visualizador protegido aberto: Android FLAG_SECURE
+  // (pager JS) e iOS escudo durante gravação/espelhamento. O aviso de print da
+  // conversa vem do useConversationPrivacy (tela de baixo continua em foco).
+  useEffect(() => {
+    if (!visible || !_locked || Platform.OS === 'web') return undefined;
+    return acquireCaptureProtection('chatyy-viewer-protected', {
+      labels: {
+        title: (typeof t === 'function' && t('advPriv.protectedTitle')) || 'Conteúdo protegido',
+        subtitle: (typeof t === 'function' && t('advPriv.protectedRecording')) || '',
+      },
+    });
+  }, [visible, _locked]);
   const [_currentUserEmail, _setCurrentUserEmail] = useState('');
   useEffect(() => {
     if (!visible || !viewOnce || !ScreenCapture) return;
@@ -2415,6 +2440,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           // backend hasn't shipped yet this 400s silently and the local
           // watermark UX still works.
           if (conversationId) {
+            try { globalThis.__chatyy_vo_shot_at = Date.now(); } catch {} // [2026-10-14 adv-privacy] sem aviso duplo
             try {
               const api = require('../services/api');
               api.apiCall?.('chat_screenshot_event', {
@@ -2886,8 +2912,17 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View
         style={[s.backdrop, viewOnceStyle]}
-        onContextMenu={viewOnce ? (e) => e.preventDefault?.() : undefined}
+        onContextMenu={_locked ? (e) => e.preventDefault?.() : undefined}
       >
+        {/* [2026-10-14 adv-privacy] web: sem bloqueio real → marca d'água com o @ de quem vê. */}
+        {Platform.OS === 'web' && _locked ? (
+          <PrivacyWatermark
+            handle={(() => { try { return viewerHandle(require('../services/api').getActiveAccountEmail?.() || ''); } catch { return ''; } })()}
+            label={(typeof t === 'function' && t('advPriv.watermark')) || 'Protegido'}
+            dark
+            style={{ zIndex: 9998 }}
+          />
+        ) : null}
         {/* Full-black backdrop layer. Opacity is driven by _bgOpacity so a
             swipe-down fades it out and reveals the chat behind (the Modal is
             transparent). pointerEvents=none so it never swallows touches. */}
@@ -3225,7 +3260,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             },
           ]}
         >
-          {!viewOnce && (
+          {!_locked && (
             <TouchableOpacity
               onPress={async () => {
                 // [2026-10-09 more-native] share sheet nativo com o ARQUIVO
@@ -3246,7 +3281,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             </TouchableOpacity>
           )}
           {/* [2026-10-09 more-native] Texto da foto (Live Text-lite, iOS Vision on-device). */}
-          {!viewOnce && isImage && canRecognizeImageText() && (
+          {!_locked && isImage && canRecognizeImageText() && (
             <TouchableOpacity
               onPress={async () => {
                 if (_ocr?.loading) return;
@@ -3263,7 +3298,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               <IconType size={22} color="#fff" />
             </TouchableOpacity>
           )}
-          {!viewOnce && (
+          {!_locked && (
             <TouchableOpacity
               onPress={() => handleDownload()}
               disabled={saving}
@@ -3291,7 +3326,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           {/* Forward — opens the app's existing forward picker for this media.
               Only shown when a handler is wired and the item isn't view-once
               (view-once media must not be forwardable). Safe no-op if absent. */}
-          {!viewOnce && typeof onForward === 'function' && (
+          {!_locked && typeof onForward === 'function' && (
             <TouchableOpacity
               onPress={() => { try { onForward(_active || { messageId: messageId || 0, fileUrl: url }); } catch {} }}
               style={s.actionBtn}

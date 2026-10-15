@@ -131,6 +131,7 @@ function EmailRow({
   const [threadItems, setThreadItems] = useState(null); // null=not loaded, []=loaded
   const [threadLoading, setThreadLoading] = useState(false);
   const threadHeightAnim = useRef(new Animated.Value(0)).current;
+  const dragSelectedRef = useRef(false); // [2026-10-15 email-melhorias] ver onMouseDown do checkbox
   const handleThreadBadgePress = useCallback(async (e) => {
     e?.stopPropagation?.();
     const willExpand = !threadExpanded;
@@ -390,8 +391,15 @@ function EmailRow({
       {/* Checkbox / Avatar */}
       <TouchableOpacity
         style={s.leftArea}
-        onPress={(e) => { e.stopPropagation?.(); onToggleSelect?.(email.uid); }}
-        onMouseDown={(e) => { if (onDragStart) { e.preventDefault(); onDragStart(email.uid); } }}
+        onPress={(e) => {
+          e.stopPropagation?.();
+          // [2026-10-15 email-melhorias] o mousedown (arrastar-p/-selecionar)
+          // já marcou esta linha → o click não pode desmarcar em seguida
+          // (no web, clicar no checkbox de linha desmarcada não fazia nada).
+          if (dragSelectedRef.current) { dragSelectedRef.current = false; return; }
+          onToggleSelect?.(email.uid);
+        }}
+        onMouseDown={(e) => { if (onDragStart) { e.preventDefault(); dragSelectedRef.current = !isChecked; onDragStart(email.uid); } }}
         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         accessibilityLabel={isChecked ? t('a11y.deselect') || 'Deselect' : t('a11y.select') || 'Select'}
         accessibilityRole="button"

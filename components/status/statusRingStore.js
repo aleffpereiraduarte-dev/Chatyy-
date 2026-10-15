@@ -88,6 +88,14 @@ export function useStatusRing(email) {
   return val;
 }
 
+// [2026-10-14 native-home] Assinatura bruta (lista nativa da home: um único
+// listener para todas as linhas em vez de um hook por linha). Devolve o unsubscribe.
+export function subscribeStatusRings(fn) {
+  if (typeof fn !== 'function') return () => {};
+  _listeners.add(fn);
+  return () => { _listeners.delete(fn); };
+}
+
 export function registerStatusOpener(fn) {
   _opener = typeof fn === 'function' ? fn : null;
   return () => { if (_opener === fn) _opener = null; };

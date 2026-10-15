@@ -51,6 +51,10 @@ data class MVFlags(
   val allowSave: Boolean = true,
   val allowForward: Boolean = true,
   val allowStar: Boolean = true,
+  // [2026-10-14 adv-privacy] Conversa com privacidade avançada / view-once:
+  // FLAG_SECURE na janela do Dialog (o FLAG_SECURE da Activity NÃO cobre o
+  // Dialog, que é outra janela) → print/gravação saem pretos.
+  val secure: Boolean = false,
 )
 
 /**
@@ -167,6 +171,7 @@ class MediaViewerDialog(
     w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+    if (flags.secure) w.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     w.setWindowAnimations(0)
     WindowCompat.setDecorFitsSystemWindows(w, false)
     @Suppress("DEPRECATION")

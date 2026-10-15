@@ -28,6 +28,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED, WALLET_ENABLED } from '../constants/featureFlags';
+import { peekCached, putCached } from '../hooks/useCachedAction';
 import * as api from '../services/api';
 import { formatMoney } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
@@ -39,6 +40,7 @@ import {
 } from '../components/ui';
 import { HeroCard, HeroButton, HERO, AnimatedNumber, ProgressBar, TABULAR, approxActive, NOFLEX } from '../components/wallet/WalletKit';
 import { formatInt } from '../utils/dateFormat';
+const EARN_KEY = ['wallet', 'earnings'];
 
 // Espelha chat.php wallet_cashout_request (amount_cents < 5000 → min_cashout).
 const MIN_CASHOUT_CENTS = 5000;
@@ -100,17 +102,19 @@ function CreatorEarnings() {
   const s = useSurface();
   useCurrency(); // re-render quando a moeda de exibição muda
 
-  const [loading, setLoading] = useState(true);
+  // [2026-10-14 offline-first] último resumo salvo no aparelho (por conta) → sem skeleton na 2ª abertura.
+  const [_seed] = useState(() => peekCached(EARN_KEY));
+  const [loading, setLoading] = useState(() => !_seed);
   const [refreshing, setRefreshing] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [data, setData] = useState({
+  const [data, setData] = useState(() => (_seed && _seed.data) || {
     pending_payout_cents: 0, lifetime_payout_cents: 0, month_payout_cents: 0,
     gifts_count_30d: 0, gifts_count_lifetime: 0, top_fans: [], timeline: [],
     min_cashout_cents: MIN_CASHOUT_CENTS,
     available_cents: null, on_hold_cents: 0, hold_days: 0, cashout_eligible: null, cashout_block_reason: null,
     payout_per_diamond_millicents: 0, account_min_age_days: 0, daily_limit_cents: 0,
   });
-  const [cashouts, setCashouts] = useState(null); // null = desconhecido
+  const [cashouts, setCashouts] = useState(() => (_seed && Array.isArray(_seed.cashouts) ? _seed.cashouts : null)); // null = desconhecido
 
   const load = useCallback(async () => {
     const [sum, list] = await Promise.allSettled([
@@ -118,9 +122,11 @@ function CreatorEarnings() {
       api.walletCashoutList?.(),
     ]);
     const r = sum.status === 'fulfilled' ? sum.value : null;
+    const l = list.status === 'fulfilled' ? list.value : null;
+    const _cash = l?.success && Array.isArray(l.data?.items) ? l.data.items : undefined;
     if (r?.success && r.data) {
       const d = r.data;
-      setData({
+      const next = {
         pending_payout_cents: Number(d.pending_payout_cents) || 0,
         lifetime_payout_cents: Number(d.lifetime_payout_cents) || 0,
         month_payout_cents: Number(d.month_payout_cents) || 0,
@@ -138,13 +144,14 @@ function CreatorEarnings() {
         payout_per_diamond_millicents: Number(d.payout_per_diamond_millicents) || 0,
         account_min_age_days: Number(d.account_min_age_days) || 0,
         daily_limit_cents: Number(d.daily_limit_cents) || 0,
-      });
+      };
+      setData(next);
       setFailed(false);
-    } else {
+      putCached(EARN_KEY, { data: next, cashouts: _cash !== undefined ? _cash : (peekCached(EARN_KEY)?.cashouts ?? null) });
+    } else if (!peekCached(EARN_KEY)) {
       setFailed(true);
     }
-    const l = list.status === 'fulfilled' ? list.value : null;
-    if (l?.success && Array.isArray(l.data?.items)) setCashouts(l.data.items);
+    if (_cash !== undefined) setCashouts(_cash);
     setLoading(false);
     setRefreshing(false);
   }, []);

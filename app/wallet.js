@@ -30,6 +30,8 @@ import { TopBar, useSurface, Skeleton, PressableScale, FadeSlideIn, Sheet, Actio
 import { haptic } from '../constants/theme';
 import { formatInt } from '../utils/dateFormat';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
+import { peekCached, putCached } from '../hooks/useCachedAction';
+import { WALLET_SCREEN, fetchWalletScreen } from '../services/screenData';
 import { useWallet, refreshWallet, isMinorAccount, MIN_CASHOUT_CENTS, getCachedGiftCatalog } from '../services/diamonds';
 import useDiamondStore from '../components/diamonds/useDiamondStore';
 import {
@@ -350,10 +352,12 @@ function WalletScreen() {
   useCurrency();
   const wallet = useWallet();
   const store = useDiamondStore({ t, language });
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-14 offline-first] última 1ª página salva no aparelho (por conta) → sem skeleton na 2ª abertura.
+  const _seed = useMemo(() => peekCached(WALLET_SCREEN.key), []);
+  const [items, setItems] = useState(() => (Array.isArray(_seed?.items) ? _seed.items : []));
+  const [loading, setLoading] = useState(() => !_seed);
   const [refreshing, setRefreshing] = useState(false);
-  const [more, setMore] = useState(false);
+  const [more, setMore] = useState(() => !!_seed?.has_more);
   const [loadingMore, setLoadingMore] = useState(false);
   const [topupOpen, setTopupOpen] = useState(false);
   const [giftOpen, setGiftOpen] = useState(false);
@@ -362,9 +366,8 @@ function WalletScreen() {
   const busyRef = useRef(false);
 
   const load = useCallback(async () => {
-    const [h] = await Promise.allSettled([api.walletHistory({ limit: PAGE, offset: 0 }), refreshWallet()]);
-    const r = h.status === 'fulfilled' ? h.value : null;
-    if (r?.success && r.data) { setItems(Array.isArray(r.data.items) ? r.data.items : []); setMore(!!r.data.has_more); }
+    const v = await fetchWalletScreen();
+    if (v) { setItems(v.items); setMore(v.has_more); putCached(WALLET_SCREEN.key, v); }
     setLoading(false); setRefreshing(false);
   }, []);
   useEffect(() => { load(); }, [load]);

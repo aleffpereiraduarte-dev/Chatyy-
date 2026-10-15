@@ -120,6 +120,9 @@ final class GroupCallSessionState: ObservableObject {
     @Published var toast: String?
     /// [2026-10-14 group-ui] Screen-share tile opened full screen (tile `id`).
     @Published var fullscreenId: String?
+    /// [2026-10-15 screen-share whatsapp-level] I am sharing my screen →
+    /// top pill "Você está compartilhando a tela · Parar".
+    @Published var localScreenSharing: Bool = false
 
     init(participants: [GroupParticipant] = [],
          status: String = GroupCallStrings.connecting,
@@ -258,6 +261,16 @@ struct GroupCallView: View {
             }
             .allowsHitTesting(false)
 
+            // [2026-10-15 screen-share whatsapp-level] Local share pill.
+            if session.localScreenSharing {
+                VStack {
+                    LocalScreenSharePill(onStop: { hapticTap(); onScreenShare() })
+                        .padding(.top, 56)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             // [2026-10-14 group-ui] "Fulano entrou / saiu" — discreet top pill.
             if let toast = session.toast {
                 VStack {
@@ -283,6 +296,7 @@ struct GroupCallView: View {
         }
         .preferredColorScheme(.dark)
         .animation(.easeInOut(duration: 0.25), value: session.toast)
+        .animation(.easeInOut(duration: 0.25), value: session.localScreenSharing)
         .sheet(isPresented: $showAudioPicker) {
             Group {
                 if #available(iOS 16.0, *) {
@@ -1059,14 +1073,58 @@ struct ScreenShareFullscreenView: View {
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
 
+    // [2026-10-15 screen-share whatsapp-level] Landscape while the iPhone
+    // UI stays portrait-locked: device turned sideways → the content is laid
+    // out in a height×width frame and rotated ±90° (rotation lock honoured —
+    // UIDevice then keeps reporting portrait).
+    @State private var angle: Double = 0
+
     var body: some View {
+        GeometryReader { geo in
+            let rotated = angle != 0
+            content
+                .frame(width: rotated ? geo.size.height : geo.size.width,
+                       height: rotated ? geo.size.width : geo.size.height)
+                .rotationEffect(.degrees(angle))
+                .position(x: geo.size.width / 2, y: geo.size.height / 2)
+        }
+        .ignoresSafeArea()
+        .background(Color.black.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .onAppear {
+            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+            updateAngle()
+        }
+        .onDisappear {
+            UIDevice.current.endGeneratingDeviceOrientationNotifications()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+            updateAngle()
+        }
+    }
+
+    private func updateAngle() {
+        let next: Double
+        switch UIDevice.current.orientation {
+        case .landscapeLeft: next = 90
+        case .landscapeRight: next = -90
+        case .portrait, .portraitUpsideDown: next = 0
+        default: return
+        }
+        guard next != angle else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            reset()
+            angle = next
+        }
+    }
+
+    private var content: some View {
         ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
+            Color.black
 
             SwiftUIVideoView(track, layoutMode: .fit)
                 .scaleEffect(scale)
                 .offset(offset)
-                .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .gesture(zoomPan)
                 .onTapGesture(count: 2) {
@@ -1099,10 +1157,10 @@ struct ScreenShareFullscreenView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(GroupCallStrings.s("pk.close")))
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.horizontal, angle != 0 ? 28 : 16)
+            .padding(.top, angle != 0 ? 16 : 56)
         }
-        .preferredColorScheme(.dark)
+        .clipped()
     }
 
     private var zoomPan: some Gesture {
@@ -1257,6 +1315,37 @@ struct GroupParticipantsSheet: View {
 }
 
 /// [2026-10-14 group-ui] Discreet top notice ("Fulano entrou / saiu").
+/// [2026-10-15 screen-share whatsapp-level] "Você está compartilhando a
+/// tela" + Parar (green, same look as the 1:1 chip).
+struct LocalScreenSharePill: View {
+    let onStop: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "rectangle.on.rectangle")
+                .font(.system(size: 13, weight: .semibold))
+            Text(CallStrings.s("ssYouAreSharing"))
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Button(action: onStop) {
+                Text(CallStrings.s("stop"))
+                    .font(.system(size: 13, weight: .bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.22)))
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundColor(.white)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .frame(height: 36)
+        .background(Capsule().fill(Color(red: 0x1E / 255.0, green: 0x8E / 255.0, blue: 0x5A / 255.0).opacity(0.96)))
+        .padding(.horizontal, 16)
+    }
+}
+
 struct CallToastPill: View {
     let text: String
 

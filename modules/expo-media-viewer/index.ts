@@ -48,6 +48,8 @@ export type MediaViewerLabels = {
   pause?: string;
   loadFailed?: string;
   retry?: string;
+  /** Texto do escudo durante gravação/espelhamento (iOS, `secure`). */
+  protected?: string;
 };
 
 export type MediaViewerOpenOptions = {
@@ -58,6 +60,12 @@ export type MediaViewerOpenOptions = {
   allowSave?: boolean;
   allowForward?: boolean;
   allowStar?: boolean;
+  /**
+   * [2026-10-14 adv-privacy] Privacidade avançada / view-once. Android:
+   * FLAG_SECURE no Dialog. iOS: tela preta enquanto grava/espelha. Só em
+   * binários com apiVersion() >= 2 — use supportsSecure() antes.
+   */
+  secure?: boolean;
 };
 
 export type MediaViewerAction = 'share' | 'save' | 'forward' | 'star';
@@ -100,6 +108,13 @@ export function isAvailable(): boolean {
   } catch {}
   const m = mod();
   return !!m && typeof m.open === 'function';
+}
+
+/** [2026-10-14 adv-privacy] true quando o binário entende `secure` (apiVersion >= 2). */
+export function supportsSecure(): boolean {
+  const m = mod();
+  if (!m || typeof m.apiVersion !== 'function') return false;
+  try { return Number(m.apiVersion()) >= 2; } catch { return false; }
 }
 
 export async function open(options: MediaViewerOpenOptions): Promise<number> {

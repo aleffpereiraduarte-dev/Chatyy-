@@ -1528,6 +1528,13 @@ export default function ComposeScreen() {
     const schedBcc = bccValueRef.current;
     if (schedTo.length === 0) { setError(t('compose.errorRecipient')); return; }
     if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
+    // [2026-10-15 email-melhorias] O backend schedule_send grava só texto
+    // (sem anexos) — o e-mail agendado saía SEM os anexos, em silêncio.
+    // Fail closed até o servidor suportar att_ids no agendamento.
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      setError(t('compose.errorScheduleAttachments'));
+      return;
+    }
     setError('');
     setSending(true);
     try {
@@ -1544,10 +1551,19 @@ export default function ComposeScreen() {
         to: contactsToString(schedTo), subject, body: sendBody,
         cc: contactsToString(schedCc), bcc: contactsToString(schedBcc),
         send_at: isoDateString,
-        attachments,
       }, 'POST');
       if (r.success) {
         if (draftTimerRef.current) clearInterval(draftTimerRef.current);
+        // [2026-10-15 email-melhorias] Agendado = não é mais rascunho: liga a
+        // guarda (o flush do unmount re-salvava o e-mail em Rascunhos) e apaga
+        // o rascunho autosalvo (o servidor já guarda a cópia agendada).
+        sentRef.current = true;
+        contentChangedRef.current = false;
+        if (draftUidRef.current) {
+          const staleUid = draftUidRef.current;
+          draftUidRef.current = null;
+          try { api.apiCall('draft_delete', { uid: staleUid }, 'POST').catch(() => {}); } catch {}
+        }
         setSuccess(true);
         refresh();
         setTimeout(() => router.back(), 1200);

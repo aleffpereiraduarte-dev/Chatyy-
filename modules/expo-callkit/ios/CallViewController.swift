@@ -203,8 +203,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     let callerEmail: String
     let hasVideo: Bool
 
-    private let lkUrl: String?
-    private let lkToken: String?
+    private var lkUrl: String? // [2026-10-15 call-open-fast] var: late token
+    private var lkToken: String? // [2026-10-15 call-open-fast] var: late token
     private let isOutgoing: Bool
     private let conversationId: String
 
@@ -1779,6 +1779,39 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // from the view's lifetime via the captured `r` reference so the
         // suspend chain survives even if the VC is dismissed mid-handshake.
         if let url = lkUrl, let token = lkToken, !url.isEmpty, !token.isEmpty {
+            startFreshRoomConnect(url: url, token: token)
+        } else {
+            // [2026-10-15 call-open-fast] Outgoing screen presented BEFORE the
+            // LiveKit token exists (tap → screen instantly). The token lands
+            // later via supplyLateToken (CXStartCallAction fetch / JS
+            // persistPendingLkToken) and the Room connects then.
+            print("[CallVC] No lkUrl/lkToken yet — Room.connect waits for supplyLateToken callId=\(callId)")
+            if isOutgoing { nativeCallDiag("callvc_waiting_token", callId) }
+        }
+
+        // Stage #993 — set up PiP for video calls. The display layer +
+        // controller live for the call's life; sample-buffer enqueue starts
+        // once a remote VideoTrack arrives in didSubscribeTrack.
+        if hasVideo {
+            setupPiPController()
+            installBackgroundObserverForPiP()
+        }
+
+        // Ringback only fires for the caller side, while we're still waiting.
+        // [2026-10-13 ringback] Arm (not play): the tone starts on CallKit's
+        // didActivate, or after ~1 s if the session was already active /
+        // didActivate never comes — never against a not-yet-activated session.
+        if isOutgoing && callConnectedAt == nil && !didHangup {
+            armRingbackTone()
+            installBackgroundObserverForRingback()
+        }
+    }
+
+    // [2026-10-15 call-open-fast] Fresh (non-adopted) LiveKit Room connect,
+    // extracted from viewDidLoad so an outgoing screen presented without a
+    // token can connect as soon as one arrives. Idempotent: one Room per VC.
+    private func startFreshRoomConnect(url: String, token: String) {
+        guard room == nil, !didHangup else { return }
             print("[CallVC] Starting LiveKit connect — callId=\(callId)")
             // [2026-05-17 MediaPipe] Touch the BackgroundProcessor singleton so
             // it's allocated before Room.connect — the first published video
@@ -1960,25 +1993,37 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     }
                 }
             }
-        } else {
-            print("[CallVC] No lkUrl/lkToken — skipping native Room.connect (JS fallback path)")
-        }
+    }
 
-        // Stage #993 — set up PiP for video calls. The display layer +
-        // controller live for the call's life; sample-buffer enqueue starts
-        // once a remote VideoTrack arrives in didSubscribeTrack.
-        if hasVideo {
-            setupPiPController()
-            installBackgroundObserverForPiP()
+    /// [2026-10-15 call-open-fast] Late LiveKit credentials for an outgoing
+    /// screen that was presented before the token existed. First token wins;
+    /// ignored once a Room exists, after hangup, or for incoming screens.
+    func supplyLateToken(url: String, token: String, source: String) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.supplyLateToken(url: url, token: token, source: source) }
+            return
         }
+        guard isOutgoing, !didHangup, room == nil, !url.isEmpty, !token.isEmpty else { return }
+        if let t = lkToken, !t.isEmpty { return }
+        guard isViewLoaded else {
+            // viewDidLoad has not run yet — it will connect with these.
+            lkUrl = url; lkToken = token
+            return
+        }
+        lkUrl = url; lkToken = token
+        nativeCallDiag("callvc_late_token", callId, "src=\(source)")
+        startFreshRoomConnect(url: url, token: token)
+    }
 
-        // Ringback only fires for the caller side, while we're still waiting.
-        // [2026-10-13 ringback] Arm (not play): the tone starts on CallKit's
-        // didActivate, or after ~1 s if the session was already active /
-        // didActivate never comes — never against a not-yet-activated session.
-        if isOutgoing && callConnectedAt == nil && !didHangup {
-            armRingbackTone()
-            installBackgroundObserverForRingback()
+    /// [2026-10-15 call-open-fast] Route a late token to the live outgoing
+    /// screen for `callId` (MAIN THREAD — liveInstances is main-only).
+    static func supplyLateTokenIfWaiting(callId: String, url: String, token: String, source: String) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { CallViewController.supplyLateTokenIfWaiting(callId: callId, url: url, token: token, source: source) }
+            return
+        }
+        for vc in liveInstances.allObjects where vc.callId == callId {
+            vc.supplyLateToken(url: url, token: token, source: source)
         }
     }
 
@@ -2092,6 +2137,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             userInfo: ["callId": callId]
         )
+        // [2026-10-15 screen-share whatsapp-level] Hang-up ends the system
+        // broadcast (red pill) immediately + forgets the active room.
+        ScreenShareSupport.callEnding(room: self.room, callId: callId)
         if let r = self.room {
             self.room = nil
             // [#1207 NativeCallRoom REAL] Drop the singleton's reference so
@@ -2823,13 +2871,45 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     private func toggleScreenShare() {
         guard let r = self.room else { return }
-        // Re-entrancy guard — the broadcast path awaits the system picker and
-        // a second tap while it's up fired overlapping set() calls.
         guard !screenShareInFlight else { return }
-        // Decide off the REAL publication state (same lesson as mute/camera:
-        // the cached bool drifts — e.g. the user stopped from the red pill).
         let currentlySharing = ScreenShareSupport.isSharing(room: r) || screenSharing
-        let desired = !currentlySharing
+        if currentlySharing {
+            performScreenShareToggle(room: r, desired: false)
+            return
+        }
+        // [2026-10-15 screen-share whatsapp-level] One-time privacy notice
+        // ("Tudo na sua tela, incluindo notificações…"), then straight to the
+        // system picker pre-targeted at the Chatyy extension.
+        installScreenSharePendingObserver()
+        ScreenShareSupport.confirmFirstUse(from: self) { [weak self] in
+            guard let self = self, let r = self.room else { return }
+            self.performScreenShareToggle(room: r, desired: true)
+        }
+    }
+
+    /// [2026-10-15] Pending start ended without a publication (picker
+    /// dismissed / 60 s timeout / publish failed) → clear the in-flight
+    /// guard; alert only on a real failure.
+    private var screenSharePendingObserver: NSObjectProtocol?
+    private func installScreenSharePendingObserver() {
+        guard screenSharePendingObserver == nil else { return }
+        screenSharePendingObserver = NotificationCenter.default.addObserver(
+            forName: ScreenShareSupport.pendingEndedNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            self.screenShareInFlight = false
+            if (note.userInfo?["failed"] as? Bool) == true, self.presentedViewController == nil {
+                let alert = UIAlertController(title: CallStrings.s("shareScreen"),
+                                              message: CallStrings.s("screenShareFailed"),
+                                              preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                self.present(alert, animated: true)
+            }
+        }
+    }
+
+    private func performScreenShareToggle(room r: Room, desired: Bool) {
+        guard !screenShareInFlight else { return }
         screenShareInFlight = true
         nativeCallDiag(desired ? "screen_share_start_tap" : "screen_share_stop_tap", callId)
         print("[CallVC] screenShare request → \(desired) (broadcastExt=\(ScreenShareSupport.useBroadcastExtension))")
@@ -2906,7 +2986,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// state, top chip). Called from the publish/unpublish RoomDelegate hooks,
     /// the toggle, and the Darwin stop observer. Main thread only.
     private func applyScreenShareState(_ sharing: Bool) {
+        let was = screenSharing
         screenSharing = sharing
+        // [2026-10-15 screen-share whatsapp-level] Camera pauses while the
+        // screen is shared (WhatsApp) and comes back when it stops.
+        if sharing && !was { pauseCameraForScreenShare() }
+        if !sharing && was {
+            resumeCameraAfterScreenShare()
+            ScreenShareSupport.logExtensionStats(callId: callId)
+        }
         if let btn = view.viewWithTag(9009) as? UIButton {
             setControlActive(btn, active: sharing,
                              symbol: sharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle")
@@ -2916,6 +3004,44 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             ScreenShareSupport.stopObserving(tok)
             broadcastStopToken = nil
         }
+    }
+
+    // [2026-10-15 screen-share whatsapp-level] Camera auto-pause/resume.
+    // Mirrors uikitOnVideoToggle WITHOUT the AudioRouter flip (the route the
+    // user had stays put while sharing).
+    private var cameraPausedForShare = false
+
+    private func pauseCameraForScreenShare() {
+        guard session.camEnabled, !cameraPausedForShare else { return }
+        cameraPausedForShare = true
+        nativeCallDiag("screen_share_camera_paused", callId)
+        setCameraForScreenShare(false, attempt: 0)
+    }
+
+    private func resumeCameraAfterScreenShare() {
+        guard cameraPausedForShare else { return }
+        cameraPausedForShare = false
+        // The user may have turned it on by hand meanwhile — nothing to do.
+        guard !session.camEnabled, room != nil, !didHangup else { return }
+        nativeCallDiag("screen_share_camera_resumed", callId)
+        setCameraForScreenShare(true, attempt: 0)
+    }
+
+    private func setCameraForScreenShare(_ on: Bool, attempt: Int) {
+        if isTogglingCamera {
+            // A user toggle is in flight — retry shortly (max ~2 s).
+            guard attempt < 8 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.setCameraForScreenShare(on, attempt: attempt + 1)
+            }
+            return
+        }
+        guard session.camEnabled != on else { return }
+        isTogglingCamera = true
+        session.camEnabled = on
+        applyCamEnabled(on)
+        setControlActive(view.viewWithTag(9005) as? UIButton, active: on,
+                         symbol: on ? "video.fill" : "video.slash.fill")
     }
 
     private func showScreenShareChip() {
@@ -2936,7 +3062,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = ScreenShareSupport.modeLabel
+        label.text = ScreenShareSupport.useBroadcastExtension
+            ? CallStrings.s("ssYouAreSharing") : ScreenShareSupport.modeLabel
+        label.lineBreakMode = .byTruncatingTail
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.85
         label.textColor = .white
         label.font = .systemFont(ofSize: 13, weight: .semibold)
 
@@ -4399,6 +4529,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         /// stay legible; frame rate is secondary for slides/documents).
         static let screenShareDimensions = Dimensions(width: Int32(1920), height: Int32(1080))
         static let screenShareEncoding = VideoEncoding(maxBitrate: 3_000_000, maxFps: 15)
+        /// [2026-10-15] Poor-network screen-share layer (720p-class @10 fps).
+        static let screenShareLowLayer = VideoParameters(
+            dimensions: Dimensions(width: Int32(1280), height: Int32(720)),
+            encoding: VideoEncoding(maxBitrate: 900_000, maxFps: 10)
+        )
         /// Top-layer envelope when "Economizar dados" is on.
         static let saverMaxBitrate = 1_000_000
 
@@ -4610,11 +4745,29 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // (the app stays alive via the CallKit/audio background mode). Same
         // choice Jitsi/LiveKit samples make for ReplayKit broadcast. Every
         // receiver (LK Swift/Android/JS) decodes VP8.
+        //
+        // [2026-10-15 screen-share whatsapp-level] Adaptive: top layer
+        // 1080p-class @15 fps ~3 Mbps + a 720p-class @10 fps ~0.9 Mbps
+        // simulcast layer. Bad uplink → libwebrtc drops the top layer and the
+        // SFU keeps forwarding 720p; a viewer on a bad downlink gets 720p
+        // while the others stay at 1080p. `maintainResolution` = under
+        // CPU/bandwidth pressure shed FPS, never sharpness (text legible).
+        // Simulcast off (auto safety net) → single 1080p layer as before;
+        // "Economizar dados" → 1.5 Mbps / 10 fps top.
+        // LK Swift 2.0.18: computeVideoEncodings(isScreenShare:) uses
+        // `screenShareEncoding` + `screenShareSimulcastLayers`; with one
+        // preset it emits [low, base] (q + h rids).
+        let simulcast = CallVideoQuality.simulcastEnabled
+        let top = CallVideoQuality.isDataSaver
+            ? VideoEncoding(maxBitrate: 1_500_000, maxFps: 10)
+            : CallVideoQuality.screenShareEncoding
         return VideoPublishOptions(
             name: nil,
-            encoding: CallVideoQuality.screenShareEncoding,
-            screenShareEncoding: CallVideoQuality.screenShareEncoding,
-            simulcast: false,
+            encoding: top,
+            screenShareEncoding: top,
+            simulcast: simulcast,
+            simulcastLayers: [],
+            screenShareSimulcastLayers: simulcast ? [CallVideoQuality.screenShareLowLayer] : [],
             preferredCodec: .vp8,
             degradationPreference: .maintainResolution
         )
@@ -4835,6 +4988,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             ScreenShareSupport.stopObserving(tok)
             broadcastStopToken = nil
         }
+        if let o = screenSharePendingObserver { NotificationCenter.default.removeObserver(o) }
+        screenShareLandscape?.detach()   // [2026-10-15]
         stopOutgoingCameraPreview() // [2026-10-14 self-view]
         gridHeaderTimer?.invalidate() // [2026-10-14 group-ui]
         if let tok = gridDeclineObserver { NotificationCenter.default.removeObserver(tok) }
@@ -5074,6 +5229,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let existing = existingCallVC(from: base), existing.callId == callId {
             NSLog("[CallVC.present] already presenting callId=\(callId) — skipping duplicate")
             nativeCallDiag("callvc_present_dedup_skip", callId)
+            // [2026-10-15 call-open-fast] The outgoing screen went up before the
+            // token existed; this later present (CXStartCallAction fetch) carries
+            // it → hand it to the live screen so its Room connects now.
+            if isOutgoing, let u = lkUrl, let t = lkToken, !u.isEmpty, !t.isEmpty {
+                existing.supplyLateToken(url: u, token: t, source: "present_dedup")
+            }
             return
         }
         // [2026-10-12 stacked-callvc] A CallViewController of ANOTHER call is
@@ -5736,8 +5897,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let fid = gridSession.fullscreenId, !tiles.contains(where: { $0.id == fid }) {
             gridSession.fullscreenId = nil
         }
+        // [2026-10-15 screen-share whatsapp-level] A NEW screen share opens
+        // full screen automatically (X = minimise back to its tile).
+        let previousIds = Set(gridSession.participants.map { $0.id })
+        let newScreen = screens.first(where: { !previousIds.contains($0.id) })
         gridSession.participants = tiles
         if wantGrid != gridActive { setGridActive(wantGrid) }
+        if wantGrid, let ns = newScreen, gridSession.fullscreenId == nil, presentedViewController == nil {
+            gridSession.fullscreenId = ns.id
+        }
         updateGridHeader()
     }
 
@@ -6490,7 +6658,136 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // Leave video controls mode → controls stay visible (no auto-hide).
             exitVideoControlsMode()
         }
+        updateRemoteScreenShareUI(track) // [2026-10-15 screen-share viewer]
         keepGridOnTop() // [2026-10-14 group-ui] no-op outside grid mode
+    }
+
+    // MARK: - [2026-10-15 screen-share whatsapp-level] Viewer (1:1)
+    //
+    // Peer's screen arrives → it already owns the full screen (aspect-fit,
+    // pinch/drag zoom) + "Fulano está compartilhando a tela" pill + double
+    // tap = 2.5× at the tapped point / back to 1×; tapping the self-view tile
+    // still swaps (= minimise the screen into the tile). Rotating the phone
+    // to landscape shows the shared screen in landscape
+    // (ScreenShareLandscapePresenter — the app is portrait-locked on iPhone).
+
+    private var remoteScreenBanner: UIView?
+    private var remoteDoubleTap: UITapGestureRecognizer?
+    private var screenShareLandscape: ScreenShareLandscapePresenter?
+    private var remoteScreenShown = false
+
+    private func updateRemoteScreenShareUI(_ track: VideoTrack?) {
+        let isScreen = (track?.source == .screenShareVideo) && !gridActive
+        if isScreen, let t = track {
+            if !remoteScreenShown {
+                remoteScreenShown = true
+                nativeCallDiag("screen_share_viewer_started", callId)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            showRemoteScreenBanner()
+            installRemoteDoubleTap()
+            if screenShareLandscape == nil {
+                screenShareLandscape = ScreenShareLandscapePresenter(host: view)
+            }
+            screenShareLandscape?.attach(track: t)
+        } else {
+            if remoteScreenShown {
+                remoteScreenShown = false
+                nativeCallDiag("screen_share_viewer_ended", callId)
+            }
+            hideRemoteScreenBanner()
+            screenShareLandscape?.detach()
+        }
+    }
+
+    private func showRemoteScreenBanner() {
+        let name = callerName.isEmpty ? callerEmail : callerName
+        let text = CallStrings.s("ssPeerSharing", ["name": name])
+        if let b = remoteScreenBanner {
+            (b.viewWithTag(1) as? UILabel)?.text = text
+            view.bringSubviewToFront(b)
+            return
+        }
+        let pill = UIView()
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.backgroundColor = UIColor.black.withAlphaComponent(0.62)
+        pill.layer.cornerRadius = 15
+        pill.isUserInteractionEnabled = false
+        let icon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle",
+                                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = .white
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.tag = 1
+        label.text = text
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.lineBreakMode = .byTruncatingTail
+        pill.addSubview(icon)
+        pill.addSubview(label)
+        view.addSubview(pill)
+        NSLayoutConstraint.activate([
+            pill.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),
+            pill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            pill.heightAnchor.constraint(equalToConstant: 30),
+            pill.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            pill.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            icon.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 12),
+            icon.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 15),
+            icon.heightAnchor.constraint(equalToConstant: 15),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+        ])
+        pill.alpha = 0
+        remoteScreenBanner = pill
+        UIView.animate(withDuration: 0.25) { pill.alpha = 1 }
+        // Discreet: fades after 4 s (the controls tap brings nothing back —
+        // same as WhatsApp's transient notice).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self, weak pill] in
+            guard let self = self, let pill = pill, self.remoteScreenBanner === pill else { return }
+            UIView.animate(withDuration: 0.4) { pill.alpha = 0 }
+        }
+    }
+
+    private func hideRemoteScreenBanner() {
+        guard let b = remoteScreenBanner else { return }
+        remoteScreenBanner = nil
+        UIView.animate(withDuration: 0.2, animations: { b.alpha = 0 }) { _ in b.removeFromSuperview() }
+    }
+
+    private func installRemoteDoubleTap() {
+        guard remoteDoubleTap == nil, let remote = remoteVideoView else { return }
+        remote.isUserInteractionEnabled = true
+        let dt = UITapGestureRecognizer(target: self, action: #selector(handleRemoteDoubleTap(_:)))
+        dt.numberOfTapsRequired = 2
+        remote.addGestureRecognizer(dt)
+        remoteDoubleTap = dt
+        // Single tap (controls toggle) waits for the double tap to fail so a
+        // double tap doesn't flash the controls.
+        videoTapGesture?.require(toFail: dt)
+    }
+
+    @objc private func handleRemoteDoubleTap(_ gr: UITapGestureRecognizer) {
+        guard let remote = remoteVideoView, !videoSwapped else { return }
+        if remoteZoomScale > 1.01 {
+            remoteZoomScale = 1.0
+            remotePanOffset = .zero
+            UIView.animate(withDuration: 0.25) { remote.transform = .identity }
+            return
+        }
+        let scale: CGFloat = 2.5
+        // Zoom toward the tapped point: offset = (center - p) * (scale - 1).
+        let p = gr.location(in: view)
+        let c = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        let proposed = CGPoint(x: (c.x - p.x) * (scale - 1), y: (c.y - p.y) * (scale - 1))
+        remoteZoomScale = scale
+        remotePanOffset = clampedRemotePan(proposed, scale: scale)
+        UIView.animate(withDuration: 0.25) {
+            remote.transform = self.remoteZoomTransform(scale: scale, offset: self.remotePanOffset)
+        }
     }
 
     /// The avatar wrapper UIView. We don't tag it, so locate it via the tagged
@@ -6865,6 +7162,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 extension CallViewController: RoomDelegate {
 
     func roomDidConnect(_ room: Room) {
+        // [2026-10-15 screen-share] Control-Center starts attach to this room.
+        ScreenShareSupport.registerActive(room: room, callId: callId)
         // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.connected.
         NSLog("[CallTrace][9/12] RoomEvent type=Connected callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] roomDidConnect — callId=\(callId)")
@@ -7000,6 +7299,7 @@ extension CallViewController: RoomDelegate {
     }
 
     func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
+        ScreenShareSupport.callEnding(room: room, callId: callId)   // [2026-10-15]
         // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.disconnect.
         NSLog("[CallTrace][9/12] RoomEvent type=Disconnected callId=\(callId) err=\(String(describing: error)) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] didDisconnectWithError — error=\(String(describing: error))")

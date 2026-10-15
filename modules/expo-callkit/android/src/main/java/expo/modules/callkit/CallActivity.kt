@@ -1191,6 +1191,7 @@ class CallActivity : ComponentActivity() {
           // [2026-10-11 call-parity] Real MediaProjection publish into THIS
           // Room (the old REQUEST_PICKER broadcast hit the JS module only).
           onStartScreenshare = { toggleScreenShare() },
+          onOpenScreenViewer = { openRemoteScreenViewer(auto = false) },
           onPlayDTMF = { digit ->
             // Local tone via ToneGenerator + LK data fan-out. The receiver
             // installed in onCreate also handles the network publish path
@@ -1328,6 +1329,14 @@ class CallActivity : ComponentActivity() {
     } else {
       @Suppress("UnspecifiedRegisterReceiverFlag")
       registerReceiver(callAnsweredReceiver, answeredFilter)
+    }
+
+    // [2026-10-15 screen-share WA] Notification "Parar" → stop the share.
+    screenShareStopRx = ScreenShareKit.registerStopReceiver(this) {
+      if (state.isScreenSharing) {
+        CallDiag.log("screen_share_stop_tap", callId, "src=notification", applicationContext)
+        stopScreenShare("notification")
+      }
     }
 
     // [2026-10-09 system-hold] Telecom hold / system mute bridge.
@@ -1542,6 +1551,12 @@ class CallActivity : ComponentActivity() {
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(callAnsweredReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(telecomStateReceiver) } catch (_: Exception) {}
+    // [2026-10-15 screen-share WA]
+    ScreenShareKit.unregisterStopReceiver(this, screenShareStopRx)
+    screenShareStopRx = null
+    try { ScreenShareKit.stopAudio(screenAudioShare) } catch (_: Throwable) {}
+    screenAudioShare = null
+    try { closeRemoteScreenViewer() } catch (_: Throwable) {}
     // [2026-05-21] Release proximity wake-lock if held.
     releaseProximityWakeLock()
     proximityWakeLock = null
@@ -1620,6 +1635,8 @@ class CallActivity : ComponentActivity() {
     // ongoing-call] WhatsApp parity: back = minimize (call keeps running,
     // in-app bar / PiP brings it back).
     if (finishing || isFinishing) return
+    // [2026-10-15 screen-share WA] Back first leaves the full-screen viewer.
+    if (remoteScreenViewer?.isOpen == true) { closeRemoteScreenViewer(); return }
     Log.d(TAG, "back press → minimize")
     minimizeCall(source = "back")
   }
@@ -2775,6 +2792,7 @@ class CallActivity : ComponentActivity() {
     // track — reflect it (the user can share again).
     if (state.isScreenSharing) {
       state.isScreenSharing = false
+      cleanupLocalScreenShare("rejoin")
       CallDiag.log("screen_share_unpublished", callId, "why=rejoin", applicationContext)
     }
     state.status = "Reconectando…"
@@ -2936,7 +2954,16 @@ class CallActivity : ComponentActivity() {
   /** [2026-10-11 call-parity] Peer screen → FIT (whole screen legible, no
    *  crop of a 9:19.5 phone screen); camera → FILL. */
   private fun setRemoteScreenMode(screen: Boolean) {
-    if (state.remoteIsScreenShare == screen) return
+    if (state.remoteIsScreenShare == screen) {
+      // [2026-10-15 screen-share WA] Same mode but a NEW screen track (peer
+      // re-shared) → rebind the open full-screen viewer to it.
+      val v = remoteScreenViewer
+      if (screen && v != null && v.isOpen && v.track !== boundRemoteVideoTrack) {
+        closeRemoteScreenViewer()
+        openRemoteScreenViewer(auto = true)
+      }
+      return
+    }
     state.remoteIsScreenShare = screen
     try {
       remoteRenderer?.setScalingType(
@@ -2944,6 +2971,50 @@ class CallActivity : ComponentActivity() {
       )
     } catch (_: Throwable) {}
     CallDiag.log("remote_screen_share", callId, "on=$screen", applicationContext)
+    // [2026-10-15 screen-share WA] WhatsApp: the peer's screen opens full
+    // screen automatically (Minimizar → back to the call UI, "Tela cheia"
+    // chip reopens it); landscape allowed while it is open.
+    if (screen) {
+      showCallToast(CallStrings.s("ssPeerSharing", "name" to state.callerName.ifBlank { "…" }))
+      openRemoteScreenViewer(auto = true)
+    } else {
+      closeRemoteScreenViewer()
+    }
+  }
+
+  // ────────────── [2026-10-15 screen-share WA] Remote screen viewer (1:1)
+  private var remoteScreenViewer: ScreenShareKit.Viewer? = null
+
+  private fun openRemoteScreenViewer(auto: Boolean) {
+    if (finishing || isFinishing || state.groupParticipants.size >= 2) return
+    val r = room ?: return
+    val track = boundRemoteVideoTrack ?: return
+    if (!state.remoteIsScreenShare) return
+    if (remoteScreenViewer?.isOpen == true) return
+    val v = ScreenShareKit.Viewer(
+      activity = this,
+      room = r,
+      track = track,
+      title = CallStrings.s("ssPeerSharing", "name" to state.callerName.ifBlank { "…" }),
+      onMinimize = {
+        state.remoteScreenViewerOpen = false
+        remoteScreenViewer = null
+        CallDiag.log("screen_share_viewer_minimize", callId, "", applicationContext)
+      },
+    )
+    if (v.open()) {
+      remoteScreenViewer = v
+      state.remoteScreenViewerOpen = true
+      if (isInPictureInPictureMode) v.setChromeVisible(false)
+      CallDiag.log("screen_share_viewer_open", callId, "auto=${if (auto) 1 else 0}", applicationContext)
+    }
+  }
+
+  private fun closeRemoteScreenViewer() {
+    val v = remoteScreenViewer ?: return
+    remoteScreenViewer = null
+    state.remoteScreenViewerOpen = false
+    v.close()
   }
 
   private fun handleRoomEvent(r: Room, event: RoomEvent) {
@@ -3521,8 +3592,10 @@ class CallActivity : ComponentActivity() {
     // [2026-10-11 call-parity] Local screen share must not outlive the call.
     if (state.isScreenSharing) {
       state.isScreenSharing = false
+      try { cleanupLocalScreenShare("call_end") } catch (_: Throwable) {}
       try { val r0 = room; if (r0 != null) MainScope().launch { try { r0.localParticipant.setScreenShareEnabled(false) } catch (_: Throwable) {} } } catch (_: Throwable) {}
     }
+    try { closeRemoteScreenViewer() } catch (_: Throwable) {}
 
     // Notify the WS server first so the peer sees call_end with low latency.
     // [2026-05-24] Pass callerEmail (the peer) as target so the C++ WS can
@@ -4337,48 +4410,64 @@ class CallActivity : ComponentActivity() {
       CallDiag.log("screen_share_error", callId, "reason=${if (p2p != null) "p2p" else "room_not_connected"}", applicationContext)
       return
     }
-    try {
-      val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
-      armSelfLaunchGuard("screen_share_consent", 30_000L)
-      screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
-    } catch (t: Throwable) {
-      Log.w(TAG, "screen capture intent failed: ${t.message}")
-      CallDiag.log("screen_share_error", callId, "err=${t.message?.take(100)}", applicationContext)
-      showCallToast(CallStrings.s("screenShareFailed"))
-    }
+    // [2026-10-15 screen-share WA] 1st time only: privacy notice → then a
+    // FRESH system consent (Android 14+: one token per session, never reused).
+    screenShareInFlight = true
+    ScreenShareKit.confirmPrivacyThen(this, onContinue = {
+      screenShareInFlight = false
+      if (finishing || state.isScreenSharing) return@confirmPrivacyThen
+      try {
+        armSelfLaunchGuard("screen_share_consent", 30_000L)
+        CallDiag.log("screen_share_consent_shown", callId, "api=${Build.VERSION.SDK_INT}", applicationContext)
+        screenCaptureLauncher.launch(ScreenShareKit.captureIntent(this))
+      } catch (t: Throwable) {
+        Log.w(TAG, "screen capture intent failed: ${t.message}")
+        CallDiag.log("screen_share_error", callId, "err=${t.message?.take(100)}", applicationContext)
+        showCallToast(CallStrings.s("screenShareFailed"))
+      }
+    }, onCancel = {
+      screenShareInFlight = false
+      CallDiag.log("screen_share_privacy_cancel", callId, "", applicationContext)
+    })
   }
 
-  private fun buildScreenShareNotification(): android.app.Notification {
-    val iconRes = try {
-      resources.getIdentifier("ic_notification", "drawable", packageName).takeIf { it != 0 } ?: applicationInfo.icon
-    } catch (_: Throwable) { applicationInfo.icon }
-    val channelId = "chatyy_screen_share"
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      try {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        if (nm.getNotificationChannel(channelId) == null) {
-          nm.createNotificationChannel(
-            android.app.NotificationChannel(channelId, CallStrings.s("sharingScreen"), android.app.NotificationManager.IMPORTANCE_LOW)
-          )
-        }
-      } catch (_: Throwable) {}
+  private fun buildScreenShareNotification(): android.app.Notification =
+    // [2026-10-15 screen-share WA] "Você está compartilhando a tela" + Parar.
+    ScreenShareKit.buildNotification(this, state.callerName, CallActivity::class.java, 7311)
+
+  /** [2026-10-15 screen-share WA] Camera paused by the share (resumed on stop). */
+  private var cameraPausedForShare = false
+  private var screenAudioShare: ScreenShareKit.AudioShare? = null
+  private var screenShareStopRx: android.content.BroadcastReceiver? = null
+  private var screenShareStartedAt = 0L
+
+  /** Publish succeeded → WhatsApp parity: camera pauses, app/media audio mixes in. */
+  private fun onLocalScreenShareStarted(r: Room) {
+    screenShareStartedAt = System.currentTimeMillis()
+    if (state.isVideo && state.isCameraOn && !state.isOnHold) {
+      cameraPausedForShare = true
+      setCameraLive(false)
     }
-    val open = try {
-      PendingIntent.getActivity(
-        this, 7311,
-        Intent(this, CallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-      )
-    } catch (_: Throwable) { null }
-    return androidx.core.app.NotificationCompat.Builder(this, channelId)
-      .setSmallIcon(iconRes)
-      .setContentTitle(CallStrings.s("sharingScreen"))
-      .setContentText(state.callerName)
-      .setOngoing(true)
-      .setOnlyAlertOnce(true)
-      .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-      .apply { if (open != null) setContentIntent(open) }
-      .build()
+    screenAudioShare = ScreenShareKit.startAudio(applicationContext, r)
+    CallDiag.log("screen_share_started", callId,
+      "cam_paused=${if (cameraPausedForShare) 1 else 0} audio=${if (screenAudioShare != null) 1 else 0} sim=${if (CallVideoQuality.simulcastEnabled()) 1 else 0}",
+      applicationContext)
+  }
+
+  /** Every stop path (button, notification, system, rejoin, hangup) ends here. */
+  private fun cleanupLocalScreenShare(why: String) {
+    ScreenShareKit.stopAudio(screenAudioShare)
+    screenAudioShare = null
+    if (cameraPausedForShare) {
+      cameraPausedForShare = false
+      if (!finishing) {
+        if (state.isOnHold) cameraWasOnBeforeHold = true else setCameraLive(true)
+      }
+    }
+    if (screenShareStartedAt > 0L) {
+      CallDiag.log("screen_share_ended", callId, "why=$why dur_s=${(System.currentTimeMillis() - screenShareStartedAt) / 1000}", applicationContext)
+      screenShareStartedAt = 0L
+    }
   }
 
   private fun startScreenShareWith(data: Intent) {
@@ -4407,6 +4496,7 @@ class CallActivity : ComponentActivity() {
         val ok = r.localParticipant.setScreenShareEnabled(true, params)
         state.isScreenSharing = ok
         CallDiag.log(if (ok) "screen_share_published" else "screen_share_error", callId, "mediaprojection", applicationContext)
+        if (ok) onLocalScreenShareStarted(r)
         if (!ok) showCallToast(CallStrings.s("screenShareFailed"))
       } catch (t: Throwable) {
         Log.w(TAG, "setScreenShareEnabled(true) failed: ${t.message}")
@@ -4422,6 +4512,7 @@ class CallActivity : ComponentActivity() {
   private fun stopScreenShare(why: String) {
     val r = room
     state.isScreenSharing = false
+    cleanupLocalScreenShare(why)
     if (r == null) return
     lifecycleScope.launch {
       try { r.localParticipant.setScreenShareEnabled(false) } catch (t: Throwable) { Log.w(TAG, "stop screen share: ${t.message}") }
@@ -4658,6 +4749,7 @@ class CallActivity : ComponentActivity() {
   ) {
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
     state.isInPip = isInPictureInPictureMode
+    try { remoteScreenViewer?.setChromeVisible(!isInPictureInPictureMode) } catch (_: Throwable) {}
     // [2026-10-11 ongoing-call] PiP → the app is what the user sees.
     uiVisible = !isInPictureInPictureMode &&
       lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -4767,6 +4859,8 @@ class CallSessionStateAndroid {
   var isScreenSharing by mutableStateOf(false)
   /** The full-bleed remote tile currently shows the peer's SCREEN (fit, not fill). */
   var remoteIsScreenShare by mutableStateOf(false)
+  /** [2026-10-15 screen-share WA] Full-screen viewer of the peer's screen is up. */
+  var remoteScreenViewerOpen by mutableStateOf(false)
   /** WE put the call on hold ("Colocar em espera"). */
   var isOnHold by mutableStateOf(false)
   /** The PEER put the call on hold ({type:"hold"} data frame). */
@@ -4913,6 +5007,8 @@ private fun CallScreen(
   onToggleHold: () -> Unit = {},
   /** [2026-10-11 call-parity] "Qualidade HD" toggle. */
   onToggleDataSaver: () -> Unit = {},
+  /** [2026-10-15 screen-share WA] Reopen the peer's screen full screen. */
+  onOpenScreenViewer: () -> Unit = {},
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   /** [2026-10-11 call-parity] iOS "Mais opções" sheet. */
@@ -5232,17 +5328,56 @@ private fun CallScreen(
         .align(Alignment.TopCenter)
         .padding(top = 104.dp),
     ) {
+      // [2026-10-15 screen-share WA] "Você está compartilhando a tela" + Parar.
       Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-          .clip(RoundedCornerShape(18.dp))
+          .clip(RoundedCornerShape(20.dp))
           .background(Color(0xFF1E8E3E))
-          .clickable { onStartScreenshare() }
+          .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+      ) {
+        Icon(imageVector = Icons.Filled.ScreenShare, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text = CallStrings.s("ssYouAreSharing"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        Spacer(Modifier.width(10.dp))
+        Text(
+          text = CallStrings.s("stop"),
+          color = Color(0xFF1E8E3E),
+          fontSize = 13.sp,
+          fontWeight = FontWeight.SemiBold,
+          modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .clickable { onStartScreenshare() }
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        )
+      }
+    }
+
+    // [2026-10-15 screen-share WA] Peer is sharing and the full-screen viewer
+    // was minimized → "Fulano está compartilhando a tela · Tela cheia".
+    AnimatedVisibility(
+      visible = state.remoteIsScreenShare && !state.remoteScreenViewerOpen && !state.isScreenSharing && !state.isInPip && state.groupParticipants.size < 2,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .padding(top = 104.dp, start = 16.dp, end = 16.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+          .clip(RoundedCornerShape(20.dp))
+          .background(Color.Black.copy(alpha = 0.6f))
+          .clickable { onOpenScreenViewer() }
           .padding(horizontal = 14.dp, vertical = 8.dp),
       ) {
         Icon(imageVector = Icons.Filled.ScreenShare, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(8.dp))
-        Text(text = CallStrings.s("sharingScreen") + " · " + CallStrings.s("stop"), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(
+          text = CallStrings.s("ssPeerSharing", "name" to state.callerName.ifBlank { "…" }) + " · " + CallStrings.s("ssFullScreen"),
+          color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+        )
       }
     }
 

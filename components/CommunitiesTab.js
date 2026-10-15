@@ -16,6 +16,7 @@ import ScreenEmptyState from './ScreenEmptyState';
 import { haptic } from '../constants/theme';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 
 const ACCENT = '#111111';
 
@@ -50,8 +51,9 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
   const { t } = useLanguage();
   const router = useRouter();
 
-  const [communities, setCommunities] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-14 offline-first] última lista salva (por conta) → pinta na hora.
+  const [communities, setCommunities] = useState(() => peekCached('communities') || []);
+  const [loading, setLoading] = useState(() => !peekCached('communities'));
   const [refreshing, setRefreshing] = useState(false);
   const [failed, setFailed] = useState(false); // [2026-10-08 apps-native] erro ≠ lista vazia
   const [expandedId, setExpandedId] = useState(null);
@@ -78,7 +80,9 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     try {
       const res = await api.communityList();
       if (api.apiOk(res)) {
-        setCommunities(api.apiList(res, 'communities'));
+        const _list = api.apiList(res, 'communities');
+        setCommunities(_list);
+        putCached('communities', _list);
         setFailed(false);
       } else {
         setFailed(true);

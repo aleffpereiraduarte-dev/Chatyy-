@@ -41,6 +41,10 @@
  *   4. Host Info.plist: `RTCAppGroupIdentifier` + `RTCScreenSharingExtension`
  *      — the keys LiveKit Swift (and react-native-webrtc) read to find the
  *      extension and present RPSystemBroadcastPickerView pre-targeted at it.
+ *   [2026-10-15] DEFAULT is now the standalone handler
+ *      (plugins/broadcast-extension/SampleHandler.swift) → steps 5 below are
+ *      SKIPPED (no pods in the appex). CHATYY_BROADCAST_EXT_LK=1 restores the
+ *      LKSampleHandler + LiveKitClient pod variant.
  *   5. Podfile: nested `target 'ChatyyBroadcastExtension'` inside the Chatyy
  *      target with `inherit! :complete` + `pod 'LiveKitClient', '2.0.18'`,
  *      and a post_install hook that drops the auto-generated
@@ -136,14 +140,18 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
-// LiveKit-documented pattern: subclass LKSampleHandler and nothing else. The
-// base class connects to the host over the App Group socket (it reads
-// `RTCAppGroupIdentifier` from the EXTENSION's Info.plist above), encodes the
-// CMSampleBuffers and the host's BroadcastScreenCapturer publishes them as
-// the Room's screen-share track. Any extra override here (custom audio IPC,
-// JPEG dumps, non-existent properties) is a compile/runtime risk — keep it
-// minimal.
-const SAMPLE_HANDLER_SWIFT = `//
+// [2026-10-15 screen-share whatsapp-level] DEFAULT = standalone handler in
+// plugins/broadcast-extension/SampleHandler.swift (no LiveKitClient, no pods
+// in the appex): downscaled JPEG frames (<=1920x1080, <=15 fps, q0.7) with a
+// footprint probe that steps down before the 50 MB ReplayKit limit, connect
+// timeout (started outside a call → friendly error), reconnect grace, host
+// "stop" Darwin signal and stats for voip_diag. Same wire protocol as
+// LKSampleHandler (host side = LiveKit Swift BroadcastScreenCapturer).
+// Escape hatch: CHATYY_BROADCAST_EXT_LK=1 → the old `LKSampleHandler`
+// subclass + LiveKitClient pod target (proven in builds 636-665).
+const USE_LK_HANDLER = /^(1|true|on)$/i.test((process.env.CHATYY_BROADCAST_EXT_LK || '').trim());
+
+const LK_SAMPLE_HANDLER_SWIFT = `//
 //  SampleHandler.swift
 //  ChatyyBroadcastExtension
 //
@@ -159,6 +167,22 @@ import LiveKitClient
 class SampleHandler: LKSampleHandler {
 }
 `;
+
+const STANDALONE_HANDLER_PATH = path.join(__dirname, 'broadcast-extension', 'SampleHandler.swift');
+
+function sampleHandlerSource() {
+  if (USE_LK_HANDLER) return LK_SAMPLE_HANDLER_SWIFT;
+  try {
+    return fs.readFileSync(STANDALONE_HANDLER_PATH, 'utf8');
+  } catch (e) {
+    console.warn(`[with-broadcast-extension] ${STANDALONE_HANDLER_PATH} unreadable (${e && e.message}) — falling back to LKSampleHandler`);
+    return null;
+  }
+}
+
+const SAMPLE_HANDLER_SWIFT = sampleHandlerSource() || LK_SAMPLE_HANDLER_SWIFT;
+// Pods (LiveKitClient) are only needed by the LKSampleHandler variant.
+const EXT_NEEDS_PODS = SAMPLE_HANDLER_SWIFT === LK_SAMPLE_HANDLER_SWIFT;
 
 const EMBEDDED_FILES = {
   'SampleHandler.swift': SAMPLE_HANDLER_SWIFT,
@@ -299,6 +323,8 @@ function withBroadcastTarget(config) {
         s.MARKETING_VERSION = `"${marketingVersion}"`;
         s.CURRENT_PROJECT_VERSION = `"${projectVersion}"`;
         s.SKIP_INSTALL = 'YES';
+        // [2026-10-15] Standalone handler links only system frameworks.
+        if (!EXT_NEEDS_PODS) s.OTHER_LDFLAGS = '"$(inherited) -framework ReplayKit -framework CoreImage -framework CoreMedia -framework CoreVideo"';
         // [2026-10-06 build 635 ERRORED] Xcode (15+) REFUSES an app-extension
         // target with APPLICATION_EXTENSION_API_ONLY=NO: "Application extensions
         // and any libraries they link to must be built with ... YES (in target
@@ -468,8 +494,12 @@ module.exports = function withBroadcastExtension(config) {
   config = withMainAppGroup(config);
   config = withBroadcastInfoPlist(config);
   config = withBroadcastTarget(config);
-  config = withBroadcastPodTarget(config);
-  config = withBroadcastProviderStub(config);
+  if (EXT_NEEDS_PODS) {
+    config = withBroadcastPodTarget(config);
+    config = withBroadcastProviderStub(config);
+  } else {
+    console.log('[with-broadcast-extension] standalone SampleHandler (no pods in the appex)');
+  }
   return config;
 };
 

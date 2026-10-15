@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-conversation-list",
+  "version": "1.0.0",
+  "description": "Chatyy native home conversation list: iOS UICollectionView (compositional list + diffable data source, native swipe actions, context menu with peek); Android RecyclerView + DiffUtil + ItemTouchHelper + Glide.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

@@ -28,6 +28,7 @@ import {
 // as Live gifts. The gift panel is components/gifts/GiftSheet (context 'post' →
 // diamond_gift_send), the same panel used in lives and the 1:1 chat.
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import { giftLabel, giftMeta } from './live/liveEngageConfig';
@@ -37,6 +38,11 @@ import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10
 // [reels-v1 2026-10-13] sinais de comportamento (só dentro do Reels) + cold start de interesses
 import { trackReelEvent, trackReelView, flushReelSignals } from '../services/reelsSignals';
 import ReelsInterestPicker from './ReelsInterestPicker';
+// [2026-10-15 native-reels] Feed vertical 100% NATIVO (modules/expo-reels-feed: UICollectionView +
+// pool de 3 AVPlayer / RecyclerView + pool de 3 ExoPlayer). Binário sem o módulo, web, kill switch
+// (globalThis.__chatyy_native_reels = false) ou erro nativo → FlatList JS abaixo, idêntica a antes.
+import NativeReelsFeed, { isNativeReelsAvailable, disableNativeReelsForSession } from './reels/NativeReelsFeed';
+import { buildAvatarUrl, avatarAuthHeaders } from '../services/avatar';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
@@ -2601,6 +2607,71 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   return true;
 });
 
+// [2026-10-15 native-reels] Menu "…" do feed nativo — mesmas opções do ReelItem
+// (por que estou vendo, não tenho interesse, salvar som, visualizações, velocidade, denunciar).
+function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpeed, onToggleSound, onUseSound }) {
+  const [whyOpen, setWhyOpen] = useState(false);
+  const rid = reel ? reel.id : null;
+  useEffect(() => { setWhyOpen(false); }, [rid]);
+  if (!reel) return null;
+  const rowStyle = { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 };
+  const txt = { color: '#fff', fontSize: 16, fontWeight: '600' };
+  const views = Number(reel.view_count) || 0;
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={onClose}>
+        <Pressable
+          style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 10, paddingBottom: 28 }}
+          onPress={(e) => e.stopPropagation && e.stopPropagation()}
+        >
+          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', alignSelf: 'center', marginBottom: 12 }} />
+          {REELS_BACKEND_ACTIONS_READY && !!reel.sound_id && (
+            <TouchableOpacity style={rowStyle} onPress={() => onUseSound(reel)} activeOpacity={0.7} accessibilityRole="button">
+              <IconMusic size={22} color="#fff" />
+              <Text style={txt}>{t?.('feed.useThisSound') || 'Usar este som'}</Text>
+            </TouchableOpacity>
+          )}
+          {!!reel.rec?.why && (
+            <TouchableOpacity style={{ paddingHorizontal: 20, paddingVertical: 14 }} onPress={() => setWhyOpen((v) => !v)} activeOpacity={0.7} accessibilityRole="button">
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                <IconEye size={22} color="#fff" />
+                <Text style={txt}>{t?.('reels.why.title') || 'Por que estou vendo isto?'}</Text>
+              </View>
+              {whyOpen ? (
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 20, marginTop: 8, marginLeft: 36 }}>{reelWhyText(reel, t)}</Text>
+              ) : null}
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={rowStyle} onPress={() => onHide(reel)} activeOpacity={0.7} accessibilityRole="button">
+            <IconX size={22} color="#fff" />
+            <Text style={txt}>{t?.('feed.notInterested') || 'Não tenho interesse'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={rowStyle} onPress={() => onToggleSound(reel)} activeOpacity={0.7} accessibilityRole="button">
+            {reel.sound_saved ? <IconBookmarkFilled size={22} color="#fff" /> : <IconBookmark size={22} color="#fff" />}
+            <Text style={txt}>{reel.sound_saved ? (t?.('feed.unsaveSound') || 'Remover som dos salvos') : (t?.('feed.saveSound') || 'Salvar som')}</Text>
+          </TouchableOpacity>
+          {views > 0 && (
+            <View style={rowStyle}>
+              <IconEye size={22} color="#fff" />
+              <Text style={[txt, { flex: 1 }]}>{t?.('feed.views') || 'Visualizações'}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '700' }}>{formatCount(views)}</Text>
+            </View>
+          )}
+          <TouchableOpacity style={rowStyle} onPress={onSpeed} activeOpacity={0.7} accessibilityRole="button">
+            <IconPlay size={22} color="#fff" />
+            <Text style={[txt, { flex: 1 }]}>{t?.('feed.speed') || 'Velocidade'}</Text>
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{speed}×</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={rowStyle} onPress={() => onReport(reel)} activeOpacity={0.7} accessibilityRole="button">
+            <IconX size={22} color="#FF3B30" />
+            <Text style={[txt, { color: '#FF3B30' }]}>{t?.('feed.report') || 'Denunciar'}</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 // ── Loading skeleton ──
 function ReelsSkeleton({ insets }) {
   const pulse = useRef(new Animated.Value(0.55)).current;
@@ -2804,10 +2875,16 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     if (feedModeProp === 'following' && reelTab !== 'following') setReelTab('following');
     if (feedModeProp === 'foryou' && reelTab !== 'forYou') setReelTab('forYou');
   }, [feedModeProp]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [reels, setReels] = useState([]);
+  // [2026-10-14 offline-first] 1ª página salva no aparelho (por conta) → a aba
+  // pinta na hora com os últimos reels; o fresco chega em 2º plano e entra
+  // DEPOIS do reel que está tocando (não troca o vídeo debaixo do dedo).
+  const _rcKey = soundIdProp ? null : ['reels_p1', useRec ? 'rec' : 'feed'];
+  const [_rcInit] = useState(() => (_rcKey ? peekCached(_rcKey) : null));
+  const rcShownRef = useRef(!!(_rcInit && ((_rcInit.reels || []).length || (_rcInit.following || []).length)));
+  const [reels, setReels] = useState(() => (Array.isArray(_rcInit?.reels) ? _rcInit.reels : []));
   const reelsRef = useRef(reels);
   reelsRef.current = reels;
-  const [followingReels, setFollowingReels] = useState([]);
+  const [followingReels, setFollowingReels] = useState(() => (Array.isArray(_rcInit?.following) ? _rcInit.following : []));
   // [2026-10-08 reels-publish] reel publicado em 2º plano (reelPublishQueue) →
   // entra no topo de "Seguindo" e "Pra você" sem esperar o próximo refresh.
   useEffect(() => {
@@ -2825,7 +2902,9 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     return () => { try { unsub && unsub(); } catch {} };
   }, [soundIdProp]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const curIdxRef = useRef(0);
+  curIdxRef.current = currentIndex;
+  const [loading, setLoading] = useState(() => !rcShownRef.current);
   const [refreshing, setRefreshing] = useState(false);
   // [2026-10-08 apps-native] falha de rede antes caía no empty "Sem reels
   // ainda" (mentira) sem jeito de tentar de novo. Agora vira estado de erro.
@@ -2834,6 +2913,27 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const [likersReel, setLikersReel] = useState(null);
   const [containerHeight, setContainerHeight] = useState(SCREEN_HEIGHT);
   const [containerWidth, setContainerWidth] = useState(SCREEN_WIDTH);
+  // [2026-10-15 native-reels] Estado do caminho nativo. Fora dele tudo fica null/false
+  // (overlayOpen e os efeitos abaixo se comportam exatamente como antes).
+  const [nativeOn, setNativeOn] = useState(() => !isWeb && isNativeReelsAvailable());
+  const [nGiftReel, setNGiftReel] = useState(null);
+  const [nShareReel, setNShareReel] = useState(null);
+  const [nMoreReel, setNMoreReel] = useState(null);
+  const [nSpeedOpen, setNSpeedOpen] = useState(false);
+  const [nRate, setNRate] = useState(1);
+  const [nCaptions, setNCaptions] = useState(true);
+  const [nBursts, setNBursts] = useState([]);
+  useEffect(() => {
+    if (!nativeOn) return;
+    (async () => {
+      try {
+        const [sp, cc] = await Promise.all([AsyncStorage.getItem(REELS_SPEED_KEY), AsyncStorage.getItem(REELS_CC_KEY)]);
+        const n = Number(sp);
+        if (Number.isFinite(n) && n > 0 && n !== 1) setNRate(n);
+        if (cc === '0') setNCaptions(false);
+      } catch {}
+    })();
+  }, [nativeOn]);
 
   // ── Infinite scroll (P0) ──
   // Page cursor + has-more + in-flight guard tracked per feed (For You vs
@@ -2929,8 +3029,18 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, [interestsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadReels = async (isRefresh = false) => {
+    // [2026-10-14 offline-first] com a cópia salva na tela, a 1ª carga é silenciosa.
+    const _overCache = !isRefresh && rcShownRef.current;
+    rcShownRef.current = false;
+    const _merge = (fresh) => (prev) => {
+      if (!_overCache || !prev.length) return fresh;
+      const keep = prev.slice(0, Math.max(0, curIdxRef.current) + 1);
+      const ids = new Set(keep.map((p) => String(p.id)));
+      return keep.concat(fresh.filter((p) => !ids.has(String(p.id))));
+    };
+    const _save = { reels: null, following: null };
     if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    else if (!_overCache) setLoading(true);
     // Fresh load → reset both feed cursors back to page 1.
     setPage(1);
     setFollowingPage(1);
@@ -2968,7 +3078,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         recModeRef.current = !!recR;
         setRecActive(!!recR);
         if (recR) {
-          setReels(recR.posts.filter(p => !hiddenIdsRef.current.has(String(p.id))));
+          _save.reels = recR.posts.filter(p => !hiddenIdsRef.current.has(String(p.id)));
+          setReels(_merge(_save.reels));
           setHasMore(recR.hasMore);
           if (recR.onboarding) maybeAskInterests();
         }
@@ -2981,7 +3092,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           const rawPosts = allR.data.posts || allR.data;
           const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
           const videos = allPosts.filter(p => isReelVideo(p) && !hiddenIdsRef.current.has(String(p.id)));
-          setReels(videos);
+          _save.reels = videos;
+          setReels(_merge(videos));
           // Base has-more on the *raw* page size (pre video-filter) so a page
           // full of non-video posts doesn't prematurely stop pagination.
           setHasMore(allPosts.length >= 50);
@@ -2990,8 +3102,16 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           const rawF = followR.data.posts || followR.data;
           const followingAll = Array.isArray(rawF) ? rawF : [];
           const followingVids = followingAll.filter(p => isReelVideo(p) && !hiddenIdsRef.current.has(String(p.id)));
-          setFollowingReels(followingVids);
+          _save.following = followingVids;
+          setFollowingReels(_merge(followingVids));
           setFollowingHasMore(followingAll.length >= 50);
+        }
+        if (_rcKey && (_save.reels || _save.following)) {
+          const prevC = peekCached(_rcKey) || {};
+          putCached(_rcKey, {
+            reels: (_save.reels || prevC.reels || []).slice(0, 15),
+            following: (_save.following || prevC.following || []).slice(0, 15),
+          });
         }
       }
     } catch (e) {
@@ -3153,7 +3273,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // strategy means the just-watched reel naturally evicts itself when we
   // hit reel N+3. No-op on web (HLS+<video> already preloads metadata).
   useEffect(() => {
-    if (isWeb || !prefetchShortsVideoFn) return;
+    if (isWeb || !prefetchShortsVideoFn || nativeOn) return; // [2026-10-15 native-reels] o feed nativo tem pool próprio
     if (!Array.isArray(activeReels) || activeReels.length === 0) return;
     for (const offset of [1, 2]) {
       const nextIdx = currentIndex + offset;
@@ -3164,7 +3284,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       if (!u) continue;
       try { prefetchShortsVideoFn(String(next.id), u); } catch {}
     }
-  }, [currentIndex, activeReels]);
+  }, [currentIndex, activeReels, nativeOn]);
 
   // Reset index when switching tabs.
   // [#tab-switch-fix] Also clear the loadingMoreRef single-flight guard so the
@@ -3266,7 +3386,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
   }, [t]);
 
-  const overlayOpen = !!commentsReel || !!likersReel || !!pickerMode;
+  const overlayOpen = !!commentsReel || !!likersReel || !!pickerMode
+    || !!nGiftReel || !!nShareReel || !!nMoreReel || nSpeedOpen; // [2026-10-15 native-reels] sheets do caminho nativo
 
   // [reels-v1 2026-10-13] Tempo assistido por impressão (relógio de parede enquanto o reel
   // está ativo, a aba visível, o app em 1º plano e sem sheet por cima). Ao trocar de reel ou
@@ -3274,6 +3395,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // e replay. Envio em lote (services/reelsSignals).
   const watchRef = useRef({ id: null, accum: 0, since: 0, dur: 0 });
   useEffect(() => {
+    // [2026-10-15 native-reels] nativo mede o tempo TOCANDO de verdade (onViewProgress) — ver abaixo.
+    if (nativeOn) return;
     const w = watchRef.current;
     const now = Date.now();
     const reel = Array.isArray(activeReels) ? activeReels[currentIndex] : null;
@@ -3286,7 +3409,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       w.dur = reel ? (Number(reel.video_duration_ms) || 0) : 0;
     }
     if (id != null) w.since = now;
-  }, [currentIndex, activeReels, playGate, overlayOpen]);
+  }, [currentIndex, activeReels, playGate, overlayOpen, nativeOn]);
   useEffect(() => () => {
     const w = watchRef.current;
     if (w.id != null) { if (w.since) w.accum += Date.now() - w.since; try { trackReelView(w.id, w.accum, w.dur); } catch {} }
@@ -3329,6 +3452,385 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       />
     );
   }, [currentIndex, colors, isDark, t, user, router, containerHeight, containerWidth, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute, onCreate]);
+
+  // ── [2026-10-15 native-reels] Feed NATIVO: itens, eventos e sheets ─────────
+  // O nativo só emite eventos; a lógica (API, fila offline, sinais de
+  // recomendação, patches dos arrays) é a MESMA do ReelItem JS.
+  const findReel = useCallback((id) => {
+    const k = String(id);
+    const pick = (arr) => (Array.isArray(arr) ? arr.find((p) => String(p.id) === k) : null);
+    return pick(reelTab === 'following' ? followingReels : reels) || pick(reels) || pick(followingReels) || null;
+  }, [reelTab, reels, followingReels]);
+  const findReelRef = useRef(findReel);
+  findReelRef.current = findReel;
+  const loadMoreRef = useRef(loadMore);
+  loadMoreRef.current = loadMore;
+  const patchReel = useCallback((id, fields) => {
+    const k = String(id);
+    const patch = (p) => (String(p.id) === k ? { ...p, ...fields } : p);
+    setReels((rs) => rs.map(patch));
+    setFollowingReels((rs) => rs.map(patch));
+  }, []);
+  // Curtir/salvar são TOGGLES no servidor: serializa por reel (ordem preservada) e só
+  // reconcilia com a resposta da ÚLTIMA requisição (toques rápidos não dessincronizam).
+  const nQueueRef = useRef(new Map());
+  const nEnqueue = useCallback((key, fn) => {
+    const q = nQueueRef.current.get(key) || { chain: Promise.resolve(), seq: 0 };
+    q.seq += 1;
+    const mine = q.seq;
+    q.chain = q.chain.then(() => fn(() => q.seq === mine)).catch(() => {});
+    nQueueRef.current.set(key, q);
+  }, []);
+
+  const nativeItems = useMemo(() => {
+    if (!nativeOn || !Array.isArray(activeReels)) return [];
+    const me = String(user?.email || '').toLowerCase();
+    return activeReels.map((r) => {
+      const urls = parseMediaUrls(r.media_urls);
+      const authorDisplay = r.author_name || r.author_email?.split('@')[0] || '?';
+      const isOther = !!r.author_email && String(r.author_email).toLowerCase() !== me;
+      let credit = '';
+      if (r.credit) {
+        credit = (t?.('reels.credit') || 'Vídeo: {name} · {source}')
+          .replace('{name}', r.credit.name || r.credit.source || '')
+          .replace('{source}', r.credit.source || '');
+      }
+      let avatar = '';
+      if (!r.is_catalog && r.author_email) {
+        try { avatar = buildAvatarUrl(r.author_email, { name: r.author_name }) || ''; } catch { avatar = ''; }
+      }
+      return {
+        id: String(r.id),
+        videoUrl: resolveMediaUrl(urls[0]) || '',
+        hlsUrl: r.hls_url ? resolveMediaUrl(r.hls_url) : '',
+        thumb: r.thumbnail_url ? resolveMediaUrl(r.thumbnail_url) : '',
+        avatar,
+        author: r.is_catalog ? authorDisplay : `@${authorDisplay}`,
+        caption: r.caption || '',
+        music: r.audio_name || `${t('feed.originalAudio') || 'Áudio original'} · ${authorDisplay}`,
+        credit,
+        likes: Number(r.like_count) || 0,
+        comments: Number(r.comment_count ?? r.comments_count ?? r.comments) || 0,
+        liked: !!r.user_liked,
+        saved: !!r.user_bookmarked,
+        durationMs: Number(r.video_duration_ms) || 0,
+        canGift: !!DIAMONDS_ENABLED && isOther && !r.is_catalog,
+        canFollow: isOther && !r.is_catalog && !(r.user_following || r.is_following),
+        commentsDisabled: r.allow_comments === false && isOther,
+        // [2026-10-15 reels-gaps] anel "ao vivo" no avatar — mesma regra do ReelItem JS
+        live: !!showLiveRing && !!(r.is_live || r.live_id),
+        width: Number(r.video_width || r.width) || 0,
+        height: Number(r.video_height || r.height) || 0,
+        subtitles: Array.isArray(r.subtitles) ? r.subtitles : [],
+      };
+    });
+  }, [nativeOn, activeReels, user?.email, t, showLiveRing]);
+
+  const nativeLabels = useMemo(() => ({
+    like: t('reels.native.like'),
+    comment: t('reels.native.comment'),
+    gift: t('reels.native.gift'),
+    share: t('reels.native.share'),
+    save: t('reels.native.save'),
+    saved: t('reels.native.saved'),
+    more: t('reels.native.more'),
+    mute: t('reels.native.mute'),
+    unmute: t('reels.native.unmute'),
+    follow: t('reels.native.follow'),
+    error: t('reels.videoError'),
+    retry: t('reels.videoRetry'),
+    likers: t('reels.native.likers'),
+    sound: t('reels.native.sound'),
+    live: t('reels.native.live'),
+  }), [t]);
+  const nativeInsets = useMemo(() => ({
+    top: reelHeaderTop(outerInsets) + REEL_HEADER_H,
+    bottom: outerInsets.bottom || 0,
+  }), [outerInsets.top, outerInsets.bottom]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Bearer só p/ get_avatar do nosso host (foto restrita "meus contatos").
+  let _nHdrKey = '';
+  if (nativeOn) {
+    try { const h = avatarAuthHeaders(buildAvatarUrl(user?.email || 'reels@chatyy.com.br')); _nHdrKey = h?.Authorization || ''; } catch {}
+  }
+  const nativeImageHeaders = useMemo(() => (_nHdrKey ? { Authorization: _nHdrKey } : null), [_nHdrKey]);
+
+  const burstSeqNRef = useRef(0);
+  const pushNBurst = useCallback((label, icon) => {
+    burstSeqNRef.current += 1;
+    const key = burstSeqNRef.current;
+    setNBursts((prev) => [...prev, { key, label, icon }].slice(-6));
+    setTimeout(() => setNBursts((prev) => prev.filter((b) => b.key !== key)), 1700);
+  }, []);
+
+  // Impressão: o nativo emite onViewProgress quando ela termina (troca/pausa/2º plano).
+  // Fallback p/ desmontagem (o evento nativo não chega num componente já desmontado).
+  const nGateOpen = playGate && !overlayOpen;
+  const nGateRef = useRef(nGateOpen);
+  nGateRef.current = nGateOpen;
+  const nImpRef = useRef({ id: null, since: 0, dur: 0 });
+  useEffect(() => {
+    if (!nativeOn) return;
+    const r = nImpRef.current;
+    if (nGateOpen) { if (r.id && !r.since) r.since = Date.now(); } else { r.since = 0; }
+  }, [nativeOn, nGateOpen]);
+  useEffect(() => {
+    if (!nativeOn) return undefined;
+    return () => {
+      const r = nImpRef.current;
+      if (r.id && r.since) { try { trackReelView(r.id, Date.now() - r.since, r.dur); } catch {} }
+      nImpRef.current = { id: null, since: 0, dur: 0 };
+    };
+  }, [nativeOn]);
+
+  // feedView (contador público) após ~1,5 s no reel — 1× por id, como o ReelItem.
+  const nViewedRef = useRef(new Set());
+  const nCurReel = nativeOn && Array.isArray(activeReels) ? (activeReels[currentIndex] || null) : null;
+  const nCurId = nCurReel ? nCurReel.id : null;
+  useEffect(() => {
+    if (!nativeOn || nCurId == null || !nGateOpen) return undefined;
+    const k = String(nCurId);
+    if (nViewedRef.current.has(k)) return undefined;
+    const timer = setTimeout(() => {
+      if (nViewedRef.current.has(k)) return;
+      nViewedRef.current.add(k);
+      try { api.feedView?.(nCurId)?.catch?.(() => {}); } catch {}
+      const cur = findReelRef.current(k);
+      if (cur) patchReel(k, { view_count: (Number(cur.view_count) || 0) + 1 });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [nativeOn, nCurId, nGateOpen, patchReel]);
+
+  // [2026-10-15 reels-gaps] Transcrição automática do PRÓPRIO reel sem legenda —
+  // mesma regra do ReelItem JS (1× por reel, só o dono, ai transcribe_video →
+  // feed_post_set_subtitles). O patch em `subtitles` chega ao nativo via 'update'
+  // e a legenda (CC) aparece na hora.
+  const nTranscribedRef = useRef(new Set());
+  const nCurVideoUrl = nCurReel ? (resolveMediaUrl(parseMediaUrls(nCurReel.media_urls)[0]) || '') : '';
+  const nCurOwner = nCurReel ? String(nCurReel.author_email || '').toLowerCase() : '';
+  const nCurHasSubs = !!(nCurReel && Array.isArray(nCurReel.subtitles) && nCurReel.subtitles.length > 0);
+  useEffect(() => {
+    if (!nativeOn || nCurId == null || nCurHasSubs || !nCurVideoUrl) return;
+    const me = String(user?.email || '').toLowerCase();
+    if (!nCurOwner || nCurOwner !== me) return;
+    const k = String(nCurId);
+    if (nTranscribedRef.current.has(k)) return;
+    nTranscribedRef.current.add(k);
+    (async () => {
+      try {
+        const r = await api.aiAssist?.('transcribe_video', { url: nCurVideoUrl });
+        const segs = r?.data?.segments;
+        if (Array.isArray(segs) && segs.length > 0) {
+          patchReel(k, { subtitles: segs });
+          try { await api.feedPostSetSubtitles(k, segs); } catch {}
+        }
+      } catch {}
+    })();
+  }, [nativeOn, nCurId, nCurHasSubs, nCurVideoUrl, nCurOwner, user?.email, patchReel]);
+
+  // Presentes de OUTROS espectadores no reel atual (WS) → diamante subindo.
+  useEffect(() => {
+    if (!nativeOn || nCurId == null) return undefined;
+    let mailWs = null;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    if (!mailWs?.on || !mailWs?.subscribe) return undefined;
+    const channel = `feed_post_${nCurId}`;
+    try { mailWs.subscribe(channel); } catch {}
+    const unsub = mailWs.on('feed_post_tip', (data) => {
+      if (!data || Number(data.post_id) !== Number(nCurId)) return;
+      if (user?.email && String(data.sender_email || '').toLowerCase() === String(user.email).toLowerCase()) return;
+      const who = data.sender_name || data.sender_email?.split('@')[0] || '?';
+      const meta = giftMeta(data.gift_sku || data.gift_type || data.gift);
+      const q = Number(data.quantity) || 1;
+      pushNBurst(`${who} · ${giftLabel(t, data.icon || meta.icon, data.label || meta.label)}${q > 1 ? ' x' + q : ''}`, data.icon || meta.icon);
+    });
+    return () => {
+      try { unsub?.(); } catch {}
+      try { mailWs.unsubscribe?.(channel); } catch {}
+    };
+  }, [nativeOn, nCurId, user?.email, t, pushNBurst]);
+
+  const handleNativeIndex = useCallback((i, id) => {
+    setCurrentIndex(i);
+    const reel = id != null ? findReelRef.current(id) : null;
+    nImpRef.current = { id: id != null ? String(id) : null, since: nGateRef.current ? Date.now() : 0, dur: Number(reel?.video_duration_ms) || 0 };
+  }, []);
+  const handleNativeViewProgress = useCallback((e) => {
+    if (!e || e.id == null) return;
+    const reel = findReelRef.current(e.id);
+    const dur = Number(e.durationMs) || Number(reel?.video_duration_ms) || 0;
+    try { trackReelView(e.id, Number(e.watchedMs) || 0, dur); } catch {}
+    if (String(e.id) === nImpRef.current.id) nImpRef.current.since = 0;
+  }, []);
+  const handleNativeLike = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (!reel) return;
+    const nextLiked = !!e.liked;
+    const optimistic = Math.max(0, Number(e.likes) || 0);
+    handleReelLikeChange(reel.id, nextLiked, optimistic);
+    try { trackReelEvent(reel.id, nextLiked ? 'like' : 'unlike'); } catch {}
+    nEnqueue(`l:${reel.id}`, async (isLast) => {
+      try {
+        const r = await api.feedLike(reel.id);
+        if (r && r.success && r.data && isLast()) {
+          const finalLiked = r.data.liked !== undefined ? !!r.data.liked : nextLiked;
+          const sc = r.data.likes_count ?? r.data.like_count;
+          handleReelLikeChange(reel.id, finalLiked, sc !== undefined ? Number(sc) : optimistic);
+        }
+      } catch {
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'feed_like', params: { id: reel.id } });
+        } catch {
+          if (isLast()) handleReelLikeChange(reel.id, !nextLiked, Math.max(0, optimistic + (nextLiked ? -1 : 1)));
+        }
+      }
+    });
+  }, [handleReelLikeChange, nEnqueue]);
+  const handleNativeSave = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (!reel) return;
+    const saved = !!e.saved;
+    patchReel(reel.id, { user_bookmarked: saved });
+    try { trackReelEvent(reel.id, saved ? 'save' : 'unsave'); } catch {}
+    nEnqueue(`b:${reel.id}`, async (isLast) => {
+      try {
+        const r = await api.feedBookmark(reel.id);
+        if (r && r.success && r.data && r.data.bookmarked !== undefined && isLast()) patchReel(reel.id, { user_bookmarked: !!r.data.bookmarked });
+      } catch {
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'feed_bookmark', params: { id: reel.id } });
+        } catch {
+          if (isLast()) patchReel(reel.id, { user_bookmarked: !saved });
+        }
+      }
+    });
+  }, [patchReel, nEnqueue]);
+  const handleNativeFollow = useCallback(async (e) => {
+    const reel = findReelRef.current(e?.id);
+    if (!reel?.author_email) return;
+    patchReel(reel.id, { user_following: true });
+    try { trackReelEvent(reel.id, 'follow'); } catch {}
+    try { await api.followUser?.(reel.author_email); } catch { patchReel(reel.id, { user_following: false }); }
+  }, [patchReel]);
+  const handleNativeComment = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (!reel) return;
+    const isOther = String(reel.author_email || '').toLowerCase() !== String(user?.email || '').toLowerCase();
+    if (reel.allow_comments === false && isOther) return;
+    handleOpenComments(reel);
+  }, [handleOpenComments, user?.email]);
+  const handleNativeGift = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (reel && DIAMONDS_ENABLED) setNGiftReel(reel);
+  }, []);
+  const handleNativeShare = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (reel) setNShareReel(reel);
+  }, []);
+  const handleNativeMore = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (reel) setNMoreReel(reel);
+  }, []);
+  const handleNativeAuthor = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (reel) handleOpenProfile(reel.author_email, reel);
+  }, [handleOpenProfile]);
+  const handleNativeMusic = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (reel) handleUseSound(reel);
+  }, [handleUseSound]);
+  // [2026-10-15 reels-gaps] toque no número de curtidas → mesma LikersSheet do ReelItem.
+  const handleNativeLikers = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    if (reel) handleOpenLikers(reel);
+  }, [handleOpenLikers]);
+  const handleNativeCredit = useCallback((e) => {
+    const reel = findReelRef.current(e?.id);
+    const u = reel?.credit?.page_url || reel?.credit?.author_url;
+    if (u) { try { Linking.openURL(u); } catch {} }
+  }, []);
+  const handleNativeNeedMore = useCallback(() => {
+    try { loadMoreRef.current?.(); } catch {}
+  }, []);
+  const handleNativeMute = useCallback((v) => {
+    setMuted(!!v);
+    AsyncStorage.setItem(REELS_MUTED_KEY, v ? '1' : '0').catch(() => {});
+  }, []);
+  const handleNativeError = useCallback((e) => {
+    _reportReels('player_error', { state: 'native', code: 'native_play' });
+  }, []);
+  const handleNativeFallback = useCallback((reason) => {
+    _reportReels('native_feed_fallback', { state: 'fallback', code: _reelErrCode(reason) });
+    setCurrentIndex(0);
+    setNativeOn(false);
+  }, []);
+
+  // Compartilhar (mesmas ações do ShareSheet do ReelItem)
+  const nShareClose = useCallback(() => setNShareReel(null), []);
+  const nShareExternal = useCallback(async () => {
+    const reel = nShareReel;
+    setNShareReel(null);
+    if (!reel) return;
+    try { trackReelEvent(reel.id, 'share'); } catch {}
+    try { await Share.share({ message: `${BASE_URL}/feed/${reel.id}` }); } catch {}
+  }, [nShareReel]);
+  const nShareCopy = useCallback(async (reelArg) => {
+    const reel = reelArg && reelArg.id ? reelArg : nShareReel;
+    setNShareReel(null);
+    if (!reel) return;
+    try { trackReelEvent(reel.id, 'share'); } catch {}
+    const url = `${BASE_URL}/feed/${reel.id}`;
+    try {
+      const Clipboard = require('expo-clipboard');
+      await Clipboard.setStringAsync(url);
+    } catch {
+      try { require('react-native').Clipboard.setString(url); } catch {}
+    }
+    try { require('expo-haptics').notificationAsync('success'); } catch {}
+  }, [nShareReel]);
+  const nShareRepost = useCallback(() => {
+    const reel = nShareReel;
+    setNShareReel(null);
+    if (!reel) return;
+    try { trackReelEvent(reel.id, 'share'); } catch {}
+    try { if (router?.push) { router.push(`/feed?repost_of=${reel.id}`); return; } } catch {}
+    nShareCopy(reel);
+  }, [nShareReel, router, nShareCopy]);
+  const nShareChat = useCallback(() => {
+    const reel = nShareReel;
+    setNShareReel(null);
+    if (!reel) return;
+    try { trackReelEvent(reel.id, 'share'); } catch {}
+    try { router?.push({ pathname: '/share-receive', params: { text: `${BASE_URL}/feed/${reel.id}` } }); } catch {}
+  }, [nShareReel, router]);
+
+  // Salvar som (menu "…") — mesma lógica do ReelItem.handleToggleSoundSave.
+  const nToggleSoundSave = useCallback(async (reel) => {
+    if (!reel) return;
+    const sid = reel.sound_id || `${reel.author_email}/${reel.id}`;
+    const label = reel.sound_label || `${reel.author_name || reel.author_email?.split('@')[0]} — ${t?.('feed.originalAudio') || 'Áudio original'}`;
+    if (reel.sound_saved) {
+      patchReel(reel.id, { sound_saved: false });
+      try { await api.reelsSoundFavoriteUnsave?.(sid); } catch {}
+    } else {
+      patchReel(reel.id, { sound_saved: true });
+      try {
+        await api.reelsSoundFavoriteSave?.(sid, label, {
+          previewUrl: reel.sound_preview_url || '',
+          imageUrl: reel.sound_image_url || '',
+          durationSec: Number(reel.video_duration_ms) ? Math.round(Number(reel.video_duration_ms) / 1000) : 30,
+        });
+      } catch {}
+      try { require('expo-haptics').selectionAsync(); } catch {}
+    }
+  }, [patchReel, t]);
+  const nSelectSpeed = useCallback((sp) => {
+    setNRate(sp);
+    setNSpeedOpen(false);
+    AsyncStorage.setItem(REELS_SPEED_KEY, String(sp)).catch(() => {});
+    try { require('expo-haptics').selectionAsync(); } catch {}
+  }, []);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
@@ -3439,45 +3941,87 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         </View>
       </View>
 
-      <FlatList
-        ref={listRef}
-        data={activeReels}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        pagingEnabled
-        showsVerticalScrollIndicator={false}
-        snapToInterval={containerHeight}
-        snapToAlignment="start"
-        decelerationRate="fast"
-        onViewableItemsChanged={onViewableRef.current}
-        viewabilityConfig={viewConfigRef.current}
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.5}
-        getItemLayout={(data, index) => ({
-          length: containerHeight,
-          offset: containerHeight * index,
-          index,
-        })}
-        initialNumToRender={2}
-        maxToRenderPerBatch={2}
-        windowSize={3}
-        // [perf] Spread the off-screen mounting work across a couple of frames
-        // instead of one big synchronous batch — keeps the swipe gesture from
-        // dropping frames while the next reel mounts. windowSize=3 already caps
-        // mounted rows to active±1 so only the active + 1 preload video exist.
-        updateCellsBatchingPeriod={60}
-        removeClippedSubviews={Platform.OS !== 'web'}
-        onRefresh={handleRefresh}
-        refreshing={refreshing}
-        ListEmptyComponent={
-          // Surface an empty state for *every* tab — silently rendering
-          // null on Discover/For You looked like a hung load.
-          // [2026-10-08 apps-native] EmptyReels unificado + retry/erro.
+      {nativeOn ? (
+        activeReels.length > 0 ? (
+          <NativeReelsFeed
+            style={StyleSheet.absoluteFill}
+            items={nativeItems}
+            resetKey={`${reelTab}|${soundIdProp || ''}`}
+            startIndex={0}
+            muted={muted}
+            paused={!playGate || overlayOpen}
+            rate={nRate}
+            captionsEnabled={nCaptions}
+            labels={nativeLabels}
+            insets={nativeInsets}
+            imageHeaders={nativeImageHeaders}
+            refreshEnabled={!soundIdProp}
+            refreshing={refreshing}
+            onIndexChange={handleNativeIndex}
+            onViewProgress={handleNativeViewProgress}
+            onLike={handleNativeLike}
+            onSave={handleNativeSave}
+            onFollow={handleNativeFollow}
+            onComment={handleNativeComment}
+            onGift={handleNativeGift}
+            onShare={handleNativeShare}
+            onMore={handleNativeMore}
+            onAuthorPress={handleNativeAuthor}
+            onMusicPress={handleNativeMusic}
+            onCreditPress={handleNativeCredit}
+            onLikersPress={handleNativeLikers}
+            onNeedMore={handleNativeNeedMore}
+            onMuteChange={handleNativeMute}
+            onRefresh={handleRefresh}
+            onPlaybackError={handleNativeError}
+            onFallback={handleNativeFallback}
+          />
+        ) : (
           <View style={[styles.loadingContainer, { height: containerHeight }]}>
             <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} onCreate={onCreate} onSeeForYou={() => handleTabChange('forYou')} />
           </View>
-        }
-      />
+        )
+      ) : (
+        <FlatList
+          ref={listRef}
+          data={activeReels}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={containerHeight}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          onViewableItemsChanged={onViewableRef.current}
+          viewabilityConfig={viewConfigRef.current}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          getItemLayout={(data, index) => ({
+            length: containerHeight,
+            offset: containerHeight * index,
+            index,
+          })}
+          initialNumToRender={2}
+          maxToRenderPerBatch={2}
+          windowSize={3}
+          // [perf] Spread the off-screen mounting work across a couple of frames
+          // instead of one big synchronous batch — keeps the swipe gesture from
+          // dropping frames while the next reel mounts. windowSize=3 already caps
+          // mounted rows to active±1 so only the active + 1 preload video exist.
+          updateCellsBatchingPeriod={60}
+          removeClippedSubviews={Platform.OS !== 'web'}
+          onRefresh={handleRefresh}
+          refreshing={refreshing}
+          ListEmptyComponent={
+            // Surface an empty state for *every* tab — silently rendering
+            // null on Discover/For You looked like a hung load.
+            // [2026-10-08 apps-native] EmptyReels unificado + retry/erro.
+            <View style={[styles.loadingContainer, { height: containerHeight }]}>
+              <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} onCreate={onCreate} onSeeForYou={() => handleTabChange('forYou')} />
+            </View>
+          }
+        />
+      )}
 
       {/* Comments bottom sheet — full-featured FeedComments (pagination,
           threading, voice/sticker/video replies, WS live comments, count
@@ -3506,6 +4050,54 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         t={t}
         onClose={() => setLikersReel(null)}
       />
+
+      {/* [2026-10-15 native-reels] Sheets JS do caminho nativo (o trilho nativo só emite eventos). */}
+      {nativeOn ? (
+        <>
+          {nBursts.map((b) => <FloatingDiamond key={b.key} label={b.label} icon={b.icon} />)}
+          {DIAMONDS_ENABLED && nGiftReel?.id ? (
+            <GiftSheet
+              visible
+              onClose={() => setNGiftReel(null)}
+              context="post"
+              targetId={nGiftReel.id}
+              recipientName={nGiftReel.author_name || (nGiftReel.author_email || '').split('@')[0]}
+              onSent={(_d, gift, qty) => {
+                const me = user?.name || user?.email?.split('@')[0] || '';
+                pushNBurst(`${me} · ${giftLabel(t, gift.icon, gift.label)}${qty > 1 ? ' x' + qty : ''}`, gift.icon);
+              }}
+            />
+          ) : null}
+          <ShareSheet
+            visible={!!nShareReel}
+            reel={nShareReel || {}}
+            t={t}
+            onClose={nShareClose}
+            onRepost={nShareRepost}
+            onCopyLink={nShareCopy}
+            onExternal={nShareExternal}
+            onSendChat={router ? nShareChat : undefined}
+          />
+          <NativeReelMoreSheet
+            reel={nMoreReel}
+            t={t}
+            speed={nRate}
+            onClose={() => setNMoreReel(null)}
+            onHide={(r) => { setNMoreReel(null); handleHidePost(r, 'not_interested'); }}
+            onReport={(r) => { setNMoreReel(null); handleHidePost(r, 'reported'); }}
+            onSpeed={() => { setNMoreReel(null); setNSpeedOpen(true); }}
+            onToggleSound={(r) => { setNMoreReel(null); nToggleSoundSave(r); }}
+            onUseSound={(r) => { setNMoreReel(null); handleUseSound(r); }}
+          />
+          <SpeedPickerSheet
+            visible={nSpeedOpen}
+            current={nRate}
+            onSelect={nSelectSpeed}
+            onClose={() => setNSpeedOpen(false)}
+            t={t}
+          />
+        </>
+      ) : null}
 
       {/* "Não tenho interesse" / report confirmation toast (iOS + web; Android
           uses the native ToastAndroid in handleHidePost). */}

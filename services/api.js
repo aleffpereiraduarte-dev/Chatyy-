@@ -3763,6 +3763,56 @@ export function getAttachmentUrl(uid, folder, part) {
   return `${base}&token=${authToken || ''}`;
 }
 
+// [2026-10-15 email-melhorias] Variante assíncrona para BAIXAR: espera o `dt`
+// de uso curto em vez de cair no bearer da sessão na URL (o 1º toque sempre
+// levava `&token=<bearer>` para o navegador/histórico). Bearer só se o mint falhar.
+export async function getAttachmentUrlSecure(uid, folder, part) {
+  const base = `${API_URL}?action=attachment_download&uid=${uid}&folder=${encodeURIComponent(folder)}&part=${part}`;
+  const key = _dlTokenKey(uid, folder, part);
+  let c = _dlTokenCache.get(key);
+  if (!c || c.exp <= Date.now()) {
+    try {
+      const r = await apiCall('attachment_dl_token', { uid, folder, part });
+      const tok = r && r.success ? (r.data?.dt || r.data?.token || r.dt) : null;
+      if (tok) {
+        const ttl = (r.data?.expires_in ? r.data.expires_in * 1000 : _DL_TOKEN_TTL_MS);
+        c = { token: tok, exp: Date.now() + Math.min(ttl, _DL_TOKEN_TTL_MS) };
+        _dlTokenCache.set(key, c);
+      }
+    } catch {}
+  }
+  if (c && c.exp > Date.now()) return `${base}&dt=${encodeURIComponent(c.token)}`;
+  return `${base}&token=${authToken || ''}`;
+}
+
+// [2026-10-15 email-melhorias] Download nativo com progresso (0..1) — o
+// bearer vai no HEADER (nunca na URL) e o arquivo fica no cache do app para
+// abrir/compartilhar. Antes: Linking.openURL(url com bearer) → navegador
+// externo, sem progresso. `expectedBytes` cobre resposta sem Content-Length.
+export async function downloadAttachmentToDevice(uid, folder, part, filename, { onProgress, expectedBytes } = {}) {
+  const FS = require('expo-file-system/legacy');
+  const url = `${API_URL}?action=attachment_download&uid=${uid}&folder=${encodeURIComponent(folder)}&part=${part}`;
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (sessionCookie) headers['Cookie'] = sessionCookie;
+  const safe = (String(filename || 'anexo').replace(/[^\w.\-]+/g, '_').slice(-120)) || 'anexo';
+  const dir = FS.cacheDirectory + 'email-att/';
+  try { await FS.makeDirectoryAsync(dir, { intermediates: true }); } catch {}
+  const dest = `${dir}${Date.now()}_${safe}`;
+  const dl = FS.createDownloadResumable(url, dest, { headers }, (p) => {
+    try {
+      const total = p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : (expectedBytes || 0);
+      if (total > 0 && onProgress) onProgress(Math.max(0, Math.min(1, p.totalBytesWritten / total)));
+    } catch {}
+  });
+  const res = await dl.downloadAsync();
+  if (!res || res.status !== 200) {
+    try { await FS.deleteAsync(dest, { idempotent: true }); } catch {}
+    throw new Error('HTTP ' + (res ? res.status : '?'));
+  }
+  return res.uri;
+}
+
 // ---- Forgot Password ----
 export async function forgotPasswordOptions(email) {
   return apiCall('forgot_password_options', { email }, 'POST');
@@ -9308,6 +9358,83 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
 
   const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream', ...getAuthHeaders() };
 
+  // [2026-10-15 bia-rapida] Fim garantido: onDone/onError exatamente 1x, mesmo
+  // se o servidor fechar sem "[DONE]" (antes a tela ficava em loading).
+  let _finished = false;
+  let _gotEvent = false;
+  const finishDone = () => { if (_finished) return; _finished = true; if (onDone) onDone(); };
+  const finishError = (m) => { if (_finished) return; _finished = true; if (onError) onError(m); };
+  const handleEvent = (raw) => {
+    if (_finished) return;
+    if (raw === '[DONE]') { finishDone(); return; }
+    try {
+      const event = JSON.parse(raw);
+      _gotEvent = true;
+      if (event.delta !== undefined && onDelta) onDelta(event.delta);
+      else if (event.tool_call && onToolCall) onToolCall(event.tool_call.name, event.tool_call.args);
+      else if (event.tool_result && onToolResult) onToolResult(event.tool_result.name, event.tool_result.result);
+      else if (event.meta && onMeta) onMeta(event.meta);
+      else if (event.error) finishError(event.error);
+    } catch { /* linha SSE malformada */ }
+  };
+
+  // [2026-10-15 bia-rapida] NATIVO: o fetch do RN (whatwg-fetch) NÃO expõe
+  // res.body — a resposta inteira era bufferizada, dava "ReadableStream not
+  // supported" e o app REENVIAVA a pergunta pelo one_chat (modelo rodava 2x,
+  // usuário esperava tudo 2x sem ver nada aparecer). XHR do RN entrega o texto
+  // incrementalmente via onprogress (responseText cresce) → streaming real.
+  if (Platform.OS !== 'web' && typeof XMLHttpRequest !== 'undefined') {
+    const xhr = new XMLHttpRequest();
+    let seen = 0;
+    let sbuf = '';
+    const pump = () => {
+      const txt = xhr.responseText || '';
+      if (txt.length <= seen) return;
+      sbuf += txt.slice(seen);
+      seen = txt.length;
+      const parts = sbuf.split('\n\n');
+      sbuf = parts.pop();
+      for (const part of parts) {
+        for (const ln of part.split('\n')) {
+          const l = ln.trim();
+          if (l.startsWith('data: ')) handleEvent(l.slice(6).trim());
+        }
+      }
+    };
+    try {
+      xhr.open('POST', `${API_URL}?action=one_chat_stream`, true);
+      Object.keys(headers).forEach((k) => { try { xhr.setRequestHeader(k, headers[k]); } catch {} });
+      xhr.withCredentials = true;
+      xhr.onprogress = pump;
+      xhr.onreadystatechange = () => { if (xhr.readyState === 3) pump(); };
+      xhr.onload = () => {
+        clearTimeout(timeout);
+        if (xhr.status < 200 || xhr.status >= 300) { if (!_gotEvent) finishError(`HTTP ${xhr.status}`); else finishDone(); return; }
+        const ct = (xhr.getResponseHeader && xhr.getResponseHeader('content-type')) || '';
+        if (!ct.includes('text/event-stream') && !_gotEvent) {
+          try {
+            const data = JSON.parse(xhr.responseText || '{}');
+            if (data?.data?.response && onDelta) onDelta(data.data.response);
+            if (data?.data?.conversation_id && onMeta) onMeta({ conversation_id: data.data.conversation_id, actions: data.data.actions || [] });
+            finishDone();
+          } catch { finishError('Invalid response'); }
+          return;
+        }
+        pump();
+        if (sbuf.trim()) { for (const ln of sbuf.split('\n')) { const l = ln.trim(); if (l.startsWith('data: ')) handleEvent(l.slice(6).trim()); } sbuf = ''; }
+        finishDone();
+      };
+      xhr.onerror = () => { clearTimeout(timeout); if (_gotEvent) finishDone(); else finishError('Stream error'); };
+      xhr.ontimeout = () => { clearTimeout(timeout); finishError('timeout'); };
+      controller.signal.addEventListener?.('abort', () => { _finished = true; try { xhr.abort(); } catch {} });
+      xhr.send(JSON.stringify(body));
+    } catch (e) {
+      clearTimeout(timeout);
+      finishError(e?.message || 'Stream error');
+    }
+    return controller;
+  }
+
   // Start the fetch — do not await, parse stream asynchronously.
   // Straight to PHP SSE (OpenAI-backed). The Rust/Anthropic shortcut was disabled
   // while the Anthropic billing is sorted out — OpenAI is the only path for now.
@@ -9330,7 +9457,7 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
       clearTimeout(timeout);
 
       if (!res.ok) {
-        if (onError) onError(`HTTP ${res.status}`);
+        finishError(`HTTP ${res.status}`);
         return;
       }
 
@@ -9342,12 +9469,12 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
           const data = await res.json();
           if (data?.data?.response && onDelta) onDelta(data.data.response);
           if (data?.data?.conversation_id && onMeta) onMeta({ conversation_id: data.data.conversation_id, actions: data.data.actions || [] });
-          if (onDone) onDone();
-        } catch { if (onError) onError('Invalid response'); }
+          finishDone();
+        } catch { finishError('Invalid response'); }
         return;
       }
 
-      if (!res.body) { if (onError) onError('ReadableStream not supported'); return; }
+      if (!res.body) { finishError('ReadableStream not supported'); return; }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
@@ -9355,16 +9482,7 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
 
       const processLine = (line) => {
         if (!line.startsWith('data: ')) return;
-        const raw = line.slice(6).trim();
-        if (raw === '[DONE]') { if (onDone) onDone(); return; }
-        try {
-          const event = JSON.parse(raw);
-          if (event.delta !== undefined && onDelta) onDelta(event.delta);
-          else if (event.tool_call && onToolCall) onToolCall(event.tool_call.name, event.tool_call.args);
-          else if (event.tool_result && onToolResult) onToolResult(event.tool_result.name, event.tool_result.result);
-          else if (event.meta && onMeta) onMeta(event.meta);
-          else if (event.error && onError) onError(event.error);
-        } catch { /* ignore malformed SSE lines */ }
+        handleEvent(line.slice(6).trim());
       };
 
       // eslint-disable-next-line no-constant-condition
@@ -9385,10 +9503,11 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
       if (buffer.trim()) {
         for (const line of buffer.split('\n')) processLine(line.trim());
       }
+      finishDone();
     } catch (err) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') return; // intentional cancel — no error
-      if (onError) onError(err.message || 'Stream error');
+      if (_gotEvent) finishDone(); else finishError(err.message || 'Stream error');
     }
   })();
 
@@ -9729,7 +9848,38 @@ export async function feedComment(postId, content, replyToId, opts = {}) {
     body.attachment_url = m; // legacy alias older clients read
     body.media_type = opts.mediaType || 'sticker';
   }
+  // [anon-comment 2026-10-14] anônimo p/ os outros; o servidor guarda o autor real.
+  if (opts.anonymous) body.anonymous = 1;
   return apiCall('feed_comment', body, 'POST');
+}
+
+// [anon-comment 2026-10-14] Denúncia / moderação do dono / configuração do anônimo.
+// Nenhuma dessas respostas traz o autor real de um comentário anônimo.
+export async function feedCommentReport(commentId, reason, details = '') {
+  return apiCall('feed_comment_report', { comment_id: commentId, reason, details }, 'POST');
+}
+// op: 'hide' | 'unhide' | 'delete' | 'mute' | 'block' (dono do post)
+export async function feedCommentModerate(commentId, op) {
+  return apiCall('feed_comment_moderate', { comment_id: commentId, op }, 'POST');
+}
+export async function feedAnonSettings(postId, allowAnon) {
+  return apiCall('feed_anon_settings', { post_id: postId, allow_anon: allowAnon ? 1 : 0 }, 'POST');
+}
+export async function feedAnonBlocksList() {
+  return apiCall('feed_anon_blocks_list', {}, 'POST');
+}
+export async function feedAnonUnblock(id) {
+  return apiCall('feed_anon_unblock', { id }, 'POST');
+}
+// Admin (só a conta de moderação): fila, revelação AUDITADA, decisão.
+export async function feedAnonAdminQueue(status = 'pending', offset = 0) {
+  return apiCall('feed_anon_admin_queue', { status, offset, limit: 50 }, 'POST');
+}
+export async function feedAnonAdminReveal(commentId, reason) {
+  return apiCall('feed_anon_admin_reveal', { comment_id: commentId, reason }, 'POST');
+}
+export async function feedAnonAdminReview(commentId, decision) {
+  return apiCall('feed_anon_admin_review', { comment_id: commentId, decision }, 'POST');
 }
 
 export async function feedComments(postId, page = 1) {
@@ -10787,6 +10937,13 @@ export async function stripeDiamondHistory() { return apiCall('stripe_diamond_hi
 // ============================================================
 export async function feedBookmarkList() { return apiCall('feed_bookmark_list'); }
 export async function reportContent(data) { return apiCall('report_content', data, 'POST'); }
+// [central-moderacao 2026-10-14] Fila única de denúncias (api/moderation_core.php).
+// data: { content_type: post|reel|comment|channel_comment|live|live_chat|status|profile|message|group,
+//         content_id, reason (códigos de mod_reasons), description?, conversation_id?, message_ids?, evidence_texts? }
+// Chat privado/E2EE: só vai como evidência o que o próprio denunciante escolher (message_ids + texto decifrado dele).
+export async function modReport(data) { return apiCall('mod_report', data, 'POST'); }
+export async function modMyReports() { return apiCall('mod_my_reports'); }
+export async function modMyStatus() { return apiCall('mod_my_status'); }
 export async function checkAccountStatus() { return apiCall('check_account_status'); }
 export async function appealSuspension(appealText) { return apiCall('appeal_suspension', { appeal_text: appealText }, 'POST'); }
 export async function requestDataDownload() { return apiCall('request_data_download', {}, 'POST'); }

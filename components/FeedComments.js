@@ -7,7 +7,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
-import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle, IconImage, IconVideo } from './Icons';
+import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle, IconImage, IconVideo, IconEyeOff, IconFlag, IconMoreHorizontal, IconShield } from './Icons';
+import AnonAvatar from './AnonAvatar'; // [anon-comment 2026-10-14]
+import NativeSwitch from './NativeSwitch';
 import ModalHeader from './ModalHeader';
 import NativeVideoModal, { nativeVideoAvailable } from './NativeVideoModal';
 import { openInApp } from '../utils/inAppBrowser';
@@ -63,13 +65,34 @@ function timeAgo(dateStr, t) {
   return (_d=>isNaN(_d.getTime())?'':_d.toLocaleDateString())(new Date(str));
 }
 
+// [anon-comment 2026-10-14] Nome público de um comentário: anônimo nunca usa e-mail/nome real
+// (o servidor nem manda). O próprio autor vê "Você (anônimo)".
+function anonLabel(item, t) {
+  if (item?.is_mine) return t?.('feed.anon.you') || 'Você (anônimo)';
+  const tag = item?.anon_tag || '';
+  return tag ? (t?.('feed.anon.label') || 'Anônimo #{tag}').replace('{tag}', tag) : (item?.name || t?.('feed.anon.badge') || 'Anônimo');
+}
+export function commentDisplayName(item, t) {
+  if (item?.anon) return anonLabel(item, t);
+  return item?.author_name || item?.name || item?.email?.split('@')[0] || item?.author_email?.split('@')[0] || '?';
+}
+const ANON_ERR_KEYS = {
+  anon_not_allowed: 'feed.anon.err.notAllowed', anon_account_too_new: 'feed.anon.err.accountNew',
+  anon_minor: 'feed.anon.err.minor', anon_rate_limited: 'feed.anon.err.rate', anon_pii: 'feed.anon.err.pii',
+  anon_blocked_content: 'feed.anon.err.content', anon_media_unsupported: 'feed.anon.err.media',
+  anon_own_post: 'feed.anon.err.ownPost', comments_unavailable: 'feed.anon.err.unavailable',
+};
+const REPORT_REASONS = ['harassment', 'hate', 'threat', 'personal_data', 'sexual', 'self_harm', 'spam', 'other'];
+
 // Swipeable comment row
 const CommentItem = memo(function CommentItem({
-  item, user, colors, isDark, t, onReply, onDelete, replyParent, onToggleLike,
+  item, user, colors, isDark, t, onReply, onDelete, replyParent, onToggleLike, onOptions,
 }) {
-  const isOwner = item.author_email === user?.email || item.email === user?.email;
-  const authorName = item.author_name || item.name || item.email?.split('@')[0] || item.author_email?.split('@')[0] || '?';
-  const authorEmail = item.author_email || item.email;
+  const isAnon = !!item.anon;
+  const isOwner = item.is_mine === true || (!isAnon && (item.author_email === user?.email || item.email === user?.email));
+  const canDelete = isOwner || item.can_delete === true;
+  const authorName = commentDisplayName(item, t);
+  const authorEmail = isAnon ? null : (item.author_email || item.email);
   const isWeb = Platform.OS === 'web';
 
   const [deleteVisible, setDeleteVisible] = useState(false);
@@ -96,8 +119,10 @@ const CommentItem = memo(function CommentItem({
   }, [liked, item, onToggleLike]);
 
   const handleLongPress = useCallback(() => {
-    if (isOwner) setDeleteVisible(true);
-  }, [isOwner]);
+    // [anon-comment 2026-10-14] segurar = opções (denunciar / moderar); o próprio = apagar.
+    if (isOwner) { setDeleteVisible(true); return; }
+    onOptions?.(item);
+  }, [isOwner, onOptions, item]);
 
   const handleDelete = useCallback(() => {
     Animated.timing(fadeAnim, {
@@ -168,7 +193,9 @@ const CommentItem = memo(function CommentItem({
       >
         {/* Replies render with a thinner avatar (24px vs 32px) so the
             sub-thread reads as a visual nest rather than another root row. */}
-        <AvatarCircle email={authorEmail} name={authorName} size={item.reply_to_id ? 24 : 32} />
+        {isAnon
+          ? <AnonAvatar size={item.reply_to_id ? 24 : 32} isDark={isDark} />
+          : <AvatarCircle email={authorEmail} name={authorName} size={item.reply_to_id ? 24 : 32} />}
         <View style={styles.commentBody}>
           <View style={styles.commentBubble}>
             {audioUrl ? (
@@ -238,13 +265,19 @@ const CommentItem = memo(function CommentItem({
           {/* Reply-to indicator */}
           {replyParent && (
             <Text style={[styles.replyToLabel, { color: colors.textTertiary }]} numberOfLines={1}>
-              @{replyParent.author_name || replyParent.name || replyParent.author_email?.split('@')[0] || '?'}
+              @{commentDisplayName(replyParent, t)}
             </Text>
           )}
           <View style={styles.commentMeta}>
             <Text style={[styles.commentTime, { color: colors.textTertiary }]}>
               {timeAgo(item.created_at, t)}
             </Text>
+            {isAnon && (
+              <View style={[styles.anonBadge, { borderColor: isDark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.22)' }]}>
+                <IconEyeOff size={10} color={colors.textSecondary} />
+                <Text style={[styles.anonBadgeText, { color: colors.textSecondary }]}>{t('feed.anon.badge') || 'Anônimo'}</Text>
+              </View>
+            )}
             <TouchableOpacity
               onPress={() => onReply?.(item)}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -271,7 +304,17 @@ const CommentItem = memo(function CommentItem({
                 </Text>
               )}
             </TouchableOpacity>
-            {isOwner && !deleteVisible && (
+            {!isOwner && !String(item.id).startsWith('tmp_') && (
+              <TouchableOpacity
+                onPress={() => onOptions?.(item)}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                accessibilityLabel={t('feed.cmod.options') || 'Opções do comentário'}
+                accessibilityRole="button"
+              >
+                <IconMoreHorizontal size={14} color={colors.textTertiary} />
+              </TouchableOpacity>
+            )}
+            {canDelete && isOwner && !deleteVisible && (
               <TouchableOpacity
                 onPress={() => setDeleteVisible(true)}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -282,6 +325,11 @@ const CommentItem = memo(function CommentItem({
               </TouchableOpacity>
             )}
           </View>
+          {item.hidden_for_others && (
+            <Text style={[styles.replyToLabel, { color: colors.textTertiary }]}>
+              {t('feed.anon.hiddenForOthers') || 'Oculto para os outros (em análise)'}
+            </Text>
+          )}
           {/* Inline delete confirmation */}
           {deleteVisible && (
             <View style={styles.deleteConfirmRow}>
@@ -424,6 +472,42 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   // or fall back to a file input on web.
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
+  // [anon-comment 2026-10-14] anônimo + moderação. meta vem do feed_comments
+  // (viewer_is_owner, allow_anon, anon_available, anon_unavailable_reason, is_platform_admin).
+  const [anonMode, setAnonMode] = useState(false);
+  const [meta, setMeta] = useState({});
+  const [optionsFor, setOptionsFor] = useState(null);
+  const [reportMode, setReportMode] = useState(false);
+  const [notice, setNotice] = useState('');
+  const noticeTimer = useRef(null);
+  const showNotice = useCallback((msg) => {
+    setNotice(msg || '');
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(''), 4200);
+  }, []);
+  useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
+  const anonErrorText = useCallback((r) => {
+    const code = r?.data?.error;
+    const k = ANON_ERR_KEYS[code];
+    return (k && t(k)) || t('feed.anon.err.generic') || 'Não foi possível enviar. Tente de novo.';
+  }, [t]);
+  // Remove um comentário (raiz ou resposta) do estado local.
+  const dropComments = useCallback((pred) => {
+    let removed = 0;
+    setComments(prev => {
+      const out = [];
+      for (const c of prev) {
+        if (pred(c)) { removed += 1 + (Array.isArray(c.replies) ? c.replies.length : 0); continue; }
+        if (Array.isArray(c.replies) && c.replies.some(pred)) {
+          const reps = c.replies.filter(r => !pred(r));
+          removed += c.replies.length - reps.length;
+          out.push({ ...c, replies: reps });
+        } else out.push(c);
+      }
+      return out;
+    });
+    return removed;
+  }, []);
 
   useEffect(() => {
     if (post) {
@@ -446,6 +530,14 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       if (r.success && r.data) {
         const newComments = r.data.comments || r.data || [];
         if (pageNum === 1) {
+          setMeta({
+            viewer_is_owner: !!r.data.viewer_is_owner,
+            allow_anon: r.data.allow_anon !== false,
+            anon_available: !!r.data.anon_available,
+            anon_unavailable_reason: r.data.anon_unavailable_reason || null,
+            is_platform_admin: !!r.data.is_platform_admin,
+          });
+          if (!r.data.anon_available) setAnonMode(false);
           setComments(newComments);
           // Reseed the dedup ref off the fresh page-1 snapshot.
           commentIdSetRef.current = collectCommentIds(newComments);
@@ -489,6 +581,8 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       setPage(1);
       setReplyTo(null);
       setText('');
+      setAnonMode(false);
+      setOptionsFor(null);
       loadComments(1);
     }
   }, [visible, post?.id, loadComments]);
@@ -509,9 +603,10 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     unsub = mailWs.on('feed_comment_new', (data) => {
       if (!data || Number(data.post_id) !== Number(post.id)) return;
       const meLc = (user?.email || '').toLowerCase();
-      if (String(data.email || '').toLowerCase() === meLc) return; // own send already inserted
+      if (data.email && String(data.email).toLowerCase() === meLc) return; // own send already inserted
       setComments(prev => {
-        if (prev.some(c => Number(c.id) === Number(data.id))) return prev;
+        // [anon-comment 2026-10-14] anônimo chega sem email → dedupe por id (raiz e respostas).
+        if (prev.some(c => Number(c.id) === Number(data.id) || (Array.isArray(c.replies) && c.replies.some(r => Number(r.id) === Number(data.id))))) return prev;
         // [2026-07-03] Bump the count only when the comment is actually NEW.
         // It was incremented unconditionally below, so a duplicate/re-delivered
         // feed_comment_new WS event inflated the count without adding a row.
@@ -520,11 +615,21 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         return [data, ...prev];
       });
     });
+    // [anon-comment 2026-10-14] apagado/ocultado pelo dono, por denúncias ou pelo admin.
+    const unsubRm = mailWs.on('feed_comment_removed', (data) => {
+      if (!data || Number(data.post_id) !== Number(post.id)) return;
+      const n = dropComments(c => Number(c.id) === Number(data.comment_id));
+      if (n > 0) {
+        currentCountRef.current = Math.max(0, currentCountRef.current - n);
+        onCommentCountChange?.(currentCountRef.current);
+      }
+    });
     return () => {
       try { unsub?.(); } catch {}
+      try { unsubRm?.(); } catch {}
       try { mailWs.unsubscribe?.(channel); } catch {}
     };
-  }, [visible, post?.id, user?.email, onCommentCountChange]);
+  }, [visible, post?.id, user?.email, onCommentCountChange, dropComments]);
 
   const loadMore = useCallback(() => {
     // [#optimistic-merge-fix] Hold off pagination while a comment/reply is
@@ -544,6 +649,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   const handleSend = useCallback(async () => {
     const content = text.trim();
     if (!content || sending || !post?.id) return;
+    const asAnon = anonMode && !!meta.anon_available;
     setSending(true);
     // Build optimistic comment up front so both online + offline branches
     // can reuse it. Server returns its own canonical row on success; the
@@ -560,7 +666,16 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       _pending: true,
     };
     try {
-      const r = await api.feedComment(post.id, content, replyTo?.id);
+      const r = await api.feedComment(post.id, content, replyTo?.id, asAnon ? { anonymous: true } : undefined);
+      if (r && r.success === false && asAnon) {
+        // [anon-comment 2026-10-14] recusado (dados pessoais, ameaça, limite, idade da conta...).
+        showNotice(anonErrorText(r));
+        return;
+      }
+      if (r && r.success === false && r?.data?.error === 'comments_unavailable') {
+        showNotice(anonErrorText(r));
+        return;
+      }
       if (r.success) {
         // Backend returns the comment row flat in `data` (not data.comment).
         // Keep the legacy data.comment read as a fallback for older servers.
@@ -569,7 +684,8 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           ? serverRow
           : { ...optimisticComment, id: Date.now(), _pending: false };
         const isReply = !!replyTo;
-        setComments(prev => insertComment(prev, newComment, replyTo));
+        setComments(prev => (prev.some(c => Number(c.id) === Number(newComment.id) || (Array.isArray(c.replies) && c.replies.some(x => Number(x.id) === Number(newComment.id))))
+          ? prev : insertComment(prev, newComment, replyTo)));
         setText('');
         setReplyTo(null);
         currentCountRef.current += 1;
@@ -596,6 +712,8 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       // the user sees their reply land "instantly". Previous behavior was a
       // silent drop: the comment was eaten and only showed up if the user
       // re-typed and got lucky with timing.
+      // [anon-comment 2026-10-14] anônimo NÃO entra na fila offline (filtros/limites decidem na hora).
+      if (asAnon) { showNotice(t('feed.anon.err.generic') || 'Não foi possível enviar. Tente de novo.'); return; }
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         await queueOfflineAction({
@@ -611,7 +729,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     } finally {
       setSending(false);
     }
-  }, [text, sending, post, replyTo, user, onCommentCountChange]);
+  }, [text, sending, post, replyTo, user, onCommentCountChange, anonMode, meta.anon_available, showNotice, anonErrorText, t]);
 
   // Voice comment record/upload. Web uses MediaRecorder; native uses
   // expo-audio's AudioModule + RecordingPresets. The upload itself goes
@@ -715,10 +833,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     if (!mediaUrl) return;
     setSending(true);
     try {
+      const asAnon = anonMode && !!meta.anon_available;
       const r = await api.feedComment(post.id, '', replyTo?.id || null, {
         mediaUrl,
         mediaType: 'sticker',
+        anonymous: asAnon,
       });
+      if (r && r.success === false) { showNotice(anonErrorText(r)); return; }
       if (r.success) {
         const newComment = r.data?.comment || r.data || {
           id: Date.now(),
@@ -743,7 +864,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     } catch {} finally {
       setSending(false);
     }
-  }, [post, replyTo, user, onCommentCountChange]);
+  }, [post, replyTo, user, onCommentCountChange, anonMode, meta.anon_available, showNotice, anonErrorText]);
 
   // Video reply — picks a clip via expo-image-picker (native) or file
   // input (web), uploads it via the existing feed-files endpoint, and
@@ -829,12 +950,52 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     try {
       const r = await api.feedDeleteComment(commentId);
       if (r.success) {
-        setComments(prev => prev.filter(c => c.id !== commentId));
-        currentCountRef.current = Math.max(0, currentCountRef.current - 1);
+        const n = dropComments(c => c.id === commentId);
+        currentCountRef.current = Math.max(0, currentCountRef.current - Math.max(1, n));
         onCommentCountChange?.(currentCountRef.current);
       }
     } catch {}
-  }, [onCommentCountChange]);
+  }, [onCommentCountChange, dropComments]);
+
+  // [anon-comment 2026-10-14] Opções: denunciar (qualquer um) e moderar (dono do post / admin).
+  // O app nunca recebe quem está por trás de um anônimo — bloquear/silenciar vale no servidor.
+  const openOptions = useCallback((comment) => { setReportMode(false); setOptionsFor(comment); }, []);
+  const closeOptions = useCallback(() => { setOptionsFor(null); setReportMode(false); }, []);
+  const doReport = useCallback(async (reason) => {
+    const c = optionsFor; closeOptions();
+    if (!c) return;
+    try {
+      const r = await api.feedCommentReport(c.id, reason);
+      showNotice(r?.success ? (t('feed.cmod.reported') || 'Denúncia enviada. Obrigado por ajudar.') : (t('feed.cmod.failed') || 'Não foi possível concluir. Tente de novo.'));
+    } catch { showNotice(t('feed.cmod.failed') || 'Não foi possível concluir. Tente de novo.'); }
+  }, [optionsFor, closeOptions, showNotice, t]);
+  const doModerate = useCallback(async (op) => {
+    const c = optionsFor; closeOptions();
+    if (!c) return;
+    try {
+      const r = await api.feedCommentModerate(c.id, op);
+      if (!r?.success) { showNotice(t('feed.cmod.failed') || 'Não foi possível concluir. Tente de novo.'); return; }
+      // Bloquear/silenciar some com tudo desse autor neste post (pela etiqueta, sem saber quem é).
+      const pred = (op === 'mute' || op === 'block')
+        ? (x) => (c.anon ? (x.anon && x.anon_tag === c.anon_tag) : (!x.anon && (x.email || x.author_email) === (c.email || c.author_email)))
+        : (x) => x.id === c.id;
+      const n = dropComments(pred);
+      currentCountRef.current = Math.max(0, currentCountRef.current - n);
+      onCommentCountChange?.(currentCountRef.current);
+      const msg = { hide: 'feed.cmod.hidden', mute: 'feed.cmod.muted', block: 'feed.cmod.blocked' }[op];
+      if (msg) showNotice(t(msg));
+    } catch { showNotice(t('feed.cmod.failed') || 'Não foi possível concluir. Tente de novo.'); }
+  }, [optionsFor, closeOptions, dropComments, onCommentCountChange, showNotice, t]);
+  const toggleAllowAnon = useCallback(async (v) => {
+    setMeta(m => ({ ...m, allow_anon: v }));
+    try {
+      const r = await api.feedAnonSettings(post?.id, v);
+      if (!r?.success) throw new Error('x');
+    } catch {
+      setMeta(m => ({ ...m, allow_anon: !v }));
+      showNotice(t('feed.cmod.failed') || 'Não foi possível concluir. Tente de novo.');
+    }
+  }, [post?.id, showNotice, t]);
 
   const handleReply = useCallback((comment) => {
     setReplyTo(comment);
@@ -924,10 +1085,11 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         onReply={handleReply}
         onDelete={handleDelete}
         onToggleLike={handleToggleCommentLike}
+        onOptions={openOptions}
         replyParent={replyParent}
       />
     );
-  }, [colors, isDark, t, user, handleReply, handleDelete, handleToggleCommentLike, commentMap]);
+  }, [colors, isDark, t, user, handleReply, handleDelete, handleToggleCommentLike, commentMap, openOptions]);
 
   // Stable keyExtractor — hoisting it out of the FlatList JSX keeps its
   // identity constant across renders (a fresh inline arrow on every keystroke
@@ -1007,8 +1169,29 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
               ListHeaderComponent={
-                // Post caption at top
-                post?.caption ? (
+                <View>
+                {/* [anon-comment 2026-10-14] dono: permitir anônimos; admin: fila de moderação. */}
+                {meta.viewer_is_owner ? (
+                  <View style={[styles.ownerRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]}>
+                    <IconEyeOff size={18} color={colors.text} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.ownerRowTitle, { color: colors.text }]}>{t('feed.anon.allowOnPost') || 'Permitir comentários anônimos'}</Text>
+                      <Text style={[styles.ownerRowHint, { color: colors.textTertiary }]}>{t('feed.anon.allowOnPostHint') || ''}</Text>
+                    </View>
+                    <NativeSwitch value={meta.allow_anon !== false} onValueChange={toggleAllowAnon} accessibilityLabel={t('feed.anon.allowOnPost') || 'Permitir comentários anônimos'} />
+                  </View>
+                ) : null}
+                {meta.is_platform_admin ? (
+                  <TouchableOpacity
+                    style={[styles.ownerRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]}
+                    onPress={() => { try { onClose?.(); require('expo-router').router.push('/moderacao-comentarios'); } catch {} }}
+                    accessibilityRole="button"
+                  >
+                    <IconShield size={18} color={colors.text} />
+                    <Text style={[styles.ownerRowTitle, { color: colors.text, flex: 1 }]}>{t('feed.cmod.queue') || 'Fila de moderação'}</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {post?.caption ? (
                   <View style={[styles.captionHeader, {
                     borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
                   }]}>
@@ -1023,7 +1206,8 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                       </Text>
                     </View>
                   </View>
-                ) : null
+                ) : null}
+                </View>
               }
               ListFooterComponent={
                 loadingMore ? (
@@ -1058,7 +1242,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               <View style={[styles.replyAccent, { backgroundColor: accent }]} />
               <Text style={[styles.replyText, { color: colors.textSecondary }]} numberOfLines={1}>
                 {(t('feed.replyingTo') || 'Replying to @{name}')
-                  .replace('{name}', replyTo.author_name || replyTo.name || replyTo.author_email?.split('@')[0] || replyTo.email?.split('@')[0] || '?')}
+                  .replace('{name}', commentDisplayName(replyTo, t))}
               </Text>
               <TouchableOpacity
                 onPress={() => setReplyTo(null)}
@@ -1070,6 +1254,38 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               </TouchableOpacity>
             </View>
           )}
+
+          {/* [anon-comment 2026-10-14] Toggle "Comentar como anônimo" + aviso legal curto. */}
+          {notice ? (
+            <View style={[styles.noticeBar, { backgroundColor: isDark ? '#f2f2f2' : '#111111' }]} accessibilityLiveRegion="polite">
+              <Text style={[styles.noticeText, { color: isDark ? '#111111' : '#ffffff' }]}>{notice}</Text>
+            </View>
+          ) : null}
+          {meta.anon_available ? (
+            <View style={[styles.anonRow, {
+              borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+              backgroundColor: isDark ? sheetBg : '#fafafa',
+            }]}>
+              <Pressable
+                style={styles.anonToggle}
+                onPress={() => setAnonMode(v => !v)}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: anonMode }}
+                accessibilityLabel={t('feed.anon.toggle') || 'Comentar como anônimo'}
+              >
+                <IconEyeOff size={16} color={anonMode ? colors.text : colors.textTertiary} />
+                <Text style={[styles.anonToggleText, { color: anonMode ? colors.text : colors.textSecondary }]}>
+                  {t('feed.anon.toggle') || 'Comentar como anônimo'}
+                </Text>
+                <NativeSwitch value={anonMode} onValueChange={setAnonMode} />
+              </Pressable>
+              {anonMode ? (
+                <Text style={[styles.anonTerms, { color: colors.textTertiary }]}>
+                  {t('feed.anon.terms') || 'Anônimo para os outros; o Chatyy guarda o autor e pode cooperar com a lei.'}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
 
           {/* Input — bottom padding tracks safe-area inset (was a fixed 28px
               that cropped on Dynamic Island devices). 10px floor keeps a
@@ -1094,7 +1310,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             {/* Video reply — Reels P1. Records 15s clip and posts as a
                 comment with media_type=video. On web we fall back to the
                 file picker so users can still attach an existing clip. */}
-            <TouchableOpacity
+            {!anonMode && <TouchableOpacity
               onPress={pickVideoReply}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={{ paddingHorizontal: 4, paddingVertical: 4 }}
@@ -1102,8 +1318,10 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               accessibilityLabel={t('feed.replyWithVideo') || 'Reply with video'}
             >
               <IconVideo size={20} color={accent} />
-            </TouchableOpacity>
-            <AvatarCircle email={user?.email} name={user?.name} size={32} />
+            </TouchableOpacity>}
+            {anonMode
+              ? <AnonAvatar size={32} isDark={isDark} />
+              : <AvatarCircle email={user?.email} name={user?.name} size={32} />}
             <View style={[styles.inputWrapper, {
               backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
               borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
@@ -1114,7 +1332,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                   color: colors.text,
                 }]}
                 placeholder={
-                  replyTo
+                  anonMode
+                    ? (t('feed.anon.placeholder') || 'Comentar anonimamente...')
+                    : replyTo
                     ? (t('feed.replyPlaceholder') || 'Reply...')
                     : (t('feed.writeComment') || 'Adicionar comentário...')
                 }
@@ -1135,7 +1355,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 maxLength={500}
                 accessibilityLabel={t('feed.writeComment') || 'Adicionar comentário'}
               />
-              {text.trim() ? (
+              {(text.trim() || anonMode) ? (
                 <TouchableOpacity
                   onPress={handleSend}
                   disabled={sending}
@@ -1171,6 +1391,55 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* [anon-comment 2026-10-14] Opções do comentário (P&B, sem emoji). */}
+      <Modal visible={!!optionsFor} transparent animationType="fade" onRequestClose={closeOptions}>
+        <Pressable style={styles.optOverlay} onPress={closeOptions} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+          <Pressable
+            onPress={(e) => e?.stopPropagation?.()}
+            style={[styles.optSheet, { backgroundColor: isDark ? '#151515' : '#ffffff', paddingBottom: Math.max(14, insets.bottom), ...(isWeb ? { maxWidth: 640, width: '100%', alignSelf: 'center' } : {}) }]}
+          >
+            <Text style={[styles.optTitle, { color: colors.textSecondary }]}>
+              {reportMode ? (t('feed.cmod.reportTitle') || 'Por que você está denunciando este comentário?') : (t('feed.cmod.options') || 'Opções do comentário')}
+            </Text>
+            {reportMode ? REPORT_REASONS.map((rs) => (
+              <TouchableOpacity key={rs} style={styles.optItem} onPress={() => doReport(rs)} accessibilityRole="button">
+                <Text style={[styles.optItemText, { color: colors.text }]}>{t('feed.cmod.reason.' + rs)}</Text>
+              </TouchableOpacity>
+            )) : (
+              <>
+                <TouchableOpacity style={styles.optItem} onPress={() => setReportMode(true)} accessibilityRole="button">
+                  <IconFlag size={18} color={colors.text} />
+                  <Text style={[styles.optItemText, { color: colors.text }]}>{t('feed.cmod.report') || 'Denunciar'}</Text>
+                </TouchableOpacity>
+                {optionsFor?.can_moderate ? (
+                  <>
+                    <TouchableOpacity style={styles.optItem} onPress={() => doModerate('hide')} accessibilityRole="button">
+                      <IconEyeOff size={18} color={colors.text} />
+                      <Text style={[styles.optItemText, { color: colors.text }]}>{t('feed.cmod.hide') || 'Ocultar comentário'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.optItem} onPress={() => doModerate('delete')} accessibilityRole="button">
+                      <IconTrash size={18} color={colors.text} />
+                      <Text style={[styles.optItemText, { color: colors.text }]}>{t('feed.cmod.delete') || 'Apagar comentário'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.optItem} onPress={() => doModerate('mute')} accessibilityRole="button">
+                      <IconX size={18} color={colors.text} />
+                      <Text style={[styles.optItemText, { color: colors.text }]}>{t('feed.cmod.mute') || 'Silenciar este autor nos meus posts'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.optItem} onPress={() => doModerate('block')} accessibilityRole="button">
+                      <IconShield size={18} color={colors.text} />
+                      <Text style={[styles.optItemText, { color: colors.text, fontWeight: '700' }]}>{t('feed.cmod.block') || 'Bloquear este autor nos meus posts'}</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+              </>
+            )}
+            <TouchableOpacity style={[styles.optItem, styles.optCancel]} onPress={closeOptions} accessibilityRole="button">
+              <Text style={[styles.optItemText, { color: colors.textSecondary, textAlign: 'center', flex: 1 }]}>{t('common.cancel') || 'Cancelar'}</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Sticker / GIF picker — Reels P1 comment reply. Mounted as a
           stacked modal so it can sit on top of the comments sheet. The
@@ -1224,6 +1493,24 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
 }
 
 const styles = StyleSheet.create({
+  // [anon-comment 2026-10-14]
+  anonBadge: { flexDirection: 'row', alignItems: 'center', gap: 3, borderWidth: StyleSheet.hairlineWidth, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 },
+  anonBadgeText: { fontSize: 10, fontWeight: '600', letterSpacing: 0.2 },
+  anonRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingTop: 8, paddingBottom: 2 },
+  anonToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 32 },
+  anonToggleText: { flex: 1, fontSize: 13, fontWeight: '600' },
+  anonTerms: { fontSize: 11, lineHeight: 15, marginTop: 2, marginBottom: 4 },
+  noticeBar: { marginHorizontal: 12, marginBottom: 6, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9 },
+  noticeText: { fontSize: 13, fontWeight: '500' },
+  ownerRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  ownerRowTitle: { fontSize: 14, fontWeight: '600' },
+  ownerRowHint: { fontSize: 12, marginTop: 2, lineHeight: 16 },
+  optOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  optSheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 14, paddingHorizontal: 8 },
+  optTitle: { fontSize: 13, fontWeight: '600', textAlign: 'center', paddingHorizontal: 16, paddingBottom: 8 },
+  optItem: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 12 },
+  optItemText: { fontSize: 15 },
+  optCancel: { marginTop: 4 },
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',

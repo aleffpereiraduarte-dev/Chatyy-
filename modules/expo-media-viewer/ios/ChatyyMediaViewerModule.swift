@@ -19,8 +19,9 @@ public class ChatyyMediaViewerModule: Module {
 
     Events("onIndexChange", "onAction", "onClose")
 
+    // 2 = aceita `secure` (escudo durante gravação/espelhamento) [2026-10-14 adv-privacy]
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     AsyncFunction("open") { (options: [String: Any]) -> Int in
@@ -45,6 +46,7 @@ public class ChatyyMediaViewerModule: Module {
       flags.allowSave = (options["allowSave"] as? Bool) ?? true
       flags.allowForward = (options["allowForward"] as? Bool) ?? true
       flags.allowStar = (options["allowStar"] as? Bool) ?? true
+      flags.secure = (options["secure"] as? Bool) ?? false
       let startIndex = MVItem.intValue(options["index"]) ?? 0
 
       let vc = MediaViewerController(
@@ -98,6 +100,10 @@ struct MVFlags {
   var allowSave = true
   var allowForward = true
   var allowStar = true
+  // [2026-10-14 adv-privacy] Privacidade avançada / view-once: tela preta com
+  // "Conteúdo protegido" enquanto UIScreen.isCaptured (gravação/espelhamento)
+  // e o vídeo pausa. Print não dá para bloquear no iOS (o JS avisa a conversa).
+  var secure = false
 }
 
 struct MVItem {

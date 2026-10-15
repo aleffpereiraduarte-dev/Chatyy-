@@ -264,7 +264,17 @@ function _finish(s, reason) {
     const terminal = s.connectedAt
       ? ((_r === 'failed' && !s.mediaAt) ? 'failed' : 'ended')
       : (_refused ? 'declined' : 'cancelled');
-    api.callStatus?.(s.callId, terminal, dur).catch(() => {});
+    // [2026-10-15 call-open-fast] The screen now opens before chat_call_invite_v2
+    // returns. A hangup inside that window must reach the server AFTER the
+    // invite (the 'cancelled' relay to the callee — WS call_end + VoIP/FCM
+    // cancel — needs the invite's history rows), and a failed late invite must
+    // not fall back to call_notify for a call that is already over.
+    let vn = null;
+    try { vn = require('./voipNative'); } catch {}
+    try { vn?.noteOutgoingEnded?.(s.callId); } catch {}
+    const send = () => { api.callStatus?.(s.callId, terminal, dur).catch(() => {}); };
+    const wait = vn?.whenInviteSettled ? vn.whenInviteSettled(s.callId) : null;
+    if (wait && typeof wait.then === 'function') wait.then(send, send); else send();
   } catch {}
   try { if (globalThis.__chatyyLastCallInviteId === s.callId) delete globalThis.__chatyyLastCallInviteId; } catch {}
   // [2026-10-12 call-review] "Como foi a ligação?" (sampled, ≥ 20 s of media).

@@ -247,6 +247,8 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
    *  Room, mic gate, CallKit-gated audio unit) so JS must NOT push /call.js.
    *  Absent on Android and on older iOS binaries. */
   supportsNativeOnlyOutgoing?(): boolean;
+  /** [2026-10-15 call-open-fast] iOS: outgoing screen opens before the token. */
+  supportsOutgoingLateToken?(): boolean;
 }
 
 export interface OpenNativeCallParams {
@@ -340,6 +342,21 @@ export function supportsNativeOnlyOutgoing(): boolean {
   if (!m || typeof m.supportsNativeOnlyOutgoing !== 'function') return false;
   try {
     return m.supportsNativeOnlyOutgoing() === true;
+  } catch {
+    return false;
+  }
+}
+
+// [2026-10-15 call-open-fast] Capability probe: the installed iOS build
+// presents the outgoing call screen immediately WITHOUT an LK token and
+// accepts it later (persistPendingLkToken). False on older iOS builds, which
+// still defer the screen until a token exists. Android CallActivity has always
+// accepted a missing token (it self-fetches), so callers don't probe there.
+export function supportsOutgoingLateToken(): boolean {
+  const m = getModule();
+  if (!m || typeof m.supportsOutgoingLateToken !== 'function') return false;
+  try {
+    return m.supportsOutgoingLateToken() === true;
   } catch {
     return false;
   }

@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-attach",
+  "version": "1.0.0",
+  "description": "Chatyy native attachment sheet (recent gallery grid + live camera tile + multi-select + caption/HD/as-file) and native chat camera (tap photo, hold video with slide-up zoom, flash, double-tap flip, recent strip). iOS: PhotoKit + AVFoundation. Android: MediaStore + CameraX (same 1.5.1 artifacts expo-camera already ships).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

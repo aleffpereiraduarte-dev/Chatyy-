@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyMessageListModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyymessagelist.ChatyyMessageListModule"]
+  }
+}

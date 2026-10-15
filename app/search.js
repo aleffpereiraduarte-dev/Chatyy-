@@ -12,6 +12,7 @@ import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 import GlobalMessageSearch from '../components/GlobalMessageSearch'; // [2026-10-14 busca-global]
 
 
@@ -38,12 +39,14 @@ export default function SearchScreen() {
   const [tab, setTab] = useState(() => (TABS.some((x) => x.key === _params?.tab) ? String(_params.tab) : 'people'));
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState({ people: [], hashtags: [], sounds: [], lives: [] });
-  const [trendingTags, setTrendingTags] = useState([]);
+  // [2026-10-14 offline-first] listas iniciais (em alta / sons / lives) pintam
+  // do último valor salvo no aparelho; a rede só atualiza em 2º plano.
+  const [results, setResults] = useState(() => { const l = peekCached(['search', 'lives']); return { people: [], hashtags: [], sounds: [], lives: Array.isArray(l) ? l : [] }; });
+  const [trendingTags, setTrendingTags] = useState(() => { const c = peekCached(['search', 'trending_tags']); return Array.isArray(c) ? c : []; });
   // Reels P1 — trending sounds (last 7d). Shown on the Sons tab empty
   // state, mirroring how Hashtags surfaces trending hashtags. Backed by
   // reels_trending_sounds which aggregates chat_feed_posts.sound_id.
-  const [trendingSounds, setTrendingSounds] = useState([]);
+  const [trendingSounds, setTrendingSounds] = useState(() => { const c = peekCached(['search', 'trending_sounds']); return Array.isArray(c) ? c : []; });
   const debounceRef = useRef(null);
   const reqIdRef = useRef(0);
 
@@ -55,6 +58,7 @@ export default function SearchScreen() {
         const r = await api.trendingHashtags(30);
         if (alive && r?.success && Array.isArray(r.data?.tags)) {
           setTrendingTags(r.data.tags);
+          putCached(['search', 'trending_tags'], r.data.tags);
         }
       } catch {}
     })();
@@ -70,6 +74,7 @@ export default function SearchScreen() {
         const r = await api.reelsTrendingSounds?.(20);
         if (alive && r?.success && Array.isArray(r.data?.sounds)) {
           setTrendingSounds(r.data.sounds);
+          putCached(['search', 'trending_sounds'], r.data.sounds);
         }
       } catch {}
     })();
@@ -84,6 +89,7 @@ export default function SearchScreen() {
         const r = await api.liveList();
         if (alive && r?.success && Array.isArray(r.data?.lives)) {
           setResults(prev => ({ ...prev, lives: r.data.lives }));
+          putCached(['search', 'lives'], r.data.lives);
         }
       } catch {}
     })();

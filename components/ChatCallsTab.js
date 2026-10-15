@@ -2768,8 +2768,9 @@ function _seedCallHistorySync() {
 function ChatCallsTab({ colors, isDark, t, user, router }) {
   const { language } = useLanguage();
   const [activeTab, setActiveTab] = useState('recent');
-  const [minutesInfo, setMinutesInfo] = useState(null);
-  const [loadingMinutes, setLoadingMinutes] = useState(true);
+  // [2026-10-14 offline-first] minutos salvos (por conta) lidos síncronos → card sem piscar.
+  const [minutesInfo, setMinutesInfo] = useState(() => { try { return require('../services/cache').getCachedSync('voip_minutes') || null; } catch { return null; } });
+  const [loadingMinutes, setLoadingMinutes] = useState(() => !minutesInfo);
   const [voipHistory, setVoipHistory] = useState([]);
   // Seed the first render from on-device storage via _seedCallHistorySync()
   // (account-scoped call_history → legacy omc_call_history → chat_calls preload,
@@ -2843,7 +2844,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const alreadyHasVisible = (Array.isArray(_cachedNow) && _cachedNow.length > 0);
 
     // Minutes info loads independently (doesn't affect history flicker)
-    setLoadingMinutes(true);
+    if (!minutesInfo) setLoadingMinutes(true);
     getCached('voip_minutes').then(cached => {
       if (cached) setMinutesInfo(cached);
       setLoadingMinutes(false);

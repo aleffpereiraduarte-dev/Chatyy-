@@ -1576,6 +1576,8 @@ function ChatHub() {
             />
             {/* [2026-10-03] Email no lugar do Reels — diferencial do super-app
                 + utilidade diária. Abre o inbox (/inbox) via handleTabPress('email'). */}
+            {/* [2026-10-15] No web, quando o chat está no painel lateral (iframe) do inbox, o e-mail já está aberto ao lado — esconde a aba. */}
+            {!(Platform.OS === 'web' && typeof window !== 'undefined' && (() => { try { return window.self !== window.top; } catch { return true; } })()) && (
             <TabBarItem
               icon={(active) => <IconEmailTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabEmail') || 'Email'}
@@ -1584,6 +1586,7 @@ function ChatHub() {
               isDark={barDark}
               badge={emailBadge}
             />
+            )}
             {/* [reels-v1 2026-10-13] Reels no centro da barra (tela cheia + ranking "Para você"). */}
             <TabBarItem
               icon={(active) => <IconReelsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}

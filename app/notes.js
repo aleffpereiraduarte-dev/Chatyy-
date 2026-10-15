@@ -18,7 +18,17 @@ import {
   IconBell, IconClock, IconGrid, IconSmile, IconLink, IconBrush, IconChevronLeft,
 } from '../components/Icons';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
+
+// [2026-10-14 offline-first] leitura SÍNCRONA da cópia salva (ignora o expiry
+// curto do prefetch do boot; máx. 7 dias). Sem conta no escopo = nada.
+function _seedList(key, field) {
+  try {
+    if (!hasCacheUser()) return null;
+    const v = getCachedEntrySync(key)?.data?.data?.[field];
+    return Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
 import { queueOfflineAction, isOnline } from '../services/offlineCache';
 import BrandFab from '../components/BrandFab';
 import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
@@ -1088,9 +1098,9 @@ export default function NotesScreen() {
     return off;
   }, []);
 
-  const [notes, setNotes] = useState([]);
-  const [notebooks, setNotebooks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [notes, setNotes] = useState(() => _seedList('notes', 'notes') || []);
+  const [notebooks, setNotebooks] = useState(() => _seedList('notebooks', 'notebooks') || []);
+  const [loading, setLoading] = useState(() => !_seedList('notes', 'notes'));
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -1164,9 +1174,9 @@ export default function NotesScreen() {
     // ALWAYS show cached data instantly (cache-first pattern)
     if (isDefaultView) {
       try {
-        const cached = await getCached(cacheKey);
-        if (cached?.data?.notes) {
-          setNotes(cached.data.notes);
+        const cachedNotes = _seedList(cacheKey, 'notes');
+        if (cachedNotes) {
+          setNotes(cachedNotes);
           setLoading(false);
           showLoading = false;
         } else if (showLoading) {
@@ -1197,8 +1207,8 @@ export default function NotesScreen() {
   }, [activeTab, selectedNotebook, searchQuery]);
 
   const loadNotebooks = useCallback(async () => {
-    const cached = await getCached('notebooks');
-    if (cached?.data?.notebooks) setNotebooks(cached.data.notebooks);
+    const cachedNb = _seedList('notebooks', 'notebooks');
+    if (cachedNb) setNotebooks(cachedNb);
     try {
       const res = await api.notebooksList();
       if (res?.success) {
@@ -1387,8 +1397,7 @@ export default function NotesScreen() {
     // Mirror current draft into the local notes list so it survives a cold
     // start even when the server save never landed.
     try {
-      const cached = await getCached('notes');
-      const existing = cached?.data?.notes || [];
+      const existing = _seedList('notes', 'notes') || [];
       const draftId = editingNote?.id || editingNote?._tempId || ('local_' + Date.now());
       const draftNote = { id: draftId, ...payload, updated_at: new Date().toISOString(), _pendingSync: true };
       const idx = existing.findIndex(n => n.id === draftId);

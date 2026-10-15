@@ -20,10 +20,29 @@ enum CallStrings {
         "hi": ["calling": "कॉल किया जा रहा है…", "ringing": "घंटी बज रही है…", "connecting": "कनेक्ट हो रहा है…", "reconnecting": "फिर से कनेक्ट हो रहा है…", "connected": "कनेक्ट हो गया", "onHold": "होल्ड पर", "declined": "अस्वीकार की गई", "busy": "व्यस्त", "unavailable": "उपलब्ध नहीं", "ended": "कॉल समाप्त", "noAnswer": "किसी ने जवाब नहीं दिया", "moreOptions": "और विकल्प", "reactions": "प्रतिक्रियाएं", "sendReaction": "प्रतिक्रिया भेजें", "shareScreen": "स्क्रीन शेयर करें", "stopSharing": "शेयर करना बंद करें", "sharingScreen": "स्क्रीन शेयर हो रही है", "stop": "रोकें", "screenShareFailed": "स्क्रीन शेयर शुरू नहीं हो सका। फिर से कोशिश करें।", "hold": "होल्ड पर रखें", "resume": "फिर से शुरू करें", "addParticipant": "प्रतिभागी जोड़ें", "dataSaver": "डेटा सेवर", "dataSaverOn": "डेटा सेवर: चालू", "weakConnection": "कमज़ोर कनेक्शन", "peerWeakConnection": "{name} का कनेक्शन कमज़ोर है", "mute": "म्यूट", "video": "वीडियो", "flip": "पलटें", "speaker": "स्पीकर", "screen": "स्क्रीन", "end": "समाप्त करें", "encrypted": "एन्क्रिप्टेड", "message": "मैसेज", "minimize": "छोटा करें", "audioOutput": "ऑडियो आउटपुट", "keypad": "कीपैड", "peerOnHold": "{name} ने कॉल होल्ड पर रखी", "couldNotCall": "{name} को कॉल नहीं हो सका", "cancel": "रद्द करें"],
     ]
 
+
+    /// [2026-10-15 screen-share whatsapp-level] Compartilhar tela (aviso de
+    /// privacidade na 1ª vez, pílula "Você está compartilhando", indicador do
+    /// lado de quem assiste). Mesmos 11 idiomas; mesmo texto do CallStrings.kt.
+    private static let screenShareTable: [String: [String: String]] = [
+        "pt-BR": ["ssPrivacyTitle": "Compartilhar tela?", "ssPrivacyBody": "Tudo na sua tela, incluindo notificações, ficará visível para quem está na chamada.", "ssContinue": "Continuar", "ssYouAreSharing": "Você está compartilhando a tela", "ssPeerSharing": "{name} está compartilhando a tela", "ssFullScreen": "Tela cheia"],
+        "pt-PT": ["ssPrivacyTitle": "Partilhar ecrã?", "ssPrivacyBody": "Tudo no seu ecrã, incluindo notificações, ficará visível para quem está na chamada.", "ssContinue": "Continuar", "ssYouAreSharing": "Está a partilhar o ecrã", "ssPeerSharing": "{name} está a partilhar o ecrã", "ssFullScreen": "Ecrã inteiro"],
+        "en": ["ssPrivacyTitle": "Share your screen?", "ssPrivacyBody": "Everything on your screen, including notifications, will be visible to people on the call.", "ssContinue": "Continue", "ssYouAreSharing": "You’re sharing your screen", "ssPeerSharing": "{name} is sharing their screen", "ssFullScreen": "Full screen"],
+        "es": ["ssPrivacyTitle": "¿Compartir pantalla?", "ssPrivacyBody": "Todo lo que aparezca en tu pantalla, incluidas las notificaciones, será visible para quienes están en la llamada.", "ssContinue": "Continuar", "ssYouAreSharing": "Estás compartiendo tu pantalla", "ssPeerSharing": "{name} está compartiendo su pantalla", "ssFullScreen": "Pantalla completa"],
+        "fr": ["ssPrivacyTitle": "Partager votre écran ?", "ssPrivacyBody": "Tout ce qui s’affiche sur votre écran, y compris les notifications, sera visible par les participants à l’appel.", "ssContinue": "Continuer", "ssYouAreSharing": "Vous partagez votre écran", "ssPeerSharing": "{name} partage son écran", "ssFullScreen": "Plein écran"],
+        "de": ["ssPrivacyTitle": "Bildschirm teilen?", "ssPrivacyBody": "Alles auf deinem Bildschirm, einschließlich Mitteilungen, ist für die Teilnehmenden des Anrufs sichtbar.", "ssContinue": "Weiter", "ssYouAreSharing": "Du teilst deinen Bildschirm", "ssPeerSharing": "{name} teilt den Bildschirm", "ssFullScreen": "Vollbild"],
+        "it": ["ssPrivacyTitle": "Condividere lo schermo?", "ssPrivacyBody": "Tutto ciò che è sul tuo schermo, comprese le notifiche, sarà visibile ai partecipanti alla chiamata.", "ssContinue": "Continua", "ssYouAreSharing": "Stai condividendo lo schermo", "ssPeerSharing": "{name} sta condividendo lo schermo", "ssFullScreen": "Schermo intero"],
+        "ja": ["ssPrivacyTitle": "画面を共有しますか？", "ssPrivacyBody": "通知を含め、画面に表示されるすべての内容が通話の参加者に表示されます。", "ssContinue": "続ける", "ssYouAreSharing": "画面を共有しています", "ssPeerSharing": "{name}さんが画面を共有しています", "ssFullScreen": "全画面"],
+        "ar": ["ssPrivacyTitle": "مشاركة الشاشة؟", "ssPrivacyBody": "كل ما يظهر على شاشتك، بما في ذلك الإشعارات، سيكون مرئيًا للمشاركين في المكالمة.", "ssContinue": "متابعة", "ssYouAreSharing": "أنت تشارك شاشتك", "ssPeerSharing": "{name} يشارك شاشته", "ssFullScreen": "ملء الشاشة"],
+        "id": ["ssPrivacyTitle": "Bagikan layar?", "ssPrivacyBody": "Semua yang ada di layar Anda, termasuk notifikasi, akan terlihat oleh peserta panggilan.", "ssContinue": "Lanjutkan", "ssYouAreSharing": "Anda sedang membagikan layar", "ssPeerSharing": "{name} sedang membagikan layar", "ssFullScreen": "Layar penuh"],
+        "hi": ["ssPrivacyTitle": "स्क्रीन शेयर करें?", "ssPrivacyBody": "आपकी स्क्रीन पर मौजूद सब कुछ, सूचनाओं समेत, कॉल में शामिल लोगों को दिखेगा।", "ssContinue": "जारी रखें", "ssYouAreSharing": "आप अपनी स्क्रीन शेयर कर रहे हैं", "ssPeerSharing": "{name} अपनी स्क्रीन शेयर कर रहे हैं", "ssFullScreen": "फ़ुल स्क्रीन"],
+    ]
+
     /// Texto da chave no idioma atual; {name} etc. substituídos por `args`.
     static func s(_ key: String, _ args: [String: String] = [:]) -> String {
         let l = GroupCallStrings.lang
-        var out = table[l]?[key] ?? table["en"]?[key] ?? key
+        var out: String = table[l]?[key] ?? screenShareTable[l]?[key] ?? ""
+        if out.isEmpty { out = table["en"]?[key] ?? screenShareTable["en"]?[key] ?? key }
         for (k, v) in args { out = out.replacingOccurrences(of: "{" + k + "}", with: v) }
         return out
     }

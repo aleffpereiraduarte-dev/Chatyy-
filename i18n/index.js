@@ -23,8 +23,7 @@
 // DEFAULT_LANGUAGE (+ novos: ensureLocaleLoaded, onLocaleLoaded, CORE_LOCALES,
 // REMOTE_LOCALES, getLocaleLoadState).
 import { Platform } from 'react-native';
-import ptBR from './pt-BR';
-import en from './en';
+import { CORE_SYNC, CORE_ASYNC } from './coreTables';
 import bundledManifest from './manifest.json';
 
 // [2026-10-09 lighter-app] Só pt-BR (padrão) + en (fallback universal) vão no
@@ -33,13 +32,75 @@ import bundledManifest from './manifest.json';
 // (preloadLocale + gate do _layout) e atualizado em background pelo manifest.
 // Enquanto um idioma remoto não está em memória, o t() usa a cadeia de
 // fallback (pt-PT → pt-BR → en; demais → en → pt-BR) — nunca chave crua.
-export const translations = {
-  'pt-BR': ptBR,
-  'en': en,
-};
+//
+// [2026-10-15 boot-i18n] As tabelas core deixaram de ser avaliadas no import:
+// translations['pt-BR'] / translations['en'] são getters que avaliam o módulo
+// na 1ª leitura (nativo: require síncrono; web: pt-BR no bundle, en em chunk
+// próprio — ver i18n/coreTables*.js). Escrever translations[code] = obj
+// continua funcionando (o setter vira propriedade normal).
+export const translations = {};
+function _setTable(code, obj) {
+  Object.defineProperty(translations, code, { value: obj, writable: true, configurable: true, enumerable: true });
+}
+Object.keys(CORE_SYNC).forEach((code) => {
+  Object.defineProperty(translations, code, {
+    configurable: true,
+    enumerable: true,
+    get() {
+      let v;
+      try { v = CORE_SYNC[code](); } catch { v = undefined; }
+      if (v && typeof v === 'object') { _setTable(code, v); return v; }
+      return undefined;
+    },
+    set(v) { _setTable(code, v); },
+  });
+});
+
+// Já em memória? NÃO dispara o getter (não avalia tabela core).
+export function isLocaleInMemory(code) {
+  if (!code) return false;
+  const d = Object.getOwnPropertyDescriptor(translations, code);
+  return !!(d && 'value' in d && d.value);
+}
 
 // Mantém em sincronia com CORE_LOCALES em scripts/build-i18n-json.js.
 export const CORE_LOCALES = ['pt-BR', 'en'];
+const CORE_SET = new Set(CORE_LOCALES);
+
+// [2026-10-15 boot-i18n] pt-BR e en têm o MESMO conjunto de chaves (conferido
+// 15/10: 11 275 × 11 275, 0 diferenças), então quando o idioma ativo é core o
+// outro core só serve p/ chave que falta nos dois. Até o 1º paint ele NÃO é
+// avaliado só p/ descobrir que falta (economiza ~0.5 MB de JS no boot); depois
+// de allowDeferredFallback() (chamado pelo LanguageProvider após o 1º paint) a
+// cadeia volta a ser a completa de sempre.
+let _deferredFallbackAllowed = false;
+export function allowDeferredFallback() { _deferredFallbackAllowed = true; }
+
+// Tabela p/ a posição `idx` da cadeia de `active`. Nunca lança.
+function _tableFor(active, code, idx) {
+  if (idx === 0) return translations[code];
+  if (isLocaleInMemory(code)) return translations[code];
+  if (CORE_ASYNC[code]) { // web: chunk do en — carrega em background, t() re-renderiza
+    if (_deferredFallbackAllowed || !CORE_SET.has(active)) ensureLocaleLoaded(code).catch(() => {});
+    return undefined;
+  }
+  // Só pula o outro core quando a tabela ATIVA está disponível (web 'en' ainda
+  // baixando → usa o pt-BR, nunca chave crua).
+  if (CORE_SET.has(code) && CORE_SET.has(active) && !_deferredFallbackAllowed &&
+      (isLocaleInMemory(active) || CORE_SYNC[active])) return undefined;
+  return translations[code];
+}
+
+// t() central: percorre a cadeia de fallback de `active`. undefined = nenhuma.
+export function lookupKey(active, key) {
+  const chain = fallbackChain(active);
+  for (let i = 0; i < chain.length; i++) {
+    const tbl = _tableFor(active, chain[i], i);
+    const v = tbl ? tbl[key] : undefined;
+    if (v != null) return v;
+  }
+  return undefined;
+}
 
 // Idiomas servidos pelo servidor (não vão no bundle). Mesma lista de antes
 // (os antigos lazyLoaders) — ml/ne/pa/si/ur são stubs e seguem fora do suporte.
@@ -268,6 +329,20 @@ function _scheduleRetry(code) {
 export function ensureLocaleLoaded(code) {
   if (!code) return Promise.resolve(false);
   if (translations[code]) return Promise.resolve(true);
+  // [2026-10-15 boot-i18n] Web: tabela core em chunk próprio (en) → import().
+  if (CORE_ASYNC[code]) {
+    if (_inflight[code]) return _inflight[code];
+    _inflight[code] = (async () => {
+      try {
+        const obj = await CORE_ASYNC[code]();
+        return _apply(code, obj, 'core');
+      } catch (e) {
+        try { console.warn('[i18n] falha ao carregar chunk core', code, e && e.message); } catch {}
+        return false;
+      } finally { delete _inflight[code]; }
+    })();
+    return _inflight[code];
+  }
   if (!REMOTE_SET.has(code)) return Promise.resolve(false);
   if (_inflight[code]) return _inflight[code];
   _inflight[code] = (async () => {
@@ -312,13 +387,31 @@ export function ensureLocaleLoaded(code) {
 // re-renderiza quando chegar.
 export function preloadLocale(code, maxWaitMs = 600) {
   if (!code || translations[code]) return Promise.resolve(!!code);
-  if (!REMOTE_SET.has(code)) return Promise.resolve(false);
+  if (!REMOTE_SET.has(code) && !CORE_ASYNC[code]) return Promise.resolve(false);
   return new Promise((resolve) => {
     let done = false;
     const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(!!v); } };
     const timer = setTimeout(() => finish(!!translations[code]), Math.max(0, maxWaitMs));
     ensureLocaleLoaded(code).then(finish, () => finish(false));
   });
+}
+
+// [2026-10-15 boot-i18n] Web: fallbacks assíncronos (chunk do en) que o idioma
+// `code` usa ANTES do 1º paint — só p/ idioma não-core (es, fr, …); idioma core
+// não precisa do outro (mesmas chaves). Mesmo teto/contrato do preloadLocale.
+export function preloadFallbacks(code, maxWaitMs = 600) {
+  try {
+    if (!code || CORE_SET.has(code)) return Promise.resolve(true);
+    // Só os assíncronos que vêm ANTES do 1º core síncrono da cadeia (pt-PT → pt-BR
+    // já cobre tudo; es → en → pt-BR precisa do en).
+    const need = [];
+    for (const c of fallbackChain(code).slice(1)) {
+      if (CORE_SYNC[c]) break;
+      if (CORE_ASYNC[c] && !isLocaleInMemory(c)) need.push(c);
+    }
+    if (!need.length) return Promise.resolve(true);
+    return Promise.all(need.map((c) => preloadLocale(c, maxWaitMs))).then((r) => r.every(Boolean), () => false);
+  } catch { return Promise.resolve(false); }
 }
 
 // Cadeia de fallback do t() p/ um idioma: ativo → parente próximo → en → pt-BR.
@@ -341,8 +434,8 @@ export const loadLocale = ensureLocaleLoaded;
 
 // 'loaded' | 'loading' | 'failed' | 'idle' | 'unsupported'
 export function getLocaleLoadState(code) {
-  if (!code || (!translations[code] && !REMOTE_SET.has(code))) return 'unsupported';
-  if (translations[code]) return 'loaded';
+  if (!isLocaleSupported(code)) return 'unsupported';
+  if (isLocaleInMemory(code) || CORE_SYNC[code]) return 'loaded'; // core síncrono = disponível (sem avaliar)
   if (_inflight[code]) return 'loading';
   if (_retry[code] && _retry[code].attempts > 0) return 'failed';
   return 'idle';
@@ -350,7 +443,8 @@ export function getLocaleLoadState(code) {
 
 // True se o código é um idioma suportado (mesmo que ainda não carregado).
 export function isLocaleSupported(code) {
-  return !!code && (!!translations[code] || REMOTE_SET.has(code));
+  // [2026-10-15 boot-i18n] Sem ler translations[code]: isso avaliaria a tabela core.
+  return !!code && (CORE_SET.has(code) || REMOTE_SET.has(code) || isLocaleInMemory(code));
 }
 
 // [2026-10-09 i18n-complete] Idiomas oferecidos no seletor de Configurações:
@@ -425,3 +519,17 @@ export const LANGUAGES = [
 ];
 
 export const DEFAULT_LANGUAGE = 'pt-BR';
+
+// [2026-10-15 boot-i18n] Web: quem NÃO usa português precisa do en (idioma ativo
+// ou fallback do idioma remoto) — começa a baixar o chunk já na avaliação deste
+// módulo, em paralelo ao resto do boot (o gate do _layout aguarda junto com o
+// JSON remoto). Mesma precedência do LanguageContext: manual > conta > navegador.
+// Usuário pt (BR/PT) não baixa nada a mais.
+try {
+  if (Platform.OS === 'web' && CORE_ASYNC.en && typeof window !== 'undefined') {
+    let c = '';
+    try { c = (window.localStorage && (window.localStorage.getItem('app_language_manual') || window.localStorage.getItem('app_language_account'))) || ''; } catch {}
+    if (!c) { try { c = (navigator.languages && navigator.languages[0]) || navigator.language || ''; } catch {} }
+    if (!/^pt(-|$)/i.test(String(c || 'pt'))) ensureLocaleLoaded('en').catch(() => {});
+  }
+} catch {}

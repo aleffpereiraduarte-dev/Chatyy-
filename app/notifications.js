@@ -23,7 +23,9 @@ import {
 import EmptyStateCard from '../components/EmptyStateCard';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import * as api from '../services/api';
-import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
+import { swr, getCachedEntrySync, setCache, userScopedKey } from '../services/cache';
+import { cachedKey } from '../hooks/useCachedAction';
+import { NOTIF_SCREEN } from '../services/screenData';
 import { filterSocialNotifications } from '../services/notificationFilter';
 import FadeSlideIn from '../components/FadeSlideIn';
 
@@ -34,7 +36,14 @@ import FadeSlideIn from '../components/FadeSlideIn';
 // still persists across cold starts. Keyed by user-scoped cache key so two
 // accounts on the same device never share state.
 const _liveStore = new Map();
-const LIVE_KEY = 'notifications_list_v1';
+// [2026-10-14 offline-first] mesma chave do aquecimento em 2º plano (screenData).
+const LIVE_KEY = cachedKey(NOTIF_SCREEN.key);
+// Cópia em disco (7 dias, ignora o TTL curto do swr). O swr grava a RESPOSTA
+// inteira ({ success, data: { notifications } }) — antes lia `.notifications`
+// na raiz e o cache de disco nunca pintava.
+function _readDisk() {
+  try { const e = getCachedEntrySync(LIVE_KEY); const d = e && e.data; const l = d && (d.data?.notifications || d.notifications); return Array.isArray(l) ? l : null; } catch { return null; }
+}
 
 function _readLive() {
   try {
@@ -447,13 +456,11 @@ function NotificationsScreenInner() {
   const [notifications, setNotifications] = useState(() => {
     const live = _readLive();
     if (live) return filterSocialNotifications(live);
-    try {
-      const cached = getCachedSync(LIVE_KEY);
-      if (cached?.notifications) return filterSocialNotifications(cached.notifications);
-    } catch {}
+    const disk = _readDisk();
+    if (disk) return filterSocialNotifications(disk);
     return [];
   });
-  const [loading, setLoading] = useState(() => !(_readLive() || getCachedSync(LIVE_KEY)?.notifications));
+  const [loading, setLoading] = useState(() => !(_readLive() || _readDisk()));
   const [refreshing, setRefreshing] = useState(false);
   // [follow-back-fix 2026-05-21] Lightweight inline toast: confirms the
   // server actually persisted the follow (or surfaces a failure) so the
@@ -503,13 +510,11 @@ function NotificationsScreenInner() {
       _applyTab(tabKey, liveItems);
       setLoading(false);
     } else {
-      try {
-        const cached = getCachedSync(LIVE_KEY);
-        if (cached?.notifications) {
-          _applyTab(tabKey, cached.notifications);
-          setLoading(false);
-        }
-      } catch {}
+      const disk = _readDisk();
+      if (disk) {
+        _applyTab(tabKey, disk);
+        setLoading(false);
+      }
     }
     // Background revalidation — shared SWR helper writes to MMKV + dedupes
     // concurrent calls (bell modal + screen mounting at the same time hit
@@ -517,7 +522,7 @@ function NotificationsScreenInner() {
     try {
       const fresh = await swr(
         LIVE_KEY,
-        () => api.notificationsList(1, 60),
+        () => NOTIF_SCREEN.fetch(),
         null,
         null,
         { ttlMs: 30 * 60 * 1000, staleAfterMs: 15 * 1000 }
@@ -565,10 +570,10 @@ function NotificationsScreenInner() {
     // [WAVE 100] Mirror into live store + MMKV so the next mount paints
     // already-read state instead of flashing unread tint for ~300ms.
     try {
-      const live = _readLive() || getCachedSync(LIVE_KEY)?.notifications || [];
+      const live = _readLive() || _readDisk() || [];
       const next = live.map(n => ({ ...n, read: true }));
       _writeLive(next);
-      setCache(LIVE_KEY, { success: true, data: { notifications: next } }, 30 * 60 * 1000);
+      setCache(LIVE_KEY, { success: true, data: { notifications: next } }, 7 * 24 * 3600 * 1000);
     } catch {}
     // Fade the unread rail tint out smoothly (200ms).
     markAllFadeAnim.setValue(1);

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [2026-10-14 native-home] Ícone de traço (viewBox 24, traço 2) — mesmo desenho do components/Icons.js. Cor aplicada por tint. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:pathData="M12,17v5 M9,11V4a1,1 0,0 1,1 -1h4a1,1 0,0 1,1 1v7 M6,11h12l-1.5,6h-9L6,11z"
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="2"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round" />
+</vector>

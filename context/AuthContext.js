@@ -542,6 +542,7 @@ async function clearAllPerAccountCaches() {
   // leak). Clear them explicitly on every full cache wipe.
   try { await clearAccountScopedMmkv(); } catch {}
   // 1. Standard MMKV cache + chat-cache module (lazy to break cycle)
+  try { require('../services/screenPrefetch').cancelScreenPrefetch(); } catch {}
   try { await clearAllCache(); } catch {}
   try { const fn = await getLazyClearChatCache(); await fn(); } catch {}
   // 1a. P0 PRIVACY: native SQLite chat store. clearChatCache() above does NOT
@@ -939,6 +940,44 @@ export function AuthProvider({ children }) {
         // blocking checkAuth below, which routes to /login as before.
         // (native cache-first hydrate already attempted above)
 
+        // [2026-10-15 boot-logged-out] Nativo SEM credencial nenhuma (instalação
+        // nova / depois de sair): não há sessão possível — o bearer é a única
+        // credencial no nativo (sessionCookie/savedCredentials só vivem em
+        // memória e estão vazios num cold start, e hydrateOffline acima já
+        // recusou: sem usuário em cache nem conta ativa). Antes caía no
+        // checkAuth de rede (BR→US + espera do token), e o /login só aparecia
+        // ~1,2 s depois (coldstart_marks Android: auth_hydrate_start 1165 →
+        // auth_none ~2200 ms; 58 de 70 boots Android medidos são deslogados).
+        // getStoredToken já leu SecureStore + o espelho do AsyncStorage.
+        if (Platform.OS !== 'web') {
+          try {
+            await Promise.race([
+              api.waitForTokenReady?.(),
+              new Promise((res) => setTimeout(res, 2000)),
+            ]);
+          } catch {}
+          const _credNow = () => !!(api.getAuthToken?.() || '') || !!(api.getActiveAccountEmail?.() || '') || !!getSavedCredentials()?.email;
+          let _hasCred = false;
+          try { _hasCred = _credNow(); } catch { _hasCred = true; }
+          if (!_hasCred) {
+            // 2ª leitura local (SecureStore pode ter falhado transitoriamente no
+            // 1º acesso ao keystore). Sem token achado não vai à rede.
+            try {
+              await Promise.race([
+                Promise.resolve(api.refreshAuthToken?.()).catch(() => {}),
+                new Promise((res) => setTimeout(res, 1200)),
+              ]);
+              _hasCred = _credNow();
+            } catch { _hasCred = true; }
+          }
+          if (!_hasCred) {
+            try { require('../services/bootTrace').mark('auth_none_fast'); } catch {}
+            loadAccounts();
+            setLoading(false);
+            return;
+          }
+        }
+
         // First try: check if server session is still alive
         const r = await api.checkAuth();
         // Detect explicit server-side auth rejection (401) vs a network error.
@@ -1248,6 +1287,8 @@ export function AuthProvider({ children }) {
         if (sc.activeAccount() === String(email).trim().toLowerCase()) sc.prefetchAll().catch(() => {});
       } catch {}
     }, 4000);
+    // [2026-10-14 offline-first] perfil/carteira/notificações/contatos salvos no aparelho.
+    try { require('../services/screenPrefetch').scheduleScreenPrefetch(email); } catch {}
     api.getProfile().then(r => {
       if (r && r.success && r.data && typeof r.data === 'object') {
         import('../services/cache').then(({ setCache }) => {
@@ -2129,6 +2170,9 @@ export function AuthProvider({ children }) {
     // Non-active account: no live in-memory bearer to revoke here; just drop
     // the stored row (its token field was already zeroed on its own logout).
     api.removeStoredAccount(email);
+    // [2026-10-14 offline-first] dados salvos das telas DESTA conta (cache.js).
+    try { require('../services/cache').clearUserCache?.(email); } catch {}
+    try { require('../services/settingsCache').purgeAccount?.(email); } catch {}
     loadAccounts();
   }, [user, doLogout, loadAccounts]);
 

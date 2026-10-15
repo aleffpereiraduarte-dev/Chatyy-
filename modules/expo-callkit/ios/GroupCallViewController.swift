@@ -601,6 +601,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         }
         flags.didHangup = true
         nativeCallDiag("group_hangup", roomName, "reason=\(reason)")
+        // [2026-10-15 screen-share] End the system broadcast (red pill) now.
+        ScreenShareSupport.callEnding(room: self.room, callId: roomName)
         // Resolve the CallKit UUID BEFORE posting the ended notification (its
         // module observer clears the callId→UUID map).
         let callKitUUID = ExpoCallKitModule.sharedCallKitUUID(forCallId: roomName)
@@ -863,15 +865,64 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     private var broadcastStopToken: ScreenShareSupport.ObserverToken?
 
     // [2026-10-06 screen-share iOS] Same mechanism as CallViewController.
+    // [2026-10-15 screen-share whatsapp-level] 1st-use privacy notice →
+    // system picker straight on our extension; publish only after the user
+    // confirms (ScreenShareSupport); camera pauses while sharing; top pill
+    // "Você está compartilhando a tela · Parar" (session.localScreenSharing).
     private func toggleScreenShare() {
         guard let r = self.room else { return }
         guard !screenShareInFlight else { return }
-        let desired = !(ScreenShareSupport.isSharing(room: r) || screenSharing)
+        if ScreenShareSupport.isSharing(room: r) || screenSharing {
+            performScreenShareToggle(room: r, desired: false)
+            return
+        }
+        if screenSharePendingObserver == nil {
+            screenSharePendingObserver = NotificationCenter.default.addObserver(
+                forName: ScreenShareSupport.pendingEndedNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.screenShareInFlight = false }
+        }
+        ScreenShareSupport.confirmFirstUse(from: self) { [weak self] in
+            guard let self = self, let r = self.room else { return }
+            self.performScreenShareToggle(room: r, desired: true)
+        }
+    }
+
+    private var screenSharePendingObserver: NSObjectProtocol?
+    private var cameraPausedForShare = false
+
+    /// Main thread. Single place for the local "sharing" state + camera
+    /// pause/resume + diag.
+    private func setLocalScreenSharing(_ sharing: Bool) {
+        let was = screenSharing
+        screenSharing = sharing
+        session.localScreenSharing = sharing
+        if sharing && !was {
+            nativeCallDiag("group_screen_share_published", roomName)
+            if session.camEnabled {
+                cameraPausedForShare = true
+                session.camEnabled = false
+                applyCamEnabled(false)
+            }
+        } else if !sharing && was {
+            nativeCallDiag("group_screen_share_unpublished", roomName)
+            ScreenShareSupport.logExtensionStats(callId: roomName)
+            if cameraPausedForShare {
+                cameraPausedForShare = false
+                if !session.camEnabled && !flags.didHangup && room != nil {
+                    session.camEnabled = true
+                    applyCamEnabled(true)
+                }
+            }
+        }
+    }
+
+    private func performScreenShareToggle(room r: Room, desired: Bool) {
+        guard !screenShareInFlight else { return }
         screenShareInFlight = true
         if desired && ScreenShareSupport.useBroadcastExtension && broadcastStopToken == nil {
             broadcastStopToken = ScreenShareSupport.observeBroadcastStopped { [weak self] in
                 guard let self = self, let r = self.room else { return }
-                self.screenSharing = false
+                self.setLocalScreenSharing(false)
                 Task { try? await ScreenShareSupport.set(room: r, enabled: false) }
             }
         }
@@ -882,14 +933,14 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 await MainActor.run {
                     self.screenShareInFlight = false
                     if !desired || !ScreenShareSupport.useBroadcastExtension {
-                        self.screenSharing = desired
+                        self.setLocalScreenSharing(desired)
                     }
                 }
             } catch {
                 print("[GroupCallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
                 await MainActor.run {
                     self.screenShareInFlight = false
-                    self.screenSharing = ScreenShareSupport.isSharing(room: r)
+                    self.setLocalScreenSharing(ScreenShareSupport.isSharing(room: r))
                 }
             }
         }
@@ -901,7 +952,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         guard publication.source == .screenShareVideo else { return }
         Task { @MainActor [weak self] in
             self?.screenShareInFlight = false
-            self?.screenSharing = true
+            self?.setLocalScreenSharing(true)
         }
     }
 
@@ -911,7 +962,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         guard publication.source == .screenShareVideo else { return }
         Task { @MainActor [weak self] in
             self?.screenShareInFlight = false
-            self?.screenSharing = false
+            self?.setLocalScreenSharing(false)
             if let tok = self?.broadcastStopToken {
                 ScreenShareSupport.stopObserving(tok)
                 self?.broadcastStopToken = nil
@@ -1176,12 +1227,23 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             isScreen: true
         )
         var arr = session.participants
+        var isNew = false
         if let i = arr.firstIndex(where: { $0.id == sid }) {
             arr[i] = tile
         } else {
             arr.insert(tile, at: 0)
+            isNew = true
         }
         session.participants = arr
+        // [2026-10-15 screen-share whatsapp-level] New share → "Fulano está
+        // compartilhando a tela" + opens full screen (X minimises to tile).
+        if isNew {
+            nativeCallDiag("group_screen_share_viewer_started", roomName)
+            showToast(CallStrings.s("ssPeerSharing", ["name": ownerName]))
+            if session.fullscreenId == nil, presentedViewController == nil {
+                session.fullscreenId = sid
+            }
+        }
     }
 
     @MainActor
@@ -1331,6 +1393,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         adaptiveVideo?.stop()
         // [2026-10-06 screen-share iOS] Darwin observer holds an unretained token.
         if let tok = broadcastStopToken { ScreenShareSupport.stopObserving(tok) }
+        if let tok = screenSharePendingObserver { NotificationCenter.default.removeObserver(tok) }
         if let tok = systemMuteObserver { NotificationCenter.default.removeObserver(tok) }
         if let tok = inviteDeclinedObserver { NotificationCenter.default.removeObserver(tok) }
         noAnswerTimer?.invalidate()
@@ -1454,6 +1517,7 @@ extension GroupCallViewController: RoomDelegate {
 
     func roomDidConnect(_ room: Room) {
         print("[GroupCallVC] roomDidConnect — room=\(roomName)")
+        ScreenShareSupport.registerActive(room: room, callId: roomName)   // [2026-10-15]
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             self.session.status = GroupCallStrings.connected

@@ -26,7 +26,7 @@ import AvatarCircle from './AvatarCircle';
 import AttachmentPreviewModal from './AttachmentPreviewModal';
 import AIEmailSummary from './AIEmailSummary';
 import AIPhishingBanner from './AIPhishingBanner';
-import { getAttachmentUrl, getExportUrl, blockSender, muteThread, sendEmail, translate as apiTranslate, aiDetectUnsubscribe, emailUnsubscribe } from '../services/api';
+import { getAttachmentUrl, getAttachmentUrlSecure, downloadAttachmentToDevice, getExportUrl, blockSender, muteThread, sendEmail, translate as apiTranslate, aiDetectUnsubscribe, emailUnsubscribe } from '../services/api';
 import {
   IconStar, IconStarFilled, IconX, IconSparkles, IconReply, IconReplyAll,
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
@@ -203,6 +203,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   const [muted, setMuted] = useState(false);
   const [showQuoted, setShowQuoted] = useState(false);
   const [previewAttach, setPreviewAttach] = useState({ visible: false, index: 0 });
+  // [2026-10-15 email-melhorias] progresso de download por anexo (índice → 0..1)
+  const [dlProgress, setDlProgress] = useState({});
+  useEffect(() => { setDlProgress({}); }, [email?.uid]);
   const [inlineReplyExpanded, setInlineReplyExpanded] = useState(false);
   const [inlineReplyText, setInlineReplyText] = useState('');
   const [inlineReplySending, setInlineReplySending] = useState(false);
@@ -1225,19 +1228,44 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               const ext = (a.filename || '').split('.').pop().toLowerCase();
               const isImage = IMAGE_EXTS.includes(ext);
               const downloadUrl = getAttachmentUrl(email.uid, folder || 'INBOX', a.part_id ?? a.part ?? (i + 1));
-              const handleDownload = () => {
+              const _part = a.part_id ?? a.part ?? (i + 1);
+              const _pct = dlProgress[i];
+              const handleDownload = async () => {
+                // [2026-10-15 email-melhorias] Web: link com `dt` de uso curto
+                // (sem bearer na URL). Nativo: baixa com % no próprio botão e
+                // abre a folha de compartilhar/abrir; fallback = jeito antigo.
                 if (Platform.OS === 'web') {
+                  let href = downloadUrl;
+                  try { href = await getAttachmentUrlSecure(email.uid, folder || 'INBOX', _part); } catch {}
                   const link = document.createElement('a');
-                  link.href = downloadUrl;
+                  link.href = href;
                   link.download = a.filename || `anexo_${i + 1}`;
                   link.target = '_blank';
                   document.body.appendChild(link);
                   link.click();
                   document.body.removeChild(link);
-                } else {
-                  import('expo-linking').then(Linking => {
-                    Linking.openURL(downloadUrl);
-                  }).catch(() => {});
+                  return;
+                }
+                if (_pct != null) return; // já baixando
+                setDlProgress((m) => ({ ...m, [i]: 0 }));
+                try {
+                  const uri = await downloadAttachmentToDevice(email.uid, folder || 'INBOX', _part, a.filename || `anexo_${i + 1}`, {
+                    expectedBytes: a.size || 0,
+                    onProgress: (f) => setDlProgress((m) => (m[i] == null ? m : { ...m, [i]: f })),
+                  });
+                  setDlProgress((m) => { const n = { ...m }; delete n[i]; return n; });
+                  try {
+                    const Sharing = require('expo-sharing');
+                    if (await Sharing.isAvailableAsync()) { await Sharing.shareAsync(uri, { dialogTitle: a.filename || undefined, mimeType: a.mime_type || a.type || undefined }); return; }
+                  } catch {}
+                  try { const Linking = require('expo-linking'); await Linking.openURL(uri); } catch {}
+                } catch {
+                  setDlProgress((m) => { const n = { ...m }; delete n[i]; return n; });
+                  try {
+                    const href = await getAttachmentUrlSecure(email.uid, folder || 'INBOX', _part);
+                    const Linking = require('expo-linking');
+                    Linking.openURL(href);
+                  } catch {}
                 }
               };
               return (
@@ -1270,7 +1298,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     </Text>
                   </View>
                   <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleDownload(); }} style={s.attachDlBtn} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }} accessibilityLabel={`Download ${a.filename || 'attachment'}`} accessibilityRole="button">
-                    <IconDownload size={18} color={colors.textSecondary} />
+                    {_pct != null ? (
+                      <Text style={[s.attachSize, { color: colors.textSecondary, fontVariant: ['tabular-nums'], minWidth: 34, textAlign: 'center' }]}>{`${Math.round(_pct * 100)}%`}</Text>
+                    ) : (
+                      <IconDownload size={18} color={colors.textSecondary} />
+                    )}
                   </TouchableOpacity>
                 </TouchableOpacity>
               );

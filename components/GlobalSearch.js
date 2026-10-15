@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 import { BASE_URL } from '../services/api';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
@@ -24,7 +25,8 @@ import {
 
 // Spotlight-style brand accent — used everywhere the focus needs to pop.
 const BRAND = '#111111';
-const RECENT_KEY = '@chatyy_global_recent_searches';
+const RECENT_KEY = '@chatyy_global_recent_searches'; // legado (sem conta) — só migração
+const RECENT_CKEY = ['global_search', 'recent'];
 const MAX_RECENT = 6;
 // Per-section preview cap. Anything beyond shows "Ver todos →".
 const SECTION_PREVIEW = 3;
@@ -253,7 +255,9 @@ export default function GlobalSearch({
   const [results, setResults] = useState({ users: [], chats: [], emails: [], posts: [] });
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('all');
-  const [recent, setRecent] = useState([]);
+  // [2026-10-14 offline-first] recentes POR CONTA (antes: chave global no
+  // AsyncStorage, lida async → piscava e vazava entre contas no multi-conta).
+  const [recent, setRecent] = useState(() => { const c = peekCached(RECENT_CKEY); return Array.isArray(c) ? c : []; });
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
   // Cache results per (filter,query) so toggling chips doesn't refetch when
@@ -265,10 +269,19 @@ export default function GlobalSearch({
   // Hydrate recent searches when the modal opens (Spotlight empty-state).
   useEffect(() => {
     if (!visible) return;
+    const c = peekCached(RECENT_CKEY);
+    if (Array.isArray(c)) { setRecent(c); return; }
+    // Migração única da chave antiga (sem conta): só adota com ≤1 conta no aparelho.
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(RECENT_KEY);
-        if (raw) setRecent(JSON.parse(raw) || []);
+        if (!raw) return;
+        let n = 0; try { n = (api.getStoredAccounts?.() || []).length; } catch {}
+        if (n <= 1) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) { const v = arr.filter(x => typeof x === 'string').slice(0, MAX_RECENT); putCached(RECENT_CKEY, v); setRecent(v); }
+        }
+        AsyncStorage.removeItem(RECENT_KEY).catch(() => {});
       } catch {}
     })();
   }, [visible]);
@@ -281,12 +294,13 @@ export default function GlobalSearch({
       const existing = recent.filter(s => s !== v);
       const next = [v, ...existing].slice(0, MAX_RECENT);
       setRecent(next);
-      await AsyncStorage.setItem(RECENT_KEY, JSON.stringify(next));
+      putCached(RECENT_CKEY, next);
     } catch {}
   }, [recent]);
 
   const clearRecent = useCallback(async () => {
     setRecent([]);
+    putCached(RECENT_CKEY, []);
     try { await AsyncStorage.removeItem(RECENT_KEY); } catch {}
   }, []);
 

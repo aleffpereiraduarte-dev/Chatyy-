@@ -29,7 +29,8 @@ class ChatyyMediaViewerModule : Module() {
 
     Events("onIndexChange", "onAction", "onClose")
 
-    Function("apiVersion") { 1 }
+    // 2 = aceita `secure` (FLAG_SECURE no Dialog) [2026-10-14 adv-privacy]
+    Function("apiVersion") { 2 }
 
     AsyncFunction("open") { options: Map<String, Any?> ->
       val activity = appContext.currentActivity ?: return@AsyncFunction 0
@@ -58,6 +59,7 @@ class ChatyyMediaViewerModule : Module() {
         allowSave = (options["allowSave"] as? Boolean) ?: true,
         allowForward = (options["allowForward"] as? Boolean) ?: true,
         allowStar = (options["allowStar"] as? Boolean) ?: true,
+        secure = (options["secure"] as? Boolean) ?: false,
       )
       val index = when (val v = options["index"]) {
         is Number -> v.toInt()

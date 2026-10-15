@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Platform, NativeModules, AppState, I18nManager, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported, preloadLocale, fallbackChain, isRTLLanguage } from '../i18n';
+import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported, preloadLocale, fallbackChain, isRTLLanguage, lookupKey, preloadFallbacks, allowDeferredFallback } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage, chatUpdateSettings as apiChatUpdateSettings } from '../services/api';
 
 // [2026-10-08 web-receipts-i18n] Idioma da CONTA. Antes o web usava SÓ o
@@ -157,7 +157,13 @@ export function preloadBootLanguage(maxWaitMs = 900) {
     } catch {}
     if (!code) { try { code = detectLanguage(); } catch { code = DEFAULT_LANGUAGE; } }
     _bootLang = code || DEFAULT_LANGUAGE;
-    if (!translations[_bootLang]) { try { await preloadLocale(_bootLang, maxWaitMs); } catch {} }
+    // [2026-10-15 boot-i18n] + fallbacks assíncronos (web: chunk do en p/ es/fr/…), em paralelo.
+    try {
+      await Promise.all([
+        translations[_bootLang] ? null : preloadLocale(_bootLang, maxWaitMs).catch(() => false),
+        preloadFallbacks(_bootLang, maxWaitMs).catch(() => false),
+      ]);
+    } catch {}
     return _bootLang;
   })().catch(() => DEFAULT_LANGUAGE);
   return _bootPromise;
@@ -202,10 +208,25 @@ export function LanguageProvider({ children }) {
     }).catch(() => {});
     return () => { alive = false; };
   }, [language]);
+  // [2026-10-15 boot-i18n] Web: idioma remoto (es, fr…) precisa do chunk do en
+  // como fallback — troca de idioma em runtime baixa junto (o tick re-renderiza).
+  useEffect(() => {
+    if (!language) return;
+    try { preloadFallbacks(language, 0).catch(() => {}); } catch {}
+  }, [language]);
+  // [2026-10-15 boot-i18n] Depois do 1º paint a cadeia volta a ser a completa
+  // (chave que faltar no pt-BR passa a consultar o en, avaliado sob demanda).
+  useEffect(() => {
+    try { require('../services/bootTrace').afterFirstPaint(() => { try { allowDeferredFallback(); } catch {} }, 3000); }
+    catch { try { allowDeferredFallback(); } catch {} }
+  }, []);
   // Retry tardio / manifest novo → só re-renderiza se for o idioma ativo.
   useEffect(() => {
     const off = onLocaleLoaded((code) => {
-      if (code === languageRef.current) setLoadedTick((n) => n + 1);
+      // [2026-10-15 boot-i18n] também quando chega um FALLBACK do idioma ativo (web: chunk do en).
+      let hit = code === languageRef.current;
+      if (!hit) { try { hit = fallbackChain(languageRef.current).includes(code); } catch {} }
+      if (hit) setLoadedTick((n) => n + 1);
     });
     return () => { try { off && off(); } catch {} };
   }, []);
@@ -370,9 +391,9 @@ export function LanguageProvider({ children }) {
     // Portuguese to non-Portuguese users. Bug-hunt P3 (2026-05-30).
     // [2026-10-09] Cadeia por idioma (pt-PT → pt-BR → en; demais → en → pt-BR):
     // idioma remoto ainda baixando nunca mostra chave crua.
-    let str;
-    const chain = fallbackChain(language);
-    for (let i = 0; i < chain.length && str == null; i++) str = translations[chain[i]]?.[key];
+    // [2026-10-15 boot-i18n] lookupKey (i18n/index.js): mesma cadeia, mas o
+    // outro idioma core só é avaliado depois do 1º paint (allowDeferredFallback).
+    let str = lookupKey(language, key);
     if (str == null) str = key;
     // For arrays (like time.days), return as-is
     if (Array.isArray(str)) return str;

@@ -84,6 +84,10 @@ import PressableRow from './PressableRow';
 import ListNamePromptModal from './ListNamePromptModal'; // [paridade-wa 2026-10-14]
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import FadeSlideIn from './FadeSlideIn';
+// [2026-10-14 native-home] Lista de conversas NATIVA (UICollectionView / RecyclerView).
+// Binário sem o módulo → isAvailable() false → FlashList abaixo (idêntico ao antigo).
+import NativeConversationList from './chatlist/NativeConversationList';
+import { isAvailable as _nativeHomeAvailable } from '../modules/expo-chat-conversation-list';
 import { haptic } from '../constants/theme';
 import { humanizeSystemText } from '../utils/systemMessageText';
 
@@ -641,9 +645,36 @@ function TypingDotsInline({ color }) {
 // pulses: a translucent halo expands + fades behind the green pip every
 // ~2s so "online" reads at a glance. Keeps the layout footprint same
 // (halo is absolutely positioned over the dot).
-function PulsingOnlineDot({ colors, isDark }) {
+// [2026-10-15 perf] Web: o loop Animated rodava no JS (sem driver nativo) =
+// ~60 atualizações/s com a lista parada. Lá o pulso agora é CSS puro
+// (mesmas curvas: halo 1→2.6 / 0.6→0.28→0, pip 1→1.08→1, 1.6 s). Nativo:
+// driver nativo (UI thread) e o loop PARA quando a tela perde o foco.
+const _webHaloKf = [{ '0%': { transform: 'scale(1)', opacity: 0.6 }, '40%': { transform: 'scale(1.64)', opacity: 0.28 }, '100%': { transform: 'scale(2.6)', opacity: 0 } }];
+const _webPipKf = [{ '0%': { transform: 'scale(1)' }, '50%': { transform: 'scale(1.08)' }, '100%': { transform: 'scale(1)' } }];
+function PulsingOnlineDotWeb({ colors }) {
+  return (
+    <View style={[s.onlineDot, { borderColor: colors.background, animationKeyframes: _webPipKf, animationDuration: '1600ms', animationIterationCount: 'infinite', animationTimingFunction: 'ease-in-out' }]}>
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          left: -2.5, top: -2.5,
+          width: 13, height: 13, borderRadius: 6.5,
+          backgroundColor: '#22c55e',
+          opacity: 0,
+          animationKeyframes: _webHaloKf, animationDuration: '1600ms', animationIterationCount: 'infinite', animationTimingFunction: 'ease-in-out',
+        }}
+      />
+    </View>
+  );
+}
+function PulsingOnlineDot(props) {
+  if (Platform.OS === 'web') return <PulsingOnlineDotWeb {...props} />;
+  return <PulsingOnlineDotNative {...props} />;
+}
+function PulsingOnlineDotNative({ colors, isDark }) {
   const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 1600, useNativeDriver: true }),
@@ -651,8 +682,8 @@ function PulsingOnlineDot({ colors, isDark }) {
       ])
     );
     loop.start();
-    return () => loop.stop();
-  }, []);
+    return () => { loop.stop(); try { pulse.setValue(0); } catch {} };
+  }, [pulse]));
   const haloScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] });
   const haloOpacity = pulse.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.6, 0.28, 0] });
   const innerScale = pulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.08, 1] });
@@ -867,113 +898,10 @@ function _rowEstimate() {
   return Math.round(74 * Math.min(Math.max(fs, 1), 1.35));
 }
 
-const ConversationRow = React.memo(function ConversationRow({
-  conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
-  currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
-  selectionMode, isSelected, onLongPress, onToggleSelect, draftText, draftEditedAt, noteText, lastSeen,
-  // WAVE 95 (2026-05-21): tap-on-avatar opens fullscreen lightbox while the
-  // rest of the row still opens the conversation. Without this prop the
-  // avatar stays a non-tappable visual element (legacy behavior).
-  onAvatarPress,
-}) {
-  // QA perf probe (Playwright sets globalThis.__chatyyListProbe); no-op otherwise.
-  { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.row++; }
-  const isGroup = conversation.type === 'group';
-  const isChannel = conversation.type === 'channel';
-  // [status-rever 2026-10-14] anel de status no avatar (direct): destacado se há
-  // status novo, cinza se já visto; tocar no avatar abre o status.
-  const _statusRing = useStatusRing((!isGroup && !isChannel) ? (conversation.other_email || conversation.contact_email || conversation.email || '') : '');
-  // For direct chats, check if the user has set a local nickname for the peer.
-  // Applies only to direct convs (groups keep server-side name). Sync read
-  // from MMKV cache so the row doesn't flicker on scroll.
-  const _peerEmail = (!isGroup && !isChannel)
-    ? (conversation.other_email || conversation.contact_email || conversation.email || '')
-    : '';
-  let _nickname = '';
-  if (_peerEmail) {
-    try { _nickname = require('../services/nicknames').getNickname(_peerEmail); } catch {}
-  }
-  // [2026-10-06 UX] Self-chat row is named by the SERVER ("Saved Messages",
-  // English) — localize it client-side like the header/drawer already do.
-  const _isSavedRow = conversation.type === 'saved' || (
-    _peerEmail && currentEmail && String(_peerEmail).toLowerCase() === String(currentEmail).toLowerCase()
-  );
-  const displayName = _isSavedRow
-    ? (t('chat.savedMessages') || 'Mensagens Salvas')
-    : (_nickname
-    || ((isGroup || isChannel)
-      ? (_convTitleRaw(conversation) || t('chat.unknown')) // [2026-10-14 grupo-nome] nome cru do grupo
-      : emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown'))));
-  const unread = conversation.unread_count > 0;
-  const lastMsg = conversation.last_message;
-  const isArchived = conversation.archived;
-  const isPinned = !!conversation.pinned;
-  const isMuted = !!conversation.muted;
-  const [hovered, setHovered] = useState(false);
-  const P = isDark ? LP_DARK : LP_LIGHT; // [2026-10-08 chat-beauty-list]
-
-  // Prefer server-provided other_email/contact_email — those are computed
-  // authoritatively by chat.php:buildConversationData knowing exactly who
-  // the current user is. Falling back to client-side .find() is only safe
-  // when currentEmail is known; otherwise the first member listed may BE
-  // the current user, which used to make their own photo appear in every
-  // direct-chat avatar on cold boot (the web bug the user reported).
-  const _me = (currentEmail || '').toLowerCase();
-  const serverPeer = conversation.other_email || conversation.contact_email || conversation.peer_email || null;
-  let otherEmail = null;
-  if (!isGroup) {
-    if (serverPeer && serverPeer.toLowerCase() !== _me) {
-      otherEmail = serverPeer;
-    } else if (_me) {
-      const otherMember = (conversation.members || []).find(m => {
-        const e = typeof m === 'string' ? m : (m?.email || '');
-        return e && e.toLowerCase() !== _me;
-      });
-      otherEmail = otherMember
-        ? (typeof otherMember === 'string' ? otherMember : otherMember?.email)
-        : null;
-    }
-    // If we still have nothing, rather than defaulting to the current user
-    // (which paints their own avatar), stay null — AvatarCircle renders the
-    // initials from `name` instead.
-  }
-
-  const isOnline = !!isOnlineProp;
-
-  // typingUsers[convId] is normalized (string/array legacy → object array) via
-  // _normalizeTypers. Derive a single display string ("Ana", "Ana, João",
-  // "Ana e mais 2") plus a recording flag for the subtitle.
-  const _typers = _normalizeTypers(typingUsers?.[conversation.id]);
-  const typingNames = _typers.map(e => e.name).filter(Boolean);
-  // [2026-10-14 grupo-rajada] "Ana e João" (era "Ana, João"); 3+ = "Ana, João +1".
-  const typingName = typingNames.length
-    ? (typingNames.length <= 2
-        ? typingNames.join(` ${(t && t('chatConv.typingAnd')) || 'e'} `)
-        : `${typingNames.slice(0, 2).join(', ')} +${typingNames.length - 2}`)
-    : null;
-  // "gravando áudio…" only when EVERY active typer is recording a voice note
-  // (always true for a 1:1, conservative for a group so a mix never mislabels
-  // a plain typist as recording).
-  const typingRecording = _typers.length > 0 && _typers.every(e => e.recording);
-
-  // Scheduled-message indicator: surface a tiny clock prefix on the row when
-  // there's a pending scheduled outgoing message. Backend may attach this on
-  // the conversation row directly or on lastMsg under a few different keys —
-  // we accept any of them so we stay resilient to the shape that ships.
-  const hasScheduled = !!(
-    conversation.scheduled_at ||
-    conversation.has_scheduled ||
-    conversation.scheduled_message ||
-    (lastMsg && (lastMsg.scheduled_at || lastMsg.is_scheduled))
-  );
-  // [perf] Memoize the preview/caption derivation — unmemoized it ran
-  // JSON.parse (2-3×) + ~7 regex passes PER ROW on every list-wide re-render
-  // (presence tick, selection toggle, theme flip), dominating the JS profile
-  // on 200-row lists. typingName is deliberately NOT a dep: while a peer is
-  // typing the render shows the typing branch and never reads preview/
-  // previewSender/statusType (the receipt icon only renders in the non-typing
-  // branch), so deriving purely from lastMsg yields byte-identical output.
-  const { preview, previewSender, statusType } = useMemo(() => {
+// [2026-10-14 native-home] Derivação da prévia (texto, remetente, recibo) da
+// linha — extraída do useMemo do ConversationRow SEM mudar a lógica, para a
+// lista nativa (components/chatlist/nativeAdapter.js) usar exatamente a mesma.
+function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
     let preview = '';
     let previewSender = null;
     let statusType = null;
@@ -1177,7 +1105,7 @@ const ConversationRow = React.memo(function ConversationRow({
       // [2026-10-11 qa-sweep2] Server rows are pt-BR sentences with the actor's
       // handle ("apitest criou o grupo") — humanize to "Você criou o grupo" and
       // localize. Also decodes the __sys.user_left__ token.
-      const _myNames = (Array.isArray(conversation.members) ? conversation.members : [])
+      const _myNames = (Array.isArray(members) ? members : [])
         .filter(m => String(m?.email || '').toLowerCase() === _me)
         .map(m => m.display_name || m.name).filter(Boolean);
       content = humanizeSystemText(content, { t, myEmail: _me, myNames: _myNames, senderEmail: lastMsg.sender_email, formatName: emailToDisplayName });
@@ -1197,7 +1125,115 @@ const ConversationRow = React.memo(function ConversationRow({
     }
     }
     return { preview, previewSender, statusType };
-  }, [lastMsg, isGroup, isChannel, _me, t, conversation.members]);
+}
+
+const ConversationRow = React.memo(function ConversationRow({
+  conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
+  currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
+  selectionMode, isSelected, onLongPress, onToggleSelect, draftText, draftEditedAt, noteText, lastSeen,
+  // WAVE 95 (2026-05-21): tap-on-avatar opens fullscreen lightbox while the
+  // rest of the row still opens the conversation. Without this prop the
+  // avatar stays a non-tappable visual element (legacy behavior).
+  onAvatarPress,
+}) {
+  // QA perf probe (Playwright sets globalThis.__chatyyListProbe); no-op otherwise.
+  { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.row++; }
+  const isGroup = conversation.type === 'group';
+  const isChannel = conversation.type === 'channel';
+  // [status-rever 2026-10-14] anel de status no avatar (direct): destacado se há
+  // status novo, cinza se já visto; tocar no avatar abre o status.
+  const _statusRing = useStatusRing((!isGroup && !isChannel) ? (conversation.other_email || conversation.contact_email || conversation.email || '') : '');
+  // For direct chats, check if the user has set a local nickname for the peer.
+  // Applies only to direct convs (groups keep server-side name). Sync read
+  // from MMKV cache so the row doesn't flicker on scroll.
+  const _peerEmail = (!isGroup && !isChannel)
+    ? (conversation.other_email || conversation.contact_email || conversation.email || '')
+    : '';
+  let _nickname = '';
+  if (_peerEmail) {
+    try { _nickname = require('../services/nicknames').getNickname(_peerEmail); } catch {}
+  }
+  // [2026-10-06 UX] Self-chat row is named by the SERVER ("Saved Messages",
+  // English) — localize it client-side like the header/drawer already do.
+  const _isSavedRow = conversation.type === 'saved' || (
+    _peerEmail && currentEmail && String(_peerEmail).toLowerCase() === String(currentEmail).toLowerCase()
+  );
+  const displayName = _isSavedRow
+    ? (t('chat.savedMessages') || 'Mensagens Salvas')
+    : (_nickname
+    || ((isGroup || isChannel)
+      ? (_convTitleRaw(conversation) || t('chat.unknown')) // [2026-10-14 grupo-nome] nome cru do grupo
+      : emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown'))));
+  const unread = conversation.unread_count > 0;
+  const lastMsg = conversation.last_message;
+  const isArchived = conversation.archived;
+  const isPinned = !!conversation.pinned;
+  const isMuted = !!conversation.muted;
+  const [hovered, setHovered] = useState(false);
+  const P = isDark ? LP_DARK : LP_LIGHT; // [2026-10-08 chat-beauty-list]
+
+  // Prefer server-provided other_email/contact_email — those are computed
+  // authoritatively by chat.php:buildConversationData knowing exactly who
+  // the current user is. Falling back to client-side .find() is only safe
+  // when currentEmail is known; otherwise the first member listed may BE
+  // the current user, which used to make their own photo appear in every
+  // direct-chat avatar on cold boot (the web bug the user reported).
+  const _me = (currentEmail || '').toLowerCase();
+  const serverPeer = conversation.other_email || conversation.contact_email || conversation.peer_email || null;
+  let otherEmail = null;
+  if (!isGroup) {
+    if (serverPeer && serverPeer.toLowerCase() !== _me) {
+      otherEmail = serverPeer;
+    } else if (_me) {
+      const otherMember = (conversation.members || []).find(m => {
+        const e = typeof m === 'string' ? m : (m?.email || '');
+        return e && e.toLowerCase() !== _me;
+      });
+      otherEmail = otherMember
+        ? (typeof otherMember === 'string' ? otherMember : otherMember?.email)
+        : null;
+    }
+    // If we still have nothing, rather than defaulting to the current user
+    // (which paints their own avatar), stay null — AvatarCircle renders the
+    // initials from `name` instead.
+  }
+
+  const isOnline = !!isOnlineProp;
+
+  // typingUsers[convId] is normalized (string/array legacy → object array) via
+  // _normalizeTypers. Derive a single display string ("Ana", "Ana, João",
+  // "Ana e mais 2") plus a recording flag for the subtitle.
+  const _typers = _normalizeTypers(typingUsers?.[conversation.id]);
+  const typingNames = _typers.map(e => e.name).filter(Boolean);
+  // [2026-10-14 grupo-rajada] "Ana e João" (era "Ana, João"); 3+ = "Ana, João +1".
+  const typingName = typingNames.length
+    ? (typingNames.length <= 2
+        ? typingNames.join(` ${(t && t('chatConv.typingAnd')) || 'e'} `)
+        : `${typingNames.slice(0, 2).join(', ')} +${typingNames.length - 2}`)
+    : null;
+  // "gravando áudio…" only when EVERY active typer is recording a voice note
+  // (always true for a 1:1, conservative for a group so a mix never mislabels
+  // a plain typist as recording).
+  const typingRecording = _typers.length > 0 && _typers.every(e => e.recording);
+
+  // Scheduled-message indicator: surface a tiny clock prefix on the row when
+  // there's a pending scheduled outgoing message. Backend may attach this on
+  // the conversation row directly or on lastMsg under a few different keys —
+  // we accept any of them so we stay resilient to the shape that ships.
+  const hasScheduled = !!(
+    conversation.scheduled_at ||
+    conversation.has_scheduled ||
+    conversation.scheduled_message ||
+    (lastMsg && (lastMsg.scheduled_at || lastMsg.is_scheduled))
+  );
+  // [perf] Memoize the preview/caption derivation — unmemoized it ran
+  // JSON.parse (2-3×) + ~7 regex passes PER ROW on every list-wide re-render
+  // (presence tick, selection toggle, theme flip), dominating the JS profile
+  // on 200-row lists. typingName is deliberately NOT a dep: while a peer is
+  // typing the render shows the typing branch and never reads preview/
+  // previewSender/statusType (the receipt icon only renders in the non-typing
+  // branch), so deriving purely from lastMsg yields byte-identical output.
+  const { preview, previewSender, statusType } = useMemo(() => _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, conversation.members), [lastMsg, isGroup, isChannel, _me, t, conversation.members]);
 
   // ── [perf 2026-10-06] FlashList v2 RECYCLES this component instance for a
   // different conversation. The "previous value" refs below (muted / mentions /
@@ -8428,6 +8464,67 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     if (loading && _ltCollapsedRef.current) { _ltCollapsedRef.current = false; try { _ltCbRef.current?.(false); } catch {} }
   }, [loading, largeTitle]);
 
+  // ── [2026-10-14 native-home] Ponto de troca da lista NATIVA ──────────────
+  // Usa a lista nativa quando o binário tem o módulo e o kill-switch
+  // `globalThis.__chatyy_native_home !== false`. Erro nativo/render → volta
+  // ao FlashList na hora (e fica no JS até reabrir o app).
+  const [_nativeHomeFailed, _setNativeHomeFailed] = useState(() => !!globalThis.__chatyy_native_home_failed);
+  const _useNativeHome = Platform.OS !== 'web' && !RESP_IS_TABLET && !_nativeHomeFailed
+    && globalThis.__chatyy_native_home !== false && _nativeHomeAvailable();
+  const _onNativeHomeFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_home_failed = true; console.warn('[native-home] fallback FlashList:', msg); } catch {}
+    _setNativeHomeFailed(true);
+  }, []);
+  const _nativeHomeHelpers = useMemo(() => {
+    const cache = new WeakMap();
+    const loc = regionalLocale(language);
+    return {
+      computePreview: (lastMsg, isGroup, isChannel, me, members) => {
+        if (!lastMsg || typeof lastMsg !== 'object') return _computeRowPreview(lastMsg, isGroup, isChannel, me, t, members);
+        const hit = cache.get(lastMsg);
+        if (hit && hit.g === isGroup && hit.c === isChannel && hit.me === me && hit.m === members) return hit.r;
+        const r = _computeRowPreview(lastMsg, isGroup, isChannel, me, t, members);
+        cache.set(lastMsg, { g: isGroup, c: isChannel, me, m: members, r });
+        return r;
+      },
+      formatTime: (d) => formatChatTime(d, t, loc),
+      convTitle: _convTitleRaw,
+      normalizeTypers: _normalizeTypers,
+    };
+  }, [t, language]);
+  // Ações do swipe / menu nativo (toque longo) → MESMOS handlers do sheet JS
+  // (lpActions), incluindo as confirmações (Alert nativo / biometria).
+  const _nativeHomeAction = useCallback((action, conv, ev) => {
+    try { if (action === 'toggleRead' || action === 'mute') haptic.select(); else if (action === 'archive') haptic.success(); } catch {}
+    const A = lpActions.current || {};
+    if (action === 'toggleRead') handleMarkUnreadConversation(conv);
+    else if (action === 'pin') handlePinConversation(conv);
+    else if (action === 'mute') {
+      const until = Number(ev?.until) || 0;
+      if (until > 0) handleMuteConversation(conv, until); else handleMuteConversation(conv);
+    }
+    else if (action === 'archive') handleArchiveConversation(conv);
+    else if (action === 'delete') handleDeleteConversation(conv);
+    else if (action === 'email') handleEmailConversation(conv);
+    else if (action === 'lock') A.onLockToggle?.(conv);
+    else if (action === 'clear') A.onClear?.(conv);
+    else if (action === 'block') A.onBlock?.(conv);
+    else if (action === 'report') A.onReportSpam?.(conv);
+    else if (action === 'listNew') A.onAddToList?.(conv, { createOnly: true });
+    else if (action === 'list') {
+      const fid = String(ev?.folderId ?? '');
+      const f = (Array.isArray(chatFolders) ? chatFolders : []).find(x => String(x?.id) === fid);
+      if (f) A.onToggleList?.(conv, f);
+    }
+  }, [handleMarkUnreadConversation, handlePinConversation, handleMuteConversation, handleArchiveConversation, handleDeleteConversation, handleEmailConversation, chatFolders]);
+  const _nativeHomeEnterSelection = useCallback((conv) => { enterSelectionMode(conv.id); }, [enterSelectionMode]);
+  const _nativeHomeCollapsed = useCallback((c) => {
+    if (c !== _ltCollapsedRef.current) {
+      _ltCollapsedRef.current = c;
+      try { _ltCbRef.current?.(c); } catch {}
+    }
+  }, []);
+
   return (
     <View style={[{ flex: 1, backgroundColor: colors.background }]}>
       {/* Selection toolbar */}
@@ -8511,6 +8608,42 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // mounts (skeleton→content), not on pull-to-refresh (the list stays
         // mounted then, so no replay).
         <FadeSlideIn distance={0} duration={260} skip={_paintedFromCacheRef.current} onLayout={_onListWrapLayout}>
+        {_useNativeHome ? (
+        <NativeConversationList
+          conversations={visibleConversations}
+          header={_listHeaderEl}
+          footer={ListFooterComponent}
+          empty={ListEmptyComponent}
+          isDark={isDark}
+          t={t}
+          language={language}
+          user={user}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          typingUsers={typingUsers}
+          drafts={drafts}
+          draftTimes={draftTimes}
+          presencesRef={presencesRef}
+          presenceToken={`${presenceVersion}:${presenceRtToken}`}
+          socketUp={socketUp}
+          lockedIds={lockedIds}
+          unlockedIds={unlockedIds}
+          notesMap={notesMap}
+          helpers={_nativeHomeHelpers}
+          bottomInset={bottomInset}
+          onOpen={handleConversationPress}
+          onPressIn={rowPrefetch}
+          onToggleSelect={rowToggleSelect}
+          onAvatarPress={setAvatarLightbox}
+          onAction={_nativeHomeAction}
+          onMore={showLongPressMenu}
+          onEnterSelection={_nativeHomeEnterSelection}
+          onCollapsedChange={largeTitle ? _nativeHomeCollapsed : undefined}
+          onFirstPaint={_onListLoad}
+          onFailure={_onNativeHomeFailure}
+          folders={chatFolders}
+        />
+        ) : (
         <ListComponent
           onLoad={_onListLoad}
           data={visibleConversations}
@@ -8543,6 +8676,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // foco da aba e silent_sync. onRefresh fica p/ chamadas programáticas.
           extraData={extraDataMemo}
         />
+        )}
         </FadeSlideIn>
       )}
 

@@ -1261,6 +1261,8 @@ export function maybeAutoSaveToGallery(localUri, key, mediaType, opts) {
   // PRIVACY (view-once): defense-in-depth — even if a view-once download ever
   // reaches this path, never mirror it into the camera roll.
   if (opts && opts.viewOnce) return;
+  // [2026-10-14 adv-privacy] Conversa com privacidade avançada: nunca vai p/ a galeria.
+  if (_advPrivBlocksGallery(opts && opts.conversationId)) return;
   if (!localUri || typeof localUri !== 'string' || !localUri.startsWith('file://')) return;
   if (!key) return;
   // Setting gate (default ON).
@@ -1290,7 +1292,12 @@ export function maybeAutoSaveToGallery(localUri, key, mediaType, opts) {
   // só copiamos depois de GALLERY_DELAY_MS e se a mensagem NÃO foi apagada p/
   // todos nesse meio-tempo (lápide checada na hora de gravar). Fila persistida
   // (MMKV) → app morto no meio continua no próximo boot, com nova carência.
-  _queueGallerySave({ f: localUri, k: key, m: opts && opts.messageId != null ? String(opts.messageId) : null, u: (opts && typeof opts.url === 'string') ? opts.url : null, d: Date.now() + GALLERY_DELAY_MS });
+  _queueGallerySave({ f: localUri, k: key, m: opts && opts.messageId != null ? String(opts.messageId) : null, u: (opts && typeof opts.url === 'string') ? opts.url : null, c: (opts && opts.conversationId != null) ? String(opts.conversationId) : null, d: Date.now() + GALLERY_DELAY_MS });
+}
+
+// [2026-10-14 adv-privacy] services/chatPrivacy (lazy: evita ciclo de import).
+function _advPrivBlocksGallery(cid) {
+  try { return !!require('./chatPrivacy').isGalleryAutoSaveBlocked(cid); } catch { return false; }
 }
 
 const GALLERY_DELAY_MS = 60 * 1000;
@@ -1359,6 +1366,8 @@ async function _runGallerySave(item) {
   const key = item.k;
   if (_isDeletedBlocked(item.u, { messageId: item.m })) return;
   if (!isAutoSaveMediaToGalleryOn() || _autoSavePermDenied) return;
+  // [2026-10-14 adv-privacy] ligaram a privacidade avançada durante a carência.
+  if (item.c && _advPrivBlocksGallery(item.c)) return;
   _hydrateAutoSavedKeys();
   if (_autoSavedKeys.has(key)) return;
   // Arquivo sumiu (purgado na exclusão / limpeza) → não salva.
@@ -2509,7 +2518,7 @@ export async function cacheMedia(url, opts = {}) {
     // De-duped + permission-gated + type-filtered inside the helper, so it's
     // safe to call unconditionally on every successful inbound download.
     if (opts.received && result && typeof result === 'string' && result.startsWith('file://') && Platform.OS !== 'web') {
-      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url), { viewOnce: !!opts.viewOnce, messageId: opts.messageId, url }); } catch {}
+      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url), { viewOnce: !!opts.viewOnce, messageId: opts.messageId, url, conversationId: opts.conversationId }); } catch {}
     }
     // [#1215 2026-05-19] PHONE-FIRST MEDIA WRITE-BACK
     // When a foto/áudio/vídeo/gif/sticker/file download lands, mirror the

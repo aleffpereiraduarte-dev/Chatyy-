@@ -28,6 +28,7 @@ import Profile from './Profile';
 import { IconPlus, IconVideo, IconSearch, IconX, IconBell, IconChevronUp } from './Icons';
 import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 import { getCached, setCache } from '../services/cache';
 import useStatuses from '../hooks/useStatuses';
 import StoryRingAvatar from './status/StoryRingAvatar';
@@ -453,7 +454,13 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     if (typeof onFeedModeChange === 'function') onFeedModeChange(feedMode);
   }, [feedMode, onFeedModeChange]);
   // Initial state reads from MMKV preload so the very first render already has data.
-  const _initialPosts = Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
+  // [2026-10-14 offline-first] 1ª página salva POR CONTA (native + web, síncrono);
+  // fallback: snapshot MMKV legado (só native). Máx. 3 dias (posts apagados).
+  const [_initialPosts] = useState(() => {
+    const c = peekCached(['feed_p1', _initialAlgo], 3 * 86400000);
+    if (Array.isArray(c) && c.length) return c;
+    return Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
+  });
   const [posts, setPosts] = useState(() => _initialPosts);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -596,6 +603,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
             // start (QA ticket 20260705-194437).
             setCache('feed_posts', newPosts, 86400000).catch(() => {});
             _saveFeedToMMKV(newPosts);
+            try { putCached(['feed_p1', algorithm], newPosts.slice(0, 30)); } catch {}
           }
         } else {
           setPosts(prev => {

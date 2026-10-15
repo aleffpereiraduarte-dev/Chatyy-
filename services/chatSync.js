@@ -17,7 +17,17 @@ import { Platform } from 'react-native';
 import { getString, setString } from './mmkv';
 import * as api from './api';
 
-const LAST_PTS_KEY = (convId) => `chat_last_pts_${convId}`;
+// [2026-10-15 pts-conta] A chave legada era GLOBAL (sem conta): com 2 contas no
+// aparelho a conta B herdava o pts da A (pulava eventos que nunca recebeu).
+// Agora é por conta; sem conta ativa usa a chave antiga.
+const LAST_PTS_KEY = (convId, acct) => {
+  const a = acct != null ? acct : _activeAcct();
+  return a ? `chat_last_pts_${a}:${convId}` : `chat_last_pts_${convId}`;
+};
+function _activeAcct() {
+  try { const cs = chatStore(); const a = cs && typeof cs.getActiveAccount === 'function' ? cs.getActiveAccount() : ''; return a ? String(a).toLowerCase() : ''; }
+  catch { return ''; }
+}
 
 // ─── Unified cursor facade (Builder 1 owns ./chatStore) ───────────────
 // The cursor lives in ONE place — chatStore.getCursor/setCursor — so the
@@ -57,22 +67,21 @@ export function getLastPts(convId) {
     return Number.isFinite(n) && n > 0 ? n : 0;
   } catch { return 0; }
 }
-export function setLastPts(convId, pts, msgId) {
+export function setLastPts(convId, pts, msgId, ownerAcct) {
   if (!convId || !Number.isFinite(pts) || pts <= 0) return;
-  // (1) Legacy MMKV write — kept working (additive) so the fallback path in
-  // getLastPts stays valid even if the facade is cleared. Guard against
-  // regression using the MMKV value DIRECTLY (not getLastPts, which may now
-  // read a facade cursor that's ahead) so MMKV never starves.
+  // [2026-10-15 pts-conta] Persiste NA CONTA DONA antes de avançar qualquer
+  // coisa. Troca de conta em curso (lock) ou resposta de outra conta (o sync
+  // começou na conta A e voltou já na B) = não grava nada: o watermark da A
+  // iria para o escopo da B e a B pularia eventos para sempre.
+  const cs = chatStore();
+  const acct = _activeAcct();
+  if (storeLocked(cs)) return;
+  if (ownerAcct != null && String(ownerAcct).toLowerCase() !== acct) return;
+  // (1) Unified cursor write (por conta, durável) — pts AND last_msg_id in one
+  // place. Monotonic per field; preserves an existing last_msg_id when this
+  // caller has none.
   try {
-    const raw = getString(LAST_PTS_KEY(convId));
-    const mmkvCur = raw ? parseInt(raw, 10) : 0;
-    if (!(Number.isFinite(mmkvCur) && mmkvCur >= pts)) setString(LAST_PTS_KEY(convId), String(pts));
-  } catch {}
-  // (2) Unified cursor write — pts AND last_msg_id in one place. Monotonic
-  // per field; preserves an existing last_msg_id when this caller has none.
-  try {
-    const cs = chatStore();
-    if (cs && typeof cs.setCursor === 'function' && !storeLocked(cs)) {
+    if (cs && typeof cs.setCursor === 'function') {
       const prev = (typeof cs.getCursor === 'function') ? cs.getCursor('conv:' + convId) : null;
       const prevPts = (prev && Number(prev.last_pts)) || 0;
       const prevMsg = (prev && Number(prev.last_msg_id)) || 0;
@@ -82,6 +91,14 @@ export function setLastPts(convId, pts, msgId) {
         cs.setCursor('conv:' + convId, { last_pts: nextPts, last_msg_id: nextMsg });
       }
     }
+  } catch {}
+  // (2) Legacy MMKV write (fallback de getLastPts), agora na chave da conta.
+  // Guard against regression using the MMKV value DIRECTLY.
+  try {
+    const k = LAST_PTS_KEY(convId, acct);
+    const raw = getString(k);
+    const mmkvCur = raw ? parseInt(raw, 10) : 0;
+    if (!(Number.isFinite(mmkvCur) && mmkvCur >= pts)) setString(k, String(pts));
   } catch {}
 }
 // Called whenever the client processes any message/event for a conv —
@@ -145,6 +162,9 @@ async function _coldTailSince(rows) {
 
 async function _runSync(convIds) {
   if (convIds.length > MAX_CONVS_PER_REQ) convIds = convIds.slice(0, MAX_CONVS_PER_REQ);
+  // [2026-10-15 pts-conta] Conta dona deste pedido — a resposta só avança o
+  // cursor (e só é entregue) se ainda for a conta ativa.
+  const _ownerAcct = _activeAcct();
   const body = {
     conversations: convIds
       .map(n => Number(n))
@@ -180,6 +200,9 @@ async function _runSync(convIds) {
         try { require('./pushNotifications').requestPushReregister?.('sync'); } catch {}
       }
       const out = Array.isArray(r.data?.conversations) ? r.data.conversations : [];
+      // Trocou de conta durante o pedido: resposta é da conta anterior — não
+      // avança cursor de ninguém nem entrega eventos à conta nova.
+      if (_activeAcct() !== _ownerAcct || storeLocked(chatStore())) return [];
       for (const c of out) {
         if (c && _coldTail.has(Number(c.id))) c.needsFullReload = true;
         if (c?.denied) { gapStreak.delete(c.id); continue; }
@@ -225,7 +248,7 @@ async function _runSync(convIds) {
           ? c.messages.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0)
           : 0;
         const wmMsg = hydCapPts !== Infinity ? 0 : msgMax;
-        if (wm > 0) setLastPts(c.id, wm, wmMsg);
+        if (wm > 0) setLastPts(c.id, wm, wmMsg, _ownerAcct);
         if (c.has_more) {
           const n = (gapStreak.get(c.id) || 0) + 1;
           gapStreak.set(c.id, n);
@@ -241,7 +264,7 @@ async function _runSync(convIds) {
       // Written through the facade only; monotonic; gated by isLocked().
       try {
         const cs = chatStore();
-        if (cs && typeof cs.setCursor === 'function' && !storeLocked(cs)) {
+        if (cs && typeof cs.setCursor === 'function' && !storeLocked(cs) && _activeAcct() === _ownerAcct) {
           let gPts = 0, gMsg = 0;
           for (const c of out) {
             if (c?.denied) continue;

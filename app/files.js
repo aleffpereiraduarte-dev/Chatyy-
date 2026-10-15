@@ -13,7 +13,31 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, getCachedSync, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
+
+// [2026-10-14 offline-first] Cópia salva da pasta, SÍNCRONA (máx. 7 dias, por
+// conta, ignora o expiry curto do prefetch do boot). Aceita os 2 formatos que
+// existem sob a mesma chave: { folders, files } (esta tela) e a resposta crua
+// de fileList { success, data: { files } } (prefetch do _layout em files_root).
+function _seedFiles(persistKey) {
+  try {
+    if (!hasCacheUser()) return null;
+    const c = getCachedEntrySync(persistKey)?.data;
+    if (!c || typeof c !== 'object') return null;
+    if (Array.isArray(c.files) || Array.isArray(c.folders)) return c;
+    const raw = c.data;
+    if (raw && Array.isArray(raw.files)) {
+      const all = raw.files;
+      return {
+        folders: raw.folders || all.filter(f => f.is_folder),
+        files: raw.files_only || all.filter(f => !f.is_folder),
+        breadcrumbs: raw.breadcrumbs,
+        storage: raw.storage,
+      };
+    }
+  } catch {}
+  return null;
+}
 import { safeAlert } from '../services/alerts';
 import { mapApiError } from '../services/errorMap';
 import {
@@ -1086,34 +1110,11 @@ function FilesScreenInner() {
   // (getCachedSync falls back to _noacct otherwise). The persist shape written
   // by loadAllFiles is { folders, files, breadcrumbs, storage } under key
   // `files_root` (currentFolderId === null → 'root'). Mirrors notifications.js.
-  const [allFolders, setAllFolders] = useState(() => {
-    try {
-      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
-        const cached = getCachedSync('files_root');
-        if (cached) return cached.folders || [];
-      }
-    } catch {}
-    return [];
-  });
-  const [allFiles, setAllFiles] = useState(() => {
-    try {
-      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
-        const cached = getCachedSync('files_root');
-        if (cached) return cached.files || [];
-      }
-    } catch {}
-    return [];
-  });
+  const [_seedRoot] = useState(() => _seedFiles('files_root'));
+  const [allFolders, setAllFolders] = useState(() => (_seedRoot && _seedRoot.folders) || []);
+  const [allFiles, setAllFiles] = useState(() => (_seedRoot && _seedRoot.files) || []);
   const [allTrash, setAllTrash] = useState([]);
-  const [loading, setLoading] = useState(() => {
-    try {
-      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
-        const cached = getCachedSync('files_root');
-        if (cached) return false;
-      }
-    } catch {}
-    return true;
-  });
+  const [loading, setLoading] = useState(() => !_seedRoot);
   const [refreshing, setRefreshing] = useState(false);
   // [2026-10-08 apps-native] Falha de rede SEM cache caía no empty state
   // ("nenhum arquivo") — enganoso. Agora vira estado de erro com "tentar de novo".
@@ -1124,7 +1125,7 @@ function FilesScreenInner() {
   const uploadShimmerAnim = useRef(new Animated.Value(0)).current;
   // Spring scale for the brand-purple Upload FAB (press feedback).
   const uploadFabScale = useRef(new Animated.Value(1)).current;
-  const [storageInfo, setStorageInfo] = useState(null);
+  const [storageInfo, setStorageInfo] = useState(() => { try { return hasCacheUser() ? (getCachedEntrySync('drive_storage_info')?.data || null) : null; } catch { return null; } });
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState(null);
@@ -1230,7 +1231,7 @@ function FilesScreenInner() {
   const loadStorageInfo = useCallback(async () => {
     try {
       // Show cached storage instantly
-      const cached = await getCached('drive_storage_info');
+      const cached = hasCacheUser() ? getCachedEntrySync('drive_storage_info')?.data : null;
       if (cached) setStorageInfo(cached);
       // Fetch fresh
       const r = await api.fileStorageInfo();
@@ -1445,8 +1446,7 @@ function FilesScreenInner() {
       setLoading(false);
     } else {
       try {
-        let cached = null;
-        if (!cached) cached = await getCached(persistKey);
+        const cached = _seedFiles(persistKey);
         if (cached) {
           folderCache.current[cacheKey] = cached;
           if (requestId !== loadRequestIdRef.current) return; // Stale request

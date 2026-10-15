@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspens
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
   ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState,
-  KeyboardAvoidingView, BackHandler,
+  KeyboardAvoidingView, BackHandler, ScrollView,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -196,6 +196,7 @@ function InboxScreenInner() {
     return () => { try { sub.remove(); } catch {} };
   }, [showSidebar, goToChats]));
   const [searchText, setSearchText] = useState('');
+  const searchTextRef = useRef(''); searchTextRef.current = searchText; // [2026-10-15 email-melhorias] lido pelo handleSearch
   // Saved searches state — PG-backed via email_search_list. Loaded lazily on
   // the first time the user opens the saved-searches menu.
   const [savedSearches, setSavedSearches] = useState([]);
@@ -923,27 +924,11 @@ function InboxScreenInner() {
     };
   }, []);
 
-  const handleSearch = useCallback(() => {
-    // ⭐ Try the native FTS5 cache first — instant local results.
-    // If we get >= 1 hit we show those immediately and the network search
-    // is bypassed entirely. Falls back to the slow network search if the
-    // cache is empty or unavailable.
-    if (Platform.OS === 'ios' && searchText.trim().length >= 2) {
-      try {
-        const Native = require('../modules/expo-chat-cache').default;
-        if (Native?.searchEmailsSync) {
-          const hits = Native.searchEmailsSync(searchText.trim(), currentFolder, 100);
-          if (Array.isArray(hits) && hits.length > 0) {
-            // The MailContext expects setEmails([]). We bypass doSearch
-            // (which makes a network call) and just patch the UI list.
-            try {
-              const ctx = require('../context/MailContext');
-              // Best-effort: doSearch returns to network for full results
-            } catch {}
-          }
-        }
-      } catch {}
-    }
+  const handleSearch = useCallback((qArg) => {
+    // [2026-10-15 email-melhorias] O SearchBar agora passa a consulta (o
+    // searchText daqui era do render anterior → buscava o texto antigo).
+    // Removido também o bloco FTS5 nativo que calculava hits e os descartava.
+    const searchText = typeof qArg === 'string' ? qArg : searchTextRef.current;
     // Search should span ALL categories (Gmail behavior), not just the tab
     // the user happens to be on. Reset to 'all' before searching so a query
     // typed while on the "Promotions"/"Social"/"Unread" tab isn't silently
@@ -952,7 +937,7 @@ function InboxScreenInner() {
     doSearch(searchText);
     setShowSearchOperators(false);
     if (searchText.trim()) saveRecentSearch(searchText.trim());
-  }, [searchText, currentFolder, doSearch]);
+  }, [doSearch]);
 
   const handleClearSearch = useCallback(() => {
     setSearchText('');
@@ -1077,9 +1062,14 @@ function InboxScreenInner() {
   // (some da lista na hora + contadores das duas pastas) em vez da API crua +
   // refresh (a linha ficava parada até o refetch e os números não mexiam).
   const handleSidebarMoveEmail = useCallback(async (uid, folder) => {
-    await ctxMoveEmail(uid, folder, currentFolder);
+    // [2026-10-15 email-melhorias] Arrastar uma linha que faz parte da
+    // seleção múltipla move TODA a seleção (Gmail) — antes ia só a arrastada.
+    const sel = selectedUids && selectedUids.size > 1 && [...selectedUids].some(u => String(u) === String(uid))
+      ? [...selectedUids] : [uid];
+    if (sel.length > 1) { try { clearSelection(); } catch {} }
+    await Promise.all(sel.map(u => ctxMoveEmail(u, folder, currentFolder).catch(() => {})));
     try { loadFolders(); } catch {}
-  }, [currentFolder, ctxMoveEmail, loadFolders]);
+  }, [currentFolder, ctxMoveEmail, loadFolders, selectedUids, clearSelection]);
 
   // Global search overlay state — opened from the sidebar "Search" shortcut
   // and (desktop/web) from the Cmd/Ctrl+K keybinding.
@@ -1718,9 +1708,9 @@ function InboxScreenInner() {
 
             {/* Other accounts */}
             {otherAccounts.length > 0 && (
-              <View style={{ paddingVertical: 4 }}>
-                {otherAccounts.map(acc => (
-                  <View key={acc.email} style={s.accountRow}>
+              <ScrollView style={{ paddingVertical: 4, maxHeight: otherAccounts.length >= 3 ? 264 : undefined }} showsVerticalScrollIndicator={otherAccounts.length > 6}>
+                {otherAccounts.map(acc => { const _cmp = otherAccounts.length >= 3; /* [2026-10-15] muitas contas = lista compacta */ return (
+                  <View key={acc.email} style={[s.accountRow, _cmp && { paddingVertical: 7, paddingHorizontal: 14 }]}>
                     <TouchableOpacity
                       style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
                       onPress={async () => {
@@ -1745,14 +1735,20 @@ function InboxScreenInner() {
                       }}
                       activeOpacity={0.6}
                     >
-                      <AvatarCircle name={acc.name || acc.email || '?'} email={acc.email} size={40} />
-                      <View style={{ flex: 1, marginLeft: 12 }}>
+                      <AvatarCircle name={acc.name || acc.email || '?'} email={acc.email} size={_cmp ? 28 : 40} />
+                      <View style={{ flex: 1, marginLeft: _cmp ? 10 : 12 }}>
+                        {_cmp ? (
+                          <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '500' }} numberOfLines={1}>
+                            {acc.email}
+                          </Text>
+                        ) : (<>
                         <Text style={[s.accountName, { color: colors.text }]} numberOfLines={1}>
                           {acc.name || acc.email?.split('@')[0]}
                         </Text>
                         <Text style={[s.accountEmail, { color: colors.textTertiary }]} numberOfLines={1}>
                           {acc.email}
                         </Text>
+                        </>)}
                       </View>
                     </TouchableOpacity>
                     {/* Remove account button */}
@@ -1774,13 +1770,13 @@ function InboxScreenInner() {
                         }
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={{ padding: 8, backgroundColor: colors.error + '10', borderRadius: 8 }}
+                      style={_cmp ? { padding: 6, borderRadius: 8 } : { padding: 8, backgroundColor: colors.error + '10', borderRadius: 8 }}
                     >
-                      <IconLogout size={16} color={colors.error} />
+                      <IconLogout size={_cmp ? 14 : 16} color={_cmp ? colors.textTertiary : colors.error} />
                     </TouchableOpacity>
                   </View>
-                ))}
-              </View>
+                ); })}
+              </ScrollView>
             )}
 
             {/* Add account */}

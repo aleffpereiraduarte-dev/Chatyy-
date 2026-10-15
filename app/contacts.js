@@ -17,7 +17,11 @@ import { useAuth } from '../context/AuthContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, getCachedSync, setCache } from '../services/cache';
+import { getCachedEntrySync, setCache } from '../services/cache';
+// [2026-10-14 offline-first] lista salva lida com idade máx. 7 dias (o prewarm do
+// _layout grava com expiry de 10 min → depois disso getCachedSync dava null e a
+// tela voltava ao spinner; getCached ainda APAGAVA a cópia expirada).
+const _contactsDisk = () => { try { const e = getCachedEntrySync('contacts'); return e && e.data && Array.isArray(e.data.data) ? e.data.data : null; } catch { return null; } };
 import { ListSkeleton } from '../components/SkeletonLoader';
 import {
   IconArrowLeft, IconUser, IconMail, IconPhone, IconPlus,
@@ -345,8 +349,8 @@ function ContactsScreenInner() {
   const [contacts, setContacts] = useState(() => {
     try {
       if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
-        const cached = getCachedSync('contacts');
-        if (cached?.data) return cached.data || [];
+        const cached = _contactsDisk();
+        if (cached) return cached;
       }
     } catch {}
     return [];
@@ -354,8 +358,7 @@ function ContactsScreenInner() {
   const [loading, setLoading] = useState(() => {
     try {
       if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
-        const cached = getCachedSync('contacts');
-        if (cached?.data) return false;
+        if (_contactsDisk()) return false;
       }
     } catch {}
     return true;
@@ -380,7 +383,7 @@ function ContactsScreenInner() {
 
   // Chatyy family
   const familyLoadedRef = useRef(false);
-  const [familyUsers, setFamilyUsers] = useState(() => { try { const c = getCachedSync('contacts_on_chatyy_v1'); return Array.isArray(c) ? c : []; } catch { return []; } });
+  const [familyUsers, setFamilyUsers] = useState(() => { try { const c = getCachedEntrySync('contacts_on_chatyy_v1')?.data; return Array.isArray(c) ? c : []; } catch { return []; } });
   const [loadingFamily, setLoadingFamily] = useState(false);
 
   // Chatyy registered contacts (emails/phones found on Chatyy)
@@ -394,7 +397,7 @@ function ContactsScreenInner() {
   // Meus contatos: e-mail do contato → e-mail da conta Chatyy ('' = sem conta).
   // UM check_contacts em lote (≤500) só p/ os ainda desconhecidos; cache 24h.
   const [myChatyyStatus, setMyChatyyStatus] = useState(() => {
-    try { const c = getCachedSync('contacts_chatyy_status_v1'); return c && typeof c === 'object' && !Array.isArray(c) ? c : {}; } catch { return {}; }
+    try { const c = getCachedEntrySync('contacts_chatyy_status_v1')?.data; return c && typeof c === 'object' && !Array.isArray(c) ? c : {}; } catch { return {}; }
   });
   const myCheckRef = useRef(false);
 
@@ -504,9 +507,9 @@ function ContactsScreenInner() {
   const loadContacts = async () => {
     setLoadError(false);
     // Show cached contacts instantly
-    const cached = await getCached('contacts');
-    if (cached?.data) {
-      setContacts(cached.data || []);
+    const cached = _contactsDisk();
+    if (cached) {
+      setContacts(cached);
       setLoading(false);
     }
     try {

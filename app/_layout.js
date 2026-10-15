@@ -123,6 +123,8 @@ try {
       // pronto a rota suspende → 100-400 ms de tela VAZIA (só o fundo) ao abrir Email,
       // Configurações e Carteira pela barra/Apps (settings já vai no lote acima). 2º lote em idle.
       try { afterFirstPaint(() => { try { require('../services/webRoutePrewarm').prewarmWebRoutes(['inbox', 'wallet']); } catch {} }, 2500); } catch {}
+      // [2026-10-15 offline-first] demais telas: sem o pedágio de ~300 ms do Suspense na 1ª abertura
+      try { afterFirstPaint(() => { try { require('../services/webRoutePrewarm').prewarmWebRoutes(['contacts', 'notes', 'drive', 'calendar', 'tasks', 'notifications', 'notifications-feed', 'creator-earnings', 'live-discover']); } catch {} }, 5000); } catch {}
     } else if (_tok && !_phone && (_p === '/' || _p === '/inbox')) {
       // Desktop: app/index.js manda p/ /inbox — mesmo pedágio do Suspense.
       try { require('../services/webRoutePrewarm').prewarmWebRoutes(_p === '/' ? ['index', 'inbox'] : ['inbox']); } catch {}
@@ -2145,6 +2147,7 @@ export default function RootLayout() {
                       estes e TODO o resto aberto de /settings (notification-preferences,
                       family, pgp-keys, ...) empilham normal com swipe-back nativo. */}
                   <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="my-reports" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [central-moderacao 2026-10-14] */ }} />
                   <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="privacy-personalization" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-13 consent-lgpd] */ }} />
@@ -2313,3 +2316,8 @@ function _tabletSplitNow() {
     return isNativeTabletSplit(Dimensions.get('window').width);
   } catch { return false; }
 }
+
+// [2026-10-15 boot-split] Fim da avaliação deste módulo (todos os imports acima
+// já rodaram). coldstart_marks: T0→layout_eval_end = avaliação do grafo de
+// boot; layout_eval_end→root_layout_render = expo-router/React até o 1º render.
+try { _bootMark('layout_eval_end'); } catch {}

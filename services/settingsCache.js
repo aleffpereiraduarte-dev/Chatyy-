@@ -358,6 +358,21 @@ export function purgeAll() {
   try { mm.remove(QUEUE_KEY); } catch {}
 }
 
+// [2026-10-14 offline-first] Remoção/revogação de UMA conta guardada: apaga só
+// os snapshots dela (chave = hash do e-mail). Não toca a fila (é da conta ativa).
+export function purgeAccount(email) {
+  const a = String(email || '').trim().toLowerCase();
+  if (!a) return;
+  const pfx = PFX + _hash(a) + '_';
+  for (const k of Array.from(_mem.keys())) if (k.startsWith(pfx)) _mem.delete(k);
+  try {
+    for (const k of (mm.getAllKeys?.() || [])) {
+      const kk = typeof k === 'string' && k.startsWith('mmkv_') ? k.slice(5) : k;
+      if (typeof kk === 'string' && kk.startsWith(pfx)) { try { mm.remove(kk); } catch {} }
+    }
+  } catch {}
+}
+
 // Aviso padrão quando o servidor recusa uma alteração (já desfeita localmente).
 export function notifySaveFailed(t) {
   const msg = (t && t('settings.saveFailedReverted')) || 'Não foi possível salvar. A alteração foi desfeita.';

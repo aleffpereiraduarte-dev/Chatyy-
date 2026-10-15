@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { regionalLocale } from '../utils/dateFormat'; // [2026-10-09 geo-qa]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
@@ -55,6 +55,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
+import { ChatyyMessageList, useNativeThreadList, nativeListApi } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -123,6 +124,13 @@ function threadItemType(item) {
 }
 import PressableScale from '../components/PressableScale'; // [2026-10-06 UX2] contact info sheet
 import FadeSlideIn from '../components/FadeSlideIn'; // [2026-10-06 UX2]
+// [2026-10-14 motion] primitivas de movimento da conversa (flag globalThis.__chatyy_motion=false desliga)
+import SpringPresence from '../components/chat/motion/SpringPresence';
+import RollingCount from '../components/chat/motion/RollingCount';
+import HeaderStackReveal from '../components/chat/motion/HeaderStackReveal';
+import ReactionSparks from '../components/chat/motion/ReactionSparks';
+const _HDR_STACK_STYLE = { flex: 1 };
+import { motionOn as _motionOn, SPRING_SEND as _SPRING_SEND, SPRING_IN as _SPRING_IN } from '../components/chat/motion/motionFlag';
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
 import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
 import VideoTrimBar from '../components/media/VideoTrimBar'; // [2026-10-10 video-trim]
@@ -131,6 +139,9 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 // [VISTO AZUL FALSO causa-raiz 2026-10-06] useIsFocused: recibo de leitura SÓ
 // quando esta tela é a focada na pilha (não há modal/outra tela por cima).
 import { useIsFocused } from '@react-navigation/native';
+// [2026-10-14 adv-privacy] Privacidade avançada da conversa.
+import useConversationPrivacy from '../components/chat/useConversationPrivacy';
+import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
 import { USE_NATIVE_SHEETS, NativeSheet } from '../components/NativeSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -214,6 +225,7 @@ import VoiceLiveMeter from '../components/chat/VoiceLiveMeter';
 import { resampleVoiceLevels } from '../components/chat/VoiceBars';
 import Profile from '../components/Profile';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
+import NativeComposerBridge, { shouldUseNativeComposer } from '../components/chat/NativeComposerBridge'; // [2026-10-14 native-composer]
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
 import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
@@ -358,6 +370,8 @@ import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, sa
 import messageOutbox, { OUTBOX_V2_ONLY } from '../services/messageOutbox';
 import mediaSendQueue from '../services/mediaSendQueue'; // [2026-10-07 send-media]
 import { userScopedKey } from '../services/cache';
+// [2026-10-14 offline-first] info de contato/grupo: último valor salvo (services/cache, por conta).
+import { peekCached as _ciPeek, putCached as _ciPut } from '../hooks/useCachedAction';
 import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
@@ -379,6 +393,10 @@ let RoundVideoViewer = null; try { RoundVideoViewer = require('../components/Rou
 // require can't throw on a binary without the native module.
 let ChatCamera = null; let isChatCameraAvailable = null;
 try { const _cc = require('../components/chat/ChatCamera'); ChatCamera = _cc.default; isChatCameraAvailable = _cc.isChatCameraAvailable; } catch {}
+// [2026-10-15 native-attach] Folha de anexos + câmera NATIVAS (modules/expo-chat-attach).
+// Binário sem o módulo / web / globalThis.__chatyy_native_attach === false → tudo como antes.
+let NativeAttachBridge = null;
+try { NativeAttachBridge = require('../components/chat/NativeAttachSheet'); } catch {}
 // WhatsApp-style mic trigger — bigger circle, ambient pulse, haptic.
 // Extracted so we can tune the visuals without touching the chat surface.
 let VoiceMicButton = null; try { VoiceMicButton = require('../components/chat/VoiceMicButton').default; } catch {}
@@ -1069,7 +1087,7 @@ function RowEnterMotion({ item, children }) {
   if (modeRef.current === undefined) {
     let mode = null;
     try {
-      if (!isReduceMotionEnabled()) {
+      if (_motionOn()) { // [2026-10-14 motion] flag + Reduzir movimento
         const k = _rowMotionKey(item);
         const md = (k && !_sendMotionSeen.has(k)) ? _rowMotionMode(item) : null;
         if (md) {
@@ -1089,9 +1107,13 @@ function RowEnterMotion({ item, children }) {
   const [settled, setSettled] = useState(!mode);
   useEffect(() => {
     if (!mode) return undefined;
+    // [2026-10-14 motion] Telegram: a enviada "sai do composer" (sobe ~34 px vindo
+    // da caixa de texto, escala .9→1, mola ~250 ms); a recebida sobe com mola curta.
     const a = mode === 'out'
-      ? Animated.spring(v, { toValue: 1, stiffness: 420, damping: 32, mass: 1, useNativeDriver: _SEND_MOTION_ND })
-      : Animated.timing(v, { toValue: 1, duration: mode === 'in' ? 170 : 210, easing: Easing.out(Easing.cubic), useNativeDriver: _SEND_MOTION_ND });
+      ? Animated.spring(v, { toValue: 1, ..._SPRING_SEND, useNativeDriver: _SEND_MOTION_ND })
+      : mode === 'in'
+        ? Animated.spring(v, { toValue: 1, ..._SPRING_IN, useNativeDriver: _SEND_MOTION_ND })
+        : Animated.timing(v, { toValue: 1, duration: 210, easing: Easing.out(Easing.cubic), useNativeDriver: _SEND_MOTION_ND });
     a.start(({ finished }) => { if (finished) setSettled(true); });
     return () => a.stop();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1101,18 +1123,22 @@ function RowEnterMotion({ item, children }) {
   let st;
   if (mode === 'out') {
     st = {
-      opacity: v.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+      opacity: v.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
       transformOrigin: 'right bottom',
       transform: [
-        { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
-        { scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+        { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [34, 0] }) },
+        { translateX: v.interpolate({ inputRange: [0, 1], outputRange: [-14, 0] }) },
+        { scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) },
       ],
     };
   } else if (mode === 'in') {
     st = {
-      opacity: v,
+      opacity: v.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
       transformOrigin: 'left bottom',
-      transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
+      transform: [
+        { translateY: v.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) },
+        { scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+      ],
     };
   } else {
     st = {
@@ -1174,7 +1200,7 @@ function _markReactionRowSeen(id) {
   if (_reactionRowSeen.size > 5000) _reactionRowSeen.clear();
   _reactionRowSeen.add(String(id));
 }
-function ReactionChipPop({ popKey, children }) {
+function ReactionChipPop({ popKey, children, sparkColor = 'rgba(128,128,128,0.75)' }) {
   const popRef = useRef(undefined);
   if (popRef.current === undefined) {
     const k = String(popKey || '');
@@ -1195,7 +1221,7 @@ function ReactionChipPop({ popKey, children }) {
     <Animated.View style={{
       opacity: scale.interpolate({ inputRange: [0.4, 0.75, 2], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
       transform: [{ scale }],
-    }}>{children}</Animated.View>
+    }}>{children}<ReactionSparks color={sparkColor} /></Animated.View>
   );
 }
 
@@ -1250,40 +1276,31 @@ function HighlightFlash({ active }) {
 // and the badge bounces when the count increases. Matches WhatsApp's
 // "jump to bottom" chip.
 function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
-  const translateY = useRef(new Animated.Value(10)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.85)).current;
+  // [2026-10-14 motion] entrada/saída com mola agora no SpringPresence (pai) e
+  // contador que rola (RollingCount); aqui só o "soco" do badge.
   const badgeScale = useRef(new Animated.Value(1)).current;
   const prevCount = useRef(newMsgCount);
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.spring(translateY, { toValue: 0, tension: 180, friction: 9, useNativeDriver: true }),
-      Animated.spring(scale, { toValue: 1, tension: 180, friction: 9, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  useEffect(() => {
-    if (newMsgCount > prevCount.current && prevCount.current >= 0) {
+    if (newMsgCount > prevCount.current && prevCount.current >= 0 && _motionOn()) {
       // Count went up — punch the badge up then settle.
       badgeScale.setValue(0.8);
       Animated.sequence([
-        Animated.spring(badgeScale, { toValue: 1.3, tension: 260, friction: 7, useNativeDriver: true }),
-        Animated.spring(badgeScale, { toValue: 1, tension: 180, friction: 9, useNativeDriver: true }),
+        Animated.spring(badgeScale, { toValue: 1.3, tension: 260, friction: 7, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.spring(badgeScale, { toValue: 1, tension: 180, friction: 9, useNativeDriver: Platform.OS !== 'web' }),
       ]).start();
     }
     prevCount.current = newMsgCount;
   }, [newMsgCount]);
 
   return (
-    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
+    <View>
       <TouchableOpacity
         onPress={onPress}
         /* [2026-10-08 chat-beauty-chrome] superfície neutra + hairline, chevron
            na cor do texto, badge monocromático (preto/branco) com aro da
            superfície — era verde WhatsApp. */
-        style={[styles.scrollDownFab, {
+        style={[styles.scrollDownFab, _FAB_INNER, {
           backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
@@ -1302,13 +1319,20 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
             borderColor: isDark ? '#000000' : '#ffffff', // [2026-10-13 conv-pb] = fundo da conversa (era #f0f2f5 antigo)
             transform: [{ scale: badgeScale }],
           }]}>
-            <Text style={[styles.scrollDownBadgeText, { color: isDark ? '#111111' : '#ffffff' }]}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
+            <RollingCount value={newMsgCount} lineHeight={14} style={[styles.scrollDownBadgeText, { color: isDark ? '#111111' : '#ffffff' }]} format={_fabCountFmt} />
           </Animated.View>
         )}
       </TouchableOpacity>
-    </Animated.View>
+    </View>
   );
 }
+const _fabCountFmt = (n) => (n > 99 ? '99+' : String(n));
+// [2026-10-14 motion] âncora em fluxo (altura 0, mesmo lugar do wrapper antigo)
+// + caixa absoluta do tamanho do FAB → a mola escala em torno do CENTRO do FAB.
+const _FAB_ANCHOR = { height: 0, zIndex: 10 };
+const _FAB_WRAP = { position: 'absolute', right: 12, bottom: 90, width: 44, height: 44, zIndex: 10 };
+const _FAB_INNER = { position: 'relative', right: 0, bottom: 0 };
+const _FAB_FROM = { translateY: 14, scale: 0.5 };
 
 // [VISUAL-G1, 2026-05-19] Module-scope sender color palette + djb2 hash (avoid re-alloc per render).
 // 20 distinct high-contrast colors, all chosen to read clearly against both the
@@ -2529,14 +2553,154 @@ const _waLineCache = new Map(); // lkey -> { last, max, n }
 const _waLineOff = new Set();   // lkey que falhou na guarda (quebrou diferente) → ghost
 const _waMetaBox = new Map();   // metaKey -> { w, h }
 const _waMetaSubs = new Map();  // metaKey -> Set<fn>
+// [2026-10-14 open-still] Abrir a conversa "imóvel" (WhatsApp): a 1ª pintura de
+// uma bolha de texto caía no caminho ghost+hug e, 1-2 frames depois (medida),
+// trocava largura/altura (−2..−21 px) → a conversa "dava um pulinho".
+//  • medidas PERSISTIDAS (MMKV; web = localStorage) entre aberturas e sessões:
+//    linhas por hash(texto|fonte|largura) e meta por id → bolha já vista abre
+//    final no frame 1 (só números, sem conteúdo);
+//  • web: mede SÍNCRONO no useLayoutEffect (antes da pintura);
+//  • nativo: "portão" da abertura (_waGate/WaOpenGate) segura a lista invisível
+//    até as bolhas sem medida medirem (≤ ~160 ms, normalmente 1-2 frames,
+//    durante o início do slide do push) — nunca pinta o layout provisório.
+const _WA_MEAS_KEY = 'wa_meas_v1';
+const _waLinePersist = new Map(); // hash(lkey) -> [last, max, n]
+let _waMeasLoaded = false;
+let _waMeasTimer = null;
+function _waHash(s) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
+}
+function _waMeasLoad() {
+  if (_waMeasLoaded) return;
+  _waMeasLoaded = true;
+  try {
+    const raw = require('../services/mmkv').getString(_WA_MEAS_KEY);
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    if (!o || o.v !== 1) return;
+    const L = o.l || {};
+    for (const k in L) { const a = L[k]; if (Array.isArray(a) && a.length === 3 && !_waLinePersist.has(k)) _waLinePersist.set(k, a); }
+    const M = o.m || {};
+    for (const k in M) { const a = M[k]; if (Array.isArray(a) && a.length === 2 && a[0] > 0 && !_waMetaBox.has(k)) _waMetaBox.set(k, { w: a[0], h: a[1] }); }
+  } catch {}
+}
+function _waMeasSave() {
+  if (_waMeasTimer) return;
+  _waMeasTimer = setTimeout(() => {
+    _waMeasTimer = null;
+    try {
+      const r1 = (x) => Math.round(x * 10) / 10;
+      const l = {}; let n = 0;
+      const le = Array.from(_waLinePersist.entries());
+      for (let i = Math.max(0, le.length - 1500); i < le.length; i++) { l[le[i][0]] = le[i][1]; n++; }
+      const m = {};
+      const me = Array.from(_waMetaBox.entries());
+      for (let i = Math.max(0, me.length - 2000); i < me.length; i++) { const v = me[i][1]; m[me[i][0]] = [r1(v.w), r1(v.h)]; }
+      if (le.length > 1800) { for (let i = 0; i < le.length - 1500; i++) _waLinePersist.delete(le[i][0]); }
+      if (n || me.length) require('../services/mmkv').setString(_WA_MEAS_KEY, JSON.stringify({ v: 1, l, m }));
+    } catch {}
+  }, 1500);
+}
+function _waFontScale() {
+  try { return Math.round((require('react-native').PixelRatio.getFontScale() || 1) * 100); } catch { return 100; }
+}
+// lkey → { last, max, n } (memória; senão o persistido)
+function _waGetLines(lkey) {
+  const hit = _waLineCache.get(lkey);
+  if (hit) return hit;
+  _waMeasLoad();
+  if (!_waLinePersist.size) return undefined;
+  const a = _waLinePersist.get(_waHash(lkey));
+  if (!a) return undefined;
+  const v = { last: a[0], max: a[1], n: a[2] };
+  _waLineCache.set(lkey, v);
+  return v;
+}
+function _waGetMeta(key) {
+  if (!key) return null;
+  const hit = _waMetaBox.get(key);
+  if (hit) return hit;
+  _waMeasLoad();
+  return _waMetaBox.get(key) || null;
+}
+// Portão da abertura (nativo). `active` só enquanto um WaOpenGate está fechado.
+const _waGate = { active: false, gen: 0, seen: 0, pending: new Set(), subs: new Set() };
+function _waGateNotify() { _waGate.subs.forEach(fn => { try { fn(); } catch {} }); }
+const _WA_OPEN_GATE_ON = Platform.OS === 'ios' || Platform.OS === 'android';
+// Envolve a lista de mensagens: invisível (opacity 0, layout normal) até as
+// bolhas montadas na abertura terem medida (tudo do cache persistido = abre no
+// fim da própria tarefa do 1º commit; pendentes = 1-2 frames; teto 160 ms).
+function WaOpenGate({ children }) {
+  const [open, setOpen] = useState(() => !_WA_OPEN_GATE_ON || (typeof globalThis !== 'undefined' && globalThis.__chatyy_open_gate === false));
+  const armedRef = useRef(false);
+  if (!open && !armedRef.current) { armedRef.current = true; _waGate.active = true; _waGate.gen++; _waGate.seen = 0; _waGate.pending.clear(); }
+  useLayoutEffect(() => {
+    if (open) return undefined;
+    let done = false; let t1 = null; let raf1 = null; let raf2 = null; let queued = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      _waGate.subs.delete(onNote);
+      _waGate.active = false; _waGate.pending.clear();
+      if (t1) clearTimeout(t1);
+      try { if (raf1 != null) cancelAnimationFrame(raf1); if (raf2 != null) cancelAnimationFrame(raf2); } catch {}
+      setOpen(true);
+    };
+    const check = () => { queued = false; if (!done && _waGate.seen > 0 && _waGate.pending.size === 0) finish(); };
+    // Avisos das bolhas chegam DURANTE o commit (layout effects em ordem): a
+    // conta só fecha no fim da tarefa (microtask) — depois dos re-renders
+    // síncronos da FlashList — senão abria antes da 2ª bolha registrar.
+    const onNote = () => { if (queued || done) return; queued = true; Promise.resolve().then(check); };
+    _waGate.subs.add(onNote);
+    onNote();
+    if (!done) {
+      // nenhuma bolha de texto (só mídia / lista vazia): 2 frames; teto absoluto 160 ms
+      try { raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => { if (_waGate.seen === 0) finish(); }); }); } catch {}
+      t1 = setTimeout(finish, 160);
+    }
+    return () => { if (!done) { done = true; _waGate.subs.delete(onNote); _waGate.active = false; _waGate.pending.clear(); if (t1) clearTimeout(t1); } };
+  }, [open]);
+  if (open) return children;
+  return React.cloneElement(children, { style: _WA_GATE_HIDDEN });
+}
+const _WA_GATE_HIDDEN = { opacity: 0 };
+// [2026-10-14 open-still] msg id → URL da foto já pintada (bolha de imagem)
+const _imgPaintedUri = new Map();
 function _waPutMetaBox(key, w, h) {
   if (!key || !(w > 0)) return;
   const p = _waMetaBox.get(key);
   if (p && Math.abs(p.w - w) < 0.5 && Math.abs(p.h - h) < 0.5) return;
   if (_waMetaBox.size > 4000) _waMetaBox.clear();
   _waMetaBox.set(key, { w, h });
+  _waMeasSave();
   const s = _waMetaSubs.get(key);
   if (s) s.forEach(fn => { try { fn(); } catch {} });
+}
+// [2026-10-14 open-still] Web: mede a meta já no attach do nó (commit, antes da
+// pintura) — o onLayout do RN-web (ResizeObserver) só chega depois de pintar.
+// Mesmas unidades do onLayout (offsetWidth/offsetHeight). Ref estável por chave.
+const _waMetaRefs = new Map();
+function _waMetaRefFor(key) {
+  if (Platform.OS !== 'web' || !key) return undefined;
+  let fn = _waMetaRefs.get(key);
+  if (!fn) {
+    fn = (el) => {
+      try {
+        if (!el || _waMetaBox.has(key) || typeof el.offsetWidth !== 'number') return;
+        if (el.offsetWidth > 0) _waPutMetaBox(key, el.offsetWidth, el.offsetHeight);
+      } catch {}
+    };
+    if (_waMetaRefs.size > 3000) _waMetaRefs.clear();
+    _waMetaRefs.set(key, fn);
+  }
+  return fn;
 }
 function _waRowsFromDom(el) {
   if (!el || typeof document === 'undefined' || !el.getBoundingClientRect) return null;
@@ -2554,32 +2718,67 @@ function _waRowsFromDom(el) {
 }
 function WaMetaText({ hugKey, metaKey, own, style, ghost, children, minW = 0, ...rest }) {
   const [, force] = useState(0);
-  const lkey = `${hugKey}|${_WA_TEXT_AVAIL}`;
-  useEffect(() => {
+  const lkey = `${hugKey}|${_WA_TEXT_AVAIL}|${_waFontScale()}`; // [2026-10-14 open-still] + escala de fonte do sistema (medida persistida)
+  const renderedMetaRef = useRef(false);
+  // [2026-10-14 open-still] layout effect (era useEffect): a meta medida no MESMO
+  // commit (ref síncrona no web / cache) re-renderiza antes da pintura.
+  useLayoutEffect(() => {
     if (!metaKey) return undefined;
     const fn = () => force(x => x + 1);
     let s = _waMetaSubs.get(metaKey);
     if (!s) { s = new Set(); _waMetaSubs.set(metaKey, s); }
     s.add(fn);
-    if (_waMetaBox.has(metaKey)) fn();
+    if (_waMetaBox.has(metaKey) && !renderedMetaRef.current) fn();
     return () => { s.delete(fn); if (!s.size) _waMetaSubs.delete(metaKey); };
   }, [metaKey]);
   const measRef = useRef(null);
   const off = _waLineOff.has(lkey);
-  const L = off ? null : _waLineCache.get(lkey);
+  const L = off ? null : _waGetLines(lkey);
   const lastM = useRef(null);
   // id temporário → id do servidor (envio) troca a chave: usa a última meta medida
   // até o onLayout da nova chegar (sem piscar p/ o ghost).
   // (célula reciclada da FlashList: só reaproveita se for do mesmo lado — ✓✓ ou não)
-  const M = (metaKey ? _waMetaBox.get(metaKey) : null) || (lastM.current && lastM.current.own === !!own ? lastM.current.m : null);
+  const _ownM = _waGetMeta(metaKey);
+  renderedMetaRef.current = !!_ownM;
+  const M = _ownM || (lastM.current && lastM.current.own === !!own ? lastM.current.m : null);
   if (M) lastM.current = { m: M, own: !!own };
   const putLines = (ws) => {
     if (!ws || !ws.length || _waLineCache.has(lkey)) return;
     let mx = 0; for (const x of ws) if (x > mx) mx = x;
     if (_waLineCache.size > 3000) _waLineCache.clear();
-    _waLineCache.set(lkey, { last: ws[ws.length - 1] || 0, max: mx, n: ws.length });
+    const last = ws[ws.length - 1] || 0;
+    _waLineCache.set(lkey, { last, max: mx, n: ws.length });
+    try { _waLinePersist.delete(_waHash(lkey)); _waLinePersist.set(_waHash(lkey), [Math.round(last * 10) / 10, Math.round(mx * 10) / 10, ws.length]); _waMeasSave(); } catch {}
     force(x => x + 1);
   };
+  // [2026-10-14 open-still] Web: mede as linhas da cópia invisível AGORA (layout
+  // síncrono do DOM) → o re-render com a largura final sai antes da pintura.
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || L || off) return;
+    try { putLines(_waRowsFromDom(measRef.current)); } catch {}
+  });
+  // [2026-10-14 open-still] Nativo: registra no portão da abertura enquanto não
+  // tem medida (linhas + meta); avisa quando mediu (ou desistiu: guarda/sem meta).
+  const gateTokRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!_WA_OPEN_GATE_ON) return;
+    if (!_waGate.active) { gateTokRef.current = null; return; }
+    const measured = off || !metaKey || !!(L && M);
+    const tok = gateTokRef.current;
+    if (!tok || tok.gen !== _waGate.gen) {
+      const nt = { gen: _waGate.gen, done: measured };
+      gateTokRef.current = nt;
+      _waGate.seen++;
+      if (!measured) _waGate.pending.add(nt);
+      _waGateNotify();
+    } else if (!tok.done && measured) {
+      tok.done = true; _waGate.pending.delete(tok); _waGateNotify();
+    }
+  });
+  useEffect(() => () => {
+    const tok = gateTokRef.current;
+    if (tok && !tok.done) { tok.done = true; _waGate.pending.delete(tok); if (_waGate.active) _waGateNotify(); }
+  }, []);
   if (L && M) {
     const fits = L.last + _WA_META_GAP + M.w <= _WA_TEXT_AVAIL + _WA_META_OVERHANG;
     const textW = Math.ceil(L.max) + 4; // + msgText.paddingRight 3 + 1 de arredondamento
@@ -5648,6 +5847,13 @@ function getCtxListStyles() {
 // Web (or a binary without Reanimated/RNGH): legacy Animated sheet below.
 function AttachmentMenu(props) {
   const { t } = useLanguage();
+  // [2026-10-15 native-attach] Folha 100% nativa (Telegram) quando o binário tem
+  // o módulo; erro/não apresentou → nativeFailed e cai no sheet JS abaixo.
+  const [nativeFailed, setNativeFailed] = useState(false);
+  if (!nativeFailed && NativeAttachBridge && NativeAttachBridge.nativeAttachUsable()) {
+    const NativeSheet = NativeAttachBridge.default;
+    return <NativeSheet {...props} t={t} items={buildAttachItems(t, { gift: !!props.giftEnabled })} onFail={() => setNativeFailed(true)} />;
+  }
   if (ATTACH_SHEET_NATIVE && AttachSheetNative) {
     return <AttachSheetNative {...props} items={buildAttachItems(t, { gift: !!props.giftEnabled })} />;
   }
@@ -7093,6 +7299,22 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   const _proEditorMod = require('../components/media/PhotoEditor'); // [2026-10-08 photo-editor]
   const ProPhotoEditor = _proEditorMod.default;
   const _proEditorOk = !!_proEditorMod.PHOTO_EDITOR_AVAILABLE;
+  // [2026-10-15 native-editor] Editor NATIVO (modules/expo-media-editor):
+  // 1 foto/vídeo → abre direto o editor nativo completo (recorte/desenho/texto/
+  // figurinhas/filtros ou corte/mudo/capa + legenda + ver uma vez + HD + enviar);
+  // lote → o "Editar" da prévia abre o nativo em modo 'edit'. Binário sem o
+  // módulo / kill switch globalThis.__chatyy_native_editor=false / erro → JS de sempre.
+  const _nativeEd = (() => { try { return require('../components/media/nativeMediaEditor'); } catch { return null; } })();
+  const _nativeEdOk = !!_nativeEd && _nativeEd.nativeEditorAvailable();
+  const [nativePhase, setNativePhase] = useState('idle'); // idle | open | fallback
+  const [nativeMeta, setNativeMeta] = useState({}); // idx → descritor final do edit nativo (dims/duração/capa)
+  const pendingNativeSendRef = useRef(null);
+  const [pendingNativeTick, setPendingNativeTick] = useState(0);
+  const [nativeEditing, setNativeEditing] = useState(false); // tira o player da prévia enquanto o nativo edita
+  const onSendRef = useRef(onSend);
+  onSendRef.current = onSend;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   // Seed local state whenever the modal opens with a fresh batch.
   // For SINGLE-image picks we auto-open the PhotoEditor as the first
@@ -7124,9 +7346,60 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     // edit can still tap into it. Default flow: preview → caption → send.
     editorAutoOpenedRef.current = false;
     setCropOpen(false);
+    setNativeMeta({});
+    setNativePhase('idle');
   }, [visible, filesProp]);
 
+  // [2026-10-15 native-editor] 1 mídia local → editor nativo em modo 'compose'.
+  const _nativeList = Array.isArray(filesProp) ? filesProp : (filesProp ? [filesProp] : []);
+  const _nativeEligible = !!(visible && _nativeEdOk && nativePhase !== 'fallback'
+    && _nativeList.length === 1 && _nativeEd.isEditableLocal(_nativeList[0]));
+  useEffect(() => {
+    if (!visible || !_nativeEdOk) return undefined;
+    const list = Array.isArray(filesProp) ? filesProp : (filesProp ? [filesProp] : []);
+    if (list.length !== 1 || !_nativeEd.isEditableLocal(list[0])) return undefined;
+    const f = list[0];
+    let alive = true;
+    setNativePhase('open');
+    const isVid = _nativeEd.isVideoFile(f);
+    const hdInit = isVid ? (hdMode == null ? !!videoHdDefault : !!hdMode) : hdMode === true;
+    (async () => {
+      const r = await _nativeEd.openNativeMediaEditor({
+        file: f, t, mode: 'compose', captionMax: 300,
+        hd: hdInit, allowHd: true, allowViewOnce: true,
+      });
+      if (!alive) return;
+      if (r.action === 'send') {
+        let out = _nativeEd.fileFromResult(f, r);
+        out = await _nativeEd.fallbackTrim(out, r);
+        if (!alive) return;
+        const wantHd = !!r.hd;
+        const cap = typeof r.caption === 'string' ? r.caption : '';
+        pendingNativeSendRef.current = { caption: cap, viewOnce: !!r.viewOnce, files: [out], hd: wantHd !== hdInit ? wantHd : null };
+        // onToggleHD(cur) grava !cur → hdMode = wantHd; o envio espera o hdMode assentar (efeito abaixo).
+        if (wantHd !== hdInit) onToggleHD?.(!wantHd);
+        setPendingNativeTick(x => x + 1);
+      } else if (r.action === 'cancel' || r.action === 'done') {
+        onCloseRef.current?.();
+      } else {
+        console.warn('[MediaPreview native-editor] fallback JS:', r.error);
+        setNativePhase('fallback');
+      }
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, filesProp]);
+
+  useEffect(() => {
+    const p = pendingNativeSendRef.current;
+    if (!p) return;
+    if (p.hd != null && (p.hd ? hdMode !== true : hdMode !== false)) return; // espera o setHdMode do pai
+    pendingNativeSendRef.current = null;
+    onSendRef.current?.(p.caption, p.viewOnce, p.files, [p.caption]);
+  }, [pendingNativeTick, hdMode]);
+
   if (!visible || files.length === 0) return null;
+  if (_nativeEligible) return null; // [2026-10-15 native-editor] o nativo está na tela
 
   const active = files[activeIdx] || files[0];
   const activeIsVideo = (active?.type || '').startsWith('video') || /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(active?.name || active?.uri || '');
@@ -7166,6 +7439,16 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     });
     // Reindex edits map — anything above idx shifts down by one
     setEdits(prev => {
+      const next = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = parseInt(k, 10);
+        if (ki === idx) return;
+        next[ki > idx ? ki - 1 : ki] = v;
+      });
+      return next;
+    });
+    // [2026-10-15 native-editor] Reindexa os metadados do edit nativo.
+    setNativeMeta(prev => {
       const next = {};
       Object.entries(prev).forEach(([k, v]) => {
         const ki = parseInt(k, 10);
@@ -7257,6 +7540,36 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     }
   };
 
+  // [2026-10-15 native-editor] "Editar" da prévia: nativo em modo 'edit' (foto a
+  // partir da versão atual; vídeo a partir do ORIGINAL). Erro → editor JS.
+  const openEditForActive = async () => {
+    if (editing) return;
+    if (_nativeEdOk && _nativeEd.isEditableLocal(active)) {
+      const idx = activeIdx;
+      const src = activeIsVideo ? { ...active } : { ...active, uri: currentUri };
+      try { Keyboard.dismiss(); } catch {}
+      setNativeEditing(true);
+      const r = await _nativeEd.openNativeMediaEditor({ file: src, t, mode: 'edit', allowHd: false, allowViewOnce: false });
+      setNativeEditing(false);
+      if (r.action === 'done') {
+        let out = _nativeEd.fileFromResult(src, r);
+        out = await _nativeEd.fallbackTrim(out, r);
+        if (out.uri !== src.uri || out.coverUri) {
+          setEdits(prev => {
+            const n = { ...prev };
+            if (out.uri !== baseUri) n[idx] = out.uri; else delete n[idx];
+            return n;
+          });
+          setNativeMeta(prev => ({ ...prev, [idx]: out }));
+          if (activeIsVideo) setTrims(prev => { const n = { ...prev }; delete n[idx]; return n; });
+        }
+        return;
+      }
+      if (r.action !== 'error') return;
+    }
+    if (!activeIsVideo && _proEditorOk) setProEditOpen(true);
+  };
+
   const handleSendPress = async () => {
     // Hand the whole (possibly-edited, possibly-pruned) batch to the parent
     // so it can fire one uploadAndSendFile per file with the shared batch id.
@@ -7291,6 +7604,9 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
         const baseName = String(f.name || 'video').replace(/\.[a-z0-9]{2,5}$/i, '');
         return { ...f, uri: r.uri, _raw: null, blob: null, size: r.size || 0, type: r.mimeType || 'video/mp4', name: `${baseName}.${ext}` };
       }
+      // [2026-10-15 native-editor] edit nativo: dims/duração/capa/tipo do arquivo final
+      const _nm = nativeMeta[i];
+      if (_nm && _nm.uri === (edits[i] || f.uri)) return { ...f, ..._nm };
       if (!edits[i]) return f;
       const out = { ...f, uri: edits[i], _raw: null };
       if (Platform.OS === 'web' && (f.blob || f._raw)) {
@@ -7422,15 +7738,15 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               // when sent" but the real problem was they couldn't see the
               // video first to verify — expo-video is already installed
               // so we use it here.
-              <VideoPreviewNative uri={currentUri} trim={trims[activeIdx] || null} />
+              nativeEditing ? <View style={{ flex: 1 }} /> : <VideoPreviewNative uri={currentUri} trim={trims[activeIdx] || null} />
             )
           ) : (
             <Image source={{ uri: currentUri }} style={previewStyles.previewImage} resizeMode="contain" />
           )}
-          {/* [2026-10-08 photo-editor] "Editar" por imagem (ativa) */}
-          {!activeIsVideo && _proEditorOk && (
+          {/* [2026-10-08 photo-editor] "Editar" por imagem (ativa) · [2026-10-15 native-editor] foto/vídeo nativo */}
+          {((!activeIsVideo && _proEditorOk) || (_nativeEdOk && _nativeEd.isEditableLocal(active))) && (
             <TouchableOpacity
-              onPress={() => setProEditOpen(true)}
+              onPress={openEditForActive}
               disabled={editing}
               accessibilityRole="button"
               accessibilityLabel={t('common.edit')}
@@ -7442,7 +7758,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
           )}
         </View>
         {/* [2026-10-10 video-trim] Cortar vídeo antes de enviar (só binário com trimVideo) */}
-        {activeIsVideo && _trimOk && !!baseUri && (
+        {activeIsVideo && _trimOk && !!baseUri && !nativeMeta[activeIdx] && (
           <VideoTrimBar
             key={`trim-${activeIdx}-${baseUri}`}
             uri={baseUri}
@@ -9874,8 +10190,10 @@ function ChatConversationInner() {
       indexOfMessage(id) {
         const s = String(id ?? '');
         if (!s) return -1;
-        return findIdx(m => !!m && (String(m.id ?? '') === s
+        const r = findIdx(m => !!m && (String(m.id ?? '') === s
           || (m._type === 'album' && Array.isArray(m._items) && m._items.some(c => c && String(c.id ?? '') === s))));
+        if (r < 0) { try { releaseRenderFloor(); } catch {} } // [2026-10-14 open-still] alvo pode estar nas linhas retidas
+        return r;
       },
       toMessage(id, opts) {
         const i = api.indexOfMessage(id);
@@ -14883,6 +15201,7 @@ function ChatConversationInner() {
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
         if (r.data?.disappearing_set_at !== undefined) setDisappearingSetAt(r.data.disappearing_set_at || null);
         if (r.data?.vanish_mode !== undefined) setVanishMode(!!r.data.vanish_mode);
+        try { if (r.data && r.data.advanced_privacy !== undefined) _advPrivNote(conversationId, r.data); } catch {} // [2026-10-14 adv-privacy]
 
         if (!beforeId && newMsgs.length > 0 && chatyySettings.read_receipts !== false) {
           const lastMsg = newMsgs[newMsgs.length - 1];
@@ -17330,7 +17649,8 @@ function ChatConversationInner() {
                     // Replay path: skip the Rust fast-path. Re-hitting Rust with
                     // an already-used temp_id 500s and disables Rust for the whole
                     // session — route retries through PHP (server dedups on CMI).
-                    { skipRust: true },
+                    // [2026-10-15 outbox-campos] opts (sealed/effect/quote) idênticos ao original.
+                    { ...((a.opts && typeof a.opts === 'object') ? a.opts : {}), ...(a.effect && !(a.opts && a.opts.effect) ? { effect: a.effect } : {}), skipRust: true },
                   );
                   if (r?.success) {
                     await removeFromQueue(a.id);
@@ -18649,6 +18969,16 @@ function ChatConversationInner() {
     // Every later outbox transition for this row (markSent / markFailed /
     // remove) chains on `_outboxReady` so ordering is preserved even when the
     // HTTP ack beats the SQLite write. Web path (savePendingMessage) unchanged.
+    // [2026-10-15 outbox-campos] O reenvio pelo worker (sendWorker._httpSend →
+    // api.chatSend(..., p.topic_id, p.opts)) só tem o que está NESTA linha. Antes
+    // ia sem topic_id/effect/sealed → no retry a msg saía fora do tópico, sem
+    // efeito e COM remetente visível (privacidade). Mesmas regras do _sendOpts
+    // do envio direto abaixo; mesmo client_message_id.
+    const _outboxTopicId = activeTopic?.id || null;
+    const _outboxSendOpts = { skipRust: true };
+    if (stagedEffect) _outboxSendOpts.effect = stagedEffect;
+    if (sealedSenderRef.current) _outboxSendOpts.sealed = true;
+    if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _outboxSendOpts.replyQuoteText = replyTo.quoteText;
     let _outboxReady = Promise.resolve();
     if (OUTBOX_V2_ONLY) {
       _outboxReady = (async () => {
@@ -18657,6 +18987,7 @@ function ChatConversationInner() {
             client_message_id: msgId,
             conversation_id: conversationId,
             temp_id: tempId,
+            topic_id: _outboxTopicId,
             content: text,
             // [send-reliability] plaintext for the restored bubble; `content`
             // is swapped for the E2E envelope below once encryption finishes.
@@ -18671,7 +19002,7 @@ function ChatConversationInner() {
             // reuse temp_id, so they MUST skip the Rust fast-path (Rust 500s on a
             // used temp_id and then disables itself session-wide). The foreground
             // first attempt below still uses Rust.
-            opts: { skipRust: true },
+            opts: _outboxSendOpts,
           }, { initialState: 'sending' });
           // [double-send race fix 2026-05-25] The foreground OWNS the HTTP
           // send for this row (api.chatSend fires below). The row is inserted
@@ -19244,7 +19575,7 @@ function ChatConversationInner() {
           // routed to /login — see api.js _consecutive401 logic.
           try {
             const { queueOfflineAction } = require('../services/offlineCache');
-            await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null });
+            await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null, opts: _outboxSendOpts });
             setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
           } catch {
             setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m));
@@ -19285,7 +19616,7 @@ function ChatConversationInner() {
         // any transient failure.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null, opts: _outboxSendOpts });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -19330,6 +19661,7 @@ function ChatConversationInner() {
           client_message_id: msgId,
           effect: stagedEffect || null,
           topic_id: activeTopic?.id || null,
+          opts: _outboxSendOpts, // [2026-10-15 outbox-campos] sealed/effect/quote no replay
         });
         // Mark as queued (still pending, not failed) — UI shows clock icon
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
@@ -19381,6 +19713,11 @@ function ChatConversationInner() {
   // the optimistic bubble by cmi; failures reach it via the [send-media]
   // effect. Returns false when the outbox is unavailable (web / SQLite down)
   // so callers fall back to their legacy inline path.
+  // [2026-10-15 ordem-rico] Mesmo teste do texto (_convBusyAtSend): só nativo.
+  const _richConvBusyNow = () => {
+    if (!OUTBOX_V2_ONLY) return false;
+    try { return !!require('../services/sendWorker').isConversationBusy?.(conversationId); } catch { return false; }
+  };
   const _sendRichViaOutbox = async ({ msgId, tempId, type, content, fileUrl = null, createdAt, replyToId = null }) => {
     if (!OUTBOX_V2_ONLY) return false;
     try {
@@ -19394,6 +19731,10 @@ function ChatConversationInner() {
         reply_to_id: replyToId || null, // [2026-10-12] figurinha respondendo
         sender_email: currentEmail,
         created_at: createdAt || new Date().toISOString(),
+        // [2026-10-15 outbox-campos] Mesmo contrato do texto: tópico ativo e
+        // remetente oculto viajam na linha (o worker reenvia com p.topic_id/p.opts).
+        topic_id: activeTopic?.id || null,
+        opts: { skipRust: true, ...(sealedSenderRef.current ? { sealed: true } : {}) },
       });
       if (!r) return false;
       try { require('../services/sendWorker').poke?.(); } catch {}
@@ -19515,7 +19856,10 @@ function ChatConversationInner() {
       if (!(mailWs.isConnected && mailWs.authenticated)) {
         try { mailWs.ensureHealthy?.(); } catch {}
       }
-      mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
+      // [2026-10-15 ordem-rico] Mensagem mais antiga desta conversa ainda na fila
+      // (backoff / worker) → sem relay antecipado: o par veria o GIF ANTES dela.
+      // O worker envia em ordem (seq) e o fan-out do servidor entrega.
+      if (!_richConvBusyNow()) mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
     } catch {}
 
     // [2026-10-07 send-media] Native: durable outbox (GIF, then the caption as
@@ -19631,7 +19975,8 @@ function ChatConversationInner() {
       if (!(mailWs.isConnected && mailWs.authenticated)) {
         try { mailWs.ensureHealthy?.(); } catch {}
       }
-      mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
+      // [2026-10-15 ordem-rico] idem GIF: fila ocupada → sem relay antecipado.
+      if (!_richConvBusyNow()) mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
       // [2026-10-12 sticker-preview] Lista já com "Figurinha" (texto/mídia fazem
       // o mesmo) — antes a prévia só mudava no eco/refetch, mostrando lixo antes.
       mailWs._emit?.('chat_local_outbound', {
@@ -19978,6 +20323,19 @@ function ChatConversationInner() {
       // KeyboardAvoidingView da prévia achava que ele ainda estava aberto e
       // encolhia a tela (conversa aparecendo embaixo). Fecha antes.
       try { Keyboard.dismiss(); } catch {}
+      // [2026-10-15 native-attach] Câmera NATIVA (AVFoundation/CameraX, sessão
+      // pré-aquecida). null = indisponível/erro → câmera JS abaixo (igual antes).
+      if (NativeAttachBridge && NativeAttachBridge.nativeCameraUsable()) {
+        const r = await NativeAttachBridge.openNativeCamera(t);
+        if (r) {
+          if (r.action === 'gallery') { setTimeout(() => { try { handleGallery(); } catch {} }, Platform.OS === 'ios' ? 120 : 0); return; }
+          if ((r.action === 'capture' || r.action === 'pick') && r.files.length) {
+            const files = r.files;
+            setTimeout(() => setMediaPreview({ visible: true, files }), Platform.OS === 'ios' ? 120 : 0);
+          }
+          return;
+        }
+      }
       if (ChatCamera && isChatCameraAvailable?.()) {
         setShowChatCamera(true);
         return;
@@ -20048,6 +20406,22 @@ function ChatConversationInner() {
     if (!(await confirmLargeMediaFiles(list))) return;
     if (Platform.OS === 'ios') setTimeout(() => setMediaPreview({ visible: true, files: list }), 350);
     else setMediaPreview({ visible: true, files: list });
+  };
+  // [2026-10-15 native-attach] "Enviar" direto da folha nativa (legenda + HD +
+  // como arquivo) → MESMO envio do MediaPreview (álbum/batchId, resposta, EXIF,
+  // pool 4 → uploadAndSendFile → mediaSendQueue). Os arquivos já trazem _hd /
+  // _asFile, lidos em uploadAndSendFile.
+  const mediaPreviewSendRef = useRef(null);
+  const handleAttachSendDirect = async (files, opts = {}) => {
+    const list = Array.isArray(files) ? files.filter(Boolean) : [];
+    if (list.length === 0) {
+      safeAlert(t('common.error') || 'Erro', 'Nenhuma das fotos selecionadas pôde ser lida.');
+      return;
+    }
+    if (!(await confirmLargeMediaFiles(list))) return;
+    const send = mediaPreviewSendRef.current;
+    if (typeof send !== 'function') { setMediaPreview({ visible: true, files: list }); return; }
+    send(String(opts.caption || ''), false, list, null);
   };
 
   const handleGallery = async () => {
@@ -20238,15 +20612,19 @@ function ChatConversationInner() {
     // their photo posted twice.
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const mimeType = file.type || '';
-    const fileType = mimeType.startsWith('image/') ? 'image'
+    // [2026-10-15 native-attach] Folha nativa: _asFile = "Enviar como arquivo"
+    // (documento, sem compressão); _hd = chip HD da folha (sobrepõe hdMode).
+    const fileType = file._asFile ? 'file'
+      : mimeType.startsWith('image/') ? 'image'
       : mimeType.startsWith('video/') ? 'video'
       : mimeType.startsWith('audio/') ? 'audio'
       : 'file';
+    const _hdOv = typeof file._hd === 'boolean' ? file._hd : null;
     // [2026-10-11 video-fullhd] Effective quality for THIS send: explicit chip
     // (true/false) or the saved default (null → 1080p unless Padrão / Data
     // Saver / weak link). Photos: HD only when the chip was explicitly ON.
-    let _vidHd = hdMode === true;
-    if (hdMode == null && fileType === 'video') {
+    let _vidHd = _hdOv != null ? _hdOv : hdMode === true;
+    if (_hdOv == null && hdMode == null && fileType === 'video') {
       try { _vidHd = require('../services/mediaUploadQuality').defaultVideoHd(); } catch { _vidHd = false; }
     }
     const _vidLabel = _vidHd ? '1080p' : '720p';
@@ -20314,7 +20692,8 @@ function ChatConversationInner() {
     if (fileType === 'video' && file?.uri && _videoSendPipeline?.preparePoster) {
       (async () => {
         try {
-          const poster = await _videoSendPipeline.preparePoster(file.uri, file.duration || null);
+          // [2026-10-15 native-editor] capa escolhida no editor nativo = pôster local
+          const poster = file.coverUri ? { posterUri: file.coverUri } : await _videoSendPipeline.preparePoster(file.uri, file.duration || null);
           const pUri = poster?.posterUri || null;
           if (!pUri || !mountedRef.current) return;
           setMessages(prev => _mapKeep(prev, m => (m.id === tempId && !m._posterUri)
@@ -20361,7 +20740,7 @@ function ChatConversationInner() {
           file_size: file.size || 0,
           caption: caption || '',
           view_once: forceViewOnce ? 1 : 0,
-          hd: fileType === 'video' ? _vidHd : hdMode === true,
+          hd: fileType === 'video' ? _vidHd : (_hdOv != null ? _hdOv : hdMode === true),
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
           batch_id: batchId || null,
@@ -23142,6 +23521,7 @@ function ChatConversationInner() {
     if (typeof conv.members_hidden !== 'undefined') setMembersHiddenForMe(!!conv.members_hidden);
     if (typeof conv.member_count !== 'undefined') setGroupMemberCount(Number(conv.member_count || 0));
     if (typeof conv.forwarding_disabled !== 'undefined') setForwardingDisabled(!!conv.forwarding_disabled);
+    if (typeof conv.advanced_privacy !== 'undefined') { try { _advPrivNote(conversationId, conv); } catch {} } // [2026-10-14 adv-privacy]
     if (typeof conv.require_approval !== 'undefined' || typeof conv.approval_required !== 'undefined') {
       setApprovalRequired(!!(conv.require_approval ?? conv.approval_required));
     }
@@ -23414,6 +23794,8 @@ function ChatConversationInner() {
 
   const myRole = members.find(m => m.email === user?.email)?.role;
   const isGroupAdmin = myRole === 'admin';
+  // [2026-10-14 adv-privacy] FLAG_SECURE/escudo/aviso de print/bloqueios — components/chat/useConversationPrivacy.js
+  const _advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin: isGroupAdmin, currentEmail, colors, isDark, t });
 
   const handleLeaveGroup = async () => {
     const ok = await confirm({
@@ -23496,18 +23878,30 @@ function ChatConversationInner() {
     if (!showContactInfo) return undefined;
     let alive = true;
     const peer = getContactPeerEmail();
+    // [2026-10-14 offline-first] último @/bio/grupos em comum/miniaturas salvos (por conta) → pinta na hora.
+    const _ciKey = ['contact_info', String(conversationId || ''), String(peer || '').toLowerCase()];
+    const _ciThumbKey = ['conv_thumbs', String(conversationId || '')];
+    try {
+      const c = _ciPeek(_ciKey);
+      if (c && c.identity) setContactIdentity(c.identity);
+      if (c && Array.isArray(c.groups)) setContactCommonGroups(c.groups);
+      const th = _ciPeek(_ciThumbKey);
+      if (Array.isArray(th)) setInfoMediaThumbs(th);
+    } catch {}
     if (peer) {
       Promise.resolve(api.profileGet?.(peer))
         .then((r) => {
-          if (!alive || r?.success === false) return;
+          if (!alive || r?.success === false || !r) return;
           if (r?.data?.identity) setContactIdentity(r.data.identity);
-          setContactCommonGroups((r?.data?.common_chats || []).filter(c => c?.type === 'group'));
+          const groups = (r?.data?.common_chats || []).filter(c => c?.type === 'group');
+          setContactCommonGroups(groups);
+          if (r?.data?.identity) _ciPut(_ciKey, { identity: r.data.identity, groups: groups.slice(0, 30) });
         })
         .catch(() => {});
     }
     // Últimas fotos p/ a faixa de miniaturas de "Mídia, links e docs".
     Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 6))
-      .then((r) => { if (alive && r?.success) setInfoMediaThumbs((r.data?.items || []).filter(it => it?.file_url).slice(0, 6)); })
+      .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs(th); _ciPut(_ciThumbKey, th); } })
       .catch(() => {});
     // Pinned ("Favoritas" in the list = pinned) — read from the account-scoped
     // conversation cache; the chat screen has no other source for it.
@@ -23527,8 +23921,10 @@ function ChatConversationInner() {
   useEffect(() => {
     if (!showGroupInfo || !conversationId) return undefined;
     let alive = true;
+    const _gtKey = ['conv_thumbs', String(conversationId)];
+    try { const th = _ciPeek(_gtKey); if (Array.isArray(th)) setInfoMediaThumbs(th); } catch {}
     Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 6))
-      .then((r) => { if (alive && r?.success) setInfoMediaThumbs((r.data?.items || []).filter(it => it?.file_url).slice(0, 6)); })
+      .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs(th); _ciPut(_gtKey, th); } })
       .catch(() => {});
     return () => { alive = false; };
   }, [showGroupInfo, conversationId]);
@@ -23554,6 +23950,7 @@ function ChatConversationInner() {
   // (chat_ai_digest; servidor velho → ai_summarize) e escolhe o alcance.
   // `range` opcional: 'unread' | 'today' | 'last100' | 'last300'.
   const runAiSummary = async (range) => {
+    if (_advPriv.guard('ai')) return; // [2026-10-14 adv-privacy] Bia não lê a conversa
     const initialRange = typeof range === 'string' ? range : 'auto'; // [bia-summary-v2] auto = Não lidas se houver
     try {
       const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
@@ -24314,6 +24711,7 @@ function ChatConversationInner() {
     if (selectedMsg) return;
     // Menu closed (any of the ~40 setSelectedMsg(null) paths) → drop anchor.
     if (ctxAnchorRef.current) { releaseBubbleAnchor(ctxAnchorRef.current); ctxAnchorRef.current = null; }
+    try { flashListRef.current?.setLiftedKey?.(''); } catch {} // [native-list fase 2] reexibe o balão
     setCtxAnchor(null);
     setCtxMenuH(0);
   }, [selectedMsg]);
@@ -24511,10 +24909,14 @@ function ChatConversationInner() {
     // through if it can't recover; the call screen will then show its own
     // "Reconectando..." banner. Never alerts the user (the old "Sem
     // conexão" alert was a false-positive that blocked real calls).
+    // [2026-10-15 call-open-fast] NOT awaited any more: the ping round-trip
+    // (up to 1.5–2.5 s on a half-open socket) ran BEFORE the call id existed,
+    // i.e. before the native screen could open. The native screen has its own
+    // signaling socket; the JS socket only feeds the headless tracker.
     try {
       const mailWs = require('../services/websocket').default;
       if (mailWs?.ensureHealthy) {
-        await mailWs.ensureHealthy(1500);
+        Promise.resolve(mailWs.ensureHealthy(1500)).catch(() => {});
       }
     } catch {}
 
@@ -24523,7 +24925,10 @@ function ChatConversationInner() {
     if (conversationType === 'group') {
       const roomId = `group_${conversationId}`;
       // Notify all members so they receive an incoming call push
-      try { await api.callNotify(conversationId, roomId, videoEnabled, roomId); } catch {}
+      // [2026-10-15 call-open-fast] Fire-and-forget: the group screen no longer
+      // waits for the server's push fan-out (same room = group_<id>; the token
+      // gate is conversation membership, not this call row).
+      try { Promise.resolve(api.callNotify(conversationId, roomId, videoEnabled, roomId)).catch(() => {}); } catch {}
       setStartingCall(true);
       // [2026-10-09 native-group-call] Fully native group screen when the
       // binary + flag allow it; otherwise the /call.js group grid below.
@@ -24853,6 +25258,39 @@ function ChatConversationInner() {
   // errado puxava a tela p/ o meio).
   const [, setDividerRev] = _useStateT(0); // re-render quando o divisor (ref) muda
   const dividerDecidedRef = useRef(false); // decidido 1x na abertura (msgs ao vivo não ganham divisor)
+  // [2026-10-14 open-still] Divisor já no 1º RENDER quando o cache local tem a
+  // última mensagem que a lista mostrou (a contagem do toque cobre só msgs que
+  // estão aqui). Antes esperava o delta do servidor (~1 s) e o divisor entrava
+  // depois de pintado: +46 px nas não lidas e −46 px no frame seguinte (medido).
+  const dividerEarlyRef = useRef(false);
+  if (!dividerDecidedRef.current && firstUnreadIdRef.current === null && messages.length > 0
+    && unreadCapSrcRef.current === 'list' && unreadCapRef.current > 0 && !openLoadDoneRef.current) {
+    try {
+      const _oc = peekOpenConversation(conversationId);
+      const _lm = Number(_oc && (_oc.last_message_id || (_oc.last_message && _oc.last_message.id))) || 0;
+      let _maxId = 0;
+      for (let i = messages.length - 1; i >= 0 && i >= messages.length - 60; i--) {
+        const _id = Number(messages[i] && messages[i].id);
+        if (_id > _maxId) _maxId = _id;
+      }
+      if (_lm > 0 && _maxId >= _lm) {
+        const cap = unreadCapRef.current;
+        let count = 0; let oldest = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i];
+          if (!m || m._type || m.type === 'system') continue;
+          if (m.sender_email === currentEmail) continue;
+          if (_chatOrder().isImportedMsg(m)) continue;
+          count++; oldest = m.id;
+          if (count >= cap) break;
+        }
+        if (oldest != null && currentEmail) {
+          dividerDecidedRef.current = true; dividerEarlyRef.current = true;
+          firstUnreadIdRef.current = oldest;
+        }
+      }
+    } catch {}
+  }
   useEffect(() => {
     if (firstUnreadIdRef.current !== null || dividerDecidedRef.current) return;
     if (messages.length === 0) return;
@@ -25777,10 +26215,39 @@ function ChatConversationInner() {
   // once here (O(n) array copy, same row objects ⇒ MemoizedMessageRow still
   // bails on reference equality). threadDataRef feeds threadScroll + the
   // viewability prefetch.
-  const threadListData = useMemo(
-    () => (THREAD_OLDEST_FIRST ? flatListData.slice().reverse() : flatListData),
-    [flatListData]
-  );
+  // [2026-10-14 open-still] "Piso" da abertura: linhas MAIS ANTIGAS que a 1ª
+  // linha pintada (página do servidor que chega ~0,5-1 s depois) não entram na
+  // lista montada enquanto o usuário não mexer. O prepend deslocava todos os
+  // índices → a FlashList reatribuía as células visíveis (remontagem: foto
+  // voltava ao borrão, players/áudio reiniciavam) + correção de rolagem —
+  // medido no web nas aberturas. Os itens de cabeçalho da 1ª pintura (data)
+  // ficam como estavam → índices das linhas pintadas não mudam. Solta no 1º
+  // gesto do usuário / salto programático / divisor fora da janela.
+  const renderFloorRef = useRef(null); // null = ainda não fixado; 'off' = solto; { msgKey, head }
+  const [floorRev, setFloorRev] = _useStateT(0);
+  const releaseRenderFloor = useCallback(() => {
+    if (renderFloorRef.current === 'off') return;
+    const had = !!renderFloorRef.current && renderFloorRef.current.cut;
+    renderFloorRef.current = 'off';
+    if (had) setFloorRev(v => v + 1);
+  }, []);
+  const threadListData = useMemo(() => {
+    const full = THREAD_OLDEST_FIRST ? flatListData.slice().reverse() : flatListData;
+    if (!THREAD_OLDEST_FIRST || renderFloorRef.current === 'off' || full.length === 0) return full;
+    const _isRow = (it) => !!it && it._type !== 'separator' && it._type !== 'unread_separator';
+    const f = renderFloorRef.current;
+    if (!f) {
+      const i0 = full.findIndex(_isRow);
+      if (i0 >= 0) renderFloorRef.current = { msgKey: msgKeyExtractor(full[i0]), head: full.slice(0, i0), cut: false };
+      return full;
+    }
+    const i = full.findIndex(it => _isRow(it) && msgKeyExtractor(it) === f.msgKey);
+    if (i < 0) { renderFloorRef.current = 'off'; return full; } // linha-piso sumiu (apagada/trocada) → sem piso
+    if (i === f.head.length) { f.head = full.slice(0, i); return full; } // nada entrou acima
+    f.cut = true;
+    return f.head.concat(full.slice(i));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flatListData, floorRev]);
   threadDataRef.current = threadListData;
 
   // PERF: stable callback for FlatList — was an inline arrow recreated
@@ -25844,6 +26311,37 @@ function ChatConversationInner() {
   // a tela inteira antes das rows do alvo pintarem (+~300 ms). Adia a página
   // antiga p/ depois do alvo aparecer (o carregamento continua acontecendo).
   const onThreadReachedOldest = useCallback(() => {
+    // [2026-10-14 open-still] Topo da lista com linhas antigas retidas pelo piso
+    // da abertura: usuário chegou lá (não grudado no fim) → elas entram agora.
+    {
+      const _fl = renderFloorRef.current;
+      if (_fl && _fl !== 'off' && _fl.cut && !threadScrollStateRef.current.pinned) { releaseRenderFloor(); return; }
+    }
+    // [2026-10-14 open-still] Na ABERTURA (grudado no fim, sem gesto do usuário,
+    // tela já cheia) a página antiga NÃO entra sozinha: o prepend de ~50 rows
+    // ~0,7 s após abrir fazia a FlashList reatribuir as células visíveis
+    // (remontagem: foto voltava ao borrão, áudio/players reiniciavam — medido no
+    // web). Fica pendente e carrega no 1º gesto p/ cima (ver _flushOlderDeferred).
+    {
+      const _st = threadScrollStateRef.current;
+      let _vh = _st.pinVh || 0; let _ch = _st.pinCh || 0;
+      if (!(_vh > 0) || !(_ch > 0)) {
+        try {
+          const _l = flashListRef.current;
+          const _w = _l?.getWindowSize?.();
+          const _n = (threadDataRef.current || []).length;
+          const _lay = _n ? _l?.getLayout?.(_n - 1) : null;
+          if (_w && _w.height > 0) _vh = _w.height;
+          if (_lay && _lay.height > 0) _ch = _lay.y + _lay.height;
+        } catch {}
+      }
+      const _full = _ch > _vh * 1.3 && _vh > 0;
+      if (THREAD_OLDEST_FIRST && _st.pinned && !_st.dragging && _full
+        && Date.now() - (_st.openedAt || 0) < 6000 && (threadDataRef.current || []).length >= 20) {
+        _st.olderDeferred = true;
+        return;
+      }
+    }
     const since = Date.now() - (threadScrollStateRef.current.jumpAt || 0);
     if (since < 700) { setTimeout(() => { try { handleLoadMoreRef.current?.(); } catch {} }, 700 - since); return; }
     try { handleLoadMoreRef.current?.(); } catch {}
@@ -26281,7 +26779,8 @@ function ChatConversationInner() {
     if (!firstUnreadIdRef.current) return;
     if (!flatListRef.current) return;
     if (enrichedMessages.length === 0) return;
-    const tm = setTimeout(() => {
+    let tm2 = null;
+    const run = () => {
       try {
         // [2026-10-07 flashlist] via threadScroll (render-order index of the
         // divider in the MOUNTED data). Oldest-first FlashList: the thread
@@ -26291,7 +26790,7 @@ function ChatConversationInner() {
         if (THREAD_OLDEST_FIRST) {
           const d = threadDataRef.current || [];
           const di = d.findIndex(m => m && m._type === 'unread_separator');
-          if (di < 0) return;
+          if (di < 0) { try { releaseRenderFloor(); } catch {} return; } // [2026-10-14 open-still] divisor nas linhas retidas → solta
           // [2026-10-08 open-at-bottom] Só na ABERTURA: se o usuário já mexeu
           // (arrastou / saiu do fim) ou a tela já está aberta há um tempo
           // (divisor tardio = msg ao vivo), não puxa a lista p/ o divisor.
@@ -26302,9 +26801,28 @@ function ChatConversationInner() {
             didScrollToUnreadRef.current = true;
             return;
           }
-          let vis = null;
-          try { vis = flashListRef.current?.computeVisibleIndices?.(); } catch {}
-          if (!(vis && di >= vis.startIndex && di <= vis.endIndex)) {
+          // [2026-10-14 open-still] Visível estando NO FIM? Pela geometria do
+          // layout (divisor.y ≥ conteúdo − janela), não pelos índices visíveis:
+          // logo após montar a FlashList ainda não tem janela calculada → o
+          // salto era chamado à toa (soltava o pin; nada se movia mas a página
+          // antiga entrava e a lista pulava +37/+128 px — medido).
+          const _l = flashListRef.current;
+          let _onScreenAtEnd = null;
+          try {
+            const _lay = _l?.getLayout?.(di);
+            const _last = _l?.getLayout?.(d.length - 1);
+            const _win = _l?.getWindowSize?.();
+            if (_lay && _last && _win && _win.height > 0 && _last.height > 0) {
+              _onScreenAtEnd = _lay.y >= (_last.y + _last.height) - _win.height;
+            }
+          } catch {}
+          if (_onScreenAtEnd === null) {
+            let vis = null;
+            try { vis = _l?.computeVisibleIndices?.(); } catch {}
+            if (vis && vis.endIndex >= 0) _onScreenAtEnd = di >= vis.startIndex && di <= vis.endIndex;
+          }
+          if (_onScreenAtEnd === null && Date.now() - (_st.openedAt || 0) < 1500) { tm2 = setTimeout(run, 50); return; } // layout ainda não pronto: tenta de novo
+          if (_onScreenAtEnd === false) {
             threadScroll.toIndex(di, { animated: false, viewPosition: 0.15 });
           }
           didScrollToUnreadRef.current = true;
@@ -26314,9 +26832,10 @@ function ChatConversationInner() {
           didScrollToUnreadRef.current = true;
         }
       } catch {}
-    }, 350);
-    return () => clearTimeout(tm);
-  }, [enrichedMessages]);
+    };
+    const tm = setTimeout(run, dividerEarlyRef.current ? 34 : 350); // [2026-10-14 open-still] divisor do 1º render: decide já (nativo: ainda dentro do portão/início do slide)
+    return () => { clearTimeout(tm); if (tm2) clearTimeout(tm2); };
+  }, [enrichedMessages, floorRev]);
 
   // Optimized scroll handler - uses ref to avoid setState on every scroll event
   const showScrollDownRef = useRef(false);
@@ -26357,6 +26876,17 @@ function ChatConversationInner() {
         // o pin — arraste real solta via onScrollBeginDrag.
         else if (_distLatest > 12 && Date.now() > (_sendMotionState.smoothUntil || 0) + 600) _st.pinned = false;
       }
+    }
+    // [2026-10-14 open-still] usuário saiu do fim (roda/teclado/toque no web, arraste) → página antiga adiada entra agora
+    {
+      const _sd = threadScrollStateRef.current;
+      // só gesto do usuário (arraste / roda / teclado / toque) — salto programático não puxa a página antiga
+      const _floorCut = !!renderFloorRef.current && renderFloorRef.current !== 'off' && renderFloorRef.current.cut;
+      // ...e só perto do TOPO (onde a página antiga faz falta): rolar um pouco p/
+      // reler as últimas não paga o prepend (re-render/remontagem) no meio do gesto.
+      const _ne0 = e && e.nativeEvent;
+      const _nearTop = !!(_ne0 && _ne0.contentOffset && _ne0.layoutMeasurement && _ne0.contentOffset.y < (_ne0.layoutMeasurement.height || 0) * 0.6);
+      if ((_sd.olderDeferred || _floorCut) && !_sd.pinned && _nearTop && (_sd.dragging || (_sd.userUpAt && Date.now() - _sd.userUpAt < 1500))) _flushOlderDeferred();
     }
     const scrolledUp = _distLatest > 300;
     isScrolledUpRef.current = scrolledUp;
@@ -26421,6 +26951,14 @@ function ChatConversationInner() {
     st.dragging = true;
     st.pinned = false;
   }, []);
+  // [2026-10-14 open-still] página antiga adiada na abertura → carrega no 1º gesto do usuário
+  function _flushOlderDeferred() {
+    const st = threadScrollStateRef.current;
+    releaseRenderFloor(); // [2026-10-14 open-still] linhas antigas retidas entram junto
+    if (!st.olderDeferred) return;
+    st.olderDeferred = false;
+    try { handleLoadMoreRef.current?.(); } catch {}
+  }
   const onThreadScrollEndDrag = useCallback(() => {
     const st = threadScrollStateRef.current;
     st.dragging = false;
@@ -26576,6 +27114,182 @@ function ChatConversationInner() {
   }, [messages]);
   const renderMessageRef = useRef(null);
 
+  // [2026-10-15 native-list fase 2] Reenvio de mensagem que falhou — extraído
+  // do JSX da bolha (toque na bolha) e da meta (alerta Tentar/Limpar) para a
+  // lista nativa chamar EXATAMENTE o mesmo código.
+  // [2026-10-15 native-list fase 2] chip de smart action (lembrete/reunião/PIX/telefone) — extraído do JSX.
+  const _onSmartAction = (msg, a) => {
+                  if (a.type === 'pix') { try { const { Clipboard } = require('react-native'); Clipboard.setString(a.payload); safeAlert(t('common.copied') || 'Copiado', a.payload); } catch {} return; }
+                  if (a.type === 'phone') { try { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } catch {} return; }
+                  // [2026-10-06] ROOT CAUSE "Criar lembrete não funciona": this used to
+                  // router.push('/event-detail', { create:'1', title, start }) but that
+                  // screen only reads params.id → loadEvent() bailed, spinner forever,
+                  // nothing scheduled. Now: confirmation sheet → LOCAL notification
+                  // (services/reminders.js) with visible success/error feedback.
+                  if (a.type === 'reminder') {
+                    const when = a.when instanceof Date ? a.when : new Date(a.when);
+                    setReminderSheet({ text: String(msg.content || ''), when, messageId: msg.id });
+                    return;
+                  }
+                  if (a.type === 'meeting') {
+                    try { router.push('/meeting-create'); } catch {}
+                  }
+  };
+  const _tapRetryFailed = (msg) => {
+              // WhatsApp-grade tap-to-retry: tap on a red-❗failed bubble
+              // immediately re-queues it for replay. Mark optimistic-pending
+              // again so the UI shows clock instead of red, then drain the
+              // offline queue.
+              try {
+                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              } catch {}
+              setMessages(prev => _mapKeep(prev, m =>
+                m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true } : m
+              ));
+              // [2026-07-05 stuck-retry fix] replayOfflineQueue alone is NOT
+              // enough: the MMKV queue drops entries after repeated failures,
+              // and sendWorker's dequeueNext skips rows in state 'failed' — so
+              // a long-stuck bubble (founder's msg from 07-03) had NO owner
+              // left to re-send it and tap-to-retry was a silent no-op. Reset
+              // the SQLite outbox row to 'queued' (attempts=0) and poke the
+              // worker. Safe against duplicates: the re-send carries the
+              // original client_message_id and the server dedups via
+              // UNIQUE(sender_email, client_message_id), returning the
+              // existing row when the message actually made it before.
+              if (OUTBOX_V2_ONLY) {
+                const _cmi = msg._client_id || msg.client_message_id;
+                if (_cmi) {
+                  try {
+                    const _requeued = messageOutbox.requeue?.(String(_cmi));
+                    const _drain = () => { try { require('../services/sendWorker').poke?.(); } catch {} };
+                    if (_requeued && typeof _requeued.then === 'function') _requeued.then(_drain).catch(() => {});
+                    else _drain();
+                  } catch {}
+                }
+              }
+              try {
+                const { replayOfflineQueue } = require('../services/offlineCache');
+                const apiMod = require('../services/api');
+                replayOfflineQueue(apiMod).catch(() => {});
+              } catch {}
+  };
+  const _promptFailedMsg = (msg) => {
+                      // A permanently-failed message used to re-send on tap with
+                      // NO way to remove it — a stuck "parasite" bubble forever.
+                      // WhatsApp lets you delete a failed message: open a 3-action
+                      // alert (Tentar / Limpar / Cancelar) instead of an immediate
+                      // re-send. `doRetry` holds the EXACT original retry logic.
+                      const doRetry = async () => {
+                      const isText = msg.type === 'text' && msg.content;
+                      const isMediaType = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type);
+                      const localUriRaw = msg._localUri || msg.file_url || '';
+                      // Media que ainda não foi pro server tem file_url local
+                      // (file://... no native, blob:... no web). Esse caso o
+                      // chatSend abaixo NÃO resolve — precisa re-enqueue do
+                      // upload em si pra subir os bytes. Só consideramos
+                      // "media com URL remota" quando o file_url já é http(s).
+                      const hasRemoteUrl = !!msg.file_url && /^https?:/i.test(msg.file_url);
+                      const isMediaWithUrl = isMediaType && hasRemoteUrl;
+                      const isLocalMedia = isMediaType && !hasRemoteUrl && !!localUriRaw;
+                      if (!isText && !isMediaWithUrl && !isLocalMedia) return;
+                      setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: isLocalMedia ? true : false } : m));
+                      // Caminho 1 — media local falhou no upload original.
+                      // Re-enqueue via offlineCache (mesma chave que o catch
+                      // do uploadAndSendFile usa), depois dispara replay
+                      // imediato. Sem isso o user tocava no balão vermelho e
+                      // nada acontecia (chatSend mandava o file:// como text).
+                      if (isLocalMedia) {
+                        try {
+                          const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
+                          await queueOfflineAction({
+                            type: 'chat_file_upload',
+                            conversation_id: conversationId,
+                            uri: localUriRaw,
+                            name: msg.file_name || '',
+                            file_type: '',
+                            msg_type: msg.type,
+                            client_message_id: msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)),
+                            temp_id: (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                            caption: msg.content || '',
+                            view_once: msg.is_view_once ? 1 : 0,
+                          });
+                          // Dispara replay agora (não espera próximo foreground).
+                          replayOfflineQueue(api).catch(() => {});
+                        } catch {
+                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+                        }
+                        return;
+                      }
+                      // Caminho 2 — texto ou media com URL remota (caso raro
+                      // onde o upload foi mas o chat_send falhou). chatSend
+                      // direto é seguro: server tem dedup por client_message_id.
+                      try {
+                        const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                        // [SEND-06, 2026-05-19] Preserve ORIGINAL client_message_id
+                        // on retry so server-side CMI dedup collapses stale-retry
+                        // to the same row. Falling back to a fresh msgId here was
+                        // creating a 2nd server row whenever an old failed bubble
+                        // got tapped — server treated it as a brand-new message.
+                        // If neither _client_id nor client_message_id is present
+                        // we DERIVE a stable id from the tempId so re-retries still
+                        // hit the same dedup bucket (was creating new CMI each tap).
+                        const retryMsgId = msg._client_id || msg.client_message_id || `cmi_from_${retryTempId}`;
+                        const sendContent = isText ? msg.content : (msg.file_url || msg.content || '');
+                        const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
+                        if (r.success && r.data?.id) {
+                          // [#1188 fix] Preserve sender_email — envelope mode returns null.
+                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
+                          if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
+                            removePendingMessage(conversationId, msg.id).catch(() => {});
+                          }
+                          _cacheOne(conversationId, r.data);
+                          try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, msg.id, getMemberEmails()); } catch {}
+                        } else {
+                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                        }
+                      } catch {
+                        setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
+                      }
+                      };
+                      safeAlert(
+                        t('chat.msgFailed') || 'Falha ao enviar',
+                        t('chatConv.failedMsgPrompt') || 'Esta mensagem não foi enviada. Deseja tentar de novo ou remover?',
+                        [
+                          { text: t('chat.retry') || 'Tentar', onPress: doRetry },
+                          { text: t('chat.clearQueued') || 'Limpar', style: 'destructive', onPress: async () => {
+                            try {
+                              // Purge from EVERY persistence layer so a permanently-failed
+                              // message can't rehydrate on reopen (chatCache list + pending,
+                              // SQLite messages + pending_messages, and the outbox).
+                              const cc = require('../services/chatCache');
+                              const cmi = msg._client_id || msg.client_message_id || msg.id;
+                              try { await cc.removePendingMessage?.(conversationId, msg.id)?.catch?.(()=>{}); } catch {}
+                              try { if (msg.temp_id && msg.temp_id !== msg.id) await cc.removePendingMessage?.(conversationId, msg.temp_id)?.catch?.(()=>{}); } catch {}
+                              try { await cc.deleteCachedMessage?.(conversationId, msg.id)?.catch?.(()=>{}); } catch {}
+                              try {
+                                const db = require('../services/db');
+                                await db.dbRemovePending?.(msg.id)?.catch?.(()=>{});
+                                if (msg.temp_id && msg.temp_id !== msg.id) await db.dbRemovePending?.(msg.temp_id)?.catch?.(()=>{});
+                              } catch {}
+                              try {
+                                const outbox = require('../services/messageOutbox');
+                                if (outbox?.remove) await outbox.remove(cmi).catch(()=>{});
+                              } catch {}
+                              // 7th layer: the offlineCache replay queue — without purging
+                              // it, the ghost re-materializes on the next replayOfflineQueue
+                              // (foreground/reconnect). This is why it kept coming back.
+                              try {
+                                const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+                                await removeChatSendFromQueueByClientMsgId?.(cmi)?.catch?.(()=>{});
+                                if (msg.client_message_id && msg.client_message_id !== cmi) await removeChatSendFromQueueByClientMsgId?.(msg.client_message_id)?.catch?.(()=>{});
+                              } catch {}
+                              setMessages(prev => prev.filter(m => m.id !== msg.id));
+                            } catch {}
+                          } },
+                          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                        ]
+                      );
+  };
   const renderMessage = ({ item, ov }) => {
     // [2026-10-06 thread-tech] Per-row overlay (dl%, painted, error, deleting,
     // translation) — passed by MemoizedMessageRow, which subscribes to this id
@@ -27179,7 +27893,18 @@ function ChatConversationInner() {
           const dispUri = (!_imgIsLocal && !msg._uploading && !msg._blurred && _dispRaw && !_dispFailedIds.has(msg.id))
             ? (() => { try { return api.getMediaUrl(_dispRaw); } catch { return null; } })()
             : null;
-          const bubbleUri = dispUri || fullUri;
+          let bubbleUri = dispUri || fullUri;
+          // [2026-10-14 open-still] A linha do servidor (delta da abertura) pode
+          // trazer OUTRA URL p/ a mesma foto (variante display × full, local ×
+          // remota). Trocar a fonte de uma foto já pintada = recarrega e volta o
+          // borrão por um instante (medido no web ~1 s após abrir). Já pintou
+          // nesta sessão → mantém a URL pintada.
+          try {
+            const _pk = String(msg.id ?? '');
+            const _prevPainted = _pk ? _imgPaintedUri.get(_pk) : null;
+            if (_prevPainted && _prevPainted !== bubbleUri && !msg._uploading && wasImageLoaded(_prevPainted) && !wasImageLoaded(bubbleUri)) bubbleUri = _prevPainted;
+            else if (_pk && bubbleUri && wasImageLoaded(bubbleUri)) { if (_imgPaintedUri.size > 3000) _imgPaintedUri.clear(); _imgPaintedUri.set(_pk, bubbleUri); }
+          } catch {}
           const imgFailed = __ov.err;
           // [BUG-1 2026-10-01] True once ChatMedia has painted the full bytes.
           // Used to retire the blur backdrops + loading ring so they behave as
@@ -30869,21 +31594,7 @@ function ChatConversationInner() {
                 colors={colors}
                 t={t}
                 onAction={(a) => {
-                  if (a.type === 'pix') { try { const { Clipboard } = require('react-native'); Clipboard.setString(a.payload); safeAlert(t('common.copied') || 'Copiado', a.payload); } catch {} return; }
-                  if (a.type === 'phone') { try { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } catch {} return; }
-                  // [2026-10-06] ROOT CAUSE "Criar lembrete não funciona": this used to
-                  // router.push('/event-detail', { create:'1', title, start }) but that
-                  // screen only reads params.id → loadEvent() bailed, spinner forever,
-                  // nothing scheduled. Now: confirmation sheet → LOCAL notification
-                  // (services/reminders.js) with visible success/error feedback.
-                  if (a.type === 'reminder') {
-                    const when = a.when instanceof Date ? a.when : new Date(a.when);
-                    setReminderSheet({ text: String(msg.content || ''), when, messageId: msg.id });
-                    return;
-                  }
-                  if (a.type === 'meeting') {
-                    try { router.push('/meeting-create'); } catch {}
-                  }
+                  _onSmartAction(msg, a); // [2026-10-15 native-list fase 2] extraído
                 }}
               />
             </View>
@@ -30946,42 +31657,7 @@ function ChatConversationInner() {
             if (selectionMode) {
               toggleSelection(msg.id);
             } else if (msg._failed && isOwn) {
-              // WhatsApp-grade tap-to-retry: tap on a red-❗failed bubble
-              // immediately re-queues it for replay. Mark optimistic-pending
-              // again so the UI shows clock instead of red, then drain the
-              // offline queue.
-              try {
-                if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              } catch {}
-              setMessages(prev => _mapKeep(prev, m =>
-                m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true } : m
-              ));
-              // [2026-07-05 stuck-retry fix] replayOfflineQueue alone is NOT
-              // enough: the MMKV queue drops entries after repeated failures,
-              // and sendWorker's dequeueNext skips rows in state 'failed' — so
-              // a long-stuck bubble (founder's msg from 07-03) had NO owner
-              // left to re-send it and tap-to-retry was a silent no-op. Reset
-              // the SQLite outbox row to 'queued' (attempts=0) and poke the
-              // worker. Safe against duplicates: the re-send carries the
-              // original client_message_id and the server dedups via
-              // UNIQUE(sender_email, client_message_id), returning the
-              // existing row when the message actually made it before.
-              if (OUTBOX_V2_ONLY) {
-                const _cmi = msg._client_id || msg.client_message_id;
-                if (_cmi) {
-                  try {
-                    const _requeued = messageOutbox.requeue?.(String(_cmi));
-                    const _drain = () => { try { require('../services/sendWorker').poke?.(); } catch {} };
-                    if (_requeued && typeof _requeued.then === 'function') _requeued.then(_drain).catch(() => {});
-                    else _drain();
-                  } catch {}
-                }
-              }
-              try {
-                const { replayOfflineQueue } = require('../services/offlineCache');
-                const apiMod = require('../services/api');
-                replayOfflineQueue(apiMod).catch(() => {});
-              } catch {}
+              _tapRetryFailed(msg); // [2026-10-15 native-list fase 2] extraído (mesmo código p/ a lista nativa)
             } else {
               handleDoubleTap(msg);
             }
@@ -31348,6 +32024,7 @@ function ChatConversationInner() {
               uma pílula sem hora e com padding 3 colado na borda). */}
           {(isDeleted || (msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video')) && (
             <View onLayout={_waTextMetaKey ? (e) => { const l = e?.nativeEvent?.layout; if (l) _waPutMetaBox(_waTextMetaKey, l.width, l.height); } : undefined /* [2026-10-14 meta-inline] largura REAL da meta → WaMetaText */}
+              ref={_waMetaRefFor(_waTextMetaKey) /* [2026-10-14 open-still] web: meta medida no commit */}
               style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline,
               // [2026-10-08 location-bubble-fast] emoji-only: pílula com o fundo da bolha (hora/✓ legíveis no tema).
               _jumboNoBubble && { alignSelf: isOwn ? 'flex-end' : 'flex-start', backgroundColor: isOwn ? ownBubbleBg : otherBubbleBg, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2, marginTop: 0 },
@@ -31437,121 +32114,7 @@ function ChatConversationInner() {
                 if (msg._failed) return (
                   <TouchableOpacity
                     onPress={() => {
-                      // A permanently-failed message used to re-send on tap with
-                      // NO way to remove it — a stuck "parasite" bubble forever.
-                      // WhatsApp lets you delete a failed message: open a 3-action
-                      // alert (Tentar / Limpar / Cancelar) instead of an immediate
-                      // re-send. `doRetry` holds the EXACT original retry logic.
-                      const doRetry = async () => {
-                      const isText = msg.type === 'text' && msg.content;
-                      const isMediaType = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type);
-                      const localUriRaw = msg._localUri || msg.file_url || '';
-                      // Media que ainda não foi pro server tem file_url local
-                      // (file://... no native, blob:... no web). Esse caso o
-                      // chatSend abaixo NÃO resolve — precisa re-enqueue do
-                      // upload em si pra subir os bytes. Só consideramos
-                      // "media com URL remota" quando o file_url já é http(s).
-                      const hasRemoteUrl = !!msg.file_url && /^https?:/i.test(msg.file_url);
-                      const isMediaWithUrl = isMediaType && hasRemoteUrl;
-                      const isLocalMedia = isMediaType && !hasRemoteUrl && !!localUriRaw;
-                      if (!isText && !isMediaWithUrl && !isLocalMedia) return;
-                      setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: isLocalMedia ? true : false } : m));
-                      // Caminho 1 — media local falhou no upload original.
-                      // Re-enqueue via offlineCache (mesma chave que o catch
-                      // do uploadAndSendFile usa), depois dispara replay
-                      // imediato. Sem isso o user tocava no balão vermelho e
-                      // nada acontecia (chatSend mandava o file:// como text).
-                      if (isLocalMedia) {
-                        try {
-                          const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
-                          await queueOfflineAction({
-                            type: 'chat_file_upload',
-                            conversation_id: conversationId,
-                            uri: localUriRaw,
-                            name: msg.file_name || '',
-                            file_type: '',
-                            msg_type: msg.type,
-                            client_message_id: msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)),
-                            temp_id: (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                            caption: msg.content || '',
-                            view_once: msg.is_view_once ? 1 : 0,
-                          });
-                          // Dispara replay agora (não espera próximo foreground).
-                          replayOfflineQueue(api).catch(() => {});
-                        } catch {
-                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
-                        }
-                        return;
-                      }
-                      // Caminho 2 — texto ou media com URL remota (caso raro
-                      // onde o upload foi mas o chat_send falhou). chatSend
-                      // direto é seguro: server tem dedup por client_message_id.
-                      try {
-                        const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                        // [SEND-06, 2026-05-19] Preserve ORIGINAL client_message_id
-                        // on retry so server-side CMI dedup collapses stale-retry
-                        // to the same row. Falling back to a fresh msgId here was
-                        // creating a 2nd server row whenever an old failed bubble
-                        // got tapped — server treated it as a brand-new message.
-                        // If neither _client_id nor client_message_id is present
-                        // we DERIVE a stable id from the tempId so re-retries still
-                        // hit the same dedup bucket (was creating new CMI each tap).
-                        const retryMsgId = msg._client_id || msg.client_message_id || `cmi_from_${retryTempId}`;
-                        const sendContent = isText ? msg.content : (msg.file_url || msg.content || '');
-                        const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
-                        if (r.success && r.data?.id) {
-                          // [#1188 fix] Preserve sender_email — envelope mode returns null.
-                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
-                          if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
-                            removePendingMessage(conversationId, msg.id).catch(() => {});
-                          }
-                          _cacheOne(conversationId, r.data);
-                          try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, msg.id, getMemberEmails()); } catch {}
-                        } else {
-                          setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
-                        }
-                      } catch {
-                        setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
-                      }
-                      };
-                      safeAlert(
-                        t('chat.msgFailed') || 'Falha ao enviar',
-                        t('chatConv.failedMsgPrompt') || 'Esta mensagem não foi enviada. Deseja tentar de novo ou remover?',
-                        [
-                          { text: t('chat.retry') || 'Tentar', onPress: doRetry },
-                          { text: t('chat.clearQueued') || 'Limpar', style: 'destructive', onPress: async () => {
-                            try {
-                              // Purge from EVERY persistence layer so a permanently-failed
-                              // message can't rehydrate on reopen (chatCache list + pending,
-                              // SQLite messages + pending_messages, and the outbox).
-                              const cc = require('../services/chatCache');
-                              const cmi = msg._client_id || msg.client_message_id || msg.id;
-                              try { await cc.removePendingMessage?.(conversationId, msg.id)?.catch?.(()=>{}); } catch {}
-                              try { if (msg.temp_id && msg.temp_id !== msg.id) await cc.removePendingMessage?.(conversationId, msg.temp_id)?.catch?.(()=>{}); } catch {}
-                              try { await cc.deleteCachedMessage?.(conversationId, msg.id)?.catch?.(()=>{}); } catch {}
-                              try {
-                                const db = require('../services/db');
-                                await db.dbRemovePending?.(msg.id)?.catch?.(()=>{});
-                                if (msg.temp_id && msg.temp_id !== msg.id) await db.dbRemovePending?.(msg.temp_id)?.catch?.(()=>{});
-                              } catch {}
-                              try {
-                                const outbox = require('../services/messageOutbox');
-                                if (outbox?.remove) await outbox.remove(cmi).catch(()=>{});
-                              } catch {}
-                              // 7th layer: the offlineCache replay queue — without purging
-                              // it, the ghost re-materializes on the next replayOfflineQueue
-                              // (foreground/reconnect). This is why it kept coming back.
-                              try {
-                                const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
-                                await removeChatSendFromQueueByClientMsgId?.(cmi)?.catch?.(()=>{});
-                                if (msg.client_message_id && msg.client_message_id !== cmi) await removeChatSendFromQueueByClientMsgId?.(msg.client_message_id)?.catch?.(()=>{});
-                              } catch {}
-                              setMessages(prev => prev.filter(m => m.id !== msg.id));
-                            } catch {}
-                          } },
-                          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                        ]
-                      );
+                      _promptFailedMsg(msg); // [2026-10-15 native-list fase 2] extraído
                     }}
                     style={{ flexDirection: 'column', alignItems: 'center', marginLeft: 2, gap: 0 }}
                     accessibilityLabel={t('chat.retry') || 'Tentar novamente'}
@@ -31852,6 +32415,463 @@ function ChatConversationInner() {
   }, [memoizedRenderItem, msgKeyExtractor]);
   const threadGetItemType = useCallback((item) => threadItemType(item), []);
 
+  // ── [2026-10-14 native-list] Lista de mensagens NATIVA (ChatyyMessageList) ──
+  // iOS UICollectionView / Android RecyclerView com células desenhadas no
+  // nativo (components/chat/nativeThreadList.js + modules/expo-chat-message-list).
+  // Liga POR CONVERSA quando todas as linhas carregadas são de tipos suportados;
+  // qualquer tipo rico (enquete, localização, link c/ prévia, visualização
+  // única…) ou erro nativo → a FlashList abaixo, intacta. Kill switch OTA:
+  // globalThis.__chatyy_native_list = false. Ponto de troca = só o JSX da lista.
+  // [2026-10-15 native-list fase 2] Cartões ricos nativos (components/chat/
+  // nativeRowCards.js): cores/estado p/ montar row.bl + relógio da localização
+  // ao vivo. Dados assíncronos (prévia de link, "tem Chatyy?") → bump → rev.
+  const [_nlCardsRev, _setNlCardsRev] = _useStateT(0);
+  const _nlCardsBumpTm = useRef(null);
+  const _nlCardsBump = useCallback(() => {
+    if (_nlCardsBumpTm.current) return;
+    _nlCardsBumpTm.current = setTimeout(() => {
+      _nlCardsBumpTm.current = null;
+      if (mountedRef.current) _setNlCardsRev((x) => x + 1);
+    }, 150);
+  }, []);
+  useEffect(() => () => { if (_nlCardsBumpTm.current) clearTimeout(_nlCardsBumpTm.current); }, []);
+  const _nlLiveSeenRef = useRef(false);
+  const _nlLiveTick = _nlLiveSeenRef.current ? vanishTickNow : 0;
+  const _nlCards = useMemo(() => ({
+    rev: _nlCardsRev,
+    bump: _nlCardsBump,
+    isDark: !!isDark,
+    colors: {
+      text: colors.text, textSecondary: colors.textSecondary, textTertiary: colors.textTertiary,
+      surface: colors.surface, border: colors.border, primary: colors.primary,
+    },
+    ownText: ownTextColor, ownMeta: ownMetaColor, otherMeta: otherMetaColor, otherInk,
+    bubbleRadius, fontSize: msgFontSize, t,
+    now: _nlLiveTick || Date.now(),
+    liveSeen: () => { _nlLiveSeenRef.current = true; },
+    resolve: (u) => { try { return _nlResolveRef.current ? _nlResolveRef.current(u) : u; } catch { return u; } },
+    formatLiveTimeRemaining,
+    lp: { get: _lpCacheGet, set: _lpCacheSet, skip: _lpShouldSkip, color: _lpHashColor },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [_nlCardsRev, _nlLiveTick, isDark, colors, ownTextColor, ownMetaColor, otherMetaColor, otherInk, bubbleRadius, msgFontSize, t]);
+  const _nlResolveRef = useRef(null);
+  _nlResolveRef.current = resolveMediaUri;
+  const _nlCtx = useMemo(() => {
+    const me = currentEmail || '';
+    const meLc = me.toLowerCase();
+    const sel = selectedIds;
+    const tt = (k, fb) => { try { const v = t(k); return (v && v !== k) ? v : fb; } catch { return fb; } };
+    const resolve = (u) => { try { return _nlResolveRef.current ? _nlResolveRef.current(u) : u; } catch { return u; } };
+    const localOf = (m) => {
+      try {
+        if (m._uploading) return _rebaseContainerUri(m._localUri) || null;
+        const idx = _indexedLocalUri(m);
+        if (idx) return idx;
+        if (m._localUri) return _rebaseContainerUri(m._localUri);
+        if (typeof m.local_path === 'string' && m.local_path) return _rebaseContainerUri(m.local_path.startsWith('file://') ? m.local_path : `file://${m.local_path}`);
+      } catch {}
+      return null;
+    };
+    const variants = (m) => {
+      if (!m.image_variants) return null;
+      try { return typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants; } catch { return null; }
+    };
+    return {
+      myEmail: me,
+      isGroup: conversationType === 'group',
+      isSavedMode: !!isSavedMode,
+      formatTime,
+      dateLabel: (d) => formatDateSeparator(d, t),
+      unreadLabel: (n) => (n > 1
+        ? (t('chatConv.unreadMessagesN', { n }) || `${n} mensagens não lidas`)
+        : n === 1 ? tt('chatConv.unreadMessagesOne', '1 mensagem não lida') : tt('chatConv.unreadMessages', 'Mensagens não lidas')),
+      deletedLabel: (own) => (own ? tt('chatConv.deletedMessageOwn', 'Você apagou esta mensagem') : tt('chatConv.deletedMessage', 'Esta mensagem foi apagada')),
+      editedLabel: (m) => { const ec = Number(m.edited_count) || 0; return ec > 1 ? `(${tt('chatConv.edited', 'editada')} ${ec}x)` : tt('chatConv.edited', 'editado'); },
+      forwardedLabel: (m) => {
+        const fc = Number(m.forward_count) || 0;
+        const base = fc >= 5 ? tt('chatConv.forwardedManyTimes', 'Encaminhada com frequência') : tt('chatConv.forwarded', 'Encaminhada');
+        const from = (m.forwarded_from_name && String(m.forwarded_from_name).trim()) || (m.forwarded_from ? emailToDisplayName(m.forwarded_from) : '') || '';
+        const fmt = tt('chatConv.forwardedFromFmt', '');
+        return from && fmt ? fmt.replace('{label}', base).replace('{name}', from) : base;
+      },
+      senderName: (m) => _friendlySenderName(m.sender_email, m.sender_name, me, t),
+      senderColor: senderColorFromEmail,
+      describeReply: (m) => {
+        const rt = m.reply_to || {};
+        const localRef = rt.id ? (messagesById.get(rt.id) || null) : null;
+        const em = String(rt.sender_email || localRef?.sender_email || '').trim();
+        const nm = String(rt.sender_name || localRef?.sender_name || '').trim();
+        const you = String(tt('chat.you', 'Você'));
+        const name = em && em.toLowerCase() === meLc
+          ? (you.charAt(0).toUpperCase() + you.slice(1))
+          : (nm || (em ? emailToDisplayName(em) : tt('chat.unknown', 'Desconhecido')));
+        const own = String(m.sender_email || '').toLowerCase() === meLc;
+        const color = conversationType === 'group' && !own ? senderColorFromEmail(em || nm || '') : (own ? ownTextColor : otherInk);
+        let rd = null;
+        try { rd = describeReplyTarget(m.reply_to, localRef, t); } catch { rd = null; }
+        const quote = (!rd?.italic && m.reply_quote_text) ? ('“' + String(m.reply_quote_text) + '”') : '';
+        let thumb = '';
+        try { const u = rd && rd.thumb && Array.isArray(rd.thumb.uris) ? rd.thumb.uris.find(Boolean) : null; if (typeof u === 'string') thumb = u; } catch {}
+        return { name, color, text: quote || (rd ? String(rd.label || '') : ''), italic: !!rd?.italic, thumb };
+      },
+      systemText: (m) => {
+        const c = typeof m.content === 'string' ? m.content : '';
+        const callData = _memoJSONSafe(c);
+        if (callData && callData.call_type) {
+          const isCaller = callData.caller_email === me;
+          const isVideo = callData.call_type === 'video';
+          const lbl = isVideo
+            ? (isCaller ? tt('call.videoCall', 'Videochamada') : tt('call.incomingVideo', 'Videochamada recebida'))
+            : (isCaller ? tt('call.audioCall', 'Chamada de voz') : tt('call.incomingAudio', 'Chamada recebida'));
+          return callData.started_at ? `${lbl} · ${formatTime(callData.started_at)}` : lbl;
+        }
+        const who = m.sender_name || (m.sender_email || '').split('@')[0] || '';
+        if (c.startsWith('disappearing_timer:')) {
+          const v = c.split(':')[1];
+          const L = { off: t('chat.disappearingOff'), '24 hours': t('chat.disappearing24h'), '7 days': t('chat.disappearing7d'), '90 days': t('chat.disappearing90d') };
+          return String(t('chat.disappearingChanged') || '').replace('{name}', who).replace('{timer}', L[v] || v);
+        }
+        if (c === 'screenshot_event' || c.startsWith('screenshot_event:')) return tt('chatConv.systemScreenshot', '{name} took a screenshot').replace('{name}', who);
+        if (c.startsWith('vanish_mode:')) {
+          const on = c.split(':')[1] === 'on';
+          return (on ? tt('chat.vanishModeChanged', '{name} turned on vanish mode') : tt('chat.vanishModeChangedOff', '{name} turned off vanish mode')).replace('{name}', who);
+        }
+        if (c.startsWith('__sys.user_left__|')) return tt('chatConv.userLeft', '{name} saiu do grupo').replace('{name}', c.split('|').slice(1).join('|'));
+        let txt = c;
+        if (txt && txt.startsWith('{')) { try { const p = JSON.parse(txt); txt = p.status || p.message || ''; } catch {} }
+        else if (txt) { try { txt = humanizeSystemText(txt, { t, myEmail: me, myNames: [user?.name].filter(Boolean), senderEmail: m.sender_email, formatName: emailToDisplayName }); } catch {} }
+        return txt ? String(txt) : null;
+      },
+      resolveMedia: (m) => {
+        const iv = variants(m);
+        const local = localOf(m);
+        let uri = local || '';
+        if (!uri && m.type === 'image') {
+          try { if (iv && typeof iv.display === 'string' && iv.display && !m._blurred) uri = api.getMediaUrl(iv.display); } catch {}
+        }
+        if (!uri && m.type === 'video') {
+          const p = m._posterUri || m.thumbnail_url || m.poster_url || m.video_thumb || (iv && (iv.poster || iv.thumb)) || '';
+          if (p) uri = /^(data:|file:)/.test(p) ? p : resolve(p);
+        }
+        if (!uri && m.type !== 'video') uri = resolve(m.file_url) || '';
+        const b64 = m.thumb_b64 || getThumbB64Sync(m.id);
+        let thumb = b64 ? `data:image/jpeg;base64,${b64}` : '';
+        if (!thumb && iv && typeof iv.thumb === 'string' && iv.thumb) { try { thumb = api.getMediaUrl(iv.thumb); } catch {} }
+        return { uri, thumb, w: Number(iv && iv.full_w) || 0, h: Number(iv && iv.full_h) || 0 };
+      },
+      resolveSticker: (m) => ({ uri: localOf(m) || resolve(m.file_url || m.content) || '' }),
+      jumbo: (txt) => jumboEmojiSize(txt),
+      isVideoNote: isVideoNoteMessage,
+      hasBlockMarkdown: _hasBlockMarkdown,
+      hasSmartActions: (c) => { try { return detectSmartActions(c).length > 0; } catch { return true; } },
+      hasCustomEmoji: (c) => { try { const ce = _splitCustomEmoji(c); return ce.length > 1 || !!(ce[0] && ce[0].ce); } catch { return false; } },
+      isAudioPlayed: (m) => { try { return !!(m.played_at || m._played || VoiceNote.isLocallyPlayed(m.id)); } catch { return false; } },
+      fileLabel: tt('chat.file', 'Arquivo'),
+      selection: { on: !!selectionMode, has: (m) => !!(sel && sel.has(m.id)) },
+      cards: _nlCards, // [fase 2] nativeRowCards
+      // [2026-10-15 native-list fase 2] texto rico (nativeThreadList → richText/
+      // _blocksFor/_smartNodes/_translationNodes): MESMAS regras/cores do render JS.
+      p2: {
+        fontSize: msgFontSize, lineHeight: msgLineHeight, isDark: !!isDark,
+        ownText: ownTextColor, otherText: colors.text, ownMeta: ownMetaColor, otherMeta: otherMetaColor, otherInk,
+        codeBlockBg: colors?.codeBlockBg || 'rgba(0,0,0,0.06)',
+        accent: (colors && (colors.primary || colors.accent)) || '#25D366',
+        muted: (colors && (colors.textSecondary || colors.textTertiary)) || 'rgba(120,120,120,0.9)',
+        primary: colors.primary || '#111111', errorColor: colors.error || '#EF4444',
+        contentMax: _WA_TEXT_AVAIL,
+        t, label: tt,
+        splitCustomEmoji: _splitCustomEmoji,
+        parseMentions: _parseMsgMentions,
+        resolveMention: _resolveMention,
+        smartActions: (c) => detectSmartActions(c),
+        translation: (m) => (m && translatedMessages ? (translatedMessages[m.id] || null) : null),
+        mentionsMe: (m) => {
+          try {
+            const mm = m.mentions;
+            const arr = Array.isArray(mm) ? mm : (typeof mm === 'string' && mm ? JSON.parse(mm) : null);
+            if (!Array.isArray(arr) || !meLc) return false;
+            return arr.some(e => String(e || '').toLowerCase() === meLc) || arr.includes('@everyone') || arr.includes('@admins');
+          } catch { return false; }
+        },
+        mentionedBg: (m) => { try { return isUserMentioned(m, me) ? (isDark ? '#2A2A2E' : '#E2E2E6') : null; } catch { return null; } },
+        pinnedShown: (m) => {
+          if (!pinnedIdSet || !pinnedIdSet.has(String(m.id))) return false;
+          if (m.type === 'sticker' || m.type === 'gif' || m.type === 'image' || m.type === 'video') return false;
+          return m.type !== 'text' || String(m.content || '').length > 300;
+        },
+        vanishes: (m) => {
+          if (!(disappearingTimer > 0)) return false;
+          const s0 = disappearingSetAt ? Date.parse(disappearingSetAt) : NaN;
+          if (!Number.isFinite(s0)) return false;
+          const ct = Date.parse(m.created_at);
+          return !Number.isFinite(ct) || ct >= s0;
+        },
+      },
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards]);
+  const _nlTheme = useMemo(() => ({
+    ownBubble: ownBubbleBg, otherBubble: otherBubbleBg, ownText: ownTextColor, otherText: otherInk,
+    ownMeta: ownMetaColor, otherMeta: otherMetaColor, link: otherInk, read: '#53BDEB', wall: chatWallBg,
+    pillBg: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)', pillText: isDark ? '#D1D1D6' : '#3C3C43',
+    systemText: colors.textTertiary || (isDark ? '#8E8E93' : '#6B6B70'), accent: isDark ? '#F5F5F7' : '#111111',
+    ownQuote: 'rgba(255,255,255,0.12)', otherQuote: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+    unreadBg: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', unreadText: isDark ? '#D1D1D6' : '#3C3C43',
+    reactBg: isDark ? '#2C2C2E' : '#FFFFFF', reactBorder: chatWallBg,
+    selection: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)', highlight: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)',
+    failed: '#E5484D',
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [isDark, colors.textTertiary]);
+  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || threadListData.length === 0)); // vazio → estado vazio JS
+  const _nlActRef = useRef(null);
+  _nlActRef.current = { handleLongPress, handleDoubleTap, handleMessageInfo, toggleSelection, handleReact, safeScrollToMsg, selectionMode,
+    promptFailed: _promptFailedMsg, tapRetry: _tapRetryFailed, smartAction: _onSmartAction }; // [fase 2]
+  // [fase 2] Ações de cartões (nativeRowCards): o bloco de cartões define
+  // _nlCardActionRef.current = (item, target, action, index) => bool.
+  const _nlCardActionRef = useRef(null);
+  _nlCardActionRef.current = (item, target, action) => {
+    try {
+      require('../components/chat/nativeRowCards').runCardAction(target || item, action, {
+        conversationId, currentEmail, user, t, router, api, Linking, Share, Haptics, safeAlert,
+        setMessages, mapKeep: _mapKeep, cacheOne: _cacheOne, pollVoteLocksRef,
+        setMapModalData, setRoundVideoViewer, setPlaylistEditor, setScheduleToast, startCall,
+        liveLocIntervalRef, liveLocTimeoutRef, liveLocMsgIdRef, setLiveLocActive,
+        resolve: (u) => { try { return resolveMediaUri(u); } catch { return u; } },
+      });
+      return true;
+    } catch { return false; }
+  };
+  // [fase 2] Ações de texto (smart actions / tradução / reenviar) → MESMOS handlers do JS.
+  const _nlTextAction = (target, action) => {
+    const A = _nlActRef.current;
+    const u = String(action || '');
+    if (u === 'retry') { A.promptFailed(target); return true; }
+    if (u.startsWith('smart:')) {
+      let acts = [];
+      try { acts = detectSmartActions(target.content) || []; } catch {}
+      const a = acts[Number(u.slice(6)) || 0];
+      if (a) A.smartAction(target, a);
+      return true;
+    }
+    if (u === 'tr:toggle') {
+      setTranslatedMessages(prev => {
+        const cur = prev[target.id];
+        if (!cur) return prev;
+        return { ...prev, [target.id]: { ...cur, _showOriginal: !cur._showOriginal } };
+      });
+      return true;
+    }
+    return false;
+  };
+  const _nlOpenMedia = useCallback((item, index) => {
+    const isAlbum = item && item._type === 'album';
+    const its = isAlbum ? (item._items || []) : null;
+    const m = isAlbum ? its[Math.max(0, Math.min(its.length - 1, index || 0))] : item;
+    if (!m || m.deleted_at || !m.file_url) return;
+    if (m.type === 'sticker') {
+      const sid = Number(m.id);
+      setStickerSheet({ messageId: Number.isFinite(sid) && sid > 0 ? sid : null, url: m.file_url || m.content });
+      return;
+    }
+    if (m._uploading) return;
+    if (!isAlbum && m.type !== 'gif') { _nlActRef.current.handleDoubleTap(m); return; }
+    const b64 = m.thumb_b64 || getThumbB64Sync(m.id);
+    setMediaViewer({
+      visible: true,
+      fileUrl: m.file_url,
+      fileName: m.file_name || m.type,
+      fileSize: m.file_size || 0,
+      type: m.type === 'gif' ? 'image' : m.type,
+      messageId: m.id,
+      blurhash: m.blurhash || null,
+      placeholderUri: b64 ? `data:image/jpeg;base64,${b64}` : null,
+      senderName: m.sender_name || (m.sender_email || '').split('@')[0] || '',
+      senderEmail: m.sender_email || '',
+      createdAt: m.created_at || m.createdAt || null,
+      ...(isAlbum ? {
+        albumIds: its.filter(x => x && !x.deleted_at && x.file_url).map(x => x.id),
+        fromAlbum: true,
+        albumClientIds: its.map(x => x && (x._client_id || x.client_message_id)).filter(Boolean),
+        clientId: m._client_id || m.client_message_id || null,
+      } : {}),
+    });
+  }, []);
+  const _nlOpenFile = useCallback((m) => {
+    if (!m || !m.file_url) return;
+    const open = (uri) => {
+      const ext = (m.file_name || '').split('.').pop()?.toLowerCase() || 'file';
+      const PREV = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'json', 'md', 'log', 'xml', 'yml', 'ini', 'conf']);
+      setMediaViewer({
+        visible: true, fileUrl: uri, fileName: m.file_name || m.content || 'file', fileSize: m.file_size || 0,
+        type: PREV.has(ext) ? ext : 'file', messageId: m.id,
+        senderName: m.sender_name || (m.sender_email || '').split('@')[0] || '', senderEmail: m.sender_email || '',
+        createdAt: m.created_at || m.createdAt || null, mimeType: m.mime_type || (ext ? `application/${ext}` : 'application/octet-stream'),
+      });
+    };
+    let uri = null;
+    try { uri = _nlResolveRef.current ? _nlResolveRef.current(m.file_url) : m.file_url; } catch { uri = m.file_url; }
+    if (typeof uri === 'string' && uri.startsWith('file://')) { open(uri); return; }
+    try {
+      const remote = api.getMediaUrl(m.file_url);
+      cacheMedia(remote, { force: true, conversationId, messageId: m.id, received: String(m.sender_email || '').toLowerCase() !== String(currentEmail || '').toLowerCase(), mediaType: m.type })
+        .then((local) => { if (mountedRef.current) open(typeof local === 'string' && local ? local : remote); })
+        .catch(() => { if (mountedRef.current) open(remote); });
+    } catch { open(uri || m.file_url); }
+  }, [conversationId, currentEmail]);
+  const _nlToggleAudio = useCallback((m) => {
+    if (!m || !m.file_url) return;
+    try {
+      const st = VoiceNote.getVoiceState();
+      if (st.item && String(st.item.messageId) === String(m.id)) { VoiceNote.toggleVoiceNote({ messageId: m.id }); return; }
+      let uri = null;
+      try { uri = _indexedLocalUri(m) || (m._localUri ? _rebaseContainerUri(m._localUri) : null); } catch {}
+      if (!uri) uri = _nlResolveRef.current ? _nlResolveRef.current(m.file_url) : m.file_url;
+      VoiceNote.playVoiceNote({
+        messageId: m.id, url: m.file_url, uri, conversationId,
+        durationMs: Math.max(0, (Number(m.duration) || 0) * 1000),
+        isOwn: String(m.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase(),
+      }).catch(() => {});
+    } catch {}
+  }, [conversationId, currentEmail]);
+  const _nlOnRowPress = useCallback(({ item, part, url, index }) => {
+    const A = _nlActRef.current;
+    if (!item || item._type === 'separator' || item._type === 'unread_separator') return;
+    const target = item._type === 'album' ? (item._items || [])[0] : item;
+    if (!target) return;
+    if (A.selectionMode) { if (target.type !== 'system') A.toggleSelection(target.id); return; }
+    switch (part) {
+      case 'retry': if (!target.deleted_at) A.promptFailed(target); return;
+      // nota de vídeo toca INLINE no nativo (play/pause/end) — JS só observa.
+      case 'vnote': return;
+      case 'action': {
+        if (_nlTextAction(target, url)) return;
+        try { if (typeof _nlCardActionRef.current === 'function') _nlCardActionRef.current(item, target, url, index); } catch {}
+        return;
+      }
+      case 'media': _nlOpenMedia(item, index); return;
+      case 'audio': _nlToggleAudio(target); return;
+      case 'file': _nlOpenFile(target); return;
+      case 'reply': if (target.reply_to && target.reply_to.id) A.safeScrollToMsg({ id: target.reply_to.id }); return;
+      case 'reaction': {
+        const emoji = url;
+        if (!emoji) return;
+        const meLc = String(currentEmail || '').toLowerCase();
+        const users = [];
+        for (const r of (target.reactions || [])) {
+          if ((r?.emoji || r?.reaction) !== emoji) continue;
+          const us = typeof r.users === 'string' ? r.users.split(',') : (r.users || []);
+          for (const u of us) if (u && !users.includes(u)) users.push(u);
+        }
+        if (users.some(u => String(u).toLowerCase() === meLc)) A.handleReact(target.id, emoji);
+        else setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) });
+        return;
+      }
+      case 'link': {
+        const u = String(url || '');
+        try {
+          if (u.startsWith('hashtag:')) { const bare = u.slice(8).replace(/^#/, ''); if (bare) router.push({ pathname: '/hashtag/[tag]', params: { tag: bare } }); return; }
+          if (u.startsWith('mention:')) {
+            // [fase 2] 'mention:@handle|destino' (destino = email resolvido | '@meta') — mesma regra do TextWithLinks.
+            const rest = u.slice(8);
+            const bar = rest.indexOf('|');
+            const h = (bar >= 0 ? rest.slice(0, bar) : rest).replace(/^@/, '').trim();
+            const to = bar >= 0 ? rest.slice(bar + 1) : '';
+            if (!h || to === '@meta') return;
+            if (h.includes('@')) require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email: h, type: 'direct' } }, { replace: true });
+            else if (to) router.push({ pathname: '/u/[username]', params: { username: to.includes('@') ? to : h } });
+            return;
+          }
+          if (/chatyy\.com\.br\/docs\//.test(u)) { router.push({ pathname: '/documentos-viewer', params: { url: u } }); return; }
+          if (/^https?:\/\//i.test(u)) Linking.openURL(u).catch(() => {});
+        } catch {}
+        return;
+      }
+      default:
+        if (target.type === 'system') return;
+        if (target.deleted_at) return; // JS: toque em lápide não faz nada
+        if (target._failed && String(target.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase()) { A.tapRetry(target); return; }
+        if ((target.type === 'image' || target.type === 'video' || target.type === 'gif' || target.type === 'sticker') && !target.deleted_at) { _nlOpenMedia(item, 0); return; }
+        A.handleDoubleTap(target);
+    }
+  }, [_nlOpenMedia, _nlOpenFile, _nlToggleAudio, currentEmail]);
+  const _nlOnRowLongPress = useCallback(({ item, key, index, anchor }) => {
+    const A = _nlActRef.current;
+    if (!item || item._type === 'separator' || item._type === 'unread_separator') return;
+    const target = item._type === 'album' ? ((item._items || [])[index || 0] || (item._items || [])[0]) : item;
+    if (!target) return;
+    if (A.selectionMode) { A.toggleSelection(target.id); return; }
+    // [fase 2] O nativo já deu o haptic + "lift" e mandou o snapshot do balão →
+    // abre o MESMO overlay de lift do caminho FlashList (MessageLiftOverlay).
+    if (anchor && anchor.uri && LIFT_AVAILABLE && target.type !== 'system' && !liftPendingRef.current) {
+      try { Keyboard.dismiss(); } catch {}
+      const isOwnMsg = String(target.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase();
+      const a = { ...anchor, isOwn: isOwnMsg };
+      if (ctxAnchorRef.current) { releaseBubbleAnchor(ctxAnchorRef.current); }
+      ctxAnchorRef.current = a;
+      setCtxMenuH(0);
+      setCtxAnchor(a);
+      setSelectedMsg(target);
+      try { if (key) flashListRef.current?.setLiftedKey?.(key); } catch {}
+      return;
+    }
+    A.handleLongPress(target);
+  }, [currentEmail]);
+  const _nlOnSwipe = useCallback(({ item, dir }) => {
+    const A = _nlActRef.current;
+    const target = item && item._type === 'album' ? (item._items || [])[0] : item;
+    if (!target || target.type === 'system') return;
+    if (dir === 'info') { A.handleMessageInfo(target); return; }
+    setReplyTo(_replyTargetOf(target));
+    try { inputRef.current?.focus(); } catch {}
+  }, []);
+  const _nlOnFallback = useCallback((reason) => { _nl.fallback(reason); }, [_nl.fallback]);
+  // [fase 2] Pílula de data flutuante NATIVA (mesmo estilo do pill JS abaixo);
+  // com ela ligada o pill JS não aparece. Esconde quando só há 1 grupo de data
+  // (o nativo também esconde quando há só 1 separador).
+  const _nlSticky = _nl.on && nativeListApi() >= 2;
+  const _nlStickyCfg = useMemo(() => (_nlSticky ? {
+    on: 1, top: 8, shadow: 1,
+    bg: isDark ? 'rgba(20,20,20,0.92)' : 'rgba(255,255,255,0.95)',
+    fg: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)',
+  } : undefined), [_nlSticky, isDark]);
+  // Destaque do salto p/ citação/busca/fixada (o JS marca replyJumpHighlightId).
+  useEffect(() => {
+    if (!_nl.on || replyJumpHighlightId == null) return;
+    try {
+      const d = threadDataRef.current || [];
+      const s = String(replyJumpHighlightId);
+      const it = d.find(m => m && (String(m.id ?? '') === s || (m._type === 'album' && (m._items || []).some(c => c && String(c.id ?? '') === s))));
+      if (it) flashListRef.current?.flashKey?.(msgKeyExtractor(it));
+    } catch {}
+  }, [_nl.on, replyJumpHighlightId, msgKeyExtractor]);
+  // Player de voz global → estado do áudio nas células nativas.
+  useEffect(() => {
+    if (!_nl.on) return undefined;
+    let posUnsub = null; let posId = null; let surfUnsub = null;
+    const push = () => {
+      try {
+        const st = VoiceNote.getVoiceState();
+        const id = st.item ? String(st.item.messageId) : '';
+        const { positionMs, durationMs } = VoiceNote.getVoicePosition();
+        flashListRef.current?.setAudioState?.({ id, playing: !!st.playing, loading: !!st.loading, pos: positionMs || 0, dur: durationMs || 0 });
+        if (id !== posId) {
+          try { posUnsub && posUnsub(); } catch {}
+          try { surfUnsub && surfUnsub(); } catch {}
+          posUnsub = null; surfUnsub = null; posId = id;
+          if (id) {
+            posUnsub = VoiceNote.subscribeVoicePosition(id, (p) => {
+              try { flashListRef.current?.setAudioState?.({ id, playing: !!p.playing, loading: false, pos: p.positionMs || 0, dur: p.durationMs || 0 }); } catch {}
+            });
+            if ((threadDataRef.current || []).some(m => m && String(m.id ?? '') === id)) surfUnsub = VoiceNote.mountVoiceSurface(id);
+          }
+        }
+      } catch {}
+    };
+    const unsub = VoiceNote.subscribeVoice(push);
+    push();
+    return () => { try { unsub(); } catch {} try { posUnsub && posUnsub(); } catch {} try { surfUnsub && surfUnsub(); } catch {} };
+  }, [_nl.on]);
+
   // ── Drag-and-drop on web: arrastar foto/vídeo/arquivo pro chat envia ───
   // Native (iOS/Android) doesn't expose HTML drag events; the existing
   // picker + paperclip UI handles attachments there. Multi-file drops
@@ -32064,7 +33084,7 @@ function ChatConversationInner() {
             <IconStar size={22} color={colors.text} />
           </TouchableOpacity>
           {/* [2026-10-07 group-admin] "Não permitir encaminhar": hidden for non-admins (ctx menu already did; multi-select bypassed it → 403). */}
-          {!(forwardingDisabled && !isGroupAdmin) && (
+          {!(forwardingDisabled && !isGroupAdmin) && !_advPriv.enabled && (
           <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.forward') || 'Encaminhar'}>
             <IconForward size={22} color={colors.text} />
           </TouchableOpacity>
@@ -32165,12 +33185,14 @@ function ChatConversationInner() {
                 "online"). Igual ao WhatsApp, o status é só o TEXTO "online"
                 (P&B). PresencePulse segue definido p/ outros usos. */}
           </View>
-          <View style={{ flex: 1 }}>
+          {/* [2026-10-14 motion] linha de presença que chega depois desliza (sem salto do nome) */}
+          <HeaderStackReveal hasSub={presenceText !== ''} style={_HDR_STACK_STYLE}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
               <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                 {conversationName}
               </Text>
               {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
+              {_advPriv.enabled && <IconShield size={12} color={colors.textSecondary} />}
             </View>
             {(presenceText !== '') && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -32197,7 +33219,7 @@ function ChatConversationInner() {
                 <TypingDotsFade visible={isTyping} color={colors.textSecondary} />
               </View>
             )}
-          </View>
+          </HeaderStackReveal>
         </TouchableOpacity>
         {/* Pin counter chip — only when there are pinned messages AND the
             banner is dismissed. Tap re-opens the banner so the user can
@@ -32308,6 +33330,11 @@ function ChatConversationInner() {
           new participant can't miss the policy. Tap → opens the picker;
           the (X) on the right snoozes per-(conv, timer) — if the duration
           changes later the banner re-surfaces with the new value. */}
+      {/* [2026-10-14 adv-privacy] aviso fixo + marca d'água (web) + folha */}
+      {_advPriv.banner}
+      {_advPriv.watermark}
+      {_advPriv.sheet}
+
       {disappearingTimer > 0 && !vanishTimerBannerDismissed && (
         <TouchableOpacity
           style={[styles.disappearingBanner, { backgroundColor: 'rgba(255,193,7,0.12)' }]}
@@ -32706,7 +33733,7 @@ function ChatConversationInner() {
           omit the countdown entirely. */}
       {/* [2026-10-13 bia-summary] Muitas não lidas (≥ 30): chip discreto
           "30 não lidas · Resumir" → folha da Bia no alcance Não lidas. */}
-      {ConversationSummarySheet && !summaryChipDismissed && !showSearchBar && (initialUnreadCountRef.current || 0) >= 30 ? (
+      {ConversationSummarySheet && !_advPriv.enabled && !summaryChipDismissed && !showSearchBar && (initialUnreadCountRef.current || 0) >= 30 ? (
         <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 2 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
             <TouchableOpacity
@@ -33281,12 +34308,49 @@ function ChatConversationInner() {
           </View>
         )}
         <ThreadKeyboardGestureArea>
-        {THREAD_IS_FLASH ? (
+        {_nl.on ? (
+        // [2026-10-14 native-list] lista NATIVA (ver _nlCtx acima). Mesmos
+        // dados (threadListData, mais antiga → mais nova) e mesmos handlers de
+        // rolagem/visibilidade/recibos que a FlashList; o ref implementa o
+        // subconjunto do FlashList usado pelo threadScroll.
+        <View style={{ flex: 1 }}>
+        <ChatyyMessageList
+          ref={flashListRef}
+          data={threadListData}
+          keyOf={msgKeyExtractor}
+          ctx={_nlCtx}
+          theme={_nlTheme}
+          fontSize={msgFontSize}
+          lineHeight={msgLineHeight}
+          bubbleRadius={bubbleRadius}
+          isDark={isDark}
+          keyboardDismissMode={THREAD_LIST_KEYBOARD_DISMISS_MODE}
+          bottomInset={Spacing.sm}
+          onRowPress={_nlOnRowPress}
+          onRowLongPress={_nlOnRowLongPress}
+          onSwipeReply={_nlOnSwipe}
+          onLoadOlder={onThreadReachedOldest}
+          onScroll={handleFlatListScroll}
+          onScrollBeginDrag={onThreadScrollBeginDrag}
+          onScrollEndDrag={onThreadScrollEndDrag}
+          onViewableItemsChanged={onViewableItemsChanged}
+          onFallback={_nlOnFallback}
+          stickyDate={_nlStickyCfg}
+        />
+        {/* digitando… fica logo acima do composer (a lista invertida mantém o fim) */}
+        {listHeader}
+        {/* "carregando antigas" no topo */}
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center' }}>{listFooter}</View>
+        </View>
+        ) : THREAD_IS_FLASH ? (
         // [2026-10-07 flashlist] FlashList v2 thread (see THREAD_LIST_ENGINE).
         // FlatList-only props (windowSize, maxToRenderPerBatch, initialNumToRender,
         // updateCellsBatchingPeriod, removeClippedSubviews, onScrollToIndexFailed)
         // don't exist here — v2 lays rows out synchronously from per-type size
         // estimates and scrollToIndex works for rows outside the window.
+        // [2026-10-14 open-still] WaOpenGate: nativo segura a lista invisível até
+        // as bolhas da abertura medirem (sem layout provisório pintado).
+        <WaOpenGate>
         <FlashList
           ref={flashListRef}
           data={threadListData}
@@ -33326,6 +34390,7 @@ function ChatConversationInner() {
           ListFooterComponent={THREAD_OLDEST_FIRST ? listHeader : listFooter}
           ListEmptyComponent={listEmpty}
         />
+        </WaOpenGate>
         ) : (
         <FlatList
           ref={flatListRef}
@@ -33768,7 +34833,7 @@ function ChatConversationInner() {
           Top must clear safe-area + header (~56) + small breath, otherwise
           the pill lands on top of the conversation title (foto Rene Reis
           2026-05-05 — "sexta-feira" sobrepunha o header). */}
-      <ThreadComposerHost store={floatingDateStore} render={(floatingDate) => (!!floatingDate && (
+      <ThreadComposerHost store={floatingDateStore} render={(floatingDate) => (!!floatingDate && !_nlSticky /* [native-list fase 2] pílula nativa */ && (
         <Animated.View
           pointerEvents="none"
           style={{
@@ -33790,7 +34855,7 @@ function ChatConversationInner() {
 
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
           Animated entrance: slide up + fade in for the "I'm replying" cue. */}
-      {(replyTo || editingMsg) && (() => {
+      {(replyTo || editingMsg) && !(shouldUseNativeComposer() && !isSavedMode && !composerBlocked && !isRecording) /* [2026-10-14 native-composer] barra nativa */ && (() => {
         // [VISUAL-G8, 2026-05-19] Composer reply chip bar color = quoted sender's color.
         // For edit-mode use brand purple (editing your own msg, no quoted sender).
         // [2026-10-08 chat-beauty-chrome] Monochrome: the gray sender palette
@@ -33910,20 +34975,23 @@ function ChatConversationInner() {
       )}
 
       {/* Scroll to bottom FAB */}
-      {showScrollDown && (
-        <ScrollDownFabAnim
-          onPress={() => {
-            threadScroll.jumpToLatest(); // [2026-10-08 chat-gaps2] longe = salto instantâneo
-            setShowScrollDown(false);
-            setNewMsgCount(0);
-            try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
-          }}
-          isDark={isDark}
-          colors={colors}
-          newMsgCount={newMsgCount}
-          t={t}
-        />
-      )}
+      {/* [2026-10-14 motion] SpringPresence: entra E sai com mola (antes sumia seco) */}
+      <View style={_FAB_ANCHOR} pointerEvents="box-none">
+      <SpringPresence visible={!!showScrollDown} from={_FAB_FROM} style={_FAB_WRAP}>
+          <ScrollDownFabAnim
+            onPress={() => {
+              threadScroll.jumpToLatest(); // [2026-10-08 chat-gaps2] longe = salto instantâneo
+              setShowScrollDown(false);
+              setNewMsgCount(0);
+              try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+            }}
+            isDark={isDark}
+            colors={colors}
+            newMsgCount={newMsgCount}
+            t={t}
+          />
+      </SpringPresence>
+      </View>
 
       {/* Multi-Select Toolbar removed — actions moved into the selection header at top */}
 
@@ -33961,6 +35029,149 @@ function ChatConversationInner() {
       // [2026-10-08 chat-beauty-chrome] Neutral (iOS systemGray) glyph tint for
       // the in-pill icons — was WhatsApp's teal-gray #8696a0.
       const _chromeIcon = isDark ? '#a1a1a6' : '#6e6e73';
+      // [2026-10-14 native-composer] Handlers do campo de texto extraídos (MESMO corpo de
+      // antes) para o TextInput JS e o composer nativo compartilharem a lógica
+      // (digitando, menções, /bot, emoji custom, foco, barra de formatação).
+      const _onComposerText = (text) => {
+                lastKeystrokeRef.current = Date.now();
+                setInputText(text);
+                // Custom animated emoji (Telegram Premium-style): when the
+                // input contains a `:handle:` token and we haven't hydrated
+                // the user's custom emoji map yet, fetch it once. Cached on
+                // the module so other chats reuse it without a refetch.
+                try {
+                  if (/:[a-z0-9_]{2,32}:/i.test(text) && !_isCustomEmojiFetched()) {
+                    _markCustomEmojiFetched();
+                    api.customEmojiMy?.().then((r) => {
+                      if (r?.success) {
+                        const items = r.items || r.data?.items || [];
+                        const map = {};
+                        for (const it of items) {
+                          if (it?.emoji_handle && it?.webp_url) {
+                            map[it.emoji_handle.toLowerCase()] = it.webp_url;
+                          }
+                        }
+                        _setCustomEmojiMap(map);
+                      }
+                    }).catch(() => {});
+                  }
+                } catch {}
+                if (conversationType === 'group') {
+                  // Avoid redundant setShowMentionPopup(false) on every keystroke —
+                  // setState still schedules a render pass even if the value is
+                  // the same, which makes fast typing stutter on long threads.
+                  const next = isMentioning(text);
+                  setShowMentionPopup(prev => prev === next ? prev : next);
+                }
+                // Bot slash-command detection. Show the popover the moment the
+                // user types `/` (or any /word with no whitespace yet) IF this
+                // conversation has at least one bot member. Hide as soon as a
+                // space follows the command or the slash is removed.
+                try {
+                  // PERF: only scan the member list when the text actually
+                  // starts with `/`. Before, this .some() ran on EVERY keystroke
+                  // in EVERY conversation (even 1:1s with no bots) just to decide
+                  // a popup that 99% of keystrokes never show. The slash regex is
+                  // a cheap bail-out that skips the scan for normal typing.
+                  const slashMatch = /^\/(\w*)$/.exec(text);
+                  let shouldShow = false;
+                  if (slashMatch) {
+                    const hasBots = (membersRef.current || []).some(m =>
+                      typeof m?.email === 'string' && m.email.toLowerCase().endsWith('@bots.chatyy')
+                    );
+                    shouldShow = hasBots;
+                  }
+                  setShowBotPopup(prev => prev === shouldShow ? prev : shouldShow);
+                  if (shouldShow) setBotCommandFilter((slashMatch[1] || '').toLowerCase());
+                } catch {}
+                // Typing indicator: fire IMMEDIATELY on first keystroke, then
+                // throttle subsequent events to 1 every 3s. Auto-stop 4s after
+                // last keystroke. Old code waited 500ms of silence which meant
+                // fast typers NEVER triggered the indicator.
+                const TYPING_THROTTLE_MS = 3000;
+                // [STAGE-E 2026-05-20 GAP#4] 4s → 3s WhatsApp parity
+                const TYPING_STOP_MS = 3000;
+                const now = Date.now();
+                if (text.length > 0) {
+                  if (now - typingLastSentAt.current > TYPING_THROTTLE_MS) {
+                    typingLastSentAt.current = now;
+                    // [2026-10-06 rt-client] Typing é SÓ via WS. O POST
+                    // chat_typing (1 a cada 3 s = 20 req/min por digitador)
+                    // foi removido: o hub Go agora replica typing/stopped_typing
+                    // também no canal per-user (chat_user_<membro>) de cada
+                    // membro — a LISTA vê "digitando…" sem passar pelo PHP. O
+                    // gate de privacidade que vivia no PHP (read_receipts off /
+                    // invisível) está em mailWs.typingAllowed() (hidratado por
+                    // chat_get_settings abaixo + tela de privacidade).
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendTyping(conversationId);
+                    } catch {}
+                  }
+                  // Reset auto-stop timer on every keystroke
+                  if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
+                  typingStopTimerRef.current = setTimeout(() => {
+                    // Guard against firing into a destroyed conversation —
+                    // unmount clears the timer ref, but a race can still
+                    // schedule this callback after the ref is cleared.
+                    if (!mountedRef.current) return;
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendStoppedTyping?.(conversationId);
+                    } catch {}
+                    // [2026-10-06 rt-client] stop também só via WS (POST removido).
+                    typingLastSentAt.current = 0;
+                  }, TYPING_STOP_MS);
+                } else if (typingStopTimerRef.current) {
+                  // Input emptied — stop immediately
+                  clearTimeout(typingStopTimerRef.current);
+                  typingStopTimerRef.current = null;
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    mailWs.sendStoppedTyping?.(conversationId);
+                  } catch {}
+                  // [2026-10-06 rt-client] stop só via WS (POST chat_typing removido).
+                  typingLastSentAt.current = 0;
+                }
+      };
+      const _onComposerFocus = () => {
+                setInputFocused(true);
+                // [2026-10-10] Tocar no campo com figurinhas/GIF abertos = teclado no lugar do painel.
+                setShowStickerPicker(false);
+                setShowGifPicker(false);
+      };
+      const _onComposerBlur = () => {
+                setInputFocused(false);
+                // WhatsApp parity: kill "X está digitando…" on the peer's
+                // screen IMMEDIATELY when the user taps away, instead of
+                // letting it linger up to TYPING_STOP_MS (3s) on the idle
+                // auto-stop timer. Mirror the "input emptied" path above.
+                if (typingStopTimerRef.current) {
+                  clearTimeout(typingStopTimerRef.current);
+                  typingStopTimerRef.current = null;
+                }
+                if (typingLastSentAt.current) {
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    mailWs.sendStoppedTyping?.(conversationId);
+                  } catch {}
+                  // [2026-10-06 rt-client] stop só via WS (POST chat_typing removido).
+                  typingLastSentAt.current = 0;
+                }
+      };
+      const _onComposerSelection = (e) => {
+                const sel = e.nativeEvent.selection;
+                inputSelectionRef.current = sel;
+                // [2026-10-05] WhatsApp/iMessage: a barra de formatação aparece
+                // SÓ enquanto há TEXTO SELECIONADO e some ao desmarcar. Selecionou
+                // → barra em cima do campo → 1 toque em B/I/S formata a seleção →
+                // seleção vira cursor → barra some. Zero "Aa", zero passo extra.
+                if (sel && sel.end > sel.start) {
+                  if (!showFormatToolbar) setShowFormatToolbar(true);
+                } else if (showFormatToolbar) {
+                  setShowFormatToolbar(false);
+                }
+      };
       // [2026-10-08 chat-beauty-chrome] Web: RN-web's <textarea> never grows
       // (the 2nd line was clipped). Size it to its content after each composer
       // render — up to ~6 lines (140px), then it scrolls. Native TextInput
@@ -34317,6 +35528,10 @@ function ChatConversationInner() {
             </View>
           </View>
         )}
+        {/* [2026-10-14 native-composer] Ponto de troca ISOLADO: binário com o
+            modules/expo-chat-composer (e __chatyy_native_composer !== false) usa o
+            composer NATIVO; senão (ou se ele falhar) o JS abaixo, idêntico. */}
+        {(() => { const _jsInputBar = () => (
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
           // [2026-10-08 chat-beauty-chrome] same surface as the header + hairline
           backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
@@ -34406,6 +35621,10 @@ function ChatConversationInner() {
             <View style={{ flex: 1, position: 'relative' }}>
             <TextInput
               ref={inputRef}
+              // [2026-10-14 open-still] web: <textarea> nasce com rows=2 (default) e só
+              // encolhe no rAF do auto-ajuste → composer −18 px e a lista inteira
+              // descia 18 px logo após abrir. rows=1 = já nasce na altura final.
+              {...(Platform.OS === 'web' ? { rows: 1 } : null)}
               // KeyboardGestureArea (Android interactive dismiss) is scoped to this input.
               nativeID={THREAD_COMPOSER_NATIVE_ID}
               style={{
@@ -34458,108 +35677,7 @@ function ChatConversationInner() {
               autoCorrect={autocorrectOn}
               autoCapitalize={autocorrectOn ? 'sentences' : 'none'}
               value={inputText}
-              onChangeText={(text) => {
-                lastKeystrokeRef.current = Date.now();
-                setInputText(text);
-                // Custom animated emoji (Telegram Premium-style): when the
-                // input contains a `:handle:` token and we haven't hydrated
-                // the user's custom emoji map yet, fetch it once. Cached on
-                // the module so other chats reuse it without a refetch.
-                try {
-                  if (/:[a-z0-9_]{2,32}:/i.test(text) && !_isCustomEmojiFetched()) {
-                    _markCustomEmojiFetched();
-                    api.customEmojiMy?.().then((r) => {
-                      if (r?.success) {
-                        const items = r.items || r.data?.items || [];
-                        const map = {};
-                        for (const it of items) {
-                          if (it?.emoji_handle && it?.webp_url) {
-                            map[it.emoji_handle.toLowerCase()] = it.webp_url;
-                          }
-                        }
-                        _setCustomEmojiMap(map);
-                      }
-                    }).catch(() => {});
-                  }
-                } catch {}
-                if (conversationType === 'group') {
-                  // Avoid redundant setShowMentionPopup(false) on every keystroke —
-                  // setState still schedules a render pass even if the value is
-                  // the same, which makes fast typing stutter on long threads.
-                  const next = isMentioning(text);
-                  setShowMentionPopup(prev => prev === next ? prev : next);
-                }
-                // Bot slash-command detection. Show the popover the moment the
-                // user types `/` (or any /word with no whitespace yet) IF this
-                // conversation has at least one bot member. Hide as soon as a
-                // space follows the command or the slash is removed.
-                try {
-                  // PERF: only scan the member list when the text actually
-                  // starts with `/`. Before, this .some() ran on EVERY keystroke
-                  // in EVERY conversation (even 1:1s with no bots) just to decide
-                  // a popup that 99% of keystrokes never show. The slash regex is
-                  // a cheap bail-out that skips the scan for normal typing.
-                  const slashMatch = /^\/(\w*)$/.exec(text);
-                  let shouldShow = false;
-                  if (slashMatch) {
-                    const hasBots = (membersRef.current || []).some(m =>
-                      typeof m?.email === 'string' && m.email.toLowerCase().endsWith('@bots.chatyy')
-                    );
-                    shouldShow = hasBots;
-                  }
-                  setShowBotPopup(prev => prev === shouldShow ? prev : shouldShow);
-                  if (shouldShow) setBotCommandFilter((slashMatch[1] || '').toLowerCase());
-                } catch {}
-                // Typing indicator: fire IMMEDIATELY on first keystroke, then
-                // throttle subsequent events to 1 every 3s. Auto-stop 4s after
-                // last keystroke. Old code waited 500ms of silence which meant
-                // fast typers NEVER triggered the indicator.
-                const TYPING_THROTTLE_MS = 3000;
-                // [STAGE-E 2026-05-20 GAP#4] 4s → 3s WhatsApp parity
-                const TYPING_STOP_MS = 3000;
-                const now = Date.now();
-                if (text.length > 0) {
-                  if (now - typingLastSentAt.current > TYPING_THROTTLE_MS) {
-                    typingLastSentAt.current = now;
-                    // [2026-10-06 rt-client] Typing é SÓ via WS. O POST
-                    // chat_typing (1 a cada 3 s = 20 req/min por digitador)
-                    // foi removido: o hub Go agora replica typing/stopped_typing
-                    // também no canal per-user (chat_user_<membro>) de cada
-                    // membro — a LISTA vê "digitando…" sem passar pelo PHP. O
-                    // gate de privacidade que vivia no PHP (read_receipts off /
-                    // invisível) está em mailWs.typingAllowed() (hidratado por
-                    // chat_get_settings abaixo + tela de privacidade).
-                    try {
-                      const mailWs = require('../services/websocket').default;
-                      mailWs.sendTyping(conversationId);
-                    } catch {}
-                  }
-                  // Reset auto-stop timer on every keystroke
-                  if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
-                  typingStopTimerRef.current = setTimeout(() => {
-                    // Guard against firing into a destroyed conversation —
-                    // unmount clears the timer ref, but a race can still
-                    // schedule this callback after the ref is cleared.
-                    if (!mountedRef.current) return;
-                    try {
-                      const mailWs = require('../services/websocket').default;
-                      mailWs.sendStoppedTyping?.(conversationId);
-                    } catch {}
-                    // [2026-10-06 rt-client] stop também só via WS (POST removido).
-                    typingLastSentAt.current = 0;
-                  }, TYPING_STOP_MS);
-                } else if (typingStopTimerRef.current) {
-                  // Input emptied — stop immediately
-                  clearTimeout(typingStopTimerRef.current);
-                  typingStopTimerRef.current = null;
-                  try {
-                    const mailWs = require('../services/websocket').default;
-                    mailWs.sendStoppedTyping?.(conversationId);
-                  } catch {}
-                  // [2026-10-06 rt-client] stop só via WS (POST chat_typing removido).
-                  typingLastSentAt.current = 0;
-                }
-              }}
+              onChangeText={_onComposerText}
               multiline
               maxLength={5000}
               // Why: previously this was `editable={!sending}` which caused
@@ -34603,44 +35721,9 @@ function ChatConversationInner() {
                   }
                 } catch {}
               } : undefined}
-              onFocus={() => {
-                setInputFocused(true);
-                // [2026-10-10] Tocar no campo com figurinhas/GIF abertos = teclado no lugar do painel.
-                setShowStickerPicker(false);
-                setShowGifPicker(false);
-              }}
-              onBlur={() => {
-                setInputFocused(false);
-                // WhatsApp parity: kill "X está digitando…" on the peer's
-                // screen IMMEDIATELY when the user taps away, instead of
-                // letting it linger up to TYPING_STOP_MS (3s) on the idle
-                // auto-stop timer. Mirror the "input emptied" path above.
-                if (typingStopTimerRef.current) {
-                  clearTimeout(typingStopTimerRef.current);
-                  typingStopTimerRef.current = null;
-                }
-                if (typingLastSentAt.current) {
-                  try {
-                    const mailWs = require('../services/websocket').default;
-                    mailWs.sendStoppedTyping?.(conversationId);
-                  } catch {}
-                  // [2026-10-06 rt-client] stop só via WS (POST chat_typing removido).
-                  typingLastSentAt.current = 0;
-                }
-              }}
-              onSelectionChange={(e) => {
-                const sel = e.nativeEvent.selection;
-                inputSelectionRef.current = sel;
-                // [2026-10-05] WhatsApp/iMessage: a barra de formatação aparece
-                // SÓ enquanto há TEXTO SELECIONADO e some ao desmarcar. Selecionou
-                // → barra em cima do campo → 1 toque em B/I/S formata a seleção →
-                // seleção vira cursor → barra some. Zero "Aa", zero passo extra.
-                if (sel && sel.end > sel.start) {
-                  if (!showFormatToolbar) setShowFormatToolbar(true);
-                } else if (showFormatToolbar) {
-                  setShowFormatToolbar(false);
-                }
-              }}
+              onFocus={_onComposerFocus}
+              onBlur={_onComposerBlur}
+              onSelectionChange={_onComposerSelection}
             />
             {/* Visible rich-text layer painted ON TOP of the transparent
                 TextInput. Same font/size/padding so glyphs align 1:1 — the
@@ -34926,6 +36009,112 @@ function ChatConversationInner() {
           )}
           </SendButtonAnim>
         </View>
+        );
+        if (!(shouldUseNativeComposer() && !isSavedMode)) return _jsInputBar();
+        const _ncTrim = (s) => { const str = String(s || ''); return str.length > 240 ? (str.slice(0, 240) + '…') : str; };
+        const _ncReply = (replyTo || editingMsg) ? (() => {
+          try {
+            if (editingMsg) return { kind: 'edit', key: 'e' + String(editingMsg.id ?? ''), title: t('chat.editing'), text: _ncTrim(editingMsg.content) };
+            const _d = describeReplyTarget(replyTo, (replyTo.id != null && messagesById.get(replyTo.id)) || null, t) || {};
+            const _q = !!(replyTo?.quoteText && !replyTo?.deleted_at);
+            const _u = (_d.thumb && Array.isArray(_d.thumb.uris)) ? _d.thumb.uris.filter(Boolean)[0] : null;
+            return {
+              kind: 'reply', key: 'r' + String(replyTo.id ?? ''),
+              title: t('chat.replyingTo', { name: _friendlySenderName(replyTo?.sender_email, replyTo?.sender_name, currentEmail, t) || t('chat.message') }),
+              text: _q ? ('“' + _ncTrim(replyTo.quoteText) + '”') : _ncTrim(_d.label),
+              italic: !_q && !!_d.italic,
+              thumbUri: _u ? _encMediaUri(_u) : null,
+              thumbRound: !!(_d.thumb && _d.thumb.kind === 'round'),
+            };
+          } catch { return null; }
+        })() : null;
+        let _ncCallBusy = false;
+        try { _ncCallBusy = !!require('../services/ongoingCall').isCallOngoing(); } catch {}
+        const _ncWs = () => { try { return require('../services/websocket').default; } catch { return null; } };
+        return (
+          <NativeComposerBridge
+            ref={inputRef}
+            fallback={_jsInputBar}
+            text={inputText}
+            t={t}
+            isDark={isDark}
+            colors={colors}
+            placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
+            replyPreview={_ncReply}
+            mentionCandidates={conversationType === 'group'
+              ? (members || []).filter((m) => typeof m?.email === 'string' && m.email !== currentEmail).map((m) => ({ token: m.email.split('@')[0], email: m.email }))
+              : undefined}
+            sendMenu={[{ key: 'effect', label: t('effects.title') || 'Enviar com efeito' }, ...getScheduleOptions().map((o) => ({ key: 'sched:' + o.value, label: o.label }))]}
+            bottomInset={(showStickerPicker || showGifPicker) ? Spacing.sm : composerBottomPad}
+            sending={sending}
+            uploading={uploading}
+            enterSends={enterSends}
+            autocorrect={autocorrectOn}
+            showVideoNote={!!VideoNoteRecorder}
+            emojiActive={showStickerPicker}
+            voiceBlocked={_ncCallBusy}
+            disabled={(blockedByPeer || iBlockedPeer) && conversationType === 'direct'}
+            onChangeText={_onComposerText}
+            onFocus={_onComposerFocus}
+            onBlur={_onComposerBlur}
+            onSelectionChange={_onComposerSelection}
+            onSend={() => { if (!sending) handleSend(); }}
+            onAttach={() => {
+              try { Keyboard.dismiss(); } catch {}
+              try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
+              setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
+            }}
+            onCamera={() => handlePickAttachment('camera')}
+            onEmoji={() => {
+              if (showStickerPicker) { setShowStickerPicker(false); return; }
+              openComposerPanel('sticker');
+            }}
+            onVideoNote={() => { if (blockRecordingDuringCall('video')) return; setShowVideoNoteRecorder(true); }}
+            onVoiceRecorded={(audioData) => { handleSendAudio(audioData); }}
+            onVoiceState={(state, reason) => {
+              if (state === 'recording') {
+                if (blockRecordingDuringCall('voice')) { try { inputRef.current?.cancelVoice?.(); } catch {} return; }
+                if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                typingLastSentAt.current = 0;
+                try { const ws = _ncWs(); ws?.sendStoppedTyping?.(conversationId); ws?.sendTyping?.(conversationId, true); } catch {}
+                return;
+              }
+              if (state === 'locked') return;
+              if (state === 'blocked') { blockRecordingDuringCall('voice'); return; }
+              if (state === 'tapHint') {
+                // Toque simples (e VoiceOver/TalkBack) = gravação mãos-livres JS de antes.
+                if (blockRecordingDuringCall('voice')) return;
+                setIsRecording(true);
+                if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                typingLastSentAt.current = 0;
+                try { const ws = _ncWs(); ws?.sendStoppedTyping?.(conversationId); ws?.sendTyping?.(conversationId, true); } catch {}
+                return;
+              }
+              try { _ncWs()?.sendStoppedTyping?.(conversationId); } catch {}
+              let _m = '';
+              if (state === 'tooShort') _m = t('chatConv.voiceTooShort');
+              else if (state === 'permissionGranted') _m = t('chatConv.holdToRecordHint');
+              else if (state === 'error' && reason === 'permission') _m = t('nativeComposer.micPermission');
+              else if (state === 'error') _m = t('nativeComposer.voiceFailed');
+              if (_m) { setScheduleToast(_m); setTimeout(() => setScheduleToast(''), 2600); }
+            }}
+            onPasteImage={(file) => handlePastedFile(file)}
+            onReplyCancel={() => {
+              const _wasEditing = !!editingMsg;
+              setReplyTo(null); setEditingMsg(null);
+              if (_wasEditing) setInputText('');
+            }}
+            onSendMenu={(key) => {
+              if (!(composerStore.get() || '').trim()) return;
+              if (key === 'effect') { setShowEffectPicker(true); return; }
+              if (key.startsWith('sched:')) {
+                const _v = key.slice(6);
+                if (_v === 'custom') setShowCustomSchedule(true);
+                else handleScheduleMessage(_v);
+              }
+            }}
+          />
+        ); })()}
         </>
         )}
         </View>
@@ -35385,6 +36574,7 @@ function ChatConversationInner() {
         onClose={() => setShowAttachMenu(false)}
         onPick={handlePickAttachment}
         onSendMedia={handleAttachRecentMedia}
+        onSendDirect={handleAttachSendDirect}
         colors={colors}
         giftEnabled={DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId}
       />
@@ -35736,7 +36926,7 @@ function ChatConversationInner() {
               )}
 
               {/* Save media (sticker/gif/image/video) — WhatsApp-style */}
-              {!selectedMsg?.deleted_at && ['sticker', 'gif', 'image', 'video'].includes(selectedMsg?.type) && (
+              {!selectedMsg?.deleted_at && !_advPriv.enabled && ['sticker', 'gif', 'image', 'video'].includes(selectedMsg?.type) && (
                 <PressableScale haptic={false}
                   style={ctxS.ctxIconBtn}
                   onPress={() => handleSaveMedia(selectedMsg)}
@@ -35755,7 +36945,7 @@ function ChatConversationInner() {
                   "Restrict saving content" behavior). Backend enforces
                   the same rule in chat_forward — UI just keeps the
                   option out of view to avoid a confusing 403 toast. */}
-              {!selectedMsg?.deleted_at && !(forwardingDisabled && !isGroupAdmin) && (
+              {!selectedMsg?.deleted_at && !(forwardingDisabled && !isGroupAdmin) && !(_advPriv.enabled && !!selectedMsg?.file_url) && (
                 <PressableScale haptic={false}
                   style={ctxS.ctxIconBtn}
                   onPress={() => handleForward(selectedMsg)}
@@ -36913,7 +38103,9 @@ function ChatConversationInner() {
         files={mediaPreview.files || []}
         colors={colors}
         onClose={() => setMediaPreview({ visible: false, files: [] })}
-        onSend={(caption, viewOnce, outFiles, captions) => {
+        // [2026-10-15 native-attach] Mesmo envio reaproveitado pela folha nativa
+        // (handleAttachSendDirect) via mediaPreviewSendRef.
+        onSend={mediaPreviewSendRef.current = (caption, viewOnce, outFiles, captions) => {
           // The modal hands back the (edited, possibly-pruned) batch. Close
           // the modal, then fire every upload in parallel with a shared
           // albumBatchId so the album grouper collapses them in the chat
@@ -37004,7 +38196,7 @@ function ChatConversationInner() {
             // native sends: it ALWAYS re-encodes non-GIF photos (EXIF/GPS strip,
             // HEIC→JPEG, fit-in-box), and an await here would let the 4-wide
             // pool enqueue album items out of order.
-            if (stripExif && Platform.OS !== 'web' && !OUTBOX_V2_ONLY && isImage(f) && f.uri && !_isGif) {
+            if (stripExif && Platform.OS !== 'web' && !OUTBOX_V2_ONLY && isImage(f) && f.uri && !_isGif && !f._asFile) {
               try {
                 const fSize = f.size || 0;
                 const _isHeic = /\.heic$|\.heif$/i.test(f.name || f.uri || '') || /heic|heif/i.test(f.type || '');
@@ -37181,6 +38373,11 @@ function ChatConversationInner() {
                         subtitle={chatLocked ? onLabel : offLabel} right="chevron"
                         accessibilityRole="switch" accessibilityState={{ checked: !!chatLocked }}
                         onPress={() => contactInfoGo(toggleChatLockFromUi)} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconShield}
+                        title={t('advPriv.title') || 'Privacidade avançada da conversa'}
+                        subtitle={_advPriv.statusLabel} right="chevron"
+                        onPress={() => contactInfoGo(_advPriv.openSheet)} />
                     </GroupCard>
 
                     {contactCommonGroups.length > 0 && (
@@ -37253,7 +38450,7 @@ function ChatConversationInner() {
                       )}
                       <GroupRow colors={colors} Icon={IconForward}
                         title={t('chatConv.exportChat') || 'Exportar conversa'} right="chevron"
-                        onPress={() => contactInfoGo(() => setShowExportModal(true))} />
+                        onPress={() => contactInfoGo(() => (_advPriv.guard('export') || setShowExportModal(true)))} />
                       {!waImported && (
                         <>
                           <GroupDivider colors={colors} />
@@ -37420,7 +38617,7 @@ function ChatConversationInner() {
                   { Icon: IconChevronLeft, label: t('chatConv.moreOptions') || 'Mais opções', back: true, keepOpen: true, onPress: () => setHeaderMenuMore(false) },
                 ]},
                 { divider: true, items: [
-                  { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); setShowExportModal(true); }},
+                  { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); (_advPriv.guard('export') || setShowExportModal(true)); }},
                   { Icon: IconSparkles, label: t('chatSum.menuLabel') || 'Resumir com a Bia', onPress: () => { closeMenu(); runAiSummary(); }},
                   // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
                   ...(waImported ? [] : [{ Icon: IconDownload, label: t('waImport.menuItem'), onPress: () => { closeMenu(); openWhatsAppImport(); }}]),
@@ -38479,6 +39676,11 @@ function ChatConversationInner() {
                 subtitle={chatLocked ? (t('chatConv.enabledState') || 'Ativado') : (t('common.off') || 'Desativado')} right="chevron"
                 accessibilityRole="switch" accessibilityState={{ checked: !!chatLocked }}
                 onPress={() => groupInfoGo(toggleChatLockFromUi)} />
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconShield}
+                title={t('advPriv.title') || 'Privacidade avançada da conversa'}
+                subtitle={_advPriv.statusLabel} right="chevron"
+                onPress={() => groupInfoGo(_advPriv.openSheet)} />
             </GroupCard>
 
             <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
@@ -38504,7 +39706,7 @@ function ChatConversationInner() {
             <GroupCard colors={colors} isDark={isDark}>
               <GroupRow colors={colors} Icon={IconForward}
                 title={t('chatConv.exportChat') || 'Exportar conversa'} right="chevron"
-                onPress={() => groupInfoGo(() => setShowExportModal(true))} />
+                onPress={() => groupInfoGo(() => (_advPriv.guard('export') || setShowExportModal(true)))} />
               {!waImported && (
                 <>
                   <GroupDivider colors={colors} />

@@ -52,7 +52,7 @@ function sanitizeFilename(name, ext) {
   return `${base}.${ext}`;
 }
 
-export default function ExportConversationModal({
+function ExportConversationModalInner({
   visible,
   onClose,
   conversationId,
@@ -424,4 +424,22 @@ export default function ExportConversationModal({
       </Animated.View>
     </Modal>
   );
+}
+
+// [2026-10-14 adv-privacy] Conversa com privacidade avançada → não abre (o
+// servidor também recusa). Avisa e fecha.
+export default function ExportConversationModal(props) {
+  const _ap = require('../services/chatPrivacy').useAdvancedPrivacy(props && props.conversationId);
+  const _blocked = !!(props && props.visible && _ap.enabled);
+  useEffect(() => {
+    if (!_blocked) return;
+    let msg = 'A exportação está desativada nesta conversa (privacidade avançada).';
+    try { const v = typeof props.t === 'function' ? props.t('advPriv.exportBlocked') : ''; if (v && v !== 'advPriv.exportBlocked') msg = v; } catch {}
+    try {
+      if (Platform.OS === 'web') window.alert?.(msg);
+      else require('react-native').Alert.alert('', msg);
+    } catch {}
+    try { props.onClose && props.onClose(); } catch {}
+  }, [_blocked]);
+  return <ExportConversationModalInner {...props} visible={!!(props && props.visible) && !_ap.enabled} />;
 }

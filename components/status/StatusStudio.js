@@ -347,6 +347,30 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   const ed = edits[idx] || null;
   const ov = ovs[idx] || blankOverlays();
   const isVideo = cur?.type === 'video';
+  // [2026-10-15 native-editor] Vídeo do status: aparar + mudo no editor NATIVO
+  // (modules/expo-media-editor, modo 'edit'). Sem o módulo → botão some (igual antes).
+  const _nativeEd = useMemo(() => { try { const m = require('../media/nativeMediaEditor'); return m.nativeEditorAvailable() ? m : null; } catch { return null; } }, []);
+  const [nativeVidEditing, setNativeVidEditing] = useState(false);
+  const nativeEditVideo = useCallback(async () => {
+    const it = items[idx];
+    if (!_nativeEd || !it || it.type !== 'video' || nativeVidEditing) return;
+    const src = { uri: it._origUri || it.uri, type: 'video/mp4', name: 'status.mp4' };
+    if (!_nativeEd.isEditableLocal(src)) return;
+    const at = idx;
+    setNativeVidEditing(true);
+    let r = null;
+    try { r = await _nativeEd.openNativeMediaEditor({ file: src, t, mode: 'edit', allowHd: false, allowViewOnce: false, context: 'status' }); } catch {}
+    setNativeVidEditing(false);
+    if (!r || r.action !== 'done') return;
+    let out = _nativeEd.fileFromResult(src, r);
+    out = await _nativeEd.fallbackTrim(out, r);
+    setItems(prev => {
+      const n = [...prev];
+      if (!n[at] || n[at].type !== 'video') return prev;
+      n[at] = { ...n[at], _origUri: src.uri, uri: out.uri, width: out.width || n[at].width, height: out.height || n[at].height };
+      return n;
+    });
+  }, [_nativeEd, items, idx, t, nativeVidEditing]);
 
   // ── reset ao abrir ──
   useEffect(() => {
@@ -763,7 +787,8 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
   const renderStageMedia = () => {
     if (!cur) return null;
     if (isVideo) {
-      return getVideoMod() ? <VideoStage uri={cur.uri} width={stageW} height={stageH} /> : <Image source={{ uri: cur.uri }} style={{ width: stageW, height: stageH }} resizeMode="contain" />;
+      if (nativeVidEditing) return <View style={{ width: stageW, height: stageH }} />; // [2026-10-15 native-editor] player fora enquanto edita
+      return getVideoMod() ? <VideoStage key={cur.uri} uri={cur.uri} width={stageW} height={stageH} /> : <Image source={{ uri: cur.uri }} style={{ width: stageW, height: stageH }} resizeMode="contain" />;
     }
     if (capturing) {
       const s = Math.min(stageW / capturing.w, stageH / capturing.h);
@@ -1012,6 +1037,9 @@ export default function StatusStudio({ visible, seed, onClose, onOpenCamera, use
           <View style={{ flex: 1 }} />
           {mode === 'media' ? (
             <View style={{ flexDirection: 'row', gap: 8 }}>
+              {isVideo && !!_nativeEd && (
+                <GlassBtn onPress={nativeEditVideo} label={t('common.edit')}><IconCrop size={19} color={chrome} /></GlassBtn>
+              )}
               {!isVideo && filtersOn && (
                 <GlassBtn onPress={applyAuto} label={t('status.studio.auto')}><IconSparkles size={19} color={chrome} /></GlassBtn>
               )}

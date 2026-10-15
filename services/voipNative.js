@@ -113,6 +113,77 @@ function generateCallId() {
   return `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// ─── [2026-10-15 call-open-fast] Tap → call screen instantly ────────────────
+// voip_diag (48 h, iOS): tap→screen 1.1–5.3 s, p50 ≈ 2.4 s. The screen waited
+// for chat_call_invite_v2 (server pushes APNs/FCM/WS synchronously: 0.4–4.8 s,
+// p50 ≈ 0.9 s) and, without its token, for a 2nd native token fetch. Now, on
+// builds with the native-only outgoing tracker, the invite runs in the
+// BACKGROUND: the native screen opens at once ("Chamando…") and the LiveKit
+// token reaches it later (persistPendingLkToken → CallViewController
+// .supplyLateToken on iOS builds with supportsOutgoingLateToken; Android
+// CallActivity self-fetches). Older iOS builds still need a token to present:
+// they get the FIRST of {direct chat_livekit_token, invite_v2} (bounded).
+// Kill switch: setCallOpenFastEnabled(false) or globalThis.__chatyy_call_open_fast=false.
+let CALL_OPEN_FAST = true;
+export function setCallOpenFastEnabled(v) { CALL_OPEN_FAST = !!v; }
+function _fastOpenActive() {
+  if (!CALL_OPEN_FAST) return false;
+  try { if (globalThis.__chatyy_call_open_fast === false) return false; } catch {}
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return false;
+  try { return !!require('./nativeOutgoingCall').isNativeOnlyOutgoingActive(); } catch { return false; }
+}
+function _nativeTakesLateToken() {
+  if (Platform.OS === 'android') return true; // CallActivity self-fetches (LkTokenFetcher)
+  try { return typeof ExpoCallKit.supportsOutgoingLateToken === 'function' && ExpoCallKit.supportsOutgoingLateToken() === true; } catch { return false; }
+}
+function _tokFromInvite(r) {
+  const d = r?.success ? (r.data || {}) : null;
+  return d && d.lk_token && d.lk_url ? { token: String(d.lk_token), url: String(d.lk_url), p2p: d.p2p || null, src: 'invite' } : null;
+}
+function _tokFromMint(r) {
+  const d = r?.success ? (r.data || {}) : null;
+  return d && d.token && d.url ? { token: String(d.token), url: String(d.url), p2p: d.p2p || null, src: 'mint' } : null;
+}
+/** First non-null value among promises, or null after `ms`. Never rejects. */
+function _firstToken(promises, ms) {
+  return new Promise((resolve) => {
+    let left = promises.length;
+    let done = false;
+    const t = setTimeout(() => { if (!done) { done = true; resolve(null); } }, ms);
+    const fin = (v) => {
+      if (done) return;
+      if (v) { done = true; clearTimeout(t); resolve(v); return; }
+      left -= 1;
+      if (left <= 0) { done = true; clearTimeout(t); resolve(null); }
+    };
+    for (const p of promises) Promise.resolve(p).then(fin, () => fin(null));
+  });
+}
+
+// Invites still in flight, per callId — a caller who hangs up before the invite
+// reached the server must have the 'cancelled' sent AFTER it (the server relays
+// call_end + VoIP/FCM cancel to the callee only once the invite rows exist).
+const _pendingInvites = new Map();
+const _endedOutgoing = new Set();
+function _registerPendingInvite(cid, p) {
+  const settled = Promise.resolve(p).then(() => {}, () => {});
+  _pendingInvites.set(cid, settled);
+  settled.then(() => { if (_pendingInvites.get(cid) === settled) _pendingInvites.delete(cid); });
+}
+/** Resolves when the outgoing invite for `cid` settled (immediately if none). */
+export function whenInviteSettled(cid, capMs = 10000) {
+  const p = _pendingInvites.get(String(cid || ''));
+  if (!p) return Promise.resolve();
+  return Promise.race([p, new Promise((r) => setTimeout(r, capMs))]);
+}
+/** The tracker calls this when an outgoing call ends (any reason). */
+export function noteOutgoingEnded(cid) {
+  const id = String(cid || '');
+  if (!id) return;
+  _endedOutgoing.add(id);
+  setTimeout(() => { try { _endedOutgoing.delete(id); } catch {} }, 120000);
+}
+
 // [WAVE 138] BUG-4: Anti-double-tap lock. Without this, a user mashing
 // the call button (or React re-rendering and re-firing onPress before the
 // first tap settles) fires startOutgoingCall twice → 2 distinct callIds,
@@ -353,7 +424,37 @@ export async function startOutgoingCall({
   // rollout, instant revert by flipping setRelayFirstV2Enabled(false).
   let v2Resp = null;
   let _lateInvite = null; // [2026-10-11] invite still in flight after INVITE_WAIT_MS
-  if (RELAY_FIRST_V2_ENABLED && conversationId) {
+  const _fastOpen = _fastOpenActive(); // [2026-10-15 call-open-fast]
+  let _fastTok = null;
+  if (_fastOpen && RELAY_FIRST_V2_ENABLED && conversationId) {
+    const _invT0 = Date.now();
+    _diag('js_invite_sent', cid, `since_tap_ms=${_invT0 - _tapT0} mode=bg`);
+    const _invP = api.chatCallInviteV2({ conversationId, callId: cid, video: !!isVideo, calleeEmail });
+    _invP.then((r) => {
+      _diag('js_invite_resp', cid, `ms=${Date.now() - _invT0} ok=${r?.success ? 1 : 0} err=${String(r?.error || '').slice(0, 60)} mode=bg`);
+    }, (e) => {
+      _diag('js_invite_resp', cid, `ms=${Date.now() - _invT0} ok=0 throw=${String(e?.message || e).slice(0, 60)} mode=bg`);
+    });
+    _registerPendingInvite(cid, _invP);
+    _lateInvite = _invP;
+    // LiveKit token on a warm JS connection (the native fetcher opens a cold
+    // TLS session: 0.8–1.4 s in voip_diag). Same room = callId as the invite.
+    // Android CallActivity fetches its own → iOS only.
+    const _mintP = Platform.OS === 'ios'
+      ? api.chatLivekitToken(conversationId, cid).then(_tokFromMint, () => null)
+      : Promise.resolve(null);
+    if (!_nativeTakesLateToken()) {
+      // Older iOS build: no token = no screen. Take whichever token lands first.
+      const _tk0 = Date.now();
+      _fastTok = await _firstToken([_mintP, _invP.then(_tokFromInvite, () => null)], INVITE_WAIT_MS);
+      _diag('js_fast_token', cid, `src=${_fastTok ? _fastTok.src : 'none'} ms=${Date.now() - _tk0}`);
+    } else if (Platform.OS === 'ios') {
+      // New iOS build: screen opens now; the first token connects its Room.
+      _mintP.then((tk) => {
+        if (tk) ExpoCallKit.persistPendingLkToken(cid, tk.token, tk.url).catch(() => {});
+      });
+    }
+  } else if (RELAY_FIRST_V2_ENABLED && conversationId) {
     try {
       console.log('[CALL-TRACE][3v2/12] chat_call_invite_v2 fired', {
         conversationId, cid, isVideo: !!isVideo, calleeEmail, ts: Date.now(),
@@ -596,10 +697,12 @@ export async function startOutgoingCall({
     roomName: String(cid ?? ''),
     conversationId: String(conversationId ?? ''),
     callId: String(cid ?? ''),
-    lkUrl: v2Data.lk_url ? String(v2Data.lk_url) : '',
-    lkToken: v2Data.lk_token ? String(v2Data.lk_token) : '',
+    lkUrl: _fastTok ? _fastTok.url : (v2Data.lk_url ? String(v2Data.lk_url) : ''),
+    lkToken: _fastTok ? _fastTok.token : (v2Data.lk_token ? String(v2Data.lk_token) : ''),
     // [2026-10-09 p2p-ios] flag P2P da ligação → nativo (binário antigo ignora).
-    p2pJson: (() => { try { return v2Data.p2p ? JSON.stringify(v2Data.p2p) : ''; } catch { return ''; } })(),
+    // [2026-10-15 call-open-fast] fast path: P2P flag of the first token (same
+    // server helper); without it the native token fetch remembers it.
+    p2pJson: (() => { try { const p = _fastTok ? _fastTok.p2p : v2Data.p2p; return p ? JSON.stringify(p) : ''; } catch { return ''; } })(),
   };
   try {
     console.log('[CALL-TRACE][4/12] ExpoCallKit.startOutgoingCall payload', {
@@ -642,7 +745,7 @@ export async function startOutgoingCall({
     try {
       const existing = raw ? (JSON.parse(raw) || []) : [];
       const next = Array.isArray(existing) ? [cid, ...existing.filter(x => x !== cid)].slice(0, 10) : [cid];
-      await AS.setItem('recent_callkit_uuids', JSON.stringify(next));
+      AS.setItem('recent_callkit_uuids', JSON.stringify(next)).catch(() => {}); // [2026-10-15 call-open-fast] off the tap path
     } catch {}
   } catch {}
 
@@ -665,7 +768,7 @@ export async function startOutgoingCall({
   } catch {}
 
   const nativePresent = ExpoCallKit.startOutgoingCall(nativePayload);
-  _diag('js_native_start', cid, `since_tap_ms=${Date.now() - _tapT0} has_token=${nativePayload.lkToken ? 1 : 0}`);
+  _diag('js_native_start', cid, `since_tap_ms=${Date.now() - _tapT0} has_token=${nativePayload.lkToken ? 1 : 0}${_fastOpen ? ' mode=fast' : ''}`);
 
   if (_lateInvite) {
     _lateInvite.then(async (r) => {
@@ -676,9 +779,12 @@ export async function startOutgoingCall({
         }
         return;
       }
-      // Late invite failed → the callee was never rung: legacy fan-out.
+      // Late invite failed → the callee was never rung: legacy fan-out
+      // (not when the caller already gave up — that would ring a dead call).
+      if (_endedOutgoing.has(cid)) return;
       try { await api.callNotify(conversationId, cid, isVideo); } catch {}
     }, async () => {
+      if (_endedOutgoing.has(cid)) return;
       try { await api.callNotify(conversationId, cid, isVideo); } catch {}
     });
   }
@@ -747,6 +853,18 @@ export async function startOutgoingCall({
 
   try {
     const ok = await nativePresent;
+    // [2026-10-15 call-open-fast] Track right after the native hand-off
+    // (idempotent — the chat screen's own track() becomes a no-op), so every
+    // entry point (chat header, Ligações tab, profile) gets the tracker, and a
+    // hangup before the background invite landed sends 'cancelled' after it.
+    if (_fastOpen) {
+      try {
+        require('./nativeOutgoingCall').track({
+          callId: cid, calleeEmail, calleeName: calleeName || calleeEmail,
+          isVideo: !!isVideo, conversationId: conversationId || '',
+        });
+      } catch {}
+    }
     // [CALL-TRACE 2026-05-21 ROUND3] Step 6/12 — native promise resolved.
     // `ok` is the boolean returned by the wrapper (true once the
     // CXStartCallAction transaction was queued / startActivity fired).
@@ -770,6 +888,12 @@ export async function startOutgoingCall({
       });
     } catch {}
     console.warn(TAG, 'native startOutgoingCall failed:', e?.message || e);
+    // [2026-10-15 call-open-fast] The background invite may already be ringing
+    // the callee — cancel it once it landed (server relays the cancel).
+    if (_fastOpen) {
+      noteOutgoingEnded(cid);
+      whenInviteSettled(cid).then(() => { api.callStatus?.(cid, 'cancelled', 0)?.catch?.(() => {}); });
+    }
     // [WAVE 117A] Mobile = 100% native. Callers gate any router.push('/call')
     // behind Platform.OS === 'web', so native failure shows user-facing error
     // on mobile instead of falling through to the JS screen.
@@ -777,4 +901,4 @@ export async function startOutgoingCall({
   }
 }
 
-export default { startOutgoingCall };
+export default { startOutgoingCall, whenInviteSettled, noteOutgoingEnded, setCallOpenFastEnabled };

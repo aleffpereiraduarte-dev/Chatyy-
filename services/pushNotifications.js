@@ -656,6 +656,12 @@ async function loadModules() {
           'status_reply',
         ]);
         if (AppState.currentState === 'active' && _foregroundContentTypes.has(data?.type)) {
+          // [2026-10-15 email-melhorias] Push de e-mail com o app aberto → a
+          // caixa atualiza na hora (antes só mostrava o toast e a lista
+          // esperava o WS/poll de 30 s). MailContext ouve `silent_sync`.
+          if (data?.type === 'new_email' || data?.type === 'email') {
+            try { require('./websocket').default?._emit?.('silent_sync', { type: 'email' }); } catch {}
+          }
           if (_onForegroundNotification && data) {
             try {
               _onForegroundNotification({
@@ -3073,9 +3079,14 @@ async function handleDeleteFromNotification(data) {
 }
 
 async function handleChatReplyFromNotification(conversationId, text) {
+  // [2026-10-15 mensagens-whatsapp] UM client_message_id para a 1ª tentativa E para
+  // a fila: antes o chatSend gerava `cli_…` por dentro e, se a resposta se perdesse
+  // (POST gravado no servidor), a fila reenviava com um `qr-…` NOVO → mensagem
+  // DUPLICADA no destinatário. Mesmo formato msg_<ts>_ do app (ordem no hub).
+  const cmid = 'msg_' + Date.now() + '_qr' + Math.random().toString(36).slice(2, 8);
   try {
     const { chatSend, chatRead } = require('./api');
-    const r = await chatSend(conversationId, text, 'text');
+    const r = await chatSend(conversationId, text, 'text', null, null, null, null, cmid);
     if (!r || r.success === false) throw new Error(r?.error || r?.message || 'chat_send_failed');
     // Mark as read too — best effort; failure here doesn't roll back the
     // send, just queues a chat_read retry.
@@ -3094,7 +3105,6 @@ async function handleChatReplyFromNotification(conversationId, text) {
     console.warn('[Push] Chat reply failed:', err?.message || err);
     _diagPush('notif_chat_reply_offline', err?.message || String(err));
     try {
-      const cmid = 'qr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
       await queueOfflineAction({
         type: 'chat_send',
         conversation_id: conversationId,

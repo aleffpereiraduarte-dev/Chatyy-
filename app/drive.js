@@ -15,7 +15,17 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
+
+// [2026-10-14 offline-first] cópia salva da pasta (síncrona, máx. 7 dias, por conta).
+function _seedDrive(folderId) {
+  try {
+    if (!hasCacheUser()) return null;
+    const res = getCachedEntrySync(`drive_${folderId || 'root'}`)?.data;
+    const d = res && (res.data || res);
+    return d && Array.isArray(d.files) ? d : null;
+  } catch { return null; }
+}
 import { formatBytes, getFileExt, PHOTO_EXTENSIONS, VIDEO_EXTENSIONS } from '../services/format';
 import { safeAlert } from '../services/alerts';
 import { mapApiError } from '../services/errorMap';
@@ -196,13 +206,14 @@ function DriveScreenInner() {
   })();
 
   // Data
-  const [files, setFiles] = useState(() => _initialDrive ? _initialDrive.filter(f => !f.is_folder) : []);
-  const [folders, setFolders] = useState(() => _initialDrive ? _initialDrive.filter(f => f.is_folder) : []);
+  const [_seedRoot] = useState(() => _seedDrive(null));
+  const [files, setFiles] = useState(() => _seedRoot ? _seedRoot.files.filter(f => !f.is_folder) : (_initialDrive ? _initialDrive.filter(f => !f.is_folder) : []));
+  const [folders, setFolders] = useState(() => _seedRoot ? _seedRoot.files.filter(f => f.is_folder) : (_initialDrive ? _initialDrive.filter(f => f.is_folder) : []));
   const [sharedFiles, setSharedFiles] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
-  const [storageInfo, setStorageInfo] = useState(null);
+  const [storageInfo, setStorageInfo] = useState(() => (_seedRoot && _seedRoot.storage) || null);
   const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: t('drive.home') }]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !_seedRoot && !_initialDrive);
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState([]);
@@ -471,10 +482,10 @@ function DriveScreenInner() {
     const requestId = ++loadFilesRequestIdRef.current;
     const cacheKey = `drive_${folderId || 'root'}`;
     // Show cached data instantly
-    const cached = await getCached(cacheKey);
+    const d0 = _seedDrive(folderId);
     if (requestId !== loadFilesRequestIdRef.current) return; // stale request
-    if (cached?.data) {
-      const d = cached.data;
+    if (d0) {
+      const d = d0;
       const allItems = d.files || [];
       setFolders(allItems.filter(f => f.is_folder));
       setFiles(allItems.filter(f => !f.is_folder));
@@ -530,7 +541,7 @@ function DriveScreenInner() {
   const loadAll = useCallback(async (showLoading = true) => {
     if (showLoading) {
       // Check if we have cached data — skip loading spinner if so
-      const cached = await getCached(`drive_${currentFolderIdRef.current || 'root'}`);
+      const cached = _seedDrive(currentFolderIdRef.current);
       if (!cached) setLoading(true);
     }
     await Promise.all([loadFiles(), loadStorage()]);

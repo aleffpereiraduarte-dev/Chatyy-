@@ -949,10 +949,23 @@ public class ExpoCallKitModule: Module {
     }
 
     AsyncFunction("persistPendingLkToken") { (roomName: String, token: String, url: String) -> Void in
+      // [2026-10-15 call-open-fast] An outgoing screen presented before its
+      // token existed connects as soon as JS has one (no-op otherwise).
+      if !token.isEmpty && !url.isEmpty {
+        CallViewController.supplyLateTokenIfWaiting(callId: roomName, url: url, token: token, source: "js_persist")
+      }
       guard let ud = UserDefaults(suiteName: kAppGroupId) else { return }
       ud.set(token, forKey: "lk_token_\(roomName)")
       ud.set(url, forKey: "lk_url_\(roomName)")
       ud.set(Date().timeIntervalSince1970, forKey: "lk_ts_\(roomName)")
+    }
+
+    // [2026-10-15 call-open-fast] Capability: startOutgoingCall presents the
+    // call screen immediately even WITHOUT an LK token and accepts it later
+    // (persistPendingLkToken / CXStartCallAction fetch). JS stops waiting for
+    // chat_call_invite_v2 before opening the screen when this is true.
+    Function("supportsOutgoingLateToken") { () -> Bool in
+      return true
     }
 
     Function("getDiagnostics") { () -> [String: Any] in
@@ -1269,7 +1282,16 @@ public class ExpoCallKitModule: Module {
           ProviderDelegate.presentOutgoingCallVC(params: immediateParams, lkUrl: immUrl, lkToken: immToken)
         }
       } else {
-        nativeCallDiag("outgoing_present_deferred_no_token", callId)
+        // [2026-10-15 call-open-fast] Present NOW without a token ("Chamando…"
+        // with name/avatar). Before, the screen waited for the token fetch in
+        // the CXStartCallAction delegate (voip_diag: tap→screen 1.1–5.3 s,
+        // p50 ≈ 2.4 s). The token reaches the live screen later through
+        // CallViewController.supplyLateToken: the delegate's fetch → present
+        // dedup, or JS persistPendingLkToken (invite_v2 / chat_livekit_token).
+        nativeCallDiag("outgoing_immediate_present_no_token", callId, "video=\(isVideo)")
+        DispatchQueue.main.async {
+          ProviderDelegate.presentOutgoingCallVC(params: immediateParams, lkUrl: nil, lkToken: nil)
+        }
       }
 
       // [2026-05-21] Donate an INStartCallIntent so iOS records this outgoing

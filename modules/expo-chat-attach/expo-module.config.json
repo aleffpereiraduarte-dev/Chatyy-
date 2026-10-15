@@ -1,0 +1,16 @@
+{
+  "platforms": [
+    "apple",
+    "android"
+  ],
+  "apple": {
+    "modules": [
+      "ChatyyAttachModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.chatyyattach.ChatyyAttachModule"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-message-list",
+  "version": "1.0.0",
+  "description": "Chatyy native chat message list: iOS inverted UICollectionView with CoreText cells laid out off the main thread; Android inverted RecyclerView with StaticLayout cells.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

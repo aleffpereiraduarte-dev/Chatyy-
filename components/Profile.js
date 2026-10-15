@@ -29,6 +29,9 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
+import { getCachedEntrySync, setCache, hasCacheUser, cacheUserScope, invalidate as _invalidateCached } from '../services/cache';
+import { cachedKey, CACHED_MAX_AGE } from '../hooks/useCachedAction';
+import { profileCacheKey } from '../services/screenData';
 import { computeContentMaxWidth } from '../utils/responsive';
 import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
@@ -49,6 +52,7 @@ import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import HighlightEditSheet from './HighlightEditSheet';
+import ReportSheet from './ReportSheet'; // [central-moderacao 2026-10-14] motivos padronizados
 import HighlightShareSheet from './HighlightShareSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
@@ -104,45 +108,58 @@ function _mmkvKey(key) {
   return PROFILE_MMKV_PREFIX + String(key).toLowerCase();
 }
 
+// [2026-10-14 offline-first] Disco = services/cache.js (chave escopada pela
+// CONTA ativa, 7 dias, LRU). O antigo `profile_v1:<id>` NÃO tinha conta na
+// chave (is_following/apelido da conta A pintavam na conta B) → migrado; as
+// chaves legadas são apagadas uma vez. Memória também escopada pela conta.
+function _memKey(id) { return cacheUserScope() + '|' + id; }
+function _purgeLegacyProfileKeys() {
+  try {
+    const mmkv = _getMmkv();
+    mmkv?.getAllKeys?.()?.forEach?.(k => { if (k.startsWith(PROFILE_MMKV_PREFIX)) mmkv.remove?.(k); });
+  } catch {}
+}
+setTimeout(_purgeLegacyProfileKeys, 15000);
+
 export function invalidateProfileCache(key) {
   if (key == null) {
+    for (const k of Array.from(_profileCache.keys())) {
+      try { const id = k.slice(k.indexOf('|') + 1); _invalidateCached(cachedKey(profileCacheKey(id))); } catch {}
+    }
     _profileCache.clear();
     try { _highlightsCache.clear(); } catch {}
-    try {
-      const mmkv = _getMmkv();
-      mmkv?.getAllKeys?.()?.forEach?.(k => {
-        if (k.startsWith(PROFILE_MMKV_PREFIX)) mmkv.remove?.(k);
-      });
-    } catch {}
+    _purgeLegacyProfileKeys();
     return;
   }
   const k = String(key).toLowerCase();
-  _profileCache.delete(k);
+  _profileCache.delete(_memKey(k));
   try { _highlightsCache.delete(k); } catch {}
-  try { _getMmkv()?.remove?.(_mmkvKey(k)); } catch {}
+  try { _invalidateCached(cachedKey(profileCacheKey(k))); } catch {}
 }
 
 function _cacheGet(key) {
-  if (!key) return null;
+  if (!key || !hasCacheUser()) return null;
   const id = String(key).toLowerCase();
-  const hit = _profileCache.get(id);
+  const hit = _profileCache.get(_memKey(id));
   if (hit) return hit;
-  // Hydrate from MMKV on demand.
+  // Hydrate from disk on demand (sync).
   try {
-    const stored = _getMmkv()?.getJSON?.(_mmkvKey(id));
-    if (stored && stored.data) {
-      _profileCache.set(id, stored);
-      return stored;
+    const e = getCachedEntrySync(cachedKey(profileCacheKey(id)), CACHED_MAX_AGE);
+    if (e && e.data) {
+      const entry = { data: e.data, ts: e.ts || 0 };
+      _profileCache.set(_memKey(id), entry);
+      return entry;
     }
   } catch {}
   return null;
 }
 
 function _cacheSet(key, data) {
-  if (!key) return;
+  if (!key || !hasCacheUser()) return;
+  const id = String(key).toLowerCase();
   const entry = { data, ts: Date.now() };
-  _profileCache.set(String(key).toLowerCase(), entry);
-  try { _getMmkv()?.setJSON?.(_mmkvKey(key), entry); } catch {}
+  _profileCache.set(_memKey(id), entry);
+  try { setCache(cachedKey(profileCacheKey(id)), data, CACHED_MAX_AGE); } catch {}
 }
 
 // Lazy expo-image for disk-cached grid/story thumbnails (avoids blank flicker
@@ -1100,6 +1117,7 @@ export default function Profile({
   }, [autoOpenStory, data?.stories]);
   const [editOpen, setEditOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false); // [central-moderacao 2026-10-14]
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Auto-open settings sheet when arriving via deeplink (?openSettings=1).
   // Apps drawer "Configurações" tile uses this path so it converges on the
@@ -1885,12 +1903,12 @@ export default function Profile({
     } catch {}
   }, [identity]);
 
-  const handleReport = useCallback(async () => {
+  // [central-moderacao 2026-10-14] Antes enviava 'profile_report' em silêncio (sem motivo nem retorno).
+  // Agora abre a folha de denúncia com motivos padronizados → fila única da moderação.
+  const handleReport = useCallback(() => {
     if (!identity?.email) return;
     setMenuOpen(false);
-    try {
-      await api.apiCall?.('chat_report_user', { email: identity.email, reason: 'profile_report' }, 'POST');
-    } catch {}
+    setReportOpen(true);
   }, [identity]);
 
   // ─── Story Highlights row (Instagram parity) ────────────────────────
@@ -4137,6 +4155,11 @@ export default function Profile({
     />
   ) : null;
 
+  const reportNode = !actions.is_self && identity?.email ? (
+    <ReportSheet visible={reportOpen} onClose={() => setReportOpen(false)}
+      target={{ content_type: 'profile', content_id: identity.email, reported_email: identity.email }} />
+  ) : null;
+
   // ─── Render ──────────────────────────────────────────────────────────
   if (mode === 'full') {
     return (
@@ -4161,6 +4184,7 @@ export default function Profile({
         {publishingToastNode}
         {settingsNode}
         {sendDiamondNode}
+        {reportNode}
         {followersNode}
         {menuNode}
         {nicknameModalNode}
@@ -4193,6 +4217,7 @@ export default function Profile({
       {publishingToastNode}
       {settingsNode}
       {sendDiamondNode}
+      {reportNode}
       {followersNode}
       {menuNode}
     </>}

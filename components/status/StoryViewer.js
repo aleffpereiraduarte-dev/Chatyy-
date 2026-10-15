@@ -35,6 +35,7 @@ import { resolveTextGradient as _resolveTextGradient } from './textGradients';
 import AnimatedStatusText from './AnimatedStatusText'; // [status-texto 2026-10-14]
 import { textStatusDurationMs } from './textStatus';
 import { cachedVideoSource } from '../../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
+import { tryOpenNativeStories, nativeStoriesAvailable, isNativeStoryGroup, closeNativeStories, setNativeStoryHasMore } from './nativeStories'; // [2026-10-15 native-story]
 
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
@@ -882,7 +883,9 @@ function StatusMusicPlayer({ url, active, startMs = 0 }) {
   return null;
 }
 
-export default function StoryViewer({
+// [2026-10-15 native-story] Viewer JS (fallback). O default export abaixo troca
+// para o visualizador NATIVO quando disponível/compatível.
+function StoryViewerJS({
   visible,
   stories: storiesProp,
   startIdx,
@@ -3344,4 +3347,136 @@ export default function StoryViewer({
       </Animated.View>
     </Modal>
   );
+}
+
+// ─── [2026-10-15 native-story] Ponto de troca nativo/JS ──────────────────────
+// Visualizador NATIVO (modules/expo-media-viewer/story.ts) quando o binário
+// tem o módulo, globalThis.__chatyy_native_story !== false e todos os itens
+// são suportados (ver nativeStories.isNativeStoryItem). Senão — ou se o open
+// nativo falhar — o StoryViewerJS acima, idêntico ao de antes.
+// Troca de pessoa: o nativo pede a próxima/anterior (onNeedMore) → chamamos
+// onNextGroup/onPrevGroup do pai → quando as props chegam com a nova pessoa,
+// ela é entregue ao nativo (cubo 3D). Pessoa com item não suportado → fecha o
+// nativo e o JS assume já nela.
+export default function StoryViewer(props) {
+  const {
+    visible, stories, startIdx, ownerName, ownerEmail, isSelf = false, t,
+    groupIndex = 0, groupCount = 1, onNextGroup = null, onPrevGroup = null,
+  } = props;
+  const list = Array.isArray(stories) ? stories : [];
+  const [mode, setMode] = useState(null); // null = decidir | 'native' | 'js'
+  const propsRef = useRef(props);
+  propsRef.current = props;
+  const sessRef = useRef(null); // { emails, parentIdx, pending, toJs, hiddenClose }
+
+  const hasNextFn = typeof onNextGroup === 'function';
+  const hasPrevFn = typeof onPrevGroup === 'function';
+  const capable = !WEB && nativeStoriesAvailable();
+  const eligible = capable && visible && list.length > 0 && isNativeStoryGroup(list);
+
+  // Fechado pelo pai → fecha o nativo e volta a decidir na próxima abertura.
+  useEffect(() => {
+    if (visible) return;
+    const s = sessRef.current;
+    if (s) { s.hiddenClose = true; closeNativeStories(); }
+    if (mode !== null) setMode(null);
+  }, [visible, mode]);
+
+  useEffect(() => () => {
+    if (sessRef.current) { sessRef.current.hiddenClose = true; closeNativeStories(); }
+  }, []);
+
+  // Abertura
+  useEffect(() => {
+    if (!visible || mode !== null) return;
+    if (!eligible) { setMode('js'); return; }
+    const p = propsRef.current;
+    const sess = { emails: [String(ownerEmail || '').toLowerCase()], parentIdx: 0, pending: null, toJs: false, hiddenClose: false };
+    const ok = tryOpenNativeStories({
+      groups: [{ email: ownerEmail || '', name: ownerName || '', isSelf: !!isSelf, items: list }],
+      startGroup: 0,
+      startItem: startIdx > 0 ? startIdx : undefined,
+      t,
+      hasMoreNext: !!onNextGroup && groupIndex < groupCount - 1,
+      hasMorePrev: !!onPrevGroup && groupIndex > 0,
+      callbacks: {
+        onFallback: () => { sessRef.current = null; setMode('js'); },
+        onClose: () => {
+          const s = sessRef.current;
+          sessRef.current = null;
+          if (s?.pending) { clearTimeout(s.pending.timer); s.pending = null; }
+          if (s?.toJs) { setMode('js'); return; }
+          if (s?.hiddenClose) return;
+          try { propsRef.current.onClose?.(); } catch {}
+        },
+        onMarkViewed: (id) => { try { propsRef.current.onMarkViewed?.(id); } catch {} },
+        onDelete: p.onDelete ? async (id) => { await propsRef.current.onDelete?.(id); } : undefined,
+        onReply: p.onReply ? (it, text) => propsRef.current.onReply?.(it, text) : undefined,
+        onReact: p.onReact ? (it, emoji) => propsRef.current.onReact?.(it, emoji) : undefined,
+        onRepost: p.onRepost ? (it) => propsRef.current.onRepost?.(it) : undefined,
+        onAddMore: p.onAddMore ? () => propsRef.current.onAddMore?.() : undefined,
+        onMentionPress: p.onMentionPress ? (info) => propsRef.current.onMentionPress?.(info) : undefined,
+        onGroupChange: (e) => {
+          const s = sessRef.current;
+          if (!s || s.pending) return;
+          const idx = Number(e?.groupIndex);
+          if (!Number.isFinite(idx) || idx === s.parentIdx) return;
+          // Voltou/avançou entre pessoas já carregadas: mantém o pai em sincronia.
+          const cur = propsRef.current;
+          if (idx === s.parentIdx + 1) { try { cur.onNextGroup?.(); } catch {} }
+          else if (idx === s.parentIdx - 1) { try { cur.onPrevGroup?.(); } catch {} }
+          s.parentIdx = idx;
+        },
+        onNeedMore: (dir) => new Promise((resolve) => {
+          const s = sessRef.current;
+          const cur = propsRef.current;
+          const fn = dir === 'prev' ? cur.onPrevGroup : cur.onNextGroup;
+          if (!s || typeof fn !== 'function') { resolve(null); return; }
+          if (s.pending) { clearTimeout(s.pending.timer); s.pending.resolve(null); }
+          const pending = { dir, resolve, from: String(cur.ownerEmail || '').toLowerCase(), timer: null };
+          pending.timer = setTimeout(() => {
+            if (s.pending === pending) s.pending = null;
+            resolve(null);
+          }, 2200);
+          s.pending = pending;
+          try { fn(); } catch { clearTimeout(pending.timer); s.pending = null; resolve(null); }
+        }),
+      },
+    });
+    if (ok) { sessRef.current = sess; setMode('native'); } else setMode('js');
+  }, [visible, mode, eligible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pai trocou de pessoa em resposta ao onNeedMore → entrega ao nativo.
+  useEffect(() => {
+    const s = sessRef.current;
+    if (mode !== 'native' || !s || !s.pending) return;
+    const email = String(ownerEmail || '').toLowerCase();
+    if (!email || email === s.pending.from || !list.length) return;
+    const pending = s.pending;
+    s.pending = null;
+    clearTimeout(pending.timer);
+    if (!isNativeStoryGroup(list)) {
+      // Pessoa com enquete/GIF/desenho… → o JS assume nela.
+      s.toJs = true;
+      pending.resolve(null);
+      closeNativeStories();
+      return;
+    }
+    if (pending.dir === 'prev') { s.emails.unshift(email); s.parentIdx = 0; }
+    else { s.emails.push(email); s.parentIdx = s.emails.length - 1; }
+    pending.resolve({ email: ownerEmail, name: ownerName || '', isSelf: !!isSelf, items: list });
+  }, [mode, ownerEmail, list, ownerName, isSelf]);
+
+  // "Há mais pessoas antes/depois" no nativo acompanha o pai.
+  useEffect(() => {
+    const s = sessRef.current;
+    if (mode !== 'native' || !s || s.pending) return;
+    const first = groupIndex - s.parentIdx;
+    const last = groupIndex + (s.emails.length - 1 - s.parentIdx);
+    setNativeStoryHasMore(hasNextFn && last < groupCount - 1, hasPrevFn && first > 0);
+  }, [mode, groupIndex, groupCount, hasNextFn, hasPrevFn]);
+
+  if (mode === 'native') return null;
+  if (mode === null && eligible) return null; // decidindo (1 frame)
+  return <StoryViewerJS {...props} />;
 }

@@ -24,6 +24,8 @@ import Svg, {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
+const LIVE_CACHE_MAX_AGE = 15 * 60 * 1000;
 import { prewarmLive } from '../services/livePrewarm';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -33,6 +35,7 @@ import {
   IconMessageCircle, IconMapPin, IconSearch,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import ReportSheet from '../components/ReportSheet'; // [central-moderacao 2026-10-14]
 import { formatCount as formatViewers } from '../components/AnimatedViewerCount';
 
 // Brand purple from constants/theme.js (primary = #111111).
@@ -154,10 +157,13 @@ export default function LiveDiscoverScreen() {
   const { colors, isDark } = useTheme();
   const { t, locale } = useLanguage();
 
-  const [categories, setCategories] = useState([]);
+  // [2026-10-14 offline-first] categorias (7 dias) e lives da aba (≤15 min —
+  // live termina rápido) salvas por conta → a tela pinta na hora.
+  const [categories, setCategories] = useState(() => peekCached('live_categories') || []);
   const [activeCategory, setActiveCategory] = useState('');  // '' = All
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [sessions, setSessions] = useState(() => peekCached(['live_discover', ''], LIVE_CACHE_MAX_AGE) || []);
+  const [loading, setLoading] = useState(() => !peekCached(['live_discover', ''], LIVE_CACHE_MAX_AGE));
+  const sessionsFromCacheRef = useRef(!loading);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
@@ -197,6 +203,7 @@ export default function LiveDiscoverScreen() {
         const res = await api.liveCategories();
         if (res?.success && Array.isArray(res.data?.categories)) {
           setCategories(res.data.categories);
+          putCached('live_categories', res.data.categories);
         }
       } catch (e) {
         // Soft failure — we still render lives with the All filter active.
@@ -209,21 +216,29 @@ export default function LiveDiscoverScreen() {
   // via the ticket counter.
   const loadDiscover = useCallback(async (cat = '', showSpinner = true) => {
     const myTicket = ++ticketRef.current;
-    if (showSpinner) setLoading(true);
+    // Cópia salva desta aba → mostra na hora e revalida sem spinner.
+    const _c = peekCached(['live_discover', cat], LIVE_CACHE_MAX_AGE);
+    if (_c) { setSessions(_c); sessionsFromCacheRef.current = true; }
+    else sessionsFromCacheRef.current = false;
+    if (showSpinner && !_c) setLoading(true);
     setError('');
     try {
       const res = await api.liveDiscover(cat);
       if (myTicket !== ticketRef.current) return; // stale response
       if (res?.success && Array.isArray(res.data?.sessions)) {
         setSessions(res.data.sessions);
-      } else {
+        sessionsFromCacheRef.current = false;
+        putCached(['live_discover', cat], res.data.sessions.slice(0, 40));
+      } else if (!sessionsFromCacheRef.current) {
         setSessions([]);
         if (!res?.success) setError(res?.message || '');
       }
     } catch (e) {
       if (myTicket !== ticketRef.current) return;
-      setError(e?.message || 'Falha ao carregar');
-      setSessions([]);
+      if (!sessionsFromCacheRef.current) {
+        setError(e?.message || 'Falha ao carregar');
+        setSessions([]);
+      }
     } finally {
       if (myTicket === ticketRef.current) {
         setLoading(false);
@@ -325,6 +340,7 @@ export default function LiveDiscoverScreen() {
   // wired to nothing until ShareSheet + report flows land. Triggers haptic
   // on open as the tactile confirmation users expect from long-press.
   const [popoverItem, setPopoverItem] = useState(null);
+  const [reportLive, setReportLive] = useState(null); // [central-moderacao 2026-10-14] Reportar era no-op
   const onLongPressCard = useCallback((item) => {
     if (Platform.OS !== 'web') {
       try {
@@ -526,7 +542,7 @@ export default function LiveDiscoverScreen() {
               </Text>
             </TouchableOpacity>
             <View style={[styles.popoverDivider, { backgroundColor: isDark ? '#2c2c2e' : '#E5E7EB' }]} />
-            <TouchableOpacity style={styles.popoverBtn} onPress={() => setPopoverItem(null)} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.popoverBtn} onPress={() => { const it = popoverItem; setPopoverItem(null); if (it && (it.id || it.session_id)) setReportLive(it); }} activeOpacity={0.7}>
               <Text style={[styles.popoverBtnText, { color: '#EF4444' }]}>
                 {t('common.report') || 'Reportar'}
               </Text>
@@ -534,6 +550,8 @@ export default function LiveDiscoverScreen() {
           </View>
         </Pressable>
       </Modal>
+      <ReportSheet visible={!!reportLive} onClose={() => setReportLive(null)}
+        target={reportLive ? { content_type: 'live', content_id: String(reportLive.id || reportLive.session_id) } : null} />
     </View>
   );
 }
@@ -733,8 +751,9 @@ function CategoryPill({ pillKey, label, icon: Icon, active, dark, onPress, onLay
 // All API calls are best-effort — falls back to mock placeholders.
 // ─────────────────────────────────────────────────────────────
 function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh }) {
-  const [scheduled, setScheduled] = useState(null); // null = loading, [] = no data
-  const [replays, setReplays] = useState(null);
+  // [2026-10-14 offline-first] agendadas/replays salvos (por conta).
+  const [scheduled, setScheduled] = useState(() => peekCached('live_scheduled')); // null = loading, [] = no data
+  const [replays, setReplays] = useState(() => peekCached('live_replays'));
 
   // Halo pulse animation for the primary CTA.
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -770,9 +789,11 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
         const res = await api.liveScheduled();
         if (cancelled) return;
         const list = res?.data?.scheduled || res?.data?.lives || res?.data?.items || [];
+        if (res?.success === false && peekCached('live_scheduled')) return; // falhou: mantém a cópia
         setScheduled(Array.isArray(list) ? list : []);
+        if (res?.success !== false && Array.isArray(list)) putCached('live_scheduled', list.slice(0, 20));
       } catch (e) {
-        if (!cancelled) setScheduled([]);
+        if (!cancelled) setScheduled((prev) => prev || []);
       }
     })();
     return () => { cancelled = true; };
@@ -791,9 +812,12 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           const res = await api.feedRecent({ type: 'live_replay', limit: 8 });
           list = res?.data?.items || res?.data?.posts || [];
         }
-        if (!cancelled) setReplays(Array.isArray(list) ? list : []);
+        if (!cancelled) {
+          setReplays(Array.isArray(list) ? list : []);
+          if (Array.isArray(list) && list.length) putCached('live_replays', list.slice(0, 12));
+        }
       } catch (e) {
-        if (!cancelled) setReplays([]);
+        if (!cancelled) setReplays((prev) => prev || []);
       }
     })();
     return () => { cancelled = true; };

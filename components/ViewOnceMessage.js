@@ -50,6 +50,12 @@ function loadScreenCapture() {
   return _screenCaptureMod;
 }
 
+// [2026-10-14 adv-privacy] View-once SEMPRE protegido: iOS escudo durante
+// gravação/espelhamento (modules/expo-chat-privacy) + áudio não toca gravando.
+function _cp() {
+  try { return require('../services/chatPrivacy'); } catch { return null; }
+}
+
 const VIEWED_KEY = 'chatyy.viewOnceViewed.v1';
 
 async function _loadLocalViewed() {
@@ -142,8 +148,16 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
   // pattern as ChatMediaViewer). Native-only — no-op on web / when the module
   // is missing.
   useEffect(() => {
+    let _releaseShield = null;
+    try {
+      if (Platform.OS === 'ios') {
+        _releaseShield = _cp()?.acquireCaptureProtection?.('chatyy-view-once-shield', {
+          labels: { title: t?.('advPriv.protectedTitle') || 'Conteúdo protegido', subtitle: t?.('advPriv.protectedRecording') || '' },
+        }) || null;
+      }
+    } catch {}
     const SC = loadScreenCapture();
-    if (!SC) return;
+    if (!SC) return () => { try { _releaseShield?.(); } catch {} };
     let sub;
     (async () => {
       try { await SC.preventScreenCaptureAsync?.('chatyy-view-once'); } catch {}
@@ -153,6 +167,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
           // (chat.php case 'chat_screenshot_event') inserts a system msg with
           // subtype='screenshot' + emits a WS event. Fire-and-forget.
           if (conversationId) {
+            try { globalThis.__chatyy_vo_shot_at = Date.now(); } catch {} // [2026-10-14 adv-privacy] sem aviso duplo
             try {
               const api = require('../services/api');
               api.apiCall?.('chat_screenshot_event', {
@@ -167,6 +182,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
     return () => {
       try { sub?.remove?.(); } catch {}
       try { SC.allowScreenCaptureAsync?.('chatyy-view-once')?.catch?.(() => {}); } catch {}
+      try { _releaseShield?.(); } catch {}
     };
   }, [conversationId, messageId]);
 
@@ -571,6 +587,23 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
     };
   }, []);
 
+  // [2026-10-14 adv-privacy] Tocando: Android FLAG_SECURE, iOS escudo; começou
+  // a gravar/espelhar a tela no iPhone → pausa (o áudio iria para a gravação).
+  useEffect(() => {
+    if (!playing || Platform.OS === 'web') return undefined;
+    const cp = _cp();
+    if (!cp) return undefined;
+    const release = cp.acquireCaptureProtection?.('chatyy-view-once-audio', {
+      labels: { title: t?.('advPriv.protectedTitle') || 'Conteúdo protegido', subtitle: t?.('advPriv.protectedRecording') || '' },
+    });
+    const sub = cp.addScreenCaptureListener?.((captured) => {
+      if (!captured) return;
+      try { soundRef.current?.pause?.(); } catch {}
+      setPlaying(false);
+    });
+    return () => { try { release?.(); } catch {} try { sub?.remove?.(); } catch {} };
+  }, [playing]);
+
   const fireConsumed = useCallback(() => {
     if (consumedRef.current) return;
     consumedRef.current = true;
@@ -635,6 +668,16 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
         setPlaying(false);
       }
       return;
+    }
+
+    // [2026-10-14 adv-privacy] iPhone gravando/espelhando → não toca.
+    if (!playing && Platform.OS === 'ios') {
+      try {
+        if (_cp()?.isScreenCaptured?.()) {
+          require('react-native').Alert.alert(t?.('advPriv.protectedTitle') || 'Conteúdo protegido', t?.('advPriv.audioCaptureBlocked') || 'Pare a gravação de tela para ouvir.');
+          return;
+        }
+      } catch {}
     }
 
     // Native (iOS/Android) — expo-audio

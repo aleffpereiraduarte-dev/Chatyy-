@@ -1,9 +1,18 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["ChatyyMediaViewerModule"]
+    "modules": [
+      "ChatyyMediaViewerModule",
+      "ChatyyStoryViewerModule"
+    ]
   },
   "android": {
-    "modules": ["expo.modules.chatyymediaviewer.ChatyyMediaViewerModule"]
+    "modules": [
+      "expo.modules.chatyymediaviewer.ChatyyMediaViewerModule",
+      "expo.modules.chatyymediaviewer.ChatyyStoryViewerModule"
+    ]
   }
 }

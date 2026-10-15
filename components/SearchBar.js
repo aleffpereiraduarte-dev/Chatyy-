@@ -115,7 +115,10 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
     const trimmed = text.trim();
     if (trimmed.length < 2) return;
     onChange(trimmed);
-    onSubmit();
+    // [2026-10-15 email-melhorias] Passa o texto: o onSubmit do pai lia o
+    // searchText do PRÓPRIO closure (render anterior) e buscava a consulta
+    // anterior — busca "um passo atrás".
+    onSubmit(trimmed);
   }, 500);
 
   useEffect(() => { setLocalValue(value || ''); }, [value]);
@@ -146,7 +149,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
     saveRecentSearch(q).then(() => getRecentSearches().then(setRecentSearches).catch(() => {})).catch(() => {});
     onChange(q);
     closeSearch();
-    setTimeout(() => onSubmit(), 50);
+    setTimeout(() => onSubmit(q), 50);
   }, [localValue, onChange, onSubmit, closeSearch]);
 
   const handleClear = useCallback(() => {

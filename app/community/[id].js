@@ -15,6 +15,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../../constants/theme';
 import * as api from '../../services/api';
+import { peekCached, putCached } from '../../hooks/useCachedAction'; // [2026-10-14 offline-first]
 
 const TABS = [
   { key: 'announcements', labelKey: 'community.tabAnnouncements', fallback: 'Anúncios' },
@@ -64,10 +65,13 @@ export default function CommunityScreen() {
   const onComposerBlur = useCallback(() => {
     Animated.timing(composerHeight, { toValue: 80, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
   }, [composerHeight]);
-  const [community, setCommunity] = useState(null);
-  const [groups, setGroups] = useState([]);
+  // [2026-10-14 offline-first] comunidade + grupos salvos (por conta) → abre na hora.
+  const [_cmInit] = useState(() => (id ? peekCached(['community', id]) : null));
+  const cmSeededRef = useRef(!!_cmInit);
+  const [community, setCommunity] = useState(() => _cmInit?.community || null);
+  const [groups, setGroups] = useState(() => _cmInit?.groups || []);
   const [members, setMembers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !_cmInit);
   const [refreshing, setRefreshing] = useState(false);
   const [announceText, setAnnounceText] = useState('');
   const [posting, setPosting] = useState(false);
@@ -88,6 +92,7 @@ export default function CommunityScreen() {
       if (r.success && r.data?.community) {
         setCommunity(r.data.community);
         setGroups(r.data.groups || []);
+        putCached(['community', id], { community: r.data.community, groups: r.data.groups || [] });
       } else if (!silent) {
         Alert.alert(t('common.error') || 'Erro', r.message || r.error || (t('community.notFound') || 'Comunidade não encontrada'));
       }
@@ -106,7 +111,11 @@ export default function CommunityScreen() {
     } catch (_) {}
   }, [community?.id]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Com a cópia salva na tela, a 1ª carga é silenciosa (sem spinner nem alerta offline).
+    const silent = cmSeededRef.current; cmSeededRef.current = false;
+    load(silent);
+  }, [load]);
   useEffect(() => {
     if (tab === 'members' && community?.id) loadMembers();
   }, [tab, community?.id, loadMembers]);

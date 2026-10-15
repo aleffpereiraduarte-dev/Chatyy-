@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, FlatList, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, Animated, Easing, Dimensions,
-  ScrollView, Modal, Linking, ActivityIndicator, Image, Alert,
+  ScrollView, Modal, Linking, ActivityIndicator, Image, Alert, Share,
 } from 'react-native';
 // FlashList reverted to FlatList
 import PressableRow from '../components/PressableRow'; // [2026-10-08 apps-native]
@@ -17,8 +17,10 @@ import {
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
   IconChevronUp, IconChevronDown, IconTrash, IconCopy, IconRepeat,
-  IconThumbsDown, IconCheck, IconChevronRight,
+  IconThumbsDown, IconCheck, IconChevronRight, IconShare,
 } from '../components/Icons';
+// [2026-10-15 bia-bonita] markdown completo + cartões de ferramenta + "pensando"
+import { BiaMarkdown, BiaToolCards, BiaThinking } from '../components/BiaRich';
 // SVG primitives for the send-button gradient + empty-state sparkle illustration.
 // Pure-SVG keeps us off expo-linear-gradient (not a dep) and renders identically
 // on web/native.
@@ -37,9 +39,17 @@ import ChatyyOneAvatar from '../components/ChatyyOneAvatar';
 // the cleaned text + the parsed list (empty if marker incomplete/malformed).
 const FOLLOWUPS_RE = /\s*<followups>([\s\S]*?)<\/followups>\s*$/i;
 const FOLLOWUPS_OPEN_RE = /\s*<followups>[\s\S]*$/i;
+const FOLLOWUPS_TAG = '<followups>';
 function extractFollowups(text) {
   if (!text || typeof text !== 'string') return { text: text || '', followups: [] };
-  if (text.indexOf('<followups>') === -1) return { text, followups: [] };
+  if (text.indexOf('<followups>') === -1) {
+    // [2026-10-15] durante o stream o marcador chega aos pedaços ("<fol") — esconde o pedaço.
+    const lt = text.lastIndexOf('<');
+    if (lt !== -1 && text.length - lt <= FOLLOWUPS_TAG.length && FOLLOWUPS_TAG.startsWith(text.slice(lt))) {
+      return { text: text.slice(0, lt).replace(/\s+$/, ''), followups: [] };
+    }
+    return { text, followups: [] };
+  }
   const m = FOLLOWUPS_RE.exec(text);
   if (m) {
     const parts = m[1].split('|')
@@ -1510,7 +1520,7 @@ function PromptChip({ label, sub, onPress, isDark, icon: Icon }) {
   );
 }
 
-function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI, onLongPressAI }) {
+function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI, onLongPressAI, onShare, onOpenCard, locale }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
   // Entrance: fadeIn + slideUp 8px. The slide gives the row a subtle "rise"
@@ -1559,7 +1569,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
       >
         {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes (random 4-8s).
             Sized 18px to match the existing aiHeaderAvatar footprint. */}
-        <ChatyyOneAvatar size={18} />
+        <ChatyyOneAvatar size={18} thinking={isStreaming} />
         <Text style={[st.aiHeaderLabel, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>Bia</Text>
       </TouchableOpacity>
 
@@ -1598,23 +1608,35 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
         activeOpacity={1}
         delayLongPress={320}
         onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
+        style={{ alignSelf: 'stretch' }}
       >
-        {isToolPending && !item.content ? (
-          <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
+        {/* [2026-10-15 bia-bonita] "Pensando..." instantâneo → rótulo humano da
+            ferramenta → texto com cursor piscando (markdown completo). */}
+        {(isToolPending || isStreaming) && !extractFollowups(item.content || '').text ? (
+          <BiaThinking isDark={isDark} t={t} toolName={isToolPending ? item._toolName : null} />
         ) : (
           <View style={st.aiBody}>
             {/* Hide the trailing <followups>...</followups> marker the model
                 appends — it's surfaced as chips below the last AI message
                 (handled in the parent). */}
-            {parseMarkdown(extractFollowups(item.content).text, isDark ? '#ECECEC' : '#0D0D0D', isDark)}
-            {/* Streaming dots (•••) inline at end during generation. */}
-            {isStreaming && !isToolPending && <InlineStreamingDots isDark={isDark} />}
+            <BiaMarkdown
+              text={extractFollowups(item.content).text}
+              color={isDark ? '#ECECEC' : '#0D0D0D'}
+              isDark={isDark}
+              streaming={isStreaming && !isToolPending}
+              t={t}
+            />
           </View>
         )}
-        {isToolPending && !!item.content && (
-          <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
+        {isToolPending && !!extractFollowups(item.content || '').text && (
+          <BiaThinking isDark={isDark} t={t} toolName={item._toolName} />
         )}
       </TouchableOpacity>
+
+      {/* Cartões dos resultados (e-mails, agenda, evento/lembrete criado, contatos) */}
+      {!isStreaming && Array.isArray(item.actions) && item.actions.length > 0 ? (
+        <BiaToolCards actions={item.actions} isDark={isDark} t={t} locale={locale} onOpen={onOpenCard} />
+      ) : null}
 
       {/* WhatsApp opt-in button (kept — feature still surfaces from AI replies) */}
       {item.content && (item.content.includes('wa.me') || (item.content.includes('WhatsApp') && (item.content.includes('conecte') || item.content.includes('conectar') || item.content.includes('opt') || item.content.includes('connect')))) && (
@@ -1658,6 +1680,16 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
               <IconVolume2 size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
             )}
           </TouchableOpacity>
+          {onShare && (
+            <TouchableOpacity
+              onPress={() => onShare(item)}
+              hitSlop={6}
+              style={st.aiActionBtn}
+              accessibilityLabel={t?.('common.share') || 'Share'}
+            >
+              <IconShare size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
+            </TouchableOpacity>
+          )}
           {isLastAI && onRegenerate && (
             <TouchableOpacity
               onPress={() => onRegenerate(item)}
@@ -1985,12 +2017,18 @@ export default function OneScreen() {
     } catch {}
   }, [user?.email]);
 
+  // [2026-10-15 bia-rapida] Efeito ESTÁVEL (só foco/desfoco). Antes dependia de
+  // [resetIfStale] → que muda quando conversationId muda → o meta do stream
+  // ({conversation_id}) numa conversa NOVA re-executava o efeito e o cleanup
+  // ABORTAVA a resposta em andamento: "Pensando..." eterno e campo travado.
+  const resetIfStaleRef = useRef(resetIfStale);
+  resetIfStaleRef.current = resetIfStale;
   useFocusEffect(useCallback(() => {
-    resetIfStale();
+    resetIfStaleRef.current();
     return () => {
       try { aiAbortRef.current?.abort?.(); } catch {}
     };
-  }, [resetIfStale]));
+  }, []));
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
@@ -2585,14 +2623,18 @@ export default function OneScreen() {
     // arrive via meta.suggested_followups when this turn lands.
     setLastFollowups([]);
     const displayMsg = msg || (currentImage ? t('one.analyzingImage') : '');
+    // [2026-10-15] id calculado AQUI (antes era Date.now() dentro do updater do
+    // setState, avaliado depois do aiMsgId → às vezes igual a ele e a resposta
+    // da Bia sobrescrevia o balão do usuário).
+    const userMsgId = Date.now();
     setMessages(prev => [...prev, {
-      id: Date.now(), role: 'user', content: displayMsg, userName: firstName,
+      id: userMsgId, role: 'user', content: displayMsg, userName: firstName,
       ...(currentImage ? { imageUri: currentImage.uri } : {}),
     }]);
     setLoading(true);
     if (voiceModeRef.current) setVoiceState('thinking');
 
-    const aiMsgId = Date.now() + 1;
+    const aiMsgId = userMsgId + 1;
     const effectiveMsg = msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : '');
 
     // ── Try SSE streaming first; fall back to oneChat on any error ─────────────
@@ -3460,6 +3502,33 @@ export default function OneScreen() {
     } catch { return false; }
   }, []);
 
+  // [2026-10-15 bia-bonita] Compartilhar resposta (texto limpo, sem markdown).
+  const shareMessage = useCallback(async (item) => {
+    const text = stripMarkdown(item?.content || '') || item?.content || '';
+    if (!text) return;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) { await navigator.share({ text }); return; }
+        if (typeof navigator !== 'undefined' && navigator.clipboard) await navigator.clipboard.writeText(text);
+        return;
+      }
+      await Share.share({ message: text });
+    } catch {}
+  }, []);
+
+  // Toque num cartão de resultado → tela certa do app.
+  const openBiaCard = useCallback((o) => {
+    if (!o) return;
+    try {
+      if (o.type === 'email' && o.uid) router.push(`/read?uid=${encodeURIComponent(o.uid)}&folder=${encodeURIComponent(o.folder || 'INBOX')}`);
+      else if (o.type === 'inbox') router.push('/inbox');
+      else if (o.type === 'event' && o.id) router.push(`/event-detail?id=${encodeURIComponent(o.id)}`);
+      else if (o.type === 'calendar') router.push('/calendar');
+      else if (o.type === 'contact') router.push(`/contacts?q=${encodeURIComponent(o.q || '')}`);
+      else if (o.type === 'url' && o.url) Linking.openURL(o.url).catch(() => {});
+    } catch {}
+  }, [router]);
+
   // Regenerate — drop the last AI message and re-send the immediately preceding
   // user message so the model takes another shot at it. ChatGPT-style affordance.
   const regenerateLast = useCallback((aiItem) => {
@@ -3500,8 +3569,11 @@ export default function OneScreen() {
       onRegenerate={regenerateLast}
       isLastAI={item.id === lastAIId}
       onLongPressAI={onLongPressAI}
+      onShare={shareMessage}
+      onOpenCard={openBiaCard}
+      locale={locale}
     />
-  ), [colors, isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId, onLongPressAI]);
+  ), [colors, isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId, onLongPressAI, shareMessage, openBiaCard, locale]);
 
   // ─── Empty state — clean 2x2 prompt grid (Translate / Summarize / Code / Brainstorm)
   const renderEmpty = () => {
@@ -3509,6 +3581,7 @@ export default function OneScreen() {
     // because the typical Chatyy user isn't here to write code; Translate /
     // Summarize / Brainstorm cover 95% of real entry intents.
     const sugCards = [
+      { key: 'today', label: t('one.whatsToday') || 'O que tenho hoje?', sub: t('one.upcomingEvents') || '', msg: t('one.whatsToday') || 'O que tenho hoje?', icon: IconCalendar },
       { key: 'translate', label: t('one.promptTranslate') || 'Translate', sub: t('one.promptTranslateSub') || 'a phrase or paragraph', msg: t('one.promptTranslateMsg') || 'Translate this to English: ', icon: IconMessageSquare },
       { key: 'summarize', label: t('one.promptSummarize') || 'Summarize', sub: t('one.promptSummarizeSub') || 'an article or thread', msg: t('one.promptSummarizeMsg') || 'Summarize my unread emails today.', icon: IconMail },
       { key: 'brainstorm', label: t('one.promptBrainstorm') || 'Brainstorm', sub: t('one.promptBrainstormSub') || 'ideas with me', msg: t('one.promptBrainstormMsg') || 'Brainstorm 5 ideas for ', icon: IconSparkles },
@@ -3644,10 +3717,10 @@ export default function OneScreen() {
               loading && !messages.some(m => m._streaming) ? (
                 <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
                   <View style={st.aiHeaderRow}>
-                    <ChatyyOneAvatar size={18} />
+                    <ChatyyOneAvatar size={18} thinking />
                     <Text style={[st.aiHeaderLabel, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>Bia</Text>
                   </View>
-                  <InlineStreamingDots isDark={isDark} />
+                  <BiaThinking isDark={isDark} t={t} />
                 </View>
               ) : (
                 // Suggested follow-up chips — only shown when:

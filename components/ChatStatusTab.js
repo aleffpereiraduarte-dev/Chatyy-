@@ -1,6 +1,6 @@
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import SheetKeyboardAvoider, { useAndroidKeyboardInset } from './chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
@@ -46,6 +46,7 @@ import { TextStatusThumb, isTextStatusItem, textStatusDurationMs, itemBg, itemFo
 import { registerTextStatusOpener } from './status/statusRingStore';
 import { formatTime, formatDateTime } from '../utils/dateFormat'; // [2026-10-13 status-viewers]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
+import { tryOpenNativeStories } from './status/nativeStories'; // [2026-10-15 native-story]
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
@@ -1322,7 +1323,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   }, [viewerIndex, viewerVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open forward modal
+  // [2026-10-15 native-story v2] Alvo do encaminhar vindo do viewer NATIVO (o JS
+  // usa viewerStatuses[viewerIndex]). Zerado a cada abertura pelo viewer JS.
+  const nativeFwdRef = useRef(null);
   const handleOpenForward = useCallback(async () => {
+    nativeFwdRef.current = null;
     setIsPaused(true);
     if (timerRef.current) clearTimeout(timerRef.current);
     if (animRef.current) animRef.current.stop();
@@ -1342,7 +1347,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
   // Forward status content to a conversation
   const handleForwardToConversation = useCallback(async (conv) => {
-    const item = viewerStatuses[viewerIndex];
+    const _nf = nativeFwdRef.current;
+    nativeFwdRef.current = null;
+    const item = _nf?.item || viewerStatuses[viewerIndex];
+    const fwdOwnerName = _nf ? (_nf.ownerName || '') : viewerOwnerName;
     if (!item) return;
     setForwardModalVisible(false);
     setIsPaused(false);
@@ -1379,7 +1387,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         await chatSend(conv.id, vmsg, 'video', null, null, fullUrl);
       } else {
         const statusPreview = (item.content || '').substring(0, 200);
-        await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${viewerOwnerName}`, 'text');
+        await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${fwdOwnerName}`, 'text');
       }
       // Navigate to the conversation
       require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(conv.name || conv.other_name || '')}`);
@@ -1716,7 +1724,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // Locally-archived ids are filtered out client-side here until the backend
   // ships `status_archive`. This way "Arquivar" gives instant feedback even
   // though the row still exists server-side.
-  useEffect(() => {
+  // [2026-10-14 offline-first] useLayoutEffect: a cópia salva do useStatuses
+  // (preload síncrono) entra ANTES do 1º paint → sem frame de skeleton/lista vazia.
+  useLayoutEffect(() => {
     if (archivedStatusIds.size > 0) {
       setMyStatuses(hookMine.filter(s => !archivedStatusIds.has(s.id)));
     } else {
@@ -1843,6 +1853,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const [allStatusGroups, setAllStatusGroups] = useState([]);
   const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
 
+  // [2026-10-15 native-story] Ações do viewer nativo (deleteMyStatus etc. são
+  // declarados mais abaixo → lidos por ref só quando o evento chega).
+  const nativeStoryCbRef = useRef({});
+
   // ─── Viewer Logic ───
   const openViewer = useCallback((statusGroup) => {
     // [WAVE 79 2026-05-21] Manifest-only placeholder guard — instead of
@@ -1910,6 +1924,42 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if ((g.muted || g.is_muted) && String(g.ownerEmail || '').toLowerCase() !== tappedLc) return;
       allGroups.push(g);
     });
+    // [2026-10-15 native-story] Visualizador NATIVO (cubo entre pessoas, player
+    // de segmentos nativo). Só quando o módulo existe, o kill switch
+    // __chatyy_native_story !== false e TODOS os itens são suportados; senão
+    // (ou se o open nativo falhar → reabre com _noNative) segue o viewer JS.
+    if (!statusGroup?._noNative && !statusGroup?._forcePlaceholderOpen) {
+      const _nIdx = Math.max(0, allGroups.findIndex(g => g.ownerEmail === statusGroup.ownerEmail));
+      const _me = String(currentEmail || '').toLowerCase();
+      const _took = tryOpenNativeStories({
+        groups: allGroups.map(g => ({
+          email: g.ownerEmail,
+          name: g.ownerName,
+          avatar: g.ownerAvatar || g.avatar_url || g.avatar || null,
+          isSelf: String(g.ownerEmail || '').toLowerCase() === _me,
+          items: g.items || [],
+        })),
+        startGroup: _nIdx,
+        t,
+        callbacks: {
+          onFallback: () => { try { openViewer({ ...statusGroup, _noNative: true }); } catch {} },
+          onMarkViewed: (id) => { try { nativeStoryCbRef.current?.markViewed?.(id); } catch {} },
+          onDelete: async (id) => { try { await nativeStoryCbRef.current?.deleteStatus?.(id); } catch {} },
+          // [2026-10-15 native-story v2] Menu do status: abre os MESMOS modais do viewer JS (o nativo fecha antes).
+          onForward: (it, ownerName) => { try { nativeStoryCbRef.current?.forward?.(it, ownerName); } catch {} },
+          onHighlight: (it) => { try { nativeStoryCbRef.current?.highlight?.(it); } catch {} },
+          onStats: (it) => { try { nativeStoryCbRef.current?.stats?.(it?.id); } catch {} },
+          onClose: () => {
+            try { _viewerVisCbRef.current?.(false); } catch {}
+            try { nativeStoryCbRef.current?.reload?.(); } catch {}
+          },
+        },
+      });
+      if (_took) {
+        try { _viewerVisCbRef.current?.(true); } catch {}
+        return;
+      }
+    }
     setAllStatusGroups(allGroups);
 
     // Find index of the tapped group
@@ -1930,7 +1980,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // VideoView native peer black — RN won't reconcile transforms and
     // opacity that come from different threads on the same modal layer.
     Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: false }).start();
-  }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName]);
+  }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName, t]);
 
   // [2026-10-15 status-perfil] Host embutido (Perfil) precisa saber se o viewer abriu (fallback) / fechou.
   const _viewerVisCbRef = useRef(onViewerVisibleChange);
@@ -3043,6 +3093,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     } catch {}
   }, [hookRemoveStatus, viewerVisible, viewerStatuses]);
 
+  nativeStoryCbRef.current = {
+    markViewed: (id) => { try { hookMarkViewed?.(id); } catch {} },
+    deleteStatus: (id) => deleteMyStatus(id),
+    reload: () => { try { loadStatuses(); } catch {} },
+  };
+
   // Archive own status. Backend `status_archive` doesn't exist yet — when
   // present, we call it (best-effort, fire-and-forget) so the server keeps
   // the row hidden across devices. Until that ships, the status is removed
@@ -3097,6 +3153,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       setAnalyticsLoading(false);
     }
   }, []);
+
+  // [2026-10-15 native-story v2] Ações do menu do viewer NATIVO → mesmos handlers do JS.
+  nativeStoryCbRef.current.forward = (item, ownerName) => {
+    if (!item) return;
+    handleOpenForward();
+    nativeFwdRef.current = { item, ownerName: ownerName || '' };
+  };
+  nativeStoryCbRef.current.highlight = (item) => { try { openHighlightSheet(item); } catch {} };
+  nativeStoryCbRef.current.stats = (id) => { if (id) { try { openAnalytics(id); } catch {} } };
 
   // Open the archive sheet (list of archived own statuses). Lazy-loads
   // on first open so we don't pay the round-trip up front.

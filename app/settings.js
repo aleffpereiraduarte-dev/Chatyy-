@@ -2890,7 +2890,7 @@ function SettingsScreenInner() {
         {/* Segurança — bloqueio do app, acesso à conta, atividade, criptografia,
             privacidade avançada, família. Web: só "Alterar senha" (o resto
             depende de recursos nativos). */}
-        {(searching || activeCategory === 'account') && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey'), t('settings.loginAlerts.title') || 'Alertas de login', t('settings.advancedPrivacy') || 'Privacidade avançada') && (
+        {(searching || activeCategory === 'account') && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey'), t('settings.loginAlerts.title') || 'Alertas de login', t('settings.advancedPrivacy') || 'Privacidade avançada', t('mod.myReports'), 'denúncia', 'denuncia', 'report', 'moderação', 'moderation') && (
         <View ref={registerSectionRef('security')}>
           {Platform.OS !== 'web' && biometricAvailable && (
             <SettingsGroup header={t('settings.rd2.appLock') || 'Bloqueio do app'} footer={t('settings.biometricDesc')}>
@@ -2981,6 +2981,31 @@ function SettingsScreenInner() {
               />
             </SettingsGroup>
           )}
+
+          {/* [central-moderacao 2026-10-14] Minhas denúncias (todos) + Moderação (só admin → painel web). */}
+          <SettingsGroup header={t('mod.reportsHeader')}>
+            <SettingsRow
+              title={t('mod.myReports')}
+              subtitle={t('mod.myReportsDesc')}
+              icon={IconShield}
+              onPress={() => safeNav('/my-reports')}
+            />
+            {String(user?.email || '').toLowerCase() === 'aleffpereiraduarte@gmail.com' ? (
+              <SettingsRow
+                title={t('mod.adminTitle')}
+                subtitle={t('mod.adminDesc')}
+                icon={IconShield}
+                onPress={async () => {
+                  const url = 'https://chatyy.com.br/api/moderacao.php';
+                  try {
+                    if (Platform.OS === 'web') { window.open(url, '_blank', 'noopener'); return; }
+                    const WB = require('expo-web-browser');
+                    await WB.openBrowserAsync(url);
+                  } catch { Linking.openURL(url).catch(() => {}); }
+                }}
+              />
+            ) : null}
+          </SettingsGroup>
 
           {Platform.OS !== 'web' && (
             <SettingsGroup header={t('settings.rd2.encryption') || 'Criptografia e backup'}>

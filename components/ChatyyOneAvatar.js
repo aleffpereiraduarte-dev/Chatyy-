@@ -26,7 +26,7 @@
 //      doesn't fire setState on a dead component.
 
 import React, { useEffect, useRef } from 'react';
-import { View, Image, Animated } from 'react-native';
+import { View, Image, Animated, Easing } from 'react-native';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 
 const ICON = require('../assets/icon.png');
@@ -69,7 +69,29 @@ function randomBlinkDelay() {
   return 4000 + Math.random() * 4000;
 }
 
-export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
+export default function ChatyyOneAvatar({ size = 48, style, blink = true, thinking = false }) {
+  // [2026-10-15 bia-bonita] thinking → "respiração" sutil (escala 1↔1.07) +
+  // olhar que passeia de leve enquanto a Bia pensa/escreve. Native driver.
+  const breath = useRef(new Animated.Value(0)).current;
+  const glance = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!thinking) { breath.setValue(0); glance.setValue(0); return undefined; }
+    const b = Animated.loop(Animated.sequence([
+      Animated.timing(breath, { toValue: 1, duration: 650, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(breath, { toValue: 0, duration: 650, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    const g = Animated.loop(Animated.sequence([
+      Animated.timing(glance, { toValue: 1, duration: 420, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.delay(500),
+      Animated.timing(glance, { toValue: -1, duration: 620, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.delay(500),
+      Animated.timing(glance, { toValue: 0, duration: 420, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+    ]));
+    b.start(); g.start();
+    return () => { b.stop(); g.stop(); };
+  }, [thinking, breath, glance]);
+  const glanceX = glance.interpolate({ inputRange: [-1, 1], outputRange: [-Math.max(1, size * 0.04), Math.max(1, size * 0.04)] });
+  const scale = breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] });
   // Eyelid scaleY: 0 = eyes fully open (overlay invisible), 1 = eyes closed.
   // We invert the more intuitive "open=1" so resting state lets the underlying
   // white pupils show through with a transform that compiles to identity.
@@ -124,7 +146,7 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
   const eyeRadius = Math.round(eyeH / 2);
 
   return (
-    <View
+    <Animated.View
       style={[
         {
           width: size,
@@ -134,6 +156,7 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
           backgroundColor: BUBBLE_BOTTOM,
         },
         style,
+        thinking ? { transform: [{ scale }] } : null,
       ]}
       accessibilityLabel="Bia"
       accessibilityRole="image"
@@ -160,6 +183,7 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
         <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${gradId})`} />
         <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${sheenId})`} />
       </Svg>
+      <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: size, height: size, transform: [{ translateX: glanceX }] }}>
       {/* Two white eyes. The blink eyelids below cover these pupils on scaleY=1. */}
       <View
         pointerEvents="none"
@@ -201,6 +225,7 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
           />
         </>
       )}
-    </View>
+      </Animated.View>
+    </Animated.View>
   );
 }

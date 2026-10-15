@@ -124,8 +124,12 @@ async function _gatherConvIds() {
 
 async function _runDeltaForAll(allConvIds) {
   if (!allConvIds.length) return { batches: 0, convs: 0 };
-  let { syncConversations } = await import('./chatSync');
+  let { syncConversations, applyEvents } = await import('./chatSync');
   if (typeof syncConversations !== 'function') return { batches: 0, convs: 0 };
+  // [2026-10-15 mensagens-whatsapp] syncConversations funde os lotes paralelos num
+  // POST só e devolve o MESMO `out` a cada chamador → sem isto cada conversa era
+  // processada (e cada mensagem gravada) até 4×. Uma vez por conversa por rodada.
+  const _doneConv = new Set();
 
   // Persist the hydrated rows the delta pulls into chatCache/SQLite so the chat
   // list + next cold-open reflect them even when the thread is CLOSED at
@@ -153,12 +157,31 @@ async function _runDeltaForAll(allConvIds) {
         // Persist the hydrated rows the delta pulled so the chat list + next
         // cold-open reflect them (they used to be thrown away — see comment
         // above). cacheSingleMessage is an idempotent upsert.
-        if (chatCache?.cacheSingleMessage && Array.isArray(out)) {
+        if (Array.isArray(out)) {
           for (const conv of out) {
+            const cid = Number(conv?.id);
+            if (!cid || _doneConv.has(cid) || conv?.denied) continue;
+            _doneConv.add(cid);
             const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
-            for (const m of msgs) {
-              if (m && m.conversation_id) {
-                try { await chatCache.cacheSingleMessage(m.conversation_id, m); } catch {}
+            const evs = Array.isArray(conv?.events) ? conv.events : [];
+            // [2026-10-15 mensagens-whatsapp] Aplica os EVENTOS também (antes só as
+            // linhas): edição/apagar/reação/lido/entregue de conversa FECHADA iam
+            // pro lixo, e — pior — mensagem recebida offline e recuperada por aqui
+            // (resume_full_sync: >200 eventos, p.ex. a noite toda offline) nunca
+            // mandava o recibo de entrega → remetente preso em ✓ até abrir a
+            // conversa. applyEvents grava no disco (facade/chatCache) + dispara o
+            // chatDeliveryAckBatched (dedup + idempotente no servidor). Setter no-op:
+            // a tela aberta tem o próprio sync.
+            if (typeof applyEvents === 'function' && evs.length) {
+              try { applyEvents(evs, null, () => {}, msgs); }
+              catch (e) { try { console.warn('[onlineRecovery] applyEvents failed:', e?.message); } catch {} }
+            }
+            // linhas hidratadas sem evento (cauda fria / full reload) — upsert idempotente
+            if (chatCache?.cacheSingleMessage) {
+              for (const m of msgs) {
+                if (m && m.conversation_id) {
+                  try { await chatCache.cacheSingleMessage(m.conversation_id, m); } catch {}
+                }
               }
             }
           }

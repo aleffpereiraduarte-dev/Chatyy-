@@ -18,7 +18,7 @@ import {
   Animated, Easing,
 } from 'react-native';
 import * as api from '../services/api';
-import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
+import { swr, getCachedEntrySync, setCache, userScopedKey } from '../services/cache';
 import AvatarCircle from './AvatarCircle';
 
 // [WAVE 100] Module-scope live store — bell modal mounts/unmounts on each
@@ -27,6 +27,10 @@ import AvatarCircle from './AvatarCircle';
 // cold starts too.
 const _hubLiveStore = new Map();
 const HUB_KEY = 'notifications_feed_hub_v1';
+// [2026-10-14 offline-first] disco (7 dias). swr grava { success, data: { items } } — antes lia `.items` na raiz (nunca pintava).
+function _readHubDisk() {
+  try { const e = getCachedEntrySync(HUB_KEY); const d = e && e.data; const l = d && (d.data?.items || d.items); return Array.isArray(l) ? l : null; } catch { return null; }
+}
 function _readHubLive() {
   try {
     const key = userScopedKey(HUB_KEY);
@@ -433,11 +437,7 @@ export default function NotificationsHub({
   const [items, setItems] = useState(() => {
     const live = _readHubLive();
     if (live) return live;
-    try {
-      const cached = getCachedSync(HUB_KEY);
-      if (cached?.items) return cached.items;
-    } catch {}
-    return [];
+    return _readHubDisk() || [];
   });
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -519,7 +519,7 @@ export default function NotificationsHub({
         // [WAVE 100] Mirror into live store + MMKV so re-open shows read state.
         try {
           _writeHubLive(next);
-          setCache(HUB_KEY, { success: true, data: { items: next } }, 30 * 60 * 1000);
+          setCache(HUB_KEY, { success: true, data: { items: next } }, 7 * 24 * 3600 * 1000);
         } catch {}
         return next;
       });

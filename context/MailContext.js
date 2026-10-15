@@ -13,12 +13,12 @@ import { playNewEmailAlert as playAlert } from '../services/notificationSound';
 import { useAuth } from './AuthContext';
 import { useLanguage } from './LanguageContext';
 import {
-  saveEmailsToCache, getEmailsFromCache,
-  saveMessageToCache, getMessageFromCache,
+  saveEmailsToCache, getEmailsFromCache, getEmailsFromCacheSync,
+  saveMessageToCache, getMessageFromCache, getMessageFromCacheSync,
   queueOfflineAction, replayOfflineQueue,
   isOnline, onOnlineStatusChange,
 } from '../services/offlineCache';
-import { getCached, setCache } from '../services/cache';
+import { getCached, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
 
 // Native cache (iOS only) — synchronous SQLite read for instant inbox first paint.
 // Same module that powers chat list / chat messages / media URI cache.
@@ -260,7 +260,7 @@ export function MailProvider({ children }) {
 
   // Use the native SQLite cache as the initial state so the inbox is rendered
   // with real emails on the very first frame (no empty list flash).
-  const [emails, setEmails] = useState(() => _nativeReadEmailsSync('INBOX') || []);
+  const [emails, setEmails] = useState(() => _nativeReadEmailsSync('INBOX') || getEmailsFromCacheSync('INBOX') || []);
   // [2026-10-11 email-qa] Leitura SÍNCRONA da lista atual. Os "wasUnread"/
   // "removed" calculados DENTRO do updater do setEmails só rodam no próximo
   // render (React 18 batch) → o `if (wasUnread)` logo abaixo via sempre false e
@@ -467,7 +467,9 @@ export function MailProvider({ children }) {
     // email-qa] Antes repintava o cache (velho) a cada chamada, desfazendo o
     // ajuste otimista do contador (abriu/excluiu → número voltava por ~1-2 s).
     if (!foldersPaintedRef.current) {
-      const cached = await getCached('email_folders');
+      // [2026-10-14 offline-first] cópia salva mesmo após o TTL de 10 min (máx. 7 dias).
+      let cached = null;
+      try { cached = hasCacheUser() ? (getCachedEntrySync('email_folders')?.data || null) : null; } catch {}
       if (cached && !foldersPaintedRef.current) setFolders(cached);
     }
     const reqAt = Date.now();
@@ -702,7 +704,11 @@ export function MailProvider({ children }) {
       setLoadingMessage(false);
       return;
     }
-    setLoadingMessage(true);
+    // [2026-10-14 offline-first] corpo já salvo → pinta no MESMO frame (sem skeleton).
+    let _syncHit = null;
+    try { _syncHit = getMessageFromCacheSync(uid, folder || currentFolder); } catch {}
+    if (_syncHit) { setSelectedEmail({ ..._syncHit, seen: true, read: true }); setLoadingMessage(false); }
+    else setLoadingMessage(true);
     // [2026-10-11] Abriu = lido NA HORA na lista/contador (local, sem POST); o
     // POST ao servidor continua no caminho da rede abaixo (ou no catch).
     try { markAsRead(uid, folder, true); } catch {}
@@ -713,8 +719,8 @@ export function MailProvider({ children }) {
     // mutable bits (flags/labels) and self-corrects the view when it lands.
     // Guarded: a cache miss (or a body-less stub) falls straight through to the
     // network path below with the spinner still showing.
-    let paintedFromCache = false;
-    try {
+    let paintedFromCache = !!_syncHit;
+    if (!_syncHit) try {
       const cached = await getMessageFromCache(uid, folder || currentFolder);
       if (cached && (cached.body_html || cached.body_text || cached.body)) {
         setSelectedEmail({ ...cached, seen: true, read: true });
@@ -1545,6 +1551,10 @@ export function MailProvider({ children }) {
           clearTimeout(arrivalRetryRef.current.a); clearTimeout(arrivalRetryRef.current.b);
           arrivalRetryRef.current.a = setTimeout(() => { try { silentRefreshRef.current?.(); loadFoldersRef.current?.(); } catch {} }, 1500);
           arrivalRetryRef.current.b = setTimeout(() => { try { silentRefreshRef.current?.(); loadFoldersRef.current?.(); } catch {} }, 4000);
+          // [2026-10-15 email-melhorias] 3ª tentativa: o índice PG do e-mail
+          // novo leva 0,6–2,5 s medidos (às vezes mais sob carga).
+          clearTimeout(arrivalRetryRef.current.c);
+          arrivalRetryRef.current.c = setTimeout(() => { try { silentRefreshRef.current?.(); } catch {} }, 9000);
         }
       }
       // Desktop browser notification with preview
@@ -1602,7 +1612,7 @@ export function MailProvider({ children }) {
       if (data?.uid) {
         const isRecentlyRead = recentlyReadRef.current.has(String(data.uid));
         setEmails(prev => prev.map(e =>
-          e.uid === data.uid ? { ...e, seen: (isRecentlyRead ? true : data.seen) } : e
+          String(e.uid) === String(data.uid) ? { ...e, seen: (isRecentlyRead ? true : data.seen) } : e
         ));
       }
     });
@@ -1612,6 +1622,17 @@ export function MailProvider({ children }) {
       loadFolders();
     });
 
+    // [2026-10-15 email-melhorias] Push de e-mail com o app ABERTO (só virava
+    // toast) e silent push de sync (`silent_sync` type email — ninguém ouvia)
+    // agora atualizam a caixa na hora, mesmo com o WS caído (rede trocando).
+    const offSync = mailWs.on('silent_sync', (d) => {
+      if (d && d.type !== 'email') return;
+      clearTimeout(arrivalRetryRef.current.s);
+      arrivalRetryRef.current.s = setTimeout(() => {
+        try { silentRefreshRef.current?.(); loadFoldersRef.current?.(); } catch {}
+      }, 300);
+    });
+
     // Connection status
     const offConn = mailWs.on('connection', (data) => {
       setWsStatus(data.status);
@@ -1619,6 +1640,8 @@ export function MailProvider({ children }) {
 
     return () => {
       clearTimeout(arrivalRetryRef.current.a); clearTimeout(arrivalRetryRef.current.b);
+      clearTimeout(arrivalRetryRef.current.c); clearTimeout(arrivalRetryRef.current.s);
+      try { offSync(); } catch {}
       offNew();
       offDel();
       offMove();
@@ -1750,19 +1773,16 @@ export function MailProvider({ children }) {
       try {
         const ws = (await import('../services/websocket')).default;
         ws.subscribe(`mail_${user.email}`);
-        unsub = ws.on('new_email', (data) => {
-          // Debounced: refresh once even if multiple events fire in burst
-          clearTimeout(unsub?._t);
-          unsub._t = setTimeout(() => {
-            try { silentRefresh(); } catch {}
-            try { loadFolders(); } catch {}
-          }, 200);
-        });
+        // [2026-10-15 email-melhorias] Só a inscrição no canal. O refresh do
+        // `new_email` já é feito pelo handler principal (acima, com retries
+        // 1,5/4/9 s) — este segundo listener duplicava silentRefresh+loadFolders
+        // a cada e-mail (2 eventos por e-mail → 4 refreshes de lista).
+        unsub = () => {};
       } catch {}
     })();
     return () => {
       try {
-        if (unsub) { clearTimeout(unsub._t); unsub(); }
+        if (unsub) unsub();
         import('../services/websocket').then(m => m.default.unsubscribe(`mail_${user.email}`)).catch(() => {});
       } catch {}
     };
@@ -1837,7 +1857,9 @@ export function MailProvider({ children }) {
     }
 
     return stop;
-  }, [silentRefresh, loadFolders, emails.length, currentFolder, wsStatus, user?.email, emailPollingEnabled]);
+  // [2026-10-15 email-melhorias] `emails.length` saiu das deps: cada e-mail
+  // novo/apagado recriava o intervalo e empurrava o próximo poll para frente.
+  }, [silentRefresh, loadFolders, currentFolder, wsStatus, user?.email, emailPollingEnabled]);
 
   // Memoize the context value so consumers don't re-render on every internal
   // state change that doesn't affect the slice they read. Previously this was

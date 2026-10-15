@@ -16,6 +16,7 @@ import { haptic } from '../constants/theme';
 import Svg, { Path, Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 
 function IconPaperclip({ size = 22, color = '#666' }) {
   return (
@@ -168,15 +169,16 @@ const QUICK_REACTIONS = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDD25', '\uD83D
 
 // ── Following Tab: channels user follows ──
 function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate }) {
-  const [channels, setChannels] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-14 offline-first] última lista salva (por conta) → pinta na hora.
+  const [channels, setChannels] = useState(() => peekCached('channels_mine') || []);
+  const [loading, setLoading] = useState(() => !peekCached('channels_mine'));
   const [refreshing, setRefreshing] = useState(false);
   const [failed, setFailed] = useState(false); // [2026-10-08 apps-native] erro ≠ vazio
 
   const load = useCallback(async () => {
     try {
       const res = await api.channelMyChannels();
-      if (api.apiOk(res)) { setChannels(api.apiList(res, 'channels', 'conversations')); setFailed(false); }
+      if (api.apiOk(res)) { const _l = api.apiList(res, 'channels', 'conversations'); setChannels(_l); putCached('channels_mine', _l); setFailed(false); }
       else setFailed(true);
     } catch { setFailed(true); } finally { setLoading(false); setRefreshing(false); }
   }, []);
@@ -259,8 +261,10 @@ function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate 
 
 // ── Discover Tab: browse/search all public channels ──
 function DiscoverList({ colors, isDark, t, onOpenChannel }) {
-  const [channels, setChannels] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [2026-10-14 offline-first] 1ª página do filtro padrão salva (por conta).
+  const [channels, setChannels] = useState(() => peekCached('channels_discover_p1') || []);
+  const [loading, setLoading] = useState(() => !peekCached('channels_discover_p1'));
+  const seededRef = useRef(!!peekCached('channels_discover_p1'));
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
   const [filter, setFilter] = useState('discover'); // top-level: subscribed/discover/suggested/recent
@@ -291,6 +295,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
         const payload = api.apiPayload(res) || {};
         nextOffsetRef.current = typeof payload.next_offset === 'number' ? payload.next_offset : offset + rows.length;
         setHasMore(!!payload.has_more);
+        if (!append && offset === 0 && (cat === 'all' || !cat) && !q && flt === 'discover') putCached('channels_discover_p1', rows.slice(0, 40));
         setChannels(prev => {
           if (!append) return rows;
           const seen = new Set(prev.map(c => c.id));
@@ -303,7 +308,8 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
+    if (seededRef.current) seededRef.current = false; // 1ª carga sobre a cópia salva: sem skeleton
+    else setLoading(true);
     load(category, search, filter);
     return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
   }, [category, filter, load]);
@@ -519,9 +525,11 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
 function ChannelView({ channel, colors, isDark, t, onBack }) {
   const { user } = useAuth();
   const myEmail = String(user?.email || '').toLowerCase();
-  const [posts, setPosts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [info, setInfo] = useState(null);
+  // [2026-10-14 offline-first] posts/info salvos do canal (por conta) → abre na hora.
+  const [_chInit] = useState(() => peekCached(['channel_view', channel.id]));
+  const [posts, setPosts] = useState(() => (Array.isArray(_chInit?.posts) ? _chInit.posts : []));
+  const [loading, setLoading] = useState(() => !_chInit);
+  const [info, setInfo] = useState(() => _chInit?.info || null);
   const [isMember, setIsMember] = useState(channel.is_member !== false);
   const [joining, setJoining] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -553,6 +561,11 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
       if (api.apiOk(infoRes)) {
         setInfo(api.apiPayload(infoRes) || null);
         setIsMember(true); // chat_group_info exige membership → ok ⇒ membro
+        if (api.apiOk(feedRes)) {
+          const _rows = api.apiList(feedRes, 'messages', 'posts', 'items').filter(m => m && m.type !== 'system' && !m.deleted_at);
+          const _asc = _rows.length > 1 && new Date(_rows[0].created_at) < new Date(_rows[_rows.length - 1].created_at);
+          putCached(['channel_view', channel.id], { posts: (_asc ? _rows.slice().reverse() : _rows).slice(0, 40), info: api.apiPayload(infoRes) || null });
+        }
       } else if (infoRes && (infoRes.status === 403 || infoRes._err?.status === 403 || /member/i.test(api.apiMsg(infoRes) || String(infoRes._err?.message || '')))) {
         setIsMember(false);
       }

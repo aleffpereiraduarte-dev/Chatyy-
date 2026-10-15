@@ -475,6 +475,10 @@ class GroupCallActivity : ComponentActivity() {
       @Suppress("UnspecifiedRegisterReceiverFlag")
       registerReceiver(closeReceiver, filter)
     }
+    // [2026-10-15 screen-share WA] Notification "Parar".
+    screenShareStopRx = ScreenShareKit.registerStopReceiver(this) {
+      if (screenSharing) stopScreenShare("notification")
+    }
 
     // Audio: shared router (speaker default for video, BT/wired wins).
     try {
@@ -753,6 +757,7 @@ class GroupCallActivity : ComponentActivity() {
           is RoomEvent.TrackUnpublished -> if (event.participant is LocalParticipant &&
             event.publication.source == Track.Source.SCREEN_SHARE) {
             screenSharing = false
+            cleanupLocalScreenShare("unpublished") // [2026-10-15 screen-share WA]
             refreshControlStates()
           }
           is RoomEvent.ActiveSpeakersChanged -> onActiveSpeakers(event.speakers)
@@ -1174,11 +1179,15 @@ class GroupCallActivity : ComponentActivity() {
     if (identity.isEmpty()) return
     val key = SCREEN_PREFIX + identity
     var tile = tilesByIdentity[key]
+    var isNewShare = false
     if (tile == null) {
       val owner = tilesByIdentity[identity]?.displayName ?: displayNameFor(identity, p)
       addTile(identity = key, displayName = GroupCallStrings.s("gx.screenOf", "name" to owner), isScreen = true)
       tile = tilesByIdentity[key]
       relayoutGrid()
+      isNewShare = true
+      // [2026-10-15 screen-share WA] "Fulano está compartilhando a tela".
+      showToastPill(CallStrings.s("ssPeerSharing", "name" to owner))
     }
     val t = tile ?: return
     val old = screenTracks[key]
@@ -1188,12 +1197,21 @@ class GroupCallActivity : ComponentActivity() {
       screenTracks[key] = track
     }
     setTileVideo(t, true)
+    // [2026-10-15 screen-share WA] WhatsApp: the shared screen opens FULL
+    // SCREEN automatically (once per share; ✕/back = minimize to its tile).
+    if (isNewShare && fullscreenOverlay == null && !screenSharing && autoOpenedScreens.add(key)) {
+      CallDiag.log("group_screen_share_viewer_open", roomName, "auto=1", applicationContext)
+      openScreenFullscreen(key)
+    } else if (fullscreenKey == key && fullscreenTrack !== track) {
+      openScreenFullscreen(key) // re-share → rebind the open viewer
+    }
   }
 
   private fun detachScreen(identity: String) {
     if (identity.isEmpty()) return
     val key = SCREEN_PREFIX + identity
     val track = screenTracks.remove(key)
+    autoOpenedScreens.remove(key)
     if (fullscreenKey == key) closeScreenFullscreen()
     tilesByIdentity[key]?.let { t -> try { track?.removeRenderer(t.renderer) } catch (_: Throwable) {} }
     if (tilesByIdentity.containsKey(key)) removeTile(key)
@@ -1321,6 +1339,16 @@ class GroupCallActivity : ComponentActivity() {
     fullscreenRenderer = tv
     fullscreenTrack = track
     fullscreenKey = key
+    // [2026-10-15 screen-share WA] Rotate → shared screen in landscape
+    // (configChanges has orientation|screenSize: no recreation). FULL_USER
+    // honours the rotation lock. Zoom resets on a size change.
+    try { requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER } catch (_: Throwable) {}
+    tv.addOnLayoutChangeListener { _, l, t, rr, b, ol, ot, orr, ob ->
+      if ((rr - l) != (orr - ol) || (b - t) != (ob - ot)) {
+        scale = 1f
+        tv.scaleX = 1f; tv.scaleY = 1f; tv.translationX = 0f; tv.translationY = 0f
+      }
+    }
   }
 
   private fun closeScreenFullscreen() {
@@ -1333,6 +1361,7 @@ class GroupCallActivity : ComponentActivity() {
     fullscreenRenderer = null
     fullscreenTrack = null
     fullscreenKey = null
+    try { requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT } catch (_: Throwable) {}
   }
 
   /** Participant list: name · state (Tocando… / Conectado / Mudo) + Adicionar. */
@@ -1863,49 +1892,75 @@ class GroupCallActivity : ComponentActivity() {
       CallDiag.log("group_screen_share_error", roomName, "reason=room_not_connected", applicationContext)
       return
     }
-    try {
-      val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
-      suppressPipUntil = System.currentTimeMillis() + 30_000L
-      screenCaptureLauncher.launch(mpm.createScreenCaptureIntent())
-    } catch (t: Throwable) {
-      suppressPipUntil = 0L
-      Log.w(TAG, "screen capture intent failed: ${t.message}")
-      CallDiag.log("group_screen_share_error", roomName, "err=${t.message?.take(100)}", applicationContext)
-      try { Toast.makeText(this, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+    // [2026-10-15 screen-share WA] 1st time only: privacy notice → FRESH
+    // consent (Android 14+: single-use token per session).
+    CallDiag.log("group_screen_share_start_tap", roomName, "", applicationContext)
+    screenShareInFlight = true
+    ScreenShareKit.confirmPrivacyThen(this, onContinue = {
+      screenShareInFlight = false
+      if (finished || screenSharing) return@confirmPrivacyThen
+      try {
+        suppressPipUntil = System.currentTimeMillis() + 30_000L
+        screenCaptureLauncher.launch(ScreenShareKit.captureIntent(this))
+      } catch (t: Throwable) {
+        suppressPipUntil = 0L
+        Log.w(TAG, "screen capture intent failed: ${t.message}")
+        CallDiag.log("group_screen_share_error", roomName, "err=${t.message?.take(100)}", applicationContext)
+        try { Toast.makeText(this, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+      }
+    }, onCancel = {
+      screenShareInFlight = false
+      CallDiag.log("group_screen_share_privacy_cancel", roomName, "", applicationContext)
+    })
+  }
+
+  private fun buildScreenShareNotification(): android.app.Notification =
+    // [2026-10-15 screen-share WA] "Você está compartilhando a tela" + Parar.
+    ScreenShareKit.buildNotification(this, title, GroupCallActivity::class.java, 7313)
+
+  /** [2026-10-15 screen-share WA] Camera paused by the share (resumed on stop). */
+  private var cameraPausedForShare = false
+  private var screenAudioShare: ScreenShareKit.AudioShare? = null
+  private var screenShareStopRx: BroadcastReceiver? = null
+  private var screenShareStartedAt = 0L
+  /** Remote screen keys already auto-opened full screen (once per share). */
+  private val autoOpenedScreens = HashSet<String>()
+
+  private fun setGroupCamera(on: Boolean) {
+    camEnabled = on
+    refreshControlStates()
+    lifecycleScope.launch {
+      try {
+        val r = room ?: return@launch
+        r.localParticipant.setCameraEnabled(on)
+        if (on) bindLocalCameraIfReady(r)
+        refreshControlStates()
+      } catch (t: Throwable) { Log.w(TAG, "setGroupCamera($on): ${t.message}") }
     }
   }
 
-  private fun buildScreenShareNotification(): android.app.Notification {
-    val iconRes = try {
-      resources.getIdentifier("ic_notification", "drawable", packageName).takeIf { it != 0 } ?: applicationInfo.icon
-    } catch (_: Throwable) { applicationInfo.icon }
-    val channelId = "chatyy_screen_share"
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      try {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        if (nm.getNotificationChannel(channelId) == null) {
-          nm.createNotificationChannel(
-            android.app.NotificationChannel(channelId, CallStrings.s("sharingScreen"), android.app.NotificationManager.IMPORTANCE_LOW)
-          )
-        }
-      } catch (_: Throwable) {}
+  private fun onLocalScreenShareStarted(r: Room) {
+    screenShareStartedAt = System.currentTimeMillis()
+    if (hasVideo && camEnabled) {
+      cameraPausedForShare = true
+      setGroupCamera(false)
     }
-    val open = try {
-      android.app.PendingIntent.getActivity(
-        this, 7313,
-        Intent(this, GroupCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
-        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-      )
-    } catch (_: Throwable) { null }
-    return androidx.core.app.NotificationCompat.Builder(this, channelId)
-      .setSmallIcon(iconRes)
-      .setContentTitle(CallStrings.s("sharingScreen"))
-      .setContentText(title)
-      .setOngoing(true)
-      .setOnlyAlertOnce(true)
-      .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-      .apply { if (open != null) setContentIntent(open) }
-      .build()
+    screenAudioShare = ScreenShareKit.startAudio(applicationContext, r)
+    CallDiag.log("group_screen_share_started", roomName,
+      "cam_paused=${if (cameraPausedForShare) 1 else 0} audio=${if (screenAudioShare != null) 1 else 0}", applicationContext)
+  }
+
+  private fun cleanupLocalScreenShare(why: String) {
+    ScreenShareKit.stopAudio(screenAudioShare)
+    screenAudioShare = null
+    if (cameraPausedForShare) {
+      cameraPausedForShare = false
+      if (!finished) setGroupCamera(true)
+    }
+    if (screenShareStartedAt > 0L) {
+      CallDiag.log("group_screen_share_ended", roomName, "why=$why dur_s=${(System.currentTimeMillis() - screenShareStartedAt) / 1000}", applicationContext)
+      screenShareStartedAt = 0L
+    }
   }
 
   private fun startScreenShareWith(data: Intent) {
@@ -1929,6 +1984,7 @@ class GroupCallActivity : ComponentActivity() {
         val ok = r.localParticipant.setScreenShareEnabled(true, params)
         screenSharing = ok
         CallDiag.log(if (ok) "group_screen_share_published" else "group_screen_share_error", roomName, "mediaprojection", applicationContext)
+        if (ok) onLocalScreenShareStarted(r)
         if (!ok) {
           try { Toast.makeText(this@GroupCallActivity, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
         }
@@ -1947,6 +2003,7 @@ class GroupCallActivity : ComponentActivity() {
   private fun stopScreenShare(why: String) {
     val r = room
     screenSharing = false
+    cleanupLocalScreenShare(why)
     refreshControlStates()
     if (r == null) return
     lifecycleScope.launch {
@@ -1963,6 +2020,10 @@ class GroupCallActivity : ComponentActivity() {
     if (liveRef?.get() === this) { liveRef = null; uiVisible = false }
     try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
+    ScreenShareKit.unregisterStopReceiver(this, screenShareStopRx) // [2026-10-15 screen-share WA]
+    screenShareStopRx = null
+    try { ScreenShareKit.stopAudio(screenAudioShare) } catch (_: Throwable) {}
+    screenAudioShare = null
     ui.removeCallbacksAndMessages(null)
     try { CallVideoQuality.stopAdaptive() } catch (_: Throwable) {}
     stopRingback()

@@ -199,6 +199,8 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
   private var didInitialLayout = false
   private weak var panCell: MVPageCell?
   private var bgObserver: NSObjectProtocol?
+  private var captureObserver: NSObjectProtocol?
+  private var captureShield: UIView?
 
   private let backdrop = UIView()
   private let layout = UICollectionViewFlowLayout()
@@ -296,10 +298,58 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
       guard let self = self, let cv = self.collectionView else { return }
       for c in cv.visibleCells { (c as? MVPageCell)?.pausePlayback() }
     }
+
+    if flags.secure {
+      captureObserver = NotificationCenter.default.addObserver(forName: UIScreen.capturedDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+        self?.updateCaptureShield()
+      }
+      updateCaptureShield()
+    }
   }
 
   deinit {
     if let o = bgObserver { NotificationCenter.default.removeObserver(o) }
+    if let o = captureObserver { NotificationCenter.default.removeObserver(o) }
+  }
+
+  // [2026-10-14 adv-privacy] Gravando/espelhando a tela → cobre tudo (inclusive
+  // as barras) e pausa o vídeo (o áudio também seria gravado).
+  private func updateCaptureShield() {
+    guard flags.secure, isViewLoaded else { return }
+    let capturing = UIScreen.main.isCaptured
+    if capturing {
+      if captureShield == nil {
+        let shield = UIView(frame: view.bounds)
+        shield.backgroundColor = .black
+        shield.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        shield.isUserInteractionEnabled = false
+        let label = UILabel()
+        label.text = labels["protected"] ?? "Conteúdo protegido"
+        label.textColor = .white
+        label.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        label.textAlignment = .center
+        label.numberOfLines = 2
+        label.translatesAutoresizingMaskIntoConstraints = false
+        shield.addSubview(label)
+        NSLayoutConstraint.activate([
+          label.centerXAnchor.constraint(equalTo: shield.centerXAnchor),
+          label.centerYAnchor.constraint(equalTo: shield.centerYAnchor),
+          label.leadingAnchor.constraint(greaterThanOrEqualTo: shield.leadingAnchor, constant: 32),
+          label.trailingAnchor.constraint(lessThanOrEqualTo: shield.trailingAnchor, constant: -32),
+        ])
+        captureShield = shield
+      }
+      if let shield = captureShield {
+        shield.frame = view.bounds
+        if shield.superview == nil { view.addSubview(shield) }
+        view.bringSubviewToFront(shield)
+      }
+      if let cv = collectionView {
+        for c in cv.visibleCells { (c as? MVPageCell)?.pausePlayback() }
+      }
+    } else {
+      captureShield?.removeFromSuperview()
+    }
   }
 
   override func viewDidLayoutSubviews() {

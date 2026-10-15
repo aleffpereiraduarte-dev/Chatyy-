@@ -17,7 +17,10 @@
 // Também liga o evento WS "history_imported" (1 por importação, vindo do servidor) →
 // a conversa aberta recarrega (push_chat_refresh) e o banner atualiza.
 import { AppState } from 'react-native';
-import { prepareImport, runImport } from './importer';
+// [2026-10-15 boot-size] importer (+ zip/fflate/parser/sha256, ~90 KB) só quando uma
+// importação começa: este módulo é importado pelo WaImportBanner da lista de
+// conversas (caminho do 1º frame) e só precisa dos listeners/estado.
+const _importer = () => require('./importer');
 import { refreshImports } from './registry';
 
 const IDLE = { status: 'idle', progress: null, result: null, error: null, prepProgress: 0 };
@@ -112,7 +115,7 @@ export async function prepare(files, opts = {}) {
   _lastFiles = files; _lastPrepOpts = opts;
   _set({ ...IDLE, status: 'preparing', originConvId: opts.originConvId || null });
   try {
-    const p = await prepareImport(files, { ...opts, signal: _signal, onProgress: (f) => _set({ prepProgress: f }) });
+    const p = await _importer().prepareImport(files, { ...opts, signal: _signal, onProgress: (f) => _set({ prepProgress: f }) });
     _prep = p;
     _set({ status: 'ready', prepProgress: 1, title: p.title });
     return p;
@@ -146,7 +149,7 @@ async function _run() {
   _set({ status: _signal.paused ? 'paused' : 'running', error: null });
   _keepAwake(true);
   try {
-    const r = await runImport(_prep, _opts, (p) => {
+    const r = await _importer().runImport(_prep, _opts, (p) => {
       _set({ progress: p, conversationId: p.conversationId || _job.conversationId, status: _signal.paused ? 'paused' : 'running' });
     }, _signal);
     if (r.cancelled) { _set({ status: 'cancelled', result: r }); _clearResume(); return r; }

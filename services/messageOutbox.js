@@ -77,6 +77,10 @@ export const MAX_ATTEMPTS = 7;
 // • Idempotency: every retry reuses the same client_message_id; chat.php dedups
 //   it BEFORE its rate/slow-mode gates and returns the original row.
 export const TRANSIENT_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000, 60000, 120000, 300000];
+// [2026-10-15 mensagens-whatsapp] last_error de uma linha adiada por 429: o
+// retryNow() (reconexão/foreground) NÃO zera esse adiamento — o servidor disse
+// quando volta a aceitar; insistir antes só gera outro 429.
+export const RATE_LIMIT_ERR_PREFIX = 'rl429:';
 
 /**
  * Classify a chat_send response / thrown error.
@@ -139,8 +143,17 @@ export function isOwnedSending(cmi) {
 // foreground send path checks this SYNCHRONOUSLY so a new message never
 // overtakes an older one that is still in backoff (per-conversation FIFO).
 const _backlog = new Set();
+// [2026-10-15 ordem-rico] Conversas com um enqueue 'queued' (GIF / figurinha /
+// local — linha que o WORKER envia) ainda gravando no SQLite. Marcado de forma
+// SÍNCRONA na chamada de enqueue(), antes de qualquer await: um texto digitado
+// logo depois vê a conversa ocupada e entra na fila atrás (mesmo seq-FIFO), em
+// vez de sair pelo envio direto e ultrapassar o GIF. Envio normal sem nada
+// pendente não muda (Map vazio).
+const _enqueuing = new Map(); // conv → contagem de enqueues em voo
 export function hasBacklog(conversationId) {
-  return conversationId != null && _backlog.has(Number(conversationId));
+  if (conversationId == null) return false;
+  const c = Number(conversationId);
+  return _backlog.has(c) || (_enqueuing.get(c) || 0) > 0;
 }
 export function noteBacklog(conversationId) {
   if (conversationId != null && Number(conversationId)) _backlog.add(Number(conversationId));
@@ -392,6 +405,24 @@ export async function enqueue(payload, opts = null) {
   // the CDN (mediaSendQueue owns it), 'msg' (default) for everything else.
   const lane = (opts && opts.lane === 'upload') ? 'upload' : 'msg';
   if (!payload || !payload.client_message_id || !payload.conversation_id) return null;
+  // [2026-10-15 ordem-rico] Ver _enqueuing acima: síncrono, antes do 1º await.
+  const _trackConv = (initialState === 'queued' && lane === 'msg') ? Number(payload.conversation_id) : 0;
+  if (_trackConv) _enqueuing.set(_trackConv, (_enqueuing.get(_trackConv) || 0) + 1);
+  try {
+    const r = await _enqueueInner(payload, initialState, lane);
+    // Linha nova na fila do worker → a conversa segue "ocupada" até o worker
+    // drená-la (refreshBacklog recalcula do SQLite após cada drenagem).
+    if (_trackConv && r && !r.existed) _backlog.add(_trackConv);
+    return r;
+  } finally {
+    if (_trackConv) {
+      const n = (_enqueuing.get(_trackConv) || 1) - 1;
+      if (n > 0) _enqueuing.set(_trackConv, n); else _enqueuing.delete(_trackConv);
+    }
+  }
+}
+
+async function _enqueueInner(payload, initialState, lane) {
   const db = await _db_or_null();
   if (!db) return null;
   const cmi = String(payload.client_message_id);
@@ -711,6 +742,9 @@ export async function markFailed(cmi, err = null, opts = null) {
         const base = TRANSIENT_BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), TRANSIENT_BACKOFF_MS.length - 1)];
         delay = Math.round(base * (0.8 + Math.random() * 0.4));
       }
+      // [2026-10-15 mensagens-whatsapp] piso = Retry-After do servidor (429)
+      const _ra = Number(opts && opts.retryAfterMs);
+      if (kind !== 'offline' && Number.isFinite(_ra) && _ra > 0) delay = Math.max(delay, Math.round(_ra + Math.random() * 400));
       await db.runAsync(
         `UPDATE outbox
             SET state = 'queued',
@@ -781,8 +815,8 @@ export async function retryNow(conversationId = null) {
   if (!db) return 0;
   try {
     const res = conversationId == null
-      ? await db.runAsync(`UPDATE outbox SET next_retry_at = 0 WHERE state = 'queued' AND next_retry_at > 0`)
-      : await db.runAsync(`UPDATE outbox SET next_retry_at = 0 WHERE state = 'queued' AND next_retry_at > 0 AND conversation_id = ?`, Number(conversationId));
+      ? await db.runAsync(`UPDATE outbox SET next_retry_at = 0 WHERE state = 'queued' AND next_retry_at > 0 AND (last_error IS NULL OR last_error NOT LIKE 'rl429:%')`)
+      : await db.runAsync(`UPDATE outbox SET next_retry_at = 0 WHERE state = 'queued' AND next_retry_at > 0 AND (last_error IS NULL OR last_error NOT LIKE 'rl429:%') AND conversation_id = ?`, Number(conversationId));
     return res?.changes ?? 0;
   } catch { return 0; }
 }

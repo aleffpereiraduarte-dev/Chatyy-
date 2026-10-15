@@ -53,6 +53,7 @@ const WEB_STUBS = new Set([
 // os arquivos de app/ (inclusive *.web.js) no bundle nativo. No nativo essa
 // rota nunca é montada (usa app/live-viewer.js) → stub no Android/iOS.
 const NATIVE_STUBS = new Set(['expo-symbols', 'hls.js']);
+const LIVEKIT_CLIENT_UMD = require('path').join(__dirname, 'node_modules', 'livekit-client', 'dist', 'livekit-client.umd.js');
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if ((platform === 'android' || platform === 'ios') && NATIVE_STUBS.has(moduleName)) {
@@ -63,6 +64,16 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // domutils/entities (~240 KB). Só p/ quem importa de dentro da lib do QR.
   if (moduleName === 'react-native-svg/css' && /[\\/]react-native-qrcode-svg[\\/]/.test(context.originModulePath || '')) {
     return { filePath: require.resolve('./stubs/svg-css-noop.js'), type: 'sourceFile' };
+  }
+  // [2026-10-15 boot-size] livekit-client entrava DUAS vezes no bundle nativo
+  // (~0.53 MB a mais): `require('livekit-client')` (app/lkLoader, @livekit/react-native
+  // commonjs) resolvia a condição "require" → dist/livekit-client.umd.js, e o
+  // `import` do @livekit/components-react (.mjs) a condição "import" →
+  // dist/livekit-client.esm.mjs. Além do peso, eram 2 instâncias do SDK (Room,
+  // loggers, instanceof) na mesma ligação. Nativo: todos usam o UMD (o que o app
+  // e o @livekit/react-native já usam hoje). Web segue com a resolução padrão.
+  if ((platform === 'android' || platform === 'ios') && moduleName === 'livekit-client') {
+    return { filePath: LIVEKIT_CLIENT_UMD, type: 'sourceFile' };
   }
   if (platform === 'web') {
     if (moduleName === 'react-native-gesture-handler') {

@@ -35,10 +35,21 @@ export async function undoEmailSend() {
   if (_timer) clearTimeout(_timer);
   _state = null;
   _emit();
+  // [2026-10-15 email-melhorias] Só reabre o composer se o servidor
+  // CONFIRMAR o cancelamento. Antes o resultado era ignorado: se o envio já
+  // tinha saído (janela fechou no servidor / 404 "ja foi enviado") ou a rede
+  // falhou, o composer reabria como se tivesse desfeito — o usuário
+  // reenviava e o destinatário recebia 2×.
+  let cancelled = false;
   try {
     const api = require('./api');
-    await api.cancelSend?.(st.sid);
+    const r = await api.cancelSend?.(st.sid);
+    cancelled = !!(r && r.success && (r.data?.cancelled !== false));
   } catch {}
+  if (!cancelled) {
+    try { showEmailNotice('sent'); } catch {}
+    return false;
+  }
   _restore = st.restore;
   return true;
 }

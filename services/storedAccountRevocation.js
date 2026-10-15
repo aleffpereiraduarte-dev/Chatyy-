@@ -109,6 +109,9 @@ async function _wipeLocalDataFor(email) {
       if (kill.length) { try { await AS.multiRemove(kill); } catch { for (const k of kill) { try { await AS.removeItem(k); } catch {} } } }
     }
   } catch {}
+  // [2026-10-14 offline-first] telas offline-first (services/cache.js, chave por conta).
+  try { require('./cache').clearUserCache?.(e); } catch {}
+  try { require('./settingsCache').purgeAccount?.(e); } catch {}
   // MMKV (offlineCache e-mail, last-known da api, espelhos de chat por hash)
   try {
     const mm = d.mmkv;

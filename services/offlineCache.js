@@ -144,6 +144,17 @@ export async function saveEmailsToCache(folder, emails) {
   }
 }
 
+// [2026-10-14 offline-first] Leitura SÍNCRONA da lista salva (MMKV; no web =
+// localStorage, gravado junto do IDB) p/ o 1º frame da caixa no web/Android
+// (o iOS já tinha o SQLite nativo síncrono). Sem conta ativa = null.
+export function getEmailsFromCacheSync(folder) {
+  try {
+    if (_acctNS() === '_noacct') return null;
+    const data = getJSON(_listKey(folder));
+    return Array.isArray(data?.emails) && data.emails.length ? data.emails : null;
+  } catch { return null; }
+}
+
 export async function getEmailsFromCache(folder) {
   // Web: try IndexedDB first (faster than MMKV shim)
   if (Platform.OS === 'web') {
@@ -624,13 +635,39 @@ export async function getOfflineQueue() {
   return fresh;
 }
 
+// [2026-10-15 fila-tombstone] Remoções feitas DURANTE um replay (late success
+// → removeChatSendFromQueueByClientMsgId, "Limpar", loop da tela) não podem ser
+// desfeitas pelo writeback do replay, que gravava o snapshot velho por cima e
+// RESSUSCITAVA o item. Tombstones só em memória (formato salvo inalterado),
+// por chave de fila, com TTL curto (cobre o replay em curso).
+const _TOMB_TTL_MS = 10 * 60 * 1000;
+const _tombs = new Map(); // `${qk}|id:${id}` / `${qk}|cmi:${cmi}` -> ts
+function _tomb(qk, a) {
+  if (!a) return;
+  const now = Date.now();
+  if (a.id) _tombs.set(qk + '|id:' + a.id, now);
+  if (a.client_message_id && _isSendType(a.type)) _tombs.set(qk + '|cmi:' + a.type + ':' + a.client_message_id, now);
+  if (_tombs.size > 2000) { for (const [k, t] of _tombs) if (now - t > _TOMB_TTL_MS) _tombs.delete(k); }
+}
+function _isTombed(qk, a, sinceTs) {
+  if (!a) return false;
+  const chk = (k) => { const t = _tombs.get(k); return !!t && t >= sinceTs && Date.now() - t <= _TOMB_TTL_MS; };
+  if (a.id && chk(qk + '|id:' + a.id)) return true;
+  if (a.client_message_id && _isSendType(a.type) && chk(qk + '|cmi:' + a.type + ':' + a.client_message_id)) return true;
+  return false;
+}
+
 export async function clearOfflineQueue() {
-  setJSON(_queueKey(), []);
+  const qk = _queueKey();
+  try { for (const a of (getJSON(qk) || [])) _tomb(qk, a); } catch {}
+  setJSON(qk, []);
 }
 
 export async function removeFromQueue(actionId) {
   const qk = _queueKey();
   const queue = getJSON(qk) || [];
+  for (const a of queue) if (a && a.id === actionId) _tomb(qk, a);
+  if (actionId) _tombs.set(qk + '|id:' + actionId, Date.now());
   setJSON(qk, queue.filter(a => a.id !== actionId));
 }
 
@@ -653,6 +690,9 @@ export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
   const filtered = queue.filter(a =>
     !(SEND_TYPES.includes(a?.type) && a?.client_message_id === clientMsgId)
   );
+  // Tombstone mesmo sem item presente: um replay em curso pode tê-lo no snapshot.
+  for (const t of SEND_TYPES) _tombs.set(qk + '|cmi:' + t + ':' + clientMsgId, Date.now());
+  for (const a of queue) if (a && SEND_TYPES.includes(a.type) && a.client_message_id === clientMsgId) _tomb(qk, a);
   if (filtered.length !== queue.length) setJSON(qk, filtered);
 }
 
@@ -682,6 +722,7 @@ export async function replayOfflineQueue(api) {
   // Captura a chave da conta ATIVA no início — o writeback no fim usa ESTA chave,
   // então uma troca de conta no meio do replay não grava na fila da conta errada.
   const _replayQk = _queueKey();
+  const _replayStartedAt = Date.now();
   const queue = await getOfflineQueue();
   if (!queue.length) return { replayed: 0, failed: 0 };
 
@@ -1016,7 +1057,9 @@ export async function replayOfflineQueue(api) {
                 // to PHP (idempotent via client_message_id).
                 // _replay: this IS the queue head — bypass the web FIFO gate in
                 // api.chatSend (it would defer the message behind itself).
-                { skipRust: true, _replay: true },
+                // [2026-10-15 outbox-campos] opts originais (sealed/effect/
+                // replyQuoteText) — o replay saía SEM remetente oculto.
+                { ...((action.opts && typeof action.opts === 'object') ? action.opts : {}), ...(action.effect && !(action.opts && action.opts.effect) ? { effect: action.effect } : {}), skipRust: true, _replay: true },
               ),
               new Promise((_, reject) =>
                 // [send-reliability 2026-10-06] 5s < api.js chat_send budget
@@ -1682,11 +1725,33 @@ export async function replayOfflineQueue(api) {
   // blind overwrite here would silently drop those new sends (never sent,
   // never queued, no failure bubble). Re-read the live queue and keep only
   // entries whose id wasn't in our snapshot — those are the fresh arrivals.
+  //
+  // [2026-10-15 fila-tombstone] Merge POR ID contra a fila viva: um item do
+  // snapshot que SUMIU da fila viva (ou tem tombstone) foi removido durante o
+  // replay → não volta. Item ainda vivo: base = versão viva (pega merges de
+  // queueOfflineAction feitos no meio), com a contabilidade de retry do replay.
   const snapshotIds = new Set(queue.map(a => a && a.id).filter(Boolean));
   let liveNow = [];
   try { liveNow = getJSON(_replayQk) || []; } catch {}
+  const liveById = new Map();
+  for (const a of liveNow) if (a && a.id) liveById.set(a.id, a);
+  const _keep = (a, touched) => {
+    if (!a || !a.id) return null;
+    const live = liveById.get(a.id);
+    if (!live || _isTombed(_replayQk, a, _replayStartedAt)) return null;
+    // Não tentado neste passe (backoff): a versão viva vale inteira (um
+    // kickSendQueue no meio pode ter zerado o next_retry_at).
+    if (!touched) return live;
+    return { ...live, retries: a.retries, next_retry_at: a.next_retry_at, _rl: a._rl, permanent_fail: a.permanent_fail };
+  };
+  const kept = [
+    ...failedFromBackoff.map(a => _keep(a, false)),
+    ...failedActions.map(a => _keep(a, true)),
+  ].filter(Boolean);
+  // Chegadas novas (id fora do snapshot) ficam sempre — um re-enfileiramento
+  // legítimo do mesmo cmi depois de uma remoção ganha id novo.
   const newArrivals = liveNow.filter(a => a && a.id && !snapshotIds.has(a.id));
-  setJSON(_replayQk, [...failedFromBackoff, ...failedActions, ...newArrivals]);
+  setJSON(_replayQk, [...kept, ...newArrivals]);
   return { replayed, failed };
   })().finally(() => { _replayInFlight = null; });
   return _replayInFlight;

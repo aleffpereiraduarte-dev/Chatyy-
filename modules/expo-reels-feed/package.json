@@ -1,0 +1,8 @@
+{
+  "name": "expo-reels-feed",
+  "version": "1.0.0",
+  "description": "Chatyy native vertical Reels feed: iOS UICollectionView pager + 3-slot AVPlayer pool + disk prefetch; Android RecyclerView + PagerSnapHelper + 3-slot Media3 ExoPlayer pool + SimpleCache.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

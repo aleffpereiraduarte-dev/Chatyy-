@@ -34,6 +34,7 @@ import messageOutbox, {
   refreshBacklog,
   hasBacklog,
   classifySendResult,
+  RATE_LIMIT_ERR_PREFIX,
   cleanup as outboxCleanup,
 } from './messageOutbox';
 
@@ -313,7 +314,11 @@ async function _processRow(row) {
   // burned WS_ACK_TIMEOUT_MS before HTTP. That handler now exists in the hub
   // (gated; see /opt/chatyy-ws-cpp/src/main.cpp), so the path is re-enabled
   // here behind the flag. _tryWsSend already marks the row 'sent' on ack.
-  if (WS_FIRST_SEND) {
+  // [2026-10-15 outbox-campos] O frame WS só leva os campos básicos — sealed /
+  // effect / reply_quote_text existem só no chat_send HTTP. Linha com eles vai
+  // direto ao HTTP (nunca reenviar remetente oculto como visível).
+  const _po = (payload && payload.opts) || {};
+  if (WS_FIRST_SEND && !(_po.sealed || _po.effect || _po.replyQuoteText || _po.silent || _po.meta)) {
     let wsResult = 'skip';
     try {
       wsResult = await _tryWsSend(row);
@@ -440,6 +445,9 @@ async function _uploadAndSendMedia(row) {
         client_message_id: cmi,
         temp_id: p.temp_id || null,
         ...(p.reply_to_id ? { reply_to_id: p.reply_to_id } : {}),
+        // [2026-10-15 fila-fiel] tópico / remetente oculto do envio original.
+        ...(p.topic_id ? { topic_id: p.topic_id } : {}),
+        ...((p.opts && p.opts.sealed) || p.sealed ? { sealed: true } : {}),
         ..._mediaMetaFields(p, msgType),
       }, 'POST');
     } else if (api.chatUploadFile && localUri) {
@@ -594,7 +602,15 @@ async function _httpSend(row) {
       p.topic_id || null,
       // Retries always skip the Rust fast-path (stable temp_id) — PHP dedups
       // on client_message_id and returns the original row.
-      { ...(p.opts || {}), skipRust: true },
+      // [2026-10-15 fila-fiel] linhas antigas/legadas com effect/sealed no topo
+      // do payload (não em opts) também reenviam idênticas.
+      {
+        ...(p.effect ? { effect: p.effect } : {}),
+        ...(p.sealed ? { sealed: true } : {}),
+        ...(p.reply_quote_text ? { replyQuoteText: p.reply_quote_text } : {}),
+        ...(p.opts || {}),
+        skipRust: true,
+      },
     );
   } catch (e) {
     const k = classifySendResult(null, e);
@@ -607,6 +623,16 @@ async function _httpSend(row) {
     const serverId = r.data?.id || r.message_id || r.data?.message_id || r.message?.id || null;
     await markSent(cmi, serverId);
     _publishServerRow(p, r, cmi);
+    return;
+  }
+  // [2026-10-15 mensagens-whatsapp] 429 (rate limit): respeita o retry_after do
+  // servidor (chat.php devolve os segundos REAIS até abrir vaga) em vez da escada
+  // 1s/2s/4s… — que, somada ao retryNow() a cada reconexão/foreground, virava uma
+  // tempestade de 429 com a fila inteira parada atrás da cabeça.
+  if (Number(r?.__httpStatus || 0) === 429) {
+    const ra = Number(r?.data?.retry_after ?? r?.retry_after ?? 0);
+    const retryAfterMs = Math.min(Math.max(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 5000, 1000), 65000);
+    await markFailed(cmi, RATE_LIMIT_ERR_PREFIX + String(r?.message || r?.error || 'http_429'), { kind: 'transient', retryAfterMs });
     return;
   }
   await markFailed(cmi, r?.message || r?.error || ('http_' + (r?.__httpStatus ?? 0)), { kind });

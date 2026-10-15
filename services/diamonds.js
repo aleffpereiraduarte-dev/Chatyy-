@@ -15,6 +15,8 @@
  */
 import { useSyncExternalStore } from 'react';
 import { apiCall } from './api';
+import { cacheUserScope } from './cache';
+import { peekCached, putCached } from '../hooks/useCachedAction';
 import { normalizeGifts, GIFT_CATALOG } from '../components/gifts/giftCatalog';
 
 let _isChild = () => false;
@@ -65,10 +67,25 @@ const INITIAL = {
 let _state = { ...INITIAL };
 const _listeners = new Set();
 function _set(patch) {
+  _syncScope();
   _state = { ..._state, ...patch };
   _listeners.forEach((l) => { try { l(); } catch {} });
 }
-export function getWallet() { return _state; }
+// [2026-10-14 offline-first] Saldo salvo no aparelho (por conta): a carteira
+// abre com o último saldo conhecido; refreshWallet() revalida. O store em
+// memória é reiniciado quando a conta ativa muda (nunca mostra o da outra).
+const BAL_KEY = ['wallet', 'balance'];
+let _stateScope = null;
+function _syncScope() {
+  let sc = '';
+  try { sc = cacheUserScope(); } catch {}
+  if (sc === _stateScope) return;
+  _stateScope = sc;
+  _state = { ...INITIAL };
+  if (!sc) return;
+  try { const d = peekCached(BAL_KEY); if (d && typeof d === 'object') _state = { ..._state, ..._balancePatch(d), loaded: true }; } catch {}
+}
+export function getWallet() { _syncScope(); return _state; }
 export function subscribeWallet(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
 export function useWallet() { return useSyncExternalStore(subscribeWallet, getWallet, getWallet); }
 
@@ -84,6 +101,21 @@ export function setDiamondBalance(n) {
 }
 
 function _bool(v, dflt) { return v === undefined || v === null ? dflt : !!v; }
+function _balancePatch(d) {
+  const enabled = _bool(d.enabled, true);
+  return {
+    diamonds: Number(d.diamond_balance) || 0,
+    pendingCents: Number(d.pending_payout_cents) || 0,
+    availableCents: d.available_cents != null ? Number(d.available_cents) || 0 : Number(d.pending_payout_cents) || 0,
+    onHoldCents: Number(d.on_hold_cents) || 0,
+    enabled,
+    purchaseEnabled: enabled && _bool(d.purchase_enabled, true),
+    giftingEnabled: enabled && _bool(d.gifting_enabled, true),
+    cashoutEnabled: enabled && _bool(d.cashout_enabled, true),
+    isMinor: !!d.is_minor,
+    blockedReason: d.blocked_reason || null,
+  };
+}
 
 let _inflight = null;
 export function refreshWallet() {
@@ -91,22 +123,13 @@ export function refreshWallet() {
   _inflight = (async () => {
     try {
       const r = await apiCall('wallet_balance', {}, 'POST');
+      const _sc0 = cacheUserScope();
       if (r && r.success && r.data) {
         const d = r.data;
-        const enabled = _bool(d.enabled, true);
-        _set({
-          loaded: true,
-          diamonds: Number(d.diamond_balance) || 0,
-          pendingCents: Number(d.pending_payout_cents) || 0,
-          availableCents: d.available_cents != null ? Number(d.available_cents) || 0 : Number(d.pending_payout_cents) || 0,
-          onHoldCents: Number(d.on_hold_cents) || 0,
-          enabled,
-          purchaseEnabled: enabled && _bool(d.purchase_enabled, true),
-          giftingEnabled: enabled && _bool(d.gifting_enabled, true),
-          cashoutEnabled: enabled && _bool(d.cashout_enabled, true),
-          isMinor: !!d.is_minor,
-          blockedReason: d.blocked_reason || null,
-        });
+        _syncScope();
+        if (cacheUserScope() !== _sc0) return _state; // trocou de conta em voo
+        _set({ loaded: true, ..._balancePatch(d) });
+        try { putCached(BAL_KEY, d); } catch {}
       } else if (errorCode(r) === 'feature_disabled') {
         _set({ loaded: true, enabled: false, purchaseEnabled: false, giftingEnabled: false, cashoutEnabled: false, blockedReason: 'disabled' });
       } else {

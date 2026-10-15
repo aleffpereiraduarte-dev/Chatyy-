@@ -20,7 +20,18 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, getCachedSync, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
+
+// [2026-10-14 offline-first] cópia salva do mês (ignora o expiry curto do
+// prefetch do boot; máx. 7 dias). Prefere a chave do próprio mês.
+function _seedCalEvents(y, m) {
+  try {
+    if (!hasCacheUser()) return null;
+    const e = getCachedEntrySync(`calendar_events_${y}_${m}`) || getCachedEntrySync('calendar_events');
+    const ev = e?.data?.data?.events;
+    return Array.isArray(ev) ? ev : null;
+  } catch { return null; }
+}
 import { CalendarSkeleton } from '../components/SkeletonLoader';
 import useIsMounted from '../hooks/useIsMounted';
 import { formatTime } from '../utils/dateFormat';
@@ -2070,24 +2081,9 @@ function CalendarScreenInner() {
   // getCachedSync would fall back to the _noacct slot for one frame (mirrors
   // chatStore.isLocked() returning []). The existing getCached + revalidate in
   // loadEvents stays untouched (belt-and-suspenders).
-  const [events, setEvents] = useState(() => {
-    try {
-      if (!api.getActiveAccountEmail()) return [];
-      const cached = getCachedSync('calendar_events') || getCachedSync(`calendar_events_${currentYear}_${currentMonth}`);
-      if (cached?.data?.events) return cached.data.events;
-    } catch {}
-    return [];
-  });
-  const [calendars, setCalendars] = useState([]);
-  const [loading, setLoading] = useState(() => {
-    try {
-      if (api.getActiveAccountEmail()) {
-        const cached = getCachedSync('calendar_events') || getCachedSync(`calendar_events_${currentYear}_${currentMonth}`);
-        if (cached?.data?.events?.length) return false;
-      }
-    } catch {}
-    return true;
-  });
+  const [events, setEvents] = useState(() => (api.getActiveAccountEmail() && _seedCalEvents(currentYear, currentMonth)) || []);
+  const [calendars, setCalendars] = useState(() => { try { return (hasCacheUser() && getCachedEntrySync('calendars')?.data?.data?.calendars) || []; } catch { return []; } });
+  const [loading, setLoading] = useState(() => !(api.getActiveAccountEmail() && _seedCalEvents(currentYear, currentMonth)));
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [aiReminders, setAiReminders] = useState([]);
@@ -2225,10 +2221,10 @@ function CalendarScreenInner() {
     const requestId = ++eventsRequestIdRef.current;
     // ALWAYS show cached data instantly (cache-first pattern)
     try {
-      const cached = await getCached('calendar_events') || await getCached(cacheKey);
-      if (cached?.data?.events) {
+      const cachedEv = _seedCalEvents(currentYear, currentMonth);
+      if (cachedEv) {
         if (requestId !== eventsRequestIdRef.current) return;
-        setEvents(cached.data.events);
+        setEvents(cachedEv);
         setLoading(false);
         showLoader = false;
       } else if (showLoader) {

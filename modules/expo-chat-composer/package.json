@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-composer",
+  "version": "1.0.0",
+  "description": "Chatyy native chat composer (Telegram/iMessage level): iOS UITextView auto-grow + mentions + paste image + send/mic morph + in-composer AAC voice recording (hold / slide-cancel / lock); Android EditText + MediaRecorder + WindowInsetsAnimationCompat.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}
