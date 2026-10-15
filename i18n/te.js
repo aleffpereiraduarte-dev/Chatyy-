@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ఆడియో అందుబాటులో లేదు — మళ్లీ ప్రయత్నించండి',
   'chatConv.audioOfflineRetry': 'ఇంటర్నెట్ లేదు — మళ్లీ ప్రయత్నించడానికి నొక్కండి',
+  "statusCam.allowPhotos": "ఫోటోలకు యాక్సెస్ ఇవ్వండి",
+  "statusCam.manageSelection": "ఎంపికను నిర్వహించండి",
+  "statusCam.moreTools": "మరిన్ని ఎంపికలు",
+  "statusCam.lessTools": "తక్కువ ఎంపికలు",
 };

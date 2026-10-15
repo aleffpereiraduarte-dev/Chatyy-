@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Không phát được âm thanh — thử lại',
   'chatConv.audioOfflineRetry': 'Không có mạng — chạm để thử lại',
+  "statusCam.allowPhotos": "Cho phép truy cập ảnh",
+  "statusCam.manageSelection": "Quản lý lựa chọn",
+  "statusCam.moreTools": "Thêm tùy chọn",
+  "statusCam.lessTools": "Ít tùy chọn hơn",
 };

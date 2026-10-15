@@ -8535,15 +8535,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           maxToRenderPerBatch={10}
           windowSize={10}
           updateCellsBatchingPeriod={30}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={P.text}
-              colors={[P.text, P.text]}
-              progressBackgroundColor={isDark ? '#1c1c1e' : '#fff'}
-            />
-          }
+          // [2026-10-15 sem-pull] Founder: "o WhatsApp não faz isso — se eu puxar
+          // a tela pra baixo, não aparece nada". SEM RefreshControl na lista de
+          // conversas: puxar = só o bounce nativo do iOS (revela título/busca).
+          // A lista já se atualiza sozinha: WS (new_message/chat_sync), reconexão
+          // ('connection' authenticated → loadConv + catch-up), foreground/AppState,
+          // foco da aba e silent_sync. onRefresh fica p/ chamadas programáticas.
           extraData={extraDataMemo}
         />
         </FadeSlideIn>

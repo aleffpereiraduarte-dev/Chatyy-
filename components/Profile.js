@@ -1096,7 +1096,7 @@ export default function Profile({
     const stories = data?.stories;
     if (!stories || stories.length === 0) return;
     _autoStoryFiredRef.current = true;
-    setStoryViewer({ open: true, startIdx: 0 });
+    openStoriesAt(0);
   }, [autoOpenStory, data?.stories]);
   const [editOpen, setEditOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1555,6 +1555,29 @@ export default function Profile({
   const social = data?.social;
   const actions = data?.actions || {};
   const selfOnly = data?.self_only;
+  // [2026-10-15 status-perfil] "Pela home 4 visualizações, pelo perfil 0" (founder).
+  // O perfil abria um StoryViewer próprio alimentado por profile_get.stories,
+  // que NÃO traz views/reações → "0 visualizações" + layout diferente. Agora o
+  // MEU status aberto pelo perfil usa o MESMO viewer da home (ChatStatusTab,
+  // dados do useStatuses/status_list + status_viewers), hospedado aqui numa
+  // superfície invisível. Se o viewer não abrir em 4 s, cai no StoryViewer.
+  const [selfStatusHost, setSelfStatusHost] = useState({ mounted: false, email: null });
+  const _selfHostFallbackRef = useRef(null);
+  const openStoriesAt = (startIdx = 0) => {
+    const myEmail = currentUser?.email || identity?.email || '';
+    if (actions?.is_self && myEmail) {
+      try { if (_selfHostFallbackRef.current) clearTimeout(_selfHostFallbackRef.current); } catch {}
+      setSelfStatusHost({ mounted: true, email: myEmail });
+      _selfHostFallbackRef.current = setTimeout(() => {
+        _selfHostFallbackRef.current = null;
+        setSelfStatusHost(prev => ({ ...prev, email: null }));
+        setStoryViewer({ open: true, startIdx });
+      }, 4000);
+      return;
+    }
+    setStoryViewer({ open: true, startIdx });
+  };
+  useEffect(() => () => { try { if (_selfHostFallbackRef.current) clearTimeout(_selfHostFallbackRef.current); } catch {} }, []);
   const posts = data?.posts || [];
   const reels = data?.reels || [];
   // Lazy-load the saved-lives list when the Lives tab is focused for
@@ -1760,7 +1783,7 @@ export default function Profile({
     // viewStory param — so the user saw the status list, not the story,
     // which read as a "white screen".
     const openStory = (startIdx) => {
-      setStoryViewer({ open: true, startIdx });
+      openStoriesAt(startIdx);
     };
     return (
       <ScrollView
@@ -2527,7 +2550,7 @@ export default function Profile({
             }
             return (
               <TouchableOpacity
-                onPress={() => setStoryViewer({ open: true, startIdx: 0 })}
+                onPress={() => openStoriesAt(0)}
                 onLongPress={actions?.is_self ? () => setAvatarActionOpen(true) : undefined}
                 delayLongPress={350}
                 activeOpacity={0.85}
@@ -3267,6 +3290,41 @@ export default function Profile({
   // Inline story viewer — opened from the highlights row at the top of the
   // profile. Replaces the old /chat?tab=status&viewStory=... deep-link that
   // chat.js never consumed (hence the white screen the user hit).
+  // [2026-10-15 status-perfil] Host do viewer canônico (mesmo da home). Superfície
+  // 0×0 fora da tela (Fabric não faz layout sob display:none — ver chat.js
+  // _STATUS_SURFACE_HIDDEN); fica montado após o 1º uso p/ o "+"/câmera/menu.
+  let selfStatusHostNode = null;
+  if (selfStatusHost.mounted) {
+    let _CST = null;
+    try { _CST = require('./ChatStatusTab').default; } catch {}
+    if (_CST) {
+      selfStatusHostNode = (
+        <View
+          style={Platform.OS === 'web' ? { display: 'none' } : { position: 'absolute', left: 0, top: 0, width: 0, height: 0, overflow: 'hidden', opacity: 0 }}
+          pointerEvents="box-none"
+        >
+          <_CST
+            embedded
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            user={currentUser}
+            router={router}
+            openStatusEmail={selfStatusHost.email}
+            onOpenStatusConsumed={() => setSelfStatusHost(prev => (prev.email ? { ...prev, email: null } : prev))}
+            onViewerVisibleChange={(vis) => {
+              if (!vis) return;
+              try { if (_selfHostFallbackRef.current) clearTimeout(_selfHostFallbackRef.current); } catch {}
+              _selfHostFallbackRef.current = null;
+              // abriu tarde (dados chegaram após o fallback) → fecha o StoryViewer reserva.
+              setStoryViewer(prev => (prev.open ? { open: false, startIdx: 0 } : prev));
+            }}
+          />
+        </View>
+      );
+    }
+  }
+
   const storyViewerNode = (
     <StoryViewer
       visible={storyViewer.open}
@@ -4091,6 +4149,7 @@ export default function Profile({
         </ScrollView>
         {viewerNode}
         {storyViewerNode}
+        {selfStatusHostNode}
         {avatarLightboxNode}
         {highlightViewerNode}
         {highlightActionSheetNode}
@@ -4122,6 +4181,7 @@ export default function Profile({
     extras={<>
       {viewerNode}
       {storyViewerNode}
+      {selfStatusHostNode}
       {avatarLightboxNode}
       {highlightViewerNode}
       {highlightActionSheetNode}

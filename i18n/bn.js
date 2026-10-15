@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'অডিও পাওয়া যাচ্ছে না — আবার চেষ্টা করুন',
   'chatConv.audioOfflineRetry': 'ইন্টারনেট নেই — আবার চেষ্টা করতে ট্যাপ করুন',
+  "statusCam.allowPhotos": "ছবিতে অ্যাক্সেস দিন",
+  "statusCam.manageSelection": "নির্বাচন পরিচালনা করুন",
+  "statusCam.moreTools": "আরও বিকল্প",
+  "statusCam.lessTools": "কম বিকল্প",
 };

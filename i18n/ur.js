@@ -948,4 +948,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'آڈیو دستیاب نہیں — دوبارہ کوشش کریں',
   'chatConv.audioOfflineRetry': 'انٹرنیٹ نہیں — دوبارہ کوشش کے لیے ٹیپ کریں',
+  "statusCam.allowPhotos": "تصاویر تک رسائی کی اجازت دیں",
+  "statusCam.manageSelection": "انتخاب کا نظم کریں",
+  "statusCam.moreTools": "مزید اختیارات",
+  "statusCam.lessTools": "کم اختیارات",
 };

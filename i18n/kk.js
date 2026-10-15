@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Аудио қолжетімсіз — қайталап көріңіз',
   'chatConv.audioOfflineRetry': 'Интернет жоқ — қайталау үшін түртіңіз',
+  "statusCam.allowPhotos": "Фотосуреттерге рұқсат беру",
+  "statusCam.manageSelection": "Таңдауды басқару",
+  "statusCam.moreTools": "Қосымша опциялар",
+  "statusCam.lessTools": "Азырақ опция",
 };

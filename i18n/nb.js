@@ -9165,4 +9165,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Lyd utilgjengelig — prøv igjen',
   'chatConv.audioOfflineRetry': 'Ingen internett — trykk for å prøve igjen',
+  "statusCam.allowPhotos": "Gi tilgang til bilder",
+  "statusCam.manageSelection": "Administrer utvalg",
+  "statusCam.moreTools": "Flere valg",
+  "statusCam.lessTools": "Færre valg",
 };

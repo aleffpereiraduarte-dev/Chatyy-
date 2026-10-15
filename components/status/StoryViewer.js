@@ -2209,7 +2209,7 @@ export default function StoryViewer({
                 style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
                 accessibilityLabel={t?.('common.delete') || 'Excluir'}
               >
-                <IconTrash size={18} color="#ef4444" />
+                <IconTrash size={18} color="#fff" />{/* [2026-10-15] P&B — vermelho só na confirmação */}
               </TouchableOpacity>
               {onAddMore ? (
                 <TouchableOpacity

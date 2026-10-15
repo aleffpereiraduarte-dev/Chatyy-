@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'האודיו לא זמין — לנסות שוב',
   'chatConv.audioOfflineRetry': 'אין אינטרנט — הקש לנסות שוב',
+  "statusCam.allowPhotos": "אפשר גישה לתמונות",
+  "statusCam.manageSelection": "ניהול הבחירה",
+  "statusCam.moreTools": "אפשרויות נוספות",
+  "statusCam.lessTools": "פחות אפשרויות",
 };

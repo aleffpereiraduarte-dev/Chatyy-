@@ -4137,4 +4137,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ஆடியோ கிடைக்கவில்லை — மீண்டும் முயலவும்',
   'chatConv.audioOfflineRetry': 'இணையம் இல்லை — மீண்டும் முயல தட்டவும்',
+  "statusCam.allowPhotos": "படங்களுக்கு அணுகலை அனுமதி",
+  "statusCam.manageSelection": "தேர்வை நிர்வகி",
+  "statusCam.moreTools": "மேலும் விருப்பங்கள்",
+  "statusCam.lessTools": "குறைவான விருப்பங்கள்",
 };

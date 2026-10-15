@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Garsas nepasiekiamas — bandyti dar kartą',
   'chatConv.audioOfflineRetry': 'Nėra interneto — palieskite, kad bandytumėte dar kartą',
+  "statusCam.allowPhotos": "Leisti pasiekti nuotraukas",
+  "statusCam.manageSelection": "Tvarkyti pasirinkimą",
+  "statusCam.moreTools": "Daugiau parinkčių",
+  "statusCam.lessTools": "Mažiau parinkčių",
 };

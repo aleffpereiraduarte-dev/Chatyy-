@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'صدا در دسترس نیست — دوباره تلاش کنید',
   'chatConv.audioOfflineRetry': 'اینترنت وصل نیست — برای تلاش دوباره ضربه بزنید',
+  "statusCam.allowPhotos": "اجازه دسترسی به عکس‌ها",
+  "statusCam.manageSelection": "مدیریت انتخاب",
+  "statusCam.moreTools": "گزینه‌های بیشتر",
+  "statusCam.lessTools": "گزینه‌های کمتر",
 };

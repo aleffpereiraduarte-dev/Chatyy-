@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Àudio no disponible — torna-ho a provar',
   'chatConv.audioOfflineRetry': 'Sense internet — toca per tornar-ho a provar',
+  "statusCam.allowPhotos": "Permet l'accés a les fotos",
+  "statusCam.manageSelection": "Gestiona la selecció",
+  "statusCam.moreTools": "Més opcions",
+  "statusCam.lessTools": "Menys opcions",
 };

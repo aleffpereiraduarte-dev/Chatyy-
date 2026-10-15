@@ -11988,4 +11988,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ऑडियो उपलब्ध नहीं — फिर से कोशिश करें',
   'chatConv.audioOfflineRetry': 'इंटरनेट नहीं — फिर से कोशिश के लिए टैप करें',
+  "statusCam.allowPhotos": "फ़ोटो तक पहुँच दें",
+  "statusCam.manageSelection": "चयन प्रबंधित करें",
+  "statusCam.moreTools": "और विकल्प",
+  "statusCam.lessTools": "कम विकल्प",
 };

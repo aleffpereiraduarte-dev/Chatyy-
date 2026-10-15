@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Audio nav pieejams — mēģināt vēlreiz',
   'chatConv.audioOfflineRetry': 'Nav interneta — pieskarieties, lai mēģinātu vēlreiz',
+  "statusCam.allowPhotos": "Atļaut piekļuvi fotoattēliem",
+  "statusCam.manageSelection": "Pārvaldīt atlasi",
+  "statusCam.moreTools": "Vairāk iespēju",
+  "statusCam.lessTools": "Mazāk iespēju",
 };

@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'មិនអាចប្រើសំឡេងបាន — សាកល្បងម្ដងទៀត',
   'chatConv.audioOfflineRetry': 'គ្មានអ៊ីនធឺណិត — ចុចដើម្បីសាកល្បងម្ដងទៀត',
+  "statusCam.allowPhotos": "អនុញ្ញាតឱ្យចូលប្រើរូបថត",
+  "statusCam.manageSelection": "គ្រប់គ្រងការជ្រើសរើស",
+  "statusCam.moreTools": "ជម្រើសច្រើនទៀត",
+  "statusCam.lessTools": "ជម្រើសតិចជាង",
 };

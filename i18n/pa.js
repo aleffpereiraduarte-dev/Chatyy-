@@ -936,4 +936,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ਆਡੀਓ ਉਪਲਬਧ ਨਹੀਂ — ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ',
   'chatConv.audioOfflineRetry': 'ਇੰਟਰਨੈੱਟ ਨਹੀਂ — ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਲਈ ਟੈਪ ਕਰੋ',
+  "statusCam.allowPhotos": "ਫ਼ੋਟੋਆਂ ਤੱਕ ਪਹੁੰਚ ਦਿਓ",
+  "statusCam.manageSelection": "ਚੋਣ ਪ੍ਰਬੰਧਿਤ ਕਰੋ",
+  "statusCam.moreTools": "ਹੋਰ ਵਿਕਲਪ",
+  "statusCam.lessTools": "ਘੱਟ ਵਿਕਲਪ",
 };

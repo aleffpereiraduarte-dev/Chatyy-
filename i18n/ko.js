@@ -8425,4 +8425,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': '오디오를 사용할 수 없음 — 다시 시도',
   'chatConv.audioOfflineRetry': '인터넷 연결 없음 — 탭하여 다시 시도',
+  "statusCam.allowPhotos": "사진 접근 허용",
+  "statusCam.manageSelection": "선택 항목 관리",
+  "statusCam.moreTools": "옵션 더보기",
+  "statusCam.lessTools": "옵션 접기",
 };

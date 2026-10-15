@@ -11235,4 +11235,8 @@ export default {
   'chatConv.seenBy': 'Visto por',
   'chatConv.audioUnavailableRetry': 'Áudio indisponível — tentar novamente',
   'chatConv.audioOfflineRetry': 'Sem internet — toque para tentar novamente',
+  "statusCam.allowPhotos": "Permitir acesso às fotografias",
+  "statusCam.manageSelection": "Gerir seleção",
+  "statusCam.moreTools": "Mais opções",
+  "statusCam.lessTools": "Menos opções",
 };

@@ -6536,4 +6536,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ઑડિયો ઉપલબ્ધ નથી — ફરી પ્રયાસ કરો',
   'chatConv.audioOfflineRetry': 'ઇન્ટરનેટ નથી — ફરી પ્રયાસ માટે ટૅપ કરો',
+  "statusCam.allowPhotos": "ફોટાની ઍક્સેસ આપો",
+  "statusCam.manageSelection": "પસંદગી મેનેજ કરો",
+  "statusCam.moreTools": "વધુ વિકલ્પો",
+  "statusCam.lessTools": "ઓછા વિકલ્પો",
 };

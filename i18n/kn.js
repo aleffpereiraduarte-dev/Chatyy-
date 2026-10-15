@@ -1736,4 +1736,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ಆಡಿಯೋ ಲಭ್ಯವಿಲ್ಲ — ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ',
   'chatConv.audioOfflineRetry': 'ಇಂಟರ್ನೆಟ್ ಇಲ್ಲ — ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಲು ಟ್ಯಾಪ್ ಮಾಡಿ',
+  "statusCam.allowPhotos": "ಫೋಟೋಗಳಿಗೆ ಪ್ರವೇಶ ನೀಡಿ",
+  "statusCam.manageSelection": "ಆಯ್ಕೆ ನಿರ್ವಹಿಸಿ",
+  "statusCam.moreTools": "ಇನ್ನಷ್ಟು ಆಯ್ಕೆಗಳು",
+  "statusCam.lessTools": "ಕಡಿಮೆ ಆಯ್ಕೆಗಳು",
 };

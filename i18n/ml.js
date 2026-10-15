@@ -938,4 +938,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ഓഡിയോ ലഭ്യമല്ല — വീണ്ടും ശ്രമിക്കുക',
   'chatConv.audioOfflineRetry': 'ഇന്റർനെറ്റ് ഇല്ല — വീണ്ടും ശ്രമിക്കാൻ ടാപ്പ് ചെയ്യുക',
+  "statusCam.allowPhotos": "ഫോട്ടോകളിലേക്ക് ആക്‌സസ് അനുവദിക്കുക",
+  "statusCam.manageSelection": "തിരഞ്ഞെടുപ്പ് നിയന്ത്രിക്കുക",
+  "statusCam.moreTools": "കൂടുതൽ ഓപ്ഷനുകൾ",
+  "statusCam.lessTools": "കുറച്ച് ഓപ്ഷനുകൾ",
 };

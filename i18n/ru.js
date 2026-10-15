@@ -9165,4 +9165,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Аудио недоступно — повторить',
   'chatConv.audioOfflineRetry': 'Нет интернета — нажмите, чтобы повторить',
+  "statusCam.allowPhotos": "Разрешить доступ к фото",
+  "statusCam.manageSelection": "Изменить выбор",
+  "statusCam.moreTools": "Ещё",
+  "statusCam.lessTools": "Свернуть",
 };

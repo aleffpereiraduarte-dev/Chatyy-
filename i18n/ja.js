@@ -11211,4 +11211,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': '音声を再生できません — 再試行',
   'chatConv.audioOfflineRetry': 'インターネットに接続されていません — タップして再試行',
+  "statusCam.allowPhotos": "写真へのアクセスを許可",
+  "statusCam.manageSelection": "選択を管理",
+  "statusCam.moreTools": "その他のオプション",
+  "statusCam.lessTools": "オプションを閉じる",
 };

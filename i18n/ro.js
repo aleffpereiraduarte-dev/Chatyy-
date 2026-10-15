@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Audio indisponibil — încearcă din nou',
   'chatConv.audioOfflineRetry': 'Fără internet — atinge pentru a încerca din nou',
+  "statusCam.allowPhotos": "Permite accesul la poze",
+  "statusCam.manageSelection": "Gestionează selecția",
+  "statusCam.moreTools": "Mai multe opțiuni",
+  "statusCam.lessTools": "Mai puține opțiuni",
 };

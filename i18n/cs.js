@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Zvuk není k dispozici — zkusit znovu',
   'chatConv.audioOfflineRetry': 'Bez internetu — klepnutím zkusíte znovu',
+  "statusCam.allowPhotos": "Povolit přístup k fotkám",
+  "statusCam.manageSelection": "Spravovat výběr",
+  "statusCam.moreTools": "Další možnosti",
+  "statusCam.lessTools": "Méně možností",
 };

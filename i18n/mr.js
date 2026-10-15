@@ -6538,4 +6538,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ऑडिओ उपलब्ध नाही — पुन्हा प्रयत्न करा',
   'chatConv.audioOfflineRetry': 'इंटरनेट नाही — पुन्हा प्रयत्नासाठी टॅप करा',
+  "statusCam.allowPhotos": "फोटोंना प्रवेश द्या",
+  "statusCam.manageSelection": "निवड व्यवस्थापित करा",
+  "statusCam.moreTools": "अधिक पर्याय",
+  "statusCam.lessTools": "कमी पर्याय",
 };

@@ -20,7 +20,7 @@ import CachedImage from './CachedImage';
 import * as api from '../services/api';
 import {
   IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
-  IconImage, IconUndo2, IconMusic, IconCheck, IconPencil,
+  IconImage, IconUndo2, IconMusic, IconCheck, IconPencil, IconChevronDown, IconChevronUp,
 } from './Icons';
 // AR face-filter pipeline — SINGLE SESSION (react-native-vision-camera v4 +
 // Skia frame processor + MLKit face-detector plugin). StatusVisionCamera owns
@@ -51,7 +51,8 @@ const StatusVisionCamera = React.lazy(() => import('./status/StatusVisionCamera'
 // CameraView is part of the already-linked expo-camera native module).
 import StatusPlainCamera from './status/StatusPlainCamera';
 import { FACE_FILTER_PRESETS } from './status/FaceFilters';
-import RecentGalleryStrip from './status/RecentGalleryStrip'; // [2026-10-09 status-composer]
+import RecentGalleryStrip, { useRecentAssets } from './status/RecentGalleryStrip'; // [2026-10-09 status-composer]
+import FastImage from './FastImage'; // [2026-10-15 status-cam] expo-image carrega ph:// (RN Image não)
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -565,24 +566,16 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     ]).start(() => setShowSwipeHint(false));
   }, [visible]);
 
-  // ─── Pre-load last camera-roll thumb (Feature 7) ───
+  // ─── Último item do rolo no quadradinho da galeria (Feature 7) ───
+  // [2026-10-15 status-cam] Mesma fonte da faixa (useRecentAssets: expo-media-library,
+  // creationTime desc, foto+vídeo, cache de módulo). Antes: RN <Image> com ph:// →
+  // quadrado vazio no iPhone; e só pegava foto.
+  const _recent = useRecentAssets(visible);
   useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const perm = await ImagePicker.getMediaLibraryPermissionsAsync?.();
-        if (!perm?.granted) return;
-        // expo-media-library would be cleaner, but to avoid a new dep we just
-        // skip the thumb when not granted. The picker still works on tap.
-        const MediaLibrary = (() => { try { return require('expo-media-library'); } catch { return null; } })();
-        if (!MediaLibrary?.getAssetsAsync) return;
-        const res = await MediaLibrary.getAssetsAsync({ first: 1, sortBy: ['creationTime'], mediaType: ['photo'] });
-        if (!cancelled && res?.assets?.[0]?.uri) setGalleryThumb(res.assets[0].uri);
-      } catch {}
-    })();
-    return () => { cancelled = true; };
-  }, [visible]);
+    const a = _recent?.assets?.[0];
+    setGalleryThumb(a?.uri || null);
+  }, [_recent]);
+  const [toolsOpen, setToolsOpen] = useState(false); // ferramentas extras recolhidas (Velocidade/Beleza/Segmentos)
 
   const fmtTime = (s) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 
@@ -1299,15 +1292,18 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         </Text>
       </TouchableOpacity>
 
-      {/* Right-side action stack (Feature 3) — TikTok vertical column */}
-      <View style={[s.rightStack, { top: safeTop + 86 }]} pointerEvents="box-none">
+      {/* Right-side action stack (Feature 3).
+          [2026-10-15 status-cam] Mais discreto (founder): ícones 38px sem fundo
+          pesado, rótulo só quando expandido; Velocidade/Beleza/Segmentos ficam
+          recolhidos atrás do chevron (como o Instagram). */}
+      <View style={[s.rightStack, { top: safeTop + 76 }]} pointerEvents="box-none">
         <TouchableOpacity
           onPress={() => { haptic('light'); setFacing(f => f === 'front' ? 'back' : 'front'); }}
           style={s.stackBtn}
           accessibilityLabel={t?.('live.flipCamera') || 'Virar câmera'}
         >
-          <IconRefresh size={22} color="#fff" />
-          <Text style={s.stackLabel}>{t?.('statusCam.flip') || 'Virar'}</Text>
+          <View style={s.stackIconCircle}><IconRefresh size={19} color="#fff" /></View>
+          {toolsOpen ? <Text style={s.stackLabel}>{t?.('statusCam.flip') || 'Virar'}</Text> : null}
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { haptic('light'); setFlash(f => f === 'off' ? 'on' : f === 'on' ? 'auto' : 'off'); }}
@@ -1315,35 +1311,14 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           accessibilityLabel={t?.('statusCam.toggleFlash') || 'Alternar flash'}
         >
           <View style={[s.stackIconCircle, flash !== 'off' && s.stackIconCircleActive]}>
-            <IconZap size={20} color={flash !== 'off' ? '#FACC15' : '#fff'} />
+            <IconZap size={18} color="#fff" />
+            {flash === 'auto' ? <Text style={s.stackBadge}>A</Text> : null}
           </View>
-          <Text style={s.stackLabel}>
-            {flash === 'off' ? (t?.('statusCam.flashOff') || 'Desligado') : flash === 'on' ? (t?.('statusCam.flashOn') || 'Ligado') : (t?.('statusCam.flashAuto') || 'Auto')}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => {
-            haptic('light');
-            setSpeed(prev => {
-              const i = SPEED_CYCLE.indexOf(prev);
-              return SPEED_CYCLE[(i + 1) % SPEED_CYCLE.length];
-            });
-          }}
-          style={s.stackBtn}
-          accessibilityLabel={t?.('feed.speed') || 'Velocidade'}
-        >
-          <Text style={[s.stackIcon, { fontSize: 13, fontWeight: '900' }]}>{SPEED_LABELS[speed]}</Text>
-          <Text style={s.stackLabel}>{t?.('feed.speed') || 'Velocidade'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => { haptic('light'); setBeauty(b => !b); }}
-          style={[s.stackBtn, beauty && s.stackBtnActive]}
-          accessibilityLabel={t?.('statusCam.beauty') || 'Beleza'}
-        >
-          <View style={[s.stackIconCircle, beauty && s.stackIconCircleActive]}>
-            <IconSparkles size={20} color={beauty ? BRAND_PURPLE_LIGHT : '#fff'} />
-          </View>
-          <Text style={s.stackLabel}>{t?.('statusCam.beauty') || 'Beleza'}</Text>
+          {toolsOpen ? (
+            <Text style={s.stackLabel}>
+              {flash === 'off' ? (t?.('statusCam.flashOff') || 'Desligado') : flash === 'on' ? (t?.('statusCam.flashOn') || 'Ligado') : (t?.('statusCam.flashAuto') || 'Auto')}
+            </Text>
+          ) : null}
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { haptic('light'); setTimerDelay(d => d === 0 ? 3 : d === 3 ? 10 : 0); }}
@@ -1351,37 +1326,79 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           accessibilityLabel={t?.('statusCam.timer') || 'Timer'}
         >
           <View style={[s.stackIconCircle, timerDelay > 0 && s.stackIconCircleActive]}>
-            <IconClock size={20} color={timerDelay > 0 ? BRAND_PURPLE_LIGHT : '#fff'} />
+            {timerDelay > 0 ? <Text style={s.stackIconCount}>{`${timerDelay}s`}</Text> : <IconClock size={18} color="#fff" />}
           </View>
-          <Text style={s.stackLabel}>{timerDelay === 0 ? (t?.('statusCam.timer') || 'Timer') : `${timerDelay}s`}</Text>
+          {toolsOpen ? <Text style={s.stackLabel}>{timerDelay === 0 ? (t?.('statusCam.timer') || 'Timer') : `${timerDelay}s`}</Text> : null}
         </TouchableOpacity>
-        {/* Multi-clip toggle — sets captureMode to video and records the
-            first segment. Subsequent taps on the record button add more
-            segments (up to 3). The user finishes by hitting "Pronto" in
-            the segment bar that appears under the mode tabs. */}
+        {toolsOpen ? (
+          <>
+            <TouchableOpacity
+              onPress={() => {
+                haptic('light');
+                setSpeed(prev => {
+                  const i = SPEED_CYCLE.indexOf(prev);
+                  return SPEED_CYCLE[(i + 1) % SPEED_CYCLE.length];
+                });
+              }}
+              style={s.stackBtn}
+              accessibilityLabel={t?.('feed.speed') || 'Velocidade'}
+            >
+              <View style={[s.stackIconCircle, speed !== 1 && s.stackIconCircleActive]}>
+                <Text style={s.stackIconCount}>{SPEED_LABELS[speed]}</Text>
+              </View>
+              <Text style={s.stackLabel}>{t?.('feed.speed') || 'Velocidade'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { haptic('light'); setBeauty(b => !b); }}
+              style={[s.stackBtn, beauty && s.stackBtnActive]}
+              accessibilityLabel={t?.('statusCam.beauty') || 'Beleza'}
+            >
+              <View style={[s.stackIconCircle, beauty && s.stackIconCircleActive]}>
+                <IconSparkles size={18} color="#fff" />
+              </View>
+              <Text style={s.stackLabel}>{t?.('statusCam.beauty') || 'Beleza'}</Text>
+            </TouchableOpacity>
+            {/* Multi-clip toggle — sets captureMode to video and records the
+                first segment. Subsequent taps on the record button add more
+                segments (up to 3). */}
+            <TouchableOpacity
+              onPress={() => {
+                if (recording) return;
+                haptic('medium');
+                if (captureMode !== 'video') setCaptureMode('video');
+                recordSegment();
+              }}
+              style={[s.stackBtn, segments.length > 0 && s.stackBtnActive]}
+              accessibilityLabel={t?.('statusCam.multiClip') || 'Vários clipes'}
+            >
+              <View style={[s.stackIconCircle, segments.length > 0 && s.stackIconCircleActive]}>
+                {segments.length > 0 ? (
+                  <Text style={s.stackIconCount}>{`${segments.length}+`}</Text>
+                ) : (
+                  <IconGrid size={17} color="#fff" />
+                )}
+              </View>
+              <Text style={s.stackLabel}>{t?.('status.segments') || 'Clips'}</Text>
+            </TouchableOpacity>
+          </>
+        ) : null}
         <TouchableOpacity
-          onPress={() => {
-            if (recording) return;
-            haptic('medium');
-            if (captureMode !== 'video') setCaptureMode('video');
-            // Start the first segment via recordSegment so the stack
-            // accumulates instead of firing onCapture with one clip.
-            recordSegment();
-          }}
-          style={[s.stackBtn, segments.length > 0 && s.stackBtnActive]}
-          accessibilityLabel={t?.('statusCam.multiClip') || 'Vários clipes'}
+          onPress={() => { haptic('light'); try { LayoutAnimation.configureNext(LayoutAnimation.create(180, 'easeInEaseOut', 'opacity')); } catch {} setToolsOpen(o => !o); }}
+          style={s.stackBtn}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: toolsOpen }}
+          accessibilityLabel={toolsOpen ? (t?.('statusCam.lessTools') || 'Menos opções') : (t?.('statusCam.moreTools') || 'Mais opções')}
+          testID="status-camera-tools-toggle"
         >
-          <View style={[s.stackIconCircle, segments.length > 0 && s.stackIconCircleActive]}>
-            {segments.length > 0 ? (
-              <Text style={s.stackIconCount}>{`${segments.length}+`}</Text>
-            ) : (
-              <IconGrid size={19} color="#fff" />
-            )}
+          <View style={[s.stackIconCircle, s.stackChevron]}>
+            {toolsOpen ? <IconChevronUp size={16} color="#fff" /> : <IconChevronDown size={16} color="#fff" />}
           </View>
-          <Text style={s.stackLabel}>
-            {t?.('status.segments') || 'Clips'}
-          </Text>
         </TouchableOpacity>
+        {/* Segmentos gravando com o painel recolhido: mostra o contador mesmo assim. */}
+        {!toolsOpen && segments.length > 0 ? (
+          <View style={[s.stackIconCircle, s.stackIconCircleActive]}><Text style={s.stackIconCount}>{`${segments.length}+`}</Text></View>
+        ) : null}
       </View>
 
       {/* Beauty soft overlay */}
@@ -1528,7 +1545,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       )}
 
       {directToEditor ? (
-        <RecentGalleryStrip visible={visible} onPick={(c) => { haptic('light'); onCapture?.(c); }} nextLabel={t?.('status.studio.next')} style={{ bottom: 190 }} />
+        <RecentGalleryStrip visible={visible} t={t} onPick={(c) => { haptic('light'); onCapture?.(c); }} onOpenGallery={() => { haptic('light'); openGallery(); }} nextLabel={t?.('status.studio.next')} style={{ bottom: 190 }} />
       ) : (
       /* Live filter chip strip (Feature E) — horizontal scroll above the
           mode bar so users can pick a look while framing. Tap = apply. */
@@ -1601,7 +1618,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           accessibilityRole="button"
         >
           {galleryThumb ? (
-            <Image source={{ uri: galleryThumb }} style={s.galleryThumbImg} />
+            <FastImage source={{ uri: galleryThumb }} style={s.galleryThumbImg} resizeMode="cover" transition={150} />
           ) : (
             <View style={s.galleryThumbFallback}>
               <IconImage size={24} color="rgba(255,255,255,0.9)" />
@@ -1916,14 +1933,14 @@ const s = StyleSheet.create({
 
   // Right-side action stack (Feature 3)
   rightStack: {
-    position: 'absolute', right: 12, top: Platform.OS === 'ios' ? 130 : androidTopInset(110),
-    alignItems: 'center', gap: 18, zIndex: 15,
+    position: 'absolute', right: 10, top: Platform.OS === 'ios' ? 130 : androidTopInset(110),
+    alignItems: 'center', gap: 10, zIndex: 15,
   },
   stackBtn: {
     // minWidth (não width fixo): rótulos como "Velocidade"/"Desligado"/"Segmentos"
     // quebravam no meio da palavra em 50px; o stack centraliza os ícones.
-    minWidth: 50, alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 4,
+    minWidth: 44, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 1,
   },
   stackBtnActive: {},
   stackIcon: {
@@ -1937,18 +1954,18 @@ const s = StyleSheet.create({
   // hosts an SVG child (vs the text glyph in `stackIcon`). Active state lights
   // the circle with a subtle white tint so the toggled tool reads clearly.
   stackIconCircle: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: 'rgba(0,0,0,0.28)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
   },
   stackIconCircleActive: {
-    backgroundColor: 'rgba(255,255,255,0.20)',
-    borderColor: 'rgba(255,255,255,0.5)',
+    backgroundColor: 'rgba(255,255,255,0.28)',
   },
-  stackIconCount: { color: '#fff', fontSize: 16, fontWeight: '900' },
+  stackChevron: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.22)' },
+  stackBadge: { position: 'absolute', right: 6, bottom: 5, color: '#fff', fontSize: 8, fontWeight: '900' },
+  stackIconCount: { color: '#fff', fontSize: 12, fontWeight: '800' },
   stackLabel: {
-    color: '#fff', fontSize: 10, marginTop: 4, fontWeight: '700',
+    color: '#fff', fontSize: 9, marginTop: 2, fontWeight: '600',
     letterSpacing: 0.3, textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },

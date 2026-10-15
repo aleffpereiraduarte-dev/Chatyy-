@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Ձայնը հասանելի չէ — կրկին փորձեք',
   'chatConv.audioOfflineRetry': 'Ինտերնետ չկա — հպեք՝ կրկին փորձելու համար',
+  "statusCam.allowPhotos": "Թույլատրել լուսանկարների հասանելիությունը",
+  "statusCam.manageSelection": "Կառավարել ընտրությունը",
+  "statusCam.moreTools": "Ավելի շատ ընտրանքներ",
+  "statusCam.lessTools": "Ավելի քիչ ընտրանքներ",
 };

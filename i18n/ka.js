@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'აუდიო მიუწვდომელია — ხელახლა ცდა',
   'chatConv.audioOfflineRetry': 'ინტერნეტი არ არის — შეეხეთ ხელახლა საცდელად',
+  "statusCam.allowPhotos": "ფოტოებზე წვდომის დაშვება",
+  "statusCam.manageSelection": "არჩევანის მართვა",
+  "statusCam.moreTools": "მეტი ვარიანტი",
+  "statusCam.lessTools": "ნაკლები ვარიანტი",
 };

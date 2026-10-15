@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ድምፅ አይገኝም — እንደገና ይሞክሩ',
   'chatConv.audioOfflineRetry': 'ኢንተርኔት የለም — እንደገና ለመሞከር ይንኩ',
+  "statusCam.allowPhotos": "የፎቶዎች መዳረሻ ፍቀድ",
+  "statusCam.manageSelection": "ምርጫን አስተዳድር",
+  "statusCam.moreTools": "ተጨማሪ አማራጮች",
+  "statusCam.lessTools": "ያነሱ አማራጮች",
 };

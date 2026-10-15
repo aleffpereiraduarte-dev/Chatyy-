@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'A hang nem érhető el — próbáld újra',
   'chatConv.audioOfflineRetry': 'Nincs internet — koppints az újrapróbáláshoz',
+  "statusCam.allowPhotos": "Fotókhoz való hozzáférés engedélyezése",
+  "statusCam.manageSelection": "Kiválasztás kezelése",
+  "statusCam.moreTools": "Több lehetőség",
+  "statusCam.lessTools": "Kevesebb lehetőség",
 };

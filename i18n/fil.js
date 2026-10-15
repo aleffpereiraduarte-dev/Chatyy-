@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Hindi available ang audio — subukan ulit',
   'chatConv.audioOfflineRetry': 'Walang internet — i-tap para subukan ulit',
+  "statusCam.allowPhotos": "Payagan ang access sa mga larawan",
+  "statusCam.manageSelection": "Pamahalaan ang pinili",
+  "statusCam.moreTools": "Higit pang opsyon",
+  "statusCam.lessTools": "Mas kaunting opsyon",
 };

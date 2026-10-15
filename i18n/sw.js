@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Sauti haipatikani — jaribu tena',
   'chatConv.audioOfflineRetry': 'Hakuna intaneti — gusa ili ujaribu tena',
+  "statusCam.allowPhotos": "Ruhusu ufikiaji wa picha",
+  "statusCam.manageSelection": "Dhibiti uteuzi",
+  "statusCam.moreTools": "Chaguo zaidi",
+  "statusCam.lessTools": "Chaguo chache",
 };

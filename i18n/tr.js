@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Ses kullanılamıyor — tekrar dene',
   'chatConv.audioOfflineRetry': 'İnternet yok — tekrar denemek için dokun',
+  "statusCam.allowPhotos": "Fotoğraflara erişime izin ver",
+  "statusCam.manageSelection": "Seçimi yönet",
+  "statusCam.moreTools": "Daha fazla seçenek",
+  "statusCam.lessTools": "Daha az seçenek",
 };

@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Audio tidak tersedia — cuba lagi',
   'chatConv.audioOfflineRetry': 'Tiada internet — ketik untuk cuba lagi',
+  "statusCam.allowPhotos": "Benarkan akses kepada foto",
+  "statusCam.manageSelection": "Urus pilihan",
+  "statusCam.moreTools": "Lebih banyak pilihan",
+  "statusCam.lessTools": "Kurang pilihan",
 };

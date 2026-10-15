@@ -935,4 +935,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'ශ්‍රව්‍ය නොමැත — නැවත උත්සාහ කරන්න',
   'chatConv.audioOfflineRetry': 'අන්තර්ජාලය නැත — නැවත උත්සාහයට තට්ටු කරන්න',
+  "statusCam.allowPhotos": "ඡායාරූප වෙත ප්‍රවේශය ඉඩ දෙන්න",
+  "statusCam.manageSelection": "තේරීම කළමනාකරණය කරන්න",
+  "statusCam.moreTools": "තවත් විකල්ප",
+  "statusCam.lessTools": "අඩු විකල්ප",
 };

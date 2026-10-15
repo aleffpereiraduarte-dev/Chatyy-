@@ -9165,4 +9165,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Audio niet beschikbaar — opnieuw proberen',
   'chatConv.audioOfflineRetry': 'Geen internet — tik om opnieuw te proberen',
+  "statusCam.allowPhotos": "Toegang tot foto's toestaan",
+  "statusCam.manageSelection": "Selectie beheren",
+  "statusCam.moreTools": "Meer opties",
+  "statusCam.lessTools": "Minder opties",
 };

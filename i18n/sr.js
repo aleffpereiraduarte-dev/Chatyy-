@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Звук није доступан — покушај поново',
   'chatConv.audioOfflineRetry': 'Нема интернета — додирни за поновни покушај',
+  "statusCam.allowPhotos": "Дозволи приступ фотографијама",
+  "statusCam.manageSelection": "Управљај избором",
+  "statusCam.moreTools": "Више опција",
+  "statusCam.lessTools": "Мање опција",
 };

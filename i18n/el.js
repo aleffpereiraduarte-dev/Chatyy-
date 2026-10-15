@@ -8387,4 +8387,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Ο ήχος δεν είναι διαθέσιμος — δοκιμάστε ξανά',
   'chatConv.audioOfflineRetry': 'Χωρίς σύνδεση — πατήστε για νέα προσπάθεια',
+  "statusCam.allowPhotos": "Να επιτρέπεται η πρόσβαση στις φωτογραφίες",
+  "statusCam.manageSelection": "Διαχείριση επιλογής",
+  "statusCam.moreTools": "Περισσότερες επιλογές",
+  "statusCam.lessTools": "Λιγότερες επιλογές",
 };

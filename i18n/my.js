@@ -8383,4 +8383,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'အသံ မရနိုင်ပါ — ထပ်ကြိုးစားပါ',
   'chatConv.audioOfflineRetry': 'အင်တာနက် မရှိပါ — ထပ်ကြိုးစားရန် နှိပ်ပါ',
+  "statusCam.allowPhotos": "ဓာတ်ပုံများကို ဝင်ခွင့်ပြုပါ",
+  "statusCam.manageSelection": "ရွေးချယ်မှုကို စီမံပါ",
+  "statusCam.moreTools": "နောက်ထပ် ရွေးစရာများ",
+  "statusCam.lessTools": "ရွေးစရာ လျှော့ရန်",
 };

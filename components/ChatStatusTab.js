@@ -956,7 +956,7 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 // Último pedido de "novo status" já atendido (sobrevive a remount do lazy).
 let _consumedNewStatusNonce = 0;
 
-function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed }) {
+function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, embedded = false, onViewerVisibleChange }) {
   // Real safe-area insets — `StatusBar.currentHeight` (the const fallback used
   // before) returned 0 on a few Pixel/Galaxy devices when the composer Modal
   // mounted before the system bar measurement settled, leaving the back/Save/
@@ -1394,7 +1394,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // [2026-10-09 status-composer] seed do estúdio: { items:[{uri,type,width,height,filter}], mode?, music?, isBoomerang? }
   const [studioSeed, setStudioSeed] = useState(null);
   // [status-texto 2026-10-14] câmeras de status fora desta aba (lista de conversas, perfil) abrem o editor de texto por aqui.
-  useEffect(() => registerTextStatusOpener(() => setStudioSeed({ mode: 'text', items: [] })), []);
+  // [2026-10-15 status-perfil] Instância embutida (host do viewer no Perfil) NÃO registra o opener global — ao desmontar ela apagaria o da aba de conversas.
+  useEffect(() => (embedded ? undefined : registerTextStatusOpener(() => setStudioSeed({ mode: 'text', items: [] }))), [embedded]);
   // Press lock: TouchableOpacity onPress + onLongPress can both fire on slow
   // devices when the user releases right at the long-press threshold. We saw
   // status creation open StatusCamera AND the system gallery picker at once
@@ -1930,6 +1931,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // opacity that come from different threads on the same modal layer.
     Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: false }).start();
   }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName]);
+
+  // [2026-10-15 status-perfil] Host embutido (Perfil) precisa saber se o viewer abriu (fallback) / fechou.
+  const _viewerVisCbRef = useRef(onViewerVisibleChange);
+  _viewerVisCbRef.current = onViewerVisibleChange;
+  useEffect(() => { try { _viewerVisCbRef.current?.(viewerVisible); } catch {} }, [viewerVisible]);
 
   const closeViewer = useCallback(() => {
     // Flush the currently-visible item's view receipt before tearing down —

@@ -9165,4 +9165,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': 'Ääni ei saatavilla — yritä uudelleen',
   'chatConv.audioOfflineRetry': 'Ei internetiä — yritä uudelleen napauttamalla',
+  "statusCam.allowPhotos": "Salli pääsy kuviin",
+  "statusCam.manageSelection": "Hallitse valintaa",
+  "statusCam.moreTools": "Lisää valintoja",
+  "statusCam.lessTools": "Vähemmän valintoja",
 };

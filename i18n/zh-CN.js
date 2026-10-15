@@ -8425,4 +8425,8 @@ export default {
   'chatConv.seenBy': 'Seen by',
   'chatConv.audioUnavailableRetry': '音频不可用 — 重试',
   'chatConv.audioOfflineRetry': '无网络 — 轻点重试',
+  "statusCam.allowPhotos": "允许访问照片",
+  "statusCam.manageSelection": "管理所选内容",
+  "statusCam.moreTools": "更多选项",
+  "statusCam.lessTools": "收起选项",
 };
