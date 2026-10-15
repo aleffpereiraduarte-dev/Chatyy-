@@ -455,8 +455,9 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
         // caixa de referência: o bloco pode ser @Sendable no SDK novo
         final class Acc { var inserted = Set<String>(); var deleted = Set<String>(); var failed = false }
         let acc = Acc()
-        changes.enumerateChanges { change, _ in
-          if let det = try? change.changeDetails(for: .asset) {
+        // PHPersistentChangeFetchResult é Sequence no Swift (não tem enumerateChanges).
+        for change in changes {
+          if let det = try? change.changeDetails(for: PHObjectType.asset) {
             acc.inserted.formUnion(det.insertedLocalIdentifiers)
             acc.deleted.formUnion(det.deletedLocalIdentifiers)
           } else {
