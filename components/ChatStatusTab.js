@@ -1,6 +1,8 @@
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import SheetKeyboardAvoider, { useAndroidKeyboardInset } from './chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
+import { LargeTitle, useLargeTitleCollapse } from './LargeTitleHeader'; // [2026-10-15 nav-motion]
+import PressableScale from './PressableScale'; // [2026-10-15 nav-motion]
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
@@ -957,7 +959,10 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 // Último pedido de "novo status" já atendido (sobrevive a remount do lazy).
 let _consumedNewStatusNonce = 0;
 
-function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, embedded = false, onViewerVisibleChange }) {
+function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, embedded = false, onViewerVisibleChange, largeTitle, onLargeTitleCollapsedChange }) {
+  // [2026-10-15 nav-motion] Título grande "Status" que rola com a lista e
+  // colapsa no header compacto do /chat (padrão da aba Conversas).
+  const _lt = useLargeTitleCollapse(onLargeTitleCollapsedChange, { enabled: !!largeTitle });
   // Real safe-area insets — `StatusBar.currentHeight` (the const fallback used
   // before) returned 0 on a few Pixel/Galaxy devices when the composer Modal
   // mounted before the system bar measurement settled, leaving the back/Save/
@@ -3524,6 +3529,28 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     );
   };
 
+  const _searchToggleRow = (
+    <>
+      {!showSearch && (
+        <View style={styles.inlineSearchRow}>
+          <PressableScale
+            haptic="select"
+            style={[styles.searchToggle, {
+              backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
+            }]}
+            onPress={() => setShowSearch(true)}
+            accessibilityRole="button"
+          >
+            <IconSearch size={18} color={colors.textSecondary} />
+            <Text style={[styles.searchToggleText, { color: colors.textSecondary }]}>
+              {t?.('status.searchPlaceholder')}
+            </Text>
+          </PressableScale>
+        </View>
+      )}
+    </>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
       {/* Search */}
@@ -3551,25 +3578,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         </View>
       )}
 
-      {!showSearch && (
-        <View style={styles.inlineSearchRow}>
-          <TouchableOpacity
-            style={[styles.searchToggle, {
-              backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
-            }]}
-            onPress={() => setShowSearch(true)}
-          >
-            <IconSearch size={18} color={colors.textSecondary} />
-            <Text style={[styles.searchToggleText, { color: colors.textSecondary }]}>
-              {t?.('status.searchPlaceholder')}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      {!largeTitle && _searchToggleRow}
 
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        onScroll={_lt.onScroll}
+        scrollEventThrottle={_lt.scrollEventThrottle}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -3580,6 +3595,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           />
         }
       >
+        {!!largeTitle && <LargeTitle title={largeTitle} color={colors.text} />}
+        {!!largeTitle && _searchToggleRow}
         {/* Horizontal story scroller */}
         {(filteredStatuses.length > 0 || hasMyStatus) && (
           <StoryScroller

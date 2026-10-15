@@ -20,8 +20,9 @@ public class ChatyyMediaViewerModule: Module {
     Events("onIndexChange", "onAction", "onClose")
 
     // 2 = aceita `secure` (escudo durante gravação/espelhamento) [2026-10-14 adv-privacy]
+    // 3 = `sourceRect`/`sourceRadius` + setReturnRect (hero bolha ↔ viewer) [2026-10-15 hero]
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
     }
 
     AsyncFunction("open") { (options: [String: Any]) -> Int in
@@ -55,6 +56,12 @@ public class ChatyyMediaViewerModule: Module {
         labels: labels,
         flags: flags
       )
+      // [2026-10-15 hero] Frame da miniatura na bolha (coordenadas de janela).
+      let heroRect = MVItem.rectValue(options["sourceRect"])
+      let heroRadius = CGFloat(MVItem.doubleValue(options["sourceRadius"]) ?? 0)
+      if let r = heroRect {
+        vc.setHeroSource(r, radius: heroRadius)
+      }
       vc.onIndexChange = { [weak self] idx in
         self?.sendEvent("onIndexChange", ["session": sid, "index": idx])
       }
@@ -68,7 +75,13 @@ public class ChatyyMediaViewerModule: Module {
         self?.sendEvent("onClose", ["session": sid, "index": idx, "reason": reason])
       }
       self.current = vc
-      presenter.present(vc, animated: true, completion: nil)
+      // Hero: o próprio viewer anima (fundo + foto saindo da bolha) — sem o
+      // crossDissolve do present por cima.
+      // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
+      presenter.present(vc, animated: heroRect == nil, completion: {
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+      })
+      NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
       return sid
     }.runOnQueue(.main)
 
@@ -83,6 +96,13 @@ public class ChatyyMediaViewerModule: Module {
     AsyncFunction("setActionState") { (action: String, state: String) -> Bool in
       guard let vc = self.current else { return false }
       vc.setActionState(action: action, state: state)
+      return true
+    }.runOnQueue(.main)
+
+    // [2026-10-15 hero] Para onde a página `index` volta ao fechar; nil = fecha normal.
+    AsyncFunction("setReturnRect") { (index: Int, rect: [String: Any]?, radius: Double) -> Bool in
+      guard let vc = self.current else { return false }
+      vc.setReturnRect(index: index, rect: MVItem.rectValue(rect), radius: CGFloat(radius))
       return true
     }.runOnQueue(.main)
 
@@ -147,6 +167,15 @@ struct MVItem {
     if let n = v as? NSNumber { return n.doubleValue }
     if let s = v as? String { return Double(s) }
     return nil
+  }
+
+  /// {x,y,width,height} (pt) → CGRect; nil se ausente/inválido.
+  static func rectValue(_ v: Any?) -> CGRect? {
+    guard let d = v as? [String: Any],
+          let x = doubleValue(d["x"]), let y = doubleValue(d["y"]),
+          let w = doubleValue(d["width"]), let h = doubleValue(d["height"]),
+          x.isFinite, y.isFinite, w.isFinite, h.isFinite, w >= 2, h >= 2 else { return nil }
+    return CGRect(x: x, y: y, width: w, height: h)
   }
 
   static func intValue(_ v: Any?) -> Int? {

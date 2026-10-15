@@ -30,7 +30,8 @@ class ChatyyMediaViewerModule : Module() {
     Events("onIndexChange", "onAction", "onClose")
 
     // 2 = aceita `secure` (FLAG_SECURE no Dialog) [2026-10-14 adv-privacy]
-    Function("apiVersion") { 2 }
+    // 3 = `sourceRect`/`sourceRadius` + setReturnRect (hero bolha ↔ viewer) [2026-10-15 hero]
+    Function("apiVersion") { 3 }
 
     AsyncFunction("open") { options: Map<String, Any?> ->
       val activity = appContext.currentActivity ?: return@AsyncFunction 0
@@ -86,6 +87,10 @@ class ChatyyMediaViewerModule : Module() {
           emit("onClose", mapOf("session" to sid, "index" to index, "reason" to reason))
         }
       })
+      // [2026-10-15 hero] frame da miniatura (dp do RN)
+      rectFrom(options["sourceRect"])?.let { r ->
+        dlg.setHeroSource(r, (options["sourceRadius"] as? Number)?.toFloat() ?: 0f)
+      }
       current = dlg
       try {
         dlg.show()
@@ -110,6 +115,13 @@ class ChatyyMediaViewerModule : Module() {
       true
     }.runOnQueue(Queues.MAIN)
 
+    // [2026-10-15 hero] Para onde a página `index` volta ao fechar; null = fecha normal.
+    AsyncFunction("setReturnRect") { index: Int, rect: Map<String, Any?>?, radius: Double ->
+      val d = current ?: return@AsyncFunction false
+      d.setReturnRect(index, rectFrom(rect), radius.toFloat())
+      true
+    }.runOnQueue(Queues.MAIN)
+
     AsyncFunction("prefetch") { uris: List<String> ->
       val ctx = appContext.reactContext?.applicationContext ?: return@AsyncFunction false
       val g = Glide.with(ctx)
@@ -124,6 +136,17 @@ class ChatyyMediaViewerModule : Module() {
       }
       true
     }.runOnQueue(Queues.MAIN)
+  }
+
+  private fun rectFrom(v: Any?): android.graphics.RectF? {
+    val m = v as? Map<*, *> ?: return null
+    fun f(k: String): Float? = (m[k] as? Number)?.toFloat()?.takeIf { x -> !x.isNaN() && !x.isInfinite() }
+    val x = f("x") ?: return null
+    val y = f("y") ?: return null
+    val w = f("width") ?: return null
+    val h = f("height") ?: return null
+    if (w < 2f || h < 2f) return null
+    return android.graphics.RectF(x, y, x + w, y + h)
   }
 
   private fun emit(name: String, body: Map<String, Any?>) {

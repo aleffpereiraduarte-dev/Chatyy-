@@ -304,6 +304,23 @@ export const ThreadKeyboardAvoider = KEYBOARD_CONTROLLER_ACTIVE
   ? KCThreadKeyboardAvoider
   : RNThreadKeyboardAvoider;
 
+// [2026-10-15 native-emoji] Painel nativo de emoji/figurinhas/GIF do composer
+// (components/chat/NativeEmojiPanelBridge.js) acompanha o MESMO valor do teclado
+// (UI thread) que o ThreadKeyboardAvoider: abrir/fechar painel ⇄ teclado sem
+// pulo de altura. Sem KC → null (o painel usa altura fixa).
+export const useThreadKeyboardHeight = KEYBOARD_CONTROLLER_ACTIVE
+  ? function useThreadKeyboardHeightKC() {
+    const { height } = KC.useReanimatedKeyboardAnimation();
+    return height;
+  }
+  : function useThreadKeyboardHeightNone() {
+    return null;
+  };
+
+export function getThreadReanimated() {
+  return KEYBOARD_CONTROLLER_ACTIVE ? Rea : null;
+}
+
 // Android: interactive keyboard swipe over the message list (KC
 // KeyboardGestureArea, API 30+). iOS uses the ScrollView's native
 // keyboardDismissMode="interactive" (KC tracks it), so no wrapper there —

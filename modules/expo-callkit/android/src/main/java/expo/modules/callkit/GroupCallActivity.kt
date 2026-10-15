@@ -1951,6 +1951,7 @@ class GroupCallActivity : ComponentActivity() {
   }
 
   private fun cleanupLocalScreenShare(why: String) {
+    ScreenProtectBridge.sharing("GroupCallActivity", false) // [2026-10-15 screen-protect-all]
     ScreenShareKit.stopAudio(screenAudioShare)
     screenAudioShare = null
     if (cameraPausedForShare) {
@@ -1966,6 +1967,10 @@ class GroupCallActivity : ComponentActivity() {
   private fun startScreenShareWith(data: Intent) {
     val r = room ?: return
     screenShareInFlight = true
+    // [2026-10-15 screen-protect-all] MediaProjection grava FLAG_SECURE como preto:
+    // desliga a proteção do app ANTES da 1ª captura; religa em cleanupLocalScreenShare
+    // (todo caminho de parada) ou se a publicação falhar.
+    ScreenProtectBridge.sharing("GroupCallActivity", true)
     lifecycleScope.launch {
       try {
         val params = io.livekit.android.room.track.screencapture.ScreenCaptureParams(
@@ -1985,6 +1990,7 @@ class GroupCallActivity : ComponentActivity() {
         screenSharing = ok
         CallDiag.log(if (ok) "group_screen_share_published" else "group_screen_share_error", roomName, "mediaprojection", applicationContext)
         if (ok) onLocalScreenShareStarted(r)
+        if (!ok) ScreenProtectBridge.sharing("GroupCallActivity", false)
         if (!ok) {
           try { Toast.makeText(this@GroupCallActivity, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
         }
@@ -1992,6 +1998,7 @@ class GroupCallActivity : ComponentActivity() {
         Log.w(TAG, "setScreenShareEnabled(true) failed: ${t.message}")
         CallDiag.log("group_screen_share_error", roomName, "err=${t.message?.take(100)}", applicationContext)
         screenSharing = false
+        ScreenProtectBridge.sharing("GroupCallActivity", false)
         try { Toast.makeText(this@GroupCallActivity, CallStrings.s("screenShareFailed"), Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
       } finally {
         screenShareInFlight = false

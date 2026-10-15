@@ -11,8 +11,10 @@
 //
 // Estética P&B do app: só tons de cinza, ícones SVG (components/Icons), sem emoji.
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Linking, Platform, StyleSheet, Animated, Easing } from 'react-native';
+import React, { useState, useEffect, useCallback, memo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, Linking, Platform, StyleSheet } from 'react-native';
+// [2026-10-15 bia-design] shimmer no passo atual, cascata nos cartões, sombra suave
+import { BiaShimmerText, BiaFadeIn, softShadow } from './bia/BiaUI';
 import {
   IconCopy, IconCheck, IconCalendar, IconMail, IconUsers, IconClock, IconChevronRight,
   IconGlobe, IconSearch, IconFolder, IconMessageSquare, IconSparkles, IconInbox, IconMapPin,
@@ -73,27 +75,18 @@ function kindIcon(kind) {
   }
 }
 
-// ─── cursor piscando (texto aninhado: opacidade via estado, não Animated) ─────
+// ─── cursor (bolinha que pulsa — estilo ChatGPT; texto aninhado: opacidade via estado) ─
 export function BlinkCaret({ color }) {
   const [on, setOn] = useState(true);
   useEffect(() => {
-    const id = setInterval(() => setOn(v => !v), 520);
+    const id = setInterval(() => setOn(v => !v), 560);
     return () => clearInterval(id);
   }, []);
-  return <Text style={{ color, opacity: on ? 0.9 : 0.15, fontWeight: '400' }}>{' ▍'}</Text>;
+  return <Text style={{ color, opacity: on ? 0.95 : 0.3, fontSize: 13, fontWeight: '400' }}>{' \u25CF'}</Text>;
 }
 
-// ─── "Pensando..." / ferramenta em andamento ────────────────────────────────
+// ─── "Pensando..." / ferramenta em andamento (texto com shimmer) ─────────────
 export function BiaThinking({ isDark, t, toolName }) {
-  const pulse = useRef(new Animated.Value(0.45)).current;
-  useEffect(() => {
-    const a = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0.45, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]));
-    a.start();
-    return () => a.stop();
-  }, [pulse]);
   const kind = toolName ? biaToolKind(toolName) : null;
   const Icon = kind ? kindIcon(kind) : null;
   const label = toolName ? biaToolLabel(toolName, t) : ((t && t('one.thinking') !== 'one.thinking' && t('one.thinking')) || 'Pensando...');
@@ -105,7 +98,7 @@ export function BiaThinking({ isDark, t, toolName }) {
           <Icon size={12} color={fg} />
         </View>
       ) : null}
-      <Animated.Text style={[rs.thinkText, { color: fg, opacity: pulse }]}>{label}</Animated.Text>
+      <BiaShimmerText text={label} isDark={isDark} style={rs.thinkText} />
     </View>
   );
 }
@@ -212,114 +205,146 @@ function BiaTable({ rows, color, isDark, keyBase }) {
   );
 }
 
+// texto "chegando": as últimas palavras ficam mais claras (borda suave que avança
+// a cada token = fade por palavra) + cursor. Só quando não há marcação aberta no fim.
+function withAlpha(color, a) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(color || ''));
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+const TAIL_ALPHA = [0.22, 0.42, 0.62, 0.82];
+function inlineLive(text, color, isDark, keyBase, live) {
+  const caret = live ? <BlinkCaret key="caret" color={color} /> : null;
+  if (!live) return biaInline(text, color, isDark, keyBase);
+  // anda de trás p/ frente até 4 palavras (linear; sem regex com backtracking)
+  const str = String(text || '');
+  let i = str.length;
+  for (let n = 0; n < TAIL_ALPHA.length && i > 0; n++) {
+    while (i > 0 && /\s/.test(str[i - 1])) i--;
+    while (i > 0 && !/\s/.test(str[i - 1])) i--;
+  }
+  const tail = str.slice(i);
+  if (!tail.trim() || tail.length > 140 || /[*`[\]~()]/.test(tail)) return [biaInline(str, color, isDark, keyBase), caret];
+  const words = tail.match(/\S+\s*/g) || [];
+  const off = Math.max(0, TAIL_ALPHA.length - words.length);
+  return [
+    biaInline(str.slice(0, i), color, isDark, keyBase),
+    ...words.map((w, i) => <Text key={`${keyBase}-t${i}`} style={{ color: withAlpha(color, TAIL_ALPHA[off + i]) }}>{w}</Text>),
+    caret,
+  ];
+}
+
+function parseBlocks(src) {
+  const lines = src.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const fence = /^\s*```\s*([\w+#.-]*)\s*$/.exec(line);
+    if (fence) {
+      const start = i; const buf = []; i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++;
+      const code = buf.join('\n');
+      out.push({ type: 'code', key: `code-${start}`, lang: fence[1], code, sig: fence[1] + '\u0001' + code });
+      continue;
+    }
+    if (!trimmed) { out.push({ type: 'br', key: `br-${i}`, sig: '' }); i++; continue; }
+    if (trimmed.includes('|') && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+      const start = i; const rows = [splitRow(line)]; const raw = [line];
+      i += 2;
+      while (i < lines.length && lines[i].trim().includes('|') && lines[i].trim()) { rows.push(splitRow(lines[i])); raw.push(lines[i]); i++; }
+      out.push({ type: 'table', key: `tb-${start}`, rows, sig: raw.join('\n') });
+      continue;
+    }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push({ type: 'hr', key: `hr-${i}`, sig: '' }); i++; continue; }
+    const h = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (h) { out.push({ type: 'h', key: `h-${i}`, depth: h[1].length, text: h[2].replace(/\s*#+\s*$/, ''), sig: trimmed }); i++; continue; }
+    if (/^\s*>\s?/.test(line)) {
+      const start = i; const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
+      const text = buf.join('\n');
+      out.push({ type: 'quote', key: `q-${start}`, text, sig: text });
+      continue;
+    }
+    const task = /^(\s*)[-*]\s+\[( |x|X)\]\s+(.+)$/.exec(line);
+    if (task) { out.push({ type: 'task', key: `tk-${i}`, indent: Math.min(Math.floor(task[1].length / 2), 3), done: task[2] !== ' ', text: task[3], sig: line }); i++; continue; }
+    const b = /^(\s*)[-*•]\s+(.+)$/.exec(line);
+    if (b) { out.push({ type: 'li', key: `li-${i}`, indent: Math.min(Math.floor(b[1].length / 2), 3), text: b[2], sig: line }); i++; continue; }
+    const n = /^(\s*)(\d+)[.)]\s+(.+)$/.exec(line);
+    if (n) { out.push({ type: 'ol', key: `ol-${i}`, indent: Math.min(Math.floor(n[1].length / 2), 3), num: n[2], text: n[3], sig: line }); i++; continue; }
+    out.push({ type: 'p', key: `p-${i}`, text: line, sig: line });
+    i++;
+  }
+  return out;
+}
+
+// Um bloco = um componente memo: durante o stream só o ÚLTIMO bloco re-renderiza
+// (os anteriores têm a mesma assinatura → pulam o render).
+const MdBlock = memo(function MdBlock({ b, color, isDark, t, live }) {
+  const k = b.key;
+  switch (b.type) {
+    case 'code': return <BiaCodeBlock code={b.code} lang={b.lang} isDark={isDark} t={t} />;
+    case 'br': return <View style={{ height: 6 }} />;
+    case 'table': return <BiaTable rows={b.rows} color={color} isDark={isDark} keyBase={k} />;
+    case 'hr': return <View style={[rs.hr, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }]} />;
+    case 'h': return (
+      <Text style={[rs.h, { color, fontSize: b.depth === 1 ? 21 : b.depth === 2 ? 19 : b.depth === 3 ? 17 : 16, marginTop: b.depth <= 2 ? 10 : 6 }]} selectable accessibilityRole="header">
+        {inlineLive(b.text, color, isDark, k, live)}
+      </Text>
+    );
+    case 'quote': return (
+      <View style={[rs.quote, { borderLeftColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]}>
+        <Text style={[rs.p, { color: isDark ? '#C7C7CC' : '#3A3A3C' }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+      </View>
+    );
+    case 'task': return (
+      <View style={[rs.li, { marginLeft: b.indent * 16 }]}>
+        <View style={[rs.checkbox, { borderColor: color }, b.done && { backgroundColor: color }]}>
+          {b.done ? <IconCheck size={10} color={isDark ? '#000' : '#fff'} /> : null}
+        </View>
+        <Text style={[rs.liText, { color }, b.done && { textDecorationLine: 'line-through', opacity: 0.6 }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+      </View>
+    );
+    case 'li': return (
+      <View style={[rs.li, { marginLeft: b.indent * 16 }]}>
+        <View style={[rs.dot, { backgroundColor: color }]} />
+        <Text style={[rs.liText, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+      </View>
+    );
+    case 'ol': return (
+      <View style={[rs.li, { marginLeft: b.indent * 16 }]}>
+        <Text style={[rs.num, { color }]}>{b.num}.</Text>
+        <Text style={[rs.liText, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+      </View>
+    );
+    default: return <Text style={[rs.p, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>;
+  }
+}, (a, b) => a.b.sig === b.b.sig && a.b.type === b.b.type && a.color === b.color && a.isDark === b.isDark && a.live === b.live);
+
+const TEXT_TYPES = { h: 1, quote: 1, task: 1, li: 1, ol: 1, p: 1 };
+
 /**
- * Markdown da Bia. `streaming` → cursor piscando no fim do último bloco de texto.
+ * Markdown da Bia. `streaming` → últimas palavras com fade + cursor no fim.
  */
 export function BiaMarkdown({ text, color, isDark, streaming, t }) {
   if (!text && !streaming) return null;
   const src = cleanMath(String(text || '')).replace(/\r/g, '');
-  const lines = src.split('\n');
+  const blocks = parseBlocks(src);
+  // durante o stream, uma linha "| a | b" ainda sem o separador é o começo de uma
+  // tabela — não mostra o texto cru com pipes (a tabela entra pronta logo depois)
+  if (streaming && blocks.length && blocks[blocks.length - 1].type === 'p' && /^\s*\|/.test(blocks[blocks.length - 1].text)) blocks.pop();
   let lastText = -1;
-  for (let i = lines.length - 1; i >= 0; i--) { if (lines[i].trim()) { lastText = i; break; } }
-  const caret = (li) => (streaming && li === lastText ? <BlinkCaret key="caret" color={color} /> : null);
-  const out = [];
-  let i = 0;
-  let endedOnBlock = false;
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    endedOnBlock = false;
-    // código
-    const fence = /^\s*```\s*([\w+#.-]*)\s*$/.exec(line);
-    if (fence) {
-      const lang = fence[1];
-      const buf = [];
-      i++;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
-      i++;
-      out.push(<BiaCodeBlock key={`code-${i}`} code={buf.join('\n')} lang={lang} isDark={isDark} t={t} />);
-      endedOnBlock = true;
-      continue;
-    }
-    if (!trimmed) { out.push(<View key={`br-${i}`} style={{ height: 6 }} />); i++; continue; }
-    // tabela: linha com | seguida de separador
-    if (trimmed.includes('|') && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
-      const rows = [splitRow(line)];
-      i += 2;
-      while (i < lines.length && lines[i].trim().includes('|') && lines[i].trim()) { rows.push(splitRow(lines[i])); i++; }
-      out.push(<BiaTable key={`tb-${i}`} rows={rows} color={color} isDark={isDark} keyBase={`tb${i}`} />);
-      endedOnBlock = true;
-      continue;
-    }
-    // divisória
-    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      out.push(<View key={`hr-${i}`} style={[rs.hr, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }]} />);
-      i++; continue;
-    }
-    // títulos
-    const h = /^(#{1,6})\s+(.+)$/.exec(trimmed);
-    if (h) {
-      const d = h[1].length;
-      out.push(
-        <Text key={`h-${i}`} style={[rs.h, { color, fontSize: d === 1 ? 20 : d === 2 ? 18 : d === 3 ? 16 : 15, marginTop: d <= 2 ? 8 : 4 }]} selectable accessibilityRole="header">
-          {biaInline(h[2].replace(/\s*#+\s*$/, ''), color, isDark, `h${i}`)}{caret(i)}
-        </Text>
-      );
-      i++; continue;
-    }
-    // citação
-    if (/^\s*>\s?/.test(line)) {
-      const buf = [];
-      const start = i;
-      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; }
-      out.push(
-        <View key={`q-${start}`} style={[rs.quote, { borderLeftColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]}>
-          <Text style={[rs.p, { color: isDark ? '#C7C7CC' : '#3A3A3C' }]} selectable>{biaInline(buf.join('\n'), color, isDark, `q${start}`)}{caret(i - 1)}</Text>
-        </View>
-      );
-      continue;
-    }
-    // tarefa
-    const task = /^(\s*)[-*]\s+\[( |x|X)\]\s+(.+)$/.exec(line);
-    if (task) {
-      const done = task[2] !== ' ';
-      out.push(
-        <View key={`tk-${i}`} style={[rs.li, { marginLeft: Math.min(Math.floor(task[1].length / 2), 3) * 16 }]}>
-          <View style={[rs.checkbox, { borderColor: color }, done && { backgroundColor: color }]}>
-            {done ? <IconCheck size={10} color={isDark ? '#000' : '#fff'} /> : null}
-          </View>
-          <Text style={[rs.liText, { color }, done && { textDecorationLine: 'line-through', opacity: 0.6 }]} selectable>{biaInline(task[3], color, isDark, `tk${i}`)}{caret(i)}</Text>
-        </View>
-      );
-      i++; continue;
-    }
-    // lista com marcador
-    const b = /^(\s*)[-*•]\s+(.+)$/.exec(line);
-    if (b) {
-      out.push(
-        <View key={`li-${i}`} style={[rs.li, { marginLeft: Math.min(Math.floor(b[1].length / 2), 3) * 16 }]}>
-          <View style={[rs.dot, { backgroundColor: color }]} />
-          <Text style={[rs.liText, { color }]} selectable>{biaInline(b[2], color, isDark, `li${i}`)}{caret(i)}</Text>
-        </View>
-      );
-      i++; continue;
-    }
-    // lista numerada
-    const n = /^(\s*)(\d+)[.)]\s+(.+)$/.exec(line);
-    if (n) {
-      out.push(
-        <View key={`ol-${i}`} style={[rs.li, { marginLeft: Math.min(Math.floor(n[1].length / 2), 3) * 16 }]}>
-          <Text style={[rs.num, { color }]}>{n[2]}.</Text>
-          <Text style={[rs.liText, { color }]} selectable>{biaInline(n[3], color, isDark, `ol${i}`)}{caret(i)}</Text>
-        </View>
-      );
-      i++; continue;
-    }
-    out.push(<Text key={`p-${i}`} style={[rs.p, { color }]} selectable>{biaInline(line, color, isDark, `p${i}`)}{caret(i)}</Text>);
-    i++;
-  }
-  if (streaming && (lastText === -1 || endedOnBlock)) out.push(<Text key="caret-end" style={rs.p}><BlinkCaret color={color} /></Text>);
-  return <View style={rs.mdWrap}>{out}</View>;
+  for (let j = blocks.length - 1; j >= 0; j--) { if (blocks[j].type !== 'br') { lastText = j; break; } }
+  const liveIdx = streaming && lastText >= 0 && TEXT_TYPES[blocks[lastText].type] ? lastText : -1;
+  return (
+    <View style={rs.mdWrap}>
+      {blocks.map((b, j) => <MdBlock key={b.key} b={b} color={color} isDark={isDark} t={t} live={j === liveIdx} />)}
+      {streaming && liveIdx === -1 ? <Text style={rs.p}><BlinkCaret color={color} /></Text> : null}
+    </View>
+  );
 }
 
 // ─── cartões de resultado de ferramenta ─────────────────────────────────────
@@ -399,54 +424,67 @@ export function buildBiaCards(actions, t) {
 export function BiaToolCards({ actions, isDark, t, locale, onOpen }) {
   const cards = buildBiaCards(actions, t);
   if (!cards.length) return null;
-  const fg = isDark ? '#ECECEC' : '#0D0D0D';
+  const fg = isDark ? '#F2F2F4' : '#0D0D0D';
   const muted = isDark ? '#A1A1A6' : '#6B7280';
-  const border = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)';
-  const bg = isDark ? '#0E0E0F' : '#FFFFFF';
+  const border = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.06)';
+  const bg = isDark ? '#111113' : '#FFFFFF';
   return (
-    <View style={{ gap: 10, marginTop: 10, alignSelf: 'stretch' }}>
-      {cards.map(card => {
+    <View style={{ gap: 12, marginTop: 14, alignSelf: 'stretch' }}>
+      {cards.map((card, ci) => {
         const Icon = kindIcon(card.kind);
         return (
-          <View key={card.key} style={[rs.card, { borderColor: border, backgroundColor: bg }]}>
-            <View style={rs.cardHead}>
-              <View style={[rs.cardIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
-                <Icon size={13} color={fg} />
-              </View>
-              <Text style={[rs.cardTitle, { color: fg }]} numberOfLines={1}>{card.title}</Text>
-            </View>
-            {card.rows.map((row, idx) => {
-              const Row = row.open ? TouchableOpacity : View;
-              return (
-                <Row
-                  key={row.key}
-                  {...(row.open ? { onPress: () => onOpen && onOpen(row.open), activeOpacity: 0.7, accessibilityRole: 'button' } : {})}
-                  style={[rs.cardRow, idx > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }]}
-                >
-                  {card.kind === 'email' ? (
-                    <View style={[rs.unread, { backgroundColor: row.dot ? fg : 'transparent' }]} />
-                  ) : null}
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={[rs.rowTitle, { color: fg }, row.dot && { fontWeight: '700' }]} numberOfLines={card.kind === 'reminder' || card.kind === 'eventCreate' ? 3 : 1}>{row.title}</Text>
-                    {row.sub ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 }}>
-                        {card.kind === 'calendar' ? <IconMapPin size={10} color={muted} /> : null}
-                        <Text style={[rs.rowSub, { color: muted }]} numberOfLines={1}>{row.sub}</Text>
-                      </View>
-                    ) : null}
+          <BiaFadeIn key={card.key} delay={80 + ci * 90} dy={12}>
+            <View style={[rs.card, { borderColor: border, backgroundColor: bg }, softShadow(isDark, 1)]}>
+              <View style={rs.cardHead}>
+                <View style={[rs.cardIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#F2F2F4' }]}>
+                  <Icon size={15} color={fg} />
+                </View>
+                <Text style={[rs.cardTitle, { color: fg }]} numberOfLines={1} accessibilityRole="header">{card.title}</Text>
+                {card.rows.length > 1 ? (
+                  <View style={[rs.cardCount, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
+                    <Text style={[rs.cardCountText, { color: muted }]}>{card.rows.length}</Text>
                   </View>
-                  {row.when ? <Text style={[rs.rowWhen, { color: muted }]} numberOfLines={1}>{fmtWhen(row.when, locale)}</Text> : null}
-                  {row.open ? <IconChevronRight size={14} color={muted} /> : null}
-                </Row>
-              );
-            })}
-            {card.footer ? (
-              <TouchableOpacity onPress={() => onOpen && onOpen(card.footer.open)} activeOpacity={0.7} style={[rs.cardFoot, { borderTopColor: border }]} accessibilityRole="button">
-                {card.kind === 'email' ? <IconInbox size={12} color={muted} /> : <IconCalendar size={12} color={muted} />}
-                <Text style={[rs.cardFootText, { color: muted }]}>{card.footer.label}</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
+                ) : null}
+              </View>
+              <View style={{ paddingHorizontal: 6, paddingBottom: card.footer ? 0 : 6 }}>
+                {card.rows.map((row, idx) => {
+                  const Row = row.open ? TouchableOpacity : View;
+                  return (
+                    <Row
+                      key={row.key}
+                      {...(row.open ? { onPress: () => onOpen && onOpen(row.open), activeOpacity: 0.6, accessibilityRole: 'button' } : {})}
+                      style={[rs.cardRow, idx > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: border }]}
+                    >
+                      {card.kind === 'email' ? (
+                        <View style={[rs.unread, { backgroundColor: row.dot ? fg : 'transparent', borderColor: row.dot ? fg : border }]} />
+                      ) : card.kind === 'calendar' ? (
+                        <View style={[rs.calBar, { backgroundColor: fg }]} />
+                      ) : null}
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={[rs.rowTitle, { color: fg }, row.dot && { fontWeight: '700' }]} numberOfLines={card.kind === 'reminder' || card.kind === 'eventCreate' ? 3 : 1}>{row.title}</Text>
+                        {row.sub ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                            {card.kind === 'calendar' ? <IconMapPin size={11} color={muted} /> : null}
+                            <Text style={[rs.rowSub, { color: muted }]} numberOfLines={1}>{row.sub}</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      {row.when ? <Text style={[rs.rowWhen, { color: muted }]} numberOfLines={1}>{fmtWhen(row.when, locale)}</Text> : null}
+                      {row.open ? <IconChevronRight size={14} color={muted} /> : null}
+                    </Row>
+                  );
+                })}
+              </View>
+              {card.footer ? (
+                <TouchableOpacity onPress={() => onOpen && onOpen(card.footer.open)} activeOpacity={0.7} style={[rs.cardFoot, { borderTopColor: border }]} accessibilityRole="button">
+                  {card.kind === 'email' ? <IconInbox size={13} color={fg} /> : <IconCalendar size={13} color={fg} />}
+                  <Text style={[rs.cardFootText, { color: fg }]}>{card.footer.label}</Text>
+                  <View style={{ flex: 1 }} />
+                  <IconChevronRight size={13} color={muted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </BiaFadeIn>
         );
       })}
     </View>
@@ -454,40 +492,43 @@ export function BiaToolCards({ actions, isDark, t, locale, onOpen }) {
 }
 
 const rs = StyleSheet.create({
-  mdWrap: { gap: 3, alignSelf: 'stretch', maxWidth: '100%' },
-  p: { fontSize: 15.5, lineHeight: 23 },
-  h: { fontWeight: '700', lineHeight: 26, letterSpacing: -0.2 },
+  mdWrap: { gap: 4, alignSelf: 'stretch', maxWidth: '100%' },
+  p: { fontSize: 16.5, lineHeight: 26, letterSpacing: -0.1 },
+  h: { fontWeight: '700', lineHeight: 28, letterSpacing: -0.35 },
   li: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, marginVertical: 1 },
-  dot: { width: 5, height: 5, borderRadius: 3, marginTop: 9, opacity: 0.85 },
-  num: { fontSize: 15, lineHeight: 23, fontWeight: '600', minWidth: 18 },
-  liText: { flex: 1, fontSize: 15.5, lineHeight: 23 },
-  checkbox: { width: 15, height: 15, borderRadius: 4, borderWidth: 1.5, marginTop: 4, alignItems: 'center', justifyContent: 'center' },
+  dot: { width: 5, height: 5, borderRadius: 3, marginTop: 11, opacity: 0.85 },
+  num: { fontSize: 16, lineHeight: 26, fontWeight: '600', minWidth: 20 },
+  liText: { flex: 1, fontSize: 16.5, lineHeight: 26, letterSpacing: -0.1 },
+  checkbox: { width: 16, height: 16, borderRadius: 5, borderWidth: 1.5, marginTop: 5, alignItems: 'center', justifyContent: 'center' },
   quote: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 2, marginVertical: 3 },
   hr: { height: StyleSheet.hairlineWidth, marginVertical: 10, alignSelf: 'stretch' },
   link: { textDecorationLine: 'underline', fontWeight: '600' },
   inlineCode: { fontFamily: MONO, fontSize: 13.5, paddingHorizontal: 4, borderRadius: 4 },
-  codeWrap: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 12, overflow: 'hidden', marginVertical: 6, alignSelf: 'stretch' },
-  codeHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 7 },
+  codeWrap: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, overflow: 'hidden', marginVertical: 8, alignSelf: 'stretch' },
+  codeHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 9 },
   codeLang: { fontSize: 11.5, fontWeight: '600', letterSpacing: 0.3, textTransform: 'lowercase' },
   codeCopy: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   codeCopyText: { fontSize: 11.5, fontWeight: '600' },
-  codeText: { fontFamily: MONO, fontSize: 12.5, lineHeight: 19, paddingHorizontal: 14, paddingVertical: 12 },
-  table: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 10, overflow: 'hidden' },
+  codeText: { fontFamily: MONO, fontSize: 13, lineHeight: 20, paddingHorizontal: 16, paddingVertical: 14 },
+  table: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, overflow: 'hidden' },
   tr: { flexDirection: 'row' },
-  td: { paddingHorizontal: 10, paddingVertical: 8 },
+  td: { paddingHorizontal: 12, paddingVertical: 10 },
   tdText: { fontSize: 14, lineHeight: 20 },
   thinkRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   thinkIcon: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  thinkText: { fontSize: 14, fontWeight: '500', letterSpacing: 0.1 },
-  card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, overflow: 'hidden' },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
-  cardIcon: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  cardTitle: { fontSize: 13, fontWeight: '700', letterSpacing: 0.1, flex: 1 },
-  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 10 },
-  unread: { width: 7, height: 7, borderRadius: 4 },
+  thinkText: { fontSize: 15.5, fontWeight: '500', letterSpacing: -0.1 },
+  card: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 20 },
+  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingTop: 13, paddingBottom: 6 },
+  cardIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  cardCount: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 7, alignItems: 'center', justifyContent: 'center' },
+  cardCountText: { fontSize: 12, fontWeight: '700' },
+  calBar: { width: 3, alignSelf: 'stretch', borderRadius: 2, opacity: 0.85 },
+  cardTitle: { fontSize: 15, fontWeight: '700', letterSpacing: -0.2, flex: 1 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 8, paddingVertical: 11 },
+  unread: { width: 8, height: 8, borderRadius: 4, borderWidth: 1 },
   rowTitle: { fontSize: 14.5, fontWeight: '600' },
   rowSub: { fontSize: 13, flexShrink: 1 },
   rowWhen: { fontSize: 12, fontWeight: '500', maxWidth: 120 },
-  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderTopWidth: StyleSheet.hairlineWidth },
-  cardFootText: { fontSize: 12.5, fontWeight: '600' },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  cardFootText: { fontSize: 13.5, fontWeight: '600' },
 });

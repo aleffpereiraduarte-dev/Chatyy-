@@ -1,0 +1,32 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+// [2026-10-15 screen-protect-all] Android: FLAG_SECURE no app inteiro
+// (todas as Activities do processo + Dialogs nativos registrados pelos outros
+// módulos via reflexão em ScreenProtectHub — ver consumer-rules.pro).
+group = 'expo.modules.chatyyprivacy'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.chatyyprivacy"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

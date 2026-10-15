@@ -89,6 +89,7 @@ struct CLRow {
   var empty: String = ""             // texto quando não há mensagem
   var lockOn: Bool = false           // conversa trancada (rótulo Trancar/Destrancar)
   var blockLabel: String = ""        // "Bloquear Ana" (vazio = sem peer p/ bloquear)
+  var smart: Bool = false            // fixada "inteligente" (fileira de fixados)
 
   init() {}
 
@@ -128,6 +129,7 @@ struct CLRow {
     empty = CLVal.str(d["empty"])
     lockOn = CLVal.bool(d["lockOn"])
     blockLabel = CLVal.str(d["blockLabel"])
+    smart = CLVal.bool(d["smart"])
   }
 
   var isGroupish: Bool { kind == "group" || kind == "channel" }

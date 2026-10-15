@@ -71,6 +71,10 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   let onScrollState = EventDispatcher()
   let onDragState = EventDispatcher()
   let onVisible = EventDispatcher()
+  // [native-ctxmenu] menu de contexto nativo (apiVersion 3)
+  let onMenuAction = EventDispatcher()
+  let onReact = EventDispatcher()
+  let onMenuDismiss = EventDispatcher()
 
   private let flow = CMLFlowLayout()
   private var cv: UICollectionView!
@@ -128,6 +132,13 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   private var liftedKey: String?
   private var liftGuard: DispatchWorkItem?
   private var lastLiftFile: URL?
+  // [native-ctxmenu]
+  private var ctxMenuOn = false
+  private var darkHint: Bool?
+  private var ctxOverlay: CMLContextMenuOverlay?
+  private var popKey: String?
+  private var popSig = ""
+  private var popUntil: CFTimeInterval = 0
   private var dateCount = 0
   private let sticky = CMLStickyView()
   private var stickyOn = false
@@ -239,6 +250,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     if let k = liftedKey {
       let w = DispatchWorkItem { [weak self] in
         guard let self = self, self.liftedKey == k else { return }
+        if let ov = self.ctxOverlay, ov.key == k, !ov.dismissing { return } // menu nativo ainda aberto
         self.setLiftedKey("")
       }
       liftGuard = w
@@ -520,6 +532,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   }
 
   private func afterApply() {
+    checkPendingPop()
     sendReadyIfNeeded()
     emitScroll(force: true)
     scheduleVisible()
@@ -716,7 +729,10 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       revealedKeys.insert(cell.key)
       cell.revealSpoilers()
       return
-    case .media(let i): body["part"] = "media"; body["index"] = i
+    case .media(let i):
+      body["part"] = "media"; body["index"] = i
+      // [hero] miniatura tocada na janela → viewer anima a foto saindo dela
+      if let fr = cell.mediaRectInWindow(i) { body["frame"] = CMLListView.frameDict(fr.0, fr.1) }
     case .reply: body["part"] = "reply"
     case .link(let u, _): body["part"] = "link"; body["url"] = u
     case .audio: body["part"] = "audio"
@@ -746,6 +762,12 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     hapticMedium.impactOccurred()
     let key = cell.key
     let snap = (row.kind == .msg && row.sel == 0) ? cell.liftSnapshot() : nil
+    // [native-ctxmenu] menu 100% nativo: o balão sai da lista JÁ (antes do JS
+    // responder); o JS manda a lista de ações via showContextMenu(payload).
+    if ctxMenuOn, let shot = snap, ctxOverlay == nil, openCtxOverlay(key: key, image: shot.0, rect: shot.1, own: row.own) {
+      onRowLongPress(["key": key, "index": idx, "native": 1])
+      return
+    }
     cell.liftPulse()
     guard let shot = snap else {
       onRowLongPress(["key": key, "index": idx])
@@ -769,6 +791,126 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
         }
         self.onRowLongPress(body)
       }
+    }
+  }
+
+  // MARK: [hero] frame da miniatura por messageId (viewer: ida e volta)
+
+  static func frameDict(_ r: CGRect, _ radius: CGFloat) -> [String: Any] {
+    return ["x": Double(r.minX), "y": Double(r.minY), "w": Double(r.width), "h": Double(r.height), "radius": Double(radius)]
+  }
+
+  /// Miniatura da mensagem `mid` (foto/vídeo solto ou item de álbum) visível
+  /// agora → frame na janela + raio; nil se fora da tela.
+  func mediaFrame(_ mid: String) -> [String: Any]? {
+    guard !mid.isEmpty, let win = window else { return nil }
+    for c in cv.visibleCells {
+      guard let cell = c as? CMLCell, let row = cell.row, row.kind == .msg else { continue }
+      var idx = -1
+      if !row.album.isEmpty {
+        if let i = row.album.firstIndex(where: { $0.id == mid }) { idx = i }
+        else if let i = row.albumIds.firstIndex(of: mid) { idx = min(i, row.album.count - 1) }
+        else if row.id == mid { idx = 0 }
+      } else if row.id == mid && row.media != nil {
+        idx = 0
+      }
+      if idx < 0 { continue }
+      guard let fr = cell.mediaRectInWindow(idx) else { return nil }
+      let r = fr.0, rad = fr.1
+      // fora da área visível da lista → sem hero (fecha com fade)
+      let listRect = convert(bounds, to: nil)
+      if !r.intersects(listRect) || !r.intersects(win.bounds) { return nil }
+      return CMLListView.frameDict(r, rad)
+    }
+    return nil
+  }
+
+  // MARK: [native-ctxmenu] menu de contexto nativo
+
+  func setDarkHint(_ v: Bool?) { darkHint = v }
+
+  func setCtxMenu(_ on: Bool) {
+    ctxMenuOn = on
+    if !on { ctxOverlay?.dismiss(reason: "off", animated: false) }
+  }
+
+  private func currentBubbleRect(_ key: String) -> CGRect? {
+    guard let c = visibleCell(key), c.window != nil else { return nil }
+    return c.liftRectInWindow()
+  }
+
+  @discardableResult
+  private func openCtxOverlay(key: String, image: UIImage, rect: CGRect, own: Bool) -> Bool {
+    guard let win = window else { return false }
+    let dark = darkHint ?? (traitCollection.userInterfaceStyle == .dark)
+    let ov = CMLContextMenuOverlay(key: key, image: image, rect: rect, own: own, dark: dark)
+    ov.sourceRectProvider = { [weak self] in self?.currentBubbleRect(key) }
+    ov.onAction = { [weak self] d, action in
+      self?.onMenuAction(["key": d.key, "messageId": d.messageId, "action": action])
+    }
+    ov.onReact = { [weak self] d, emoji in
+      guard let self = self else { return }
+      self.popKey = d.key
+      self.popSig = self.reactSig(d.key)
+      self.popUntil = CACurrentMediaTime() + 4
+      self.onReact(["key": d.key, "messageId": d.messageId, "emoji": emoji])
+    }
+    ov.onDismissed = { [weak self, weak ov] reason in
+      guard let self = self else { return }
+      if let o = ov, self.ctxOverlay === o { self.ctxOverlay = nil }
+      if self.liftedKey == key { self.setLiftedKey("") }
+      self.onMenuDismiss(["key": key, "reason": reason])
+      self.checkPendingPop()
+    }
+    ctxOverlay = ov
+    setLiftedKey(key)
+    ov.present(in: win)
+    return true
+  }
+
+  /// JS → nativo: lista de ações/reações do menu. Abre o overlay se o
+  /// long-press não abriu (ex.: chamado pelo JS direto). false = não deu.
+  func showContextMenu(_ payload: [String: Any]) -> Bool {
+    let d = CMLCtxMenuData(payload)
+    guard !d.key.isEmpty else { return false }
+    if let ov = ctxOverlay, !ov.dismissing {
+      if ov.key == d.key {
+        if ov.data == nil { ov.setMenu(d) }
+        return true
+      }
+      ov.dismiss(reason: "replaced", animated: false)
+    }
+    guard let c = visibleCell(d.key), let row = c.row, row.kind == .msg, let shot = c.liftSnapshot() else { return false }
+    guard openCtxOverlay(key: d.key, image: shot.0, rect: shot.1, own: row.own), let ov = ctxOverlay else { return false }
+    ov.setMenu(d)
+    return true
+  }
+
+  func dismissContextMenu() {
+    ctxOverlay?.dismiss(reason: "js")
+  }
+
+  private func reactSig(_ k: String) -> String {
+    guard let r = rows[k] else { return "" }
+    return r.reacts.map { "\($0.emoji):\($0.count):\($0.mine ? 1 : 0)" }.joined(separator: ",")
+  }
+
+  /// Chip da reação aparece com "pop" quando a linha chega com as reações novas.
+  private func checkPendingPop() {
+    guard let k = popKey else { return }
+    if CACurrentMediaTime() > popUntil { popKey = nil; return }
+    if let ov = ctxOverlay, ov.key == k { return } // ainda voando / balão voltando
+    let sig = reactSig(k)
+    if sig == popSig { return }
+    popKey = nil
+    guard let r = rows[k], !r.reacts.isEmpty, let c = visibleCell(k) else { return }
+    c.popReactions()
+  }
+
+  public override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil, let ov = ctxOverlay {
+      ov.dismiss(reason: "detach", animated: false)
     }
   }
 

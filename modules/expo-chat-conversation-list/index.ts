@@ -67,3 +67,48 @@ export function apiVersion(): number {
   _probe();
   return _api;
 }
+
+// ── [2026-10-15 native-pins] Fileira nativa de FIXADAS ───────────────────────
+// View `ChatyyPinnedStrip` (módulo próprio no mesmo pacote; binário antigo não
+// tem → null e o ChatListTab mantém a fileira JS).
+//   props  items [linhas do nativeAdapter.buildRow + smart], dark, labels,
+//          folders, peek, avatarSize, reorderMode, selectionMode, menuEnabled,
+//          authToken
+//   events onPinPress {id}, onPinPressIn {id}, onPinAction {id, action, …},
+//          onPinLongPress {id}, onPeekRequest {id}, onPeekOpen {id},
+//          onReorder {ids}, onReorderDone, onNativeError {message}
+export const PINNED_STRIP_VIEW_NAME = 'ChatyyPinnedStrip';
+
+let _pinsChecked = false;
+let _pinsView: any = null;
+
+function _probePins() {
+  if (_pinsChecked) return;
+  _pinsChecked = true;
+  if (Platform.OS === 'web') return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function'
+      ? core.requireOptionalNativeModule(PINNED_STRIP_VIEW_NAME)
+      : null;
+    if (!mod) return;
+    let api = 0;
+    try { api = typeof mod.apiVersion === 'function' ? Number(mod.apiVersion()) || 0 : 0; } catch { api = 0; }
+    if (api < 1) return;
+    const req = core.requireNativeViewManager || core.requireNativeView;
+    if (typeof req === 'function') _pinsView = req(PINNED_STRIP_VIEW_NAME);
+  } catch {
+    _pinsView = null;
+  }
+}
+
+/** View nativa da fileira de fixados, ou null (binário sem o módulo / web). */
+export function getNativePinnedStripView(): any {
+  _probePins();
+  return _pinsView;
+}
+
+export function isPinnedStripAvailable(): boolean {
+  return !!getNativePinnedStripView();
+}

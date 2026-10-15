@@ -69,6 +69,10 @@ async function _apply(enabled) {
   } catch (e) {
     // expo-screen-capture not present in dev shim — no-op.
   }
+  // [2026-10-15 screen-protect-all] Android: o toggle do usuário vira tag local
+  // no hub nativo (sobrevive à proteção do app desligar/religar) e o allow do
+  // expo não derruba a proteção do app inteiro.
+  try { require('./screenProtect').setScreenProtectLocalTag?.(TAG, !!enabled); } catch {}
 }
 
 export async function isScreenCaptureBlocked() {

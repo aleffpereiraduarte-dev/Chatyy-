@@ -11,12 +11,15 @@ public class ChatyyMessageListModule: Module {
     // 2 = [fase 2] blocos (bl/pre/post), spoiler/emoji/code inline, fail/pin/timer,
     //     lift (anchor no long-press + setLiftedKey), flash pulsando, stickyDate,
     //     seleção animada, nota de vídeo.
+    // 3 = [native-ctxmenu] menu de contexto nativo (prop ctxMenu,
+    //     showContextMenu/dismissContextMenu, onMenuAction/onReact/onMenuDismiss)
+    //     + [hero] onRowPress part 'media' traz frame {x,y,w,h,radius}; mediaFrame(id).
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
     }
 
     View(CMLListView.self) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss")
 
       Prop("theme") { (view: CMLListView, value: [String: Any]?) in
         view.setTheme(value ?? [:])
@@ -30,8 +33,9 @@ public class ChatyyMessageListModule: Module {
       Prop("bubbleRadius") { (view: CMLListView, value: Double?) in
         view.setRadius(value)
       }
-      Prop("dark") { (_: CMLListView, _: Bool?) in
-        // cores vêm prontas em `theme`; mantido p/ compatibilidade de props
+      Prop("dark") { (view: CMLListView, value: Bool?) in
+        // cores vêm prontas em `theme`; aqui só o tema do menu de contexto nativo
+        view.setDarkHint(value)
       }
       Prop("keyboardDismissMode") { (view: CMLListView, value: String?) in
         view.setKeyboardDismissMode(value)
@@ -44,6 +48,9 @@ public class ChatyyMessageListModule: Module {
       }
       Prop("stickyDate") { (view: CMLListView, value: [String: Any]?) in
         view.setStickyDate(value)
+      }
+      Prop("ctxMenu") { (view: CMLListView, value: Bool?) in
+        view.setCtxMenu(value ?? false)
       }
 
       AsyncFunction("applyRows") { (view: CMLListView, payload: [String: Any]) in
@@ -68,6 +75,19 @@ public class ChatyyMessageListModule: Module {
 
       AsyncFunction("setLiftedKey") { (view: CMLListView, key: String) in
         view.setLiftedKey(key)
+      }.runOnQueue(.main)
+
+      AsyncFunction("showContextMenu") { (view: CMLListView, payload: [String: Any]) -> Bool in
+        return view.showContextMenu(payload)
+      }.runOnQueue(.main)
+
+      AsyncFunction("dismissContextMenu") { (view: CMLListView) in
+        view.dismissContextMenu()
+      }.runOnQueue(.main)
+
+      // [hero] frame atual da miniatura de uma mensagem (null = fora da tela)
+      AsyncFunction("mediaFrame") { (view: CMLListView, messageId: String) -> [String: Any]? in
+        return view.mediaFrame(messageId)
       }.runOnQueue(.main)
     }
   }

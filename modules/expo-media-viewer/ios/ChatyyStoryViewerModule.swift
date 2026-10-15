@@ -70,7 +70,11 @@ public class ChatyyStoryViewerModule: Module {
         if self.current == nil || self.current === vc { self.current = nil }
       }
       self.current = vc
-      presenter.present(vc, animated: true, completion: nil)
+      // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
+      presenter.present(vc, animated: true, completion: {
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+      })
+      NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
       return sid
     }.runOnQueue(.main)
 

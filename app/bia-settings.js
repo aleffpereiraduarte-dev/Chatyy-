@@ -8,8 +8,9 @@ import { IconSparkles } from '../components/Icons';
 import { aiMemoryGet, aiMemorySet, aiMemoryLearnStyle } from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import {
-  SettingsScreen, SettingsGroup, SettingsRow, SettingsIconTile, useGroupedColors, useSettingsInputStyle,
+  SettingsScreen, SettingsGroup, SettingsRow, useGroupedColors, useSettingsInputStyle,
 } from '../components/settings/SettingsKit';
+import BiaOrb from '../components/bia/BiaOrb';
 
 export default function BiaSettings() {
   const { t } = useLanguage();
@@ -99,7 +100,7 @@ export default function BiaSettings() {
         <View>
           <SettingsGroup>
             <View style={s.hero}>
-              <SettingsIconTile Icon={IconSparkles} size={56} />
+              <BiaOrb size={76} isDark={g.isDark} /* [2026-10-15 bia-design] mesma identidade da tela da Bia */ />
               <Text style={[s.heroText, { color: g.secondary }]}>
                 {t('bia.intro') || 'A Bia usa essas preferências pra escrever emails e respostas na sua voz. Quanto mais você ensina, mais parecida com você ela fica.'}
               </Text>

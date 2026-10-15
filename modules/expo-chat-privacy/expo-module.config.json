@@ -1,6 +1,10 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["ExpoChatPrivacyModule"]
+    "modules": ["ExpoChatPrivacyModule"],
+    "appDelegateSubscribers": ["ChatPrivacyAppDelegateSubscriber"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyyprivacy.ExpoChatPrivacyModule"]
   }
 }

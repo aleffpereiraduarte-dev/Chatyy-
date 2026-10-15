@@ -36,7 +36,11 @@ public class ChatyyMediaEditorModule: Module {
         promise.resolve(result)
       }
       self.current = vc
-      presenter.present(vc, animated: true, completion: nil)
+      // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
+      presenter.present(vc, animated: true, completion: {
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+      })
+      NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
       // Apresentação recusada (outro modal saindo, etc.) → JS cai no editor antigo.
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak vc] in
         guard !settled else { return }

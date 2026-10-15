@@ -139,6 +139,11 @@ final class CLAvatarView: UIView {
   private var tileCount = 0
   private var isChannel = false
   var theme = CLTheme(dark: false)
+  /// [2026-10-15 native-pins] Lado da caixa (54 na linha; a fileira de
+  /// fixados usa avatares maiores com o mesmo desenho).
+  var boxSize: CGFloat = CLAvatarView.box {
+    didSet { if boxSize != oldValue { setNeedsLayout(); ringView.setNeedsDisplay() } }
+  }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -229,10 +234,12 @@ final class CLAvatarView: UIView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    let box = CLAvatarView.box
+    let box = boxSize
     ringView.frame = CGRect(x: 0, y: 0, width: box, height: box)
-    let inner: CGFloat = hasRing ? box - 8 : box
-    let off: CGFloat = hasRing ? 4 : 0
+    // Margem do anel: 4 pt na linha (54); cresce junto nos avatares maiores.
+    let ringGap: CGFloat = max(4, (box * 0.075).rounded())
+    let inner: CGFloat = hasRing ? box - ringGap * 2 : box
+    let off: CGFloat = hasRing ? ringGap : 0
     clip.frame = CGRect(x: off, y: off, width: inner, height: inner)
     clip.layer.cornerRadius = inner / 2
     channelIcon.frame = clip.bounds
@@ -256,8 +263,16 @@ final class CLAvatarView: UIView {
       visible[2].frame = CGRect(x: 0, y: half, width: half, height: half)
       visible[3].frame = CGRect(x: half, y: half, width: half, height: half)
     }
-    onlineDot.frame = CGRect(x: box - 15, y: box - 15, width: 14, height: 14)
-    onlineDot.layer.cornerRadius = 7
+    if box <= CLAvatarView.box + 0.5 {
+      onlineDot.frame = CGRect(x: box - 15, y: box - 15, width: 14, height: 14)
+      onlineDot.layer.cornerRadius = 7
+    } else {
+      // Avatar grande (fixados): bolinha proporcional, sobre a borda a 45°.
+      let dot = (box * 0.22).rounded()
+      let o = box / 2 + box / 2 * 0.7071 - dot / 2
+      onlineDot.frame = CGRect(x: o, y: o, width: dot, height: dot)
+      onlineDot.layer.cornerRadius = dot / 2
+    }
     if !noteLabel.isHidden {
       let h: CGFloat = 18
       noteLabel.frame = CGRect(x: -4, y: -6, width: box + 8, height: h)

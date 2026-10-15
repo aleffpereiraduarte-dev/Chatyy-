@@ -9,6 +9,13 @@
 // API:
 //   isAvailable(), isCaptured(), setShield(tag, enabled, { title, subtitle }),
 //   clearShields(), addCaptureListener(cb) → { remove() }
+//
+// [2026-10-15 screen-protect-all] apiVersion 2 (iOS + Android): proteção de
+// captura do APP INTEIRO — setAppProtection / getAppProtection / setLocalTag /
+// reassert + eventos onProtectChange / onScreenshotBlocked. Quem decide e
+// chama é services/screenProtect.js (direto no módulo nativo). Android agora
+// também tem o módulo, mas o escudo de gravação (setShield) continua só iOS:
+// services/chatPrivacy.js só usa este wrapper no iOS.
 
 import { requireOptionalNativeModule } from 'expo-modules-core';
 

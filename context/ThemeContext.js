@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform, useColorScheme, InteractionManager, Appearance, AppState, DeviceEventEmitter } from 'react-native';
+import { Platform, useColorScheme, InteractionManager, Appearance, AppState, DeviceEventEmitter, Animated, Easing, Image, StyleSheet } from 'react-native';
+import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-15 nav-motion]
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, DarkColors, FontFamily } from '../constants/theme';
 
@@ -275,13 +276,80 @@ export function ThemeProvider({ children }) {
     }
   }, []);
 
+  // ── [2026-10-15 nav-motion] Troca de tema ANIMADA (Telegram) ─────────────
+  // Antes: a troca claro↔escuro era um corte seco (todas as telas repintam no
+  // mesmo frame, às vezes com 1-2 frames de re-render pesado visíveis). Agora:
+  // snapshot da tela (react-native-view-shot, já no binário) → overlay com a
+  // imagem por cima → aplica o tema por baixo → fade 1→0 nativo. O re-render
+  // pesado fica escondido sob o snapshot. Web, Reduce Motion, binário sem
+  // view-shot ou kill switch `globalThis.__chatyy_theme_fade = false` → corte
+  // seco como antes. Só nas trocas feitas pelo usuário (setThemeMode/toggle);
+  // mudança do sistema/sync remoto continua direta.
+  const _isDarkRef = useRef(false);
+  const _sysDarkRef = useRef(false);
+  const [_snap, _setSnap] = useState(null); // { uri, apply }
+  const _snapAnim = useRef(new Animated.Value(0)).current;
+  const _snapBusy = useRef(false);
+  const _snapShotMod = useRef(null);
+  const _snapEnd = useCallback((uri) => {
+    _snapBusy.current = false;
+    _setSnap(null);
+    if (uri) { try { _snapShotMod.current?.releaseCapture?.(uri); } catch {} }
+  }, []);
+  const _runThemeFade = useCallback((nextDark, apply) => {
+    let shot = null;
+    try {
+      if (Platform.OS !== 'web' && nextDark !== _isDarkRef.current && !_snapBusy.current
+        && globalThis.__chatyy_theme_fade !== false && !isReduceMotionEnabled()) {
+        shot = require('react-native-view-shot');
+      }
+    } catch { shot = null; }
+    if (!shot || typeof shot.captureScreen !== 'function') { apply(); return; }
+    _snapShotMod.current = shot;
+    _snapBusy.current = true;
+    let done = false;
+    const giveUp = () => { if (done) return; done = true; _snapBusy.current = false; apply(); };
+    const tm = setTimeout(giveUp, 280); // captura lenta → troca seca (nunca atrasa o toque)
+    let p;
+    try { p = shot.captureScreen({ format: 'jpg', quality: 0.9, result: 'tmpfile' }); } catch { clearTimeout(tm); giveUp(); return; }
+    Promise.resolve(p).then((uri) => {
+      if (done) { try { uri && shot.releaseCapture?.(uri); } catch {} return; }
+      done = true; clearTimeout(tm);
+      if (!uri) { _snapBusy.current = false; apply(); return; }
+      _snapAnim.setValue(1);
+      _setSnap({ uri, apply });
+    }).catch(() => { clearTimeout(tm); giveUp(); });
+  }, [_snapAnim]);
+  // Snapshot pintado → aplica o tema por baixo → 2 frames p/ o re-render
+  // assentar → fade nativo. Guarda: se o onLoad não vier, aplica mesmo assim.
+  const _snapApplied = useRef(null);
+  const _onSnapReady = useCallback(() => {
+    const cur = _snap;
+    if (!cur || _snapApplied.current === cur.uri) return;
+    _snapApplied.current = cur.uri;
+    requestAnimationFrame(() => {
+      try { cur.apply(); } catch {}
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        Animated.timing(_snapAnim, { toValue: 0, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true })
+          .start(() => _snapEnd(cur.uri));
+      }));
+    });
+  }, [_snap, _snapAnim, _snapEnd]);
+  useEffect(() => {
+    if (!_snap) return undefined;
+    const t = setTimeout(_onSnapReady, 350);
+    return () => clearTimeout(t);
+  }, [_snap, _onSnapReady]);
+
   // Drive the 3-state mode. 'light'/'dark' force isDark and persist a
   // matching theme_dark override for backward compat; 'system' clears the
   // manual override so the useColorScheme() watcher above takes over.
   // Exposed so settings.js can call setThemeMode('system'|'light'|'dark').
   const setThemeMode = useCallback((mode) => {
     if (!THEME_MODES.has(mode)) return;
-    setThemeModeState(mode);
+    // [2026-10-15 nav-motion] troca de tema com crossfade (snapshot da tela).
+    const _nextDark = mode === 'system' ? _sysDarkRef.current : mode === 'dark';
+    _runThemeFade(_nextDark, () => setThemeModeState(mode));
     _persistMode(mode);
     if (mode === 'system') {
       // No manual override — let the system scheme decide. Drop the legacy
@@ -296,13 +364,13 @@ export function ThemeProvider({ children }) {
       _persistDark(mode === 'dark');
     }
     if (!_suppressBroadcast.current) _broadcastSetting('theme', mode === 'system' ? 'system' : (mode === 'dark' ? 'dark' : 'light'));
-  }, [_persistMode, _persistDark]);
+  }, [_persistMode, _persistDark, _runThemeFade]);
 
   // Legacy boolean toggle — now expressed in terms of the 3-state mode so the
   // two never drift. Toggling always lands on a FORCED light/dark (never
   // 'system'), matching the prior behavior where toggle pinned theme_dark.
   const toggle = useCallback(() => {
-    setThemeModeState(prevMode => {
+    _runThemeFade(!_isDarkRef.current, () => setThemeModeState(prevMode => {
       const prevDark = prevMode === 'system' ? systemIsDark : prevMode === 'dark';
       const next = !prevDark;
       const mode = next ? 'dark' : 'light';
@@ -310,8 +378,8 @@ export function ThemeProvider({ children }) {
       _persistDark(next);
       if (!_suppressBroadcast.current) _broadcastSetting('theme', mode);
       return mode;
-    });
-  }, [_persistDark, _persistMode, systemIsDark]);
+    }));
+  }, [_persistDark, _persistMode, systemIsDark, _runThemeFade]);
 
   const setDensity = useCallback((d) => {
     if (!DENSITY_CONFIG[d]) return;
@@ -424,6 +492,8 @@ export function ThemeProvider({ children }) {
   // 'system'). This eliminates the setIsDark races between the hydrate effect
   // and the OS-scheme watcher that left web rendering light under forced dark.
   const isDark = themeMode === 'system' ? systemIsDark : themeMode === 'dark';
+  _isDarkRef.current = isDark; // [2026-10-15 nav-motion]
+  _sysDarkRef.current = !!systemIsDark;
   useEffect(() => {
     if (Platform.OS === 'web' || !_hydratedRef.current) return;
     try { DeviceEventEmitter.emit(APP_THEME_DARK_EVENT, isDark); } catch {}
@@ -455,6 +525,11 @@ export function ThemeProvider({ children }) {
   return (
     <ThemeContext.Provider value={contextValue}>
       {children}
+      {_snap ? (
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: _snapAnim, zIndex: 99999, elevation: 99999 }]}>
+          <Image source={{ uri: _snap.uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fadeDuration={0} onLoad={_onSnapReady} onError={_onSnapReady} />
+        </Animated.View>
+      ) : null}
     </ThemeContext.Provider>
   );
 }

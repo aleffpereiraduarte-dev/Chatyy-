@@ -17,5 +17,5 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.swift'
 
-  s.frameworks = 'UIKit'
+  s.frameworks = 'UIKit', 'CallKit', 'ReplayKit', 'AVFoundation'
 end

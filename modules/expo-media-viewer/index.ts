@@ -66,7 +66,17 @@ export type MediaViewerOpenOptions = {
    * binários com apiVersion() >= 2 — use supportsSecure() antes.
    */
   secure?: boolean;
+  /**
+   * [2026-10-15 hero] Retângulo da miniatura na bolha (coordenadas de JANELA,
+   * pt/dp do RN — measureInWindow). O viewer anima a foto daí até tela cheia e
+   * volta para ele ao fechar. Só em binários com apiVersion() >= 3 (supportsHero()).
+   */
+  sourceRect?: HeroRect | null;
+  /** Raio dos cantos da miniatura na bolha (pt/dp). */
+  sourceRadius?: number;
 };
+
+export type HeroRect = { x: number; y: number; width: number; height: number };
 
 export type MediaViewerAction = 'share' | 'save' | 'forward' | 'star';
 
@@ -82,6 +92,7 @@ type NativeMod = {
   close(): Promise<boolean>;
   setActionState(action: MediaViewerAction, state: 'busy' | 'done' | 'idle'): Promise<boolean>;
   prefetch(uris: string[]): Promise<boolean>;
+  setReturnRect?(index: number, rect: HeroRect | null, radius: number): Promise<boolean>;
   addListener<K extends keyof MediaViewerEvents>(name: K, cb: MediaViewerEvents[K]): { remove(): void };
 };
 
@@ -117,11 +128,56 @@ export function supportsSecure(): boolean {
   try { return Number(m.apiVersion()) >= 2; } catch { return false; }
 }
 
+/**
+ * [2026-10-15 hero] true quando o binário anima bolha ↔ viewer (apiVersion >= 3).
+ * Kill switch OTA/console: globalThis.__chatyy_hero = false.
+ */
+export function supportsHero(): boolean {
+  try {
+    if ((globalThis as any).__chatyy_hero === false) return false;
+  } catch {}
+  const m = mod();
+  if (!m || typeof m.apiVersion !== 'function' || typeof m.setReturnRect !== 'function') return false;
+  try { return Number(m.apiVersion()) >= 3; } catch { return false; }
+}
+
+function _validRect(r: any): HeroRect | null {
+  if (!r) return null;
+  const x = Number(r.x), y = Number(r.y), width = Number(r.width), height = Number(r.height);
+  if (![x, y, width, height].every(Number.isFinite) || width < 2 || height < 2) return null;
+  return { x, y, width, height };
+}
+
+/**
+ * [2026-10-15 hero] Para onde a foto `index` volta ao fechar (bolha visível) —
+ * null = fecha com o fade/slide normal. Chame no onIndexChange.
+ */
+export function setReturnRect(index: number, rect: HeroRect | null, radius?: number): void {
+  if (!supportsHero()) return;
+  const m = mod();
+  if (!m || typeof m.setReturnRect !== 'function') return;
+  try {
+    const r: any = m.setReturnRect(index, _validRect(rect), Number(radius) || 0);
+    if (r && r.catch) r.catch(() => {});
+  } catch {}
+}
+
 export async function open(options: MediaViewerOpenOptions): Promise<number> {
   const m = mod();
   if (!m) return 0;
   try {
-    const sid = await m.open(options);
+    // Binário antigo (apiVersion < 3) ou kill switch: nada novo atravessa a ponte.
+    let opts: any = options;
+    if ('sourceRect' in (options as any) || 'sourceRadius' in (options as any)) {
+      const { sourceRect, sourceRadius, ...rest } = options as any;
+      opts = rest;
+      const sr = _validRect(sourceRect);
+      if (sr && supportsHero()) {
+        opts.sourceRect = sr;
+        opts.sourceRadius = Number(sourceRadius) || 0;
+      }
+    }
+    const sid = await m.open(opts);
     return typeof sid === 'number' ? sid : 0;
   } catch {
     return 0;
@@ -156,4 +212,4 @@ export function addListener<K extends keyof MediaViewerEvents>(name: K, cb: Medi
   }
 }
 
-export default { isAvailable, open, close, setActionState, prefetch, addListener };
+export default { isAvailable, supportsHero, open, close, setActionState, setReturnRect, prefetch, addListener };

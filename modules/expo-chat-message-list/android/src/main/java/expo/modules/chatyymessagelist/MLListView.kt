@@ -16,6 +16,7 @@ import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -56,6 +57,10 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   val onScrollState by EventDispatcher()
   val onDragState by EventDispatcher()
   val onVisible by EventDispatcher()
+  // [native-ctxmenu] menu de contexto nativo (apiVersion 3)
+  val onMenuAction by EventDispatcher()
+  val onReact by EventDispatcher()
+  val onMenuDismiss by EventDispatcher()
 
   private val main = Handler(Looper.getMainLooper())
   private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "chatyy-msglist-layout").apply { priority = Thread.NORM_PRIORITY + 1 } }
@@ -86,6 +91,13 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   // [fase 2]
   private var liftedKey = ""
+  // [native-ctxmenu]
+  private var ctxMenuOn = false
+  private var darkHint: Boolean? = null
+  private var ctxOverlay: MLCtxOverlay? = null
+  private var popKey: String? = null
+  private var popSig = ""
+  private var popUntil = 0L
   private val revealedKeys = HashSet<String>()
   private val vnPlayer = MLVideoNotePlayer(context.applicationContext) { k, what ->
     main.post { if (!destroyed) onRowPress(mapOf("key" to k, "part" to "vnote", "url" to what)) }
@@ -236,6 +248,136 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     stickyVisible = false
     sticky.animate().cancel()
     sticky.animate().alpha(0f).setDuration(400).withEndAction { if (!stickyVisible) sticky.visibility = View.GONE }.start()
+  }
+
+  // ─── [hero] frame da miniatura (mesmas coords do anchor: dp, relativo à raiz React)
+  private fun frameOf(c: MLCellView, i: Int): Map<String, Any>? {
+    val (f, rad) = c.mediaRectInCell(i) ?: return null
+    val loc = IntArray(2)
+    c.getLocationInWindow(loc)
+    val rl = IntArray(2)
+    reactRoot()?.getLocationInWindow(rl)
+    val d = resources.displayMetrics.density
+    return mapOf(
+      "x" to ((loc[0] - rl[0] + f.left) / d).toDouble(), "y" to ((loc[1] - rl[1] + f.top) / d).toDouble(),
+      "w" to (f.width() / d).toDouble(), "h" to (f.height() / d).toDouble(), "radius" to (rad / d).toDouble(),
+    )
+  }
+
+  /** Miniatura da mensagem `mid` visível agora (null = fora da tela). */
+  fun mediaFrame(mid: String): Map<String, Any>? {
+    if (mid.isEmpty()) return null
+    for (i in 0 until rv.childCount) {
+      val c = rv.getChildAt(i) as? MLCellView ?: continue
+      val r = c.row ?: continue
+      if (r.kind != MLKind.MSG) continue
+      var idx = -1
+      if (r.album.isNotEmpty()) {
+        val a = r.album.indexOfFirst { it.id == mid }
+        val b = r.albumIds.indexOf(mid)
+        idx = if (a >= 0) a else if (b >= 0) min(b, r.album.size - 1) else if (r.id == mid) 0 else -1
+      } else if (r.id == mid && r.media != null) idx = 0
+      if (idx < 0) continue
+      // fora da área visível da lista → sem hero
+      val (f, _) = c.mediaRectInCell(idx) ?: return null
+      val top = c.top + f.top
+      val bottom = c.top + f.bottom
+      if (bottom <= 0f || top >= rv.height.toFloat()) return null
+      return frameOf(c, idx)
+    }
+    return null
+  }
+
+  // ─── [native-ctxmenu] menu de contexto nativo ───────────────────────────
+  fun setCtxMenu(on: Boolean) {
+    ctxMenuOn = on
+    if (!on) ctxOverlay?.dismiss("off", false)
+  }
+
+  fun setDarkHint(v: Boolean?) { darkHint = v }
+
+  private fun findCell(key: String): MLCellView? {
+    for (i in 0 until rv.childCount) {
+      val c = rv.getChildAt(i) as? MLCellView ?: continue
+      if (c.key == key) return c
+    }
+    return null
+  }
+
+  /** Balão (snapshot) em coordenadas da janela. */
+  private fun bubbleWindowRect(c: MLCellView, rect: RectF): RectF {
+    val loc = IntArray(2)
+    c.getLocationInWindow(loc)
+    return RectF(loc[0] + rect.left, loc[1] + rect.top, loc[0] + rect.right, loc[1] + rect.bottom)
+  }
+
+  private fun currentBubbleRect(key: String): RectF? {
+    val c = findCell(key) ?: return null
+    if (!c.isAttachedToWindow) return null
+    val r = c.bubbleRectInCell() ?: return null
+    return bubbleWindowRect(c, r)
+  }
+
+  private fun openCtxOverlay(c: MLCellView, key: String, own: Boolean): Boolean {
+    val act = MLCtxOverlay.activityOf(context) ?: appContext.currentActivity ?: return false
+    val shot = c.snapshotBubble() ?: return false
+    val (bmp, rect) = shot
+    val win = bubbleWindowRect(c, rect)
+    val dark = darkHint ?: ((resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES)
+    val ov = MLCtxOverlay(act, key, bmp, win, own, dark)
+    ov.sourceRectProvider = { currentBubbleRect(key) }
+    ov.onAction = { d, action -> onMenuAction(mapOf("key" to d.key, "messageId" to d.messageId, "action" to action)) }
+    ov.onReact = { d, emoji ->
+      popKey = d.key
+      popSig = reactSig(d.key)
+      popUntil = SystemClock.uptimeMillis() + 4000
+      onReact(mapOf("key" to d.key, "messageId" to d.messageId, "emoji" to emoji))
+    }
+    ov.onDismissed = { reason ->
+      if (ctxOverlay === ov) ctxOverlay = null
+      if (liftedKey == key) setLiftedKey("")
+      if (!destroyed) {
+        onMenuDismiss(mapOf("key" to key, "reason" to reason))
+        checkPendingPop()
+      }
+    }
+    if (!ov.present()) { try { bmp.recycle() } catch (_: Throwable) {}; return false }
+    ctxOverlay = ov
+    setLiftedKey(key)
+    return true
+  }
+
+  /** JS → nativo: lista de ações/reações. Abre o overlay se o long-press não abriu. */
+  fun showContextMenu(payload: Map<String, Any?>): Boolean {
+    val d = MLCtxMenuData(payload)
+    if (d.key.isEmpty()) return false
+    val cur = ctxOverlay
+    if (cur != null && !cur.dismissing) {
+      if (cur.key == d.key) { if (cur.data == null) cur.setMenu(d); return true }
+      cur.dismiss("replaced", false)
+    }
+    val c = findCell(d.key) ?: return false
+    val r = c.row ?: return false
+    if (r.kind != MLKind.MSG) return false
+    if (!openCtxOverlay(c, d.key, r.own)) return false
+    ctxOverlay?.setMenu(d)
+    return true
+  }
+
+  fun dismissContextMenu() { ctxOverlay?.dismiss("js") }
+
+  private fun reactSig(k: String): String = rows[k]?.reacts?.joinToString(",") { "${it.emoji}:${it.count}:${if (it.mine) 1 else 0}" } ?: ""
+
+  private fun checkPendingPop() {
+    val k = popKey ?: return
+    if (SystemClock.uptimeMillis() > popUntil) { popKey = null; return }
+    val ov = ctxOverlay
+    if (ov != null && ov.key == k) return
+    if (reactSig(k) == popSig) return
+    popKey = null
+    val r = rows[k] ?: return
+    if (r.reacts.isEmpty()) return
+    findCell(k)?.popReactions()
   }
 
   /** Raiz React (Fabric mede relativo a ela). */
@@ -433,6 +575,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       sendReady()
       emitScroll(true)
       scheduleVisible()
+      checkPendingPop()
     }
   }
 
@@ -481,6 +624,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   fun destroy() {
     destroyed = true
+    ctxOverlay?.dismiss("destroy", false)
     try { vnPlayer.stop() } catch (_: Throwable) {}
     main.removeCallbacks(stickyHide)
     try { worker.shutdownNow() } catch (_: Throwable) {}
@@ -488,6 +632,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
+    ctxOverlay?.dismiss("detach", false)
     try { vnPlayer.stop() } catch (_: Throwable) {}
   }
 
@@ -666,7 +811,11 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       val body = HashMap<String, Any>()
       body["key"] = c.key
       when (part) {
-        is MLCellView.Part.Media -> { body["part"] = "media"; body["index"] = part.index }
+        is MLCellView.Part.Media -> {
+          body["part"] = "media"; body["index"] = part.index
+          // [hero] miniatura tocada → viewer anima a foto saindo dela
+          frameOf(c, part.index)?.let { body["frame"] = it }
+        }
         is MLCellView.Part.Reply -> body["part"] = "reply"
         is MLCellView.Part.Link -> { body["part"] = "link"; body["url"] = part.url }
         is MLCellView.Part.Audio -> body["part"] = "audio"
@@ -709,6 +858,12 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       val key = c.key
       if (r.kind != MLKind.MSG || r.sel > 0) {
         onRowLongPress(mapOf("key" to key, "index" to idx))
+        return
+      }
+      // [native-ctxmenu] menu 100% nativo: o balão sai da lista já; o JS manda
+      // a lista de ações via showContextMenu(payload).
+      if (ctxMenuOn && ctxOverlay == null && openCtxOverlay(c, key, r.own)) {
+        onRowLongPress(mapOf("key" to key, "index" to idx, "native" to 1))
         return
       }
       // [fase 2] snapshot ANTES do "lift" (o draw não aplica a escala da view)

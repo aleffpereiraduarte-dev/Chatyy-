@@ -13,8 +13,44 @@
 //   • Android: Material — ON track ink w/ white thumb, OFF neutral gray.
 // Adds a selection haptic on change (native toggles tick).
 // Drop-in: same props as RN <Switch>.
-import React from 'react';
-import { Switch, Platform } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { Switch, Platform, Pressable, Animated, Easing } from 'react-native';
+import { isReduceMotionEnabled } from './reducedMotion';
+
+// [2026-10-15 settings-2026] Web: o <Switch> do RN-web é um toggle de
+// formulário (trilho fino + bola que vaza). Desenha um UISwitch de verdade
+// (51x31, knob branco com sombra, trilho que preenche) animado com spring.
+// role="switch" + aria-checked preservados (QA/leitores de tela).
+function WebSwitch({ value, onValueChange, disabled, onTrack, offTrack, onThumb, accessibilityLabel, testID, style }) {
+  const anim = useRef(new Animated.Value(value ? 1 : 0)).current;
+  useEffect(() => {
+    if (isReduceMotionEnabled()) { anim.setValue(value ? 1 : 0); return; }
+    Animated.spring(anim, { toValue: value ? 1 : 0, useNativeDriver: false, tension: 260, friction: 22 }).start();
+  }, [value, anim]);
+  const bg = anim.interpolate({ inputRange: [0, 1], outputRange: [offTrack, onTrack] });
+  const tx = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 22] });
+  return (
+    <Pressable
+      onPress={() => { if (!disabled) onValueChange?.(!value); }}
+      disabled={disabled}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: !!value, disabled: !!disabled }}
+      aria-checked={!!value}
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+      hitSlop={6}
+      style={[{ opacity: disabled ? 0.45 : 1, cursor: disabled ? 'default' : 'pointer' }, style]}
+    >
+      <Animated.View style={{ width: 51, height: 31, borderRadius: 16, backgroundColor: bg, justifyContent: 'center' }}>
+        <Animated.View style={{
+          width: 27, height: 27, borderRadius: 14, backgroundColor: value ? onThumb : '#FFFFFF',
+          transform: [{ translateX: tx }],
+          boxShadow: '0 2px 6px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.12)',
+        }} />
+      </Animated.View>
+    </Pressable>
+  );
+}
 import { useTheme } from '../context/ThemeContext';
 import { selection } from '../services/haptics';
 
@@ -42,6 +78,21 @@ export default function NativeSwitch({
     onValueChange?.(v);
   };
 
+  if (Platform.OS === 'web') {
+    return (
+      <WebSwitch
+        value={!!value}
+        onValueChange={handleChange}
+        disabled={disabled}
+        onTrack={onTrack}
+        offTrack={isDark ? '#3A3A3C' : '#E3E3E6'}
+        onThumb={onThumb}
+        accessibilityLabel={props.accessibilityLabel}
+        testID={props.testID}
+        style={props.style}
+      />
+    );
+  }
   return (
     <Switch
       {...props}

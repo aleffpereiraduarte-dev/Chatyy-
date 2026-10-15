@@ -1,0 +1,31 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.chatyytabbar'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.chatyytabbar"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  // [2026-10-15 native-tabs] Só framework Android + expo-modules-core: a barra
+  // é desenhada com View/LinearLayout/RippleDrawable (sem Material Components,
+  // que exigiria Theme.MaterialComponents — o app usa Theme.AppCompat).
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

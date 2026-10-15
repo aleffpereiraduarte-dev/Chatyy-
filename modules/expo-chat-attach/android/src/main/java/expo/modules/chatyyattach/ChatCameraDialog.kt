@@ -207,6 +207,7 @@ class ChatCameraDialog(
 
   private fun setupWindow() {
     val w = window ?: return
+    ScreenProtectBridge.protect(w, false) // [2026-10-15 screen-protect-all]
     w.setBackgroundDrawable(ColorDrawable(Color.BLACK))
     w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     w.setWindowAnimations(android.R.style.Animation_Dialog)

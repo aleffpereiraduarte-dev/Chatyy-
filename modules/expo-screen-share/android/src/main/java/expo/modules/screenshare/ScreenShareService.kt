@@ -149,6 +149,9 @@ class ScreenShareService : Service() {
     }
     mediaProjection = mp
     isRunning = true
+    // [2026-10-15 screen-protect-all] FLAG_SECURE sai preto no MediaProjection →
+    // proteção do app desligada enquanto o usuário compartilha a tela.
+    ScreenProtectBridge.sharing("ScreenShareService", true)
 
     // If the user taps "Stop sharing" in the system status bar, the
     // MediaProjection fires onStop on a binder thread. Tear down the FGS.
@@ -475,6 +478,7 @@ class ScreenShareService : Service() {
   override fun onDestroy() {
     Log.d(TAG, "onDestroy")
     isRunning = false
+    ScreenProtectBridge.sharing("ScreenShareService", false) // [2026-10-15 screen-protect-all]
     stopScreenAudioCapture()
     try {
       mediaProjectionCallback?.let { mediaProjection?.unregisterCallback(it) }

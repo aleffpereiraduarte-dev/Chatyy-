@@ -14,8 +14,9 @@
 // - Escolhas com >3 opções (ou rótulos longos) → SettingsPickerRow: mostra o
 //   valor atual à direita e abre um sheet com lista + checkmark.
 // - Só RN + react-native-svg (via Icons) → OTA-safe, funciona no web.
-import React, { useState } from 'react';
+import React, { useState, useRef, useContext, createContext } from 'react';
 import { View, Text, Modal, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
+import FadeSlideIn from '../FadeSlideIn';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
@@ -32,10 +33,12 @@ export function useGroupedColors() {
   const { colors = {}, isDark } = useTheme() || {};
   return {
     isDark: !!isDark,
-    pageBg: isDark ? (colors.background || '#000000') : '#F2F2F7',
-    cardBg: isDark ? '#1C1C1E' : '#FFFFFF',
-    separator: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(60,60,67,0.16)',
-    header: isDark ? '#8E8E93' : '#6D6D72',
+    // [2026-10-15 settings-2026] claro mais limpo (cinza quase branco) e escuro
+    // PRETO verdadeiro com cartões só um degrau acima; separadores mais leves.
+    pageBg: isDark ? (colors.background || '#000000') : '#F3F3F6',
+    cardBg: isDark ? '#141416' : '#FFFFFF',
+    separator: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(60,60,67,0.11)',
+    header: isDark ? '#7C7C82' : '#77777D',
     text: colors.text || (isDark ? '#F5F5F7' : '#111111'),
     secondary: isDark ? '#8E8E93' : '#8A8A8E',
     tertiary: isDark ? '#636366' : '#C4C4C7',
@@ -45,30 +48,74 @@ export function useGroupedColors() {
     tileBg: isDark ? '#F5F5F7' : '#111111',
     tileFg: isDark ? '#0b0b0b' : '#FFFFFF',
     fill: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(118,118,128,0.12)',
+    // [2026-10-15 settings-2026] chip suave monocromático atrás dos ícones
+    // (no lugar do quadrado preto pesado) + realce do termo buscado.
+    chipBg: isDark ? 'rgba(255,255,255,0.075)' : 'rgba(17,17,17,0.055)',
+    chipFg: isDark ? '#EDEDF0' : '#1A1A1C',
+    ring: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(17,17,17,0.10)',
+    highlightBg: isDark ? 'rgba(255,255,255,0.20)' : 'rgba(17,17,17,0.10)',
   };
 }
 
-// Small rounded ink tile behind a row icon (black & white Settings look).
-export function SettingsIconTile({ Icon, size = 30, muted = false }) {
+// Ícone da linha num chip suave (squircle) monocromático — [2026-10-15
+// settings-2026] o quadrado preto sólido pesava demais; `solid` mantém o
+// visual antigo para quem precisar de destaque.
+export function SettingsIconTile({ Icon, size = 32, muted = false, solid = false }) {
   const g = useGroupedColors();
   if (!Icon) return null;
   return (
     <View style={{
-      width: size, height: size, borderRadius: size * 0.27,
-      backgroundColor: muted ? g.fill : g.tileBg,
+      width: size, height: size, borderRadius: Math.round(size * 0.31),
+      backgroundColor: solid ? g.tileBg : (muted ? g.fill : g.chipBg),
       alignItems: 'center', justifyContent: 'center',
     }}>
-      <Icon size={Math.round(size * 0.6)} color={muted ? g.text : g.tileFg} />
+      <Icon size={Math.round(size * 0.56)} color={solid ? g.tileFg : g.chipFg} />
     </View>
   );
 }
 
+// [2026-10-15 settings-2026] Busca das Configurações: o termo digitado chega
+// às linhas por contexto e o trecho que casa aparece realçado no título.
+export const SettingsSearchContext = createContext('');
+function HighlightText({ text, query, style, numberOfLines }) {
+  const g = useGroupedColors();
+  const str = typeof text === 'string' ? text : null;
+  const q = (query || '').trim();
+  if (!str || !q) return <Text style={style} numberOfLines={numberOfLines}>{text}</Text>;
+  const i = str.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return <Text style={style} numberOfLines={numberOfLines}>{text}</Text>;
+  return (
+    <Text style={style} numberOfLines={numberOfLines}>
+      {str.slice(0, i)}
+      <Text style={{ fontWeight: '700', backgroundColor: g.highlightBg, borderRadius: 4 }}>{str.slice(i, i + q.length)}</Text>
+      {str.slice(i + q.length)}
+    </Text>
+  );
+}
+
+// Entrada em cascata: grupos montados juntos (mesma tela/categoria) entram
+// um após o outro (35 ms). FadeSlideIn já respeita Reduzir Movimento e a
+// regra "nasce assentado durante o push nativo".
+let _cascadeAt = 0;
+let _cascadeN = 0;
+function useCascadeDelay() {
+  const ref = useRef(null);
+  if (ref.current === null) {
+    const now = Date.now();
+    if (now - _cascadeAt > 280) { _cascadeAt = now; _cascadeN = 0; }
+    ref.current = Math.min(_cascadeN++, 8) * 35;
+  }
+  return ref.current;
+}
+
 export function SettingsGroup({ header, footer, children, inset = 16, style, cardStyle, testID }) {
   const g = useGroupedColors();
+  const delay = useCascadeDelay();
   const items = React.Children.toArray(children).filter(Boolean);
   if (!items.length && !header) return null;
   return (
-    <View style={[{ marginBottom: 26 }, style]} testID={testID}>
+    <FadeSlideIn delay={delay} distance={8} duration={240} style={[{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: 'auto', marginBottom: 24 }, style]}>
+    <View testID={testID}>
       {!!header && (
         <Text style={[st.header, { color: g.header }]} accessibilityRole="header" numberOfLines={1}>
           {String(header).toUpperCase()}
@@ -86,6 +133,7 @@ export function SettingsGroup({ header, footer, children, inset = 16, style, car
       )}
       {!!footer && <Text style={[st.footer, { color: g.header }]}>{footer}</Text>}
     </View>
+    </FadeSlideIn>
   );
 }
 
@@ -103,6 +151,7 @@ export function SettingsRow({
   accessibilityLabel, accessibilityRole, center, testID, children,
 }) {
   const g = useGroupedColors();
+  const searchQ = useContext(SettingsSearchContext);
   const showChevron = chevron ?? (!!onPress && !destructive && checked === undefined && !right);
   const titleColor = destructive ? g.destructive : g.text;
   // RN-web não propaga o dir="rtl" do <html> pro LocaleContext → marginStart/End
@@ -114,10 +163,10 @@ export function SettingsRow({
   const body = (
     <View style={[st.row, disabled && { opacity: 0.45 }]}>
       {!!Icon && (iconTile
-        ? <View style={{ ..._gapEnd(12) }}><SettingsIconTile Icon={Icon} /></View>
-        : <View style={{ ..._gapEnd(12), width: 24, alignItems: 'center' }}><Icon size={20} color={destructive ? g.destructive : g.text} /></View>)}
+        ? <View style={{ ..._gapEnd(14) }}><SettingsIconTile Icon={Icon} /></View>
+        : <View style={{ ..._gapEnd(14), width: 24, alignItems: 'center' }}><Icon size={20} color={destructive ? g.destructive : g.text} /></View>)}
       <View style={{ flex: 1, minWidth: 0, alignItems: center ? 'center' : 'flex-start' }}>
-        <Text style={[st.title, { color: titleColor }, titleStyle]} numberOfLines={numberOfLines}>{title}</Text>
+        <HighlightText text={title} query={searchQ} style={[st.title, { color: titleColor }, titleStyle]} numberOfLines={numberOfLines} />
         {!!subtitle && <Text style={[st.subtitle, { color: g.secondary }]} numberOfLines={subtitleLines}>{subtitle}</Text>}
         {children}
       </View>
@@ -368,13 +417,15 @@ const st = StyleSheet.create({
     borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, minHeight: 44,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
-  header: { fontSize: 13, fontWeight: '500', letterSpacing: 0.2, paddingHorizontal: 16, marginBottom: 7 },
-  footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 16, marginTop: 7 },
-  card: { borderRadius: 12, overflow: 'hidden' },
+  // [2026-10-15 settings-2026] títulos de grupo pequenos em caixa alta com
+  // tracking; cartões mais arredondados (iOS 26); linhas mais arejadas.
+  header: { fontSize: 12, fontWeight: '600', letterSpacing: 0.7, paddingHorizontal: 18, marginBottom: 8 },
+  footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 18, marginTop: 8 },
+  card: { borderRadius: 18, overflow: 'hidden' },
   sep: { height: StyleSheet.hairlineWidth },
-  row: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 16, paddingVertical: 10 },
-  title: { fontSize: 16, fontWeight: '400', letterSpacing: -0.2 },
-  subtitle: { fontSize: 13, lineHeight: 17, marginTop: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingHorizontal: 16, paddingVertical: 11 },
+  title: { fontSize: 16, fontWeight: '400', letterSpacing: -0.25 },
+  subtitle: { fontSize: 13, lineHeight: 17, marginTop: 2, letterSpacing: -0.05 },
   value: { fontSize: 16, marginLeft: 10, maxWidth: 170, textAlign: 'right' },
   sheetWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 10, maxWidth: 560, width: '100%', alignSelf: 'center' },
   sheet: { borderRadius: 14, overflow: 'hidden' },

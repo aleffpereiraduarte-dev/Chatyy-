@@ -94,7 +94,8 @@ internal data class CLRow(
   val a11y: String = "",
   val empty: String = "",
   val lockOn: Boolean = false,
-  val blockLabel: String = ""
+  val blockLabel: String = "",
+  val smart: Boolean = false
 ) {
   val isGroupish: Boolean get() = kind == "group" || kind == "channel"
   val tilesKey: String get() = kind + "|" + tiles.joinToString("|") { "${it.url}#${it.initials}#${it.grad}" }
@@ -135,7 +136,8 @@ internal data class CLRow(
         a11y = CLVal.str(m["a11y"]),
         empty = CLVal.str(m["empty"]),
         lockOn = CLVal.bool(m["lockOn"]),
-        blockLabel = CLVal.str(m["blockLabel"])
+        blockLabel = CLVal.str(m["blockLabel"]),
+        smart = CLVal.bool(m["smart"])
       )
     }
   }

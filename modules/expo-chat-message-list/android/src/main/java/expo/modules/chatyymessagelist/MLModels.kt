@@ -75,6 +75,8 @@ class MLRow(d: Map<String, Any?>) {
   val media: MLMedia? = (d["media"] as? Map<*, *>)?.let { parseMedia(it) }
   val album: List<MLMedia> = ((d["album"] as? List<*>) ?: emptyList<Any>()).mapNotNull { (it as? Map<*, *>)?.let { m -> parseMedia(m) } }
   val more: Int = (num(d["more"]) ?: 0.0).toInt()
+  /** [hero] ids de TODO o álbum (só quando > 4: índice ≥ 4 volta ao último tile). */
+  val albumIds: List<String> = ((d["aids"] as? List<*>) ?: emptyList<Any>()).map { str(it) }
   val audio: MLAudio? = (d["au"] as? Map<*, *>)?.let { a ->
     val w = ((a["w"] as? List<*>) ?: emptyList<Any>()).mapNotNull { num(it) }.map { (it.coerceIn(8.0, 100.0) / 100.0).toFloat() }
     MLAudio((num(a["d"]) ?: 0.0).toInt(), if (a["v"] == null) true else bool(a["v"]), w.toFloatArray(), bool(a["p"]))

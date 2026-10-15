@@ -539,7 +539,8 @@ export default function SignupPhone() {
               // the SMS they already had was for a screen they had left.
               // WhatsApp parity: same number → same code screen → you're in
               // (checkOtp logs existing accounts in via the token branch).
-              setOtpChannels({ wa: false, sms: lr?.data?.sms_sent !== false });
+              // [otp-global 2026-10-15] login_request agora diz o canal real (WhatsApp ou SMS).
+              setOtpChannels({ wa: !!lr?.data?.whatsapp_sent, sms: !lr?.data?.whatsapp_sent && lr?.data?.sms_sent !== false });
               setSentVia('sms');
               setResendCountdown(60);
               setCode('');
@@ -1484,12 +1485,15 @@ export default function SignupPhone() {
                   </View>
                 )}
 
-                {/* Se o user pediu o código por LIGAÇÃO, oferece voltar pro SMS
-                    (channel=force_sms → backend manda SÓ SMS). Some quando o
-                    último envio já foi por SMS. [2026-06-19] WhatsApp removido. */}
-                {resendCountdown === 0 && sentVia !== 'sms' && (
+                {/* [otp-global 2026-10-15] Trocar de canal após 30 s (o servidor libera a
+                    troca em 30 s; reenvio no mesmo canal segue 60 s): chegou pelo WhatsApp
+                    (ou ligação) → "Enviar por SMS" (force_sms); chegou por SMS →
+                    "Receber pelo WhatsApp" (whatsapp). */}
+                {resendCountdown <= 30 && (() => {
+                  const _toSms = sentVia === 'voice' || (otpChannels.wa && !otpChannels.sms);
+                  return (
                   <TouchableOpacity
-                    onPress={() => sendOtp('force_sms')}
+                    onPress={() => sendOtp(_toSms ? 'force_sms' : 'whatsapp')}
                     disabled={busy}
                     style={{
                       marginTop: 16, paddingVertical: 12, paddingHorizontal: 14,
@@ -1500,10 +1504,13 @@ export default function SignupPhone() {
                     activeOpacity={0.7}
                   >
                     <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>
-                      {t('signupPhone.sendBySms') || 'Não recebi? Enviar por SMS'}
+                      {_toSms
+                        ? (t('signupPhone.sendBySms') || 'Não recebi? Enviar por SMS')
+                        : (t('login.otpViaWhatsapp') || 'Receber pelo WhatsApp')}
                     </Text>
                   </TouchableOpacity>
-                )}
+                  );
+                })()}
                 {/* Voice fallback (WhatsApp/Telegram parity): após o timer expirar,
                     deixa o user pedir uma chamada onde a Polly Camila lê o
                     código em PT-BR. Para quando o SMS não chega ou caixa lotada. */}

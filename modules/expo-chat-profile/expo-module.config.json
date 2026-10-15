@@ -1,0 +1,13 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyProfileHeaderModule", "ChatyyProfileMediaModule", "ChatyyProfileListModule"]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.chatyyprofile.ChatyyProfileHeaderModule",
+      "expo.modules.chatyyprofile.ChatyyProfileMediaModule",
+      "expo.modules.chatyyprofile.ChatyyProfileListModule"
+    ]
+  }
+}

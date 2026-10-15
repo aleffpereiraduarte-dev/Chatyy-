@@ -58,6 +58,8 @@ import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components
 import GlobalSearch from '../components/GlobalSearch';
 import FirstRunGate from '../components/onboarding/FirstRunGate'; // [2026-10-07 welcome]
 import { BarMaterial, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
+import NativeHomeTabBar, { nativeTabsAvailable } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
+import { useCollapsedTitleAnim } from '../components/LargeTitleHeader'; // [2026-10-15 nav-motion]
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -469,6 +471,12 @@ function ChatHub() {
   const onChatTitleCollapse = useCallback((collapsed) => {
     Animated.timing(chatTitleAnim, { toValue: collapsed ? 1 : 0, duration: 160, useNativeDriver: true }).start();
   }, [chatTitleAnim]);
+  // [2026-10-15 nav-motion] Mesmo título grande colapsável nas abas Ligações e
+  // Status (components/LargeTitleHeader.js). Cada aba tem o seu valor (o
+  // scroll de cada uma é preservado ao trocar de aba).
+  const [callsTitleAnim, onCallsTitleCollapse] = useCollapsedTitleAnim();
+  const [statusTitleAnim, onStatusTitleCollapse] = useCollapsedTitleAnim();
+  const _ltTab = LIST_LARGE_TITLE && !isKids && (activeTab === 'calls' || activeTab === 'status') ? activeTab : null;
   // Tab bar de VIDRO no iOS (UIVisualEffectView via expo-blur): fica absoluta
   // sobre o conteúdo e a lista de conversas rola por baixo (bottomInset).
   // Android/web/binário sem expo-blur: barra sólida no fluxo, como antes.
@@ -478,6 +486,23 @@ function ChatHub() {
     const h = Math.round(e?.nativeEvent?.layout?.height || 0);
     setTabBarH(prev => (prev === h ? prev : h));
   }, []);
+  // [2026-10-15 native-tabs] Barra inferior NATIVA (UITabBar / barra M3 em
+  // Views) — components/NativeHomeTabBar + modules/expo-native-tabbar. Só
+  // celular não-Kids com o módulo no binário; kill switch
+  // globalThis.__chatyy_native_tabs = false → barra JS (TabBarItem) de antes.
+  // Mesmo comportamento: badge de Conversas/Email/Ligações, Email abre /inbox
+  // (nunca fica marcada), segurar Conversas = câmera do status.
+  const NATIVE_TABS = useMemo(() => !isKids && nativeTabsAvailable(), [isKids]);
+  const nativeTabItems = useMemo(() => {
+    if (!NATIVE_TABS) return null;
+    return [
+      { key: 'chats', label: t('chat.tabChats') || 'Chats', sfSymbol: 'bubble.left.and.bubble.right', sfSymbolActive: 'bubble.left.and.bubble.right.fill', androidIcon: 'chats', badge: chatsBadge || 0, longPress: true },
+      { key: 'email', label: t('chat.tabEmail') || 'Email', sfSymbol: 'envelope', sfSymbolActive: 'envelope.fill', androidIcon: 'email', badge: emailBadge || 0, selectable: false },
+      { key: 'reels', label: t('reels.title') || 'Reels', sfSymbol: 'play.rectangle', sfSymbolActive: 'play.rectangle.fill', androidIcon: 'reels' },
+      { key: 'calls', label: t('chat.tabCalls') || 'Ligações', sfSymbol: 'phone', sfSymbolActive: 'phone.fill', androidIcon: 'calls', badge: missedCallBadge || 0 },
+      { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
+    ];
+  }, [NATIVE_TABS, t, chatsBadge, emailBadge, missedCallBadge]);
 
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
@@ -1343,8 +1368,21 @@ function ChatHub() {
         paddingLeft: 14,
         // [2026-10-07 native-ui-build] large title: sem hairline fixa — ela
         // aparece (fade) só quando a lista rola por baixo do header.
-        ...(LIST_LARGE_TITLE && activeTab === 'chats' ? { borderBottomWidth: 0 } : {}),
+        ...(LIST_LARGE_TITLE && (activeTab === 'chats' || _ltTab) ? { borderBottomWidth: 0 } : {}),
       }]}>
+        {/* [2026-10-15 nav-motion] Ligações/Status: título compacto + hairline
+            aparecem quando o título grande passa por baixo do header. */}
+        {!!_ltTab && (
+          <>
+            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, { opacity: _ltTab === 'calls' ? callsTitleAnim : statusTitleAnim }]}>
+              <Text numberOfLines={1} style={[styles.compactTitle, { color: colors.text }]}>{titles[_ltTab]}</Text>
+            </Animated.View>
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.headerHairline, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)', opacity: _ltTab === 'calls' ? callsTitleAnim : statusTitleAnim }]}
+            />
+          </>
+        )}
         {LIST_LARGE_TITLE && activeTab === 'chats' && (
           <>
             <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, { opacity: chatTitleAnim }]}>
@@ -1389,10 +1427,14 @@ function ChatHub() {
             )
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10}>
+              {/* [2026-10-15 nav-motion] Ligações é aba da barra → sem "voltar"
+                  (como Conversas); o título mora na lista (grande → compacto). */}
+              {_ltTab !== 'calls' && (
+              <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
                 <IconArrowLeft size={18} color={colors.text} />
               </TouchableOpacity>
-              <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
+              )}
+              {!_ltTab && <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>}
             </View>
           )}
         </View>
@@ -1447,7 +1489,7 @@ function ChatHub() {
           /></ChatErrorBoundary>
         </View>
         {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
-          <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} /></Suspense></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.calls : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onCallsTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
           <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
@@ -1456,7 +1498,7 @@ function ChatHub() {
           <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
-          <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
+          <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.status : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onStatusTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
         </View>}
         {/* Removed: config/profile duplicate — header avatar routes to /u/{me} */}
         {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
@@ -1474,6 +1516,23 @@ function ChatHub() {
           na borda com hairline no topo (UITabBar / Material NavigationBar) —
           antes era um "card flutuante" (cantos 22 + sombra -4/elevation 16),
           padrão de site. Altura = 49pt iOS / 64-80dp Android + home indicator. */}
+      {NATIVE_TABS && nativeTabItems ? (
+        <NativeHomeTabBar
+          items={nativeTabItems}
+          selectedKey={showAppsDrawer ? 'apps' : ((activeTab === 'chats' || activeTab === 'reels' || activeTab === 'calls') ? activeTab : null)}
+          isDark={barDark}
+          translucent={GLASS_TAB_BAR}
+          bottomInset={insets.bottom}
+          activeColor={barDark ? TAB_ON_DARK : TAB_ON_LIGHT}
+          inactiveColor={barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT}
+          backgroundColor={barDark ? SHELL_DARK : '#ffffff'}
+          hairlineColor={barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)'}
+          onTabPress={handleTabPress}
+          onTabLongPress={(key) => { if (key === 'chats') requestNewStatus(); /* [2026-10-09 status-composer] segurar = câmera do status */ }}
+          onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined}
+          style={GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : null}
+        />
+      ) : (
       <View accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={[styles.tabBar, {
         backgroundColor: GLASS_TAB_BAR ? 'transparent' : (barDark ? SHELL_DARK : '#ffffff'),
         ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
@@ -1613,6 +1672,7 @@ function ChatHub() {
           </>
         )}
       </View>
+      )}
       <AppsDrawerModal
         visible={showAppsDrawer}
         onClose={closeAppsDrawer}

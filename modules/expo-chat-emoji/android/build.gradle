@@ -1,0 +1,33 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.chatyyemoji'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.chatyyemoji"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  // [2026-10-15 native-emoji] Só o que o binário já carrega: AndroidX core +
+  // RecyclerView (grade) e Glide 5.0.5 (expo-image) p/ figurinhas WebP e GIFs.
+  implementation 'androidx.core:core-ktx:1.13.1'
+  implementation 'androidx.recyclerview:recyclerview:1.3.2'
+  implementation 'com.github.bumptech.glide:glide:5.0.5'
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

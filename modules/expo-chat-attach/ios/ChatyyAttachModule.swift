@@ -71,7 +71,11 @@ public class ChatyyAttachModule: Module {
       self.sheet = vc
       vc.modalPresentationStyle = .overFullScreen
       vc.modalPresentationCapturesStatusBarAppearance = false
-      presenter.present(vc, animated: false, completion: nil)
+      // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
+      presenter.present(vc, animated: false, completion: {
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+      })
+      NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
     }.runOnQueue(.main)
 
     AsyncFunction("openCamera") { (options: [String: Any], promise: Promise) in
@@ -95,7 +99,11 @@ public class ChatyyAttachModule: Module {
       self.camera = vc
       vc.modalPresentationStyle = .fullScreen
       vc.modalTransitionStyle = .coverVertical
-      presenter.present(vc, animated: true, completion: nil)
+      // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
+      presenter.present(vc, animated: true, completion: {
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+      })
+      NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
     }.runOnQueue(.main)
 
     // Fecha o que estiver aberto (resolve 'cancel').

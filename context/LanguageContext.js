@@ -408,6 +408,17 @@ export function LanguageProvider({ children }) {
     return str;
   }, [language, loadedTick]);
 
+  // [2026-10-15 screen-protect-all] Texto do aviso nativo "Capturas de tela
+  // estão bloqueadas no Chatyy" no idioma do app (+ 1ª sincronização da
+  // proteção de captura logo no boot). Web: no-op.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    try {
+      const s = lookupKey(language, 'screenProtect.blocked');
+      require('../services/screenProtect').setScreenProtectText?.(typeof s === 'string' ? s : '');
+    } catch {}
+  }, [language, loadedTick]);
+
   // [2026-10-09 i18n-complete] RTL NATIVO. Web: HtmlLangSync (_layout) põe
   // <html dir="rtl">. iOS/Android: I18nManager só muda a direção do layout
   // depois de recarregar o JS, então gravamos a preferência (persistida pelo

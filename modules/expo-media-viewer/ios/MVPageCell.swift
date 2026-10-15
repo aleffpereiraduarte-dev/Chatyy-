@@ -76,6 +76,30 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
     }
   }
 
+  // [2026-10-15 hero] Imagem exibida (foto ou pôster do vídeo) p/ a transição de volta à bolha.
+  var heroImage: UIImage? {
+    guard let it = item else { return nil }
+    return it.isVideo ? posterView.image : imageView.image
+  }
+
+  /// Frame do conteúdo visível em `target` (inclui zoom e o arrasto de fechar).
+  func heroFrame(in target: UIView) -> CGRect? {
+    guard let it = item else { return nil }
+    if !it.isVideo {
+      guard imageView.image != nil, !zoomView.isHidden, imageView.bounds.width > 0 else { return nil }
+      return imageView.convert(imageView.bounds, to: target)
+    }
+    guard let img = posterView.image else { return nil }
+    var nat = (it.width > 0 && it.height > 0) ? CGSize(width: it.width, height: it.height) : img.size
+    if let ps = player?.currentItem?.presentationSize, ps.width > 0, ps.height > 0 { nat = ps }
+    let b = page.bounds
+    guard nat.width > 0, nat.height > 0, b.width > 0, b.height > 0 else { return nil }
+    let s = min(b.width / nat.width, b.height / nat.height)
+    let sz = CGSize(width: nat.width * s, height: nat.height * s)
+    let r = CGRect(x: (b.width - sz.width) / 2, y: (b.height - sz.height) / 2, width: sz.width, height: sz.height)
+    return page.convert(r, to: target)
+  }
+
   var isZoomed: Bool {
     return !zoomView.isHidden && zoomView.zoomScale > zoomView.minimumZoomScale + 0.01
   }

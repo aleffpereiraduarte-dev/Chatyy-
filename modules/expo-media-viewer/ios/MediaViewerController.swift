@@ -223,6 +223,16 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
   private let doubleTap = UITapGestureRecognizer()
   private let dismissPan = UIPanGestureRecognizer()
 
+  // [2026-10-15 hero] Transição bolha ↔ viewer (Telegram/WhatsApp): a foto sai
+  // do frame da miniatura (coordenadas de janela) e volta para a bolha da
+  // página atual ao fechar. Sem frame de volta → fechamento normal.
+  private var heroSource: CGRect?
+  private var heroSourceRadius: CGFloat = 0
+  private var heroOpenStarted = false
+  private var returnRects: [Int: CGRect] = [:]
+  private var returnRadii: [Int: CGFloat] = [:]
+  private weak var heroView: UIImageView?
+
   init(items: [MVItem], index: Int, labels: [String: String], flags: MVFlags) {
     self.items = items
     self.currentIndex = index
@@ -236,6 +246,24 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
 
   required init?(coder: NSCoder) {
     fatalError("init(coder:) not supported")
+  }
+
+  /// Chamado ANTES do present (sem animação do sistema — o hero é a animação).
+  func setHeroSource(_ rect: CGRect, radius: CGFloat) {
+    heroSource = rect
+    heroSourceRadius = max(0, radius)
+    returnRects[currentIndex] = rect
+    returnRadii[currentIndex] = max(0, radius)
+  }
+
+  func setReturnRect(index: Int, rect: CGRect?, radius: CGFloat) {
+    if let r = rect {
+      returnRects[index] = r
+      returnRadii[index] = max(0, radius)
+    } else {
+      returnRects.removeValue(forKey: index)
+      returnRadii.removeValue(forKey: index)
+    }
   }
 
   override var prefersStatusBarHidden: Bool { return !chromeVisible }
@@ -292,6 +320,14 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     buildChrome()
     updateChrome()
 
+    if heroSource != nil {
+      // Tudo invisível até o hero começar (a bolha continua aparecendo por baixo).
+      backdrop.alpha = 0
+      collectionView.alpha = 0
+      topBar.alpha = 0
+      bottomBar.alpha = 0
+    }
+
     // App foi p/ segundo plano: vídeo não segue tocando (o app tem modo de
     // áudio em background por causa das ligações).
     bgObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -305,6 +341,177 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
       }
       updateCaptureShield()
     }
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    if heroSource != nil && !heroOpenStarted {
+      heroOpenStarted = true
+      runHeroOpen()
+    }
+  }
+
+  // MARK: - Hero
+
+  /// Imagem já disponível (memória) para a página `index`.
+  private func cachedHeroImage(_ index: Int) -> UIImage? {
+    guard index >= 0, index < items.count else { return nil }
+    let it = items[index]
+    let loader = MVImageLoader.shared
+    if !it.isVideo {
+      for s in [it.localUri, it.uri] where !s.isEmpty {
+        if let img = loader.cachedImage(s, maxPixel: MVImageLoader.fullMaxPixel) { return img }
+      }
+    }
+    if !it.thumbUri.isEmpty, let th = loader.cachedImage(it.thumbUri, maxPixel: MVImageLoader.thumbMaxPixel) {
+      return th
+    }
+    return nil
+  }
+
+  /// Retângulo aspect-fit (coordenadas de `view`) — igual ao da página em 1×.
+  private func heroFitRect(_ img: UIImage, index: Int) -> CGRect {
+    let b = view.bounds
+    var nat = img.size
+    if index >= 0, index < items.count, items[index].width > 0, items[index].height > 0 {
+      nat = CGSize(width: items[index].width, height: items[index].height)
+    }
+    guard nat.width > 0, nat.height > 0, b.width > 0, b.height > 0 else { return b }
+    let s = min(b.width / nat.width, b.height / nat.height)
+    let w = floor(nat.width * s)
+    let h = floor(nat.height * s)
+    return CGRect(x: b.midX - w / 2, y: b.midY - h / 2, width: w, height: h)
+  }
+
+  private func runHeroOpen() {
+    if closed { return }
+    let idx = currentIndex
+    if let img = currentCell()?.heroImage ?? cachedHeroImage(idx) {
+      animateHeroIn(img)
+      return
+    }
+    // Ainda não decodificada: espera um pouco (miniatura costuma vir em
+    // poucos ms do disco/base64); passou do prazo → fade normal.
+    guard idx >= 0, idx < items.count else { fadeInPlain(); return }
+    let it = items[idx]
+    var src = it.thumbUri
+    var px = MVImageLoader.thumbMaxPixel
+    if src.isEmpty && !it.isVideo {
+      src = MVItem.existingFileURL(it.localUri) != nil ? it.localUri : it.uri
+      px = MVImageLoader.fullMaxPixel
+    }
+    if src.isEmpty { fadeInPlain(); return }
+    var fired = false
+    MVImageLoader.shared.load(src, maxPixel: px) { [weak self] img in
+      guard let self = self, !fired else { return }
+      fired = true
+      if let img = img, !self.closed { self.animateHeroIn(img) } else { self.fadeInPlain() }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+      guard let self = self, !fired else { return }
+      fired = true
+      self.fadeInPlain()
+    }
+  }
+
+  private func fadeInPlain() {
+    if closed { return }
+    UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+      self.backdrop.alpha = 1
+      self.collectionView.alpha = 1
+      self.topBar.alpha = self.chromeVisible ? 1 : 0
+      self.bottomBar.alpha = self.chromeVisible ? 1 : 0
+    }, completion: nil)
+  }
+
+  private func animateHeroIn(_ img: UIImage) {
+    guard !closed, let src = heroSource else { fadeInPlain(); return }
+    let start = view.convert(src, from: nil)
+    let target = heroFitRect(img, index: currentIndex)
+    let hv = UIImageView(image: img)
+    hv.contentMode = .scaleAspectFill
+    hv.clipsToBounds = true
+    hv.layer.cornerRadius = heroSourceRadius
+    if #available(iOS 13.0, *) { hv.layer.cornerCurve = .continuous }
+    hv.frame = start
+    view.insertSubview(hv, aboveSubview: collectionView)
+    heroView = hv
+    collectionView.alpha = 0
+    view.isUserInteractionEnabled = false
+    UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0, options: [.curveEaseOut], animations: {
+      hv.frame = target
+      hv.layer.cornerRadius = 0
+      self.backdrop.alpha = 1
+    }, completion: { _ in
+      self.view.isUserInteractionEnabled = true
+      if !self.closed { self.collectionView.alpha = 1 }
+      if self.heroView === hv { hv.removeFromSuperview() }
+    })
+    UIView.animate(withDuration: 0.22, delay: 0.14, options: [.curveEaseOut, .allowUserInteraction], animations: {
+      self.topBar.alpha = self.chromeVisible ? 1 : 0
+      self.bottomBar.alpha = self.chromeVisible ? 1 : 0
+    }, completion: nil)
+  }
+
+  /// Frame de volta (coordenadas de `view`) da página atual, se a bolha está na tela.
+  private func heroReturnTarget() -> (CGRect, CGFloat)? {
+    guard let r = returnRects[currentIndex] else { return nil }
+    let local = view.convert(r, from: nil)
+    guard local.width >= 2, local.height >= 2, local.intersects(view.bounds) else { return nil }
+    return (local, returnRadii[currentIndex] ?? 0)
+  }
+
+  private func teardownForClose() {
+    videoBar.unbind()
+    for c in collectionView?.visibleCells ?? [] {
+      (c as? MVPageCell)?.pausePlayback()
+    }
+    MVAudio.restore()
+  }
+
+  /// Fecha encolhendo a foto até a bolha. false = sem destino/imagem → caller
+  /// segue o fechamento normal.
+  private func startHeroClose(reason: String, then: (() -> Void)?) -> Bool {
+    guard !closed, presentingViewController != nil, isViewLoaded, view.window != nil,
+          let ret = heroReturnTarget(),
+          let cell = currentCell(), let img = cell.heroImage,
+          let start = cell.heroFrame(in: view) else { return false }
+    let target = ret.0
+    let radius = ret.1
+    closed = true
+    teardownForClose()
+    heroView?.removeFromSuperview()
+    let hv = UIImageView(image: img)
+    hv.contentMode = .scaleAspectFill
+    hv.clipsToBounds = true
+    if #available(iOS 13.0, *) { hv.layer.cornerCurve = .continuous }
+    hv.frame = start
+    view.insertSubview(hv, aboveSubview: collectionView)
+    heroView = hv
+    collectionView.alpha = 0
+    cell.page.transform = .identity
+    view.isUserInteractionEnabled = false
+    let idx = currentIndex
+    let cb = onClose
+    UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.92, initialSpringVelocity: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+      hv.frame = target
+      hv.layer.cornerRadius = radius
+      self.backdrop.alpha = 0
+      self.topBar.alpha = 0
+      self.bottomBar.alpha = 0
+      self.captureShield?.alpha = 0
+    }, completion: { _ in
+      let done = {
+        then?()
+        cb?(idx, reason)
+      }
+      if self.presentingViewController != nil {
+        self.dismiss(animated: false) { done() }
+      } else {
+        done()
+      }
+    })
+    return true
   }
 
   deinit {
@@ -632,12 +839,9 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
 
   private func finish(reason: String, animated: Bool, then: (() -> Void)? = nil) {
     if closed { return }
+    if animated && startHeroClose(reason: reason, then: then) { return }
     closed = true
-    videoBar.unbind()
-    for c in collectionView?.visibleCells ?? [] {
-      (c as? MVPageCell)?.pausePlayback()
-    }
-    MVAudio.restore()
+    teardownForClose()
     let idx = currentIndex
     let cb = onClose
     let done = {
@@ -710,6 +914,10 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
       let vy = g.velocity(in: view).y
       let sameDir = (t.y >= 0) == (vy >= 0) || abs(vy) < 200
       let shouldClose = g.state == .ended && sameDir && (abs(t.y) > 110 || abs(vy) > 900)
+      if shouldClose && startHeroClose(reason: "swipe", then: nil) {
+        panCell = nil
+        return
+      }
       if shouldClose {
         let dir: CGFloat = (abs(t.y) > 8 ? t.y : vy) >= 0 ? 1 : -1
         let cb = onClose

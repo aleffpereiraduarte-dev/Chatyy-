@@ -1961,6 +1961,14 @@ export default function RootLayout() {
     headerBlurEffect: _navIsDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight',
     headerStyle: { backgroundColor: 'transparent' },
   };
+  // [2026-10-15 nav-motion] Telas com título GRANDE nativo (UINavigationBar
+  // large title, colapsa ao rolar). Na rota desde o 1º frame — a tela repete as
+  // mesmas opções no setOptions, então nada troca durante o push.
+  const _LARGE_TITLE_HDR = Platform.OS !== 'ios' ? {} : {
+    headerLargeTitle: true,
+    headerLargeTitleShadowVisible: false,
+    headerLargeStyle: { backgroundColor: _GROUPED_BG },
+  };
   // [2026-10-14 nav-nativa] Navegação React Navigation com as cores do APP (antes
   // DefaultTheme: fundo rgb(242,242,242)/card branco também no escuro → header de
   // tela sem headerStyle próprio e qualquer área não coberta pelo contentStyle
@@ -2105,7 +2113,7 @@ export default function RootLayout() {
                   <Stack.Screen name="compose" options={{ ..._FULL_MODAL }} />
                   <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="settings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
+                  <Stack.Screen name="settings" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' && !(typeof route?.params?.section === 'string' && route.params.section) ? _LARGE_TITLE_HDR : {}) })} />{/* [2026-10-15 nav-motion] raiz nasce c/ título grande (o settings.js aplica o mesmo) — ?section= abre direto na categoria, compacto */}
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
@@ -2182,7 +2190,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
+                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

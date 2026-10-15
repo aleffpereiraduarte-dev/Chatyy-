@@ -1,0 +1,8 @@
+{
+  "name": "expo-native-tabbar",
+  "version": "1.0.0",
+  "description": "Chatyy native bottom tab bar: iOS UITabBar (system material blur, SF Symbols, badges, spring icon bounce, haptics); Android Material 3 style navigation bar (pill indicator, ripple, badges, overshoot bounce, haptics).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

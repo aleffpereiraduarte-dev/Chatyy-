@@ -253,6 +253,12 @@ export function acquireCaptureProtection(tag, opts) {
   if (useSc) {
     try { sc.preventScreenCaptureAsync?.(tag)?.catch?.(() => {}); } catch {}
   }
+  // [2026-10-15 screen-protect-all] Android: tag local no hub nativo — a
+  // conversa protegida continua com FLAG_SECURE mesmo com a proteção do app
+  // desligada (conta liberada / compartilhando a tela numa chamada).
+  if (Platform.OS === 'android') {
+    try { require('./screenProtect').setScreenProtectLocalTag?.(tag, true); } catch {}
+  }
   const cp = _cp();
   if (cp) cp.setShield(tag, true, o.labels || {});
   return () => {
@@ -260,6 +266,11 @@ export function acquireCaptureProtection(tag, opts) {
     released = true;
     if (useSc) {
       try { sc.allowScreenCaptureAsync?.(tag)?.catch?.(() => {}); } catch {}
+    }
+    // Depois do allow do expo (que limpa o FLAG_SECURE da Activity): solta a
+    // tag local e re-aplica a proteção do app inteiro.
+    if (Platform.OS === 'android') {
+      try { require('./screenProtect').setScreenProtectLocalTag?.(tag, false); } catch {}
     }
     if (cp) cp.setShield(tag, false, o.labels || {});
   };

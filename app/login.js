@@ -1532,7 +1532,8 @@ export default function LoginScreen() {
       // channel asks Vonage to PLACE A CALL that reads the code aloud (PT-BR
       // Polly), so it must skip Firebase and go straight to the backend OTP.
       const backendOnly = channel === 'backend';
-      const ch = (channel === 'voice' || channel === 'force_sms') ? channel : 'sms';
+      // [otp-global 2026-10-15] 'whatsapp' = usuário escolheu WhatsApp; 'force_sms' = escolheu SMS; 'sms' = automático.
+      const ch = (channel === 'voice' || channel === 'force_sms' || channel === 'whatsapp') ? channel : 'sms';
       // Firebase Phone Auth first for SMS (Google sends it — best BR
       // deliverability). Reset any prior attempt's state, then try Firebase;
       // fall back to the backend OTP endpoint (Vonage) if Firebase is
@@ -2557,9 +2558,12 @@ export default function LoginScreen() {
                           {/* [2026-10-07 login-ux] WhatsApp option: our verify_send
                               delivers the SAME code by WhatsApp (+ SMS in BR). Hidden
                               when the last send already went through WhatsApp. */}
-                          {!otpWentViaWhatsapp && (
+                          {/* [otp-global 2026-10-15] Botão de TROCAR canal: chegou pelo WhatsApp →
+                              "Enviar por SMS" (force_sms); chegou por SMS → "Receber pelo WhatsApp"
+                              (whatsapp). O servidor libera a troca em 30 s (responde "aguarde Xs"). */}
+                          {(
                             <TouchableOpacity
-                              onPress={() => handlePhoneSendOtp('backend')}
+                              onPress={() => handlePhoneSendOtp(otpWentViaWhatsapp ? 'force_sms' : 'whatsapp')}
                               disabled={phoneSending}
                               activeOpacity={0.7}
                               accessibilityRole="button"
@@ -2572,7 +2576,7 @@ export default function LoginScreen() {
                               }}
                             >
                               <IconMessageCircle size={16} color={colors.text} />
-                              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{t('login.otpViaWhatsapp')}</Text>
+                              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{otpWentViaWhatsapp ? (t('signupPhone.sendBySms') || 'Enviar por SMS') : t('login.otpViaWhatsapp')}</Text>
                             </TouchableOpacity>
                           )}
 

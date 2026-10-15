@@ -123,6 +123,9 @@ final class CMLCell: UICollectionViewCell {
     selIcon.alpha = 1
     selIcon.transform = .identity
     slide.transform = .identity
+    reacts.layer.removeAllAnimations()
+    reacts.transform = .identity
+    reacts.alpha = 1
     replyIcon.alpha = 0
     highlight.layer.removeAllAnimations()
     highlight.alpha = 0
@@ -396,7 +399,9 @@ final class CMLCell: UICollectionViewCell {
     // reações (coordenadas da linha, não do balão)
     if !L.reactChips.isEmpty {
       reacts.isHidden = false
-      reacts.frame = L.reactsFrame
+      // bounds+center (não frame): o "pop" do menu nativo anima o transform
+      reacts.bounds = CGRect(origin: .zero, size: L.reactsFrame.size)
+      reacts.center = CGPoint(x: L.reactsFrame.midX, y: L.reactsFrame.midY)
       reacts.bg = th.reactBg
       reacts.border = th.reactBorder
       reacts.mineBg = th.selection.withAlphaComponent(0.9)
@@ -552,6 +557,46 @@ final class CMLCell: UICollectionViewCell {
       UIView.animate(withDuration: 0.18, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
         self.slide.transform = .identity
       })
+    })
+  }
+
+  /// [native-ctxmenu] Retângulo ATUAL do balão na janela (p/ a volta do menu).
+  func liftRectInWindow() -> CGRect? {
+    guard let L = layoutInfo, let row = row, row.kind == .msg, window != nil else { return nil }
+    let r = L.bubbleFrame.offsetBy(dx: slide.center.x - slide.bounds.width / 2, dy: slide.center.y - slide.bounds.height / 2)
+    guard r.width > 1, r.height > 1 else { return nil }
+    return contentView.convert(r, to: nil)
+  }
+
+  /// [hero] Miniatura `i` (foto/vídeo/tile do álbum) na janela + raio dos cantos.
+  func mediaRectInWindow(_ i: Int) -> (CGRect, CGFloat)? {
+    guard let L = layoutInfo, let row = row, row.kind == .msg, window != nil else { return nil }
+    var f: CGRect
+    var radius: CGFloat
+    if !L.albumFrames.isEmpty {
+      f = L.albumFrames[max(0, min(L.albumFrames.count - 1, i))]
+      radius = 4
+    } else if !L.mediaFrame.isEmpty {
+      f = L.mediaFrame
+      radius = L.mediaRadius
+    } else {
+      return nil
+    }
+    f = f.offsetBy(dx: L.bubbleFrame.minX + slide.center.x - slide.bounds.width / 2 + slide.transform.tx,
+                   dy: L.bubbleFrame.minY + slide.center.y - slide.bounds.height / 2)
+    guard f.width > 1, f.height > 1 else { return nil }
+    return (contentView.convert(f, to: nil), radius)
+  }
+
+  /// [native-ctxmenu] Chip de reação novo: "pop" (0.3 → 1 com spring).
+  func popReactions() {
+    guard !reacts.isHidden, !UIAccessibility.isReduceMotionEnabled else { return }
+    reacts.layer.removeAllAnimations()
+    reacts.transform = CGAffineTransform(scaleX: 0.3, y: 0.3)
+    reacts.alpha = 0.3
+    UIView.animate(withDuration: 0.55, delay: 0, usingSpringWithDamping: 0.48, initialSpringVelocity: 0.9, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+      self.reacts.transform = .identity
+      self.reacts.alpha = 1
     })
   }
 

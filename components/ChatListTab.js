@@ -1,5 +1,6 @@
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { giftPreviewText as _giftPreviewText } from './gifts/giftCatalog'; // [2026-10-13 diamantes]
+import RollingNumber from './RollingNumber'; // [2026-10-15 nav-motion]
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
@@ -35,6 +36,7 @@ import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
+import BiaHomeCard from './bia/BiaHomeCard'; // [2026-10-15 bia-design]
 import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
 import WaImportBanner from './WaImportBanner'; // [2026-10-13] importação do WhatsApp visível na home
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
@@ -88,6 +90,9 @@ import FadeSlideIn from './FadeSlideIn';
 // Binário sem o módulo → isAvailable() false → FlashList abaixo (idêntico ao antigo).
 import NativeConversationList from './chatlist/NativeConversationList';
 import { isAvailable as _nativeHomeAvailable } from '../modules/expo-chat-conversation-list';
+// [2026-10-15 native-pins] Fileira de FIXADAS nativa (menu nativo + arrastar p/ reordenar).
+import PinnedStripSlot, { createPinBridge, autoPinAvatarSize, pinStripHeight } from './chatlist/NativePinnedStrip';
+import { isPinnedStripAvailable as _pinsNativeAvailable } from '../modules/expo-chat-conversation-list';
 import { haptic } from '../constants/theme';
 import { humanizeSystemText } from '../utils/systemMessageText';
 
@@ -6581,6 +6586,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [pinnedSize, setPinnedSize] = useState('m');           // 's' | 'm' | 'l' default
   const [pinnedSizes, setPinnedSizes] = useState({});          // { [convId]: 's'|'m'|'l' }
   const [pinnedEditMode, setPinnedEditMode] = useState(false);
+  // [2026-10-15 native-pins] Fileira nativa de fixados. Kill switch
+  // `globalThis.__chatyy_native_pins !== false`; erro → volta à fileira JS.
+  // Os dados vivos (presença/digitando) chegam por uma ponte publicada no fim
+  // do render (ver _pinBridgeRef.current.set lá embaixo), não pelo header memo.
+  const _pinBridgeRef = useRef(null);
+  if (!_pinBridgeRef.current) _pinBridgeRef.current = createPinBridge();
+  const [_nativePinsFailed, _setNativePinsFailed] = useState(() => !!globalThis.__chatyy_native_pins_failed);
+  const _useNativePins = Platform.OS !== 'web' && !_nativePinsFailed
+    && globalThis.__chatyy_native_pins !== false && _pinsNativeAvailable();
   // Persist a flag so the "Toque pra mudar tamanho" hint only shows the
   // FIRST time the user enters edit mode. After tapping "Pronto" once,
   // we stop rendering the hint pill (was overlapping pin cards).
@@ -7320,7 +7334,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             s.chipBadge,
             { backgroundColor: active ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount },
           ]}>
-            <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: pillTxt }]}>{count > 99 ? '99+' : count}</Text>
+            {/* [2026-10-15 nav-motion] contador rola (odômetro) no nativo */}
+            {isWeb
+              ? <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: pillTxt }]}>{count > 99 ? '99+' : count}</Text>
+              : <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: pillTxt }]} value={count > 99 ? '99+' : count} />}
           </View>
         ) : null}
       </TouchableOpacity>
@@ -7344,8 +7361,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // close to old M (60) so users who downsized don't lose their layout.
       // L grew 80→84 for visual impact in 1-2 pin layouts.
       const SIZE_OF = (sz) => sz === 's' ? 60 : sz === 'l' ? 84 : 72;
-      const sizePx = SIZE_OF(pinnedSize);
-      const SLOT_W = sizePx + 14;
+      // [2026-10-15 native-pins] Tamanho AUTOMÁTICO (sem lápis/configuração):
+      // até 4 fixados = avatares grandes; mais que isso = menores + rolagem.
+      // Vale p/ a fileira nativa e p/ a JS (web/binário antigo).
+      const _autoPx = autoPinAvatarSize(
+        pinnedConversations.length,
+        Math.min(Dimensions.get('window').width || 360, CONTENT_MAX_WIDTH || 9999),
+      );
       const wiggleRotate = pinWiggleAnim.interpolate({
         inputRange: [-1, 1], outputRange: ['-1.8deg', '1.8deg'],
       });
@@ -7358,15 +7380,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // DRAG_SLOT: media dinamica das larguras de slot atuais (sizePx + gap).
       // Antes era constante 78 — mas com pins de tamanhos diferentes (s=52,
       // m=64, l=80) o calculo de target ficava off por 15-25px (audit #2).
-      const DRAG_SLOT = (() => {
-        if (!pinnedConversations.length) return 78;
-        const widths = pinnedConversations.map(c => {
-          const sz = pinnedSizes[c.id] || pinnedSize || 'm';
-          const px = SIZE_OF(sz);
-          return px + 14;
-        });
-        return Math.round(widths.reduce((a, b) => a + b, 0) / widths.length);
-      })();
+      const DRAG_SLOT = _autoPx + 14;
       const buildPanForItem = (item, idx) => PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onStartShouldSetPanResponderCapture: () => false,
@@ -7449,7 +7463,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // padding (14→16) to give bigger avatars breathing room. iOS Messages
           // has no chip/background around pinned tiles — just clean separation.
           paddingTop: 16,
-          paddingBottom: 18,
+          paddingBottom: _useNativePins ? 8 : 18, // [native-pins] a fileira nativa já traz o respiro
           paddingLeft: 14,
           backgroundColor: 'transparent',
           borderBottomWidth: StyleSheet.hairlineWidth,
@@ -7465,12 +7479,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   o SVG continuava parecendo bullet/blob esfumado antes do
                   texto "FIXADAS". WhatsApp/Telegram não usam ícone aqui;
                   o caps + letterSpacing já comunica que é section header. */}
-              {pinnedEditMode && !pinnedHintSeen ? (
+              {pinnedEditMode ? (
                 <Text
                   numberOfLines={1}
                   style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#111111', flexShrink: 1 }}
                 >
-                  {t?.('chat.tapToResize') || 'Toque pra mudar tamanho'}
+                  {(() => { const v = t?.('chat.dragToReorder'); return v && v !== 'chat.dragToReorder' ? v : 'Arraste para reorganizar'; })()}
                 </Text>
               ) : (
                 <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.4, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }}>
@@ -7478,41 +7492,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 </Text>
               )}
             </View>
-            {/* Pressable + bigger hit area + explicit cursor pra web — RNW
-                TouchableOpacity hitSlop unreliable em headless e em alguns
-                browsers. User reportou "Editar nao funciona no navegador". */}
-            {!pinnedEditMode ? (
-              <Pressable
-                onPress={() => {
-                  try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
-                  setPinnedEditMode(true);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={t?.('chat.reorderPinned') || 'Reorganizar fixados'}
-                hitSlop={10}
-                style={({ pressed }) => ({
-                  width: 32, height: 32, borderRadius: 16,
-                  alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: pressed
-                    ? (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)')
-                    : 'transparent',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
-                })}
-              >
-                {/* [7172 polish 2026-05-22] Replaced "Editar" text with pencil SVG.
-                    User wanted a discreet icon, matching iOS/WhatsApp where pinned
-                    sections don't have a labeled button. */}
-                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                  <Path
-                    d="M16.475 5.408l2.117 2.117M14.69 7.193l-9.39 9.39a1.5 1.5 0 00-.421.815l-.5 2.5a.5.5 0 00.59.59l2.5-.5a1.5 1.5 0 00.815-.42l9.39-9.39M14.69 7.193l1.785-1.785a1.5 1.5 0 012.117 0l0 0a1.5 1.5 0 010 2.117l-1.785 1.785M14.69 7.193l2.117 2.117"
-                    stroke={isDark ? '#F5F5F7' : '#111111'}
-                    strokeWidth={1.8}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </Svg>
-              </Pressable>
-            ) : (
+            {/* [2026-10-15 native-pins] Lápis de tamanho REMOVIDO: o tamanho é
+                automático e reorganizar = toque longo + arrastar (ou
+                "Reorganizar fixados" no menu). Aqui só o "Concluir" do modo. */}
+            {pinnedEditMode ? (
               <TouchableOpacity
                 onPress={() => {
                   try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
@@ -7533,8 +7516,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   {t?.('common.done') || 'Concluir'}
                 </Text>
               </TouchableOpacity>
-            )}
+            ) : <View style={{ height: 32 }} />}
           </View>
+          {_useNativePins ? (
+            <View style={{ marginLeft: -14 }}>
+              <PinnedStripSlot
+                bridge={_pinBridgeRef.current}
+                avatarSize={_autoPx}
+                height={pinStripHeight(_autoPx)}
+              />
+            </View>
+          ) : (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -7559,8 +7551,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               const isDragging = pinDraggingId === item.id;
               const pan = pinnedEditMode ? buildPanForItem(item, idx) : null;
               // Tamanho proprio deste pin (override individual ou default)
-              const itemSize = getPinSize(item.id);
-              const itemSizePx = SIZE_OF(itemSize);
+              const itemSizePx = _autoPx;
               // SLOT DINAMICO: largura do wrapper = tamanho do avatar.
               // ScrollView ja tem `gap: 14` entre items, entao gap visual
               // entre avatares fica CONSTANTE de 14px independente das
@@ -7592,11 +7583,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 >
                   <Pressable
                     onPress={() => {
-                      // Em edit mode: tap cicla S→M→L do PROPRIO pin (iMessage-like).
+                      // Em edit mode: toque sai do modo (tamanho agora é automático).
                       // Fora de edit mode: abre conversa.
                       if (pinnedEditMode) {
                         try { haptic.select(); /* [2026-10-07 native-polish] was Vibration.vibrate(8): ~400ms buzz on iOS */ } catch {}
-                        cyclePinSize(item.id);
+                        markPinnedHintSeen();
+                        setPinnedEditMode(false);
                         return;
                       }
                       if (selectionMode) toggleSelected(item.id);
@@ -7707,6 +7699,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 section. The previous inline pill overlapped pin cards
                 (Lucas Catine bug print 2026-05-08). */}
           </ScrollView>
+          )}
         </View>
       );
     }
@@ -8023,43 +8016,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           </Text>
         </TouchableOpacity>
       )}
-      {/* Chatyy One AI quick access (like Snapchat's My AI) */}
+      {/* Chatyy One AI quick access (like Snapchat's My AI)
+          [2026-10-15 bia-design] mini-orb vivo + sugestão do momento + atalho de voz */}
       {!(searchQuery || '').trim() && (
-        <TouchableOpacity
-          onPress={() => { try { router.push('/one'); } catch {} }}
-          activeOpacity={0.7}
-          style={{
-            flexDirection: 'row', alignItems: 'center', gap: 14,
-            paddingHorizontal: 16, paddingVertical: 10, minHeight: 74,
-          }}
-        >
-          {/* WAVE 46 (2026-05-21): swap solid purple + sparkle for the real
-              app icon with a winking-eye animation (~every 4–8s). Same 52px
-              footprint so layout doesn't shift. */}
-          {/* dark: hairline ring so the black Bia mark doesn't melt into #0b0b0b */}
-          <View style={isDark ? { borderRadius: ROW_AVATAR / 2, borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', margin: -1 } : null}>
-            <ChatyyOneAvatar size={ROW_AVATAR} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text maxFontSizeMultiplier={1.35} style={[s.rowName, { flex: 0, color: P.text }]}>
-                {t?.('one.title') || 'Bia'}
-              </Text>
-              <View style={{
-                backgroundColor: P.chipBg,
-                borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1,
-              }}>
-                <Text maxFontSizeMultiplier={1.1} style={{ color: P.sub, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>{t?.('chat.aiBadge') || 'IA'}</Text>
-              </View>
-            </View>
-            <Text maxFontSizeMultiplier={1.3} style={[s.rowPreview, { color: P.sub, marginTop: 3, marginRight: 0 }]} numberOfLines={1}>
-              {t?.('one.subtitle') || 'Pergunte qualquer coisa • IA pessoal'}
-            </Text>
-          </View>
-          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-            <Path d="M9 6l6 6-6 6" stroke={P.faint} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-          </Svg>
-        </TouchableOpacity>
+        <BiaHomeCard isDark={isDark} t={t} router={router} P={P} avatarSize={ROW_AVATAR} nameStyle={s.rowName} previewStyle={s.rowPreview} />
       )}
       {/* [2026-10-08 chat-beauty-list] Same inset hairline as the rows (was
           a full-bleed border that broke the list rhythm). */}
@@ -8163,7 +8123,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds,
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds, _useNativePins,
     // [2026-10-08 offline-first] banners rendered inside this header were missing
     // from the deps → their show/hide only landed on an unrelated re-render.
     wsDownBanner, netOffline, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount]);
@@ -8524,6 +8484,42 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       try { _ltCbRef.current?.(c); } catch {}
     }
   }, []);
+
+  // ── [2026-10-15 native-pins] Ponte da fileira nativa de FIXADAS ──────────
+  // Publica os dados vivos (digitando/presença/rascunho/seleção) e as ações
+  // (mesmos handlers do menu nativo da lista) para o slot dentro do header
+  // memoizado. `set` compara raso: só re-renderiza a fileira quando muda algo.
+  const _onNativePinsFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_pins_failed = true; console.warn('[native-pins] fallback JS:', msg); } catch {}
+    _setNativePinsFailed(true);
+  }, []);
+  React.useLayoutEffect(() => {
+    if (!_useNativePins) return;
+    _pinBridgeRef.current.set({
+      conversations: pinnedConversations,
+      isDark, t, language, user,
+      selectionMode, selectedIds, typingUsers, drafts, draftTimes,
+      presencesRef, presenceToken: `${presenceVersion}:${presenceRtToken}`,
+      socketUp, lockedIds, unlockedIds, notesMap,
+      helpers: _nativeHomeHelpers,
+      folders: chatFolders,
+      reorderMode: pinnedEditMode,
+    }, {
+      onOpen: handleConversationPress,
+      onPressIn: rowPrefetch,
+      onToggleSelect: rowToggleSelect,
+      onAction: _nativeHomeAction,
+      onMore: showLongPressMenu,
+      onEnterSelection: _nativeHomeEnterSelection,
+      onReorder: (ids) => { try { haptic.select(); } catch {} savePinnedOrder(ids); },
+      onReorderMode: (on) => {
+        try { haptic.select(); } catch {}
+        if (!on) markPinnedHintSeen();
+        setPinnedEditMode(!!on);
+      },
+      onFailure: _onNativePinsFailure,
+    });
+  });
 
   return (
     <View style={[{ flex: 1, backgroundColor: colors.background }]}>

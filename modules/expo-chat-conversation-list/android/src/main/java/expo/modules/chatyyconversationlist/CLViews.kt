@@ -35,6 +35,7 @@ import com.bumptech.glide.request.target.CustomTarget
 import com.bumptech.glide.request.transition.Transition
 import java.io.File
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -88,7 +89,21 @@ internal fun tintedIcon(ctx: Context, res: Int, color: Int): Drawable? {
 // ─── Avatar ────────────────────────────────────────────────────────────────
 
 internal class CLAvatarView(ctx: Context) : View(ctx) {
-  private val box = ctx.dp(54f)
+  private var box = ctx.dp(54f)
+  private val baseBox = ctx.dp(54f)
+
+  /** [2026-10-15 native-pins] Lado da caixa em dp (54 na linha; fixados = maior). */
+  fun setBoxDp(v: Float) {
+    val nb = context.dp(v)
+    if (abs(nb - box) < 0.5f) return
+    box = nb
+    tilesKey = "" // recarrega as fotos no tamanho novo no próximo bind
+    requestLayout()
+    invalidate()
+  }
+
+  /** Margem do anel: 4 dp na linha; cresce junto nos avatares maiores. */
+  private fun ringGap(): Float = max(context.dp(4f), Math.round(box * 0.075f).toFloat())
   private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
   private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
   private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -164,7 +179,7 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
       bitmaps[i] = null
     }
     if (row.kind == "channel") return
-    val inner = if (hasRing()) box - context.dp(8f) else box
+    val inner = if (hasRing()) box - ringGap() * 2f else box
     val rects = tileRects(inner, 0f)
     val key = tilesKey
     tiles.forEachIndexed { i, tile ->
@@ -218,8 +233,8 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     val ring = hasRing()
-    val inner = if (ring) box - context.dp(8f) else box
-    val off = if (ring) context.dp(4f) else 0f
+    val inner = if (ring) box - ringGap() * 2f else box
+    val off = if (ring) ringGap() else 0f
     val cx = off + inner / 2f
     val cy = off + inner / 2f
     circle.reset()
@@ -301,8 +316,9 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
 
     // Bolinha online (14 com borda 2.5 na cor do fundo da linha)
     if (row.online) {
-      val r = context.dp(7f)
-      val c = box - context.dp(1f) - r
+      val big = box > baseBox + 0.5f
+      val r = if (big) Math.round(box * 0.22f) / 2f else context.dp(7f)
+      val c = if (big) box / 2f + box / 2f * 0.7071f else box - context.dp(1f) - r
       fill.shader = null
       fill.color = rowBg
       canvas.drawCircle(c, c, r, fill)

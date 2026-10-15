@@ -19,7 +19,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, ScrollView, Share, Platform } from 'react-native';
 import { useRouter, Redirect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView, IOS_NATIVE_INSET } from '../components/nativeHeader';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -588,12 +588,14 @@ function WalletScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: s.bgGrouped }}>
       {USE_NATIVE_HEADER ? (
-        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title })} />
+        // [2026-10-15 nav-motion] iOS: título grande que colapsa ao rolar (spring
+        // do UINavigationBar). A FlatList é o 1º scrollable → o UIKit a acompanha.
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title, largeTitle: true, headerLargeStyle: { backgroundColor: s.bgGrouped } })} />
       ) : (
         <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} maxWidth={Layout.contentMaxWidth} />
       )}
       {loading ? (
-        <WalletSkeleton />
+        <NativeInsetView><WalletSkeleton /></NativeInsetView>
       ) : (
         <FlatList
           data={rows}
@@ -604,7 +606,8 @@ function WalletScreen() {
           ListEmptyComponent={more || loadingMore ? null : <View style={{ marginTop: Space.md }}><EmptyActivity s={s} t={t} filter={filter} onBuy={canPurchase ? openTopup : null} /></View>}
           onEndReached={loadMore}
           onEndReachedThreshold={0.6}
-          contentContainerStyle={[styles.body, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
+          {...nativeScrollInsetProps()}
+          contentContainerStyle={[styles.body, { paddingBottom: IOS_NATIVE_INSET ? Space.xxxl : Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
           showsVerticalScrollIndicator={false}
           initialNumToRender={14}
           windowSize={9}

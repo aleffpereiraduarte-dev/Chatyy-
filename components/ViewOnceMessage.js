@@ -182,6 +182,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
     return () => {
       try { sub?.remove?.(); } catch {}
       try { SC.allowScreenCaptureAsync?.('chatyy-view-once')?.catch?.(() => {}); } catch {}
+      try { require('../services/screenProtect').reassertScreenProtect?.(); } catch {} // [2026-10-15 screen-protect-all]
       try { _releaseShield?.(); } catch {}
     };
   }, [conversationId, messageId]);

@@ -26,3 +26,12 @@ export function ThreadKeyboardGestureArea({ children }) {
 
 export const THREAD_LIST_KEYBOARD_DISMISS_MODE = 'on-drag';
 export const THREAD_COMPOSER_NATIVE_ID = 'chatyy-thread-composer';
+
+// [2026-10-15 native-emoji] mesmas exports do .native.js (web: sem teclado virtual).
+export function useThreadKeyboardHeight() {
+  return null;
+}
+
+export function getThreadReanimated() {
+  return null;
+}

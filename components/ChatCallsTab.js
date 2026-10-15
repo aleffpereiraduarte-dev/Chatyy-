@@ -19,6 +19,10 @@ import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../se
 import { CallListSkeleton } from './SkeletonLoader';
 import { haptic } from '../constants/theme';
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
+import { LargeTitle, useLargeTitleCollapse } from './LargeTitleHeader'; // [2026-10-15 nav-motion]
+import PressableScale from './PressableScale'; // [2026-10-15 nav-motion]
+import FadeSlideIn from './FadeSlideIn'; // [2026-10-15 nav-motion]
+const _NOFLEX = { flex: 0 };
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
@@ -2765,7 +2769,11 @@ function _seedCallHistorySync() {
   return Array.isArray(_preloadedCalls) ? _preloadedCalls : [];
 }
 
-function ChatCallsTab({ colors, isDark, t, user, router }) {
+function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitleCollapsedChange }) {
+  // [2026-10-15 nav-motion] Título grande "Ligações" que rola 1:1 com a lista
+  // e colapsa no header compacto do /chat (mesmo padrão da aba Conversas).
+  // Sem `largeTitle` (web/kids/desktop) o layout é o de antes.
+  const _lt = useLargeTitleCollapse(onLargeTitleCollapsedChange, { enabled: !!largeTitle });
   const { language } = useLanguage();
   const [activeTab, setActiveTab] = useState('recent');
   // [2026-10-14 offline-first] minutos salvos (por conta) lidos síncronos → card sem piscar.
@@ -3414,8 +3422,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   // and shouldn't delay showing the chat call history.
   const isLoading = loadingHistory;
 
-  return (
-    <View style={[s.container, { backgroundColor: bgColor }]}>
+  const _headerChrome = (
+    <>
       {/* Header with tabs */}
       <View style={[s.header, { backgroundColor: isDark ? '#000000' : '#f2f2f7' }]}>
         {/* [2026-10-11 visual polish] Chip row scrolls horizontally from the
@@ -3427,7 +3435,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           style={{ marginHorizontal: -16, marginBottom: 8, flexGrow: 0 }}
           contentContainerStyle={{ flexGrow: 1, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 24 }}
         >
-          <TouchableOpacity
+          <PressableScale haptic="select" scaleTo={0.95}
             onPress={() => setScheduleVisible(true)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             style={{
@@ -3441,9 +3449,9 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 13, fontWeight: '600' }}>
               {t?.('calls.schedule') || 'Agendar'}
             </Text>
-          </TouchableOpacity>
+          </PressableScale>
           {router && (
-            <TouchableOpacity
+            <PressableScale haptic="select" scaleTo={0.95}
               onPress={() => router.push('/call-schedule')}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               style={{
@@ -3457,14 +3465,14 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               <Text style={{ color: isDark ? '#F5F5F7' : '#111111', fontSize: 13, fontWeight: '600' }}>
                 {t?.('calls.scheduledList') || 'Agendadas'}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           )}
           {/* [2026-10-14 vis-audit] "Limpar tudo" saiu da fileira de ações (chip vermelho ao lado
               de Agendar) → menu "…" do histórico; a ação mantém a confirmação (handleClearAll). */}
           {filteredHistory.length > 0 && (
             <>
               <View style={{ flex: 1 }} />
-              <TouchableOpacity
+              <PressableScale haptic="select" scaleTo={0.95}
                 onPress={() => setHistoryMenuOpen(true)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 style={{
@@ -3475,7 +3483,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                 accessibilityLabel={t?.('common.more') || 'Mais'}
               >
                 <IconMoreHorizontal size={18} color={isDark ? '#F5F5F7' : '#111111'} />
-              </TouchableOpacity>
+              </PressableScale>
             </>
           )}
         </ScrollView>
@@ -3497,6 +3505,14 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       {PSTN_ENABLED && !loadingMinutes && (
         <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
       )}
+    </>
+  );
+
+  return (
+    <View style={[s.container, { backgroundColor: bgColor }]}>
+      {/* [2026-10-15 nav-motion] chips/segmento/plano: fixos em cima (sem título
+          grande) ou rolando logo abaixo do título grande. */}
+      {!largeTitle && _headerChrome}
 
       {/* Call history */}
       <ScrollView
@@ -3504,7 +3520,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
         onScrollBeginDrag={renderLimit === Infinity ? undefined : expandRenderLimit}
+        onScroll={_lt.onScroll}
+        scrollEventThrottle={_lt.scrollEventThrottle}
       >
+        {!!largeTitle && <LargeTitle title={largeTitle} color={textColor} />}
+        {!!largeTitle && _headerChrome}
         {/* [2026-10-14 vis3] os 2 cartões agora rolam junto com o histórico (antes ficavam fixos e
             comiam ~170px da lista em telas pequenas). */}
         {/* Silence unknown callers */}
@@ -3527,7 +3547,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         </View>
 
         {/* Create shareable call link (WhatsApp parity) */}
-        <TouchableOpacity
+        <PressableScale
           onPress={handleCreateCallLink}
           activeOpacity={0.7}
           disabled={creatingLink}
@@ -3558,7 +3578,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
             </Text>
           </View>
-        </TouchableOpacity>
+        </PressableScale>
         {isLoading ? (
           <CallListSkeleton count={6} />
         ) : filteredHistory.length === 0 ? (
@@ -3587,7 +3607,9 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
           </View>
         ) : (
           groupedCalls.map((group, gIdx) => (
-            <View key={group.label + gIdx}>
+            // [2026-10-15 nav-motion] entrada suave escalonada só nas 3 primeiras
+            // seções (o resto nasce assentado — custo zero em histórico longo).
+            <FadeSlideIn key={group.label + gIdx} skip={gIdx > 2} delay={gIdx * 50} distance={8} style={_NOFLEX}>
               {/* Section header */}
               <Text style={[s.sectionHeader, { color: subColor }]}>
                 {group.label}
@@ -3627,7 +3649,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                   </React.Fragment>
                 ))}
               </View>
-            </View>
+            </FadeSlideIn>
           ))
         )}
         <View style={{ height: 100 }} />

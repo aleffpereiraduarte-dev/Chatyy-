@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyEmojiPanelModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyyemoji.ChatyyEmojiPanelModule"]
+  }
+}

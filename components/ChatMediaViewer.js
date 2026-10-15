@@ -2254,10 +2254,24 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     };
     const items = _nvItems(ctx.list || [], ctx);
     const _same = (e) => !!e && _nvSessionRef.current > 0 && e.session === _nvSessionRef.current;
+    // [2026-10-15 hero] Binário com hero (apiVersion >= 3) + kill switch
+    // globalThis.__chatyy_hero: a foto sai da miniatura da bolha e volta p/ a
+    // bolha da página atual (se ela ainda está na tela) ao fechar.
+    let _hero = null;
+    try { if (NV.supportsHero && NV.supportsHero()) _hero = require('../services/mediaHero'); } catch { _hero = null; }
     _nvCleanup();
     _nvSubsRef.current = [
       NV.addListener('onIndexChange', (e) => {
-        if (_same(e) && typeof e.index === 'number') _setCurrentIdx(e.index);
+        if (_same(e) && typeof e.index === 'number') {
+          _setCurrentIdx(e.index);
+          if (_hero) {
+            const idx = e.index;
+            const mid = items[idx] && items[idx].messageId;
+            _hero.measureHero(mid).then((r) => {
+              if (_same(e)) NV.setReturnRect(idx, r, _hero.heroRadius(mid));
+            }).catch(() => {});
+          }
+        }
       }),
       NV.addListener('onAction', (e) => { if (_same(e)) _nvOnAction(e); }),
       NV.addListener('onClose', (e) => {
@@ -2268,9 +2282,13 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       }),
     ];
     try { Keyboard.dismiss(); } catch {}
-    NV.open({
+    const _startMid = items[_initial] && items[_initial].messageId;
+    const _srcP = (_hero && _startMid) ? _hero.measureHero(_startMid).catch(() => null) : Promise.resolve(null);
+    // Fechado/desmontado enquanto media → não abre (sid 0 sem sessão -1 = nada).
+    _srcP.then((_srcRect) => (_nvSessionRef.current !== -1 ? 0 : NV.open({
       items,
       index: _initial,
+      ...(_srcRect ? { sourceRect: _srcRect, sourceRadius: _hero.heroRadius(_startMid) } : {}),
       labels: {
         close: _tt('nativeViewer.close'),
         share: _tt('nativeViewer.share'),
@@ -2289,7 +2307,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       allowForward: !ctx.secure && typeof ctx.onForward === 'function',
       allowStar: true,
       secure: !!ctx.secure,
-    }).then((sid) => {
+    }))).then((sid) => {
       if (sid > 0) {
         if (_nvSessionRef.current === -1) _nvSessionRef.current = sid;
         else NV.close(); // fechado enquanto abria
@@ -2455,6 +2473,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     return () => {
       try { sub?.remove?.(); } catch {}
       try { ScreenCapture.allowScreenCaptureAsync?.('chatyy-view-once')?.catch?.(() => {}); } catch {}
+      try { require('../services/screenProtect').reassertScreenProtect?.(); } catch {} // [2026-10-15 screen-protect-all]
       _setWatermarkVisible(false);
     };
   }, [visible, viewOnce]);

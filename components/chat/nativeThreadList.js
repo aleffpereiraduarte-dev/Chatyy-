@@ -47,6 +47,13 @@
 //          o MESMO overlay JS de lift (MessageLiftOverlay); ref.setLiftedKey(k)
 //          esconde o balão enquanto o menu está aberto ('' restaura).
 //   prop   stickyDate {on, top, bg, fg, shadow} = pílula de data nativa.
+//   menu   [apiVersion 3, native-ctxmenu] prop ctxMenu → o long-press abre o
+//          menu de contexto NATIVO (balão sai da lista, blur, reações, ações);
+//          onRowLongPress traz native:1 e o JS responde com
+//          ref.showContextMenu(payload de nativeContextMenu.buildNativeCtxMenu);
+//          escolhas voltam por onMenuAction {key, messageId, action} /
+//          onReact {key, messageId, emoji}; onMenuDismiss {key, reason}.
+//          Kill switch: globalThis.__chatyy_native_ctxmenu = false.
 //
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
@@ -68,6 +75,10 @@ let _NativeView = null;
 let _sessionDisabled = false; // erro nativo nesta sessão → JS até reiniciar
 let _sessionReason = '';
 let _api = 0; // apiVersion do binário (1 = fase 1; 2 = blocos/lift/seleção/fixa)
+/** [native-ctxmenu] kill switch OTA do menu de contexto nativo. */
+function _ctxMenuSwitchOn() { try { return globalThis.__chatyy_native_ctxmenu !== false; } catch { return true; } }
+/** Menu de contexto nativo disponível (binário apiVersion ≥ 3 + kill switch). */
+export function nativeCtxMenuAvailable() { _getNativeView(); return _api >= 3 && _ctxMenuSwitchOn(); }
 /** apiVersion do módulo nativo (0 = ausente). */
 export function nativeListApi() { _getNativeView(); return _api; }
 
@@ -807,7 +818,7 @@ export function buildRow(item, key, ctx) {
       md.id = String(c.id ?? '');
       return md;
     });
-    if (its.length > 4) row.more = its.length - 4;
+    if (its.length > 4) { row.more = its.length - 4; row.aids = its.map(c => String(c?.id ?? '')); } // [hero] volta ao último tile
     const cap = _caption(item);
     if (cap && _api >= 2) _p2Caption(cap, row, ctx, item);
     else if (cap) { const p = parseInline(cap); row.text = p.text; if (p.spans.length) row.sp = p.spans; }
@@ -969,7 +980,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     keyboardDismissMode = 'interactive', bottomInset = 8, topInset = 0,
     onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll,
     onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, style,
-    stickyDate,
+    stickyDate, ctxMenu, onMenuAction, onReact, onMenuDismiss,
   } = props;
   const Native = _getNativeView();
   const nativeRef = useRef(null);
@@ -980,7 +991,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const keyIndexRef = useRef(new Map());
   const readyRef = useRef(false);
   const cbRef = useRef({});
-  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback };
+  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss };
   const failRef = useRef(false);
 
   const fail = useCallback((reason) => {
@@ -1077,12 +1088,20 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       const ne = e?.nativeEvent || {};
       const item = itemOf(ne.key);
       if (!item) return;
-      try { cbRef.current.onRowPress && cbRef.current.onRowPress({ item, key: ne.key, part: ne.part || 'bubble', url: ne.url || '', index: Number(ne.index) || 0, flags: Number(ne.flags) || 0 }); } catch {}
+      // [hero] part 'media' traz frame {x,y,w,h,radius} (janela) da miniatura tocada
+      const fr = ne.frame && Number(ne.frame.w) > 1 && Number(ne.frame.h) > 1
+        ? { x: Number(ne.frame.x) || 0, y: Number(ne.frame.y) || 0, width: Number(ne.frame.w), height: Number(ne.frame.h), radius: Number(ne.frame.radius) || 0 }
+        : null;
+      try { cbRef.current.onRowPress && cbRef.current.onRowPress({ item, key: ne.key, part: ne.part || 'bubble', url: ne.url || '', index: Number(ne.index) || 0, flags: Number(ne.flags) || 0, frame: fr }); } catch {}
     },
     onRowLongPress: (e) => {
       const ne = e?.nativeEvent || {};
       const item = itemOf(ne.key);
-      if (!item) return;
+      if (!item) {
+        // [native-ctxmenu] o nativo já levantou o balão → devolve
+        if (ne.native) { try { const v = nativeRef.current; v && v.dismissContextMenu && v.dismissContextMenu().catch(() => {}); } catch {} }
+        return;
+      }
       // [fase 2] anchor = snapshot PNG do balão + retângulo na janela (dp) → o
       // MESMO lift overlay JS (MessageLiftOverlay) do caminho FlashList.
       let anchor = null;
@@ -1090,7 +1109,20 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       if (a && typeof a === 'object' && a.uri && Number(a.w) > 0 && Number(a.h) > 0) {
         anchor = { uri: String(a.uri), x: Number(a.x) || 0, y: Number(a.y) || 0, w: Number(a.w), h: Number(a.h) };
       }
-      try { cbRef.current.onRowLongPress && cbRef.current.onRowLongPress({ item, key: ne.key, index: Number(ne.index) || 0, anchor }); } catch {}
+      try { cbRef.current.onRowLongPress && cbRef.current.onRowLongPress({ item, key: ne.key, index: Number(ne.index) || 0, anchor, native: !!ne.native }); } catch {}
+    },
+    // [native-ctxmenu] escolhas do menu nativo → handlers do JS
+    onMenuAction: (e) => {
+      const ne = e?.nativeEvent || {};
+      try { cbRef.current.onMenuAction && cbRef.current.onMenuAction({ item: itemOf(ne.key), key: ne.key, messageId: String(ne.messageId || ''), action: String(ne.action || '') }); } catch {}
+    },
+    onReact: (e) => {
+      const ne = e?.nativeEvent || {};
+      try { cbRef.current.onReact && cbRef.current.onReact({ item: itemOf(ne.key), key: ne.key, messageId: String(ne.messageId || ''), emoji: String(ne.emoji || '') }); } catch {}
+    },
+    onMenuDismiss: (e) => {
+      const ne = e?.nativeEvent || {};
+      try { cbRef.current.onMenuDismiss && cbRef.current.onMenuDismiss({ key: ne.key, reason: String(ne.reason || '') }); } catch {}
     },
     onSwipeReply: (e) => {
       const ne = e?.nativeEvent || {};
@@ -1160,6 +1192,22 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       flashKey: (k) => { if (k) call('flashKey', String(k)); },
       // [fase 2] esconde o balão enquanto o overlay do lift mostra o snapshot ('' restaura).
       setLiftedKey: (k) => { if (_api >= 2) call('setLiftedKey', String(k || '')); },
+      // [native-ctxmenu] Promise<boolean> (false = não abriu → caminho JS)
+      showContextMenu: (payload) => {
+        if (_api < 3) return Promise.resolve(false);
+        const p = call('showContextMenu', payload || {});
+        return p && typeof p.then === 'function' ? p.then(v => !!v, () => false) : Promise.resolve(false);
+      },
+      dismissContextMenu: () => { if (_api >= 3) call('dismissContextMenu'); },
+      // [hero] Promise<{x,y,width,height,radius}|null> da miniatura da mensagem (janela)
+      mediaFrame: (mid) => {
+        if (_api < 3 || mid == null) return Promise.resolve(null);
+        const p = call('mediaFrame', String(mid));
+        if (!p || typeof p.then !== 'function') return Promise.resolve(null);
+        return p.then((f) => (f && Number(f.w) > 1 && Number(f.h) > 1
+          ? { x: Number(f.x) || 0, y: Number(f.y) || 0, width: Number(f.w), height: Number(f.h), radius: Number(f.radius) || 0 }
+          : null), () => null);
+      },
       setAudioState: (s) => { call('setAudioState', s || {}); },
       computeVisibleIndices: () => null,
     };
@@ -1197,6 +1245,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       bottomInset={bottomInset}
       topInset={topInset}
       {...(nativeSticky ? { stickyDate: nativeSticky } : null)}
+      {...(_api >= 3 ? { ctxMenu: !!ctxMenu && _ctxMenuSwitchOn() } : null)}
       {...handlers}
     />
   );

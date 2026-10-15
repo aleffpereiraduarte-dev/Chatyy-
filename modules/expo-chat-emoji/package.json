@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-emoji",
+  "version": "1.0.0",
+  "description": "Chatyy native composer panel (emoji grid with categories/recents/search/skin tones, stickers, GIFs): iOS UICollectionView, Android RecyclerView.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

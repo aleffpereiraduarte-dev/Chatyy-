@@ -19,6 +19,13 @@ import UIKit
 //   isCaptured() → Bool (cache atualizado na main thread)
 //   setShield(tag, enabled, title, subtitle) → Bool   (contagem por tag)
 //   evento onCaptureChange { captured }
+//
+// [2026-10-15 screen-protect-all] apiVersion 2 — proteção do APP INTEIRO
+// (camada segura por janela; ver ChatyyScreenProtect.swift):
+//   setAppProtection(enabled, { toast }) → Bool efetivo (persistido)
+//   getAppProtection() → { supported, enabled, effective, sharing }
+//   setLocalTag / reassert → no-op (API do Android)
+//   eventos onProtectChange { effective, sharing }, onScreenshotBlocked
 public class ExpoChatPrivacyModule: Module {
   private var tags = Set<String>()
   private var title = "Conteúdo protegido"
@@ -30,22 +37,51 @@ public class ExpoChatPrivacyModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ExpoChatPrivacy")
 
-    Events("onCaptureChange")
+    Events("onCaptureChange", "onProtectChange", "onScreenshotBlocked")
 
     OnCreate {
       DispatchQueue.main.async { [weak self] in
         self?.startObserving()
+        let sp = ChatyyScreenProtect.shared
+        sp.onChange = { [weak self] effective, sharing in
+          self?.sendEvent("onProtectChange", ["effective": effective, "sharing": sharing])
+        }
+        sp.onScreenshot = { [weak self] in
+          self?.sendEvent("onScreenshotBlocked", [:])
+        }
+        sp.start()
       }
     }
 
     OnDestroy {
       DispatchQueue.main.async { [weak self] in
         self?.stopObserving()
+        ChatyyScreenProtect.shared.onChange = nil
+        ChatyyScreenProtect.shared.onScreenshot = nil
       }
     }
 
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
+    }
+
+    AsyncFunction("setAppProtection") { (enabled: Bool, labels: [String: Any]) -> Bool in
+      let toast = labels["toast"] as? String
+      let bundle = labels["bundle"] as? String
+      ChatyyScreenProtect.shared.setEnabled(enabled, toast: toast, bundle: bundle)
+      return ChatyyScreenProtect.shared.effective
+    }.runOnQueue(.main)
+
+    AsyncFunction("getAppProtection") { () -> [String: Any] in
+      return ChatyyScreenProtect.shared.state()
+    }.runOnQueue(.main)
+
+    AsyncFunction("setLocalTag") { (_: String, _: Bool) -> Bool in
+      return true
+    }
+
+    AsyncFunction("reassert") { () -> Bool in
+      return true
     }
 
     Function("isCaptured") { () -> Bool in

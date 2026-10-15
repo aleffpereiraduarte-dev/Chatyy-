@@ -55,7 +55,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
-import { ChatyyMessageList, useNativeThreadList, nativeListApi } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
+import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -231,6 +231,8 @@ import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
+import NativeEmojiPanel, { shouldUseNativeEmojiPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
+import { shouldUseNativeProfile, ProfileScrollHost, NativeProfileMedia, NativeProfileList, profileTheme, profileInitials, avatarRefForEmail, avatarRefForUrl, hasRealPhoto, extractRecentLinks, profileColor } from '../components/chat/NativeProfileBridge'; // [2026-10-15 native-profile]
 // [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
 import StickerMaker from '../components/stickers/StickerMaker';
 // [2026-10-10 stickers-import] tocar na figurinha → favoritar/salvar/ver pacote; web: arrastar/colar .webp
@@ -376,6 +378,7 @@ import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { heroRef as _heroRef } from '../services/mediaHero'; // [2026-10-15 hero] miniatura → viewer nativo
 // Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
 import { coverageStyleFor, boraStyleUrl, boraMapHtml, boraStaticMapUrl } from '../components/BoraMap';
 // [2026-10-13 web-focus] Web com mouse+teclado (desktop). Web mobile/touch = false.
@@ -10714,6 +10717,7 @@ function ChatConversationInner() {
     try { setShowFullEmojiPicker(false); } catch {}
     try { setShowGifPicker(false); } catch {}
     try { setShowStickerPicker(false); } catch {}
+    try { setShowNativeEmoji(false); } catch {} // [2026-10-15 native-emoji]
     try { setSelectionMode(false); } catch {}
     // [2026-10-14 piscada-voltar] Set NOVO sempre = re-render da conversa inteira
     // no 1º frame do pop; só troca se havia seleção.
@@ -10767,6 +10771,7 @@ function ChatConversationInner() {
           if (o.showAttachMenu) { o.setShowAttachMenu(false); return true; }
           if (o.showGifPicker) { o.setShowGifPicker(false); return true; }
           if (o.showStickerPicker) { o.setShowStickerPicker(false); return true; }
+          if (o.showNativeEmoji) { o.setShowNativeEmoji(false); return true; } // [2026-10-15 native-emoji]
           if (o.selectionMode) { o.setSelectionMode(false); o.setSelectedIds(new Set()); return true; }
           if (o.editingMsg) { o.setEditingMsg(null); return true; }
           if (o.replyTo) { o.setReplyTo(null); return true; }
@@ -12696,6 +12701,17 @@ function ChatConversationInner() {
   const [forwardSearch, setForwardSearch] = _useStateT('');
   const [showGifPicker, setShowGifPicker] = _useStateT(false);
   const [showStickerPicker, setShowStickerPicker] = _useStateT(false);
+  // [2026-10-15 native-emoji] Painel NATIVO Emoji | Figurinhas | GIF (modules/expo-chat-emoji)
+  // no lugar do StickerPicker/GifPicker JS quando o binário tem o módulo.
+  // Kill switch: globalThis.__chatyy_native_emoji = false. Erro → volta ao JS.
+  const [showNativeEmoji, setShowNativeEmoji] = _useStateT(false);
+  const [nativeEmojiTab, setNativeEmojiTab] = _useStateT('emoji');
+  const [nativeEmojiOff, setNativeEmojiOff] = _useStateT(false);
+  const _nativeEmojiOn = Platform.OS !== 'web' && !nativeEmojiOff && shouldUseNativeEmojiPanel();
+  const _nativeEmojiOnRef = useRef(_nativeEmojiOn);
+  _nativeEmojiOnRef.current = _nativeEmojiOn;
+  const _nativeEmojiDismissRef = useRef(false);
+  const _nativeEmojiFallbackRef = useRef(null);
   // [2026-10-10 painel-no-lugar-do-teclado] Figurinhas/GIF/emoji SUBSTITUEM o
   // teclado (WhatsApp): abrir um painel derruba o teclado antes (mesmo padrão
   // do menu "+": blur + Keyboard.dismiss + KeyboardController.dismiss + ~60ms);
@@ -12713,7 +12729,47 @@ function ChatConversationInner() {
     try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
     return wasOpen;
   }, []);
+  // [2026-10-15 native-emoji] Abre o painel nativo; o teclado só é derrubado
+  // quando o painel já montou (onShown) → painel cresce enquanto o teclado desce.
+  const _dismissKbNow = () => {
+    try { inputRef.current?.blur?.(); } catch {}
+    try { Keyboard.dismiss(); } catch {}
+    try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
+  };
+  const openNativeEmojiPanel = useCallback((tab) => {
+    if (tab) setNativeEmojiTab(tab);
+    setShowStickerPicker(false);
+    setShowGifPicker(false);
+    let kbOpen = false;
+    try { kbOpen = !!Keyboard.isVisible?.(); } catch {}
+    _nativeEmojiDismissRef.current = kbOpen;
+    setShowNativeEmoji(true);
+    if (kbOpen) {
+      // rede de segurança caso o onShown não chegue
+      setTimeout(() => {
+        if (_nativeEmojiDismissRef.current) { _nativeEmojiDismissRef.current = false; _dismissKbNow(); }
+      }, 220);
+    }
+  }, []);
+  const onNativeEmojiShown = useCallback(() => {
+    if (!_nativeEmojiDismissRef.current) return;
+    _nativeEmojiDismissRef.current = false;
+    _dismissKbNow();
+  }, []);
+  // Tocar no emoji com o painel aberto = volta ao teclado (o painel encolhe
+  // enquanto o teclado sobe; some no keyboardDidShow).
+  const closeNativeEmojiToKeyboard = useCallback(() => {
+    try { inputRef.current?.focus?.(); } catch {}
+    if (_nativeEmojiFallbackRef.current) clearTimeout(_nativeEmojiFallbackRef.current);
+    _nativeEmojiFallbackRef.current = setTimeout(() => {
+      _nativeEmojiFallbackRef.current = null;
+      let vis = false;
+      try { vis = !!Keyboard.isVisible?.(); } catch {}
+      if (!vis) setShowNativeEmoji(false);
+    }, 900);
+  }, []);
   const openComposerPanel = useCallback((kind) => {
+    if ((kind === 'sticker' || kind === 'gif') && _nativeEmojiOnRef.current) { openNativeEmojiPanel(kind === 'gif' ? 'gif' : null); return; }
     const wasOpen = dismissComposerKeyboard(kind);
     const apply = () => {
       if (kind === 'sticker') { setShowStickerPicker(true); setShowGifPicker(false); }
@@ -12739,6 +12795,35 @@ function ChatConversationInner() {
     });
     return () => { try { sub.remove(); } catch {} };
   }, [showStickerPicker, showGifPicker, showFullEmojiPicker]);
+  // [2026-10-15 native-emoji] Painel nativo fecha só quando o teclado do
+  // COMPOSER terminou de subir (o painel encolheu junto) — sem pulo.
+  useEffect(() => {
+    if (!showNativeEmoji || Platform.OS === 'web') return undefined;
+    const sub = Keyboard.addListener('keyboardDidShow', () => {
+      let composerFocused = false;
+      try { composerFocused = !!inputRef.current?.isFocused?.(); } catch {}
+      if (!composerFocused) return;
+      if (_nativeEmojiFallbackRef.current) { clearTimeout(_nativeEmojiFallbackRef.current); _nativeEmojiFallbackRef.current = null; }
+      setShowNativeEmoji(false);
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [showNativeEmoji]);
+  const handleNativeEmojiInsert = useCallback((emoji) => {
+    const cur = composerStore.get() || '';
+    const r = _npInsert(cur, inputSelectionRef.current || { start: cur.length, end: cur.length }, emoji);
+    inputSelectionRef.current = { start: r.cursor, end: r.cursor };
+    try { inputRef.current?.setNativeProps?.({ text: r.text, selection: { start: r.cursor, end: r.cursor } }); } catch {}
+    setInputText(r.text);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleNativeEmojiBackspace = useCallback(() => {
+    const cur = composerStore.get() || '';
+    if (!cur) return;
+    const r = _npDelete(cur, inputSelectionRef.current || { start: cur.length, end: cur.length });
+    if (r.text === cur) return;
+    inputSelectionRef.current = { start: r.cursor, end: r.cursor };
+    try { inputRef.current?.setNativeProps?.({ text: r.text, selection: { start: r.cursor, end: r.cursor } }); } catch {}
+    setInputText(r.text);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [stickerMakerSrc, setStickerMakerSrc] = _useStateT(null); // [2026-10-08 sticker-maker]
   const [stickerSheet, setStickerSheet] = _useStateT(null); // [2026-10-10 stickers-import] { messageId, url }
   const [stickerDrop, setStickerDrop] = _useStateT(null); // [2026-10-10 stickers-import] web: [{uri, blob, name, type, size}]
@@ -12802,6 +12887,7 @@ function ChatConversationInner() {
       showAttachMenu, setShowAttachMenu,
       showGifPicker, setShowGifPicker,
       showStickerPicker, setShowStickerPicker,
+      showNativeEmoji, setShowNativeEmoji, // [2026-10-15 native-emoji]
       selectionMode, setSelectionMode, setSelectedIds,
       editingMsg, setEditingMsg,
       replyTo, setReplyTo,
@@ -13523,6 +13609,7 @@ function ChatConversationInner() {
     })();
     return () => {
       try { SC.allowScreenCaptureAsync?.('chatyy-chat-private')?.catch?.(() => {}); } catch {}
+      try { require('../services/screenProtect').reassertScreenProtect?.(); } catch {} // [2026-10-15 screen-protect-all]
     };
   }, [chatLocked]);
 
@@ -23874,6 +23961,165 @@ function ChatConversationInner() {
     if (Platform.OS === 'ios') setTimeout(() => { try { fn(); } catch {} }, 350);
     else { try { fn(); } catch {} }
   };
+  // ── [2026-10-15 native-profile] Cabeçalho nativo estilo Telegram + mídia em
+  // abas + listas nativas (modules/expo-chat-profile). Todas as ações chamam
+  // os MESMOS handlers da folha JS. Kill switch: globalThis.__chatyy_native_profile = false.
+  const [nativeProfileOff, setNativeProfileOff] = _useStateT(false);
+  const _npOn = Platform.OS !== 'web' && !nativeProfileOff && shouldUseNativeProfile();
+  const _npContact = _npOn && conversationType === 'direct';
+  const _npGroup = _npOn && conversationType === 'group';
+  const _npOff = () => setNativeProfileOff(true);
+  const _npTheme = _npOn && (showContactInfo || showGroupInfo) ? profileTheme(isDark, colors) : null;
+  const _npAvatarBg = isDark ? '#3a3a3c' : '#aeaeb2';
+  const _npLabels = { close: t('common.close') || 'Fechar', photo: t('chatConv.viewPhoto') || 'Ver foto' };
+  const [infoNativeMedia, setInfoNativeMedia] = _useStateT({ media: [], files: [] });
+  useEffect(() => {
+    if (!_npOn || !(showContactInfo || showGroupInfo) || !conversationId) return undefined;
+    let alive = true;
+    Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 9))
+      .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, media: (r.data?.items || []).filter((it) => it?.file_url).slice(0, 9) })); })
+      .catch(() => {});
+    Promise.resolve(api.chatMediaGallery?.(conversationId, 'file', 5))
+      .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, files: (r.data?.items || []).slice(0, 5) })); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [_npOn, showContactInfo, showGroupInfo, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const _npAbs = (u) => { try { return u && !/^https?:|^file:|^data:/.test(u) ? api.getMediaUrl(u) : u; } catch { return u; } };
+  const buildNativeMediaProps = (go) => {
+    const mediaSrc = (infoNativeMedia.media && infoNativeMedia.media.length ? infoNativeMedia.media : infoMediaThumbs) || [];
+    const media = mediaSrc.map((it, i) => ({ key: String(it.id || i), uri: _npAbs(it.thumb_url || it.file_url), video: /video/.test(String(it.type || '')) }));
+    const files = (infoNativeMedia.files || []).map((it, i) => {
+      const name = String(it.file_name || it.content || t('chat.nprofile.files') || 'Arquivo');
+      const ext = (name.match(/\.([a-z0-9]{1,5})$/i) || [])[1] || '';
+      const kb = Number(it.file_size) || 0;
+      const size = kb > 0 ? (kb > 1048576 ? `${(kb / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(kb / 1024))} KB`) : '';
+      let when = '';
+      try { when = it.created_at ? new Date(it.created_at).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''; } catch {}
+      return { key: String(it.id || i), title: name, subtitle: [size, when].filter(Boolean).join(' · '), ext };
+    });
+    let links = [];
+    try { links = extractRecentLinks(messages, 5); } catch {}
+    return {
+      theme: _npTheme,
+      tabs: [
+        { key: 'media', label: t('chat.nprofile.media') || 'Mídia' },
+        { key: 'links', label: t('chat.nprofile.links') || 'Links' },
+        { key: 'files', label: t('chat.nprofile.files') || 'Arquivos' },
+      ],
+      media, links, files,
+      labels: { seeAll: t('chat.nprofile.seeAll') || 'Ver tudo', empty: t('chat.nprofile.empty') || 'Nada por aqui ainda' },
+      maxItems: 9,
+      onItem: (tab, key) => {
+        if (tab === 'links') { try { Linking.openURL(key); } catch {} return; }
+        go(() => setShowMediaGallery(true));
+      },
+      onSeeAll: () => go(() => setShowMediaGallery(true)),
+      onFatal: _npOff,
+    };
+  };
+  const buildContactNativeHeader = () => {
+    const peerEmail = getContactPeerEmail();
+    const ident = contactIdentity && (contactIdentity.email || '').toLowerCase() === (peerEmail || '').toLowerCase() ? contactIdentity : null;
+    const handleLine = [ident?.username ? `@${ident.username}` : null, ident?.phone || null].filter(Boolean).join('  ·  ') || peerEmail || '';
+    const full = peerEmail ? avatarRefForEmail(peerEmail, conversationName, 'full') : null;
+    return {
+      title: conversationName || '',
+      subtitle: handleLine,
+      avatar: peerEmail ? avatarRefForEmail(peerEmail, conversationName) : null,
+      initials: profileInitials(conversationName, peerEmail),
+      avatarColor: _npAvatarBg,
+      photos: hasRealPhoto(full) ? [full] : [],
+      actions: [
+        { key: 'call', icon: 'call', label: t('chatConv.call') || 'Ligar', onPress: () => contactInfoGo(() => handleStartAudioCall()) },
+        { key: 'video', icon: 'video', label: t('chatConv.video') || 'Vídeo', onPress: () => contactInfoGo(() => handleStartVideoCall()) },
+        { key: 'search', icon: 'search', label: t('chatConv.search') || 'Buscar', onPress: () => contactInfoGo(() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }) },
+        mutedUntil
+          ? { key: 'unmute', icon: 'unmute', active: true, label: t('chatConv.unmuteShort') || 'Reativar', onPress: () => handleMuteChat(null) }
+          : { key: 'mute', icon: 'mute', label: t('chatConv.muteShort') || 'Silenciar', onPress: () => contactInfoGo(() => setShowMuteModal(true)) },
+      ],
+      onAvatarPress: () => contactInfoGo(() => setAvatarLightbox({ name: conversationName, email: peerEmail, uri: null })),
+      onClose: () => setShowContactInfo(false),
+      topInset: 6,
+      theme: _npTheme,
+      labels: _npLabels,
+    };
+  };
+  const buildGroupNativeHeader = () => {
+    const n = membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : (members || []).length;
+    const cnt = t('chatConv.groupMembersCount', { n }) || `${n} membros`;
+    const full = conversationAvatar ? avatarRefForUrl(conversationAvatar, 'full') : null;
+    return {
+      title: conversationName || '',
+      subtitle: `${t('chatConv.group') || 'Grupo'} · ${cnt}`,
+      avatar: conversationAvatar ? avatarRefForUrl(conversationAvatar) : null,
+      initials: profileInitials(conversationName),
+      avatarColor: _npAvatarBg,
+      photos: full ? [full] : [],
+      actions: [
+        { key: 'call', icon: 'call', label: t('chatConv.call') || 'Ligar', onPress: () => { setShowGroupInfo(false); handleStartAudioCall(); } },
+        { key: 'video', icon: 'video', label: t('chatConv.video') || 'Vídeo', onPress: () => { setShowGroupInfo(false); handleStartVideoCall(); } },
+        { key: 'search', icon: 'search', label: t('chatConv.search') || 'Buscar', onPress: () => { setShowGroupInfo(false); setShowSearchBar?.(true); } },
+        mutedUntil
+          ? { key: 'unmute', icon: 'unmute', active: true, label: t('chatConv.unmuteShort') || 'Reativar', onPress: () => handleMuteChat(null) }
+          : { key: 'mute', icon: 'mute', label: t('chatConv.muteShort') || 'Silenciar', onPress: () => groupInfoGo(() => setShowMuteModal(true)) },
+      ],
+      avatarBadge: isGroupAdmin ? 'camera' : '',
+      avatarBusy: !!changingGroupPhoto,
+      onAvatarPress: () => {
+        if (isGroupAdmin) { if (!changingGroupPhoto) handleChangeGroupPhoto(); return; }
+        if (conversationAvatar) groupInfoGo(() => setAvatarLightbox({ name: conversationName, email: null, uri: conversationAvatar }));
+      },
+      onClose: () => setShowGroupInfo(false),
+      topInset: 6,
+      theme: _npTheme,
+      labels: _npLabels,
+    };
+  };
+  const buildMemberRow = (m) => {
+    const isMe = m.email === user?.email;
+    let nick = '';
+    if (m.email && !isMe) { try { nick = require('../services/nicknames').getNickname?.(m.email) || ''; } catch {} }
+    const memberName = nick || emailToDisplayName(m.display_name || m.email?.split('@')[0] || '');
+    const buttons = [];
+    if (isGroupAdmin && !isMe) {
+      buttons.push({ key: 'admin', style: 'pill', label: m.role === 'admin' ? (t('chatConv.demote') || 'Remover admin') : (t('chatConv.promote') || 'Tornar admin') });
+      buttons.push({ key: 'remove', style: 'remove', label: t('chatConv.removeMember') || 'Remover' });
+    }
+    return {
+      key: String(m.email || memberName),
+      title: memberName + (isMe ? ` (${t('chat.you') || 'Você'})` : ''),
+      subtitle: m.email || '',
+      avatar: m.email ? avatarRefForEmail(m.email, m.display_name || m.email) : null,
+      initials: profileInitials(memberName, m.email),
+      avatarColor: profileColor(_npAvatarBg),
+      badge: m.role === 'admin' ? 'Admin' : '',
+      link: (m.role === 'admin' && isGroupAdmin && !isMe) ? { key: 'perms', label: t('chatConv.editPermissions') || 'Editar permissões' } : null,
+      buttons,
+    };
+  };
+  const onNativeMemberAction = (key, action) => {
+    const m = (members || []).find((x) => String(x.email) === key);
+    if (!m) return;
+    if (action === 'row' || action === 'avatar') { setProfileViewer({ name: m.display_name || m.email, email: m.email }); return; }
+    if (action === 'admin') { handleToggleAdmin(m.email, m.role); return; }
+    if (action === 'remove') {
+      let nick = '';
+      try { nick = require('../services/nicknames').getNickname?.(m.email) || ''; } catch {}
+      handleRemoveMember(m.email, nick || emailToDisplayName(m.display_name || m.email?.split('@')[0] || ''));
+      return;
+    }
+    if (action === 'perms') {
+      setRoleEditTarget(m.email);
+      setRolePermsDraft({
+        add_members: true,
+        edit_info: true,
+        remove_messages: true,
+        pin_messages: true,
+        promote_admins: false,
+        ...(rolePermsLocal[m.email] || {}),
+      });
+    }
+  };
   useEffect(() => {
     if (!showContactInfo) return undefined;
     let alive = true;
@@ -27371,6 +27617,7 @@ function ChatConversationInner() {
         return (
           <TouchableOpacity
             key={m.id || keyIdx}
+            ref={_heroRef(m.id, 4)}
             activeOpacity={0.9}
             onPressIn={() => {
               // Touch-down prefetch — see image bubble above for rationale.
@@ -28011,6 +28258,7 @@ function ChatConversationInner() {
           const hasCaption = msg.content && msg.content !== msg.file_name && !_looksLikeFilename;
           return (
             <TouchableOpacity
+              ref={_heroRef(msg.id, 12)}
               onPressIn={() => {
                 // WhatsApp-style touch-down prefetch. Tap → press → release
                 // is ~80-200ms; we use that window to start downloading the
@@ -28725,6 +28973,7 @@ function ChatConversationInner() {
           };
           return (
             <TouchableOpacity
+              ref={_heroRef(msg.id, 12)}
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
                 if (msg._uploading || !msg.file_url) return;
@@ -32733,7 +32982,16 @@ function ChatConversationInner() {
       }).catch(() => {});
     } catch {}
   }, [conversationId, currentEmail]);
-  const _nlOnRowPress = useCallback(({ item, part, url, index }) => {
+  // [2026-10-15 native-list hero] Viewer: com a lista nativa não há nó RN por
+  // miniatura → mediaHero mede pelo nativo (ref.mediaFrame) e usa o frame do
+  // toque como dica (ida). Kill switch: globalThis.__chatyy_hero = false.
+  useEffect(() => {
+    if (!_nl.on) return undefined;
+    let off = null;
+    try { off = require('../services/mediaHero').setHeroResolver((mid) => flashListRef.current?.mediaFrame?.(mid) || null); } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [_nl.on]);
+  const _nlOnRowPress = useCallback(({ item, part, url, index, frame }) => {
     const A = _nlActRef.current;
     if (!item || item._type === 'separator' || item._type === 'unread_separator') return;
     const target = item._type === 'album' ? (item._items || [])[0] : item;
@@ -32748,7 +33006,15 @@ function ChatConversationInner() {
         try { if (typeof _nlCardActionRef.current === 'function') _nlCardActionRef.current(item, target, url, index); } catch {}
         return;
       }
-      case 'media': _nlOpenMedia(item, index); return;
+      case 'media': {
+        if (frame) {
+          const _its = item._type === 'album' ? (item._items || []) : null;
+          const _m = _its ? _its[Math.max(0, Math.min(_its.length - 1, index || 0))] : item;
+          try { if (_m) require('../services/mediaHero').setHeroHint(_m.id, frame, frame.radius); } catch {}
+        }
+        _nlOpenMedia(item, index);
+        return;
+      }
       case 'audio': _nlToggleAudio(target); return;
       case 'file': _nlOpenFile(target); return;
       case 'reply': if (target.reply_to && target.reply_to.id) A.safeScrollToMsg({ id: target.reply_to.id }); return;
@@ -32794,12 +33060,101 @@ function ChatConversationInner() {
         A.handleDoubleTap(target);
     }
   }, [_nlOpenMedia, _nlOpenFile, _nlToggleAudio, currentEmail]);
-  const _nlOnRowLongPress = useCallback(({ item, key, index, anchor }) => {
+  // [2026-10-15 native-ctxmenu] Menu de contexto NATIVO (apiVersion 3): a lista
+  // de ações sai de nativeContextMenu.buildNativeCtxMenu com as MESMAS condições
+  // do menu JS (Modal do selectedMsg) e as escolhas voltam para os MESMOS
+  // handlers (runNativeCtxAction / handleReact). Kill switch:
+  // globalThis.__chatyy_native_ctxmenu = false → overlay JS de sempre.
+  const _nlCtxMenuOn = _nl.on && Platform.OS !== 'web' && nativeCtxMenuAvailable();
+  const _nlCtxMsgRef = useRef(null); // { key, msg } da mensagem com o menu aberto
+  const _nlCtxEnvRef = useRef(null);
+  _nlCtxEnvRef.current = (m) => {
+    const meLc = String(currentEmail || '').toLowerCase();
+    let mine = '';
+    try {
+      for (const g of (Array.isArray(m?.reactions) ? m.reactions : [])) {
+        const us = Array.isArray(g?.users) ? g.users : (typeof g?.users === 'string' ? g.users.split(',') : []);
+        if (us.some(u => String(u || '').toLowerCase() === meLc)) { mine = g.emoji || g.reaction || ''; break; }
+      }
+    } catch {}
+    let recents = [];
+    try { recents = require('../components/chat/nativeContextMenu').recentEmojis(); } catch {}
+    return {
+      t, currentEmail, conversationType, forwardingDisabled, isGroupAdmin,
+      advPrivOn: !!_advPriv?.enabled,
+      pinned: pinnedIdSet.has(String(m?.id)),
+      translated: !!translatedMessages[m?.id]?.text,
+      disappearingTimer, e2eEnabled,
+      isImported: (x) => _chatOrder().isImportedMsg(x),
+      editKind: _msgEditKind,
+      deleteWindowMs: DELETE_FOR_ALL_WINDOW_MS,
+      fmtLeft: _fmtDeleteWindowLeft,
+      quick: getQuickReactions().map(r => r.emoji),
+      mine, recents, isDark, accent: colors.primary,
+    };
+  };
+  const _nlCtxHRef = useRef(null);
+  _nlCtxHRef.current = () => ({
+    handleReply, setQuoteSelectModal, handleCopyMessage, handleEdit, handlePinMessage, handleForward,
+    handleTranslate, handleMessageInfo, handleStarMessage, handleSaveMedia, handleReportUser, handleDelete,
+    setMessages, mapKeep: _mapKeep, Haptics, setSelectionMode, toggleSelection, setStickerSheet,
+    setStickerMakerSrc, router, api, t, mt: _mt, safeAlert, emailToDisplayName, mountedRef, setAudioTranscription,
+  });
+  const _nlCtxOpen = (key, target) => {
+    if (!key || !target || target.type === 'system') return false;
+    let payload = null;
+    try {
+      payload = require('../components/chat/nativeContextMenu').buildNativeCtxMenu(key, target, _nlCtxEnvRef.current(target));
+    } catch (e) { if (__DEV__) console.warn('[native-ctxmenu] build', e?.message); return false; }
+    try { Keyboard.dismiss(); } catch {}
+    _nlCtxMsgRef.current = { key, msg: target };
+    const p = flashListRef.current?.showContextMenu?.(payload);
+    if (!p || typeof p.then !== 'function') { _nlCtxMsgRef.current = null; return false; }
+    p.then((ok) => {
+      if (ok) return;
+      // célula sumiu / binário recusou → menu JS clássico
+      if (_nlCtxMsgRef.current?.key === key) _nlCtxMsgRef.current = null;
+      try { require('../components/chat/nativeContextMenu').resetNativeEmojiSent(); } catch {}
+      _nlActRef.current?.handleLongPress?.(target);
+    });
+    return true;
+  };
+  const _nlOnMenuAction = useCallback(({ key, action }) => {
+    const cur = _nlCtxMsgRef.current;
+    if (!cur || cur.key !== key || !action) return;
+    try { require('../components/chat/nativeContextMenu').runNativeCtxAction(action, cur.msg, _nlCtxHRef.current()); } catch (e) { if (__DEV__) console.warn('[native-ctxmenu] action', action, e?.message); }
+  }, []);
+  const _nlOnReact = useCallback(({ key, emoji }) => {
+    const cur = _nlCtxMsgRef.current;
+    if (!cur || cur.key !== key || !emoji) return;
+    try { _nlActRef.current.handleReact(cur.msg.id, emoji); } catch {}
+  }, []);
+  const _nlOnMenuDismiss = useCallback(({ key }) => {
+    if (_nlCtxMsgRef.current && _nlCtxMsgRef.current.key === key) _nlCtxMsgRef.current = null;
+  }, []);
+  // Android: voltar fecha o menu nativo (o overlay também trata a tecla).
+  useEffect(() => {
+    if (!_nlCtxMenuOn || Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!_nlCtxMsgRef.current) return false;
+      try { flashListRef.current?.dismissContextMenu?.(); } catch {}
+      _nlCtxMsgRef.current = null;
+      return true;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [_nlCtxMenuOn]);
+  const _nlOnRowLongPress = useCallback(({ item, key, index, anchor, native }) => {
     const A = _nlActRef.current;
-    if (!item || item._type === 'separator' || item._type === 'unread_separator') return;
+    const _drop = () => { if (native) { try { flashListRef.current?.dismissContextMenu?.(); } catch {} } };
+    if (!item || item._type === 'separator' || item._type === 'unread_separator') { _drop(); return; }
     const target = item._type === 'album' ? ((item._items || [])[index || 0] || (item._items || [])[0]) : item;
-    if (!target) return;
-    if (A.selectionMode) { A.toggleSelection(target.id); return; }
+    if (!target) { _drop(); return; }
+    if (A.selectionMode) { _drop(); A.toggleSelection(target.id); return; }
+    // [native-ctxmenu] o nativo já levantou o balão → manda a lista de ações.
+    if (native) {
+      if (_nlCtxOpenRef.current && _nlCtxOpenRef.current(key, target)) return;
+      _drop();
+    }
     // [fase 2] O nativo já deu o haptic + "lift" e mandou o snapshot do balão →
     // abre o MESMO overlay de lift do caminho FlashList (MessageLiftOverlay).
     if (anchor && anchor.uri && LIFT_AVAILABLE && target.type !== 'system' && !liftPendingRef.current) {
@@ -32816,6 +33171,8 @@ function ChatConversationInner() {
     }
     A.handleLongPress(target);
   }, [currentEmail]);
+  const _nlCtxOpenRef = useRef(null);
+  _nlCtxOpenRef.current = _nlCtxOpen;
   const _nlOnSwipe = useCallback(({ item, dir }) => {
     const A = _nlActRef.current;
     const target = item && item._type === 'album' ? (item._items || [])[0] : item;
@@ -34328,6 +34685,10 @@ function ChatConversationInner() {
           bottomInset={Spacing.sm}
           onRowPress={_nlOnRowPress}
           onRowLongPress={_nlOnRowLongPress}
+          ctxMenu={_nlCtxMenuOn}
+          onMenuAction={_nlOnMenuAction}
+          onReact={_nlOnReact}
+          onMenuDismiss={_nlOnMenuDismiss}
           onSwipeReply={_nlOnSwipe}
           onLoadOlder={onThreadReachedOldest}
           onScroll={handleFlatListScroll}
@@ -35139,6 +35500,8 @@ function ChatConversationInner() {
                 // [2026-10-10] Tocar no campo com figurinhas/GIF abertos = teclado no lugar do painel.
                 setShowStickerPicker(false);
                 setShowGifPicker(false);
+                // [2026-10-15 native-emoji] painel nativo some no keyboardDidShow (encolhe junto); rede de segurança:
+                if (showNativeEmoji) closeNativeEmojiToKeyboard();
       };
       const _onComposerBlur = () => {
                 setInputFocused(false);
@@ -35548,7 +35911,7 @@ function ChatConversationInner() {
           // [2026-10-10] Com figurinhas/GIF abertos o PAINEL reserva o home
           // indicator (bottomInset) — aqui só o respiro mínimo, senão sobrava
           // uma faixa vazia entre o composer e o painel.
-          paddingBottom: (showStickerPicker || showGifPicker) ? Spacing.sm : composerBottomPad,
+          paddingBottom: (showStickerPicker || showGifPicker || showNativeEmoji) ? Spacing.sm : composerBottomPad,
         }]}>
           {/* WhatsApp pill container — 2026 refined.
               Telegram-style horizontal swipe: a short flick LEFT on the
@@ -35599,6 +35962,7 @@ function ChatConversationInner() {
             <TouchableOpacity
               onPress={() => {
                 // [2026-10-10] Painel no lugar do teclado: fecha o teclado antes de abrir.
+                if (showNativeEmoji) { closeNativeEmojiToKeyboard(); return; } // [2026-10-15 native-emoji]
                 if (showStickerPicker) { setShowStickerPicker(false); return; }
                 openComposerPanel('sticker');
               }}
@@ -35606,7 +35970,7 @@ function ChatConversationInner() {
               accessibilityLabel={t('chatConv.stickers') || 'Stickers'}
               accessibilityRole="button"
             >
-              <IconSmile size={22} color={showStickerPicker ? colors.text : _chromeIcon} />
+              <IconSmile size={22} color={(showStickerPicker || showNativeEmoji) ? colors.text : _chromeIcon} />
             </TouchableOpacity>
 
             {/* TextInput - center, flex: 1.
@@ -36045,13 +36409,13 @@ function ChatConversationInner() {
               ? (members || []).filter((m) => typeof m?.email === 'string' && m.email !== currentEmail).map((m) => ({ token: m.email.split('@')[0], email: m.email }))
               : undefined}
             sendMenu={[{ key: 'effect', label: t('effects.title') || 'Enviar com efeito' }, ...getScheduleOptions().map((o) => ({ key: 'sched:' + o.value, label: o.label }))]}
-            bottomInset={(showStickerPicker || showGifPicker) ? Spacing.sm : composerBottomPad}
+            bottomInset={(showStickerPicker || showGifPicker || showNativeEmoji) ? Spacing.sm : composerBottomPad}
             sending={sending}
             uploading={uploading}
             enterSends={enterSends}
             autocorrect={autocorrectOn}
             showVideoNote={!!VideoNoteRecorder}
-            emojiActive={showStickerPicker}
+            emojiActive={showStickerPicker || showNativeEmoji}
             voiceBlocked={_ncCallBusy}
             disabled={(blockedByPeer || iBlockedPeer) && conversationType === 'direct'}
             onChangeText={_onComposerText}
@@ -36066,6 +36430,7 @@ function ChatConversationInner() {
             }}
             onCamera={() => handlePickAttachment('camera')}
             onEmoji={() => {
+              if (showNativeEmoji) { closeNativeEmojiToKeyboard(); return; } // [2026-10-15 native-emoji]
               if (showStickerPicker) { setShowStickerPicker(false); return; }
               openComposerPanel('sticker');
             }}
@@ -36522,6 +36887,29 @@ function ChatConversationInner() {
           onSendAsPhoto={(fs) => setMediaPreview(prev => prev?.visible ? { visible: true, files: [...(prev.files || []), ...fs] } : { visible: true, files: fs })}
         />
       ) : null}
+
+      {/* [2026-10-15 native-emoji] Painel nativo Emoji | Figurinhas | GIF */}
+      {_nativeEmojiOn && (
+        <NativeEmojiPanel
+          visible={showNativeEmoji}
+          tab={nativeEmojiTab}
+          onTabChange={setNativeEmojiTab}
+          isDark={isDark}
+          colors={colors}
+          t={t}
+          insetBottom={insets.bottom}
+          composerPad={composerBottomPad}
+          composerGap={Spacing.sm}
+          windowHeight={Dimensions.get('window').height}
+          onShown={onNativeEmojiShown}
+          onEmoji={handleNativeEmojiInsert}
+          onBackspace={handleNativeEmojiBackspace}
+          onSendSticker={(url) => { try { handleSendSticker(url); } catch {} }}
+          onSendGif={(gif) => { try { handleSendGif(gif); } catch {} }}
+          onOpenStickerManager={() => { setShowNativeEmoji(false); setShowStickerPicker(true); }}
+          onFatal={() => { setNativeEmojiOff(true); setShowNativeEmoji(false); }}
+        />
+      )}
 
       {/* Sticker Picker Panel */}
       {showStickerPicker && (
@@ -38263,13 +38651,16 @@ function ChatConversationInner() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
+          {!_npContact && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
             <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
+          )}
+          {/* [2026-10-15 native-profile] _npContact → cabeçalho nativo (avatar encolhe p/ a barra, puxar abre a galeria) */}
+          <ProfileScrollHost native={_npContact && showContactInfo ? buildContactNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
             {(() => {
               const peerEmail = getContactPeerEmail();
               const peer = peerEmail || params.email || '';
@@ -38285,6 +38676,7 @@ function ChatConversationInner() {
               const peerName = conversationName || '';
               return (
                 <>
+                  {!_npContact && (
                   <FadeSlideIn>
                   <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 22, paddingHorizontal: Spacing.md, backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, marginBottom: 16 }}>
                     <TouchableOpacity
@@ -38329,12 +38721,26 @@ function ChatConversationInner() {
                     </View>
                   </View>
                   </FadeSlideIn>
+                  )}
 
-                  <View style={{ paddingHorizontal: Spacing.md }}>
+                  <View style={{ paddingHorizontal: Spacing.md, paddingTop: _npContact ? 12 : 0 }}>
+                    {_npContact && !!ident?.bio && (
+                      <GroupCard colors={colors} isDark={isDark}>
+                        <Text style={{ fontSize: 14.5, color: colors.text, lineHeight: 20, paddingHorizontal: 14, paddingVertical: 12 }} selectable>{ident.bio}</Text>
+                      </GroupCard>
+                    )}
                     <GroupCard colors={colors} isDark={isDark}>
+                      {_npContact ? (
+                        <NativeProfileMedia {...buildNativeMediaProps(contactInfoGo)} fallback={() => (
+                          <InfoMediaStrip items={infoMediaThumbs} colors={colors}
+                            title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
+                            onPress={() => contactInfoGo(() => setShowMediaGallery(true))} />
+                        )} />
+                      ) : (
                       <InfoMediaStrip items={infoMediaThumbs} colors={colors}
                         title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
                         onPress={() => contactInfoGo(() => setShowMediaGallery(true))} />
+                      )}
                       <GroupDivider colors={colors} />
                       <GroupRow colors={colors} Icon={IconStar}
                         title={t('chat.starredMessages') || 'Mensagens favoritas'} right="chevron"
@@ -38384,7 +38790,18 @@ function ChatConversationInner() {
                       <>
                         <GroupSectionLabel colors={colors}>{`${t('profile.commonChats') || 'Grupos em comum'} (${contactCommonGroups.length})`}</GroupSectionLabel>
                         <GroupCard colors={colors} isDark={isDark}>
-                          {contactCommonGroups.slice(0, 5).map((g, gi) => (
+                          {_npContact ? (
+                            <NativeProfileList
+                              theme={_npTheme}
+                              avatarSize={34}
+                              rows={contactCommonGroups.slice(0, 5).map((g) => ({ key: String(g.id), title: String(g.name || ''), avatar: g.avatar_url ? avatarRefForUrl(g.avatar_url) : null, initials: profileInitials(g.name), avatarColor: profileColor(_npAvatarBg), chevron: true }))}
+                              onRowAction={(key) => {
+                                const g = contactCommonGroups.find((x) => String(x.id) === key);
+                                if (g) contactInfoGo(() => require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: g.id, name: g.name || '', type: 'group' } }, { replace: true }));
+                              }}
+                              onFatal={_npOff}
+                            />
+                          ) : contactCommonGroups.slice(0, 5).map((g, gi) => (
                             <React.Fragment key={String(g.id)}>
                               {gi > 0 && <GroupDivider colors={colors} />}
                               <PressableRow
@@ -38496,7 +38913,7 @@ function ChatConversationInner() {
                 </>
               );
             })()}
-          </ScrollView>
+          </ProfileScrollHost>
         </View>
         </View>
       </Modal>
@@ -38917,14 +39334,24 @@ function ChatConversationInner() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
+          {!_npGroup && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfoTitle') || 'Dados do grupo'}</Text>
             <TouchableOpacity onPress={() => setShowGroupInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
-          <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl }}>
+          )}
+          {/* [2026-10-15 native-profile] _npGroup → cabeçalho nativo; hero/descrição JS abaixo só no fallback */}
+          <ProfileScrollHost native={_npGroup && showGroupInfo ? buildGroupNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl }}>
             {/* ─── Hero header — large centered avatar + name + member count ─── */}
+            {_npGroup ? (
+              !!conversationDescription && (
+                <View style={{ marginHorizontal: Spacing.md, marginTop: 12, marginBottom: 4, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.surface }}>
+                  {renderMarkdownLite(conversationDescription, { color: colors.text, fontSize: 14, lineHeight: 20 })}
+                </View>
+              )
+            ) : (
             <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 26, paddingHorizontal: Spacing.md, backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, marginBottom: 16 }}>
               <TouchableOpacity
                 style={{ marginBottom: 16, position: 'relative' }}
@@ -38987,8 +39414,9 @@ function ChatConversationInner() {
                 </View>
               )}
             </View>
+            )}
 
-            <View style={{ paddingHorizontal: Spacing.md }}>
+            <View style={{ paddingHorizontal: Spacing.md, paddingTop: _npGroup ? 12 : 0 }}>
             {isGroupAdmin ? (
               <>
                 <GroupSectionLabel colors={colors}>{t('chatConv.groupName')}</GroupSectionLabel>
@@ -39150,6 +39578,21 @@ function ChatConversationInner() {
                       {t('group.search.empty') || 'Nenhum membro encontrado'}
                     </Text>
                   </View>
+                );
+              }
+              if (_npGroup) {
+                // [2026-10-15 native-profile] lista nativa (mesma ordem: você, admins, A–Z)
+                const sorted = [...filtered].sort((a, b) => {
+                  const aIsMe = a.email === user?.email;
+                  const bIsMe = b.email === user?.email;
+                  if (aIsMe !== bIsMe) return aIsMe ? -1 : 1;
+                  const aAdmin = a.role === 'admin';
+                  const bAdmin = b.role === 'admin';
+                  if (aAdmin !== bAdmin) return aAdmin ? -1 : 1;
+                  return String(a.display_name || a.email || '').localeCompare(String(b.display_name || b.email || ''));
+                });
+                return (
+                  <NativeProfileList theme={_npTheme} rows={sorted.map(buildMemberRow)} onRowAction={onNativeMemberAction} onFatal={_npOff} />
                 );
               }
               return filtered.sort((a, b) => {
@@ -39335,9 +39778,17 @@ function ChatConversationInner() {
             {/* Media, links & search shortcuts */}
             <GroupSectionLabel colors={colors}>{t('chatConv.media') || 'Mídia, links e docs'}</GroupSectionLabel>
             <GroupCard colors={colors} isDark={isDark}>
+              {_npGroup ? (
+                <NativeProfileMedia {...buildNativeMediaProps(groupInfoGo)} fallback={() => (
+                  <InfoMediaStrip items={infoMediaThumbs} colors={colors}
+                    title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
+                    onPress={() => groupInfoGo(() => setShowMediaGallery(true))} />
+                )} />
+              ) : (
               <InfoMediaStrip items={infoMediaThumbs} colors={colors}
                 title={t('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
                 onPress={() => groupInfoGo(() => setShowMediaGallery(true))} />
+              )}
               <GroupDivider colors={colors} />
               <GroupRow
                 colors={colors}
@@ -39737,7 +40188,7 @@ function ChatConversationInner() {
               />
             </GroupCard>
             </View>
-          </ScrollView>
+          </ProfileScrollHost>
         </View>
         </View>
       </Modal>

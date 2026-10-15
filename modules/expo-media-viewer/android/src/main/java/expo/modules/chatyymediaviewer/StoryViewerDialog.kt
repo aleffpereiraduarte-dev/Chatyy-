@@ -236,6 +236,7 @@ class StoryViewerDialog(
 
   private fun setupWindow() {
     val w = window ?: return
+    ScreenProtectBridge.protect(w, false) // [2026-10-15 screen-protect-all]
     w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)

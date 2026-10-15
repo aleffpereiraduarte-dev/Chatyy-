@@ -17,6 +17,8 @@ const EDGE_SERVERS = [
   // leitura sempre no master). Enquanto o DNS api-usw não existir o probe falha (99999) e nada muda;
   // a histerese (>25% E >40ms) + "empate → US" seguem valendo.
   { url: 'https://api-usw.chatyy.com.br', region: 'usw', base: 'https://api-usw.chatyy.com.br' },
+  // [2026-10-15] Índia (Mumbai): relay igual ao Seattle (QA: chat_list 545 ms vs 1286 ms direto ao US).
+  { url: 'https://api-in.chatyy.com.br', region: 'in', base: 'https://api-in.chatyy.com.br' },
 ];
 
 // US origin/master is the INVIOLABLE fallback. Whenever latency detection has
@@ -35,8 +37,8 @@ export function getOriginBase() { return ORIGIN_BASE; }
 // v12 [2026-10-08 region-pick] = escolha com dica do servidor + probe aquecido
 // + histerese. Sobe a versão para descartar as escolhas v11 (1 probe frio) —
 // ~20% dos clientes nos EUA estavam presos em EU/BR (+150-300ms por escrita).
-const EDGE_CACHE_VERSION = 12;
-const VALID_REGIONS = ['us', 'br', 'eu', 'usw'];
+const EDGE_CACHE_VERSION = 13; // v13 [2026-10-15] + edge Índia
+const VALID_REGIONS = ['us', 'br', 'eu', 'usw', 'in'];
 
 let _bestServer = null;
 let _detecting = false;
@@ -1240,6 +1242,7 @@ function getActiveAccountEmail() {
 
 function setActiveAccountEmail(email) {
   _cachedActiveAccount = email || '';
+  try { require('./screenProtect').syncScreenProtect?.('account'); } catch {} // [2026-10-15 screen-protect-all] conta liberada (QA) x protegida
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       if (email) localStorage.setItem('mail_active_account', email);
@@ -1260,6 +1263,7 @@ function setActiveAccountEmail(email) {
       const a = await SecureStore.getItemAsync('mail_active_account');
       if (a) _cachedActiveAccount = a;
     } catch {}
+  try { require('./screenProtect').syncScreenProtect?.('boot'); } catch {} // [2026-10-15 screen-protect-all] conta liberada (QA) x protegida
   }
 })();
 
@@ -2946,6 +2950,7 @@ export async function clearAuthTokenAsync() {
 // resurrects the session.
 export async function setActiveAccountEmailAsync(email) {
   _cachedActiveAccount = email || '';
+  try { require('./screenProtect').syncScreenProtect?.('account'); } catch {} // [2026-10-15 screen-protect-all] conta liberada (QA) x protegida
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       if (email) localStorage.setItem('mail_active_account', email);
@@ -11470,6 +11475,8 @@ export async function appInit() {
 // Use this on every app open for instant data
 export async function bootstrap() {
   const r = await apiCall('bootstrap');
+  // [2026-10-15 screen-protect-all] flag remota screen_protect_all (+ allowlist em hash).
+  try { if (r?.success && r.data?.config) require('./screenProtect').noteServerConfig?.(r.data.config); } catch {}
   if (r?.success && r.data) {
     // Cache locally for offline/instant access
     try {

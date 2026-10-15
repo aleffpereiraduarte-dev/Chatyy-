@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-profile",
+  "version": "1.0.0",
+  "description": "Chatyy native contact/group info: Telegram-style collapsing profile header (avatar shrinks into the title, pull-down opens the photo gallery), media/links/files tabs grid and member list.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

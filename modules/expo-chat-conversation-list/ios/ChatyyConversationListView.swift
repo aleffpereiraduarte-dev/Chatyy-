@@ -438,58 +438,11 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   }
 
   private func buildMenu(id: String, row: CLRow) -> UIMenu {
-    // Menu nativo estilo WhatsApp (toque longo): ações rápidas no topo,
-    // submenus (silenciar por…, listas, mais) e destrutivas em vermelho.
-    // A confirmação das destrutivas é a dos handlers JS já existentes
-    // (Alert nativo / biometria), então aqui só emitimos o evento.
-    let L = labels
-    func sym(_ name: String) -> UIImage? { UIImage(systemName: name) }
-    func act(_ action: String, _ title: String, _ symbol: String, destructive: Bool = false,
-             extra: [String: Any] = [:], on: Bool = false) -> UIAction {
-      let a = UIAction(title: title, image: sym(symbol)) { [weak self] _ in
-        var body: [String: Any] = ["id": id, "action": action, "source": "menu"]
-        for (k, v) in extra { body[k] = v }
-        self?.onRowAction(body)
-      }
-      if destructive { a.attributes.insert(.destructive) }
-      if on { a.state = .on }
-      return a
+    // Menu nativo estilo WhatsApp (toque longo) — montado em CLMenuBuilder
+    // (o mesmo da fileira de fixados).
+    return CLMenuBuilder.rowMenu(id: id, row: row, labels: labels, folders: folders) { [weak self] body in
+      self?.onRowAction(body)
     }
-    var top: [UIMenuElement] = []
-    top.append(act("toggleRead",
-                   row.unreadVisible ? L.get("markRead", "Marcar como lida") : L.get("markUnread", "Marcar como não lida"),
-                   row.unreadVisible ? "checkmark.message" : "message"))
-    top.append(act("pin", row.pinned ? L.get("unpin", "Desafixar") : L.get("pin", "Fixar"), row.pinned ? "pin.slash" : "pin"))
-    if row.muted {
-      top.append(act("mute", L.get("unmute", "Reativar som"), "bell"))
-    } else {
-      let now = Date().timeIntervalSince1970
-      top.append(UIMenu(title: L.get("mute", "Silenciar"), image: sym("bell.slash"), children: [
-        act("mute", L.get("muteFor8h", "Silenciar por 8 horas"), "clock", extra: ["until": floor(now) + 8 * 3600]),
-        act("mute", L.get("muteFor1w", "Silenciar por 1 semana"), "calendar", extra: ["until": floor(now) + 7 * 86400]),
-        act("mute", L.get("muteForever", "Silenciar sempre"), "bell.slash", extra: ["until": 4070908800.0]),
-      ]))
-    }
-    top.append(act("archive", row.archived ? L.get("unarchive", "Desarquivar") : L.get("archive", "Arquivar"),
-                   row.archived ? "tray.and.arrow.up" : "archivebox"))
-    top.append(act("lock", row.lockOn ? L.get("unlockChat", "Destrancar conversa") : L.get("lockChat", "Trancar conversa"),
-                   row.lockOn ? "lock.open" : "lock"))
-    var lists: [UIMenuElement] = folders.map { f -> UIMenuElement in
-      act("list", f.name, f.ids.contains(id) ? "checkmark" : "list.bullet", extra: ["folderId": f.id], on: f.ids.contains(id))
-    }
-    lists.append(act("listNew", L.get("createNewList", "Criar nova lista"), "plus"))
-    top.append(UIMenu(title: L.get("addToList", "Adicionar à lista"), image: sym("text.badge.plus"), children: lists))
-    top.append(UIMenu(title: L.get("moreMenu", "Mais"), image: sym("ellipsis.circle"), children: [
-      act("select", L.get("select", "Selecionar várias"), "checkmark.circle"),
-      act("clear", L.get("clearChat", "Limpar conversa"), "xmark.circle"),
-    ]))
-    var danger: [UIMenuElement] = []
-    if !row.blockLabel.isEmpty {
-      danger.append(act("block", row.blockLabel, "nosign", destructive: true))
-    }
-    danger.append(act("report", L.get("report", "Denunciar"), "exclamationmark.bubble", destructive: true))
-    danger.append(act("delete", L.get("delete", "Apagar"), "trash", destructive: true))
-    return UIMenu(title: "", children: top + [UIMenu(title: "", options: .displayInline, children: danger)])
   }
 
   // MARK: - UICollectionViewDelegate

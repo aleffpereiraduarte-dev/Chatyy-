@@ -230,7 +230,8 @@ class MediaEditorDialog(
     val w = window ?: return
     w.setBackgroundDrawable(ColorDrawable(Color.BLACK))
     w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-    if (opts.secure) w.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    // [2026-10-15 screen-protect-all] app inteiro protegido (hub) + secure local da conversa.
+    ScreenProtectBridge.protect(w, opts.secure)
     @Suppress("DEPRECATION")
     w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
     WindowCompat.setDecorFitsSystemWindows(w, false)

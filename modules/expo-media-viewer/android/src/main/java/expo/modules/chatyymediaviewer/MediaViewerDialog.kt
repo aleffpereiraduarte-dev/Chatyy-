@@ -4,7 +4,14 @@ import android.app.Activity
 import android.app.Application
 import android.app.Dialog
 import android.content.res.ColorStateList
+import android.animation.ValueAnimator
+import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -19,6 +26,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
@@ -108,6 +116,35 @@ class MediaViewerDialog(
   private var wasPlaying = false
   private var settleRetries = 0
 
+  // [2026-10-15 hero] Transição bolha ↔ viewer: a foto sai do frame da
+  // miniatura (coordenadas do RN: dp, relativas à área visível da janela —
+  // RootViewUtil.getViewportOffset) e volta à bolha da página atual ao fechar.
+  private var heroSource: RectF? = null
+  private var heroSourceRadius = 0f
+  private val returnRects = HashMap<Int, RectF>()
+  private val returnRadii = HashMap<Int, Float>()
+  private var heroView: MVHeroView? = null
+  private var heroAnim: ValueAnimator? = null
+  private var heroPolls = 0
+
+  /** Antes do show(). rect/radius em dp do RN. */
+  fun setHeroSource(rect: RectF, radiusDp: Float) {
+    heroSource = RectF(rect)
+    heroSourceRadius = max(0f, radiusDp)
+    returnRects[current] = RectF(rect)
+    returnRadii[current] = max(0f, radiusDp)
+  }
+
+  fun setReturnRect(index: Int, rect: RectF?, radiusDp: Float) {
+    if (rect != null) {
+      returnRects[index] = RectF(rect)
+      returnRadii[index] = max(0f, radiusDp)
+    } else {
+      returnRects.remove(index)
+      returnRadii.remove(index)
+    }
+  }
+
   private val progressLoop = object : Runnable {
     override fun run() {
       updateProgress()
@@ -148,8 +185,17 @@ class MediaViewerDialog(
     window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     if (!faded) {
       faded = true
-      root.alpha = 0f
-      root.animate().alpha(1f).setDuration(180).start()
+      if (heroSource != null) {
+        // Hero: tudo invisível até a foto sair da bolha (que segue visível atrás).
+        backdrop.alpha = 0f
+        pager.alpha = 0f
+        topBar.alpha = 0f
+        bottomBar.alpha = 0f
+        root.post { runHeroOpen() }
+      } else {
+        root.alpha = 0f
+        root.animate().alpha(1f).setDuration(180).start()
+      }
     }
   }
 
@@ -171,7 +217,8 @@ class MediaViewerDialog(
     w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-    if (flags.secure) w.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    // [2026-10-15 screen-protect-all] app inteiro protegido (hub) + secure local da conversa.
+    ScreenProtectBridge.protect(w, flags.secure)
     w.setWindowAnimations(0)
     WindowCompat.setDecorFitsSystemWindows(w, false)
     @Suppress("DEPRECATION")
@@ -491,14 +538,21 @@ class MediaViewerDialog(
 
   fun closeSilently() = finish("replaced", false)
 
-  private fun finish(reason: String, animate: Boolean, then: (() -> Unit)? = null) {
-    if (closed) return
-    closed = true
+  private fun teardownForClose() {
     handler.removeCallbacksAndMessages(null)
+    heroAnim?.cancel()
+    heroAnim = null
     detachPlayer()
     try { player?.release() } catch (_: Throwable) {}
     player = null
     try { host.application.unregisterActivityLifecycleCallbacks(lifecycleCb) } catch (_: Throwable) {}
+  }
+
+  private fun finish(reason: String, animate: Boolean, then: (() -> Unit)? = null) {
+    if (closed) return
+    if (animate && startHeroClose(reason, then)) return
+    closed = true
+    teardownForClose()
     val idx = current
     val done = {
       realDismiss()
@@ -765,6 +819,7 @@ class MediaViewerDialog(
     if (closed) return
     val sameDir = (dy >= 0f) == (vy >= 0f) || abs(vy) < dp(250f)
     val shouldClose = sameDir && (abs(dy) > dp(110f) || abs(vy) > dp(900f))
+    if (shouldClose && startHeroClose("swipe", null)) return
     if (shouldClose) {
       val h = max(1, root.height).toFloat()
       val dir = if ((if (abs(dy) > dp(4f)) dy else vy) >= 0f) 1f else -1f
@@ -790,4 +845,264 @@ class MediaViewerDialog(
       bottomBar.animate().alpha(a).setDuration(220).start()
     }
   }
+  // ─── Hero (bolha ↔ viewer) ───────────────────────────────────────────────
+
+  /** rect do RN (dp, relativo à área visível da janela da Activity) → px em `root`. */
+  private fun rnToLocal(r: RectF): RectF {
+    val d = context.resources.displayMetrics.density
+    val vis = Rect()
+    try { host.window?.decorView?.getWindowVisibleDisplayFrame(vis) } catch (_: Throwable) {}
+    val rl = IntArray(2)
+    try { root.getLocationOnScreen(rl) } catch (_: Throwable) {}
+    val ox = vis.left - rl[0]
+    val oy = vis.top - rl[1]
+    return RectF(r.left * d + ox, r.top * d + oy, r.right * d + ox, r.bottom * d + oy)
+  }
+
+  private fun pageDrawable(page: MVPageView?): Drawable? {
+    val p = page ?: return null
+    val it = p.item ?: return null
+    return if (it.isVideo) p.posterView.drawable else p.zoomView.drawable
+  }
+
+  /** Cópia (mesmo bitmap) — os bounds do original pertencem ao ImageView. */
+  private fun copyDrawable(d: Drawable?): Drawable? {
+    if (d == null || d.intrinsicWidth <= 0 || d.intrinsicHeight <= 0) return null
+    return try { d.constantState?.newDrawable(context.resources)?.mutate() } catch (_: Throwable) { null }
+  }
+
+  private fun fitRect(cw: Float, ch: Float, nw: Float, nh: Float): RectF {
+    if (cw <= 0f || ch <= 0f || nw <= 0f || nh <= 0f) return RectF(0f, 0f, cw, ch)
+    val s = min(cw / nw, ch / nh)
+    val w = nw * s
+    val h = nh * s
+    return RectF((cw - w) / 2f, (ch - h) / 2f, (cw + w) / 2f, (ch + h) / 2f)
+  }
+
+  /** Frame visível da mídia da página em coordenadas de `root` (zoom + arrasto). */
+  private fun pageMediaRect(page: MVPageView, d: Drawable): RectF? {
+    val it = page.item ?: return null
+    val c = page.content
+    if (c.width <= 0 || c.height <= 0) return null
+    val r: RectF
+    if (!it.isVideo) {
+      val z = page.zoomView
+      r = RectF(0f, 0f, d.intrinsicWidth.toFloat(), d.intrinsicHeight.toFloat())
+      z.imageMatrix.mapRect(r)
+      r.offset((z.left + z.paddingLeft).toFloat(), (z.top + z.paddingTop).toFloat())
+    } else {
+      val tv = page.textureView
+      val lp = tv.layoutParams
+      r = if (tv.visibility == View.VISIBLE && lp != null && lp.width > 0 && lp.height > 0 && tv.width > 0) {
+        RectF(tv.left.toFloat(), tv.top.toFloat(), tv.right.toFloat(), tv.bottom.toFloat())
+      } else {
+        val nw = if (it.width > 0 && it.height > 0) it.width.toFloat() else d.intrinsicWidth.toFloat()
+        val nh = if (it.width > 0 && it.height > 0) it.height.toFloat() else d.intrinsicHeight.toFloat()
+        fitRect(c.width.toFloat(), c.height.toFloat(), nw, nh)
+      }
+    }
+    // content-local → page-local (translação/escala do arrasto de fechar)
+    c.matrix.mapRect(r)
+    r.offset(c.left.toFloat(), c.top.toFloat())
+    val pl = IntArray(2)
+    val rl = IntArray(2)
+    page.getLocationOnScreen(pl)
+    root.getLocationOnScreen(rl)
+    r.offset((pl[0] - rl[0]).toFloat(), (pl[1] - rl[1]).toFloat())
+    return r
+  }
+
+  private fun runHeroOpen() {
+    if (closed) return
+    val d = copyDrawable(pageDrawable(currentPage()))
+    if (d != null) {
+      animateHeroIn(d)
+      return
+    }
+    // Miniatura ainda decodificando (Glide): espera até ~300 ms.
+    if (heroPolls++ < 10) {
+      root.postDelayed({ runHeroOpen() }, 30)
+      return
+    }
+    fadeInPlain()
+  }
+
+  private fun fadeInPlain() {
+    if (closed) return
+    backdrop.animate().alpha(1f).setDuration(180).start()
+    pager.animate().alpha(1f).setDuration(180).start()
+    val a = if (chromeVisible) 1f else 0f
+    topBar.animate().alpha(a).setDuration(180).start()
+    bottomBar.animate().alpha(a).setDuration(180).start()
+  }
+
+  private fun addHeroView(d: Drawable): MVHeroView {
+    heroView?.let { old -> try { root.removeView(old) } catch (_: Throwable) {} }
+    val hv = MVHeroView(context)
+    hv.image = d
+    hv.isClickable = true // engole toques durante a animação
+    root.addView(hv, root.indexOfChild(pager) + 1, FrameLayout.LayoutParams(-1, -1))
+    heroView = hv
+    return hv
+  }
+
+  private fun animateHeroIn(d: Drawable) {
+    val src = heroSource
+    if (closed || src == null || root.width <= 0 || root.height <= 0) { fadeInPlain(); return }
+    val start = rnToLocal(src)
+    val it = items.getOrNull(current)
+    val nw = if (it != null && it.width > 0 && it.height > 0) it.width.toFloat() else d.intrinsicWidth.toFloat()
+    val nh = if (it != null && it.width > 0 && it.height > 0) it.height.toFloat() else d.intrinsicHeight.toFloat()
+    val pr = currentPage()?.let { p -> IntArray(2).also { a -> p.getLocationOnScreen(a) } }
+    val rl = IntArray(2).also { a -> root.getLocationOnScreen(a) }
+    val cw = (currentPage()?.content?.width ?: root.width).toFloat().let { w -> if (w > 0f) w else root.width.toFloat() }
+    val ch = (currentPage()?.content?.height ?: root.height).toFloat().let { h -> if (h > 0f) h else root.height.toFloat() }
+    val target = fitRect(cw, ch, nw, nh)
+    if (pr != null) target.offset((pr[0] - rl[0]).toFloat(), (pr[1] - rl[1]).toFloat())
+    val r0 = heroSourceRadius * context.resources.displayMetrics.density
+    val hv = addHeroView(d)
+    hv.set(start, r0)
+    pager.alpha = 0f
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 340
+    a.interpolator = PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
+    a.addUpdateListener { va ->
+      val f = va.animatedValue as Float
+      hv.lerp(start, target, f, r0 * (1f - f))
+      backdrop.alpha = min(1f, f * 1.4f)
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      private var cancelled = false
+      override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (cancelled || closed) return
+        backdrop.alpha = 1f
+        pager.alpha = 1f
+        if (heroView === hv) { root.removeView(hv); heroView = null }
+      }
+    })
+    heroAnim = a
+    a.start()
+    // (sem setStartDelay: o ViewPropertyAnimator guardaria o atraso p/ o setChrome)
+    root.postDelayed({
+      if (!closed) {
+        val ca = if (chromeVisible) 1f else 0f
+        topBar.animate().alpha(ca).setDuration(200).start()
+        bottomBar.animate().alpha(ca).setDuration(200).start()
+      }
+    }, 140)
+  }
+
+  /** Fecha encolhendo até a bolha; false = sem destino/imagem → fechamento normal. */
+  private fun startHeroClose(reason: String, then: (() -> Unit)?): Boolean {
+    if (closed || !this::root.isInitialized || !root.isAttachedToWindow) return false
+    val ret = returnRects[current] ?: return false
+    val page = currentPage() ?: return false
+    val orig = pageDrawable(page) ?: return false
+    val d = copyDrawable(orig) ?: return false
+    val start = pageMediaRect(page, orig) ?: return false
+    val target = rnToLocal(ret)
+    if (target.width() < 2f || target.height() < 2f) return false
+    if (!RectF.intersects(target, RectF(0f, 0f, root.width.toFloat(), root.height.toFloat()))) return false
+    closed = true
+    teardownForClose()
+    val idx = current
+    val r1 = (returnRadii[current] ?: 0f) * context.resources.displayMetrics.density
+    val hv = addHeroView(d)
+    hv.set(start, 0f)
+    pager.alpha = 0f
+    page.resetTransform()
+    val b0 = backdrop.alpha
+    val t0 = topBar.alpha
+    val bt0 = bottomBar.alpha
+    topBar.animate().cancel()
+    bottomBar.animate().cancel()
+    backdrop.animate().cancel()
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 300
+    a.interpolator = PathInterpolator(0.25f, 0.8f, 0.25f, 1f)
+    a.addUpdateListener { va ->
+      val f = va.animatedValue as Float
+      hv.lerp(start, target, f, r1 * f)
+      backdrop.alpha = b0 * (1f - f)
+      topBar.alpha = t0 * max(0f, 1f - f * 2f)
+      bottomBar.alpha = bt0 * max(0f, 1f - f * 2f)
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      private var ended = false
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (ended) return
+        ended = true
+        realDismiss()
+        try { then?.invoke() } catch (_: Throwable) {}
+        listener.onClose(idx, reason)
+      }
+    })
+    a.start()
+    return true
+  }
 }
+
+/**
+ * [2026-10-15 hero] Desenha a mídia em `rect` com center-crop e cantos
+ * arredondados — interpola do recorte da bolha (cover) ao fit da tela.
+ */
+class MVHeroView(context: Context) : View(context) {
+  var image: Drawable? = null
+  private val rect = RectF()
+  private var radius = 0f
+  private val path = Path()
+  private val bounds = Rect()
+
+  fun set(r: RectF, rad: Float) {
+    rect.set(r)
+    radius = rad
+    invalidate()
+  }
+
+  fun lerp(a: RectF, b: RectF, f: Float, rad: Float) {
+    rect.set(
+      a.left + (b.left - a.left) * f,
+      a.top + (b.top - a.top) * f,
+      a.right + (b.right - a.right) * f,
+      a.bottom + (b.bottom - a.bottom) * f,
+    )
+    radius = rad
+    invalidate()
+  }
+
+  override fun onDraw(canvas: Canvas) {
+    super.onDraw(canvas)
+    val d = image ?: return
+    val w = rect.width()
+    val h = rect.height()
+    if (w < 1f || h < 1f) return
+    val iw = d.intrinsicWidth.toFloat()
+    val ih = d.intrinsicHeight.toFloat()
+    canvas.save()
+    if (radius > 0.5f) {
+      path.reset()
+      path.addRoundRect(rect, radius, radius, Path.Direction.CW)
+      canvas.clipPath(path)
+    } else {
+      canvas.clipRect(rect)
+    }
+    if (iw > 0f && ih > 0f) {
+      val s = max(w / iw, h / ih)
+      val dw = iw * s
+      val dh = ih * s
+      bounds.set(
+        (rect.centerX() - dw / 2f).toInt(),
+        (rect.centerY() - dh / 2f).toInt(),
+        (rect.centerX() + dw / 2f).toInt() + 1,
+        (rect.centerY() + dh / 2f).toInt() + 1,
+      )
+    } else {
+      rect.roundOut(bounds)
+    }
+    d.bounds = bounds
+    d.draw(canvas)
+    canvas.restore()
+  }
+}
+

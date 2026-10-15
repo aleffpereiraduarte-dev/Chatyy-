@@ -1,37 +1,33 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import {
-  View, FlatList, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, Animated, Easing, Dimensions,
-  ScrollView, Modal, Linking, ActivityIndicator, Image, Alert, Share,
+  View, FlatList, Text, TouchableOpacity, StyleSheet, Pressable,
+  KeyboardAvoidingView, Platform, Dimensions,
+  ScrollView, Modal, Linking, Image, Alert, Share,
 } from 'react-native';
-// FlashList reverted to FlatList
-import PressableRow from '../components/PressableRow'; // [2026-10-08 apps-native]
 import { HeaderIconButton } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
-  IconSend, IconArrowLeft, IconZap, IconMail, IconCalendar,
-  IconMessageSquare, IconClock, IconPlus, IconSparkles,
-  IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
-  IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
-  IconChevronUp, IconChevronDown, IconTrash, IconCopy, IconRepeat,
-  IconThumbsDown, IconCheck, IconChevronRight, IconShare,
+  IconArrowLeft, IconMail, IconCalendar, IconBell, IconMenu, IconCamera, IconEdit,
+  IconChevronDown, IconCopy, IconRepeat, IconThumbsDown, IconCheck, IconGlobe, IconSliders,
 } from '../components/Icons';
 // [2026-10-15 bia-bonita] markdown completo + cartões de ferramenta + "pensando"
 import { BiaMarkdown, BiaToolCards, BiaThinking } from '../components/BiaRich';
-// SVG primitives for the send-button gradient + empty-state sparkle illustration.
-// Pure-SVG keeps us off expo-linear-gradient (not a dep) and renders identically
-// on web/native.
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Circle as SvgCircle, Path as SvgPath, G as SvgG } from 'react-native-svg';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { OneRealtimeSession, isRealtimeSupported } from '../services/oneRealtime';
 import SmartReplyChips from '../components/SmartReplyChips';
-import ChatyyOneAvatar from '../components/ChatyyOneAvatar';
+// [2026-10-15 bia-design] orb (Skia/UI thread) + interface nova (vidro, cascata, gaveta, voz)
+import BiaOrb from '../components/bia/BiaOrb';
+import {
+  biaPalette, BiaFadeIn, BiaSuggestionGrid, BiaComposer, BiaMessageActions,
+  BiaHistoryDrawer, BiaVoiceScreen,
+} from '../components/bia/BiaUI';
+import { createStreamLevelMeter, dbToLevel } from '../components/bia/biaAudioLevel';
 
 // Strip the trailing `<followups>q1|q2|q3</followups>` marker the server-side
 // prompt appends to every One reply. Lets us hide it from rendered markdown
@@ -89,33 +85,6 @@ const ACCENT_HEADER = '#111111'; // Chatyy header dark
 const USER_BUBBLE = '#F1F3F5'; // Chatyy sent bubble (light)
 const USER_BUBBLE_DARK = '#111111'; // Chatyy sent bubble (dark)
 
-const ROTATING_PHRASES = [
-  'resumir seus emails',
-  'organizar sua agenda',
-  'te lembrar de compromissos',
-  'rascunhar respostas',
-  'agendar reuniões',
-  'te ligar pra lembrar',
-  'buscar seus arquivos',
-  'enviar mensagens',
-  'criar eventos no calendário',
-  'aprender seu estilo',
-  'responder emails por você',
-  'encontrar contatos',
-  'marcar reuniões com sua equipe',
-  'gerenciar suas pastas',
-  'resumir conversas do chat',
-  'planejar seu dia',
-  'priorizar tarefas urgentes',
-  'encaminhar emails importantes',
-  'criar lembretes',
-  'organizar seus documentos',
-  'sugerir respostas inteligentes',
-  'acompanhar prazos',
-  'preparar briefings do dia',
-  'traduzir mensagens',
-  'te ajudar em tudo',
-];
 
 // ─── Voice helpers ───
 
@@ -430,1281 +399,94 @@ function haptic(type = 'light') {
   } catch {}
 }
 
-// ─── Pulsing mic indicator ───
-
-function PulsingMicDot({ isDark }) {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    Animated.loop(Animated.sequence([
-      Animated.timing(pulseAnim, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ])).start();
-  }, []);
-
-  return (
-    <Animated.View style={{
-      width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444',
-      transform: [{ scale: pulseAnim }],
-    }} />
-  );
-}
-
-// ─── Premium voice conversation components ───
-
-// 1. Dynamic waveform with bars reacting to simulate audio
-function SpeakingWaveform() {
-  const NUM_BARS = 24;
-  const bars = useRef(Array.from({ length: NUM_BARS }, () => new Animated.Value(0.15))).current;
-
-  useEffect(() => {
-    const timeouts = [];
-    bars.forEach((bar, i) => {
-      const randomDuration = () => 180 + Math.random() * 280;
-      const randomHeight = () => 0.1 + Math.random() * 0.9;
-
-      function animate() {
-        Animated.timing(bar, {
-          toValue: randomHeight(),
-          duration: randomDuration(),
-          useNativeDriver: true,
-        }).start(() => animate());
-      }
-      const t = setTimeout(() => animate(), i * 30);
-      timeouts.push(t);
-    });
-
-    return () => {
-      timeouts.forEach(t => clearTimeout(t));
-      bars.forEach(b => b.stopAnimation());
-    };
-  }, []);
-
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2, height: 60, justifyContent: 'center' }}>
-      {bars.map((bar, i) => {
-        // Create a dome shape: bars in center are taller
-        const center = NUM_BARS / 2;
-        const dist = Math.abs(i - center) / center;
-        const maxH = 60 * (1 - dist * 0.6);
-        return (
-          <Animated.View key={i} style={{
-            width: 3, borderRadius: 1.5, backgroundColor: ACCENT,
-            height: maxH, transform: [{ scaleY: bar }],
-            opacity: 0.8,
-          }} />
-        );
-      })}
-    </View>
-  );
-}
-
-// 2. Listening - concentric ripples (ChatGPT style)
-function ListeningRipples() {
-  const NUM_RINGS = 3;
-  const rings = useRef(Array.from({ length: NUM_RINGS }, () => ({
-    scale: new Animated.Value(1),
-    opacity: new Animated.Value(0.4),
-  }))).current;
-
-  useEffect(() => {
-    const anims = rings.map((ring, i) => {
-      return Animated.loop(
-        Animated.sequence([
-          Animated.delay(i * 400),
-          Animated.parallel([
-            Animated.timing(ring.scale, { toValue: 2.2, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-            Animated.timing(ring.opacity, { toValue: 0, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-          ]),
-          Animated.parallel([
-            Animated.timing(ring.scale, { toValue: 1, duration: 0, useNativeDriver: true }),
-            Animated.timing(ring.opacity, { toValue: 0.5, duration: 0, useNativeDriver: true }),
-          ]),
-        ])
-      );
-    });
-    anims.forEach(a => a.start());
-    return () => anims.forEach(a => a.stop());
-  }, []);
-
-  return (
-    <View style={{ width: 200, height: 200, alignItems: 'center', justifyContent: 'center' }}>
-      {rings.map((ring, i) => (
-        <Animated.View key={i} style={{
-          position: 'absolute', width: 100, height: 100, borderRadius: 50,
-          borderWidth: 1.5, borderColor: ACCENT,
-          opacity: ring.opacity, transform: [{ scale: ring.scale }],
-        }} />
-      ))}
-    </View>
-  );
-}
-
-// 3. Thinking - orbiting dots
-function OrbitingDots() {
-  const rotation = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.timing(rotation, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: true })
-    ).start();
-    return () => rotation.stopAnimation();
-  }, []);
-
-  const spin = rotation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-
-  return (
-    <View style={{ width: 140, height: 140, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View style={{ position: 'absolute', width: 140, height: 140, transform: [{ rotate: spin }] }}>
-        {[0, 120, 240].map((deg, i) => {
-          const rad = (deg * Math.PI) / 180;
-          const x = 60 * Math.cos(rad);
-          const y = 60 * Math.sin(rad);
-          return (
-            <View key={i} style={{
-              position: 'absolute', width: 8, height: 8, borderRadius: 4,
-              backgroundColor: ['rgba(255,255,255,0.8)', 'rgba(255,255,255,0.5)', 'rgba(255,255,255,0.3)'][i],
-              left: 66 + x, top: 66 + y,
-            }} />
-          );
-        })}
-      </Animated.View>
-    </View>
-  );
-}
-
-// 4. Typewriter transcript
-function TypewriterText({ text, colors }) {
-  const [displayedChars, setDisplayedChars] = useState(0);
-  const textRef = useRef(text);
-
-  useEffect(() => {
-    textRef.current = text;
-    setDisplayedChars(0);
-  }, [text]);
-
-  useEffect(() => {
-    if (displayedChars < text.length) {
-      const timer = setTimeout(() => {
-        setDisplayedChars(prev => Math.min(prev + 1, textRef.current.length));
-      }, 30);
-      return () => clearTimeout(timer);
-    }
-  }, [displayedChars, text]);
-
-  return (
-    <Text style={[st.voiceTranscript, { color: colors.text }]} numberOfLines={3}>
-      {text.substring(0, displayedChars)}
-      {displayedChars < text.length && (
-        <Text style={{ opacity: 0.5 }}>|</Text>
-      )}
-    </Text>
-  );
-}
-
-// 5. Status text below orb
-function VoiceStatusText({ voiceState, t }) {
-  const label = voiceState === 'listening' ? t('one.voiceListening') :
-    voiceState === 'thinking' ? t('one.thinking') :
-    t('one.voiceSpeaking');
-
-  return (
-    <Text style={st.voiceStatusLabel}>{label}</Text>
-  );
-}
-
-// 6. Voice orb - Siri-inspired multi-layer gradient blob with color shift.
-// Three concentric rings counter-rotate + breathe at different tempos. The
-// outer halo pulses color through a magenta→purple→teal palette, giving the
-// "AI alive" feel without needing a video or LottieFiles.
-function VoiceOrb({ voiceState }) {
-  const scaleCore = useRef(new Animated.Value(1)).current;
-  const scaleRing1 = useRef(new Animated.Value(1)).current;
-  const scaleRing2 = useRef(new Animated.Value(1)).current;
-  const glowAnim = useRef(new Animated.Value(0.2)).current;
-  const rot1 = useRef(new Animated.Value(0)).current;
-  const rot2 = useRef(new Animated.Value(0)).current;
-  const hue = useRef(new Animated.Value(0)).current; // 0..3 — indexes palette
-
-  useEffect(() => {
-    // Continuous counter-rotation — runs across all states so the orb never
-    // looks static. Ring 1 clockwise 18s, ring 2 counter 24s.
-    Animated.loop(
-      Animated.timing(rot1, { toValue: 1, duration: 18000, easing: Easing.linear, useNativeDriver: false })
-    ).start();
-    Animated.loop(
-      Animated.timing(rot2, { toValue: 1, duration: 24000, easing: Easing.linear, useNativeDriver: false })
-    ).start();
-    // Slow color drift through the palette — 12s per cycle
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(hue, { toValue: 1, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(hue, { toValue: 2, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(hue, { toValue: 3, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(hue, { toValue: 0, duration: 4000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-      ])
-    ).start();
-  }, []);
-
-  useEffect(() => {
-    [scaleCore, scaleRing1, scaleRing2, glowAnim].forEach(a => a.stopAnimation());
-
-    const breathe = (anim, toLo, toHi, dur) => Animated.loop(Animated.sequence([
-      Animated.timing(anim, { toValue: toHi, duration: dur, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
-      Animated.timing(anim, { toValue: toLo, duration: dur, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
-    ]));
-
-    if (voiceState === 'listening') {
-      breathe(scaleCore, 1, 1.12, 1300).start();
-      breathe(scaleRing1, 1, 1.22, 1700).start();
-      breathe(scaleRing2, 1, 1.35, 2300).start();
-      breathe(glowAnim, 0.25, 0.55, 1500).start();
-    } else if (voiceState === 'thinking') {
-      breathe(scaleCore, 0.94, 1.04, 700).start();
-      breathe(scaleRing1, 0.98, 1.08, 850).start();
-      breathe(scaleRing2, 1, 1.12, 950).start();
-      breathe(glowAnim, 0.2, 0.4, 750).start();
-    } else {
-      // Speaking — rapid beat, like someone talking with energy
-      breathe(scaleCore, 0.96, 1.1, 350).start();
-      breathe(scaleRing1, 1, 1.2, 400).start();
-      breathe(scaleRing2, 1, 1.28, 500).start();
-      breathe(glowAnim, 0.3, 0.6, 380).start();
-    }
-
-    return () => [scaleCore, scaleRing1, scaleRing2, glowAnim].forEach(a => a.stopAnimation());
-  }, [voiceState]);
-
-  const rotDeg1 = rot1.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-  const rotDeg2 = rot2.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
-
-  // Color palette shifts through magenta/purple/teal/violet. Each ring
-  // samples a different stop on the palette so the colors harmonize instead
-  // of clashing.
-  const halo = hue.interpolate({
-    inputRange: [0, 1, 2, 3],
-    outputRange: ['#111111', '#111111', '#06b6d4', '#111111'],
-  });
-  const core = hue.interpolate({
-    inputRange: [0, 1, 2, 3],
-    outputRange: ['#111111', '#111111', '#22d3ee', '#F1F3F5'],
-  });
-  const ringOuter = hue.interpolate({
-    inputRange: [0, 1, 2, 3],
-    outputRange: ['#111111', '#06b6d4', '#111111', '#111111'],
-  });
-
-  return (
-    <View style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
-      {/* Outer halo — large, low opacity, color-shifting */}
-      <Animated.View style={{
-        position: 'absolute', width: 260, height: 260, borderRadius: 130,
-        backgroundColor: halo, opacity: glowAnim,
-        transform: [{ scale: scaleRing2 }, { rotate: rotDeg2 }],
-      }} />
-      {/* Middle ring — hairline stroke rotating opposite way */}
-      <Animated.View style={{
-        position: 'absolute', width: 200, height: 200, borderRadius: 100,
-        borderWidth: 2, borderColor: ringOuter,
-        opacity: 0.5,
-        transform: [{ scale: scaleRing1 }, { rotate: rotDeg1 }],
-      }} />
-      {/* Inner ring — subtle outline around core */}
-      <Animated.View style={{
-        position: 'absolute', width: 160, height: 160, borderRadius: 80,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)',
-        transform: [{ scale: scaleRing1 }, { rotate: rotDeg2 }],
-      }} />
-      {/* Core orb — solid, bright, shifts color slightly */}
-      <Animated.View style={{
-        width: 136, height: 136, borderRadius: 68,
-        backgroundColor: core,
-        transform: [{ scale: scaleCore }],
-        ...(Platform.OS === 'web' ? {
-          boxShadow: '0 0 80px rgba(17, 17, 17,0.55), 0 0 160px rgba(17, 17, 17,0.35), inset 0 0 40px rgba(255,255,255,0.22)',
-        } : {
-          shadowColor: '#111111',
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.7,
-          shadowRadius: 40,
-          elevation: 14,
-        }),
-      }} />
-      {/* Specular highlight — makes it feel 3D */}
-      <Animated.View style={{
-        position: 'absolute', width: 50, height: 50, borderRadius: 25,
-        top: 75, left: 95,
-        backgroundColor: 'rgba(255,255,255,0.35)',
-        transform: [{ scale: scaleCore }],
-        opacity: 0.6,
-      }} pointerEvents="none" />
-    </View>
-  );
-}
-
-function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, onStop, onExit, onToggleMute, muted, onSwitchToText }) {
-  // voiceState: 'listening' | 'thinking' | 'speaking'
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const silenceStart = useRef(Date.now());
-  const [silenceHint, setSilenceHint] = useState('');
-
-  // Call timer — format m:ss, starts at overlay mount.
-  const startedAt = useRef(Date.now());
-  const [elapsedStr, setElapsedStr] = useState('0:00');
-  useEffect(() => {
-    const tick = () => {
-      const s = Math.floor((Date.now() - startedAt.current) / 1000);
-      setElapsedStr(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
-    };
-    tick();
-    const iv = setInterval(tick, 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // Pulsing "LIVE" dot when active
-  const livePulse = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(livePulse, { toValue: 0.35, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(livePulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, []);
-
-  useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, []);
-
-  // Silence timeout hints
-  useEffect(() => {
-    if (voiceState === 'listening') {
-      silenceStart.current = Date.now();
-      setSilenceHint('');
-      const iv = setInterval(() => {
-        const elapsed = Date.now() - silenceStart.current;
-        if (elapsed >= 30000) setSilenceHint(t('one.voiceSilenceLong') || 'Diga algo ou toque para parar');
-        else if (elapsed >= 10000) setSilenceHint(t('one.voiceSilenceShort') || 'Estou ouvindo...');
-      }, 2000);
-      return () => clearInterval(iv);
-    } else {
-      setSilenceHint('');
-    }
-  }, [voiceState, t]);
-
-  useEffect(() => {
-    if (transcript) {
-      silenceStart.current = Date.now();
-      setSilenceHint('');
-    }
-  }, [transcript]);
-
-  const handleStop = useCallback(() => {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.in(Easing.cubic), useNativeDriver: true })
-      .start(() => { if (onStop) onStop(); });
-  }, [onStop, fadeAnim]);
-
-  // Cores dinâmicas — branco minimalista (ChatGPT-style) em light mode,
-  // quase-preto em dark. User pediu: "deixa fundo branco minimalista
-  // igual chatgpt".
-  const bg = isDark ? '#0d0d0d' : '#ffffff';
-  const fg = isDark ? '#ffffff' : '#0d0d0d';
-  const fgMuted = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(13,13,13,0.55)';
-  const fgDim = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(13,13,13,0.35)';
-  const ctrlBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(13,13,13,0.05)';
-  const ctrlBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(13,13,13,0.10)';
-
-  return (
-    <Animated.View style={[st.voiceOverlay, { opacity: fadeAnim, backgroundColor: bg }]}>
-      {/* Sem glow nem gradient — ChatGPT é flat clean. */}
-
-      {/* Top bar: brand + timer */}
-      <View style={st.voiceTopBar}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Animated.View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#ef4444', opacity: livePulse }} />
-          <Text style={[st.voiceTopBarLive, { color: fgMuted, letterSpacing: 1 }]}>{t('live.aoVivo')}</Text>
-        </View>
-        <Text style={[st.voiceTopBarTitle, { color: fg }]}>Chatyy AI</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={[st.voiceTopBarTimer, { color: fgMuted }]}>{elapsedStr}</Text>
-        </View>
-      </View>
-
-      <View style={st.voiceOverlayInner}>
-        {/* Central orb */}
-        <View style={st.voiceCenterAnim}>
-          <VoiceOrb voiceState={voiceState} />
-          {voiceState === 'listening' && <ListeningRipples />}
-          {voiceState === 'thinking' && <OrbitingDots />}
-          {voiceState === 'speaking' && (
-            <View style={{ position: 'absolute', bottom: -40 }}>
-              <SpeakingWaveform />
-            </View>
-          )}
-        </View>
-
-        {/* Status text */}
-        <VoiceStatusText voiceState={voiceState} t={t} />
-
-        {/* Transcript — card translúcido com cor de texto adaptativa */}
-        {transcript ? (
-          <View style={[st.voiceTranscriptCard, {
-            backgroundColor: ctrlBg,
-            borderColor: ctrlBorder,
-            borderWidth: 1,
-          }]}>
-            <TypewriterText text={transcript} colors={{ text: fg }} />
-          </View>
-        ) : null}
-
-        {/* Silence hint */}
-        {silenceHint && !transcript ? (
-          <Text style={[st.voiceSilenceHint, { color: fgDim }]}>{silenceHint}</Text>
-        ) : null}
-      </View>
-
-      {/* Bottom control bar — branco/preto adaptativo */}
-      <View style={st.voiceBottomBar}>
-        {onToggleMute ? (
-          <TouchableOpacity
-            onPress={onToggleMute}
-            activeOpacity={0.7}
-            style={[st.voiceCtrlBtn, { backgroundColor: ctrlBg, borderColor: ctrlBorder, borderWidth: 1 }, muted && { backgroundColor: 'rgba(239,68,68,0.18)', borderColor: '#ef4444' }]}
-            accessibilityLabel={muted ? (t('one.unmute') || 'Desmutar') : (t('one.mute') || 'Mutar')}
-            accessibilityRole="button"
-          >
-            {muted ? <IconMicOff size={22} color="#ef4444" /> : <IconMic size={22} color={fg} />}
-          </TouchableOpacity>
-        ) : <View style={st.voiceCtrlBtn} />}
-
-        <TouchableOpacity
-          onPress={handleStop}
-          activeOpacity={0.75}
-          style={[st.voiceEndBtn, { backgroundColor: '#ef4444' }]}
-          accessibilityLabel={t('one.voiceEnd') || 'Encerrar chamada'}
-          accessibilityRole="button"
-        >
-          <IconX size={30} color="#fff" />
-        </TouchableOpacity>
-
-        {onSwitchToText ? (
-          <TouchableOpacity
-            onPress={onSwitchToText}
-            activeOpacity={0.7}
-            style={[st.voiceCtrlBtn, { backgroundColor: ctrlBg, borderColor: ctrlBorder, borderWidth: 1 }]}
-            accessibilityLabel={t('one.switchToText') || 'Digitar'}
-            accessibilityRole="button"
-          >
-            <IconEdit size={20} color={fg} />
-          </TouchableOpacity>
-        ) : <View style={st.voiceCtrlBtn} />}
-      </View>
-    </Animated.View>
-  );
-}
-
-// ─── Animated rotating text ───
-
-function RotatingText({ isDark }) {
-  const [index, setIndex] = useState(0);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  const slideAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    let timeout;
-    const cycle = () => {
-      // Last phrase ("Tudo") stays longer
-      const isLast = index === ROTATING_PHRASES.length - 1;
-      const delay = isLast ? 4000 : 2200;
-      timeout = setTimeout(() => {
-        // Fade out + slide up
-        Animated.parallel([
-          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-          Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: true }),
-        ]).start(() => {
-          setIndex(prev => (prev + 1) % ROTATING_PHRASES.length);
-          slideAnim.setValue(20);
-          // Fade in + slide from below
-          Animated.parallel([
-            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-            Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-          ]).start();
-        });
-      }, delay);
-    };
-    cycle();
-    return () => clearTimeout(timeout);
-  }, [index]);
-
-  const phrase = ROTATING_PHRASES[index];
-
-  return (
-    <View style={st.rotatingWrap}>
-      <Animated.Text
-        style={[st.rotatingText, {
-          color: ACCENT,
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        }]}
-      >
-        {phrase}
-      </Animated.Text>
-    </View>
-  );
-}
-
-// ─── Pulsing logo ───
-
-// Clean simple logo for empty state (not used currently but kept for reference)
-
-// [#1239 2026-05-20] Header brand orb — sits next to the "One" title and pulses
-// while the assistant is thinking. Same Chatyy purple as the rest of the AI
-// surface, native driver so it doesn't tank perf on the JS thread.
-function PulsingHeaderLogo({ active, isDark }) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const opacity = useRef(new Animated.Value(0.85)).current;
-  const loopRef = useRef(null);
-
-  useEffect(() => {
-    if (active) {
-      const seq = Animated.loop(
-        Animated.sequence([
-          Animated.parallel([
-            Animated.timing(scale, { toValue: 1.18, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-            Animated.timing(opacity, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-          ]),
-          Animated.parallel([
-            Animated.timing(scale, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-            Animated.timing(opacity, { toValue: 0.55, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-          ]),
-        ])
-      );
-      loopRef.current = seq;
-      seq.start();
-    } else {
-      try { loopRef.current?.stop?.(); } catch {}
-      Animated.parallel([
-        Animated.timing(scale, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]).start();
-    }
-    return () => { try { loopRef.current?.stop?.(); } catch {} };
-  }, [active]);
-
-  return (
-    <Animated.View
-      style={{
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        backgroundColor: ACCENT,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 8,
-        opacity,
-        transform: [{ scale }],
-        shadowColor: ACCENT,
-        shadowOpacity: active ? 0.55 : 0,
-        shadowRadius: active ? 10 : 0,
-        shadowOffset: { width: 0, height: 0 },
-      }}
-    >
-      <IconSparkles size={12} color="#fff" />
-    </Animated.View>
-  );
-}
-
-function getSuggestions(t) {
-  const tod = getTimeOfDay();
-  if (tod === 'morning') return [
-    { text: t('one.todaySummary'), icon: IconMail },
-    { text: t('one.whatsToday'), icon: IconCalendar },
-    { text: t('one.draftEmail'), icon: IconSend },
-    { text: t('one.sendMessage'), icon: IconMessageSquare },
-  ];
-  if (tod === 'afternoon') return [
-    { text: t('one.unreadEmails'), icon: IconMail },
-    { text: t('one.upcomingEvents'), icon: IconCalendar },
-    { text: t('one.sendMessage'), icon: IconMessageSquare },
-    { text: t('one.setReminder'), icon: IconBell },
-  ];
-  return [
-    { text: t('one.daySummary'), icon: IconMail },
-    { text: t('one.tomorrowAgenda'), icon: IconCalendar },
-    { text: t('one.setReminder'), icon: IconBell },
-    { text: t('one.sendMessage'), icon: IconMessageSquare },
-  ];
-}
-
-// ─── Quick Actions Bar (above input, visible when chat has messages) ───
-
-function QuickActionsBar({ onSend, colors, isDark, t }) {
-  const [workflows, setWorkflows] = useState([]);
-  useEffect(() => {
-    (async () => {
-      try {
-        const AS = require('@react-native-async-storage/async-storage').default;
-        const raw = await AS.getItem('one_workflows');
-        if (raw) setWorkflows(JSON.parse(raw) || []);
-      } catch {}
-    })();
-  }, []);
-  const defaults = [
-    { key: 'daily', label: t('one.quickDailySummary'), icon: IconMail, msg: t('one.quickDailySummaryMsg') },
-    { key: 'events', label: t('one.quickUpcomingEvents'), icon: IconCalendar, msg: t('one.quickUpcomingEventsMsg') },
-    { key: 'unread', label: t('one.quickUnreadMessages'), icon: IconMessageSquare, msg: t('one.quickUnreadMessagesMsg') },
-    { key: 'photo', label: t('one.quickAnalyzePhoto'), icon: IconCamera, msg: t('one.quickAnalyzePhotoMsg') },
-  ];
-  const deleteWorkflow = async (key) => {
-    try {
-      const next = workflows.filter(w => w.key !== key);
-      setWorkflows(next);
-      const AS = require('@react-native-async-storage/async-storage').default;
-      await AS.setItem('one_workflows', JSON.stringify(next));
-    } catch {}
-  };
-  const actions = [
-    ...workflows.map(w => ({ key: w.key, label: w.label, icon: IconSparkles, msg: w.msg, custom: true })),
-    ...defaults,
-  ];
-
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={st.quickActionsContent}
-      style={st.quickActionsBar}
-    >
-      {actions.map((a) => {
-        const Icon = a.icon;
-        return (
-          <TouchableOpacity
-            key={a.key}
-            style={[st.quickActionChip, {
-              backgroundColor: a.custom
-                ? (isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)')
-                : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)'),
-              ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'all 0.15s ease' } : {}),
-            }]}
-            onPress={() => onSend(a.msg)}
-            onLongPress={a.custom ? () => {
-              try {
-                const { Alert } = require('react-native');
-                Alert.alert(a.label, t('one.workflowDeleteConfirm') || 'Remover este workflow?', [
-                  { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                  { text: t('common.delete') || 'Remover', style: 'destructive', onPress: () => deleteWorkflow(a.key) },
-                ]);
-              } catch {}
-            } : undefined}
-            activeOpacity={0.7}
-          >
-            <Icon size={13} color={a.custom ? '#111111' : (isDark ? '#8E8E93' : '#667781')} />
-            <Text style={[st.quickActionText, { color: a.custom ? '#111111' : (isDark ? '#8E8E93' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </ScrollView>
-  );
-}
-
-// ─── Markdown parser ───
-
-function parseMarkdown(text, textColor, isDark) {
-  if (!text) return null;
-  const elements = [];
-  const lines = text.split('\n');
-  let inCodeBlock = false;
-  let codeLines = [];
-  let codeKey = 0;
-
-  for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-    if (line.trimStart().startsWith('```')) {
-      if (inCodeBlock) {
-        elements.push(
-          <CodeBlockWithCopy key={`code-${codeKey++}`} code={codeLines.join('\n')} isDark={isDark} />
-        );
-        codeLines = [];
-        inCodeBlock = false;
-      } else {
-        inCodeBlock = true;
-      }
-      continue;
-    }
-    if (inCodeBlock) { codeLines.push(line); continue; }
-    if (!line.trim()) { elements.push(<View key={`br-${li}`} style={{ height: 8 }} />); continue; }
-
-    // Headers (###, ##, #) — the model sometimes slips these in despite
-    // the system-prompt ban. Render as bold lines sized by depth so the
-    // bubble doesn't show literal "###" characters.
-    const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
-    if (headerMatch) {
-      const depth = headerMatch[1].length;
-      const fontSize = depth === 1 ? 18 : depth === 2 ? 16 : 15;
-      elements.push(
-        <Text
-          key={`h-${li}`}
-          style={[st.msgText, { color: textColor, fontSize, fontWeight: '700', marginTop: depth <= 2 ? 4 : 2 }]}
-          selectable
-        >
-          {fmtInline(headerMatch[2], textColor, isDark)}
-        </Text>
-      );
-      continue;
-    }
-
-    // Bullet list
-    const bulletMatch = line.match(/^(\s*)[-*]\s+(.+)/);
-    if (bulletMatch) {
-      const indent = Math.min(Math.floor((bulletMatch[1] || '').length / 2), 3);
-      elements.push(
-        <View key={`li-${li}`} style={[st.bulletRow, { marginLeft: indent * 16 }]}>
-          <Text style={[st.bulletDot, { color: textColor }]}>{'\u2022'}</Text>
-          <Text style={[st.bulletText, { color: textColor }]} selectable>{fmtInline(bulletMatch[2], textColor, isDark)}</Text>
-        </View>
-      );
-      continue;
-    }
-
-    // Numbered list
-    const numMatch = line.match(/^(\s*)\d+[.)]\s+(.+)/);
-    if (numMatch) {
-      const num = line.match(/(\d+)/)[1];
-      elements.push(
-        <View key={`ol-${li}`} style={st.bulletRow}>
-          <Text style={[st.bulletNum, { color: textColor }]}>{num}.</Text>
-          <Text style={[st.bulletText, { color: textColor }]} selectable>{fmtInline(numMatch[2], textColor, isDark)}</Text>
-        </View>
-      );
-      continue;
-    }
-
-    elements.push(
-      <Text key={`p-${li}`} style={[st.msgText, { color: textColor }]} selectable>
-        {fmtInline(line, textColor, isDark)}
-      </Text>
-    );
-  }
-
-  if (inCodeBlock && codeLines.length) {
-    elements.push(
-      <CodeBlockWithCopy key={`code-${codeKey}`} code={codeLines.join('\n')} isDark={isDark} />
-    );
-  }
-  return elements;
-}
-
-function fmtInline(text, textColor, isDark) {
-  if (!text) return text;
-  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|https?:\/\/[^\s)]+)/g);
-  return parts.map((part, i) => {
-    if (!part) return null;
-    if (part.startsWith('**') && part.endsWith('**'))
-      return <Text key={i} style={{ fontWeight: '700' }}>{part.slice(2, -2)}</Text>;
-    if (part.startsWith('*') && part.endsWith('*') && part.length > 2)
-      return <Text key={i} style={{ fontStyle: 'italic' }}>{part.slice(1, -1)}</Text>;
-    if (part.startsWith('`') && part.endsWith('`'))
-      return <Text key={i} style={[st.inlineCode, { backgroundColor: isDark ? '#3a3a3a' : '#f0f0f0' }]}>{part.slice(1, -1)}</Text>;
-    if (/^https?:\/\//.test(part))
-      return <Text key={i} style={{ color: ACCENT, textDecorationLine: 'underline' }} onPress={() => Linking.openURL(part)}>{part}</Text>;
-    return part;
-  });
-}
-
-// ─── Typing dots indicator (clean 3-dot animation) ───
-
-function TypingDots({ isDark }) {
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
-  useEffect(() => {
-    const animateDot = (dot, delay) => Animated.loop(Animated.sequence([
-      Animated.delay(delay),
-      Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-    ]));
-    const a1 = animateDot(dot1, 0);
-    const a2 = animateDot(dot2, 200);
-    const a3 = animateDot(dot3, 400);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, []);
-  const dotStyle = { width: 7, height: 7, borderRadius: 3.5, backgroundColor: isDark ? '#888' : '#999' };
-  return (
-    <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 4 }}>
-      <Animated.View style={[dotStyle, { opacity: dot1 }]} />
-      <Animated.View style={[dotStyle, { opacity: dot2 }]} />
-      <Animated.View style={[dotStyle, { opacity: dot3 }]} />
-    </View>
-  );
-}
-
-function ThinkingIndicator({ colors, isDark, t, toolStatus }) {
-  return (
-    <View style={st.aiBubbleRow}>
-      <View style={st.aiBubbleAvatarWrap}>
-        <View style={st.aiBubbleAvatar}>
-          <Text style={st.aiBubbleAvatarText}>O</Text>
-        </View>
-      </View>
-      <View style={[st.aiBubble, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
-        {toolStatus ? (
-          <View style={[st.toolChip, {
-            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-            borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-            marginBottom: 6,
-            alignSelf: 'flex-start',
-          }]}>
-            <ActivityIndicator size={10} color={ACCENT_DARK} />
-            <Text style={[st.toolChipText, { color: isDark ? '#aaa' : '#888' }]}>{toolStatus}</Text>
-          </View>
-        ) : null}
-        <TypingDots isDark={isDark} />
-        <View style={[st.aiBubbleTail, { borderRightColor: isDark ? '#1c1c1e' : '#fff' }]} />
-      </View>
-    </View>
-  );
-}
-
-// ─── Tool action label mapping ───
-
-function getToolLabel(action, t) {
-  if (!action) return '';
-  const type = action.type || action.tool || action.name || '';
-  const map = {
-    'read_emails': t('one.toolSearchingEmails'),
-    'search_emails': t('one.toolSearchingEmails'),
-    'read_calendar': t('one.toolReadingCalendar'),
-    'create_calendar_event': t('one.toolCreatingEvent'),
-    'send_email': t('one.toolSendingEmail'),
-    'send_chat': t('one.toolSendingMessage'),
-    'read_chat': t('one.toolReadingChat'),
-    'search_contacts': t('one.toolSearchingContacts'),
-    'read_files': t('one.toolSearchingFiles'),
-  };
-  return map[type] || t('one.toolWorking');
-}
-
-// ─── Code block with copy button ───
-
-function CodeBlockWithCopy({ code, isDark }) {
-  const { t } = useLanguage();
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async () => {
-    // Why: previously copy worked only on web. Native users had no way to copy code
-    // out of an AI answer — which is the #1 use case for code blocks. Now we use
-    // expo-clipboard everywhere with a graceful fallback.
-    try {
-      if (Platform.OS === 'web' && navigator?.clipboard) {
-        await navigator.clipboard.writeText(code);
-      } else {
-        const Clipboard = require('expo-clipboard');
-        await Clipboard.setStringAsync(code);
-      }
-      setCopied(true);
-      try {
-        const Haptics = require('expo-haptics');
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      } catch {}
-      setTimeout(() => setCopied(false), 2000);
-    } catch {}
-  }, [code]);
-
-  return (
-    <View style={st.codeBlockWrap}>
-      <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7} accessibilityLabel={t('oneScreen.copyCode')}>
-        {copied ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <IconCheck size={11} color="#ccc" />
-            <Text style={st.codeCopyBtnText}>{t('common.copied')}</Text>
-          </View>
-        ) : (
-          <Text style={st.codeCopyBtnText}>{t('common.copy')}</Text>
-        )}
-      </TouchableOpacity>
-      <View style={[st.codeBlock, isDark && { backgroundColor: '#1a1a1a' }]}>
-        <Text style={st.codeText} selectable>{code}</Text>
-      </View>
-    </View>
-  );
-}
-
-// ─── Message row (WhatsApp chat bubble style) ───
-
-// Blinking cursor for streaming messages
-function StreamingCursor({ isDark }) {
-  const blink = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    Animated.loop(Animated.sequence([
-      Animated.timing(blink, { toValue: 0, duration: 500, useNativeDriver: true }),
-      Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: true }),
-    ])).start();
-  }, [blink]);
-  return (
-    <Animated.Text style={{ opacity: blink, color: ACCENT, fontWeight: 'bold', fontSize: 16 }}>
-      {'▋'}
-    </Animated.Text>
-  );
-}
-
-// Three-dot typing indicator shown while a tool is executing.
-// Wave animation: each dot rises ~6px with spring physics, staggered. Reads
-// as more lively than the old opacity-only pulse. Opacity still toggles so
-// the dot fades while it falls — the combined effect mirrors iMessage /
-// Telegram's "typing…" indicator more closely.
-function ToolTypingIndicator({ toolName, isDark, t }) {
-  const dot1 = useRef(new Animated.Value(0)).current;
-  const dot2 = useRef(new Animated.Value(0)).current;
-  const dot3 = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const wave = (v, delay) => Animated.loop(Animated.sequence([
-      Animated.delay(delay),
-      Animated.spring(v, { toValue: 1, tension: 220, friction: 8, useNativeDriver: true }),
-      Animated.spring(v, { toValue: 0, tension: 220, friction: 10, useNativeDriver: true }),
-      Animated.delay(360),
-    ]));
-    const a1 = wave(dot1, 0); const a2 = wave(dot2, 140); const a3 = wave(dot3, 280);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, [dot1, dot2, dot3]);
-  const dotBase = { width: 7, height: 7, borderRadius: 4, backgroundColor: isDark ? '#aaa' : '#666', marginHorizontal: 2 };
-  const animStyle = (v) => ({
-    opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
-    transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }],
-  });
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 2 }}>
-      <Animated.View style={[dotBase, animStyle(dot1)]} />
-      <Animated.View style={[dotBase, animStyle(dot2)]} />
-      <Animated.View style={[dotBase, animStyle(dot3)]} />
-      {toolName ? (
-        <Text style={{ marginLeft: 8, fontSize: 11, color: isDark ? '#8E8E93' : '#9ba5ab' }}>
-          {toolName.replace(/_/g, ' ')}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
-
-// ChatGPT-style streaming dots inline with the last AI paragraph.
-// Three small dots that fade in/out one after the other.
-function InlineStreamingDots({ isDark }) {
-  const d1 = useRef(new Animated.Value(0.3)).current;
-  const d2 = useRef(new Animated.Value(0.3)).current;
-  const d3 = useRef(new Animated.Value(0.3)).current;
-  useEffect(() => {
-    const anim = (v, delay) => Animated.loop(Animated.sequence([
-      Animated.delay(delay),
-      Animated.timing(v, { toValue: 1, duration: 380, useNativeDriver: true }),
-      Animated.timing(v, { toValue: 0.3, duration: 380, useNativeDriver: true }),
-    ]));
-    const a1 = anim(d1, 0); const a2 = anim(d2, 160); const a3 = anim(d3, 320);
-    a1.start(); a2.start(); a3.start();
-    return () => { a1.stop(); a2.stop(); a3.stop(); };
-  }, []);
-  const c = isDark ? '#A1A1A6' : '#6b7280';
-  const dot = { width: 5, height: 5, borderRadius: 2.5, backgroundColor: c, marginHorizontal: 2 };
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-      <Animated.View style={[dot, { opacity: d1 }]} />
-      <Animated.View style={[dot, { opacity: d2 }]} />
-      <Animated.View style={[dot, { opacity: d3 }]} />
-    </View>
-  );
-}
-
-// ── Brand-gradient send button (44px circle, purple gradient + SVG send icon).
-// Replaces the flat ACCENT-filled 36px button. The gradient (top-left light
-// purple → bottom-right ACCENT_DARK) plus a soft 1px inner highlight gives the
-// button a premium "polished pebble" feel matching ChatGPT 4.5/Anthropic UI.
-function BrandSendCircle({ size = 44, isDark }) {
-  const r = size / 2;
-  return (
-    <Svg width={size} height={size}>
-      <Defs>
-        <SvgLinearGradient id="brandSendGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#111111" stopOpacity="1" />
-          <Stop offset="0.6" stopColor={ACCENT} stopOpacity="1" />
-          <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
-        </SvgLinearGradient>
-      </Defs>
-      <SvgCircle cx={r} cy={r} r={r} fill="url(#brandSendGrad)" />
-      {/* Subtle inner highlight — adds a soft glass edge so the circle doesn't
-          read as a flat disk. Skipped in dark mode where the contrast already
-          pops against the canvas. */}
-      {!isDark && <SvgCircle cx={r} cy={r} r={r - 0.5} fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth={1} />}
-      {/* Send arrow — paper-plane style, centered. Stroke 2.2 for crispness. */}
-      <SvgPath
-        d={`M ${r - 7} ${r + 1} L ${r + 7} ${r - 6} L ${r + 1} ${r + 7} L ${r - 1} ${r + 1} Z`}
-        fill="#fff"
-      />
-    </Svg>
-  );
-}
-
-// ── Empty-state sparkle illustration (large 96px SVG: one big sparkle +
-// two small accents). Replaces the previous solid circle + IconSparkles
-// duo with a more illustrative mark so the empty canvas feels considered.
-function SparkleIllustration({ size = 96, isDark }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 96 96">
-      <Defs>
-        <SvgLinearGradient id="sparkBigGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#F1F3F5" stopOpacity="1" />
-          <Stop offset="0.55" stopColor={ACCENT} stopOpacity="1" />
-          <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
-        </SvgLinearGradient>
-        <SvgLinearGradient id="sparkSmallGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#111111" stopOpacity="1" />
-          <Stop offset="1" stopColor={ACCENT} stopOpacity="1" />
-        </SvgLinearGradient>
-      </Defs>
-      {/* Soft halo behind main sparkle */}
-      <SvgCircle cx="48" cy="48" r="34" fill={isDark ? 'rgba(17, 17, 17,0.16)' : 'rgba(17, 17, 17,0.10)'} />
-      {/* Big sparkle (4-point star) centered */}
-      <SvgPath
-        d="M48 18 L52 44 L78 48 L52 52 L48 78 L44 52 L18 48 L44 44 Z"
-        fill="url(#sparkBigGrad)"
-      />
-      {/* Small sparkle top-right */}
-      <SvgPath
-        d="M76 16 L78 24 L86 26 L78 28 L76 36 L74 28 L66 26 L74 24 Z"
-        fill="url(#sparkSmallGrad)"
-        opacity={0.85}
-      />
-      {/* Tiny sparkle bottom-left */}
-      <SvgPath
-        d="M16 70 L17.5 75 L22.5 76.5 L17.5 78 L16 83 L14.5 78 L9.5 76.5 L14.5 75 Z"
-        fill="url(#sparkSmallGrad)"
-        opacity={0.7}
-      />
-    </Svg>
-  );
-}
-
-// ── Suggested-prompt chip (horizontal scroll on the empty state). Brand
-// outline 1px, transparent fill, press scale 0.96 with spring. Built as a
-// small inline component so each chip owns its own animated value (avoids
-// a shared scale flickering between presses).
-function PromptChip({ label, sub, onPress, isDark, icon: Icon }) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const handleIn = () => Animated.spring(scale, { toValue: 0.975, tension: 320, friction: 14, useNativeDriver: true }).start();
-  const handleOut = () => Animated.spring(scale, { toValue: 1, tension: 280, friction: 12, useNativeDriver: true }).start();
-  const fg = isDark ? '#ECECEC' : '#0D0D0D';
-  const muted = isDark ? '#A1A1A6' : '#6B7280';
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      onPressIn={handleIn}
-      onPressOut={handleOut}
-      activeOpacity={0.88}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Animated.View style={[st.promptCard, {
-        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)',
-        backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : '#FAFAFB',
-        transform: [{ scale }],
-      }]}>
-        <View style={[st.promptCardIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(17,17,17,0.055)' }]}>
-          {Icon ? <Icon size={18} color={fg} /> : null}
-        </View>
-        <View style={st.promptCardText}>
-          <Text style={[st.promptCardLabel, { color: fg }]} numberOfLines={1}>{label}</Text>
-          {sub ? (
-            <Text style={[st.promptCardSub, { color: muted }]} numberOfLines={1}>{sub}</Text>
-          ) : null}
-        </View>
-        <IconChevronRight size={16} color={isDark ? '#6C6C70' : '#B8BBC2'} />
-      </Animated.View>
-    </TouchableOpacity>
-  );
-}
-
-function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI, onLongPressAI, onShare, onOpenCard, locale }) {
+// [2026-10-15 bia-design] componentes visuais antigos (orb de voz, ondas, chips,
+// parser de markdown local, sidebar) removidos — substituídos por components/bia/*.
+
+// [2026-10-15 bia-design] Linha de mensagem: usuário = bolha discreta à direita;
+// Bia = SEM bolha, largura total, tipografia de leitura (16.5/26), mini-orb no
+// cabeçalho, ações suaves no fim. memo: durante o stream só a linha da resposta
+// em andamento re-renderiza (os outros itens mantêm a mesma referência).
+const MessageRow = memo(function MessageRow({ item, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI, onLongPressAI, onShare, onOpenCard, onFeedback, locale }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
-  // Entrance: fadeIn + slideUp 8px. The slide gives the row a subtle "rise"
-  // motion that ChatGPT/Claude apps use to make new messages feel placed,
-  // not just popped in. Both animated values share the same timing so we
-  // don't drift between opacity and position.
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(8)).current;
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-    ]).start();
-  }, []);
-
+  const P = biaPalette(isDark);
   const isStreaming = !!item._streaming;
   const isToolPending = !!item._toolPending;
-  const toolActions = item.actions || [];
+  const shownText = isUser ? '' : extractFollowups(item.content || '').text;
 
-  // ── User: subtle gray pill, right-aligned, no avatar (ChatGPT 2026 style)
   if (isUser) {
     return (
-      <Animated.View style={[st.userRow, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-        <View style={[st.userPill, {
-          backgroundColor: isDark ? '#2A2A2A' : '#F1F1F4',
-        }]}>
-          {item.imageUri && (
-            <Image source={{ uri: item.imageUri }} style={{ width: 220, height: 220, borderRadius: 14, marginBottom: 8 }} resizeMode="cover" />
-          )}
-          <Text style={[st.userText, { color: isDark ? '#ECECEC' : '#0D0D0D' }]} selectable>{item.content}</Text>
+      <BiaFadeIn dy={8} duration={300} style={st.userRow}>
+        <View style={[st.userPill, { backgroundColor: P.bubble }]}>
+          {item.imageUri ? (
+            <Image source={{ uri: item.imageUri }} style={{ width: 220, height: 220, borderRadius: 16, marginBottom: item.content ? 8 : 0 }} resizeMode="cover" />
+          ) : null}
+          {item.content ? <Text style={[st.userText, { color: P.fg }]} selectable>{item.content}</Text> : null}
         </View>
-      </Animated.View>
+      </BiaFadeIn>
     );
   }
 
-  // ── AI: no bubble, plain left-aligned text. Small "One" chip+avatar header
-  // sits above the first paragraph. Long-press opens the context sheet.
+  const thinkingOnly = (isToolPending || isStreaming) && !shownText;
   return (
-    <Animated.View style={[st.aiRow, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      {/* Header chip — small gray pill with avatar + "One" label */}
-      <TouchableOpacity
-        activeOpacity={0.85}
-        delayLongPress={320}
-        onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
-        style={st.aiHeaderRow}
-      >
-        {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes (random 4-8s).
-            Sized 18px to match the existing aiHeaderAvatar footprint. */}
-        <ChatyyOneAvatar size={18} thinking={isStreaming} />
-        <Text style={[st.aiHeaderLabel, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>Bia</Text>
-      </TouchableOpacity>
-
-      {/* Tool chips only while AI is mid-flight. After the response lands we hide
-          them — otherwise an unknown action type falls back to "Processando..."
-          and lingers under a finished reply, looking like the AI is still working. */}
-      {toolActions.length > 0 && (isStreaming || isToolPending) && (
-        <View style={st.toolChipsRow}>
-          {toolActions.slice(0, 3).map((action, i) => {
-            const type = action.type || action.tool || action.name || '';
-            const iconMap = {
-              'read_emails': IconMail, 'search_emails': IconMail,
-              'read_calendar': IconCalendar, 'create_calendar_event': IconCalendar,
-              'send_email': IconSend, 'send_chat': IconMessageSquare,
-              'read_chat': IconMessageSquare, 'search_contacts': IconUsers,
-              'read_files': IconFolder,
-            };
-            const ToolIcon = iconMap[type] || IconZap;
-            return (
-              <View key={i} style={[st.toolChip, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-              }]}>
-                <ToolIcon size={11} color={isDark ? '#aaa' : '#666'} />
-                <Text style={[st.toolChipText, { color: isDark ? '#aaa' : '#666' }]}>
-                  {getToolLabel(action, t)}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      )}
-
-      {/* Body — plain text, NO bubble background. Long-press opens context sheet. */}
-      <TouchableOpacity
-        activeOpacity={1}
+    <BiaFadeIn dy={6} duration={300} style={st.aiRow}>
+      <View style={st.aiHeaderRow}>
+        <BiaOrb size={20} lite isDark={isDark} mode={isStreaming ? 'thinking' : 'idle'} animated={isStreaming} />
+        <Text style={[st.aiHeaderLabel, { color: P.fg }]}>Bia</Text>
+      </View>
+      <Pressable
         delayLongPress={320}
         onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
         style={{ alignSelf: 'stretch' }}
       >
-        {/* [2026-10-15 bia-bonita] "Pensando..." instantâneo → rótulo humano da
-            ferramenta → texto com cursor piscando (markdown completo). */}
-        {(isToolPending || isStreaming) && !extractFollowups(item.content || '').text ? (
+        {thinkingOnly ? (
           <BiaThinking isDark={isDark} t={t} toolName={isToolPending ? item._toolName : null} />
         ) : (
           <View style={st.aiBody}>
-            {/* Hide the trailing <followups>...</followups> marker the model
-                appends — it's surfaced as chips below the last AI message
-                (handled in the parent). */}
             <BiaMarkdown
-              text={extractFollowups(item.content).text}
-              color={isDark ? '#ECECEC' : '#0D0D0D'}
+              text={shownText}
+              color={P.fg}
               isDark={isDark}
               streaming={isStreaming && !isToolPending}
               t={t}
             />
           </View>
         )}
-        {isToolPending && !!extractFollowups(item.content || '').text && (
+        {isToolPending && !!shownText && (
           <BiaThinking isDark={isDark} t={t} toolName={item._toolName} />
         )}
-      </TouchableOpacity>
+      </Pressable>
 
-      {/* Cartões dos resultados (e-mails, agenda, evento/lembrete criado, contatos) */}
       {!isStreaming && Array.isArray(item.actions) && item.actions.length > 0 ? (
         <BiaToolCards actions={item.actions} isDark={isDark} t={t} locale={locale} onOpen={onOpenCard} />
       ) : null}
 
-      {/* WhatsApp opt-in button (kept — feature still surfaces from AI replies) */}
       {item.content && (item.content.includes('wa.me') || (item.content.includes('WhatsApp') && (item.content.includes('conecte') || item.content.includes('conectar') || item.content.includes('opt') || item.content.includes('connect')))) && (
         <TouchableOpacity
-          style={[st.waOptInBtn, { backgroundColor: ACCENT, marginTop: 10 }]}
+          style={[st.waOptInBtn, { backgroundColor: P.ink, marginTop: 12 }]}
           onPress={() => {
             const url = 'https://wa.me/12093093434?text=Oi!%20Quero%20receber%20lembretes%20do%20Chatyy.';
-            if (Platform.OS === 'web') {
-              window.open(url, '_blank');
-            } else {
-              Linking.openURL(url).catch(() => {});
-            }
+            if (Platform.OS === 'web') window.open(url, '_blank');
+            else Linking.openURL(url).catch(() => {});
           }}
         >
-          <Text style={st.waOptInBtnText}>{t('one.whatsappConnectBtn')}</Text>
+          <Text style={[st.waOptInBtnText, { color: P.onInk }]}>{t('one.whatsappConnectBtn')}</Text>
         </TouchableOpacity>
       )}
 
-      {/* Inline action row — copy / read aloud / regenerate (only on most recent AI message) */}
-      {item.content && !isStreaming && (
-        <View style={st.aiActionsRow}>
-          {onCopy && (
-            <TouchableOpacity
-              onPress={() => onCopy(item)}
-              hitSlop={6}
-              style={st.aiActionBtn}
-              accessibilityLabel={t?.('common.copy') || 'Copy'}
-            >
-              <IconCopy size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            onPress={() => onSpeak?.(item)}
-            hitSlop={6}
-            style={st.aiActionBtn}
-            accessibilityLabel={isSpeaking ? (t?.('one.speakStop') || 'Stop reading') : (t?.('oneScreen.readAloud') || 'Read aloud')}
-          >
-            {isSpeaking ? (
-              <IconVolumeX size={14} color={ACCENT_DARK} />
-            ) : (
-              <IconVolume2 size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
-            )}
-          </TouchableOpacity>
-          {onShare && (
-            <TouchableOpacity
-              onPress={() => onShare(item)}
-              hitSlop={6}
-              style={st.aiActionBtn}
-              accessibilityLabel={t?.('common.share') || 'Share'}
-            >
-              <IconShare size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
-            </TouchableOpacity>
-          )}
-          {isLastAI && onRegenerate && (
-            <TouchableOpacity
-              onPress={() => onRegenerate(item)}
-              hitSlop={6}
-              style={st.aiActionBtn}
-              accessibilityLabel={t?.('one.regenerate') || 'Regenerate'}
-            >
-              <IconRepeat size={14} color={isDark ? '#A1A1A6' : '#6B7280'} />
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
-    </Animated.View>
+      {item.content && !isStreaming ? (
+        <BiaMessageActions
+          item={item} isDark={isDark} t={t}
+          onCopy={onCopy}
+          onSpeak={onSpeak} speaking={isSpeaking}
+          onRegenerate={isLastAI ? onRegenerate : null}
+          onShare={onShare}
+          onFeedback={onFeedback}
+        />
+      ) : null}
+    </BiaFadeIn>
   );
-}
+});
 
 // ─── Model picker pill (top center) + bottom sheet ───
 const MODEL_OPTIONS = [
@@ -1801,85 +583,6 @@ function MessageContextSheet({ visible, onClose, isDark, t, onCopy, onRegenerate
   );
 }
 
-// ─── History sidebar ───
-
-function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, colors, isDark, t, insets, onDelete, onClearAll }) {
-  if (!visible) return null;
-  return (
-    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
-      <View style={st.sidebarOverlay}>
-        <TouchableOpacity style={st.sidebarDim} activeOpacity={1} onPress={onClose} />
-        <View style={[st.sidebar, {
-          backgroundColor: isDark ? '#171717' : '#fff',
-          paddingTop: insets.top + 8,
-        }]}>
-          <View style={st.sidebarHeader}>
-            <Text style={[st.sidebarTitle, { color: isDark ? '#e5e5e5' : '#1a1a1a' }]}>{t('one.history')}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              {/* Botão "Limpar tudo" — apaga todo o histórico do user.
-                  Confirma via Alert antes de chamar oneHistoryDelete clearAll. */}
-              {conversations.length > 0 && (
-                <TouchableOpacity
-                  onPress={onClearAll}
-                  hitSlop={10}
-                  style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8 }}
-                  accessibilityLabel={t('one.clearHistory') || 'Limpar histórico'}
-                >
-                  <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>
-                    {t('one.clearAll') || 'Limpar'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity onPress={onClose} hitSlop={12}>
-                <IconX size={20} color={isDark ? '#888' : '#999'} />
-              </TouchableOpacity>
-            </View>
-          </View>
-          {/* [2026-10-08 apps-native] ScrollView+map → FlatList virtualizada
-              (histórico pode ter centenas de conversas) + PressableRow
-              (highlight de célula iOS / ripple Android em vez de fade web). */}
-          <FlatList
-            style={st.sidebarList}
-            data={conversations}
-            keyExtractor={(c) => String(c.id)}
-            showsVerticalScrollIndicator={false}
-            initialNumToRender={16}
-            maxToRenderPerBatch={16}
-            windowSize={7}
-            ListEmptyComponent={
-              <Text style={[st.sidebarEmpty, { color: isDark ? '#666' : '#aaa' }]}>{t('one.noConversations')}</Text>
-            }
-            renderItem={({ item: c }) => {
-              const active = c.id === currentId;
-              return (
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <PressableRow
-                    style={[st.sidebarItem, { flex: 1 }, active && { backgroundColor: isDark ? '#2f2f2f' : '#f0f0f0' }]}
-                    onPress={() => { haptic('light'); onSelect(c); onClose(); }}
-                    accessibilityRole="button"
-                  >
-                    <Text style={[st.sidebarItemText, { color: active ? (isDark ? '#fff' : '#1a1a1a') : (isDark ? '#ccc' : '#555') }]} numberOfLines={1}>
-                      {c.title || `#${c.id}`}
-                    </Text>
-                  </PressableRow>
-                  {/* Tap no lixinho → delete só essa conversa */}
-                  <HeaderIconButton
-                    onPress={() => onDelete?.(c)}
-                    accessibilityLabel={t('common.delete')}
-                    style={{ marginHorizontal: 4 }}
-                  >
-                    <IconTrash size={16} color={isDark ? '#666' : '#999'} />
-                  </HeaderIconButton>
-                </View>
-              );
-            }}
-          />
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 // ─── Main Screen ───
 
 export default function OneScreen() {
@@ -1914,6 +617,12 @@ export default function OneScreen() {
   const [voiceState, setVoiceState] = useState('listening'); // 'listening' | 'thinking' | 'speaking'
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
+  // [2026-10-15 bia-design] altura da barra flutuante (lista rola por baixo do vidro)
+  const [composerH, setComposerH] = useState(72);
+  // nível de voz 0..1 p/ o orb: nativo = metering do gravador; web = analisador do stream
+  const voiceLevelRef = useRef(0);
+  const voiceStateRef = useRef('listening');
+  const webMeterRef = useRef(null);
   const flatListRef = useRef(null);
   // [2026-10-04] 1º scroll ao abrir a Bia = INSTANTÂNEO (ancora a última msg no
   // rodapé); mudanças seguintes animam. Sem isto o scrollToEnd animado só em
@@ -2929,6 +1638,7 @@ export default function OneScreen() {
             if (status && typeof status.metering === 'number') level = status.metering;
             else if (typeof r.metering === 'number') level = r.metering;
           } catch {}
+          voiceLevelRef.current = dbToLevel(level); // [bia-design] orb reage à voz
           if (level != null) {
             if (level > SILENCE_DB) {
               vadStateRef.current.lastVoiceAt = now;
@@ -3236,6 +1946,7 @@ export default function OneScreen() {
               const status = (typeof rec.getStatus === 'function') ? await rec.getStatus() : null;
               if (status && typeof status.metering === 'number') metering = status.metering;
             } catch {}
+            voiceLevelRef.current = dbToLevel(metering); // [bia-design] orb reage à voz
             const elapsed = Date.now() - startedAt;
             if (metering > VOICE_DB) { hasSpoken = true; lastVoiceAt = Date.now(); }
             const silentMs = lastVoiceAt ? (Date.now() - lastVoiceAt) : elapsed;
@@ -3385,6 +2096,16 @@ export default function OneScreen() {
       if (isMountedRef.current) startListeningForVoiceMode();
     }, 300);
   }, [startListeningForVoiceMode]);
+
+  // [2026-10-15 bia-design] atalho do card da home: /one?voice=1 abre direto no modo voz
+  const voiceParamHandledRef = useRef(false);
+  const enterVoiceRef = useRef(enterVoiceMode);
+  enterVoiceRef.current = enterVoiceMode;
+  useEffect(() => {
+    if (voiceParamHandledRef.current || String(params?.voice || '') !== '1') return;
+    voiceParamHandledRef.current = true;
+    setTimeout(() => { if (isMountedRef.current && !voiceModeRef.current) enterVoiceRef.current(); }, 350);
+  }, [params?.voice]);
 
   const exitVoiceMode = useCallback(() => {
     // Bump the session token so any in-flight onend / 8s timer / whisper
@@ -3561,9 +2282,35 @@ export default function OneScreen() {
     setCtxSheetItem(item);
   }, []);
 
+  // [2026-10-15 bia-design] curtir/descurtir — registro leve (haptic + aviso no 👎 como antes)
+  const onFeedback = useCallback((item, v) => {
+    haptic('light');
+    if (v < 0) {
+      try {
+        if (Platform.OS === 'web') window.alert(t('one.badResponseThanks'));
+        else Alert.alert(t('one.badResponseThanks'));
+      } catch {}
+    }
+  }, [t]);
+
+  // nível de voz p/ o orb (lido ~30 Hz pelo próprio orb, sem render React)
+  voiceStateRef.current = voiceState;
+  const getVoiceLevel = useCallback(() => {
+    if (Platform.OS === 'web') {
+      const sess = realtimeRef.current;
+      if (sess) {
+        if (!webMeterRef.current) webMeterRef.current = createStreamLevelMeter();
+        const stream = voiceStateRef.current === 'speaking' ? (sess.remoteAudioEl?.srcObject || null) : sess.localStream;
+        return webMeterRef.current.get(stream);
+      }
+    }
+    return voiceLevelRef.current || 0;
+  }, []);
+  useEffect(() => () => { try { webMeterRef.current?.dispose(); } catch {} }, []);
+
   const renderMessage = useCallback(({ item }) => (
     <MessageRow
-      item={item} colors={colors} isDark={isDark}
+      item={item} isDark={isDark}
       onSpeak={speakMessage} speakingId={speakingId} t={t}
       onCopy={copyMessage}
       onRegenerate={regenerateLast}
@@ -3571,124 +2318,110 @@ export default function OneScreen() {
       onLongPressAI={onLongPressAI}
       onShare={shareMessage}
       onOpenCard={openBiaCard}
+      onFeedback={onFeedback}
       locale={locale}
     />
-  ), [colors, isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId, onLongPressAI, shareMessage, openBiaCard, locale]);
+  ), [isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId, onLongPressAI, shareMessage, openBiaCard, onFeedback, locale]);
 
-  // ─── Empty state — clean 2x2 prompt grid (Translate / Summarize / Code / Brainstorm)
+  const P = biaPalette(isDark);
+  // fim da resposta (cartões/ações entram depois do último token) → ancora no fim
+  const prevLoadingRef = useRef(loading);
+  useEffect(() => {
+    const was = prevLoadingRef.current;
+    prevLoadingRef.current = loading;
+    if (!was || loading || !hasMessages) return undefined;
+    const id = setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {} }, 420);
+    return () => clearTimeout(id);
+  }, [loading, hasMessages]);
+
+  // ─── Tela inicial: orb + saudação grande + grade de sugestões (cascata) ───
   const renderEmpty = () => {
-    // 3-card grid (Codar removed — user asked to drop the dev-oriented prompt
-    // because the typical Chatyy user isn't here to write code; Translate /
-    // Summarize / Brainstorm cover 95% of real entry intents.
     const sugCards = [
-      { key: 'today', label: t('one.whatsToday') || 'O que tenho hoje?', sub: t('one.upcomingEvents') || '', msg: t('one.whatsToday') || 'O que tenho hoje?', icon: IconCalendar },
-      { key: 'translate', label: t('one.promptTranslate') || 'Translate', sub: t('one.promptTranslateSub') || 'a phrase or paragraph', msg: t('one.promptTranslateMsg') || 'Translate this to English: ', icon: IconMessageSquare },
-      { key: 'summarize', label: t('one.promptSummarize') || 'Summarize', sub: t('one.promptSummarizeSub') || 'an article or thread', msg: t('one.promptSummarizeMsg') || 'Summarize my unread emails today.', icon: IconMail },
-      { key: 'brainstorm', label: t('one.promptBrainstorm') || 'Brainstorm', sub: t('one.promptBrainstormSub') || 'ideas with me', msg: t('one.promptBrainstormMsg') || 'Brainstorm 5 ideas for ', icon: IconSparkles },
+      { key: 'today', label: t('one.sugAgendaTitle'), sub: t('one.sugAgendaSub'), msg: t('one.whatsToday'), icon: IconCalendar },
+      { key: 'mail', label: t('one.sugEmailTitle'), sub: t('one.sugEmailSub'), msg: t('one.todaySummary'), icon: IconMail },
+      { key: 'write', label: t('one.sugWriteTitle'), sub: t('one.sugWriteSub'), prefill: t('one.sugWriteMsg'), icon: IconEdit },
+      { key: 'remind', label: t('one.sugReminderTitle'), sub: t('one.sugReminderSub'), prefill: t('one.sugReminderMsg'), icon: IconBell },
+      { key: 'web', label: t('one.sugWebTitle'), sub: t('one.sugWebSub'), prefill: t('one.sugWebMsg'), icon: IconGlobe },
+      { key: 'photo', label: t('one.sugPhotoTitle'), sub: t('one.sugPhotoSub'), action: 'photo', icon: IconCamera },
     ];
-
+    const greet = firstName ? `${getGreeting(t)}, ${firstName}` : getGreeting(t);
     return (
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={st.emptyOuter}
+        contentContainerStyle={[st.emptyOuter, { paddingBottom: composerH + 16 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={st.emptyCenter}>
-          {/* Mascot — Bia's blinking-eye bubble, now on a soft radial halo so
-              she reads as the warm centre of an otherwise calm, empty canvas
-              (ChatGPT/Claude/Gemini-style welcome). */}
-          <View style={st.emptyAvatarWrap}>
-            <View
-              pointerEvents="none"
-              style={[st.emptyAvatarHalo, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17,17,17,0.045)' }]}
-            />
-            <ChatyyOneAvatar size={84} />
-          </View>
-          {/* Personalized greeting eyebrow above the big question. */}
-          {firstName ? (
-            <Text style={[st.emptyEyebrow, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>
-              {`${getGreeting(t)}, ${firstName}`}
-            </Text>
-          ) : null}
-          <Text style={[st.emptyGreeting, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>
-            {t('one.emptyTitle') || 'How can I help?'}
-          </Text>
-        </View>
-
-        {/* Quick-start prompts — a calm vertical stack of premium cards
-            (icon + title + subtitle + chevron), press-scales for tactile
-            feedback. Same sugCards source so adding a prompt stays one line. */}
-        <View style={[st.promptList, isWide && { maxWidth: 520, alignSelf: 'center', width: '100%' }]}>
-          {sugCards.map((item) => (
-            <PromptChip
-              key={item.key}
-              label={item.label}
-              sub={item.sub}
-              icon={item.icon}
-              isDark={isDark}
-              onPress={() => {
-                if (item.msg.endsWith(' ') || item.msg.endsWith(': ')) {
-                  setInputText(item.msg);
-                } else {
-                  sendMessage(item.msg);
-                }
-              }}
-            />
-          ))}
+        <View style={[st.emptyInner, isWide && { maxWidth: 560, alignSelf: 'center', width: '100%' }]}>
+          <BiaFadeIn dy={14} duration={600} style={st.emptyOrbWrap}>
+            <BiaOrb size={124} isDark={isDark} mode={loading ? 'thinking' : 'idle'} />
+          </BiaFadeIn>
+          <BiaFadeIn delay={90} dy={12}>
+            <Text style={[st.emptyHello, { color: P.fg }]} accessibilityRole="header" maxFontSizeMultiplier={1.4} numberOfLines={2}>{greet}</Text>
+          </BiaFadeIn>
+          <BiaFadeIn delay={150} dy={12}>
+            <Text style={[st.emptyAsk, { color: P.sub }]} maxFontSizeMultiplier={1.4}>{t('one.emptyTitle')}</Text>
+          </BiaFadeIn>
+          <BiaSuggestionGrid
+            items={sugCards}
+            isDark={isDark}
+            baseDelay={230}
+            onPick={(it) => {
+              haptic('light');
+              if (it.action === 'photo') pickImage();
+              else if (it.prefill) setInputText(it.prefill);
+              else sendMessage(it.msg);
+            }}
+          />
         </View>
       </ScrollView>
     );
   };
 
-  // ChatGPT-style canvas: white in light mode, near-black in dark.
-  const canvasBg = isDark ? '#000000' : '#FFFFFF'; // [2026-10-11 polish-secondary] escuro = preto real do app (era #1A1A1A cinza)
+  const canvasBg = P.bg; // escuro = preto real; claro = branco limpo
+  const stopGenerating = () => {
+    try { aiAbortRef.current?.abort?.(); } catch {}
+    try { stopListening?.(); } catch {}
+    if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
+    if (audioRecordingRef.current) { try { audioRecordingRef.current.stop?.(); } catch {} audioRecordingRef.current = null; }
+    setLoading(false);
+    setVoiceState('listening');
+  };
 
   return (
     <KeyboardAvoidingView
       style={[st.container, { backgroundColor: canvasBg }]}
-      // [2026-05-21] Android with behavior=undefined left the composer hidden
-      // behind the keyboard on /one. Even with android:windowSoftInputMode=
-      // adjustResize in the manifest, the KAV needed an explicit 'height' to
-      // recompute layout when IME opened (user print: composer não visível,
-      // só o keyboard sob os chips). 'height' shrinks the KAV to keyboard
-      // height, push the input bar above the IME.
+      // [2026-05-21] Android: 'height' empurra a barra acima do teclado (adjustResize sozinho não bastava).
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      keyboardVerticalOffset={0}
     >
-      {/* Clean header — no gradient, just title + side actions on a flat canvas. */}
       <View style={[st.headerClean, { paddingTop: insets.top + 4, backgroundColor: canvasBg }]}>
-        {/* [2026-10-08 apps-native] HeaderIconButton = ripple borderless
-            Android / opacidade iOS + haptic (antes TouchableOpacity web-like).
-            Header segue custom: o KeyboardAvoidingView desta tela assume
-            offset 0 — header nativo exigiria recalibrar o teclado. */}
         <HeaderIconButton onPress={() => router.back()} style={st.headerCleanBtn} accessibilityLabel={t('common.back')}>
-          <IconArrowLeft size={22} color={isDark ? '#ECECEC' : '#0D0D0D'} />
+          <IconArrowLeft size={22} color={P.fg} />
         </HeaderIconButton>
-
+        <HeaderIconButton
+          onPress={() => { loadConversations(false); setHistoryOpen(true); }}
+          style={st.headerCleanBtn}
+          accessibilityLabel={t('one.history')}
+        >
+          <IconMenu size={20} color={P.fg} />
+        </HeaderIconButton>
         <View style={st.headerCleanCenter}>
-          <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>Bia</Text>
+          {hasMessages ? <BiaOrb size={20} lite isDark={isDark} mode={loading ? 'thinking' : 'idle'} animated={loading} /> : null}
+          <Text style={[st.headerCleanTitle, { color: P.fg }]} accessibilityRole="header">Bia</Text>
         </View>
-
-        <View style={{ flexDirection: 'row' }}>
-          <HeaderIconButton onPress={newChat} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat')}>
-            <IconEdit size={20} color={isDark ? '#ECECEC' : '#0D0D0D'} />
-          </HeaderIconButton>
-          <HeaderIconButton
-            onPress={() => { loadConversations(false); setHistoryOpen(true); }}
-            style={st.headerCleanBtn}
-            accessibilityLabel={t('one.history')}
-          >
-            <IconMenu size={20} color={isDark ? '#ECECEC' : '#0D0D0D'} />
-          </HeaderIconButton>
-        </View>
+        <HeaderIconButton onPress={() => router.push('/bia-settings')} style={st.headerCleanBtn} accessibilityLabel={t('bia.title')}>
+          <IconSliders size={19} color={P.fg} />
+        </HeaderIconButton>
+        <HeaderIconButton onPress={newChat} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat')}>
+          <IconEdit size={20} color={P.fg} />
+        </HeaderIconButton>
       </View>
 
-      {/* Canvas (no wallpaper background — flat surface like ChatGPT) */}
       <View style={[st.chatArea, { backgroundColor: canvasBg }]}>
         {initialLoading && !hasMessages ? (
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color={ACCENT} />
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: composerH }}>
+            <BiaOrb size={64} isDark={isDark} mode="thinking" />
           </View>
         ) : hasMessages ? (
           <FlatList
@@ -3702,48 +2435,36 @@ export default function OneScreen() {
             style={{ flex: 1 }}
             contentContainerStyle={{
               paddingTop: 8,
-              // [WAVE 43A 2026-05-21] When followup chips render in the footer,
-              // the previous 16px wasn't enough on iOS — the chip row got
-              // clipped by the input pill on auto-scrollToEnd (user report:
-              // "ta cortando embaixo"). Bump to ~120 when chips are visible
-              // so the chip row is fully clear of the input area.
-              paddingBottom: (lastFollowups.length > 0 && !loading) ? 120 : 16,
-              paddingHorizontal: 12,
+              // lista rola por baixo da barra de vidro: reserva a altura dela (+ chips)
+              paddingBottom: composerH + ((lastFollowups.length > 0 && !loading) ? 64 : 20),
+              paddingHorizontal: 16,
             }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             automaticallyAdjustKeyboardInsets={true}
             ListFooterComponent={
               loading && !messages.some(m => m._streaming) ? (
-                <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
+                <View style={[st.aiRow, { marginTop: 4 }]}>
                   <View style={st.aiHeaderRow}>
-                    <ChatyyOneAvatar size={18} thinking />
-                    <Text style={[st.aiHeaderLabel, { color: isDark ? '#A1A1A6' : '#6B7280' }]}>Bia</Text>
+                    <BiaOrb size={20} lite isDark={isDark} mode="thinking" />
+                    <Text style={[st.aiHeaderLabel, { color: P.fg }]}>Bia</Text>
                   </View>
                   <BiaThinking isDark={isDark} t={t} />
                 </View>
               ) : (
-                // Suggested follow-up chips — only shown when:
-                //   • we have follow-ups from the latest AI reply
-                //   • nothing is streaming/loading right now
-                //   • user hasn't started typing (their own intent wins)
-                //   • there IS a finished AI reply to attach them to
                 !loading
                 && lastFollowups.length > 0
                 && !inputText.trim()
                 && messages.some(m => m.role === 'assistant' && !m._streaming)
                   ? (
-                    // [WAVE 43A] Wrap in View w/ paddingBottom so chip pills
-                    // never sit flush against the input bar — gives the row
-                    // a clear floor even if keyboard pushes layout around.
-                    <View style={{ paddingBottom: 24 }}>
+                    <BiaFadeIn delay={200} style={{ paddingBottom: 8, ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' } : null) }}>
                       <SmartReplyChips
                         replies={lastFollowups}
                         label={t('one.followupSuggested') || 'Continue com'}
                         onSelectReply={(chip) => setInputText(chip)}
                         onSendReply={(chip) => { setLastFollowups([]); sendMessage(chip); }}
                       />
-                    </View>
+                    </BiaFadeIn>
                   )
                   : null
               )
@@ -3752,123 +2473,40 @@ export default function OneScreen() {
         ) : (
           renderEmpty()
         )}
-      </View>
 
-      {/* Input — rounded 24pt pill, multi-line, plus + mic left, send right (purple #111111 filled circle) */}
-      <View style={[st.inputAreaClean, {
-        paddingBottom: Math.max(insets.bottom, 8),
-        backgroundColor: canvasBg,
-      }]}>
-        <View style={[st.inputWrapperClean, isWide && { maxWidth: 720, alignSelf: 'center', width: '100%' }]}>
-          {attachedImage && (
-            <View style={[st.attachPreview, { backgroundColor: isDark ? '#2A2A2A' : '#F1F1F4' }]}>
-              <Image source={{ uri: attachedImage.uri }} style={{ width: 56, height: 56, borderRadius: 8 }} />
-              <TouchableOpacity onPress={() => setAttachedImage(null)} style={st.attachRemove}>
-                <IconX size={14} color="#fff" />
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <View style={[st.inputBoxClean, {
-            backgroundColor: isDark ? '#2A2A2A' : '#FAFAFB',
-            borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-          }]}>
-            {/* Left: plus (attach) + mic */}
-            <View style={st.inputLeftIcons}>
-              <TouchableOpacity
-                style={st.inputIconBtn}
-                onPress={pickImage}
-                activeOpacity={0.7}
-                accessibilityLabel={t('one.attachPhoto')}
-              >
-                <IconPlus size={20} color={isDark ? '#A1A1A6' : '#6B7280'} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={st.inputIconBtn}
-                onPress={toggleListening}
-                activeOpacity={0.7}
-                accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
-              >
-                {isListening ? (
-                  <IconMicOff size={20} color="#ef4444" />
-                ) : (
-                  <IconMic size={20} color={isDark ? '#A1A1A6' : '#6B7280'} />
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={[st.inputClean, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}
-              placeholder={isListening ? (t('one.voiceListening') || 'Listening…') : (t('one.placeholder') || 'Message Bia…')}
-              placeholderTextColor={isDark ? '#6C6C70' : '#9CA3AF'}
-              value={inputText}
-              onChangeText={setInputText}
-              onSubmitEditing={() => sendMessage()}
-              onKeyPress={(e) => {
-                if (Platform.OS === 'web' && e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
-              returnKeyType="send"
-              multiline
-              maxLength={2000}
-              editable={!loading}
-            />
-
-            {/* Right: send (filled purple) / stop (when generating) / voice (when empty) */}
-            {loading ? (
-              <TouchableOpacity
-                onPress={() => {
-                  try { aiAbortRef.current?.abort?.(); } catch {}
-                  try { stopListening?.(); } catch {}
-                  if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
-                  if (audioRecordingRef.current) { try { audioRecordingRef.current.stop?.(); } catch {} audioRecordingRef.current = null; }
-                  setLoading(false);
-                  setVoiceState('listening');
-                }}
-                activeOpacity={0.7}
-                accessibilityLabel={t?.('common.cancel') || 'Cancel'}
-              >
-                <View style={[st.sendBtnClean, { backgroundColor: isDark ? '#3F3F46' : '#0D0D0D' }]}>
-                  <IconStop size={14} color="#fff" />
-                </View>
-              </TouchableOpacity>
-            ) : (inputText.trim() || attachedImage) ? (
-              <TouchableOpacity onPress={() => sendMessage()} activeOpacity={0.85}>
-                {/* Brand-gradient 44px circle — see BrandSendCircle. The SVG
-                    is absolute-positioned; we use a same-size wrapper so the
-                    layout slot matches the stop/voice buttons. */}
-                <View style={st.sendBtnBrand}>
-                  <BrandSendCircle size={44} isDark={isDark} />
-                </View>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                onPress={enterVoiceMode}
-                activeOpacity={0.7}
-                accessibilityLabel={t('one.voiceConversation') || 'Voice conversation'}
-              >
-                <View style={[st.sendBtnClean, { backgroundColor: ACCENT }]}>
-                  <IconPhone size={16} color="#fff" />
-                </View>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      </View>
-
-      {/* Voice conversation overlay */}
-      {voiceMode && (
-        <VoiceConversationOverlay
+        <BiaComposer
           isDark={isDark}
-          colors={colors}
+          t={t}
+          value={inputText}
+          onChangeText={setInputText}
+          onSend={() => sendMessage()}
+          onStop={stopGenerating}
+          onVoice={enterVoiceMode}
+          onMic={toggleListening}
+          onAttach={pickImage}
+          listening={isListening}
+          loading={loading}
+          attachedImage={attachedImage}
+          onRemoveAttachment={() => setAttachedImage(null)}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
+          bottomInset={insets.bottom}
+          onHeight={(h) => setComposerH(prev => (Math.abs(prev - h) > 1 ? h : prev))}
+          maxWidth={isWide ? CONTENT_MAX : undefined}
+        />
+      </View>
+
+      {/* Modo voz em tela cheia: orb grande reagindo ao volume + legenda ao vivo */}
+      {voiceMode && (
+        <BiaVoiceScreen
+          isDark={isDark}
           t={t}
           voiceState={voiceState}
           transcript={voiceTranscript}
           onStop={exitVoiceMode}
+          onKeyboard={exitVoiceMode}
+          getLevel={getVoiceLevel}
+          insets={insets}
         />
       )}
 
@@ -3905,17 +2543,17 @@ export default function OneScreen() {
         }}
       />
 
-      {/* History */}
-      <HistorySidebar
+      {/* Histórico: gaveta lateral com busca + agrupamento por data */}
+      <BiaHistoryDrawer
         visible={historyOpen}
         onClose={() => setHistoryOpen(false)}
         conversations={conversations}
         onSelect={loadConversation}
         currentId={conversationId}
-        colors={colors}
         isDark={isDark}
         t={t}
         insets={insets}
+        onNewChat={newChat}
         onDelete={(c) => {
           const doDel = async () => {
             try {
@@ -3975,8 +2613,8 @@ const st = StyleSheet.create({
   headerCleanCenter: {
     // [2026-10-11 polish-secondary] título centrado na tela (1 botão à esq. ×
     // 2 à dir. puxava 20px p/ esquerda) e no eixo vertical dos ícones (40px).
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    height: 40, paddingLeft: 40,
+    flex: 1, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center',
+    height: 40,
   },
   headerCleanTitle: {
     // [beauty2 2026-05-31] a touch larger/heavier so "One" anchors the bar.
@@ -4003,25 +2641,25 @@ const st = StyleSheet.create({
     ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center' } : {}),
   },
   userPill: {
-    maxWidth: '82%',
-    paddingHorizontal: 15, paddingVertical: 10,
-    borderRadius: 20,
-    borderBottomRightRadius: 7,
+    maxWidth: '84%',
+    paddingHorizontal: 16, paddingVertical: 11,
+    borderRadius: 22,
+    borderBottomRightRadius: 8,
   },
   userText: {
-    fontSize: 15, lineHeight: 22, letterSpacing: -0.1,
+    fontSize: 16.5, lineHeight: 23, letterSpacing: -0.15,
   },
 
   // AI: no bubble, plain text, header chip above
   // [beauty2 2026-05-31] a touch more breathing room above/below each AI turn so
   // answers feel composed on the canvas (ChatGPT/Claude spacing).
   aiRow: {
-    width: '100%', alignItems: 'flex-start', marginVertical: 12,
-    paddingHorizontal: 4,
+    width: '100%', alignItems: 'flex-start', marginTop: 14, marginBottom: 10,
+    paddingHorizontal: 2,
     ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center' } : {}),
   },
   aiHeaderRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 7,
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8,
   },
   aiHeaderAvatar: {
     width: 18, height: 18, borderRadius: 9,
@@ -4030,7 +2668,7 @@ const st = StyleSheet.create({
   },
   aiHeaderLabel: {
     // [beauty2 2026-05-31] slightly wider tracking reads as a calm brand label.
-    fontSize: 12, fontWeight: '600', letterSpacing: 0.1,
+    fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1,
   },
   aiBody: { gap: 3 },
   aiActionsRow: {
@@ -4328,7 +2966,11 @@ const st = StyleSheet.create({
   // Empty state — minimal ChatGPT-style
   // [beauty2 2026-05-31] more generous breathing room on the welcome canvas so
   // the mascot + greeting feel centered and unhurried.
-  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 32 },
+  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingTop: 12, paddingHorizontal: 18 },
+  emptyInner: { alignSelf: 'stretch' },
+  emptyOrbWrap: { alignSelf: 'flex-start', marginBottom: 26, marginLeft: 2 },
+  emptyHello: { fontSize: 34, lineHeight: 40, fontWeight: '700', letterSpacing: -1.1 },
+  emptyAsk: { fontSize: 22, lineHeight: 28, fontWeight: '500', letterSpacing: -0.5, marginTop: 4, marginBottom: 26 },
   emptyCenter: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, marginBottom: 34 },
   emptyLogoCircle: {
     width: 56, height: 56, borderRadius: 28,

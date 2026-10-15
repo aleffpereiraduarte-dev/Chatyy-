@@ -266,6 +266,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     mediaSlot.clear(); replySlot.clear(); albumSlots.forEach { it.clear() }
     nodeSlots.forEach { it.clear() }
     selAnim?.cancel(); barAnim?.cancel(); revealAnim?.cancel(); liftAnim?.cancel()
+    reactPop.cancel(); reactPopScale = 1f
     pressedAction = -1
     stopSpinner()
     flashAnim?.cancel(); flashAlpha = 0f
@@ -398,6 +399,42 @@ class MLCellView(context: Context) : ViewGroup(context) {
     a.addUpdateListener { v -> val f = v.animatedValue as Float; for (sp in L.spoilers) sp.reveal = max(sp.reveal, f); invalidate() }
     revealAnim = a
     a.start()
+  }
+
+  // [native-ctxmenu] pop do chip de reação novo
+  private var reactPopScale = 1f
+  private val reactPop = MLReactPop { v -> reactPopScale = v; invalidate() }
+  fun popReactions() { if (lay?.chips?.isNotEmpty() == true) reactPop.start() }
+
+  /** [hero] Miniatura `i` (foto/vídeo/tile do álbum) nas coords da célula + raio (px). */
+  fun mediaRectInCell(i: Int): Pair<RectF, Float>? {
+    val L = lay ?: return null
+    val r = row ?: return null
+    if (r.kind != MLKind.MSG) return null
+    val s = style ?: return null
+    val f: RectF
+    val rad: Float
+    if (L.albumFrames.isNotEmpty()) {
+      f = RectF(L.albumFrames[i.coerceIn(0, L.albumFrames.size - 1)]); rad = s.dp(4f)
+    } else if (!L.mediaFrame.isEmpty) {
+      f = RectF(L.mediaFrame); rad = L.mediaRadius
+    } else return null
+    f.offset(L.bubble.left + swipeX, L.bubble.top)
+    if (f.width() <= 1f || f.height() <= 1f) return null
+    return Pair(f, rad)
+  }
+
+  /** [native-ctxmenu] Retângulo do balão (mesmo do snapshot) nas coords da célula. */
+  fun bubbleRectInCell(): RectF? {
+    val L = lay ?: return null
+    val r = row ?: return null
+    if (r.kind != MLKind.MSG) return null
+    val s = style ?: return null
+    val rect = RectF(L.bubble)
+    if (L.showBubble && r.first) { if (r.own) rect.right += s.dp(6f) else rect.left -= s.dp(6f) }
+    rect.offset(swipeX, 0f)
+    rect.intersect(0f, 0f, width.toFloat(), height.toFloat())
+    return rect
   }
 
   /** Snapshot PNG-ready do balão (sem seleção/reações/realce). */
@@ -614,6 +651,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (r.failed) c.restore()
     // reações (coordenadas da linha)
     if (!snap && L.chips.isNotEmpty()) {
+      val popOn = reactPopScale != 1f
+      if (popOn) { c.save(); c.scale(reactPopScale, reactPopScale, L.reactsFrame.centerX(), L.reactsFrame.centerY()) }
       for ((i, ch) in L.chips.withIndex()) {
         tmpRect.set(L.reactsFrame.left + ch.first.left, L.reactsFrame.top, L.reactsFrame.left + ch.first.right, L.reactsFrame.bottom)
         val rad = tmpRect.height() / 2
@@ -623,6 +662,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
         c.drawRoundRect(tmpRect, rad, rad, stroke)
         drawText(c, ch.second, tmpRect.centerX() - ch.second.width / 2, tmpRect.centerY() - ch.second.height / 2)
       }
+      if (popOn) c.restore()
     }
     if (liftAlpha < 1f) c.restore()
     c.restore()

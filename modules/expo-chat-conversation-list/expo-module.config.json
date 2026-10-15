@@ -1,9 +1,18 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["ChatyyConversationListModule"]
+    "modules": [
+      "ChatyyConversationListModule",
+      "ChatyyPinnedStripModule"
+    ]
   },
   "android": {
-    "modules": ["expo.modules.chatyyconversationlist.ChatyyConversationListModule"]
+    "modules": [
+      "expo.modules.chatyyconversationlist.ChatyyConversationListModule",
+      "expo.modules.chatyyconversationlist.ChatyyPinnedStripModule"
+    ]
   }
 }

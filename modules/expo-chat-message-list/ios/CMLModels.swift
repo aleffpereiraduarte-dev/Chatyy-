@@ -99,6 +99,8 @@ final class CMLRow {
   let media: CMLMedia?
   let album: [CMLMedia]
   let more: Int
+  /// [hero] ids de TODO o álbum (só quando > 4: os de índice ≥ 4 voltam ao último tile)
+  let albumIds: [String]
   let audio: CMLAudio?
   let file: CMLFile?
   // [fase 2] blocos / extras
@@ -164,6 +166,7 @@ final class CMLRow {
     media = (d["media"] as? [String: Any]).map { CMLRow.parseMedia($0) }
     album = ((d["album"] as? [[String: Any]]) ?? []).map { CMLRow.parseMedia($0) }
     more = Int(CMLRow.num(d["more"]) ?? 0)
+    albumIds = ((d["aids"] as? [Any]) ?? []).map { CMLRow.str($0) }
     if let a = d["au"] as? [String: Any] {
       var au = CMLAudio()
       au.duration = Int(CMLRow.num(a["d"]) ?? 0)

@@ -4,7 +4,7 @@ import { memo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
-  BackHandler, Keyboard, RefreshControl,
+  BackHandler, Keyboard, RefreshControl, Animated, Easing,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -20,7 +20,10 @@ import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [
 import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
 import SettingsSegmented from '../components/SettingsSegmented';
 // [2026-10-11 settings-unify] painéis únicos (antes duplicados no ProfileSettingsSheet / ChatProfileTab)
-import { PrivacyExtrasGroup, PushMasterSwitchRow, AccentColorGroup, WallpaperRow, ProfileHeaderCard } from '../components/settings/SettingsPanels';
+import { PrivacyExtrasGroup, PushMasterSwitchRow, AccentColorGroup, WallpaperRow } from '../components/settings/SettingsPanels';
+import { SettingsHero, SettingsSpecialCards } from '../components/settings/SettingsHero'; // [2026-10-15 settings-2026]
+import { SettingsSearchContext } from '../components/settings/SettingsKit';
+import { isReduceMotionEnabled } from '../components/reducedMotion';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -560,6 +563,30 @@ function SettingsScreenInner() {
   // making the user remember which sub-section a toggle lives in.
   const [searchQuery, setSearchQuery] = useState('');
   const _q = (searchQuery || '').trim().toLowerCase();
+  // [2026-10-15 settings-2026] busca que expande (web) + hero que encolhe ao
+  // rolar + saldo de diamantes p/ o cartão da Carteira (some se desativado).
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchInputRef = useRef(null);
+  const searchAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const to = searchFocused || !!searchQuery ? 1 : 0;
+    if (isReduceMotionEnabled()) { searchAnim.setValue(to); return; }
+    Animated.spring(searchAnim, { toValue: to, useNativeDriver: false, tension: 220, friction: 24 }).start();
+  }, [searchFocused, searchQuery, searchAnim]);
+  const heroScrollY = useRef(new Animated.Value(0)).current;
+  const onHeroScroll = useRef(Animated.event([{ nativeEvent: { contentOffset: { y: heroScrollY } } }], { useNativeDriver: true })).current;
+  const [walletDiamonds, setWalletDiamonds] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const tm = setTimeout(() => {
+      api.walletBalance?.().then((r) => {
+        if (!alive) return;
+        const d = r?.data;
+        if (r?.success && d && d.enabled !== false && typeof d.diamond_balance === 'number') setWalletDiamonds(d.diamond_balance);
+      }).catch(() => {});
+    }, 500);
+    return () => { alive = false; clearTimeout(tm); };
+  }, [user?.email]);
   // `searching` = user typed something in the search box. When true the
   // category layer is bypassed and every section that matches the query is
   // shown (search works ACROSS all categories).
@@ -1603,6 +1630,7 @@ function SettingsScreenInner() {
     if (twoPane && activeCategory === null) setActiveCategory('account');
   }, [twoPane, activeCategory]);
   const openCategory = (key) => {
+    try { Haptics.selectionAsync?.(); } catch {}
     setActiveCategory(key);
     if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
   };
@@ -1729,12 +1757,22 @@ function SettingsScreenInner() {
 
   // [2026-10-11 settings-unify] Raiz do hub (cartão do perfil + categorias +
   // Sair) e busca — reutilizados na coluna esquerda do layout de 2 painéis.
+  // [2026-10-15 settings-2026] Busca integrada (web; no nativo é a barra do
+  // header): ao focar, a barra ganha destaque e o "Cancelar" desliza para
+  // dentro com spring; o termo aparece realçado nas linhas (SettingsSearchContext).
   const searchBarNode = (
-          <View style={[s.searchBar, { backgroundColor: gc.fill }]}>
-            <IconSearch size={17} color={gc.secondary} />
+          <View style={s.searchWrap}>
+          <Animated.View style={[s.searchBar, {
+            backgroundColor: searchFocused ? gc.cardBg : gc.fill,
+            borderColor: searchFocused ? gc.ring : 'transparent',
+          }]}>
+            <IconSearch size={17} color={searchFocused ? gc.text : gc.secondary} />
             <TextInput
+              ref={searchInputRef}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => { if (!searchQuery) setSearchFocused(false); }}
               placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
               placeholderTextColor={gc.secondary}
               style={[s.searchInput, { color: colors.text }]}
@@ -1753,26 +1791,81 @@ function SettingsScreenInner() {
                 <IconX size={15} color={gc.secondary} />
               </TouchableOpacity>
             )}
+          </Animated.View>
+          <Animated.View style={{ overflow: 'hidden', maxWidth: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 110] }), opacity: searchAnim }}>
+            <TouchableOpacity
+              onPress={() => { setSearchQuery(''); setSearchFocused(false); try { searchInputRef.current?.blur?.(); } catch {} }}
+              style={s.searchCancel}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.cancel') || 'Cancelar'}
+            >
+              <Text style={{ color: gc.text, fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{t('common.cancel') || 'Cancelar'}</Text>
+            </TouchableOpacity>
+          </Animated.View>
           </View>
   );
+  // Estado atual de cada categoria como subtítulo (ex.: "Notificações · Tudo").
+  const _fmtBytesHub = (b) => {
+    const bytes = Math.max(0, Number(b) || 0);
+    const mb = bytes / (1024 * 1024);
+    if (mb < 1) return bytes > 0 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : '';
+    if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+    const gb = mb / 1024;
+    return `${(gb < 10 ? gb.toFixed(1) : Math.round(gb)).toString().replace('.', (language || '').startsWith('en') ? '.' : ',')} GB`;
+  };
+  const _langLabel = (LANG_OPTIONS.find(o => o.value === language) || {}).label || '';
+  const _fontLabel = settings?.font_size === 'small' ? t('settings.fontSmall') : settings?.font_size === 'large' ? t('settings.fontLarge') : t('settings.fontMedium');
+  const _themeLabel = themeMode === 'dark' ? t('settings.theme.dark') : themeMode === 'light' ? t('settings.theme.light') : t('settings.theme.system');
+  const _pushLabel = pushNotifLevel === 'urgent' ? t('settings.notifUrgent') : pushNotifLevel === 'silent' ? t('settings.notifSilent') : t('settings.notifAll');
+  const _storageSub = Platform.OS === 'web'
+    ? `${t('settings.mediaUploadQuality.title') || ''}: ${mediaUploadQuality === 'hd' ? (t('settings.mediaUploadQuality.hd') || 'HD') : (t('settings.mediaUploadQuality.standard') || 'Padrão')}`
+    : _fmtBytesHub(storageStats?.totalBytes);
+  const catSubtitle = {
+    account: (myProfile?.phone || user?.email || ''),
+    privacy: `${t('settings.privacyLastSeen')}: ${privacyValueLabel('last_seen')}`,
+    chat: `${t('settings.theme.label') || ''}: ${_themeLabel}`,
+    notifications: _pushLabel,
+    storage_data: _storageSub,
+    accessibility: `${t('settings.fontSize')}: ${_fontLabel}`,
+    language: _langLabel,
+    email: user?.email || '',
+    bia: t('settings.cat.biaSub') || '',
+    help: (t('settings.about.version') || 'Versão {ver}').replace('{ver}', appVersionLabel),
+    invite: referralCount > 0 ? String(referralCount) : '',
+  };
   const homeListNode = (
           <View>
-            {/* [2026-10-11 settings-unify] Cartão do perfil (WhatsApp): foto,
-                nome, recado/@ e QR. Toque → a ÚNICA tela "Editar perfil". */}
-            <ProfileHeaderCard
+            {/* [2026-10-15 settings-2026] Perfil como HERO (avatar grande +
+                anel, nome forte, @usuário · telefone, recado, pílulas) que
+                encolhe ao rolar; cartões especiais (Chatyy One / Carteira,
+                Contas c/ avatares sobrepostos, Dispositivos). */}
+            <SettingsHero
               user={user}
               profile={myProfile}
               avatarKey={avatarKey}
-              onPress={() => safeNav('/edit-profile')}
-              onPressQr={() => safeNav('/profile-qr')}
+              scrollY={twoPane ? null : heroScrollY}
+              onEdit={() => safeNav('/edit-profile')}
+              onQr={() => safeNav('/profile-qr')}
+              onSwitch={() => { try { Haptics.selectionAsync?.(); } catch {} setAccountSwitcherOpen(true); }}
+            />
+            <SettingsSpecialCards
+              user={user}
+              accounts={accounts}
+              walletDiamonds={walletDiamonds}
+              onOne={() => safeNav('/settings-one')}
+              onWallet={() => safeNav('/wallet')}
+              onAccounts={() => { try { Haptics.selectionAsync?.(); } catch {} setAccountSwitcherOpen(true); }}
+              onDevices={() => safeNav('/linked-devices')}
             />
             {categoryGroups.map((grp, gi) => (
-              <SettingsGroup key={gi} inset={58}>
+              <SettingsGroup key={gi} inset={62} header={[t('notif.general'), t('settings.preferences'), t('chat.apps'), t('settings.support')][gi]}>
                 {grp.map((cat) => (
                   <SettingsRow
                     key={cat.key}
                     icon={cat.Icon}
                     title={cat.title}
+                    subtitle={catSubtitle[cat.key] || undefined}
+                    subtitleLines={1}
                     titleStyle={twoPane && activeCategory === cat.key ? { fontWeight: '700' } : undefined}
                     accessibilityState={twoPane ? { selected: activeCategory === cat.key } : undefined}
                     testID={'settings-cat-' + cat.key}
@@ -1787,6 +1880,7 @@ function SettingsScreenInner() {
               <SettingsRow
                 title={t('settings.logoutAccount')}
                 destructive
+                center
                 onPress={handleSettingsLogout}
               />
             </SettingsGroup>
@@ -1816,6 +1910,17 @@ function SettingsScreenInner() {
           // ?section= o voltar sai da tela → swipe nativo liberado.
           gestureEnabled: !inCategorySubpage,
           contentStyle: { backgroundColor: gc.pageBg },
+          // [2026-10-15 nav-motion] iOS: título GRANDE na raiz (como o Ajustes do
+          // sistema) que colapsa com spring nativo ao rolar — o ScrollView já usa
+          // contentInsetAdjustmentBehavior automatic (acompanha o colapso). Nas
+          // categorias, título compacto. Explícito nos dois sentidos porque o
+          // setOptions MESCLA (senão o large ficava preso ao entrar na categoria).
+          ...(Platform.OS === 'ios' ? {
+            headerLargeTitle: activeCategory === null,
+            headerLargeTitleShadowVisible: false,
+            headerLargeStyle: { backgroundColor: gc.pageBg },
+            headerLargeTitleStyle: { color: colors.text },
+          } : {}),
           // [2026-10-12 settings-back] Stack.Screen = navigation.setOptions, que
           // MESCLA com as opções anteriores: sem zerar explicitamente, o
           // headerLeft custom (closure velha com activeCategory≠null) e o
@@ -1844,7 +1949,16 @@ function SettingsScreenInner() {
         <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1} accessibilityRole="header">{activeCategory !== null && !twoPane ? activeCategoryTitle : t('settings.title')}</Text>
+        <Animated.Text
+          style={[s.headerTitle, { color: colors.text },
+            // [2026-10-15 settings-2026] raiz: o título aparece quando o hero
+            // some ao rolar (o hero "vira" o título); categorias: fixo.
+            (activeCategory === null && !twoPane && !isReduceMotionEnabled())
+              ? { opacity: heroScrollY.interpolate({ inputRange: [90, 170], outputRange: [0, 1], extrapolate: 'clamp' }) }
+              : null]}
+          numberOfLines={1}
+          accessibilityRole="header"
+        >{activeCategory !== null && !twoPane ? activeCategoryTitle : t('settings.title')}</Animated.Text>
         {/* Save button removed — settings now persist automatically (see the
             auto-save effect). Spacer keeps the title centered. */}
         <View style={s.backBtn} />
@@ -1868,9 +1982,12 @@ function SettingsScreenInner() {
       )}
       <View style={s.flex1}>
       <FadeSlideIn style={s.flex1}>
-      <ScrollView
+      <SettingsSearchContext.Provider value={_q}>
+      <Animated.ScrollView
         key={activeCategory || 'root'}
         ref={scrollRef}
+        onScroll={activeCategory === null && !twoPane ? onHeroScroll : undefined}
+        scrollEventThrottle={16}
         contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -3744,7 +3861,8 @@ function SettingsScreenInner() {
           })()}
         </View>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
+      </SettingsSearchContext.Provider>
       </FadeSlideIn>
       </View>
       </View>
@@ -4814,8 +4932,11 @@ const s = StyleSheet.create({
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   // Root search (web only — native uses the header search bar)
-  searchBar: { flexDirection: 'row', alignItems: 'center', borderRadius: 10, paddingHorizontal: 10, height: 38, marginBottom: 20, gap: 6 },
-  searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 38, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
+  // [2026-10-15 settings-2026] busca em pílula que expande (foco → cartão + Cancelar).
+  searchWrap: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
+  searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 12, height: 42, gap: 8, borderWidth: 1 },
+  searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 40, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
+  searchCancel: { paddingLeft: 12, paddingVertical: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
   searchSummary: { fontSize: 13, paddingHorizontal: 16, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.2 },
   // Root profile card / Conta header
   profileCardRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
