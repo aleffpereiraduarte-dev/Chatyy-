@@ -21,8 +21,12 @@ let Rea = null;
 if (KEYBOARD_CONTROLLER_ACTIVE) {
   try { Rea = require('react-native-reanimated'); } catch { Rea = null; } // eslint-disable-line global-require
 }
+// [2026-10-15 hotfix] Layout Animations do Reanimated (entering/layout) medem errado dentro do formSheet
+// nativo (react-native-screens) → blocos sobrepostos/cabeçalho sumido no iPhone. Padrão: Animated (native driver).
+// Religar só p/ teste: globalThis.__chatyy_apps_reanimated = true.
 const REA_OK = !!(
-  Rea && Rea.default && Rea.default.View && Rea.withSpring && Rea.withTiming && Rea.withDelay
+  (typeof globalThis !== 'undefined' && globalThis.__chatyy_apps_reanimated === true)
+  && Rea && Rea.default && Rea.default.View && Rea.withSpring && Rea.withTiming && Rea.withDelay
   && Rea.withRepeat && Rea.withSequence && Rea.useSharedValue && Rea.useAnimatedStyle
   && Rea.cancelAnimation && Rea.LinearTransition
 );
