@@ -121,4 +121,18 @@ export function isAvailable(): boolean {
   return !!getNativeComposerView();
 }
 
-export default { isAvailable, getNativeComposerView };
+/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. */
+let _api: number | null = null;
+export function apiVersion(): number {
+  if (_api != null) return _api;
+  try {
+    const mod: any = requireOptionalNativeModule('ChatyyComposer');
+    const v = mod && typeof mod.apiVersion === 'function' ? Number(mod.apiVersion()) : 0;
+    _api = Number.isFinite(v) ? v : 0;
+  } catch {
+    _api = 0;
+  }
+  return _api;
+}
+
+export default { isAvailable, getNativeComposerView, apiVersion };

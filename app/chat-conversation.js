@@ -4417,6 +4417,21 @@ function _rtMediaUri(u) {
 function _replyV2On() {
   try { return globalThis.__chatyy_native_reply_v2 !== false; } catch { return true; }
 }
+// [2026-10-15 reply-card-fallback] iOS build 692: o cartão de resposta do
+// composer NATIVO não aparecia → no iOS a barra JS de resposta (a de sempre)
+// fica acima do composer nativo e o nativo recebe replyPreview=null (sem cartão
+// duplo). Binário com o composer apiVersion >= 2 (cartão corrigido) ou
+// globalThis.__chatyy_native_reply_card = true volta ao cartão nativo; = false
+// força a barra JS em todas as plataformas.
+function _nativeReplyCardOn() {
+  try {
+    const g = globalThis.__chatyy_native_reply_card;
+    if (g === true) return true;
+    if (g === false) return false;
+  } catch {}
+  if (Platform.OS !== 'ios') return true;
+  try { return require('../modules/expo-chat-composer').apiVersion() >= 2; } catch { return false; }
+}
 // Ícone do describeReplyTarget → tipo p/ o cartão nativo do composer (SF Symbol / path).
 function _rtIconKind(Icon) {
   switch (Icon) {
@@ -35092,7 +35107,7 @@ function ChatConversationInner() {
 
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
           Animated entrance: slide up + fade in for the "I'm replying" cue. */}
-      {(replyTo || editingMsg) && !(shouldUseNativeComposer() && !isSavedMode && !composerBlocked && !isRecording) /* [2026-10-14 native-composer] barra nativa */ && (() => {
+      {(replyTo || editingMsg) && !(shouldUseNativeComposer() && _nativeReplyCardOn() && !isSavedMode && !composerBlocked && !isRecording) /* [2026-10-14 native-composer] barra nativa; [reply-card-fallback] iOS 692 = barra JS */ && (() => {
         // [VISUAL-G8, 2026-05-19] Composer reply chip bar color = quoted sender's color.
         // For edit-mode use brand purple (editing your own msg, no quoted sender).
         // [2026-10-08 chat-beauty-chrome] Monochrome: the gray sender palette
@@ -36298,7 +36313,7 @@ function ChatConversationInner() {
             isDark={isDark}
             colors={colors}
             placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
-            replyPreview={_ncReply}
+            replyPreview={_nativeReplyCardOn() ? _ncReply : null /* [reply-card-fallback] */}
             mentionCandidates={conversationType === 'group'
               ? (members || []).filter((m) => typeof m?.email === 'string' && m.email !== currentEmail).map((m) => ({ token: m.email.split('@')[0], email: m.email }))
               : undefined}
@@ -41923,7 +41938,11 @@ function _pickLightShell(params, acct, isDark, language, insetsTop) {
     if (!!rec.list.isDark !== !!isDark) return null;
     const ty = String(params.type || rec.info.type || '');
     if (rec.list.x !== `${language || ''}|${ty}`) return null; // rev da foto não bateria
-    if (!require('../services/nativeChatStore').threadNewestSync(acct, cid)) return null; // sem foto
+    const _ns = require('../services/nativeChatStore');
+    if (!_ns.threadNewestSync(acct, cid)) return null; // sem foto
+    // [2026-10-15 fase 2b] o transporte nativo gravou mensagem/edição que a foto
+    // não tem (e não montou no nativo) → foto velha: tela de antes (o JS remonta)
+    if (_ns.threadStaleSync && _ns.threadStaleSync(acct, cid)) return null;
     return rec;
   } catch { return null; }
 }
