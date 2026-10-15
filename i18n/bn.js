@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "বিরক্ত করবেন না চালু আছে",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{b}-এর মধ্যে {a}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "অংশগ্রহণকারীদের অপেক্ষায়",
   "meetV2.waitingSub": "লোকজনকে মিটিংয়ে আমন্ত্রণ জানাতে লিঙ্ক শেয়ার করুন।",

@@ -586,6 +586,8 @@ final class CMLAudioView: UIView {
   var tint: UIColor = .white { didSet { setNeedsDisplay() } }
   var dim: UIColor = .gray
   var unplayedDot: UIColor? = nil
+  /// [native-media-dl] o anel de download ocupa o botão (play some)
+  var glyphHidden = false { didSet { if glyphHidden != oldValue { setNeedsDisplay() } } }
   private let spinner = UIActivityIndicatorView(style: .medium)
 
   override init(frame: CGRect) {
@@ -612,9 +614,11 @@ final class CMLAudioView: UIView {
     guard let ctx = UIGraphicsGetCurrentContext() else { return }
     let b = CMLAudioView.buttonSize
     let btn = CGRect(x: 0, y: 1, width: b, height: b)
-    ctx.setFillColor(tint.withAlphaComponent(0.14).cgColor)
-    ctx.fillEllipse(in: btn)
-    if !loading {
+    if !glyphHidden {
+      ctx.setFillColor(tint.withAlphaComponent(0.14).cgColor)
+      ctx.fillEllipse(in: btn)
+    }
+    if !loading && !glyphHidden {
       if playing { CMLIcons.pause(ctx, rect: btn, color: tint) } else { CMLIcons.play(ctx, rect: btn.insetBy(dx: 4, dy: 4), color: tint) }
     }
     // ondas
@@ -659,6 +663,10 @@ final class CMLFileView: UIView {
   var sizeL: CMLTextLayout? { didSet { setNeedsDisplay() } }
   var extL: CMLTextLayout? { didSet { setNeedsDisplay() } }
   var iconColor: UIColor = .gray { didSet { setNeedsDisplay() } }
+  /// [native-media-dl] anel de download por cima do ícone → some a extensão
+  var extHidden = false { didSet { if extHidden != oldValue { setNeedsDisplay() } } }
+  /// [native-media-dl] "1,2 MB de 4,5 MB" no lugar do tamanho enquanto baixa
+  var sizeOverride: NSAttributedString? { didSet { if sizeOverride != oldValue { setNeedsDisplay() } } }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -676,7 +684,7 @@ final class CMLFileView: UIView {
     ctx.setFillColor(iconColor.cgColor)
     ctx.addPath(UIBezierPath(roundedRect: icon, cornerRadius: 7).cgPath)
     ctx.fillPath()
-    if let e = extL {
+    if let e = extL, !extHidden {
       CMLTextView.drawText(e, in: ctx, origin: CGPoint(x: icon.midX - e.size.width / 2, y: icon.midY - e.size.height / 2), height: bounds.height)
     }
     var y: CGFloat = max(0, (bounds.height - (nameL?.size.height ?? 0) - (sizeL?.size.height ?? 0) - 2) / 2)
@@ -684,7 +692,11 @@ final class CMLFileView: UIView {
       CMLTextView.drawText(n, in: ctx, origin: CGPoint(x: 48, y: y), height: bounds.height)
       y += n.size.height + 2
     }
-    if let s = sizeL {
+    if let o = sizeOverride {
+      UIGraphicsPushContext(ctx)
+      o.draw(at: CGPoint(x: 48, y: y))
+      UIGraphicsPopContext()
+    } else if let s = sizeL {
       CMLTextView.drawText(s, in: ctx, origin: CGPoint(x: 48, y: y), height: bounds.height)
     }
   }

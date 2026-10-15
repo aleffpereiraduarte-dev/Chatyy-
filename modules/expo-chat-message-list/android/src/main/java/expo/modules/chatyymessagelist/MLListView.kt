@@ -47,7 +47,7 @@ private const val STORE_WINDOW = 60
 // pelo ItemAnimator; lendo acima, o LayoutManager mantém a âncora.
 
 @SuppressLint("ViewConstructor")
-class MLListView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
+class MLListView(context: Context, appContext: AppContext) : ExpoView(context, appContext), MLTransferObserver {
   // RN (ReactViewGroup) engole requestLayout: sem isto o RecyclerView não
   // remede/relayouta ao mudar o adapter fora de um passe do Yoga.
   override val shouldUseAndroidLayout: Boolean = true
@@ -67,6 +67,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   val onMenuDismiss by EventDispatcher()
   // [native-store] foto da conversa lida do store nativo (apiVersion 4)
   val onStore by EventDispatcher()
+  // [native-media-dl] download nativo de mídia (apiVersion 5)
+  val onMediaTransfer by EventDispatcher()
 
   private val main = Handler(Looper.getMainLooper())
   private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "chatyy-msglist-layout").apply { priority = Thread.NORM_PRIORITY + 1 } }
@@ -203,7 +205,30 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       topMargin = dp(stickyTopDp).toInt()
     })
     applyInsets()
+    MLTransfers.addObserver(this, context)
   }
+
+  // ─── [2026-10-15 native-media-dl] transferências ─────────────────────────
+  override fun transferChanged(key: String) {
+    if (destroyed) return
+    for (i in 0 until rv.childCount) {
+      val c = rv.getChildAt(i) as? MLCellView ?: continue
+      if (key in c.transferKeys) c.applyTransfers()
+    }
+    // toque do usuário concluído → tique leve
+    val x = MLTransfers.item(key)
+    if (x != null && x.state == MLXferState.DONE && x.user && !x.external) {
+      x.user = false
+      try { rv.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.KEYBOARD_TAP) } catch (_: Throwable) {}
+    }
+  }
+
+  override fun transferEvent(body: Map<String, Any>) {
+    if (destroyed) return
+    onMediaTransfer(body)
+  }
+
+  fun setTransfers(list: List<Map<String, Any?>>) { MLTransfers.setExternal(list) }
 
   // ─── [fase 2] props/comandos ─────────────────────────────────────────────
   fun setStickyDate(m: Map<String, Any?>?) {
@@ -780,6 +805,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     persistNow() // [native-store] (idempotente: só grava se mudou desde a última)
     main.removeCallbacks(persistRunnable)
     destroyed = true
+    MLTransfers.removeObserver(this)
     unwatchStore()
     ctxOverlay?.dismiss("destroy", false)
     try { vnPlayer.stop() } catch (_: Throwable) {}
@@ -878,6 +904,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       holder.cell.onRecycled = { c -> vnPlayer.stopIf(c) }
       holder.cell.bind(k, r, l, s, audioState, liftedKey, k in revealedKeys)
       if (pendingFlash == k) { pendingFlash = null; holder.cell.post { holder.cell.flash() } }
+      // [native-media-dl] auto-download (política) das mídias que entram na tela
+      if (holder.cell.transferKeys.isNotEmpty()) holder.cell.autoStartTransfers(this@MLListView)
     }
     override fun onViewRecycled(holder: Holder) { holder.cell.recycle() }
   }
@@ -1003,6 +1031,39 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
           body["part"] = "bubble"
         }
         is MLCellView.Part.Bubble -> body["part"] = "bubble"
+        is MLCellView.Part.Xfer -> {
+          if (r.sel > 0) { body["part"] = "bubble" } else {
+            // [native-media-dl] baixar / cancelar no próprio nativo; envio → JS
+            val (dl, up) = c.xferInfo(part.slot)
+            if (up != null) {
+              body["part"] = "xfer"; body["url"] = "cancel-up"; body["index"] = max(0, part.slot)
+              onRowPress(body)
+              return
+            }
+            val d = dl ?: return
+            val x = MLTransfers.probe(d)
+            try { c.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) } catch (_: Throwable) {}
+            when (x.state) {
+              MLXferState.DONE -> {
+                when (part.slot) {
+                  MLCellView.XFER_AUDIO -> body["part"] = "audio"
+                  MLCellView.XFER_FILE -> body["part"] = "file"
+                  else -> { body["part"] = "media"; body["index"] = max(0, part.slot); frameOf(c, max(0, part.slot))?.let { body["frame"] = it } }
+                }
+              }
+              MLXferState.RUNNING, MLXferState.QUEUED -> {
+                if (x.external) { body["part"] = "xfer"; body["url"] = "cancel-js"; body["k"] = d.key; onRowPress(body) }
+                else MLTransfers.cancel(d.key)
+                return
+              }
+              else -> {
+                if (d.js && x.state == MLXferState.NONE) { body["part"] = "xfer"; body["url"] = "cancel-js"; body["k"] = d.key; onRowPress(body); return }
+                MLTransfers.start(d, true, this@MLListView)
+                return
+              }
+            }
+          }
+        }
         is MLCellView.Part.None -> { if (r.sel > 0) body["part"] = "bubble" else return }
       }
       if (r.sel > 0 && r.kind == MLKind.MSG) body["part"] = "bubble"

@@ -557,6 +557,87 @@ export function cancelDownload(url) {
   return false;
 }
 
+// ── [2026-10-15 native-media-dl] Download feito pela LISTA NATIVA ─────────
+// A lista de mensagens nativa (modules/expo-chat-message-list, apiVersion 5)
+// baixa a mídia recebida com progresso real (URLSession/OkHttp) direto em
+// getCacheDir() + urlToKey(url) — o MESMO arquivo que cacheMedia procuraria.
+// begin → cacheMedia da mesma URL espera o nativo (sem download duplicado);
+// finish → adota o arquivo (syncIndex + store da conversa + galeria + local_path).
+const _extResolvers = new Map(); // key → resolve(path|url)
+/** Pasta (file://…/) onde o nativo grava. null no web. */
+export function getMediaCacheDirUri() { try { return getCacheDir(); } catch { return null; } }
+/** Hosts alternativos da mesma mídia (edge → origem → CDN). */
+export function fallbackUrlsFor(url) { return url ? _fallbackUrls(url) : []; }
+/** Promise do download JS em andamento desta URL (null = nenhum). */
+export function getInflightDownload(url) {
+  const k = mediaUrlKey(url);
+  return k ? (_inflightDownloads.get(k) || null) : null;
+}
+/** Nativo começou a baixar `url`. false = o JS já baixava (não marca). */
+export function beginExternalDownload(url) {
+  if (!url || Platform.OS === 'web') return false;
+  const key = mediaUrlKey(url);
+  if (!key || _inflightDownloads.has(key)) return false;
+  let res = null;
+  const p = new Promise((r) => { res = r; });
+  const fin = (v) => {
+    if (_extResolvers.get(key) !== fin) return;
+    _extResolvers.delete(key);
+    if (_inflightDownloads.get(key) === p) _inflightDownloads.delete(key);
+    try { res(v); } catch {}
+  };
+  _extResolvers.set(key, fin);
+  _inflightDownloads.set(key, p);
+  // rede longa / app em segundo plano: nunca prende o cacheMedia p/ sempre
+  setTimeout(() => fin(url), 10 * 60 * 1000);
+  return true;
+}
+/**
+ * Nativo terminou. local = file:// (ok) ou null (falhou/cancelou).
+ * opts: { messageId, conversationId, mediaType, received, noStore }.
+ * Devolve o caminho final (pode ter ido p/ o store da conversa) ou null.
+ */
+export async function finishExternalDownload(url, local, opts = {}) {
+  if (!url || Platform.OS === 'web') return null;
+  const key = mediaUrlKey(url);
+  if (!key) return null;
+  const fin = _extResolvers.get(key);
+  let result = null;
+  try {
+    if (typeof local === 'string' && local) {
+      const fs = getFS();
+      const p = local.startsWith('file://') ? local : ('file://' + local);
+      let ok = false;
+      try { const st = fs ? await fs.getInfoAsync(p) : null; ok = !!(st && st.exists && st.size > 0); } catch {}
+      if (ok) {
+        if (!opts.noStore) {
+          const plan = _planStore(url, key, opts);
+          if (plan && fs) { try { result = await _promoteToStore(fs, p, plan, url, key, opts); } catch { result = null; } }
+        }
+        if (!result) { registerSyncKey(url, p); result = p; }
+        _dlFailStatus.delete(key);
+        _dlUserCancelled.delete(key);
+        _countDownloadedBytes(fs, result);
+        if (opts.received && !opts.noStore) {
+          try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url), { messageId: opts.messageId, url, conversationId: opts.conversationId }); } catch {}
+        }
+        if (opts.messageId != null && opts.conversationId != null && !opts.noStore) {
+          try {
+            const nativeDb = require('./db');
+            if (typeof nativeDb.dbUpdateMessageFields === 'function') {
+              await nativeDb.dbUpdateMessageFields(opts.conversationId, opts.messageId, { local_path: result });
+            }
+          } catch {}
+        }
+      }
+    }
+  } finally {
+    if (fin) fin(result || url);
+  }
+  if (result) _emitDlProgress(key, { url, messageId: opts.messageId != null ? opts.messageId : null, state: 'done', pct: 100, loaded: 0, total: 0, local: result });
+  return result;
+}
+
 // [#1218 2026-05-20] WhatsApp-parity reconnect sweep.
 // When the network is 'none' or 'unknown', cacheMedia's auto-download gate
 // returns the remote URL (= unsaved). WhatsApp records these and flushes

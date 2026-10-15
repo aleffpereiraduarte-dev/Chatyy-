@@ -64,7 +64,7 @@ final class CMLSwipeDelegate: NSObject, UIGestureRecognizerDelegate {
   }
 }
 
-public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching {
+public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching, CMLTransferObserver {
   let onReady = EventDispatcher()
   let onNativeError = EventDispatcher()
   let onRowPress = EventDispatcher()
@@ -80,6 +80,9 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   let onMenuDismiss = EventDispatcher()
   // [native-store] foto da conversa lida do store nativo (apiVersion 4)
   let onStore = EventDispatcher()
+  // [native-media-dl] download nativo de mídia (apiVersion 5)
+  let onMediaTransfer = EventDispatcher()
+  private let hapticSoft = UIImpactFeedbackGenerator(style: .light)
 
   private let flow = CMLFlowLayout()
   private var cv: UICollectionView!
@@ -233,6 +236,30 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     sticky.alpha = 0
     addSubview(sticky)
     CMLListView.cleanupLiftFiles()
+    CMLTransfers.shared.addObserver(self)
+  }
+
+  // MARK: [2026-10-15 native-media-dl] transferências
+
+  func transferChanged(_ key: String) {
+    let x = CMLTransfers.shared.item(key)
+    for cell in cv.visibleCells {
+      guard let c = cell as? CMLCell, c.transferKeys.contains(key) else { continue }
+      c.applyTransfers(animated: true)
+    }
+    // toque do usuário concluído → tique leve (como o WhatsApp)
+    if let x = x, x.state == .done, x.user, !x.external {
+      x.user = false
+      if window != nil { hapticSoft.impactOccurred(intensity: 0.5) }
+    }
+  }
+
+  func transferEvent(_ body: [String: Any]) {
+    onMediaTransfer(body)
+  }
+
+  func setTransfers(_ list: [[String: Any]]) {
+    CMLTransfers.shared.setExternal(list)
   }
 
   private static var cleanedLiftFiles = false
@@ -815,6 +842,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   // [2026-10-15 native-effects] emoji grande anima 1× ao entrar na tela
   public func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
     (cell as? CMLCell)?.willAppear()
+    (cell as? CMLCell)?.autoStartTransfers(owner: self)
   }
 
   public func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
@@ -891,6 +919,44 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       body["part"] = "media"; body["index"] = i
       // [hero] miniatura tocada na janela → viewer anima a foto saindo dela
       if let fr = cell.mediaRectInWindow(i) { body["frame"] = CMLListView.frameDict(fr.0, fr.1) }
+    case .xfer(let i):
+      // [native-media-dl] baixar / cancelar no próprio nativo; envio → JS
+      let (dl, up) = cell.xferInfo(i)
+      if up != nil {
+        body["part"] = "xfer"; body["url"] = "cancel-up"; body["index"] = max(0, i)
+        onRowPress(body)
+        return
+      }
+      guard let d = dl else { return }
+      let T = CMLTransfers.shared
+      let x = T.probe(d)
+      switch x.state {
+      case .done:
+        if i == CMLCell.xferAudio { body["part"] = "audio" }
+        else if i == CMLCell.xferFile { body["part"] = "file" }
+        else {
+          body["part"] = "media"; body["index"] = max(0, i)
+          if let fr = cell.mediaRectInWindow(max(0, i)) { body["frame"] = CMLListView.frameDict(fr.0, fr.1) }
+        }
+      case .running, .queued:
+        haptic.impactOccurred()
+        if x.external {
+          body["part"] = "xfer"; body["url"] = "cancel-js"; body["k"] = d.key
+          onRowPress(body)
+        } else {
+          T.cancel(d.key)
+        }
+        return
+      default:
+        haptic.impactOccurred()
+        if d.js && x.state == .none {
+          body["part"] = "xfer"; body["url"] = "cancel-js"; body["k"] = d.key
+          onRowPress(body)
+          return
+        }
+        T.start(d, user: true, owner: self)
+        return
+      }
     case .reply: body["part"] = "reply"
     case .link(let u, _): body["part"] = "link"; body["url"] = u
     case .audio: body["part"] = "audio"

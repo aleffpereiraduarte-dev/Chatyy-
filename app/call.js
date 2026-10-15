@@ -504,6 +504,9 @@ function CallScreenInner() {
   // Incident call_1791675346907: caller saw a running timer while the
   // callee's phone was still ringing (presence treated as answer).
   const [peerReached, setPeerReached] = useState(false);
+  // [2026-10-15 chamadas-dnd] Callee em Foco/Não Perturbe: o aparelho dele não
+  // tocou (servidor repassa call_peer_status {status:'dnd'}). Igual iOS/Android.
+  const [peerDnd, setPeerDnd] = useState(false);
   const [answeredUi, setAnsweredUi] = useState(false);
   const [mediaUp, setMediaUp] = useState(false);
   const mediaUpRef = useRef(false);
@@ -4272,7 +4275,21 @@ function CallScreenInner() {
         } catch {}
       });
     }
-    wsUnsubsRef.current = [unsubAccepted, unsubEnd, unsubMissed, unsubDeclined, unsubMuteRequest];
+    // [2026-10-15 chamadas-dnd] status do aparelho do callee (relé do servidor).
+    let unsubPeerStatus = () => {};
+    if (mailWs) {
+      unsubPeerStatus = mailWs.on('call_peer_status', (data) => {
+        if (!mounted || !data || data.call_id !== callId) return;
+        if (data.status === 'dnd') {
+          setPeerDnd(true);
+          try { _callDiagAppend('info', 'caller: callee em não perturbe', { call_id: callId, reason: data.reason || '' }); } catch {}
+        } else if (data.status === 'ringing') {
+          setPeerDnd(false);
+          setPeerReached(true);
+        }
+      });
+    }
+    wsUnsubsRef.current = [unsubAccepted, unsubEnd, unsubMissed, unsubDeclined, unsubMuteRequest, unsubPeerStatus];
 
     // [TTFC 2026-05-18] Caller pre-connects to LiveKit IN PARALLEL with
     // the call_invite WS broadcast (WhatsApp parity). Old behavior awaited
@@ -5509,6 +5526,8 @@ function CallScreenInner() {
   if (isCaller && !isGroupCall && !peerConnected) {
     statusText = answeredUi
       ? (t('call.state.connecting') || 'Conectando…')
+      : peerDnd
+        ? (t('call.state.peerDnd') || 'Não perturbe ativo')
       : peerReached
         ? (t('call.state.ringing') || 'Tocando…')
         : (t('call.state.calling') || 'Chamando…');

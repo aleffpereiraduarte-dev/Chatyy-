@@ -571,6 +571,27 @@ final class CallSignalWs: NSObject {
             // own `mailWs.on('call_end')` subscription — this is belt-and-
             // suspenders for the native UI cleanup.
             handleIncomingCallEndLocked(obj)
+        case "call_peer_status":
+            // [2026-10-15 chamadas-dnd] Caller: o aparelho do callee não tocou
+            // (Foco/Não Perturbe) → status "dnd"; voltou a tocar → "ringing".
+            // Relé do servidor (chat.php call_status dnd|peer_ringing).
+            let cid = (obj["call_id"] as? String) ?? ""
+            let st = (obj["status"] as? String) ?? ""
+            if !cid.isEmpty && !st.isEmpty {
+                nativeCallDiag("ws_peer_status_recv", cid, "status=\(st)")
+                let info: [String: Any] = [
+                    "callId": cid,
+                    "status": st,
+                    "reason": (obj["reason"] as? String) ?? "",
+                ]
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ExpoCallKitPeerCallStatus"),
+                        object: nil,
+                        userInfo: info
+                    )
+                }
+            }
         case "call_p2p_ready", "call_p2p_offer", "call_p2p_answer",
              "call_p2p_candidate", "call_p2p_restart", "call_p2p_fallback":
             // [2026-10-09 p2p-ios] Sinalização P2P 1:1 → sessão nativa (ou
@@ -730,6 +751,8 @@ final class CallSignalWs: NSObject {
         // per-user voip_diag log so the next answered call reveals if a
         // stale/duplicate frame is what fired the close.
         nativeCallDiag("ws_call_end_recv", callId, "reason=\(reason)")
+        // [2026-10-15 chamadas-dnd] Some a notificação "toque para atender".
+        IncomingCallFilter.clear(callId: callId, reason: "ws_\(reason)")
 
         // [P2 active-call keepAlive 2026-10-04] Call is over — drop it from the
         // active set so reconnect retries wind down (covers inbound call_cancel
@@ -1008,9 +1031,33 @@ final class CallSignalWs: NSObject {
             }
             return false
         }()
-        if voipPushRegistered {
+        // [2026-10-15 chamadas-dnd] App em PRIMEIRO PLANO: reporta na hora.
+        // A espera de 1,8 s só existia p/ o push (payload mais rico) não gerar
+        // uma 2ª entrada no CallKit — o claim atômico do registro
+        // (registerIncomingCallKitUUIDIfAbsent) já garante isso: o push que
+        // chegar depois cai no ramo "reusing UUID" (sem 2º report) e só
+        // atualiza a exibição/payload. Com o app aberto o push ainda pode
+        // atrasar 20 s+ (APNs) — esperar só atrasava o toque.
+        if voipPushRegistered && isAppForeground {
+            nativeCallDiag("ws_invite_report_now_fg", callId)
+        }
+        if voipPushRegistered && !isAppForeground {
             NSLog("[CallSignalWs] call_invite \(callId): VoIP registered (fg=\(isAppForeground)) — yielding \(kWsInviteYieldToPushSeconds)s to the push path")
             nativeCallDiag("ws_yield_to_push", callId, "delayMs=\(Int(kWsInviteYieldToPushSeconds * 1000))")
+            // [2026-10-15 chamadas-dnd] Pré-conexão EM PARALELO à espera (o SFU
+            // join + ICE levam 1-3 s em 4G). Dedupe por callId: preconnectRoom
+            // ignora uma 2ª chamada (kPreconnectRoomLock + isPreconnected) — o
+            // kick do push/report depois vira no-op. Se o CallKit recusar o
+            // toque (Foco), IncomingCallFilter derruba esta sala.
+            if let tok = lkExtras["lk_token"] as? String, !tok.isEmpty,
+               let lkUrl = lkExtras["lk_url"] as? String, !lkUrl.isEmpty,
+               !IncomingCallFilter.isFiltered(callId) {
+                nativeCallDiag("ws_invite_preconnect_parallel", callId)
+                VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(
+                    callId: callId,
+                    dict: ["call_id": callId, "lk_token": tok, "lk_url": lkUrl]
+                )
+            }
             queue.asyncAfter(deadline: .now() + kWsInviteYieldToPushSeconds) { [weak self] in
                 guard let self = self else { return }
                 // call_end / call_cancel landed during the yield → the invite
@@ -1156,6 +1203,21 @@ final class CallSignalWs: NSObject {
                     // (e.g. Focus/DND filter = CXErrorCodeIncomingCallError 3).
                     nativeCallDiag("ws_invite_report_failed", callId,
                                    "code=\((error as NSError).code) err=\(error.localizedDescription)")
+                    // [2026-10-15 chamadas-dnd] Não tocou → sem pré-conexão
+                    // (inclusive a paralela do convite), avisa o caller e
+                    // posta a notificação "toque para atender".
+                    IncomingCallFilter.handleReportFailure(
+                        error: error,
+                        callId: callId,
+                        uuid: uuid,
+                        callerName: callerName,
+                        callerEmail: callerEmail,
+                        conversationId: conversationId,
+                        hasVideo: hasVideo,
+                        lkToken: (lkExtras["lk_token"] as? String) ?? "",
+                        lkUrl: (lkExtras["lk_url"] as? String) ?? "",
+                        source: "ws"
+                    )
                 } else {
                     NSLog("[CallSignalWs] reportNewIncomingCall succeeded for \(callId)")
                     // [2026-10-12 ring-first-try] Same ring-window LiveKit

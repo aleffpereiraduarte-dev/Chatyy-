@@ -17,16 +17,25 @@ public class ChatyyMessageListModule: Module {
     // 4 = [native-store] prop `store` {a,c,r,n} (foto da conversa lida/gravada
     //     direto no store nativo modules/expo-chat-store) + evento onStore;
     //     onReady traz src 'store'|'js'.
+    // 5 = [native-media-dl] download nativo com anel de progresso (row.media/au/
+    //     file/album[].dl {u,k,a,sz,alt,js}), configureTransfers (módulo),
+    //     setTransfers (view), evento onMediaTransfer, onRowPress part 'xfer'.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 4
+      return 5
       #else
       return 3
       #endif
     }
 
+    // [native-media-dl] pasta do cache do mediaCache (JS) + matriz de auto-download
+    // + economia de dados + modelo "{a} de {b}" traduzido.
+    AsyncFunction("configureTransfers") { (cfg: [String: Any]) in
+      CMLTransfers.shared.configure(cfg)
+    }.runOnQueue(.main)
+
     View(CMLListView.self) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore", "onMediaTransfer")
 
       Prop("theme") { (view: CMLListView, value: [String: Any]?) in
         view.setTheme(value ?? [:])
@@ -81,6 +90,12 @@ public class ChatyyMessageListModule: Module {
 
       AsyncFunction("setAudioState") { (view: CMLListView, state: [String: Any]) in
         view.setAudioState(state)
+      }.runOnQueue(.main)
+
+      // [native-media-dl] progresso de transferências feitas pelo JS (download do
+      // mediaCache / upload) → o mesmo anel. [{k, st: q|p|d|f|c, p, t, l}]
+      AsyncFunction("setTransfers") { (view: CMLListView, list: [Any]) in
+        view.setTransfers(list.compactMap { $0 as? [String: Any] })
       }.runOnQueue(.main)
 
       AsyncFunction("setLiftedKey") { (view: CMLListView, key: String) in

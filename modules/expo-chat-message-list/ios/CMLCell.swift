@@ -18,7 +18,16 @@ final class CMLCell: UICollectionViewCell {
   let media = UIImageView()
   let playBadge = CMLIconView()
   let durLabel = CMLTextView()
-  let progress = CMLProgressView()
+  let progress = CMLProgressView()   // legado (apiVersion < 5 não usa mais; mantido p/ binário antigo)
+  // [2026-10-15 native-media-dl] anel único de transferência (baixar/enviar)
+  let xRing = CMLTransferRing()
+  let mediaDim = UIView()
+  var albumRings: [CMLTransferRing] = []
+  let audioRing = CMLTransferRing()
+  let fileRing = CMLTransferRing()
+  /// chaves de transferência mostradas nesta célula (p/ a lista só atualizar quem importa)
+  private(set) var transferKeys = Set<String>()
+  fileprivate var style0: CMLStyle?
   var albumViews: [UIImageView] = []
   let moreLabel = CMLTextView()
   let moreDim = UIView()
@@ -101,11 +110,26 @@ final class CMLCell: UICollectionViewCell {
     slide.addSubview(playBadge)
     slide.addSubview(durLabel)
     slide.addSubview(progress)
+    progress.isHidden = true
+    mediaDim.backgroundColor = UIColor(white: 0, alpha: 0.18)
+    mediaDim.isUserInteractionEnabled = false
+    mediaDim.isHidden = true
+    slide.insertSubview(mediaDim, aboveSubview: media)
+    slide.addSubview(xRing)
+    for _ in 0..<4 {
+      let r = CMLTransferRing()
+      slide.addSubview(r)
+      albumRings.append(r)
+    }
     slide.addSubview(textView)
     deletedIcon.kind = .deleted
     slide.addSubview(deletedIcon)
     slide.addSubview(audio)
     slide.addSubview(fileView)
+    audioRing.look = .inline
+    fileRing.look = .inline
+    slide.addSubview(audioRing)
+    slide.addSubview(fileRing)
     slide.addSubview(blocks)
     blocks.onVideoNoteEvent = { [weak self] _, st in
       guard let self = self else { return }
@@ -132,6 +156,10 @@ final class CMLCell: UICollectionViewCell {
     highlight.layer.removeAllAnimations()
     highlight.alpha = 0
     progress.stop()
+    xRing.reset(); audioRing.reset(); fileRing.reset()
+    for r in albumRings { r.reset() }
+    mediaDim.isHidden = true
+    transferKeys = []
     textView.layer.removeAnimation(forKey: CMLJumboFX.animKey)
     jumboPending = false
     mediaToken = ""
@@ -158,6 +186,7 @@ final class CMLCell: UICollectionViewCell {
     self.key = key
     self.row = row
     self.layoutInfo = L
+    self.style0 = s
     self.revealed = extra.revealed
     let th = s.theme
     let w = bounds.width > 0 ? bounds.width : s.width
@@ -277,7 +306,7 @@ final class CMLCell: UICollectionViewCell {
       media.contentMode = md.kind == "sticker" ? .scaleAspectFit : .scaleAspectFill
       media.backgroundColor = md.kind == "sticker" ? .clear : (row.own ? th.ownQuote : th.otherQuote)
       let px = max(L.mediaFrame.width, L.mediaFrame.height) * scale
-      setImage(media, slot: -1, uri: md.uri, thumb: md.thumb, maxPixel: px, animated: md.kind == "gif" || md.kind == "sticker")
+      setImage(media, slot: -1, uri: effectiveURI(md), thumb: md.thumb, maxPixel: px, animated: md.kind == "gif" || md.kind == "sticker")
       let isVideo = md.kind == "video"
       let showPlay = isVideo && md.up == nil
       playBadge.isHidden = !showPlay
@@ -297,23 +326,15 @@ final class CMLCell: UICollectionViewCell {
       } else {
         durLabel.isHidden = true
       }
-      if let up = md.up {
-        progress.isHidden = false
-        let s: CGFloat = 48
-        progress.frame = CGRect(x: L.mediaFrame.midX - s / 2, y: L.mediaFrame.midY - s / 2, width: s, height: s).offsetBy(dx: o.x, dy: o.y)
-        progress.set(progress: up)
-      } else {
-        progress.isHidden = true
-        progress.stop()
-      }
+      mediaDim.frame = media.frame
+      mediaDim.layer.cornerRadius = L.mediaRadius
     } else {
       media.isHidden = true
       media.image = nil
       mediaToken = ""
       playBadge.isHidden = true
       durLabel.isHidden = true
-      progress.isHidden = true
-      progress.stop()
+      mediaDim.isHidden = true
     }
 
     // álbum
@@ -326,7 +347,7 @@ final class CMLCell: UICollectionViewCell {
           place(iv, L.albumFrames[i], true)
           iv.backgroundColor = row.own ? th.ownQuote : th.otherQuote
           let f = L.albumFrames[i]
-          setImage(iv, slot: i, uri: md.uri, thumb: md.thumb, maxPixel: max(f.width, f.height) * scale, animated: false)
+          setImage(iv, slot: i, uri: effectiveURI(md), thumb: md.thumb, maxPixel: max(f.width, f.height) * scale, animated: false)
         } else {
           iv.isHidden = true
           iv.image = nil
@@ -401,6 +422,9 @@ final class CMLCell: UICollectionViewCell {
     } else {
       fileView.isHidden = true
     }
+
+    // [native-media-dl] anéis (enviar/baixar) por cima de mídia/álbum/áudio/arquivo
+    applyTransfers(animated: prevKey == key && window != nil)
 
     // meta
     meta.meta = L.meta
@@ -479,7 +503,11 @@ final class CMLCell: UICollectionViewCell {
 
   // MARK: hit test (ponto em coordenadas do contentView)
 
-  enum Part { case bubble, media(Int), reply, link(String, Int), audio, file, reaction(Int), action(String, CGRect, CGFloat), retry, vnote(Int), spoiler, none }
+  enum Part { case bubble, media(Int), reply, link(String, Int), audio, file, reaction(Int), action(String, CGRect, CGFloat), retry, vnote(Int), spoiler, xfer(Int), none }
+
+  /// [native-media-dl] slots de transferência: -1 mídia única, 0..3 álbum
+  static let xferAudio = 100
+  static let xferFile = 101
 
   func part(at pContent: CGPoint) -> Part {
     guard let L = layoutInfo, let row = row else { return .none }
@@ -502,6 +530,7 @@ final class CMLCell: UICollectionViewCell {
       case .action(let a, let r, let rad): return .action(a, r, rad)
       }
     }
+    if let xs = xferHit(bp, L) { return .xfer(xs) }
     if !L.albumFrames.isEmpty {
       for (i, f) in L.albumFrames.enumerated() where f.contains(bp) { return .media(i) }
     }
@@ -715,4 +744,197 @@ struct CMLAudioState {
   var loading: Bool
   var posMs: Double?
   var durMs: Double?
+}
+
+
+// MARK: - [2026-10-15 native-media-dl] anel de transferência (baixar/enviar)
+
+extension CMLCell {
+  /// Estado de um slot: modo do anel + se a mídia já está local.
+  private func xferState(_ dl: CMLMediaDL?, up: Int?, sizeText: Bool) -> (CMLTransferRing.Mode, Bool, CMLXfer?) {
+    if let u = up {
+      let m: CMLTransferRing.Mode = u < 0 ? .spin : .progress(Double(max(0, min(100, u))) / 100)
+      return (m, true, nil)
+    }
+    guard let d = dl else { return (.hidden, true, nil) }
+    let x = CMLTransfers.shared.probe(d)
+    switch x.state {
+    case .done: return (.hidden, true, x)
+    case .queued: return (.spin, false, x)
+    case .running:
+      let m: CMLTransferRing.Mode = x.total > 0 ? .progress(x.fraction) : .spin
+      return (m, false, x)
+    default:
+      if d.js && x.state == .none { return (.spin, false, x) } // o JS já está baixando
+      let sz = sizeText ? CMLTransfers.formatBytes(d.size > 0 ? d.size : x.total) : ""
+      return (.download(sz), false, x)
+    }
+  }
+
+  /// URI a desenhar: foto/GIF com `dl` só aparece (nítida) depois de baixada —
+  /// antes fica a miniatura borrada + anel. Vídeo: `uri` já é o pôster.
+  func effectiveURI(_ md: CMLMedia) -> String {
+    guard let d = md.dl, md.up == nil, md.kind == "image" || md.kind == "gif" else { return md.uri }
+    let x = CMLTransfers.shared.probe(d)
+    if x.state == .done, let l = x.local { return l }
+    return ""
+  }
+
+  /// Atualiza só os anéis (e troca a miniatura pela foto quando termina).
+  func applyTransfers(animated: Bool) {
+    guard let row = row, let L = layoutInfo, row.kind == .msg else { return }
+    var keys = Set<String>()
+    let o = L.bubbleFrame.origin
+    let scale = UIScreen.main.scale
+    // mídia única
+    if let md = row.media, !L.mediaFrame.isEmpty, md.kind != "sticker" {
+      if let d = md.dl { keys.insert(d.key) }
+      let (mode, done, x) = xferState(md.dl, up: md.up, sizeText: true)
+      let wasShown = !xRing.isHidden
+      place(ring: xRing, mode: mode, in: L.mediaFrame.offsetBy(dx: o.x, dy: o.y), animated: animated, done: done)
+      let isVideo = md.kind == "video"
+      playBadge.isHidden = !(isVideo && md.up == nil && done)
+      mediaDim.isHidden = done || md.dl == nil
+      if done, x != nil, md.kind == "image" || md.kind == "gif" {
+        // terminou agora → foto nítida com cross-fade sobre a miniatura
+        let u = effectiveURI(md)
+        if !u.isEmpty && !mediaToken.hasPrefix(u + "#") {
+          let px = max(L.mediaFrame.width, L.mediaFrame.height) * scale
+          setImage(media, slot: -1, uri: u, thumb: md.thumb, maxPixel: px, animated: md.kind == "gif")
+        }
+      }
+      if animated && wasShown && done && !playBadge.isHidden {
+        playBadge.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0.2, options: [.allowUserInteraction], animations: { self.playBadge.alpha = 1 })
+      }
+    } else {
+      xRing.reset()
+      mediaDim.isHidden = true
+    }
+    // álbum
+    for i in 0..<albumRings.count {
+      let r = albumRings[i]
+      guard i < row.album.count, i < L.albumFrames.count, !L.albumFrames.isEmpty else { r.reset(); continue }
+      let md = row.album[i]
+      if let d = md.dl { keys.insert(d.key) }
+      let (mode, done, x) = xferState(md.dl, up: md.up, sizeText: false)
+      place(ring: r, mode: mode, in: L.albumFrames[i].offsetBy(dx: o.x, dy: o.y), animated: animated, done: done)
+      if done, x != nil, i < albumTokens.count {
+        let u = effectiveURI(md)
+        if !u.isEmpty && !albumTokens[i].hasPrefix(u + "#") {
+          let f = L.albumFrames[i]
+          setImage(albumViews[i], slot: i, uri: u, thumb: md.thumb, maxPixel: max(f.width, f.height) * scale, animated: false)
+        }
+      }
+    }
+    // áudio: o botão play vira o anel enquanto baixa
+    if let au = row.audio, !L.audioFrame.isEmpty {
+      if let d = au.dl { keys.insert(d.key) }
+      let (mode, done, _) = xferState(au.dl, up: nil, sizeText: false)
+      audioRing.tint = row.own ? style0?.theme.ownText ?? .white : style0?.theme.otherText ?? .black
+      let b = CMLAudioView.buttonSize
+      let btn = CGRect(x: L.audioFrame.minX, y: L.audioFrame.minY + 1, width: b, height: b).offsetBy(dx: o.x, dy: o.y)
+      place(ring: audioRing, mode: mode, in: btn, animated: animated, done: done)
+      audio.glyphHidden = mode != .hidden
+    } else {
+      audioRing.reset()
+      audio.glyphHidden = false
+    }
+    // arquivo: anel no ícone + "1,2 MB de 4,5 MB"
+    if let f = row.file, !L.fileFrame.isEmpty {
+      if let d = f.dl { keys.insert(d.key) }
+      let (mode, done, x) = xferState(f.dl, up: nil, sizeText: false)
+      let tint = row.own ? (style0?.theme.ownText ?? .white) : (style0?.theme.accent ?? .black)
+      fileRing.tint = tint
+      let ff = L.fileFrame
+      let icon = CGRect(x: ff.minX, y: ff.minY + max(0, (ff.height - 44) / 2) + 3, width: 38, height: 38).offsetBy(dx: o.x, dy: o.y)
+      place(ring: fileRing, mode: mode, in: icon, animated: animated, done: done)
+      fileView.extHidden = mode != .hidden
+      if let x = x, x.state == .running, !done {
+        let t = CMLTransfers.shared.progressText(x)
+        if t.isEmpty { fileView.sizeOverride = nil } else {
+          let c = row.own ? (style0?.theme.ownMeta ?? .lightGray) : (style0?.theme.otherMeta ?? .gray)
+          fileView.sizeOverride = NSAttributedString(string: t, attributes: [.font: style0?.meta ?? UIFont.systemFont(ofSize: 12), .foregroundColor: c])
+        }
+      } else {
+        fileView.sizeOverride = nil
+      }
+    } else {
+      fileRing.reset()
+      fileView.extHidden = false
+      fileView.sizeOverride = nil
+    }
+    transferKeys = keys
+  }
+
+  private func place(ring: CMLTransferRing, mode: CMLTransferRing.Mode, in rect: CGRect, animated: Bool, done: Bool) {
+    if mode == .hidden {
+      if animated && done && !ring.isHidden { ring.finish() } else if !(animated && done) { ring.set(.hidden, animated: false) }
+      return
+    }
+    let sz = ring.preferredSize(mode)
+    let f = CGRect(x: rect.midX - sz.width / 2, y: rect.midY - sz.height / 2, width: sz.width, height: sz.height)
+    if ring.bounds.size != f.size || ring.center != CGPoint(x: f.midX, y: f.midY) {
+      ring.bounds = CGRect(origin: .zero, size: f.size)
+      ring.center = CGPoint(x: f.midX, y: f.midY)
+    }
+    ring.set(mode, animated: animated)
+  }
+
+  /// Toque cai num anel/botão de baixar? (ponto em coords do balão)
+  fileprivate func xferHit(_ bp: CGPoint, _ L: CMLRowLayout) -> Int? {
+    guard let row = row else { return nil }
+    let o = L.bubbleFrame.origin
+    func ringHit(_ r: CMLTransferRing) -> Bool {
+      if r.isHidden || r.mode == .hidden { return false }
+      return r.frame.offsetBy(dx: -o.x, dy: -o.y).insetBy(dx: -12, dy: -12).contains(bp)
+    }
+    // botão "baixar": a mídia inteira; baixando: só o anel (X) — fora dele abre
+    func isDownloadButton(_ r: CMLTransferRing) -> Bool {
+      if case .download = r.mode { return !r.isHidden }
+      return false
+    }
+    if let md = row.media, !L.mediaFrame.isEmpty, md.kind != "sticker" {
+      if md.up != nil { return ringHit(xRing) ? -1 : nil }
+      // foto/vídeo ainda não baixado: o balão inteiro baixa (WhatsApp)
+      if md.dl != nil && !xRing.isHidden && (isDownloadButton(xRing) ? L.mediaFrame.contains(bp) : ringHit(xRing)) { return -1 }
+    }
+    for (i, r) in albumRings.enumerated() where i < L.albumFrames.count && i < row.album.count {
+      let md = row.album[i]
+      if md.up != nil { if ringHit(r) { return i }; continue }
+      if md.dl != nil && !r.isHidden && L.albumFrames[i].contains(bp) && (isDownloadButton(r) || ringHit(r)) { return i }
+    }
+    if row.audio != nil && !audioRing.isHidden && !L.audioFrame.isEmpty {
+      let b = CMLAudioView.buttonSize
+      if CGRect(x: L.audioFrame.minX, y: L.audioFrame.minY, width: b + 12, height: L.audioFrame.height).insetBy(dx: -8, dy: -6).contains(bp) { return CMLCell.xferAudio }
+    }
+    if row.file != nil && !fileRing.isHidden && !L.fileFrame.isEmpty && L.fileFrame.contains(bp) { return CMLCell.xferFile }
+    return nil
+  }
+
+  /// dl / up do slot (p/ a lista decidir baixar, cancelar ou mandar ao JS).
+  func xferInfo(_ slot: Int) -> (CMLMediaDL?, Int?) {
+    guard let row = row else { return (nil, nil) }
+    switch slot {
+    case -1: return (row.media?.dl, row.media?.up)
+    case CMLCell.xferAudio: return (row.audio?.dl, nil)
+    case CMLCell.xferFile: return (row.file?.dl, nil)
+    default: return slot >= 0 && slot < row.album.count ? (row.album[slot].dl, row.album[slot].up) : (nil, nil)
+    }
+  }
+
+  /// Auto-download (política do usuário) das mídias desta linha.
+  func autoStartTransfers(owner: CMLTransferObserver) {
+    guard let row = row, row.kind == .msg, !row.deleted else { return }
+    var dls: [CMLMediaDL] = []
+    if let d = row.media?.dl, row.media?.up == nil { dls.append(d) }
+    for m in row.album where m.up == nil { if let d = m.dl { dls.append(d) } }
+    if let d = row.audio?.dl { dls.append(d) }
+    if let d = row.file?.dl { dls.append(d) }
+    let T = CMLTransfers.shared
+    for d in dls where !d.js {
+      let x = T.probe(d)
+      if x.state == .none && !x.autoTried && T.allowsAuto(d.bucket) { T.start(d, user: false, owner: owner) }
+    }
+  }
 }

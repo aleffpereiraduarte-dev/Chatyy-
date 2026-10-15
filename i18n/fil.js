@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "Naka-on ang Huwag Istorbohin",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} ng {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "Naghihintay ng mga kalahok",
   "meetV2.waitingSub": "Ibahagi ang link para mag-imbita ng mga tao sa meeting.",

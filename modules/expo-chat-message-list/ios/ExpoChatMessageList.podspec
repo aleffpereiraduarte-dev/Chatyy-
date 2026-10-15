@@ -19,5 +19,5 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.swift'
 
-  s.frameworks = 'UIKit', 'CoreText', 'ImageIO', 'CryptoKit', 'QuartzCore', 'AVFoundation'
+  s.frameworks = 'UIKit', 'CoreText', 'ImageIO', 'CryptoKit', 'QuartzCore', 'AVFoundation', 'Network'
 end

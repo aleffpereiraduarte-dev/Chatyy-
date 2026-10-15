@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "Usisumbue imewashwa",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} kati ya {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "Inasubiri washiriki",
   "meetV2.waitingSub": "Shiriki kiungo ili kualika watu kwenye mkutano.",

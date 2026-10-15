@@ -541,6 +541,28 @@ object CallSignalWs {
                     Log.w(TAG, "broadcast CALL_ANSWERED failed: ${t.message}")
                 }
             }
+            "call_peer_status" -> {
+                // [2026-10-15 dnd] Callee-side ring status relayed by chat.php
+                // (call_status dnd / peer_ringing): "dnd" = its phone did not
+                // ring (iOS Focus / Android zen) → caller shows "Não perturbe
+                // ativo" instead of a false "Tocando…"; "ringing" = ring shows
+                // again. CallActivity decides (outgoing + unanswered only).
+                val psId = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
+                val st = obj.optString("status")
+                Log.d(TAG, "call_peer_status $psId status=$st")
+                if (psId.isNotEmpty() && st.isNotEmpty()) {
+                    try {
+                        val intent = Intent("expo.modules.callkit.CALL_PEER_STATUS")
+                        appContext?.let { intent.setPackage(it.packageName) }
+                        intent.putExtra("call_id", psId)
+                        intent.putExtra("status", st)
+                        intent.putExtra("reason", obj.optString("reason"))
+                        appContext?.sendBroadcast(intent)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "broadcast CALL_PEER_STATUS failed: ${t.message}")
+                    }
+                }
+            }
             "call_declined", "call_rejected", "call_cancel" -> {
                 // [WAVE 161 2026-05-23] Callee rejected, OR caller cancelled
                 // before pickup. Tear down native call UI same as call_end.
@@ -842,6 +864,9 @@ object CallSignalWs {
                 ctx, callId, callerName, callerEmail, conversationId, hasVideo,
                 source = "ws"
             )
+            // [2026-10-15 dnd] Tell the caller the ring is silenced (once per
+            // call_id; the FCM path then also skips its preconnect).
+            try { CallRingGate.checkAndReport(ctx, callId, "ws") } catch (_: Throwable) {}
         } catch (e: Throwable) {
             Log.e(TAG, "call_invite $callId: startForegroundService failed — falling back to notification", e)
             try {

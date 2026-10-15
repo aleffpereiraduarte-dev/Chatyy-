@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "Mitte segada on sees",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} / {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "Ootame osalejaid",
   "meetV2.waitingSub": "Jaga linki, et kutsuda inimesi koosolekule.",

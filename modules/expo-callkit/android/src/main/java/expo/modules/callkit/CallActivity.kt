@@ -628,10 +628,44 @@ class CallActivity : ComponentActivity() {
    *  LK room). Only upgrades "Chamando…" — never touches accept/connected. */
   private fun markPeerRinging(src: String) {
     if (!isOutgoing || peerAnswered || mediaFlowing || finishing) return
+    // [2026-10-15 dnd] Callee reported Do Not Disturb — a later LK join must
+    // not paint a false "Tocando…" (only an explicit status "ringing" clears).
+    if (peerDnd) return
     if (state.status != "Chamando…") return
     state.status = "Tocando…"
     Log.i(TAG, "[call-states] Tocando… src=$src callId=$callId")
     try { CallVideoQuality.postDiag("call_state_ringing", "src=$src") } catch (_: Throwable) {}
+  }
+
+  /** [2026-10-15 dnd] Callee's ring was silenced (iOS Focus refused CallKit /
+   *  Android zen mutes the ring). Set by call_peer_status{dnd}; cleared by
+   *  call_peer_status{ringing} (callee reopened the app and the ring shows). */
+  @Volatile private var peerDnd: Boolean = false
+
+  /** [2026-10-15 dnd] WS call_peer_status → caller label. Ringback continues;
+   *  the call is NOT ended (the callee may still answer from the notification). */
+  private val peerStatusReceiver = object : BroadcastReceiver() {
+    override fun onReceive(ctx: Context?, intent: Intent?) {
+      val cid = intent?.getStringExtra("call_id") ?: ""
+      if (cid.isNotEmpty() && cid != callId) return
+      val st = intent?.getStringExtra("status") ?: ""
+      runOnUiThread {
+        if (!isOutgoing || peerAnswered || mediaFlowing || finishing) return@runOnUiThread
+        when (st) {
+          "dnd" -> {
+            peerDnd = true
+            state.status = PEER_DND_STATUS
+            Log.i(TAG, "[call-states] peer DND callId=$callId")
+            try { CallVideoQuality.postDiag("call_state_peer_dnd", "reason=${intent?.getStringExtra("reason") ?: ""}") } catch (_: Throwable) {}
+          }
+          "ringing" -> {
+            peerDnd = false
+            if (state.status == PEER_DND_STATUS) state.status = "Chamando…"
+            markPeerRinging("peer_status_ringing")
+          }
+        }
+      }
+    }
   }
 
   /** Real answer (WS call_accepted, or remote media which implies it). Stops
@@ -682,6 +716,7 @@ class CallActivity : ComponentActivity() {
   private fun steadyStatusLabel(): String = when {
     mediaFlowing -> "Conectado"
     !isOutgoing || peerAnswered -> "Conectando…"
+    peerDnd -> PEER_DND_STATUS
     (room?.remoteParticipants?.isNotEmpty() == true) -> "Tocando…"
     else -> "Chamando…"
   }
@@ -1364,6 +1399,15 @@ class CallActivity : ComponentActivity() {
       registerReceiver(callAnsweredReceiver, answeredFilter)
     }
 
+    // [2026-10-15 dnd] call_peer_status (callee DND / ringing again).
+    val peerStatusFilter = IntentFilter("expo.modules.callkit.CALL_PEER_STATUS")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      registerReceiver(peerStatusReceiver, peerStatusFilter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      registerReceiver(peerStatusReceiver, peerStatusFilter)
+    }
+
     // [2026-10-15 screen-share WA] Notification "Parar" → stop the share.
     screenShareStopRx = ScreenShareKit.registerStopReceiver(this) {
       if (state.isScreenSharing) {
@@ -1602,6 +1646,7 @@ class CallActivity : ComponentActivity() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(callAnsweredReceiver) } catch (_: Exception) {}
+    try { unregisterReceiver(peerStatusReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(telecomStateReceiver) } catch (_: Exception) {}
     // [2026-10-15 screen-share WA]
     ScreenShareKit.unregisterStopReceiver(this, screenShareStopRx)
@@ -3110,7 +3155,7 @@ class CallActivity : ComponentActivity() {
           // [2026-10-10 call-states] LK does not emit ParticipantConnected for
           // peers already in the room at join: the callee's ring preconnect
           // being there already = its device is ringing → "Tocando…".
-          if (state.status != "Tocando…") state.status = "Chamando…" // clears "Tentando reconectar…"
+          if (state.status != "Tocando…") state.status = if (peerDnd) PEER_DND_STATUS else "Chamando…" // clears "Tentando reconectar…"
           if (r.remoteParticipants.isNotEmpty()) markPeerRinging("present_at_join")
         } else {
           // [2026-10-10 call-states] Room up ≠ media: "Conectado" + timer only
@@ -5955,6 +6000,9 @@ private fun statusLine(status: String, elapsedSeconds: Int): String {
   return localizedStatus(status)
 }
 
+/** [2026-10-15 dnd] Internal label: callee has Do Not Disturb on. */
+internal const val PEER_DND_STATUS = "Não perturbe ativo"
+
 /** [2026-10-11 call-parity] Internal state labels are pt-BR literals (the
  *  state machine compares them); the UI shows the app language. */
 private fun localizedStatus(status: String): String = when (status) {
@@ -5963,6 +6011,7 @@ private fun localizedStatus(status: String): String = when (status) {
   "Reconectando…" -> CallStrings.s("reconnecting")
   "Chamando…" -> CallStrings.s("calling")
   "Tocando…" -> CallStrings.s("ringing")
+  PEER_DND_STATUS -> CallStrings.s("peerDnd")
   else -> status
 }
 

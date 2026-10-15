@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "Do Not Disturb is on",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} of {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "Waiting for others to join",
   "meetV2.waitingSub": "Share the link to invite people to this meeting.",

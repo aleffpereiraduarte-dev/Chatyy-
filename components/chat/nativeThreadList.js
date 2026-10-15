@@ -62,6 +62,18 @@
 //          Kill switch: globalThis.__chatyy_native_store = false.
 //          Desenho: docs/native-store-DESIGN.md.
 //
+//   mídia  [apiVersion 5, native-media-dl] media/album[]/au/file ganham `dl`
+//          {u: URL remota, k: chave estável (mediaCache.mediaUrlKey, sem exp/
+//          sig), a: photos|videos|audio|documents, sz, alt[], js: o JS já
+//          baixa} quando a mídia ainda NÃO está no aparelho → o nativo baixa
+//          (URLSession/OkHttp, progresso real, cancelar/retomar, 3 por vez,
+//          matriz de auto-download) e desenha o anel (o MESMO do envio). Fim →
+//          onMediaTransfer {k, st: start|done|failed|cancelled, url, local} →
+//          mediaCache.begin/finishExternalDownload (adota o arquivo). Downloads
+//          do próprio JS (mediaCache) → ref setTransfers → mesmo anel.
+//          onRowPress part 'xfer' url 'cancel-up' (X do envio) chega à tela.
+//          Kill switch: globalThis.__chatyy_native_media_dl = false.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -663,6 +675,136 @@ function _fmtSize(b) {
 }
 function _isTmpId(id) { return typeof id === 'string' && id.startsWith('tmp'); }
 
+// ─── [2026-10-15 native-media-dl] download nativo com anel de progresso ─────
+function _mediaDlSwitchOn() { try { return globalThis.__chatyy_native_media_dl !== false; } catch { return true; } }
+let _mdlModRef; // undefined = não checado; null = sem a API
+function _mdlMod() {
+  if (_mdlModRef !== undefined) return _mdlModRef;
+  _mdlModRef = null;
+  try {
+    const expo = require('expo');
+    const mod = typeof expo.requireOptionalNativeModule === 'function' ? expo.requireOptionalNativeModule('ChatyyMessageList') : null;
+    if (mod && typeof mod.configureTransfers === 'function') _mdlModRef = mod;
+  } catch {}
+  return _mdlModRef;
+}
+function _mc() { try { return require('../../services/mediaCache'); } catch { return null; } }
+let _mdlCfgAt = 0;
+let _mdlOfLabel = '{a} / {b}';
+/** Manda ao nativo: pasta do cache do mediaCache + matriz + economia de dados. */
+function _mdlConfigure() {
+  const mod = _mdlMod();
+  const mc = _mc();
+  if (!mod || !mc || typeof mc.getMediaCacheDirUri !== 'function') return false;
+  const dir = mc.getMediaCacheDirUri();
+  if (!dir) return false;
+  try {
+    let saver = false;
+    try { saver = !!mc.isDataSaverOn(); } catch {}
+    const p = mod.configureTransfers({ dir, policy: mc.getAutoDownloadPolicy(), saver, of: _mdlOfLabel });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch { return false; }
+  _mdlCfgAt = Date.now();
+  return true;
+}
+function _mdlOn() {
+  if (_api < 5 || !_mediaDlSwitchOn() || !_mdlMod()) return false;
+  if (!_mdlCfgAt && !_mdlConfigure()) return false;
+  return true;
+}
+/** Download nativo de mídia ativo (binário apiVersion ≥ 5 + kill switch). */
+export function nativeMediaDlActive() { _getNativeView(); return _mdlOn(); }
+
+const _dlMeta = new Map(); // k → { url, id, conv, type, received, noStore }
+const _mdlViews = new Set(); // views nativas montadas (setTransfers)
+let _mdlPending = [];
+let _mdlTimer = null;
+function _mdlSend(list) {
+  if (!list || !list.length) return;
+  _mdlPending.push(...list);
+  if (_mdlTimer) return;
+  _mdlTimer = setTimeout(() => {
+    _mdlTimer = null;
+    // último estado por chave
+    const by = new Map();
+    for (const o of _mdlPending) by.set(o.k, o);
+    _mdlPending = [];
+    const out = Array.from(by.values());
+    for (const v of _mdlViews) {
+      try { if (v && typeof v.setTransfers === 'function') { const p = v.setTransfers(out); if (p && p.catch) p.catch(() => {}); } } catch {}
+    }
+  }, 50);
+}
+const _jsWatch = new Set();
+function _watchJs(k, promise) {
+  if (_jsWatch.has(k) || !promise || typeof promise.then !== 'function') return;
+  _jsWatch.add(k);
+  promise.then((res) => {
+    _jsWatch.delete(k);
+    _mdlSend([typeof res === 'string' && /^file:/.test(res) ? { k, st: 'd', l: res } : { k, st: 'f' }]);
+  }, () => { _jsWatch.delete(k); _mdlSend([{ k, st: 'f' }]); });
+}
+function _bucketOf(type) {
+  if (type === 'video') return 'videos';
+  if (type === 'audio' || type === 'voice') return 'audio';
+  if (type === 'file') return 'documents';
+  return 'photos';
+}
+/**
+ * `dl` da mensagem (undefined = já está no aparelho / não se aplica).
+ * url: URL que a bolha vai mostrar (foto: variante de exibição); sem url = file_url.
+ */
+function _dlFor(m, ctx, url, display) {
+  if (!m || !_mdlOn()) return undefined;
+  if (m._uploading || m._compressing || m._queued || m._failed || m.deleted_at || _isTmpId(m.id)) return undefined;
+  const mc = _mc();
+  if (!mc) return undefined;
+  try { if (mc.isViewOnceMessage(m)) return undefined; } catch {}
+  let remote = url;
+  if (!remote) {
+    if (!m.file_url || typeof m.file_url !== 'string') return undefined;
+    if (/^(file|content|ph|data|asset):/i.test(m.file_url)) return undefined;
+    try { remote = require('../../services/api').getMediaUrl(m.file_url); } catch { return undefined; }
+  }
+  if (typeof remote !== 'string' || !/^https?:\/\//i.test(remote)) return undefined;
+  const bucket = _bucketOf(m.type);
+  if (bucket === 'audio') { try { remote = mc.playableAudioUrl(remote); } catch {} }
+  try { if (mc.getLocalUriSyncJs(remote)) return undefined; } catch {}
+  if (!display) {
+    try { if (ctx && ctx.localOf && ctx.localOf(m)) return undefined; } catch {}
+  }
+  const k = mc.mediaUrlKey(remote);
+  if (!k) return undefined;
+  const out = { u: remote, k, a: bucket };
+  const sz = Number(m.file_size) || 0;
+  if (sz > 0 && !display) out.sz = sz;
+  try { const alt = mc.fallbackUrlsFor(remote); if (alt && alt.length) out.alt = alt.slice(0, 3); } catch {}
+  try { const inflight = mc.getInflightDownload(remote); if (inflight) { out.js = 1; _watchJs(k, inflight); } } catch {}
+  const own = String(m.sender_email || '').toLowerCase() === String((ctx && ctx.myEmail) || '').toLowerCase();
+  _dlMeta.set(k, { url: remote, id: m.id, conv: ctx && ctx.conversationId != null ? ctx.conversationId : (m.conversation_id ?? null), type: m.type, received: !own, noStore: !!display });
+  if (_dlMeta.size > 3000) _dlMeta.delete(_dlMeta.keys().next().value);
+  return out;
+}
+/** Mídia de foto/vídeo/GIF: troca uri por local já baixado ou anexa `dl`. */
+function _mdlMedia(m, out, ctx) {
+  if (out.up !== undefined || !_mdlOn()) return;
+  if (m.type === 'video') {
+    const dl = _dlFor(m, ctx, null, false);
+    if (dl) out.dl = dl;
+    return;
+  }
+  if (m.type !== 'image' && m.type !== 'gif') return;
+  if (!out.uri || !/^https?:\/\//i.test(out.uri)) return; // já local (file://) ou sem URL
+  let fileRemote = '';
+  try { fileRemote = m.file_url ? require('../../services/api').getMediaUrl(m.file_url) : ''; } catch {}
+  const display = !!fileRemote && fileRemote !== out.uri;
+  let loc = null;
+  try { loc = _mc().getLocalUriSyncJs(out.uri); } catch {}
+  if (loc) { out.uri = loc; return; }
+  const dl = _dlFor(m, ctx, out.uri, display);
+  if (dl) out.dl = dl;
+}
+
 /**
  * Motivo (string) pelo qual a linha NÃO pode ir pro nativo, ou '' se pode.
  * ctx: ver buildCtx no chat-conversation.js.
@@ -785,6 +927,7 @@ function _mediaFor(m, ctx) {
   }
   if (m._uploading || m._compressing) out.up = typeof m._uploadPct === 'number' ? Math.max(0, Math.min(100, Math.round(m._uploadPct))) : -1;
   else if (m._queued && _isTmpId(m.id) && !m._failed) out.up = -1;
+  _mdlMedia(m, out, ctx); // [native-media-dl]
   return out;
 }
 
@@ -904,12 +1047,16 @@ export function buildRow(item, key, ctx) {
       row.au.w = out;
     }
     if (!own && ctx.isAudioPlayed && ctx.isAudioPlayed(item)) row.au.p = 1;
+    const adl = _dlFor(item, ctx, null, false); // [native-media-dl]
+    if (adl) row.au.dl = adl;
     return row;
   }
   if (type === 'file') {
     const name = String(item.file_name || '').trim() || (ctx.fileLabel || 'Arquivo');
     const ext = (name.match(/\.([a-z0-9]{1,5})$/i) || [])[1] || '';
     row.file = { n: name, s: _fmtSize(item.file_size), x: ext.toUpperCase() };
+    const fdl = _dlFor(item, ctx, null, false); // [native-media-dl]
+    if (fdl) row.file.dl = fdl;
     const cap = _caption(item);
     if (cap && cap !== name && _api >= 2) _p2Caption(cap, row, ctx, item);
     else if (cap && cap !== name) { const p = parseInline(cap); row.text = p.text; if (p.spans.length) row.sp = p.spans; }
@@ -1002,7 +1149,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const keyIndexRef = useRef(new Map());
   const readyRef = useRef(false);
   const cbRef = useRef({});
-  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss };
+  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer };
   const failRef = useRef(false);
 
   const fail = useCallback((reason) => {
@@ -1071,6 +1218,48 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     }
   }, [data, ctx, ctxRev, keyOf, Native, fail]);
 
+  // [native-media-dl] política atualizada + view registrada p/ setTransfers +
+  // progresso dos downloads do JS (mediaCache) pintando o MESMO anel nativo.
+  const dlOfLabel = ctx && ctx.dlOf;
+  useEffect(() => {
+    if (!Native || shell || _api < 5 || !_mediaDlSwitchOn() || !_mdlMod()) return undefined;
+    if (typeof dlOfLabel === 'string' && dlOfLabel.includes('{a}') && dlOfLabel.includes('{b}')) _mdlOfLabel = dlOfLabel;
+    _mdlConfigure();
+    const v = nativeRef.current;
+    if (v) _mdlViews.add(v);
+    const mc = _mc();
+    let unsub = null;
+    const toMsg = (ev) => {
+      if (!ev || !ev.key) return null;
+      const st = ev.state === 'progress' ? 'p' : ev.state === 'queued' ? 'q' : ev.state === 'done' ? 'd' : ev.state === 'cancelled' ? 'c' : 'f';
+      const o = { k: ev.key, st };
+      if (st === 'd') { if (ev.local) o.l = String(ev.local); else return null; }
+      if (st === 'p' || st === 'q') {
+        o.p = Math.max(0, Math.min(100, Number(ev.pct) || 0));
+        if (Number(ev.total) > 0) { o.t = Number(ev.total); if (Number(ev.loaded) > 0) o.l = Number(ev.loaded); }
+      }
+      return o;
+    };
+    try {
+      if (mc && typeof mc.subscribeDownloadProgress === 'function') {
+        unsub = mc.subscribeDownloadProgress((ev) => { const o = toMsg(ev); if (o) _mdlSend([o]); });
+        const cur = (mc.listDownloadProgress && mc.listDownloadProgress()) || [];
+        const init = cur.map(toMsg).filter(Boolean);
+        if (init.length) _mdlSend(init);
+      }
+    } catch {}
+    let appSub = null;
+    try {
+      const { AppState } = require('react-native');
+      appSub = AppState.addEventListener('change', (st) => { if (st === 'active') _mdlConfigure(); });
+    } catch {}
+    return () => {
+      if (v) _mdlViews.delete(v);
+      try { unsub && unsub(); } catch {}
+      try { appSub && appSub.remove && appSub.remove(); } catch {}
+    };
+  }, [Native, shell, dlOfLabel]);
+
   // Pronto em até READY_TIMEOUT_MS ou volta pro JS.
   useEffect(() => {
     if (!Native) return undefined;
@@ -1123,9 +1312,39 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       } catch {}
     },
     onStore: (e) => { try { storeEvRef.current = (e && e.nativeEvent) || null; } catch {} },
+    // [native-media-dl] download nativo começou/terminou → mediaCache adota o arquivo
+    onMediaTransfer: (e) => {
+      const ne = (e && e.nativeEvent) || {};
+      const k = String(ne.k || '');
+      const meta = _dlMeta.get(k) || null;
+      const url = (meta && meta.url) || ne.url;
+      const mc = _mc();
+      if (!url || !mc) return;
+      const opts = meta ? { messageId: meta.id, conversationId: meta.conv, mediaType: meta.type, received: !!meta.received, noStore: !!meta.noStore } : { noStore: true };
+      try {
+        if (ne.st === 'start') { mc.beginExternalDownload(url); return; }
+        const done = ne.st === 'done' && ne.local;
+        const p = mc.finishExternalDownload(url, done ? String(ne.local) : null, opts);
+        if (done && p && typeof p.then === 'function') {
+          p.then((fin) => {
+            if (!fin) return;
+            _mdlSend([{ k, st: 'd', l: fin }]);
+            try { cbRef.current.onMediaTransfer && cbRef.current.onMediaTransfer({ key: k, url, local: fin, messageId: meta ? meta.id : null }); } catch {}
+          }, () => {});
+        }
+      } catch {}
+    },
     onNativeError: (e) => { fail('native:' + (e?.nativeEvent?.message || '')); },
     onRowPress: (e) => {
       const ne = e?.nativeEvent || {};
+      // [native-media-dl] X de um download que o JS (mediaCache) está fazendo
+      if (ne.part === 'xfer' && ne.url === 'cancel-js') {
+        const k = String(ne.k || '');
+        const meta = _dlMeta.get(k);
+        try { if (meta && meta.url) _mc().cancelDownload(meta.url); } catch {}
+        if (k) _mdlSend([{ k, st: 'c' }]);
+        return;
+      }
       const item = itemOf(ne.key);
       if (!item) return;
       // [hero] part 'media' traz frame {x,y,w,h,radius} (janela) da miniatura tocada

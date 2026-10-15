@@ -84,8 +84,12 @@ final class CMLImageLoader {
     }
     if let f = CMLImageLoader.fileURL(uri) { done(.file(f)); return }
     guard let remote = CMLImageLoader.remoteURL(uri) else { done(nil); return }
-    let dest = diskDir.appendingPathComponent(CMLImageLoader.sha256(uri))
+    // [native-media-dl] chave SEM exp/sig (mesma regra do MVImageLoader do viewer):
+    // a URL assinada do CDN muda a cada janela, o arquivo não.
+    let dest = diskDir.appendingPathComponent(CMLImageLoader.sha256(CMLImageLoader.stableURI(uri)))
     if FileManager.default.fileExists(atPath: dest.path) { done(.file(dest)); return }
+    let legacy = diskDir.appendingPathComponent(CMLImageLoader.sha256(uri))
+    if FileManager.default.fileExists(atPath: legacy.path) { done(.file(legacy)); return }
     if downloads[uri] != nil {
       downloads[uri]?.append { u in done(u.map { Source.file($0) }) }
       return
@@ -119,6 +123,18 @@ final class CMLImageLoader {
     }
     guard let u = url, u.isFileURL, FileManager.default.fileExists(atPath: u.path) else { return nil }
     return u
+  }
+
+  /// [native-media-dl] URL sem os parâmetros voláteis de assinatura (exp/sig/
+  /// token/expires/X-Amz-*) — mesma ideia do mediaCache.urlToKey (JS).
+  static func stableURI(_ uri: String) -> String {
+    guard uri.hasPrefix("http"), let q = uri.firstIndex(of: "?") else { return uri }
+    let base = uri[..<q]
+    let params = uri[uri.index(after: q)...].split(separator: "&").filter { kv in
+      let k = kv.split(separator: "=", maxSplits: 1).first.map { String($0).lowercased() } ?? ""
+      return !(k == "exp" || k == "sig" || k == "signature" || k == "token" || k == "expires" || k.hasPrefix("x-amz-"))
+    }
+    return params.isEmpty ? String(base) : String(base) + "?" + params.joined(separator: "&")
   }
 
   static func remoteURL(_ s: String) -> URL? {

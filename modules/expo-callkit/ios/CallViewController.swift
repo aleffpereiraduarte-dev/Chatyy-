@@ -443,6 +443,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var outgoingConnectFallbackTimer: DispatchWorkItem?
     private var speakerTouchedByUser: Bool = false
     private var remoteEndObserver: NSObjectProtocol?
+    /// [2026-10-15 chamadas-dnd] Caller: relé `call_peer_status` (callee com
+    /// Foco/Não Perturbe — o toque não apareceu) → "Não perturbe ativo".
+    private var peerStatusObserver: NSObjectProtocol?
+    private var peerDndActive: Bool = false
     /// [2026-10-09 p2p-ios] P2PCallBridge.stateChangedNotification.
     private var p2pObserver: NSObjectProtocol?
     /// [2026-10-07 audio-route] AudioRouter.routeDidChangeNotification → keeps
@@ -711,6 +715,40 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         statusDotsBase = "Tocando"
         session.status = "Tocando"
         nativeCallDiag("outgoing_peer_ringing", callId, reason)
+    }
+
+    /// [2026-10-15 chamadas-dnd] Caller: o servidor repassa o status do
+    /// aparelho do callee (CallSignalWs → ExpoCallKitPeerCallStatus).
+    ///   dnd     → "Não perturbe ativo" (ringback continua; NÃO encerra; um
+    ///             "Tocando" posterior via participant join não sobrescreve —
+    ///             markPeerRinging só sai de "Chamando").
+    ///   ringing → o callee abriu o app e o toque apareceu → "Tocando…".
+    private func installPeerStatusObserver() {
+        guard isOutgoing, peerStatusObserver == nil else { return }
+        peerStatusObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ExpoCallKitPeerCallStatus"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self, !self.didHangup else { return }
+            guard (note.userInfo?["callId"] as? String) == self.callId else { return }
+            guard !self.outgoingMicGateOpen, self.callConnectedAt == nil, !self.remoteRefusalActive else { return }
+            let st = ((note.userInfo?["status"] as? String) ?? "").lowercased()
+            if st == "dnd" {
+                guard !self.peerDndActive else { return }
+                self.peerDndActive = true
+                let label = CallStrings.s("peerDnd")
+                self.statusDotsBase = label
+                self.session.status = label
+                if let lbl = self.view.viewWithTag(9001) as? UILabel { lbl.text = label }
+                nativeCallDiag("outgoing_peer_dnd", self.callId, (note.userInfo?["reason"] as? String) ?? "")
+            } else if st == "ringing" {
+                guard self.peerDndActive else { return }
+                self.peerDndActive = false
+                self.statusDotsBase = "Chamando"
+                self.markPeerRinging(reason: "peer_status_ringing")
+            }
+        }
     }
 
     private func cancelOutgoingConnectFallback() {
@@ -1032,6 +1070,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-06 native-only outgoing] Remote-end wording + the VC-owned
         // 45s no-answer timeout (see helpers next to openOutgoingMicGate).
         installRemoteEndStatusObserver()
+        installPeerStatusObserver() // [2026-10-15 chamadas-dnd]
         if isOutgoing {
             scheduleOutgoingRingTimer()
         }
@@ -1289,6 +1328,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [2026-10-10 call-states] Chamando → Tocando → Conectando; a
             // transport blip before media shows "Reconectando".
             if self.remoteRefusalActive { return } // [2026-10-11 call-parity]
+            // [2026-10-15 chamadas-dnd] "Não perturbe ativo" é estado, não progresso: sem pontinhos.
+            if self.peerDndActive && !self.outgoingMicGateOpen && !self.session.isReconnecting {
+                lbl.text = CallStrings.s("peerDnd")
+                return
+            }
             let base = self.session.isReconnecting ? "Reconectando" : self.statusDotsBase
             let dots = String(repeating: ".", count: self.dotCount)
             lbl.text = CallViewController.dotsBase(base) + dots
@@ -5090,6 +5134,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let obs = remoteAnsweredObserver { NotificationCenter.default.removeObserver(obs); remoteAnsweredObserver = nil }
         // [2026-10-06 native-only outgoing]
         if let obs = remoteEndObserver { NotificationCenter.default.removeObserver(obs); remoteEndObserver = nil }
+        if let obs = peerStatusObserver { NotificationCenter.default.removeObserver(obs); peerStatusObserver = nil }
         if let obs = p2pObserver { NotificationCenter.default.removeObserver(obs); p2pObserver = nil }
         outgoingRingTimer?.cancel(); outgoingRingTimer = nil
         outgoingConnectFallbackTimer?.cancel(); outgoingConnectFallbackTimer = nil
@@ -5222,6 +5267,26 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // accepted. No publish = no ghost on the peer's SFU.
                 NativeCallRoom.shared.didConnect()
                 print("[CallVC] preconnectRoom: connected (subscribe-only, mic publish deferred to answer) callId=\(callId)")
+                // [chamadas-atender 2026-10-15] AQUECE o publisher PC durante o toque (paridade WhatsApp:
+                // ICE/DTLS de envio prontos ANTES de atender). SDK 2.0.18 ignora JoinResponse.fast_publish e
+                // só negocia o publisher no 1º publish → no atender, o mic esperava um 2º ICE inteiro (campo
+                // 15/10: callee BR em 4G IPv6 levou +4 s só nisso; caller ouviu ~12 s depois do "atender").
+                // publish(data:) força a negociação SEM mídia; destino = a própria identidade → o SFU não
+                // entrega a ninguém (sem fantasma no outro lado, #1330 continua valendo: mic só no atender).
+                // Desligar sem build: App Group bool "chatyy_warm_publisher_off" = true.
+                if !(UserDefaults(suiteName: "group.com.onemundo.mail")?.bool(forKey: "chatyy_warm_publisher_off") ?? false),
+                   let me = r.localParticipant.identity {
+                    let tWarm = Date()
+                    do {
+                        try await r.localParticipant.publish(
+                            data: Data([1]),
+                            options: DataPublishOptions(destinationIdentities: [me], topic: "chatyy_warm", reliable: true)
+                        )
+                        nativeCallDiag("preconnect_pub_warm_ok", callId, "ms=\(Int(Date().timeIntervalSince(tWarm) * 1000))")
+                    } catch {
+                        nativeCallDiag("preconnect_pub_warm_err", callId, "ms=\(Int(Date().timeIntervalSince(tWarm) * 1000)) err=\(error)")
+                    }
+                }
             } catch {
                 NSLog("[CallTrace][8b/12] LK Room connect FAILED err=\(error) (path=preconnect)")
                 print("[CallVC] preconnectRoom: failed callId=\(callId) err=\(error)")

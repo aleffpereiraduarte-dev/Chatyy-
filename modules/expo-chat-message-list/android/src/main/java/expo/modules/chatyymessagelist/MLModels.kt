@@ -33,12 +33,14 @@ data class MLMedia(
   val dur: String,
   val up: Int?,
   val id: String,
+  /** [native-media-dl] baixar nativo (null = já local / JS cuida) */
+  val dl: MLMediaDL? = null,
 )
 
 data class MLReply(val id: String, val name: String, val text: String, val color: Int, val thumb: String, val italic: Boolean)
 data class MLReact(val emoji: String, val count: Int, val mine: Boolean)
-data class MLAudio(val duration: Int, val voice: Boolean, val wave: FloatArray, val played: Boolean)
-data class MLFile(val name: String, val size: String, val ext: String)
+data class MLAudio(val duration: Int, val voice: Boolean, val wave: FloatArray, val played: Boolean, val dl: MLMediaDL? = null)
+data class MLFile(val name: String, val size: String, val ext: String, val dl: MLMediaDL? = null)
 
 class MLRow(d: Map<String, Any?>) {
   val key: String = str(d["k"])
@@ -79,9 +81,9 @@ class MLRow(d: Map<String, Any?>) {
   val albumIds: List<String> = ((d["aids"] as? List<*>) ?: emptyList<Any>()).map { str(it) }
   val audio: MLAudio? = (d["au"] as? Map<*, *>)?.let { a ->
     val w = ((a["w"] as? List<*>) ?: emptyList<Any>()).mapNotNull { num(it) }.map { (it.coerceIn(8.0, 100.0) / 100.0).toFloat() }
-    MLAudio((num(a["d"]) ?: 0.0).toInt(), if (a["v"] == null) true else bool(a["v"]), w.toFloatArray(), bool(a["p"]))
+    MLAudio((num(a["d"]) ?: 0.0).toInt(), if (a["v"] == null) true else bool(a["v"]), w.toFloatArray(), bool(a["p"]), MLMediaDL.parse(a["dl"]))
   }
-  val file: MLFile? = (d["file"] as? Map<*, *>)?.let { MLFile(str(it["n"]), str(it["s"]), str(it["x"])) }
+  val file: MLFile? = (d["file"] as? Map<*, *>)?.let { MLFile(str(it["n"]), str(it["s"]), str(it["x"]), MLMediaDL.parse(it["dl"])) }
 
   // ─── [2026-10-15 fase 2] blocos / extras ────────────────────────────────
   val blocks: List<MLNode> = MLNode.list(d["bl"])
@@ -144,6 +146,7 @@ class MLRow(d: Map<String, Any?>) {
         dur = str(m["dur"]),
         up = num(m["up"])?.toInt(),
         id = str(m["id"]),
+        dl = MLMediaDL.parse(m["dl"]),
       )
     }
 

@@ -134,6 +134,9 @@ public class VoipPushAppDelegateSubscriber: ExpoAppDelegateSubscriber {
         // arrives, so reportNewIncomingCall can run in the same run-loop tick.
         setupEarlyCallKitProvider()
         setupVoipPushRegistry()
+        // [2026-10-15 chamadas-dnd] Re-toque de ligação que o Foco/Não Perturbe
+        // filtrou, quando o usuário abre o app (toque na notificação local).
+        IncomingCallFilter.installActiveObserver()
     }
 
     // MARK: - Early CallKit provider (stub)
@@ -332,6 +335,7 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             DispatchQueue.main.async {
                 NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "cancel_push_\(pushType)")
             }
+            IncomingCallFilter.clear(callId: callId, reason: "cancel_push_\(pushType)")
             completion()
             return
         }
@@ -490,6 +494,27 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 // (Focus) — the phone does not ring; previously invisible.
                 nativeCallDiag("voip_report_failed", callId,
                                "code=\((error as NSError).code) err=\(error.localizedDescription)")
+                // [2026-10-15 chamadas-dnd] O telefone NÃO tocou: nada de
+                // pré-conexão (era o "Tocando…" falso do caller), avisa o
+                // caller (call_status=dnd) e posta "Ligação de X — toque para
+                // atender". Ver IncomingCallFilter.
+                IncomingCallFilter.handleReportFailure(
+                    error: error,
+                    callId: callId,
+                    uuid: uuid,
+                    callerName: callerName,
+                    callerEmail: (dict["caller_email"] as? String) ?? "",
+                    callerPhone: callerPhone,
+                    conversationId: {
+                        if let s = dict["conversation_id"] as? String { return s }
+                        if let n = dict["conversation_id"] as? NSNumber { return n.stringValue }
+                        return ""
+                    }(),
+                    hasVideo: hasVideo,
+                    lkToken: (dict["lk_token"] as? String) ?? "",
+                    lkUrl: (dict["lk_url"] as? String) ?? "",
+                    source: "push"
+                )
             } else {
                 print("[VoipSubscriber] reportNewIncomingCall succeeded")
                 // [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] Arm the ring
@@ -513,7 +538,14 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             // [2026-10-06 callkit-dedupe] Body extracted to
             // kickRingWindowPreconnect so the UUID-reuse branch above can run
             // the exact same preconnect without a 2nd reportNewIncomingCall.
-            VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(callId: callId, dict: dict)
+            // [2026-10-15 chamadas-dnd] SÓ se o CallKit aceitou o toque. Antes
+            // pré-conectava mesmo com voip_report_failed (Foco) → caller via
+            // "Tocando…" e o telefone não tocava.
+            if error == nil {
+                VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(callId: callId, dict: dict)
+            } else {
+                nativeCallDiag("preconnect_skip_report_failed", callId)
+            }
 
             NotificationCenter.default.post(
                 name: Notification.Name("ExpoCallKitPendingVoipCall"),
@@ -570,6 +602,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
     /// reported by the native WS invite) run the identical preconnect. See the
     /// STAGE-A / WAVE 104D comments inside for the history.
     static func kickRingWindowPreconnect(callId: String, dict: [AnyHashable: Any]) {
+        // [2026-10-15 chamadas-dnd] CallKit recusou o toque (Foco/Não Perturbe):
+        // entrar na sala faria o caller ver "Tocando…" com o telefone mudo.
+        if IncomingCallFilter.isFiltered(callId) {
+            nativeCallDiag("preconnect_skip_filtered", callId)
+            return
+        }
         // [STAGE-A 2026-05-20] GAP #2 — Kick Room.connect during the ring
         // window, BEFORE the user taps Accept. Audio is hot the instant
         // they answer (WhatsApp parity). The push may carry an inline
@@ -760,6 +798,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
     ///      has no way to recover the contact from the lock screen.
     /// Timer is a DispatchSourceTimer on a global queue so it survives the
     /// rare case where the main run-loop is starved during cold start.
+    /// [2026-10-15 chamadas-dnd] Re-toque (IncomingCallFilter) arma o mesmo
+    /// timer de "não atendida" que o push arma após um report bem-sucedido.
+    static func armRingTimeout(uuid: UUID, callId: String, provider: CXProvider) {
+        scheduleRingTimeout(uuid: uuid, callId: callId, provider: provider)
+    }
+
     fileprivate static func scheduleRingTimeout(uuid: UUID, callId: String, provider: CXProvider) {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         timer.schedule(deadline: .now() + .seconds(kRingTimeoutSeconds))

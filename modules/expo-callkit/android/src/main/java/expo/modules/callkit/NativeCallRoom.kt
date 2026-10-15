@@ -779,6 +779,12 @@ object NativeCallRoom {
             Log.d(TAG, "preconnect: already in-flight or done for callId=$callId")
             return
         }
+        // [2026-10-15 dnd] Ring silenced by Do Not Disturb (CallRingGate) →
+        // never join during the ring (the join paints "Tocando…" on the caller).
+        if (CallRingGate.isSilenced(callId)) {
+            Log.i(TAG, "preconnect: callId=$callId ring silenced (DND) — skip")
+            return
+        }
         if (preconnectingCallId != null && preconnectingCallId != callId) {
             Log.w(TAG, "preconnect: switching from ${preconnectingCallId} → $callId; clearing prior Room")
             // [2026-05-22 #1331 fix] Fire-and-forget timeout-bounded disconnect
@@ -829,6 +835,18 @@ object NativeCallRoom {
                 publish(r, callId, callId, ctx.applicationContext)
                 r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
                 Log.i(TAG, "preconnect: Room.connect returned subscribe-only, state=${r.state}")
+                // [2026-10-15 warm-publisher] Twin of iOS preconnectRoom's
+                // publish(data:) warm-up. livekit-android 2.24.1 already
+                // negotiates the publisher PC at join when the server sets
+                // JoinResponse.fast_publish (RTCEngine.joinImpl: !subscriberPrimary
+                // || fastPublish → negotiatePublisher); this tiny data packet to
+                // OUR OWN identity is the belt-and-braces for a server that does
+                // not (publishData → ensurePublisherConnected negotiates ICE/DTLS
+                // now, not at the first mic publish after Accept). No media, no
+                // track → the caller never sees an "answer". Nobody else receives
+                // it (destination = self). Kill switch: prefs bool
+                // "chatyy_warm_publisher_off" (expo_callkit_prefs).
+                warmPublisher(ctx.applicationContext, r, callId)
                 // [bug 2026-05-24 ios-caller-auto-answers] DO NOT publish mic
                 // during preconnect. This matches iOS (CallViewController.swift:
                 // "subscribe-only, mic publish deferred to answer"). Publishing
@@ -843,6 +861,30 @@ object NativeCallRoom {
                 // fallback launch CallActivity cleanly.
                 preconnectingCallId = null
             }
+        }
+    }
+
+    private suspend fun warmPublisher(ctx: Context, r: Room, callId: String) {
+        try {
+            val off = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                .getBoolean("chatyy_warm_publisher_off", false)
+            if (off) return
+            if (r.state != Room.State.CONNECTED) return
+            val me = r.localParticipant.identity ?: return
+            val t0 = System.currentTimeMillis()
+            val res = withTimeoutOrNull(15_000L) {
+                r.localParticipant.publishData(
+                    "{\"type\":\"warm\"}".toByteArray(Charsets.UTF_8),
+                    io.livekit.android.room.track.DataPublishReliability.RELIABLE,
+                    "chatyy_warm",
+                    listOf(me)
+                )
+            }
+            val ok = res?.isSuccess == true
+            Log.i(TAG, "preconnect: publisher warm ok=$ok ms=${System.currentTimeMillis() - t0} callId=$callId")
+            try { CallDiag.log("warm_publisher", callId, "ok=${if (ok) 1 else 0} ms=${System.currentTimeMillis() - t0}", ctx) } catch (_: Throwable) {}
+        } catch (t: Throwable) {
+            Log.w(TAG, "preconnect: publisher warm failed callId=$callId: ${t.message}")
         }
     }
 

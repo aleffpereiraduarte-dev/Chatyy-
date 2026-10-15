@@ -50,11 +50,27 @@ object CallStrings {
     "hi" to mapOf("videoReqTitle" to "{name} वीडियो पर स्विच करना चाहते हैं", "videoReqTitleNoName" to "वीडियो पर स्विच करें?", "videoReqAccept" to "स्वीकार करें", "videoReqDecline" to "अस्वीकार करें"),
   )
 
+  /** [2026-10-15 dnd] Quem liga: o aparelho do outro lado está em Não perturbe. */
+  private val PEER_DND: Map<String, String> = mapOf(
+    "pt-BR" to "Não perturbe ativo",
+    "pt-PT" to "Não incomodar ativo",
+    "en" to "Do Not Disturb is on",
+    "es" to "No molestar activado",
+    "fr" to "Ne pas déranger activé",
+    "de" to "Nicht stören ist aktiv",
+    "it" to "Non disturbare attivo",
+    "ja" to "おやすみモードがオンです",
+    "ar" to "وضع عدم الإزعاج مفعّل",
+    "id" to "Mode Jangan Ganggu aktif",
+    "hi" to "परेशान न करें चालू है",
+  )
+
   /** Texto da chave no idioma atual; {name} etc. substituídos por [args]. */
   fun s(key: String, vararg args: Pair<String, String>): String {
     val l = GroupCallStrings.lang()
     var out = T[l]?.get(key) ?: T["en"]?.get(key)
       ?: (if (key == "camDenied") CAM_DENIED[l] ?: CAM_DENIED["en"] else null)
+      ?: (if (key == "peerDnd") PEER_DND[l] ?: PEER_DND["en"] else null)
       ?: VIDEO_REQ[l]?.get(key) ?: VIDEO_REQ["en"]?.get(key) ?: key
     for ((k, v) in args) out = out.replace("{" + k + "}", v)
     return out

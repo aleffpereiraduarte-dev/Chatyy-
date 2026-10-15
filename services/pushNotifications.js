@@ -562,6 +562,19 @@ async function loadModules() {
           };
         }
 
+        // [2026-10-15 chamadas-dnd] Notificação LOCAL do nativo iOS quando o
+        // Foco/Não Perturbe filtrou o CallKit: "Ligação de X — toque para
+        // atender". Mostra mesmo com o app aberto (o toque não apareceu).
+        if (data?.type === 'call_filtered') {
+          return {
+            shouldShowAlert: true,
+            shouldShowBanner: true,
+            shouldShowList: true,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+          };
+        }
+
         // Incoming call: trigger IncomingCallListener (in-app UI with ringtone)
         if (data?.type === 'incoming_call' && (data?.room_id || data?.call_id)) {
           const callId = data.call_id || data.room_id;
@@ -2999,6 +3012,12 @@ function _navigateForNotification(data) {
     // so the user can pause / inspect status without digging through Settings.
     if (data.type === 'upload_progress' || data.type === 'upload_complete' || data.type === 'upload_error') {
       router.push('/photos');
+      return;
+    }
+    // [2026-10-15 chamadas-dnd] Toque em "Ligação de X — toque para atender":
+    // o nativo (IncomingCallFilter, didBecomeActive) re-reporta a ligação ao
+    // CallKit. Nada a navegar aqui (não cair no /inbox).
+    if (data.type === 'call_filtered') {
       return;
     }
     if (data.type === 'incoming_call' && (data.room_id || data.call_id)) {

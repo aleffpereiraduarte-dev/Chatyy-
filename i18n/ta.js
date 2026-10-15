@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "தொந்தரவு செய்யாதே இயக்கத்தில் உள்ளது",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{b} இல் {a}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "பங்கேற்பாளர்களுக்காகக் காத்திருக்கிறது",
   "meetV2.waitingSub": "மக்களைக் கூட்டத்திற்கு அழைக்க இணைப்பைப் பகிரவும்.",

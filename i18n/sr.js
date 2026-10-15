@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "Не узнемиравај је укључено",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} од {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "Чека се учесници",
   "meetV2.waitingSub": "Поделите линк да позовете људе на састанак.",

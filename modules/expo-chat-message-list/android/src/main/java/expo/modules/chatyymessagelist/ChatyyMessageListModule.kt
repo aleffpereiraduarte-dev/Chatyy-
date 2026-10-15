@@ -13,10 +13,18 @@ class ChatyyMessageListModule : Module() {
     // 3 = [native-ctxmenu] menu de contexto nativo (prop ctxMenu,
     //     showContextMenu/dismissContextMenu, onMenuAction/onReact/onMenuDismiss).
     // 4 = [native-store] prop `store` {a,c,r,n} + evento onStore; onReady traz src.
-    Function("apiVersion") { 4 }
+    // 5 = [native-media-dl] download nativo com anel (row.media/au/file/album[].dl),
+    //     configureTransfers, setTransfers, onMediaTransfer, onRowPress part 'xfer'.
+    Function("apiVersion") { 5 }
+
+    // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
+    // economia de dados + modelo "{a} de {b}" traduzido.
+    AsyncFunction("configureTransfers") { cfg: Map<String, Any?> ->
+      MLTransfers.configure(cfg)
+    }.runOnQueue(Queues.MAIN)
 
     View(MLListView::class) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore", "onMediaTransfer")
 
       Prop("theme") { view: MLListView, v: Map<String, Any?>? -> view.setTheme(v ?: emptyMap()) }
       Prop("fontSize") { view: MLListView, v: Double? -> view.setFontSize(v) }
@@ -51,6 +59,11 @@ class ChatyyMessageListModule : Module() {
 
       AsyncFunction("setAudioState") { view: MLListView, state: Map<String, Any?> ->
         view.setAudioState(state)
+      }.runOnQueue(Queues.MAIN)
+
+      // [native-media-dl] progresso de transferências feitas pelo JS → o mesmo anel
+      AsyncFunction("setTransfers") { view: MLListView, list: List<Map<String, Any?>> ->
+        view.setTransfers(list)
       }.runOnQueue(Queues.MAIN)
 
       AsyncFunction("setLiftedKey") { view: MLListView, key: String ->

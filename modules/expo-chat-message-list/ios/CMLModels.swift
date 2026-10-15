@@ -45,6 +45,8 @@ struct CMLMedia {
   var dur: String = ""
   var up: Int? = nil           // nil = sem envio; -1 indeterminado; 0..100
   var id: String = ""
+  /// [native-media-dl] baixar nativo (nil = já local / JS cuida)
+  var dl: CMLMediaDL? = nil
 }
 
 struct CMLReply {
@@ -67,12 +69,14 @@ struct CMLAudio {
   var voice: Bool = true
   var wave: [CGFloat] = []
   var played: Bool = false
+  var dl: CMLMediaDL? = nil
 }
 
 struct CMLFile {
   var name: String = ""
   var size: String = ""
   var ext: String = ""
+  var dl: CMLMediaDL? = nil
 }
 
 final class CMLRow {
@@ -172,6 +176,7 @@ final class CMLRow {
       au.duration = Int(CMLRow.num(a["d"]) ?? 0)
       au.voice = a["v"] == nil ? true : CMLRow.bool(a["v"])
       au.played = CMLRow.bool(a["p"])
+      au.dl = CMLMediaDL.parse(a["dl"])
       if let w = a["w"] as? [Any] {
         au.wave = w.compactMap { CMLRow.num($0) }.map { CGFloat(max(8, min(100, $0))) / 100 }
       }
@@ -180,7 +185,7 @@ final class CMLRow {
       audio = nil
     }
     if let f = d["file"] as? [String: Any] {
-      file = CMLFile(name: CMLRow.str(f["n"]), size: CMLRow.str(f["s"]), ext: CMLRow.str(f["x"]))
+      file = CMLFile(name: CMLRow.str(f["n"]), size: CMLRow.str(f["s"]), ext: CMLRow.str(f["x"]), dl: CMLMediaDL.parse(f["dl"]))
     } else {
       file = nil
     }
@@ -229,6 +234,7 @@ final class CMLRow {
     md.dur = str(m["dur"])
     if let u = num(m["up"]) { md.up = Int(u) }
     md.id = str(m["id"])
+    md.dl = CMLMediaDL.parse(m["dl"])
     return md
   }
 

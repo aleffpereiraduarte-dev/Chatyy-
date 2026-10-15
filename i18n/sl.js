@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "Ne moti je vklopljeno",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} od {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "Čakanje na udeležence",
   "meetV2.waitingSub": "Delite povezavo, da povabite ljudi na sestanek.",

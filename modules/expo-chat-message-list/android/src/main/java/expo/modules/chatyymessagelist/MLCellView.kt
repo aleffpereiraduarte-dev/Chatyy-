@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.os.SystemClock
 import android.view.animation.DecelerateInterpolator
 import android.graphics.Bitmap
 import android.graphics.LinearGradient
@@ -42,14 +43,26 @@ class MLImageSlot(private val owner: View) {
   private var thumbTarget: CustomTarget<Drawable>? = null
   private var thumb: Drawable? = null
   private var shownAt = 0L
+  // [native-media-dl] miniatura → foto nítida com cross-fade (só se a foto chegou depois)
+  private var setAt = 0L
+  private var fadeAt = 0L
 
   fun set(uri: String, thumbUri: String, w: Int, h: Int, animated: Boolean, fit: Boolean = false) {
     if (uri == model && thumbUri == thumbModel && (drawable != null || target != null)) return
+    // [native-media-dl] mesma miniatura, foto nova (baixou agora) → mantém a
+    // miniatura na tela enquanto a foto decodifica (cross-fade em draw)
+    val keepThumb = thumbUri.isNotEmpty() && thumbUri == thumbModel && thumb != null && drawable == null
+    val keptThumb = if (keepThumb) thumb else null
+    val keptThumbTarget = if (keepThumb) thumbTarget else null
+    if (keepThumb) thumbTarget = null
     clear()
     model = uri
     thumbModel = thumbUri
+    setAt = android.os.SystemClock.uptimeMillis()
+    fadeAt = 0L
     val ctx = owner.context.applicationContext
-    if (thumbUri.isNotEmpty()) {
+    if (keepThumb) { thumb = keptThumb; thumbTarget = keptThumbTarget }
+    if (thumbUri.isNotEmpty() && !keepThumb) {
       val t = object : CustomTarget<Drawable>(64, 64) {
         override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
           if (thumbModel != thumbUri) return
@@ -69,6 +82,8 @@ class MLImageSlot(private val owner: View) {
         if (model != uri) return
         drawable = resource
         shownAt = System.currentTimeMillis()
+        val now = android.os.SystemClock.uptimeMillis()
+        if (thumb != null && now - setAt > 60) fadeAt = now
         if (resource is Animatable) {
           resource.callback = owner
           (resource as Animatable).start()
@@ -106,7 +121,24 @@ class MLImageSlot(private val owner: View) {
 
   /** Desenha com centerCrop (o Glide já recortou p/ o tamanho; ajuste fino aqui). */
   fun draw(c: Canvas, r: RectF, radius: Float, fit: Boolean): Boolean {
-    val d = drawable ?: thumb ?: return false
+    val full = drawable
+    val th = thumb
+    if (full != null && th != null && fadeAt > 0L) {
+      val t = (android.os.SystemClock.uptimeMillis() - fadeAt) / 240f
+      if (t < 1f) {
+        drawOne(c, th, r, radius, fit, 255)
+        drawOne(c, full, r, radius, fit, (255 * t).toInt().coerceIn(0, 255))
+        owner.postInvalidateOnAnimation()
+        return true
+      }
+      fadeAt = 0L
+    }
+    val d = full ?: th ?: return false
+    drawOne(c, d, r, radius, fit, 255)
+    return true
+  }
+
+  private fun drawOne(c: Canvas, d: Drawable, r: RectF, radius: Float, fit: Boolean, alpha: Int) {
     val iw = d.intrinsicWidth.toFloat()
     val ih = d.intrinsicHeight.toFloat()
     c.save()
@@ -127,9 +159,10 @@ class MLImageSlot(private val owner: View) {
     } else {
       d.setBounds(r.left.toInt(), r.top.toInt(), r.right.toInt(), r.bottom.toInt())
     }
+    if (alpha < 255) d.alpha = alpha
     d.draw(c)
+    if (alpha < 255) d.alpha = 255
     c.restore()
-    return true
   }
 
   companion object {
@@ -207,6 +240,16 @@ class MLCellView(context: Context) : ViewGroup(context) {
     set(v) { field = v; invalidate() }
   var onRecycled: ((MLCellView) -> Unit)? = null
 
+  // [2026-10-15 native-media-dl] anel de transferência por slot
+  // (0 mídia, 1..4 álbum, 5 áudio, 6 arquivo)
+  private val ringShown = FloatArray(7)
+  private val ringVisible = BooleanArray(7)
+  private val ringFinishAt = LongArray(7)
+  private var ringAnimated = false
+  var transferKeys: Set<String> = emptySet()
+    private set
+  private val ringText = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD) }
+
   private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
   private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
   private val tmpRect = RectF()
@@ -224,6 +267,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     this.style = style
     this.audio = audio
     if (changedRow) {
+      for (i in 0 until 7) { ringShown[i] = 0f; ringVisible[i] = false; ringFinishAt[i] = 0L }
       jumboAnim?.cancel(); jumboAnim = null; jumboScale = 1f; jumboRot = 0f
       jumboPending = row.kind == MLKind.MSG && row.jumbo > 0f && !row.deleted
       swipeX = 0f
@@ -261,18 +305,19 @@ class MLCellView(context: Context) : ViewGroup(context) {
     // imagens
     val md = row.media
     if (md != null && !lay.mediaFrame.isEmpty) {
-      mediaSlot.set(md.uri, md.thumb, lay.mediaFrame.width().toInt(), lay.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker")
+      mediaSlot.set(effectiveUri(md), md.thumb, lay.mediaFrame.width().toInt(), lay.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker")
     } else mediaSlot.clear()
     for (i in 0 until 4) {
       if (i < row.album.size && i < lay.albumFrames.size) {
         val f = lay.albumFrames[i]
-        albumSlots[i].set(row.album[i].uri, row.album[i].thumb, f.width().toInt(), f.height().toInt(), false)
+        albumSlots[i].set(effectiveUri(row.album[i]), row.album[i].thumb, f.width().toInt(), f.height().toInt(), false)
       } else albumSlots[i].clear()
     }
     val rp = row.reply
     if (rp != null && lay.replyThumb) replySlot.set(rp.thumb, "", (40 * style.density).toInt(), (40 * style.density).toInt(), false) else replySlot.clear()
-    val uploading = md?.up != null
-    if ((uploading && md?.up == -1) || lay.hasLoader) startSpinner() else stopSpinner()
+    ringAnimated = !changedRow
+    refreshTransferKeys()
+    if (anySpin() || lay.hasLoader) startSpinner() else stopSpinner()
     requestLayout()
     invalidate()
     if (jumboPending && isAttachedToWindow) post { startJumbo() }
@@ -313,6 +358,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     reactPop.cancel(); reactPopScale = 1f
     pressedAction = -1
     stopSpinner()
+    transferKeys = emptySet()
+    for (i in 0 until 7) { ringShown[i] = 0f; ringVisible[i] = false; ringFinishAt[i] = 0L }
     flashAnim?.cancel(); flashAlpha = 0f
     jumboAnim?.cancel(); jumboAnim = null; jumboScale = 1f; jumboRot = 0f; jumboPending = false
     swipeX = 0f
@@ -518,6 +565,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     data class Action(val action: String, val index: Int) : Part()
     object Retry : Part()
     object VNote : Part()
+    /** [native-media-dl] anel/botão de baixar: -1 mídia, 0..3 álbum, 100 áudio, 101 arquivo */
+    data class Xfer(val slot: Int) : Part()
     object Spoiler : Part()
     object None : Part()
   }
@@ -566,6 +615,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
       if (u != null) return Part.Link(u)
     }
     for (i in L.actions.indices.reversed()) if (L.actions[i].rect.contains(bx, by)) return Part.Action(L.actions[i].action, i)
+    xferHit(bx, by, L, r, s)?.let { return Part.Xfer(it) }
     for ((i, f) in L.albumFrames.withIndex()) if (f.contains(bx, by)) return Part.Media(i)
     if (!L.mediaFrame.isEmpty && L.mediaFrame.contains(bx, by)) return Part.Media(0)
     if (!L.replyFrame.isEmpty && L.replyFrame.contains(bx, by)) return Part.Reply
@@ -659,13 +709,19 @@ class MLCellView(context: Context) : ViewGroup(context) {
         fill.color = if (r.own) th.ownQuote else th.otherQuote
         c.drawRoundRect(L.mediaFrame, L.mediaRadius, L.mediaRadius, fill)
       }
-      if (md.kind == "video" && md.up == null) {
+      val (mode, done) = if (sticker) Pair(RingMode.Hidden, true) else xferMode(md.dl, md.up, true)
+      if (!done && md.dl != null && !sticker) {
+        // ainda não baixada: miniatura levemente escurecida (P&B premium)
+        fill.color = 0x2E000000
+        c.drawRoundRect(L.mediaFrame, L.mediaRadius, L.mediaRadius, fill)
+      }
+      if (md.kind == "video" && md.up == null && done && !snap) {
         val cx = L.mediaFrame.centerX(); val cy = L.mediaFrame.centerY(); val rad = s.dp(23f)
         fill.color = 0x73000000; c.drawCircle(cx, cy, rad, fill)
         drawPlay(c, RectF(cx - rad * 0.6f, cy - rad * 0.6f, cx + rad * 0.6f, cy + rad * 0.6f), 0xFFFFFFFF.toInt())
       }
       L.durText?.let { drawText(c, it, L.mediaFrame.left + s.dp(8f), L.mediaFrame.bottom - it.height - s.dp(7f)) }
-      md.up?.let { drawProgress(c, L.mediaFrame.centerX(), L.mediaFrame.centerY(), s.dp(24f), it, s) }
+      if (!snap) drawRing(c, 0, mode, done, L.mediaFrame.centerX(), L.mediaFrame.centerY(), true, 0xFFFFFFFF.toInt(), s)
     }
     if (L.albumFrames.isNotEmpty()) {
       for ((i, f) in L.albumFrames.withIndex()) {
@@ -673,6 +729,11 @@ class MLCellView(context: Context) : ViewGroup(context) {
         if (!albumSlots[i].draw(c, f, s.dp(4f), false)) {
           fill.color = if (r.own) th.ownQuote else th.otherQuote
           c.drawRoundRect(f, s.dp(4f), s.dp(4f), fill)
+        }
+        if (!snap && i < r.album.size) {
+          val am = r.album[i]
+          val (mode, done) = xferMode(am.dl, am.up, false)
+          drawRing(c, 1 + i, mode, done, f.centerX(), f.centerY(), true, 0xFFFFFFFF.toInt(), s)
         }
       }
       val last = L.albumFrames.last()
@@ -1039,12 +1100,16 @@ class MLCellView(context: Context) : ViewGroup(context) {
     val b = s.dp(38f)
     val cx = f.left + b / 2
     val cy = f.top + s.dp(1f) + b / 2
-    fill.color = (tint and 0x00FFFFFF) or (0x24 shl 24)
-    c.drawCircle(cx, cy, b / 2, fill)
     val st = audio
     val active = st != null && st.id == r.id
     val playing = active && st!!.playing
     val loading = active && st!!.loading
+    // [native-media-dl] o botão play vira o anel enquanto baixa
+    val (amode, adone) = xferMode(au.dl, null, false)
+    val aBusy = amode != RingMode.Hidden
+    if (!aBusy) {
+    fill.color = (tint and 0x00FFFFFF) or (0x24 shl 24)
+    c.drawCircle(cx, cy, b / 2, fill)
     if (loading) {
       stroke.color = tint; stroke.strokeWidth = s.dp(2f)
       tmpRect.set(cx - s.dp(9f), cy - s.dp(9f), cx + s.dp(9f), cy + s.dp(9f))
@@ -1058,6 +1123,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     } else {
       drawPlay(c, RectF(cx - b * 0.38f, cy - b * 0.38f, cx + b * 0.38f, cy + b * 0.38f), tint)
     }
+    }
+    if (aBusy || ringVisible[5] || ringFinishAt[5] > 0L) drawRing(c, 5, amode, adone, cx, cy, false, tint, s)
     var dur = au.duration.toDouble()
     if (active) st!!.durMs?.let { if (it > 0) dur = it / 1000.0 }
     var progress = 0f
@@ -1098,15 +1165,263 @@ class MLCellView(context: Context) : ViewGroup(context) {
     val icon = RectF(f.left, f.top + max(0f, (f.height() - s.dp(44f)) / 2), f.left + s.dp(38f), f.top + max(0f, (f.height() - s.dp(44f)) / 2) + s.dp(44f))
     fill.color = if (r.own) ((s.theme.ownText and 0x00FFFFFF) or (0x38 shl 24)) else ((s.theme.accent and 0x00FFFFFF) or (0xD9 shl 24))
     c.drawRoundRect(icon, s.dp(7f), s.dp(7f), fill)
-    L.fileExt?.let { drawText(c, it, icon.centerX() - it.width / 2, icon.centerY() - it.height / 2) }
+    // [native-media-dl] anel no ícone + "1,2 MB de 4,5 MB"
+    val fd = r.file?.dl
+    val (fmode, fdone) = xferMode(fd, null, false)
+    val fBusy = fmode != RingMode.Hidden
+    if (!fBusy) L.fileExt?.let { drawText(c, it, icon.centerX() - it.width / 2, icon.centerY() - it.height / 2) }
+    if (fBusy || ringVisible[6] || ringFinishAt[6] > 0L) drawRing(c, 6, fmode, fdone, icon.centerX(), icon.centerY(), false, 0xFFFFFFFF.toInt(), s)
     val nh = L.fileName?.height ?: 0f
     val sh = L.fileSize?.height ?: 0f
     var y = f.top + max(0f, (f.height() - nh - sh - s.dp(2f)) / 2)
     L.fileName?.let { drawText(c, it, f.left + s.dp(48f), y); y += it.height + s.dp(2f) }
-    L.fileSize?.let { drawText(c, it, f.left + s.dp(48f), y) }
+    val fx = if (fd != null) MLTransfers.item(fd.key) else null
+    val ptxt = if (fx != null && fx.state == MLXferState.RUNNING) MLTransfers.progressText(fx) else ""
+    if (ptxt.isNotEmpty() && L.fileSize != null) {
+      ringText.textSize = s.dp(12f)
+      ringText.typeface = android.graphics.Typeface.DEFAULT
+      ringText.color = if (r.own) s.theme.ownMeta else s.theme.otherMeta
+      val fm = ringText.fontMetrics
+      c.drawText(ptxt, f.left + s.dp(48f), y - fm.ascent, ringText)
+    } else L.fileSize?.let { drawText(c, it, f.left + s.dp(48f), y) }
+  }
+
+  // ─── [2026-10-15 native-media-dl] anel de transferência (baixar/enviar) ────
+  sealed class RingMode {
+    object Hidden : RingMode()
+    data class Download(val text: String) : RingMode()
+    data class Progress(val f: Float) : RingMode()
+    object Spin : RingMode()
+  }
+
+  /** (modo do anel, já local?) de um slot. */
+  private fun xferMode(dl: MLMediaDL?, up: Int?, sizeText: Boolean): Pair<RingMode, Boolean> {
+    if (up != null) return Pair(if (up < 0) RingMode.Spin else RingMode.Progress(up.coerceIn(0, 100) / 100f), true)
+    if (dl == null) return Pair(RingMode.Hidden, true)
+    val x = MLTransfers.probe(dl)
+    return when (x.state) {
+      MLXferState.DONE -> Pair(RingMode.Hidden, true)
+      MLXferState.QUEUED -> Pair(RingMode.Spin, false)
+      MLXferState.RUNNING -> Pair(if (x.total > 0) RingMode.Progress(x.fraction) else RingMode.Spin, false)
+      else -> {
+        if (dl.js && x.state == MLXferState.NONE) Pair(RingMode.Spin, false)
+        else Pair(RingMode.Download(if (sizeText) MLTransfers.formatBytes(if (dl.size > 0) dl.size else x.total) else ""), false)
+      }
+    }
+  }
+
+  /** Foto/GIF com `dl` só aparece nítida depois de baixada (antes: miniatura + anel). */
+  private fun effectiveUri(md: MLMedia): String {
+    val d = md.dl ?: return md.uri
+    if (md.up != null || (md.kind != "image" && md.kind != "gif")) return md.uri
+    val x = MLTransfers.probe(d)
+    val l = x.local
+    return if (x.state == MLXferState.DONE && l != null) l else ""
+  }
+
+  private fun anySpin(): Boolean {
+    val r = row ?: return false
+    fun sp(dl: MLMediaDL?, up: Int?): Boolean = xferMode(dl, up, false).first == RingMode.Spin
+    r.media?.let { if (it.kind != "sticker" && sp(it.dl, it.up)) return true }
+    for (m in r.album) if (sp(m.dl, m.up)) return true
+    r.audio?.let { if (sp(it.dl, null)) return true }
+    r.file?.let { if (sp(it.dl, null)) return true }
+    return false
+  }
+
+  private fun refreshTransferKeys() {
+    val r = row ?: run { transferKeys = emptySet(); return }
+    val k = HashSet<String>()
+    r.media?.dl?.let { k.add(it.key) }
+    for (m in r.album) m.dl?.let { k.add(it.key) }
+    r.audio?.dl?.let { k.add(it.key) }
+    r.file?.dl?.let { k.add(it.key) }
+    transferKeys = k
+  }
+
+  /** Transferência mudou (progresso/fim): troca a foto e redesenha o anel. */
+  fun applyTransfers() {
+    val r = row ?: return
+    val L = lay ?: return
+    ringAnimated = true
+    val md = r.media
+    if (md != null && !L.mediaFrame.isEmpty) {
+      mediaSlot.set(effectiveUri(md), md.thumb, L.mediaFrame.width().toInt(), L.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker")
+    }
+    for (i in 0 until 4) {
+      if (i < r.album.size && i < L.albumFrames.size) {
+        val f = L.albumFrames[i]
+        albumSlots[i].set(effectiveUri(r.album[i]), r.album[i].thumb, f.width().toInt(), f.height().toInt(), false)
+      }
+    }
+    if (anySpin() || L.hasLoader) startSpinner() else stopSpinner()
+    invalidate()
+  }
+
+  /** Auto-download (política do usuário) das mídias desta linha. */
+  fun autoStartTransfers(owner: MLTransferObserver) {
+    val r = row ?: return
+    if (r.kind != MLKind.MSG || r.deleted) return
+    val dls = ArrayList<MLMediaDL>()
+    r.media?.let { if (it.up == null && it.kind != "sticker") it.dl?.let { d -> dls.add(d) } }
+    for (m in r.album) if (m.up == null) m.dl?.let { dls.add(it) }
+    r.audio?.dl?.let { dls.add(it) }
+    r.file?.dl?.let { dls.add(it) }
+    for (d in dls) {
+      if (d.js) continue
+      val x = MLTransfers.probe(d)
+      if (x.state == MLXferState.NONE && !x.autoTried && MLTransfers.allowsAuto(d.bucket)) MLTransfers.start(d, false, owner)
+    }
+  }
+
+  /** dl / up do slot (p/ a lista decidir baixar, cancelar ou mandar ao JS). */
+  fun xferInfo(slot: Int): Pair<MLMediaDL?, Int?> {
+    val r = row ?: return Pair(null, null)
+    return when (slot) {
+      -1 -> Pair(r.media?.dl, r.media?.up)
+      XFER_AUDIO -> Pair(r.audio?.dl, null)
+      XFER_FILE -> Pair(r.file?.dl, null)
+      else -> if (slot in 0 until r.album.size) Pair(r.album[slot].dl, r.album[slot].up) else Pair(null, null)
+    }
+  }
+
+  private fun xferHit(bx: Float, by: Float, L: MLRowLayout, r: MLRow, s: MLStyle): Int? {
+    val ringR = s.dp(24f) + s.dp(12f)
+    fun inRing(cx: Float, cy: Float): Boolean = (bx - cx) * (bx - cx) + (by - cy) * (by - cy) <= ringR * ringR
+    val md = r.media
+    if (md != null && md.kind != "sticker" && !L.mediaFrame.isEmpty) {
+      if (md.up != null) { if (inRing(L.mediaFrame.centerX(), L.mediaFrame.centerY())) return -1 }
+      else if (md.dl != null && L.mediaFrame.contains(bx, by)) {
+        // botão "baixar": a mídia inteira; baixando: só o anel (X) — fora dele abre
+        val m = xferMode(md.dl, null, false)
+        if (!m.second && (m.first is RingMode.Download || inRing(L.mediaFrame.centerX(), L.mediaFrame.centerY()))) return -1
+      }
+    }
+    for ((i, f) in L.albumFrames.withIndex()) {
+      if (i >= r.album.size) break
+      val am = r.album[i]
+      if (am.up != null) { if (f.contains(bx, by) && inRing(f.centerX(), f.centerY())) return i; continue }
+      if (am.dl != null && f.contains(bx, by)) {
+        val m = xferMode(am.dl, null, false)
+        if (!m.second && (m.first is RingMode.Download || inRing(f.centerX(), f.centerY()))) return i
+      }
+    }
+    val au = r.audio
+    if (au?.dl != null && !L.audioFrame.isEmpty && !xferMode(au.dl, null, false).second) {
+      val b = s.dp(38f)
+      if (bx >= L.audioFrame.left - s.dp(8f) && bx <= L.audioFrame.left + b + s.dp(12f) && by >= L.audioFrame.top - s.dp(6f) && by <= L.audioFrame.bottom + s.dp(6f)) return XFER_AUDIO
+    }
+    val fl = r.file
+    if (fl?.dl != null && !L.fileFrame.isEmpty && L.fileFrame.contains(bx, by) && !xferMode(fl.dl, null, false).second) return XFER_FILE
+    return null
+  }
+
+  /**
+   * Desenha o anel do slot. overlay = branco sobre disco escurecido (foto/vídeo);
+   * senão anel na cor `tint` sobre disco translúcido (áudio/arquivo).
+   */
+  private fun drawRing(c: Canvas, slot: Int, mode: RingMode, done: Boolean, cx: Float, cy: Float, overlay: Boolean, tint: Int, s: MLStyle) {
+    val now = SystemClock.uptimeMillis()
+    if (mode == RingMode.Hidden) {
+      if (ringVisible[slot] && done && ringAnimated && ringFinishAt[slot] == 0L) ringFinishAt[slot] = now
+      ringVisible[slot] = false
+      val fa = ringFinishAt[slot]
+      if (fa == 0L) return
+      val t = (now - fa) / 380f
+      if (t >= 1f) { ringFinishAt[slot] = 0L; return }
+      // arco fecha (0..0.4) e o anel encolhe/some (0.4..1)
+      val k = ((t - 0.4f) / 0.6f).coerceIn(0f, 1f)
+      ringShown[slot] = ringShown[slot] + (1f - ringShown[slot]) * 0.35f
+      c.save()
+      c.scale(1f - 0.45f * k, 1f - 0.45f * k, cx, cy)
+      drawRingBody(c, cx, cy, overlay, tint, s, ringShown[slot], false, ((1f - k) * 255).toInt(), false)
+      c.restore()
+      postInvalidateOnAnimation()
+      return
+    }
+    ringFinishAt[slot] = 0L
+    val first = !ringVisible[slot]
+    ringVisible[slot] = true
+    when (mode) {
+      is RingMode.Download -> {
+        val a = 255
+        if (overlay && mode.text.isNotEmpty()) {
+          // pílula "↓ 12,4 MB"
+          ringText.textSize = s.dp(13f)
+          ringText.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+          val tw = ringText.measureText(mode.text)
+          val h = s.dp(34f)
+          val w = s.dp(14f + 16f + 6f + 14f) + tw
+          tmpRect.set(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+          fill.color = 0x80000000.toInt()
+          c.drawRoundRect(tmpRect, h / 2, h / 2, fill)
+          val ix = tmpRect.left + s.dp(14f)
+          drawArrowDown(c, RectF(ix, cy - s.dp(8f), ix + s.dp(16f), cy + s.dp(8f)), 0xFFFFFFFF.toInt(), s.dp(2.2f), a)
+          ringText.color = 0xFFFFFFFF.toInt()
+          val fm = ringText.fontMetrics
+          c.drawText(mode.text, ix + s.dp(22f), cy - (fm.ascent + fm.descent) / 2, ringText)
+        } else {
+          val rad = if (overlay) s.dp(24f) else s.dp(19f)
+          fill.color = if (overlay) 0x80000000.toInt() else ((tint and 0x00FFFFFF) or (0x24 shl 24))
+          c.drawCircle(cx, cy, rad, fill)
+          val ir = rad * 0.4f
+          drawArrowDown(c, RectF(cx - ir, cy - ir, cx + ir, cy + ir), if (overlay) 0xFFFFFFFF.toInt() else tint, if (overlay) s.dp(2.2f) else s.dp(2f), a)
+        }
+      }
+      is RingMode.Progress -> {
+        val target = mode.f.coerceIn(0.02f, 1f)
+        if (first) ringShown[slot] = target
+        val cur = ringShown[slot]
+        if (abs(target - cur) > 0.003f) {
+          ringShown[slot] = cur + (target - cur) * 0.25f + (if (target > cur) 0.002f else -0.002f)
+          if ((target - cur) * (target - ringShown[slot]) < 0f) ringShown[slot] = target
+          postInvalidateOnAnimation()
+        } else ringShown[slot] = target
+        drawRingBody(c, cx, cy, overlay, tint, s, ringShown[slot], false, 255, true)
+      }
+      is RingMode.Spin -> drawRingBody(c, cx, cy, overlay, tint, s, 0.25f, true, 255, true)
+      else -> {}
+    }
+  }
+
+  private fun drawRingBody(c: Canvas, cx: Float, cy: Float, overlay: Boolean, tint: Int, s: MLStyle, f: Float, spin: Boolean, alpha: Int, cross: Boolean) {
+    val rad = if (overlay) s.dp(24f) else s.dp(19f)
+    fill.color = if (overlay) 0x80000000.toInt() else ((tint and 0x00FFFFFF) or (0x24 shl 24))
+    fill.alpha = (((fill.color ushr 24) and 0xFF) * alpha / 255)
+    c.drawCircle(cx, cy, rad, fill)
+    fill.alpha = 255
+    val ir = rad - (if (overlay) s.dp(7f) else s.dp(3f))
+    tmpRect.set(cx - ir, cy - ir, cx + ir, cy + ir)
+    stroke.strokeWidth = if (overlay) s.dp(2.5f) else s.dp(2f)
+    val fg = if (overlay) 0xFFFFFFFF.toInt() else tint
+    stroke.color = (fg and 0x00FFFFFF) or ((((fg ushr 24) and 0xFF) * 0.28f * alpha / 255).toInt() shl 24)
+    c.drawOval(tmpRect, stroke)
+    stroke.color = (fg and 0x00FFFFFF) or ((((fg ushr 24) and 0xFF) * alpha / 255) shl 24)
+    if (spin) c.drawArc(tmpRect, spinAngle - 90f, 90f, false, stroke)
+    else c.drawArc(tmpRect, -90f, 360f * f.coerceIn(0f, 1f), false, stroke)
+    if (cross) {
+      val h = rad * (if (overlay) 0.27f else 0.3f)
+      stroke.strokeWidth = if (overlay) s.dp(2.2f) else s.dp(2f)
+      c.drawLine(cx - h, cy - h, cx + h, cy + h, stroke)
+      c.drawLine(cx + h, cy - h, cx - h, cy + h, stroke)
+    }
+  }
+
+  private fun drawArrowDown(c: Canvas, r: RectF, color: Int, w: Float, alpha: Int) {
+    stroke.color = (color and 0x00FFFFFF) or ((((color ushr 24) and 0xFF) * alpha / 255) shl 24)
+    stroke.strokeWidth = w
+    tmpPath.reset()
+    tmpPath.moveTo(r.centerX(), r.top + r.height() * 0.1f)
+    tmpPath.lineTo(r.centerX(), r.bottom - r.height() * 0.12f)
+    tmpPath.moveTo(r.left + r.width() * 0.2f, r.centerY() + r.height() * 0.06f)
+    tmpPath.lineTo(r.centerX(), r.bottom - r.height() * 0.1f)
+    tmpPath.lineTo(r.right - r.width() * 0.2f, r.centerY() + r.height() * 0.06f)
+    c.drawPath(tmpPath, stroke)
   }
 
   companion object {
+    const val XFER_AUDIO = 100
+    const val XFER_FILE = 101
     // lucide "pin" e "timer" (viewBox 24) — mesmos ícones do JS
     val PIN_PATHS: List<Path?> by lazy { listOf(
       MLNode.parsePath("M12 17v5"),

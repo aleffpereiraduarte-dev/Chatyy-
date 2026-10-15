@@ -31,6 +31,9 @@ dependencies {
   // [native-ctxmenu] SpringAnimation do menu de contexto — já no binário
   // (react-native-keyboard-controller puxa dynamicanimation 1.x).
   implementation 'androidx.dynamicanimation:dynamicanimation:1.0.0'
+  // [native-media-dl] download nativo com progresso — mesma versão que
+  // expo-chat-transport / expo-background-upload já trazem (zero bytes novos).
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
 
 def safeExtGet(prop, fallback) {

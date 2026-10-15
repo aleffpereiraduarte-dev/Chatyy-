@@ -359,7 +359,15 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 // ~50-150ms warm. Best-effort: skip if we don't have
                 // creds (the FCM payload doesn't always include them, e.g.
                 // when MaxConnectionsPerEmail evicts the WS path).
-                if (preLkUrl != null && preLkToken != null) {
+                // [2026-10-15 dnd] Zen mode certainly silences this ring →
+                // NO preconnect (its LK join paints a false "Tocando…" on the
+                // caller) + call_status dnd once (caller: "Não perturbe ativo").
+                val ringSilenced = try {
+                    CallRingGate.checkAndReport(applicationContext, callId, "fcm")
+                } catch (_: Throwable) { false }
+                if (ringSilenced) {
+                    Log.i(TAG, "[dnd] ring silenced by DND — skipping preconnect for callId=$callId")
+                } else if (preLkUrl != null && preLkToken != null) {
                     try {
                         NativeCallRoom.preconnect(
                             applicationContext, preLkUrl, preLkToken, callId

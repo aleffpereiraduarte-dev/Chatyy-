@@ -1,4 +1,8 @@
 export default {
+  // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
+  "call.state.peerDnd": "방해 금지 모드 켜짐",
+  // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download
+  "chat.dlOfSize": "{a} / {b}",
   // [2026-10-15 meet-v2]
   "meetV2.waitingTitle": "참가자를 기다리는 중",
   "meetV2.waitingSub": "링크를 공유해 회의에 사람들을 초대하세요.",

@@ -55,7 +55,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
-import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
+import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -12509,6 +12509,8 @@ function ChatConversationInner() {
     // abort the in-flight compress/upload, drop the outbox row + durable copy.
     if (OUTBOX_V2_ONLY) { try { mediaSendQueue.cancelByTempId(tempId)?.catch?.(() => {}); } catch {} }
   }, []);
+  const cancelUploadRef = useRef(null); // [native-media-dl] X do anel de envio da lista nativa
+  cancelUploadRef.current = cancelUpload;
 
   // [2026-10-07 send-media] Media queue → bubble state. Progress ticks only
   // touch the uploadProgress map (bubbles read _uploadPct from it); setMessages
@@ -15871,11 +15873,15 @@ function ChatConversationInner() {
   // the visible head of the thread (force:true on those). Per-message
   // dedup is handled inside cacheMedia (in-flight set).
   const _autoDLFiredRef = useRef(false);
+  const _nlOnRef = useRef(false); // [native-media-dl] lista nativa ativa (setado no render, mais abaixo)
   useEffect(() => {
     if (Platform.OS === 'web') return;
     if (!conversationId) return;
     if (!messages || messages.length === 0) return;
     if (_autoDLFiredRef.current) return; // single-shot per conv open
+    // [native-media-dl] lista nativa baixando as visíveis (com anel + matriz) →
+    // não dispara o mesmo download em paralelo pelo JS.
+    if (_nlOnRef.current && nativeMediaDlActive()) return;
     _autoDLFiredRef.current = true;
     const types = new Set(['image', 'video', 'voice', 'audio', 'gif', 'sticker']);
     // Take the LAST 15 (newest), filter to media without local file,
@@ -32594,6 +32600,15 @@ function ChatConversationInner() {
       } catch {}
       return null;
     };
+    // [native-media-dl] resolve SEM baixar (só índice local); remoto se não houver
+    const _nlMdl = nativeMediaDlActive();
+    const resolveNF = (u) => {
+      if (!u) return u;
+      let abs = u;
+      try { abs = api.getMediaUrl(u); } catch {}
+      try { const loc = getLocalUriSyncJs(abs); if (loc) return loc; } catch {}
+      return abs;
+    };
     const variants = (m) => {
       if (!m.image_variants) return null;
       try { return typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants; } catch { return null; }
@@ -32675,13 +32690,19 @@ function ChatConversationInner() {
           const p = m._posterUri || m.thumbnail_url || m.poster_url || m.video_thumb || (iv && (iv.poster || iv.thumb)) || '';
           if (p) uri = /^(data:|file:)/.test(p) ? p : resolve(p);
         }
-        if (!uri && m.type !== 'video') uri = resolve(m.file_url) || '';
+        // [native-media-dl] com o download nativo ligado a lista baixa (com anel);
+        // aqui só consulta o índice local — sem disparar o cacheMedia do JS.
+        if (!uri && m.type !== 'video') uri = (_nlMdl ? resolveNF(m.file_url) : resolve(m.file_url)) || '';
         const b64 = m.thumb_b64 || getThumbB64Sync(m.id);
         let thumb = b64 ? `data:image/jpeg;base64,${b64}` : '';
         if (!thumb && iv && typeof iv.thumb === 'string' && iv.thumb) { try { thumb = api.getMediaUrl(iv.thumb); } catch {} }
         return { uri, thumb, w: Number(iv && iv.full_w) || 0, h: Number(iv && iv.full_h) || 0 };
       },
       resolveSticker: (m) => ({ uri: localOf(m) || resolve(m.file_url || m.content) || '' }),
+      // [native-media-dl] mídia já no aparelho? / conversa (adotar no store) / "1,2 MB de 4,5 MB"
+      localOf: (m) => localOf(m),
+      conversationId,
+      dlOf: tt('chat.dlOfSize', '{a} de {b}'),
       jumbo: (txt) => jumboEmojiSize(txt),
       isVideoNote: isVideoNoteMessage,
       hasBlockMarkdown: _hasBlockMarkdown,
@@ -32731,7 +32752,7 @@ function ChatConversationInner() {
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards]);
+  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId]);
   const _nlTheme = useMemo(() => ({
     ownBubble: ownBubbleBg, otherBubble: otherBubbleBg, ownText: ownTextColor, otherText: otherInk,
     ownMeta: ownMetaColor, otherMeta: otherMetaColor, link: otherInk, read: '#53BDEB', wall: chatWallBg,
@@ -32779,6 +32800,7 @@ function ChatConversationInner() {
     } catch {}
   }, [currentEmail, conversationId]);
   const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas))); // vazio → estado vazio JS (salvo foto nativa enquanto carrega)
+  _nlOnRef.current = !!(_nl && _nl.on); // [native-media-dl]
   const _nlActRef = useRef(null);
   _nlActRef.current = { handleLongPress, handleDoubleTap, handleMessageInfo, toggleSelection, handleReact, safeScrollToMsg, selectionMode,
     promptFailed: _promptFailedMsg, tapRetry: _tapRetryFailed, smartAction: _onSmartAction }; // [fase 2]
@@ -32924,6 +32946,14 @@ function ChatConversationInner() {
       }
       case 'audio': _nlToggleAudio(target); return;
       case 'file': _nlOpenFile(target); return;
+      // [native-media-dl] X do anel de ENVIO (o de download o nativo/JS já trata)
+      case 'xfer': {
+        if (url !== 'cancel-up') return;
+        const its = item._type === 'album' ? (item._items || []) : null;
+        const m = its ? its[Math.max(0, Math.min(its.length - 1, index || 0))] : target;
+        if (m && m.id != null) { try { cancelUploadRef.current && cancelUploadRef.current(m.id); } catch {} }
+        return;
+      }
       case 'reply': if (target.reply_to && target.reply_to.id) A.safeScrollToMsg({ id: target.reply_to.id }); else if (target.reply_to && target.reply_to._ext) { try { require('../utils/privateReplyQuote').openExtSource(target.reply_to); } catch {} } return; // [responder-privado 2026-10-15]
       case 'reaction': {
         const emoji = url;

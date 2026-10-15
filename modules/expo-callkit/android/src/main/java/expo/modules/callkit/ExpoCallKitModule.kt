@@ -746,7 +746,11 @@ class ExpoCallKitModule : Module() {
       // _mintLivekitTokenForUser), skip. NativeCallRoom guards against
       // duplicate calls for the same callId.
       try {
-        if (!lkUrl.isNullOrBlank() && !lkToken.isNullOrBlank()) {
+        // [2026-10-15 dnd] No preconnect for a ring zen mode silences.
+        val silenced = try {
+          CallRingGate.checkAndReport(context.applicationContext, callId, "js")
+        } catch (_: Throwable) { false }
+        if (!silenced && !lkUrl.isNullOrBlank() && !lkToken.isNullOrBlank()) {
           NativeCallRoom.preconnect(context.applicationContext, lkUrl, lkToken, callId)
         }
       } catch (t: Throwable) {

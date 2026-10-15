@@ -68,11 +68,27 @@ enum CallStrings {
         "hi": ["videoReqTitle": "{name} वीडियो पर स्विच करना चाहते हैं", "videoReqTitleNoName": "वीडियो पर स्विच करें?", "videoReqAccept": "स्वीकार करें", "videoReqDecline": "अस्वीकार करें"],
     ]
 
+    // [2026-10-15 chamadas-dnd] Callee com Foco/Não Perturbe (CallKit recusou o
+    // toque): status na tela de quem liga + notificação local do callee.
+    private static let peerStatusTable: [String: [String: String]] = [
+        "pt-BR": ["peerDnd": "Não perturbe ativo", "dndIncomingBody": "Ligação de {name} — toque para atender"],
+        "pt-PT": ["peerDnd": "Não incomodar ativo", "dndIncomingBody": "Chamada de {name} — toque para atender"],
+        "en": ["peerDnd": "Do Not Disturb is on", "dndIncomingBody": "Call from {name} — tap to answer"],
+        "es": ["peerDnd": "No molestar activado", "dndIncomingBody": "Llamada de {name}: toca para contestar"],
+        "fr": ["peerDnd": "Ne pas déranger activé", "dndIncomingBody": "Appel de {name} — touchez pour répondre"],
+        "de": ["peerDnd": "Nicht stören ist aktiv", "dndIncomingBody": "Anruf von {name} – zum Annehmen tippen"],
+        "it": ["peerDnd": "Non disturbare attivo", "dndIncomingBody": "Chiamata da {name}: tocca per rispondere"],
+        "ja": ["peerDnd": "おやすみモードがオンです", "dndIncomingBody": "{name}さんからの着信 — タップして応答"],
+        "ar": ["peerDnd": "وضع عدم الإزعاج مفعّل", "dndIncomingBody": "مكالمة من {name} — اضغط للرد"],
+        "id": ["peerDnd": "Mode Jangan Ganggu aktif", "dndIncomingBody": "Panggilan dari {name} — ketuk untuk menjawab"],
+        "hi": ["peerDnd": "परेशान न करें चालू है", "dndIncomingBody": "{name} की कॉल — जवाब देने के लिए टैप करें"],
+    ]
+
     /// Texto da chave no idioma atual; {name} etc. substituídos por `args`.
     static func s(_ key: String, _ args: [String: String] = [:]) -> String {
         let l = GroupCallStrings.lang
         // Loop instead of a long `??` chain (keeps the type checker fast).
-        let tables: [[String: [String: String]]] = [table, screenShareTable, cameraTable, videoRequestTable]
+        let tables: [[String: [String: String]]] = [table, screenShareTable, cameraTable, videoRequestTable, peerStatusTable]
         var out: String = ""
         for lang in [l, "en"] where out.isEmpty {
             for t in tables {
