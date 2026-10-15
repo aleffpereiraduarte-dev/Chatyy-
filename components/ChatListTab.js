@@ -207,20 +207,51 @@ function _rcMergeListRow(old, c) {
 //    MINHA, unread fica o local (0: enviar = ler tudo antes);
 //  - snapshot igual/mais novo → servidor manda (recibos não rebaixam), salvo
 //    leitura local recente que cobre a última msg do snapshot (réplica atrasada).
-const _selfReadMarks = new Map(); // String(convId) → { at, ms }  (TTL 2 min)
-const _SELF_READ_TTL = 120000;
+const _selfReadMarks = new Map(); // String(convId) → { at, ms, lmId }
+const _SELF_READ_TTL = 120000;      // cobertura por TEMPO (relógio aparelho x servidor)
+const _SELF_READ_ID_TTL = 600000;   // [2026-10-15 unread-mono] cobertura por ID/autor (exata) dura mais
+function _rowLmId(row) {
+  const lm = row && row.last_message && typeof row.last_message === 'object' ? row.last_message : null;
+  const n = Number((lm && lm.id) || (row && row.last_message_id) || 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
 function _noteSelfRead(convId, row) {
   if (convId == null) return;
   try {
-    const ms = Math.max(row ? _convActivityMs(row) : 0, Date.now());
-    _selfReadMarks.set(String(convId), { at: Date.now(), ms });
+    const k = String(convId);
+    const prev = _selfReadMarks.get(k);
+    // [2026-10-15 unread-mono] monotônico: nunca recua o que já foi lido.
+    const ms = Math.max(row ? _convActivityMs(row) : 0, Date.now(), (prev && prev.ms) || 0);
+    const lmId = Math.max(_rowLmId(row), (prev && prev.lmId) || 0);
+    _selfReadMarks.delete(k);
+    _selfReadMarks.set(k, { at: Date.now(), ms, lmId });
     if (_selfReadMarks.size > 300) _selfReadMarks.delete(_selfReadMarks.keys().next().value);
   } catch {}
 }
-function _selfReadCovers(convId, c) {
+// "Marcar como não lida" (aqui) desarma a proteção.
+function _clearSelfRead(convId) { try { _selfReadMarks.delete(String(convId)); } catch {} }
+function _hasSelfRead(convId) {
+  const m = _selfReadMarks.get(String(convId));
+  return !!m && (Date.now() - m.at) <= _SELF_READ_ID_TTL;
+}
+function _selfReadCovers(convId, c, meLc) {
   const m = _selfReadMarks.get(String(convId));
   if (!m) return false;
-  if (Date.now() - m.at > _SELF_READ_TTL) { _selfReadMarks.delete(String(convId)); return false; }
+  const age = Date.now() - m.at;
+  if (age > _SELF_READ_ID_TTL) { _selfReadMarks.delete(String(convId)); return false; }
+  // [2026-10-15 unread-mono] Founder: "abro, respondo, volto → o 2 ainda está lá
+  // por alguns segundos". O snapshot do chat_list (SWR/réplica/read HTTP ainda
+  // em voo) já trazia a MINHA resposta como última msg, mas com o unread velho;
+  // a cobertura só por tempo (≤ leitura+3 s) não valia porque a resposta é mais
+  // nova que a leitura → o 2 voltava. Regras (WhatsApp):
+  //  - última msg é MINHA → enviar = ler tudo antes → 0;
+  //  - última msg com id ≤ maior id que eu já li aqui → 0;
+  //  - senão, cobertura por tempo (réplica atrasada, ids temporários).
+  const lm = c && c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+  if (meLc && lm && _lmIsMine(lm, meLc)) return true;
+  const lmId = _rowLmId(c);
+  if (lmId > 0 && m.lmId > 0) return lmId <= m.lmId;
+  if (age > _SELF_READ_TTL) return false;
   const n = _convActivityMs(c);
   // Folga de 3 s p/ relógio do aparelho x servidor; msg do snapshot mais nova
   // que a leitura local = chegou depois → conta. Só zera quando a linha local já
@@ -253,7 +284,7 @@ function _sameLm(a, b, meLc) {
 function _mergeServerConvRow(old, c, meLc) {
   if (!c) return c;
   if (!old) {
-    if ((c.unread_count || 0) > 0 && _selfReadCovers(c.id, c)) return { ...c, unread_count: 0 };
+    if ((c.unread_count || 0) > 0 && _selfReadCovers(c.id, c, meLc)) return { ...c, unread_count: 0, unread_mentions: 0 };
     return c;
   }
   const oldLm = old.last_message && typeof old.last_message === 'object' ? old.last_message : null;
@@ -273,17 +304,30 @@ function _mergeServerConvRow(old, c, meLc) {
       last_message_at: old.last_message_at,
       last_message_sender: old.last_message_sender ?? c.last_message_sender,
       last_message_type: old.last_message_type ?? c.last_message_type,
-      unread_count: _lmIsMine(oldLm, meLc)
+      // [2026-10-15 unread-mono] linha local mais nova + já lida aqui (msg chegou
+      // com a conversa aberta) → o snapshot velho não repõe o contador.
+      unread_count: (_lmIsMine(oldLm, meLc) || ((old.unread_count || 0) === 0 && _hasSelfRead(c.id)))
         ? (old.unread_count || 0)
         : Math.max(c.unread_count || 0, old.unread_count || 0),
     };
   } else {
     base = _rcMergeListRow(old, c);
-    if ((base.unread_count || 0) > 0 && (old.unread_count || 0) === 0 && _selfReadCovers(c.id, c)) {
-      base = { ...base, unread_count: 0 };
+    if ((base.unread_count || 0) > 0 && (old.unread_count || 0) === 0 && _selfReadCovers(c.id, c, meLc)) {
+      base = { ...base, unread_count: 0, unread_mentions: 0 };
     }
   }
   return base;
+}
+// [2026-10-15 unread-mono] Snapshot do servidor gravado no cache offline (cold
+// start) passa pela mesma guarda → não ressuscita o contador no próximo boot.
+function _guardReadRows(convs, meLc) {
+  if (!Array.isArray(convs) || !_selfReadMarks.size) return convs;
+  let ch = false;
+  const out = convs.map(c => {
+    if (c && c.id != null && (c.unread_count || 0) > 0 && _selfReadCovers(c.id, c, meLc)) { ch = true; return { ...c, unread_count: 0, unread_mentions: 0 }; }
+    return c;
+  });
+  return ch ? out : convs;
 }
 // [2026-10-14 grupo-nome] Nome de grupo/canal: `name` do servidor é a verdade. display_name
 // de grupo só existe em placeholder local (WS/push/bgJournal — às vezes o nome de QUEM MANDOU),
@@ -3780,6 +3824,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // same chat onto the stack twice (user complaint: "tenho que clicar 2 vez
   // para voltar").
   const _navLockRef = useRef(null);
+  const _lastOpenedConvRef = useRef(null); // [2026-10-15 unread-mono] conversa aberta pela lista (volta = tudo lido até a última msg local)
   // Skip the loading spinner if we already painted from cache
   const [loading, setLoading] = useState(_initialConvs.length === 0);
   // WS down banner — surfaces an "offline" hint at the top of the list so
@@ -4240,6 +4285,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     if (ids.length === 0) return;
     const selected = (filter === 'archived' ? archivedConversations : conversations).filter(c => selectedIds.has(c.id));
     const anyUnread = selected.some(c => (c.unread_count || 0) > 0);
+    // [2026-10-15 unread-mono] guarda monotônica também no lote.
+    try {
+      for (const c of selected) {
+        if (anyUnread) { _noteSelfRead(c.id, c); require('../services/unreadBadge').markConversationReadLocal(c.id, { emitList: false }); }
+        else { _clearSelfRead(c.id); require('../services/unreadBadge').noteIncomingUnread(c.id); }
+      }
+    } catch {}
     const _patchUnread = (prev) => prev.map(c => {
       if (!selectedIds.has(c.id)) return c;
       return anyUnread ? { ...c, unread_count: 0 } : { ...c, unread_count: Math.max(c.unread_count || 0, 1) };
@@ -4316,7 +4368,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           }), convs.length, _archIds));
         });
         setArchivedConversations(prev => _reuseConvRows(prev, _arch));
-        cacheConversations(convs).catch(() => {});
+        cacheConversations(_guardReadRows(convs, _meLcRef.current)).catch(() => {});
         _saveNativeConversations(convs);
       }).catch((e) => {
         console.warn('[ChatList] background sync threw', e?.message);
@@ -4331,7 +4383,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       const cached = await getCachedConversations();
       if (!isFresh()) return;
       if (cached.length > 0) {
-        setConversations(cached.filter(c => !c.archived));
+        setConversations(_guardReadRows(cached.filter(c => !c.archived), _meLcRef.current));
         setArchivedConversations(cached.filter(c => c.archived));
         // Mirror cached snapshot into App Group so the native ShareExtension
         // works on cold-start before the network refresh lands.
@@ -4358,7 +4410,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               });
             }
             setArchivedConversations(convs.filter(c => c.archived));
-            cacheConversations(convs).catch(() => {});
+            cacheConversations(_guardReadRows(convs, _meLcRef.current)).catch(() => {});
             _saveNativeConversations(convs);
           }).catch(() => {});
         }
@@ -4375,8 +4427,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       if (!isFresh() && _convsCountRef.current > 0) return;
       if (r.success) {
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-        setConversations(convs.filter(c => !c.archived));
-        cacheConversations(convs).catch(() => {});
+        setConversations(_guardReadRows(convs.filter(c => !c.archived), _meLcRef.current));
+        cacheConversations(_guardReadRows(convs, _meLcRef.current)).catch(() => {});
         setLoadError(false);
       } else if (_convsCountRef.current === 0) {
         // [silent-fail-w3] Non-success on cold start with empty screen —
@@ -4389,7 +4441,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       if (rAll.success) {
         const all = Array.isArray(rAll.data) ? rAll.data : (rAll.data?.conversations || []);
         setArchivedConversations(all.filter(c => c.archived));
-        cacheConversations(all).catch(() => {});
+        cacheConversations(_guardReadRows(all, _meLcRef.current)).catch(() => {});
         _saveNativeConversations(all);
       }
     } catch (e) {
@@ -4741,6 +4793,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   }, [_focusNav]);
   useFocusEffect(
     useCallback(() => runAfterFocusTransition(() => {
+      // [2026-10-15 unread-mono] Voltou da conversa: o que chegou nela enquanto
+      // aberta também está lido → a guarda sobe até a última msg da linha local
+      // (antes do refresh abaixo, que pode trazer snapshot com o unread velho).
+      try {
+        const _oid = _lastOpenedConvRef.current;
+        if (_oid != null) {
+          _lastOpenedConvRef.current = null;
+          const _row = (conversationsRef.current || []).find(c => String(c.id) === String(_oid));
+          if (_row && !((_row.unread_count || 0) > 0)) _noteSelfRead(_oid, _row);
+        }
+      } catch {}
       const now = Date.now();
       if (now - lastFocusRefreshRef.current < 800) return;
       lastFocusRefreshRef.current = now;
@@ -4772,7 +4835,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               return _reuseConvRows(prev, _active.map(c => _keepKnownName(_pById.get(String(c.id)), _mergeServerConvRow(_pById.get(String(c.id)), c, _meLc))));
             });
             setArchivedConversations(prev => _reuseConvRows(prev, _arch));
-            cacheConversations(convs).catch(() => {});
+            cacheConversations(_guardReadRows(convs, _meLcRef.current)).catch(() => {});
           }
         }
       }).catch(() => {});
@@ -5273,6 +5336,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               };
               return [placeholder, ...prev];
             }
+            // [2026-10-15 unread-mono] Evento ATRASADO (replay do transporte/sync/push) de
+            // msg de outra pessoa que eu já li aqui (id ≤ guarda de leitura) não sobe o
+            // contador; se também não é mais nova que a prévia, a linha fica como está.
+            if (!isSelf) {
+              const _inId = Number(data.id ?? data.message_id) || 0;
+              const _mk = _inId > 0 ? _selfReadMarks.get(String(data.conversation_id)) : null;
+              if (_mk && _mk.lmId > 0 && _inId <= _mk.lmId && _hasSelfRead(data.conversation_id)) {
+                const _curId = Number(prev[idx].last_message && prev[idx].last_message.id) || 0;
+                if (_curId >= _inId || !(_curId > 0)) return prev;
+              }
+            }
             // Move updated conversation to top with spring animation
             const updated = {
               ...prev[idx],
@@ -5303,7 +5377,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // [2026-10-14 lida-na-hora] conversa aberta = lendo agora → 0 (antes mantinha o
               // contador antigo) + marca leitura local p/ o refresh do servidor (que chega antes
               // do chat_mark_read) não trazer "não lida" de volta por alguns segundos.
-              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); const open = a && String(a) === String(data.conversation_id); if (open) { try { _noteSelfRead(data.conversation_id, null); } catch {} } else { try { require('../services/unreadBadge').noteIncomingUnread(data.conversation_id); } catch {} } return open; })() ? 0 : ((prev[idx].unread_count || 0) + 1)),
+              unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); const open = a && String(a) === String(data.conversation_id); if (open) { try { _noteSelfRead(data.conversation_id, { last_message: { id: data.id ?? data.message_id } }); } catch {} } else { try { require('../services/unreadBadge').noteIncomingUnread(data.conversation_id); } catch {} } return open; })() ? 0 : ((prev[idx].unread_count || 0) + 1)),
             };
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
@@ -5949,7 +6023,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // cancelled the next focus sync restores the badge.
     if ((conv.unread_count || 0) > 0 || (conv.unread_mentions || 0) > 0) {
       setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0, unread_mentions: 0 } : c));
+      setArchivedConversations(prev => prev.some(c => c.id === conv.id) ? prev.map(c => c.id === conv.id ? { ...c, unread_count: 0, unread_mentions: 0 } : c) : prev);
     }
+    // [2026-10-15 unread-mono] Abrir = lido LOCALMENTE e na hora, com guarda
+    // monotônica: nenhum snapshot (SWR/réplica/cache/sync) com última msg ≤ a
+    // lida aqui ou MINHA repõe o contador; só msg NOVA de outra pessoa sobe.
+    // Ícone/aba/banners via unreadBadge (sem recibo ao servidor — esse segue o
+    // gate de visibilidade da conversa).
+    try { _noteSelfRead(conv.id, conv); } catch {}
+    try { _lastOpenedConvRef.current = conv.id; } catch {}
+    try { require('../services/unreadBadge').markConversationReadLocal(conv.id, { emitList: false }); } catch {}
     // Haptic click on row-open — WhatsApp pattern, confirms the tap took.
     haptic.select();
 
@@ -6187,6 +6270,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const handleMarkUnreadConversation = useCallback(async (conv) => {
     const prevUnread = conv.unread_count || 0;
     const markRead = prevUnread > 0;
+    // [2026-10-15 unread-mono] mesma guarda da abertura (menu/swipe "Marcar como lida").
+    try {
+      if (markRead) { _noteSelfRead(conv.id, conv); require('../services/unreadBadge').markConversationReadLocal(conv.id, { emitList: false }); }
+      else { _clearSelfRead(conv.id); require('../services/unreadBadge').noteIncomingUnread(conv.id); }
+    } catch {}
     try {
       setConversations(prev => prev.map(c => c.id === conv.id
         ? { ...c, unread_count: markRead ? 0 : Math.max(c.unread_count || 0, 1) }
@@ -8341,7 +8429,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _emptyIsFiltered = filter !== 'all' || !!String(searchQuery || '').trim()
     || (Array.isArray(conversations) && conversations.length > 0);
   const _emptyClearFilter = useCallback(() => { setFilter('all'); }, []);
-  const _emptyNewGroup = useCallback(() => { setShowCreateGroup(true); }, []);
+  const _emptyNewGroup = useCallback(() => { if (!(require('./groupCreate/groupCreateDraft').openNativeGroupCreate(router, 'group'))) setShowCreateGroup(true); }, [router]); // [2026-10-15 native-group-create]
   // Searching and only CONTATOS/MENSAGENS matched: no big "nothing found"
   // illustration above real results (the footer sections carry them).
   const _searchHasOtherHits = !!String(searchQuery || '').trim() && (contactHits.length > 0 || messageHits.length > 0);
@@ -8772,7 +8860,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 backgroundColor: isDark ? '#1c1c1e' : '#fff',
                 ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
               }]}
-              onPress={() => { toggleFabMenu(); setShowCreateGroup(true); }}
+              onPress={() => { toggleFabMenu(); if (!(require('./groupCreate/groupCreateDraft').openNativeGroupCreate(router, 'group'))) setShowCreateGroup(true); }}
               activeOpacity={0.7}
             >
               <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
@@ -8792,7 +8880,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 backgroundColor: isDark ? '#1c1c1e' : '#fff',
                 ...(isWeb ? { boxShadow: '0 2px 12px rgba(0,0,0,0.15)' } : {}),
               }]}
-              onPress={() => { toggleFabMenu(); setShowCreateChannel(true); }}
+              onPress={() => { toggleFabMenu(); if (!(require('./groupCreate/groupCreateDraft').openNativeGroupCreate(router, 'channel'))) setShowCreateChannel(true); }}
               activeOpacity={0.7}
             >
               <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>

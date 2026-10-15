@@ -9,6 +9,8 @@ import android.net.Network
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import expo.modules.chatyychatstore.ChatyyStoreDB
+import expo.modules.chatyychatstore.StoreIngest
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -63,7 +65,9 @@ import kotlin.random.Random
  */
 internal object ChatTransport {
   private const val TAG = "ChatyyTransport"
-  const val VERSION = 1
+  // 2 = [2026-10-15 fase 2b/4] grava frames no store nativo (storeIngest) +
+  //     fila de envio nativa (outbox*) + conta da sessão.
+  const val VERSION = 2
 
   private val exec = ScheduledThreadPoolExecutor(1) { r ->
     Thread(r, "chatyy-transport").apply { isDaemon = true }
@@ -74,6 +78,9 @@ internal object ChatTransport {
 
   private var inited = false
   private var session: Session? = null
+  @Volatile internal var appCtx: Context? = null
+
+  internal fun executor(): ScheduledThreadPoolExecutor = exec
 
   // Estado do aparelho (só na thread do transporte).
   internal var foreground = true
@@ -135,6 +142,7 @@ internal object ChatTransport {
 
   fun init(ctx: Context) {
     val appCtx = ctx.applicationContext ?: ctx
+    this.appCtx = appCtx
     // Primeiro plano inicial ANTES de registrar (contador de activities parte dele).
     val fg = isProcessForeground(appCtx)
     post {
@@ -209,6 +217,7 @@ internal object ChatTransport {
     netUp = true
     bump("netChanges")
     session?.onNetwork(if (wasDown) "net_up" else "net_change")
+    if (wasDown) NativeOutbox.peek()?.onNetwork(true)
   }
 
   private fun onNetLost(network: Network) {
@@ -227,7 +236,13 @@ internal object ChatTransport {
     val bgMs = if (fg && bgAt > 0) now() - bgAt else 0L
     if (!fg) bgAt = now()
     session?.onForeground(fg, bgMs)
+    // [fase 4] fila nativa: indo pro fundo com pendência → Worker garante o envio
+    if (!fg) NativeOutbox.onBackground() else NativeOutbox.peek()?.kick("foreground")
   }
+
+  // ─── [fase 4] porta WS da fila nativa (chamado no MESMO executor) ────────
+  internal fun nativeSendReady(account: String): Boolean = session?.nativeSendReady(account) ?: false
+  internal fun nativeSendRaw(account: String, text: String): Boolean = session?.sendNativeFrame(account, text) ?: false
 
   // ─── API (chamada pela thread JS → posta na thread do transporte) ───────
 
@@ -246,6 +261,8 @@ internal object ChatTransport {
       fgProbeMs = num(cfg["fgProbeMs"], 2500L, 1000L, 10000L),
       batchMs = num(cfg["batchMs"], 16L, 0L, 250L),
       outboxMax = num(cfg["outboxMax"], 500L, 10L, 2000L).toInt(),
+      account = ((cfg["account"] as? String) ?: "").trim().lowercase(),
+      storeIngest = cfg["storeIngest"] == true,
     )
     post {
       session?.close(1000, "replaced", emitClosed = false)
@@ -334,6 +351,10 @@ internal data class SessionConfig(
   val fgProbeMs: Long,
   val batchMs: Long,
   val outboxMax: Int,
+  /** [2b] conta da sessão (JS) — confirmada pelo e-mail do auth_success. */
+  val account: String = "",
+  /** [2b] gravar mensagens/recibos direto no expo-chat-store. */
+  val storeIngest: Boolean = false,
 )
 
 /** Uma sessão LÓGICA (= um `new WebSocket()` do JS). Só tocada na thread do transporte. */
@@ -386,6 +407,21 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private val outbox = ArrayDeque<Out>()
   private val buf = ArrayList<String>()
   private var bufBytes = 0
+
+  // [2b/4] conta confirmada pelo auth_success + capability native_send do hub
+  private var authedAccount: String? = null
+  private var nativeSendCap = false
+  private val ingestBuf = ArrayList<String>()
+
+  fun nativeSendReady(account: String): Boolean =
+    !closed && phys == Phys.AUTHED && ws != null && nativeSendCap && authedAccount != null && authedAccount == account.trim().lowercase()
+
+  fun sendNativeFrame(account: String, text: String): Boolean {
+    if (!nativeSendReady(account)) return false
+    val ok = ws?.send(text) ?: false
+    if (ok) ChatTransport.bump("outboxWsFrames")
+    return ok
+  }
 
   private fun now() = ChatTransport.now()
 
@@ -502,6 +538,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
         enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":$rtt}")
       }
       "auth_success" -> {
+        noteAuthIdentity(text)
         enqueueFrame(text)
         onAuthSuccess()
       }
@@ -512,7 +549,42 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
         enqueueFrame(text)
         flushFrames()
       }
-      else -> enqueueFrame(text)
+      else -> {
+        // [fase 4] ack do envio nativo (chat_send_ack / chat_send_fallback)
+        if (text.length < 65536 && text.contains("\"chat_send_")) {
+          val o = try { JSONObject(text) } catch (_: Throwable) { null }
+          val acct = authedAccount
+          if (o != null && acct != null) NativeOutbox.peek()?.onWsFrame(acct, o)
+        }
+        // [2b] mensagens/recibos → store nativo (o JS continua recebendo igual)
+        if (cfg.storeIngest && authedAccount != null && StoreIngest.wants(text)) ingestBuf.add(text)
+        enqueueFrame(text)
+      }
+    }
+  }
+
+  /** e-mail + caps do auth_success sem parsear o `data` inteiro (pode ter centenas de KB). */
+  private fun noteAuthIdentity(text: String) {
+    nativeSendCap = false
+    val ci = text.indexOf("\"caps\":[")
+    if (ci >= 0) {
+      val end = text.indexOf(']', ci)
+      if (end > ci) nativeSendCap = text.substring(ci, end).contains("\"native_send\"")
+    }
+    // e-mail de TOPO: chaves do Go em ordem alfabética → vem depois de "data";
+    // o último "email" é o do topo. Sem ele, vale a conta que o JS informou.
+    var email: String? = null
+    val ei = text.lastIndexOf("\"email\":\"")
+    if (ei >= 0) {
+      val st = ei + 9
+      val en = text.indexOf('"', st)
+      if (en > st) email = text.substring(st, en).trim().lowercase()
+    }
+    val js = cfg.account
+    authedAccount = when {
+      js.isEmpty() -> email
+      email == null || email == js -> js
+      else -> { ChatTransport.bump("authAccountMismatch"); null } // nunca grava na conta errada
     }
   }
 
@@ -537,6 +609,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     flushOutbox()
     startHeartbeat()
     emitState("authed", mapOf("url" to curUrl, "reconnectMs" to since, "regionalBlocked" to regionalBlocked))
+    // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
+    if (authedAccount != null) NativeOutbox.peek()?.kick("ws_authed")
   }
 
   /** Socket físico acabou (close/falha/timeout). */
@@ -885,12 +959,26 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
 
   private fun flushFrames() {
     cancel(flushTask); flushTask = null
+    flushIngest()
     if (buf.isEmpty()) return
     val list = ArrayList(buf)
     buf.clear()
     bufBytes = 0
     ChatTransport.bump("batches")
     ChatTransport.emit("onTransportFrames", mapOf("sid" to sid, "frames" to list, "n" to list.size))
+  }
+
+  private fun flushIngest() {
+    if (ingestBuf.isEmpty()) return
+    val acct = authedAccount
+    val list = ArrayList(ingestBuf)
+    ingestBuf.clear()
+    val ctx = ChatTransport.appCtx ?: return
+    if (acct == null) return
+    try {
+      ChatyyStoreDB.get(ctx).ingestFrames(acct, list)
+      ChatTransport.bump("ingestBatches"); ChatTransport.bump("ingestFrames", list.size.toLong())
+    } catch (_: Throwable) { ChatTransport.bump("ingestErrors") }
   }
 
   private fun emitState(state: String, extra: Map<String, Any?> = emptyMap()) {

@@ -14,6 +14,12 @@ struct PGTheme {
   var header = UIColor.systemBackground
   var check = UIColor.systemBlue
 
+  /// [2026-10-15 photos-flicker] tema igual → setTheme não recarrega a grade.
+  func same(_ o: PGTheme) -> Bool {
+    return background.isEqual(o.background) && text.isEqual(o.text) && textSecondary.isEqual(o.textSecondary)
+      && accent.isEqual(o.accent) && header.isEqual(o.header) && check.isEqual(o.check)
+  }
+
   static func color(_ v: Any?) -> UIColor? {
     guard var s = v as? String else { return nil }
     s = s.trimmingCharacters(in: .whitespaces)
@@ -139,6 +145,11 @@ final class PGCell: UICollectionViewCell {
   private let dimView = UIView()
   var token = 0
   var requestId: Int32 = 0
+  // [2026-10-15 photos-flicker] item/qualidade da imagem atual — reloadData não
+  // apaga a miniatura de quem continua mostrando o MESMO item (era o "piscar").
+  var itemKey = ""
+  var imagePx: CGFloat = 0
+  var imageFinal = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -168,8 +179,10 @@ final class PGCell: UICollectionViewCell {
 
   override func prepareForReuse() {
     super.prepareForReuse()
+    // [2026-10-15 photos-flicker] NÃO zera a imagem aqui: o cellForItem decide
+    // (mesmo item → mantém; outro item → cache em memória ou nil). Callbacks
+    // em voo de outro item caem pelo token.
     token += 1
-    imageView.image = nil
     contentView.transform = .identity
   }
 

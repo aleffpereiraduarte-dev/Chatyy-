@@ -22,7 +22,8 @@ class ChatyyMediaEditorModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyMediaEditor")
 
-    Function("apiVersion") { 1 }
+    // 2 = cropShape 'circle' (recorte circular p/ avatar/perfil)
+    Function("apiVersion") { 2 }
 
     AsyncFunction("open") { options: Map<String, Any?>, promise: Promise ->
       val activity = appContext.currentActivity
@@ -123,6 +124,7 @@ class ChatyyMediaEditorModule : Module() {
       allowTrim = tool("trim"),
       allowMute = tool("mute"),
       allowCover = tool("cover"),
+      circleCrop = (o["cropShape"] as? String) == "circle" && type != "video",
     )
   }
 }

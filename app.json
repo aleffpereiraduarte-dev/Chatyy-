@@ -96,7 +96,8 @@
         "BGTaskSchedulerPermittedIdentifiers": [
           "com.onemundo.mail.backup.refresh",
           "com.onemundo.mail.backup.processing",
-          "chatyy-cloud-backup"
+          "chatyy-cloud-backup",
+          "com.onemundo.mail.outbox"
         ],
         "CFBundleURLTypes": [
           {

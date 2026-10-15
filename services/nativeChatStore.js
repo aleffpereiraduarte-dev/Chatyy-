@@ -83,6 +83,9 @@ export async function wipeNativeStore() {
   try { if (_flushTm) clearTimeout(_flushTm); } catch {}
   _flushTm = null; _pend = null;
   try { require('./nativeStoreRows').resetNativeStoreRows(); } catch {}
+  // [2026-10-15 fase 4] fila de envio nativa: credenciais da conta que sai (a
+  // tabela `outbox` some junto com o arquivo do store abaixo)
+  try { require('./nativeOutbox').forgetNativeOutbox(); } catch {}
   const m = _resolve();
   if (!m || typeof m.wipeAll !== 'function') return true;
   try { await m.wipeAll(); return true; } catch { return false; }
@@ -327,3 +330,31 @@ export function flushNativeStoreBatch() { _flushNow(); }
  * ver ChatyyStoreDB.applyBatch (Swift/Kotlin) — mesmas chaves deste arquivo.
  */
 export const NATIVE_STORE_BATCH_KEYS = ['conversations', 'conv_deletes', 'messages', 'msg_deletes', 'receipts', 'reactions', 'cursors', 'threads'];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// [2026-10-15 fase 2b] apiVersion ≥ 3 — o transporte WS nativo grava direto.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * id da mensagem que deixou a foto da conversa desatualizada (0 = em dia): o
+ * transporte nativo gravou mensagem/edição/reação que a foto não tem e não deu
+ * p/ montar no nativo. A lista nativa grava a foto de novo ao abrir (limpa).
+ */
+export function threadStaleSync(account, conv) {
+  if (nativeStoreApi() < 3 || !account || conv == null) return 0;
+  try { return Number(_mod.threadStaleSync(_acct(account), String(conv))) || 0; } catch { return 0; }
+}
+
+/**
+ * Perfil de formato p/ o RowBuilder NATIVO de texto simples (services/
+ * nativeStoreRows monta a partir do ctx da tela). json '' = remove.
+ */
+export function setThreadProfile(account, conv, json) {
+  if (nativeStoreApi() < 3 || !account || conv == null) return;
+  try { _mod.setThreadProfile(_acct(account), String(conv), String(json || '')); } catch {}
+}
+
+export function clearThreadProfiles(account) {
+  if (nativeStoreApi() < 3 || !account) return;
+  try { _mod.clearThreadProfiles(_acct(account)); } catch {}
+}

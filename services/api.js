@@ -4886,8 +4886,14 @@ export async function chatConversations(search = '', includeArchived = false) {
   return apiCall('chat_list', params);
 }
 
-export async function chatCreate(members, name = '', type = 'direct') {
-  return apiCall('chat_create', { members, name, type }, 'POST');
+export async function chatCreate(members, name = '', type = 'direct', extra = null) {
+  // [2026-10-15 native-group-create] extra opcional (ex.: { disappearing_seconds })
+  // — campos que o chat_create JÁ aceita; chamadas antigas (3 args) idênticas.
+  const body = { members, name, type };
+  if (extra && typeof extra === 'object') {
+    if (extra.disappearing_seconds != null) body.disappearing_seconds = Number(extra.disappearing_seconds) || 0;
+  }
+  return apiCall('chat_create', body, 'POST');
 }
 
 // Rust chat-api endpoint availability (probed once, cached).
@@ -5186,6 +5192,20 @@ async function _tryNativeWsSend(payload) {
   for (const k of ['reply_to_id', 'reply_quote_text', 'mentions', 'effect', 'silent', 'sealed']) {
     if (payload[k] != null && payload[k] !== '') frame[k] = payload[k];
   }
+  // [2026-10-15 fase 4] FILA DE ENVIO NATIVA: grava no SQLite nativo ANTES de
+  // enviar (sobrevive a app fechado/morto) e envia pelo WS nativo (ack no socket)
+  // com HTTP nativo de reserva. Devolve o resultado (ok / rejeição definitiva) ou
+  // {_deferred, _native_queued} — o nativo segue tentando sozinho e o evento
+  // 'sent' conclui (services/nativeOutbox). undefined = não elegível → caminho JS.
+  try {
+    if (globalThis.__chatyy_native_send_off !== true) {
+      const no = require('./nativeOutbox');
+      if (no.nativeOutboxEnabled && no.nativeOutboxEnabled()) {
+        const r = await no.sendTextNow(payload, _nativeSendAckTimeout() + 4000);
+        if (r !== undefined) return r;
+      }
+    }
+  } catch {}
   // [2026-10-08 native-core-2] NATIVE_CORE_PRIMARY (default OFF): the same
   // hub `chat_send` frame goes through the NATIVE outbox (ChatCoreSocket,
   // persisted + re-sent with the same cmi on reconnect). undefined = native
@@ -5553,6 +5573,14 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
         try {
           const nat = await _tryNativeWsSend(payload);
           if (nat?.success) result = nat;
+          // [2026-10-15 fase 4] a fila nativa ficou com a mensagem (rede ruim →
+          // relógio; ela reenvia sozinha) ou o servidor rejeitou de vez: NÃO cai
+          // no Rust/HTTP do JS (seria um 2º remetente do mesmo cmi).
+          else if (nat && (nat._native_outbox || nat._native_queued)) {
+            if (!nat._deferred) { try { await _localMarkFailed(localTempId, nat.message || 'rejected'); } catch {} }
+            _webNoteSendOutcome(conversationId, stableCMI, nat, opts);
+            return nat;
+          }
         } catch {}
       }
       if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta && !opts?.replyExt) {

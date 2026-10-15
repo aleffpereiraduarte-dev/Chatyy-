@@ -33,7 +33,7 @@ let _stats = { appended: 0, put: 0, dropped: 0, receipts: 0, skippedNoEnv: 0 };
 
 export function nativeStoreRowsStats() { return { ..._stats, envs: _envs.size }; }
 
-export function resetNativeStoreRows() { _envs.clear(); _mounted.clear(); }
+export function resetNativeStoreRows() { _envs.clear(); _mounted.clear(); _profSent.clear(); _profCleared = false; }
 
 function _iso(dateStr) {
   if (!dateStr) return '';
@@ -96,6 +96,71 @@ export function registerThreadEnv(conv, env) {
   _envs.delete(k);
   _envs.set(k, { acct: String(env.acct).toLowerCase(), rev: env.rev, ctx: env.ctx, keyOf: env.keyOf, data: env.data, tail: undefined });
   while (_envs.size > MAX_ENVS) _envs.delete(_envs.keys().next().value);
+  _pushTextProfile(k, env);
+}
+
+// ─── [2026-10-15 fase 2b] RowBuilder NATIVO de texto simples ────────────────
+// Com o JS ocupado/no fundo, o transporte nativo grava a mensagem nova no store
+// e — SÓ para texto simples numa conversa 1:1 — já monta a linha da foto no
+// nativo (StoreIngest.textOps / ChatyyStoreIngest.textOps), com este "perfil"
+// tirado do ctx REAL da tela: formato de hora, rótulo "Hoje", conta, rev da foto
+// e as regras de texto (allow/deny: nada de marcação, link, @, #, números,
+// palavras que viram lembrete/reunião). Quando o JS processa a mesma mensagem, a
+// linha "oficial" (buildRow) substitui a nativa no lugar. Fora do perfil → a foto
+// fica marcada como desatualizada (threadStaleSync) e o JS remonta ao abrir.
+// Flag (OTA): globalThis.__chatyy_native_text_rows === true liga (padrão DESLIGADO).
+const TEXT_ALLOW = "^[A-Za-zÀ-ÖØ-öø-ÿ ,.!?'()-]{1,500}$";
+const TEXT_DENY = 'hoje|amanh|ontem|manh|tarde|noite|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo|semana|reuni|meet|encontro|call|liga[cç]|videocham|today|tomorrow|tonight|yesterday|morning|afternoon|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|hoy|ma[nñ]ana|noche|lunes|martes|mi[eé]rcoles|jueves|viernes|pix|lembr|remind|record';
+const _profSent = new Map(); // conv → assinatura enviada
+let _profCleared = false;
+
+function _textRowsOn() {
+  try { return globalThis.__chatyy_native_text_rows === true; } catch { return false; }
+}
+
+function _timeShape(fmt) {
+  // "13:05" / "01:05 PM" (2 dígitos, como o Intl da tela). Outro formato → null.
+  try {
+    const d1 = new Date(); d1.setHours(13, 5, 0, 0);
+    const d2 = new Date(); d2.setHours(9, 5, 0, 0);
+    const a = String(fmt(d1.toISOString()) || ''); const b = String(fmt(d2.toISOString()) || '');
+    if (a === '13:05' && b === '09:05') return { h24: 1 };
+    const ma = /^01:05(\s*)(\S.*)$/.exec(a); const mb = /^09:05(\s*)(\S.*)$/.exec(b);
+    if (ma && mb && ma[1] === mb[1]) return { h24: 0, join: ma[1], pm: ma[2], am: mb[2] };
+  } catch {}
+  return null;
+}
+
+function _pushTextProfile(conv, env) {
+  let ns = null;
+  try { ns = require('./nativeChatStore'); } catch { return; }
+  if (!ns || ns.nativeStoreApi() < 3) return;
+  if (!_textRowsOn()) {
+    if (!_profCleared) { _profCleared = true; try { ns.clearThreadProfiles(env.acct); } catch {} }
+    _profSent.clear();
+    return;
+  }
+  _profCleared = false;
+  const ctx = env.ctx || {};
+  let prof = null;
+  try {
+    const keyOf = env.keyOf || defaultKeyOf;
+    const keysOk = keyOf({ id: 7, client_message_id: 'x' }) === 'c:x' && keyOf({ id: 7 }) === '7';
+    const ts = ctx.formatTime ? _timeShape(ctx.formatTime) : null;
+    const now = new Date();
+    const label = ctx.dateLabel ? String(ctx.dateLabel(now.toISOString()) || '') : '';
+    if (keysOk && ts && label && !ctx.isGroup && !ctx.isSavedMode) {
+      prof = {
+        v: 1, rev: env.rev, me: String(ctx.myEmail || env.acct || '').toLowerCase(), group: 0,
+        ...ts, today: `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`, todayLabel: label,
+        gapMs: 60000, allow: TEXT_ALLOW, deny: TEXT_DENY,
+      };
+    }
+  } catch { prof = null; }
+  const json = prof ? JSON.stringify(prof) : '';
+  if (_profSent.get(conv) === json) return;
+  _profSent.set(conv, json);
+  ns.setThreadProfile(env.acct, conv, json);
 }
 
 export function setThreadMounted(conv, on) {

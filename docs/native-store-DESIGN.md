@@ -386,3 +386,81 @@ Medição web (Seattle, conta QA, conv 971; casca é só nativa): sem mudança m
 ≈165–180 ms antes/depois; x4 CPU: long tasks ≈930–1000 ms nos dois (ruído ±100 ms). Fibras da tela no web:
 6219, 95% são as linhas da FlashList — no nativo (lista nativa) a tela JS tem ~300 fibras + ~670 hooks; o
 ganho da casca é tirar esse render inteiro da frente da 1ª pintura (medir nos beacons após o build).
+
+---
+
+## 12. Fases 2b e 4 — transporte grava direto + fila de envio NATIVA (2026-10-15, NÃO buildado/commitado)
+
+Binários: transporte `ChatyyTransport.version() = 2`, store `apiVersion = 3` (`user_version = 3`, tabela
+`outbox`). Binário velho / web → caminho atual idêntico (gates por versão).
+
+**Kill switches (OTA):** `__chatyy_native_ingest = false` (transporte não grava no store),
+`__chatyy_native_text_rows = true` (LIGA as linhas nativas de texto; padrão DESLIGADO),
+`__chatyy_native_outbox = false` (volta tudo à fila JS; o que já está no nativo ele termina de enviar).
+
+### 12.1 Fase 2b — transporte → store sem JS
+- `open(config)` ganhou `account` (do JS) e `storeIngest`. A conta é confirmada pelo e-mail de TOPO do
+  `auth_success` (último `"email"` do frame; chaves do Go em ordem alfabética) — divergiu → não grava
+  (`authAccountMismatch`). `caps` → `native_send`.
+- Frames `chat_message/chat_summary/edit/delete/reaction/chat_read/chat_delivered` (pré-filtro por agulha,
+  sem parse no transporte) vão em lote, no mesmo flush de 16 ms da entrega ao JS, para
+  `ChatyyStoreDB.ingestFrames` (fila do store). O JS continua recebendo tudo igual (lógica dele).
+- `StoreIngest.kt` / `ChatyyStoreIngest.swift` (puros): frame → lote (`messages`, `receipts`, `reactions`)
+  + chaves internas: `self_reads` (minha leitura → `conversations.unread=0`, cursor `read:<conv>`),
+  `peer_reads` (cursor `peer_read:<conv>:<email>`; **só conversa direct**: recibos `read_at` das minhas +
+  `stUpTo st 3` na foto), `delivs` (`delivered_at` + `stUpTo st 2` só direct), `conv_types`, `touch`.
+- Foto: mensagem nova/editada/apagada/reação que a foto não tem → marca `meta stale:<conv> = id`.
+  Limpa quando a lista grava a foto (`saveThread`) ou quando uma operação do JS leva a foto até ≥ esse id.
+  JS: `nativeChatStore.threadStaleSync`; a casca leve (fase 3) não entra com foto desatualizada.
+- **RowBuilder nativo de texto simples** (flag): `nativeStoreRows` manda por conversa (1:1, aberta nesta
+  sessão) um perfil tirado do ctx REAL (`setThreadProfile`: rev, conta, formato de hora 24h/12h, rótulo
+  "Hoje", `allow`/`deny` — sem marcação/link/@/#/dígitos/palavras de lembrete-reunião). Nova mensagem
+  qualificada, sem lacuna no canônico e com a foto em dia → `set last:0` (agrupa ≤60 s) + `append` (+
+  separador "Hoje"). Quando o JS processa a mesma mensagem, o `append` dele (com `after` antigo) **troca a
+  linha no lugar** (`append` passou a aceitar linhas já presentes; divergência com lacuna → apaga a foto).
+- Testes: `StoreIngest` na JVM com frames REAIS do hub (capturados com apitest↔qa2); `ChatyyStoreDB.kt`
+  inteiro na JVM com shim de `android.database.sqlite` sobre sqlite-jdbc (21/21: stale, linha nativa,
+  troca pela oficial, lacuna, recibos ✓✓/azul, edição, frames reais, SQL do outbox).
+
+### 12.2 Fase 4 — fila de envio nativa
+- Tabela `outbox(cmi PK, conv, seq, kind text|media, body (JSON do chat_send), frame (chat_send WS),
+  file, up, state queued|uploading|sending|sent|failed, tries, next_at, err, server, …)` no arquivo da conta.
+- Motor: `OutboxCore.kt` (puro: org.json + OkHttp — o MESMO arquivo roda no app e na JVM) /
+  `ChatOutbox.swift`. Roda na fila do transporte. WS nativo autenticado + `native_send` → frame `chat_send`
+  (ack 4 s) → senão HTTP `https://chatyy.com.br/api/email.php?action=chat_send` (origem US, Bearer).
+  FIFO por conversa; mídia sem `file_url` sobe em paralelo (`/api/rust/upload`, POST único) e entra na
+  ordem pelo seq. Backoff 1-2-4-8-15-30-60-120-300 s ±20 %; offline não conta; 401 → `auth_needed` (JS
+  renova e reconfigura); 429 → `retry_after`; só 4xx definitivo vira `failed`. `sending` órfão → `queued`
+  no próximo processo. `sent`/`failed` ficam até o JS conciliar (`outboxAck`) ou 7 dias.
+- Store reflete: `outboxSent` grava a mensagem canônica + op `ack` na foto (relógio → ✓ + id do servidor,
+  nunca rebaixa ✓✓/azul); falha → op `fail` (`st -1`, só de relógio).
+- 2º plano: iOS — `beginBackgroundTask` (até ~25 s drenando ao ir pro fundo) + `BGAppRefreshTask`
+  `com.onemundo.mail.outbox` (Info.plist via app.json; registro no `didFinishLaunching` por
+  `ChatOutboxAppDelegateSubscriber`, só se o id estiver permitido) + `URLSession` de 2º plano
+  `com.onemundo.mail.nativeOutbox` para upload de mídia (corpo multipart em arquivo; relança o app e
+  conclui o chat_send). Android — `ChatyyOutboxWorker` (WorkManager, rede obrigatória, KEEP, backoff
+  exponencial; agendado ao enfileirar (+15 s, rede de segurança) e ao ir pro fundo com pendência).
+- Credenciais p/ reenviar sem o JS: iOS Keychain (`AfterFirstUnlockThisDeviceOnly`), Android arquivo
+  privado em `noBackupFilesDir/chatyy-outbox`. Logout (`wipeNativeStore`) → `outboxForget`.
+- JS (`services/nativeOutbox.js`): `sendTextNow` (api.chatSend → `_tryNativeWsSend`: grava no nativo e
+  espera o ack ~8 s; sem ack → `{_deferred, _native_queued}` = relógio, SEM fallback JS),
+  `sendRowAndWait` (sendWorker: texto e commit de mídia com `cdn_url`), `handoffUpload` (mediaSendQueue:
+  arquivo ≤ 1 MB, não-áudio, link rápido), eventos `onOutboxState` → `markSent/markFailed` + eco local
+  `chat_message` (+ `onCommitted` da mídia, `promoteReady` do álbum). A varredura global do sendWorker
+  entrega TODAS as linhas elegíveis de cada conversa ao nativo (não só a cabeça) e segura as linhas
+  não-elegíveis atrás delas. `isOwnedSending` considera "possuída pelo nativo" (TTL 10 min). Boot:
+  `reconcile` (o que o nativo enviou com o JS morto) + `migratePending` (linhas de texto da fila JS).
+- Fica no JS: web, envelope/E2EE, tópico, meta/replyExt, voz/áudio (PHP transcodifica), sessão de voz,
+  view-once, mídia > 1 MB (pedaços retomáveis + bgTransfer, que já é nativo).
+- Testes (scratchpad `nob/`): `jvm/OutboxTest.kt` = OutboxCore REAL contra hub + chat.php de produção
+  (apitest→qa2, conv 971): rajada 25 (WS, 1,3 s, ordem OK, 0 dup), queda de rede no meio (12/12, ordem
+  OK, 0 dup), processo morto com `Runtime.halt` no meio (10/10 após reabrir, 0 dup), duplicata (mesmo
+  cmi → 1 linha / reenvio forçado → mesmo id), só HTTP (6/6), mídia (upload + commit; texto não fica
+  preso atrás). `js/run-nob.js` = JS real (messageOutbox/sendWorker/mediaSendQueue/nativeOutbox) com
+  fake do módulo: 29/29 (rajada, deferido offline, JS morto → nativo envia → boot concilia, nativo morto,
+  migração, kill switch, mídia/álbum, corrida de duplicata, 403). Regressões: `harness/run-mw.js` 51/51,
+  transporte `tr/h run.js native` igual ao de antes.
+- Riscos: Swift NÃO compilado (só tree-sitter + revisão); BGAppRefreshTask é oportunista (o iOS decide
+  quando roda); HTTP nativo vai à origem US (sem aceite regional do edge: +100–250 ms no BR/EU quando o
+  WS não está pronto); upload nativo sem barra de progresso real (fases 10 %→commit); `native_send`
+  hoje só p/ contas com a capability no hub (as demais: HTTP nativo).

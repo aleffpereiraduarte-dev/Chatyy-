@@ -72,10 +72,24 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
   private var keyIndex: [String: Int] = [:]
   private var matchedLocal = Set<String>()
   private var generation = 0
+  // [2026-10-15 photos-flicker] contador PRÓPRIO da carga local: com o mesmo
+  // `generation` da mescla, um pedaço da nuvem chegando no meio descartava a
+  // varredura do aparelho.
+  private var localGeneration = 0
   private var permission = "notDetermined"
   private var observing = false
   private var reloadWork: DispatchWorkItem?
   private var titleCache: [String: String] = [:]
+  // [2026-10-15 photos-flicker] miniaturas locais FINAIS em memória (chave = localId|px,
+  // estável — nada de URL assinada). reloadData/rolagem reaplicam de forma síncrona.
+  static let thumbCache: NSCache<NSString, UIImage> = {
+    let c = NSCache<NSString, UIImage>()
+    c.countLimit = 900
+    c.totalCostLimit = 96 * 1024 * 1024
+    return c
+  }()
+  private var localeId = "\u{0}"
+  private var darkValue: Bool?? = .none
 
   // status de backup
   private var cloudSet = Set<String>()
@@ -164,32 +178,49 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
   // MARK: - props
 
   func setTheme(_ v: [String: Any]) {
+    // [2026-10-15 photos-flicker] o Expo (Fabric) reaplica TODAS as props a cada
+    // mudança de qualquer uma → só recarrega se o tema mudou de verdade.
+    let before = theme
     if let c = PGTheme.color(v["background"]) { theme.background = c }
     if let c = PGTheme.color(v["text"]) { theme.text = c }
     if let c = PGTheme.color(v["textSecondary"]) { theme.textSecondary = c }
     if let c = PGTheme.color(v["accent"]) { theme.accent = c }
     if let c = PGTheme.color(v["header"]) { theme.header = c } else if let c = PGTheme.color(v["background"]) { theme.header = c }
     if let c = PGTheme.color(v["check"]) { theme.check = c } else if let c = PGTheme.color(v["accent"]) { theme.check = c }
+    if theme.same(before) { return }
     applyTheme()
   }
 
   func setDark(_ d: Bool?) {
+    if case .some(let prev) = darkValue, prev == d { return }
+    darkValue = .some(d)
     overrideUserInterfaceStyle = d == nil ? .unspecified : (d! ? .dark : .light)
   }
 
   func setLocale(_ s: String?) {
     let l = (s ?? "").replacingOccurrences(of: "_", with: "-")
+    if l == localeId { return }
+    localeId = l
     locale = l.isEmpty ? Locale.current : Locale(identifier: l)
     titleCache.removeAll()
-    cv.reloadData()
+    reloadHeadersOnly()
   }
 
   func setLabels(_ v: [String: Any]?) {
     var m: [String: String] = [:]
     for (k, x) in v ?? [:] { if let s = x as? String { m[k] = s } }
+    if m == labels { return }
     labels = m
     titleCache.removeAll()
-    cv.reloadData()
+    reloadHeadersOnly()
+  }
+
+  /// Títulos mudaram (idioma/rótulos): só os cabeçalhos visíveis — as células
+  /// (e as miniaturas) ficam como estão.
+  private func reloadHeadersOnly() {
+    guard cv != nil else { return }
+    for ip in cv.indexPathsForVisibleSupplementaryElements(ofKind: PGLayout.headerKind) { refreshHeader(ip.section) }
+    updateScroller()
   }
 
   func setInsets(top: Double?, bottom: Double?) {
@@ -206,12 +237,16 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
   }
 
   func setBackupEnabled(_ v: Bool?) {
-    backupEnabled = v ?? false
+    let n = v ?? false
+    if n == backupEnabled { return }
+    backupEnabled = n
     refreshVisibleBadges()
   }
 
   func setShowBadges(_ v: Bool?) {
-    showBadges = v ?? true
+    let n = v ?? true
+    if n == showBadges { return }
+    showBadges = n
     refreshVisibleBadges()
   }
 
@@ -224,6 +259,7 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
       if g != "year" && g != "month" { g = "day" }
       out.append(PGLevel(cols: c, group: g))
     }
+    if out.count == levels.count && zip(out, levels).allSatisfy({ $0.cols == $1.cols && $0.group == $1.group }) { return }
     levels = out
     level = min(level, out.count - 1)
     rebuildSections(anchor: nil)
@@ -261,8 +297,8 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
       PHPhotoLibrary.shared().register(self)
       observing = true
     }
-    generation += 1
-    let gen = generation
+    localGeneration += 1
+    let gen = localGeneration
     dataQ.async { [weak self] in
       var res: PHFetchResult<PHAsset>?
       var list: [PGItem] = []
@@ -283,7 +319,7 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
         }
       }
       DispatchQueue.main.async { [res, list] in // [review] captura por valor
-        guard let self = self, gen == self.generation else { return }
+        guard let self = self, gen == self.localGeneration else { return }
         self.fetch = res
         self.localItems = list
         self.imageManager.stopCachingImagesForAllAssets()
@@ -295,7 +331,32 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
   public func photoLibraryDidChange(_ changeInstance: PHChange) {
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { return }
-      if let f = self.fetch, changeInstance.changeDetails(for: f) == nil { return }
+      if let f = self.fetch {
+        guard let det = changeInstance.changeDetails(for: f) else { return }
+        let structural = !det.hasIncrementalChanges || det.hasMoves
+          || (det.removedIndexes?.count ?? 0) > 0 || (det.insertedIndexes?.count ?? 0) > 0
+        // [2026-10-15 photos-flicker] Só metadados/recursos mudaram (iCloud baixando o
+        // original p/ o backup, análise do Fotos, favoritar…): mesmos índices → troca o
+        // fetch e NÃO recarrega a grade. Antes cada aviso desses = reloadData de tudo
+        // (todas as miniaturas sumiam e voltavam = fotos "piscando" durante o backup).
+        self.fetch = det.fetchResultAfterChanges
+        if det.hasIncrementalChanges {
+          // foto editada (recorte/filtro): miniatura nova só p/ ela
+          var edited = Set<String>()
+          for a in det.changedObjects where a.hasAdjustments {
+            edited.insert("l:" + a.localIdentifier)
+            for px in [160, 320, 480] { PGGridView.thumbCache.removeObject(forKey: "\(a.localIdentifier)|\(px)" as NSString) }
+          }
+          if !structural && !edited.isEmpty {
+            var ips: [IndexPath] = []
+            for ip in self.cv.indexPathsForVisibleItems {
+              if let c = self.cv.cellForItem(at: ip) as? PGCell, edited.contains(c.itemKey) { c.imageFinal = false; ips.append(ip) }
+            }
+            if !ips.isEmpty { UIView.performWithoutAnimation { self.cv.reloadItems(at: ips) } }
+          }
+        }
+        if !structural { return }
+      }
       self.reloadWork?.cancel()
       let w = DispatchWorkItem { [weak self] in self?.reloadLocal() }
       self.reloadWork = w
@@ -361,6 +422,10 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
     let anchor = currentAnchor()
     let locals = localItems
     let clouds = cloudItems
+    // [2026-10-15 photos-flicker] p/ detectar "mesma lista" (recarga do aparelho,
+    // nuvem re-enviada, URL assinada renovada) e NÃO dar reloadData.
+    let oldItems = items
+    let oldDays = dayKeys
     generation += 1
     let gen = generation
     dataQ.async { [weak self] in
@@ -411,8 +476,31 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
       var idx: [String: Int] = [:]
       idx.reserveCapacity(merged.count)
       for (k, it) in merged.enumerated() { idx[it.key] = k }
-      DispatchQueue.main.async { [merged, days, months, years, idx, matched, visibleCloud] in // [review] captura por valor (closure @Sendable)
+      var sameLayout = !merged.isEmpty && oldItems.count == merged.count && oldDays == days
+      if sameLayout {
+        for k in 0..<merged.count {
+          let a = oldItems[k], b = merged[k]
+          if a.key != b.key || a.video != b.video || a.dur != b.dur { sameLayout = false; break }
+        }
+      }
+      DispatchQueue.main.async { [merged, days, months, years, idx, matched, visibleCloud, sameLayout] in // [review] captura por valor (closure @Sendable)
         guard let self = self, gen == self.generation else { return }
+        if sameLayout && self.items.count == merged.count {
+          // mesma grade: troca os dados, atualiza só selos visíveis — sem reloadData
+          self.items = merged
+          self.dayKeys = days
+          self.monthKeys = months
+          self.yearKeys = years
+          self.keyIndex = idx
+          self.matchedLocal = matched
+          self.refreshVisibleBadges()
+          self.updateScroller()
+          self.onReady([
+            "total": merged.count, "local": locals.count, "cloud": visibleCloud.count,
+            "permission": self.permission,
+          ])
+          return
+        }
         self.items = merged
         self.dayKeys = days
         self.monthKeys = months
@@ -638,19 +726,47 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
     guard g >= 0 && g < items.count else { return cell }
     let it = items[g]
     configureChrome(cell, indexPath)
-    if cell.requestId != 0 { imageManager.cancelImageRequest(PHImageRequestID(cell.requestId)); cell.requestId = 0 }
-    let token = cell.token
     let px = thumbPixels
+    // [2026-10-15 photos-flicker] Mesma célula, mesmo item, imagem final na
+    // qualidade certa → nada a fazer (reloadData/selo/tema não recarregam a foto).
+    if cell.itemKey == it.key && cell.imageFinal && cell.imageView.image != nil && cell.imagePx >= px {
+      return cell
+    }
+    if cell.requestId != 0 { imageManager.cancelImageRequest(PHImageRequestID(cell.requestId)); cell.requestId = 0 }
+    cell.token += 1
+    let token = cell.token
+    // mesmo item em qualidade menor (pinça, miniatura degradada): mantém a atual
+    // na tela enquanto a melhor chega — sem branco no meio.
+    let keepOld = cell.itemKey == it.key && cell.imageView.image != nil
+    cell.itemKey = it.key
+    cell.imagePx = px
+    cell.imageFinal = false
+    if !keepOld { cell.imageView.image = nil }
     if it.local, let f = fetch, it.localIndex >= 0, it.localIndex < f.count {
+      let ck = "\(it.localId)|\(Int(px))" as NSString
+      if let img = PGGridView.thumbCache.object(forKey: ck) {
+        cell.imageView.image = img
+        cell.imageFinal = true
+        return cell
+      }
       let asset = f.object(at: it.localIndex)
       let o = PHImageRequestOptions()
       o.deliveryMode = .opportunistic
       o.resizeMode = .fast
       o.isNetworkAccessAllowed = true
-      let rid = imageManager.requestImage(for: asset, targetSize: CGSize(width: px, height: px), contentMode: .aspectFill, options: o) { [weak cell] img, _ in
+      let rid = imageManager.requestImage(for: asset, targetSize: CGSize(width: px, height: px), contentMode: .aspectFill, options: o) { [weak cell] img, info in
+        let degraded = (info?[PHImageResultIsDegradedKey] as? NSNumber)?.boolValue ?? false
         let apply = {
           guard let c = cell, c.token == token, let img = img else { return }
+          // degradada nunca substitui uma imagem que já está na tela (evita "borrar e voltar")
+          if degraded && c.imageView.image != nil { return }
           c.imageView.image = img
+          if !degraded {
+            c.imageFinal = true
+            c.requestId = 0
+            let cost = Int(img.size.width * img.scale * img.size.height * img.scale * 4)
+            PGGridView.thumbCache.setObject(img, forKey: ck, cost: max(1, cost))
+          }
         }
         if Thread.isMainThread { apply() } else { DispatchQueue.main.async(execute: apply) }
       }
@@ -658,11 +774,14 @@ public final class PGGridView: ExpoView, UICollectionViewDataSource, UICollectio
     } else if !it.thumb.isEmpty {
       if let img = MVImageLoader.shared.cachedImage(it.thumb, maxPixel: px) {
         cell.imageView.image = img
+        cell.imageFinal = true
       } else {
+        let fade = !keepOld
         MVImageLoader.shared.load(it.thumb, maxPixel: px) { [weak cell] img in
-          guard let c = cell, c.token == token else { return }
+          guard let c = cell, c.token == token, let img = img else { return }
           c.imageView.image = img
-          if img != nil {
+          c.imageFinal = true
+          if fade {
             c.imageView.alpha = 0
             UIView.animate(withDuration: 0.15) { c.imageView.alpha = 1 }
           }

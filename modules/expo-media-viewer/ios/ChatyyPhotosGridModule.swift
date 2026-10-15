@@ -8,8 +8,10 @@ public class ChatyyPhotosGridModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyPhotosGrid")
 
+    // 2 = [2026-10-15 photos-flicker] sem reloadData em aviso de metadados/props
+    //     repetidas/lista igual + cache de miniaturas → o JS só liga a grade com >= 2.
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(PGGridView.self) {

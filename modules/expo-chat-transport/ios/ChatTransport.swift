@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import UIKit
+import ExpoChatStore
 
 /// [2026-10-15 native-transport] Transporte realtime NATIVO do Chatyy (gêmeo de
 /// ChatTransport.kt — ver o comentário de lá para o desenho completo).
@@ -17,7 +18,9 @@ import UIKit
 /// cuja delegateQueue roda em cima de `q`) → sem locks.
 final class ChatTransport {
   static let shared = ChatTransport()
-  static let version = 1
+  // 2 = [2026-10-15 fase 2b/4] grava frames no store nativo (storeIngest) +
+  //     fila de envio nativa (outbox*) + conta da sessão.
+  static let version = 2
 
   let q = DispatchQueue(label: "chatyy.transport", qos: .userInitiated)
   private lazy var opQueue: OperationQueue = {
@@ -100,6 +103,14 @@ final class ChatTransport {
     q.async {
       self.setForeground(false)
       let pending = self.session?.hasPendingOutbound() ?? false
+      // [fase 4] fila nativa com pendência: segura até ~25 s drenando e agenda o
+      // BGAppRefreshTask p/ o que sobrar (texto); mídia segue na sessão de 2º plano.
+      let outboxPending = ChatOutbox.shared.pendingCountLocked() > 0
+      if outboxPending {
+        ChatOutboxBackground.schedule()
+        ChatOutbox.shared.drain(maxMs: 25000) { _ in DispatchQueue.main.async { self.endBackgroundTask() } }
+        return
+      }
       self.q.asyncAfter(deadline: .now() + (pending ? 8.0 : 2.0)) {
         DispatchQueue.main.async { self.endBackgroundTask() }
       }
@@ -129,7 +140,12 @@ final class ChatTransport {
     let bgMs = (fg && bgAt > 0) ? max(0, wall - bgAt) : 0
     if !fg { bgAt = wall }
     session?.onForeground(fg, bgMs: bgMs)
+    if fg { ChatOutbox.shared.kick("foreground") }
   }
+
+  // MARK: [fase 4] porta WS da fila nativa (chamado na fila q)
+  func nativeSendReady(account: String) -> Bool { return session?.nativeSendReady(account) ?? false }
+  func nativeSendRaw(account: String, text: String) -> Bool { return session?.sendNativeFrame(account, text) ?? false }
 
   private func onPath(_ path: NWPath) {
     if !pathInited {
@@ -164,6 +180,7 @@ final class ChatTransport {
       primaryIface = iface
       bump("netChanges")
       session?.onNetwork("net_up")
+      ChatOutbox.shared.onNetworkUp()
       return
     }
     if iface != primaryIface {
@@ -195,7 +212,9 @@ final class ChatTransport {
       connectTimeoutMs: ChatTransport.num(config["connectTimeoutMs"], 10000, 3000, 30000),
       fgProbeMs: ChatTransport.num(config["fgProbeMs"], 2500, 1000, 10000),
       batchMs: ChatTransport.num(config["batchMs"], 16, 0, 250),
-      outboxMax: Int(ChatTransport.num(config["outboxMax"], 500, 10, 2000))
+      outboxMax: Int(ChatTransport.num(config["outboxMax"], 500, 10, 2000)),
+      account: ((config["account"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+      storeIngest: (config["storeIngest"] as? Bool) == true
     )
     q.async {
       self.session?.close(code: 1000, reason: "replaced", emitClosed: false)
@@ -309,6 +328,10 @@ struct TransportConfig {
   let fgProbeMs: Double
   let batchMs: Double
   let outboxMax: Int
+  /// [2b] conta da sessão (JS) — confirmada pelo e-mail do auth_success.
+  let account: String
+  /// [2b] gravar mensagens/recibos direto no expo-chat-store.
+  let storeIngest: Bool
 }
 
 /// Delegate por socket físico (geração). Callbacks na fila q (delegateQueue).
@@ -398,6 +421,51 @@ final class TransportSession {
   private var outbox: [Out] = []
   private var buf: [String] = []
   private var bufBytes = 0
+
+  // [2b/4] conta confirmada pelo auth_success + capability native_send do hub
+  private var authedAccount: String?
+  private var nativeSendCap = false
+  private var ingestBuf: [String] = []
+
+  func nativeSendReady(_ account: String) -> Bool {
+    guard !closed, phys == .authed, task != nil, nativeSendCap, let a = authedAccount else { return false }
+    return a == account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  }
+
+  func sendNativeFrame(_ account: String, _ text: String) -> Bool {
+    if !nativeSendReady(account) { return false }
+    rawSend(text)
+    owner.bump("outboxWsFrames")
+    return true
+  }
+
+  /// e-mail + caps do auth_success sem parsear o `data` inteiro (pode ter centenas de KB).
+  private func noteAuthIdentity(_ text: String) {
+    nativeSendCap = false
+    if let ci = text.range(of: "\"caps\":["), let end = text.range(of: "]", range: ci.upperBound..<text.endIndex) {
+      nativeSendCap = text[ci.lowerBound..<end.lowerBound].contains("\"native_send\"")
+    }
+    // e-mail de TOPO: chaves do Go em ordem alfabética → vem depois de "data";
+    // o último "email" é o do topo. Sem ele, vale a conta que o JS informou.
+    var email: String?
+    if let ei = text.range(of: "\"email\":\"", options: .backwards),
+       let en = text.range(of: "\"", range: ei.upperBound..<text.endIndex) {
+      email = String(text[ei.upperBound..<en.lowerBound]).trimmingCharacters(in: .whitespaces).lowercased()
+    }
+    let js = cfg.account
+    if js.isEmpty { authedAccount = email }
+    else if email == nil || email == js { authedAccount = js }
+    else { owner.bump("authAccountMismatch"); authedAccount = nil } // nunca grava na conta errada
+  }
+
+  private func flushIngest() {
+    if ingestBuf.isEmpty { return }
+    let list = ingestBuf
+    ingestBuf.removeAll()
+    guard let acct = authedAccount else { return }
+    ChatyyStoreDB.shared.ingestFrames(account: acct, frames: list)
+    owner.bump("ingestBatches"); owner.bump("ingestFrames", Int64(list.count))
+  }
 
   init(sid: String, cfg: TransportConfig, owner: ChatTransport) {
     self.sid = sid
@@ -532,6 +600,7 @@ final class TransportSession {
       owner.bump("pongs")
       enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":\(rtt)}")
     case "auth_success"?:
+      noteAuthIdentity(text)
       enqueueFrame(text)
       onAuthSuccess()
     case "auth_error"?:
@@ -541,6 +610,14 @@ final class TransportSession {
       enqueueFrame(text)
       flushFrames()
     default:
+      // [fase 4] ack do envio nativo (chat_send_ack / chat_send_fallback)
+      if text.utf8.count < 65536 && text.contains("\"chat_send_"), let acct = authedAccount,
+         let data = text.data(using: .utf8),
+         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+        ChatOutbox.shared.onWsFrame(account: acct, obj: obj)
+      }
+      // [2b] mensagens/recibos → store nativo (o JS continua recebendo igual)
+      if cfg.storeIngest && authedAccount != nil && ChatyyStoreIngest.wants(text) { ingestBuf.append(text) }
       enqueueFrame(text)
     }
   }
@@ -569,6 +646,8 @@ final class TransportSession {
     flushOutbox()
     startHeartbeat()
     emitState("authed", ["url": curUrl?.absoluteString, "reconnectMs": since, "regionalBlocked": regionalBlocked])
+    // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
+    if authedAccount != nil { ChatOutbox.shared.kick("ws_authed") }
   }
 
   /// Socket físico acabou (close/falha/timeout).
@@ -950,6 +1029,7 @@ final class TransportSession {
 
   private func flushFrames() {
     flushWork?.cancel(); flushWork = nil
+    flushIngest()
     if buf.isEmpty { return }
     let list = buf
     buf.removeAll(keepingCapacity: true)

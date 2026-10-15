@@ -11,7 +11,8 @@ class ChatyyPhotosGridModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyPhotosGrid")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-15 photos-flicker] props idempotentes + lista igual sem notifyDataSetChanged.
+    Function("apiVersion") { 2 }
 
     View(PGGridView::class) {
       Events("onReady", "onPress", "onZoomChange", "onScrollState", "onNativeError", "onSelectionChange", "onSelectionMode")

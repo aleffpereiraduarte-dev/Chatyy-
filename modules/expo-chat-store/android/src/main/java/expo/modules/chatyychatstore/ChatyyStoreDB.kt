@@ -29,10 +29,14 @@ import java.util.concurrent.TimeUnit
  */
 class ChatyyStoreDB private constructor(ctx: Context) {
   companion object {
-    const val SCHEMA_VERSION = 2
+    const val SCHEMA_VERSION = 3
     const val THREAD_WINDOW = 60
     const val MAX_MESSAGES_PER_CONV = 400
     const val MAX_THREADS = 400
+    /** [fase 4] fila de envio nativa — mesmo DDL no Swift. */
+    const val OUTBOX_DDL = "CREATE TABLE IF NOT EXISTS outbox (cmi TEXT PRIMARY KEY, conv TEXT NOT NULL, seq INTEGER NOT NULL, " +
+      "kind TEXT NOT NULL, body TEXT NOT NULL, frame TEXT, file TEXT, up TEXT, state TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0, " +
+      "next_at INTEGER NOT NULL DEFAULT 0, err TEXT, server TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"
 
     @Volatile private var inst: ChatyyStoreDB? = null
 
@@ -141,6 +145,9 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       db.execSQL("CREATE TABLE IF NOT EXISTS receipts (conv TEXT NOT NULL, msg_id INTEGER NOT NULL, delivered_at INTEGER, read_at INTEGER, PRIMARY KEY (conv, msg_id)) WITHOUT ROWID")
       db.execSQL("CREATE TABLE IF NOT EXISTS reactions (conv TEXT NOT NULL, msg_id INTEGER NOT NULL, emoji TEXT NOT NULL, users TEXT, PRIMARY KEY (conv, msg_id, emoji)) WITHOUT ROWID")
       db.execSQL("CREATE TABLE IF NOT EXISTS cursors (scope TEXT PRIMARY KEY, pts INTEGER, last_id INTEGER, v TEXT, updated_at INTEGER)")
+      // [2026-10-15 fase 2b/4] fila de envio NATIVA (sobrevive a app fechado)
+      db.execSQL(OUTBOX_DDL)
+      db.execSQL("CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conv, seq)")
       db.version = SCHEMA_VERSION
       db.setTransactionSuccessful()
       return true
@@ -192,6 +199,8 @@ class ChatyyStoreDB private constructor(ctx: Context) {
               arrayOf<Any>(conv, rev, JSONArray(ordered).toString(), ordered.last(), ordered.size, System.currentTimeMillis())
             )
           }
+          // [2b] a lista gravou a foto com o que a tela tem → deixa de estar desatualizada
+          db.execSQL("DELETE FROM meta WHERE k = ?", arrayOf<Any>("stale:$conv"))
           db.setTransactionSuccessful()
         } finally {
           db.endTransaction()
@@ -407,9 +416,13 @@ class ChatyyStoreDB private constructor(ctx: Context) {
 
   private fun applyBatchNow(account: String, json: String): Map<String, Any> {
     val b = try { JSONObject(json) } catch (_: Throwable) { return mapOf("ok" to 0, "why" to "json") }
+    return applyBatchObj(account, b)
+  }
+
+  private fun applyBatchObj(account: String, b: JSONObject): Map<String, Any> {
     val db = open(account) ?: return mapOf("ok" to 0, "why" to "open")
     val touched = HashSet<String>()
-    var nMsg = 0; var nThreads = 0
+    var nMsg = 0; var nThreads = 0; var nNative = 0; var nStale = 0
     val now = System.currentTimeMillis()
     db.beginTransaction()
     try {
@@ -506,6 +519,11 @@ class ChatyyStoreDB private constructor(ctx: Context) {
           }
         }
       }
+      // ─── [2b] chaves do transporte nativo (StoreIngest.translate) ───
+      if (b.has("conv_types") || b.has("self_reads") || b.has("peer_reads") || b.has("delivs") || b.has("touch")) {
+        val r = applyIngestKeys(account, db, b, touched)
+        nNative += r.first; nStale += r.second
+      }
       for (conv in touched) {
         db.execSQL(
           "DELETE FROM messages WHERE conv = ? AND id < COALESCE((SELECT id FROM messages WHERE conv = ? ORDER BY id DESC LIMIT 1 OFFSET ${MAX_MESSAGES_PER_CONV - 1}), 0)",
@@ -524,7 +542,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       } catch (_: Throwable) {}
     }
     notifyConvs(account, touched)
-    return mapOf("ok" to 1, "messages" to nMsg, "threads" to nThreads, "convs" to touched.size)
+    return mapOf("ok" to 1, "messages" to nMsg, "threads" to nThreads, "convs" to touched.size, "nativeRows" to nNative, "stale" to nStale)
   }
 
   /** Operações na foto (ver ChatyyStoreDB.swift applyThreadOps). true = gravou. */
@@ -557,8 +575,33 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       when (jStr(op.opt("op"))) {
         "append" -> {
           val after = jStr(op.opt("after"))
-          if (after.isNotEmpty() && keys.lastOrNull() != after) break@loop
           val ra = op.optJSONArray("rows") ?: continue@loop
+          if (after.isNotEmpty() && keys.lastOrNull() != after) {
+            // [2b] o transporte nativo já anexou estas linhas (texto simples) →
+            // o JS chega depois com a linha "oficial": troca no lugar. Qualquer
+            // outra divergência → para (foto não está onde o JS acha).
+            var all = ra.length() > 0 && after in keys
+            for (j in 0 until ra.length()) { val k = jStr(ra.optJSONObject(j)?.opt("k")); if (k.isEmpty() || k !in keys) { all = false; break } }
+            if (!all) {
+              if (after in keys) {
+                // divergiu do que o nativo anexou (lacuna) → apaga a foto (JS repinta ao abrir)
+                db.execSQL("DELETE FROM thread_rows WHERE conv = ?", arrayOf<Any?>(conv))
+                db.execSQL("DELETE FROM thread_snap WHERE conv = ?", arrayOf<Any?>(conv))
+                db.execSQL("DELETE FROM meta WHERE k = ?", arrayOf<Any?>("stale:$conv"))
+                return true
+              }
+              break@loop
+            }
+            for (j in 0 until ra.length()) {
+              val r = ra.optJSONObject(j) ?: continue
+              val k = jStr(r.opt("k"))
+              val old = rows[k]
+              // mantém o recibo que a foto já subiu (✓✓/azul) se o JS montou com menos
+              if (old != null && old.has("st") && r.has("st") && jLong(old.opt("st")) > jLong(r.opt("st"))) r.put("st", old.get("st"))
+              rows[k] = r; dirty.add(k); changed = true
+            }
+            continue@loop
+          }
           for (j in 0 until ra.length()) {
             val r = ra.optJSONObject(j) ?: continue
             val k = jStr(r.opt("k")); if (k.isEmpty()) continue
@@ -586,6 +629,20 @@ class ChatyyStoreDB private constructor(ctx: Context) {
             rows.remove(k); removed.add(k); dirty.remove(k)
           }
           rows[nk] = r; dirty.add(nk); changed = true
+        }
+        // [fase 4] fila nativa: ✓ (só sobe de relógio/falha) / "!" (só de relógio)
+        "ack", "fail" -> {
+          val k = jStr(op.opt("k"))
+          val r = rows[k] ?: continue@loop
+          val cur = if (r.has("st")) jLong(r.opt("st")) else 0L
+          if (jStr(op.opt("op")) == "ack") {
+            if (cur >= 1) continue@loop
+            r.put("st", 1); val id = jStr(op.opt("id")); if (id.isNotEmpty()) r.put("id", id)
+          } else {
+            if (cur != 0L) continue@loop
+            r.put("st", -1)
+          }
+          dirty.add(k); changed = true
         }
         "stUpTo" -> {
           val upTo = jLong(op.opt("id")); val nst = jLong(op.opt("st"))
@@ -617,7 +674,284 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       "UPDATE thread_snap SET keys = ?, newest = ?, n = ?, updated_at = ? WHERE conv = ?",
       arrayOf<Any?>(JSONArray(finalKeys).toString(), finalKeys.lastOrNull() ?: "", finalKeys.size, System.currentTimeMillis(), conv)
     )
+    // [2b] foto alcançou a mensagem que a deixou desatualizada → limpa a marca
+    val stale = metaGet(db, "stale:$conv")?.toLongOrNull()
+    if (stale != null) {
+      val newestId = finalKeys.lastOrNull()?.let { rows[it] }?.let { jStr(it.opt("id")).toLongOrNull() } ?: 0L
+      if (newestId >= stale) db.execSQL("DELETE FROM meta WHERE k = ?", arrayOf<Any?>("stale:$conv"))
+    }
     return true
+  }
+
+  private fun metaGet(db: SQLiteDatabase, k: String): String? =
+    db.rawQuery("SELECT v FROM meta WHERE k = ?", arrayOf(k)).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+
+  private fun metaSet(db: SQLiteDatabase, k: String, v: String?) {
+    if (v == null) db.execSQL("DELETE FROM meta WHERE k = ?", arrayOf<Any?>(k))
+    else db.execSQL("INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)", arrayOf<Any?>(k, v))
+  }
+
+  // ═══ [2026-10-15 fase 2b] transporte WS nativo grava direto (sem JS) ═══════
+
+  /**
+   * Frames crus do hub (já pré-filtrados por StoreIngest.wants) → lote numa
+   * transação, na fila do store. Chamado pelo expo-chat-transport.
+   */
+  fun ingestFrames(account: String, frames: List<String>, done: ((Map<String, Any>) -> Unit)? = null) {
+    if (account.isEmpty() || frames.isEmpty()) return
+    ex.execute {
+      val out = try {
+        val b = StoreIngest.translate(normAccount(account), frames)
+        if (b == null) mapOf<String, Any>("ok" to 1, "messages" to 0) else applyBatchObj(account, b)
+      } catch (_: SQLiteDatabaseCorruptException) { drop(account); mapOf<String, Any>("ok" to 0, "why" to "corrupt") }
+      catch (t: Throwable) { mapOf<String, Any>("ok" to 0, "why" to (t.message ?: "err")) }
+      try { done?.invoke(out) } catch (_: Throwable) {}
+    }
+  }
+
+  /** Perfil de formato p/ o RowBuilder nativo de texto ("" = remove). */
+  fun setThreadProfile(account: String, conv: String, json: String) {
+    if (account.isEmpty() || conv.isEmpty()) return
+    ex.execute {
+      try { val db = open(account) ?: return@execute; metaSet(db, "tp:$conv", json.ifEmpty { null }) } catch (_: Throwable) {}
+    }
+  }
+
+  fun clearThreadProfiles(account: String) {
+    if (account.isEmpty()) return
+    ex.execute { try { open(account)?.execSQL("DELETE FROM meta WHERE k LIKE 'tp:%'") } catch (_: Throwable) {} }
+  }
+
+  /** id da mensagem que deixou a foto desatualizada (0 = em dia). Síncrono. */
+  fun threadStaleSync(account: String, conv: String): Long {
+    if (account.isEmpty() || conv.isEmpty()) return 0L
+    return onEx(1500L, 0L) { val db = open(account) ?: return@onEx 0L; metaGet(db, "stale:$conv")?.toLongOrNull() ?: 0L }
+  }
+
+  private fun snapKeys(db: SQLiteDatabase, conv: String): Pair<String, ArrayList<String>>? {
+    var rev: String? = null; var sk = ""
+    db.rawQuery("SELECT rev, keys FROM thread_snap WHERE conv = ?", arrayOf(conv)).use { c -> if (c.moveToFirst()) { rev = c.getString(0); sk = c.getString(1) ?: "" } }
+    val r = rev ?: return null
+    val ka = try { JSONArray(sk) } catch (_: Throwable) { JSONArray() }
+    return Pair(r, ArrayList<String>(ka.length()).also { l -> for (i in 0 until ka.length()) l.add(ka.optString(i, "")) })
+  }
+
+  private fun tailOf(db: SQLiteDatabase, conv: String, keys: List<String>): StoreIngest.Tail? {
+    val k = keys.lastOrNull() ?: return null
+    val row = db.rawQuery("SELECT row FROM thread_rows WHERE conv = ? AND k = ?", arrayOf(conv, k)).use { c ->
+      if (c.moveToFirst()) try { JSONObject(c.getString(0) ?: "{}") } catch (_: Throwable) { null } else null
+    } ?: return null
+    if (row.optString("kind") != "msg") return null
+    val id = jStr(row.opt("id")).toLongOrNull() ?: return null
+    return db.rawQuery("SELECT created_at, sender, type FROM messages WHERE conv = ? AND id = ?", arrayOf(conv, id.toString())).use { c ->
+      if (!c.moveToFirst()) null
+      else { val ts = c.getLong(0); StoreIngest.Tail(k, id, (c.getString(1) ?: "").lowercase(), ts, c.getString(2) ?: "text", StoreIngest.dayKey(ts)) }
+    }
+  }
+
+  private fun convType(db: SQLiteDatabase, conv: String, b: JSONObject): String {
+    val t = b.optJSONObject("conv_types")?.optString(conv, "") ?: ""
+    if (t.isNotEmpty()) return t
+    return db.rawQuery("SELECT type FROM conversations WHERE id = ?", arrayOf(conv)).use { c -> if (c.moveToFirst()) c.getString(0) ?: "" else "" }
+  }
+
+  /** Recibos/leituras + linhas nativas de texto + marca "foto desatualizada". (nativas, stale) */
+  private fun applyIngestKeys(account: String, db: SQLiteDatabase, b: JSONObject, touched: HashSet<String>): Pair<Int, Int> {
+    val me = normAccount(account)
+    var nNative = 0; var nStale = 0
+    b.optJSONArray("self_reads")?.let { a ->
+      for (i in 0 until a.length()) {
+        val r = a.optJSONObject(i) ?: continue
+        val conv = jStr(r.opt("conv")); val upTo = jLong(r.opt("upTo")); if (conv.isEmpty() || upTo <= 0) continue
+        db.execSQL("UPDATE conversations SET unread = 0, read_watermark = MAX(COALESCE(read_watermark,0), ?) WHERE id = ?", arrayOf<Any?>(upTo, conv))
+        db.execSQL("INSERT OR IGNORE INTO cursors (scope, pts, last_id, v, updated_at) VALUES (?,0,0,'',0)", arrayOf<Any?>("read:$conv"))
+        db.execSQL("UPDATE cursors SET last_id = MAX(COALESCE(last_id,0), ?), updated_at = ? WHERE scope = ?", arrayOf<Any?>(upTo, System.currentTimeMillis(), "read:$conv"))
+        touched.add(conv)
+      }
+    }
+    b.optJSONArray("peer_reads")?.let { a ->
+      for (i in 0 until a.length()) {
+        val r = a.optJSONObject(i) ?: continue
+        val conv = jStr(r.opt("conv")); val upTo = jLong(r.opt("upTo")); if (conv.isEmpty() || upTo <= 0) continue
+        val scope = "peer_read:$conv:" + jStr(r.opt("email"))
+        db.execSQL("INSERT OR IGNORE INTO cursors (scope, pts, last_id, v, updated_at) VALUES (?,0,0,'',0)", arrayOf<Any?>(scope))
+        db.execSQL("UPDATE cursors SET last_id = MAX(COALESCE(last_id,0), ?), updated_at = ? WHERE scope = ?", arrayOf<Any?>(upTo, System.currentTimeMillis(), scope))
+        // grupo: leitura de UM membro não é "lido" → só cursor
+        if (convType(db, conv, b) != "direct") continue
+        val now = System.currentTimeMillis()
+        db.execSQL("INSERT OR IGNORE INTO receipts (conv, msg_id, delivered_at, read_at) SELECT conv, id, 0, 0 FROM messages WHERE conv = ? AND sender = ? AND id <= ?", arrayOf<Any?>(conv, me, upTo))
+        db.execSQL("UPDATE receipts SET read_at = MAX(COALESCE(read_at,0), ?), delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id <= ? AND msg_id IN (SELECT id FROM messages WHERE conv = ? AND sender = ?)",
+          arrayOf<Any?>(now, now, conv, upTo, conv, me))
+        if (applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "stUpTo").put("id", upTo).put("st", 3)))) dropCached(account, conv)
+        touched.add(conv)
+      }
+    }
+    b.optJSONArray("delivs")?.let { a ->
+      for (i in 0 until a.length()) {
+        val r = a.optJSONObject(i) ?: continue
+        val conv = jStr(r.opt("conv")); if (conv.isEmpty()) continue
+        val at = jLong(r.opt("at")); val ids = r.optJSONArray("ids") ?: continue
+        var mx = 0L
+        for (j in 0 until ids.length()) {
+          val id = jLong(ids.opt(j)); if (id <= 0) continue
+          mx = maxOf(mx, id)
+          db.execSQL("INSERT OR IGNORE INTO receipts (conv, msg_id, delivered_at, read_at) VALUES (?,?,0,0)", arrayOf<Any?>(conv, id))
+          db.execSQL("UPDATE receipts SET delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id = ?", arrayOf<Any?>(at, conv, id))
+        }
+        if (mx > 0 && convType(db, conv, b) == "direct" &&
+          applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "stUpTo").put("id", mx).put("st", 2)))) dropCached(account, conv)
+        touched.add(conv)
+      }
+    }
+    val touch = b.optJSONArray("touch") ?: return Pair(0, 0)
+    val nowDay = StoreIngest.dayKey(System.currentTimeMillis())
+    val profiles = HashMap<String, StoreIngest.TextProfile?>()
+    for (i in 0 until touch.length()) {
+      val t = touch.optJSONObject(i) ?: continue
+      val conv = jStr(t.opt("conv")); val id = jLong(t.opt("id")); val m = t.optJSONObject("msg") ?: continue
+      if (conv.isEmpty() || id <= 0) continue
+      val snap = snapKeys(db, conv) ?: continue // sem foto: nada a desatualizar
+      val (srev, keys) = snap
+      val key = StoreIngest.keyOf(m)
+      val isNew = jStr(t.opt("kind")) == "new"
+      if (isNew && key in keys) continue // a foto já tem (JS anexou antes)
+      if (!isNew) {
+        // editada/apagada/reação: só importa se a mensagem está na foto
+        val cl = jStr(m.opt("client_message_id"))
+        val base = if (cl.isNotEmpty()) "c:$cl" else id.toString()
+        if (base !in keys && "${base}_d" !in keys) continue
+      }
+      val already = metaGet(db, "stale:$conv")?.toLongOrNull()
+      if (isNew && already == null) {
+        val prof = profiles.getOrPut(conv) {
+          metaGet(db, "tp:$conv")?.let { try { StoreIngest.TextProfile(JSONObject(it)) } catch (_: Throwable) { null } }
+        }
+        if (prof != null && prof.rev == srev) {
+          val tail = tailOf(db, conv, keys)
+          // lacuna: mensagem canônica entre a última da foto e esta → não anexa
+          val gap = tail != null && db.rawQuery("SELECT 1 FROM messages WHERE conv = ? AND id > ? AND id < ? LIMIT 1",
+            arrayOf(conv, tail.id.toString(), id.toString())).use { c -> c.moveToFirst() }
+          val ops = if (tail != null && !gap) StoreIngest.textOps(prof, m, tail, nowDay) else null
+          if (ops != null && applyThreadOps(db, conv, srev, ops)) {
+            dropCached(account, conv); touched.add(conv); nNative++
+            continue
+          }
+        }
+      }
+      if (already == null || already < id) metaSet(db, "stale:$conv", id.toString())
+      touched.add(conv); nStale++
+    }
+    return Pair(nNative, nStale)
+  }
+
+  // ═══ [2026-10-15 fase 4] fila de envio NATIVA (persistência) ═════════════
+  // O motor (envio WS/HTTP, backoff, ordem, 2º plano) mora no expo-chat-transport
+  // (ChatOutbox); aqui só a tabela `outbox` do arquivo da conta. Tudo síncrono
+  // na fila do store (chamado da thread do transporte/Worker).
+
+  private val OUTBOX_COLS = arrayOf("cmi", "conv", "seq", "kind", "body", "frame", "file", "up", "state", "tries", "next_at", "err", "server", "created_at", "updated_at")
+
+  /** Insere (idempotente por cmi). Devolve "new" ou o estado atual da linha existente. */
+  fun outboxPut(account: String, item: JSONObject): String = onEx(4000L, "") {
+    val db = open(account) ?: return@onEx ""
+    val cmi = jStr(item.opt("cmi")); val conv = jStr(item.opt("conv"))
+    if (cmi.isEmpty() || conv.isEmpty()) return@onEx ""
+    val cur = db.rawQuery("SELECT state FROM outbox WHERE cmi = ?", arrayOf(cmi)).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    if (cur != null) return@onEx cur
+    val now = System.currentTimeMillis()
+    db.execSQL(
+      "INSERT OR IGNORE INTO outbox (cmi, conv, seq, kind, body, frame, file, up, state, tries, next_at, err, server, created_at, updated_at) " +
+        "VALUES (?, ?, (SELECT COALESCE(MAX(seq),0)+1 FROM outbox), ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, ?, ?)",
+      arrayOf<Any?>(cmi, conv, jStr(item.opt("kind")).ifEmpty { "text" }, (item.opt("body") ?: JSONObject()).toString(),
+        optStr(item, "frame"), optStr(item, "file"), item.optJSONObject("up")?.toString(), jStr(item.opt("state")).ifEmpty { "queued" },
+        jLong(item.opt("created_at")).let { if (it > 0) it else now }, now)
+    )
+    "new"
+  }
+
+  /** Todas as linhas (JSON array, ordem seq). */
+  fun outboxAll(account: String): String = onEx(4000L, "[]") {
+    val db = open(account) ?: return@onEx "[]"
+    val a = JSONArray()
+    db.rawQuery("SELECT ${OUTBOX_COLS.joinToString(",")} FROM outbox ORDER BY seq ASC", null).use { c ->
+      while (c.moveToNext()) {
+        val o = JSONObject()
+        for ((i, col) in OUTBOX_COLS.withIndex()) {
+          if (c.isNull(i)) continue
+          when (col) { "seq", "tries", "next_at", "created_at", "updated_at" -> o.put(col, c.getLong(i)); else -> o.put(col, c.getString(i)) }
+        }
+        a.put(o)
+      }
+    }
+    a.toString()
+  }
+
+  /** Atualiza colunas (state/tries/next_at/err/server/body/file/up). */
+  fun outboxPatch(account: String, cmi: String, patch: JSONObject) {
+    onEx(4000L, Unit) {
+      val db = open(account) ?: return@onEx Unit
+      val sets = ArrayList<String>(); val args = ArrayList<Any?>()
+      val it = patch.keys()
+      while (it.hasNext()) {
+        val k = it.next()
+        if (k !in arrayOf("state", "tries", "next_at", "err", "server", "body", "file", "up")) continue
+        sets.add("$k = ?")
+        args.add(if (patch.isNull(k)) null else when (k) { "tries", "next_at" -> jLong(patch.opt(k)); else -> patch.opt(k).toString() })
+      }
+      if (sets.isEmpty()) return@onEx Unit
+      sets.add("updated_at = ?"); args.add(System.currentTimeMillis()); args.add(cmi)
+      db.execSQL("UPDATE outbox SET ${sets.joinToString(", ")} WHERE cmi = ?", args.toTypedArray())
+      Unit
+    }
+  }
+
+  fun outboxRemove(account: String, cmi: String) {
+    onEx(4000L, Unit) { open(account)?.execSQL("DELETE FROM outbox WHERE cmi = ?", arrayOf<Any?>(cmi)); Unit }
+  }
+
+  /** Volta 'sending' órfão (processo morreu no meio) p/ 'queued'. */
+  fun outboxRecover(account: String): Int = onEx(4000L, 0) {
+    val db = open(account) ?: return@onEx 0
+    val st = db.compileStatement("UPDATE outbox SET state = 'queued', next_at = 0 WHERE state = 'sending'")
+    val n = try { st.executeUpdateDelete() } finally { st.close() }
+    n
+  }
+
+  /**
+   * Servidor confirmou: linha 'sent' + mensagem canônica + bolha da foto (✓, id
+   * do servidor) — a lista nativa reflete mesmo com o JS ocupado/morto.
+   */
+  fun outboxSent(account: String, cmi: String, conv: String, server: JSONObject) {
+    onEx(4000L, Unit) {
+      val db = open(account) ?: return@onEx Unit
+      db.beginTransaction()
+      try {
+        db.execSQL("UPDATE outbox SET state = 'sent', server = ?, err = NULL, updated_at = ? WHERE cmi = ?", arrayOf<Any?>(server.toString(), System.currentTimeMillis(), cmi))
+        val id = jLong(server.opt("id"))
+        if (id > 0) {
+          db.execSQL(
+            "INSERT OR REPLACE INTO messages (conv, id, ckey, client_id, sender, type, created_at, edited_at, deleted, reply_to, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            arrayOf<Any?>(conv, id, "c:$cmi", cmi, (jStr(server.opt("sender_email")).ifEmpty { account }).lowercase(), jStr(server.opt("type")).ifEmpty { "text" },
+              StoreIngest.ms(server.opt("created_at")), 0L, 0L, jLong(server.opt("reply_to_id")), server.toString())
+          )
+          if (applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "ack").put("k", "c:$cmi").put("id", id.toString())))) dropCached(account, conv)
+        }
+        db.setTransactionSuccessful()
+      } finally { db.endTransaction() }
+      notifyConvs(account, setOf(conv))
+      Unit
+    }
+  }
+
+  /** Falha definitiva: bolha da foto com "!" (st -1). */
+  fun outboxFailedMark(account: String, cmi: String, conv: String) {
+    onEx(4000L, Unit) {
+      val db = open(account) ?: return@onEx Unit
+      if (applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "fail").put("k", "c:$cmi")))) {
+        dropCached(account, conv); notifyConvs(account, setOf(conv))
+      }
+      Unit
+    }
   }
 
   /** Mensagens canônicas (raw), antiga → nova, como "[raw,…]". Síncrono. */

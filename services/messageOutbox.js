@@ -136,7 +136,9 @@ export function touchOwned(cmi) {
 }
 export function isOwnedSending(cmi) {
   const t = _owned.get(String(cmi));
-  return !!t && (Date.now() - t) < OWN_STALE_MS;
+  if (!!t && (Date.now() - t) < OWN_STALE_MS) return true;
+  // [2026-10-15 fase 4] item entregue à fila NATIVA: quem envia é o nativo
+  try { return !!require('./nativeOutbox').isNativeOwned?.(cmi); } catch { return false; }
 }
 
 // Conversations with at least one row waiting for a retry ('queued'). The

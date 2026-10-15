@@ -109,6 +109,9 @@ function _overallPct(key, raw, phase) {
   return raw;
 }
 
+/** [2026-10-15 fase 4] progresso vindo da fila nativa (upload/commit). */
+export function emitProgressExternal(p, cmi, pct, phase) { _emit(p, cmi, pct, phase); }
+
 function _emit(p, cmi, pct, phase) {
   const key = String(cmi);
   const now = Date.now();
@@ -499,6 +502,22 @@ async function _process(row) {
     }
 
     // 2. Upload — skipped when a previous attempt already put it on the CDN.
+    // [2026-10-15 fase 4] Arquivo pequeno (POST único) → a FILA NATIVA sobe (iOS:
+    // URLSession de 2º plano; Android: OkHttp/WorkManager) e faz o chat_send na
+    // ordem — continua com o app fechado. O evento 'sent' conclui (nativeOutbox).
+    if (!p.cdn_url && !(p.upload_via === 'php' || p.type === 'audio' || p.type === 'voice')) {
+      try {
+        const no = require('./nativeOutbox');
+        if (no.nativeOutboxEnabled && no.nativeOutboxEnabled() && size <= no.NATIVE_MEDIA_MAX_BYTES && !_slowLink()) {
+          let meta = null;
+          try { meta = require('./sendWorker').mediaMetaFields?.(p, p.type) || null; } catch {}
+          if (await no.handoffUpload(row, p, file, size, meta)) {
+            _emit(p, cmi, 10, 'upload');
+            return;
+          }
+        }
+      } catch {}
+    }
     if (!p.cdn_url) {
       _emit(p, cmi, 0, 'upload');
       const usePhp = p.upload_via === 'php' || p.type === 'audio' || p.type === 'voice';

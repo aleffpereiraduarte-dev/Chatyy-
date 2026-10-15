@@ -116,6 +116,10 @@ async function _afterDrain() {
  * overtake the older one (order break). The caller hands the row to the
  * worker instead (messageOutbox.release + poke).
  */
+function _isNativeOwned(cmi) {
+  try { return !!require('./nativeOutbox').isNativeOwned?.(cmi); } catch { return false; }
+}
+
 export function isConversationBusy(conversationId) {
   if (conversationId == null) return false;
   const c = Number(conversationId);
@@ -186,7 +190,10 @@ async function _drainLoop(conversationId) {
   // process) so they can't block their conversation until the next kick.
   try { await recoverStuck(); } catch {}
   try {
-    if (conversationId != null) {
+    // [2026-10-15 fase 4] fila nativa: a varredura global entrega TODAS as linhas
+    // elegíveis de cada conversa ao nativo de uma vez (ele mantém o FIFO e
+    // sobrevive a app fechado) — não só a cabeça.
+    if (conversationId != null && !_nativeOn()) {
       await _drainOneConversation(conversationId);
     } else {
       await _drainAllConversations();
@@ -216,6 +223,41 @@ async function _drainOneConversation(conversationId) {
 // ASC), then fan out the FIRST due row of each NOT-already-in-flight
 // conversation — one in-flight per conversation, many conversations at once.
 // A per-pass skip set keeps us from launching two sends for the same conv.
+function _nativeOn() {
+  try { const no = require('./nativeOutbox'); return !!(no.nativeOutboxEnabled && no.nativeOutboxEnabled()); } catch { return false; }
+}
+
+// [2026-10-15 fase 4] Linha entregue à fila nativa (sem segurar a conversa no
+// JS: o nativo faz o FIFO). O resultado chega depois (evento) e concilia.
+const _nativeHanded = new Set(); // cmi
+function _nativeEligible(row) {
+  try {
+    const no = require('./nativeOutbox');
+    const p = { ...(row.payload || {}), client_message_id: row.client_message_id, conversation_id: (row.payload || {}).conversation_id ?? row.conversation_id };
+    if (p._e2eWanted && !p._e2e) return false;
+    const t = p.type || 'text';
+    if (t === 'text') return no.canTakeText(p);
+    return MEDIA_TYPES.has(t) && !!p.cdn_url && no.canTakeMedia(p);
+  } catch { return false; }
+}
+async function _handToNative(row) {
+  const cmi = row.client_message_id;
+  if (_nativeHanded.has(cmi)) return true;
+  const claimed = await markSending(cmi);
+  if (!claimed) return false;
+  _nativeHanded.add(cmi);
+  const p = row.payload || {};
+  const ptype = p.type || 'text';
+  let no = null;
+  try { no = require('./nativeOutbox'); } catch {}
+  const pr = no ? no.sendRowAndWait(row, MEDIA_TYPES.has(ptype) ? _mediaMetaFields(p, ptype) : null) : Promise.resolve(null);
+  pr.then(async (r) => {
+    if (r) await _applyNativeResult(row, r);
+    else await markFailed(cmi, 'native_unavailable', { kind: 'transient' });
+  }).catch(() => {}).finally(() => { _nativeHanded.delete(cmi); setTimeout(() => { poke(); }, 0); });
+  return true;
+}
+
 async function _drainAllConversations() {
   // [2026-10-07 send-media] msg lane only — upload-lane rows belong to
   // mediaSendQueue (they must not head-block text while bytes upload).
@@ -224,9 +266,22 @@ async function _drainAllConversations() {
   const now = Date.now();
   const startedThisPass = new Set();
   let launched = 0;
+  const nativeOn = _nativeOn();
+  const nativeAhead = new Set(); // conv com linha já no nativo antes desta
   for (const row of pending) {
     if (launched >= 200) break; // catastrophic backstop
     const conv = row.conversation_id;
+    if (nativeOn && !startedThisPass.has(conv) && !_inflight.has(conv)) {
+      // já é do nativo (em voo lá) → não segura a conversa no JS
+      if (row.state === 'sending' && (_nativeHanded.has(row.client_message_id) || _isNativeOwned(row.client_message_id))) {
+        nativeAhead.add(conv); continue;
+      }
+      if (row.state === 'queued' && _nativeEligible(row)) {
+        if (await _handToNative(row)) { nativeAhead.add(conv); launched++; continue; }
+      }
+      // linha que o JS envia, atrás de linhas no nativo → espera elas saírem
+      if (nativeAhead.has(conv)) { startedThisPass.add(conv); continue; }
+    }
     // Already in flight or blocked earlier this pass — never launch a
     // higher-seq row of the same conversation (strict FIFO).
     if (_inflight.has(conv) || startedThisPass.has(conv)) continue;
@@ -294,6 +349,18 @@ async function _processRow(row) {
     return;
   }
 
+  // [2026-10-15 fase 4] FILA NATIVA: texto e commit de mídia (bytes já no CDN)
+  // vão para o nativo (SQLite + WS/HTTP nativo; sobrevive a app fechado). Espera
+  // o resultado FINAL (o nativo trata transitórios) → FIFO da conversa mantido
+  // pelo _inflight. null = não elegível / módulo ausente → caminho JS abaixo.
+  try {
+    const no = require('./nativeOutbox');
+    if (no.nativeOutboxEnabled && no.nativeOutboxEnabled()) {
+      const nr = await no.sendRowAndWait(row, MEDIA_TYPES.has(ptype) ? _mediaMetaFields(payload, ptype) : null);
+      if (nr) { await _applyNativeResult(row, nr); return; }
+    }
+  } catch {}
+
   // Media branch — upload local_uri then chain chat_send. WS-first path is
   // text-only because the WS hub has no upload primitive.
   if (MEDIA_TYPES.has(ptype)) {
@@ -330,6 +397,27 @@ async function _processRow(row) {
   }
 
   await _httpSend(row);
+}
+
+// [2026-10-15 fase 4] Resultado da fila nativa → mesma conciliação do HTTP JS.
+async function _applyNativeResult(row, r) {
+  const p = row.payload || {};
+  const cmi = row.client_message_id;
+  if (r && r.success && r.data && r.data.id != null) {
+    await markSent(cmi, r.data.id);
+    if (MEDIA_TYPES.has(p.type || 'text')) {
+      try {
+        const serverMsg = { ...r.data, client_message_id: r.data.client_message_id || cmi };
+        _ws()?.emit?.('chat_message', { conversation_id: p.conversation_id, message: serverMsg });
+        _mediaQueue()?.onCommitted?.({ ...p, client_message_id: cmi }, serverMsg)?.catch?.(() => {});
+      } catch {}
+    } else {
+      _publishServerRow(p, r, cmi);
+    }
+    return;
+  }
+  if (r && r._native_timeout) { await markFailed(cmi, 'native_timeout', { kind: 'transient' }); return; }
+  await markFailed(cmi, 'chat_send_rejected:' + String((r && (r.message || r.error)) || 'rejected'), { kind: 'hard' });
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +460,9 @@ function _mediaMetaFields(p, msgType) {
   } catch {}
   return out;
 }
+
+/** [2026-10-15 fase 4] mesmos metadados p/ o commit feito pela fila nativa. */
+export function mediaMetaFields(p, msgType) { return _mediaMetaFields(p, msgType); }
 
 async function _uploadAndSendMedia(row) {
   const api = _api();
@@ -686,6 +777,9 @@ export function start() {
   // [2026-10-10 regional-accept] Ouvintes de eco/rejeição + varredura das
   // linhas 'accepted' (aceite regional do edge aguardando o id numérico).
   try { require('./regionalAccept').install?.(); } catch {}
+  // [2026-10-15 fase 4] fila nativa: concilia o que o nativo enviou com o JS
+  // morto + migra as linhas de texto pendentes da fila JS para o nativo.
+  try { require('./nativeOutbox').bootNativeOutbox?.(); } catch {}
 
   // On boot, recover any rows stuck mid-flight from a previous crash. Nothing
   // is owned yet in this fresh JS context, so EVERY 'sending' row is an

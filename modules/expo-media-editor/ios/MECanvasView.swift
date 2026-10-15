@@ -60,22 +60,37 @@ final class MECropOverlay: UIView {
     let d = cv.cropRect
     let e = cv.editRectPx()
     ctx.setFillColor(UIColor(white: 0, alpha: 0.6).cgColor)
-    ctx.fill(CGRect(x: d.minX, y: d.minY, width: d.width, height: max(0, e.minY - d.minY)))
-    ctx.fill(CGRect(x: d.minX, y: e.maxY, width: d.width, height: max(0, d.maxY - e.maxY)))
-    ctx.fill(CGRect(x: d.minX, y: e.minY, width: max(0, e.minX - d.minX), height: e.height))
-    ctx.fill(CGRect(x: e.maxX, y: e.minY, width: max(0, d.maxX - e.maxX), height: e.height))
-    ctx.setStrokeColor(UIColor(white: 1, alpha: 0.45).cgColor)
-    ctx.setLineWidth(1)
-    for i in 1...2 {
-      let x = e.minX + e.width * CGFloat(i) / 3
-      let y = e.minY + e.height * CGFloat(i) / 3
-      ctx.move(to: CGPoint(x: x, y: e.minY)); ctx.addLine(to: CGPoint(x: x, y: e.maxY))
-      ctx.move(to: CGPoint(x: e.minX, y: y)); ctx.addLine(to: CGPoint(x: e.maxX, y: y))
+    if cv.circleMask {
+      // [circle-crop] máscara even-odd: retângulo da imagem menos o círculo inscrito.
+      let mask = CGMutablePath()
+      mask.addRect(d)
+      mask.addEllipse(in: e)
+      ctx.addPath(mask)
+      ctx.fillPath(using: .evenOdd)
+      ctx.setStrokeColor(UIColor(white: 1, alpha: 0.3).cgColor)
+      ctx.setLineWidth(1)
+      ctx.stroke(e)
+      ctx.setStrokeColor(UIColor.white.cgColor)
+      ctx.setLineWidth(2)
+      ctx.strokeEllipse(in: e)
+    } else {
+      ctx.fill(CGRect(x: d.minX, y: d.minY, width: d.width, height: max(0, e.minY - d.minY)))
+      ctx.fill(CGRect(x: d.minX, y: e.maxY, width: d.width, height: max(0, d.maxY - e.maxY)))
+      ctx.fill(CGRect(x: d.minX, y: e.minY, width: max(0, e.minX - d.minX), height: e.height))
+      ctx.fill(CGRect(x: e.maxX, y: e.minY, width: max(0, d.maxX - e.maxX), height: e.height))
+      ctx.setStrokeColor(UIColor(white: 1, alpha: 0.45).cgColor)
+      ctx.setLineWidth(1)
+      for i in 1...2 {
+        let x = e.minX + e.width * CGFloat(i) / 3
+        let y = e.minY + e.height * CGFloat(i) / 3
+        ctx.move(to: CGPoint(x: x, y: e.minY)); ctx.addLine(to: CGPoint(x: x, y: e.maxY))
+        ctx.move(to: CGPoint(x: e.minX, y: y)); ctx.addLine(to: CGPoint(x: e.maxX, y: y))
+      }
+      ctx.strokePath()
+      ctx.setStrokeColor(UIColor.white.cgColor)
+      ctx.setLineWidth(1.5)
+      ctx.stroke(e)
     }
-    ctx.strokePath()
-    ctx.setStrokeColor(UIColor.white.cgColor)
-    ctx.setLineWidth(1.5)
-    ctx.stroke(e)
     let L: CGFloat = 18
     let t: CGFloat = 3
     let o = t / 2
@@ -120,6 +135,10 @@ final class MECanvasView: UIView {
     didSet { cropOverlay.setNeedsDisplay() }
   }
   var cropRatio: CGFloat = 0
+  /// [circle-crop] Escurece tudo fora do círculo inscrito na moldura.
+  var circleMask = false {
+    didSet { cropOverlay.setNeedsDisplay() }
+  }
 
   private(set) var fullRect: CGRect = .zero
   private(set) var cropRect: CGRect = .zero

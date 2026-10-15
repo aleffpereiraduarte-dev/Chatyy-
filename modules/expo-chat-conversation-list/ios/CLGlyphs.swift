@@ -248,6 +248,39 @@ final class CLCheckView: UIView {
     tick.isHidden = !checked
   }
 
+  /// [2026-10-15 native-group-create] Marcar com animação (mola na bolinha +
+  /// traço do check desenhando), estilo WhatsApp. animated=false = `checked`.
+  func setChecked(_ on: Bool, animated: Bool) {
+    if !animated || on == checked {
+      layer.removeAllAnimations()
+      tick.removeAllAnimations()
+      transform = .identity
+      checked = on
+      return
+    }
+    checked = on
+    if on {
+      let draw = CABasicAnimation(keyPath: "strokeEnd")
+      draw.fromValue = 0
+      draw.toValue = 1
+      draw.duration = 0.22
+      draw.beginTime = CACurrentMediaTime() + 0.05
+      draw.fillMode = .backwards
+      draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      tick.add(draw, forKey: "draw")
+      transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.5, initialSpringVelocity: 0.8,
+                     options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        self.transform = .identity
+      }, completion: nil)
+    } else {
+      transform = CGAffineTransform(scaleX: 0.85, y: 0.85)
+      UIView.animate(withDuration: 0.22, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut], animations: {
+        self.transform = .identity
+      }, completion: nil)
+    }
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
     layer.cornerRadius = bounds.width / 2

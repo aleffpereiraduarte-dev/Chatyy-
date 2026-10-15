@@ -490,8 +490,41 @@ internal class CLTypingDots(ctx: Context) : View(ctx) {
 internal class CLCheckView(ctx: Context) : View(ctx) {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val path = Path()
+  private val tickMeasure = android.graphics.PathMeasure()
+  private val tickPart = Path()
+  /** 0…1: quanto do traço do check está desenhado (animação). */
+  private var tickProgress = 1f
+  private var tickAnim: android.animation.ValueAnimator? = null
   var checked = false
     set(v) { field = v; invalidate() }
+
+  /** [2026-10-15 native-group-create] Marcar com mola + traço desenhando. */
+  fun setChecked(on: Boolean, animated: Boolean) {
+    tickAnim?.cancel()
+    animate().cancel()
+    if (!animated || on == checked) {
+      scaleX = 1f; scaleY = 1f
+      tickProgress = 1f
+      checked = on
+      return
+    }
+    checked = on
+    if (on) {
+      scaleX = 0.6f; scaleY = 0.6f
+      animate().scaleX(1f).scaleY(1f).setDuration(380)
+        .setInterpolator(android.view.animation.OvershootInterpolator(2.6f)).start()
+      tickProgress = 0f
+      tickAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 220
+        startDelay = 50
+        addUpdateListener { tickProgress = it.animatedValue as Float; invalidate() }
+        start()
+      }
+    } else {
+      scaleX = 0.85f; scaleY = 0.85f
+      animate().scaleX(1f).scaleY(1f).setDuration(200).start()
+    }
+  }
   var onColor = 0xFF000000.toInt()
   var tickColor = 0xFFFFFFFF.toInt()
   var borderTint = 0x40000000
@@ -516,7 +549,14 @@ internal class CLCheckView(ctx: Context) : View(ctx) {
       paint.strokeCap = Paint.Cap.ROUND
       paint.strokeJoin = Paint.Join.ROUND
       paint.color = tickColor
-      canvas.drawPath(path, paint)
+      if (tickProgress >= 1f) {
+        canvas.drawPath(path, paint)
+      } else if (tickProgress > 0f) {
+        tickMeasure.setPath(path, false)
+        tickPart.reset()
+        tickMeasure.getSegment(0f, tickMeasure.length * tickProgress, tickPart, true)
+        canvas.drawPath(tickPart, paint)
+      }
     } else {
       paint.style = Paint.Style.STROKE
       paint.strokeWidth = bw

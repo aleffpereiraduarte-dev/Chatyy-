@@ -115,6 +115,8 @@ final class CTContactCell: UICollectionViewListCell {
   var onLongPress: ((String) -> Void)?
 
   private(set) var row = CTRow()
+  private var prevId = ""
+  private var prevCheck = 0
   private var colors = CTColors()
   private var metrics = CTMetrics()
 
@@ -187,6 +189,21 @@ final class CTContactCell: UICollectionViewListCell {
 
   // MARK: Altura
 
+  /// Nome lógico do glifo (JS) → SF Symbol. Vazio/desconhecido = convidar.
+  static func glyphSymbol(_ name: String) -> String {
+    switch name {
+    case "users", "group": return "person.2.fill"
+    case "community": return "person.3.fill"
+    case "megaphone", "channel": return "megaphone.fill"
+    case "link": return "link"
+    case "qr": return "qrcode"
+    case "share": return "square.and.arrow.up"
+    case "mail": return "envelope.fill"
+    case "bookmark": return "bookmark.fill"
+    default: return "person.badge.plus"
+    }
+  }
+
   private static func avatarSide(_ r: CTRow) -> CGFloat {
     if !r.glyph.isEmpty { return 44 }
     return r.avatar + (r.avatarRing ? 6 : 0)
@@ -227,7 +244,8 @@ final class CTContactCell: UICollectionViewListCell {
       avatarRing.isHidden = true
       glyph.isHidden = false
       glyph.backgroundColor = r.glyphBg ?? UIColor(clHex: 0x111111)
-      glyph.image = CLSymbols.image("person.badge.plus", pointSize: 16, weight: .medium, color: .white)
+      // [2026-10-15 native-group-create] glifo por nome (atalhos da Nova conversa).
+      glyph.image = CLSymbols.image(CTContactCell.glyphSymbol(r.glyph), pointSize: 16, weight: .medium, color: .white)
     } else {
       glyph.isHidden = true
       avatar.isHidden = false
@@ -347,8 +365,13 @@ final class CTContactCell: UICollectionViewListCell {
       check.onColor = c.primary
       check.tickColor = c.onPrimary
       check.borderTint = c.border
-      check.checked = r.check == 2
+      // [2026-10-15 native-group-create] mesma linha marcada/desmarcada →
+      // check anima (mola + traço); célula reciclada para outra linha → seco.
+      let animate = prevId == r.id && prevCheck > 0 && prevCheck != r.check && window != nil
+      check.setChecked(r.check == 2, animated: animate)
     }
+    prevId = r.id
+    prevCheck = r.check
 
     hairline.backgroundColor = c.hair
     longPress.isEnabled = r.longPress
@@ -427,7 +450,9 @@ final class CTContactCell: UICollectionViewListCell {
     // Lado direito (da borda para dentro)
     var right = b.width - m.padH
     if !check.isHidden {
-      check.frame = CGRect(x: right - 24, y: (b.height - 24) / 2, width: 24, height: 24)
+      // bounds+center (não frame): o check pode estar com transform da animação.
+      check.bounds = CGRect(x: 0, y: 0, width: 24, height: 24)
+      check.center = CGPoint(x: right - 12, y: b.height / 2)
       right -= 24 + 8
     }
     if !trash.isHidden {

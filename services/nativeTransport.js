@@ -148,6 +148,9 @@ class NativeTransportSocket {
       fgProbeMs: opts.fgProbeMs || 2500,
       batchMs: 16,
       outboxMax: 500,
+      // [2026-10-15 fase 2b] conta da sessão + gravação direta no store nativo
+      account: String(opts.account || ''),
+      storeIngest: !!opts.storeIngest,
     };
     if (opts.authFrame) {
       try { cfg.authFrame = JSON.stringify(opts.authFrame); } catch {}

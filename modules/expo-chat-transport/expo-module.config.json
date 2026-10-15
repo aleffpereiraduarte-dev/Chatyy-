@@ -1,9 +1,19 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["ChatyyTransportModule"]
+    "modules": [
+      "ChatyyTransportModule"
+    ],
+    "appDelegateSubscribers": [
+      "ChatOutboxAppDelegateSubscriber"
+    ]
   },
   "android": {
-    "modules": ["expo.modules.chatyytransport.ChatyyTransportModule"]
+    "modules": [
+      "expo.modules.chatyytransport.ChatyyTransportModule"
+    ]
   }
 }

@@ -11,6 +11,9 @@
 //         AVAssetImageGenerator), mudo, capa. Corte/mudo SEM re-encode
 //         (MediaExtractor+MediaMuxer / AVMutableComposition passthrough).
 //   Modo 'compose': legenda + ver uma vez + HD + enviar. Modo 'edit': Concluir.
+//   cropShape 'circle' (apiVersion >= 2, só foto): avatar de grupo/perfil —
+//         abre já no recorte, 1:1 travado, máscara circular; exporta JPEG
+//         QUADRADO (o app mostra redondo). Default 'rect' = comportamento antigo.
 //
 // Binário sem o módulo (build antigo, Expo Go, web) ou kill switch
 // globalThis.__chatyy_native_editor === false → isAvailable() false e o
@@ -58,6 +61,8 @@ export type MediaEditorOptions = {
   secure?: boolean;
   /** Liga/desliga ferramentas (todas true por padrão). */
   tools?: Partial<Record<'crop' | 'draw' | 'text' | 'stickers' | 'filters' | 'trim' | 'mute' | 'cover', boolean>>;
+  /** 'circle' = avatar/perfil: 1:1 travado, máscara circular, abre já no recorte (apiVersion >= 2). */
+  cropShape?: 'rect' | 'circle';
 };
 
 export type MediaEditorResult = {

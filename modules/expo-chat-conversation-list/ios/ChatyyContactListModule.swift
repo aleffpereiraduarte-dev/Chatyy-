@@ -15,8 +15,10 @@ public class ChatyyContactListModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyContactList")
 
+    // 2 = [2026-10-15 native-group-create] check animado + haptic, glifos por
+    //     nome (`gl`), view irmã ChatyyChipStrip.
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(ChatyyContactListView.self) {

@@ -21,6 +21,8 @@ import {
 } from '../components/Icons';
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import SignupIntro from '../components/SignupIntro';
+import NativeOnboardingGate from '../components/nativeOnboarding/NativeOnboardingGate'; // [2026-10-15 native-onboarding]
+import { isNativeOnboardingOn } from '../components/nativeOnboarding/flag';
 import { LANGUAGES } from '../i18n';
 import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
@@ -349,6 +351,9 @@ export default function LoginScreen() {
   // phone entry (which is the actual login surface). Skipped on desktop
   // (QR primary) and when adding a new account from Settings.
   const [showIntro, setShowIntro] = useState(false);
+  // [2026-10-15 native-onboarding] Boas-vindas + cadastro nativos (kill switch
+  // __chatyy_native_onboarding; binário antigo/crash → SignupIntro de sempre).
+  const [nativeOnboarding] = useState(() => isNativeOnboardingOn());
   useEffect(() => {
     if (isDesktop || isAddAccount) return;
     let cancelled = false;
@@ -1951,6 +1956,15 @@ export default function LoginScreen() {
   // before being asked for their number. SignupIntro handles its own
   // SafeAreaView + dots + CTA; on finish we just flip the flag.
   if (showIntro) {
+    if (nativeOnboarding) {
+      return (
+        <NativeOnboardingGate
+          entry="welcome"
+          onExitToLogin={() => dismissIntro({ mode: 'login' })}
+          fallback={() => <SignupIntro onFinish={dismissIntro} />}
+        />
+      );
+    }
     return <SignupIntro onFinish={dismissIntro} />;
   }
 

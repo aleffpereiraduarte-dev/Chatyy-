@@ -11,7 +11,9 @@ class ChatyyContactListModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyContactList")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-15 native-group-create] check animado + haptic, glifos por
+    //     nome (`gl`), view irmã ChatyyChipStrip.
+    Function("apiVersion") { 2 }
 
     View(ChatyyContactListView::class) {
       Events(

@@ -14,8 +14,10 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # [2026-10-15 fase 2b/4] grava direto no store nativo + fila de envio nativa
+  s.dependency 'ExpoChatStore'
 
   s.source_files = '**/*.swift'
 
-  s.frameworks = 'Foundation', 'Network', 'UIKit'
+  s.frameworks = 'Foundation', 'Network', 'UIKit', 'BackgroundTasks', 'Security'
 end

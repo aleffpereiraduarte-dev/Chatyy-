@@ -202,3 +202,27 @@ export function getNativeChannelListView(): any { return _probeNamed(CHANNEL_LIS
 export function getNativeChannelFeedView(): any { return _probeNamed(CHANNEL_FEED_VIEW_NAME); }
 export function getNativeCommunityListView(): any { return _probeNamed(COMMUNITY_LIST_VIEW_NAME); }
 export function getNativeCommunityDetailView(): any { return _probeNamed(COMMUNITY_DETAIL_VIEW_NAME); }
+
+// ── [2026-10-15 native-group-create] Novo grupo nativo ───────────────────────
+// ChatyyChipStrip: fileira de selecionados (avatar + "x" + nome), entra com
+// mola / sai encolhendo. ChatyyContactList apiVersion ≥ 2: check animado +
+// haptic + glifos por nome. Binário antigo → null / 1 e a tela fica no JS.
+export const CHIP_STRIP_VIEW_NAME = 'ChatyyChipStrip';
+export function getNativeChipStripView(): any { return _probeNamed(CHIP_STRIP_VIEW_NAME); }
+
+let _ctApi = -1;
+/** apiVersion da ChatyyContactList (0 = ausente). */
+export function contactListApiVersion(): number {
+  if (_ctApi >= 0) return _ctApi;
+  _ctApi = 0;
+  if (Platform.OS === 'web') return 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function'
+      ? core.requireOptionalNativeModule(CONTACT_LIST_VIEW_NAME)
+      : null;
+    if (mod && typeof mod.apiVersion === 'function') _ctApi = Number(mod.apiVersion()) || 0;
+  } catch { _ctApi = 0; }
+  return _ctApi;
+}

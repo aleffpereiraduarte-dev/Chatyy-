@@ -11,8 +11,29 @@ public class ChatyyChatStoreModule: Module {
     // 1 = fotos por conversa (thread_snap/thread_rows), 1 arquivo por conta.
     // 2 = [fase 1.5/2] foto da home + pré-carga no toque + tabelas canônicas
     //     (applyBatchAsync) + operações na foto + messagesSync.
+    // 3 = [fase 2b/4] transporte nativo grava direto (ingestFrames), perfil de
+    //     texto p/ linhas nativas (setThreadProfile), foto "desatualizada"
+    //     (threadStaleSync), tabela outbox (fila de envio nativa).
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
+    }
+
+    Function("setThreadProfile") { (account: String, conv: String, json: String) in
+      ChatyyStoreDB.shared.setThreadProfile(account: account, conv: conv, json: json)
+    }
+
+    Function("clearThreadProfiles") { (account: String) in
+      ChatyyStoreDB.shared.clearThreadProfiles(account: account)
+    }
+
+    Function("threadStaleSync") { (account: String, conv: String) -> Double in
+      return Double(ChatyyStoreDB.shared.threadStaleSync(account: account, conv: conv))
+    }
+
+    /// Teste/diagnóstico: aplica frames crus do hub como o transporte faria.
+    AsyncFunction("ingestFramesAsync") { (account: String, frames: [String], promise: Promise) in
+      if frames.isEmpty { promise.resolve(["ok": 1, "messages": 0]); return }
+      ChatyyStoreDB.shared.ingestFrames(account: account, frames: frames) { out in promise.resolve(out) }
     }
 
     // Lote do sync (1 string JSON). Resolve com {ok, messages, threads, convs}.

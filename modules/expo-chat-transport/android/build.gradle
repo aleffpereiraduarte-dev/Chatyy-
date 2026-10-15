@@ -24,6 +24,10 @@ dependencies {
   // [2026-10-15 native-transport] Mesma versão que o binário já carrega
   // (react-native / expo-callkit): zero bytes novos de terceiros.
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  // [2026-10-15 fase 2b/4] grava direto no store nativo + fila de envio nativa
+  implementation project(':expo-chat-store')
+  // WorkManager: reenvio com o app fechado (mesma versão do expo-background-upload)
+  implementation 'androidx.work:work-runtime-ktx:2.9.0'
 }
 
 def safeExtGet(prop, fallback) {

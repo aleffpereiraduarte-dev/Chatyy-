@@ -14,6 +14,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isNativeTransportEnabled, createNativeSocket, markNativeTransportBroken, getNativeTransportStats } from './nativeTransport';
 // Sentinela de pingTimer no modo nativo (o keepalive roda no nativo).
 const NATIVE_PING = 'native';
+// [2026-10-15 fase 2b] transporte nativo → store nativo direto. Kill switches:
+// __chatyy_native_ingest = false (só isto) / __chatyy_native_store = false (store todo).
+function _nativeIngestOn() {
+  try {
+    if (globalThis.__chatyy_native_ingest === false) return false;
+    return require('./nativeChatStore').nativeStoreApi() >= 3;
+  } catch { return false; }
+}
 
 // MessagePack codec — lazy-required so a missing/broken module never breaks
 // startup. Gated by globalThis.__chatyy_msgpack_ws feature flag (off by
@@ -984,6 +992,10 @@ class MailWebSocket {
             connectTimeoutMs: CONNECT_TIMEOUT_MS,
             authWatchdogMs: AUTH_WATCHDOG_MS,
             fgProbeMs: FG_PROBE_MS,
+            // [2026-10-15 fase 2b] o nativo grava mensagens/recibos direto no
+            // store nativo (sem esperar o JS); conta confirmada pelo auth_success.
+            account: String(this.email || '').trim().toLowerCase(),
+            storeIngest: _nativeIngestOn(),
           });
           ns.onnativestate = (ev) => { try { this._onNativeState(ns, ev); } catch {} };
           this.ws = ns;

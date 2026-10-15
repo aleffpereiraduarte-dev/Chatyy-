@@ -26,6 +26,9 @@ struct MEOptions {
   var quality: CGFloat = 0.92
   var secure = false
   var tools: [String: Bool] = [:]
+  /// [2026-10-15 circle-crop] cropShape 'circle' (só foto): 1:1 travado, máscara
+  /// circular no recorte, abre já na ferramenta de recorte. Exporta JPEG quadrado.
+  var circleCrop = false
 
   func tool(_ k: String) -> Bool { return tools[k] ?? true }
 
@@ -82,6 +85,8 @@ struct MEOptions {
     if let t = o["tools"] as? [String: Any] {
       for (k, v) in t { if let b = v as? Bool { tools[k] = b } }
     }
+    circleCrop = !isVideo && ((o["cropShape"] as? String) ?? "rect") == "circle"
+    if circleCrop { tools["crop"] = true }
   }
 }
 
@@ -593,6 +598,7 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
   private func buildPhoto() {
     let cv = MECanvasView(frame: .zero)
     cv.host = self
+    cv.circleMask = opts.circleCrop
     canvas = cv
     stage.addSubview(cv)
     trashView.backgroundColor = UIColor(white: 0, alpha: 0.6)
@@ -627,6 +633,7 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
         self.refreshDisplay()
         self.buildPhotoPanels()
         self.view.setNeedsLayout()
+        if self.opts.circleCrop && self.panels["crop"] != nil { self.setTool(.crop) }
       }
     }
   }
@@ -795,7 +802,9 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
     sc.tag = 11
     wrap.addSubview(sc)
     ratioButtons = []
-    for (key, r) in MediaEditorViewController.ratios {
+    sc.isHidden = opts.circleCrop
+    let ratioList: [(String, CGFloat)] = opts.circleCrop ? [] : MediaEditorViewController.ratios
+    for (key, r) in ratioList {
       let title = key == "free" ? L("ratioFree", "Livre") : (key == "orig" ? L("ratioOriginal", "Original") : key)
       let b = pillLabelButton(title, dark: true)
       b.addAction(UIAction { [weak self] _ in
@@ -817,7 +826,11 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
     reset.tag = 13
     reset.addAction(UIAction { [weak self] _ in self?.resetCrop() }, for: .touchUpInside)
     wrap.addSubview(reset)
-    let ok = iconButton("check", L("done", "Concluir"), size: 22) { [weak self] in self?.setTool(.none) }
+    let ok = iconButton("check", L("done", "Concluir"), size: 22) { [weak self] in
+      guard let self = self else { return }
+      // circle-crop (avatar): o check do recorte já conclui (igual ao Android).
+      if self.opts.circleCrop { self.export("done") } else { self.setTool(.none) }
+    }
     ok.tag = 14
     wrap.addSubview(ok)
     panels["crop"] = wrap
@@ -922,6 +935,7 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
       cv.editCrop = editorState.crop
       cv.cropRatio = 0
       ratioSel = "free"
+      if opts.circleCrop { lockSquare() }
       paintRatios()
     case .draw: cv.mode = .draw
     default: cv.mode = .objects
@@ -958,8 +972,40 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
     ratioSel = "free"
     paintRatios()
     refreshDisplay()
+    if opts.circleCrop { lockSquare() }
     cv.setNeedsLayout()
     changed()
+  }
+
+  /// [circle-crop] Maior quadrado (em PIXELS) dentro de `c`, centrado em `c`.
+  static func squareInside(_ c: CGRect, bw: CGFloat, bh: CGFloat) -> CGRect {
+    guard bw > 0, bh > 0 else { return c }
+    let s = min(c.width * bw, c.height * bh)
+    let w = min(1, s / bw)
+    let h = min(1, s / bh)
+    let x = min(max(0, c.midX - w / 2), 1 - w)
+    let y = min(max(0, c.midY - h / 2), 1 - h)
+    return CGRect(x: x, y: y, width: w, height: h)
+  }
+
+  static func isSquare(_ c: CGRect, bw: CGFloat, bh: CGFloat) -> Bool {
+    let pw = c.width * bw
+    let ph = c.height * bh
+    return pw > 0 && ph > 0 && abs(pw / ph - 1) < 0.005
+  }
+
+  /// [circle-crop] Trava a moldura em 1:1 (na 1ª vez = maior quadrado centrado).
+  private func lockSquare() {
+    guard let cv = canvas else { return }
+    let bw = cv.imagePixelSize.width
+    let bh = cv.imagePixelSize.height
+    guard bw > 0, bh > 0 else { return }
+    let e = cv.editCrop
+    if !MediaEditorViewController.isSquare(e, bw: bw, bh: bh) {
+      cv.editCrop = MediaEditorViewController.squareInside(e, bw: bw, bh: bh)
+    }
+    cv.cropRatio = 1
+    ratioSel = "1:1"
   }
 
   private func addSticker(_ s: String) {
@@ -977,6 +1023,7 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
     editorState = prev
     if tool == .crop { canvas?.editCrop = prev.crop }
     refreshDisplay()
+    if tool == .crop && opts.circleCrop { lockSquare() }
     canvas?.setNeedsLayout()
     canvas?.redraw()
     changed()
@@ -1513,6 +1560,14 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
   private func export(_ action: String) {
     guard !busy, !finished else { return }
     if tool == .crop { setTool(.none) }
+    if opts.circleCrop && !opts.isVideo, let cv = canvas {
+      // Garante recorte quadrado mesmo se um desfazer trouxe moldura não-1:1.
+      let bw = cv.imagePixelSize.width
+      let bh = cv.imagePixelSize.height
+      if bw > 0, bh > 0, !MediaEditorViewController.isSquare(editorState.crop, bw: bw, bh: bh) {
+        editorState.crop = MediaEditorViewController.squareInside(editorState.crop, bw: bw, bh: bh)
+      }
+    }
     if !textOverlay.isHidden { closeTextEditor(commit: true) }
     view.endEditing(true)
     if opts.isVideo { exportVideo(action) } else { exportPhoto(action) }
@@ -1548,9 +1603,10 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
     let maxDim = hd ? opts.hdMaxDim : opts.maxDim
     let quality = opts.quality
     let uri = opts.uri
+    let square = opts.circleCrop
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let out = MediaEditorViewController.renderPhoto(uri: uri, state: st, filter: f, maxDim: maxDim, quality: quality)
-        ?? (maxDim > 2048 ? MediaEditorViewController.renderPhoto(uri: uri, state: st, filter: f, maxDim: 2048, quality: quality) : nil)
+      let out = MediaEditorViewController.renderPhoto(uri: uri, state: st, filter: f, maxDim: maxDim, quality: quality, square: square)
+        ?? (maxDim > 2048 ? MediaEditorViewController.renderPhoto(uri: uri, state: st, filter: f, maxDim: 2048, quality: quality, square: square) : nil)
       DispatchQueue.main.async {
         guard let self = self, !self.finished else { return }
         self.showBusy(false)
@@ -1570,7 +1626,7 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
   }
 
   /// (uri, largura, altura, bytes)
-  static func renderPhoto(uri: String, state st: MEState, filter: MEFilter?, maxDim: Int, quality: CGFloat) -> (String, Int, Int, Int)? {
+  static func renderPhoto(uri: String, state st: MEState, filter: MEFilter?, maxDim: Int, quality: CGFloat, square: Bool = false) -> (String, Int, Int, Int)? {
     return autoreleasepool { () -> (String, Int, Int, Int)? in
       guard let full = MEImage.load(uri, maxPixel: maxDim) else { return nil }
       let img = MEImage.filtered(full, filter)
@@ -1582,8 +1638,14 @@ final class MediaEditorViewController: UIViewController, MECanvasHost, MERailDel
       let ct = (min(1, max(0, c.minY)) * rh).rounded()
       let cr = (min(1, max(0, c.maxX)) * rw).rounded()
       let cb = (min(1, max(0, c.maxY)) * rh).rounded()
-      let ow = max(1, cr - cl)
-      let oh = max(1, cb - ct)
+      var ow = max(1, cr - cl)
+      var oh = max(1, cb - ct)
+      if square {
+        // circle-crop: arredondamento pode deixar 1 px de diferença → força quadrado.
+        let side = min(ow, oh)
+        ow = side
+        oh = side
+      }
       let size = CGSize(width: ow, height: oh)
       let fmt = UIGraphicsImageRendererFormat.default()
       fmt.scale = 1

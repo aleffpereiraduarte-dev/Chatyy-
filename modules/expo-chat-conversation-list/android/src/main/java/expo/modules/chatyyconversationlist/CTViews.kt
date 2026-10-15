@@ -194,6 +194,18 @@ internal class CTRowView(ctx: Context) : LinearLayout(ctx) {
   private val trash = ImageView(ctx)
   private val check = CLCheckView(ctx)
 
+  private var prevId = ""
+  private var prevCheck = 0
+
+  /** Nome lógico do glifo (JS) → drawable. Vazio/desconhecido = convidar. */
+  private fun glyphRes(name: String): Int = when (name) {
+    "users", "group", "community" -> R.drawable.dv_ic_users
+    "megaphone", "channel" -> R.drawable.ccl_ic_megaphone
+    "link" -> R.drawable.crl_ic_link
+    "mail" -> R.drawable.ccl_ic_mail
+    else -> R.drawable.cct_ic_user_plus
+  }
+
   private val rowBg = ColorDrawable(Color.WHITE)
   private val hairPaint = Paint().apply { style = Paint.Style.FILL }
   private var metrics = CTMetrics()
@@ -254,7 +266,11 @@ internal class CTRowView(ctx: Context) : LinearLayout(ctx) {
 
     addView(check, LayoutParams(ctPx(24f), ctPx(24f)).apply { marginStart = ctPx(8f) })
 
-    setOnClickListener { if (row.tap) listener?.onPress(row.id) }
+    setOnClickListener {
+      if (!row.tap) return@setOnClickListener
+      if (row.check > 0) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+      listener?.onPress(row.id)
+    }
     setOnLongClickListener {
       if (!row.longPress) return@setOnLongClickListener false
       performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -287,7 +303,8 @@ internal class CTRowView(ctx: Context) : LinearLayout(ctx) {
       avatar.visibility = GONE
       glyph.visibility = VISIBLE
       glyphBg.setColor(r.glyphBg ?: Color.parseColor("#111111"))
-      glyph.setImageDrawable(tintedIcon(context, R.drawable.cct_ic_user_plus, Color.WHITE)?.also {
+      // [2026-10-15 native-group-create] glifo por nome (atalhos da Nova conversa).
+      glyph.setImageDrawable(tintedIcon(context, glyphRes(r.glyph), Color.WHITE)?.also {
         it.setBounds(0, 0, ctPx(18f), ctPx(18f))
       })
       glyph.scaleType = ImageView.ScaleType.FIT_CENTER
@@ -459,13 +476,17 @@ internal class CTRowView(ctx: Context) : LinearLayout(ctx) {
     }
     if (r.check > 0) {
       check.visibility = VISIBLE
-      check.checked = r.check == 2
       check.onColor = c.primary
       check.tickColor = c.onPrimary
       check.borderTint = c.border
+      // [2026-10-15 native-group-create] mesma linha trocou de estado → anima.
+      val animate = prevId == r.id && prevCheck > 0 && prevCheck != r.check && isAttachedToWindow
+      check.setChecked(r.check == 2, animate)
     } else {
       check.visibility = GONE
     }
+    prevId = r.id
+    prevCheck = r.check
 
     contentDescription = r.a11y.ifEmpty { listOf(r.title, r.sub).filter { it.isNotEmpty() }.joinToString(", ") }
     invalidate()

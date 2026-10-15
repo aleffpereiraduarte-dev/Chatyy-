@@ -1,0 +1,527 @@
+package expo.modules.chatyytransport
+
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.IOException
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+
+/**
+ * [2026-10-15 fase 4] Motor da FILA DE ENVIO NATIVA (outbox) — puro Kotlin
+ * (org.json + OkHttp): roda igual no app e na JVM (harness contra o hub real).
+ * Espelho: ChatOutbox.swift.
+ *
+ * Cada item (texto ou mídia) é gravado no SQLite da conta (tabela `outbox` do
+ * expo-chat-store) com o client_message_id ANTES de qualquer tentativa → mata o
+ * app no meio do envio e o item continua lá; quem reenvia é o nativo (WS do
+ * transporte nativo → `chat_send` com ack no mesmo socket; sem ack em ~4 s ou
+ * sem socket → HTTP `email.php?action=chat_send`). O servidor deduplica por
+ * (remetente, client_message_id): reenvio NUNCA duplica.
+ *
+ * Ordem: FIFO por conversa (1 em voo por conversa; item em espera de backoff
+ * segura os de trás). Mídia sobe em paralelo (estado 'uploading' não segura a
+ * fila) e depois entra na ordem pelo seq dela (mesma regra da fila JS).
+ * Transitório (rede/5xx/timeout/401/429) nunca vira falha; só 4xx definitivo.
+ * Offline: não conta tentativa.
+ *
+ * Toda a lógica roda no executor de 1 thread `exec` (sem locks).
+ */
+class OutboxCore(
+  private val storage: Storage,
+  private val net: Net,
+  private val exec: ScheduledExecutorService,
+  httpClient: OkHttpClient? = null,
+) {
+  interface Storage {
+    /** Insere (idempotente). "new" ou o estado atual. "" = falhou. */
+    fun put(account: String, item: JSONObject): String
+    fun all(account: String): JSONArray
+    fun patch(account: String, cmi: String, p: JSONObject)
+    fun remove(account: String, cmi: String)
+    fun recover(account: String): Int
+    fun sent(account: String, cmi: String, conv: String, server: JSONObject)
+    fun failed(account: String, cmi: String, conv: String)
+  }
+
+  interface Net {
+    fun online(): Boolean
+    /** Socket nativo autenticado nesta conta + hub com `native_send`. */
+    fun wsReady(account: String): Boolean
+    fun wsSend(account: String, text: String): Boolean
+  }
+
+  class Creds(val account: String, val token: String, val base: String)
+
+  companion object {
+    val BACKOFF_MS = longArrayOf(1000, 2000, 4000, 8000, 15000, 30000, 60000, 120000, 300000)
+    const val WS_ACK_MS = 4000L
+    const val MAX_UPLOADS = 2
+    const val SENT_KEEP_MS = 7L * 24 * 3600 * 1000
+    private val HARD_RE = Regex("\\b403\\b|forbidden|not.?a.?member|no_permission|permission_denied|conversation.?deleted|admin.?only", RegexOption.IGNORE_CASE)
+    private val JSON_MT = "application/json; charset=utf-8".toMediaType()
+    fun isUsableBase(b: String): Boolean = b.startsWith("https://") && (b.removePrefix("https://").substringBefore('/').let { h -> h == "chatyy.com.br" || h.endsWith(".chatyy.com.br") })
+  }
+
+  /** (evento, corpo) → JS (onOutboxState). Nulo com o JS morto. */
+  @Volatile var emitter: ((Map<String, Any?>) -> Unit)? = null
+  /** Carrega credenciais persistidas (2º plano sem JS). */
+  @Volatile var credsLoader: ((String) -> Creds?)? = null
+  /** Contas com fila (persistidas) p/ o dreno em 2º plano. */
+  @Volatile var accountsLoader: (() -> List<String>)? = null
+  /** Teste: base HTTP alternativa (proxy local). */
+  @Volatile var baseOverride: String? = null
+
+  private val http: OkHttpClient = httpClient ?: OkHttpClient.Builder()
+    .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS)
+    .callTimeout(40, TimeUnit.SECONDS).retryOnConnectionFailure(true).build()
+  private val upHttp: OkHttpClient = http.newBuilder().callTimeout(6, TimeUnit.MINUTES).writeTimeout(5, TimeUnit.MINUTES).build()
+
+  private class Attempt(val account: String, val cmi: String, val conv: String, var phase: String, var timer: ScheduledFuture<*>? = null, var call: Call? = null)
+
+  private val creds = HashMap<String, Creds>()
+  private val accounts = LinkedHashSet<String>()
+  private val recovered = HashSet<String>()
+  private val inflight = HashMap<String, Attempt>() // cmi → envio em voo
+  private val uploads = HashMap<String, Attempt>() // cmi → upload em voo
+  private val authWaitUntil = HashMap<String, Long>()
+  private var wake: ScheduledFuture<*>? = null
+  private var wakeAt = 0L
+  private var pumpQueued = false
+  val stats = HashMap<String, Long>()
+
+  private fun bump(k: String, n: Long = 1) { stats[k] = (stats[k] ?: 0L) + n }
+  private fun now() = System.currentTimeMillis()
+  private fun norm(a: String) = a.trim().lowercase()
+  private fun key(a: String, c: String) = "$a|$c"
+
+  private fun emit(m: Map<String, Any?>) { try { emitter?.invoke(m) } catch (_: Throwable) {} }
+
+  private fun post(fn: () -> Unit) { try { exec.execute { try { fn() } catch (_: Throwable) { bump("errors") } } } catch (_: Throwable) {} }
+
+  // ─── API (qualquer thread) ───────────────────────────────────────────────
+
+  fun configure(account: String, token: String, base: String) {
+    val a = norm(account)
+    if (a.isEmpty() || token.isEmpty()) return
+    val b = if (isUsableBase(base)) base.trimEnd('/') else "https://chatyy.com.br"
+    post {
+      creds[a] = Creds(a, token, b)
+      accounts.add(a)
+      authWaitUntil.remove(a)
+      schedulePump()
+    }
+  }
+
+  /** Enfileira (idempotente por cmi). Bloqueia até gravar no SQLite (≤ 4 s). */
+  fun submit(account: String, item: JSONObject): String {
+    val a = norm(account)
+    if (a.isEmpty()) return ""
+    val st = storage.put(a, item)
+    post {
+      accounts.add(a)
+      if (st == "new") { bump("submitted"); emit(mapOf("account" to a, "cmi" to item.optString("cmi"), "conv" to item.optString("conv"), "state" to "queued", "tries" to 0)) }
+      schedulePump()
+    }
+    return st
+  }
+
+  fun kick(reason: String = "kick") {
+    post {
+      // reconexão / rede voltou / primeiro plano: tudo que está em espera vira devido
+      for (a in accounts.toList()) {
+        val items = try { storage.all(a) } catch (_: Throwable) { continue }
+        for (i in 0 until items.length()) {
+          val it = items.optJSONObject(i) ?: continue
+          val st = it.optString("state")
+          if ((st == "queued" || st == "uploading") && it.optLong("next_at") > now() && !it.optString("err").startsWith("rl429")) {
+            storage.patch(a, it.optString("cmi"), JSONObject().put("next_at", 0))
+          }
+        }
+      }
+      bump("kicks")
+      pumpNow()
+    }
+  }
+
+  /** Usuário tocou em "reenviar" num item 'failed'. */
+  fun retry(account: String, cmi: String) {
+    val a = norm(account)
+    post {
+      storage.patch(a, cmi, JSONObject().put("state", "queued").put("next_at", 0).put("tries", 0).put("err", JSONObject.NULL))
+      accounts.add(a); pumpNow()
+    }
+  }
+
+  /** JS já conciliou o 'sent'/'failed' → apaga. */
+  fun ack(account: String, cmi: String) {
+    val a = norm(account)
+    post { if (!inflight.containsKey(cmi) && !uploads.containsKey(cmi)) storage.remove(a, cmi) }
+  }
+
+  fun cancel(account: String, cmi: String) {
+    val a = norm(account)
+    post {
+      inflight.remove(cmi)?.let { it.timer?.cancel(false); it.call?.cancel() }
+      uploads.remove(cmi)?.let { it.call?.cancel() }
+      storage.remove(a, cmi)
+      pumpNow()
+    }
+  }
+
+  fun list(account: String): String = try { storage.all(norm(account)).toString() } catch (_: Throwable) { "[]" }
+
+  /** Frame do hub chegou no socket nativo (chat_send_ack / chat_send_fallback). */
+  fun onWsFrame(account: String, obj: JSONObject) {
+    val type = obj.optString("type")
+    val cmi = obj.optString("client_message_id")
+    if (cmi.isEmpty()) return
+    post {
+      val at = inflight[cmi] ?: return@post
+      if (at.phase != "ws" || at.account != norm(account)) return@post
+      at.timer?.cancel(false)
+      val row = obj.optJSONObject("message")
+      if (type == "chat_send_ack" && row != null && idOf(row) > 0) {
+        bump("wsAcks")
+        done(at, row, "ws")
+      } else {
+        bump("wsFallbacks")
+        httpSend(at)
+      }
+    }
+  }
+
+  fun onNetwork(up: Boolean) { if (up) kick("net_up") }
+
+  /** Executor do outbox: há algo pendente (pra agendar o dreno em 2º plano)? */
+  fun pendingCount(): Int {
+    var n = 0
+    for (a in accounts.toList()) {
+      val items = try { storage.all(a) } catch (_: Throwable) { continue }
+      for (i in 0 until items.length()) { val st = items.optJSONObject(i)?.optString("state"); if (st == "queued" || st == "sending" || st == "uploading") n++ }
+    }
+    return n
+  }
+
+  fun inflightCount(): Int = inflight.size + uploads.size
+
+  fun snapshot(): Map<String, Any?> = HashMap<String, Any?>().also { m ->
+    for ((k, v) in stats) m[k] = v.toDouble()
+    m["inflight"] = inflight.size; m["uploads"] = uploads.size; m["accounts"] = accounts.size
+  }
+
+  /**
+   * Dreno síncrono p/ 2º plano (Worker do Android / teste): carrega contas e
+   * credenciais persistidas, bombeia e espera até não ter nada devido em voo ou
+   * estourar `maxMs`. true = ainda há itens pendentes (reagendar).
+   */
+  fun drainBlocking(maxMs: Long): Boolean {
+    val deadline = now() + maxMs
+    try {
+      exec.submit {
+        accountsLoader?.invoke()?.forEach { accounts.add(norm(it)) }
+        pumpNow()
+      }.get(10, TimeUnit.SECONDS)
+    } catch (_: Throwable) {}
+    while (now() < deadline) {
+      Thread.sleep(250)
+      val busy = try { exec.submit<Boolean> { inflight.isNotEmpty() || uploads.isNotEmpty() || hasDueLocked() }.get(5, TimeUnit.SECONDS) } catch (_: Throwable) { false }
+      if (!busy) break
+    }
+    return try { exec.submit<Int> { pendingCount() }.get(5, TimeUnit.SECONDS) > 0 } catch (_: Throwable) { true }
+  }
+
+  // ─── bomba (só no exec) ─────────────────────────────────────────────────
+
+  private fun schedulePump() {
+    if (pumpQueued) return
+    pumpQueued = true
+    post { pumpQueued = false; pumpNow() }
+  }
+
+  private fun credsFor(a: String): Creds? {
+    creds[a]?.let { return it }
+    val c = try { credsLoader?.invoke(a) } catch (_: Throwable) { null } ?: return null
+    creds[a] = c
+    return c
+  }
+
+  private fun hasDueLocked(): Boolean {
+    val t = now()
+    for (a in accounts) {
+      val items = try { storage.all(a) } catch (_: Throwable) { continue }
+      for (i in 0 until items.length()) {
+        val it = items.optJSONObject(i) ?: continue
+        val st = it.optString("state")
+        if ((st == "queued" || st == "uploading") && it.optLong("next_at") <= t && net.online()) return true
+      }
+    }
+    return false
+  }
+
+  private fun pumpNow() {
+    val t = now()
+    var nextWake = Long.MAX_VALUE
+    for (a in accounts.toList()) {
+      if (a !in recovered) {
+        recovered.add(a)
+        val n = try { storage.recover(a) } catch (_: Throwable) { 0 }
+        if (n > 0) bump("recovered", n.toLong())
+      }
+      val items = try { storage.all(a) } catch (_: Throwable) { continue }
+      val blocked = HashSet<String>()
+      for (i in 0 until items.length()) {
+        val it = items.optJSONObject(i) ?: continue
+        val cmi = it.optString("cmi"); val conv = it.optString("conv")
+        val st = it.optString("state"); val due = it.optLong("next_at")
+        when (st) {
+          "sent", "failed" -> {
+            // conciliado pelo JS (ack) ou velho demais → some
+            if (t - it.optLong("updated_at") > SENT_KEEP_MS) storage.remove(a, cmi)
+          }
+          "uploading" -> {
+            if (uploads.containsKey(cmi)) continue
+            if (due > t) { nextWake = minOf(nextWake, due); continue }
+            if (uploads.size < MAX_UPLOADS && net.online()) startUpload(a, it)
+          }
+          "sending" -> {
+            // em voo (deste processo) ou órfão recém-recuperado: segura a conversa
+            blocked.add(conv)
+            if (!inflight.containsKey(cmi)) {
+              storage.patch(a, cmi, JSONObject().put("state", "queued").put("next_at", 0))
+              nextWake = minOf(nextWake, t + 200)
+            }
+          }
+          "queued" -> {
+            if (it.optString("kind") == "media" && !hasFileUrl(it)) {
+              // bytes ainda não estão no CDN → sobe em paralelo (não segura a conversa)
+              storage.patch(a, cmi, JSONObject().put("state", "uploading").put("next_at", 0))
+              if (uploads.size < MAX_UPLOADS && net.online()) startUpload(a, it)
+              continue
+            }
+            if (conv in blocked || inflight.containsKey(cmi)) { blocked.add(conv); continue }
+            blocked.add(conv) // FIFO: só a cabeça da conversa sai
+            if (due > t) { nextWake = minOf(nextWake, due); continue }
+            if (inflight.values.any { x -> x.account == a && x.conv == conv }) continue
+            if (!net.online()) continue // rede volta → kick
+            val wait = authWaitUntil[a] ?: 0L
+            if (wait > t) { nextWake = minOf(nextWake, wait); continue }
+            startSend(a, it)
+          }
+        }
+      }
+    }
+    armWake(nextWake)
+  }
+
+  private fun armWake(at: Long) {
+    if (at == Long.MAX_VALUE) return
+    val t = now()
+    val due = maxOf(at, t + 200)
+    if (wake != null && wakeAt in 1..due) return
+    wake?.cancel(false)
+    wakeAt = due
+    wake = exec.schedule({ wake = null; wakeAt = 0; try { pumpNow() } catch (_: Throwable) {} }, due - t, TimeUnit.MILLISECONDS)
+  }
+
+  private fun hasFileUrl(it: JSONObject): Boolean {
+    val b = parseObj(it.opt("body"))
+    return b.optString("file_url").isNotEmpty() && b.optString("file_url") != "null"
+  }
+
+  private fun parseObj(v: Any?): JSONObject = when (v) {
+    is JSONObject -> v
+    is String -> try { JSONObject(v) } catch (_: Throwable) { JSONObject() }
+    else -> JSONObject()
+  }
+
+  private fun idOf(row: JSONObject): Long {
+    val v = row.opt("id")
+    return when (v) { is Number -> v.toLong(); is String -> v.toLongOrNull() ?: 0L; else -> 0L }
+  }
+
+  // ─── envio ──────────────────────────────────────────────────────────────
+
+  private fun startSend(a: String, it: JSONObject) {
+    val cmi = it.optString("cmi"); val conv = it.optString("conv")
+    val at = Attempt(a, cmi, conv, "ws")
+    inflight[cmi] = at
+    storage.patch(a, cmi, JSONObject().put("state", "sending"))
+    emit(mapOf("account" to a, "cmi" to cmi, "conv" to conv, "state" to "sending", "tries" to it.optLong("tries")))
+    bump("attempts")
+    val frame = it.optString("frame")
+    if (frame.isNotEmpty() && frame != "null" && net.wsReady(a) && net.wsSend(a, frame)) {
+      bump("wsSends")
+      at.timer = exec.schedule({ if (inflight[cmi] === at && at.phase == "ws") { bump("wsTimeouts"); httpSend(at) } }, WS_ACK_MS, TimeUnit.MILLISECONDS)
+      return
+    }
+    httpSend(at)
+  }
+
+  private fun httpSend(at: Attempt) {
+    at.phase = "http"
+    val c = credsFor(at.account)
+    if (c == null) { authWaitUntil[at.account] = now() + 15000; transient(at, "no_creds", offline = false, auth = true); return }
+    val row = findItem(at.account, at.cmi) ?: run { inflight.remove(at.cmi); return }
+    val body = parseObj(row.opt("body"))
+    val base = baseOverride ?: c.base
+    val req = Request.Builder()
+      .url("$base/api/email.php?action=chat_send")
+      .post(body.toString().toRequestBody(JSON_MT))
+      .header("Authorization", "Bearer " + c.token)
+      .header("X-Chatyy-Outbox", "native")
+      .build()
+    bump("httpSends")
+    val call = http.newCall(req)
+    at.call = call
+    call.enqueue(object : Callback {
+      override fun onFailure(call: Call, e: IOException) {
+        post { if (inflight[at.cmi] === at) transient(at, "net: " + (e.message ?: "io"), offline = !net.online()) }
+      }
+      override fun onResponse(call: Call, response: Response) {
+        val code = response.code
+        val text = try { response.body?.string() ?: "" } catch (_: Throwable) { "" } finally { try { response.close() } catch (_: Throwable) {} }
+        post { if (inflight[at.cmi] === at) onHttp(at, code, text) }
+      }
+    })
+  }
+
+  private fun onHttp(at: Attempt, code: Int, text: String) {
+    val j = try { JSONObject(text) } catch (_: Throwable) { null }
+    val ok = j != null && j.optBoolean("success", false)
+    val data = j?.optJSONObject("data")
+    if (code in 200..299 && ok && data != null && idOf(data) > 0) { done(at, data, "http"); return }
+    val msg = j?.optString("message")?.ifEmpty { j.optString("error") } ?: ""
+    when {
+      code == 401 -> { authWaitUntil[at.account] = now() + 10000; transient(at, "http_401", offline = false, auth = true) }
+      code == 429 -> {
+        val ra = (data?.optDouble("retry_after", 0.0) ?: 0.0).let { if (it > 0) it else (j?.optDouble("retry_after", 0.0) ?: 0.0) }
+        val ms = (if (ra > 0) ra * 1000 else 5000.0).toLong().coerceIn(1000, 65000)
+        transient(at, "rl429: " + msg.take(80), offline = false, fixedMs = ms)
+      }
+      code >= 500 || code == 408 || code == 425 || code == 0 -> transient(at, "http_$code", offline = false)
+      code in 400..499 -> hard(at, "http_$code " + msg.take(120))
+      code in 200..299 && j != null && HARD_RE.containsMatchIn(msg) -> hard(at, msg.take(120))
+      else -> transient(at, "http_$code " + msg.take(80), offline = false)
+    }
+  }
+
+  private fun findItem(a: String, cmi: String): JSONObject? {
+    val items = try { storage.all(a) } catch (_: Throwable) { return null }
+    for (i in 0 until items.length()) { val it = items.optJSONObject(i) ?: continue; if (it.optString("cmi") == cmi) return it }
+    return null
+  }
+
+  private fun done(at: Attempt, server: JSONObject, via: String) {
+    inflight.remove(at.cmi)
+    at.timer?.cancel(false)
+    try { storage.sent(at.account, at.cmi, at.conv, server) } catch (_: Throwable) {}
+    bump("sent")
+    emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "sent", "via" to via, "server" to server.toString()))
+    pumpNow()
+  }
+
+  private fun hard(at: Attempt, err: String) {
+    inflight.remove(at.cmi)
+    storage.patch(at.account, at.cmi, JSONObject().put("state", "failed").put("err", err))
+    try { storage.failed(at.account, at.cmi, at.conv) } catch (_: Throwable) {}
+    bump("hardFails")
+    emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "failed", "kind" to "hard", "err" to err))
+    pumpNow()
+  }
+
+  private fun transient(at: Attempt, err: String, offline: Boolean, auth: Boolean = false, fixedMs: Long = -1) {
+    inflight.remove(at.cmi)
+    val row = findItem(at.account, at.cmi)
+    val tries = (row?.optLong("tries") ?: 0L) + (if (offline) 0 else 1)
+    val delay = when {
+      fixedMs >= 0 -> fixedMs
+      offline -> 30000L
+      else -> { val b = BACKOFF_MS[minOf((tries - 1).toInt().coerceAtLeast(0), BACKOFF_MS.size - 1)]; (b * (0.8 + Math.random() * 0.4)).toLong() }
+    }
+    storage.patch(at.account, at.cmi, JSONObject().put("state", "queued").put("tries", tries).put("next_at", now() + delay).put("err", err))
+    bump(if (offline) "offlineRetries" else "transient")
+    emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "queued", "tries" to tries, "err" to err, "retryInMs" to delay))
+    if (auth) emit(mapOf("account" to at.account, "state" to "auth_needed"))
+    pumpNow()
+  }
+
+  // ─── mídia: upload único (Rust /api/rust/upload) e depois chat_send ─────
+
+  private fun startUpload(a: String, it: JSONObject) {
+    val cmi = it.optString("cmi"); val conv = it.optString("conv")
+    val up = parseObj(it.opt("up"))
+    val path = it.optString("file").removePrefix("file://")
+    val f = File(path)
+    if (path.isEmpty() || !f.exists()) {
+      val at = Attempt(a, cmi, conv, "upload"); inflight[cmi] = at
+      hard(at, "no_local_file"); return
+    }
+    val c = credsFor(a)
+    if (c == null) { authWaitUntil[a] = now() + 15000; storage.patch(a, cmi, JSONObject().put("next_at", now() + 15000)); emit(mapOf("account" to a, "state" to "auth_needed")); return }
+    val at = Attempt(a, cmi, conv, "upload")
+    uploads[cmi] = at
+    emit(mapOf("account" to a, "cmi" to cmi, "conv" to conv, "state" to "uploading"))
+    val base = baseOverride ?: up.optString("base").let { if (isUsableBase(it)) it.trimEnd('/') else c.base }
+    val name = up.optString("filename").ifEmpty { f.name }
+    val mime = up.optString("mime").ifEmpty { "application/octet-stream" }
+    val mb = MultipartBody.Builder().setType(MultipartBody.FORM)
+      .addFormDataPart("file", name, f.asRequestBody(mime.toMediaType()))
+      .addFormDataPart("user_email", up.optString("user_email").ifEmpty { a })
+      .addFormDataPart("context", up.optString("context").ifEmpty { "chat" })
+      .addFormDataPart("filename", name)
+      .build()
+    val req = Request.Builder().url("$base/api/rust/upload").post(mb).header("Authorization", "Bearer " + c.token).build()
+    bump("uploads")
+    val call = upHttp.newCall(req)
+    at.call = call
+    call.enqueue(object : Callback {
+      override fun onFailure(call: Call, e: IOException) { post { if (uploads[cmi] === at) uploadDone(at, 0, "") } }
+      override fun onResponse(call: Call, response: Response) {
+        val code = response.code
+        val text = try { response.body?.string() ?: "" } catch (_: Throwable) { "" } finally { try { response.close() } catch (_: Throwable) {} }
+        post { if (uploads[cmi] === at) uploadDone(at, code, text) }
+      }
+    })
+  }
+
+  /** Também chamado pelo iOS-equivalente (sessão em 2º plano) — aqui só Android/JVM. */
+  private fun uploadDone(at: Attempt, code: Int, text: String) {
+    uploads.remove(at.cmi)
+    val j = try { JSONObject(text) } catch (_: Throwable) { null }
+    val cdn = j?.optString("cdn_url") ?: ""
+    if (code in 200..299 && j != null && j.optBoolean("success", false) && cdn.isNotEmpty()) {
+      val row = findItem(at.account, at.cmi) ?: return
+      val body = parseObj(row.opt("body"))
+      val up = parseObj(row.opt("up"))
+      body.put("file_url", cdn)
+      body.put("file_name", j.optString("filename").ifEmpty { up.optString("filename") })
+      if (j.has("size")) body.put("file_size", j.optLong("size"))
+      storage.patch(at.account, at.cmi, JSONObject().put("body", body.toString()).put("state", "queued").put("next_at", 0).put("err", JSONObject.NULL))
+      bump("uploaded")
+      emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "uploaded", "cdn_url" to cdn))
+      pumpNow(); return
+    }
+    if (code == 413 || code == 415) {
+      inflight[at.cmi] = at
+      hard(at, "upload_http_$code"); return
+    }
+    val row = findItem(at.account, at.cmi)
+    val tries = (row?.optLong("tries") ?: 0L) + (if (net.online()) 1 else 0)
+    val delay = if (!net.online()) 30000L else BACKOFF_MS[minOf((tries - 1).toInt().coerceAtLeast(0), BACKOFF_MS.size - 1)]
+    storage.patch(at.account, at.cmi, JSONObject().put("state", "uploading").put("tries", tries).put("next_at", now() + delay).put("err", "upload_http_$code"))
+    if (code == 401) emit(mapOf("account" to at.account, "state" to "auth_needed"))
+    bump("uploadRetries")
+    pumpNow()
+  }
+}

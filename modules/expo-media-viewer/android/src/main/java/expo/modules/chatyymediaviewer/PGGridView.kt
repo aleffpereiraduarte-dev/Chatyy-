@@ -263,12 +263,16 @@ class PGGridView(context: Context, appContext: AppContext) : ExpoView(context, a
   // ════════════════════════════════════════════════════════════════════
   // Props
   // ════════════════════════════════════════════════════════════════════
-  fun setTheme(m: Map<String, Any?>?) { themeRaw = m; applyTheme() }
-  fun setDark(v: Boolean?) { darkHint = v; applyTheme() }
+  // [2026-10-15 photos-flicker] props idempotentes: valor igual → nada (sem rebind da grade).
+  fun setTheme(m: Map<String, Any?>?) { if (m == themeRaw) return; themeRaw = m; applyTheme() }
+  fun setDark(v: Boolean?) { if (v == darkHint) return; darkHint = v; applyTheme() }
   fun setLocale(v: String?) { if (v != localeTag) { localeTag = v; rebuildFmt() } }
   fun setLabels(m: Map<String, Any?>?) {
-    labelToday = (m?.get("today") as? String) ?: "Hoje"
-    labelYesterday = (m?.get("yesterday") as? String) ?: "Ontem"
+    val nt = (m?.get("today") as? String) ?: "Hoje"
+    val ny = (m?.get("yesterday") as? String) ?: "Ontem"
+    if (nt == labelToday && ny == labelYesterday) return
+    labelToday = nt
+    labelYesterday = ny
     rebuildFmt()
   }
   fun setInsets(top: Double?, bottom: Double?) {
@@ -289,7 +293,7 @@ class PGGridView(context: Context, appContext: AppContext) : ExpoView(context, a
     backupEnabled = nv
     refreshVisibleCells()
   }
-  fun setShowBadges(v: Boolean?) { showBadges = v ?: true; refreshVisibleCells() }
+  fun setShowBadges(v: Boolean?) { val nv = v ?: true; if (nv == showBadges) return; showBadges = nv; refreshVisibleCells() }
   fun setZoomLevels(raw: List<*>?) {
     levels = PGZoomLevel.parse(raw)
     level = level.coerceIn(0, levels.size - 1)
@@ -386,8 +390,18 @@ class PGGridView(context: Context, appContext: AppContext) : ExpoView(context, a
       }
       main.post {
         if (destroyed || seq != mergeSeq) return@post
+        // [2026-10-15 photos-flicker] mesma lista (aviso do MediaStore sem mudança real,
+        // nuvem re-enviada, URL assinada renovada) → só troca os dados e os selos.
+        val old = items
+        var same = rowCount > 0 && old.size == merged.size
+        if (same) {
+          for (i in merged.indices) {
+            val a = old[i]; val b = merged[i]
+            if (a.key != b.key || a.time != b.time || a.video != b.video) { same = false; break }
+          }
+        }
         items = merged
-        applyRowsKeepingAnchor()
+        if (same) refreshVisibleCells() else applyRowsKeepingAnchor()
         var lc = 0
         for (it in merged) if (it.local) lc++
         onReady(mapOf("total" to merged.size, "local" to lc, "cloud" to merged.size - lc, "permission" to permission))

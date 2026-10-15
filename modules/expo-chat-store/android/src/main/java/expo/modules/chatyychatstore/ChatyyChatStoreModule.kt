@@ -21,7 +21,31 @@ class ChatyyChatStoreModule : Module() {
 
     // 2 = [fase 1.5/2] foto da home + pré-carga no toque + tabelas canônicas
     //     (applyBatchAsync) + operações na foto + messagesSync.
-    Function("apiVersion") { 2 }
+    // 3 = [fase 2b/4] transporte nativo grava direto (ingestFrames), perfil de
+    //     texto p/ linhas nativas (setThreadProfile), foto "desatualizada"
+    //     (threadStaleSync), tabela outbox (fila de envio nativa).
+    Function("apiVersion") { 3 }
+
+    Function("setThreadProfile") { account: String, conv: String, json: String ->
+      store()?.setThreadProfile(account, conv, json)
+      Unit
+    }
+
+    Function("clearThreadProfiles") { account: String ->
+      store()?.clearThreadProfiles(account)
+      Unit
+    }
+
+    Function("threadStaleSync") { account: String, conv: String ->
+      (store()?.threadStaleSync(account, conv) ?: 0L).toDouble()
+    }
+
+    /** Teste/diagnóstico: aplica frames crus do hub como o transporte faria. */
+    AsyncFunction("ingestFramesAsync") { account: String, frames: List<String>, promise: Promise ->
+      val s = store()
+      if (s == null) promise.resolve(mapOf("ok" to 0, "why" to "nostore"))
+      else s.ingestFrames(account, frames) { out -> promise.resolve(out) }
+    }
 
     AsyncFunction("applyBatchAsync") { account: String, json: String, promise: Promise ->
       val s = store()

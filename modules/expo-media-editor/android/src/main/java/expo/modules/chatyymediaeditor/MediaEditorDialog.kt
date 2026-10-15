@@ -72,6 +72,9 @@ class MEOptions(
   val allowTrim: Boolean,
   val allowMute: Boolean,
   val allowCover: Boolean,
+  // [2026-10-15 native-onboarding] cropShape 'circle' (avatar): 1:1 travado, máscara
+  // circular, abre direto no recorte e o check do recorte conclui o editor.
+  val circleCrop: Boolean = false,
 )
 
 /**
@@ -644,6 +647,11 @@ class MediaEditorDialog(
         baseBitmap = b
         refreshDisplayBitmap()
         buildPhotoPanels()
+        // [2026-10-15 native-onboarding] avatar: abre direto no recorte circular
+        if (opts.circleCrop && opts.allowCrop) {
+          canvasView?.circleMask = true
+          setTool(T_CROP)
+        }
       }
     }.start()
   }
@@ -740,6 +748,7 @@ class MediaEditorDialog(
       rr.setPadding(dp(10f), dp(8f), dp(10f), dp(4f))
       ratioRow = rr
       sc.addView(rr)
+      if (opts.circleCrop) sc.visibility = View.GONE // 1:1 travado (avatar)
       box.addView(sc, LinearLayout.LayoutParams(-1, -2))
       val actions = LinearLayout(context)
       actions.orientation = LinearLayout.HORIZONTAL
@@ -752,7 +761,7 @@ class MediaEditorDialog(
       reset.setOnClickListener { if (!busy) resetCrop() }
       actions.addView(reset)
       actions.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-      actions.addView(iconBtn("check", L("done", "Concluir"), 24f) { setTool(T_NONE) })
+      actions.addView(iconBtn("check", L("done", "Concluir"), 24f) { if (opts.circleCrop) { if (!busy) export("done") } else setTool(T_NONE) })
       box.addView(actions, LinearLayout.LayoutParams(-1, -2))
       panel.addView(box, FrameLayout.LayoutParams(-1, -2))
       paintRatioRow()
@@ -882,6 +891,7 @@ class MediaEditorDialog(
       cv.editCrop.set(st.crop)
       ratioSel = "free"
       cv.cropRatio = 0f
+      if (opts.circleCrop) lockSquareCrop(cv, keepIfSquare = true)
       paintRatioRow()
     }
     bottomBar.visibility = if (t == T_NONE || t == T_FILTER) View.VISIBLE else View.GONE
@@ -912,10 +922,24 @@ class MediaEditorDialog(
     cv.editCrop.set(0f, 0f, 1f, 1f)
     cv.cropRatio = 0f
     ratioSel = "free"
-    paintRatioRow()
     refreshDisplayBitmap()
+    if (opts.circleCrop) lockSquareCrop(cv, keepIfSquare = false)
+    paintRatioRow()
     cv.invalidate()
     changed()
+  }
+
+  /** [2026-10-15 native-onboarding] cropShape 'circle': trava 1:1 em pixels. */
+  private fun lockSquareCrop(cv: PhotoCanvasView, keepIfSquare: Boolean) {
+    ratioSel = "1:1"
+    val bm = cv.bitmap
+    val e = cv.editCrop
+    if (keepIfSquare && bm != null && e.height() > 0f) {
+      val pw = e.width() * bm.width
+      val ph = e.height() * bm.height
+      if (ph > 0f && abs(pw / ph - 1f) < 0.01f) { cv.cropRatio = 1f; cv.invalidate(); return }
+    }
+    cv.applyRatio(1f)
   }
 
   private fun addSticker(s: String) {
@@ -1331,6 +1355,23 @@ class MediaEditorDialog(
   private fun export(action: String) {
     if (busy) return
     if (tool == T_CROP) setTool(T_NONE)
+    if (opts.circleCrop && !opts.isVideo) {
+      // garante recorte quadrado (px) mesmo se um desfazer trouxe moldura não-1:1
+      val bm = canvasView?.bitmap
+      val c = st.crop
+      if (bm != null && c.width() > 0f && c.height() > 0f) {
+        val bw = bm.width.toFloat()
+        val bh = bm.height.toFloat()
+        val side = min(c.width() * bw, c.height() * bh)
+        val w = min(1f, side / bw)
+        val h = min(1f, side / bh)
+        if (abs(c.width() - w) > 1e-4f || abs(c.height() - h) > 1e-4f) {
+          val x = min(max(0f, c.centerX() - w / 2f), 1f - w)
+          val y = min(max(0f, c.centerY() - h / 2f), 1f - h)
+          st.crop = RectF(x, y, x + w, y + h)
+        }
+      }
+    }
     if (textOverlay?.visibility == View.VISIBLE) closeTextEditor(commit = true)
     hideKeyboard()
     if (opts.isVideo) exportVideo(action) else exportPhoto(action)

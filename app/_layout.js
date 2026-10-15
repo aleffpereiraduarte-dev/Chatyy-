@@ -2146,6 +2146,8 @@ export default function RootLayout() {
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
                   })} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
+                  {/* [2026-10-15 native-group-create] Novo grupo/canal — passo de detalhes (lista agrupada nativa). */}
+                  <Stack.Screen name="group-new-details" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
                   <Stack.Screen name="locked-chats" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 more-native] */ }} />
                   <Stack.Screen name="saved-messages" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="call-schedule" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

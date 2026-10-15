@@ -38,6 +38,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import { VOICE_OTP_ENABLED } from '../constants/featureFlags';
 import { markFreshSignup } from '../services/firstRun'; // [2026-10-11 funnel-qa]
+import NativeOnboardingGate from '../components/nativeOnboarding/NativeOnboardingGate'; // [2026-10-15 native-onboarding]
+import { isNativeOnboardingOn } from '../components/nativeOnboarding/flag';
 // [2026-10-07 signup-ux] keyboard-controller aware container (falls back to RN
 // KeyboardAvoidingView when KC native is absent / on web), draft resume,
 // smarter phone/handle/password helpers.
@@ -57,7 +59,30 @@ const { width: SCREEN_W } = Dimensions.get('window');
 // Trimmed welcome carousel — Instagram-style, just 2 slides (first + last).
 // IG signup has zero intro carousel; we keep just enough to convey brand +
 // the headline value prop without burning 3 taps on filler.
+// [2026-10-15 native-onboarding] Fluxo novo (components/nativeOnboarding) com
+// kill switch globalThis.__chatyy_native_onboarding; desligado / binário antigo /
+// crash de render → este fluxo legado, idêntico ao de antes.
 export default function SignupPhone() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const [nativeOn] = useState(() => isNativeOnboardingOn());
+  if (!nativeOn) return <SignupPhoneLegacy />;
+  return (
+    <NativeOnboardingGate
+      entry="phone"
+      params={params || {}}
+      onExitToLogin={() => {
+        try {
+          if (typeof router.canGoBack === 'function' && router.canGoBack()) router.back();
+          else router.replace('/login');
+        } catch { try { router.replace('/login'); } catch {} }
+      }}
+      fallback={() => <SignupPhoneLegacy />}
+    />
+  );
+}
+
+function SignupPhoneLegacy() {
   const router = useRouter();
   // Login forwards an unknown phone to /signup-phone?phone=...&country=...
   // so user goes straight from "this number isn't on Chatyy" to creating an

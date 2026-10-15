@@ -10,8 +10,9 @@ public class ChatyyMediaEditorModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyMediaEditor")
 
+    // 2 = cropShape 'circle' (recorte circular p/ foto de grupo/perfil)
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     AsyncFunction("open") { (options: [String: Any], promise: Promise) in

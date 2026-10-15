@@ -24,7 +24,7 @@ import CryptoKit
 // (DESIGN §4) no MESMO arquivo, com migração por user_version.
 public final class ChatyyStoreDB {
   public static let shared = ChatyyStoreDB()
-  public static let schemaVersion: Int32 = 2
+  public static let schemaVersion: Int32 = 3
   /// Teto de conversas com foto por conta (as menos recentes saem).
   static let maxThreads = 400
 
@@ -191,7 +191,14 @@ public final class ChatyyStoreDB {
         scope TEXT PRIMARY KEY, pts INTEGER, last_id INTEGER, v TEXT, updated_at INTEGER
       );
       """
-    let ddl = "BEGIN;" + (v < 1 ? v1 : "") + v2 + "PRAGMA user_version = \(Self.schemaVersion);COMMIT;"
+    // [2026-10-15 fase 2b/4] fila de envio NATIVA (mesmo DDL do Kotlin OUTBOX_DDL)
+    let v3 = """
+      CREATE TABLE IF NOT EXISTS outbox (cmi TEXT PRIMARY KEY, conv TEXT NOT NULL, seq INTEGER NOT NULL,
+        kind TEXT NOT NULL, body TEXT NOT NULL, frame TEXT, file TEXT, up TEXT, state TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
+        next_at INTEGER NOT NULL DEFAULT 0, err TEXT, server TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conv, seq);
+      """
+    let ddl = "BEGIN;" + (v < 1 ? v1 : "") + v2 + v3 + "PRAGMA user_version = \(Self.schemaVersion);COMMIT;"
     if exec(db, ddl) != SQLITE_OK { _ = exec(db, "ROLLBACK;"); return false }
     return true
   }
@@ -270,6 +277,8 @@ public final class ChatyyStoreDB {
         } else { ok = false }
         sqlite3_finalize(st); st = nil
       }
+      // [2b] a lista gravou a foto com o que a tela tem → deixa de estar desatualizada
+      if ok { run(db, "DELETE FROM meta WHERE k = ?;", ["stale:" + conv]) }
       rc = exec(db, ok ? "COMMIT;" : "ROLLBACK;")
       if isCorrupt(rc) { drop(account); return }
       saves += 1
@@ -542,11 +551,15 @@ public final class ChatyyStoreDB {
 
   private func applyBatchNow(_ account: String, _ json: String) -> [String: Any] {
     guard let b = Self.jsonObject(json) as? [String: Any] else { return ["ok": 0, "why": "json"] }
+    return applyBatchObj(account, b)
+  }
+
+  private func applyBatchObj(_ account: String, _ b: [String: Any]) -> [String: Any] {
     guard let db = open(account) else { return ["ok": 0, "why": "open"] }
     var rc = exec(db, "BEGIN IMMEDIATE;")
     if rc != SQLITE_OK { if isCorrupt(rc) { drop(account) }; return ["ok": 0, "why": "begin"] }
     var touched = Set<String>()
-    var nMsg = 0, nThreadOps = 0
+    var nMsg = 0, nThreadOps = 0, nNative = 0, nStale = 0
     let now = nowMs()
     for c in (b["conversations"] as? [[String: Any]]) ?? [] {
       let id = Self.str(c["id"]); if id.isEmpty { continue }
@@ -607,6 +620,11 @@ public final class ChatyyStoreDB {
         nThreadOps += 1; touched.insert(conv); dropCached(account, conv)
       }
     }
+    // ─── [2b] chaves do transporte nativo (ChatyyStoreIngest.translate) ───
+    if b["conv_types"] != nil || b["self_reads"] != nil || b["peer_reads"] != nil || b["delivs"] != nil || b["touch"] != nil {
+      let r = applyIngestKeys(account, db, b, &touched)
+      nNative += r.0; nStale += r.1
+    }
     // poda: só as N mensagens mais novas por conversa tocada
     for conv in touched {
       run(db, "DELETE FROM messages WHERE conv = ? AND id < COALESCE((SELECT id FROM messages WHERE conv = ? ORDER BY id DESC LIMIT 1 OFFSET \(Self.maxMessagesPerConv - 1)), 0);", [conv, conv])
@@ -623,7 +641,7 @@ public final class ChatyyStoreDB {
       run(db, "DELETE FROM reactions WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.conv = reactions.conv AND m.id = reactions.msg_id);", [])
     }
     notify(account, touched)
-    return ["ok": 1, "messages": nMsg, "threads": nThreadOps, "convs": touched.count]
+    return ["ok": 1, "messages": nMsg, "threads": nThreadOps, "convs": touched.count, "nativeRows": nNative, "stale": nStale]
   }
 
   /// Operações na foto de uma conversa (dentro da transação do lote). Só mexe se
@@ -659,8 +677,30 @@ public final class ChatyyStoreDB {
       switch Self.str(op["op"]) {
       case "append":
         let after = Self.str(op["after"])
-        if !after.isEmpty && keys.last != after { break opsLoop } // foto não está onde o JS acha → para
-        for r in (op["rows"] as? [[String: Any]]) ?? [] {
+        let ra = (op["rows"] as? [[String: Any]]) ?? []
+        if !after.isEmpty && keys.last != after {
+          // [2b] o transporte nativo já anexou estas linhas (texto simples) → o JS
+          // chega depois com a linha "oficial": troca no lugar. Lacuna → apaga a
+          // foto (o JS repinta ao abrir). Outro caso → para.
+          let all = !ra.isEmpty && keys.contains(after) && ra.allSatisfy { r in let k = Self.str(r["k"]); return !k.isEmpty && keys.contains(k) }
+          if !all {
+            if keys.contains(after) {
+              run(db, "DELETE FROM thread_rows WHERE conv = ?;", [conv])
+              run(db, "DELETE FROM thread_snap WHERE conv = ?;", [conv])
+              run(db, "DELETE FROM meta WHERE k = ?;", ["stale:" + conv])
+              return true
+            }
+            break opsLoop
+          }
+          for var r in ra {
+            let k = Self.str(r["k"])
+            // mantém o recibo que a foto já subiu (✓✓/azul) se o JS montou com menos
+            if let old = rows[k], old["st"] != nil, r["st"] != nil, Self.i64(old["st"]) > Self.i64(r["st"]) { r["st"] = old["st"] }
+            rows[k] = r; dirty.insert(k); changed = true
+          }
+          continue
+        }
+        for r in ra {
           let k = Self.str(r["k"]); if k.isEmpty { continue }
           if !keys.contains(k) { keys.append(k) }
           rows[k] = r; dirty.insert(k); removed.remove(k); changed = true
@@ -681,6 +721,20 @@ public final class ChatyyStoreDB {
           rows.removeValue(forKey: k); removed.insert(k); dirty.remove(k)
         }
         rows[nk] = r; dirty.insert(nk); changed = true
+      // [fase 4] fila nativa: ✓ (só sobe de relógio/falha) / "!" (só de relógio)
+      case "ack", "fail":
+        let k = Self.str(op["k"])
+        guard var r = rows[k] else { continue }
+        let cur = r["st"] != nil ? Self.i64(r["st"]) : 0
+        if Self.str(op["op"]) == "ack" {
+          if cur >= 1 { continue }
+          r["st"] = NSNumber(value: 1)
+          let id = Self.str(op["id"]); if !id.isEmpty { r["id"] = id }
+        } else {
+          if cur != 0 { continue }
+          r["st"] = NSNumber(value: -1)
+        }
+        rows[k] = r; dirty.insert(k); changed = true
       case "stUpTo":
         let upTo = Self.i64(op["id"]); let nst = Self.i64(op["st"])
         if upTo <= 0 || nst <= 0 { continue }
@@ -706,6 +760,11 @@ public final class ChatyyStoreDB {
     }
     run(db, "UPDATE thread_snap SET keys = ?, newest = ?, n = ?, updated_at = ? WHERE conv = ?;",
         [Self.jsonString(keys) ?? "[]", keys.last ?? "", Int64(keys.count), nowMs(), conv])
+    // [2b] foto alcançou a mensagem que a deixou desatualizada → limpa a marca
+    if let stale = Int64(metaGet(db, "stale:" + conv) ?? "") {
+      let newestId = keys.last.flatMap { rows[$0] }.map { Int64(Self.str($0["id"])) ?? 0 } ?? 0
+      if newestId >= stale { run(db, "DELETE FROM meta WHERE k = ?;", ["stale:" + conv]) }
+    }
     return true
   }
 
@@ -818,6 +877,314 @@ public final class ChatyyStoreDB {
       }
       sqlite3_finalize(st)
       return s
+    }
+  }
+
+  // MARK: [2026-10-15 fase 2b] transporte WS nativo grava direto (sem JS)
+
+  private func metaGet(_ db: OpaquePointer, _ k: String) -> String? {
+    var st: OpaquePointer?
+    var out: String?
+    if sqlite3_prepare_v2(db, "SELECT v FROM meta WHERE k = ?;", -1, &st, nil) == SQLITE_OK {
+      bind(st, 1, k)
+      if sqlite3_step(st) == SQLITE_ROW { out = colText(st, 0) }
+    }
+    sqlite3_finalize(st)
+    return out
+  }
+
+  private func metaSet(_ db: OpaquePointer, _ k: String, _ v: String?) {
+    if let v = v { run(db, "INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?);", [k, v]) }
+    else { run(db, "DELETE FROM meta WHERE k = ?;", [k]) }
+  }
+
+  /// Frames crus do hub (pré-filtrados por ChatyyStoreIngest.wants) → lote numa
+  /// transação, na fila do store. Chamado pelo expo-chat-transport.
+  public func ingestFrames(account: String, frames: [String], done: (([String: Any]) -> Void)? = nil) {
+    if account.isEmpty || frames.isEmpty { return }
+    q.async { [self] in
+      var out: [String: Any] = ["ok": 1, "messages": 0]
+      if let b = ChatyyStoreIngest.translate(me: Self.normAccount(account), frames: frames) { out = applyBatchObj(account, b) }
+      done?(out)
+    }
+  }
+
+  /// Perfil de formato p/ o RowBuilder nativo de texto ("" = remove).
+  public func setThreadProfile(account: String, conv: String, json: String) {
+    if account.isEmpty || conv.isEmpty { return }
+    q.async { [self] in
+      guard let db = open(account) else { return }
+      metaSet(db, "tp:" + conv, json.isEmpty ? nil : json)
+    }
+  }
+
+  public func clearThreadProfiles(account: String) {
+    if account.isEmpty { return }
+    q.async { [self] in
+      guard let db = open(account) else { return }
+      run(db, "DELETE FROM meta WHERE k LIKE 'tp:%';", [])
+    }
+  }
+
+  /// id da mensagem que deixou a foto desatualizada (0 = em dia). Síncrono.
+  public func threadStaleSync(account: String, conv: String) -> Int64 {
+    if account.isEmpty || conv.isEmpty { return 0 }
+    return q.sync { [self] in
+      guard let db = open(account) else { return 0 }
+      return Int64(metaGet(db, "stale:" + conv) ?? "") ?? 0
+    }
+  }
+
+  private func snapKeys(_ db: OpaquePointer, _ conv: String) -> (String, [String])? {
+    var st: OpaquePointer?
+    var rev: String?, sk = ""
+    if sqlite3_prepare_v2(db, "SELECT rev, keys FROM thread_snap WHERE conv = ?;", -1, &st, nil) == SQLITE_OK {
+      bind(st, 1, conv)
+      if sqlite3_step(st) == SQLITE_ROW { rev = colText(st, 0); sk = colText(st, 1) }
+    }
+    sqlite3_finalize(st)
+    guard let r = rev else { return nil }
+    return (r, (Self.jsonObject(sk) as? [String]) ?? [])
+  }
+
+  private func tailOf(_ db: OpaquePointer, _ conv: String, _ keys: [String]) -> ChatyyStoreIngest.Tail? {
+    guard let k = keys.last else { return nil }
+    var st: OpaquePointer?
+    var rowS = ""
+    if sqlite3_prepare_v2(db, "SELECT row FROM thread_rows WHERE conv = ? AND k = ?;", -1, &st, nil) == SQLITE_OK {
+      bind(st, 1, conv); bind(st, 2, k)
+      if sqlite3_step(st) == SQLITE_ROW { rowS = colText(st, 0) }
+    }
+    sqlite3_finalize(st); st = nil
+    guard let row = Self.jsonObject(rowS) as? [String: Any], Self.str(row["kind"]) == "msg", let id = Int64(Self.str(row["id"])) else { return nil }
+    var out: ChatyyStoreIngest.Tail?
+    if sqlite3_prepare_v2(db, "SELECT created_at, sender, type FROM messages WHERE conv = ? AND id = ?;", -1, &st, nil) == SQLITE_OK {
+      bind(st, 1, conv); sqlite3_bind_int64(st, 2, id)
+      if sqlite3_step(st) == SQLITE_ROW {
+        let ts = sqlite3_column_int64(st, 0)
+        let ty = colText(st, 2)
+        out = ChatyyStoreIngest.Tail(k: k, id: id, sender: colText(st, 1).lowercased(), ts: ts, type: ty.isEmpty ? "text" : ty, day: ChatyyStoreIngest.dayKey(ts))
+      }
+    }
+    sqlite3_finalize(st)
+    return out
+  }
+
+  private func convType(_ db: OpaquePointer, _ conv: String, _ b: [String: Any]) -> String {
+    if let t = (b["conv_types"] as? [String: Any])?[conv] as? String, !t.isEmpty { return t }
+    var st: OpaquePointer?
+    var t = ""
+    if sqlite3_prepare_v2(db, "SELECT type FROM conversations WHERE id = ?;", -1, &st, nil) == SQLITE_OK {
+      bind(st, 1, conv)
+      if sqlite3_step(st) == SQLITE_ROW { t = colText(st, 0) }
+    }
+    sqlite3_finalize(st)
+    return t
+  }
+
+  private func hasGap(_ db: OpaquePointer, _ conv: String, _ from: Int64, _ to: Int64) -> Bool {
+    var st: OpaquePointer?
+    var found = false
+    if sqlite3_prepare_v2(db, "SELECT 1 FROM messages WHERE conv = ? AND id > ? AND id < ? LIMIT 1;", -1, &st, nil) == SQLITE_OK {
+      bind(st, 1, conv); sqlite3_bind_int64(st, 2, from); sqlite3_bind_int64(st, 3, to)
+      found = sqlite3_step(st) == SQLITE_ROW
+    }
+    sqlite3_finalize(st)
+    return found
+  }
+
+  /// Recibos/leituras + linhas nativas de texto + marca "foto desatualizada". (nativas, stale)
+  private func applyIngestKeys(_ account: String, _ db: OpaquePointer, _ b: [String: Any], _ touched: inout Set<String>) -> (Int, Int) {
+    let me = Self.normAccount(account)
+    var nNative = 0, nStale = 0
+    let now = nowMs()
+    for r in (b["self_reads"] as? [[String: Any]]) ?? [] {
+      let conv = Self.str(r["conv"]); let upTo = Self.i64(r["upTo"]); if conv.isEmpty || upTo <= 0 { continue }
+      run(db, "UPDATE conversations SET unread = 0, read_watermark = MAX(COALESCE(read_watermark,0), ?) WHERE id = ?;", [upTo, conv])
+      run(db, "INSERT OR IGNORE INTO cursors (scope, pts, last_id, v, updated_at) VALUES (?,0,0,'',0);", ["read:" + conv])
+      run(db, "UPDATE cursors SET last_id = MAX(COALESCE(last_id,0), ?), updated_at = ? WHERE scope = ?;", [upTo, now, "read:" + conv])
+      touched.insert(conv)
+    }
+    for r in (b["peer_reads"] as? [[String: Any]]) ?? [] {
+      let conv = Self.str(r["conv"]); let upTo = Self.i64(r["upTo"]); if conv.isEmpty || upTo <= 0 { continue }
+      let scope = "peer_read:\(conv):" + Self.str(r["email"])
+      run(db, "INSERT OR IGNORE INTO cursors (scope, pts, last_id, v, updated_at) VALUES (?,0,0,'',0);", [scope])
+      run(db, "UPDATE cursors SET last_id = MAX(COALESCE(last_id,0), ?), updated_at = ? WHERE scope = ?;", [upTo, now, scope])
+      // grupo: leitura de UM membro não é "lido" → só cursor
+      if convType(db, conv, b) != "direct" { continue }
+      run(db, "INSERT OR IGNORE INTO receipts (conv, msg_id, delivered_at, read_at) SELECT conv, id, 0, 0 FROM messages WHERE conv = ? AND sender = ? AND id <= ?;", [conv, me, upTo])
+      run(db, "UPDATE receipts SET read_at = MAX(COALESCE(read_at,0), ?), delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id <= ? AND msg_id IN (SELECT id FROM messages WHERE conv = ? AND sender = ?);",
+          [now, now, conv, upTo, conv, me])
+      if applyThreadOps(db, conv, "", [["op": "stUpTo", "id": NSNumber(value: upTo), "st": 3]]) { dropCached(account, conv) }
+      touched.insert(conv)
+    }
+    for r in (b["delivs"] as? [[String: Any]]) ?? [] {
+      let conv = Self.str(r["conv"]); if conv.isEmpty { continue }
+      let at = Self.i64(r["at"])
+      var mx: Int64 = 0
+      for x in (r["ids"] as? [Any]) ?? [] {
+        let id = Self.i64(x); if id <= 0 { continue }
+        mx = max(mx, id)
+        run(db, "INSERT OR IGNORE INTO receipts (conv, msg_id, delivered_at, read_at) VALUES (?,?,0,0);", [conv, id])
+        run(db, "UPDATE receipts SET delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id = ?;", [at, conv, id])
+      }
+      if mx > 0 && convType(db, conv, b) == "direct",
+         applyThreadOps(db, conv, "", [["op": "stUpTo", "id": NSNumber(value: mx), "st": 2]]) { dropCached(account, conv) }
+      touched.insert(conv)
+    }
+    guard let touch = b["touch"] as? [[String: Any]] else { return (0, 0) }
+    let nowDay = ChatyyStoreIngest.dayKey(now)
+    var profiles: [String: ChatyyStoreIngest.TextProfile?] = [:]
+    for t in touch {
+      let conv = Self.str(t["conv"]); let id = Self.i64(t["id"])
+      guard let m = t["msg"] as? [String: Any], !conv.isEmpty, id > 0 else { continue }
+      guard let sk = snapKeys(db, conv) else { continue } // sem foto: nada a desatualizar
+      let srev = sk.0, keys = sk.1
+      let key = ChatyyStoreIngest.keyOf(m)
+      let isNew = Self.str(t["kind"]) == "new"
+      if isNew && keys.contains(key) { continue } // a foto já tem (JS anexou antes)
+      if !isNew {
+        // editada/apagada/reação: só importa se a mensagem está na foto
+        let cl = Self.str(m["client_message_id"])
+        let base = cl.isEmpty ? String(id) : "c:" + cl
+        if !keys.contains(base) && !keys.contains(base + "_d") { continue }
+      }
+      let already = Int64(metaGet(db, "stale:" + conv) ?? "")
+      if isNew && already == nil {
+        if profiles[conv] == nil {
+          let p = metaGet(db, "tp:" + conv).flatMap { Self.jsonObject($0) as? [String: Any] }.map { ChatyyStoreIngest.TextProfile($0) }
+          profiles[conv] = .some(p)
+        }
+        if let prof = profiles[conv] ?? nil, prof.rev == srev, let tail = tailOf(db, conv, keys), !hasGap(db, conv, tail.id, id),
+           let ops = ChatyyStoreIngest.textOps(prof, m, tail, nowDay), applyThreadOps(db, conv, srev, ops) {
+          dropCached(account, conv); touched.insert(conv); nNative += 1
+          continue
+        }
+      }
+      if already == nil || already! < id { metaSet(db, "stale:" + conv, String(id)) }
+      touched.insert(conv); nStale += 1
+    }
+    return (nNative, nStale)
+  }
+
+  // MARK: [2026-10-15 fase 4] fila de envio NATIVA (persistência)
+  // O motor (envio WS/HTTP, backoff, ordem, 2º plano) mora no expo-chat-transport
+  // (ChatOutbox.swift); aqui só a tabela `outbox`. Tudo síncrono na fila do store.
+
+  private static let outboxCols = ["cmi", "conv", "seq", "kind", "body", "frame", "file", "up", "state", "tries", "next_at", "err", "server", "created_at", "updated_at"]
+  private static let outboxIntCols: Set<String> = ["seq", "tries", "next_at", "created_at", "updated_at"]
+
+  /// Insere (idempotente por cmi). "new" ou o estado atual da linha existente ("" = falhou).
+  public func outboxPut(account: String, item: [String: Any]) -> String {
+    let cmi = Self.str(item["cmi"]), conv = Self.str(item["conv"])
+    if account.isEmpty || cmi.isEmpty || conv.isEmpty { return "" }
+    return q.sync { [self] in
+      guard let db = open(account) else { return "" }
+      var st: OpaquePointer?
+      var cur: String?
+      if sqlite3_prepare_v2(db, "SELECT state FROM outbox WHERE cmi = ?;", -1, &st, nil) == SQLITE_OK {
+        bind(st, 1, cmi)
+        if sqlite3_step(st) == SQLITE_ROW { cur = colText(st, 0) }
+      }
+      sqlite3_finalize(st)
+      if let c = cur { return c }
+      let now = nowMs()
+      let body: String = (item["body"] as? String) ?? Self.jsonString(item["body"] ?? [String: Any]()) ?? "{}"
+      let up: String? = (item["up"] as? String) ?? (item["up"].flatMap { Self.jsonString($0) })
+      var kind = Self.str(item["kind"]); if kind.isEmpty { kind = "text" }
+      var state = Self.str(item["state"]); if state.isEmpty { state = "queued" }
+      let created = Self.i64(item["created_at"])
+      let rc = run(db, "INSERT OR IGNORE INTO outbox (cmi, conv, seq, kind, body, frame, file, up, state, tries, next_at, err, server, created_at, updated_at) VALUES (?, ?, (SELECT COALESCE(MAX(seq),0)+1 FROM outbox), ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, ?, ?);",
+                   [cmi, conv, kind, body, item["frame"] as? String, item["file"] as? String, up, state, created > 0 ? created : now, now])
+      return rc == SQLITE_DONE ? "new" : ""
+    }
+  }
+
+  /// Todas as linhas, ordem seq.
+  public func outboxAll(account: String) -> [[String: Any]] {
+    if account.isEmpty { return [] }
+    return q.sync { [self] in
+      guard let db = open(account) else { return [] }
+      var st: OpaquePointer?
+      var out: [[String: Any]] = []
+      if sqlite3_prepare_v2(db, "SELECT \(Self.outboxCols.joined(separator: ",")) FROM outbox ORDER BY seq ASC;", -1, &st, nil) == SQLITE_OK {
+        while sqlite3_step(st) == SQLITE_ROW {
+          var o: [String: Any] = [:]
+          for (i, col) in Self.outboxCols.enumerated() {
+            let ci = Int32(i)
+            if sqlite3_column_type(st, ci) == SQLITE_NULL { continue }
+            o[col] = Self.outboxIntCols.contains(col) ? NSNumber(value: sqlite3_column_int64(st, ci)) : colText(st, ci)
+          }
+          out.append(o)
+        }
+      }
+      sqlite3_finalize(st)
+      return out
+    }
+  }
+
+  /// Atualiza colunas (state/tries/next_at/err/server/body/file/up). NSNull = NULL.
+  public func outboxPatch(account: String, cmi: String, patch: [String: Any]) {
+    if account.isEmpty || cmi.isEmpty { return }
+    q.sync { [self] in
+      guard let db = open(account) else { return }
+      var sets: [String] = [], args: [Any?] = []
+      for (k, v) in patch where ["state", "tries", "next_at", "err", "server", "body", "file", "up"].contains(k) {
+        sets.append("\(k) = ?")
+        if v is NSNull { args.append(nil) }
+        else if k == "tries" || k == "next_at" { args.append(NSNumber(value: Self.i64(v))) }
+        else if let s = v as? String { args.append(s) }
+        else { args.append(Self.jsonString(v) ?? Self.str(v)) }
+      }
+      if sets.isEmpty { return }
+      sets.append("updated_at = ?"); args.append(NSNumber(value: nowMs())); args.append(cmi)
+      run(db, "UPDATE outbox SET \(sets.joined(separator: ", ")) WHERE cmi = ?;", args)
+    }
+  }
+
+  public func outboxRemove(account: String, cmi: String) {
+    if account.isEmpty { return }
+    q.sync { [self] in if let db = open(account) { run(db, "DELETE FROM outbox WHERE cmi = ?;", [cmi]) } }
+  }
+
+  /// Volta 'sending' órfão (processo morreu no meio) p/ 'queued'.
+  @discardableResult
+  public func outboxRecover(account: String) -> Int {
+    if account.isEmpty { return 0 }
+    return q.sync { [self] in
+      guard let db = open(account) else { return 0 }
+      run(db, "UPDATE outbox SET state = 'queued', next_at = 0 WHERE state = 'sending';", [])
+      return Int(sqlite3_changes(db))
+    }
+  }
+
+  /// Servidor confirmou: linha 'sent' + mensagem canônica + bolha da foto (✓, id).
+  public func outboxSent(account: String, cmi: String, conv: String, server: [String: Any]) {
+    if account.isEmpty { return }
+    q.sync { [self] in
+      guard let db = open(account) else { return }
+      if exec(db, "BEGIN IMMEDIATE;") != SQLITE_OK { return }
+      let raw = Self.jsonString(server) ?? "{}"
+      run(db, "UPDATE outbox SET state = 'sent', server = ?, err = NULL, updated_at = ? WHERE cmi = ?;", [raw, nowMs(), cmi])
+      let id = Self.i64(server["id"])
+      if id > 0 {
+        var sender = Self.str(server["sender_email"]); if sender.isEmpty { sender = account }
+        var type = Self.str(server["type"]); if type.isEmpty { type = "text" }
+        run(db, "INSERT OR REPLACE INTO messages (conv, id, ckey, client_id, sender, type, created_at, edited_at, deleted, reply_to, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?);",
+            [conv, id, "c:" + cmi, cmi, sender.lowercased(), type, ChatyyStoreIngest.ms(server["created_at"]), Int64(0), Int64(0), Self.i64(server["reply_to_id"]), raw])
+        if applyThreadOps(db, conv, "", [["op": "ack", "k": "c:" + cmi, "id": String(id)]]) { dropCached(account, conv) }
+      }
+      if exec(db, "COMMIT;") != SQLITE_OK { _ = exec(db, "ROLLBACK;"); return }
+      notify(account, [conv])
+    }
+  }
+
+  /// Falha definitiva: bolha da foto com "!" (st -1).
+  public func outboxFailedMark(account: String, cmi: String, conv: String) {
+    if account.isEmpty { return }
+    q.sync { [self] in
+      guard let db = open(account) else { return }
+      if applyThreadOps(db, conv, "", [["op": "fail", "k": "c:" + cmi]]) { dropCached(account, conv); notify(account, [conv]) }
     }
   }
 

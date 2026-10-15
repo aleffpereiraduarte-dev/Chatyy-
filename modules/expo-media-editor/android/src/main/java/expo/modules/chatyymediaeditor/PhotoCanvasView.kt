@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.os.SystemClock
 import android.view.MotionEvent
@@ -61,6 +62,9 @@ class PhotoCanvasView(ctx: Context, private val host: Host) : View(ctx) {
   val editCrop = RectF(0f, 0f, 1f, 1f)
   /** 0 = livre; > 0 = proporção largura/altura em pixels. */
   var cropRatio = 0f
+  /** [2026-10-15 native-onboarding] cropShape 'circle': escurece fora do círculo inscrito. */
+  var circleMask = false
+  private val circlePath = Path()
 
   private val density = resources.displayMetrics.density
   private val bmPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -140,19 +144,30 @@ class PhotoCanvasView(ctx: Context, private val host: Host) : View(ctx) {
   private fun drawCropUi(c: Canvas) {
     val e = editRectPx()
     val d = cropRect
+    if (circleMask) {
+      // fora do círculo inscrito na moldura (even-odd) + contorno do círculo
+      circlePath.reset()
+      circlePath.fillType = Path.FillType.EVEN_ODD
+      circlePath.addRect(d, Path.Direction.CW)
+      circlePath.addOval(e, Path.Direction.CW)
+      c.drawPath(circlePath, dimPaint)
+      framePaint.strokeWidth = 1.5f * density
+      c.drawOval(e, framePaint)
+    } else {
     c.drawRect(d.left, d.top, d.right, e.top, dimPaint)
     c.drawRect(d.left, e.bottom, d.right, d.bottom, dimPaint)
     c.drawRect(d.left, e.top, e.left, e.bottom, dimPaint)
     c.drawRect(e.right, e.top, d.right, e.bottom, dimPaint)
+    }
     gridPaint.strokeWidth = 1f * density
-    for (i in 1..2) {
+    if (!circleMask) for (i in 1..2) {
       val x = e.left + e.width() * i / 3f
       val y = e.top + e.height() * i / 3f
       c.drawLine(x, e.top, x, e.bottom, gridPaint)
       c.drawLine(e.left, y, e.right, y, gridPaint)
     }
     framePaint.strokeWidth = 1.5f * density
-    c.drawRect(e, framePaint)
+    if (!circleMask) c.drawRect(e, framePaint)
     val L = 18f * density
     val t = 3f * density
     handlePaint.strokeWidth = t

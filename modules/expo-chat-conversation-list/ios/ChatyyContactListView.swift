@@ -544,6 +544,8 @@ public final class ChatyyContactListView: ExpoView, UICollectionViewDelegate {
   public func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
     collectionView.deselectItem(at: indexPath, animated: true)
     guard let id = dataSource.itemIdentifier(for: indexPath) else { return }
+    // [2026-10-15 native-group-create] linha selecionável (check) → haptic leve.
+    if let r = rows[id], r.check > 0 { UISelectionFeedbackGenerator().selectionChanged() }
     onRowPress(["id": id])
   }
 

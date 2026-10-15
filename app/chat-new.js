@@ -32,6 +32,13 @@ import PressableScale from '../components/PressableScale'; // [2026-10-11] prima
 // com haptic). Binário sem a view / web / kill switch → SectionList abaixo.
 import NativeContactList, { nativeContactsEnabled } from '../components/contacts/NativeContactList';
 import { buildFlatRows, contactTile } from '../components/contacts/contactListAdapter';
+// [2026-10-15 native-group-create] Novo grupo / Nova conversa nível WhatsApp:
+// atalhos + frequentes como linhas nativas, seleção com check animado + chips
+// nativos + contador "N de 1024", detalhes em /group-new-details. Kill switch
+// globalThis.__chatyy_native_group_create = false (binário antigo = fluxo JS).
+import NativeChipStrip from '../components/groupCreate/NativeChipStrip';
+import { IconArrowRight as IconArrowRightNgc } from '../components/Icons';
+import { nativeGroupCreateEnabled, markNativeGroupCreateFailed, setGroupDraft, GROUP_MAX_MEMBERS } from '../components/groupCreate/groupCreateDraft';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -482,7 +489,12 @@ export default function ChatNewScreen() {
     } else { Alert.alert(title, message, buttons); }
   };
 
-  const [mode, setMode] = useState('direct');
+  // [2026-10-15 native-group-create] Fluxo nativo de grupo (fixo por montagem;
+  // falha nativa → volta ao JS na hora). ?mode=group abre direto na seleção.
+  const [_ngcOn, _setNgcOn] = useState(() => !pickMode && nativeGroupCreateEnabled());
+  const _ngc = _ngcOn && !pickMode;
+  const _onNgcFailure = useCallback((msg) => { markNativeGroupCreateFailed(msg); _setNgcOn(false); }, []);
+  const [mode, setMode] = useState(() => (!pickMode && pageParams.mode === 'group' ? 'group' : 'direct'));
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -1272,6 +1284,11 @@ export default function ChatNewScreen() {
       handleCreateDirect(contact.email, contact.name || contact.email);
       return;
     }
+    // [2026-10-15 native-group-create] limite do grupo (1024 contando quem cria).
+    if (mode === 'group' && !selectedMembers.some(m => m.email === contact.email) && selectedMembers.length >= GROUP_MAX_MEMBERS - 1) {
+      safeAlert('', (t('groupNew.limitReached') || 'Limite de {max} membros').replace('{max}', String(GROUP_MAX_MEMBERS)));
+      return;
+    }
     setSelectedMembers(prev => {
       const exists = prev.find(m => m.email === contact.email);
       if (exists) return prev.filter(m => m.email !== contact.email);
@@ -1895,9 +1912,30 @@ export default function ChatNewScreen() {
     const inviteLabel = t('chat.invite');
     const picking = mode === 'group' || mode === 'channel';
     const selectedSet = new Set((selectedMembers || []).map(m => m && m.email).filter(Boolean));
+    // [2026-10-15 native-group-create] Topo da Nova conversa (WhatsApp): atalhos
+    // + "Contatos frequentes" como linhas NATIVAS (só no modo Direto).
+    const _ngcTop = (_ngc && mode === 'direct' && !onlyChatyy) ? [
+      { key: 'ngc_short', _ngcNoHeader: true, data: [
+        { _ngcShortcut: 'group' },
+        ...(Platform.OS !== 'web' ? [{ _ngcShortcut: 'contact' }] : []),
+        { _ngcShortcut: 'community' },
+        { _ngcShortcut: 'channel' },
+      ] },
+      ...((recentContacts || []).length ? [{
+        key: 'ngc_freq',
+        title: t('groupNew.frequent') || 'Contatos frequentes',
+        data: recentContacts.filter(c => c && c.email).slice(0, 6).map(c => ({ ...c, isRegistered: true })),
+      }] : []),
+    ] : [];
+    const _ngcShort = {
+      group: { gl: 'users', t: t('chat.newGroup') || 'Novo grupo' },
+      contact: { gl: 'userPlus', t: t('groupNew.newContact') || 'Novo contato' },
+      community: { gl: 'community', t: t('groupNew.newCommunity') || 'Nova comunidade' },
+      channel: { gl: 'megaphone', t: t('chat.newChannel') || 'Novo canal' },
+    };
     return buildFlatRows(
-      _nativeSections,
-      (sec) => (sec._letterBucket ? {
+      _ngcTop.length ? [..._ngcTop, ..._nativeSections] : _nativeSections,
+      (sec) => (sec._ngcNoHeader ? null : sec._letterBucket ? {
         t: String(sec.title || ''), sbg: isDark ? '#0d0d0d' : '#fafafc', sfg: titleColor,
         fs: 13, fw: 700, ls: 0.5, pt: 4, pb: 4, ph: Spacing.md, hl: true,
         ix: String(sec.title || ''),
@@ -1907,6 +1945,11 @@ export default function ChatNewScreen() {
       }),
       (item) => {
         if (!item || item._isSearchHeader) return null;
+        if (item._ngcShortcut) {
+          const sc = _ngcShort[item._ngcShortcut];
+          if (!sc) return null;
+          return { key: 'sc:' + item._ngcShortcut, row: { t: sc.t, tw: 600, gl: sc.gl, gbg: glyphBg, a11y: sc.t } };
+        }
         if (item._isPhoneInvite) {
           return { key: 'phone:' + (item.phone || ''), row: {
             t: item.display || item.phone || '', tw: 700, gl: 'userPlus', gbg: glyphBg,
@@ -1953,7 +1996,7 @@ export default function ChatNewScreen() {
         } };
       },
     );
-  }, [_useNativeContacts, _nativeSections, isDark, colors.onPrimary, t, mode, selectedMembers, invitingEmail]);
+  }, [_useNativeContacts, _nativeSections, isDark, colors.onPrimary, t, mode, selectedMembers, invitingEmail, _ngc, onlyChatyy, recentContacts]);
   const _nativeContactColors = useMemo(() => ({
     dark: !!isDark,
     bg: colors.background, text: colors.text, sub: colors.textSecondary, faint: colors.textTertiary,
@@ -1966,8 +2009,32 @@ export default function ChatNewScreen() {
     padH: Spacing.md, padV: 14, gap: 14, minH: 0,
     nameSize: 16, subSize: 13, sub2Size: 12, metaSize: 10,
   }), []);
+  // [2026-10-15 native-group-create] Atalhos do topo + avançar da seleção.
+  const _ngcShortcutRef = useRef(() => {});
+  _ngcShortcutRef.current = (k) => {
+    if (k === 'group') {
+      try { router.push({ pathname: '/chat-new', params: { mode: 'group' } }); } catch {}
+    } else if (k === 'contact') {
+      handleNewContact();
+    } else if (k === 'community') {
+      try { router.push('/community/create'); } catch {}
+    } else if (k === 'channel') {
+      setGroupDraft('channel', []);
+      try { router.push('/group-new-details'); } catch {}
+    }
+  };
+  const _ngcNext = useCallback(() => {
+    if (!selectedMembers.length) return;
+    try { require('../constants/theme').haptic.light(); } catch {}
+    setGroupDraft('group', selectedMembers);
+    try { router.push('/group-new-details'); } catch {}
+  }, [selectedMembers, router]);
+  const _ngcRemoveChip = useCallback((email) => {
+    setSelectedMembers(prev => prev.filter(m => m.email !== email));
+  }, []);
   // Mesmas ações do ContactRow (JS).
   const _onNativeContactPress = useCallback((item) => {
+    if (item?._ngcShortcut) { _ngcShortcutRef.current(item._ngcShortcut); return; }
     if (item?._isMessageYourself) handleMessageYourself();
     else if (item && item.isRegistered === true) onSelectRow(item);
   }, [handleMessageYourself, onSelectRow]);
@@ -2007,9 +2074,9 @@ export default function ChatNewScreen() {
     <View onLayout={(e) => { alphaHeaderHRef.current = e.nativeEvent.layout.height; _updateAlphaTop(); }}>
       {/* [2026-10-09 find-contacts] WhatsApp-style shortcuts at the
           very top: Novo grupo · Novo contato · Escanear QR · Meu QR. */}
-      {mode === 'direct' && !pickMode && (
+      {mode === 'direct' && !pickMode && !(_ngc && _useNativeContacts) && (
         <View style={sty.shortcutRow}>
-          <ShortcutTile label={t('chat.newGroup')} colors={colors} isDark={isDark} onPress={() => { setSelectedMembers([]); setMode('group'); }}>
+          <ShortcutTile label={t('chat.newGroup')} colors={colors} isDark={isDark} onPress={() => { if (_ngc) { _ngcShortcutRef.current('group'); return; } setSelectedMembers([]); setMode('group'); }}>
             <IconUsers size={20} color="#fff" />
           </ShortcutTile>
           {Platform.OS !== 'web' && (
@@ -2084,7 +2151,7 @@ export default function ChatNewScreen() {
       )}
 
       {/* Recently contacted (horizontal scroll) */}
-      {!onlyChatyy && recentContacts.length > 0 && (
+      {!onlyChatyy && recentContacts.length > 0 && !(_ngc && _useNativeContacts && mode === 'direct') && (
         <View style={sty.recentSection}>
           <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
             <View style={sty.sectionAccentLine} />
@@ -2391,7 +2458,33 @@ export default function ChatNewScreen() {
       {/* [2026-10-07 app-feel-nav] Nativo: header do sistema (título anima com
           o push, back chevron nativo + swipe-back), ações QR/atualizar como
           bar buttons. Web mantém o header custom abaixo. */}
-      {USE_NATIVE_HEADER ? (
+      {USE_NATIVE_HEADER && _ngc && mode === 'group' ? (
+        // [2026-10-15 native-group-create] "Novo grupo" + "N de 1024" + Avançar.
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          title: t('groupNew.title') || 'Novo grupo',
+          headerTitle: () => (
+            <View style={{ alignItems: Platform.OS === 'ios' ? 'center' : 'flex-start' }} accessible accessibilityRole="header">
+              <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600' }} numberOfLines={1}>{t('groupNew.title') || 'Novo grupo'}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+                {(t('groupNew.countOf') || '{count} de {max}').replace('{count}', String(selectedMembers.length)).replace('{max}', String(GROUP_MAX_MEMBERS))}
+              </Text>
+            </View>
+          ),
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={_ngcNext}
+              disabled={selectedMembers.length === 0}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{ opacity: selectedMembers.length === 0 ? 0.35 : 1, paddingHorizontal: Platform.OS === 'ios' ? 4 : 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('groupNew.next') || 'Avançar'}
+            >
+              <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600' }}>{t('groupNew.next') || 'Avançar'}</Text>
+            </TouchableOpacity>
+          ),
+        })} />
+      ) : USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({
           colors,
           title: t('chat.newConversation'),
@@ -2453,7 +2546,8 @@ export default function ChatNewScreen() {
       </View>
       )}
 
-      {/* Mode Toggle */}
+      {/* Mode Toggle — [2026-10-15 native-group-create] fluxo nativo: some (atalhos + rotas próprias, como o WhatsApp) */}
+      {!_ngc && (
       <View style={[sty.toggleRow, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
         <TouchableOpacity
           style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: colors.primary }]]}
@@ -2483,9 +2577,10 @@ export default function ChatNewScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+      )}
 
-      {/* Group/Channel Name */}
-      {(mode === 'group' || mode === 'channel') && (
+      {/* Group/Channel Name — nativo: nome vai para /group-new-details */}
+      {(mode === 'channel' || (mode === 'group' && !_ngc)) && (
         <View style={[sty.groupNameWrap, { borderBottomColor: colors.border }]}>
           <TextInput
             style={[sty.groupNameInput, { color: colors.text, borderColor: groupNameError ? (colors.error || '#E5484D') : 'transparent', backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}
@@ -2508,7 +2603,19 @@ export default function ChatNewScreen() {
           avatars. Fixed height so the layout doesn't jump as you add
           / remove people; nativeID prevents duplicate renders of the
           same chip causing the overflow glitch on web. */}
-      {(mode === 'group' || mode === 'channel') && selectedMembers.length > 0 && (
+      {/* [2026-10-15 native-group-create] chips NATIVOS (mola/encolhe, toque remove) */}
+      {_ngc && mode === 'group' && (
+        <NativeChipStrip
+          members={selectedMembers}
+          colors={colors}
+          isDark={isDark}
+          borderColor={colors.border}
+          removeLabel={t('common.remove') || 'Remover'}
+          onRemove={_ngcRemoveChip}
+          onFailure={_onNgcFailure}
+        />
+      )}
+      {!(_ngc && mode === 'group') && (mode === 'group' || mode === 'channel') && selectedMembers.length > 0 && (
         <View style={[sty.selectedRow, { borderBottomColor: colors.border }]}>
           <FlatList
             horizontal
@@ -2804,7 +2911,20 @@ export default function ChatNewScreen() {
       )}
 
       {/* Create Group Button */}
-      {mode === 'group' && selectedMembers.length > 0 && (
+      {/* [2026-10-15 native-group-create] nativo: seta "Avançar" (WhatsApp) → detalhes */}
+      {_ngc && mode === 'group' && selectedMembers.length > 0 && (
+        <View style={{ position: 'absolute', right: Spacing.lg, bottom: insets.bottom + Spacing.lg }} pointerEvents="box-none">
+          <PressableScale
+            style={[{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary }, Shadow.md]}
+            onPress={_ngcNext}
+            accessibilityRole="button"
+            accessibilityLabel={t('groupNew.next') || 'Avançar'}
+          >
+            <IconArrowRightNgc size={24} color={colors.onPrimary || '#fff'} />
+          </PressableScale>
+        </View>
+      )}
+      {!_ngc && mode === 'group' && selectedMembers.length > 0 && (
         <View style={[sty.createBtnWrap, { paddingBottom: insets.bottom + Spacing.md }]}>
           <PressableScale
             style={[sty.createBtn, { backgroundColor: colors.primary }, Shadow.md]}
