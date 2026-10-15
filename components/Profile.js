@@ -405,32 +405,58 @@ function LiveWatchCta({ label, onPress }) {
 // linha "Editar perfil · Compartilhar" (mesmo preenchimento suave, sem borda) —
 // estilo TikTok/Instagram: discreto, 1 toque até a Carteira, só no próprio perfil.
 const ProfileWalletChip = memo(function ProfileWalletChip({ colors, isDark, t, onPress }) {
+  // [2026-10-15 carteira-v2] Cartão P&B premium abaixo de "Editar · Compartilhar"
+  // (antes: pílula com diamante azul espremida na linha). Glifo monocromático,
+  // saldo grande tabular, rótulo e chevron — 1 toque até a Carteira.
   const w = useWallet();
   useEffect(() => { refreshWallet(); }, []);
+  const scale = useRef(new Animated.Value(1)).current;
   if (w.loaded && !w.enabled) return null;
-  const fill = colors?.surfaceVariant || (isDark ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.055)');
   const has = typeof w.diamonds === 'number';
   const label = t?.('wallet.title') || 'Carteira';
+  const sub = t?.('wallet.diamondsAvailable') || 'diamantes disponíveis';
+  const fg = isDark ? '#FFFFFF' : '#0B0B0C';
+  const muted = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(11,11,12,0.52)';
+  const cardBg = isDark ? '#141416' : '#F4F4F5';
+  const glyphBg = isDark ? '#FFFFFF' : '#0B0B0C';
+  const glyphFg = isDark ? '#0B0B0C' : '#FFFFFF';
+  const S = (() => { try { return require('react-native-svg'); } catch { return null; } })();
+  const press = (v) => Animated.spring(scale, { toValue: v, useNativeDriver: true, speed: 40, bounciness: v === 1 ? 6 : 0 }).start();
   return (
-    <TouchableOpacity
-      onPress={() => { try { haptic.light(); } catch {} onPress?.(); }}
-      activeOpacity={0.7}
-      accessibilityRole="button"
-      accessibilityLabel={has ? `${label}: ${w.diamonds}` : label}
-      hitSlop={{ top: 4, bottom: 4 }}
-      style={{
-        minHeight: 38, borderRadius: 10, paddingHorizontal: 12,
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
-        backgroundColor: fill,
-      }}
-    >
-      <IconDiamond size={14} />
-      {has ? (
-        <Text style={{ color: colors?.text || (isDark ? '#fff' : '#111'), fontSize: 14, fontWeight: '600', letterSpacing: 0.1, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
-          {_humanizeDiamonds(w.diamonds)}
-        </Text>
-      ) : null}
-    </TouchableOpacity>
+    <Animated.View style={{ transform: [{ scale }], marginTop: 10 }}>
+      <TouchableOpacity
+        onPress={() => { try { haptic.light(); } catch {} onPress?.(); }}
+        onPressIn={() => press(0.975)}
+        onPressOut={() => press(1)}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={has ? `${label}: ${w.diamonds} ${sub}` : label}
+        testID="profile-wallet-card"
+        style={{
+          flexDirection: 'row', alignItems: 'center', gap: 12,
+          backgroundColor: cardBg, borderRadius: 16, paddingVertical: 11, paddingLeft: 11, paddingRight: 12,
+          borderWidth: isDark ? StyleSheet.hairlineWidth : 0, borderColor: 'rgba(255,255,255,0.10)',
+          ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null),
+        }}
+      >
+        <View style={{ width: 36, height: 36, borderRadius: 11, backgroundColor: glyphBg, alignItems: 'center', justifyContent: 'center', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
+          {S ? (
+            <S.default width={18} height={18} viewBox="0 0 24 24">
+              <S.Path d="M6.5 3.5h11l4 5.5L12 20.5 2.5 9l4-5.5Z" fill="none" stroke={glyphFg} strokeWidth={1.7} strokeLinejoin="round" />
+              <S.Path d="M2.8 9h18.4M9 3.8 12 9l3-5.2M12 9v11" fill="none" stroke={glyphFg} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" opacity={0.75} />
+            </S.default>
+          ) : <IconDiamond size={16} />}
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={{ color: muted, fontSize: 12.5, fontWeight: '600', letterSpacing: 0.1 }} numberOfLines={1}>{label}</Text>
+          <Text style={{ color: fg, fontSize: 16, fontWeight: '700', letterSpacing: -0.2, marginTop: 1, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+            {has ? `${_humanizeDiamonds(w.diamonds)} ` : '— '}
+            <Text style={{ color: muted, fontSize: 13.5, fontWeight: '500', letterSpacing: 0 }}>{sub}</Text>
+          </Text>
+        </View>
+        <IconChevronRight size={18} color={muted} />
+      </TouchableOpacity>
+    </Animated.View>
   );
 });
 
@@ -2910,6 +2936,7 @@ export default function Profile({
           // removed 2026-05-08 — it duplicated the top-right "+" (also
           // removed) and read as "follow yourself" on a self profile. Users
           // who want to find people use the dedicated chat-new entry point.
+          <View>
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'stretch' }}>
             <FlatButton
               label={t?.('profile.edit') || 'Editar perfil'}
@@ -2923,7 +2950,8 @@ export default function Profile({
               colors={colors}
               isDark={isDark}
             />
-            {/* [2026-10-14 carteira-discreta] saldo compacto no fim da linha. */}
+          </View>
+            {/* [2026-10-15 carteira-v2] cartão da carteira abaixo da linha de ações. */}
             {DIAMONDS_ENABLED ? (
               <ProfileWalletChip colors={colors} isDark={isDark} t={t} onPress={() => { try { router?.push('/wallet'); } catch {} }} />
             ) : null}
