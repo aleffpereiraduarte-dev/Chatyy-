@@ -16,6 +16,23 @@ enum SVIcons {
     return img
   }
 
+  // [2026-10-15] reações com o emoji real (como Instagram) — vetor ficava feio.
+  static func emoji(_ glyph: String, size: CGFloat) -> UIImage? {
+    let k = "e|\(glyph)|\(Int(size))"
+    if let img = cache[k] { return img }
+    let fmt = UIGraphicsImageRendererFormat.default()
+    fmt.opaque = false
+    let r = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: fmt)
+    let img = r.image { _ in
+      let font = UIFont.systemFont(ofSize: size * 0.82)
+      let s = NSAttributedString(string: glyph, attributes: [.font: font])
+      let b = s.boundingRect(with: CGSize(width: size * 2, height: size * 2), options: [.usesLineFragmentOrigin], context: nil)
+      s.draw(at: CGPoint(x: (size - b.width) / 2, y: (size - b.height) / 2))
+    }
+    cache[k] = img
+    return img
+  }
+
   static func reactionColor(_ kind: String) -> UIColor {
     return kind == "heart" ? UIColor(red: 1, green: 0.19, blue: 0.25, alpha: 1) : .white
   }

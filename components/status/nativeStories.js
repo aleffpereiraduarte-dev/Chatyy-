@@ -54,12 +54,12 @@ function _api() {
 
 const LIKE = '❤️';
 export const NATIVE_STORY_REACTIONS = [
-  { emoji: LIKE, kind: 'heart' },
-  { emoji: '\u{1F525}', kind: 'flame' },
   { emoji: '\u{1F602}', kind: 'laugh' },
   { emoji: '\u{1F62E}', kind: 'wow' },
+  { emoji: '\u{1F60D}', kind: 'love' },
   { emoji: '\u{1F622}', kind: 'sad' },
   { emoji: '\u{1F44F}', kind: 'clap' },
+  { emoji: '\u{1F525}', kind: 'flame' },
 ];
 const _KIND = {
   [LIKE]: 'heart', '❤': 'heart', '\u{1F60D}': 'heart',

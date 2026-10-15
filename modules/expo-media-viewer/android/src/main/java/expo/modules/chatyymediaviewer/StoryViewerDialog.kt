@@ -984,7 +984,7 @@ class StoryViewerDialog(
     composerReactions.gravity = Gravity.CENTER
     reactions.forEachIndexed { i, r ->
       val b = ImageButton(context)
-      b.setImageResource(r.drawable())
+      b.setImageBitmap(emojiBitmap(r.emoji, dp(38f))) // [2026-10-15] emoji real (como Instagram)
       b.scaleType = ImageView.ScaleType.FIT_CENTER
       b.setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
       b.contentDescription = r.emoji
@@ -1108,13 +1108,24 @@ class StoryViewerDialog(
     pg.refreshCounters()
     listener.emit("onReact", mapOf("id" to item.id, "ownerEmail" to (pg.group?.ownerEmail ?: ""), "emoji" to r.emoji, "active" to item.myReaction.isNotEmpty()))
     closeComposer()
-    if (item.myReaction.isNotEmpty()) burst(r.kind)
+    if (item.myReaction.isNotEmpty()) burst(r.kind, glyph = r.emoji)
   }
 
-  private fun burst(kind: String, atX: Float? = null, atY: Float? = null) {
+  private fun emojiBitmap(glyph: String, px: Int): android.graphics.Bitmap {
+    val bmp = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(bmp)
+    val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    p.textSize = px * 0.82f
+    p.textAlign = android.graphics.Paint.Align.CENTER
+    val fm = p.fontMetrics
+    c.drawText(glyph, px / 2f, px / 2f - (fm.ascent + fm.descent) / 2f, p)
+    return bmp
+  }
+
+  private fun burst(kind: String, atX: Float? = null, atY: Float? = null, glyph: String? = null) {
     val iv = ImageView(context)
-    iv.setImageResource(SVReaction.drawableFor(kind))
     val size = dp(110f)
+    if (glyph != null) iv.setImageBitmap(emojiBitmap(glyph, size)) else iv.setImageResource(SVReaction.drawableFor(kind))
     if (atX != null && atY != null) {
       root.addView(iv, FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.START))
       iv.translationX = atX - size / 2f

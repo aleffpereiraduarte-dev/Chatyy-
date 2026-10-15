@@ -843,7 +843,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     reactionsRow.alignment = .center
     for (i, r) in reactions.enumerated() {
       let b = UIButton(type: .custom)
-      b.setImage(SVIcons.reaction(r.kind, size: 34), for: .normal)
+      b.setImage(SVIcons.emoji(r.emoji, size: 38) ?? SVIcons.reaction(r.kind, size: 34), for: .normal)
       b.tag = i
       b.accessibilityLabel = r.emoji
       b.addTarget(self, action: #selector(tapReaction(_:)), for: .touchUpInside)
@@ -964,11 +964,11 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     gv.refreshCounters()
     emit?("onReact", ["id": item.id, "ownerEmail": gv.group.ownerEmail, "emoji": r.emoji, "active": !item.myReaction.isEmpty])
     closeComposer()
-    if !item.myReaction.isEmpty { burst(r.kind) }
+    if !item.myReaction.isEmpty { burst(r.kind, glyph: r.emoji) }
   }
 
-  private func burst(_ kind: String, at point: CGPoint? = nil) {
-    guard let img = SVIcons.reaction(kind, size: 110) else { return }
+  private func burst(_ kind: String, at point: CGPoint? = nil, glyph: String? = nil) {
+    guard let img = (glyph.flatMap { SVIcons.emoji($0, size: 110) }) ?? SVIcons.reaction(kind, size: 110) else { return }
     let iv = UIImageView(image: img)
     iv.frame = CGRect(x: 0, y: 0, width: 110, height: 110)
     iv.center = point ?? CGPoint(x: view.bounds.midX, y: view.bounds.midY)
