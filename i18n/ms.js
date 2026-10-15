@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Pendaftaran memerlukan nombor telefon",
+  "phoneLink.title": "Tambah nombor anda",
+  "phoneLink.body": "Seperti WhatsApp, setiap akaun Chatyy mempunyai nombor telefon. Ini melindungi akaun anda dan membantu rakan mencari anda.",
+  "phoneLink.bodyRequired": "Untuk terus menggunakan Chatyy, sahkan nombor telefon anda.",
+  "phoneLink.hint": "Kami akan menghantar kod melalui SMS atau WhatsApp.",
+  "phoneLink.send": "Hantar kod",
+  "phoneLink.notNow": "Bukan sekarang",
+  "phoneLink.codeTitle": "Masukkan kod",
+  "phoneLink.codeSent": "Kami telah menghantar kod ke {phone}",
+  "phoneLink.resendIn": "Hantar semula dalam {s} saat",
+  "phoneLink.resend": "Hantar semula kod",
+  "phoneLink.changeNumber": "Tukar nombor",
+  "phoneLink.done": "Nombor ditambah",
+  "phoneLink.taken": "Nombor ini sudah dipautkan kepada akaun Chatyy lain. Untuk menggunakan akaun itu, log masuk dengan nombor tersebut.",
+  "phoneLink.alreadyHas": "Akaun anda sudah mempunyai nombor. Untuk menukarnya, pergi ke Tetapan > Tukar nombor.",
+  "phoneLink.expired": "Pengesahan telah tamat tempoh. Hantar kod sekali lagi.",
+  "phoneLink.error": "Tidak dapat menambah nombor. Cuba lagi.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Jangan Ganggu dihidupkan",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

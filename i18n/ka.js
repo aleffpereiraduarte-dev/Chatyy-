@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "რეგისტრაციისთვის საჭიროა ტელეფონის ნომერი",
+  "phoneLink.title": "დაამატეთ თქვენი ნომერი",
+  "phoneLink.body": "როგორც WhatsApp-ში, Chatyy-ის ყველა ანგარიშს აქვს ნომერი. ეს იცავს თქვენს ანგარიშს და მეგობრებს ეხმარება თქვენს პოვნაში.",
+  "phoneLink.bodyRequired": "Chatyy-ის გამოყენების გასაგრძელებლად დაადასტურეთ ტელეფონის ნომერი.",
+  "phoneLink.hint": "კოდს გამოგიგზავნით SMS-ით ან WhatsApp-ით.",
+  "phoneLink.send": "კოდის გაგზავნა",
+  "phoneLink.notNow": "ახლა არა",
+  "phoneLink.codeTitle": "შეიყვანეთ კოდი",
+  "phoneLink.codeSent": "კოდი გაიგზავნა ნომერზე {phone}",
+  "phoneLink.resendIn": "ხელახლა გაგზავნა {s} წმ-ში",
+  "phoneLink.resend": "კოდის ხელახლა გაგზავნა",
+  "phoneLink.changeNumber": "ნომრის შეცვლა",
+  "phoneLink.done": "ნომერი დაემატა",
+  "phoneLink.taken": "ეს ნომერი უკვე დაკავშირებულია Chatyy-ის სხვა ანგარიშთან. იმ ანგარიშის გამოსაყენებლად შედით ნომრით.",
+  "phoneLink.alreadyHas": "თქვენს ანგარიშს უკვე აქვს ნომერი. შესაცვლელად გადადით პარამეტრები > ნომრის შეცვლა.",
+  "phoneLink.expired": "დადასტურების ვადა ამოიწურა. ხელახლა გაგზავნეთ კოდი.",
+  "phoneLink.error": "ნომრის დამატება ვერ მოხერხდა. სცადეთ ხელახლა.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "„არ შემაწუხოთ“ ჩართულია",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

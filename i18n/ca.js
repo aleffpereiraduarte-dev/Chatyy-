@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "El registre requereix un número de telèfon",
+  "phoneLink.title": "Afegeix el teu número",
+  "phoneLink.body": "Com a WhatsApp, cada compte de Chatyy té un número. Protegeix el teu compte i ajuda els teus amics a trobar-te.",
+  "phoneLink.bodyRequired": "Per continuar fent servir Chatyy, confirma el teu número de telèfon.",
+  "phoneLink.hint": "T'enviarem un codi per SMS o WhatsApp.",
+  "phoneLink.send": "Envia el codi",
+  "phoneLink.notNow": "Ara no",
+  "phoneLink.codeTitle": "Escriu el codi",
+  "phoneLink.codeSent": "Hem enviat un codi al {phone}",
+  "phoneLink.resendIn": "Torna a enviar en {s} s",
+  "phoneLink.resend": "Torna a enviar el codi",
+  "phoneLink.changeNumber": "Canvia el número",
+  "phoneLink.done": "Número afegit",
+  "phoneLink.taken": "Aquest número ja està vinculat a un altre compte de Chatyy. Per fer servir aquell compte, inicia sessió amb el número.",
+  "phoneLink.alreadyHas": "El teu compte ja té un número. Per canviar-lo, ves a Configuració > Canvia el número.",
+  "phoneLink.expired": "La verificació ha caducat. Torna a enviar el codi.",
+  "phoneLink.error": "No s'ha pogut afegir el número. Torna-ho a provar.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "No molestis activat",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

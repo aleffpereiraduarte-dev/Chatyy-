@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Регистрация только по номеру телефона",
+  "phoneLink.title": "Добавьте свой номер",
+  "phoneLink.body": "Как в WhatsApp, у каждого аккаунта Chatyy есть номер. Это защищает ваш аккаунт и помогает друзьям найти вас.",
+  "phoneLink.bodyRequired": "Чтобы продолжить пользоваться Chatyy, подтвердите номер телефона.",
+  "phoneLink.hint": "Мы отправим код по SMS или в WhatsApp.",
+  "phoneLink.send": "Отправить код",
+  "phoneLink.notNow": "Не сейчас",
+  "phoneLink.codeTitle": "Введите код",
+  "phoneLink.codeSent": "Мы отправили код на {phone}",
+  "phoneLink.resendIn": "Повторно через {s} с",
+  "phoneLink.resend": "Отправить код снова",
+  "phoneLink.changeNumber": "Сменить номер",
+  "phoneLink.done": "Номер добавлен",
+  "phoneLink.taken": "Этот номер уже привязан к другому аккаунту Chatyy. Чтобы пользоваться тем аккаунтом, войдите по номеру.",
+  "phoneLink.alreadyHas": "У вашего аккаунта уже есть номер. Сменить его можно в Настройки > Сменить номер.",
+  "phoneLink.expired": "Срок подтверждения истёк. Отправьте код снова.",
+  "phoneLink.error": "Не удалось добавить номер. Попробуйте ещё раз.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Режим «Не беспокоить» включён",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

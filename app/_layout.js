@@ -483,6 +483,7 @@ import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 import PushTokenStaleBanner from '../components/PushTokenStaleBanner';
 import PushPermissionPrimer from '../components/PushPermissionPrimer'; // [2026-10-07 native-polish]
 import TermsUpdateGate from '../components/consent/TermsUpdateNotice'; // [2026-10-13 consent-lgpd]
+import AddPhoneGate from '../components/phoneLink/AddPhoneGate'; // [phone-obrigatorio 2026-10-15] "Adicione seu número" p/ contas antigas
 import { registerBackgroundSync } from '../services/backgroundSync';
 // [2026-10-08 receipts-speed] Side-effect: define+registra a task de push em 2º
 // plano que manda o ✓✓ cinza (chat_push_delivered com o d_ack do push) — cobre
@@ -2298,6 +2299,8 @@ export default function RootLayout() {
                 <WhatsNewGate />
                 {/* [2026-10-13 consent-lgpd] aviso único "Atualizamos nossos Termos" p/ contas antigas (não bloqueia) */}
                 <TermsUpdateGate />
+                {/* [phone-obrigatorio 2026-10-15] conta antiga sem telefone → "Adicione seu número" (Agora não = 7 dias) */}
+                <AddPhoneGate />
                 {/* [2026-10-07 native-polish] push pre-permission sheet (gap P0-6) */}
                 <PushPermissionPrimer />
                 <Suspense fallback={null}>

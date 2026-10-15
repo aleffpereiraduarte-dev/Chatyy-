@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Գրանցման համար անհրաժեշտ է հեռախոսահամար",
+  "phoneLink.title": "Ավելացրեք ձեր համարը",
+  "phoneLink.body": "Ինչպես WhatsApp-ում, Chatyy-ի յուրաքանչյուր հաշիվ ունի համար։ Դա պաշտպանում է ձեր հաշիվը և օգնում ընկերներին գտնել ձեզ։",
+  "phoneLink.bodyRequired": "Chatyy-ից շարունակելու համար հաստատեք ձեր հեռախոսահամարը։",
+  "phoneLink.hint": "Մենք կուղարկենք կոդ SMS-ով կամ WhatsApp-ով։",
+  "phoneLink.send": "Ուղարկել կոդը",
+  "phoneLink.notNow": "Ոչ հիմա",
+  "phoneLink.codeTitle": "Մուտքագրեք կոդը",
+  "phoneLink.codeSent": "Կոդն ուղարկվեց {phone} համարին",
+  "phoneLink.resendIn": "Կրկին ուղարկել {s} վ-ից",
+  "phoneLink.resend": "Կրկին ուղարկել կոդը",
+  "phoneLink.changeNumber": "Փոխել համարը",
+  "phoneLink.done": "Համարն ավելացվեց",
+  "phoneLink.taken": "Այս համարն արդեն կապված է Chatyy-ի մեկ այլ հաշվի հետ։ Այդ հաշիվն օգտագործելու համար մուտք գործեք համարով։",
+  "phoneLink.alreadyHas": "Ձեր հաշիվն արդեն ունի համար։ Փոխելու համար անցեք Կարգավորումներ > Փոխել համարը։",
+  "phoneLink.expired": "Հաստատման ժամկետն անցել է։ Կրկին ուղարկեք կոդը։",
+  "phoneLink.error": "Չհաջողվեց ավելացնել համարը։ Փորձեք կրկին։",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "«Չանհանգստացնել» ռեժիմը միացված է",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

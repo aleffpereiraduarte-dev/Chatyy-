@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Registreren kan alleen met een telefoonnummer",
+  "phoneLink.title": "Voeg je nummer toe",
+  "phoneLink.body": "Net als bij WhatsApp heeft elk Chatyy-account een nummer. Dat beschermt je account en helpt vrienden je te vinden.",
+  "phoneLink.bodyRequired": "Bevestig je telefoonnummer om Chatyy te blijven gebruiken.",
+  "phoneLink.hint": "We sturen een code via sms of WhatsApp.",
+  "phoneLink.send": "Code versturen",
+  "phoneLink.notNow": "Niet nu",
+  "phoneLink.codeTitle": "Voer de code in",
+  "phoneLink.codeSent": "We hebben een code gestuurd naar {phone}",
+  "phoneLink.resendIn": "Opnieuw versturen over {s}s",
+  "phoneLink.resend": "Code opnieuw versturen",
+  "phoneLink.changeNumber": "Nummer wijzigen",
+  "phoneLink.done": "Nummer toegevoegd",
+  "phoneLink.taken": "Dit nummer is al gekoppeld aan een ander Chatyy-account. Log in met het nummer om dat account te gebruiken.",
+  "phoneLink.alreadyHas": "Je account heeft al een nummer. Wijzig het via Instellingen > Nummer wijzigen.",
+  "phoneLink.expired": "De verificatie is verlopen. Stuur de code opnieuw.",
+  "phoneLink.error": "Kan het nummer niet toevoegen. Probeer het opnieuw.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Niet storen staat aan",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

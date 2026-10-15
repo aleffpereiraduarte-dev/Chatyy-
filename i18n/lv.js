@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Reģistrācijai nepieciešams tālruņa numurs",
+  "phoneLink.title": "Pievieno savu numuru",
+  "phoneLink.body": "Tāpat kā WhatsApp, katram Chatyy kontam ir numurs. Tas aizsargā tavu kontu un palīdz draugiem tevi atrast.",
+  "phoneLink.bodyRequired": "Lai turpinātu lietot Chatyy, apstiprini savu tālruņa numuru.",
+  "phoneLink.hint": "Mēs nosūtīsim kodu ar SMS vai WhatsApp.",
+  "phoneLink.send": "Sūtīt kodu",
+  "phoneLink.notNow": "Ne tagad",
+  "phoneLink.codeTitle": "Ievadi kodu",
+  "phoneLink.codeSent": "Mēs nosūtījām kodu uz {phone}",
+  "phoneLink.resendIn": "Sūtīt vēlreiz pēc {s} s",
+  "phoneLink.resend": "Sūtīt kodu vēlreiz",
+  "phoneLink.changeNumber": "Mainīt numuru",
+  "phoneLink.done": "Numurs pievienots",
+  "phoneLink.taken": "Šis numurs jau ir saistīts ar citu Chatyy kontu. Lai lietotu to kontu, piesakies ar numuru.",
+  "phoneLink.alreadyHas": "Tavam kontam jau ir numurs. Maini to sadaļā Iestatījumi > Mainīt numuru.",
+  "phoneLink.expired": "Apstiprināšanas laiks beidzās. Nosūti kodu vēlreiz.",
+  "phoneLink.error": "Neizdevās pievienot numuru. Mēģini vēlreiz.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Netraucēt ir ieslēgts",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

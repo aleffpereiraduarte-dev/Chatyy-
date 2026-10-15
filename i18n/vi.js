@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Đăng ký cần số điện thoại",
+  "phoneLink.title": "Thêm số của bạn",
+  "phoneLink.body": "Giống như WhatsApp, mỗi tài khoản Chatyy đều có một số điện thoại. Điều này bảo vệ tài khoản của bạn và giúp bạn bè tìm thấy bạn.",
+  "phoneLink.bodyRequired": "Để tiếp tục dùng Chatyy, hãy xác nhận số điện thoại của bạn.",
+  "phoneLink.hint": "Chúng tôi sẽ gửi mã qua SMS hoặc WhatsApp.",
+  "phoneLink.send": "Gửi mã",
+  "phoneLink.notNow": "Để sau",
+  "phoneLink.codeTitle": "Nhập mã",
+  "phoneLink.codeSent": "Chúng tôi đã gửi mã tới {phone}",
+  "phoneLink.resendIn": "Gửi lại sau {s} giây",
+  "phoneLink.resend": "Gửi lại mã",
+  "phoneLink.changeNumber": "Đổi số",
+  "phoneLink.done": "Đã thêm số",
+  "phoneLink.taken": "Số này đã được liên kết với một tài khoản Chatyy khác. Để dùng tài khoản đó, hãy đăng nhập bằng số này.",
+  "phoneLink.alreadyHas": "Tài khoản của bạn đã có số. Để đổi, vào Cài đặt > Đổi số.",
+  "phoneLink.expired": "Xác minh đã hết hạn. Hãy gửi lại mã.",
+  "phoneLink.error": "Không thể thêm số. Hãy thử lại.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Không làm phiền đang bật",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

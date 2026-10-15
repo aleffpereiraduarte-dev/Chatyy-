@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Registracija zahteva telefonsko številko",
+  "phoneLink.title": "Dodajte svojo številko",
+  "phoneLink.body": "Tako kot na WhatsAppu ima vsak račun Chatyy številko. To ščiti vaš račun in prijateljem pomaga, da vas najdejo.",
+  "phoneLink.bodyRequired": "Za nadaljnjo uporabo Chatyy potrdite svojo telefonsko številko.",
+  "phoneLink.hint": "Kodo vam pošljemo po SMS-u ali WhatsAppu.",
+  "phoneLink.send": "Pošlji kodo",
+  "phoneLink.notNow": "Ne zdaj",
+  "phoneLink.codeTitle": "Vnesite kodo",
+  "phoneLink.codeSent": "Kodo smo poslali na {phone}",
+  "phoneLink.resendIn": "Ponovno pošlji čez {s} s",
+  "phoneLink.resend": "Ponovno pošlji kodo",
+  "phoneLink.changeNumber": "Zamenjaj številko",
+  "phoneLink.done": "Številka dodana",
+  "phoneLink.taken": "Ta številka je že povezana z drugim računom Chatyy. Za uporabo tega računa se prijavite s številko.",
+  "phoneLink.alreadyHas": "Vaš račun že ima številko. Zamenjate jo v Nastavitve > Zamenjaj številko.",
+  "phoneLink.expired": "Preverjanje je poteklo. Ponovno pošljite kodo.",
+  "phoneLink.error": "Številke ni bilo mogoče dodati. Poskusite znova.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Ne moti je vklopljeno",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

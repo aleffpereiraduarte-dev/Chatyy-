@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "စာရင်းသွင်းရန် ဖုန်းနံပါတ် လိုအပ်သည်",
+  "phoneLink.title": "သင့်နံပါတ်ကို ထည့်ပါ",
+  "phoneLink.body": "WhatsApp ကဲ့သို့ပင် Chatyy အကောင့်တိုင်းတွင် ဖုန်းနံပါတ်ရှိသည်။ ၎င်းသည် သင့်အကောင့်ကို ကာကွယ်ပေးပြီး သူငယ်ချင်းများ သင့်ကို ရှာတွေ့စေသည်။",
+  "phoneLink.bodyRequired": "Chatyy ကို ဆက်သုံးရန် သင့်ဖုန်းနံပါတ်ကို အတည်ပြုပါ။",
+  "phoneLink.hint": "SMS သို့မဟုတ် WhatsApp ဖြင့် ကုဒ်ပို့ပေးပါမည်။",
+  "phoneLink.send": "ကုဒ်ပို့ရန်",
+  "phoneLink.notNow": "နောက်မှ",
+  "phoneLink.codeTitle": "ကုဒ်ထည့်ပါ",
+  "phoneLink.codeSent": "{phone} သို့ ကုဒ်ပို့ပြီးပါပြီ",
+  "phoneLink.resendIn": "{s} စက္ကန့်အတွင်း ပြန်ပို့ရန်",
+  "phoneLink.resend": "ကုဒ်ပြန်ပို့ရန်",
+  "phoneLink.changeNumber": "နံပါတ်ပြောင်းရန်",
+  "phoneLink.done": "နံပါတ် ထည့်ပြီးပါပြီ",
+  "phoneLink.taken": "ဤနံပါတ်သည် အခြား Chatyy အကောင့်နှင့် ချိတ်ဆက်ပြီးဖြစ်သည်။ ထိုအကောင့်ကို သုံးရန် နံပါတ်ဖြင့် ဝင်ပါ။",
+  "phoneLink.alreadyHas": "သင့်အကောင့်တွင် နံပါတ်ရှိပြီးဖြစ်သည်။ ပြောင်းရန် ဆက်တင်များ > နံပါတ်ပြောင်းရန် သို့သွားပါ။",
+  "phoneLink.expired": "အတည်ပြုချက် သက်တမ်းကုန်သွားပါပြီ။ ကုဒ်ကို ပြန်ပို့ပါ။",
+  "phoneLink.error": "နံပါတ်ထည့်၍ မရပါ။ ထပ်ကြိုးစားပါ။",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "မနှောင့်ယှက်ရ ဖွင့်ထားသည်",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

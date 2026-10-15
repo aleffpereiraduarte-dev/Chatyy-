@@ -2266,17 +2266,8 @@ export default function LoginScreen() {
               router.push('/signup-phone');
             }
           })}
-          {/* [2026-10-09 signup-nophone] /signup-username (sem telefone) só abria pela URL. */}
-          <TouchableOpacity
-            onPress={() => { hSelection(); router.push('/signup-username'); }}
-            activeOpacity={0.6}
-            accessibilityRole="link"
-            hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
-            style={[s.igGhostBtn, { marginTop: 4 }]}
-            testID="login-signup-nophone"
-          >
-            <Text style={[s.igGhostBtnLabel, { color: colors.textSecondary, fontSize: 14 }]}>{t('login.createAccountNoPhone')}</Text>
-          </TouchableOpacity>
+          {/* [phone-obrigatorio 2026-10-15] "Criar conta sem número" REMOVIDO: 1 conta = 1 número verificado
+              (servidor recusa username_signup/signup sem telefone com 403 phone_required). */}
         </>
       )}
     </View>

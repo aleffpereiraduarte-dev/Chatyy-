@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "การสมัครต้องใช้หมายเลขโทรศัพท์",
+  "phoneLink.title": "เพิ่มหมายเลขของคุณ",
+  "phoneLink.body": "เช่นเดียวกับ WhatsApp ทุกบัญชี Chatyy มีหมายเลขโทรศัพท์ ช่วยปกป้องบัญชีของคุณและช่วยให้เพื่อนค้นหาคุณได้",
+  "phoneLink.bodyRequired": "หากต้องการใช้ Chatyy ต่อ โปรดยืนยันหมายเลขโทรศัพท์ของคุณ",
+  "phoneLink.hint": "เราจะส่งรหัสทาง SMS หรือ WhatsApp",
+  "phoneLink.send": "ส่งรหัส",
+  "phoneLink.notNow": "ไว้ทีหลัง",
+  "phoneLink.codeTitle": "ป้อนรหัส",
+  "phoneLink.codeSent": "เราส่งรหัสไปที่ {phone} แล้ว",
+  "phoneLink.resendIn": "ส่งอีกครั้งใน {s} วินาที",
+  "phoneLink.resend": "ส่งรหัสอีกครั้ง",
+  "phoneLink.changeNumber": "เปลี่ยนหมายเลข",
+  "phoneLink.done": "เพิ่มหมายเลขแล้ว",
+  "phoneLink.taken": "หมายเลขนี้เชื่อมกับบัญชี Chatyy อื่นอยู่แล้ว หากต้องการใช้บัญชีนั้น ให้เข้าสู่ระบบด้วยหมายเลขนี้",
+  "phoneLink.alreadyHas": "บัญชีของคุณมีหมายเลขอยู่แล้ว หากต้องการเปลี่ยน ไปที่ การตั้งค่า > เปลี่ยนหมายเลข",
+  "phoneLink.expired": "การยืนยันหมดอายุ โปรดส่งรหัสอีกครั้ง",
+  "phoneLink.error": "ไม่สามารถเพิ่มหมายเลขได้ โปรดลองอีกครั้ง",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "ห้ามรบกวนเปิดอยู่",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

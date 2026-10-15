@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Înregistrarea necesită un număr de telefon",
+  "phoneLink.title": "Adaugă-ți numărul",
+  "phoneLink.body": "Ca pe WhatsApp, fiecare cont Chatyy are un număr. Îți protejează contul și îi ajută pe prieteni să te găsească.",
+  "phoneLink.bodyRequired": "Pentru a folosi în continuare Chatyy, confirmă-ți numărul de telefon.",
+  "phoneLink.hint": "Îți trimitem un cod prin SMS sau WhatsApp.",
+  "phoneLink.send": "Trimite codul",
+  "phoneLink.notNow": "Nu acum",
+  "phoneLink.codeTitle": "Introdu codul",
+  "phoneLink.codeSent": "Am trimis un cod la {phone}",
+  "phoneLink.resendIn": "Retrimite în {s} s",
+  "phoneLink.resend": "Retrimite codul",
+  "phoneLink.changeNumber": "Schimbă numărul",
+  "phoneLink.done": "Număr adăugat",
+  "phoneLink.taken": "Acest număr este deja legat de alt cont Chatyy. Pentru a folosi acel cont, conectează-te cu numărul.",
+  "phoneLink.alreadyHas": "Contul tău are deja un număr. Îl poți schimba din Setări > Schimbă numărul.",
+  "phoneLink.expired": "Verificarea a expirat. Trimite din nou codul.",
+  "phoneLink.error": "Numărul nu a putut fi adăugat. Încearcă din nou.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Nu deranja este activat",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

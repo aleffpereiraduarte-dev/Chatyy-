@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Usajili unahitaji nambari ya simu",
+  "phoneLink.title": "Ongeza nambari yako",
+  "phoneLink.body": "Kama ilivyo WhatsApp, kila akaunti ya Chatyy ina nambari. Hii hulinda akaunti yako na kuwasaidia marafiki kukupata.",
+  "phoneLink.bodyRequired": "Ili kuendelea kutumia Chatyy, thibitisha nambari yako ya simu.",
+  "phoneLink.hint": "Tutatuma msimbo kwa SMS au WhatsApp.",
+  "phoneLink.send": "Tuma msimbo",
+  "phoneLink.notNow": "Si sasa",
+  "phoneLink.codeTitle": "Weka msimbo",
+  "phoneLink.codeSent": "Tumetuma msimbo kwa {phone}",
+  "phoneLink.resendIn": "Tuma tena baada ya sekunde {s}",
+  "phoneLink.resend": "Tuma msimbo tena",
+  "phoneLink.changeNumber": "Badilisha nambari",
+  "phoneLink.done": "Nambari imeongezwa",
+  "phoneLink.taken": "Nambari hii tayari imeunganishwa na akaunti nyingine ya Chatyy. Ili kutumia akaunti hiyo, ingia kwa nambari hiyo.",
+  "phoneLink.alreadyHas": "Akaunti yako tayari ina nambari. Ili kuibadilisha, nenda Mipangilio > Badilisha nambari.",
+  "phoneLink.expired": "Muda wa uthibitishaji umeisha. Tuma msimbo tena.",
+  "phoneLink.error": "Imeshindwa kuongeza nambari. Jaribu tena.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Usisumbue imewashwa",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

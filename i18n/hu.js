@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "A regisztrációhoz telefonszám kell",
+  "phoneLink.title": "Add meg a számodat",
+  "phoneLink.body": "Ahogy a WhatsAppon, minden Chatyy-fióknak van telefonszáma. Ez védi a fiókodat, és segít a barátaidnak megtalálni.",
+  "phoneLink.bodyRequired": "A Chatyy további használatához erősítsd meg a telefonszámodat.",
+  "phoneLink.hint": "Kódot küldünk SMS-ben vagy WhatsAppon.",
+  "phoneLink.send": "Kód küldése",
+  "phoneLink.notNow": "Most nem",
+  "phoneLink.codeTitle": "Írd be a kódot",
+  "phoneLink.codeSent": "Kódot küldtünk ide: {phone}",
+  "phoneLink.resendIn": "Újraküldés {s} mp múlva",
+  "phoneLink.resend": "Kód újraküldése",
+  "phoneLink.changeNumber": "Szám módosítása",
+  "phoneLink.done": "Szám hozzáadva",
+  "phoneLink.taken": "Ez a szám már egy másik Chatyy-fiókhoz tartozik. A fiók használatához jelentkezz be a számmal.",
+  "phoneLink.alreadyHas": "A fiókodnak már van száma. Módosítsd: Beállítások > Szám módosítása.",
+  "phoneLink.expired": "Az ellenőrzés lejárt. Küldd újra a kódot.",
+  "phoneLink.error": "Nem sikerült hozzáadni a számot. Próbáld újra.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "A Ne zavarjanak be van kapcsolva",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "பதிவு செய்ய தொலைபேசி எண் தேவை",
+  "phoneLink.title": "உங்கள் எண்ணைச் சேர்க்கவும்",
+  "phoneLink.body": "WhatsApp போலவே, ஒவ்வொரு Chatyy கணக்கிற்கும் ஒரு எண் உண்டு. இது உங்கள் கணக்கைப் பாதுகாக்கிறது, நண்பர்கள் உங்களைக் கண்டறிய உதவுகிறது.",
+  "phoneLink.bodyRequired": "Chatyy-ஐத் தொடர்ந்து பயன்படுத்த உங்கள் தொலைபேசி எண்ணை உறுதிப்படுத்தவும்.",
+  "phoneLink.hint": "SMS அல்லது WhatsApp மூலம் ஒரு குறியீட்டை அனுப்புவோம்.",
+  "phoneLink.send": "குறியீட்டை அனுப்பு",
+  "phoneLink.notNow": "இப்போது வேண்டாம்",
+  "phoneLink.codeTitle": "குறியீட்டை உள்ளிடவும்",
+  "phoneLink.codeSent": "{phone} எண்ணுக்கு குறியீட்டை அனுப்பினோம்",
+  "phoneLink.resendIn": "{s} வினாடிகளில் மீண்டும் அனுப்பு",
+  "phoneLink.resend": "குறியீட்டை மீண்டும் அனுப்பு",
+  "phoneLink.changeNumber": "எண்ணை மாற்று",
+  "phoneLink.done": "எண் சேர்க்கப்பட்டது",
+  "phoneLink.taken": "இந்த எண் ஏற்கனவே வேறொரு Chatyy கணக்குடன் இணைக்கப்பட்டுள்ளது. அந்தக் கணக்கைப் பயன்படுத்த எண் மூலம் உள்நுழையவும்.",
+  "phoneLink.alreadyHas": "உங்கள் கணக்கில் ஏற்கனவே எண் உள்ளது. மாற்ற அமைப்புகள் > எண்ணை மாற்று என்பதற்குச் செல்லவும்.",
+  "phoneLink.expired": "சரிபார்ப்பு காலாவதியானது. குறியீட்டை மீண்டும் அனுப்பவும்.",
+  "phoneLink.error": "எண்ணைச் சேர்க்க முடியவில்லை. மீண்டும் முயலவும்.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "தொந்தரவு செய்யாதே இயக்கத்தில் உள்ளது",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

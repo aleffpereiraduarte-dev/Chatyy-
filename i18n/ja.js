@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "登録には電話番号が必要です",
+  "phoneLink.title": "電話番号を追加",
+  "phoneLink.body": "WhatsApp と同じように、Chatyy のアカウントには電話番号が紐づきます。アカウントを守り、友だちがあなたを見つけやすくなります。",
+  "phoneLink.bodyRequired": "Chatyy を引き続き使うには、電話番号を確認してください。",
+  "phoneLink.hint": "SMS または WhatsApp でコードを送信します。",
+  "phoneLink.send": "コードを送信",
+  "phoneLink.notNow": "あとで",
+  "phoneLink.codeTitle": "コードを入力",
+  "phoneLink.codeSent": "{phone} にコードを送信しました",
+  "phoneLink.resendIn": "{s} 秒後に再送信",
+  "phoneLink.resend": "コードを再送信",
+  "phoneLink.changeNumber": "番号を変更",
+  "phoneLink.done": "番号を追加しました",
+  "phoneLink.taken": "この番号はすでに別の Chatyy アカウントに登録されています。そのアカウントを使うには、この番号でログインしてください。",
+  "phoneLink.alreadyHas": "このアカウントにはすでに番号があります。変更するには 設定 > 番号を変更 へ。",
+  "phoneLink.expired": "確認の有効期限が切れました。もう一度コードを送信してください。",
+  "phoneLink.error": "番号を追加できませんでした。もう一度お試しください。",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "おやすみモードがオンです",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

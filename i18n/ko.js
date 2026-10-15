@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "가입하려면 전화번호가 필요합니다",
+  "phoneLink.title": "전화번호 추가",
+  "phoneLink.body": "WhatsApp처럼 모든 Chatyy 계정에는 전화번호가 있습니다. 계정을 보호하고 친구들이 회원님을 찾을 수 있게 해 줍니다.",
+  "phoneLink.bodyRequired": "Chatyy를 계속 사용하려면 전화번호를 인증하세요.",
+  "phoneLink.hint": "SMS 또는 WhatsApp으로 코드를 보내 드립니다.",
+  "phoneLink.send": "코드 보내기",
+  "phoneLink.notNow": "나중에",
+  "phoneLink.codeTitle": "코드 입력",
+  "phoneLink.codeSent": "{phone}(으)로 코드를 보냈습니다",
+  "phoneLink.resendIn": "{s}초 후 다시 보내기",
+  "phoneLink.resend": "코드 다시 보내기",
+  "phoneLink.changeNumber": "번호 변경",
+  "phoneLink.done": "번호가 추가되었습니다",
+  "phoneLink.taken": "이 번호는 이미 다른 Chatyy 계정에 연결되어 있습니다. 그 계정을 사용하려면 이 번호로 로그인하세요.",
+  "phoneLink.alreadyHas": "계정에 이미 번호가 있습니다. 변경하려면 설정 > 번호 변경으로 이동하세요.",
+  "phoneLink.expired": "인증이 만료되었습니다. 코드를 다시 보내세요.",
+  "phoneLink.error": "번호를 추가하지 못했습니다. 다시 시도하세요.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "방해 금지 모드 켜짐",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "സൈൻ അപ്പിന് ഫോൺ നമ്പർ ആവശ്യമാണ്",
+  "phoneLink.title": "നിങ്ങളുടെ നമ്പർ ചേർക്കുക",
+  "phoneLink.body": "WhatsApp പോലെ, ഓരോ Chatyy അക്കൗണ്ടിനും ഒരു നമ്പർ ഉണ്ട്. ഇത് നിങ്ങളുടെ അക്കൗണ്ട് സംരക്ഷിക്കുകയും സുഹൃത്തുക്കൾക്ക് നിങ്ങളെ കണ്ടെത്താൻ സഹായിക്കുകയും ചെയ്യുന്നു.",
+  "phoneLink.bodyRequired": "Chatyy ഉപയോഗം തുടരാൻ നിങ്ങളുടെ ഫോൺ നമ്പർ സ്ഥിരീകരിക്കുക.",
+  "phoneLink.hint": "SMS വഴിയോ WhatsApp വഴിയോ ഞങ്ങൾ ഒരു കോഡ് അയയ്ക്കും.",
+  "phoneLink.send": "കോഡ് അയയ്ക്കുക",
+  "phoneLink.notNow": "ഇപ്പോൾ വേണ്ട",
+  "phoneLink.codeTitle": "കോഡ് നൽകുക",
+  "phoneLink.codeSent": "{phone} എന്നതിലേക്ക് ഒരു കോഡ് അയച്ചു",
+  "phoneLink.resendIn": "{s} സെക്കൻഡിൽ വീണ്ടും അയയ്ക്കുക",
+  "phoneLink.resend": "കോഡ് വീണ്ടും അയയ്ക്കുക",
+  "phoneLink.changeNumber": "നമ്പർ മാറ്റുക",
+  "phoneLink.done": "നമ്പർ ചേർത്തു",
+  "phoneLink.taken": "ഈ നമ്പർ ഇതിനകം മറ്റൊരു Chatyy അക്കൗണ്ടുമായി ബന്ധിപ്പിച്ചിരിക്കുന്നു. ആ അക്കൗണ്ട് ഉപയോഗിക്കാൻ നമ്പർ ഉപയോഗിച്ച് സൈൻ ഇൻ ചെയ്യുക.",
+  "phoneLink.alreadyHas": "നിങ്ങളുടെ അക്കൗണ്ടിന് ഇതിനകം ഒരു നമ്പർ ഉണ്ട്. മാറ്റാൻ ക്രമീകരണങ്ങൾ > നമ്പർ മാറ്റുക എന്നതിലേക്ക് പോകുക.",
+  "phoneLink.expired": "സ്ഥിരീകരണത്തിന്റെ സമയം കഴിഞ്ഞു. കോഡ് വീണ്ടും അയയ്ക്കുക.",
+  "phoneLink.error": "നമ്പർ ചേർക്കാനായില്ല. വീണ്ടും ശ്രമിക്കുക.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "ശല്യപ്പെടുത്തരുത് ഓണാണ്",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

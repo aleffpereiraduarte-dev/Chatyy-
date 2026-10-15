@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Kailangan ng numero ng telepono para mag-sign up",
+  "phoneLink.title": "Idagdag ang numero mo",
+  "phoneLink.body": "Gaya ng WhatsApp, may numero ang bawat Chatyy account. Pinoprotektahan nito ang account mo at tinutulungan ang mga kaibigan na mahanap ka.",
+  "phoneLink.bodyRequired": "Para patuloy na magamit ang Chatyy, kumpirmahin ang numero ng telepono mo.",
+  "phoneLink.hint": "Magpapadala kami ng code sa SMS o WhatsApp.",
+  "phoneLink.send": "Ipadala ang code",
+  "phoneLink.notNow": "Hindi ngayon",
+  "phoneLink.codeTitle": "Ilagay ang code",
+  "phoneLink.codeSent": "Nagpadala kami ng code sa {phone}",
+  "phoneLink.resendIn": "Ipadala muli sa loob ng {s}s",
+  "phoneLink.resend": "Ipadala muli ang code",
+  "phoneLink.changeNumber": "Palitan ang numero",
+  "phoneLink.done": "Naidagdag ang numero",
+  "phoneLink.taken": "Naka-link na ang numerong ito sa ibang Chatyy account. Para gamitin ang account na iyon, mag-sign in gamit ang numero.",
+  "phoneLink.alreadyHas": "May numero na ang account mo. Para palitan, pumunta sa Settings > Palitan ang numero.",
+  "phoneLink.expired": "Nag-expire ang verification. Ipadala muli ang code.",
+  "phoneLink.error": "Hindi maidagdag ang numero. Subukang muli.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Naka-on ang Huwag Istorbohin",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

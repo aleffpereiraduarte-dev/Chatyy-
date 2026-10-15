@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Rekisteröityminen vaatii puhelinnumeron",
+  "phoneLink.title": "Lisää numerosi",
+  "phoneLink.body": "Kuten WhatsAppissa, jokaisella Chatyy-tilillä on numero. Se suojaa tiliäsi ja auttaa ystäviäsi löytämään sinut.",
+  "phoneLink.bodyRequired": "Vahvista puhelinnumerosi jatkaaksesi Chatyyn käyttöä.",
+  "phoneLink.hint": "Lähetämme koodin tekstiviestillä tai WhatsAppilla.",
+  "phoneLink.send": "Lähetä koodi",
+  "phoneLink.notNow": "Ei nyt",
+  "phoneLink.codeTitle": "Anna koodi",
+  "phoneLink.codeSent": "Lähetimme koodin numeroon {phone}",
+  "phoneLink.resendIn": "Lähetä uudelleen {s} s kuluttua",
+  "phoneLink.resend": "Lähetä koodi uudelleen",
+  "phoneLink.changeNumber": "Vaihda numero",
+  "phoneLink.done": "Numero lisätty",
+  "phoneLink.taken": "Tämä numero on jo liitetty toiseen Chatyy-tiliin. Käyttääksesi sitä tiliä kirjaudu numerolla.",
+  "phoneLink.alreadyHas": "Tililläsi on jo numero. Vaihda se kohdassa Asetukset > Vaihda numero.",
+  "phoneLink.expired": "Vahvistus vanhentui. Lähetä koodi uudelleen.",
+  "phoneLink.error": "Numeron lisääminen epäonnistui. Yritä uudelleen.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Älä häiritse on päällä",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

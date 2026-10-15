@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Η εγγραφή απαιτεί αριθμό τηλεφώνου",
+  "phoneLink.title": "Προσθέστε τον αριθμό σας",
+  "phoneLink.body": "Όπως στο WhatsApp, κάθε λογαριασμός Chatyy έχει αριθμό. Προστατεύει τον λογαριασμό σας και βοηθά τους φίλους σας να σας βρουν.",
+  "phoneLink.bodyRequired": "Για να συνεχίσετε να χρησιμοποιείτε το Chatyy, επιβεβαιώστε τον αριθμό σας.",
+  "phoneLink.hint": "Θα στείλουμε κωδικό με SMS ή WhatsApp.",
+  "phoneLink.send": "Αποστολή κωδικού",
+  "phoneLink.notNow": "Όχι τώρα",
+  "phoneLink.codeTitle": "Εισαγάγετε τον κωδικό",
+  "phoneLink.codeSent": "Στείλαμε κωδικό στο {phone}",
+  "phoneLink.resendIn": "Επαναποστολή σε {s} δ",
+  "phoneLink.resend": "Επαναποστολή κωδικού",
+  "phoneLink.changeNumber": "Αλλαγή αριθμού",
+  "phoneLink.done": "Ο αριθμός προστέθηκε",
+  "phoneLink.taken": "Αυτός ο αριθμός είναι ήδη συνδεδεμένος με άλλον λογαριασμό Chatyy. Για να χρησιμοποιήσετε εκείνον τον λογαριασμό, συνδεθείτε με τον αριθμό.",
+  "phoneLink.alreadyHas": "Ο λογαριασμός σας έχει ήδη αριθμό. Αλλάξτε τον από Ρυθμίσεις > Αλλαγή αριθμού.",
+  "phoneLink.expired": "Η επαλήθευση έληξε. Στείλτε ξανά τον κωδικό.",
+  "phoneLink.error": "Δεν ήταν δυνατή η προσθήκη του αριθμού. Δοκιμάστε ξανά.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Η λειτουργία «Μην ενοχλείτε» είναι ενεργή",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

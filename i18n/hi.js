@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "साइन अप के लिए फ़ोन नंबर ज़रूरी है",
+  "phoneLink.title": "अपना नंबर जोड़ें",
+  "phoneLink.body": "WhatsApp की तरह, हर Chatyy अकाउंट का एक नंबर होता है। इससे आपका अकाउंट सुरक्षित रहता है और दोस्त आपको ढूँढ पाते हैं।",
+  "phoneLink.bodyRequired": "Chatyy इस्तेमाल करते रहने के लिए अपना फ़ोन नंबर कन्फ़र्म करें।",
+  "phoneLink.hint": "हम SMS या WhatsApp से एक कोड भेजेंगे।",
+  "phoneLink.send": "कोड भेजें",
+  "phoneLink.notNow": "अभी नहीं",
+  "phoneLink.codeTitle": "कोड डालें",
+  "phoneLink.codeSent": "हमने {phone} पर कोड भेजा है",
+  "phoneLink.resendIn": "{s} सेकंड में फिर से भेजें",
+  "phoneLink.resend": "कोड फिर से भेजें",
+  "phoneLink.changeNumber": "नंबर बदलें",
+  "phoneLink.done": "नंबर जोड़ दिया गया",
+  "phoneLink.taken": "यह नंबर पहले से किसी दूसरे Chatyy अकाउंट से जुड़ा है। उस अकाउंट को इस्तेमाल करने के लिए नंबर से साइन इन करें।",
+  "phoneLink.alreadyHas": "आपके अकाउंट में पहले से नंबर है। बदलने के लिए सेटिंग्स > नंबर बदलें पर जाएँ।",
+  "phoneLink.expired": "वेरिफ़िकेशन की समय-सीमा खत्म हो गई। कोड फिर से भेजें।",
+  "phoneLink.error": "नंबर नहीं जोड़ा जा सका। फिर से कोशिश करें।",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "परेशान न करें चालू है",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

@@ -7603,6 +7603,19 @@ export async function phoneChangeCancel() {
   return apiCall('phone_change_cancel', {}, 'POST');
 }
 
+// [phone-obrigatorio 2026-10-15] "Adicione seu número" p/ conta EXISTENTE sem telefone.
+// Código = verifySend/verifyCheck (mesmo caminho do cadastro); phoneLink liga o verify_token
+// à conta logada. Número de outra conta → 409 { reason: 'phone_taken' }.
+export async function phoneLinkStatus() {
+  return apiCall('phone_link_status', {}, 'POST');
+}
+export async function phoneLinkPrecheck(phone) {
+  return apiCall('phone_link_precheck', { phone }, 'POST');
+}
+export async function phoneLink(verifyToken) {
+  return apiCall('phone_link', { verify_token: verifyToken }, 'POST');
+}
+
 export async function chatBlockUser(email) {
   return apiCall('chat_block_user', { email }, 'POST');
 }

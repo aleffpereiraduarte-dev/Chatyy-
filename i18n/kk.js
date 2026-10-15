@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Тіркелу үшін телефон нөмірі қажет",
+  "phoneLink.title": "Нөміріңізді қосыңыз",
+  "phoneLink.body": "WhatsApp сияқты, әр Chatyy аккаунтының нөмірі болады. Бұл аккаунтыңызды қорғайды және достарыңызға сізді табуға көмектеседі.",
+  "phoneLink.bodyRequired": "Chatyy-ді пайдалануды жалғастыру үшін телефон нөміріңізді растаңыз.",
+  "phoneLink.hint": "Кодты SMS немесе WhatsApp арқылы жібереміз.",
+  "phoneLink.send": "Кодты жіберу",
+  "phoneLink.notNow": "Қазір емес",
+  "phoneLink.codeTitle": "Кодты енгізіңіз",
+  "phoneLink.codeSent": "{phone} нөміріне код жібердік",
+  "phoneLink.resendIn": "{s} с кейін қайта жіберу",
+  "phoneLink.resend": "Кодты қайта жіберу",
+  "phoneLink.changeNumber": "Нөмірді өзгерту",
+  "phoneLink.done": "Нөмір қосылды",
+  "phoneLink.taken": "Бұл нөмір басқа Chatyy аккаунтына байланған. Сол аккаунтты пайдалану үшін нөмірмен кіріңіз.",
+  "phoneLink.alreadyHas": "Аккаунтыңызда нөмір бар. Өзгерту үшін Параметрлер > Нөмірді өзгерту бөліміне өтіңіз.",
+  "phoneLink.expired": "Растау мерзімі өтті. Кодты қайта жіберіңіз.",
+  "phoneLink.error": "Нөмірді қосу мүмкін болмады. Қайталап көріңіз.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "«Мазаламау» қосулы",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

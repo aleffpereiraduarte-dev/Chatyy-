@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Roʻyxatdan oʻtish uchun telefon raqami kerak",
+  "phoneLink.title": "Raqamingizni qoʻshing",
+  "phoneLink.body": "WhatsApp kabi, har bir Chatyy hisobida raqam bor. Bu hisobingizni himoya qiladi va doʻstlaringizga sizni topishga yordam beradi.",
+  "phoneLink.bodyRequired": "Chatyy’dan foydalanishni davom ettirish uchun telefon raqamingizni tasdiqlang.",
+  "phoneLink.hint": "Kodni SMS yoki WhatsApp orqali yuboramiz.",
+  "phoneLink.send": "Kodni yuborish",
+  "phoneLink.notNow": "Hozir emas",
+  "phoneLink.codeTitle": "Kodni kiriting",
+  "phoneLink.codeSent": "{phone} raqamiga kod yubordik",
+  "phoneLink.resendIn": "{s} soniyadan keyin qayta yuborish",
+  "phoneLink.resend": "Kodni qayta yuborish",
+  "phoneLink.changeNumber": "Raqamni oʻzgartirish",
+  "phoneLink.done": "Raqam qoʻshildi",
+  "phoneLink.taken": "Bu raqam allaqachon boshqa Chatyy hisobiga bogʻlangan. Oʻsha hisobdan foydalanish uchun raqam bilan kiring.",
+  "phoneLink.alreadyHas": "Hisobingizda allaqachon raqam bor. Oʻzgartirish uchun Sozlamalar > Raqamni oʻzgartirish boʻlimiga oʻting.",
+  "phoneLink.expired": "Tasdiqlash muddati tugadi. Kodni qayta yuboring.",
+  "phoneLink.error": "Raqamni qoʻshib boʻlmadi. Qayta urinib koʻring.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Bezovta qilinmasin yoqilgan",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

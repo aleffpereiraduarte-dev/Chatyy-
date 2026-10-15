@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Registreerumiseks on vaja telefoninumbrit",
+  "phoneLink.title": "Lisa oma number",
+  "phoneLink.body": "Nagu WhatsAppis, on igal Chatyy kontol number. See kaitseb sinu kontot ja aitab sõpradel sind leida.",
+  "phoneLink.bodyRequired": "Chatyy kasutamise jätkamiseks kinnita oma telefoninumber.",
+  "phoneLink.hint": "Saadame koodi SMS-i või WhatsAppi kaudu.",
+  "phoneLink.send": "Saada kood",
+  "phoneLink.notNow": "Mitte praegu",
+  "phoneLink.codeTitle": "Sisesta kood",
+  "phoneLink.codeSent": "Saatsime koodi numbrile {phone}",
+  "phoneLink.resendIn": "Saada uuesti {s} s pärast",
+  "phoneLink.resend": "Saada kood uuesti",
+  "phoneLink.changeNumber": "Muuda numbrit",
+  "phoneLink.done": "Number lisatud",
+  "phoneLink.taken": "See number on juba seotud teise Chatyy kontoga. Selle konto kasutamiseks logi sisse numbriga.",
+  "phoneLink.alreadyHas": "Sinu kontol on juba number. Muuda seda: Seaded > Muuda numbrit.",
+  "phoneLink.expired": "Kinnitus aegus. Saada kood uuesti.",
+  "phoneLink.error": "Numbri lisamine ebaõnnestus. Proovi uuesti.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Mitte segada on sees",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

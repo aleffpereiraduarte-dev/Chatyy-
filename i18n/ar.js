@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "التسجيل يتطلب رقم هاتف",
+  "phoneLink.title": "أضف رقمك",
+  "phoneLink.body": "كما في واتساب، لكل حساب في Chatyy رقم هاتف. هذا يحمي حسابك ويساعد أصدقاءك في العثور عليك.",
+  "phoneLink.bodyRequired": "لمواصلة استخدام Chatyy، أكّد رقم هاتفك.",
+  "phoneLink.hint": "سنرسل رمزًا عبر SMS أو واتساب.",
+  "phoneLink.send": "إرسال الرمز",
+  "phoneLink.notNow": "ليس الآن",
+  "phoneLink.codeTitle": "أدخل الرمز",
+  "phoneLink.codeSent": "أرسلنا رمزًا إلى {phone}",
+  "phoneLink.resendIn": "إعادة الإرسال بعد {s} ث",
+  "phoneLink.resend": "إعادة إرسال الرمز",
+  "phoneLink.changeNumber": "تغيير الرقم",
+  "phoneLink.done": "تمت إضافة الرقم",
+  "phoneLink.taken": "هذا الرقم مرتبط بالفعل بحساب آخر في Chatyy. لاستخدام ذلك الحساب، سجّل الدخول بالرقم.",
+  "phoneLink.alreadyHas": "حسابك لديه رقم بالفعل. لتغييره، انتقل إلى الإعدادات > تغيير الرقم.",
+  "phoneLink.expired": "انتهت صلاحية التحقق. أرسل الرمز مرة أخرى.",
+  "phoneLink.error": "تعذّرت إضافة الرقم. حاول مرة أخرى.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "وضع عدم الإزعاج مفعّل",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

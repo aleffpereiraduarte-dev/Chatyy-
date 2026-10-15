@@ -2085,19 +2085,7 @@ function SignupPhoneLegacy() {
               </>
             )}
           </TouchableOpacity>
-          {/* [2026-10-09 signup-nophone] saída p/ cadastro só com @username (sem SMS). */}
-          {step === 'phone' && !busy && (
-            <TouchableOpacity
-              onPress={() => { try { router.replace('/signup-username'); } catch {} }}
-              activeOpacity={0.6}
-              accessibilityRole="link"
-              hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
-              style={{ alignSelf: 'center', paddingVertical: 12, marginTop: 4 }}
-              testID="signup-phone-nophone"
-            >
-              <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textSecondary }}>{t('login.createAccountNoPhone')}</Text>
-            </TouchableOpacity>
-          )}
+          {/* [phone-obrigatorio 2026-10-15] saída p/ cadastro sem telefone REMOVIDA (1 conta = 1 número). */}
         </View>
       )}
 

@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Qeydiyyat üçün telefon nömrəsi tələb olunur",
+  "phoneLink.title": "Nömrənizi əlavə edin",
+  "phoneLink.body": "WhatsApp-da olduğu kimi, hər Chatyy hesabının nömrəsi var. Bu, hesabınızı qoruyur və dostlarınızın sizi tapmasına kömək edir.",
+  "phoneLink.bodyRequired": "Chatyy-dən istifadəyə davam etmək üçün telefon nömrənizi təsdiqləyin.",
+  "phoneLink.hint": "SMS və ya WhatsApp ilə kod göndərəcəyik.",
+  "phoneLink.send": "Kodu göndər",
+  "phoneLink.notNow": "İndi yox",
+  "phoneLink.codeTitle": "Kodu daxil edin",
+  "phoneLink.codeSent": "{phone} nömrəsinə kod göndərdik",
+  "phoneLink.resendIn": "{s} san. sonra yenidən göndər",
+  "phoneLink.resend": "Kodu yenidən göndər",
+  "phoneLink.changeNumber": "Nömrəni dəyiş",
+  "phoneLink.done": "Nömrə əlavə edildi",
+  "phoneLink.taken": "Bu nömrə artıq başqa Chatyy hesabına bağlıdır. Həmin hesabdan istifadə etmək üçün nömrə ilə daxil olun.",
+  "phoneLink.alreadyHas": "Hesabınızın artıq nömrəsi var. Dəyişmək üçün Ayarlar > Nömrəni dəyiş bölməsinə keçin.",
+  "phoneLink.expired": "Təsdiqləmənin vaxtı bitdi. Kodu yenidən göndərin.",
+  "phoneLink.error": "Nömrəni əlavə etmək mümkün olmadı. Yenidən cəhd edin.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Narahat etməyin aktivdir",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

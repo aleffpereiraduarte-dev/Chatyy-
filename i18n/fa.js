@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "ثبت‌نام فقط با شماره تلفن",
+  "phoneLink.title": "شماره‌تان را اضافه کنید",
+  "phoneLink.body": "مثل واتس‌اپ، هر حساب Chatyy یک شماره دارد. این کار از حساب شما محافظت می‌کند و به دوستانتان کمک می‌کند شما را پیدا کنند.",
+  "phoneLink.bodyRequired": "برای ادامهٔ استفاده از Chatyy، شماره تلفن خود را تأیید کنید.",
+  "phoneLink.hint": "یک کد از طریق پیامک یا واتس‌اپ می‌فرستیم.",
+  "phoneLink.send": "ارسال کد",
+  "phoneLink.notNow": "الان نه",
+  "phoneLink.codeTitle": "کد را وارد کنید",
+  "phoneLink.codeSent": "کدی به {phone} فرستادیم",
+  "phoneLink.resendIn": "ارسال دوباره تا {s} ثانیه دیگر",
+  "phoneLink.resend": "ارسال دوبارهٔ کد",
+  "phoneLink.changeNumber": "تغییر شماره",
+  "phoneLink.done": "شماره اضافه شد",
+  "phoneLink.taken": "این شماره قبلاً به حساب دیگری در Chatyy متصل شده است. برای استفاده از آن حساب، با شماره وارد شوید.",
+  "phoneLink.alreadyHas": "حساب شما از قبل شماره دارد. برای تغییر آن به تنظیمات > تغییر شماره بروید.",
+  "phoneLink.expired": "مهلت تأیید تمام شد. کد را دوباره بفرستید.",
+  "phoneLink.error": "افزودن شماره ممکن نشد. دوباره تلاش کنید.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "حالت مزاحم نشوید روشن است",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

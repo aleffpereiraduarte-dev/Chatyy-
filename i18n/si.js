@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "ලියාපදිංචියට දුරකථන අංකයක් අවශ්‍යයි",
+  "phoneLink.title": "ඔබේ අංකය එක් කරන්න",
+  "phoneLink.body": "WhatsApp මෙන්ම, සෑම Chatyy ගිණුමකටම අංකයක් ඇත. එය ඔබේ ගිණුම ආරක්ෂා කරන අතර මිතුරන්ට ඔබව සොයා ගැනීමට උදව් කරයි.",
+  "phoneLink.bodyRequired": "Chatyy දිගටම භාවිතා කිරීමට ඔබේ දුරකථන අංකය තහවුරු කරන්න.",
+  "phoneLink.hint": "අපි SMS හෝ WhatsApp මඟින් කේතයක් එවන්නෙමු.",
+  "phoneLink.send": "කේතය යවන්න",
+  "phoneLink.notNow": "දැන් නොවේ",
+  "phoneLink.codeTitle": "කේතය ඇතුළත් කරන්න",
+  "phoneLink.codeSent": "අපි {phone} වෙත කේතයක් එව්වා",
+  "phoneLink.resendIn": "තත්පර {s} කින් නැවත යවන්න",
+  "phoneLink.resend": "කේතය නැවත යවන්න",
+  "phoneLink.changeNumber": "අංකය වෙනස් කරන්න",
+  "phoneLink.done": "අංකය එක් කළා",
+  "phoneLink.taken": "මෙම අංකය දැනටමත් වෙනත් Chatyy ගිණුමකට සම්බන්ධයි. එම ගිණුම භාවිතා කිරීමට අංකයෙන් පුරනය වන්න.",
+  "phoneLink.alreadyHas": "ඔබේ ගිණුමට දැනටමත් අංකයක් ඇත. වෙනස් කිරීමට සැකසීම් > අංකය වෙනස් කරන්න වෙත යන්න.",
+  "phoneLink.expired": "තහවුරු කිරීම කල් ඉකුත් විය. කේතය නැවත යවන්න.",
+  "phoneLink.error": "අංකය එක් කළ නොහැකි විය. නැවත උත්සාහ කරන්න.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "බාධා නොකරන්න ක්‍රියාත්මකයි",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

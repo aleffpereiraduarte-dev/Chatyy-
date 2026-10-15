@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "ለመመዝገብ ስልክ ቁጥር ያስፈልጋል",
+  "phoneLink.title": "ቁጥርዎን ያክሉ",
+  "phoneLink.body": "እንደ WhatsApp ሁሉ እያንዳንዱ የChatyy መለያ ቁጥር አለው። ይህ መለያዎን ይጠብቃል፤ ጓደኞችዎም እንዲያገኙዎት ይረዳል።",
+  "phoneLink.bodyRequired": "Chatyyን መጠቀም ለመቀጠል ስልክ ቁጥርዎን ያረጋግጡ።",
+  "phoneLink.hint": "ኮድ በSMS ወይም በWhatsApp እንልካለን።",
+  "phoneLink.send": "ኮድ ላክ",
+  "phoneLink.notNow": "አሁን አይደለም",
+  "phoneLink.codeTitle": "ኮዱን ያስገቡ",
+  "phoneLink.codeSent": "ወደ {phone} ኮድ ልከናል",
+  "phoneLink.resendIn": "በ{s} ሰከንድ ውስጥ እንደገና ላክ",
+  "phoneLink.resend": "ኮዱን እንደገና ላክ",
+  "phoneLink.changeNumber": "ቁጥር ቀይር",
+  "phoneLink.done": "ቁጥሩ ታክሏል",
+  "phoneLink.taken": "ይህ ቁጥር አስቀድሞ ከሌላ የChatyy መለያ ጋር ተገናኝቷል። ያንን መለያ ለመጠቀም በቁጥሩ ይግቡ።",
+  "phoneLink.alreadyHas": "መለያዎ አስቀድሞ ቁጥር አለው። ለመቀየር ወደ ቅንብሮች > ቁጥር ቀይር ይሂዱ።",
+  "phoneLink.expired": "የማረጋገጫው ጊዜ አልፏል። ኮዱን እንደገና ይላኩ።",
+  "phoneLink.error": "ቁጥሩን ማከል አልተቻለም። እንደገና ይሞክሩ።",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "አትረብሽ በርቷል",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

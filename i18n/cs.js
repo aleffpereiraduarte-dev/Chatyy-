@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Registrace vyžaduje telefonní číslo",
+  "phoneLink.title": "Přidejte své číslo",
+  "phoneLink.body": "Stejně jako na WhatsAppu má každý účet Chatyy číslo. Chrání váš účet a pomáhá přátelům vás najít.",
+  "phoneLink.bodyRequired": "Chcete-li Chatyy dál používat, potvrďte své telefonní číslo.",
+  "phoneLink.hint": "Pošleme vám kód přes SMS nebo WhatsApp.",
+  "phoneLink.send": "Odeslat kód",
+  "phoneLink.notNow": "Teď ne",
+  "phoneLink.codeTitle": "Zadejte kód",
+  "phoneLink.codeSent": "Poslali jsme kód na {phone}",
+  "phoneLink.resendIn": "Znovu odeslat za {s} s",
+  "phoneLink.resend": "Odeslat kód znovu",
+  "phoneLink.changeNumber": "Změnit číslo",
+  "phoneLink.done": "Číslo přidáno",
+  "phoneLink.taken": "Toto číslo už je propojené s jiným účtem Chatyy. Chcete-li použít ten účet, přihlaste se číslem.",
+  "phoneLink.alreadyHas": "Váš účet už číslo má. Změníte ho v Nastavení > Změnit číslo.",
+  "phoneLink.expired": "Ověření vypršelo. Pošlete kód znovu.",
+  "phoneLink.error": "Číslo se nepodařilo přidat. Zkuste to znovu.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Nerušit je zapnuto",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

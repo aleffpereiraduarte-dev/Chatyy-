@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "సైన్ అప్‌కు ఫోన్ నంబర్ అవసరం",
+  "phoneLink.title": "మీ నంబర్‌ను జోడించండి",
+  "phoneLink.body": "WhatsApp లాగే, ప్రతి Chatyy ఖాతాకు ఒక నంబర్ ఉంటుంది. ఇది మీ ఖాతాను రక్షిస్తుంది, స్నేహితులు మిమ్మల్ని కనుగొనడంలో సహాయపడుతుంది.",
+  "phoneLink.bodyRequired": "Chatyyని ఉపయోగించడం కొనసాగించడానికి మీ ఫోన్ నంబర్‌ను నిర్ధారించండి.",
+  "phoneLink.hint": "మేము SMS లేదా WhatsApp ద్వారా కోడ్ పంపుతాము.",
+  "phoneLink.send": "కోడ్ పంపు",
+  "phoneLink.notNow": "ఇప్పుడు కాదు",
+  "phoneLink.codeTitle": "కోడ్‌ను నమోదు చేయండి",
+  "phoneLink.codeSent": "{phone}కు కోడ్ పంపాము",
+  "phoneLink.resendIn": "{s} సెకన్లలో మళ్లీ పంపు",
+  "phoneLink.resend": "కోడ్ మళ్లీ పంపు",
+  "phoneLink.changeNumber": "నంబర్ మార్చు",
+  "phoneLink.done": "నంబర్ జోడించబడింది",
+  "phoneLink.taken": "ఈ నంబర్ ఇప్పటికే మరో Chatyy ఖాతాకు లింక్ అయి ఉంది. ఆ ఖాతాను ఉపయోగించడానికి నంబర్‌తో సైన్ ఇన్ చేయండి.",
+  "phoneLink.alreadyHas": "మీ ఖాతాకు ఇప్పటికే నంబర్ ఉంది. మార్చడానికి సెట్టింగ్‌లు > నంబర్ మార్చు కు వెళ్లండి.",
+  "phoneLink.expired": "ధృవీకరణ గడువు ముగిసింది. కోడ్‌ను మళ్లీ పంపండి.",
+  "phoneLink.error": "నంబర్‌ను జోడించలేకపోయాము. మళ్లీ ప్రయత్నించండి.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "అంతరాయం కలిగించవద్దు ఆన్‌లో ఉంది",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

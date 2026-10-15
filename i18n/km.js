@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "ការចុះឈ្មោះត្រូវការលេខទូរស័ព្ទ",
+  "phoneLink.title": "បន្ថែមលេខរបស់អ្នក",
+  "phoneLink.body": "ដូច WhatsApp ដែរ គណនី Chatyy នីមួយៗមានលេខទូរស័ព្ទ។ វាការពារគណនីរបស់អ្នក និងជួយមិត្តភក្តិរកអ្នកឃើញ។",
+  "phoneLink.bodyRequired": "ដើម្បីបន្តប្រើ Chatyy សូមបញ្ជាក់លេខទូរស័ព្ទរបស់អ្នក។",
+  "phoneLink.hint": "យើងនឹងផ្ញើលេខកូដតាម SMS ឬ WhatsApp។",
+  "phoneLink.send": "ផ្ញើលេខកូដ",
+  "phoneLink.notNow": "មិនមែនឥឡូវនេះ",
+  "phoneLink.codeTitle": "បញ្ចូលលេខកូដ",
+  "phoneLink.codeSent": "យើងបានផ្ញើលេខកូដទៅ {phone}",
+  "phoneLink.resendIn": "ផ្ញើម្ដងទៀតក្នុង {s} វិនាទី",
+  "phoneLink.resend": "ផ្ញើលេខកូដម្ដងទៀត",
+  "phoneLink.changeNumber": "ប្ដូរលេខ",
+  "phoneLink.done": "បានបន្ថែមលេខ",
+  "phoneLink.taken": "លេខនេះបានភ្ជាប់ជាមួយគណនី Chatyy ផ្សេងរួចហើយ។ ដើម្បីប្រើគណនីនោះ សូមចូលដោយប្រើលេខនេះ។",
+  "phoneLink.alreadyHas": "គណនីរបស់អ្នកមានលេខរួចហើយ។ ដើម្បីប្ដូរ សូមចូលទៅ ការកំណត់ > ប្ដូរលេខ។",
+  "phoneLink.expired": "ការផ្ទៀងផ្ទាត់បានផុតកំណត់។ សូមផ្ញើលេខកូដម្ដងទៀត។",
+  "phoneLink.error": "មិនអាចបន្ថែមលេខបានទេ។ សូមព្យាយាមម្ដងទៀត។",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "កុំរំខាន ត្រូវបានបើក",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

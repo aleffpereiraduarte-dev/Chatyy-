@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "ההרשמה דורשת מספר טלפון",
+  "phoneLink.title": "הוסיפו את המספר שלכם",
+  "phoneLink.body": "כמו בוואטסאפ, לכל חשבון Chatyy יש מספר. זה מגן על החשבון שלכם ועוזר לחברים למצוא אתכם.",
+  "phoneLink.bodyRequired": "כדי להמשיך להשתמש ב-Chatyy, אשרו את מספר הטלפון שלכם.",
+  "phoneLink.hint": "נשלח קוד ב-SMS או בוואטסאפ.",
+  "phoneLink.send": "שליחת קוד",
+  "phoneLink.notNow": "לא עכשיו",
+  "phoneLink.codeTitle": "הזינו את הקוד",
+  "phoneLink.codeSent": "שלחנו קוד אל {phone}",
+  "phoneLink.resendIn": "שליחה חוזרת בעוד {s} שנ׳",
+  "phoneLink.resend": "שליחת הקוד שוב",
+  "phoneLink.changeNumber": "החלפת מספר",
+  "phoneLink.done": "המספר נוסף",
+  "phoneLink.taken": "המספר הזה כבר מקושר לחשבון Chatyy אחר. כדי להשתמש בחשבון ההוא, היכנסו עם המספר.",
+  "phoneLink.alreadyHas": "לחשבון שלכם כבר יש מספר. להחלפה: הגדרות > החלפת מספר.",
+  "phoneLink.expired": "תוקף האימות פג. שלחו את הקוד שוב.",
+  "phoneLink.error": "לא ניתן היה להוסיף את המספר. נסו שוב.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "מצב \"נא לא להפריע\" פעיל",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

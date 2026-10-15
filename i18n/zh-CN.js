@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "注册需要手机号码",
+  "phoneLink.title": "添加你的手机号",
+  "phoneLink.body": "和 WhatsApp 一样，每个 Chatyy 账号都绑定一个手机号。这能保护你的账号，也方便朋友找到你。",
+  "phoneLink.bodyRequired": "要继续使用 Chatyy，请确认你的手机号码。",
+  "phoneLink.hint": "我们会通过短信或 WhatsApp 发送验证码。",
+  "phoneLink.send": "发送验证码",
+  "phoneLink.notNow": "以后再说",
+  "phoneLink.codeTitle": "输入验证码",
+  "phoneLink.codeSent": "验证码已发送至 {phone}",
+  "phoneLink.resendIn": "{s} 秒后重新发送",
+  "phoneLink.resend": "重新发送验证码",
+  "phoneLink.changeNumber": "更换号码",
+  "phoneLink.done": "号码已添加",
+  "phoneLink.taken": "该号码已绑定另一个 Chatyy 账号。如需使用该账号，请用此号码登录。",
+  "phoneLink.alreadyHas": "你的账号已绑定号码。如需更换，请前往 设置 > 更换号码。",
+  "phoneLink.expired": "验证已过期，请重新发送验证码。",
+  "phoneLink.error": "无法添加号码，请重试。",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "勿扰模式已开启",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

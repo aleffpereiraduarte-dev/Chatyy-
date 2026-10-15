@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Registracijai reikia telefono numerio",
+  "phoneLink.title": "Pridėkite savo numerį",
+  "phoneLink.body": "Kaip ir WhatsApp, kiekviena Chatyy paskyra turi numerį. Tai apsaugo jūsų paskyrą ir padeda draugams jus rasti.",
+  "phoneLink.bodyRequired": "Norėdami toliau naudotis Chatyy, patvirtinkite savo telefono numerį.",
+  "phoneLink.hint": "Atsiųsime kodą SMS žinute arba per WhatsApp.",
+  "phoneLink.send": "Siųsti kodą",
+  "phoneLink.notNow": "Ne dabar",
+  "phoneLink.codeTitle": "Įveskite kodą",
+  "phoneLink.codeSent": "Išsiuntėme kodą į {phone}",
+  "phoneLink.resendIn": "Siųsti iš naujo po {s} s",
+  "phoneLink.resend": "Siųsti kodą iš naujo",
+  "phoneLink.changeNumber": "Keisti numerį",
+  "phoneLink.done": "Numeris pridėtas",
+  "phoneLink.taken": "Šis numeris jau susietas su kita Chatyy paskyra. Norėdami naudoti tą paskyrą, prisijunkite su numeriu.",
+  "phoneLink.alreadyHas": "Jūsų paskyra jau turi numerį. Pakeiskite jį: Nustatymai > Keisti numerį.",
+  "phoneLink.expired": "Patvirtinimas baigėsi. Atsiųskite kodą iš naujo.",
+  "phoneLink.error": "Nepavyko pridėti numerio. Bandykite dar kartą.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Netrukdyti įjungta",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

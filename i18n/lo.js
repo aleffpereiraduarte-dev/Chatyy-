@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "ການລົງທະບຽນຕ້ອງໃຊ້ເບີໂທລະສັບ",
+  "phoneLink.title": "ເພີ່ມເບີຂອງທ່ານ",
+  "phoneLink.body": "ຄືກັບ WhatsApp, ທຸກບັນຊີ Chatyy ມີເບີໂທ. ມັນຊ່ວຍປົກປ້ອງບັນຊີຂອງທ່ານ ແລະ ຊ່ວຍໃຫ້ໝູ່ຊອກຫາທ່ານໄດ້.",
+  "phoneLink.bodyRequired": "ເພື່ອໃຊ້ Chatyy ຕໍ່, ກະລຸນາຢືນຢັນເບີໂທລະສັບຂອງທ່ານ.",
+  "phoneLink.hint": "ພວກເຮົາຈະສົ່ງລະຫັດທາງ SMS ຫຼື WhatsApp.",
+  "phoneLink.send": "ສົ່ງລະຫັດ",
+  "phoneLink.notNow": "ບໍ່ແມ່ນຕອນນີ້",
+  "phoneLink.codeTitle": "ໃສ່ລະຫັດ",
+  "phoneLink.codeSent": "ພວກເຮົາໄດ້ສົ່ງລະຫັດໄປທີ່ {phone}",
+  "phoneLink.resendIn": "ສົ່ງອີກຄັ້ງໃນ {s} ວິນາທີ",
+  "phoneLink.resend": "ສົ່ງລະຫັດອີກຄັ້ງ",
+  "phoneLink.changeNumber": "ປ່ຽນເບີ",
+  "phoneLink.done": "ເພີ່ມເບີແລ້ວ",
+  "phoneLink.taken": "ເບີນີ້ເຊື່ອມກັບບັນຊີ Chatyy ອື່ນແລ້ວ. ເພື່ອໃຊ້ບັນຊີນັ້ນ, ໃຫ້ເຂົ້າສູ່ລະບົບດ້ວຍເບີນີ້.",
+  "phoneLink.alreadyHas": "ບັນຊີຂອງທ່ານມີເບີແລ້ວ. ເພື່ອປ່ຽນ, ໄປທີ່ ການຕັ້ງຄ່າ > ປ່ຽນເບີ.",
+  "phoneLink.expired": "ການຢືນຢັນໝົດອາຍຸແລ້ວ. ກະລຸນາສົ່ງລະຫັດອີກຄັ້ງ.",
+  "phoneLink.error": "ບໍ່ສາມາດເພີ່ມເບີໄດ້. ກະລຸນາລອງໃໝ່.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "ຫ້າມລົບກວນເປີດຢູ່",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

@@ -1,4 +1,22 @@
 export default {
+  // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
+  "auth.phoneRequired": "Бүртгүүлэхэд утасны дугаар шаардлагатай",
+  "phoneLink.title": "Дугаараа нэмэх",
+  "phoneLink.body": "WhatsApp-ийн адил Chatyy-ийн бүх бүртгэл дугаартай. Энэ нь таны бүртгэлийг хамгаалж, найзууд тань таныг олоход тусална.",
+  "phoneLink.bodyRequired": "Chatyy-г үргэлжлүүлэн ашиглахын тулд утасны дугаараа баталгаажуулна уу.",
+  "phoneLink.hint": "Бид SMS эсвэл WhatsApp-аар код илгээнэ.",
+  "phoneLink.send": "Код илгээх",
+  "phoneLink.notNow": "Одоо биш",
+  "phoneLink.codeTitle": "Кодоо оруулна уу",
+  "phoneLink.codeSent": "{phone} дугаарт код илгээлээ",
+  "phoneLink.resendIn": "{s} секундийн дараа дахин илгээх",
+  "phoneLink.resend": "Кодыг дахин илгээх",
+  "phoneLink.changeNumber": "Дугаар солих",
+  "phoneLink.done": "Дугаар нэмэгдлээ",
+  "phoneLink.taken": "Энэ дугаар өөр Chatyy бүртгэлтэй холбогдсон байна. Тэр бүртгэлийг ашиглахын тулд дугаараар нэвтэрнэ үү.",
+  "phoneLink.alreadyHas": "Таны бүртгэл аль хэдийн дугаартай. Солихын тулд Тохиргоо > Дугаар солих руу орно уу.",
+  "phoneLink.expired": "Баталгаажуулалтын хугацаа дууслаа. Кодыг дахин илгээнэ үү.",
+  "phoneLink.error": "Дугаар нэмж чадсангүй. Дахин оролдоно уу.",
   // [2026-10-15 chamadas-dnd] caller: aparelho do callee em Foco/Não Perturbe
   "call.state.peerDnd": "Бүү саад бол асаалттай",
   // [2026-10-15 native-media-dl] "1,2 MB de 4,5 MB" no anel de download

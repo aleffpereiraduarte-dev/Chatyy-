@@ -18,7 +18,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, KeyboardAvoidingView, ScrollView, Easing, useWindowDimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Redirect } from 'expo-router';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthTheme } from '../context/ThemeContext';
@@ -36,7 +36,16 @@ import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
 import { SignupConsentBlock } from '../components/consent/ConsentOptions'; // [2026-10-13 consent-lgpd]
 import { usernameLocalError, sanitizeUsernameTyping, friendlyServerError } from '../components/signup/signupSmarts';
 
-export default function SignupUsername() {
+// [phone-obrigatorio 2026-10-15] Cadastro SEM telefone FECHADO (founder: 1 conta = 1 número, como WhatsApp).
+// O servidor recusa username_signup (403 phone_required); a rota (links antigos / URL no web) cai no
+// cadastro por telefone. Tela antiga mantida abaixo só como referência — não é mais alcançável.
+export const USERNAME_SIGNUP_ENABLED = false;
+export default function SignupUsernameRoute() {
+  if (!USERNAME_SIGNUP_ENABLED) return <Redirect href="/signup-phone" />;
+  return <SignupUsername />;
+}
+
+function SignupUsername() {
   const router = useRouter();
   const { colors, isDark } = useAuthTheme();
   const { t } = useLanguage();
