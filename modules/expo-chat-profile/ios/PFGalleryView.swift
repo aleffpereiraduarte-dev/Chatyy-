@@ -183,8 +183,8 @@ final class PFGalleryView: UIView, UIScrollViewDelegate, UIGestureRecognizerDele
     }
   }
 
-  func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-    guard let pan = g as? UIPanGestureRecognizer else { return true }
+  override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    guard let pan = g as? UIPanGestureRecognizer else { return super.gestureRecognizerShouldBegin(g) }
     let v = pan.velocity(in: self)
     return abs(v.y) > abs(v.x)
   }

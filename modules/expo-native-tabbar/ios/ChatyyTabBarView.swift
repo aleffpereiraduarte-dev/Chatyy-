@@ -288,8 +288,8 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     return max(0, min(records.count - 1, i))
   }
 
-  func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-    guard g === longPress else { return true }
+  override func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    guard g === longPress else { return super.gestureRecognizerShouldBegin(g) }
     guard let i = indexAt(g.location(in: tabBar)) else { return false }
     return records[i].longPress
   }
