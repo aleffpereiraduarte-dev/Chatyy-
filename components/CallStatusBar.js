@@ -24,13 +24,14 @@
  * — `minimized` says the call screen is not the visible one. Web (and the
  * legacy SIP path) keeps the JS CallContext fallback.
  */
-import React, { useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, useLayoutEffect } from 'react';
 import { View, Text, Pressable, StyleSheet, Animated, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets, SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { IconPhone, IconPhoneOff, IconVideo, IconMic, IconMicOff } from './Icons';
 import { useCurrentCall } from '../services/call-state-reader';
 import { useLanguage } from '../context/LanguageContext';
+import { useVoiceBarInset, voiceBarShift, runVoiceBarShift } from '../services/voiceBarInset';
 
 // Lazy resolved at module load (outside the component) — does NOT call hooks itself
 let _useCall = null;
@@ -72,7 +73,18 @@ const RealInsetsContext = React.createContext(null);
  */
 export function CallBarInsetProvider({ children }) {
   const insets = useSafeAreaInsets();
-  const barH = useCallBarHeight();
+  const callH = useCallBarHeight();
+  // [2026-10-15 voice-bar] The voice-note strip (push mode) stacks right under
+  // the call bar and pushes the navigator the same way — never covers headers
+  // or large titles. Its height change glides via a native-driver translateY.
+  const voiceH = useVoiceBarInset();
+  const barH = callH + voiceH;
+  const prevVoiceH = useRef(voiceH);
+  useLayoutEffect(() => {
+    const d = voiceH - prevVoiceH.current;
+    prevVoiceH.current = voiceH;
+    if (d) runVoiceBarShift(d);
+  }, [voiceH]);
   const shifted = useMemo(
     () => (barH ? { top: 0, bottom: insets.bottom, left: insets.left, right: insets.right } : insets),
     [barH, insets]
@@ -80,7 +92,10 @@ export function CallBarInsetProvider({ children }) {
   return (
     <RealInsetsContext.Provider value={insets}>
       <View style={{ flex: 1, paddingTop: barH ? insets.top + barH : 0 }}>
-        <SafeAreaInsetsContext.Provider value={shifted}>{children}</SafeAreaInsetsContext.Provider>
+        {/* Web: no transform (it would re-root position:fixed descendants). */}
+        <Animated.View style={IS_NATIVE ? { flex: 1, transform: [{ translateY: voiceBarShift }] } : { flex: 1 }}>
+          <SafeAreaInsetsContext.Provider value={shifted}>{children}</SafeAreaInsetsContext.Provider>
+        </Animated.View>
       </View>
     </RealInsetsContext.Provider>
   );
@@ -92,7 +107,7 @@ const IOS_WINDOW_MODALS = new Set(['modal', 'fullScreenModal', 'transparentModal
 
 function ModalInsetRestore({ presentation, children }) {
   const real = React.useContext(RealInsetsContext);
-  const barH = useCallBarHeight();
+  const barH = useCallBarHeight() + useVoiceBarInset();
   if (!barH || !real || !IOS_WINDOW_MODALS.has(presentation)) return children;
   return <SafeAreaInsetsContext.Provider value={real}>{children}</SafeAreaInsetsContext.Provider>;
 }

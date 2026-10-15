@@ -204,6 +204,16 @@ function _gcDetached() {
 export function getVoiceConversationTitle(conversationId) {
   return _convCtx.get(String(conversationId))?.title || '';
 }
+// [2026-10-15 voice-bar] Extra per-conversation info for the mini bar:
+// { email, avatar } (avatar of the direct peer / group photo) and
+// jumpTo(messageId) (scroll the open chat to the note + highlight).
+export function updateVoiceConversationMeta(conversationId, meta) {
+  const cur = _convCtx.get(String(conversationId));
+  if (cur && meta) Object.assign(cur, meta);
+}
+export function getVoiceConversationMeta(conversationId) {
+  return _convCtx.get(String(conversationId)) || null;
+}
 
 // ── Engines ────────────────────────────────────────────────────────────
 let _native;            // undefined = not probed yet

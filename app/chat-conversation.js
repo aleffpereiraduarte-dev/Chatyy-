@@ -11572,10 +11572,12 @@ function ChatConversationInner() {
   // both and re-enables the jump firing when messages loads. Hook order stays
   // stable (unconditional effect at a fixed new position).
   useEffect(() => {
-    if (_didJumpRef.current) return;
+    // [2026-10-15 voice-bar] Guarda o ALVO (não só "já pulou") → um novo alvo via
+    // setParams na mesma conversa (barra de áudio / estrela) também rola.
     if (_jumpTargetId == null || _jumpTargetId === '') return;
+    if (_didJumpRef.current === String(_jumpTargetId)) return;
     if (!Array.isArray(messages) || messages.length === 0) return;
-    _didJumpRef.current = true;
+    _didJumpRef.current = String(_jumpTargetId);
     // Defer so the list lays out before scrollToIndex / load-around runs.
     const tm = setTimeout(() => { safeScrollToMsg({ id: _jumpTargetId }); }, 250);
     return () => clearTimeout(tm);
@@ -16159,6 +16161,27 @@ function ChatConversationInner() {
     voiceTitleRef.current = conversationName || '';
     if (conversationId) VoiceNote.updateVoiceConversationTitle(conversationId, conversationName || '');
   }, [conversationId, conversationName]);
+  // [2026-10-15 voice-bar] Avatar (peer / group photo) + "jump to the note"
+  // for the global voice bar (components/chat/VoiceMiniPlayer.js).
+  const _voiceJumpRef = useRef(null);
+  _voiceJumpRef.current = safeScrollToMsg;
+  useEffect(() => {
+    if (!conversationId) return;
+    let email = '';
+    try {
+      if (conversationType === 'direct') {
+        const _meLc = (currentEmail || '').toLowerCase();
+        const fromMembers = (membersRef.current || []).find(m => (m?.email || '') && (m.email || '').toLowerCase() !== _meLc)?.email;
+        email = fromMembers || params.email || '';
+        if (email && email.toLowerCase() === _meLc) email = '';
+      }
+    } catch {}
+    VoiceNote.updateVoiceConversationMeta?.(conversationId, {
+      email,
+      avatar: conversationType === 'group' ? (conversationAvatar || '') : '',
+      jumpTo: (mid) => { try { _voiceJumpRef.current?.({ id: mid }); } catch {} },
+    });
+  }, [conversationId, conversationType, conversationAvatar, currentEmail, params.email]);
 
   // Subscribe to "send permanently failing" events so we flip the bubble
   // to red ❗ after ~5 retry attempts in offlineCache.replayOfflineQueue.
