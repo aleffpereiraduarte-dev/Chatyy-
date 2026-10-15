@@ -1002,6 +1002,10 @@ export default function StoryViewer({
   // owner sees BOTH metrics at a glance (Instagram pattern). Map keyed by
   // status id so flipping between slides in the same group doesn't refetch.
   const [repliesCountById, setRepliesCountById] = useState({});
+  // [2026-10-15 views-perfil] Contagem de visualizações do PRÓPRIO status buscada
+  // no servidor (status_viewers) — pelo perfil os stories vêm do profile_get sem
+  // views (mostrava 0 enquanto a home mostrava 5).
+  const [viewsById, setViewsById] = useState({});
   // UI fade when paused (long-press to inspect a story). Mirrors Instagram —
   // header + bottom bar fade to 0 so the photo is unobstructed; tap-release
   // brings them back. Native-driven opacity, free even on cheap Android.
@@ -1899,11 +1903,30 @@ export default function StoryViewer({
     finally { setSaving(false); }
   }, [saving, t, savedToastAnim]);
 
+  useEffect(() => {
+    if (!visible || !isSelf) return undefined;
+    const st = stories && stories[Math.min(Math.max(0, idx), Math.max(0, stories.length - 1))];
+    const sid = st && (st.id || st.status_id);
+    if (!sid || viewsById[sid] != null) return undefined;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.statusViewers(sid);
+        const d = r && (r.data || r);
+        const list = Array.isArray(d) ? d : (d?.viewers || d?.items || []);
+        const n = Number(d?.count ?? d?.total ?? d?.views ?? (Array.isArray(list) ? list.length : NaN));
+        if (alive && Number.isFinite(n)) setViewsById((m) => ({ ...m, [sid]: n }));
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [visible, isSelf, idx, stories, viewsById]);
+
   if (!visible) return null;
   if (!stories.length) return null;
   const safeIdx = Math.min(Math.max(0, idx), stories.length - 1);
-  const cur = stories[safeIdx];
-  if (!cur) return null;
+  const _cur0 = stories[safeIdx];
+  if (!_cur0) return null;
+  const cur = (isSelf && viewsById[_cur0.id || _cur0.status_id] != null) ? { ..._cur0, views: Math.max(Number(_cur0.views) || 0, viewsById[_cur0.id || _cur0.status_id]) } : _cur0;
 
   const isImage = cur.type === 'image';
   const isVideo = cur.type === 'video';
