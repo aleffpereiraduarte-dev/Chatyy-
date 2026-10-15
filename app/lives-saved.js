@@ -244,18 +244,18 @@ export default function LivesSavedScreen() {
           </Text>
           <View style={styles.metaRow}>
             <AvatarCircle name={item.host_name} email={item.host_email} size={18} />
-            <Text style={[styles.metaTxt, { color: colors.textMuted || '#888' }]} numberOfLines={1}>
+            <Text style={[styles.metaTxt, { color: (colors.textMuted || colors.textTertiary) || '#888' }]} numberOfLines={1}>
               {item.host_name || item.host_email}
             </Text>
-            <Text style={[styles.metaDot, { color: colors.textMuted || '#888' }]}>·</Text>
-            <Text style={[styles.metaTxt, { color: colors.textMuted || '#888' }]}>
+            <Text style={[styles.metaDot, { color: (colors.textMuted || colors.textTertiary) || '#888' }]}>·</Text>
+            <Text style={[styles.metaTxt, { color: (colors.textMuted || colors.textTertiary) || '#888' }]}>
               {formatWhen(item.ended_at || item.started_at, t)}
             </Text>
           </View>
           {item.is_host && item.saved_count > 0 && (
             <View style={styles.savedCountRow}>
               <IconStar size={11} color={colors.primary} />
-              <Text style={[styles.savedCountTxt, { color: colors.textMuted || '#888' }]}>
+              <Text style={[styles.savedCountTxt, { color: (colors.textMuted || colors.textTertiary) || '#888' }]}>
                 {item.saved_count} {item.saved_count === 1
                   ? (t('liveReplay.savedBy1') || 'pessoa salvou')
                   : (t('liveReplay.savedByN') || 'pessoas salvaram')}

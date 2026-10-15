@@ -280,6 +280,7 @@ export default function CommunityDiscoverScreen() {
               kind="search"
               compact
               title={t('community.empty') || 'Nenhuma comunidade encontrada'}
+              subtitle={t('community.createFirst') || 'Crie uma comunidade para organizar seus grupos'}
             />
           }
         />

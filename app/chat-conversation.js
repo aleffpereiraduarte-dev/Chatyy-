@@ -197,7 +197,7 @@ import {
   IconArrowLeft, IconSend, IconUsers, IconMoreVert, IconVideo, IconPhone,
   IconX, IconEdit, IconTrash, IconReply, IconPaperclip, IconImage, IconFileText,
   IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconVideoNote,
-  IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
+  IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus, IconType,
   IconHeart,
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconChevronLeft,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
@@ -36103,7 +36103,7 @@ function ChatConversationInner() {
                   accessibilityLabel={t('chatConv.savedHeading') || 'Cabeçalho'}
                   accessibilityRole="button"
                 >
-                  <Text style={{ color: _chromeIcon, fontWeight: '800', fontSize: 15 }}>H</Text>
+                  <IconType size={20} color={_chromeIcon} />
                 </TouchableOpacity>
                 {/* Lembrar-me em — schedule the message via existing
                     chatScheduleMessage so the user gets it back as a chat
@@ -39426,9 +39426,9 @@ function ChatConversationInner() {
                       <TouchableOpacity
                         onPress={handleUpdateGroupName}
                         activeOpacity={0.7}
-                        style={{ alignItems: 'center', paddingVertical: 13, backgroundColor: GI_ACCENT }}
+                        style={{ alignItems: 'center', paddingVertical: 13, backgroundColor: colors.primary }}
                       >
-                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>{t('common.save') || 'Salvar'}</Text>
+                        <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 15 }}>{t('common.save') || 'Salvar'}</Text>
                       </TouchableOpacity>
                     </>
                   )}
@@ -39526,10 +39526,10 @@ function ChatConversationInner() {
                           onPress={() => setMemberRoleFilter(chip.key)}
                           style={{
                             paddingHorizontal: 13, paddingVertical: 6, borderRadius: 15,
-                            backgroundColor: active ? GI_ACCENT : (isDark ? 'rgba(255,255,255,0.06)' : '#f0f2f5'),
+                            backgroundColor: active ? colors.primary : (isDark ? 'rgba(255,255,255,0.06)' : '#f0f2f5'),
                           }}
                         >
-                          <Text style={{ fontSize: 12.5, fontWeight: '600', color: active ? '#fff' : colors.textSecondary }}>
+                          <Text style={{ fontSize: 12.5, fontWeight: '600', color: active ? (colors.onPrimary || '#fff') : colors.textSecondary }}>
                             {chip.label}
                           </Text>
                         </TouchableOpacity>
@@ -39698,11 +39698,11 @@ function ChatConversationInner() {
                   onPress={() => handleGenerateInviteLink(false)}
                   disabled={inviteLinkLoading}
                   activeOpacity={0.85}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: GI_ACCENT, paddingVertical: 13, borderRadius: 11, opacity: inviteLinkLoading ? 0.6 : 1 }}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: colors.primary, paddingVertical: 13, borderRadius: 12, borderCurve: 'continuous', opacity: inviteLinkLoading ? 0.6 : 1 }}
                 >
                   {inviteLinkLoading
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <><IconShare size={17} color="#fff" /><Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>{t('chatConv.shareLink') || 'Compartilhar link'}</Text></>
+                    ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
+                    : <><IconShare size={17} color={colors.onPrimary || '#fff'} /><Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 15 }}>{t('chatConv.shareLink') || 'Compartilhar link'}</Text></>
                   }
                 </TouchableOpacity>
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
@@ -39876,9 +39876,9 @@ function ChatConversationInner() {
                         groupInfoGo(() => setShowTopicCreate(true), true); // [2026-10-07 group-admin]
                       }}
                       accessibilityLabel={t('chat.createTopic') || 'Criar tópico'}
-                      style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: GI_ACCENT, alignItems: 'center', justifyContent: 'center' }}
+                      style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}
                     >
-                      <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22 }}>+</Text>
+                      <IconPlus size={18} color={colors.onPrimary || '#fff'} />
                     </TouchableOpacity>
                   )}
                 </View>

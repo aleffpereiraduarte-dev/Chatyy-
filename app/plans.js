@@ -109,7 +109,7 @@ function OneAIShowcase({ colors, isDark, t }) {
     }}>
       {/* Dark gradient header */}
       <View style={{
-        backgroundColor: isDark ? '#0f0a1e' : '#161618',
+        backgroundColor: isDark ? '#0a0a0a' : '#161618',
         paddingVertical: 28,
         paddingHorizontal: 24,
         alignItems: 'center',
@@ -122,7 +122,7 @@ function OneAIShowcase({ colors, isDark, t }) {
           marginBottom: 14,
           opacity: IS_WEB ? 0.7 : glowAnim,
           ...(Platform.OS === 'web' ? {
-            boxShadow: '0 0 30px rgba(17, 17, 17, 0.5), 0 0 60px rgba(99, 102, 241, 0.3)',
+            boxShadow: '0 0 30px rgba(17, 17, 17, 0.5), 0 0 60px rgba(120, 120, 128, 0.3)',
           } : {}),
         }, webGlow]}>
           <View style={{
@@ -1411,11 +1411,14 @@ export default function PlansScreen() {
   const contentWidth = isDesktop ? Math.min(640, width - 80) : width;
 
   const PLUS_COLOR = '#111111';
-  const PLUS_LIGHT = isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.08)';
-  const PLUS_BORDER = isDark ? 'rgba(99, 102, 241, 0.3)' : 'rgba(99, 102, 241, 0.2)';
-  const FAMILY_COLOR = '#f59e0b';
-  const FAMILY_LIGHT = isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.08)';
-  const FAMILY_BORDER = isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.2)';
+  // [2026-10-15 polish-ota] tinta adaptativa p/ TEXTO/ÍCONE dos planos: '#111' puro
+  // sumia no escuro (título "Chatyy Plus" invisível). Preenchimentos seguem PLUS_COLOR.
+  const PLAN_INK = isDark ? '#F5F5F7' : '#111111';
+  const PLUS_LIGHT = isDark ? 'rgba(120, 120, 128, 0.15)' : 'rgba(120, 120, 128, 0.08)';
+  const PLUS_BORDER = isDark ? 'rgba(120, 120, 128, 0.3)' : 'rgba(120, 120, 128, 0.2)';
+  const FAMILY_COLOR = '#111111'; // [2026-10-15 polish-ota] P&B (era âmbar)
+  const FAMILY_LIGHT = isDark ? 'rgba(120, 120, 128, 0.15)' : 'rgba(120, 120, 128, 0.08)';
+  const FAMILY_BORDER = isDark ? 'rgba(120, 120, 128, 0.3)' : 'rgba(120, 120, 128, 0.2)';
   const GREEN = isDark ? '#4ade80' : '#16a34a';
   const AMBER = isDark ? '#fbbf24' : '#d97706';
   const RED = isDark ? '#f87171' : '#dc2626';
@@ -1481,7 +1484,7 @@ export default function PlansScreen() {
   const StorageSelector = ({ options, selected, onSelect, accentColor, basePrice }) => {
     const totalLabel = sumPriceLabel(basePrice, storageExtraPrice(selected));
     const gradientBg = accentColor === FAMILY_COLOR
-      ? 'linear-gradient(135deg, #f59e0b, #f97316)'
+      ? 'linear-gradient(135deg, #111111, #111111)'
       : 'linear-gradient(135deg, #111111, #111111)';
     return (
       <View style={{ marginTop: 20, marginBottom: 4 }}>
@@ -1578,7 +1581,7 @@ export default function PlansScreen() {
   };
 
   const FeatureItem = ({ text, highlight, desc }) => {
-    const iconData = highlight ? { Icon: IconSparkles, color: AI_PURPLE } : getFeatureIconData(text);
+    const iconData = highlight ? { Icon: IconSparkles, color: AI_PURPLE } : { Icon: getFeatureIconData(text).Icon, color: AI_PURPLE }; // [2026-10-15 polish-ota] ícones P&B (eram verde/âmbar/ciano)
     const bgColor = isDark ? (iconData.color + '15') : (iconData.color + '0d');
     return (
       <View style={{ flexDirection: 'row', alignItems: highlight ? 'flex-start' : 'center', marginBottom: 16, paddingVertical: 2 }}>
@@ -1663,17 +1666,17 @@ export default function PlansScreen() {
             paddingTop: 56,
             paddingBottom: 40,
             alignItems: 'center',
-            backgroundColor: isDark ? '#0c0a1a' : '#0f0832',
+            backgroundColor: isDark ? '#000000' : '#111111',
             ...(Platform.OS === 'web' ? {
               backgroundImage: isDark
-                ? 'radial-gradient(ellipse at 50% 0%, rgba(99, 102, 241, 0.2) 0%, transparent 60%), linear-gradient(135deg, #0c0a1a 0%, #161618 40%, #0f172a 100%)'
-                : 'radial-gradient(ellipse at 50% 0%, rgba(17, 17, 17, 0.25) 0%, transparent 60%), linear-gradient(135deg, #0f0832 0%, #161618 30%, #312e81 60%, #111111 100%)',
+                ? 'radial-gradient(ellipse at 50% 0%, rgba(120, 120, 128, 0.2) 0%, transparent 60%), linear-gradient(135deg, #000000 0%, #161618 40%, #000000 100%)'
+                : 'radial-gradient(ellipse at 50% 0%, rgba(17, 17, 17, 0.25) 0%, transparent 60%), linear-gradient(135deg, #111111 0%, #161618 30%, #2c2c2e 60%, #111111 100%)',
             } : {}),
           }}>
             {/* Decorative floating orbs (web only) */}
             {Platform.OS === 'web' && (
               <>
-                <View style={{ position: 'absolute', top: 20, left: '10%', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(99, 102, 241, 0.08)' }} />
+                <View style={{ position: 'absolute', top: 20, left: '10%', width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(120, 120, 128, 0.08)' }} />
                 <View style={{ position: 'absolute', top: 60, right: '5%', width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(17, 17, 17, 0.06)' }} />
               </>
             )}
@@ -1739,7 +1742,7 @@ export default function PlansScreen() {
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   borderWidth: 1, borderColor: 'rgba(17, 17, 17, 0.18)',
                 }}>
-                  {p.icon === '✓' ? <IconCheck size={11} color="#10b981" /> : <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '900' }}>{p.icon}</Text>}
+                  {p.icon === '✓' ? <IconCheck size={11} color="#F1F3F5" /> : <Text style={{ color: '#F1F3F5', fontSize: 11, fontWeight: '900' }}>{p.icon}</Text>}
                   <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11.5, fontWeight: '600' }}>{p.label}</Text>
                 </View>
               ))}
@@ -1803,7 +1806,7 @@ export default function PlansScreen() {
                     from first glance. Only hidden on the inactive monthly
                     button to avoid visual noise. */}
                 <View style={{
-                  backgroundColor: '#fbbf24',
+                  backgroundColor: '#F5F5F7',
                   borderRadius: 8,
                   paddingHorizontal: 7, paddingVertical: 2,
                 }}>
@@ -1837,8 +1840,8 @@ export default function PlansScreen() {
           {/* Storage warning for free users near limit */}
           {currentPlan === 'free' && storageUsed > 0 && (storageUsed / storageTotal) > 0.8 && (
             <View style={[s.storageWarning, {
-              backgroundColor: isDark ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.08)',
-              borderColor: isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
+              backgroundColor: isDark ? 'rgba(120, 120, 128, 0.12)' : 'rgba(120, 120, 128, 0.08)',
+              borderColor: isDark ? 'rgba(120, 120, 128, 0.3)' : 'rgba(120, 120, 128, 0.25)',
             }]}>
               <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: AMBER + '20', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
                 <IconShield size={18} color={AMBER} />
@@ -1865,8 +1868,8 @@ export default function PlansScreen() {
           {!!planExpiryNotice(planInfo) && (
             <View style={{
               marginBottom: 12, padding: 12, borderRadius: 10, borderWidth: 1,
-              backgroundColor: isDark ? 'rgba(245, 158, 11, 0.10)' : 'rgba(245, 158, 11, 0.06)',
-              borderColor: isDark ? 'rgba(245, 158, 11, 0.3)' : 'rgba(245, 158, 11, 0.25)',
+              backgroundColor: isDark ? 'rgba(120, 120, 128, 0.10)' : 'rgba(120, 120, 128, 0.06)',
+              borderColor: isDark ? 'rgba(120, 120, 128, 0.3)' : 'rgba(120, 120, 128, 0.25)',
             }}>
               <Text style={{ color: AMBER, fontSize: FontSize.sm, fontWeight: '600' }}>
                 {planExpiryNotice(planInfo).kind === 'grace'
@@ -1970,8 +1973,8 @@ export default function PlansScreen() {
               backdropFilter: 'blur(24px) saturate(150%)',
               WebkitBackdropFilter: 'blur(24px) saturate(150%)',
               boxShadow: isDark
-                ? '0 12px 40px rgba(99, 102, 241, 0.15), 0 0 0 1px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)'
-                : '0 12px 40px rgba(99, 102, 241, 0.12), 0 0 0 1px rgba(99, 102, 241, 0.06)',
+                ? '0 12px 40px rgba(120, 120, 128, 0.15), 0 0 0 1px rgba(120, 120, 128, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)'
+                : '0 12px 40px rgba(120, 120, 128, 0.12), 0 0 0 1px rgba(120, 120, 128, 0.06)',
               transition: 'all 0.3s ease',
             } : {}),
           }}>
@@ -1979,7 +1982,7 @@ export default function PlansScreen() {
             <View style={{
               position: 'absolute', top: 0, left: 0, right: 0, height: 4,
               backgroundColor: PLUS_COLOR,
-              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #111111, #111111, #111111)' } : {}),
+              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #111111, #3a3a3c, #111111)' } : {}),
             }} />
 
             {/* "Mais popular" badge — recomenda Plus como entry-tier
@@ -1988,13 +1991,12 @@ export default function PlansScreen() {
             <View style={{
               position: 'absolute',
               top: 14, right: 14,
-              backgroundColor: '#fbbf24',
-              borderRadius: 14,
+              backgroundColor: PLAN_INK,
+              borderRadius: 14, borderCurve: 'continuous',
               paddingHorizontal: 10, paddingVertical: 4,
               zIndex: 5,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 3px 10px rgba(251, 191, 36, 0.4)' } : { shadowColor: '#fbbf24', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 4 }),
             }}>
-              <Text style={{ color: '#000', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>
+              <Text style={{ color: isDark ? '#000' : '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>
                 {t('plans.mostPopular')}
               </Text>
             </View>
@@ -2036,9 +2038,9 @@ export default function PlansScreen() {
                   android: { elevation: 4 },
                 }),
               }}>
-                <IconStarFilled size={20} color={PLUS_COLOR} />
+                <IconStarFilled size={20} color={PLAN_INK} />
               </View>
-              <Text style={{ color: PLUS_COLOR, fontSize: 26, fontWeight: '900', letterSpacing: -0.4 }}>Chatyy Plus</Text>
+              <Text style={{ color: PLAN_INK, fontSize: 26, fontWeight: '900', letterSpacing: -0.4 }}>Chatyy Plus</Text>
             </View>
 
             {/* Price — BIG */}
@@ -2052,7 +2054,7 @@ export default function PlansScreen() {
                 <Text style={{
                   color: colors.text, fontSize: 48, fontWeight: '800', letterSpacing: -1.5,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: `linear-gradient(135deg, ${isDark ? '#e0e7ff' : '#1e1b4b'}, ${isDark ? '#c7d2fe' : '#312e81'})`,
+                    backgroundImage: `linear-gradient(135deg, ${isDark ? '#ffffff' : '#111111'}, ${isDark ? '#d1d1d6' : '#2c2c2e'})`,
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
                   } : {}),
@@ -2154,8 +2156,8 @@ export default function PlansScreen() {
                   paddingHorizontal: 20,
                   backgroundColor: PLUS_COLOR,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: 'linear-gradient(135deg, #4f46e5, #111111, #111111)',
-                    boxShadow: '0 6px 24px rgba(99, 102, 241, 0.35), 0 2px 8px rgba(99, 102, 241, 0.2)',
+                    backgroundImage: 'linear-gradient(135deg, #111111, #2c2c2e)',
+                    boxShadow: '0 6px 24px rgba(120, 120, 128, 0.35), 0 2px 8px rgba(120, 120, 128, 0.2)',
                     transition: 'all 0.3s ease',
                   } : {}),
                   ...Shadow.md,
@@ -2184,14 +2186,14 @@ export default function PlansScreen() {
             overflow: 'hidden',
             position: 'relative',
             borderWidth: currentPlan === 'family' ? 2 : 1,
-            borderColor: isDark ? 'rgba(245,158,11,0.35)' : 'rgba(245,158,11,0.2)',
-            backgroundColor: isDark ? 'rgba(245,158,11,0.05)' : 'rgba(245,158,11,0.02)',
+            borderColor: isDark ? 'rgba(120,120,128,0.35)' : 'rgba(120,120,128,0.2)',
+            backgroundColor: isDark ? 'rgba(120,120,128,0.05)' : 'rgba(120,120,128,0.02)',
             ...(Platform.OS === 'web' ? {
               backdropFilter: 'blur(24px) saturate(150%)',
               WebkitBackdropFilter: 'blur(24px) saturate(150%)',
               boxShadow: isDark
-                ? '0 12px 40px rgba(245, 158, 11, 0.12), 0 0 0 1px rgba(245, 158, 11, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)'
-                : '0 12px 40px rgba(245, 158, 11, 0.1), 0 0 0 1px rgba(245, 158, 11, 0.05)',
+                ? '0 12px 40px rgba(120, 120, 128, 0.12), 0 0 0 1px rgba(120, 120, 128, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)'
+                : '0 12px 40px rgba(120, 120, 128, 0.1), 0 0 0 1px rgba(120, 120, 128, 0.05)',
               transition: 'all 0.3s ease',
             } : {}),
           }}>
@@ -2199,7 +2201,7 @@ export default function PlansScreen() {
             <View style={{
               position: 'absolute', top: 0, left: 0, right: 0, height: 4,
               backgroundColor: FAMILY_COLOR,
-              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #d97706, #f59e0b, #f97316, #fb923c)' } : {}),
+              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #111111, #3a3a3c, #111111)' } : {}),
             }} />
 
             {/* "Melhor custo" — Pro vale o dobro do Plus por menos de
@@ -2252,11 +2254,11 @@ export default function PlansScreen() {
                   android: { elevation: 4 },
                 }),
               }}>
-                <IconUsers size={20} color={FAMILY_COLOR} />
+                <IconUsers size={20} color={PLAN_INK} />
               </View>
-              <Text style={{ color: FAMILY_COLOR, fontSize: 26, fontWeight: '900', letterSpacing: -0.4 }}>Chatyy Pro</Text>
+              <Text style={{ color: PLAN_INK, fontSize: 26, fontWeight: '900', letterSpacing: -0.4 }}>Chatyy Pro</Text>
               <View style={{
-                backgroundColor: '#f59e0b',
+                backgroundColor: '#111111',
                 borderRadius: 14,
                 paddingHorizontal: 12,
                 paddingVertical: 4,
@@ -2265,10 +2267,10 @@ export default function PlansScreen() {
                 gap: 4,
                 ...Platform.select({
                   web: {
-                    backgroundImage: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                    boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
+                    backgroundImage: 'linear-gradient(135deg, #111111, #2c2c2e)',
+                    boxShadow: '0 2px 8px rgba(120, 120, 128, 0.3)',
                   },
-                  ios: { shadowColor: '#f59e0b', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 8 },
+                  ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 8 },
                   android: { elevation: 3 },
                 }),
               }}>
@@ -2288,7 +2290,7 @@ export default function PlansScreen() {
                 <Text style={{
                   color: colors.text, fontSize: 48, fontWeight: '800', letterSpacing: -1.5,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: `linear-gradient(135deg, ${isDark ? '#fef3c7' : '#78350f'}, ${isDark ? '#fde68a' : '#92400e'})`,
+                    backgroundImage: `linear-gradient(135deg, ${isDark ? '#ffffff' : '#111111'}, ${isDark ? '#d1d1d6' : '#3a3a3c'})`,
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
                   } : {}),
@@ -2373,8 +2375,8 @@ export default function PlansScreen() {
                   paddingHorizontal: 20,
                   backgroundColor: FAMILY_COLOR,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: 'linear-gradient(135deg, #d97706, #f59e0b, #f97316)',
-                    boxShadow: '0 6px 24px rgba(245, 158, 11, 0.35), 0 2px 8px rgba(245, 158, 11, 0.2)',
+                    backgroundImage: 'linear-gradient(135deg, #111111, #2c2c2e)',
+                    boxShadow: '0 6px 24px rgba(120, 120, 128, 0.35), 0 2px 8px rgba(120, 120, 128, 0.2)',
                     transition: 'all 0.3s ease',
                   } : {}),
                   ...Shadow.md,
@@ -2404,7 +2406,7 @@ export default function PlansScreen() {
             <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               {/* Section header */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
-                <IconStarFilled size={18} color={PLUS_COLOR} />
+                <IconStarFilled size={18} color={PLAN_INK} />
                 <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '700' }}>
                   {t('plans.mySubscription')}
                 </Text>
@@ -2529,11 +2531,11 @@ export default function PlansScreen() {
                     <TouchableOpacity
                       onPress={handleChangeCard}
                       style={[s.manageBtnSmall, {
-                        backgroundColor: isDark ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.08)',
+                        backgroundColor: isDark ? 'rgba(120, 120, 128, 0.15)' : 'rgba(120, 120, 128, 0.08)',
                         borderColor: PLUS_BORDER,
                       }]}
                     >
-                      <Text style={{ color: PLUS_COLOR, fontSize: FontSize.sm, fontWeight: '600' }}>
+                      <Text style={{ color: PLAN_INK, fontSize: FontSize.sm, fontWeight: '600' }}>
                         {t('plans.changeCard')}
                       </Text>
                     </TouchableOpacity>
@@ -2546,17 +2548,17 @@ export default function PlansScreen() {
                       alignItems: 'center',
                       justifyContent: 'center',
                       gap: 8,
-                      backgroundColor: isDark ? 'rgba(99, 102, 241, 0.12)' : 'rgba(99, 102, 241, 0.06)',
+                      backgroundColor: isDark ? 'rgba(120, 120, 128, 0.12)' : 'rgba(120, 120, 128, 0.06)',
                       borderRadius: 12,
                       paddingVertical: 12,
                       paddingHorizontal: 16,
                       borderWidth: 1,
-                      borderColor: isDark ? 'rgba(99, 102, 241, 0.25)' : 'rgba(99, 102, 241, 0.15)',
+                      borderColor: isDark ? 'rgba(120, 120, 128, 0.25)' : 'rgba(120, 120, 128, 0.15)',
                     }}
                     activeOpacity={0.7}
                   >
-                    <IconPlus size={16} color={PLUS_COLOR} />
-                    <Text style={{ color: PLUS_COLOR, fontSize: FontSize.sm, fontWeight: '600' }}>
+                    <IconPlus size={16} color={PLAN_INK} />
+                    <Text style={{ color: PLAN_INK, fontSize: FontSize.sm, fontWeight: '600' }}>
                       {t('plans.addCard')}
                     </Text>
                   </TouchableOpacity>
@@ -2644,7 +2646,7 @@ export default function PlansScreen() {
             return (
               <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <IconCloud size={18} color={PLUS_COLOR} />
+                  <IconCloud size={18} color={PLAN_INK} />
                   <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '700' }}>
                     {t('plans.addMoreStorage')}
                   </Text>
@@ -2675,7 +2677,7 @@ export default function PlansScreen() {
                         padding: 14,
                         alignItems: 'center',
                       }}>
-                        <IconCloud size={24} color={isCurrentExact ? GREEN : (isUpgrade ? PLUS_COLOR : colors.textTertiary)} />
+                        <IconCloud size={24} color={isCurrentExact ? GREEN : (isUpgrade ? PLAN_INK : colors.textTertiary)} />
                         <Text style={{
                           color: colors.text, fontSize: FontSize.lg, fontWeight: '800',
                           marginTop: 8, marginBottom: 2,
@@ -2691,7 +2693,7 @@ export default function PlansScreen() {
                           </View>
                         ) : isUpgrade ? (
                           <>
-                            <Text style={{ color: PLUS_COLOR, fontSize: FontSize.xs, fontWeight: '600', marginTop: 4, textAlign: 'center' }}>
+                            <Text style={{ color: PLAN_INK, fontSize: FontSize.xs, fontWeight: '600', marginTop: 4, textAlign: 'center' }}>
                               {priceDiffFormatted}
                             </Text>
                             <TouchableOpacity
@@ -2739,7 +2741,7 @@ export default function PlansScreen() {
             <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconUsers size={18} color={FAMILY_COLOR} />
+                  <IconUsers size={18} color={PLAN_INK} />
                   <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600' }}>{t('plans.familyMembers')}</Text>
                 </View>
                 {isAdmin ? (
@@ -2747,20 +2749,20 @@ export default function PlansScreen() {
                     style={[s.addMemberBtn, { backgroundColor: FAMILY_LIGHT, borderColor: FAMILY_BORDER }]}
                     onPress={() => setShowAddMember(true)}
                   >
-                    <IconPlus size={14} color={FAMILY_COLOR} />
-                    <Text style={{ color: FAMILY_COLOR, fontSize: FontSize.sm, fontWeight: '500' }}>{t('plans.addMember')}</Text>
+                    <IconPlus size={14} color={PLAN_INK} />
+                    <Text style={{ color: PLAN_INK, fontSize: FontSize.sm, fontWeight: '500' }}>{t('plans.addMember')}</Text>
                   </TouchableOpacity>
                 ) : (
                   <View style={{ backgroundColor: FAMILY_LIGHT, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 }}>
-                    <Text style={{ color: FAMILY_COLOR, fontSize: FontSize.xs, fontWeight: '500' }}>{t('plans.memberBadge')}</Text>
+                    <Text style={{ color: PLAN_INK, fontSize: FontSize.xs, fontWeight: '500' }}>{t('plans.memberBadge')}</Text>
                   </View>
                 )}
               </View>
 
               {/* Show admin info for members */}
               {!isAdmin && familyAdmin && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: isDark ? 'rgba(245,158,11,0.06)' : '#fffbeb', borderRadius: 8 }}>
-                  <IconShield size={14} color={FAMILY_COLOR} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: isDark ? 'rgba(120,120,128,0.06)' : '#f5f5f7', borderRadius: 8 }}>
+                  <IconShield size={14} color={PLAN_INK} />
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>
                     {t('community.admin')}: <Text style={{ fontWeight: '600', color: colors.text }}>{familyAdmin}</Text>
                   </Text>
@@ -2854,7 +2856,7 @@ export default function PlansScreen() {
           }}>
             <View style={{
               paddingHorizontal: 20, paddingVertical: 16,
-              backgroundColor: isDark ? 'rgba(99, 102, 241, 0.06)' : 'rgba(99, 102, 241, 0.03)',
+              backgroundColor: isDark ? 'rgba(120, 120, 128, 0.06)' : 'rgba(120, 120, 128, 0.03)',
               borderBottomWidth: 1, borderBottomColor: colors.border,
             }}>
               <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800', letterSpacing: 0.3 }}>
@@ -2869,8 +2871,8 @@ export default function PlansScreen() {
             }}>
               <View style={{ flex: 2 }} />
               <Text style={{ flex: 1, textAlign: 'center', color: '#94a3b8', fontSize: 12, fontWeight: '700' }}>{t('plans.free')}</Text>
-              <Text style={{ flex: 1, textAlign: 'center', color: PLUS_COLOR, fontSize: 12, fontWeight: '700' }}>Plus</Text>
-              <Text style={{ flex: 1, textAlign: 'center', color: FAMILY_COLOR, fontSize: 12, fontWeight: '700' }}>{t('plans.family')}</Text>
+              <Text style={{ flex: 1, textAlign: 'center', color: PLAN_INK, fontSize: 12, fontWeight: '700' }}>Plus</Text>
+              <Text style={{ flex: 1, textAlign: 'center', color: PLAN_INK, fontSize: 12, fontWeight: '700' }}>{t('plans.family')}</Text>
             </View>
 
             {/* Feature rows */}
@@ -2894,12 +2896,12 @@ export default function PlansScreen() {
                 <Text style={{ flex: 1, textAlign: 'center', color: colors.textTertiary, fontSize: 11 }}>{row.free}</Text>
                 <View style={{ flex: 1, alignItems: 'center' }}>
                   <View style={{ backgroundColor: PLUS_COLOR + '15', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-                    <Text style={{ color: PLUS_COLOR, fontSize: 11, fontWeight: '600' }}>{row.one}</Text>
+                    <Text style={{ color: PLAN_INK, fontSize: 11, fontWeight: '600' }}>{row.one}</Text>
                   </View>
                 </View>
                 <View style={{ flex: 1, alignItems: 'center' }}>
                   <View style={{ backgroundColor: FAMILY_COLOR + '15', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
-                    <Text style={{ color: FAMILY_COLOR, fontSize: 11, fontWeight: '600' }}>{row.family}</Text>
+                    <Text style={{ color: PLAN_INK, fontSize: 11, fontWeight: '600' }}>{row.family}</Text>
                   </View>
                 </View>
               </View>
@@ -3113,7 +3115,7 @@ export default function PlansScreen() {
                   {modalMode === 'update_card' ? (
                     <>
                       <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: PLUS_COLOR + '15', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-                        <IconShield size={26} color={PLUS_COLOR} />
+                        <IconShield size={26} color={PLAN_INK} />
                       </View>
                       <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800' }}>
                         {t('plans.changeCard')}

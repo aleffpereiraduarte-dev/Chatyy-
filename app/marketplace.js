@@ -383,11 +383,11 @@ function CreateListingModal({ visible, onClose, onCreated }) {
                 <TouchableOpacity
                   key={c.key}
                   onPress={() => setCategory(c.key)}
-                  style={[s.catPill, { borderColor: category === c.key ? c.color : colors.border, backgroundColor: category === c.key ? c.color + '18' : colors.surface }]}
+                  style={[s.catPill, { borderColor: category === c.key ? colors.primary : colors.border, backgroundColor: category === c.key ? colors.primary : colors.surface }]}
                   accessibilityLabel={t(c.labelKey)}
                 >
-                  <c.Icon size={14} color={category === c.key ? c.color : colors.textSecondary} />
-                  <Text style={{ color: category === c.key ? c.color : colors.textSecondary, fontSize: 13, marginLeft: 4, fontWeight: category === c.key ? '700' : '400' }}>
+                  <c.Icon size={14} color={category === c.key ? (colors.onPrimary || '#fff') : colors.textSecondary} />
+                  <Text style={{ color: category === c.key ? (colors.onPrimary || '#fff') : colors.textSecondary, fontSize: 13, marginLeft: 4, fontWeight: category === c.key ? '700' : '400' }}>
                     {t(c.labelKey)}
                   </Text>
                 </TouchableOpacity>
@@ -859,14 +859,14 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing, onSell }) {
             key={c.key}
             onPress={() => onCatChange(c.key)}
             style={[s.catPill, {
-              borderColor: category === c.key ? c.color : colors.border,
-              backgroundColor: category === c.key ? c.color + '18' : colors.surface,
+              borderColor: category === c.key ? colors.primary : colors.border,
+              backgroundColor: category === c.key ? colors.primary : colors.surface,
               marginRight: 8,
             }]}
             accessibilityLabel={t(c.labelKey)}
           >
-            <c.Icon size={14} color={category === c.key ? c.color : colors.textSecondary} />
-            <Text style={{ color: category === c.key ? c.color : colors.textSecondary, fontSize: 13, marginLeft: 4, fontWeight: category === c.key ? '700' : '400' }}>
+            <c.Icon size={14} color={category === c.key ? (colors.onPrimary || '#fff') : colors.textSecondary} />
+            <Text style={{ color: category === c.key ? (colors.onPrimary || '#fff') : colors.textSecondary, fontSize: 13, marginLeft: 4, fontWeight: category === c.key ? '700' : '400' }}>
               {t(c.labelKey)}
             </Text>
           </TouchableOpacity>

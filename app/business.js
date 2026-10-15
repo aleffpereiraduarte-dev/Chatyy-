@@ -174,7 +174,7 @@ export default function BusinessScreen() {
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={[styles.brandDot, { backgroundColor: ACCENT }]} />
+          <View style={[styles.brandDot, { backgroundColor: colors.text }]} />
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('business.title')}</Text>
         </View>
         {activeTab === 'catalog' && cartCount > 0 && (
@@ -198,10 +198,10 @@ export default function BusinessScreen() {
               <TouchableOpacity
                 key={tab.key}
                 onPress={() => setActiveTab(tab.key)}
-                style={[styles.tabItem, active && { borderBottomColor: ACCENT, borderBottomWidth: 2 }]}
+                style={[styles.tabItem, active && { borderBottomColor: colors.text, borderBottomWidth: 2 }]}
               >
-                <Icon size={18} color={active ? ACCENT : colors.textSecondary} />
-                <Text style={[styles.tabLabel, { color: active ? ACCENT : colors.textSecondary }]}>{t(tab.labelKey)}</Text>
+                <Icon size={18} color={active ? colors.text : colors.textSecondary} />
+                <Text style={[styles.tabLabel, { color: active ? colors.text : colors.textSecondary }]}>{t(tab.labelKey)}</Text>
               </TouchableOpacity>
             );
           })}
@@ -282,8 +282,8 @@ function ProfileTab({ colors, isDark, user }) {
         {/* Business card */}
         <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.shadow }]}>
           <View style={styles.profileHeader}>
-            <View style={[styles.businessAvatar, { backgroundColor: ACCENT + '22' }]}>
-              <IconStore size={40} color={ACCENT} />
+            <View style={[styles.businessAvatar, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}>
+              <IconStore size={40} color={colors.text} />
             </View>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -294,7 +294,7 @@ function ProfileTab({ colors, isDark, user }) {
               </View>
               {profile?.category ? (
                 <View style={[styles.categoryBadge, { backgroundColor: ACCENT + '18' }]}>
-                  <Text style={[styles.categoryText, { color: ACCENT_DARK }]}>{categoryLabel(profile.category, t)}</Text>
+                  <Text style={[styles.categoryText, { color: colors.text }]}>{categoryLabel(profile.category, t)}</Text>
                 </View>
               ) : null}
             </View>
@@ -319,9 +319,9 @@ function ProfileTab({ colors, isDark, user }) {
           </View>
 
           {!profile?.is_verified && (
-            <View style={[styles.verifyBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f0f9ff', borderColor: '#bae6fd' }]}>
-              <IconVerified size={16} color={VERIFIED_COLOR} />
-              <Text style={[styles.verifyText, { color: isDark ? '#7dd3fc' : '#0369a1' }]}>
+            <View style={[styles.verifyBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f5f5f7', borderColor: colors.border, borderCurve: 'continuous' }]}>
+              <IconVerified size={16} color={colors.text} />
+              <Text style={[styles.verifyText, { color: colors.textSecondary }]}>
                 {t('business.verifyHint')}
               </Text>
             </View>
@@ -331,8 +331,8 @@ function ProfileTab({ colors, isDark, user }) {
         {/* Stats */}
         <View style={styles.statsRow}>
           <StatCard label={t('business.products')} value={profile?.product_count ?? '—'} color={colors.primary} colors={colors} />
-          <StatCard label={t('business.orders')} value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
-          <StatCard label={t('business.rating')} value={profile?.rating ? `${profile.rating}` : '—'} icon={profile?.rating ? <IconStar size={13} color={ACCENT} /> : null} color={ACCENT} colors={colors} />
+          <StatCard label={t('business.orders')} value={profile?.order_count ?? '—'} color={colors.text} colors={colors} />
+          <StatCard label={t('business.rating')} value={profile?.rating ? `${profile.rating}` : '—'} icon={profile?.rating ? <IconStar size={13} color={colors.text} /> : null} color={colors.text} colors={colors} />
         </View>
       </ScrollView>
 
@@ -345,7 +345,7 @@ function ProfileTab({ colors, isDark, user }) {
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('profile.editProfile')}</Text>
             <TouchableOpacity onPress={handleSave} disabled={busy}>
-              {busy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
+              {busy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -526,7 +526,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{editProduct ? t('business.editProduct') : t('business.addProduct')}</Text>
             <TouchableOpacity onPress={handleSave} disabled={busy}>
-              {busy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
+              {busy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -565,7 +565,7 @@ function ProductCard({ product, colors, isDark, onEdit, onDelete, onAddToCart, c
         {product.description ? (
           <Text style={[styles.productDesc, { color: colors.textSecondary }]} numberOfLines={2}>{product.description}</Text>
         ) : null}
-        <Text style={[styles.productPrice, { color: ACCENT_DARK }]}>
+        <Text style={[styles.productPrice, { color: colors.text }]}>
           R$ {price.toFixed(2).replace('.', ',')}
         </Text>
         {product.stock != null && (
@@ -585,7 +585,7 @@ function ProductCard({ product, colors, isDark, onEdit, onDelete, onAddToCart, c
             style={[styles.addCartBtn, { backgroundColor: inCart ? ACCENT : ACCENT + '18', flex: 1 }]}
             accessibilityLabel={inCart ? t('business.inCartCount', { n: cartQty }) : t('business.addToCartA11y')}
           >
-            <Text style={[styles.addCartText, { color: inCart ? '#fff' : ACCENT_DARK }]}>
+            <Text style={[styles.addCartText, { color: inCart ? '#fff' : colors.text }]}>
               {inCart ? `+1 (${cartQty})` : t('business.cart')}
             </Text>
           </TouchableOpacity>
@@ -706,7 +706,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 }}>
         <View style={[styles.sentIcon, { backgroundColor: ACCENT + '18' }]}>
-          <IconCheck size={40} color={ACCENT} />
+          <IconCheck size={40} color={colors.text} />
         </View>
         <Text style={[styles.sentTitle, { color: colors.text }]}>{t('business.orderSent')}</Text>
         <Text style={[styles.sentSub, { color: colors.textSecondary }]}>{t('business.orderSentSub')}</Text>
@@ -742,7 +742,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
             </View>
             <View style={[styles.totalRow, { backgroundColor: colors.surface }]}>
               <Text style={[styles.totalLabel, { color: colors.textSecondary }]}>{t('business.total')}</Text>
-              <Text style={[styles.totalValue, { color: ACCENT_DARK }]}>R$ {total.toFixed(2).replace('.', ',')}</Text>
+              <Text style={[styles.totalValue, { color: colors.text }]}>R$ {total.toFixed(2).replace('.', ',')}</Text>
             </View>
             <TouchableOpacity
               onPress={handleCheckout}
@@ -780,7 +780,7 @@ function CartItem({ item, colors, onUpdateQty }) {
       )}
       <View style={{ flex: 1, gap: 4 }}>
         <Text style={[styles.cartItemName, { color: colors.text }]} numberOfLines={1}>{item.product.name}</Text>
-        <Text style={[styles.cartItemPrice, { color: ACCENT_DARK }]}>R$ {(price * item.qty).toFixed(2).replace('.', ',')}</Text>
+        <Text style={[styles.cartItemPrice, { color: colors.text }]}>R$ {(price * item.qty).toFixed(2).replace('.', ',')}</Text>
       </View>
       <View style={styles.qtyControl}>
         <TouchableOpacity onPress={() => onUpdateQty(item.product.id, item.qty - 1)} style={[styles.qtyBtn, { backgroundColor: colors.inputBg }]}>
@@ -952,8 +952,8 @@ function AutoRepliesTab({ colors, isDark }) {
       <View style={styles.sectionHeader}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('business.quickReplies')}</Text>
         <TouchableOpacity onPress={openNewQR} style={[styles.sectionAddBtn, { backgroundColor: ACCENT + '18' }]}>
-          <IconPlus size={16} color={ACCENT} />
-          <Text style={{ color: ACCENT, fontSize: 13, fontWeight: '600' }}>{t('business.newShort')}</Text>
+          <IconPlus size={16} color={colors.text} />
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('business.newShort')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -967,7 +967,7 @@ function AutoRepliesTab({ colors, isDark }) {
         quickReplies.map(qr => (
           <View key={qr.id} style={[styles.qrCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.qrShortcut, { color: ACCENT_DARK }]}>/{qr.shortcut}</Text>
+              <Text style={[styles.qrShortcut, { color: colors.text }]}>/{qr.shortcut}</Text>
               <Text style={[styles.qrMessage, { color: colors.textSecondary }]} numberOfLines={2}>{qr.message}</Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -991,7 +991,7 @@ function AutoRepliesTab({ colors, isDark }) {
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{qrEditing ? t('business.editShortcut') : t('business.newShortcut')}</Text>
             <TouchableOpacity onPress={handleSaveQR} disabled={qrBusy}>
-              {qrBusy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
+              {qrBusy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -1101,7 +1101,7 @@ function LabelsTab({ colors, isDark }) {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 }}>
           <EmptyStateCard Icon={IconLabel} title={t('business.labelsEmpty')} subtitle={t('business.labelsEmptySub')} tone="neutral" />
           <TouchableOpacity onPress={handleSeedDefaults} style={[styles.seedBtn, { backgroundColor: ACCENT + '18', borderColor: ACCENT + '44' }]}>
-            <Text style={{ color: ACCENT, fontWeight: '600' }}>{t('business.seedLabels')}</Text>
+            <Text style={{ color: colors.text, fontWeight: '600' }}>{t('business.seedLabels')}</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -1140,7 +1140,7 @@ function LabelsTab({ colors, isDark }) {
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{editing ? t('business.editLabel') : t('business.newLabel')}</Text>
             <TouchableOpacity onPress={handleSave} disabled={busy}>
-              {busy ? <ActivityIndicator size="small" color={ACCENT} /> : <IconCheck size={22} color={ACCENT} />}
+              {busy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
           <View style={{ padding: 20, gap: 20 }}>
@@ -1183,7 +1183,7 @@ function LabelsTab({ colors, isDark }) {
 function LoadingView({ colors }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator size="large" color={ACCENT} />
+      <ActivityIndicator size="large" color={colors.text} />
     </View>
   );
 }
@@ -1216,7 +1216,7 @@ function InfoRow({ icon, label, colors, accent }) {
   return (
     <View style={styles.infoRow}>
       {icons[icon]}
-      <Text style={[styles.infoText, { color: accent ? ACCENT_DARK : colors.textSecondary }]} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.infoText, { color: accent ? colors.text : colors.textSecondary }]} numberOfLines={1}>{label}</Text>
     </View>
   );
 }

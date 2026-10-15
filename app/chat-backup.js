@@ -119,6 +119,13 @@ export default function ChatBackupScreen() {
       setBackups(Array.isArray(list) ? list : []);
     } catch (e) {
       const msg = String(e?.message || e);
+      // [2026-10-15 polish-ota] Módulo nativo ausente (web / build antigo): a
+      // lista nativa simplesmente não existe aqui — não abrir alerta com o erro
+      // técnico em inglês ("…native module unavailable on this platform/build").
+      if (/native module|unavailable on this platform/i.test(msg)) {
+        setBackups([]);
+        return;
+      }
       // Surface Google Sign-In requirement clearly on Android.
       if (msg.includes('ERR_GOOGLE_SIGNIN') || msg.toLowerCase().includes('sign in with google')) {
         Alert.alert(
@@ -490,7 +497,7 @@ export default function ChatBackupScreen() {
               {t('backup.e2eHeader') || 'End-to-end encrypted'}
             </Text>
           </View>
-          <Text style={[styles.cardBody, { color: colors.textMuted }]}>
+          <Text style={[styles.cardBody, { color: (colors.textMuted || colors.textTertiary) }]}>
             {t('backup.e2eBody') ||
               'Your password encrypts the backup on this device. Chatyy servers never see it. If you forget your password, the backup cannot be recovered.'}
           </Text>
@@ -504,7 +511,7 @@ export default function ChatBackupScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           placeholder={t('backup.passwordHint') || 'At least 8 characters'}
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={(colors.textMuted || colors.textTertiary)}
           style={[styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
         />
 
@@ -527,7 +534,7 @@ export default function ChatBackupScreen() {
         <Text style={[styles.sectionHeader, { color: colors.text }]}>
           {t('backup.cloud.providersHeader') || 'Backup em nuvem'}
         </Text>
-        <Text style={[styles.cardBody, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
+        <Text style={[styles.cardBody, { color: (colors.textMuted || colors.textTertiary), marginBottom: Spacing.sm }]}>
           {t('backup.cloud.providersDesc') ||
             'Salve uma cópia cifrada do seu chat na sua iCloud (iOS) ou Google Drive. Em troca de celular, restaure pelo botão Restaurar abaixo.'}
         </Text>
@@ -594,14 +601,14 @@ export default function ChatBackupScreen() {
             <Text style={[styles.toggleLabel, { color: colors.text }]}>
               {t('backup.cloud.frequencyLabel') || 'Frequência do backup automático'}
             </Text>
-            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+            <Text style={[styles.toggleHelp, { color: (colors.textMuted || colors.textTertiary) }]}>
               {t(`backup.cloud.freq.${frequency}`) ||
                 (frequency === 'off' ? 'Desativado' :
                  frequency === 'daily' ? 'Diariamente' :
                  frequency === 'weekly' ? 'Semanalmente' : 'Mensalmente')}
             </Text>
           </View>
-          <Text style={[styles.toggleState, { color: frequency === 'off' ? colors.textMuted : colors.primary }]}>
+          <Text style={[styles.toggleState, { color: frequency === 'off' ? (colors.textMuted || colors.textTertiary) : colors.primary }]}>
             {(t(`backup.cloud.freq.${frequency}`) || frequency).toUpperCase()}
           </Text>
         </TouchableOpacity>
@@ -615,18 +622,18 @@ export default function ChatBackupScreen() {
             <Text style={[styles.toggleLabel, { color: colors.text }]}>
               {t('backup.cloud.wifiOnly') || 'Somente em Wi-Fi'}
             </Text>
-            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+            <Text style={[styles.toggleHelp, { color: (colors.textMuted || colors.textTertiary) }]}>
               {t('backup.cloud.wifiOnlyDesc') ||
                 'Evita usar dados móveis durante o backup automático.'}
             </Text>
           </View>
-          <Text style={[styles.toggleState, { color: wifiOnly ? colors.primary : colors.textMuted }]}>
+          <Text style={[styles.toggleState, { color: wifiOnly ? colors.primary : (colors.textMuted || colors.textTertiary) }]}>
             {wifiOnly ? (t('common.on') || 'ON') : (t('common.off') || 'OFF')}
           </Text>
         </TouchableOpacity>
 
         {lastBackupAt && (
-          <Text style={[styles.privacyNote, { color: colors.textMuted }]}>
+          <Text style={[styles.privacyNote, { color: (colors.textMuted || colors.textTertiary) }]}>
             {t('backup.cloud.lastBackupAt') || 'Último backup:'} {fmtDate(lastBackupAt)}
           </Text>
         )}
@@ -641,11 +648,11 @@ export default function ChatBackupScreen() {
             <Text style={[styles.toggleLabel, { color: colors.text }]}>
               {t('backup.includeMedia') || 'Incluir mídia'}
             </Text>
-            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+            <Text style={[styles.toggleHelp, { color: (colors.textMuted || colors.textTertiary) }]}>
               {t('backup.mediaWarning') || 'Backup pode ficar grande (centenas de MB).'}
             </Text>
           </View>
-          <Text style={[styles.toggleState, { color: includeMedia ? colors.primary : colors.textMuted }]}>
+          <Text style={[styles.toggleState, { color: includeMedia ? colors.primary : (colors.textMuted || colors.textTertiary) }]}>
             {includeMedia ? (t('common.on') || 'ON') : (t('common.off') || 'OFF')}
           </Text>
         </TouchableOpacity>
@@ -654,7 +661,7 @@ export default function ChatBackupScreen() {
         <Text style={[styles.sectionHeader, { color: colors.text }]}>
           {t('backup.export.local') || 'Exportar localmente'}
         </Text>
-        <Text style={[styles.cardBody, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
+        <Text style={[styles.cardBody, { color: (colors.textMuted || colors.textTertiary), marginBottom: Spacing.sm }]}>
           {Platform.OS === 'web'
             ? (t('backup.export.descWeb') || 'Baixe um arquivo do seu backup direto no seu computador.')
             : (t('backup.export.descNative') || 'Salve um arquivo do seu backup e compartilhe via AirDrop, e-mail ou outro app.')}
@@ -700,18 +707,18 @@ export default function ChatBackupScreen() {
             <Text style={[styles.toggleLabel, { color: colors.text }]}>
               {t('backup.autoDaily') || 'Configurar backup automatico'}
             </Text>
-            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+            <Text style={[styles.toggleHelp, { color: (colors.textMuted || colors.textTertiary) }]}>
               {Platform.OS === 'ios'
                 ? t('chatBackup.autoHelpIcloud')
                 : t('chatBackup.autoHelpDrive')}
             </Text>
           </View>
-          <Text style={[styles.toggleState, { color: autoSchedule ? colors.primary : colors.textMuted }]}>
+          <Text style={[styles.toggleState, { color: autoSchedule ? colors.primary : (colors.textMuted || colors.textTertiary) }]}>
             {autoSchedule ? (t('common.on') || 'ON') : (t('common.off') || 'OFF')}
           </Text>
         </TouchableOpacity>
 
-        <Text style={[styles.privacyNote, { color: colors.textMuted }]}>
+        <Text style={[styles.privacyNote, { color: (colors.textMuted || colors.textTertiary) }]}>
           {Platform.OS === 'ios'
             ? t('chatBackup.privacyIcloud')
             : t('chatBackup.privacyDrive')}
@@ -726,7 +733,7 @@ export default function ChatBackupScreen() {
         )}
 
         {(!backups || backups.length === 0) && busyAction !== 'list' && (
-          <Text style={[styles.empty, { color: colors.textMuted }]}>
+          <Text style={[styles.empty, { color: (colors.textMuted || colors.textTertiary) }]}>
             {t('backup.noBackups') || 'No backups yet. Tap “Backup now” to create your first.'}
           </Text>
         )}
@@ -735,7 +742,7 @@ export default function ChatBackupScreen() {
           <View key={b.filename} style={[styles.backupRow, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.backupName, { color: colors.text }]}>{b.filename}</Text>
-              <Text style={[styles.backupMeta, { color: colors.textMuted }]}>
+              <Text style={[styles.backupMeta, { color: (colors.textMuted || colors.textTertiary) }]}>
                 {fmtDate(b.createdAt)} · {fmtBytes(b.size)}
               </Text>
             </View>

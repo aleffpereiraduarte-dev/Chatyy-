@@ -827,7 +827,7 @@ function FamilyScreenInner() {
             />
             <FeatureRow
               icon={IconMessageCircle}
-              color="#3B82F6"
+              color={accent}
               title={t('family.chat.title')}
               subtitle={t('family.chat.sub')}
               onPress={() => router.push('/chat-new')}
@@ -835,7 +835,7 @@ function FamilyScreenInner() {
             />
             <CollapsibleFeature
               icon={IconCheckbox}
-              color={colors.success || '#10B981'}
+              color={accent}
               title={t('family.shopping.title')}
               subtitle={t('family.shopping.sub')}
               colors={colors}
@@ -843,7 +843,7 @@ function FamilyScreenInner() {
             />
             <CollapsibleFeature
               icon={IconImage}
-              color="#8B5CF6"
+              color={accent}
               title={t('family.album.title')}
               subtitle={t('family.album.sub')}
               colors={colors}
@@ -851,7 +851,7 @@ function FamilyScreenInner() {
             />
             <CollapsibleFeature
               icon={IconCalendar}
-              color="#F59E0B"
+              color={accent}
               title={t('family.calendar.title')}
               subtitle={t('family.calendar.sub')}
               colors={colors}
@@ -868,7 +868,7 @@ function FamilyScreenInner() {
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
               <FeatureRow
                 icon={IconStar}
-                color="#F59E0B"
+                color={accent}
                 title={planShare?.plan_name ? t('family.plan.named', { name: planShare.plan_name }) : t('family.plan.default')}
                 subtitle={planShare?.shared ? t('family.plan.sharedWith', { n: planShare.shared_with || memberCount }) : t('family.plan.shareUpTo')}
                 badge={planShare?.shared ? t('plans.active') : null}
@@ -894,7 +894,7 @@ function FamilyScreenInner() {
             />
             <FeatureRow
               icon={IconShield}
-              color={colors.error || '#EF4444'}
+              color={accent}
               title={t('settings.parentalControls')}
               subtitle={t('family.parental.sub')}
               onPress={() => router.push('/parental')}
@@ -902,7 +902,7 @@ function FamilyScreenInner() {
             />
             <FeatureRow
               icon={IconKey}
-              color="#3B82F6"
+              color={accent}
               title={t('family.join.rowTitle')}
               subtitle={t('family.join.rowSub')}
               onPress={() => { setJoinValue(''); setJoinOpen(true); }}

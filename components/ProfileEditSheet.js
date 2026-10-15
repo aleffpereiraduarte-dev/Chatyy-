@@ -1009,7 +1009,7 @@ export default function ProfileEditSheet({
                   hint: t?.('profile.accountTypeBusinessHint') || 'Categoria + contato + métricas comerciais.' },
               ].map((opt) => {
                 const selected = accountType === opt.key;
-                const accent = '#111111';
+                const accent = isDark ? '#F5F5F7' : '#111111'; // [2026-10-15 polish-ota] '#111' sumia no escuro
                 return (
                   <TouchableOpacity
                     key={opt.key}
@@ -1020,7 +1020,7 @@ export default function ProfileEditSheet({
                       flexDirection: 'row', alignItems: 'center', gap: 12,
                       borderBottomWidth: StyleSheet.hairlineWidth,
                       borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
-                      backgroundColor: selected ? (isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.04)') : 'transparent',
+                      backgroundColor: selected ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.04)') : 'transparent',
                     }}
                     accessibilityRole="radio"
                     accessibilityState={{ selected }}

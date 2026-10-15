@@ -370,7 +370,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
             {stage === 'password' && selected && (
               <View>
                 <View style={styles.selectedHeader}>
-                  <IconLock size={16} color={colors.textMuted} />
+                  <IconLock size={16} color={(colors.textMuted || colors.textTertiary)} />
                   <Text style={styles.selectedName} numberOfLines={1}>{selected.filename}</Text>
                 </View>
                 <Text style={styles.label}>{t('backup.passwordLabel')}</Text>
@@ -381,7 +381,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder={t('restorePrompt.passwordPlaceholder')}
-                  placeholderTextColor={colors.textMuted}
+                  placeholderTextColor={(colors.textMuted || colors.textTertiary)}
                   style={styles.input}
                   autoFocus
                 />
@@ -524,7 +524,7 @@ function buildStyles(colors, isDark) {
     subtitle: {
       marginTop: Spacing.xs,
       fontSize: FontSize.sm,
-      color: colors.textMuted,
+      color: (colors.textMuted || colors.textTertiary),
       textAlign: 'center',
       lineHeight: 19,
     },
@@ -546,7 +546,7 @@ function buildStyles(colors, isDark) {
     },
     mutedSmall: {
       fontSize: FontSize.sm,
-      color: colors.textMuted,
+      color: (colors.textMuted || colors.textTertiary),
       textAlign: 'center',
     },
     doneTitle: {
@@ -574,7 +574,7 @@ function buildStyles(colors, isDark) {
     backupMeta: {
       marginTop: 2,
       fontSize: FontSize.sm,
-      color: colors.textMuted,
+      color: (colors.textMuted || colors.textTertiary),
     },
     pickCta: {
       fontSize: FontSize.sm,
@@ -591,7 +591,7 @@ function buildStyles(colors, isDark) {
     selectedName: {
       flex: 1,
       fontSize: FontSize.sm,
-      color: colors.textMuted,
+      color: (colors.textMuted || colors.textTertiary),
     },
     label: {
       fontSize: FontSize.sm,
@@ -649,7 +649,7 @@ function buildStyles(colors, isDark) {
       paddingHorizontal: Spacing.lg,
     },
     skipText: {
-      color: colors.textMuted,
+      color: (colors.textMuted || colors.textTertiary),
       fontSize: FontSize.md,
       fontWeight: '600',
     },

@@ -300,7 +300,7 @@ export default function LinkedDevicesScreen() {
             )}
           </View>
           <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={1}>
-            {browserLabel}{parsed.os ? ` · ${parsed.os}` : ''} · IP {ipLabel}
+            {[browserLabel !== '—' ? browserLabel : null, parsed.os || null, ipLabel !== '—' ? `IP ${ipLabel}` : null].filter(Boolean).join(' · ') || '—'}
           </Text>
           <Text style={[styles.rowTime, { color: colors.textSecondary }]}>
             {lastActiveLabel}

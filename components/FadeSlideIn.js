@@ -26,7 +26,7 @@
 // RN Animated only (no Reanimated) → ships via OTA. useNativeDriver:true so
 // it runs on the UI thread and never jank-blocks JS.
 import React, { useRef, useEffect } from 'react';
-import { Animated, Easing, Platform } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet } from 'react-native';
 import { isReduceMotionEnabled } from './reducedMotion';
 
 // [2026-10-14 piscada-voltar] Founder: "TODA transição entre páginas em
@@ -61,6 +61,12 @@ function _mountedWithRouteTransition(routeKey) {
   }
   return now - first < _NAV_SETTLE_MS;
 }
+
+// [2026-10-15 polish-ota] No web, `flex: 0` vira CSS `flex: 0 1 0%` (base 0%)
+// → o wrapper colapsa p/ altura 0 e seções empilham umas sobre as outras (ex.:
+// "HOJE/ONTEM/ESTA SEMANA" sobrepostos na aba Ligações). Quem passa flex:0 quer
+// "tamanho do conteúdo": no web trocamos pelos longhands equivalentes.
+const _WEB_NOFLEX = { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' };
 
 export default function FadeSlideIn({
   children,
@@ -107,9 +113,19 @@ export default function FadeSlideIn({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Web + flex:0 → tira o shorthand `flex` (o RNW ignora os longhands quando
+  // ele está presente) e aplica tamanho-do-conteúdo explícito.
+  let _webNoFlexStyle = null;
+  if (Platform.OS === 'web' && style) {
+    const _flat = StyleSheet.flatten(style);
+    if (_flat && _flat.flex === 0) {
+      const { flex: _dropFlex, ...rest } = _flat; // eslint-disable-line no-unused-vars
+      _webNoFlexStyle = { ...rest, ..._WEB_NOFLEX };
+    }
+  }
   return (
     <Animated.View
-      style={[{ flex: 1, opacity: fade, transform: [{ translateY: slide }] }, style]}
+      style={_webNoFlexStyle ? [{ opacity: fade, transform: [{ translateY: slide }] }, _webNoFlexStyle] : [{ flex: 1, opacity: fade, transform: [{ translateY: slide }] }, style]}
       onLayout={onLayout}
     >
       {children}
