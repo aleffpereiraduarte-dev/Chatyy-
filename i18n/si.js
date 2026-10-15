@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "ඔබේ නම සහ කැමති නම් ඡායාරූපයක් එක් කරන්න.",
   "nob.removePhoto": "ඡායාරූපය ඉවත් කරන්න",
   "nob.camMicNote": "කැමරාව සහ මයික්‍රෆෝනය: භාවිතා කරන විට පමණක් අසමු — ඇමතුමක, ඡායාරූපයක හෝ හඬ පණිවිඩයක.",
+  "nob.moreOptions": "තවත් විකල්ප",
+  "nob.emailLoginLegacy": "ඊමේල් මගින් පුරනය වන්න (පැරණි ගිණුම)",
+  "nob.existingTitle": "අංකය දැනටමත් ලියාපදිංචි කර ඇත",
+  "nob.existingSub": "අපි ඔබගේ ගිණුමට පුරනය වෙමු. ඉදිරියට යාමට කේතය ඇතුළත් කරන්න.",
+  "nob.welcomeBack": "නැවත සාදරයෙන් පිළිගනිමු",
+  "nob.welcomeBackSub": "මෙය ඔබගේ Chatyy ගිණුමයි.",
+  "nob.codeAlreadySent": "අපි දැන් ඔබට කේතයක් එව්වා. එය පහතින් ඇතුළත් කරන්න.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube හි විවෘත කරන්න",
   "ytPlayer.minimize": "කුඩා කරන්න",

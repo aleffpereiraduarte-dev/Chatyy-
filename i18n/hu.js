@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Add meg a neved és ha szeretnéd, egy fotót.",
   "nob.removePhoto": "Fotó eltávolítása",
   "nob.camMicNote": "Kamera és mikrofon: csak akkor kérünk engedélyt, amikor használod — hívásnál, fotónál vagy hangüzenetnél.",
+  "nob.moreOptions": "További lehetőségek",
+  "nob.emailLoginLegacy": "Belépés e-maillel (régebbi fiók)",
+  "nob.existingTitle": "A szám már regisztrálva van",
+  "nob.existingSub": "Belépünk a fiókodba. A folytatáshoz írd be a kódot.",
+  "nob.welcomeBack": "Üdv újra",
+  "nob.welcomeBackSub": "Ez a Chatyy-fiókod.",
+  "nob.codeAlreadySent": "Az imént küldtünk egy kódot. Írd be lent.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Megnyitás a YouTube-on",
   "ytPlayer.minimize": "Kis méret",

@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Добавете името си и, ако искате, снимка.",
   "nob.removePhoto": "Премахване на снимката",
   "nob.camMicNote": "Камера и микрофон: искаме достъп само когато ги използвате — при обаждане, снимка или гласово съобщение.",
+  "nob.moreOptions": "Още опции",
+  "nob.emailLoginLegacy": "Вход с имейл (стар профил)",
+  "nob.existingTitle": "Номерът вече е регистриран",
+  "nob.existingSub": "Влизаме във вашия профил. Въведете кода, за да продължите.",
+  "nob.welcomeBack": "Добре дошли отново",
+  "nob.welcomeBackSub": "Това е вашият профил в Chatyy.",
+  "nob.codeAlreadySent": "Току-що ви изпратихме код. Въведете го по-долу.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Отвори в YouTube",
   "ytPlayer.minimize": "Минимизирай",

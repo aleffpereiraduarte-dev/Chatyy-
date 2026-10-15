@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "ನಿಮ್ಮ ಹೆಸರು ಮತ್ತು ಬೇಕಿದ್ದರೆ ಫೋಟೋ ಸೇರಿಸಿ.",
   "nob.removePhoto": "ಫೋಟೋ ತೆಗೆದುಹಾಕಿ",
   "nob.camMicNote": "ಕ್ಯಾಮೆರಾ ಮತ್ತು ಮೈಕ್ರೋಫೋನ್: ಬಳಸುವಾಗ ಮಾತ್ರ ಕೇಳುತ್ತೇವೆ — ಕರೆ, ಫೋಟೋ ಅಥವಾ ಧ್ವನಿ ಸಂದೇಶದಲ್ಲಿ.",
+  "nob.moreOptions": "ಹೆಚ್ಚಿನ ಆಯ್ಕೆಗಳು",
+  "nob.emailLoginLegacy": "ಇಮೇಲ್ ಮೂಲಕ ಸೈನ್ ಇನ್ (ಹಳೆಯ ಖಾತೆ)",
+  "nob.existingTitle": "ಸಂಖ್ಯೆ ಈಗಾಗಲೇ ನೋಂದಾಯಿತವಾಗಿದೆ",
+  "nob.existingSub": "ನಿಮ್ಮ ಖಾತೆಗೆ ಸೈನ್ ಇನ್ ಆಗುತ್ತಿದ್ದೇವೆ. ಮುಂದುವರಿಯಲು ಕೋಡ್ ನಮೂದಿಸಿ.",
+  "nob.welcomeBack": "ಮರಳಿ ಸ್ವಾಗತ",
+  "nob.welcomeBackSub": "ಇದು ನಿಮ್ಮ Chatyy ಖಾತೆ.",
+  "nob.codeAlreadySent": "ನಾವು ಈಗಷ್ಟೇ ಕೋಡ್ ಕಳುಹಿಸಿದ್ದೇವೆ. ಅದನ್ನು ಕೆಳಗೆ ನಮೂದಿಸಿ.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube ನಲ್ಲಿ ತೆರೆಯಿರಿ",
   "ytPlayer.minimize": "ಕಿರಿದಾಗಿಸಿ",

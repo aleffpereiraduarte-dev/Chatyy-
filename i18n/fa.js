@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "نام خود و در صورت تمایل یک عکس اضافه کنید.",
   "nob.removePhoto": "حذف عکس",
   "nob.camMicNote": "دوربین و میکروفون: فقط هنگام استفاده درخواست می‌کنیم — در تماس، عکس یا پیام صوتی.",
+  "nob.moreOptions": "گزینه‌های بیشتر",
+  "nob.emailLoginLegacy": "ورود با ایمیل (حساب قدیمی)",
+  "nob.existingTitle": "این شماره قبلاً ثبت شده است",
+  "nob.existingSub": "وارد حساب شما می‌شویم. برای ادامه کد را وارد کنید.",
+  "nob.welcomeBack": "خوش برگشتی",
+  "nob.welcomeBackSub": "این حساب Chatyy شماست.",
+  "nob.codeAlreadySent": "همین الان یک کد برایتان فرستادیم. آن را در پایین وارد کنید.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "باز کردن در YouTube",
   "ytPlayer.minimize": "کوچک کردن",

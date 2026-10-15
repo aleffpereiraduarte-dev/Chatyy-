@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Ավելացրեք ձեր անունը և, ցանկության դեպքում, լուսանկար։",
   "nob.removePhoto": "Հեռացնել լուսանկարը",
   "nob.camMicNote": "Տեսախցիկ և խոսափող. խնդրում ենք միայն երբ օգտագործում եք՝ զանգի, լուսանկարի կամ ձայնային հաղորդագրության ժամանակ։",
+  "nob.moreOptions": "Այլ ընտրանքներ",
+  "nob.emailLoginLegacy": "Մուտք էլ. փոստով (հին հաշիվ)",
+  "nob.existingTitle": "Համարն արդեն գրանցված է",
+  "nob.existingSub": "Մտնում ենք ձեր հաշիվ։ Շարունակելու համար մուտքագրեք կոդը։",
+  "nob.welcomeBack": "Բարի վերադարձ",
+  "nob.welcomeBackSub": "Սա ձեր Chatyy հաշիվն է։",
+  "nob.codeAlreadySent": "Մենք հենց նոր կոդ ուղարկեցինք։ Մուտքագրեք այն ստորև։",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Բացել YouTube-ում",
   "ytPlayer.minimize": "Փոքրացնել",

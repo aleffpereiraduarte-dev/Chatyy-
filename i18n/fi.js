@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Lisää nimesi ja halutessasi kuva.",
   "nob.removePhoto": "Poista kuva",
   "nob.camMicNote": "Kamera ja mikrofoni: kysymme lupaa vasta, kun käytät niitä — puhelussa, kuvassa tai ääniviestissä.",
+  "nob.moreOptions": "Lisää vaihtoehtoja",
+  "nob.emailLoginLegacy": "Kirjaudu sähköpostilla (vanha tili)",
+  "nob.existingTitle": "Numero on jo rekisteröity",
+  "nob.existingSub": "Kirjaudutaan tiliisi. Jatka syöttämällä koodi.",
+  "nob.welcomeBack": "Tervetuloa takaisin",
+  "nob.welcomeBackSub": "Tämä on Chatyy-tilisi.",
+  "nob.codeAlreadySent": "Lähetimme sinulle juuri koodin. Syötä se alle.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Avaa YouTubessa",
   "ytPlayer.minimize": "Pienennä",

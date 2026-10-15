@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Dodajte svoje ime in po želji fotografijo.",
   "nob.removePhoto": "Odstrani fotografijo",
   "nob.camMicNote": "Kamera in mikrofon: za dovoljenje vprašamo šele, ko ju uporabite — pri klicu, fotografiji ali glasovnem sporočilu.",
+  "nob.moreOptions": "Več možnosti",
+  "nob.emailLoginLegacy": "Prijava z e-pošto (starejši račun)",
+  "nob.existingTitle": "Številka je že registrirana",
+  "nob.existingSub": "Prijavili vas bomo v vaš račun. Za nadaljevanje vnesite kodo.",
+  "nob.welcomeBack": "Dobrodošli nazaj",
+  "nob.welcomeBackSub": "To je vaš račun Chatyy.",
+  "nob.codeAlreadySent": "Pravkar smo vam poslali kodo. Vnesite jo spodaj.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Odpri v YouTubu",
   "ytPlayer.minimize": "Pomanjšaj",

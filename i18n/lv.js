@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Pievienojiet savu vārdu un, ja vēlaties, fotoattēlu.",
   "nob.removePhoto": "Noņemt fotoattēlu",
   "nob.camMicNote": "Kamera un mikrofons: jautājam tikai tad, kad tos izmantojat — zvanā, fotoattēlā vai balss ziņā.",
+  "nob.moreOptions": "Vairāk iespēju",
+  "nob.emailLoginLegacy": "Pieteikties ar e-pastu (vecs konts)",
+  "nob.existingTitle": "Numurs jau reģistrēts",
+  "nob.existingSub": "Piesakāmies tavā kontā. Ievadi kodu, lai turpinātu.",
+  "nob.welcomeBack": "Laipni lūgts atpakaļ",
+  "nob.welcomeBackSub": "Šis ir tavs Chatyy konts.",
+  "nob.codeAlreadySent": "Mēs tikko nosūtījām kodu. Ievadi to zemāk.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Atvērt YouTube",
   "ytPlayer.minimize": "Minimizēt",

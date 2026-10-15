@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Adınızı və istəsəniz şəklinizi əlavə edin.",
   "nob.removePhoto": "Şəkli sil",
   "nob.camMicNote": "Kamera və mikrofon: yalnız istifadə edəndə soruşuruq — zəngdə, şəkildə və ya səsli mesajda.",
+  "nob.moreOptions": "Digər seçimlər",
+  "nob.emailLoginLegacy": "E-poçtla daxil ol (köhnə hesab)",
+  "nob.existingTitle": "Nömrə artıq qeydiyyatdadır",
+  "nob.existingSub": "Hesabınıza daxil oluruq. Davam etmək üçün kodu daxil edin.",
+  "nob.welcomeBack": "Yenidən xoş gəldiniz",
+  "nob.welcomeBackSub": "Bu sizin Chatyy hesabınızdır.",
+  "nob.codeAlreadySent": "Bir az əvvəl kod göndərdik. Onu aşağıda daxil edin.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-da aç",
   "ytPlayer.minimize": "Kiçilt",

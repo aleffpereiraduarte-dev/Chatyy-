@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Ongeza jina lako na, ukipenda, picha.",
   "nob.removePhoto": "Ondoa picha",
   "nob.camMicNote": "Kamera na maikrofoni: tunaomba tu unapozitumia — kwenye simu, picha au ujumbe wa sauti.",
+  "nob.moreOptions": "Chaguo zaidi",
+  "nob.emailLoginLegacy": "Ingia kwa barua pepe (akaunti ya zamani)",
+  "nob.existingTitle": "Nambari tayari imesajiliwa",
+  "nob.existingSub": "Tunaingia kwenye akaunti yako. Weka msimbo ili kuendelea.",
+  "nob.welcomeBack": "Karibu tena",
+  "nob.welcomeBackSub": "Hii ni akaunti yako ya Chatyy.",
+  "nob.codeAlreadySent": "Tumekutumia msimbo sasa hivi. Uweke hapa chini.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Fungua kwenye YouTube",
   "ytPlayer.minimize": "Punguza",

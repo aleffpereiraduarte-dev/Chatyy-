@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Добавьте имя и, если хотите, фото.",
   "nob.removePhoto": "Удалить фото",
   "nob.camMicNote": "Камера и микрофон: мы спросим разрешение, только когда они понадобятся — для звонка, фото или голосового.",
+  "nob.moreOptions": "Ещё",
+  "nob.emailLoginLegacy": "Войти по e-mail (старый аккаунт)",
+  "nob.existingTitle": "Номер уже зарегистрирован",
+  "nob.existingSub": "Входим в ваш аккаунт. Введите код, чтобы продолжить.",
+  "nob.welcomeBack": "С возвращением",
+  "nob.welcomeBackSub": "Это ваш аккаунт Chatyy.",
+  "nob.codeAlreadySent": "Мы только что отправили код. Введите его ниже.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Открыть в YouTube",
   "ytPlayer.minimize": "Свернуть",

@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "ເພີ່ມຊື່ຂອງທ່ານ ແລະ ຮູບຖ້າຕ້ອງການ.",
   "nob.removePhoto": "ລຶບຮູບ",
   "nob.camMicNote": "ກ້ອງ ແລະ ໄມໂຄຣໂຟນ: ພວກເຮົາຂໍສະເພາະຕອນທ່ານໃຊ້ — ໃນການໂທ, ຮູບ ຫຼື ຂໍ້ຄວາມສຽງ.",
+  "nob.moreOptions": "ຕົວເລືອກເພີ່ມເຕີມ",
+  "nob.emailLoginLegacy": "ເຂົ້າສູ່ລະບົບດ້ວຍອີເມວ (ບັນຊີເກົ່າ)",
+  "nob.existingTitle": "ເບີນີ້ລົງທະບຽນແລ້ວ",
+  "nob.existingSub": "ກຳລັງເຂົ້າສູ່ບັນຊີຂອງທ່ານ. ໃສ່ລະຫັດເພື່ອສືບຕໍ່.",
+  "nob.welcomeBack": "ຍິນດີຕ້ອນຮັບກັບມາ",
+  "nob.welcomeBackSub": "ນີ້ແມ່ນບັນຊີ Chatyy ຂອງທ່ານ.",
+  "nob.codeAlreadySent": "ພວກເຮົາຫາກໍ່ສົ່ງລະຫັດໃຫ້ທ່ານ. ໃສ່ມັນຂ້າງລຸ່ມ.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "ເປີດໃນ YouTube",
   "ytPlayer.minimize": "ຫຍໍ້",

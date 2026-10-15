@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Tambahkan nama dan, jika mau, foto.",
   "nob.removePhoto": "Hapus foto",
   "nob.camMicNote": "Kamera dan mikrofon: kami hanya meminta saat Anda menggunakannya — untuk panggilan, foto, atau pesan suara.",
+  "nob.moreOptions": "Opsi lainnya",
+  "nob.emailLoginLegacy": "Masuk dengan email (akun lama)",
+  "nob.existingTitle": "Nomor sudah terdaftar",
+  "nob.existingSub": "Kami akan masuk ke akunmu. Masukkan kode untuk melanjutkan.",
+  "nob.welcomeBack": "Selamat datang kembali",
+  "nob.welcomeBackSub": "Ini akun Chatyy-mu.",
+  "nob.codeAlreadySent": "Kami baru saja mengirim kode. Masukkan di bawah.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Buka di YouTube",
   "ytPlayer.minimize": "Perkecil",

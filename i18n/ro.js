@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Adaugă-ți numele și, dacă vrei, o fotografie.",
   "nob.removePhoto": "Elimină fotografia",
   "nob.camMicNote": "Camera și microfonul: le cerem doar când le folosești — într-un apel, o fotografie sau un mesaj vocal.",
+  "nob.moreOptions": "Mai multe opțiuni",
+  "nob.emailLoginLegacy": "Conectare cu e-mail (cont vechi)",
+  "nob.existingTitle": "Număr deja înregistrat",
+  "nob.existingSub": "Te conectăm la contul tău. Introdu codul pentru a continua.",
+  "nob.welcomeBack": "Bine ai revenit",
+  "nob.welcomeBackSub": "Acesta este contul tău Chatyy.",
+  "nob.codeAlreadySent": "Ți-am trimis un cod chiar acum. Introdu-l mai jos.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Deschide în YouTube",
   "ytPlayer.minimize": "Minimizează",

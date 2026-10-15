@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "আপনার নাম এবং চাইলে একটি ছবি যোগ করুন।",
   "nob.removePhoto": "ছবি সরান",
   "nob.camMicNote": "ক্যামেরা ও মাইক্রোফোন: শুধু ব্যবহারের সময় চাই — কল, ছবি বা ভয়েস মেসেজে।",
+  "nob.moreOptions": "আরও বিকল্প",
+  "nob.emailLoginLegacy": "ইমেল দিয়ে সাইন ইন (পুরনো অ্যাকাউন্ট)",
+  "nob.existingTitle": "নম্বরটি ইতিমধ্যে নিবন্ধিত",
+  "nob.existingSub": "আপনার অ্যাকাউন্টে সাইন ইন করছি। চালিয়ে যেতে কোড দিন।",
+  "nob.welcomeBack": "আবার স্বাগতম",
+  "nob.welcomeBackSub": "এটি আপনার Chatyy অ্যাকাউন্ট।",
+  "nob.codeAlreadySent": "আমরা এইমাত্র একটি কোড পাঠিয়েছি। নিচে লিখুন।",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-এ খুলুন",
   "ytPlayer.minimize": "ছোট করুন",

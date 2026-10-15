@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Нэрээ, хүсвэл зургаа нэмнэ үү.",
   "nob.removePhoto": "Зургийг устгах",
   "nob.camMicNote": "Камер ба микрофон: зөвхөн ашиглах үед асууна — дуудлага, зураг эсвэл дуут мессежэнд.",
+  "nob.moreOptions": "Бусад сонголт",
+  "nob.emailLoginLegacy": "Имэйлээр нэвтрэх (хуучин бүртгэл)",
+  "nob.existingTitle": "Дугаар аль хэдийн бүртгэлтэй",
+  "nob.existingSub": "Таны бүртгэлд нэвтэрье. Үргэлжлүүлэхийн тулд кодоо оруулна уу.",
+  "nob.welcomeBack": "Тавтай морил",
+  "nob.welcomeBackSub": "Энэ бол таны Chatyy бүртгэл.",
+  "nob.codeAlreadySent": "Бид саяхан код илгээлээ. Доор оруулна уу.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-д нээх",
   "ytPlayer.minimize": "Багасгах",

@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "이름과 원하면 사진을 추가하세요.",
   "nob.removePhoto": "사진 삭제",
   "nob.camMicNote": "카메라와 마이크: 사용할 때만 요청합니다 — 통화, 사진, 음성 메시지에서.",
+  "nob.moreOptions": "더보기",
+  "nob.emailLoginLegacy": "이메일로 로그인 (기존 계정)",
+  "nob.existingTitle": "이미 등록된 번호예요",
+  "nob.existingSub": "계정에 로그인할게요. 계속하려면 코드를 입력하세요.",
+  "nob.welcomeBack": "다시 오신 걸 환영해요",
+  "nob.welcomeBackSub": "회원님의 Chatyy 계정이에요.",
+  "nob.codeAlreadySent": "방금 코드를 보냈어요. 아래에 입력하세요.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube에서 열기",
   "ytPlayer.minimize": "최소화",

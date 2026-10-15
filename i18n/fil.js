@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Idagdag ang iyong pangalan at, kung gusto mo, isang larawan.",
   "nob.removePhoto": "Alisin ang larawan",
   "nob.camMicNote": "Camera at mikropono: hihingin lang namin kapag ginamit mo — sa tawag, larawan o voice message.",
+  "nob.moreOptions": "Higit pang opsyon",
+  "nob.emailLoginLegacy": "Mag-sign in gamit ang email (lumang account)",
+  "nob.existingTitle": "Nakarehistro na ang numero",
+  "nob.existingSub": "Papasok tayo sa iyong account. Ilagay ang code para magpatuloy.",
+  "nob.welcomeBack": "Maligayang pagbabalik",
+  "nob.welcomeBackSub": "Ito ang iyong Chatyy account.",
+  "nob.codeAlreadySent": "Kakapadala lang namin ng code. Ilagay ito sa ibaba.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Buksan sa YouTube",
   "ytPlayer.minimize": "I-minimize",

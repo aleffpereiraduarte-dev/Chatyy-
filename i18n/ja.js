@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "名前と、必要なら写真を追加してください。",
   "nob.removePhoto": "写真を削除",
   "nob.camMicNote": "カメラとマイク：使うときだけ許可をお願いします（通話・写真・音声メッセージ）。",
+  "nob.moreOptions": "その他のオプション",
+  "nob.emailLoginLegacy": "メールでログイン（以前のアカウント）",
+  "nob.existingTitle": "この番号は登録済みです",
+  "nob.existingSub": "アカウントにログインします。続けるにはコードを入力してください。",
+  "nob.welcomeBack": "おかえりなさい",
+  "nob.welcomeBackSub": "これがあなたの Chatyy アカウントです。",
+  "nob.codeAlreadySent": "先ほどコードを送信しました。下に入力してください。",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTubeで開く",
   "ytPlayer.minimize": "最小化",

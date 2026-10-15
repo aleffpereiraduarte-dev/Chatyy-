@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "أضف اسمك وصورة إن أردت.",
   "nob.removePhoto": "إزالة الصورة",
   "nob.camMicNote": "الكاميرا والميكروفون: لا نطلبهما إلا عند الاستخدام — في مكالمة أو صورة أو رسالة صوتية.",
+  "nob.moreOptions": "خيارات أخرى",
+  "nob.emailLoginLegacy": "تسجيل الدخول بالبريد الإلكتروني (حساب قديم)",
+  "nob.existingTitle": "الرقم مسجّل بالفعل",
+  "nob.existingSub": "سنسجّل دخولك إلى حسابك. أدخل الرمز للمتابعة.",
+  "nob.welcomeBack": "مرحبًا بعودتك",
+  "nob.welcomeBackSub": "هذا هو حسابك على Chatyy.",
+  "nob.codeAlreadySent": "أرسلنا لك رمزًا قبل لحظات. أدخله أدناه.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "فتح في YouTube",
   "ytPlayer.minimize": "تصغير",

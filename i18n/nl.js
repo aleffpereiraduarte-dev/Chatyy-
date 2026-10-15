@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Voeg je naam en eventueel een foto toe.",
   "nob.removePhoto": "Foto verwijderen",
   "nob.camMicNote": "Camera en microfoon: we vragen pas toestemming als je ze gebruikt — bij een gesprek, foto of spraakbericht.",
+  "nob.moreOptions": "Meer opties",
+  "nob.emailLoginLegacy": "Inloggen met e-mail (ouder account)",
+  "nob.existingTitle": "Nummer al geregistreerd",
+  "nob.existingSub": "We loggen je in op je account. Voer de code in om door te gaan.",
+  "nob.welcomeBack": "Welkom terug",
+  "nob.welcomeBackSub": "Dit is je Chatyy-account.",
+  "nob.codeAlreadySent": "We hebben je net een code gestuurd. Voer die hieronder in.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Openen in YouTube",
   "ytPlayer.minimize": "Minimaliseren",

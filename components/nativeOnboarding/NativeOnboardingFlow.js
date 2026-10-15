@@ -44,8 +44,9 @@ import {
 } from '../signup/signupSmarts';
 import {
   IconArrowLeft, IconChevronDown, IconCheck, IconAlertTriangle, IconCamera, IconGlobe, IconX,
-  IconMessageCircle, IconSmartphone, IconPhone, IconMic, IconAtSign,
+  IconMessageCircle, IconSmartphone, IconPhone, IconMic, IconAtSign, IconMoreHorizontal,
 } from '../Icons';
+import AvatarCircle from '../AvatarCircle';
 import { useReducedMotion } from '../reducedMotion';
 import { useOnbCopy } from '../onboarding/copy';
 import { FriendsArt, BellArt } from '../onboarding/illustrations';
@@ -123,6 +124,9 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const [sentVia, setSentVia] = useState('sms');
   const [otpChannels, setOtpChannels] = useState({ wa: true, sms: true });
   const [accountExists, setAccountExists] = useState(null);
+  const [codeAlreadySent, setCodeAlreadySent] = useState(false); // [2026-10-15 onb-existing]
+  const [moreOpen, setMoreOpen] = useState(false); // [2026-10-15 onb-existing] menu "⋯" (e-mail de conta antiga)
+  const [accountName, setAccountName] = useState(''); // nome da conta existente (só DEPOIS do código)
   const [lockRequired, setLockRequired] = useState(false);
   const [lockPin, setLockPin] = useState('');
   const [otpErrorTick, setOtpErrorTick] = useState(0);
@@ -189,6 +193,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     otp: T('signupPhone.titleOtp', 'Digite o código'),
     profile: T('nob.profileTitle', 'Seu perfil'),
     username: T('signupPhone.titleHandle', 'Escolha seu @'),
+    welcomeBack: T('nob.welcomeBack', 'Bem-vindo de volta'),
     permissions: '',
     restore: T('ownBackup.restorePromptTitle', 'Restaurar backup'),
     done: T('signupPhone.titleDone', 'Tudo pronto!'),
@@ -249,26 +254,52 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     const digits = phone.replace(/\D/g, '');
     if (digits.length < 8 || !E164_RE.test(fullPhone)) { setError(T('login.phoneInvalid', 'Número inválido')); return; }
     setError(''); setBusy(true);
+    setCodeAlreadySent(false);
+    // [2026-10-15 onb-existing] Já existe um código válido emitido há < 60 s (cooldown
+    // do servidor, compartilhado por phone_login_request/verify_send) → vai para a
+    // tela do código em vez de travar no telefone com "Aguarde Ns".
+    const toOtpOnCooldown = (r) => {
+      const st = Number(r?.__httpStatus || 0);
+      const ra = Number(r?.data?.retry_after || 0);
+      if (!(st === 429 && r?.data?.reason === 'cooldown' && ra > 0 && ra <= 60)) return false;
+      setResendCountdown(ra);
+      setCodeAlreadySent(true);
+      setCode('');
+      setBusy(false);
+      if (stepRef.current !== 'otp') go('otp', 1);
+      return true;
+    };
     try {
       if (accountExists === null && stepRef.current !== 'otp') {
-        try {
-          const lr = await api.phoneLoginRequest(fullPhone);
-          if (mountedRef.current) {
-            const exists = !!(lr?.data?.exists);
-            setAccountExists(exists);
-            if (exists) {
-              // phone_login_request JÁ enviou o código da conta existente (e
-              // armou o cooldown de 60 s) → mesma tela de código, sem 2º envio.
-              setOtpChannels({ wa: !!lr?.data?.whatsapp_sent, sms: !lr?.data?.whatsapp_sent && lr?.data?.sms_sent !== false });
-              setSentVia('sms');
-              setResendCountdown(60);
-              setCode('');
-              setBusy(false);
-              go('otp', 1);
-              return;
-            }
-          }
-        } catch { /* segue como conta nova */ }
+        let lr = null;
+        try { lr = await api.phoneLoginRequest(fullPhone); } catch { lr = null; }
+        if (!mountedRef.current) return;
+        if (lr?.success && lr?.data?.exists === true) {
+          // phone_login_request JÁ enviou o código da conta existente (e
+          // armou o cooldown de 60 s) → mesma tela de código, sem 2º envio.
+          setAccountExists(true);
+          const wa = !!lr.data.whatsapp_sent;
+          setOtpChannels({ wa, sms: !wa && lr.data.sms_sent !== false });
+          setSentVia('sms');
+          setCode('');
+          if (lr.data.delivered === false) {
+            // Nenhum canal entregou: tela do código + erro + "Reenviar" no retry_after.
+            setResendCountdown(Math.min(3600, Math.max(0, Number(lr.data.retry_after || 0))));
+            setError(T('signupPhone.sendError', 'Não foi possível enviar o código. Tente novamente.'));
+          } else setResendCountdown(60);
+          setBusy(false);
+          go('otp', 1);
+          return;
+        }
+        if (lr?.success && lr?.data?.exists === false) setAccountExists(false);
+        else if (lr && !lr.success && Number(lr.__httpStatus || 0) === 429) {
+          // Limite de envio do número (cooldown → já há código válido; senão, espera).
+          if (toOtpOnCooldown(lr)) return;
+          const f = friendlyServerError(lr, 'signupPhone.sendError');
+          if (f.seconds) { setResendCountdown(f.seconds); setError(t('otp.waitSeconds', { s: f.seconds })); } else setError(f.text || t(f.key));
+          return;
+        }
+        // 5xx / rede: segue pelo verify_send (o código vale p/ login E cadastro).
       }
       fbConfirmRef.current = null;
       fbIdTokenRef.current = null;
@@ -291,7 +322,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         setOtpChannels((wa === undefined && sms === undefined) ? { wa: true, sms: true } : { wa: !!wa, sms: !!sms });
         if (stepRef.current !== 'otp') go('otp', 1);
         setCode('');
-      } else {
+      } else if (!toOtpOnCooldown(r)) {
         const f = friendlyServerError(r, 'signupPhone.sendError');
         if (f.seconds) { setResendCountdown(f.seconds); setError(t('otp.waitSeconds', { s: f.seconds })); } else setError(f.text || t(f.key));
       }
@@ -343,7 +374,10 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         try { hSuccess(); } catch {}
         setIsNewAccount(false);
         setAccountEmail(String(r.data.email || ''));
-        afterAuthRef.current?.(String(r.data.email || ''), false);
+        setAccountName(String(r.data.name || ''));
+        // [2026-10-15 onb-existing] Código conferido → agora sim mostra de quem é a
+        // conta ("Bem-vindo de volta" + foto/nome/@) antes das permissões.
+        go('welcomeBack', 1);
       } else if (r?.success && r.data?.exists === false && r.data?.verify_token) {
         setVerifyToken(r.data.verify_token);
         go('profile', 1);
@@ -638,9 +672,9 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const goBackRef = useRef(goBack); goBackRef.current = goBack;
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
-    if (!['phone', 'otp', 'profile', 'username', 'permissions', 'restore', 'done', 'finishing'].includes(step)) return undefined;
+    if (!['phone', 'otp', 'profile', 'username', 'welcomeBack', 'permissions', 'restore', 'done', 'finishing'].includes(step)) return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (['permissions', 'restore', 'done', 'finishing'].includes(stepRef.current)) return true; // conta já autenticada: não volta ao formulário
+      if (['welcomeBack', 'permissions', 'restore', 'done', 'finishing'].includes(stepRef.current)) return true; // conta já autenticada: não volta ao formulário
       try { goBackRef.current?.(); } catch {}
       return true;
     });
@@ -733,7 +767,6 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           }}
           testID="nob-agree"
         />
-        <Secondary label={T('signupPhone.loginWithEmail', 'Entrar com email')} onPress={exitToLogin} testID="nob-other-login" />
       </>
     );
   } else if (step === 'phone') {
@@ -805,7 +838,6 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     footer = (
       <>
         <Primary label={T('onb.continue', 'Continuar')} onPress={() => { Keyboard.dismiss(); setConfirmOpen(true); }} disabled={!phoneValid} loading={busy} testID="nob-phone-next" />
-        {entry !== 'welcome' ? <Secondary label={T('signupPhone.loginWithEmail', 'Entrar com email')} onPress={exitToLogin} /> : null}
       </>
     );
   } else if (step === 'otp') {
@@ -822,6 +854,17 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           {'  '}
           <Text style={[st.link, { color: fg }]} accessibilityRole="button" onPress={goBack}>{T('signupPhone.edit', 'Editar')}</Text>
         </Text>
+        {accountExists === true && (
+          <View style={[st.existCard, { backgroundColor: colors.surfaceVariant }]} accessibilityLiveRegion="polite" testID="nob-existing-account">
+            <View style={[st.existIcon, { backgroundColor: fg }]}>
+              <IconCheck size={16} color={colors.background} strokeWidth={3} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[st.existTitle, { color: fg }]} maxFontSizeMultiplier={1.4}>{T('nob.existingTitle', 'Número já cadastrado')}</Text>
+              <Text style={[st.channelSub, { color: sub }]} maxFontSizeMultiplier={1.5}>{T('nob.existingSub', 'Vamos entrar na sua conta. Digite o código para continuar.')}</Text>
+            </View>
+          </View>
+        )}
         <View style={{ height: 18 }} />
         <OtpCells
           ref={otpRef}
@@ -838,11 +881,8 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         <View style={[st.channelCard, { backgroundColor: colors.surfaceVariant }]}>
           {sentVia === 'voice' ? <IconPhone size={17} color={fg} /> : otpChannels.wa ? <IconMessageCircle size={17} color={fg} /> : <IconSmartphone size={17} color={fg} />}
           <View style={{ flex: 1 }}>
-            <Text style={[st.channelTitle, { color: fg }]}>{chLabel}</Text>
-            <Text style={[st.channelSub, { color: sub }]}>
-              {accountExists === true ? T('signupPhone.existingAccountOtp', 'Este número já tem conta. Digite o código para entrar.')
-                : T('otp.mayTakeMinute', 'Pode levar até 1 minuto para chegar.')}
-            </Text>
+            <Text style={[st.channelTitle, { color: fg }]}>{codeAlreadySent ? T('nob.codeAlreadySent', 'Já enviamos um código há pouco. Digite-o abaixo.') : chLabel}</Text>
+            <Text style={[st.channelSub, { color: sub }]}>{T('otp.mayTakeMinute', 'Pode levar até 1 minuto para chegar.')}</Text>
           </View>
         </View>
         {lockRequired && (
@@ -1046,6 +1086,24 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         <Primary label={T('signupPhone.finish', 'Criar conta')} onPress={finishSignup} loading={busy} disabled={!ok} testID="nob-create" />
       </>
     );
+  } else if (step === 'welcomeBack') {
+    // [2026-10-15 onb-existing] Conta existente, código JÁ conferido: mostra de quem é.
+    const uname = String(accountEmail || '').split('@')[0] || '';
+    const display = (accountName || '').trim() || uname;
+    body = (
+      <View style={{ alignItems: 'center', marginTop: 24 }} testID="nob-welcome-back">
+        <AvatarCircle email={accountEmail} name={display} size={104} />
+        <Text style={[st.title, { color: fg, textAlign: 'center', marginTop: 20 }]} accessibilityRole="header" maxFontSizeMultiplier={1.3}>
+          {titles.welcomeBack}
+        </Text>
+        <Text style={[st.wbName, { color: fg }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{display}</Text>
+        {uname ? <Text style={[st.sub, { color: sub, textAlign: 'center', marginTop: 2 }]} numberOfLines={1}>@{uname}</Text> : null}
+        <Text style={[st.sub, { color: sub, textAlign: 'center', marginTop: 14 }]} maxFontSizeMultiplier={1.5}>{T('nob.welcomeBackSub', 'Essa é a sua conta Chatyy.')}</Text>
+      </View>
+    );
+    footer = (
+      <Primary label={T('onb.continue', 'Continuar')} onPress={() => afterAuthRef.current?.(accountEmail, false)} testID="nob-welcome-back-continue" />
+    );
   } else if (step === 'permissions') {
     const cur = permSteps[permIdx];
     const isContacts = cur === 'contacts';
@@ -1128,6 +1186,20 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     );
   }
 
+  // [2026-10-15 onb-existing] "⋯" discreto: e-mail SÓ p/ conta antiga sem telefone (sem criar conta).
+  const MoreBtn = (
+    <Pressable
+      onPress={() => { Keyboard.dismiss(); setMoreOpen(true); }}
+      hitSlop={10}
+      style={({ pressed }) => [st.iconBtn, { opacity: pressed ? 0.6 : 1 }]}
+      accessibilityRole="button"
+      accessibilityLabel={T('nob.moreOptions', 'Mais opções')}
+      testID="nob-more"
+    >
+      <IconMoreHorizontal size={22} color={sub} />
+    </Pressable>
+  );
+
   // ── layout ─────────────────────────────────────────────────────────────
   const showTop = FORM_STEPS.includes(step) || step === 'welcome';
   const formIdx = FORM_STEPS.indexOf(step);
@@ -1140,7 +1212,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
       <View style={[st.column, { paddingTop: topPad }]}>
         {showTop && (
           <View style={st.topBar}>
-            {step === 'welcome' ? <View style={st.iconBtn} /> : (
+            {step === 'welcome' ? MoreBtn : (
               <Pressable onPress={goBack} hitSlop={10} style={st.iconBtn} accessibilityRole="button" accessibilityLabel={T('a11y.back', 'Voltar')} testID="nob-back">
                 <IconArrowLeft size={22} color={fg} />
               </Pressable>
@@ -1164,7 +1236,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
                 <IconGlobe size={16} color={fg} />
                 <Text style={[st.langText, { color: fg }]} numberOfLines={1}>{langLabel}</Text>
               </Pressable>
-            ) : <View style={st.iconBtn} />}
+            ) : (step === 'phone' ? MoreBtn : <View style={st.iconBtn} />)}
           </View>
         )}
         <Animated.View style={{ flex: 1, opacity: fade, transform: [{ translateX: shift }] }}>
@@ -1227,6 +1299,26 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         </View>
       </Modal>
 
+      <Modal visible={moreOpen} transparent animationType="fade" onRequestClose={() => setMoreOpen(false)} statusBarTranslucent>
+        <Pressable style={st.menuBackdrop} onPress={() => setMoreOpen(false)} accessibilityLabel={T('common.close', 'Fechar')}>
+          <View
+            style={[st.menu, { top: topPad + 44, backgroundColor: colors.background, borderColor: colors.border }, step === 'welcome' ? { left: 12 } : { right: 12 }]}
+            accessibilityViewIsModal
+            testID="nob-more-menu"
+          >
+            <Pressable
+              onPress={() => { setMoreOpen(false); exitToLogin(); }}
+              style={({ pressed }) => [st.menuRow, { backgroundColor: pressed ? colors.surfaceVariant : 'transparent' }]}
+              accessibilityRole="button"
+              testID="nob-email-login"
+            >
+              <IconAtSign size={18} color={fg} />
+              <Text style={[st.menuText, { color: fg }]} maxFontSizeMultiplier={1.4}>{T('nob.emailLoginLegacy', 'Entrar com e-mail (conta antiga)')}</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
+
       {/* Android: folha câmera/galeria (iOS usa ActionSheet nativo; web abre o seletor de arquivo). */}
       <Modal visible={photoSheet} transparent animationType="slide" onRequestClose={() => setPhotoSheet(false)} statusBarTranslucent>
         <Pressable style={st.sheetBackdrop} onPress={() => setPhotoSheet(false)}>
@@ -1278,6 +1370,14 @@ const st = StyleSheet.create({
   column: { flex: 1, width: '100%', maxWidth: 520, alignSelf: 'center' },
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 48, gap: 8 },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  existCard: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, marginTop: 16 },
+  existIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  existTitle: { fontSize: 15, fontWeight: '700' },
+  wbName: { fontSize: 19, fontWeight: '700', textAlign: 'center', marginTop: 10, paddingHorizontal: 12 },
+  menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' },
+  menu: { position: 'absolute', minWidth: 240, maxWidth: 320, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 6, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 8 },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 13 },
+  menuText: { fontSize: 15, fontWeight: '500', flexShrink: 1 },
   progress: { flex: 1, flexDirection: 'row', gap: 6, paddingHorizontal: 8 },
   seg: { flex: 1, height: 3, borderRadius: 2 },
   langBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, height: 34, borderRadius: 17, borderWidth: 1, maxWidth: 180 },

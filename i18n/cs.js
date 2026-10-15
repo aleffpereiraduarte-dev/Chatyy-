@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Přidejte své jméno a případně fotku.",
   "nob.removePhoto": "Odstranit fotku",
   "nob.camMicNote": "Fotoaparát a mikrofon: žádáme o ně, až když je použijete — při hovoru, fotce nebo hlasové zprávě.",
+  "nob.moreOptions": "Další možnosti",
+  "nob.emailLoginLegacy": "Přihlásit se e-mailem (starší účet)",
+  "nob.existingTitle": "Číslo je již registrováno",
+  "nob.existingSub": "Přihlásíme vás k vašemu účtu. Pokračujte zadáním kódu.",
+  "nob.welcomeBack": "Vítejte zpět",
+  "nob.welcomeBackSub": "Toto je váš účet Chatyy.",
+  "nob.codeAlreadySent": "Před chvílí jsme vám poslali kód. Zadejte ho níže.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Otevřít v YouTube",
   "ytPlayer.minimize": "Minimalizovat",

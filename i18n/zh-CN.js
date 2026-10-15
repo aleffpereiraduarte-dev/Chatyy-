@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "添加你的名字，也可以加一张照片。",
   "nob.removePhoto": "移除照片",
   "nob.camMicNote": "相机和麦克风：只在你使用时才会请求——通话、拍照或语音消息时。",
+  "nob.moreOptions": "更多选项",
+  "nob.emailLoginLegacy": "使用邮箱登录（旧账号）",
+  "nob.existingTitle": "该号码已注册",
+  "nob.existingSub": "正在登录你的账号。输入验证码以继续。",
+  "nob.welcomeBack": "欢迎回来",
+  "nob.welcomeBackSub": "这是你的 Chatyy 账号。",
+  "nob.codeAlreadySent": "我们刚刚发送了验证码，请在下方输入。",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "在 YouTube 中打开",
   "ytPlayer.minimize": "最小化",

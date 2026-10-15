@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "เพิ่มชื่อของคุณ และรูปภาพหากต้องการ",
   "nob.removePhoto": "ลบรูปภาพ",
   "nob.camMicNote": "กล้องและไมโครโฟน: เราจะขอเมื่อคุณใช้งานเท่านั้น — ในการโทร ถ่ายรูป หรือข้อความเสียง",
+  "nob.moreOptions": "ตัวเลือกเพิ่มเติม",
+  "nob.emailLoginLegacy": "เข้าสู่ระบบด้วยอีเมล (บัญชีเก่า)",
+  "nob.existingTitle": "หมายเลขนี้ลงทะเบียนแล้ว",
+  "nob.existingSub": "กำลังเข้าสู่บัญชีของคุณ ใส่รหัสเพื่อดำเนินการต่อ",
+  "nob.welcomeBack": "ยินดีต้อนรับกลับมา",
+  "nob.welcomeBackSub": "นี่คือบัญชี Chatyy ของคุณ",
+  "nob.codeAlreadySent": "เราเพิ่งส่งรหัสให้คุณ ใส่รหัสด้านล่าง",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "เปิดใน YouTube",
   "ytPlayer.minimize": "ย่อ",

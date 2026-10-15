@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "დაამატეთ სახელი და, თუ გსურთ, ფოტო.",
   "nob.removePhoto": "ფოტოს წაშლა",
   "nob.camMicNote": "კამერა და მიკროფონი: ვითხოვთ მხოლოდ გამოყენებისას — ზარში, ფოტოში ან ხმოვან შეტყობინებაში.",
+  "nob.moreOptions": "მეტი ვარიანტი",
+  "nob.emailLoginLegacy": "შესვლა ელფოსტით (ძველი ანგარიში)",
+  "nob.existingTitle": "ნომერი უკვე რეგისტრირებულია",
+  "nob.existingSub": "შევდივართ თქვენს ანგარიშში. გასაგრძელებლად შეიყვანეთ კოდი.",
+  "nob.welcomeBack": "კეთილი იყოს თქვენი დაბრუნება",
+  "nob.welcomeBackSub": "ეს არის თქვენი Chatyy ანგარიში.",
+  "nob.codeAlreadySent": "ახლახან გამოგიგზავნეთ კოდი. შეიყვანეთ ქვემოთ.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-ში გახსნა",
   "ytPlayer.minimize": "ჩაკეცვა",

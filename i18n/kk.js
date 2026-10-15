@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Атыңызды және қаласаңыз, суретіңізді қосыңыз.",
   "nob.removePhoto": "Суретті өшіру",
   "nob.camMicNote": "Камера мен микрофон: тек қолданған кезде ғана сұраймыз — қоңырауда, суретте немесе дауыстық хабарда.",
+  "nob.moreOptions": "Қосымша",
+  "nob.emailLoginLegacy": "E-mail арқылы кіру (ескі аккаунт)",
+  "nob.existingTitle": "Нөмір тіркелген",
+  "nob.existingSub": "Аккаунтыңызға кіреміз. Жалғастыру үшін кодты енгізіңіз.",
+  "nob.welcomeBack": "Қайта қош келдіңіз",
+  "nob.welcomeBackSub": "Бұл сіздің Chatyy аккаунтыңыз.",
+  "nob.codeAlreadySent": "Жаңа ғана код жібердік. Оны төменге енгізіңіз.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-та ашу",
   "ytPlayer.minimize": "Кішірейту",

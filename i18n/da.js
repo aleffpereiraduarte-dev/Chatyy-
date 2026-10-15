@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Tilføj dit navn og evt. et billede.",
   "nob.removePhoto": "Fjern billede",
   "nob.camMicNote": "Kamera og mikrofon: vi spørger først, når du bruger dem — i et opkald, et billede eller en talebesked.",
+  "nob.moreOptions": "Flere muligheder",
+  "nob.emailLoginLegacy": "Log ind med e-mail (ældre konto)",
+  "nob.existingTitle": "Nummeret er allerede registreret",
+  "nob.existingSub": "Vi logger dig ind på din konto. Indtast koden for at fortsætte.",
+  "nob.welcomeBack": "Velkommen tilbage",
+  "nob.welcomeBackSub": "Dette er din Chatyy-konto.",
+  "nob.codeAlreadySent": "Vi har lige sendt dig en kode. Indtast den nedenfor.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Åbn i YouTube",
   "ytPlayer.minimize": "Minimer",

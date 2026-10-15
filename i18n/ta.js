@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "உங்கள் பெயரையும் விரும்பினால் ஒரு படத்தையும் சேர்க்கவும்.",
   "nob.removePhoto": "படத்தை அகற்று",
   "nob.camMicNote": "கேமரா, மைக்ரோஃபோன்: பயன்படுத்தும்போது மட்டுமே கேட்போம் — அழைப்பு, படம் அல்லது குரல் செய்தியில்.",
+  "nob.moreOptions": "மேலும் விருப்பங்கள்",
+  "nob.emailLoginLegacy": "மின்னஞ்சலில் உள்நுழை (பழைய கணக்கு)",
+  "nob.existingTitle": "எண் ஏற்கனவே பதிவுசெய்யப்பட்டுள்ளது",
+  "nob.existingSub": "உங்கள் கணக்கில் உள்நுழைகிறோம். தொடர குறியீட்டை உள்ளிடவும்.",
+  "nob.welcomeBack": "மீண்டும் வருக",
+  "nob.welcomeBackSub": "இது உங்கள் Chatyy கணக்கு.",
+  "nob.codeAlreadySent": "சற்று முன் ஒரு குறியீட்டை அனுப்பினோம். கீழே உள்ளிடவும்.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-இல் திற",
   "ytPlayer.minimize": "சிறிதாக்கு",

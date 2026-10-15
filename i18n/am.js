@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "ስምዎን እና ከፈለጉ ፎቶ ያክሉ።",
   "nob.removePhoto": "ፎቶ አስወግድ",
   "nob.camMicNote": "ካሜራ እና ማይክሮፎን፦ ሲጠቀሙ ብቻ እንጠይቃለን — በጥሪ፣ በፎቶ ወይም በድምፅ መልዕክት።",
+  "nob.moreOptions": "ተጨማሪ አማራጮች",
+  "nob.emailLoginLegacy": "በኢሜይል ግባ (የቆየ መለያ)",
+  "nob.existingTitle": "ቁጥሩ አስቀድሞ ተመዝግቧል",
+  "nob.existingSub": "ወደ መለያዎ እየገባን ነው። ለመቀጠል ኮዱን ያስገቡ።",
+  "nob.welcomeBack": "እንኳን ደህና መጡ",
+  "nob.welcomeBackSub": "ይህ የእርስዎ Chatyy መለያ ነው።",
+  "nob.codeAlreadySent": "አሁን ኮድ ልከንልዎታል። ከታች ያስገቡት።",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "በYouTube ክፈት",
   "ytPlayer.minimize": "አሳንስ",

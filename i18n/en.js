@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Add your name and, if you like, a photo.",
   "nob.removePhoto": "Remove photo",
   "nob.camMicNote": "Camera and microphone: we only ask when you use them — in a call, photo or voice message.",
+  "nob.moreOptions": "More options",
+  "nob.emailLoginLegacy": "Sign in with email (older account)",
+  "nob.existingTitle": "Number already registered",
+  "nob.existingSub": "Let's sign in to your account. Enter the code to continue.",
+  "nob.welcomeBack": "Welcome back",
+  "nob.welcomeBackSub": "This is your Chatyy account.",
+  "nob.codeAlreadySent": "We sent you a code a moment ago. Enter it below.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Open in YouTube",
   "ytPlayer.minimize": "Minimize",

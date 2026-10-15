@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "നിങ്ങളുടെ പേരും വേണമെങ്കിൽ ഒരു ഫോട്ടോയും ചേർക്കുക.",
   "nob.removePhoto": "ഫോട്ടോ നീക്കം ചെയ്യുക",
   "nob.camMicNote": "ക്യാമറയും മൈക്രോഫോണും: ഉപയോഗിക്കുമ്പോൾ മാത്രം ചോദിക്കും — കോൾ, ഫോട്ടോ അല്ലെങ്കിൽ വോയ്‌സ് സന്ദേശത്തിൽ.",
+  "nob.moreOptions": "കൂടുതൽ ഓപ്ഷനുകൾ",
+  "nob.emailLoginLegacy": "ഇമെയിൽ വഴി സൈൻ ഇൻ (പഴയ അക്കൗണ്ട്)",
+  "nob.existingTitle": "നമ്പർ ഇതിനകം രജിസ്റ്റർ ചെയ്തിട്ടുണ്ട്",
+  "nob.existingSub": "നിങ്ങളുടെ അക്കൗണ്ടിലേക്ക് സൈൻ ഇൻ ചെയ്യുന്നു. തുടരാൻ കോഡ് നൽകുക.",
+  "nob.welcomeBack": "തിരികെ സ്വാഗതം",
+  "nob.welcomeBackSub": "ഇതാണ് നിങ്ങളുടെ Chatyy അക്കൗണ്ട്.",
+  "nob.codeAlreadySent": "ഞങ്ങൾ ഇപ്പോൾ ഒരു കോഡ് അയച്ചു. അത് താഴെ നൽകുക.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube-ൽ തുറക്കുക",
   "ytPlayer.minimize": "ചെറുതാക്കുക",

@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Adınızı ve isterseniz bir fotoğraf ekleyin.",
   "nob.removePhoto": "Fotoğrafı kaldır",
   "nob.camMicNote": "Kamera ve mikrofon: yalnızca kullandığınızda isteriz — aramada, fotoğrafta veya sesli mesajda.",
+  "nob.moreOptions": "Diğer seçenekler",
+  "nob.emailLoginLegacy": "E-postayla giriş yap (eski hesap)",
+  "nob.existingTitle": "Numara zaten kayıtlı",
+  "nob.existingSub": "Hesabına giriş yapıyoruz. Devam etmek için kodu gir.",
+  "nob.welcomeBack": "Tekrar hoş geldin",
+  "nob.welcomeBackSub": "Bu senin Chatyy hesabın.",
+  "nob.codeAlreadySent": "Az önce bir kod gönderdik. Aşağıya gir.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube’da aç",
   "ytPlayer.minimize": "Küçült",

@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "మీ పేరు మరియు కావాలంటే ఫోటో జోడించండి.",
   "nob.removePhoto": "ఫోటో తీసివేయి",
   "nob.camMicNote": "కెమెరా, మైక్రోఫోన్: వాడేటప్పుడే అడుగుతాం — కాల్, ఫోటో లేదా వాయిస్ మెసేజ్‌లో.",
+  "nob.moreOptions": "మరిన్ని ఎంపికలు",
+  "nob.emailLoginLegacy": "ఇమెయిల్‌తో సైన్ ఇన్ (పాత ఖాతా)",
+  "nob.existingTitle": "నంబర్ ఇప్పటికే నమోదైంది",
+  "nob.existingSub": "మీ ఖాతాలోకి సైన్ ఇన్ చేస్తున్నాం. కొనసాగించడానికి కోడ్ నమోదు చేయండి.",
+  "nob.welcomeBack": "తిరిగి స్వాగతం",
+  "nob.welcomeBackSub": "ఇది మీ Chatyy ఖాతా.",
+  "nob.codeAlreadySent": "మేము ఇప్పుడే మీకు కోడ్ పంపాము. దాన్ని కింద నమోదు చేయండి.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTubeలో తెరవండి",
   "ytPlayer.minimize": "కనిష్ఠీకరించు",

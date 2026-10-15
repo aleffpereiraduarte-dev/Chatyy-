@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Afegeix el teu nom i, si vols, una foto.",
   "nob.removePhoto": "Treu la foto",
   "nob.camMicNote": "Càmera i micròfon: només els demanem quan els facis servir — en una trucada, foto o àudio.",
+  "nob.moreOptions": "Més opcions",
+  "nob.emailLoginLegacy": "Entra amb correu (compte antic)",
+  "nob.existingTitle": "Número ja registrat",
+  "nob.existingSub": "Entrarem al teu compte. Escriu el codi per continuar.",
+  "nob.welcomeBack": "Benvingut de nou",
+  "nob.welcomeBackSub": "Aquest és el teu compte de Chatyy.",
+  "nob.codeAlreadySent": "T'hem enviat un codi fa un moment. Escriu-lo a sota.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Obre a YouTube",
   "ytPlayer.minimize": "Minimitza",

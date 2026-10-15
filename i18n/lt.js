@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Pridėkite savo vardą ir, jei norite, nuotrauką.",
   "nob.removePhoto": "Pašalinti nuotrauką",
   "nob.camMicNote": "Kamera ir mikrofonas: leidimo klausiame tik kai juos naudojate — skambučiui, nuotraukai ar balso žinutei.",
+  "nob.moreOptions": "Daugiau parinkčių",
+  "nob.emailLoginLegacy": "Prisijungti el. paštu (senesnė paskyra)",
+  "nob.existingTitle": "Numeris jau užregistruotas",
+  "nob.existingSub": "Prisijungsime prie jūsų paskyros. Įveskite kodą, kad tęstumėte.",
+  "nob.welcomeBack": "Sveiki sugrįžę",
+  "nob.welcomeBackSub": "Tai jūsų Chatyy paskyra.",
+  "nob.codeAlreadySent": "Ką tik išsiuntėme kodą. Įveskite jį žemiau.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Atidaryti „YouTube“",
   "ytPlayer.minimize": "Sumažinti",

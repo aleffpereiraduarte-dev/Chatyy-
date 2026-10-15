@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Ismingizni va xohlasangiz, rasmingizni qo‘shing.",
   "nob.removePhoto": "Rasmni olib tashlash",
   "nob.camMicNote": "Kamera va mikrofon: faqat foydalanganingizda so‘raymiz — qo‘ng‘iroq, rasm yoki ovozli xabarda.",
+  "nob.moreOptions": "Boshqa imkoniyatlar",
+  "nob.emailLoginLegacy": "E-pochta orqali kirish (eski hisob)",
+  "nob.existingTitle": "Raqam allaqachon roʻyxatdan oʻtgan",
+  "nob.existingSub": "Hisobingizga kiramiz. Davom etish uchun kodni kiriting.",
+  "nob.welcomeBack": "Xush kelibsiz",
+  "nob.welcomeBackSub": "Bu sizning Chatyy hisobingiz.",
+  "nob.codeAlreadySent": "Hozirgina kod yubordik. Uni quyida kiriting.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "YouTube’da ochish",
   "ytPlayer.minimize": "Kichraytirish",

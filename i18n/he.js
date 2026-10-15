@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "הוסיפו את שמכם ואם תרצו גם תמונה.",
   "nob.removePhoto": "הסרת התמונה",
   "nob.camMicNote": "מצלמה ומיקרופון: נבקש רק כשתשתמשו בהם — בשיחה, בתמונה או בהודעה קולית.",
+  "nob.moreOptions": "אפשרויות נוספות",
+  "nob.emailLoginLegacy": "כניסה עם אימייל (חשבון ישן)",
+  "nob.existingTitle": "המספר כבר רשום",
+  "nob.existingSub": "נכנסים לחשבון שלך. הזן את הקוד כדי להמשיך.",
+  "nob.welcomeBack": "ברוך שובך",
+  "nob.welcomeBackSub": "זה חשבון ה-Chatyy שלך.",
+  "nob.codeAlreadySent": "שלחנו לך קוד לפני רגע. הזן אותו למטה.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "פתיחה ב-YouTube",
   "ytPlayer.minimize": "מזעור",

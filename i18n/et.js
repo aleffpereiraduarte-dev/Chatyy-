@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Lisa oma nimi ja soovi korral foto.",
   "nob.removePhoto": "Eemalda foto",
   "nob.camMicNote": "Kaamera ja mikrofon: küsime luba alles siis, kui neid kasutad — kõnes, fotol või häälsõnumis.",
+  "nob.moreOptions": "Rohkem valikuid",
+  "nob.emailLoginLegacy": "Logi sisse e-postiga (vana konto)",
+  "nob.existingTitle": "Number on juba registreeritud",
+  "nob.existingSub": "Logime sinu kontole sisse. Jätkamiseks sisesta kood.",
+  "nob.welcomeBack": "Tere tulemast tagasi",
+  "nob.welcomeBackSub": "See on sinu Chatyy konto.",
+  "nob.codeAlreadySent": "Saatsime sulle just koodi. Sisesta see allpool.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Ava YouTube’is",
   "ytPlayer.minimize": "Minimeeri",

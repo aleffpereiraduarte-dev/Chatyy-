@@ -49,6 +49,13 @@ export default {
   "nob.profileSub": "Thêm tên và ảnh nếu bạn muốn.",
   "nob.removePhoto": "Xóa ảnh",
   "nob.camMicNote": "Camera và micrô: chúng tôi chỉ xin quyền khi bạn dùng — trong cuộc gọi, ảnh hoặc tin nhắn thoại.",
+  "nob.moreOptions": "Tùy chọn khác",
+  "nob.emailLoginLegacy": "Đăng nhập bằng email (tài khoản cũ)",
+  "nob.existingTitle": "Số đã được đăng ký",
+  "nob.existingSub": "Đang đăng nhập vào tài khoản của bạn. Nhập mã để tiếp tục.",
+  "nob.welcomeBack": "Chào mừng trở lại",
+  "nob.welcomeBackSub": "Đây là tài khoản Chatyy của bạn.",
+  "nob.codeAlreadySent": "Chúng tôi vừa gửi mã cho bạn. Hãy nhập bên dưới.",
   // [2026-10-15 yt-inline]
   "ytPlayer.openInYouTube": "Mở trong YouTube",
   "ytPlayer.minimize": "Thu nhỏ",
