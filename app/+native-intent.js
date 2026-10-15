@@ -44,6 +44,19 @@ export function redirectSystemPath({ path, initial }) {
         return null;
       }
     }
+    // [2026-10-15 system-integration] Android launcher shortcut "Câmera do
+    // status" (onemundomail://chat?new=1) with the app warm: pop back to the
+    // existing home instead of stacking a 2nd /chat (chat.js reacts to ?new=1).
+    if (!initial && typeof path === 'string') {
+      let sc = null;
+      try { sc = require('../services/appShortcuts'); } catch {}
+      if (sc && sc.isStatusCameraHref(path)) {
+        setTimeout(() => {
+          try { sc.openStatusCamera(require('expo-router').router); } catch {}
+        }, 0);
+        return null;
+      }
+    }
     const hit = resolveUniversalLink(path);
     if (!hit) return path;
     if (hit.owner === 'router') return hit.href;

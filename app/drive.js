@@ -44,6 +44,9 @@ import * as driveVault from '../services/driveVault';
 import FileViewer from '../components/FileViewer';
 import BrandFab from '../components/BrandFab';
 import CachedImage from '../components/CachedImage';
+// [2026-10-15 native-drive] Lista/grade nativa (kill switch __chatyy_native_drive).
+import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriveList';
+import { driveRow } from '../components/native/driveListAdapter';
 
 // ============================================================
 // Web-only drag/drop wrapper — RN Web's View strips drag props,
@@ -222,6 +225,8 @@ function DriveScreenInner() {
   // Selection
   const [selectedItems, setSelectedItems] = useState(new Set());
   const [selectMode, setSelectMode] = useState(false);
+  // [2026-10-15 native-drive] Lista/grade nativa; 1ª falha → JS na sessão.
+  const [nativeDriveOn, onNativeDriveFail] = useNativeDrive();
 
   // Modals
   const [contextMenu, setContextMenu] = useState(null);
@@ -1106,6 +1111,48 @@ function DriveScreenInner() {
     }
     return items || [];
   }, [activeTab, files, folders, sharedFiles, trashFiles, searchResults, sortBy, sortDir]);
+
+  // [2026-10-15 native-drive] Linhas da lista nativa (mesma ordem/dados da FlatList).
+  const nativeDriveMeta = useRef(new Map());
+  const nativeDriveRows = useMemo(() => {
+    if (!nativeDriveOn || activeTab === 'photos') return [];
+    const meta = new Map();
+    const isTrash = activeTab === 'trash';
+    const unavailable = (() => { const v = t('photos.fileUnavailable'); return (v && v !== 'photos.fileUnavailable') ? v : 'Arquivo indisponível'; })();
+    const out = displayItems.map((item) => {
+      const isFolder = !!item.is_folder;
+      const id = `${isFolder ? 'f' : 'i'}_${item.id}`;
+      meta.set(id, item);
+      const date = formatDate(item.created_at || item.uploaded_at, t);
+      const sub = isFolder
+        ? [item.file_count > 0 ? `${item.file_count} ${item.file_count === 1 ? 'item' : 'itens'}` : '', date].filter(Boolean).join(' · ')
+        : [item.unavailable ? unavailable : formatBytes(item.size), date].filter(Boolean).join(' · ');
+      let thumb = '';
+      if (!isFolder && !item.unavailable) {
+        if (isPhoto(item)) thumb = item.thumbnail_url || item.cdn_url || api.fileDownloadUrl(item.id);
+        else if (isVideo(item) && item.thumbnail_url) thumb = item.thumbnail_url;
+      }
+      return driveRow(item, {
+        id,
+        title: item.name,
+        sub,
+        thumb,
+        video: !isFolder && isVideo(item),
+        starred: !!item.is_starred,
+        shared: item.shared_with?.length > 0,
+        chevron: isFolder,
+        swipe: isTrash ? ['purge', 'restore'] : ['delete', 'move'],
+        swipeLeft: isTrash ? [] : ['star'],
+        menu: isTrash
+          ? ['restore', 'purge']
+          : (isFolder
+            ? ['open', 'share', 'rename', 'move', 'star', 'delete', 'more']
+            : ['open', 'download', 'share', 'rename', 'move', 'star', 'delete', 'more']),
+      });
+    });
+    nativeDriveMeta.current = meta;
+    return out;
+  }, [nativeDriveOn, activeTab, displayItems, t]);
 
   // Recent files - last 10 modified, only shown at root
   const recentFiles = useMemo(() => {
@@ -2309,6 +2356,27 @@ function DriveScreenInner() {
   const gridCols = isDesktop ? (previewPanelFile ? 4 : 5) : 2;
   const gridKey = `grid-${gridCols}`;
 
+  // [2026-10-15 native-drive] Lista nativa só na lista principal com itens
+  // (fotos/vazio/carregando continuam JS). A barra de envio vai junto.
+  const nativeListShown = nativeDriveOn && activeTab !== 'photos' && displayItems.length > 0 && !(loading && displayItems.length === 0);
+  const onNativeDriveAction = (id, action) => {
+    const item = nativeDriveMeta.current.get(id);
+    if (!item) return;
+    switch (action) {
+      case 'open': if (item.is_folder) navigateToFolder(item); else setPreviewFile(item); break;
+      case 'download': handleDownload(item); break;
+      case 'share': setShareModal(item); break;
+      case 'rename': setRenameModal(item); setRenameText(item.name); break;
+      case 'move': setMoveModal(item); loadMoveFolders(); break;
+      case 'star': handleStar(item); break;
+      case 'delete': handleDelete(item); break;
+      case 'restore': handleRestore(item); break;
+      case 'purge': handlePermanentDelete(item); break;
+      case 'more': setContextMenu({ item, position: { x: 100, y: 100 } }); break;
+      default: break;
+    }
+  };
+
   return (
     <View
       style={[styles.container, { backgroundColor: colors.background, paddingTop: (Platform.OS === 'web' || USE_NATIVE_HEADER) ? 0 : insets.top }]}
@@ -2554,6 +2622,31 @@ function DriveScreenInner() {
             renderPhotosTab()
           ) : displayItems.length === 0 ? (
             renderEmptyState()
+          ) : nativeListShown ? (
+            <NativeDriveList
+              rows={nativeDriveRows}
+              mode={viewMode === 'grid' ? 'grid' : 'list'}
+              columns={gridCols}
+              selectionMode={selectMode}
+              selectedIds={Array.from(selectedItems)}
+              uploads={uploading ? uploadProgress : []}
+              labels={{
+                open: t('drive.preview'), download: t('drive.download'), share: t('drive.share'),
+                rename: t('drive.rename'), move: t('drive.moveTo'), star: t('drive.star'), unstar: t('drive.unstar'),
+                delete: t('drive.delete'), restore: t('drive.restore'), purge: t('drive.deletePermanently'),
+                more: t('common.more'), uploading: t('drive.uploading'),
+              }}
+              highlight={searchResults !== null ? searchText : ''}
+              colors={colors}
+              isDark={isDark}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              bottomInset={100}
+              onPress={(id) => { const it = nativeDriveMeta.current.get(id); if (it) handleItemPress(it); }}
+              onLongPress={(id) => { const it = nativeDriveMeta.current.get(id); if (it) handleItemLongPress(it); }}
+              onAction={onNativeDriveAction}
+              onFailure={onNativeDriveFail}
+            />
           ) : viewMode === 'list' ? (
             <FlatList
               data={displayItems}
@@ -2599,7 +2692,7 @@ function DriveScreenInner() {
       </NativeHeaderSafeArea>
 
       {/* Overlays & Modals */}
-      {renderUploadProgress()}
+      {!nativeListShown && renderUploadProgress()}
       {renderFAB()}
       {renderContextMenu()}
       {renderNewFolderModal()}

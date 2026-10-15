@@ -12,6 +12,8 @@ import * as settingsCache from '../../../services/settingsCache';
 import FilterRuleEditor from '../../FilterRuleEditor';
 import { IconMessageSquare, IconPenTool, IconDraft, IconSparkles, IconTrash, IconPlus } from '../../Icons';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, useGroupedColors } from '../SettingsKit';
+import { getBlockRemoteDefault, setBlockRemoteDefault } from '../../../services/emailImagePolicy';
+import { isNativeEmailBodyOn } from '../../email/NativeEmailBody';
 import {
   useSettingsHost, useSettingsBlob, useSection, useLocalKeys, setStorage, OPEN_TTL, catStyles,
 } from './shared';
@@ -32,6 +34,8 @@ export default function EmailCategory() {
   const [undoDelay, setUndoDelay] = useState(5);
   const [smartCompose, setSmartCompose] = useState(true);
   const [ai, setAi] = useState({ ai_smart_reply: true, ai_summary: true, ai_enhance: true });
+  // [2026-10-15 native-email] Privacidade: abrir e-mails com imagens remotas bloqueadas.
+  const [blockImages, setBlockImages] = useState(() => getBlockRemoteDefault());
   useLocalKeys(['undo_send_delay', 'smart_compose', 'ai_smart_reply', 'ai_summary', 'ai_enhance'], (kv) => {
     const d = kv.undo_send_delay;
     if (d != null && d !== '' && !isNaN(parseInt(d, 10))) setUndoDelay(Math.max(0, parseInt(d, 10)));
@@ -95,6 +99,12 @@ export default function EmailCategory() {
           options={[20, 50, 100].map(n => ({ value: n, label: String(n) }))}
           onChange={(n) => setSettings(prev => ({ ...prev, emails_per_page: n }))}
         />
+        {(Platform.OS === 'web' || isNativeEmailBodyOn()) && <SettingsSwitchRow
+          title={t('settings.blockRemoteImages') || 'Bloquear imagens remotas'}
+          subtitle={t('settings.blockRemoteImagesDesc') || 'Impede que o remetente saiba quando você abriu. Toque em "Carregar imagens" no e-mail quando quiser ver.'}
+          value={blockImages}
+          onValueChange={(v) => { setBlockImages(!!v); setBlockRemoteDefault(!!v); }}
+        />}
       </SettingsGroup>
 
       <View ref={registerAnchor('notifications')}>

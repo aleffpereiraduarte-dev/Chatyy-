@@ -1360,7 +1360,7 @@ function StoryViewerJS({
             if (_Haptics && Platform.OS !== 'web') {
               try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium); } catch {}
             }
-            try { Linking.openURL(target).catch(() => {}); } catch {}
+            try { require('../../services/openLink').openLink(target); } catch {} // [2026-10-15 native-browser]
           }
           setPaused(false);
           return;
@@ -2659,7 +2659,7 @@ function StoryViewerJS({
             <TouchableOpacity
               onPress={() => {
                 _haptic('light');
-                try { Linking.openURL(linkSticker.url).catch(() => {}); } catch {}
+                try { require('../../services/openLink').openLink(linkSticker.url); } catch {} // [2026-10-15 native-browser]
               }}
               activeOpacity={0.85}
               accessibilityRole="link"

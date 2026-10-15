@@ -38,7 +38,7 @@ export async function openInApp(url, opts = {}) {
   const isDark = opts.isDark != null ? !!opts.isDark : Appearance.getColorScheme() === 'dark';
   try {
     const WB = require('expo-web-browser');
-    const bg = colors?.surface || colors?.background || (isDark ? '#111111' : '#ffffff');
+    const bg = colors?.surface || colors?.background || (isDark ? '#000000' : '#ffffff');
     const fg = colors?.primary || (isDark ? '#ffffff' : '#111111');
     await WB.openBrowserAsync(u, {
       toolbarColor: bg,

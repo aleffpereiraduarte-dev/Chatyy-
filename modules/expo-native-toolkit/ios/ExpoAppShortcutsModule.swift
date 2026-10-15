@@ -105,6 +105,9 @@ final class ChatyyShortcutCenter {
     if t.hasSuffix(".newchat") { return "onemundomail://chat-new" }
     if t.hasSuffix(".camera") { return "onemundomail://photos?camera=1" }
     if t.hasSuffix(".compose") { return "onemundomail://compose" }
+    // [2026-10-15 system-integration] current static set (with-app-shortcuts.js)
+    if t.hasSuffix(".statuscamera") { return "onemundomail://chat?new=1" }
+    if t.hasSuffix(".search") { return "onemundomail://search?tab=messages" }
     return nil
   }
 }

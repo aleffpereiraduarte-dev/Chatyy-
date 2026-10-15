@@ -106,7 +106,7 @@ export default function WebCameraStudio({ t, draftId, initialMusic, onNext, onCl
       if (!blob.size) { setErr(t('videoStudio.cam.recordFailed')); return; }
       const uri = URL.createObjectURL(blob);
       const out = Math.max(0.1, Math.min(wall, (limitS - totalS) * spd));
-      await session.addSegment({ uri, kind: 'video', in: 0, out, speed: spd, mirror: fac === 'user', camera: fac === 'user' ? 'front' : 'back' });
+      await session.addSegment({ uri, kind: 'video', in: 0, out, speed: spd, mirror: false /* [2026-10-15 espelho] */, camera: fac === 'user' ? 'front' : 'back' });
     };
     recRef.current = rec;
     startRef.current = Date.now();

@@ -1,9 +1,9 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["ChatyyReelsFeedModule"]
+    "modules": ["ChatyyReelsFeedModule", "ChatyyPostFeedModule"]
   },
   "android": {
-    "modules": ["expo.modules.chatyyreelsfeed.ChatyyReelsFeedModule"]
+    "modules": ["expo.modules.chatyyreelsfeed.ChatyyReelsFeedModule", "expo.modules.chatyyreelsfeed.ChatyyPostFeedModule"]
   }
 }

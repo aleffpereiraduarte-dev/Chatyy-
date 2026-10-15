@@ -28,6 +28,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import expo.modules.chatyychatstore.ChatyyStoreDB
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -137,6 +138,75 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private val adapter = Adapter()
   private val touchHelper: ItemTouchHelper = ItemTouchHelper(SwipeCallback())
 
+  // ─── [2026-10-15 native-store fase 1.5] foto da HOME ──────────────────────
+  // Espelho do iOS: prop `store` {a, r, n, s}; sem linhas do JS ainda → pinta a
+  // foto do store; 1º reset do JS substitui; regrava as 60 primeiras sozinho.
+  private var storeA = ""; private var storeR = ""; private var storeN = ""; private var storeS = "main"
+  private var storeLoadStarted = false
+  private var storeLoading = false
+  private var photoActive = false
+  private var jsHasRows = false
+  private val rawRows = HashMap<String, Map<String, Any?>>()
+  private var jsVersion = 0
+  private var persistedVersion = 0
+  private val persistRunnable = Runnable { persistNow() }
+
+  fun setStore(v: Map<String, Any?>?) {
+    if (v == null) { storeA = ""; main.removeCallbacks(persistRunnable); return }
+    val a = CLVal.str(v["a"]); val r = CLVal.str(v["r"])
+    if (a.isEmpty() || r.isEmpty()) { storeA = ""; return }
+    if (storeA.isNotEmpty() && storeA != a) { main.removeCallbacks(persistRunnable); persistedVersion = jsVersion }
+    storeA = a; storeR = r; storeN = CLVal.str(v["n"])
+    storeS = CLVal.str(v["s"]).ifEmpty { "main" }
+    if (jsHasRows || storeLoadStarted) return
+    storeLoadStarted = true
+    storeLoading = true
+    val db = try { ChatyyStoreDB.get(context) } catch (_: Throwable) { null }
+    if (db == null) { storeLoading = false; return }
+    db.loadHome(a, storeS, r) { snap, _ ->
+      storeLoading = false
+      if (snap != null && !jsHasRows && storeA == a) {
+        val next = HashMap<String, CLRow>(); val ids = ArrayList<String>()
+        for (d in snap.rows) {
+          val row = try { CLRow.from(d) } catch (_: Throwable) { continue }
+          if (row.id.isEmpty() || next.containsKey(row.id)) continue
+          next[row.id] = row; ids.add(row.id)
+        }
+        if (ids.isNotEmpty()) {
+          rows.clear(); rows.putAll(next)
+          order = ids
+          photoActive = true
+          pendingReset = true
+          needsApply = true
+        }
+      }
+      commitProps()
+    }
+  }
+
+  private fun noteJSPatch() {
+    jsHasRows = true
+    photoActive = false
+    storeLoading = false
+    jsVersion += 1
+    if (storeA.isNotEmpty()) { main.removeCallbacks(persistRunnable); main.postDelayed(persistRunnable, 1500) }
+  }
+
+  private fun persistNow() {
+    main.removeCallbacks(persistRunnable)
+    if (storeA.isEmpty() || !jsHasRows || selectionMode || persistedVersion == jsVersion) return
+    persistedVersion = jsVersion
+    val ids = ArrayList<String>(); val out = ArrayList<Map<String, Any?>>()
+    for (id in order) {
+      if (ids.size >= HOME_WINDOW) break
+      val d0 = rawRows[id] ?: continue
+      val d = HashMap(d0)
+      d["typing"] = ""; d["selected"] = false; d["online"] = false; d["activity"] = ""
+      ids.add(id); out.add(d)
+    }
+    try { ChatyyStoreDB.get(context).saveHome(storeA, storeS, storeR, storeN, ids, out) } catch (_: Throwable) {}
+  }
+
   // ─── Props ───────────────────────────────────────────────────────────────
 
   fun setRowsPatch(p: Map<String, Any?>?) {
@@ -149,6 +219,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
         // reenviar todas as props) é ignorado.
         if (pseq == seq && firstPaintSent) return
         rows.clear()
+        val track = true // [native-store] a prop store pode chegar depois do 1º reset
+        if (track) rawRows.clear()
         val ids = ArrayList<String>()
         for (item in reset) {
           val m = CLVal.map(item) ?: continue
@@ -156,7 +228,9 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
           if (r.id.isEmpty()) continue
           if (!rows.containsKey(r.id)) ids.add(r.id)
           rows[r.id] = r
+          if (track) rawRows[r.id] = m
         }
+        noteJSPatch()
         order = CLVal.list(p["order"])?.map { CLVal.str(it) } ?: ids
         seq = pseq
         pendingReset = true
@@ -172,7 +246,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
         }
         return
       }
-      CLVal.list(p["remove"])?.forEach { rows.remove(CLVal.str(it)) }
+      CLVal.list(p["remove"])?.forEach { rows.remove(CLVal.str(it)); rawRows.remove(CLVal.str(it)) }
+      noteJSPatch()
       val hasOrder = p["order"] != null
       val appended = ArrayList<String>()
       CLVal.list(p["upsert"])?.forEach { item ->
@@ -181,6 +256,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
         if (r.id.isEmpty()) return@forEach
         if (!rows.containsKey(r.id) && !hasOrder) appended.add(r.id)
         rows[r.id] = r
+        rawRows[r.id] = m
         dirty.add(r.id)
       }
       val ord = CLVal.list(p["order"])
@@ -243,6 +319,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   }
 
   fun commitProps() {
+    // [native-store] foto da home lendo e o JS sem linhas: não aplica vazio.
+    if (storeLoading && rows.isEmpty()) return
     var rebindAll = false
     if (themeDirty || selectionDirty) {
       setBackgroundColor(theme.bg)
@@ -383,6 +461,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
   private fun showMenu(id: String, anchor: View) {
     val row = rows[id] ?: return
+    if (photoActive) return // [native-store] só a foto: o JS ainda não conhece as conversas
     if (selectionMode || !menuEnabled) {
       onLongPress(mapOf("id" to id))
       return
@@ -472,7 +551,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
   private inner class SwipeCallback : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
     override fun getSwipeDirs(rv: RecyclerView, vh: RecyclerView.ViewHolder): Int {
-      if (vh !is RowHolder || !swipeEnabled || selectionMode) return 0
+      if (vh !is RowHolder || !swipeEnabled || selectionMode || photoActive) return 0
       return super.getSwipeDirs(rv, vh)
     }
 
@@ -559,11 +638,13 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   }
 
   override fun onDetachedFromWindow() {
+    persistNow() // [native-store] saiu da home → grava a foto já
     main.removeCallbacksAndMessages(null)
     super.onDetachedFromWindow()
   }
 
   companion object {
+    private const val HOME_WINDOW = 60
     private const val TYPE_HEADER = 0
     private const val TYPE_ROW = 1
     private const val TYPE_FOOTER = 2

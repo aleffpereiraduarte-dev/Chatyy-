@@ -11,7 +11,8 @@ class ChatyyConversationListModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyConversationList")
 
-    Function("apiVersion") { 1 }
+    // 2 = [native-store fase 1.5] prop `store` {a, r, n, s} (foto da home no store nativo)
+    Function("apiVersion") { 2 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -43,6 +44,7 @@ class ChatyyConversationListModule : Module() {
       Prop("swipeEnabled") { view: ChatyyConversationListView, v: Boolean? -> view.swipeEnabled = v ?: true }
       Prop("menuEnabled") { view: ChatyyConversationListView, v: Boolean? -> view.menuEnabled = v ?: true }
       Prop("scrollToTopSeq") { view: ChatyyConversationListView, v: Double? -> view.setScrollToTopSeqProp(v ?: 0.0) }
+      Prop("store") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setStore(v) }
 
       OnViewDidUpdateProps { view: ChatyyConversationListView -> view.commitProps() }
 

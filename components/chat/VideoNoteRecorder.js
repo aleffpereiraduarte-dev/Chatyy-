@@ -70,6 +70,50 @@ function hapticImpact(style) {
   } catch {}
 }
 
+// [2026-10-15 native-vnote] ponte p/ modules/expo-chat-attach (opcional).
+let _vnMod; // undefined = não tentou; null = indisponível
+function _nativeVnote() {
+  if (_vnMod !== undefined) return _vnMod;
+  _vnMod = null;
+  if (Platform.OS === 'web') return _vnMod;
+  try {
+    // eslint-disable-next-line global-require
+    const m = require('../../modules/expo-chat-attach');
+    if (m && typeof m.openVideoNote === 'function') _vnMod = m;
+  } catch { _vnMod = null; }
+  return _vnMod;
+}
+function _nativeVnoteUsable() {
+  try {
+    if (globalThis.__chatyy_native_vnote === false) return false;
+    const m = _nativeVnote();
+    return !!(m && m.isVideoNoteAvailable && m.isVideoNoteAvailable());
+  } catch { return false; }
+}
+function _tt(t, key, fb) {
+  try { const v = typeof t === 'function' ? t(key) : null; return (typeof v === 'string' && v && v !== key) ? v : fb; } catch { return fb; }
+}
+function _vnoteLabels(t) {
+  return {
+    close: _tt(t, 'common.close', 'Fechar'),
+    flip: _tt(t, 'chat.nattach.flip', 'Trocar câmera'),
+    flashOn: _tt(t, 'chat.nattach.flashOn', 'Flash ligado'),
+    flashOff: _tt(t, 'chat.nattach.flashOff', 'Flash desligado'),
+    hold: _tt(t, 'videoNote.holdToRecord', 'Segure para gravar'),
+    slideHints: _tt(t, 'videoNote.slideHints', 'Deslize ↑ travar • ← cancelar'),
+    releaseToCancel: _tt(t, 'videoNote.releaseToCancel', 'Solte para cancelar'),
+    send: _tt(t, 'common.send', 'Enviar'),
+    cancel: _tt(t, 'videoNote.discard', 'Descartar'),
+    processing: _tt(t, 'videoNote.processing', 'Preparando vídeo…'),
+    permTitle: _tt(t, 'videoNote.title', 'Vídeo-recado'),
+    permBody: _tt(t, 'videoNote.permBody', 'Para gravar, o Chatyy precisa da câmera e do microfone.'),
+    permAllow: _tt(t, 'videoNote.continue', 'Continuar'),
+    permDeniedBody: _tt(t, 'videoNote.permDenied', 'A câmera ou o microfone estão bloqueados. Ative nos Ajustes.'),
+    permSettings: _tt(t, 'chat.nattach.permSettings', 'Abrir Ajustes'),
+    error: _tt(t, 'videoNote.recordError', 'Não foi possível gravar o vídeo'),
+  };
+}
+
 const SIZE = 300;     // preview circle diameter (px)
 const MAX_MS = 60000; // 60s WhatsApp/Telegram cap
 const WARN_MS = 50000; // last 10s: red timer + haptic warning ticks
@@ -78,6 +122,60 @@ const LOCK_THRESHOLD = 60; // slide-up px to lock hands-free
 const CANCEL_THRESHOLD = 90; // slide-left px to cancel with trash zone
 
 export default function VideoNoteRecorder({ visible, onClose, onComplete, colors, t }) {
+  // [2026-10-15 native-vnote] Gravador NATIVO (modules/expo-chat-attach →
+  // openVideoNote: sessão de câmera única pré-aquecida, círculo + anel, segurar/
+  // travar/cancelar, duplo toque troca câmera, flash de tela, MP4 640x640
+  // H.264/AAC). Binário sem o módulo / globalThis.__chatyy_native_vnote ===
+  // false / falha ao apresentar → este gravador JS (idêntico ao de antes).
+  const nativeRef = useRef(false);      // sessão nativa aberta p/ este "visible"
+  const nativeFailedRef = useRef(false); // falhou nesta montagem → JS
+  const [nativeFallback, setNativeFallback] = useState(false);
+  if (visible && !nativeRef.current && !nativeFailedRef.current && _nativeVnoteUsable()) {
+    nativeRef.current = true;
+  }
+  if (!visible && nativeRef.current) nativeRef.current = false;
+  useEffect(() => {
+    if (!visible || !nativeRef.current) return undefined;
+    let alive = true;
+    (async () => {
+      let r = null;
+      try {
+        r = await _nativeVnote().openVideoNote({
+          labels: _vnoteLabels(t),
+          maxSec: MAX_MS / 1000,
+          size: 640,
+          autoStart: globalThis.__chatyy_vnote_hold !== true,
+          withAudio: true,
+        });
+      } catch (e) {
+        try { console.warn('[VideoNoteRecorder] native failed', e?.message || e); } catch {}
+        r = null;
+      }
+      if (!alive) return;
+      if (!r) {
+        // Não apresentou → cai no gravador JS nesta mesma abertura.
+        nativeFailedRef.current = true;
+        nativeRef.current = false;
+        setNativeFallback(true);
+        return;
+      }
+      if (r.action === 'send' && r.item?.uri) {
+        const it = r.item;
+        onComplete?.({
+          uri: it.uri,
+          name: it.name || `video_note_${Date.now()}.mp4`,
+          type: it.type || 'video/mp4',
+          size: Number(it.size) || 0,
+          width: Number(it.width) || undefined,
+          height: Number(it.height) || undefined,
+          duration: Math.max(1, Math.round(Number(it.duration) || 0)),
+        });
+      }
+      onClose?.();
+    })();
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
   const mod = loadCamera();
   const CameraView = mod && (mod.CameraView || mod.Camera);
   const useCameraPermissions = mod?.useCameraPermissions;
@@ -167,7 +265,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   // Request perms on first open. We do this lazily so the chat opens
   // instantly even on iOS where the permission prompt is slow.
   useEffect(() => {
-    if (!visible || !mod) return;
+    if (!visible || !mod || nativeRef.current) return;
     (async () => {
       if (permission && !permission.granted) {
         const r = await requestPermission();
@@ -178,7 +276,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         if (!r.granted) { setError('mic'); return; }
       }
     })();
-  }, [visible]);
+  }, [visible, nativeFallback]);
 
   // [2026-10-12 rec-audit P1-15] Estado de gravação também em ref: o
   // PanResponder (criado 1x) e o setInterval do timer guardam as funções da
@@ -371,6 +469,8 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   ).current;
 
   if (!visible) return null;
+  if (nativeRef.current) return null; // UI 100% nativa (fallback JS: nativeFallback)
+  void nativeFallback;
 
   if (!mod || !CameraView) {
     return (

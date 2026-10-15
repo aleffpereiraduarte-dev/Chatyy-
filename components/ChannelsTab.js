@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, TextInput, Modal, ScrollView, Alert,
-  Image, Linking, BackHandler, KeyboardAvoidingView,
+  Image, Linking, BackHandler, KeyboardAvoidingView, Share,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
 import { IconSearch, IconPlus, IconArrowLeft, IconPlay } from './Icons';
@@ -17,6 +17,9 @@ import Svg, { Path, Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradie
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
+// [2026-10-15 native-social] Lista / posts em nativo (fallback = JS abaixo).
+import NativeChannelList, { nativeChannelsEnabled, markNativeChannelsFailed, channelTile, absMedia } from './channels/NativeChannelList';
+import NativeChannelFeed, { encodeReactions } from './channels/NativeChannelFeed';
 
 function IconPaperclip({ size = 22, color = '#666' }) {
   return (
@@ -164,6 +167,31 @@ function normalizeReactions(post, myEmail) {
   return { list, mine };
 }
 
+// [2026-10-15 native-social] Paleta/labels das views nativas (só hex).
+function _hex(c, fb) {
+  const v = String(c || '').trim();
+  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v) ? v : fb;
+}
+function nativePalette(colors, isDark) {
+  return {
+    bg: _hex(colors?.background, isDark ? '#000000' : '#FFFFFF'),
+    text: _hex(colors?.text, isDark ? '#F5F5F7' : '#111111'),
+    sub: _hex(colors?.textSecondary, isDark ? '#8E8E93' : '#737373'),
+    card: isDark ? '#1C1C1E' : '#FFFFFF',
+    pill: isDark ? '#1A1A24' : '#F0F0F5',
+    line: isDark ? '#FFFFFF0F' : '#0000000F',
+  };
+}
+function nativeLabels(t) {
+  const tx = (k, fb) => { try { const v = t ? t(k) : ''; return (typeof v === 'string' && v && v !== k) ? v : fb; } catch { return fb; } };
+  return { join: tx('channel.join', 'Inscrever'), joined: tx('channel.joined', 'Inscrito') };
+}
+function useNativeChannels(kind) {
+  const [on, setOn] = useState(() => nativeChannelsEnabled(kind));
+  const fail = useCallback((msg) => { markNativeChannelsFailed(msg); setOn(false); }, []);
+  return [on, fail];
+}
+
 // ── Quick emoji reaction bar ──
 const QUICK_REACTIONS = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDD25', '\uD83D\uDE02', '\uD83D\uDE2E', '\uD83D\uDE22'];
 
@@ -174,6 +202,7 @@ function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate 
   const [loading, setLoading] = useState(() => !peekCached('channels_mine'));
   const [refreshing, setRefreshing] = useState(false);
   const [failed, setFailed] = useState(false); // [2026-10-08 apps-native] erro ≠ vazio
+  const [nativeOn, nativeFail] = useNativeChannels('list'); // [2026-10-15 native-social]
 
   const load = useCallback(async () => {
     try {
@@ -246,6 +275,15 @@ function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate 
     );
   }
 
+  if (nativeOn) {
+    return (
+      <FollowingNative
+        channels={channels} colors={colors} isDark={isDark} t={t}
+        refreshing={refreshing} onRefresh={onRefresh} onOpenChannel={onOpenChannel} onFailure={nativeFail}
+      />
+    );
+  }
+
   return (
     <FlatList
       data={channels}
@@ -255,6 +293,41 @@ function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate 
       windowSize={7}
       removeClippedSubviews={Platform.OS === 'android'}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
+    />
+  );
+}
+
+// [2026-10-15 native-social] Seguindo em nativo (mesmos dados do renderItem).
+function FollowingNative({ channels, colors, isDark, t, refreshing, onRefresh, onOpenChannel, onFailure }) {
+  const byId = useMemo(() => {
+    const m = new Map();
+    for (const c of channels || []) if (c && c.id != null) m.set(`ch:${c.id}`, c);
+    return m;
+  }, [channels]);
+  const rows = useMemo(() => (channels || []).filter(c => c && c.id != null).map((item) => {
+    const meta = `${formatCount(channelCount(item))} ${t('channel.followers') || 'followers'}`;
+    const time = relativeTime(channelTime(item), t);
+    const unread = parseInt(item.unread_count ?? item.unread, 10) || 0;
+    const row = {
+      id: `ch:${item.id}`, kind: 'row', title: String(item.name || ''), sub: String(channelPreview(item) || ''),
+      time: String(time || ''), meta, unread,
+      a11y: [item.name, time, unread > 0 ? String(unread) : ''].filter(Boolean).join(', '),
+      ...channelTile(item),
+    };
+    if (item.verified || item.is_verified) row.ver = 1;
+    return row;
+  }), [channels, t]);
+  const palette = useMemo(() => nativePalette(colors, isDark), [colors, isDark]);
+  return (
+    <NativeChannelList
+      rows={rows}
+      isDark={isDark}
+      palette={palette}
+      labels={nativeLabels(t)}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      onRowPress={(id) => { const c = byId.get(id); if (c) onOpenChannel(c); }}
+      onFailure={onFailure}
     />
   );
 }
@@ -270,6 +343,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
   const [filter, setFilter] = useState('discover'); // top-level: subscribed/discover/suggested/recent
   const [refreshing, setRefreshing] = useState(false);
   const searchTimeout = useRef(null);
+  const [nativeOn, nativeFail] = useNativeChannels('list'); // [2026-10-15 native-social]
 
   // [2026-10-08 trust-channels] Backend chat_discover_channels now really
   // lists public channels (paginated). Top-level filter maps to the server:
@@ -442,6 +516,12 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
             subtitle={t('channel.discoverDesc') || 'Find public channels to follow'}
           />
         </ScrollView>
+      ) : nativeOn ? (
+        <DiscoverNative
+          channels={displayed} colors={colors} isDark={isDark} t={t}
+          refreshing={refreshing} onRefresh={onRefresh} onEndReached={onEndReached}
+          loadingMore={loadingMore} onOpenChannel={onOpenChannel} onFollow={handleFollow} onFailure={nativeFail}
+        />
       ) : (
         <FlatList
           data={displayed}
@@ -516,6 +596,42 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
   );
 }
 
+// [2026-10-15 native-social] Descobrir em nativo (cartões 180 do renderItem).
+function DiscoverNative({ channels, colors, isDark, t, refreshing, onRefresh, onEndReached, loadingMore, onOpenChannel, onFollow, onFailure }) {
+  const byId = useMemo(() => {
+    const m = new Map();
+    for (const c of channels || []) if (c && c.id != null) m.set(`dc:${c.id}`, c);
+    return m;
+  }, [channels]);
+  const rows = useMemo(() => (channels || []).filter(c => c && c.id != null).map((item) => {
+    const n = channelCount(item);
+    const subText = formatCount(n) + ' ' + (t('channel.subscribers') || 'subscribers');
+    const catLabel = item.category && item.category !== 'general' ? (t(`channel.cat.${item.category}`) || item.category) : null;
+    const row = {
+      id: `dc:${item.id}`, kind: 'card', title: String(item.name || ''), desc: String(item.description || ''),
+      meta: subText + (catLabel ? `   ${catLabel}` : ''), badge: formatCount(n), member: item.is_member ? 1 : 0,
+      a11y: [item.name, subText].filter(Boolean).join(', '),
+    };
+    return row;
+  }), [channels, t]);
+  const palette = useMemo(() => nativePalette(colors, isDark), [colors, isDark]);
+  return (
+    <NativeChannelList
+      rows={rows}
+      isDark={isDark}
+      palette={palette}
+      labels={nativeLabels(t)}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      onEndReached={onEndReached}
+      footer={loadingMore ? <ActivityIndicator color={colors.text} style={{ marginVertical: 12 }} /> : <View style={{ height: 20 }} />}
+      onRowPress={(id) => { const c = byId.get(id); if (c) onOpenChannel(c); }}
+      onRowAction={(id, action) => { const c = byId.get(id); if (c && action === 'follow') onFollow(c); }}
+      onFailure={onFailure}
+    />
+  );
+}
+
 // ── Channel View: scrollable feed of posts ──
 // [2026-10-08 apps-native] Reescrito sobre o formato REAL do backend
 // (chat_messages/chat_group_info): posts em `messages` (asc → invertido p/
@@ -536,6 +652,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
   const [newPost, setNewPost] = useState('');
   const [posting, setPosting] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [nativeOn, nativeFail] = useNativeChannels('feed'); // [2026-10-15 native-social]
 
   // Android: botão voltar do sistema fecha o canal (antes saía da aba inteira).
   useEffect(() => {
@@ -678,6 +795,47 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     || (myEmail && String(info?.created_by || channel.created_by || '').toLowerCase() === myEmail));
   const followerCount = channelCount(info) || channelCount(channel);
 
+  // [2026-10-15 native-social] Posts → linhas planas do ChatyyChannelFeed.
+  const nativePal = useMemo(() => nativePalette(colors, isDark), [colors, isDark]);
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    return posts.filter(p => p && p.id != null).map((item) => {
+      const { list, mine } = normalizeReactions(item, myEmail);
+      const media = item.file_url || item.media_url || '';
+      const isImage = !!media && (item.type === 'image' || /\.(jpe?g|png|gif|webp|heic)(\?|$)/i.test(media));
+      const isVideo = !!media && !isImage && (item.type === 'video' || /\.(mp4|mov|m4v|webm)(\?|$)/i.test(media));
+      const views = parseInt(item.views ?? item.view_count ?? item.views_count, 10) || 0;
+      const row = {
+        id: `p:${item.id}`, kind: 'post', text: String(item.content || ''), time: String(relativeTime(item.created_at, t) || ''),
+        rx: encodeReactions(list), mine: mine ? String(mine) : '', q: isMember ? 1 : 0,
+      };
+      if (views > 0) row.views = formatCount(views);
+      if (isImage || isVideo) { row.mu = absMedia(media); row.mk = isImage ? 'image' : 'video'; }
+      return row;
+    });
+  }, [nativeOn, posts, myEmail, isMember, t]);
+  const onNativePostAction = useCallback((id, action, ev) => {
+    const pid = String(id || '').replace(/^p:/, '');
+    const post = posts.find(p => String(p?.id) === pid);
+    if (!post) return;
+    if (action === 'react' && ev?.emoji) { handleReact(post.id, String(ev.emoji)); return; }
+    if (action === 'media') {
+      const media = absMedia(post.file_url || post.media_url || '');
+      if (media && !/\.(jpe?g|png|gif|webp|heic)(\?|$)/i.test(media) && post.type !== 'image') require('../services/openLink').openLink(media);
+      return;
+    }
+    if (action === 'longpress') {
+      // Copiar / Compartilhar o texto do post (o JS tinha <Text selectable>).
+      const text = String(post.content || '');
+      if (!text) return;
+      Alert.alert('', text.length > 140 ? text.slice(0, 140) + '…' : text, [
+        { text: t('common.copy') || 'Copiar', onPress: () => { try { require('expo-clipboard').setStringAsync(text); haptic.success(); } catch {} } },
+        { text: t('common.share') || 'Compartilhar', onPress: () => { Share.share({ message: text }).catch(() => {}); } },
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+      ]);
+    }
+  }, [posts, handleReact, t]);
+
   const renderPost = useCallback(({ item }) => {
     const { list: reactions, mine } = normalizeReactions(item, myEmail);
     const media = item.file_url || item.media_url || '';
@@ -689,7 +847,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
           <FastImage source={{ uri: media }} style={[styles.postMedia, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]} resizeMode="cover" recyclingKey={media} />
         ) : isVideo ? (
           <PressableScale
-            onPress={() => { Linking.openURL(media).catch(() => {}); }}
+            onPress={() => { require('../services/openLink').openLink(media); }}
             style={[styles.postMedia, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}
             accessibilityRole="button"
           >
@@ -785,6 +943,18 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
       {/* Posts feed */}
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={colors.text} size="large" /></View>
+      ) : (nativeOn && posts.length > 0) ? (
+        <NativeChannelFeed
+          rows={nativeRows}
+          isDark={isDark}
+          palette={nativePal}
+          labels={nativeLabels(t)}
+          quickReactions={isMember ? QUICK_REACTIONS : []}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onRowAction={onNativePostAction}
+          onFailure={nativeFail}
+        />
       ) : (
         <FlatList
           data={posts}

@@ -46,6 +46,14 @@ export type ComposerReplyPreview = {
   italic?: boolean;
   thumbUri?: string | null;
   thumbRound?: boolean;
+  // [reply-v2]
+  color?: number | null;
+  icon?: string;
+  lines?: number;
+  focus?: boolean;
+  pop?: boolean;
+  iconVb?: number;
+  iconPaths?: { d: string; fill?: number; w?: number }[];
 };
 
 export type ComposerMentionCandidate = { token: string; email: string };

@@ -127,7 +127,7 @@ function FilterThumb({ filter, uri, selected, onPress }) {
 // estúdio com filtros reais → galeria vai direto pra ele (sem o preview antigo
 // de filtros "pintados") e a faixa de galeria recente substitui os chips de
 // filtro ao vivo (que eram só uma película colorida, nunca aplicada no arquivo).
-export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null, directToEditor = false, onOpenText = null }) {
+function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, directToEditor = false, onOpenText = null }) {
   // Safe-area insets — the absolute overlays (close button, music pill,
   // right-side action stack) used a fixed Platform.OS check that fell short
   // on Android edge-to-edge windows (close was tucking under the status
@@ -613,10 +613,10 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     }
     try {
       let finalUri = photo.uri;
-      // Front-camera mirror fix: flip horizontally so the saved photo matches
-      // what the user saw in the preview (iOS/Android save a non-mirrored image
-      // but the preview is mirrored — selfie looks "backwards" after capture).
-      if (facing === 'front' && Platform.OS !== 'web') {
+      // [2026-10-15 espelho] Padrão WhatsApp/sistema: a PRÉVIA da frontal é
+      // espelhada, mas a foto ENVIADA não (texto legível). O antigo flip
+      // horizontal aqui deixava o status "espelhado" para quem via — removido.
+      if (false && facing === 'front' && Platform.OS !== 'web') {
         try {
           const ImageManipulator = require('expo-image-manipulator');
           const flipped = await ImageManipulator.manipulateAsync(
@@ -2288,3 +2288,63 @@ const s = StyleSheet.create({
   },
   permBtnTxt: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });
+
+// ─── [2026-10-15 native-status-studio] Câmera do status NATIVA ──────────────
+// Só no fluxo que vai direto ao estúdio (directToEditor, sem repost): câmera do
+// modules/expo-chat-attach em modo status (Texto · Normal · Boomerang; toque =
+// foto, segurar = vídeo com zoom deslizando, duplo toque troca, flash, faixa de
+// recentes). Binário sem a câmera v3 / estúdio nativo, kill switch
+// globalThis.__chatyy_native_status_camera === false, ou se não apresentar →
+// câmera JS abaixo, idêntica à de antes.
+function NativeStatusCameraHost({ visible, onClose, onCapture, onOpenText, t, onFallback }) {
+  const busyRef = useRef(false);
+  const propsRef = useRef(null);
+  propsRef.current = { onClose, onCapture, onOpenText, t, onFallback };
+  useEffect(() => {
+    if (!visible || busyRef.current) return;
+    busyRef.current = true;
+    (async () => {
+      // eslint-disable-next-line global-require
+      const N = require('./status/nativeStatusStudio');
+      let loops = 0;
+      try {
+        while (loops++ < 6) {
+          const p = propsRef.current;
+          const r = await N.runNativeStatusCamera(p.t);
+          if (!r) { p.onFallback?.(); return; }
+          if (r.action === 'capture' || r.action === 'pick') { p.onCapture?.(r.capture); return; }
+          if (r.action === 'text') { if (p.onOpenText) p.onOpenText(); else p.onClose?.(); return; }
+          if (r.action === 'gallery') {
+            const picked = await N.pickStatusGallery();
+            if (picked.length) {
+              p.onCapture?.(picked.length === 1 ? picked[0] : { multi: true, items: picked });
+              return;
+            }
+            continue; // cancelou a galeria → volta para a câmera
+          }
+          p.onClose?.();
+          return;
+        }
+        propsRef.current.onClose?.();
+      } catch (e) {
+        console.warn('[StatusCamera] native failed', e?.message || e);
+        propsRef.current.onFallback?.();
+      } finally {
+        busyRef.current = false;
+      }
+    })();
+  }, [visible]);
+  return null;
+}
+
+export default function StatusCamera(props) {
+  const nativeOk = React.useMemo(() => {
+    if (Platform.OS === 'web' || !props.directToEditor || props.initialSeed) return false;
+    try { return require('./status/nativeStatusStudio').nativeStatusCameraUsable(); } catch { return false; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [fallback, setFallback] = useState(false);
+  if (!nativeOk || fallback) return <StatusCameraJS {...props} />;
+  return <NativeStatusCameraHost {...props} onFallback={() => setFallback(true)} />;
+}
+

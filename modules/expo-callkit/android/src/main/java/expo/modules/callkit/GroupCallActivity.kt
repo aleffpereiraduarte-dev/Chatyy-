@@ -50,6 +50,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -281,6 +282,12 @@ class GroupCallActivity : ComponentActivity() {
   private var micEnabled = true
   private var camEnabled = true
   private var speakerOn = true
+  /** [2026-10-15 viva-voz] Real route → speaker button. Main thread. */
+  private val audioRouteListener = expo.modules.callkit.audio.AudioRouter.Listener { r ->
+    if (finished) return@Listener
+    speakerOn = r == expo.modules.callkit.audio.AudioRouter.Route.SPEAKER
+    try { refreshControlStates() } catch (_: Throwable) {}
+  }
 
   // Views.
   private lateinit var grid: GridLayout
@@ -483,7 +490,8 @@ class GroupCallActivity : ComponentActivity() {
     // Audio: shared router (speaker default for video, BT/wired wins).
     try {
       val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
-      router.configureForCall(hasVideo)
+      router.addListener(audioRouteListener) // [2026-10-15 viva-voz] button = real route
+      router.configureForCall(hasVideo, roomName)
       speakerOn = router.speakerOn
     } catch (t: Throwable) {
       Log.w(TAG, "AudioRouter.configureForCall failed: ${t.message}")
@@ -573,7 +581,8 @@ class GroupCallActivity : ComponentActivity() {
       Log.w(TAG, "RoomOptions ctor failed: ${t.message} — defaults")
       RoomOptions()
     }
-    val r = LiveKit.create(applicationContext, options = roomOptions)
+    // [2026-10-15 viva-voz] No LiveKit AudioSwitch: AudioRouter owns the route.
+    val r = LiveKit.create(applicationContext, options = roomOptions, overrides = expo.modules.callkit.audio.AudioRouter.liveKitOverrides())
     room = r
     // [2026-10-11 noise] RNNoise capture post-processor (pass-through on failure).
     expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)
@@ -1575,7 +1584,9 @@ class GroupCallActivity : ComponentActivity() {
       b.setImageResource(if (speakerOn) spk else ear)
       b.imageTintList = ColorStateList.valueOf(if (speakerOn) Color.BLACK else Color.WHITE)
     }
-    localRenderer?.visibility = if (hasVideo && camEnabled && boundLocalTrack != null) View.VISIBLE else View.GONE
+    localRenderer?.visibility = if (camEnabled && boundLocalTrack != null) View.VISIBLE else View.GONE
+    // [2026-10-15 cam-1-toque] Voice group: flip only while the camera is on.
+    switchCamBtn?.visibility = if (hasVideo || camEnabled) View.VISIBLE else View.GONE
     // [2026-10-14 group-ui] Screen share: highlighted (white) while sharing.
     screenBtn?.let { b ->
       (b.background as? GradientDrawable)?.setColor(if (screenSharing) Color.WHITE else Color.parseColor("#2C2C2E"))
@@ -1679,8 +1690,10 @@ class GroupCallActivity : ComponentActivity() {
     root.addView(header)
     statusBar = header
 
-    // Local preview (only when video) — top-right over the grid.
-    if (hasVideo) {
+    // Local preview — top-right over the grid. [2026-10-15 cam-1-toque]
+    // Built in VOICE group calls too (camera can be turned on mid-call);
+    // stays GONE until a camera track is bound.
+    run {
       localRenderer = SurfaceViewRenderer(this).apply {
         layoutParams = FrameLayout.LayoutParams(dp(96), dp(132)).apply {
           gravity = Gravity.TOP or Gravity.END
@@ -1756,22 +1769,10 @@ class GroupCallActivity : ComponentActivity() {
     }
     addCtl(muteBtn, 52)
 
-    if (hasVideo) {
+    // [2026-10-15 cam-1-toque] Camera + flip in VOICE group calls too.
+    run {
       val vb = roundButton(52, Color.parseColor("#2C2C2E"), drawable("gc_videocam", android.R.drawable.ic_menu_camera), Color.WHITE, GroupCallStrings.s("camera")) {
-        camEnabled = !camEnabled
-        refreshControlStates()
-        lifecycleScope.launch {
-          try {
-            val r = room ?: return@launch
-            // [2026-10-08 call-video-fix] Mute the PUBLICATION (peers swap to
-            // the avatar) instead of track.enabled (frozen last frame).
-            r.localParticipant.setCameraEnabled(camEnabled)
-            if (camEnabled) bindLocalCameraIfReady(r)
-            refreshControlStates()
-          } catch (t: Throwable) {
-            Log.w(TAG, "toggleCam failed: ${t.message}")
-          }
-        }
+        toggleGroupCameraFromTap()
       }
       addCtl(vb, 52)
       videoBtn = vb
@@ -1926,22 +1927,114 @@ class GroupCallActivity : ComponentActivity() {
   /** Remote screen keys already auto-opened full screen (once per share). */
   private val autoOpenedScreens = HashSet<String>()
 
+  // ─── [2026-10-15 cam-1-toque] 1 tap = camera on/off ─────────────────────
+  // Founder: "para ligar a câmera numa chamada de voz tem que clicar 2 vezes".
+  // Group: voice calls had no camera button at all; video calls published
+  // without the CAMERA grant (dead capturer → peers saw nothing until a 2nd
+  // toggle) and a failed publish left the button lit. Now: ask the grant on
+  // the 1st tap and CONTINUE the same tap when granted; verify the
+  // publication and reset the button if it never appears.
+  private val reqCodeGroupCamera = 4417
+  private var pendingCamOnGrant = false
+
+  private fun toggleGroupCameraFromTap() {
+    val desired = !camEnabled
+    CallDiag.log("group_camera_toggle", roomName, "on=$desired video_call=$hasVideo", applicationContext)
+    if (!desired) {
+      pendingCamOnGrant = false
+      setGroupCamera(false)
+      return
+    }
+    val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+      this, android.Manifest.permission.CAMERA
+    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    if (!granted) {
+      // Lit right away while the system prompt is up; reverted on deny.
+      camEnabled = true
+      refreshControlStates()
+      pendingCamOnGrant = true
+      // The prompt fires onUserLeaveHint → PiP (video calls) — suppress.
+      suppressPipUntil = System.currentTimeMillis() + 30_000L
+      try {
+        androidx.core.app.ActivityCompat.requestPermissions(
+          this, arrayOf(android.Manifest.permission.CAMERA), reqCodeGroupCamera
+        )
+      } catch (t: Throwable) {
+        Log.w(TAG, "requestPermissions(CAMERA) threw: ${t.message}")
+        pendingCamOnGrant = false
+        camEnabled = false
+        refreshControlStates()
+      }
+      return
+    }
+    setGroupCamera(true)
+  }
+
+  override fun onRequestPermissionsResult(
+    requestCode: Int,
+    permissions: Array<String>,
+    grantResults: IntArray,
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode != reqCodeGroupCamera) return
+    suppressPipUntil = 0L
+    val granted = grantResults.isNotEmpty() &&
+      grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED
+    CallDiag.log("group_camera_permission", roomName, "granted=$granted", applicationContext)
+    val want = pendingCamOnGrant
+    pendingCamOnGrant = false
+    if (granted && want && camEnabled && !finished) {
+      setGroupCamera(true)
+    } else if (!granted) {
+      camEnabled = false
+      refreshControlStates()
+      try {
+        android.widget.Toast.makeText(this, CallStrings.s("camDenied"), android.widget.Toast.LENGTH_LONG).show()
+      } catch (_: Throwable) {}
+    }
+  }
+
   private fun setGroupCamera(on: Boolean) {
     camEnabled = on
     refreshControlStates()
     lifecycleScope.launch {
+      val r = room
+      if (r == null) {
+        if (on) { camEnabled = false; refreshControlStates() }
+        return@launch
+      }
       try {
-        val r = room ?: return@launch
+        // [2026-10-08 call-video-fix] Mute the PUBLICATION (peers swap to
+        // the avatar) instead of track.enabled (frozen last frame).
         r.localParticipant.setCameraEnabled(on)
         if (on) bindLocalCameraIfReady(r)
         refreshControlStates()
-      } catch (t: Throwable) { Log.w(TAG, "setGroupCamera($on): ${t.message}") }
+      } catch (t: Throwable) {
+        Log.w(TAG, "setGroupCamera($on): ${t.message}")
+      }
+      if (on) {
+        // [2026-10-15 cam-1-toque] Confirm a CAMERA publication exists
+        // (~1.5 s); else reset the button instead of a lit lie.
+        var ok = false
+        for (i in 0 until 6) {
+          ok = try { r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track != null } catch (_: Throwable) { false }
+          if (ok) break
+          delay(250)
+        }
+        if (ok) {
+          bindLocalCameraIfReady(r)
+        } else if (camEnabled) {
+          CallDiag.log("group_camera_publish_failed", roomName, "", applicationContext)
+          camEnabled = false
+        }
+        refreshControlStates()
+      }
     }
   }
 
   private fun onLocalScreenShareStarted(r: Room) {
     screenShareStartedAt = System.currentTimeMillis()
-    if (hasVideo && camEnabled) {
+    if (camEnabled) {
       cameraPausedForShare = true
       setGroupCamera(false)
     }
@@ -2052,6 +2145,7 @@ class GroupCallActivity : ComponentActivity() {
       endTelecom("destroyed")
       try { ExpoCallKitModule.emitCallEnded(roomName) } catch (_: Throwable) {}
     }
+    try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).removeListener(audioRouteListener) } catch (_: Throwable) {}
     try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).teardown() } catch (_: Throwable) {}
     closeScreenFullscreen() // [2026-10-14 group-ui]
     tilesByIdentity.values.forEach { tile ->

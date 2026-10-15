@@ -21,6 +21,8 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+  // [2026-10-15 native-store fase 1.5] foto da home lida/gravada direto no store nativo
+  implementation project(':expo-chat-store')
   implementation 'androidx.core:core-ktx:1.13.1'
   // [2026-10-14 native-home] AndroidX (Google Maven), já no grafo do app —
   // mesmas versões do expo-media-viewer: zero dependência de terceiros nova.

@@ -494,6 +494,7 @@ export function ThemeProvider({ children }) {
   const isDark = themeMode === 'system' ? systemIsDark : themeMode === 'dark';
   _isDarkRef.current = isDark; // [2026-10-15 nav-motion]
   _sysDarkRef.current = !!systemIsDark;
+  try { globalThis.__chatyy_app_is_dark = !!isDark; } catch {} // [2026-10-15 native-browser] services/openLink tinge o navegador interno c/ o tema do APP (não o do SO)
   useEffect(() => {
     if (Platform.OS === 'web' || !_hydratedRef.current) return;
     try { DeviceEventEmitter.emit(APP_THEME_DARK_EVENT, isDark); } catch {}

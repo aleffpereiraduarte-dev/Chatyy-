@@ -419,6 +419,8 @@ export function getSyncStatsSync() {
  */
 export function upsertMessagesSync(convId, messages) {
   if (isWeb || !Array.isArray(messages) || messages.length === 0) return 0;
+  // [2026-10-15 native-store fase 2] escrita dupla (lote coalescido, nunca lança)
+  try { require('./nativeChatStore').mirrorMessages(convId, messages); } catch {}
   const db = _getDb();
   if (!db || !_ensureTable(db)) return 0;
   let written = 0;

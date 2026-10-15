@@ -125,6 +125,7 @@ class Boundary extends React.Component {
   componentDidCatch(err) {
     _failed = true;
     try { console.warn('[native-profile] fallback to JS:', err?.message || err); } catch {}
+    try { require('../../services/crashReporter').reportNativeFallback('native_profile', err); } catch {}
     try { this.props.onFatal?.(err); } catch {}
   }
 

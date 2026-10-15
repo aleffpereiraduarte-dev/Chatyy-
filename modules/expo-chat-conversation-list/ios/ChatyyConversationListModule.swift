@@ -23,8 +23,14 @@ public class ChatyyConversationListModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyConversationList")
 
+    // 2 = [native-store fase 1.5] prop `store` {a, r, n, s}: foto da home lida
+    //     direto do store nativo (modules/expo-chat-store) + regravada sozinha.
     Function("apiVersion") { () -> Int in
+      #if canImport(ExpoChatStore)
+      return 2
+      #else
       return 1
+      #endif
     }
 
     View(ChatyyConversationListView.self) {
@@ -84,6 +90,9 @@ public class ChatyyConversationListModule: Module {
       }
       Prop("scrollToTopSeq") { (view: ChatyyConversationListView, value: Double?) in
         view.setScrollToTopSeq(value ?? 0)
+      }
+      Prop("store") { (view: ChatyyConversationListView, value: [String: Any]?) in
+        view.setStore(value)
       }
 
       OnViewDidUpdateProps { (view: ChatyyConversationListView) in

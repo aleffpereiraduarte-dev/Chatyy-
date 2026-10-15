@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-store",
+  "version": "1.0.0",
+  "description": "Chatyy native local chat store (system SQLite, one DB file per account). Phase 1: per-conversation render snapshots read directly by the native message list.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

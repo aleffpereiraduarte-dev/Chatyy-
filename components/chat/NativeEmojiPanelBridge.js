@@ -309,6 +309,7 @@ class NativeEmojiBoundary extends React.Component {
   componentDidCatch(err) {
     _failed = true;
     try { console.warn('[native-emoji] fallback to JS panels:', err?.message || err); } catch {}
+    try { require('../../services/crashReporter').reportNativeFallback('native_emoji', err); } catch {}
     try { this.props.onFatal?.(err); } catch {}
   }
 

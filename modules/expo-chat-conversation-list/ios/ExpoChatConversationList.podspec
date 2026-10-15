@@ -14,6 +14,8 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # [2026-10-15 native-store fase 1.5] foto da home lida/gravada direto no store nativo
+  s.dependency 'ExpoChatStore'
 
   s.source_files = '**/*.swift'
 

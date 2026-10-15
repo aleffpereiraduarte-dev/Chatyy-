@@ -14,6 +14,11 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 import GlobalMessageSearch from '../components/GlobalMessageSearch'; // [2026-10-14 busca-global]
+// [2026-10-15 native-search-notifs] Resultados das abas em lista NATIVA
+// (ChatyyResultList) quando o binário tem a view; kill switch
+// globalThis.__chatyy_native_search = false → FlashList JS abaixo (igual antes).
+import NativeResultList, { useNativeResults } from '../components/native/NativeResultList';
+import { contactTile } from '../components/native/resultListAdapter';
 
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
@@ -49,6 +54,7 @@ export default function SearchScreen() {
   const [trendingSounds, setTrendingSounds] = useState(() => { const c = peekCached(['search', 'trending_sounds']); return Array.isArray(c) ? c : []; });
   const debounceRef = useRef(null);
   const reqIdRef = useRef(0);
+  const [nativeOn, onNativeFailure] = useNativeResults('__chatyy_native_search');
 
   // Initial trending hashtag list shown on the empty-state of the Hashtags tab.
   useEffect(() => {
@@ -155,10 +161,12 @@ export default function SearchScreen() {
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (!query || query.trim().length < 2) {
+      reqIdRef.current++; // resposta antiga não pinta depois de limpar
+      setLoading(false);
       setResults(prev => ({ ...prev, people: [], sounds: [] }));
       return;
     }
-    debounceRef.current = setTimeout(() => { runSearch(query, tab); }, 350);
+    debounceRef.current = setTimeout(() => { runSearch(query, tab); }, 250);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query, tab, runSearch]);
 
@@ -348,6 +356,76 @@ export default function SearchScreen() {
     />
   );
 
+  // ── [2026-10-15 native-search-notifs] linhas da lista nativa por aba ──────
+  const tt = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  const nativeMeta = useRef(new Map());
+  const nativeRows = React.useMemo(() => {
+    if (!nativeOn || tab === 'messages') return [];
+    const q = query.trim();
+    const typed = q.length >= 2;
+    const rows = [];
+    const meta = new Map();
+    const note = (txt, gl) => rows.push({ id: `n:${tab}`, k: 'n', t: txt, gl: gl || 'search', tap: 0 });
+    if (tab === 'people') {
+      for (const u of results.people || []) {
+        if (!u?.email) continue;
+        const name = u.name || u.email.split('@')[0];
+        const id = `u:${u.email}`;
+        rows.push({ id, k: 'r', t: name, sb: u.email, tiles: contactTile(u.email, name), hl: 1 });
+        meta.set(id, () => router.push(`/u/${encodeURIComponent(u.email)}`));
+      }
+      if (!rows.length && !loading) note(typed ? tt('feed.noResults', 'Sem resultados') : tt('search.peopleHint', 'Busque pessoas pelo nome ou @usuário'));
+    } else if (tab === 'hashtags') {
+      const list = typed ? results.hashtags : trendingTags;
+      if (!typed && list.length) rows.push({ id: 's:trending', k: 's', t: tt('search.trending', 'Em alta') });
+      for (const h of list || []) {
+        if (!h?.tag) continue;
+        const id = `h:${h.tag}`;
+        rows.push({ id, k: 'r', t: `#${h.tag}`, sb: tt('search.mentions', '{n} menções').replace('{n}', h.mentions || 0), gl: 'hash', hl: 1 });
+        meta.set(id, () => router.push(`/hashtag?tag=${encodeURIComponent(h.tag)}`));
+      }
+      if (!list?.length && !loading && typed) note(tt('feed.noResults', 'Sem resultados'), 'hash');
+    } else if (tab === 'sounds') {
+      const list = typed ? results.sounds : trendingSounds;
+      if (!typed && list.length) rows.push({ id: 's:trendingSounds', k: 's', t: tt('search.trendingSounds', 'Sons em alta') });
+      (list || []).forEach((s0, i) => {
+        const sid = String(s0.id || s0.sound_id || s0.track_id || '');
+        const label = s0.sound_label || `${s0.title || s0.name || '?'} — ${s0.artist || ''}`.replace(/^ — /, '').replace(/ — $/, '');
+        const id = `snd:${sid || i}`;
+        const sub = `${s0.artist || ''}${typeof s0.post_count === 'number' ? ` · ${tt('search.posts', '{n} posts').replace('{n}', s0.post_count)}` : ''}`;
+        const row = { id, k: 'r', t: s0.title || s0.name || label || '?', hl: 1 };
+        if (sub) row.sb = sub;
+        const art = s0.image_url || s0.artwork_url;
+        if (art) row.th = art; else { row.gl = 'music'; row.gs = 'r'; }
+        rows.push(row);
+        meta.set(id, () => { if (sid) { try { router.push(`/reels-sound?sound_id=${encodeURIComponent(sid)}&label=${encodeURIComponent(label)}`); } catch {} } });
+      });
+      if (!list?.length && !loading) note(typed ? tt('feed.noResults', 'Sem resultados') : tt('search.noTrendingSounds', 'Sem sons em alta no momento.'), 'music');
+    } else if (tab === 'lives') {
+      for (const l of results.lives || []) {
+        const sidv = l.id || l.session_id;
+        if (!sidv) continue;
+        const id = `live:${sidv}`;
+        const name = l.host_name || (l.host_email || '').split('@')[0];
+        const row = { id, k: 'r', t: name, tiles: contactTile(l.host_email, name), bd: 'live', hl: 1 };
+        if (l.title) row.sb = l.title;
+        if (typeof l.viewer_count === 'number') row.tm = String(l.viewer_count);
+        row.a11y = `${tt('live.liveNow', 'Ao vivo')}: ${name}${l.title ? `, ${l.title}` : ''}`;
+        rows.push(row);
+        meta.set(id, () => router.push({
+          pathname: '/live-viewer',
+          params: { sessionId: sidv, hostEmail: l.host_email, hostName: l.host_name, title: l.title },
+        }));
+      }
+      if (!rows.length && !loading) note(tt('search.noLives', 'Nenhuma transmissão agora.'), 'live');
+    }
+    if (loading) rows.push({ id: 'l:loading', k: 'l' });
+    nativeMeta.current = meta;
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOn, tab, query, results, trendingTags, trendingSounds, loading, t]);
+  const onNativePress = useCallback((id) => { const fn = nativeMeta.current.get(id); if (fn) fn(); }, []);
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header — back chevron + search input. Auto-focuses the input on
@@ -425,12 +503,22 @@ export default function SearchScreen() {
         })}
       </ScrollView>
 
-      {loading && (
+      {loading && !(nativeOn && tab !== 'messages') && (
         <View style={{ paddingVertical: 10 }}>
           <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
       )}
 
+      {nativeOn && tab !== 'messages' ? (
+        <NativeResultList
+          rows={nativeRows}
+          highlight={query.trim().length >= 2 ? query.trim().replace(/^#/, '') : ''}
+          colors={colors}
+          isDark={isDark}
+          onPress={onNativePress}
+          onFailure={onNativeFailure}
+        />
+      ) : (
       <FadeSlideIn>
         {tab === 'people' && renderPeople()}
         {tab === 'messages' && (
@@ -440,6 +528,7 @@ export default function SearchScreen() {
         {tab === 'sounds' && renderSounds()}
         {tab === 'lives' && renderLives()}
       </FadeSlideIn>
+      )}
     </View>
   );
 }

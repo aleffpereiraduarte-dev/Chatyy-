@@ -26,6 +26,9 @@ import AvatarCircle from './AvatarCircle';
 import AttachmentPreviewModal from './AttachmentPreviewModal';
 import AIEmailSummary from './AIEmailSummary';
 import AIPhishingBanner from './AIPhishingBanner';
+// [2026-10-15 native-email] Corpo em view nativa dedicada + política de imagens.
+import NativeEmailBody, { isNativeEmailBodyOn, openEmailLink } from './email/NativeEmailBody';
+import { shouldBlockRemoteImages, allowSenderImages } from '../services/emailImagePolicy';
 import { getAttachmentUrl, getAttachmentUrlSecure, downloadAttachmentToDevice, getExportUrl, blockSender, muteThread, sendEmail, translate as apiTranslate, aiDetectUnsubscribe, emailUnsubscribe } from '../services/api';
 import {
   IconStar, IconStarFilled, IconX, IconSparkles, IconReply, IconReplyAll,
@@ -131,6 +134,34 @@ const sanitizeHtml = (html) => {
   // email's own CSS can't leak into the app, and dropping it broke styled emails.
   return _regexFallbackSanitize(html, { keepStyle: true });
 };
+// [2026-10-15 native-email] Reuso pelo ThreadView (corpo nativo por mensagem).
+export { sanitizeHtml as sanitizeEmailHtml };
+
+// Anexos já baixados nesta sessão (Quick Look reabre sem rede).
+const _attLocal = new Map();
+
+function _emailSender(email) {
+  if (!email) return '';
+  if (email.from_email) return String(email.from_email);
+  const raw = String(email.from || '');
+  const m = raw.match(/<([^>]+)>/);
+  return (m ? m[1] : raw).trim();
+}
+
+// Hosts liberados mesmo com conteúdo remoto bloqueado: anexos inline (cid:)
+// reescritos para a URL de download do próprio servidor.
+function _attachmentHosts(email, folder) {
+  const out = ['chatyy.com.br', 'onemundo.com.br'];
+  try {
+    if (email?.attachments?.length) {
+      const u = String(getAttachmentUrl(email.uid, folder || 'INBOX', 1) || '');
+      const h = (u.match(/^https?:\/\/([^/:?#]+)/i) || [])[1];
+      if (h && !out.some((d) => h === d || h.endsWith('.' + d))) out.push(h.toLowerCase());
+    }
+  } catch {}
+  return out;
+}
+
 const MEET_LINK_RE = /https?:\/\/(meet\.jit\.si|meet\.onemundo\.com\.br|mail\.onemundo\.com\.br\/meet)\/[\w-]+/g;
 const ONEMUNDO_MEET_RE = /https?:\/\/mail\.onemundo\.com\.br\/meet\/([\w-]+)/;
 
@@ -181,7 +212,7 @@ function getAttachIconComponent(filename) {
   return ATTACH_ICON_MAP[ext] || IconPaperclip;
 }
 
-export default function EmailReader({ email, onReply, onReplyAll, onForward, onForwardAsAttachment, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread, onAddAsTask, hasActionBar = false }) {
+export default function EmailReader({ email, onReply, onReplyAll, onForward, onForwardAsAttachment, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread, onAddAsTask, hasActionBar = false, onBodyZoomChange }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -392,7 +423,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   // 2026-05-17: user requested images on by default. Tracking pixel concern
   // dropped — convenience wins. The "Show images" button only appears now
   // if user disabled them via a future setting (placeholder for opt-out).
-  const [showImages, setShowImages] = useState(true);
+  // [2026-10-15 native-email] Padrão continua "carregar" (regra 2026-05-17);
+  // com "Bloquear imagens remotas" ligado em Configurações › E-mail, abre
+  // bloqueado (exceto remetentes liberados) e mostra "Carregar imagens".
+  const [showImages, setShowImages] = useState(() => !shouldBlockRemoteImages(_emailSender(email)));
   const [hasRemoteImages, setHasRemoteImages] = useState(false);
 
   // Reset per-email state when switching emails
@@ -406,8 +440,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
     setTranslatedHtml('');
     setShowTranslation(false);
     setTranslating(false);
-    setShowImages(true);
+    setShowImages(!shouldBlockRemoteImages(_emailSender(email)));
     setHasRemoteImages(false);
+    try { onBodyZoomChange?.(false); } catch {}
   }, [email?.uid]);
 
   // Process HTML before render — applies image privacy gating + lazy-load.
@@ -618,6 +653,77 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
     } catch (e) { console.warn('print', e); }
   };
 
+  // [2026-10-15 native-email] Corpo nativo (modules/expo-email-native): JS do
+  // e-mail desligado, remoto bloqueável, altura automática (um só scroll),
+  // pinça, inversão inteligente no escuro, menu de link nativo, histórico
+  // citado recolhido ("Mostrar histórico") como no web.
+  const renderNativeBody = () => {
+    const { main, quoted } = splitQuotedHtml(email.body_html);
+    const fragment = showQuoted || !quoted ? email.body_html : main;
+    const safe = processEmailHtml(sanitizeHtml(fragment));
+    const blocked = !showImages;
+    return (
+      <View>
+        {hasRemoteImages && blocked && (
+          <View style={[s.imgBanner, { backgroundColor: colors.surfaceVariant, borderColor: colors.borderLight }]}>
+            <IconShield size={15} color={colors.textSecondary} />
+            <Text style={[s.imgBannerText, { color: colors.textSecondary }]} numberOfLines={2}>
+              {t('reader.imagesBlocked') || 'Imagens remotas bloqueadas para proteger sua privacidade.'}
+            </Text>
+            <TouchableOpacity
+              onPress={() => { haptic.light(); setShowImages(true); }}
+              style={[s.imgBannerBtn, { borderColor: colors.border }]}
+              accessibilityRole="button"
+              accessibilityLabel={t('reader.loadImages') || 'Carregar imagens'}
+            >
+              <Text style={[s.imgBannerBtnText, { color: colors.text }]}>{t('reader.loadImages') || 'Carregar imagens'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { haptic.light(); allowSenderImages(_emailSender(email)); setShowImages(true); }}
+              style={s.imgBannerLink}
+              accessibilityRole="button"
+              accessibilityLabel={t('reader.alwaysLoadFrom') || 'Sempre deste remetente'}
+            >
+              <Text style={[s.imgBannerLinkText, { color: colors.primary }]}>{t('reader.alwaysLoadFrom') || 'Sempre deste remetente'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <NativeEmailBody
+          html={safe}
+          rawHtml={email.body_html}
+          isDark={isDark}
+          colors={colors}
+          blockRemote={blocked}
+          allowHosts={_attachmentHosts(email, folder)}
+          contentKey={`${email.uid}:${folder || ''}:${showQuoted ? 'q' : 'm'}`}
+          labels={{
+            open: t('common.open') || 'Abrir',
+            copyLink: t('common.copyLink') || 'Copiar link',
+            share: t('common.share') || 'Compartilhar',
+            cancel: t('common.cancel') || 'Cancelar',
+          }}
+          onLinkPress={(url) => openEmailLink(url, { colors, isDark })}
+          onZoomChange={(z) => { try { onBodyZoomChange?.(z); } catch {} }}
+        />
+        {!!quoted && (
+          <TouchableOpacity
+            style={[s.quotedToggle, { backgroundColor: colors.primary + '12', marginTop: Spacing.sm }]}
+            onPress={() => { haptic.light(); setShowQuoted(!showQuoted); }}
+            accessibilityLabel={showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || t('reader.showQuoted') || 'Show history')}
+            accessibilityRole="button"
+          >
+            <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
+              {showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || '...')}
+            </Text>
+            <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+              <IconChevronDown size={14} color={colors.textSecondary} />
+            </Animated.View>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
   const renderBody = () => {
     if (email.body_html && Platform.OS === 'web') {
       const { main, quoted } = splitQuotedHtml(email.body_html);
@@ -699,6 +805,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         </View>
       );
     }
+    if (email.body_html && Platform.OS !== 'web' && isNativeEmailBodyOn()) {
+      return renderNativeBody();
+    }
     if (email.body_html && Platform.OS !== 'web') {
       const safeBody = processEmailHtml(sanitizeHtml(email.body_html));
       // Native HTML view from expo-native-toolkit (iOS only).
@@ -743,7 +852,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     if (/^(mailto|tel|sms):/i.test(url)) {
                       import('expo-linking').then(L => L.openURL(url)).catch(() => {});
                     } else {
-                      require('../utils/inAppBrowser').openInApp(url, { colors, isDark });
+                      require('../services/openLink').openLink(url, { colors, isDark, fallback: 'inapp' }); // [2026-10-15 native-browser] convite/perfil do Chatyy abre no app
                     }
                   }}
                   onRendered={(e) => {
@@ -832,7 +941,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                 if (url.startsWith('mailto:')) {
                   import('expo-linking').then(L => L.openURL(url)).catch(() => {});
                 } else {
-                  require('../utils/inAppBrowser').openInApp(url, { colors });
+                  require('../services/openLink').openLink(url, { colors, isDark, fallback: 'inapp' });
                 }
               }
             } catch {}
@@ -845,7 +954,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               import('expo-linking').then(L => L.openURL(request.url)).catch(() => {});
               return false;
             }
-            require('../utils/inAppBrowser').openInApp(request.url, { colors });
+            require('../services/openLink').openLink(request.url, { colors, isDark, fallback: 'inapp' });
             return false;
           }}
         />
@@ -1268,11 +1377,50 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   } catch {}
                 }
               };
+              // [2026-10-15 native-email] Documento → Quick Look (iOS) / "Abrir
+              // com" (Android) direto, offline, com % no cartão; imagem segue no
+              // visualizador do app. Binário sem o módulo → modal antigo.
+              const openAttachment = async () => {
+                haptic.light();
+                if (Platform.OS === 'web' || isImage || !isNativeEmailBodyOn()) {
+                  setPreviewAttach({ visible: true, index: i });
+                  return;
+                }
+                if (_pct != null) return;
+                const _k = `${email.uid}:${folder || 'INBOX'}:${_part}`;
+                const _cached = _attLocal.get(_k);
+                if (_cached) {
+                  try {
+                    const info = await require('expo-file-system/legacy').getInfoAsync(_cached);
+                    if (info?.exists) {
+                      const { openDocumentWithSystem } = require('../utils/openDocument');
+                      if (await openDocumentWithSystem({ url: _cached, filename: a.filename || `anexo_${i + 1}`, mimeType: a.mime_type || a.type || undefined })) return;
+                    }
+                  } catch {}
+                  _attLocal.delete(_k);
+                }
+                setDlProgress((m) => ({ ...m, [i]: 0 }));
+                try {
+                  const uri = await downloadAttachmentToDevice(email.uid, folder || 'INBOX', _part, a.filename || `anexo_${i + 1}`, {
+                    expectedBytes: a.size || 0,
+                    onProgress: (f) => setDlProgress((m) => (m[i] == null ? m : { ...m, [i]: f })),
+                  });
+                  setDlProgress((m) => { const n = { ...m }; delete n[i]; return n; });
+                  _attLocal.set(_k, uri);
+                  if (_attLocal.size > 40) _attLocal.delete(_attLocal.keys().next().value);
+                  const { openDocumentWithSystem } = require('../utils/openDocument');
+                  const r = await openDocumentWithSystem({ url: uri, filename: a.filename || `anexo_${i + 1}`, mimeType: a.mime_type || a.type || undefined });
+                  if (!r) setPreviewAttach({ visible: true, index: i });
+                } catch {
+                  setDlProgress((m) => { const n = { ...m }; delete n[i]; return n; });
+                  setPreviewAttach({ visible: true, index: i });
+                }
+              };
               return (
                 <TouchableOpacity
                   key={i}
                   style={[s.attachItem, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                  onPress={() => setPreviewAttach({ visible: true, index: i })}
+                  onPress={openAttachment}
                   activeOpacity={0.7}
                   accessibilityLabel={`${t('reader.openAttachment') || 'Open'} ${a.filename || `attachment ${i + 1}`}`}
                   accessibilityRole="button"
@@ -2006,6 +2154,17 @@ const s = StyleSheet.create({
     borderRadius: BorderRadius.md, gap: 4,
   },
   quotedToggleText: { fontSize: FontSize.sm, fontWeight: '500' },
+  // [2026-10-15 native-email] Faixa "imagens remotas bloqueadas"
+  imgBanner: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    paddingVertical: 8, paddingHorizontal: 12, marginBottom: 10,
+    borderRadius: 10, borderWidth: StyleSheet.hairlineWidth,
+  },
+  imgBannerText: { flex: 1, minWidth: 160, fontSize: 12.5, lineHeight: 17 },
+  imgBannerBtn: { paddingHorizontal: 12, minHeight: 32, justifyContent: 'center', borderRadius: 16, borderWidth: StyleSheet.hairlineWidth },
+  imgBannerBtnText: { fontSize: 13, fontWeight: '600' },
+  imgBannerLink: { minHeight: 32, justifyContent: 'center', paddingHorizontal: 4 },
+  imgBannerLinkText: { fontSize: 13, fontWeight: '500' },
   // Inline Reply
   inlineReplyContainer: {
     marginTop: Spacing.xl, borderWidth: StyleSheet.hairlineWidth, borderRadius: 14,

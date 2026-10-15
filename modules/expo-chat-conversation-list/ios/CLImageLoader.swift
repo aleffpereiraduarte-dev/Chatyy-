@@ -75,6 +75,41 @@ final class CLImageLoader {
     }
   }
 
+  // [2026-10-15 native-social] Mesma fonte/disco/fila, decodificação maior
+  // (foto de post de canal). Chave de memória separada por tamanho.
+  func cachedImage(_ uri: String, maxPixel: CGFloat) -> UIImage? {
+    if uri.isEmpty { return nil }
+    return memory.object(forKey: (uri + "#px\(Int(maxPixel))") as NSString)
+  }
+
+  /// completion SEMPRE na main.
+  func load(_ uri: String, auth: Bool, maxPixel: CGFloat, completion: @escaping (UIImage?) -> Void) {
+    if uri.isEmpty { completion(nil); return }
+    let key = uri + "#px\(Int(maxPixel))"
+    if let img = memory.object(forKey: key as NSString) { completion(img); return }
+    if let t = failedAt[key], Date().timeIntervalSince(t) < 30 { completion(nil); return }
+    if waiters[key] != nil {
+      waiters[key]?.append(completion)
+      return
+    }
+    waiters[key] = [completion]
+    trimDiskOnce()
+    let token = auth ? authToken : ""
+    resolveSource(uri, token: token) { [weak self] source in
+      guard let self = self else { return }
+      guard let source = source else { self.finish(key, nil); return }
+      self.decodeQueue.async {
+        let img = CLImageLoader.decode(source, maxPixel: maxPixel)
+        DispatchQueue.main.async {
+          if let img = img {
+            self.memory.setObject(img, forKey: key as NSString, cost: CLImageLoader.cost(img))
+          }
+          self.finish(key, img)
+        }
+      }
+    }
+  }
+
   func clearMemory() {
     memory.removeAllObjects()
     failedAt.removeAll()

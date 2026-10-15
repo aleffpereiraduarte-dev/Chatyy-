@@ -28,6 +28,19 @@ import { cachedKey } from '../hooks/useCachedAction';
 import { NOTIF_SCREEN } from '../services/screenData';
 import { filterSocialNotifications } from '../services/notificationFilter';
 import FadeSlideIn from '../components/FadeSlideIn';
+// [2026-10-15 native-search-notifs] Lista NATIVA (ChatyyResultList): agrupada por
+// dia, avatar + selo da ação, miniatura, "Seguir de volta"/"Mensagem" inline,
+// swipe p/ apagar, ponto de não lida. Kill switch:
+// globalThis.__chatyy_native_notifs = false → FlatList JS abaixo (igual antes).
+import NativeResultList, { useNativeResults } from '../components/native/NativeResultList';
+import { contactTile } from '../components/native/resultListAdapter';
+
+// Tipo → glifo (selo no avatar / círculo quando não há autor).
+const NOTIF_GLYPH = {
+  chat: 'message', mention: 'at', like: 'heart', feed_like: 'heart',
+  comment: 'message', feed_comment: 'message', follow: 'user',
+  contact_joined: 'userPlus', live: 'live',
+};
 
 
 // [WAVE 100] Module-scope live store — survives unmount/remount in the same
@@ -176,8 +189,9 @@ const BUCKET_LABELS = {
   older:     { key: 'notifications.bucketOlder',     fallback: 'Mais antigas' },
 };
 
-// ─── Single notification row (Instagram-style) ────────────────────────────────
-function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
+// ─── Texto/estado da linha — o MESMO para a linha JS e a lista nativa ─────────
+// [2026-10-15 native-search-notifs] extraído do NotifRow.
+function notifDisplay(item, t) {
   const grouped = item.grouped_body || null;
   const ts      = timeAgo(item.created_at || item.latest_at, t);
 
@@ -222,16 +236,22 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     body = '';
   }
 
-  const unreadBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.04)'; // [2026-10-11] escuro: #111 a 10% sobre preto era invisível
-  const ink = colors.text;
-  const onInk = colors.background;
-
   // Right-side thumbnail (post preview) for likes/comments referencing a post
   const thumbUri = item.thumbnail_url || item.post_thumbnail || null;
   const showThumb = !!thumbUri && ['like', 'comment', 'feed_like', 'feed_comment', 'mention'].includes(item.type);
 
   // Inline action pills — only for follow notifications
   const showActions = item.type === 'follow' && !item.action_taken;
+  return { ts, title, body, isLikeGroup, isContactJoined, thumbUri, showThumb, showActions };
+}
+
+// ─── Single notification row (Instagram-style) ────────────────────────────────
+function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
+  const { ts, title, body, isLikeGroup, isContactJoined, thumbUri, showThumb, showActions } = notifDisplay(item, t);
+
+  const unreadBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.04)'; // [2026-10-11] escuro: #111 a 10% sobre preto era invisível
+  const ink = colors.text;
+  const onInk = colors.background;
 
   return (
     <PressableRow
@@ -484,6 +504,7 @@ function NotificationsScreenInner() {
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
   const cacheRef = useRef({});
+  const [nativeOn, onNativeFailure] = useNativeResults('__chatyy_native_notifs');
 
   const _applyTab = useCallback((tabKey, rawItems) => {
     const tabDef = TABS.find(tt => tt.key === tabKey);
@@ -707,6 +728,22 @@ function NotificationsScreenInner() {
     }
   }, [router]);
 
+  // [2026-10-15 native-search-notifs] swipe "Apagar": some na hora (todas as
+  // abas + cache vivo/disco) e o servidor apaga em 2º plano.
+  const handleDelete = useCallback(async (notif) => {
+    if (!notif || notif.id == null) return;
+    const drop = (arr) => (arr || []).filter(n => n.id !== notif.id);
+    Object.keys(cacheRef.current).forEach(k => { cacheRef.current[k] = drop(cacheRef.current[k]); });
+    setNotifications(prev => drop(prev));
+    try {
+      const live = _readLive() || _readDisk() || [];
+      const next = drop(live);
+      _writeLive(next);
+      setCache(LIVE_KEY, { success: true, data: { notifications: next } }, 7 * 24 * 3600 * 1000);
+    } catch {}
+    try { await api.notificationsDelete(notif.id); } catch (e) { console.warn('[notifications] delete failed:', e?.message || e); }
+  }, []);
+
   const hasUnread = notifications.some(n => !n.read);
 
   // Build sectioned list with date-bucket headers
@@ -728,6 +765,60 @@ function NotificationsScreenInner() {
     }
     return out;
   }, [notifications, t]);
+
+  const nativeMetaRef = useRef(new Map());
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const rows = [];
+    const meta = new Map();
+    const delLabel = tl(t, 'common.delete', { pt: 'Apagar', en: 'Delete', es: 'Eliminar' });
+    for (const item of groupedData) {
+      if (item.__section) { rows.push({ id: item.id, k: 's', t: item.label }); continue; }
+      const d = notifDisplay(item, t);
+      const id = `n:${item.id ?? item.latest_at}`;
+      const row = { id, k: 'r', t: d.title || '', tl: 2, sl: 1 };
+      if (d.ts) row.tm = d.ts;
+      if (d.body) row.sb = d.body;
+      const glyph = NOTIF_GLYPH[item.type] || 'bell';
+      if (d.isLikeGroup) {
+        const first = (item.actor_emails || [])[0] || '';
+        const nm = (item.actor_names || [])[0] || '';
+        row.tiles = contactTile(first, nm);
+        row.bd = glyph;
+      } else if (item.author_email) {
+        row.tiles = contactTile(item.author_email, item.author_name || '');
+        row.bd = glyph;
+      } else {
+        row.gl = glyph;
+      }
+      if (d.showThumb && d.thumbUri) row.rt = d.thumbUri;
+      if (!item.read) row.un = 1;
+      if (d.showActions) {
+        row.b1 = t('notifications.followBack');
+        row.b2 = t('notifications.message');
+      } else if (d.isContactJoined && item.author_email) {
+        row.b1 = tl(t, 'notifications.sayHi', { pt: 'Dizer oi', en: 'Say hi', es: 'Saludar' });
+      }
+      if (item.id != null) row.sw = delLabel;
+      rows.push(row);
+      meta.set(id, item);
+    }
+    nativeMetaRef.current = meta;
+    return rows;
+  }, [nativeOn, groupedData, t]);
+
+  const onNativePress = useCallback((id) => {
+    const item = nativeMetaRef.current.get(id);
+    if (item) handleTap(item);
+  }, [handleTap]);
+
+  const onNativeAction = useCallback((id, action) => {
+    const item = nativeMetaRef.current.get(id);
+    if (!item) return;
+    if (action === 'delete') { haptic.light?.(); handleDelete(item); return; }
+    if (action === 'b1') { handleAction(item, item.type === 'contact_joined' ? 'say_hi' : 'follow_back'); return; }
+    if (action === 'b2') handleAction(item, 'message');
+  }, [handleAction, handleDelete]);
 
   const unreadCounts = useMemo(() => {
     const c = {};
@@ -831,7 +922,21 @@ function NotificationsScreenInner() {
       />
 
       {/* List — [2026-10-08 apps-native] skeleton no 1º load (antes: tela em branco) */}
-      {loading && notifications.length === 0 ? <ListSkeleton count={8} /> : (
+      {loading && notifications.length === 0 ? <ListSkeleton count={8} /> : (nativeOn && notifications.length > 0) ? (
+        <NativeResultList
+          rows={nativeRows}
+          colors={colors}
+          isDark={isDark}
+          separators
+          refreshEnabled
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          bottomInset={(insets.bottom || 0) + 24}
+          onPress={onNativePress}
+          onAction={onNativeAction}
+          onFailure={onNativeFailure}
+        />
+      ) : (
       <FlatList
         data={groupedData}
         renderItem={renderItem}

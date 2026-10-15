@@ -303,6 +303,22 @@ export async function reportStep(step, info) {
   _post(step, info);
 }
 
+// [2026-10-15 confiab] Telas nativas novas (lista home/inbox/status/pins/
+// chamadas/contatos/configurações…) caem para o JS via ErrorBoundary e só
+// faziam console.warn — em 72 h de telemetria ZERO beacons de fallback, ou
+// seja: invisível em campo. Um beacon por módulo por sessão, com build/OTA.
+const _nativeFallbackSent = new Set();
+export function reportNativeFallback(name, msg) {
+  try {
+    const n = String(name || 'native').slice(0, 40);
+    if (_nativeFallbackSent.has(n)) return;
+    _nativeFallbackSent.add(n);
+    const m = String((msg && (msg.message || msg)) || '').replace(/\s+/g, ' ').slice(0, 240);
+    addBreadcrumb('native_fallback', n);
+    _post('native_fallback', `${n} ${_buildTag()} ${m}`);
+  } catch {}
+}
+
 // [#1206 2026-05-19] Defensive beacon for SQLite/persistence write+read
 // failures that used to be swallowed by silent catch (e) {}. Surfaces the
 // error class + a short context tag through the same `push_diag` channel
@@ -342,6 +358,9 @@ export function reportCrash(payload) {
     const type = String(p.type || 'persistence_error').slice(0, 40);
     const ctx = String(p.context || 'unknown').slice(0, 40);
     const msg = String(p.message || '').slice(0, 200);
+    // [2026-10-15 confiab] ErrorBoundary por aba (render_error_*) também
+    // pode ser chunk de build misturado (web) → mesmo auto-reparo 1×/10 min.
+    if (type === 'render_error') { try { _maybeHealStaleChunk(msg, 'boundary'); } catch {} }
     // Step is alphanumeric+_ only via _post sanitization, so encode the
     // type+ctx as the step and the message as info.
     const step = `${type}_${ctx}`;
@@ -458,12 +477,18 @@ async function _flushPersistedCrashes() {
 // na hora se a falha derrubou a tela (ErrorBoundary), senão quando a aba for
 // para o fundo (sem interromper quem está digitando). Nunca em localhost (QA).
 const _RE_CHUNK_FAIL = /Loading (module|chunk) .* failed|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i;
+// [2026-10-15 confiab] Assinaturas de chunk de OUTRO build misturado (CF/SW
+// servindo entry/__common velho com chunk novo): export minificado ausente
+// "(0 , Y.resolveTextGradient) is not a function" (ChatStatusTab 14/10) e TDZ
+// minificado "Cannot access 'bi' before initialization" (__common 15/10).
+// Mesmo guard: 1 reload por 10 min por aba, só web, nunca em chamada.
+const _RE_STALE_MODULE = /\(0\s*,\s*[A-Za-z_$][\w$]{0,3}\.[A-Za-z_$][\w$]*\) is not a function|Cannot access '[A-Za-z_$][\w$]{0,2}' before initialization/;
 const _CHUNK_RELOAD_KEY = '@chatyy/chunk_reload_at';
 let _chunkReloadArmed = false;
 function _maybeHealStaleChunk(msg, source) {
   try {
     if (_platform !== 'web' || typeof window === 'undefined' || !window.location) return;
-    if (!_RE_CHUNK_FAIL.test(String(msg || ''))) return;
+    if (!_RE_CHUNK_FAIL.test(String(msg || '')) && !_RE_STALE_MODULE.test(String(msg || ''))) return;
     const host = String(window.location.hostname || '');
     if (!host || host === 'localhost' || host === '127.0.0.1') return;
     let ss = null;
@@ -537,7 +562,23 @@ export function installCrashReporter() {
   // then flush anything a previous (killed) process left behind.
   _ensureAnonId().then(() => _flushPersistedCrashes()).catch(() => {});
   addBreadcrumb('boot_start');
-  _post('boot_start', `ver=${_appVersion()} plat=${_platform}`);
+  // [2026-10-15 confiab] `ver` vem do app.json do OTA (e no iOS usava o
+  // versionCode do ANDROID) → não dava para separar builds 686/688/690 em
+  // campo. Anexa o build REAL do binário + OTA + launch de emergência
+  // (expo-updates caiu no embutido porque o OTA não abriu) — sem isso a
+  // falha de launch de OTA era invisível na telemetria.
+  let _bootExtra = '';
+  try {
+    const bt = _buildTag(); // "[b=686 ota=01a13ede rt=2.6.0]"
+    const mb = /b=(\S+) ota=(\S+)/.exec(bt);
+    if (mb) _bootExtra += ` nb=${mb[1]} ota=${mb[2]}`;
+    const U = _lazyUpdates();
+    if (U && U.isEmergencyLaunch === true) {
+      _bootExtra += ` emerg=1 why=${String(U.emergencyLaunchReason || '').replace(/\s+/g, '_').slice(0, 120)}`;
+    }
+    if (U && U.isEmbeddedLaunch === true) _bootExtra += ' embedded=1';
+  } catch {}
+  _post('boot_start', `ver=${_appVersion()} plat=${_platform}${_bootExtra}`);
 
   // Global JS error handler (RN/Hermes)
   try {

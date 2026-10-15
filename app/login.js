@@ -1781,6 +1781,18 @@ export default function LoginScreen() {
   // [2026-10-08 android-otp-shortcuts] Android SMS User Consent → fill + auto-submit.
   // Re-arms when a (re)send starts the 60s cooldown.
   useSmsOtpAutofill(loginMode === 'phone' && phoneStep === 'otp', (code) => handlePhoneOtpFullChange(code), phoneResendTimer > 0);
+  // [2026-10-15 native-otp] Teclado numérico JÁ aberto ao chegar no código: o
+  // autoFocus do TextInput se perde quando ele monta durante a transição de
+  // passo (Android sobretudo) → reforça o foco depois da animação.
+  // Kill switch: globalThis.__chatyy_native_otp = false.
+  useEffect(() => {
+    if (Platform.OS === 'web' || globalThis.__chatyy_native_otp === false) return undefined;
+    if (!(loginMode === 'phone' && phoneStep === 'otp')) return undefined;
+    const tms = [320, 700].map((ms) => setTimeout(() => {
+      try { const r = phoneOtpRefs.current[0]; if (r && !(r.isFocused && r.isFocused())) r.focus(); } catch {}
+    }, ms));
+    return () => tms.forEach(clearTimeout);
+  }, [loginMode, phoneStep]);
 
   // [2026-10-07 login-ux] REMOVED the debounced "Conta encontrada / Vamos
   // criar" live-check. It called api.phoneLoginRequest({phone,…}) with an

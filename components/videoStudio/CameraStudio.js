@@ -220,7 +220,7 @@ export default function CameraStudio({ t, draftId, initialMusic, onNext, onClose
       const srcDur = Math.max(0.1, Math.min(wallS, remaining * spd));
       try {
         const { index, clip } = await session.addSegment(
-          { uri: res.uri, kind: 'video', in: 0, out: srcDur, speed: spd, mirror: fac === 'front', camera: fac },
+          { uri: res.uri, kind: 'video', in: 0, out: srcDur, speed: spd, mirror: false /* [2026-10-15 espelho] enviado NÃO espelhado (só a prévia espelha); usuário pode espelhar no editor */, camera: fac },
           { move: true },
         );
         // Duração REAL (start-up da gravação come ~100-300 ms do relógio de parede) + frame p/ Alinhar.

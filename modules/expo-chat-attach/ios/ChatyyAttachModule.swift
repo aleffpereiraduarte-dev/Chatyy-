@@ -24,12 +24,19 @@ import Photos
 public class ChatyyAttachModule: Module {
   private var sheet: AttachSheetController?
   private var camera: ChatCameraController?
+  private var videoNote: VideoNoteController?
 
   public func definition() -> ModuleDefinition {
     Name("ChatyyAttach")
 
+    // 2 = openVideoNote (gravador de vídeo-recado redondo) [2026-10-15 native-vnote]
+    // 3 = câmera com statusModes (Texto · Normal · Boomerang) [2026-10-15 native-status-studio]
     Function("apiVersion") { () -> Int in
-      return 1
+      return 3
+    }
+
+    Function("isVideoNoteSupported") { () -> Bool in
+      return AVCaptureDevice.default(for: .video) != nil
     }
 
     Function("isCameraSupported") { () -> Bool in
@@ -106,11 +113,40 @@ public class ChatyyAttachModule: Module {
       NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
     }.runOnQueue(.main)
 
+    // [2026-10-15 native-vnote] Vídeo-recado redondo (VideoNoteController).
+    // Resolve { action: 'send', item } | { action: 'cancel' } | { action: 'error', message };
+    // null = não conseguiu apresentar → JS usa o gravador JS.
+    AsyncFunction("openVideoNote") { (options: [String: Any], promise: Promise) in
+      if let old = self.videoNote {
+        self.videoNote = nil
+        old.finishSilently()
+      }
+      guard let presenter = self.appContext?.utilities?.currentViewController() else {
+        promise.resolve(nil)
+        return
+      }
+      let vc = VideoNoteController(config: VideoNoteController.Config(options))
+      var done = false
+      vc.onFinish = { [weak self] result in
+        if done { return }
+        done = true
+        if self?.videoNote === vc { self?.videoNote = nil }
+        promise.resolve(result)
+      }
+      self.videoNote = vc
+      vc.modalPresentationStyle = .overFullScreen
+      vc.modalTransitionStyle = .crossDissolve
+      presenter.present(vc, animated: true, completion: {
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+      })
+    }.runOnQueue(.main)
+
     // Fecha o que estiver aberto (resolve 'cancel').
     AsyncFunction("dismiss") { () -> Bool in
       var any = false
       if let s = self.sheet { s.closeFromJS(); any = true }
       if let c = self.camera { c.closeFromJS(); any = true }
+      if let v = self.videoNote { v.closeFromJS(); any = true }
       return any
     }.runOnQueue(.main)
   }
@@ -138,6 +174,9 @@ struct AttachConfig {
   let allowCamera: Bool
   let maxVideoSec: Double
   let withAudio: Bool
+  // [2026-10-15 native-status-studio] câmera do status: seletor Texto · Normal · Boomerang.
+  let statusModes: Bool
+  let boomerangSec: Double
 
   init(_ o: [String: Any]) {
     var l: [String: String] = [:]
@@ -167,6 +206,8 @@ struct AttachConfig {
     allowCamera = (o["allowCamera"] as? Bool) ?? true
     maxVideoSec = max(3, AttachConfig.double(o["maxVideoSec"]) ?? 60)
     withAudio = (o["withAudio"] as? Bool) ?? true
+    statusModes = (o["statusModes"] as? Bool) ?? false
+    boomerangSec = min(4, max(0.8, AttachConfig.double(o["boomerangSec"]) ?? 1.5))
   }
 
   func t(_ key: String, _ fallback: String) -> String {

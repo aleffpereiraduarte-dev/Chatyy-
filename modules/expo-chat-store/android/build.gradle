@@ -1,0 +1,30 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.chatyychatstore'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.chatyychatstore"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+// [2026-10-15 native-store] SQLite do SISTEMA (android.database.sqlite) — zero
+// dependência nova. expo-chat-message-list depende deste projeto.
+dependencies {
+  implementation project(':expo-modules-core')
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

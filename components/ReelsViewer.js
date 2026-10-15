@@ -2314,7 +2314,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             style={styles.creditText}
             numberOfLines={1}
             accessibilityRole="link"
-            onPress={() => { const u = reel.credit.page_url || reel.credit.author_url; if (u) { try { Linking.openURL(u); } catch {} } }}
+            onPress={() => { const u = reel.credit.page_url || reel.credit.author_url; if (u) { try { require('../services/openLink').openLink(u); } catch {} } }}
           >
             {(t?.('reels.credit') || 'Vídeo: {name} · {source}').replace('{name}', reel.credit.name || reel.credit.source || '').replace('{source}', reel.credit.source || '')}
           </Text>
@@ -3319,7 +3319,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, [reelTab]);
 
   const handleOpenProfile = useCallback((email, item) => {
-    if (item?.is_catalog) { const u = item.credit?.author_url || item.credit?.page_url; if (u) { try { Linking.openURL(u); } catch {} } return; } // [reels-v1]
+    if (item?.is_catalog) { const u = item.credit?.author_url || item.credit?.page_url; if (u) { try { require('../services/openLink').openLink(u); } catch {} } return; } // [reels-v1]
     // If the parent wired onAvatarTap (ChatReelsTab does for live routing),
     // give it the first shot so tapping a live creator opens the live viewer
     // instead of their profile.
@@ -3748,7 +3748,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const handleNativeCredit = useCallback((e) => {
     const reel = findReelRef.current(e?.id);
     const u = reel?.credit?.page_url || reel?.credit?.author_url;
-    if (u) { try { Linking.openURL(u); } catch {} }
+    if (u) { try { require('../services/openLink').openLink(u); } catch {} }
   }, []);
   const handleNativeNeedMore = useCallback(() => {
     try { loadMoreRef.current?.(); } catch {}

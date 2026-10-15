@@ -20,10 +20,42 @@ object CallStrings {
     "hi" to mapOf("calling" to "कॉल किया जा रहा है…", "ringing" to "घंटी बज रही है…", "connecting" to "कनेक्ट हो रहा है…", "reconnecting" to "फिर से कनेक्ट हो रहा है…", "connected" to "कनेक्ट हो गया", "onHold" to "होल्ड पर", "declined" to "अस्वीकार की गई", "busy" to "व्यस्त", "unavailable" to "उपलब्ध नहीं", "ended" to "कॉल समाप्त", "noAnswer" to "किसी ने जवाब नहीं दिया", "moreOptions" to "और विकल्प", "reactions" to "प्रतिक्रियाएं", "sendReaction" to "प्रतिक्रिया भेजें", "shareScreen" to "स्क्रीन शेयर करें", "stopSharing" to "शेयर करना बंद करें", "sharingScreen" to "स्क्रीन शेयर हो रही है", "stop" to "रोकें", "screenShareFailed" to "स्क्रीन शेयर शुरू नहीं हो सका। फिर से कोशिश करें।", "hold" to "होल्ड पर रखें", "resume" to "फिर से शुरू करें", "addParticipant" to "प्रतिभागी जोड़ें", "dataSaver" to "डेटा सेवर", "dataSaverOn" to "डेटा सेवर: चालू", "weakConnection" to "कमज़ोर कनेक्शन", "peerWeakConnection" to "{name} का कनेक्शन कमज़ोर है", "mute" to "म्यूट", "video" to "वीडियो", "flip" to "पलटें", "speaker" to "स्पीकर", "screen" to "स्क्रीन", "end" to "समाप्त करें", "encrypted" to "एन्क्रिप्टेड", "message" to "मैसेज", "minimize" to "छोटा करें", "audioOutput" to "ऑडियो आउटपुट", "keypad" to "कीपैड", "peerOnHold" to "{name} ने कॉल होल्ड पर रखी", "couldNotCall" to "{name} को कॉल नहीं हो सका", "cancel" to "रद्द करें", "ssPrivacyTitle" to "स्क्रीन शेयर करें?", "ssPrivacyBody" to "आपकी स्क्रीन पर सब कुछ, सूचनाओं सहित, कॉल में शामिल लोगों को दिखाई देगा।", "ssContinue" to "जारी रखें", "ssYouAreSharing" to "आप अपनी स्क्रीन शेयर कर रहे हैं", "ssPeerSharing" to "{name} स्क्रीन शेयर कर रहे हैं", "ssFullScreen" to "फ़ुल स्क्रीन"),
   )
 
+  /** [2026-10-15 cam-1-toque] Câmera negada (toque em "Vídeo"). */
+  private val CAM_DENIED: Map<String, String> = mapOf(
+    "pt-BR" to "Permita a câmera nas Configurações para ligar o vídeo",
+    "pt-PT" to "Permita a câmara nas Definições para ligar o vídeo",
+    "en" to "Allow camera access in Settings to turn on video",
+    "es" to "Permite la cámara en Ajustes para activar el video",
+    "fr" to "Autorisez la caméra dans les Paramètres pour activer la vidéo",
+    "de" to "Erlaube den Kamerazugriff in den Einstellungen, um Video einzuschalten",
+    "it" to "Consenti la fotocamera nelle Impostazioni per attivare il video",
+    "ja" to "ビデオをオンにするには、設定でカメラを許可してください",
+    "ar" to "اسمح بالكاميرا من الإعدادات لتشغيل الفيديو",
+    "id" to "Izinkan kamera di Pengaturan untuk menyalakan video",
+    "hi" to "वीडियो चालू करने के लिए सेटिंग्स में कैमरा की अनुमति दें",
+  )
+
+  /** [2026-10-15 founder] Pedido de vídeo do outro lado (Aceitar/Recusar). */
+  private val VIDEO_REQ: Map<String, Map<String, String>> = mapOf(
+    "pt-BR" to mapOf("videoReqTitle" to "{name} quer mudar para vídeo", "videoReqTitleNoName" to "Mudar para vídeo?", "videoReqAccept" to "Aceitar", "videoReqDecline" to "Recusar"),
+    "pt-PT" to mapOf("videoReqTitle" to "{name} quer mudar para vídeo", "videoReqTitleNoName" to "Mudar para vídeo?", "videoReqAccept" to "Aceitar", "videoReqDecline" to "Recusar"),
+    "en" to mapOf("videoReqTitle" to "{name} wants to switch to video", "videoReqTitleNoName" to "Switch to video?", "videoReqAccept" to "Accept", "videoReqDecline" to "Decline"),
+    "es" to mapOf("videoReqTitle" to "{name} quiere cambiar a video", "videoReqTitleNoName" to "¿Cambiar a video?", "videoReqAccept" to "Aceptar", "videoReqDecline" to "Rechazar"),
+    "fr" to mapOf("videoReqTitle" to "{name} veut passer en vidéo", "videoReqTitleNoName" to "Passer en vidéo ?", "videoReqAccept" to "Accepter", "videoReqDecline" to "Refuser"),
+    "de" to mapOf("videoReqTitle" to "{name} möchte zu Video wechseln", "videoReqTitleNoName" to "Zu Video wechseln?", "videoReqAccept" to "Annehmen", "videoReqDecline" to "Ablehnen"),
+    "it" to mapOf("videoReqTitle" to "{name} vuole passare al video", "videoReqTitleNoName" to "Passare al video?", "videoReqAccept" to "Accetta", "videoReqDecline" to "Rifiuta"),
+    "ja" to mapOf("videoReqTitle" to "{name}さんがビデオに切り替えようとしています", "videoReqTitleNoName" to "ビデオに切り替えますか？", "videoReqAccept" to "承諾", "videoReqDecline" to "拒否"),
+    "ar" to mapOf("videoReqTitle" to "يريد {name} التبديل إلى الفيديو", "videoReqTitleNoName" to "التبديل إلى الفيديو؟", "videoReqAccept" to "قبول", "videoReqDecline" to "رفض"),
+    "id" to mapOf("videoReqTitle" to "{name} ingin beralih ke video", "videoReqTitleNoName" to "Beralih ke video?", "videoReqAccept" to "Terima", "videoReqDecline" to "Tolak"),
+    "hi" to mapOf("videoReqTitle" to "{name} वीडियो पर स्विच करना चाहते हैं", "videoReqTitleNoName" to "वीडियो पर स्विच करें?", "videoReqAccept" to "स्वीकार करें", "videoReqDecline" to "अस्वीकार करें"),
+  )
+
   /** Texto da chave no idioma atual; {name} etc. substituídos por [args]. */
   fun s(key: String, vararg args: Pair<String, String>): String {
     val l = GroupCallStrings.lang()
-    var out = T[l]?.get(key) ?: T["en"]?.get(key) ?: key
+    var out = T[l]?.get(key) ?: T["en"]?.get(key)
+      ?: (if (key == "camDenied") CAM_DENIED[l] ?: CAM_DENIED["en"] else null)
+      ?: VIDEO_REQ[l]?.get(key) ?: VIDEO_REQ["en"]?.get(key) ?: key
     for ((k, v) in args) out = out.replace("{" + k + "}", v)
     return out
   }

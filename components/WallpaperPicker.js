@@ -38,6 +38,12 @@ import {
   IconSparkles, IconCheck,
 } from './Icons';
 import * as api from '../services/api';
+// [2026-10-15 native-wallpaper] temas animados (4 cores) + padrão vetorial +
+// foto c/ desfoque/paralaxe, prévia em tela cheia antes de aplicar, claro/escuro
+// separados. Render nativo: modules/expo-chat-wallpaper (fallback JS idêntico ao antigo).
+import ChatWallpaper from './wallpaper/ChatWallpaper';
+import WallpaperPreview from './wallpaper/WallpaperPreview';
+import { THEMES, buildValue, bubbleFor, specFor, composeValue, isV2 } from './wallpaper/wallpaperSpec';
 let _WpExpoImage = null; // [2026-10-08 chat-open-flicker] see WallpaperBackground
 try { _WpExpoImage = require('expo-image').Image; } catch {}
 
@@ -92,7 +98,7 @@ export function resolveWallpaperUri(v) {
   try { return api.getMediaUrl(v) || v; } catch { return v; }
 }
 function isImageWallpaper(v) {
-  return typeof v === 'string' && !!v && v !== 'none' && !v.startsWith('#') && !isGradientValue(v);
+  return typeof v === 'string' && !!v && v !== 'none' && !v.startsWith('#') && !isGradientValue(v) && !isV2(v);
 }
 
 // ── Reusable gradient fill (SVG) ───────────────────────────────────────────
@@ -118,6 +124,8 @@ function GradientFill({ colors, dir, style, gradKey }) {
 // false applies the subtle chat-background opacity so bubbles stay readable.
 export function WallpaperBackground({ value, isDark, preview = false, style }) {
   const v = value || 'none';
+  // [2026-10-15 native-wallpaper] valor v2 → renderizador novo (nativo/fallback)
+  if (isV2(v)) return <ChatWallpaper value={v} isDark={isDark} preview={preview} style={style} />;
   if (v === 'none') {
     // Web keeps the faint dotted Chatyy pattern; native default = plain.
     if (!preview && Platform.OS === 'web') {
@@ -207,6 +215,34 @@ function PresetTile({ item, size, selected, onPress, isDark, t }) {
   );
 }
 
+// [2026-10-15 native-wallpaper] Miniatura VIVA de tema (gradiente animando,
+// padrão, bolhas de exemplo na cor derivada).
+function ThemeTile({ th, w, selected, onPress, isDark, idx, paused }) {
+  const value = buildValue({ t: th.id });
+  const tint = bubbleFor(value, isDark);
+  return (
+    <PressableScale onPress={onPress} scaleTo={0.94} haptic="select" style={{ width: w, height: Math.round(w * 1.45), marginBottom: 12 }}>
+      <View style={{
+        flex: 1, borderRadius: 16, overflow: 'hidden',
+        borderWidth: selected ? 2.5 : StyleSheet.hairlineWidth,
+        borderColor: selected ? (isDark ? '#fff' : '#111') : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)'),
+        backgroundColor: isDark ? '#000' : '#fff',
+      }}>
+        <ChatWallpaper value={value} isDark={isDark} preview autoplay={paused ? 0 : 2600 + idx * 230} patternScale={0.42} motion={false} />
+        <View style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 8 }]} pointerEvents="none">
+          <View style={{ alignSelf: 'flex-start', width: '62%', height: 12, borderRadius: 6, marginBottom: 5, backgroundColor: isDark ? '#1C1C1E' : '#EEEEF0' }} />
+          <View style={{ alignSelf: 'flex-end', width: '50%', height: 12, borderRadius: 6, backgroundColor: tint ? tint.bg : (isDark ? '#333336' : '#111111') }} />
+        </View>
+        {selected && (
+          <View style={{ position: 'absolute', top: 6, right: 6, width: 22, height: 22, borderRadius: 11, backgroundColor: isDark ? '#fff' : '#111', alignItems: 'center', justifyContent: 'center' }}>
+            <IconCheck size={14} color={isDark ? '#000' : '#fff'} strokeWidth={3} />
+          </View>
+        )}
+      </View>
+    </PressableScale>
+  );
+}
+
 // ── Main picker ─────────────────────────────────────────────────────────────
 export default function WallpaperPicker({
   visible,
@@ -231,12 +267,15 @@ export default function WallpaperPicker({
   const [photoError, setPhotoError] = useState('');
   const scrollRef = React.useRef(null);
   const { width } = useWindowDimensions();
+  // [2026-10-15 native-wallpaper] prévia em tela cheia ({ spec } | null)
+  const [preview, setPreview] = useState(null);
 
   // 4-column grid sizing. Sheet horizontal padding = 20 each side, 12 gaps.
   const GRID_PAD = 20;
   const GRID_GAP = 12;
   const sheetW = Math.min(width, 560);
   const tileW = Math.floor((sheetW - GRID_PAD * 2 - GRID_GAP * 3) / 4);
+  const themeW = Math.floor((sheetW - GRID_PAD * 2 - GRID_GAP * 2) / 3);
 
   // Reset local state each time it opens so the check mark + scope match the
   // caller's current value/entry point.
@@ -249,6 +288,7 @@ export default function WallpaperPicker({
       setAiPrompt('');
       setAiError('');
       setPhotoError('');
+      setPreview(null);
     }
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -256,6 +296,15 @@ export default function WallpaperPicker({
     setSelected(value);
     try { onApply?.(value, scope); } catch {}
   }, [onApply, scope]);
+
+  // Toda escolha passa pela prévia; "Aplicar" compõe o valor (claro/escuro).
+  const openPreview = useCallback((spec) => setPreview({ spec: spec || null }), []);
+  const applyPreview = useCallback((spec, target) => {
+    const value = composeValue(selected, spec, target);
+    setPreview(null);
+    apply(value);
+    try { onClose?.(); } catch {}
+  }, [selected, apply, onClose]);
 
   const presets = useMemo(
     () => [{ id: 'none' }, ...WALLPAPER_GRADIENTS],
@@ -287,10 +336,10 @@ export default function WallpaperPicker({
         if (r?.success !== false && url) finalUri = url;
       } catch {}
     }
-    if (/^https?:\/\//i.test(finalUri)) { apply(finalUri); return true; }
+    if (/^https?:\/\//i.test(finalUri)) { openPreview({ img: finalUri }); return true; }
     setPhotoError(photoFailMsg);
     return false;
-  }, [apply, conversationId, photoFailMsg]);
+  }, [openPreview, conversationId, photoFailMsg]);
 
   const pickPhoto = useCallback(async () => {
     setPhotoError('');
@@ -335,7 +384,7 @@ export default function WallpaperPicker({
       const r = await api.aiGenerateImage(prompt, '1024x1536');
       const url = r?.data?.url || r?.data?.image_url || r?.data?.file_url || r?.data?.image || r?.url;
       if (r?.success && url) {
-        apply(resolveWallpaperUri(url));
+        openPreview({ img: resolveWallpaperUri(url) });
       } else {
         // Mensagem do servidor (ex.: limite por hora, prompt recusado) quando houver.
         const m = typeof r?.message === 'string' && /limite/i.test(r.message) ? r.message : '';
@@ -346,7 +395,7 @@ export default function WallpaperPicker({
     } finally {
       setAiBusy(false);
     }
-  }, [aiPrompt, aiBusy, apply, t]);
+  }, [aiPrompt, aiBusy, openPreview, t]);
 
   const C = colors || {};
   const cardBg = isDark ? 'rgba(255,255,255,0.05)' : '#FFFFFF';
@@ -355,7 +404,10 @@ export default function WallpaperPicker({
   // [2026-10-14 wallpaper] P&B: ícones/botões neutros (era azul/roxo/laranja/verde).
   const ink = C.text || (isDark ? '#fff' : '#111');
   const inkInv = isDark ? '#000' : '#fff';
-  const imgSelected = isImageWallpaper(selected) ? resolveWallpaperUri(selected) : '';
+  // seleção no modo atual do app (valores v2 podem ter claro/escuro separados)
+  const selSpec = specFor(selected, isDark);
+  const imgSelected = selSpec && selSpec.img ? selSpec.img
+    : (selSpec && isImageWallpaper(selSpec.v) ? resolveWallpaperUri(selSpec.v) : '');
 
   const Row = ({ Icon, tint, title, subtitle, onPress, open, trailing }) => (
     <PressableScale onPress={onPress} scaleTo={0.985} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
@@ -389,7 +441,7 @@ export default function WallpaperPicker({
   };
 
   return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={() => (preview ? setPreview(null) : onClose?.())}>
       {/* [2026-10-14 wallpaper-ai] KAV: o teclado cobria o campo e o botão Gerar
           (sheet ancorada embaixo) — no iPhone não dava pra ver/tocar em Gerar. */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
@@ -441,9 +493,9 @@ export default function WallpaperPicker({
               {showColors && (
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, padding: 16, paddingTop: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
                   {WALLPAPER_SOLIDS.map(c => (
-                    <TouchableOpacity key={c} onPress={() => apply(c)} activeOpacity={0.8}
-                      style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c, alignItems: 'center', justifyContent: 'center', borderWidth: selected === c ? 3 : StyleSheet.hairlineWidth, borderColor: selected === c ? ink : 'rgba(128,128,128,0.4)' }}>
-                      {selected === c && <IconCheck size={18} color="#fff" strokeWidth={3} />}
+                    <TouchableOpacity key={c} onPress={() => openPreview({ v: c })} activeOpacity={0.8}
+                      style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: c, alignItems: 'center', justifyContent: 'center', borderWidth: selSpec?.v === c ? 3 : StyleSheet.hairlineWidth, borderColor: selSpec?.v === c ? ink : 'rgba(128,128,128,0.4)' }}>
+                      {selSpec?.v === c && <IconCheck size={18} color="#fff" strokeWidth={3} />}
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -491,6 +543,18 @@ export default function WallpaperPicker({
               )}
             </View>
 
+            {/* [2026-10-15 native-wallpaper] Temas animados (3 col, miniaturas vivas) */}
+            <Text style={{ fontSize: 13, fontWeight: '700', color: subText, marginBottom: 14, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+              {t?.('chatConv.wallpaperThemes') || 'Temas'}
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: GRID_GAP, marginBottom: 12 }}>
+              {THEMES.map((th, idx) => (
+                <ThemeTile key={th.id} th={th} w={themeW} idx={idx} isDark={isDark} paused={!!preview}
+                  selected={selSpec?.t === th.id}
+                  onPress={() => openPreview({ t: th.id, ...(selSpec?.t === th.id ? selSpec : {}) })} />
+              ))}
+            </View>
+
             {/* Preset grid (4-col) */}
             <Text style={{ fontSize: 13, fontWeight: '700', color: subText, marginBottom: 14, letterSpacing: 0.3, textTransform: 'uppercase' }}>
               {t?.('chatConv.wallpaperPresets') || 'Predefinidos'}
@@ -503,8 +567,8 @@ export default function WallpaperPicker({
                     key={item.id}
                     item={item}
                     size={tileW}
-                    selected={selected === value}
-                    onPress={() => apply(value)}
+                    selected={item.id === 'none' ? !selSpec : selSpec?.v === value}
+                    onPress={() => openPreview(item.id === 'none' ? null : { v: value })}
                     isDark={isDark}
                     t={t}
                   />
@@ -522,6 +586,10 @@ export default function WallpaperPicker({
         </View>
       </View>
       </KeyboardAvoidingView>
+      {preview ? (
+        <WallpaperPreview spec={preview.spec} appDark={isDark} t={t}
+          onCancel={() => setPreview(null)} onApply={applyPreview} />
+      ) : null}
     </Modal>
   );
 }

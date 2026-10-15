@@ -162,3 +162,43 @@ export function getNativeContactListView(): any { return _probeNamed(CONTACT_LIS
 export function isContactListAvailable(): boolean { return !!getNativeContactListView(); }
 export function getNativeSettingsListView(): any { return _probeNamed(SETTINGS_LIST_VIEW_NAME); }
 export function isSettingsListAvailable(): boolean { return !!getNativeSettingsListView(); }
+
+// [2026-10-15 native-search-notifs] Lista de RESULTADOS (busca global +
+// central de notificações) — components/native/NativeResultList.js.
+export const RESULT_LIST_VIEW_NAME = 'ChatyyResultList';
+export function getNativeResultListView(): any { return _probeNamed(RESULT_LIST_VIEW_NAME); }
+export function isResultListAvailable(): boolean { return !!getNativeResultListView(); }
+
+// [2026-10-15 native-apps] Carteira, Notas, Calendário e Drive em NATIVO.
+// Um módulo por view; binário sem a view → null e a tela mantém a lista JS.
+//   ChatyyWalletList   — app/wallet.js, app/creator-earnings.js
+//   ChatyyNotesList    — app/notes.js
+//   ChatyyCalendarView — app/calendar.js (mês + agenda do dia)
+//   ChatyyDriveList    — app/drive.js, app/files.js
+export const WALLET_LIST_VIEW_NAME = 'ChatyyWalletList';
+export const NOTES_LIST_VIEW_NAME = 'ChatyyNotesList';
+export const CALENDAR_VIEW_NAME = 'ChatyyCalendarView';
+export const DRIVE_LIST_VIEW_NAME = 'ChatyyDriveList';
+export function getNativeWalletListView(): any { return _probeNamed(WALLET_LIST_VIEW_NAME); }
+export function isWalletListAvailable(): boolean { return !!getNativeWalletListView(); }
+export function getNativeNotesListView(): any { return _probeNamed(NOTES_LIST_VIEW_NAME); }
+export function isNotesListAvailable(): boolean { return !!getNativeNotesListView(); }
+export function getNativeCalendarView(): any { return _probeNamed(CALENDAR_VIEW_NAME); }
+export function isCalendarViewAvailable(): boolean { return !!getNativeCalendarView(); }
+export function getNativeDriveListView(): any { return _probeNamed(DRIVE_LIST_VIEW_NAME); }
+export function isDriveListAvailable(): boolean { return !!getNativeDriveListView(); }
+
+// [2026-10-15 native-social] Abas CANAIS e COMUNIDADES em NATIVO.
+//   ChatyyChannelList      — lista de canais (components/ChannelsTab.js)
+//   ChatyyChannelFeed      — posts de um canal com reações
+//   ChatyyCommunityList    — lista de comunidades (components/CommunitiesTab.js)
+//   ChatyyCommunityDetail  — tela da comunidade: avisos + grupos (app/community/[id].js)
+// Kill switches: globalThis.__chatyy_native_channels / __chatyy_native_communities = false.
+export const CHANNEL_LIST_VIEW_NAME = 'ChatyyChannelList';
+export const CHANNEL_FEED_VIEW_NAME = 'ChatyyChannelFeed';
+export const COMMUNITY_LIST_VIEW_NAME = 'ChatyyCommunityList';
+export const COMMUNITY_DETAIL_VIEW_NAME = 'ChatyyCommunityDetail';
+export function getNativeChannelListView(): any { return _probeNamed(CHANNEL_LIST_VIEW_NAME); }
+export function getNativeChannelFeedView(): any { return _probeNamed(CHANNEL_FEED_VIEW_NAME); }
+export function getNativeCommunityListView(): any { return _probeNamed(COMMUNITY_LIST_VIEW_NAME); }
+export function getNativeCommunityDetailView(): any { return _probeNamed(COMMUNITY_DETAIL_VIEW_NAME); }

@@ -1,5 +1,8 @@
 import ExpoModulesCore
 import UIKit
+#if canImport(ExpoChatStore)
+import ExpoChatStore
+#endif
 
 /// UICollectionView que avisa quando faz layout (reposiciona header/rodapé RN).
 final class CLCollectionView: UICollectionView {
@@ -84,6 +87,23 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   private weak var peekController: CLPeekController?
   private var lastPeek: [String: Any]?
 
+  // [2026-10-15 native-store fase 1.5] Foto da HOME no store nativo. Prop
+  // `store` {a: conta, r: rev do formato, n: assinatura da 1ª linha do JS, s:
+  // escopo}: no cold start, se o JS ainda não mandou linhas (adiou o buildRow
+  // p/ depois do 1º frame), a lista pinta a foto direto do store. O 1º reset do
+  // JS substitui tudo. Depois de cada patch do JS as 60 primeiras linhas são
+  // regravadas (debounce) sem cruzar a ponte.
+  private var storeA = "", storeR = "", storeN = "", storeS = "main"
+  private var storeLoadStarted = false
+  private var storeLoading = false
+  private var photoActive = false
+  private var jsHasRows = false
+  private var rawRows: [String: [String: Any]] = [:]
+  private var persistWork: DispatchWorkItem?
+  private var jsVersion = 0
+  private var persistedVersion = 0
+  static let homeWindow = 60
+
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     clipsToBounds = true
@@ -157,13 +177,17 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       if pseq == seq && appliedOnce { return }
       var next: [String: CLRow] = [:]
       var ids: [String] = []
+      let track = true // [native-store] a prop store pode chegar depois do 1º reset
+      if track { rawRows.removeAll(keepingCapacity: true) }
       for item in reset {
         guard let d = item as? [String: Any] else { continue }
         let r = CLRow(d)
         if r.id.isEmpty { continue }
         if next[r.id] == nil { ids.append(r.id) }
         next[r.id] = r
+        if track { rawRows[r.id] = d }
       }
+      noteJSPatch()
       rows = next
       order = ids
       if let ord = p["order"] as? [Any] {
@@ -185,13 +209,15 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       return
     }
     if let rm = p["remove"] as? [Any] {
-      for x in rm { rows.removeValue(forKey: CLVal.str(x)) }
+      for x in rm { rows.removeValue(forKey: CLVal.str(x)); rawRows.removeValue(forKey: CLVal.str(x)) }
     }
+    noteJSPatch()
     if let ups = p["upsert"] as? [Any] {
       for item in ups {
         guard let d = item as? [String: Any] else { continue }
         let r = CLRow(d)
         if r.id.isEmpty { continue }
+        rawRows[r.id] = d
         if rows[r.id] == nil && p["order"] == nil { order.append(r.id) }
         rows[r.id] = r
         pendingDirty.insert(r.id)
@@ -251,6 +277,9 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   }
 
   func commitProps() {
+    // [native-store] foto da home ainda lendo e o JS sem linhas: não aplica
+    // um snapshot vazio (evita onFirstPaint com 0 e um frame em branco).
+    if storeLoading && rows.isEmpty { return }
     var reconfigureAll = false
     if themeDirty || selectionDirty {
       backgroundColor = theme.bg
@@ -267,6 +296,87 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     }
     applySnapshot(reconfigureAll: reconfigureAll)
     refreshInsets()
+  }
+
+  // MARK: - [native-store fase 1.5] foto da home
+
+  func setStore(_ v: [String: Any]?) {
+    #if canImport(ExpoChatStore)
+    guard let v = v else { storeA = ""; persistWork?.cancel(); persistWork = nil; return }
+    let a = CLVal.str(v["a"]), r = CLVal.str(v["r"])
+    if a.isEmpty || r.isEmpty { storeA = ""; return }
+    if !storeA.isEmpty && storeA != a { persistWork?.cancel(); persistWork = nil; persistedVersion = jsVersion }
+    storeA = a; storeR = r; storeN = CLVal.str(v["n"])
+    let sc = CLVal.str(v["s"]); storeS = sc.isEmpty ? "main" : sc
+    if jsHasRows || storeLoadStarted { return }
+    storeLoadStarted = true
+    storeLoading = true
+    let scope = storeS
+    ChatyyStoreDB.shared.loadHome(account: a, scope: scope, rev: r) { [weak self] snap, _ in
+      guard let self = self else { return }
+      self.storeLoading = false
+      if let snap = snap, !self.jsHasRows, self.storeA == a {
+        var next: [String: CLRow] = [:]
+        var ids: [String] = []
+        for d in snap.rows {
+          let row = CLRow(d)
+          if row.id.isEmpty || next[row.id] != nil { continue }
+          next[row.id] = row; ids.append(row.id)
+        }
+        if !ids.isEmpty {
+          self.rows = next
+          self.order = ids
+          self.photoActive = true
+          self.pendingReset = true
+          self.needsApply = true
+        }
+      }
+      self.commitProps()
+    }
+    #endif
+  }
+
+  private func noteJSPatch() {
+    jsHasRows = true
+    photoActive = false
+    storeLoading = false
+    jsVersion += 1
+    schedulePersist()
+  }
+
+  private func schedulePersist() {
+    if storeA.isEmpty { return }
+    persistWork?.cancel()
+    let w = DispatchWorkItem { [weak self] in self?.persistNow() }
+    persistWork = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: w)
+  }
+
+  /// Regrava as primeiras linhas como o JS mandou, sem estado transitório
+  /// (digitando, seleção, online).
+  private func persistNow() {
+    persistWork?.cancel(); persistWork = nil
+    #if canImport(ExpoChatStore)
+    if storeA.isEmpty || !jsHasRows || selectionMode || persistedVersion == jsVersion { return }
+    persistedVersion = jsVersion
+    var ids: [String] = []
+    var out: [[String: Any]] = []
+    for id in order {
+      if ids.count >= Self.homeWindow { break }
+      guard var d = rawRows[id] else { continue }
+      d["typing"] = ""
+      d["selected"] = false
+      d["online"] = false
+      d["activity"] = ""
+      ids.append(id); out.append(d)
+    }
+    ChatyyStoreDB.shared.saveHome(account: storeA, scope: storeS, rev: storeR, top: storeN, ids: ids, rows: out)
+    #endif
+  }
+
+  public override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { persistNow() }
   }
 
   // MARK: - Snapshot
@@ -407,7 +517,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   }
 
   private func swipeConfiguration(_ indexPath: IndexPath, leading: Bool) -> UISwipeActionsConfiguration? {
-    guard swipeEnabled, !selectionMode,
+    guard swipeEnabled, !selectionMode, !photoActive,
           let id = dataSource.itemIdentifier(for: indexPath),
           let row = rows[id] else { return nil }
     var actions: [UIContextualAction] = []
@@ -461,7 +571,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   }
 
   public func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
-    guard menuEnabled, !selectionMode,
+    guard menuEnabled, !selectionMode, !photoActive,
           let id = dataSource.itemIdentifier(for: indexPath),
           let row = rows[id] else { return nil }
     onPeekRequest(["id": id])

@@ -150,7 +150,7 @@ export function openTextStatusLink(url) {
   if (!url || !/^https?:\/\//i.test(url)) return;
   try {
     if (Platform.OS === 'web' && typeof window !== 'undefined') { window.open(url, '_blank', 'noopener,noreferrer'); return; }
-    Linking.openURL(url).catch(() => {});
+    require('../../services/openLink').openLink(url); // [2026-10-15 native-browser]
   } catch {}
 }
 

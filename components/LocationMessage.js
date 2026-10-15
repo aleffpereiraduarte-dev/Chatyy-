@@ -93,8 +93,13 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     const lat = location.latitude;
     const lng = location.longitude;
     if (lat == null || lng == null) return;
-    const url = `https://maps.google.com/?q=${lat},${lng}`;
-    Linking.openURL(url).catch(() => {});
+    // [2026-10-15 native-location] Com onOpenMap → só o visualizador nativo do app
+    // (antes abria o Google Maps E o visualizador). Sem ele → Apple Maps / geo:.
+    if (typeof onOpenMap === 'function' && globalThis.__chatyy_native_location !== false) {
+      onOpenMap({ lat, lng, label: location.address || (t?.('chatConv.location') || 'Localização'), isLive: location.is_live || false });
+      return;
+    }
+    try { require('../services/openLink').openInMaps(lat, lng, location.address || ''); } catch {}
     if (typeof onOpenMap === 'function') {
       onOpenMap({ lat, lng, label: location.address || (t?.('chatConv.location') || 'Localização'), isLive: location.is_live || false });
     }

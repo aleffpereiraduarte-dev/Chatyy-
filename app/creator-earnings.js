@@ -18,7 +18,7 @@
 // wallet_cashout_request) → botão desabilitado com o motivo, sem cair no
 // redirect para /chat.
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl } from 'react-native';
 import { useRouter, Redirect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,6 +40,9 @@ import {
 } from '../components/ui';
 import { HeroCard, HeroButton, HERO, AnimatedNumber, ProgressBar, TABULAR, approxActive, NOFLEX } from '../components/wallet/WalletKit';
 import { formatInt } from '../utils/dateFormat';
+// [2026-10-15 native-wallet] Herói + "Presentes recebidos" em NATIVO (kill switch __chatyy_native_wallet).
+import NativeWalletList, { useNativeWallet, walletColors } from '../components/native/NativeWalletList';
+import { contactTile } from '../components/contacts/contactListAdapter';
 const EARN_KEY = ['wallet', 'earnings'];
 
 // Espelha chat.php wallet_cashout_request (amount_cents < 5000 → min_cashout).
@@ -115,6 +118,7 @@ function CreatorEarnings() {
     payout_per_diamond_millicents: 0, account_min_age_days: 0, daily_limit_cents: 0,
   });
   const [cashouts, setCashouts] = useState(() => (_seed && Array.isArray(_seed.cashouts) ? _seed.cashouts : null)); // null = desconhecido
+  const [nativeOn, onNativeFail] = useNativeWallet();
 
   const load = useCallback(async () => {
     const [sum, list] = await Promise.allSettled([
@@ -195,9 +199,7 @@ function CreatorEarnings() {
       .replace('{amount}', money(last.amount_cents)).replace('{status}', stLabel);
   })();
 
-  const body = (
-    <>
-      {/* ── Saldo disponível + Sacar (herói grafite, igual à Carteira) ── */}
+  const heroCard = (
       <FadeSlideIn style={NOFLEX}>
         <HeroCard isDark={isDark} glow={false}>
           <Text style={[styles.heroCaps, { color: HERO.sub }]}>{tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}</Text>
@@ -243,7 +245,11 @@ function CreatorEarnings() {
           ) : null}
         </HeroCard>
       </FadeSlideIn>
+  );
 
+  // Blocos JS entre o herói e "Presentes recebidos" (no nativo = filho RN).
+  const midBlocks = (
+    <>
       {/* ── Métricas ────────────────────────────────────────── */}
       <View style={styles.grid}>
         <MetricTile s={s} label={tr(t, 'creatorEarnings.stat.lifetime', 'Total ganho')} value={money(data.lifetime_payout_cents)} />
@@ -300,6 +306,14 @@ function CreatorEarnings() {
 
       {/* ── Presentes recebidos ─────────────────────────────── */}
       <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'creatorEarnings.timeline', 'Presentes recebidos')} />
+    </>
+  );
+
+  const body = (
+    <>
+      {/* ── Saldo disponível + Sacar (herói grafite, igual à Carteira) ── */}
+      {heroCard}
+      {midBlocks}
       <Card padding={0}>
         {data.timeline.length > 0 ? data.timeline.map((item, idx) => {
           const when = fmtDate(item.created_at_ts);
@@ -348,6 +362,67 @@ function CreatorEarnings() {
     </>
   );
 
+  // ── [2026-10-15 native-wallet] Herói + linhas da lista nativa ──
+  const nativeHero = useMemo(() => {
+    if (!nativeOn) return null;
+    const caps = tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque');
+    const withdraw = tr(t, 'creatorDash.withdraw', 'Sacar');
+    return {
+      caps, value: pending, fmt: 'brl', text: money(pending), loc: 'pt-BR', numSize: 42, glow: false,
+      sub: approxActive(pending) || '',
+      stats: [
+        { l: tr(t, 'walletV3.onHold', 'Em liberação'), v: money(data.on_hold_cents), s: tr(t, 'walletV3.holdDays', 'retido {days} dias').replace('{days}', String(data.hold_days || 7)) },
+        { l: tr(t, 'walletV3.minCashout', 'Saque mínimo'), v: money(min), s: tr(t, 'walletV3.viaPix', 'via Pix') },
+      ],
+      prog: progress,
+      progText: reachedMin
+        ? tr(t, 'creatorEarnings.pixEta', 'Via Pix, em até 48h úteis.')
+        : tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}').replace('{missing}', money(min - pending)).replace('{min}', money(min)),
+      buttons: [{
+        id: 'cashout', label: withdraw, primary: true, disabled: !canCashout,
+        a11y: !canCashout ? `${withdraw}. ${blockReason || tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}` : '',
+      }],
+      foot: blockReason || '',
+      a11y: `${caps}: ${money(pending)}`,
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOn, t, pending, data, min, progress, reachedMin, canCashout, blockReason]);
+
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const out = [];
+    data.timeline.forEach((item, idx) => {
+      const when = fmtDate(item.created_at_ts);
+      const isMoney = item.payout_cents != null || item.kind === 'tip_recv' || item.kind === 'live_gift_recv';
+      const earned = item.payout_cents != null ? item.payout_cents : item.amount;
+      const name = item.counterparty_name || handleOf(item.counterparty) || tr(t, 'creatorEarnings.someone', 'Alguém');
+      const sub = `${sourceLabel(t, item.ref_kind)}${item.diamonds ? ' · ' + formatInt(item.diamonds, language) + ' ' + tr(t, 'wallet.diamondsLabel', 'diamantes') : ''}${when ? ' · ' + when : ''}`;
+      const am = `+${isMoney ? money(earned) : formatInt(item.amount || 0, language)}`;
+      out.push({
+        id: 'tl' + String(item.id ?? idx), k: 'x', sid: 'timeline', gl: 'gift', t: name, sb: sub, am, ag: 'gift',
+        tiles: [contactTile(item.counterparty, name)].filter(Boolean), tap: 0, a11y: `${name}. ${am}. ${sub}`,
+      });
+    });
+    if (!data.timeline.length) {
+      out.push({
+        id: 'tl-empty', k: 'e', gl: 'gift',
+        t: tr(t, 'creatorEarnings.emptyTimelineTitle', 'Nenhum presente ainda'),
+        sb: tr(t, 'creatorEarnings.emptyTimelineShort', 'Presentes de lives, reels e posts aparecem aqui.'),
+      });
+    }
+    if (failed) out.push({ id: 'failed', k: 'n', cr: 1, t: tr(t, 'creatorDash.loadError', 'Não foi possível atualizar. Puxe para tentar de novo.') });
+    out.push({
+      id: 'tos', k: 'n',
+      t: perDiamond > 0
+        ? tr(t, 'earn.tosPerDiamond', 'Cada diamante recebido vale {value} para você. Presentes ficam {days} dias em liberação (prazo de reembolso das lojas) antes de entrar no saldo de saque. Saques via Pix passam por análise manual.')
+          .replace('{value}', formatMoney(perDiamond, 'BRL', 'pt-BR')).replace('{days}', String(data.hold_days || 7))
+        : tr(t, 'creatorEarnings.tos', 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.'),
+    });
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOn, data, failed, perDiamond, t, language]);
+  const nativeColors = useMemo(() => walletColors(s, isDark), [s, isDark]);
+
   return (
     <View style={{ flex: 1, backgroundColor: s.bgGrouped }}>
       {USE_NATIVE_HEADER ? (
@@ -357,6 +432,22 @@ function CreatorEarnings() {
       )}
       {loading ? (
         <EarningsSkeleton />
+      ) : nativeOn ? (
+        <NativeWalletList
+          hero={nativeHero}
+          rows={nativeRows}
+          header={<View style={{ gap: Space.md, paddingBottom: Space.md }}>{midBlocks}</View>}
+          colors={nativeColors}
+          isDark={isDark}
+          maxWidth={Layout.contentMaxWidth}
+          bottomInset={Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl)}
+          heroTop={Layout.gutter}
+          heroGap={Space.md}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onHeroAction={(id) => { if (id === 'cashout' && canCashout) go('/wallet-cashout')(); }}
+          onFailure={onNativeFail}
+        />
       ) : (
         <ScrollView
           contentContainerStyle={[styles.scrollBody, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}

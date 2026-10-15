@@ -1075,7 +1075,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const _useNativeStatus = Platform.OS !== 'web' && !_nativeStatusFailed
     && globalThis.__chatyy_native_status_list !== false && _nativeStatusAvailable();
   const _onNativeStatusFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_status_list_failed = true; console.warn('[native-status] fallback JS:', msg); } catch {}
+    try { globalThis.__chatyy_native_status_list_failed = true; console.warn('[native-status] fallback JS:', msg); try { require('../services/crashReporter').reportNativeFallback('native_status', msg); } catch {} } catch {}
     _setNativeStatusFailed(true);
   }, []);
   const _nsTimeAgo = useCallback((ts) => timeAgo(ts, t), [t]);

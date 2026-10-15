@@ -21,16 +21,47 @@ class ChatyyAttachModule : Module() {
 
   private var sheet: AttachSheetDialog? = null
   private var camera: ChatCameraDialog? = null
+  private var vnote: VideoNoteDialog? = null
 
   override fun definition() = ModuleDefinition {
     Name("ChatyyAttach")
 
-    Function("apiVersion") { 1 }
+    // 3 = câmera com statusModes (Texto · Normal · Boomerang) [2026-10-15 native-status-studio]
+    Function("apiVersion") { 3 }
 
     Function("isCameraSupported") {
       val ctx = appContext.reactContext ?: return@Function false
       ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
     }
+
+    // [2026-10-15 native-vnote] Gravador de vídeo-recado redondo.
+    Function("isVideoNoteSupported") {
+      val ctx = appContext.reactContext ?: return@Function false
+      ctx.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY)
+    }
+
+    AsyncFunction("openVideoNote") { options: Map<String, Any?>, promise: Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null || activity.isFinishing) { promise.resolve(null); return@AsyncFunction }
+      vnote?.let { old -> vnote = null; try { old.finishSilently() } catch (_: Throwable) {} }
+      val cfg = VNConfig(options)
+      var done = false
+      var dlg: VideoNoteDialog? = null
+      dlg = VideoNoteDialog(activity, cfg, { perms, cb -> ask(perms, cb) }) { result ->
+        if (done) return@VideoNoteDialog
+        done = true
+        if (vnote === dlg) vnote = null
+        promise.resolve(result)
+      }
+      vnote = dlg
+      try {
+        dlg.show()
+      } catch (t: Throwable) {
+        Log.w(TAG, "video note show failed: ${t.message}")
+        vnote = null
+        if (!done) { done = true; promise.resolve(null) }
+      }
+    }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("prewarmCamera") {
       val ctx = appContext.reactContext ?: return@AsyncFunction false
@@ -93,6 +124,7 @@ class ChatyyAttachModule : Module() {
       var any = false
       sheet?.let { any = true; it.finish(mapOf("action" to "cancel")) }
       camera?.let { any = true; it.finish(mapOf("action" to "cancel")) }
+      vnote?.let { any = true; it.finish(mapOf("action" to "cancel")) }
       any
     }.runOnQueue(Queues.MAIN)
   }

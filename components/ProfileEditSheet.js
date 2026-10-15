@@ -9,8 +9,9 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, KeyboardAvoidingView,
-  Alert, Animated, Easing, Linking,
+  Alert, Animated, Easing, Linking, BackHandler,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 
 // Request media-library permission with a clear, actionable prompt.
@@ -205,7 +206,14 @@ function UsernameIndicator({ status, colors }) {
 
 export default function ProfileEditSheet({
   visible, onClose, initial, onSaved, colors, isDark, t, currentEmail,
+  // [2026-10-15 edit-profile-x] asScreen: hospedado como ROTA (/edit-profile,
+  // apresentada como modal nativo pelo Stack). Sem <Modal> RN por cima de uma
+  // rota vazia — antes o X baixava o Modal, revelava a rota em branco e só
+  // então dava router.back() = "página branca e depois fecha". Agora o
+  // conteúdo É a tela e o X chama onClose → router.back() (animação nativa).
+  asScreen = false,
 }) {
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   // Live availability check — debounced 400ms while user types.
@@ -518,25 +526,53 @@ export default function ProfileEditSheet({
   const dirty = isDirty();
   const headerCanSave = dirty && !saving;
 
+  // Modo rota: botão voltar do Android passa pelo mesmo "Descartar alterações?".
+  const _requestCloseRef = useRef(requestClose);
+  _requestCloseRef.current = requestClose;
+  useEffect(() => {
+    if (!asScreen || Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      try { _requestCloseRef.current?.(); } catch {}
+      return true;
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [asScreen]);
+
+  const _screenBg = colors?.background || (isDark ? '#000' : '#fff');
+  const Wrap = asScreen ? View : Modal;
+  const wrapProps = asScreen
+    ? { style: { flex: 1, backgroundColor: _screenBg } }
+    : { visible: !!visible, transparent: true, animationType: 'slide', onRequestClose: requestClose };
+  const Backdrop = asScreen ? View : Pressable;
+  const backdropProps = asScreen
+    ? { style: { flex: 1, paddingTop: insets?.top || 0, backgroundColor: _screenBg } }
+    : { style: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, onPress: requestClose };
+  const Sheet = asScreen ? View : Pressable;
+  const sheetProps = asScreen
+    ? { style: { flex: 1, backgroundColor: _screenBg, paddingBottom: insets?.bottom || 0 } }
+    : {
+        style: {
+          backgroundColor: colors?.background || '#fff',
+          borderTopLeftRadius: 20, borderTopRightRadius: 20,
+          maxHeight: '92%',
+        },
+        onPress: e => e.stopPropagation?.(),
+      };
+
   return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={requestClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={requestClose}>
+    <Wrap {...wrapProps}>
+      <Backdrop {...backdropProps}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1, justifyContent: 'flex-end' }}
+          style={asScreen ? { flex: 1 } : { flex: 1, justifyContent: 'flex-end' }}
         >
-          <Pressable
-            style={{
-              backgroundColor: colors?.background || '#fff',
-              borderTopLeftRadius: 20, borderTopRightRadius: 20,
-              maxHeight: '92%',
-            }}
-            onPress={e => e.stopPropagation?.()}
-          >
-            {/* Drag handle */}
-            <View style={{ alignItems: 'center', paddingTop: 10 }}>
-              <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-            </View>
+          <Sheet {...sheetProps}>
+            {/* Drag handle (só no modo folha) */}
+            {!asScreen && (
+              <View style={{ alignItems: 'center', paddingTop: 10 }}>
+                <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+              </View>
+            )}
 
             {/* Header — Instagram pattern: X icon left, title center, "Concluído"
                 pill right. Pill goes filled-purple when dirty, ghost-grey when
@@ -1041,7 +1077,7 @@ export default function ProfileEditSheet({
 
               <View style={{ height: Platform.OS === 'ios' ? 40 : 20 }} />
             </ScrollView>
-          </Pressable>
+          </Sheet>
         </KeyboardAvoidingView>
 
         {/* Avatar preview modal — shown after the user picks an image and
@@ -1122,7 +1158,7 @@ export default function ProfileEditSheet({
             </Pressable>
           </Pressable>
         </Modal>
-      </Pressable>
-    </Modal>
+      </Backdrop>
+    </Wrap>
   );
 }

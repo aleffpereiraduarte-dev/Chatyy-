@@ -17,6 +17,10 @@ import { haptic } from '../constants/theme';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
+// [2026-10-15 native-social] Lista nativa (UICollectionView / RecyclerView);
+// binário antigo / web / kill switch / erro → FlatList JS abaixo, idêntico.
+import NativeCommunityList from './communities/NativeCommunityList';
+import { nativeCommunitiesEnabled, markNativeCommunitiesFailed } from './communities/communityRows';
 
 const ACCENT = '#111111';
 
@@ -339,6 +343,25 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
 
   const openCreate = useCallback(() => { setShowCreate(true); setCreateName(''); setCreateDesc(''); }, []);
 
+  // [2026-10-15 native-social] Lista nativa: mesmas ações do renderCommunity.
+  const [nativeFailed, setNativeFailed] = useState(false);
+  const useNativeList = !nativeFailed && nativeCommunitiesEnabled('list');
+  const onNativeFailure = useCallback((msg) => { markNativeCommunitiesFailed(msg); setNativeFailed(true); }, []);
+  const openGroupNative = useCallback((g) => {
+    require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: g.conversation_id, name: g.name || '', type: 'group' } });
+  }, []);
+  const confirmRemoveGroupNative = useCallback((g, item) => {
+    Alert.alert(
+      t('community.removeGroup') || 'Remover grupo',
+      (t('community.removeGroupConfirm') || 'Remover "{name}" desta comunidade?').replace('{name}', g.name),
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t('common.remove') || 'Remover', style: 'destructive', onPress: () => handleRemoveGroup(item.id, g.conversation_id) },
+      ]
+    );
+  }, [t, handleRemoveGroup]);
+  const openAnnounceNative = useCallback((item) => { setAnnounceCommunity(item); setAnnounceText(''); }, []);
+
   if (loading) {
     return (
       <View style={[styles.center, { flex: 1, backgroundColor: colors.background }]}>
@@ -349,6 +372,44 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {useNativeList ? (
+        <NativeCommunityList
+          communities={communities}
+          expandedId={expandedId}
+          expandedData={expandedData}
+          loadingInfo={loadingInfo}
+          t={t}
+          colors={colors}
+          isDark={isDark}
+          refreshing={refreshing}
+          bottomInset={80}
+          onRefresh={onRefresh}
+          onToggle={toggleExpand}
+          onOpenGroup={openGroupNative}
+          onRemoveGroup={confirmRemoveGroupNative}
+          onAddGroup={openAddGroup}
+          onAnnounce={openAnnounceNative}
+          onFailure={onNativeFailure}
+          // Altura fixa: o estado vazio usa flex:1 e o slot do rodapé não tem altura própria.
+          footer={communities.length === 0 ? (<View style={{ height: 520 }}>{
+            failed ? (
+              <ScreenEmptyState
+                kind="search"
+                title={t('common.error') || 'Erro'}
+                subtitle={t('common.tryAgain') || 'Tentar novamente'}
+                cta={{ label: t('common.retry') || 'Tentar novamente', onPress: () => { setLoading(true); loadCommunities(); } }}
+              />
+            ) : (
+              <ScreenEmptyState
+                kind="contacts"
+                title={t('community.noCommunities') || 'No communities'}
+                subtitle={t('community.createFirst') || 'Create a community to organize your groups'}
+                cta={{ label: t('community.create') || 'Create community', onPress: openCreate }}
+              />
+            )
+          }</View>) : null}
+        />
+      ) : (
       <FlatList
         data={communities}
         keyExtractor={item => String(item.id)}
@@ -374,6 +435,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
           />
         )}
       />
+      )}
 
       {/* FAB — Telegram-grade glass orb.
           [2026-10-14] Só com comunidades na lista: vazio já tem o botão "Criar comunidade"

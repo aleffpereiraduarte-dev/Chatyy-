@@ -112,7 +112,7 @@ export default function EmailList({
   const _useNativeInbox = Platform.OS !== 'web' && !_nativeInboxFailed && !searchQuery
     && globalThis.__chatyy_native_inbox !== false && _nativeInboxAvailable();
   const _onNativeInboxFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_inbox_failed = true; console.warn('[native-inbox] fallback FlashList:', msg); } catch {}
+    try { globalThis.__chatyy_native_inbox_failed = true; console.warn('[native-inbox] fallback FlashList:', msg); try { require('../services/crashReporter').reportNativeFallback('native_inbox', msg); } catch {} } catch {}
     _setNativeInboxFailed(true);
   }, []);
   const dragRef = useRef({ active: false });

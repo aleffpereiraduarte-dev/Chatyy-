@@ -36,8 +36,10 @@ import { useWallet, refreshWallet, isMinorAccount, MIN_CASHOUT_CENTS, getCachedG
 import useDiamondStore from '../components/diamonds/useDiamondStore';
 import {
   tr, moneyBRL, approxActive, TABULAR, HERO, HeroCard, HeroButton, AnimatedNumber, DiamondMark,
-  ProgressBar, TxGlyph, FilterChips, PackCard, NOFLEX,
+  ProgressBar, TxGlyph, FilterChips, PackCard, NOFLEX, txCategory,
 } from '../components/wallet/WalletKit';
+// [2026-10-15 native-wallet] Herói + histórico em NATIVO (kill switch __chatyy_native_wallet).
+import NativeWalletList, { useNativeWallet, walletColors } from '../components/native/NativeWalletList';
 
 let Clipboard = null;
 try { Clipboard = require('expo-clipboard'); } catch {}
@@ -364,6 +366,7 @@ function WalletScreen() {
   const [filter, setFilter] = useState('all');
   const [detail, setDetail] = useState(null);
   const busyRef = useRef(false);
+  const [nativeOn, onNativeFail] = useNativeWallet();
 
   const load = useCallback(async () => {
     const v = await fetchWalletScreen();
@@ -445,9 +448,7 @@ function WalletScreen() {
   const refPrice = typeof wallet.diamonds === 'number' && wallet.diamonds > 0 ? store.refValue(wallet.diamonds) : '';
   const refAmount = refPrice ? tr(t, 'walletV3.refValue', '≈ {amount} em valor de compra').replace('{amount}', refPrice) : '';
 
-  const header = (
-    <View style={{ gap: Space.lg }}>
-      {/* ── Cartão-herói ─────────────────────────────────────── */}
+  const heroCard = (
       <FadeSlideIn style={NOFLEX}>
         <HeroCard isDark={isDark}>
           <View style={styles.heroTop}>
@@ -491,7 +492,11 @@ function WalletScreen() {
           )}
         </HeroCard>
       </FadeSlideIn>
+  );
 
+  // Blocos abaixo do herói (no nativo viram o filho RN, logo abaixo do herói nativo).
+  const restBlocks = (
+    <>
       {/* ── Ganhos (criador) ─────────────────────────────────── */}
       {isCreator ? (
         <FadeSlideIn delay={60} style={NOFLEX}>
@@ -569,6 +574,14 @@ function WalletScreen() {
           <FilterChips options={filters} value={filter} onChange={setFilter} s={s} inset={Layout.gutter} fadeColor={s.bgGrouped} />
         </View>
       </View>
+    </>
+  );
+
+  const header = (
+    <View style={{ gap: Space.lg }}>
+      {/* ── Cartão-herói ─────────────────────────────────────── */}
+      {heroCard}
+      {restBlocks}
     </View>
   );
 
@@ -578,6 +591,82 @@ function WalletScreen() {
     }
     return <TxRow item={r.item} s={s} t={t} language={language} first={r.first} last={r.last} onPress={() => setDetail(r.item)} />;
   }, [s, t, language]);
+
+  // ── [2026-10-15 native-wallet] Modelo do herói + linhas da lista nativa ──
+  const nativeHero = useMemo(() => {
+    if (!nativeOn) return null;
+    const bal = typeof wallet.diamonds === 'number' ? wallet.diamonds : null;
+    const caps = tr(t, 'wallet.diamondBalance', 'Saldo de diamantes');
+    const buttons = [{ id: 'buy', label: tr(t, 'wallet.topup', 'Comprar diamantes'), primary: true, disabled: !canPurchase }];
+    if (isCreator) buttons.push({ id: 'cashout', label: tr(t, 'creatorDash.withdraw', 'Sacar') });
+    else buttons.push({ id: 'gift', label: tr(t, 'walletV3.sendGift', 'Enviar presente') });
+    return {
+      caps, brand: 'CHATYY', value: bal, fmt: 'int', loc: language || '',
+      text: bal == null ? '—' : formatInt(bal, language), dia: true, danger: !!negative, numSize: 46,
+      sub: refAmount || '',
+      note: negative ? tr(t, 'gifts.negativeBalance', 'Seu saldo está negativo por causa de um reembolso. Recarregue para voltar a enviar.') : '',
+      notice: minor ? tr(t, 'diamondShop.minorBlocked', 'Compras não estão disponíveis para contas supervisionadas.')
+        : off ? tr(t, 'diamondShop.purchasesOff', 'Compras de diamantes indisponíveis no momento.') : '',
+      buttons, glow: true,
+      a11y: `${caps}: ${bal == null ? '—' : formatInt(bal, language)}`,
+    };
+  }, [nativeOn, wallet.diamonds, t, language, canPurchase, isCreator, negative, refAmount, minor, off]);
+
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const out = [];
+    let sid = '';
+    for (const r of rows) {
+      if (r.type === 'day') { sid = r.key; out.push({ id: r.key, k: 'd', t: r.label }); continue; }
+      const it = r.item;
+      const d = describe(it, t);
+      const ts = Number(it.created_at_ts) || 0;
+      const sub = [d.who && '@' + d.who, d.source, d.isConvert ? tr(t, 'wallet.earningsConversionSub', 'Saldo antigo convertido em reais') : '', ts ? timeLabel(ts, language) : '']
+        .filter(Boolean).join(' · ');
+      const sign = d.credit ? '+' : '−';
+      const mainIsMoney = d.diamonds == null && d.payout != null;
+      const a11y = `${d.title}. ${d.diamonds != null ? sign + formatInt(Math.abs(d.diamonds), language) + ' ' + tr(t, 'wallet.diamondsLabel', 'diamantes') : ''} ${d.payout != null ? sign + moneyBRL(d.payout) : ''}. ${sub}`;
+      out.push({
+        id: 'tx' + String(it.id ?? out.length), k: 'x', sid, gl: txCategory(d.kind), t: d.title, sb: sub,
+        am: mainIsMoney ? `${sign}${moneyBRL(d.payout)}` : `${sign}${formatInt(Math.abs(d.diamonds || 0), language)}`,
+        cr: d.credit ? 1 : 0, dm: mainIsMoney ? 0 : 1,
+        a2: !mainIsMoney && d.payout != null ? `+${moneyBRL(d.payout)}` : '',
+        a11y,
+      });
+    }
+    if (!filtered.length && !more && !loadingMore) {
+      const msg = {
+        all: ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'],
+        purchases: ['walletV3.emptyPurchasesSub', 'Suas compras de diamantes aparecem aqui.'],
+        gifts: ['walletV3.emptyGiftsSub', 'Mande um presente numa live, reel, post ou conversa.'],
+        earnings: ['walletV3.emptyEarningsSub', 'Presentes que você receber aparecem aqui.'],
+        cashouts: ['walletV3.emptyCashoutsSub', 'Seus saques via Pix aparecem aqui.'],
+      }[filter] || ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'];
+      const btn = canPurchase && (filter === 'all' || filter === 'purchases');
+      out.push({
+        id: 'empty:' + filter, k: 'e', gl: 'receipt',
+        t: tr(t, 'wallet.historyEmptyTitle', 'Nenhuma transação ainda'), sb: tr(t, msg[0], msg[1]),
+        b: btn ? tr(t, 'wallet.topup', 'Comprar diamantes') : '', ba: btn ? 'buy' : '',
+      });
+    }
+    if (loadingMore) out.push({ id: 'loading', k: 'l' });
+    else if (!more && filtered.length > 8) out.push({ id: 'end', k: 'n', t: tr(t, 'walletV3.endOfList', 'Isso é tudo por aqui') });
+    return out;
+  }, [nativeOn, rows, filtered.length, more, loadingMore, filter, canPurchase, t, language]);
+
+  const txById = useMemo(() => {
+    const m = new Map();
+    for (const it of items) m.set('tx' + String(it.id), it);
+    return m;
+  }, [items]);
+
+  const onNativeHero = useCallback((id) => {
+    if (id === 'buy') { if (canPurchase) openTopup(); }
+    else if (id === 'cashout') goCashout();
+    else if (id === 'gift') setGiftOpen(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canPurchase, openTopup, reachedMin, wallet.cashoutEnabled]);
+  const nativeColors = useMemo(() => walletColors(s, isDark), [s, isDark]);
 
   const footer = loadingMore ? (
     <View style={styles.more}><ActivityIndicator color={s.textSecondary} /></View>
@@ -596,6 +685,26 @@ function WalletScreen() {
       )}
       {loading ? (
         <NativeInsetView><WalletSkeleton /></NativeInsetView>
+      ) : nativeOn ? (
+        <NativeWalletList
+          hero={nativeHero}
+          rows={nativeRows}
+          header={<View style={{ gap: Space.lg }}>{restBlocks}</View>}
+          colors={nativeColors}
+          isDark={isDark}
+          maxWidth={Layout.contentMaxWidth}
+          autoInset={IOS_NATIVE_INSET}
+          bottomInset={IOS_NATIVE_INSET ? Space.xxxl : Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl)}
+          heroTop={Layout.gutter}
+          heroGap={Space.lg}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onEndReached={loadMore}
+          onHeroAction={onNativeHero}
+          onRowPress={(id) => { const it = txById.get(id); if (it) setDetail(it); }}
+          onRowAction={(id, action) => { if (action === 'buy' && canPurchase) openTopup(); }}
+          onFailure={onNativeFail}
+        />
       ) : (
         <FlatList
           data={rows}

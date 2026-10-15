@@ -404,7 +404,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    private func publishCamera(on r: Room) async {
+    @discardableResult
+    private func publishCamera(on r: Room) async -> Bool {
         let captureOpts = CallViewController.defaultCameraCaptureOptions(position: currentCameraPosition, isGroup: true)
         let publishOpts = CallViewController.defaultVideoPublishOptions()
         // [2026-10-14 self-view] Was a single `try?` — a throw (ICE
@@ -433,7 +434,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
                     print("[GroupCallVC] camera published (profile=\(CallViewController.CallVideoQuality.current.rawValue) layers=\(CallViewController.CallVideoQuality.layersLabel())) — room=\(roomName)")
                     await MainActor.run { self.startAdaptiveVideo(r) }
-                    return
+                    return true
                 }
                 lastError = nil
                 break
@@ -445,6 +446,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         }
         let errText: String = lastError.map { "\($0)" } ?? "no_track"
         nativeCallDiag("group_cam_publish_failed", roomName, String(errText.prefix(160)))
+        return false
     }
 
     private func fetchTokenAndConnect() {
@@ -792,13 +794,47 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     }
 
     private func applyCamEnabled(_ enabled: Bool) {
-        guard let r = self.room else { return }
+        // [2026-10-15 cam-1-toque] 1 tap = camera on, also in a VOICE group
+        // call: ask the camera permission the 1st time and continue the same
+        // tap when granted; denied → button back to off + Settings alert.
+        // A failed first publish now also resets the button (was left lit).
+        if enabled {
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized:
+                break
+            case .notDetermined:
+                AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        nativeCallDiag("group_camera_permission", self.roomName, "granted=\(granted ? 1 : 0)")
+                        guard self.session.camEnabled else { return } // tapped off meanwhile
+                        if granted && !self.flags.didHangup {
+                            self.applyCamEnabled(true)
+                        } else {
+                            self.session.camEnabled = false
+                        }
+                    }
+                }
+                return
+            default:
+                session.camEnabled = false
+                nativeCallDiag("group_camera_permission", roomName, "denied=1")
+                presentCameraDeniedAlert()
+                return
+            }
+        }
+        guard let r = self.room else {
+            if enabled { session.camEnabled = false }
+            return
+        }
+        nativeCallDiag("group_camera_toggle", roomName, "on=\(enabled ? 1 : 0) video_call=\(hasVideo ? 1 : 0)")
         Task { [weak self] in
             guard let self = self else { return }
             do {
                 if enabled, r.localParticipant.localVideoTracks.first(where: { $0.source == .camera }) == nil {
                     // First publish (audio call upgraded to video) — group profile.
-                    await self.publishCamera(on: r)
+                    let ok = await self.publishCamera(on: r)
+                    if !ok { await MainActor.run { self.session.camEnabled = false } }
                     return
                 }
                 let pub = try await r.localParticipant.setCamera(enabled: enabled)
@@ -814,6 +850,21 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 await MainActor.run { self.session.camEnabled = !enabled }
             }
         }
+    }
+
+    /// [2026-10-15 cam-1-toque] Camera access denied in iOS Settings.
+    private func presentCameraDeniedAlert() {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(title: CallStrings.s("camDeniedTitle"),
+                                      message: CallStrings.s("camDeniedBody"),
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: CallStrings.s("cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: CallStrings.s("openSettings"), style: .default) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        })
+        present(alert, animated: true)
     }
 
     /// [Wave B audio] Speaker toggle delegates to AudioRouter.

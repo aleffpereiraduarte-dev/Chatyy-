@@ -37,6 +37,10 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderS
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 // [notas-lembrete 2026-10-14] lembrete por PUSH do servidor (Lembrar-me + chip + seção "Com lembrete")
 import NoteReminderSheet, { NoteReminderChip } from '../components/notes/NoteReminderSheet';
+// [2026-10-15 native-notes] Lista/grade nativa (UICollectionView / RecyclerView);
+// kill switch globalThis.__chatyy_native_notes = false → FlatList JS (web sempre JS).
+import NativeNotesList, { useNativeNotes } from '../components/native/NativeNotesList';
+import { buildNoteRows, buildNoteMenu, noteIdFromRow } from '../components/native/notesListAdapter';
 import {
   loadNoteReminders, subscribeNoteReminders, getNoteRemindersSnapshot, reminderDisplayDate,
   formatNoteReminderShort, repeatLabel, reminderIsOverdue,
@@ -1083,6 +1087,9 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
 });
 
 
+// [2026-10-15 native-notes] Modo da lista nativa (lista | grade) lembrado na sessão.
+let _notesLayoutMemo = 'list';
+
 export default function NotesScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
@@ -1123,6 +1130,11 @@ export default function NotesScreen() {
   const [emailAddress, setEmailAddress] = useState('');
   const [emailSending, setEmailSending] = useState(false);
   const [viewMode, setViewMode] = useState(isDesktop ? 'board' : 'list'); // 'board' or 'list' - mobile defaults to list
+  // [2026-10-15 native-notes] Lista nativa + modo grade (2 colunas) só no nativo;
+  // o botão do topo alterna lista → grade → quadro. Lembra na sessão.
+  const [nativeNotesOn, onNativeNotesFail] = useNativeNotes();
+  const [notesLayout, setNotesLayoutState] = useState(() => _notesLayoutMemo);
+  const setNotesLayout = useCallback((m) => { _notesLayoutMemo = m; setNotesLayoutState(m); }, []);
   const [snapEnabled, setSnapEnabled] = useState(false);
   const [quickNoteLoading, setQuickNoteLoading] = useState(false);
   const [deletingNoteId, setDeletingNoteId] = useState(null);
@@ -1789,6 +1801,48 @@ export default function NotesScreen() {
     loadNoteReminders().catch(() => {});
   }, [loadNotes, loadNotebooks]);
 
+  // [2026-10-15 native-notes] Linhas/ações da lista nativa (mesmas seções e
+  // handlers da FlatList JS: openEditor, togglePin, toggleArchive, deleteNote…).
+  const nativeNoteRows = useMemo(() => {
+    if (!nativeNotesOn) return [];
+    return buildNoteRows({
+      pinnedNotes, reminderNotes, otherNotes, activeFilter, activeTab, t, reminders,
+      formatDate: formatNoteDate,
+      reminderInfo: (r) => {
+        const d = reminderDisplayDate(r);
+        if (!d) return null;
+        return { label: formatNoteReminderShort(d, t), overdue: reminderIsOverdue(r), repeat: !!(r.repeat && r.repeat !== 'none') };
+      },
+    });
+  }, [nativeNotesOn, pinnedNotes, reminderNotes, otherNotes, activeFilter, activeTab, t, reminders]);
+  const nativeNoteMenu = useMemo(() => buildNoteMenu(t), [t]);
+  const nativeNoteLabels = useMemo(() => ({
+    delete: t('notes.deleteNote') || 'Apagar',
+    pin: t('notes.pin') || 'Fixar',
+    unpin: t('notes.unpin') || 'Desafixar',
+  }), [t]);
+  const notesByIdRef = useRef(new Map());
+  notesByIdRef.current = useMemo(() => new Map(notes.map(n => [String(n.id), n])), [notes]);
+  const onNativeNotePress = useCallback((rowId) => {
+    const note = notesByIdRef.current.get(noteIdFromRow(rowId));
+    if (note) openEditor(note);
+  }, [openEditor]);
+  const onNativeNoteAction = useCallback((rowId, action) => {
+    const note = notesByIdRef.current.get(noteIdFromRow(rowId));
+    if (!note) return;
+    switch (action) {
+      case 'edit': openEditor(note); break;
+      case 'pin': togglePin(note); break;
+      case 'archive': toggleArchive(note); break;
+      case 'color': setColorPickerNote(note); setColorPickerVisible(true); break;
+      case 'email': setEmailModalNote(note); setEmailAddress(''); setEmailModalVisible(true); break;
+      case 'pdf': exportNotePdf(note); break;
+      case 'copy': copyNoteText(note); break;
+      case 'delete': deleteNote(note); break;
+      default: break;
+    }
+  }, [openEditor, togglePin, toggleArchive, exportNotePdf, copyNoteText, deleteNote]);
+
   // Column count - single column list on mobile for clean card layout
   const numColumns = isDesktop ? (SCREEN_WIDTH > 1200 ? 4 : 3) : 1;
   const notebookColumns = isDesktop ? (SCREEN_WIDTH > 1200 ? 4 : 3) : 2;
@@ -1845,12 +1899,20 @@ export default function NotesScreen() {
               )}
               {activeTab !== 'notebooks' && (
                 <HeaderIconButton
-                  onPress={() => { haptic.select(); setViewMode(m => (m === 'board' ? 'list' : 'board')); }}
-                  accessibilityLabel={viewMode === 'board' ? 'List' : 'Board'}
+                  onPress={() => {
+                    haptic.select();
+                    // [2026-10-15 native-notes] nativo: lista → grade → quadro → lista.
+                    if (nativeNotesOn && viewMode === 'list' && notesLayout === 'list') { setNotesLayout('grid'); return; }
+                    if (nativeNotesOn && viewMode === 'board') { setNotesLayout('list'); }
+                    setViewMode(m => (m === 'board' ? 'list' : 'board'));
+                  }}
+                  accessibilityLabel={viewMode === 'board' ? 'List' : (nativeNotesOn && notesLayout === 'list' ? 'Grid' : 'Board')}
                 >
                   {viewMode === 'board'
                     ? <IconMenu size={22} color={colors.text} />
-                    : <IconGrid size={22} color={colors.text} />}
+                    : (nativeNotesOn && notesLayout === 'grid'
+                      ? <IconStickyNote size={22} color={colors.text} />
+                      : <IconGrid size={22} color={colors.text} />)}
                 </HeaderIconButton>
               )}
               <HeaderIconButton onPress={() => openEditor()} accessibilityLabel={t('notes.newNote')}>
@@ -2246,6 +2308,26 @@ export default function NotesScreen() {
           onResize={updateNoteSize}
           onCreateAtPosition={createNoteAtPosition}
           snapEnabled={snapEnabled}
+        />
+      ) : nativeNotesOn ? (
+        // [2026-10-15 native-notes] Lista/grade NATIVA (mesmas seções/ações da FlatList abaixo).
+        <NativeNotesList
+          style={s.scrollContent}
+          rows={nativeNoteRows}
+          highlight={searchQuery}
+          colors={colors}
+          isDark={isDark}
+          layoutMode={notesLayout}
+          labels={nativeNoteLabels}
+          menu={nativeNoteMenu}
+          refreshEnabled
+          refreshing={refreshing}
+          topInset={5}
+          bottomInset={100}
+          onPress={onNativeNotePress}
+          onAction={onNativeNoteAction}
+          onRefresh={onRefresh}
+          onFailure={onNativeNotesFail}
         />
       ) : (
         // ---- Notes Grid (List View) ----

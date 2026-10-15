@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-transport",
+  "version": "1.0.0",
+  "description": "Chatyy native realtime transport: WebSocket to the Go hub owned by native code (iOS URLSessionWebSocketTask + NWPathMonitor, Android OkHttp + ConnectivityManager) with keepalive, zombie detection, network-change reconnect, outbox and batched delivery to JS.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

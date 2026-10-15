@@ -116,7 +116,7 @@ function cleanMath(s) {
 function openLink(url) {
   try {
     if (Platform.OS === 'web' && typeof window !== 'undefined') { window.open(url, '_blank'); return; }
-    Linking.openURL(url).catch(() => {});
+    require('../services/openLink').openLink(url); // [2026-10-15 native-browser]
   } catch {}
 }
 

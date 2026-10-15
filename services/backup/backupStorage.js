@@ -364,6 +364,30 @@ export async function markAssetTooLarge(assetId, info = {}) {
   m[assetId] = { at: Date.now(), size: Number(info.size) || 0, max: Number(info.max) || 0 };
   try { await AsyncStorage.setItem(TOO_LARGE_KEY, JSON.stringify(m)); } catch {}
 }
+// [2026-10-15 confiab] Assets cujo arquivo SUMIU do disco (Android:
+// "upload_file_missing: content://…" — figurinha/foto do WhatsApp apagada mas
+// ainda no MediaStore). Cada passada repetia o upload e falhava (≈1.000×/72 h).
+// Pula por 7 dias (cartão SD desmontado volta sozinho depois disso).
+const MISSING_KEY = '@chatyy_backup/missing_files';
+const MISSING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+let _missingCache = null;
+export async function getMissingMap() {
+  if (_missingCache) return _missingCache;
+  try {
+    const raw = await AsyncStorage.getItem(MISSING_KEY);
+    const m = raw ? (JSON.parse(raw) || {}) : {};
+    const now = Date.now();
+    for (const k of Object.keys(m)) { if (!m[k] || now - (Number(m[k].at) || 0) > MISSING_TTL_MS) delete m[k]; }
+    _missingCache = m;
+  } catch { _missingCache = {}; }
+  return _missingCache;
+}
+export async function markAssetMissing(assetId) {
+  if (!assetId) return;
+  const m = await getMissingMap();
+  m[assetId] = { at: Date.now() };
+  try { await AsyncStorage.setItem(MISSING_KEY, JSON.stringify(m)); } catch {}
+}
 export async function clearTooLargeMap() {
   _tooLargeCache = {};
   try { await AsyncStorage.removeItem(TOO_LARGE_KEY); } catch {}

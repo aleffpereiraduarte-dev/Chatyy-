@@ -1,9 +1,18 @@
 {
-  "platforms": ["apple", "android"],
+  "platforms": [
+    "apple",
+    "android"
+  ],
   "apple": {
-    "modules": ["ChatyyEffectsModule"]
+    "modules": [
+      "ChatyyEffectsModule",
+      "ChatyyLiveStageModule"
+    ]
   },
   "android": {
-    "modules": ["expo.modules.chatyyeffects.ChatyyEffectsModule"]
+    "modules": [
+      "expo.modules.chatyyeffects.ChatyyEffectsModule",
+      "expo.modules.chatyyeffects.ChatyyLiveStageModule"
+    ]
   }
 }

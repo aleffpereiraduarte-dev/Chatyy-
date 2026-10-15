@@ -13,6 +13,67 @@ import { Colors } from '../constants/theme';
 import { IconChevronDown, IconReply, IconReplyAll, IconForward, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import { useAuth } from '../context/AuthContext';
+// [2026-10-15 native-email] Corpo HTML de cada mensagem da thread em view nativa.
+import NativeEmailBody, { isNativeEmailBodyOn, openEmailLink } from './email/NativeEmailBody';
+import { sanitizeEmailHtml } from './EmailReader';
+import { getAttachmentUrl } from '../services/api';
+import { shouldBlockRemoteImages, allowSenderImages } from '../services/emailImagePolicy';
+
+const _TRACKER_RE = /<img\b[^>]*\b(?:width|height)\s*=\s*["']?\s*1\s*["']?[^>]*\b(?:width|height)\s*=\s*["']?\s*1\s*["']?[^>]*>/gi;
+
+function _threadHtml(m) {
+  let html = sanitizeEmailHtml(String(m.body_html || '')) || '';
+  html = html.replace(_TRACKER_RE, '');
+  // cid: (anexo inline) → URL de download do próprio servidor
+  const cidMap = {};
+  try {
+    (m.attachments || []).forEach((a, i) => {
+      const cid = String(a?.content_id || '').replace(/^<|>$/g, '').trim().toLowerCase();
+      if (cid) cidMap[cid] = a.part_id ?? a.part ?? (i + 1);
+    });
+  } catch {}
+  if (Object.keys(cidMap).length && m.uid != null) {
+    html = html.replace(/\bsrc\s*=\s*["']cid:([^"']+)["']/gi, (full, ref) => {
+      const part = cidMap[String(ref).replace(/^<|>$/g, '').trim().toLowerCase()];
+      if (part == null) return full;
+      return 'src="' + String(getAttachmentUrl(m.uid, m.folder || 'INBOX', part)).replace(/"/g, '&quot;') + '"';
+    });
+  }
+  return html;
+}
+
+function ThreadNativeBody({ m, colors, t }) {
+  const { isDark } = useTheme();
+  const sender = m.from_email || ((String(m.from || '').match(/<([^>]+)>/) || [])[1]) || String(m.from || '').trim();
+  const [show, setShow] = useState(() => !shouldBlockRemoteImages(sender));
+  const html = useMemo(() => _threadHtml(m), [m.body_html, m.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasRemote = useMemo(() => /<img\b[^>]*\bsrc\s*=\s*["']?https?:/i.test(html), [html]);
+  return (
+    <View>
+      {!show && hasRemote && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+          <TouchableOpacity onPress={() => setShow(true)} accessibilityRole="button" style={{ minHeight: 32, justifyContent: 'center' }}>
+            <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>{t('reader.loadImages') || 'Carregar imagens'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => { allowSenderImages(sender); setShow(true); }} accessibilityRole="button" style={{ minHeight: 32, justifyContent: 'center' }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('reader.alwaysLoadFrom') || 'Sempre deste remetente'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      <NativeEmailBody
+        html={html}
+        rawHtml={m.body_html}
+        isDark={isDark}
+        colors={colors}
+        blockRemote={!show}
+        allowHosts={['chatyy.com.br', 'onemundo.com.br']}
+        contentKey={`t:${m.uid}:${m.folder || ''}`}
+        labels={{ open: t('common.open') || 'Abrir', copyLink: t('common.copyLink') || 'Copiar link', share: t('common.share') || 'Compartilhar', cancel: t('common.cancel') || 'Cancelar' }}
+        onLinkPress={(url) => openEmailLink(url, { colors, isDark })}
+      />
+    </View>
+  );
+}
 
 // [2026-10-11 email-qa] Cabeçalhos crus ("apitest <apitest@…>", '"Fulano"
 // <x@y>') apareciam como nome do remetente/destinatário. Agora: parse do
@@ -177,6 +238,9 @@ function MessageItem({ message, initiallyExpanded, colors, t, onReply, onReplyAl
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(m.body_html) }}
         />
       );
+    }
+    if (m.body_html && Platform.OS !== 'web' && isNativeEmailBodyOn()) {
+      return <ThreadNativeBody m={m} colors={colors} t={t} />;
     }
     // Sem corpo ainda + buscando → spinner em vez de "(sem conteúdo)".
     if (!mHasBody && loadingBody) {

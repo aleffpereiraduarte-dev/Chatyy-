@@ -1,5 +1,5 @@
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, memo, Fragment } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
   Dimensions, Share, Modal, Pressable, ScrollView, Keyboard, StatusBar, PanResponder, Image,
@@ -56,6 +56,8 @@ import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 const LEGACY_LIVE_GIFT_UI = false;
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import ConnectionBars from '../components/ConnectionBars';
+// [2026-10-15 native-live] palco nativo (swipe Reels + corações/presentes + mudo).
+import { getLiveStageView, isLiveStageAvailable, initialsOf as _lsInitials, giftKind as _lsGiftKind } from '../modules/expo-chat-effects/liveStage';
 // Round 67 #1158 (2026-05-18) — keep the display on while watching a
 // live. User: "a tela ainda desliga mesmo rolando a live". Tag scopes
 // the wake-lock to this screen; unmount auto-releases.
@@ -402,6 +404,15 @@ export default function LiveViewerScreen() {
   const sessionIdRef = useRef(paramSessionId);
   const chatIdRef = useRef(0);
   const heartIdRef = useRef(0);
+  // [2026-10-15 native-live] Decidido 1x por montagem (kill switch
+  // globalThis.__chatyy_native_live === false → caminho JS de sempre).
+  const nativeStageRef = useRef(null);
+  const _nativeStageViewRef = useRef(undefined);
+  if (_nativeStageViewRef.current === undefined) {
+    _nativeStageViewRef.current = (Platform.OS !== 'web' && isLiveStageAvailable()) ? getLiveStageView() : null;
+  }
+  const NativeLiveStage = _nativeStageViewRef.current;
+  const [nativeMuted, setNativeMuted] = useState(false);
   const iceCandidateQueueRef = useRef([]);
   const endTimerRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -1927,7 +1938,17 @@ export default function LiveViewerScreen() {
             gift_type: msg.gift_type || msg.gift,
             diamonds: msg.diamonds || msg.amount || 1,
           };
-          if (LEGACY_LIVE_GIFT_UI) {
+          if (NativeLiveStage && nativeStageRef.current?.playGift) {
+            // [2026-10-15 native-live] presente animado no palco nativo (glifo vetorial).
+            try {
+              nativeStageRef.current.playGift({
+                kind: _lsGiftKind(giftEvent.gift_type),
+                title: String(giftEvent.sender_name || (giftEvent.sender_email ? String(giftEvent.sender_email).split('@')[0] : '')),
+                subtitle: t('live.sentGift') || 'enviou',
+                count: Number(msg.count || msg.quantity || 1) || 1,
+              })?.catch?.(() => {});
+            } catch {}
+          } else if (LEGACY_LIVE_GIFT_UI) {
             setActiveGiftAnim(prev => {
               if (prev) { pendingGiftsRef.current.push(giftEvent); return prev; }
               return giftEvent;
@@ -2666,6 +2687,21 @@ export default function LiveViewerScreen() {
     const id = ++heartIdRef.current;
     const isEmoji = typeof arg === 'string';
     const isObj = arg && typeof arg === 'object' && !Array.isArray(arg);
+    if (NativeLiveStage && nativeStageRef.current?.spawnHearts) {
+      // [2026-10-15 native-live] Corações desenhados no palco nativo.
+      const it = {};
+      if (isEmoji) it.emoji = arg;
+      else if (typeof arg === 'number' && isFinite(arg)) it.x = arg;
+      else if (isObj) {
+        if (typeof arg.x === 'number' && isFinite(arg.x)) it.x = arg.x;
+        if (typeof arg.y === 'number' && isFinite(arg.y)) it.y = arg.y;
+        if (typeof arg.color === 'string') it.color = arg.color;
+        if (typeof arg.emoji === 'string' && arg.emoji) it.emoji = arg.emoji;
+      }
+      try { nativeStageRef.current.spawnHearts([it])?.catch?.(() => {}); } catch {}
+      setLikeCount(c => c + 1);
+      return;
+    }
     // Spawn near the right rail / heart button — the visual origin of taps.
     const baseX = SCREEN_W - 56 + (Math.random() - 0.5) * 24;
     let x;
@@ -2792,9 +2828,11 @@ export default function LiveViewerScreen() {
   // generous on the tapper's screen without nuking the channel for everyone
   // else. Other viewers see the throttled rate but the local viewer feels
   // every tap land.
-  const handleStageHeartSpam = useCallback((tapX, tapY) => {
-    const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
-    spawnHeart({ x: tapX, y: tapY, color });
+  const handleStageHeartSpam = useCallback((tapX, tapY, nativeColor) => {
+    // nativeColor: o palco nativo JÁ desenhou o coração (só conta + envia).
+    const color = nativeColor || HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    if (nativeColor) setLikeCount(c => c + 1);
+    else spawnHeart({ x: tapX, y: tapY, color });
     // [lives-engage] curtida em lote (cada toque conta no total do host).
     likeEngage.queueLike({ x: tapX / SCREEN_W, color });
     if (likeEngage) return;
@@ -2818,6 +2856,10 @@ export default function LiveViewerScreen() {
   // Central particle burst on double-tap. Spawns 8 hearts in a radial pattern
   // from screen center so it reads like an Instagram-style "love bomb."
   const spawnBurst = useCallback(() => {
+    if (NativeLiveStage && nativeStageRef.current?.burst) {
+      try { nativeStageRef.current.burst({})?.catch?.(() => {}); } catch {}
+      return;
+    }
     const cx = SCREEN_W / 2;
     const cy = SCREEN_H * 0.45;
     const newOnes = [];
@@ -3324,13 +3366,20 @@ export default function LiveViewerScreen() {
     return () => clearTimeout(tm);
   }, [connected, liveEnded, nextLive?.id]);
 
-  const goToLive = useCallback((target, dir) => {
-    if (!target?.id || swipeBusyRef.current) return;
+  const goToLive = useCallback((target, dir, fromNative) => {
+    if (!target?.id || swipeBusyRef.current) {
+      if (fromNative) { try { nativeStageRef.current?.resetSwipe?.()?.catch?.(() => {}); } catch {} }
+      return;
+    }
     swipeBusyRef.current = true;
     try { markPrewarmHandoff(target.id); } catch {}
     try { Keyboard.dismiss(); } catch {}
     const H = Dimensions.get('window').height;
-    Animated.timing(swipeY, { toValue: dir === 'prev' ? H : -H, duration: 200, useNativeDriver: true }).start(() => {
+    // [2026-10-15 native-live] o palco nativo já animou a troca (arraste interativo).
+    const _anim = fromNative
+      ? { start: (cb) => cb() }
+      : Animated.timing(swipeY, { toValue: dir === 'prev' ? H : -H, duration: 200, useNativeDriver: true });
+    _anim.start(() => {
       const p = new URLSearchParams();
       p.set('sessionId', String(target.id));
       if (target.host_email) p.set('hostEmail', target.host_email);
@@ -3341,9 +3390,36 @@ export default function LiveViewerScreen() {
       try { router.replace(`/live-viewer?${p.toString()}`); } catch {
         swipeBusyRef.current = false;
         swipeY.setValue(0);
+        try { nativeStageRef.current?.resetSwipe?.()?.catch?.(() => {}); } catch {}
       }
     });
   }, [router, swipeQueue, swipeY]);
+
+  // [2026-10-15 native-live] Eventos do palco nativo.
+  const _onNativeStageTap = useCallback((e) => {
+    const ne = e?.nativeEvent || {};
+    const x = Number(ne.x) || SCREEN_W / 2;
+    const y = Number(ne.y) || SCREEN_H / 2;
+    const color = typeof ne.color === 'string' ? ne.color : HEART_COLORS[0];
+    if (ne.double) { try { require('react-native').Vibration.vibrate(10); } catch {} }
+    handleStageHeartSpam(x, y, color);
+  }, [handleStageHeartSpam]);
+  const _onNativeSwipe = useCallback((e) => {
+    const s = swipeStateRef.current;
+    const dir = e?.nativeEvent?.direction === 'prev' ? 'prev' : 'next';
+    const target = dir === 'prev' ? s.prevLive : s.nextLive;
+    if (!target || s.blocked) { try { nativeStageRef.current?.resetSwipe?.()?.catch?.(() => {}); } catch {} return; }
+    s.goToLive(target, dir, true);
+  }, []);
+  const _onNativeMute = useCallback((e) => { setNativeMuted(!!e?.nativeEvent?.muted); }, []);
+  // Mudo nativo → trilhas de áudio remotas (inclui as que chegarem depois).
+  useEffect(() => {
+    if (!NativeLiveStage) return;
+    for (const tr of lkTracks) {
+      if (tr?.kind !== 'audio') continue;
+      try { if (tr.track?.mediaStreamTrack) tr.track.mediaStreamTrack.enabled = !nativeMuted; } catch {}
+    }
+  }, [NativeLiveStage, lkTracks, nativeMuted]);
 
   const swipeStateRef = useRef({});
   swipeStateRef.current = {
@@ -3655,6 +3731,36 @@ export default function LiveViewerScreen() {
     setInputText('');
   };
 
+  const _peekOf = (target) => {
+    if (!target?.id) return null;
+    const name = target.host_name || (target.host_email ? String(target.host_email).split('@')[0] : '');
+    return { title: name, subtitle: '', imageUrl: target.thumbnail_url || '', initials: _lsInitials(name) };
+  };
+  const _StageOuter = NativeLiveStage || View;
+  const _StageInner = NativeLiveStage ? Fragment : Pressable;
+  const _stageOuterProps = NativeLiveStage ? {
+    ref: nativeStageRef,
+    style: StyleSheet.absoluteFill,
+    peekNext: _peekOf(nextLive),
+    peekPrev: _peekOf(prevLive),
+    swipeEnabled: !(chatSheetOpen || showViewersList || hostPeekOpen),
+    tapHearts: true,
+    heartColors: HEART_COLORS,
+    muted: nativeMuted,
+    showMute: streamType === 'livekit',
+    controlsTop: insets.top + 72,
+    labels: {
+      mute: t('live.mute') || 'Silenciar',
+      unmute: t('live.unmute') || 'Ativar som',
+      next: t('live.nextLive') || 'Próxima live',
+      prev: t('live.previousLive') || 'Live anterior',
+    },
+    onSwipe: _onNativeSwipe,
+    onStageTap: _onNativeStageTap,
+    onMuteToggle: _onNativeMute,
+  } : { style: StyleSheet.absoluteFill, ...swipePanRef.current.panHandlers };
+  const _stageInnerProps = NativeLiveStage ? {} : { style: StyleSheet.absoluteFill, onPress: handleStageTap };
+
   const qualityColor = connQuality === 'good' ? '#22c55e' : connQuality === 'medium' ? '#f59e0b' : '#ef4444';
 
   return (
@@ -3664,8 +3770,8 @@ export default function LiveViewerScreen() {
       collapsable={false}
     >
       {/* [2026-10-10 lives-2] Prévia da live vizinha que entra pela borda ao arrastar. */}
-      {_renderSwipePeek(nextLive, 'below')}
-      {_renderSwipePeek(prevLive, 'above')}
+      {!NativeLiveStage && _renderSwipePeek(nextLive, 'below')}
+      {!NativeLiveStage && _renderSwipePeek(prevLive, 'above')}
       {/* Round 64 (2026-05-18) — translucent status bar so the soft top scrim
           in LiveTopBar bleeds the host video right up to the notch instead of
           competing with a system-painted black/white status bar. Light icons
@@ -3674,8 +3780,10 @@ export default function LiveViewerScreen() {
       {/* Remote video — wrapped in Pressable so double-tap fires a love-bomb
           burst over the stream without stealing taps from controls overlaid
           on top (those have higher zIndex). */}
-      <View style={StyleSheet.absoluteFill} {...swipePanRef.current.panHandlers}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={handleStageTap}>
+      {/* [2026-10-15 native-live] Com o palco nativo: swipe/toques/corações/
+          presentes/mudo são nativos e os tiles de vídeo viram filhos dele. */}
+      <_StageOuter {..._stageOuterProps}>
+      <_StageInner {..._stageInnerProps}>
         {streamType === 'livekit' && lkTracks.length > 0 ? (
           // [WAVE 110] LiveKit SFU viewer — render the first video track from
           // a remote participant (the host). _LK_VideoView is the native
@@ -3838,8 +3946,8 @@ export default function LiveViewerScreen() {
             />
           </View>
         )}
-      </Pressable>
-      </View>
+      </_StageInner>
+      </_StageOuter>
 
       {/* Connecting overlay — round 62 redesign extracted into LiveConnectingOverlay.
           Pulsing red ring + round host avatar + "Conectando à live de X..."

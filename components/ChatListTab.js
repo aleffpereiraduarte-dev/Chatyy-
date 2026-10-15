@@ -84,6 +84,7 @@ import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
 import PressableRow from './PressableRow';
 import ListNamePromptModal from './ListNamePromptModal'; // [paridade-wa 2026-10-14]
+import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import FadeSlideIn from './FadeSlideIn';
 // [2026-10-14 native-home] Lista de conversas NATIVA (UICollectionView / RecyclerView).
@@ -5994,6 +5995,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // [2026-10-08 chat-open-flicker] Hand the tapped row to the thread so its
     // first frame already has the group photo etc. (sync, no I/O).
     try { require('../utils/chatOpenHandoff').stashOpenConversation(conv); } catch {}
+    try { require('../services/convShell').markOpenTap(conv.id); } catch {} // [native-store fase 3] t0 do beacon conv_shell
     require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`, { router, source: 'list' });
   }, [user?.email, router]);
 
@@ -7864,7 +7866,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // take a conversation and delegate to the existing id-based handlers.
   const rowPrefetch = useCallback((conv) => {
     try { prefetchConversation(conv.id); } catch {}
-  }, []);
+    // [native-store fase 1.5] foto da conversa decodificada em memória no
+    // nativo já no toque → a lista nativa da tela pinta no set da prop.
+    try { require('../services/nativeChatStore').prewarmThread(user?.email, conv.id); } catch {}
+  }, [user?.email]);
   const rowToggleSelect = useCallback((conv) => {
     toggleSelected(conv.id);
   }, [toggleSelected]);
@@ -8488,7 +8493,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _useNativeHome = Platform.OS !== 'web' && !RESP_IS_TABLET && !_nativeHomeFailed
     && globalThis.__chatyy_native_home !== false && _nativeHomeAvailable();
   const _onNativeHomeFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_home_failed = true; console.warn('[native-home] fallback FlashList:', msg); } catch {}
+    try { globalThis.__chatyy_native_home_failed = true; console.warn('[native-home] fallback FlashList:', msg); try { require('../services/crashReporter').reportNativeFallback('native_home', msg); } catch {} } catch {}
     _setNativeHomeFailed(true);
   }, []);
   const _nativeHomeHelpers = useMemo(() => {
@@ -8546,7 +8551,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // (mesmos handlers do menu nativo da lista) para o slot dentro do header
   // memoizado. `set` compara raso: só re-renderiza a fileira quando muda algo.
   const _onNativePinsFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_pins_failed = true; console.warn('[native-pins] fallback JS:', msg); } catch {}
+    try { globalThis.__chatyy_native_pins_failed = true; console.warn('[native-pins] fallback JS:', msg); try { require('../services/crashReporter').reportNativeFallback('native_pins', msg); } catch {} } catch {}
     _setNativePinsFailed(true);
   }, []);
   React.useLayoutEffect(() => {
@@ -8694,6 +8699,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           onFirstPaint={_onListLoad}
           onFailure={_onNativeHomeFailure}
           folders={chatFolders}
+          storeMain={filter === 'all' && !(debouncedQuery || '').trim() && !selectionMode} /* [native-store fase 1.5] foto da home */
         />
         ) : (
         <ListComponent
@@ -9249,21 +9255,21 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
 
   const _nowSec = Math.floor(Date.now() / 1000);
   const muteItems = [
-    { label: t('chatConv.muteFor8h') || 'Silenciar por 8 horas', icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv, _nowSec + 8 * 3600) },
-    { label: t('chatConv.muteFor1w') || 'Silenciar por 1 semana', icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv, _nowSec + 7 * 86400) },
+    { label: t('chatConv.muteFor8h') || 'Silenciar por 8 horas', icon: Ic.Bell, color: text, quick: true, onPress: () => actions.onMute?.(conv, _nowSec + 8 * 3600) },
+    { label: t('chatConv.muteFor1w') || 'Silenciar por 1 semana', icon: Ic.Bell, color: text, quick: true, onPress: () => actions.onMute?.(conv, _nowSec + 7 * 86400) },
     { label: t('chatConv.muteForever') || 'Silenciar sempre', icon: Ic.Bell, color: text, onPress: () => actions.onMute?.(conv, 4070908800) },
     { divider: true },
     { label: t('common.cancel') || 'Cancelar', icon: null, color: subText, keepOpen: true, onPress: () => setMuteStep(false) },
   ];
   const mainItems = [
-    { label: hasUnread ? (t('chat.markRead') || 'Marcar como lida') : (t('chat.markUnread') || 'Marcar como não lida'), icon: Ic.Bubble, color: text, onPress: () => actions.onMarkUnread?.(conv) },
-    { label: isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar'), icon: Ic.Pin, color: text, onPress: () => actions.onPin?.(conv) },
+    { label: hasUnread ? (t('chat.markRead') || 'Marcar como lida') : (t('chat.markUnread') || 'Marcar como não lida'), icon: Ic.Bubble, color: text, quick: true, onPress: () => actions.onMarkUnread?.(conv) },
+    { label: isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar'), icon: Ic.Pin, color: text, quick: true, onPress: () => actions.onPin?.(conv) },
     ...(isPinned ? [{ label: t('chat.reorderPinned') || 'Reorganizar fixados', icon: Ic.List, color: text, onPress: () => actions.onReorderPinned?.() }] : []),
-    { label: isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar'), icon: Ic.Bell, color: text, keepOpen: !isMuted, onPress: () => (isMuted ? actions.onMute?.(conv) : setMuteStep(true)) },
+    { label: isMuted ? (t('chat.unmute') || 'Reativar som') : (t('chat.mute') || 'Silenciar'), icon: Ic.Bell, color: text, keepOpen: !isMuted, quick: true, onPress: () => (isMuted ? actions.onMute?.(conv) : setMuteStep(true)) },
     { label: isLocked ? (t('chat.unlockChat') || 'Desbloquear chat') : (t('chat.lockChat') || 'Bloquear chat'), icon: Ic.Lock, color: text, onPress: () => actions.onLockToggle?.(conv) },
-    { label: t('chat.archive') || 'Arquivar', icon: Ic.Archive, color: text, onPress: () => actions.onArchive?.(conv) },
+    { label: t('chat.archive') || 'Arquivar', icon: Ic.Archive, color: text, quick: true, onPress: () => actions.onArchive?.(conv) },
     { label: t('chat.addToList') || 'Adicionar a lista', icon: Ic.List, color: text, keepOpen: true, onPress: () => setListStep(true) },
-    { label: t('chat.selectMore') || 'Selecionar várias', icon: Ic.Users, color: text, onPress: () => actions.onSelect?.(conv) },
+    { label: t('chat.selectMore') || 'Selecionar várias', icon: Ic.Users, color: text, quick: true, onPress: () => actions.onSelect?.(conv) },
     { divider: true },
     ...(peerEmail ? [{ label: `${t('chat.block') || 'Bloquear'} ${firstName}`.trim(), icon: Ic.Ban, color: danger, onPress: () => actions.onBlock?.(conv) }] : []),
     // Spam report — fires chat_report_spam. Server tally per sender; >10
@@ -9290,8 +9296,13 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
   ];
   const items = muteStep ? muteItems : (listStep ? listItems : mainItems);
 
-  const handleTap = (fn) => {
+  // [2026-10-15 native-sheets-v2] No sheet do sistema, ações que abrem outro
+  // Modal RN / outro sheet / confirmação esperam o sheet terminar de descer
+  // (UIKit ignora apresentar por cima de um sheet saindo). Ações só-estado
+  // (`quick`: fixar, silenciar, arquivar...) seguem com os 80 ms de antes.
+  const handleTap = (fn, quick) => {
     onClose();
+    if (USE_NATIVE_SHEETS && !quick) { runAfterNativeSheet(() => fn?.()); return; }
     setTimeout(() => fn?.(), 80);
   };
 
@@ -9308,26 +9319,8 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     }, 80);
   };
 
-  return (
-    <Modal visible={!!conv} transparent animationType="none" onRequestClose={handleBackdropTap} statusBarTranslucent>
-      <View style={StyleSheet.absoluteFillObject}>
-        {/* Backdrop — slightly lighter (0.40) per Telegram spec; tap fades out
-            both backdrop and peek before unmount instead of hard popping. */}
-        {/* [2026-10-07 native-ui-build] iOS: material BORRADO atrás do menu
-            (UIVisualEffectView) — o chat list some no vidro como no iMessage.
-            Android/web: o mesmo rgba sólido 0.40 de antes. */}
-        <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: backdrop }]}>
-          <BlurBackdrop isDark={isDark} dim={0.40} />
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={handleBackdropTap} />
-        </Animated.View>
-        <Animated.View
-          {...dragResponder.panHandlers}
-          style={{
-            position: 'absolute', left: 12, right: 12, bottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
-            opacity: backdrop,
-            transform: [{ translateY: Animated.add(slideY, panY) }, { scale }],
-          }}
-        >
+  const lpPeekEl = (
+  <>
           {/* ── Preview card (peek into the conversation) ── */}
           <ConversationPeekCard
             conv={conv}
@@ -9341,7 +9334,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
             typingUsers={typingUsers}
             presencesRef={presencesRef}
           />
-
+  </>
+  );
+  const lpMenuEl = (
+  <>
           {/* ── Action menu ──
               Polish: radius 14→16 (matches preview card 22 hierarchy),
               hairline separators (RN's StyleSheet.hairlineWidth resolves to
@@ -9375,7 +9371,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
               return (
                 <PressableRow
                   key={`${muteStep ? 'm' : (listStep ? 'l' : 'a')}-${i}`}
-                  onPress={() => (it.keepOpen ? it.onPress?.() : handleTap(it.onPress))}
+                  onPress={() => (it.keepOpen ? it.onPress?.() : handleTap(it.onPress, it.quick))}
                   highlightColor={isDark ? '#2c2c2e' : '#f1f2f4'}
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 14,
@@ -9402,6 +9398,44 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
               );
             })}
           </View>
+  </>
+  );
+  // [2026-10-15 native-sheets-v2] Sheet do SISTEMA (iOS UISheetPresentation /
+  // Android BottomSheet): arrastar 1:1, fundo escurece/escala nativo. Mesmo
+  // peek + mesma lista de ações. Web / kill-switch → Modal JS abaixo.
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!conv} onClose={onClose} detents="fitToContents" backgroundColor={isDark ? '#0b0b0b' : '#f2f2f7'}>
+        <View style={{ paddingTop: 22, paddingHorizontal: 12, paddingBottom: Platform.OS === 'ios' ? 12 : androidBottomInset(12) }}>
+          {lpPeekEl}
+          {lpMenuEl}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={!!conv} transparent animationType="none" onRequestClose={handleBackdropTap} statusBarTranslucent>
+      <View style={StyleSheet.absoluteFillObject}>
+        {/* Backdrop — slightly lighter (0.40) per Telegram spec; tap fades out
+            both backdrop and peek before unmount instead of hard popping. */}
+        {/* [2026-10-07 native-ui-build] iOS: material BORRADO atrás do menu
+            (UIVisualEffectView) — o chat list some no vidro como no iMessage.
+            Android/web: o mesmo rgba sólido 0.40 de antes. */}
+        <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: backdrop }]}>
+          <BlurBackdrop isDark={isDark} dim={0.40} />
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={handleBackdropTap} />
+        </Animated.View>
+        <Animated.View
+          {...dragResponder.panHandlers}
+          style={{
+            position: 'absolute', left: 12, right: 12, bottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
+            opacity: backdrop,
+            transform: [{ translateY: Animated.add(slideY, panY) }, { scale }],
+          }}
+        >
+          {lpPeekEl}
+          {lpMenuEl}
         </Animated.View>
       </View>
     </Modal>

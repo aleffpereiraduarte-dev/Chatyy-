@@ -1,0 +1,12 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyEmailBodyModule", "ChatyyRichEditorModule"]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.chatyyemail.ChatyyEmailBodyModule",
+      "expo.modules.chatyyemail.ChatyyRichEditorModule"
+    ]
+  }
+}

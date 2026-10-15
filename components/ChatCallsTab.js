@@ -8,6 +8,8 @@ import BrandFab from './BrandFab';
 import { PSTN_ENABLED } from '../constants/featureFlags';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal } from './Icons';
 import Sheet from './ui/Sheet'; import ActionList from './ui/ActionList'; // [2026-10-14 vis-audit] menu "…" do histórico
+import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-15 native-sheets-v2]
 import SwipeAction from './SwipeAction';
 import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile, callNotify as apiCallNotify } from '../services/api';
@@ -935,15 +937,10 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
     ? rawName
     : prettifyHandle(rawName);
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}
-    >
-      <View style={s.modalOverlay}>
-        <View style={[s.modalContent, { backgroundColor: bgColor }]}>
+  // [2026-10-15 native-sheets-v2] Sheet do SISTEMA (detents/grabber/arrastar
+  // 1:1); web / kill-switch → Modal JS abaixo, idêntico.
+  const infoBody = (
+  <>
           {/* Header */}
           <View style={s.modalHeader}>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -1027,12 +1024,33 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
           {/* Call again button */}
           <TouchableOpacity
             style={s.callAgainBtn}
-            onPress={() => { onClose(); onCallAgain(item); }}
+            onPress={() => { onClose(); if (USE_NATIVE_SHEETS) runAfterNativeSheet(() => onCallAgain(item)); else onCallAgain(item); }}
             activeOpacity={0.7}
           >
             <IconPhone size={18} color="#fff" />
             <Text style={s.callAgainText}>{t?.('calls.callAgain') || 'Ligar novamente'}</Text>
           </TouchableOpacity>
+  </>
+  );
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={bgColor}>
+        <View style={{ paddingTop: 14, paddingBottom: Platform.OS === 'ios' ? 16 : androidBottomInset(16) }}>
+          {infoBody}
+        </View>
+      </NativeSheet>
+    );
+  }
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onClose}
+    >
+      <View style={s.modalOverlay}>
+        <View style={[s.modalContent, { backgroundColor: bgColor }]}>
+          {infoBody}
         </View>
       </View>
     </Modal>
@@ -2870,7 +2888,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   // [2026-10-15 native-calls] lista nativa: falha → volta ao ScrollView JS (sessão inteira).
   const [_nativeCallsFailed, _setNativeCallsFailed] = useState(() => !!globalThis.__chatyy_native_calls_failed);
   const _onNativeCallsFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_calls_failed = true; console.warn('[native-calls] fallback JS:', msg); } catch {}
+    try { globalThis.__chatyy_native_calls_failed = true; console.warn('[native-calls] fallback JS:', msg); try { require('../services/crashReporter').reportNativeFallback('native_calls', msg); } catch {} } catch {}
     _setNativeCallsFailed(true);
   }, []);
   const _nativeDescribe = useCallback((item) => _describeCallRow(item, t, language), [t, language]);
@@ -3571,7 +3589,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             </>
           )}
         </ScrollView>
-        <Sheet visible={historyMenuOpen} onClose={() => setHistoryMenuOpen(false)}>
+        <Sheet native visible={historyMenuOpen} onClose={() => setHistoryMenuOpen(false)}>
           <ActionList
             onDone={() => setHistoryMenuOpen(false)}
             items={[{ key: 'clear', label: t?.('calls.clearHistory') || 'Limpar histórico', icon: IconTrash, destructive: true, onPress: handleClearAll }]}

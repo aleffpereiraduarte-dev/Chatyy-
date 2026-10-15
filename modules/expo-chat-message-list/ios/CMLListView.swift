@@ -1,5 +1,8 @@
 import ExpoModulesCore
 import UIKit
+#if canImport(ExpoChatStore)
+import ExpoChatStore
+#endif
 
 // [2026-10-14 native-list] ChatyyMessageList — UICollectionView INVERTIDA
 // (scaleY -1: offset 0 = mensagem mais nova, embaixo). Ganho vs FlashList JS:
@@ -75,6 +78,8 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   let onMenuAction = EventDispatcher()
   let onReact = EventDispatcher()
   let onMenuDismiss = EventDispatcher()
+  // [native-store] foto da conversa lida do store nativo (apiVersion 4)
+  let onStore = EventDispatcher()
 
   private let flow = CMLFlowLayout()
   private var cv: UICollectionView!
@@ -105,6 +110,27 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   private var readySent = false
   private var audioState: CMLAudioState?
   private var pendingFlash: String?
+
+  // [2026-10-15 native-store] Foto da conversa no store nativo (modules/
+  // expo-chat-store). Prop `store` {a: conta, c: conversa, r: rev do formato
+  // das linhas, n: chave mais nova que o JS tem}: na montagem a lista lê a
+  // última janela que mostrou desta conversa e PINTA sem esperar o JS (o JS só
+  // mandou o id). O 1º applyRows do JS substitui tudo — linha idêntica à da foto
+  // mantém o layout (sem recálculo/piscada). Depois de cada applyRows do JS a
+  // janela mais nova é regravada (debounce) direto no store, sem ponte.
+  struct StoreCfg { let a: String; let c: String; let r: String; let n: String }
+  private var storeCfg: StoreCfg?
+  private var storeLoadStarted = false
+  private var jsApplied = false
+  private var storeDicts: [String: NSDictionary] = [:]  // linhas pintadas da foto (até o 1º applyRows do JS)
+  private var rawDicts: [String: [String: Any]] = [:]   // dicionário JS por chave (p/ regravar a foto)
+  private var jsVersion = 0
+  private var persistedVersion = 0
+  private var persistWork: DispatchWorkItem?
+  static let storeWindow = 60
+  /// Enquanto só a foto está na tela (JS ainda não mandou linhas), toques não
+  /// vão p/ o JS (que ainda não conhece os itens).
+  private var storeInteractive: Bool { return jsApplied || storeDicts.isEmpty }
 
   // rolagem
   private var lastScrollEmit: CFTimeInterval = 0
@@ -377,8 +403,31 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   // MARK: dados (JS → nativo)
 
   func applyRows(_ payload: [String: Any]) {
+    let firstJS = !jsApplied
+    jsApplied = true
+    applyRowsCore(payload, fromStore: false)
+    if firstJS {
+      storeDicts.removeAll()
+      #if canImport(ExpoChatStore)
+      unwatchStore()
+      #endif
+    }
+    jsVersion += 1
+    schedulePersist()
+  }
+
+  private func applyRowsCore(_ payload: [String: Any], fromStore: Bool) {
     if let arr = payload["rows"] as? [[String: Any]] {
       for d in arr {
+        if let k = d["k"] as? String {
+          if fromStore {
+            storeDicts[k] = d as NSDictionary
+          } else {
+            if storeCfg != nil { rawDicts[k] = d }
+            // mesma linha que a foto já pintou → mantém linha + layout
+            if let sd = storeDicts[k], rows[k] != nil, sd == (d as NSDictionary) { continue }
+          }
+        }
         guard let r = CMLRow(dict: d) else { continue }
         rows[r.key] = r
         layouts[r.key] = nil
@@ -399,6 +448,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
         rows = rows.filter { seen.contains($0.key) }
         layouts = layouts.filter { seen.contains($0.key) }
         appliedHeights = appliedHeights.filter { seen.contains($0.key) }
+        rawDicts = rawDicts.filter { seen.contains($0.key) }
       }
       olderArmed = true
     }
@@ -541,7 +591,110 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   private func sendReadyIfNeeded() {
     if readySent { return }
     readySent = true
-    onReady(["count": applied.count])
+    onReady(["count": applied.count, "src": jsApplied ? "js" : "store"])
+  }
+
+  // MARK: [native-store] foto da conversa
+
+  func setStore(_ v: [String: Any]?) {
+    #if canImport(ExpoChatStore)
+    guard let v = v else { storeCfg = nil; return }
+    let a = CMLRow.str(v["a"]), c = CMLRow.str(v["c"]), r = CMLRow.str(v["r"]), n = CMLRow.str(v["n"])
+    if a.isEmpty || c.isEmpty || r.isEmpty { storeCfg = nil; return }
+    if let p = storeCfg, p.a != a || p.c != c {
+      // mesma view, outra conversa/conta: não regrava a janela antiga na nova chave
+      persistWork?.cancel(); persistWork = nil
+      rawDicts.removeAll()
+      persistedVersion = jsVersion
+    }
+    storeCfg = StoreCfg(a: a, c: c, r: r, n: n)
+    if jsApplied || storeLoadStarted { return }
+    storeLoadStarted = true
+    // [fase 1.5] pré-carga do pressIn da home: pinta SÍNCRONO, já no set da prop
+    // (antes do 1º layout da view) — sem hop de fila.
+    if let snap = ChatyyStoreDB.shared.cachedThread(account: a, conv: c, rev: r) {
+      if n.isEmpty || snap.newest == n {
+        applyRowsCore(["rows": snap.rows, "keys": snap.keys, "anim": 0], fromStore: true)
+        onStore(["hit": 1, "why": "mem", "ms": 0, "readMs": Int(snap.readMs), "rows": snap.keys.count])
+        watchStore(a, c)
+        return
+      }
+    }
+    loadStoreSnapshot(a, c, r, reason: "hit")
+    watchStore(a, c)
+    #endif
+  }
+
+  #if canImport(ExpoChatStore)
+  private var storeObsToken: Int?
+
+  deinit {
+    if let t = storeObsToken { ChatyyStoreDB.shared.removeObserver(t) }
+  }
+
+  private func loadStoreSnapshot(_ a: String, _ c: String, _ r: String, reason: String) {
+    let t0 = CACurrentMediaTime()
+    ChatyyStoreDB.shared.loadThread(account: a, conv: c, rev: r) { [weak self] snap, why in
+      guard let self = self else { return }
+      let ms = Int((CACurrentMediaTime() - t0) * 1000)
+      guard let snap = snap else { self.onStore(["hit": 0, "why": why, "ms": ms]); return }
+      if self.jsApplied { self.onStore(["hit": 0, "why": "late", "ms": ms, "rows": snap.keys.count]); return }
+      guard let cur = self.storeCfg, cur.a == a, cur.c == c else { self.onStore(["hit": 0, "why": "moved", "ms": ms]); return }
+      // o JS tem mensagem mais nova que a foto → não pinta algo velho. Com a
+      // fase 2 o sync já anexa as novas na foto (services/nativeStoreRows).
+      if !cur.n.isEmpty && snap.newest != cur.n { self.onStore(["hit": 0, "why": "stale", "ms": ms, "rows": snap.keys.count]); return }
+      self.applyRowsCore(["rows": snap.rows, "keys": snap.keys, "anim": reason == "hit" ? 0 : 1], fromStore: true)
+      self.onStore(["hit": 1, "why": reason, "ms": ms, "readMs": Int(snap.readMs), "rows": snap.keys.count])
+    }
+  }
+
+  /// [fase 2] enquanto SÓ a foto está na tela (JS ainda montando — casca leve),
+  /// um lote do sync que mexe nesta conversa relê a foto (mensagem nova aparece).
+  private func watchStore(_ a: String, _ c: String) {
+    unwatchStore()
+    storeObsToken = ChatyyStoreDB.shared.addObserver(account: a, conv: c) { [weak self] in
+      guard let self = self, !self.jsApplied, let cfg = self.storeCfg, cfg.a == a, cfg.c == c else { return }
+      // n (chave mais nova do JS) ficou para trás: a foto agora pode estar mais nova.
+      self.storeCfg = StoreCfg(a: cfg.a, c: cfg.c, r: cfg.r, n: "")
+      self.loadStoreSnapshot(a, c, cfg.r, reason: "live")
+    }
+  }
+
+  private func unwatchStore() {
+    if let t = storeObsToken { ChatyyStoreDB.shared.removeObserver(t); storeObsToken = nil }
+  }
+  #endif
+
+  private func schedulePersist() {
+    guard storeCfg != nil, jsApplied else { return }
+    persistWork?.cancel()
+    let w = DispatchWorkItem { [weak self] in self?.persistNow() }
+    persistWork = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: w)
+  }
+
+  /// Regrava no store a janela mais nova (até storeWindow linhas) exatamente
+  /// como o JS mandou — menos estado transitório (seleção, upload, não-lidas).
+  private func persistNow() {
+    persistWork?.cancel(); persistWork = nil
+    #if canImport(ExpoChatStore)
+    guard let cfg = storeCfg, jsApplied, persistedVersion != jsVersion else { return }
+    persistedVersion = jsVersion
+    var keys: [String] = []
+    var out: [[String: Any]] = []
+    for k in target { // mais nova primeiro
+      if keys.count >= CMLListView.storeWindow { break }
+      guard var d = rawDicts[k] else { continue }
+      if (d["kind"] as? String) == "unread" { continue }
+      if let id = d["id"] as? String, id.hasPrefix("tmp") { continue }
+      d.removeValue(forKey: "sel")
+      if var m = d["media"] as? [String: Any], m["up"] != nil { m.removeValue(forKey: "up"); d["media"] = m }
+      keys.append(k)
+      out.append(d)
+    }
+    keys.reverse(); out.reverse()
+    ChatyyStoreDB.shared.saveThread(account: cfg.a, conv: cfg.c, rev: cfg.r, keys: keys, rows: out)
+    #endif
   }
 
   // MARK: comandos (JS)
@@ -714,7 +867,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   }
 
   @objc private func onTap(_ g: UITapGestureRecognizer) {
-    guard g.state == .ended, let hit = cellAt(g), let row = hit.0.row else { return }
+    guard storeInteractive, g.state == .ended, let hit = cellAt(g), let row = hit.0.row else { return }
     let cell = hit.0, pc = hit.1
     var body: [String: Any] = ["key": cell.key]
     if row.sel > 0 && row.kind == .msg {
@@ -754,7 +907,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   }
 
   @objc private func onLong(_ g: UILongPressGestureRecognizer) {
-    guard g.state == .began, let hit = cellAt(g), let row = hit.0.row, row.kind == .msg || row.kind == .system else { return }
+    guard storeInteractive, g.state == .began, let hit = cellAt(g), let row = hit.0.row, row.kind == .msg || row.kind == .system else { return }
     let cell = hit.0, pc = hit.1
     var idx = 0
     switch cell.part(at: pc) {
@@ -917,9 +1070,11 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     if window == nil, let ov = ctxOverlay {
       ov.dismiss(reason: "detach", animated: false)
     }
+    if window == nil { persistNow() } // [native-store] saiu da conversa → grava já
   }
 
   func swipeShouldBegin() -> Bool {
+    if !storeInteractive { return false }
     let v = swipe.velocity(in: cv)
     let pSelf = swipe.location(in: self)
     if pSelf.x < 28 { return false } // borda = voltar (navegação)
@@ -956,13 +1111,21 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       x = min(x, 110)
       cell.setSwipe(x * swipeDir, threshold: swipeThreshold)
       let armedNow = raw >= swipeThreshold
-      if armedNow && !swipeArmed { haptic.impactOccurred() }
+      if armedNow && !swipeArmed {
+        haptic.impactOccurred()
+        cell.popReplyIcon() // [reply-v2] "estala" no limiar (Telegram)
+        haptic.prepare()
+      }
       swipeArmed = armedNow
     case .ended, .cancelled, .failed:
       let fire = g.state == .ended && swipeArmed
       let key = cell.key
       let dir = swipeDir
-      UIView.animate(withDuration: 0.34, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+      // [reply-v2] volta com mola (leve overshoot), velocidade do dedo.
+      let cur = abs(cell.slide.transform.tx)
+      let vx = abs(g.velocity(in: cv).x)
+      let iv = cur > 1 ? min(8, vx / cur) : 0
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.72, initialSpringVelocity: iv, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
         cell.setSwipe(0, threshold: self.swipeThreshold)
       })
       swipeCell = nil

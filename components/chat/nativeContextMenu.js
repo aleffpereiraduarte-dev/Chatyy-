@@ -200,7 +200,12 @@ export function runNativeCtxAction(action, msg, H) {
   if (!msg) return;
   switch (action) {
     case 'reply': H.handleReply(msg); return;
-    case 'quote': H.setQuoteSelectModal({ msg, draft: '' }); return;
+    case 'quote': {
+      // [reply-v2] seletor nativo de trecho; sem suporte/desligado → modal JS
+      try { if (H.nativeQuote && H.nativeQuote(msg)) return; } catch {}
+      H.setQuoteSelectModal({ msg, draft: '' });
+      return;
+    }
     case 'copy': H.handleCopyMessage(msg); return;
     case 'edit': H.handleEdit(msg); return;
     case 'pin': case 'unpin': H.handlePinMessage(msg); return;
@@ -276,6 +281,8 @@ async function _replyPrivately(srcMsg, H) {
       content: previewSource,
       quoteText: previewSource,
       type: srcMsg.type || 'text',
+      // [responder-privado 2026-10-15] origem → servidor monta a citação cruzada (membro + visível)
+      ...(require('../../utils/privateReplyQuote').extSourceOf(srcMsg, H.conversationId)),
     };
     let newId = null;
     try {

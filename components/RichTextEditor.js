@@ -1,9 +1,12 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, TextInput, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, TextInput, Animated, processColor } from 'react-native';
 import Svg, { Path, Line, Circle, Rect } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, FontFamily } from '../constants/theme';
 import { IconBold, IconItalic, IconUnderline, IconLink } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
+// [2026-10-15 native-email] Editor rico nativo (UITextView / EditText + spans).
+import { getNativeRichEditorView } from '../modules/expo-email-native';
 
 // ─── Inline SVG icons for the formatting toolbar ───
 // Local to RichTextEditor so we don't bloat the global Icons.js with editor-only glyphs.
@@ -172,6 +175,37 @@ const TOOLBAR_GROUPS = [
   ],
 ];
 
+// Toolbar do editor NATIVO: só o que o modelo nativo representa sem perda
+// (o HTML gerado volta igual ao que se vê).
+const NATIVE_TOOLBAR_GROUPS = [
+  [
+    { id: 'bold',          command: 'bold',          iconKey: 'bold' },
+    { id: 'italic',        command: 'italic',        iconKey: 'italic' },
+    { id: 'underline',     command: 'underline',     iconKey: 'underline' },
+    { id: 'strikethrough', command: 'strikeThrough', iconKey: 'strike' },
+  ],
+  [
+    { id: 'bulletList',   command: 'insertUnorderedList', iconKey: 'bullet' },
+    { id: 'numberedList', command: 'insertOrderedList',   iconKey: 'numbered' },
+    { id: 'blockquote',   command: 'formatBlock', arg: 'BLOCKQUOTE', iconKey: 'quote' },
+  ],
+  [
+    { id: 'link',        command: 'createLink',   iconKey: 'link' },
+    { id: 'clearFormat', command: 'removeFormat', iconKey: 'clear' },
+  ],
+  [
+    { id: 'undo', command: 'undo', iconKey: 'undo' },
+    { id: 'redo', command: 'redo', iconKey: 'redo' },
+  ],
+];
+
+// HTML que o editor nativo NÃO representa (imagem, tabela, cor, tamanho,
+// alinhamento, código…) → fica no editor WebView para não perder nada.
+const NATIVE_UNSUPPORTED_RE = /<(img|table|font|pre|code|hr|iframe|video|svg|h[1-6])\b|\sstyle\s*=\s*["'][^"']*(color|font-size|font-family|text-align|background)|\salign\s*=|\sbgcolor\s*=/i;
+export function canUseNativeEditor(html) {
+  return !NATIVE_UNSUPPORTED_RE.test(String(html || ''));
+}
+
 function renderFmtIcon(key, color, btn) {
   switch (key) {
     case 'bold':       return <IconBold size={18} color={color} />;
@@ -239,7 +273,7 @@ function ToolbarButton({ btn, onPress, colors, activeCommands }) {
 }
 
 // ─── Formatting Toolbar — grouped pills + dividers ───
-function Toolbar({ onCommand, colors, activeCommands }) {
+function Toolbar({ onCommand, colors, activeCommands, groups = TOOLBAR_GROUPS }) {
   return (
     <View
       style={[
@@ -256,7 +290,7 @@ function Toolbar({ onCommand, colors, activeCommands }) {
         contentContainerStyle={styles.toolbarContent}
         keyboardShouldPersistTaps="always"
       >
-        {TOOLBAR_GROUPS.map((group, gi) => (
+        {groups.map((group, gi) => (
           <View key={`g${gi}`} style={styles.toolbarGroupRow}>
             <View style={styles.toolbarGroup}>
               {group.map(btn => (
@@ -269,7 +303,7 @@ function Toolbar({ onCommand, colors, activeCommands }) {
                 />
               ))}
             </View>
-            {gi < TOOLBAR_GROUPS.length - 1 && (
+            {gi < groups.length - 1 && (
               <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
             )}
           </View>
@@ -841,11 +875,98 @@ function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark,
   );
 }
 
+// ─── Native Editor (UITextView / EditText + spans) ───
+// [2026-10-15 native-email] Mesmo contrato do MobileEditor (value HTML /
+// onChange(html)); a toolbar é a do JS, os comandos vão para o nativo.
+function NativeEditor({ value, onChange, placeholder, minHeight, colors, cardMode, onUnsupported }) {
+  const NativeView = getNativeRichEditorView();
+  const { t } = useLanguage();
+  const ref = useRef(null);
+  const [activeCommands, setActiveCommands] = useState([]);
+  const [height, setHeight] = useState(minHeight || 200);
+  const initialRef = useRef(value || '');
+  const lastSentRef = useRef(value || '');
+
+  // Valor trocado de fora (IA, modelo, rascunho, assinatura) → empurra pro nativo.
+  useEffect(() => {
+    if (value === lastSentRef.current) return;
+    if (!canUseNativeEditor(value)) { onUnsupported?.(); return; }
+    lastSentRef.current = value;
+    try { ref.current?.setHtml?.(value || ''); } catch {}
+  }, [value, onUnsupported]);
+
+  const theme = useMemo(() => ({
+    text: processColor(colors.text),
+    placeholder: processColor(colors.textTertiary || colors.textSecondary),
+    link: processColor(colors.primary),
+    quoteBar: processColor(colors.border || colors.borderLight),
+    tint: processColor(colors.primary),
+  }), [colors]);
+
+  const labels = useMemo(() => ({
+    linkTitle: t('compose.linkTitle') || 'Inserir link',
+    linkPlaceholder: 'https://',
+    ok: t('common.ok') || 'OK',
+    cancel: t('common.cancel') || 'Cancelar',
+    removeLink: t('compose.linkRemove') || 'Remover link',
+  }), [t]);
+
+  const handleCommand = useCallback((btn) => {
+    try { ref.current?.exec?.(btn.command, btn.arg || null); } catch {}
+  }, []);
+
+  const handleChange = useCallback((e) => {
+    const html = e?.nativeEvent?.html ?? '';
+    lastSentRef.current = html;
+    onChange?.(html);
+  }, [onChange]);
+
+  return (
+    <View style={[cardMode ? styles.editorContainerFlat : styles.editorContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+      <Toolbar onCommand={handleCommand} colors={colors} activeCommands={activeCommands} groups={NATIVE_TOOLBAR_GROUPS} />
+      <NativeView
+        ref={ref}
+        style={{ height: Math.max(minHeight || 200, height), backgroundColor: 'transparent' }}
+        initialHtml={initialRef.current}
+        placeholder={placeholder || ''}
+        fontSize={FontSize.base}
+        theme={theme}
+        labels={labels}
+        padding={Spacing.md}
+        onChange={handleChange}
+        onSelectionChange={(e) => setActiveCommands(e?.nativeEvent?.formats || [])}
+        onHeightChange={(e) => { const h = Number(e?.nativeEvent?.height) || 0; if (h > 0) setHeight(Math.ceil(h)); }}
+      />
+    </View>
+  );
+}
+
 // ─── Main Export ───
 // `cardMode` (default false) — when true, the editor renders without its own
 // border/shadow so a parent card can supply them (used by compose.js body card).
 export default function RichTextEditor({ value, onChange, placeholder, minHeight, cardMode = false }) {
   const { colors, isDark } = useTheme();
+  // [2026-10-15 native-email] Nativo quando o binário tem a view, o kill switch
+  // (__chatyy_native_compose) não está desligado e o HTML é representável.
+  // Uma vez no WebView, fica nele (troca só nativo → WebView, nunca o contrário).
+  const [useNative, setUseNative] = useState(() => (
+    Platform.OS !== 'web' && !!getNativeRichEditorView() && canUseNativeEditor(value)
+  ));
+  const fallBack = useCallback(() => setUseNative(false), []);
+
+  if (useNative && Platform.OS !== 'web') {
+    return (
+      <NativeEditor
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        minHeight={minHeight}
+        colors={colors}
+        cardMode={cardMode}
+        onUnsupported={fallBack}
+      />
+    );
+  }
 
   if (Platform.OS === 'web') {
     return (

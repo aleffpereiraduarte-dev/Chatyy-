@@ -14,12 +14,19 @@ public class ChatyyMessageListModule: Module {
     // 3 = [native-ctxmenu] menu de contexto nativo (prop ctxMenu,
     //     showContextMenu/dismissContextMenu, onMenuAction/onReact/onMenuDismiss)
     //     + [hero] onRowPress part 'media' traz frame {x,y,w,h,radius}; mediaFrame(id).
+    // 4 = [native-store] prop `store` {a,c,r,n} (foto da conversa lida/gravada
+    //     direto no store nativo modules/expo-chat-store) + evento onStore;
+    //     onReady traz src 'store'|'js'.
     Function("apiVersion") { () -> Int in
+      #if canImport(ExpoChatStore)
+      return 4
+      #else
       return 3
+      #endif
     }
 
     View(CMLListView.self) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore")
 
       Prop("theme") { (view: CMLListView, value: [String: Any]?) in
         view.setTheme(value ?? [:])
@@ -52,6 +59,9 @@ public class ChatyyMessageListModule: Module {
       Prop("ctxMenu") { (view: CMLListView, value: Bool?) in
         view.setCtxMenu(value ?? false)
       }
+      Prop("store") { (view: CMLListView, value: [String: Any]?) in
+        view.setStore(value)
+      }
 
       AsyncFunction("applyRows") { (view: CMLListView, payload: [String: Any]) in
         view.applyRows(payload)
@@ -83,6 +93,12 @@ public class ChatyyMessageListModule: Module {
 
       AsyncFunction("dismissContextMenu") { (view: CMLListView) in
         view.dismissContextMenu()
+      }.runOnQueue(.main)
+
+      // [reply-v2] "Citar trecho" nativo → resolve com o trecho ("" = cancelou)
+      AsyncFunction("showQuotePicker") { (view: CMLListView, payload: [String: Any], promise: Promise) in
+        guard let win = view.window else { promise.resolve(""); return }
+        CMLQuotePicker.present(in: win, payload: payload) { text in promise.resolve(text) }
       }.runOnQueue(.main)
 
       // [hero] frame atual da miniatura de uma mensagem (null = fora da tela)

@@ -15,6 +15,11 @@ import { DateTimePickerModal } from './ScheduleModals';
 import { IconSearch, IconImage, IconVideo, IconLink, IconMic, IconFileText, IconBarChart, IconCalendar, IconX, IconPlay } from './Icons';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+// [2026-10-15 native-search-notifs] resultados em lista NATIVA (ChatyyResultList):
+// cabeçalho por conversa, trecho em volta do termo com destaque nativo,
+// paginação por onEndReached. Kill switch: globalThis.__chatyy_native_search = false.
+import NativeResultList, { useNativeResults } from './native/NativeResultList';
+import { snippetAround } from './native/resultListAdapter';
 
 const KINDS = [
   { key: 'photo', labelKey: 'gsearch.photos', fallback: 'Fotos', Icon: IconImage },
@@ -68,6 +73,7 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
   const [customFrom, setCustomFrom] = useState(null);
   const reqRef = useRef(0);
   const debRef = useRef(null);
+  const [nativeOn, onNativeFailure] = useNativeResults('__chatyy_native_search');
 
   const q = String(query || '').trim();
   const active = !!kind || !!range || q.length >= 2;
@@ -294,6 +300,49 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
     );
   })();
 
+  // ── Linhas nativas ─────────────────────────────────────────────────────────
+  const nativeMeta = useRef(new Map());
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const out = [];
+    const meta = new Map();
+    for (const it of items) {
+      if (it._t === 'h') {
+        const m0 = convMeta(it.cid, it.first);
+        out.push({ id: it.id, k: 's', t: `${m0.name} · ${it.count}${hasMore ? '+' : ''}` });
+        continue;
+      }
+      const m = it.m;
+      const own = String(m.sender_email || '').toLowerCase() === me;
+      const cm = convMeta(m.conversation_id, m);
+      const who = own ? tt('gsearch.you', 'Você') : (cm.type === 'direct' ? cm.name : (m.sender_name || cm.name));
+      const k = m.kind || 'text';
+      let uri = '';
+      if (k === 'photo' || k === 'video') {
+        if (m.thumb_b64) uri = String(m.thumb_b64).startsWith('data:') ? m.thumb_b64 : `data:image/jpeg;base64,${m.thumb_b64}`;
+        else if (m.thumbnail_url) uri = api.getMediaUrl(m.thumbnail_url);
+        else if (k === 'photo' && m.file_url) uri = api.getMediaUrl(m.file_url);
+      }
+      const row = { id: it.id, k: 'r', t: who || cm.name, sb: snippetAround(previewText(m), q), sl: 2, tm: fmtDate(m.created_at), hl: 1 };
+      if (uri) { row.th = uri; if (k === 'video') row.pv = 1; } else {
+        row.gl = ({ photo: 'image', video: 'video', link: 'link', audio: 'mic', doc: 'file', poll: 'chart' })[k] || 'message';
+        row.gs = 'r';
+      }
+      row.a11y = `${cm.name}: ${previewText(m)}`;
+      out.push(row);
+      meta.set(it.id, () => openHit(m));
+    }
+    if (loading || loadingMore) out.push({ id: 'l:more', k: 'l' });
+    else if (!out.length) {
+      if (error) { out.push({ id: 'n:error', k: 'n', t: tt('gsearch.error', 'Não foi possível buscar. Toque para tentar de novo.'), gl: 'search' }); meta.set('n:error', () => fetchPage(null)); }
+      else out.push({ id: 'n:empty', k: 'n', t: active ? tt('gsearch.empty', 'Nenhuma mensagem encontrada') : tt('gsearch.hint', 'Digite para buscar ou toque em um tipo'), gl: 'search', tap: 0 });
+    }
+    nativeMeta.current = meta;
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOn, items, convs, hasMore, loading, loadingMore, error, active, q, me, tt, fmtDate]);
+  const onNativePress = useCallback((id) => { const fn = nativeMeta.current.get(id); if (fn) fn(); }, []);
+
   return (
     <View style={{ flex: 1 }}>
       <ScrollView
@@ -338,10 +387,21 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
         })}
       </ScrollView>
 
-      {loading ? (
+      {loading && !nativeOn ? (
         <View style={{ paddingVertical: 10 }}><ActivityIndicator size="small" color={sub} /></View>
       ) : null}
 
+      {nativeOn ? (
+        <NativeResultList
+          rows={nativeRows}
+          highlight={q}
+          colors={colors}
+          isDark={isDark}
+          onPress={onNativePress}
+          onEndReached={loadMore}
+          onFailure={onNativeFailure}
+        />
+      ) : (
       <FlashList
         data={items}
         keyExtractor={(it) => it.id}
@@ -354,6 +414,7 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
         ListEmptyComponent={empty}
         ListFooterComponent={loadingMore ? <View style={{ paddingVertical: 14 }}><ActivityIndicator size="small" color={sub} /></View> : null}
       />
+      )}
 
       <Modal visible={dateSheet} transparent animationType="fade" onRequestClose={() => setDateSheet(false)}>
         <Pressable style={styles.overlay} onPress={() => setDateSheet(false)}>

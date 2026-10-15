@@ -933,7 +933,11 @@ class CallActivity : ComponentActivity() {
     // mid-call BT connect/disconnect (API 23+).
     try {
       val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
-      router.configureForCall(hasVideo)
+      // [2026-10-15 viva-voz] Real route → button state + proximity (only in
+      // earpiece mode). Registered BEFORE configureForCall so the initial
+      // route is reflected too.
+      router.addListener(audioRouteListener)
+      router.configureForCall(hasVideo, callId)
       state.isSpeakerOn = router.speakerOn
     } catch (t: Throwable) {
       Log.w(TAG, "AudioRouter.configureForCall failed: ${t.message}")
@@ -1027,6 +1031,34 @@ class CallActivity : ComponentActivity() {
             // The camera flips on only after the peer replies `accepted`
             // (handleVideoRequestData → enterVideoModeAndPublish). For an
             // already-video call, fall through to the normal mute/unmute path.
+            // [2026-10-15 cam-1-toque] Turning OFF also cancels a camera that
+            // was waiting for the CAMERA grant (else the grant would light it
+            // up after the user already said no).
+            if (!desired) pendingVideoPublish = false
+            // [2026-10-15 cam-1-toque] VOICE call still ringing (caller): the
+            // ring gate forbids publishing before the answer → remember the
+            // tap (button lit via videoUpgradeRequested) and turn the camera
+            // on when the callee answers (publishLocalMediaAfterConnect). A
+            // 2nd tap while pending cancels it.
+            if (callerRingGateClosed() && !state.isVideo) {
+              val pend = !camOnAnswerPending
+              camOnAnswerPending = pend
+              state.videoUpgradeRequested = pend
+              return@onToggleCam
+            }
+            // [2026-10-15 cam-1-toque] ALSO route through the upgrade when the
+            // call already flipped to video because the PEER turned its camera
+            // on (isVideo=true) but OUR camera never published and the local
+            // renderer was never allocated (voice-started call): the plain
+            // path below published with no self-view, no proximity release
+            // and no announce to the peer.
+            val noLocalCamYet = try {
+              room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track == null
+            } catch (_: Throwable) { true }
+            if (desired && state.isVideo && noLocalCamYet && localRenderer == null) {
+              enterVideoModeAndPublish(announce = true)
+              return@onToggleCam
+            }
             if (desired && !state.isVideo) {
               // [audio→video fix 2026-05-27] Notify the peer (so their UI can
               // show "X ligou a câmera" / auto-upgrade on TrackSubscribed) BUT
@@ -1038,11 +1070,23 @@ class CallActivity : ComponentActivity() {
               // enterVideoModeAndPublish() requests CAMERA perm if missing,
               // (re)creates+overlays the local renderer, sets isVideo/isCameraOn,
               // setCameraEnabled(true) and binds the local track. WhatsApp-style.
-              requestVideoUpgrade()
-              enterVideoModeAndPublish()
+              // [2026-10-15 cam-1-toque] The peer is told AFTER our camera
+              // really published (announce=true; same as iOS, which sends
+              // video_request only on first publish) — before, the request
+              // went out even while the CAMERA prompt was up / on failure.
+              enterVideoModeAndPublish(announce = true)
               return@onToggleCam
             }
             state.isCameraOn = desired
+            // [2026-10-15 cam-1-toque] Camera off on a call that started as
+            // VOICE: audio/proximity go back to the voice rule (iOS parity:
+            // AudioRouter.setLocalVideoActive(false)); back on → video rule.
+            if (!desired) {
+              restoreVoiceAudioAfterCameraOff()
+            } else if (!hasVideo) {
+              releaseProximityWakeLock()
+              applyVideoAudioRoute()
+            }
             lifecycleScope.launch {
               // [Wave C, 2026-05-18] Toggle the LocalVideoTrack mute state
               // instead of unpublishing — keeps the SFU path warm, preserves
@@ -1114,6 +1158,8 @@ class CallActivity : ComponentActivity() {
             try { ExpoCallKitModule.emitLkLocalVideoChanged(desired) } catch (_: Throwable) {}
           },
           onToggleSpeaker = { desired ->
+            speakerTouchedByUser = true
+            speakerAutoForVideo = false
             state.isSpeakerOn = desired
             applyAudioRoute(desired)
             // __chatyy_native_call_sync — speaker route was previously a
@@ -1141,6 +1187,8 @@ class CallActivity : ComponentActivity() {
             // Toggle between bluetooth-preferred and built-in. Real device
             // picker UX is out of scope for the 1:1 screen — long press on
             // the speaker button just flips the BT route.
+            speakerTouchedByUser = true
+            speakerAutoForVideo = false
             state.audioOutputPreferBluetooth = !state.audioOutputPreferBluetooth
             applyAudioRoute(state.isSpeakerOn)
             // __chatyy_native_call_sync — emit the resolved audio route so JS
@@ -1240,30 +1288,15 @@ class CallActivity : ComponentActivity() {
             // routes through the headset; for the others we just clear SCO
             // and toggle speakerphone.
             val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
-            when (type) {
-              "speaker" -> {
-                state.audioOutputPreferBluetooth = false
-                router.setSpeaker(true)
-                state.isSpeakerOn = true
-              }
-              "earpiece" -> {
-                state.audioOutputPreferBluetooth = false
-                router.setSpeaker(false)
-                state.isSpeakerOn = false
-              }
-              "bluetooth" -> {
-                state.audioOutputPreferBluetooth = true
-                router.preferBluetooth()
-                state.isSpeakerOn = false
-              }
-              "wired" -> {
-                // Wired headset takes priority on its own when plugged in;
-                // we just drop speakerphone/SCO so the system route wins.
-                state.audioOutputPreferBluetooth = false
-                router.setSpeaker(false)
-                state.isSpeakerOn = false
-              }
-            }
+            speakerTouchedByUser = true
+            speakerAutoForVideo = false
+            // [2026-10-15 viva-voz] Exact route (earpiece no longer falls
+            // back to BT); the router listener then mirrors the REAL route.
+            state.audioOutputPreferBluetooth = type == "bluetooth"
+            state.isSpeakerOn = type == "speaker"
+            router.selectRouteByName(type)
+            try { ExpoCallKitModule.emitLkSpeakerChanged(type == "speaker") } catch (_: Throwable) {}
+            try { ExpoCallKitModule.emitAudioRouteChanged(type) } catch (_: Throwable) {}
           },
           // [video-upgrade 2026-05-25] Wire the two video-upgrade callbacks.
           onRequestVideoUpgrade = { requestVideoUpgrade() },
@@ -1426,7 +1459,26 @@ class CallActivity : ComponentActivity() {
   // [proximity 2026-10-04] Proximity wake-lock lifecycle extracted into helpers
   // so an audio→video upgrade can RELEASE it (the screen must stay on for
   // video) and a video→audio downgrade can RE-ACQUIRE it. Both are idempotent.
+  /** [2026-10-15 viva-voz] Router → UI. Main thread. */
+  private val audioRouteListener = expo.modules.callkit.audio.AudioRouter.Listener { r ->
+    if (finishing) return@Listener
+    val spk = r == expo.modules.callkit.audio.AudioRouter.Route.SPEAKER
+    state.isSpeakerOn = spk
+    state.audioOutputPreferBluetooth = r == expo.modules.callkit.audio.AudioRouter.Route.BLUETOOTH
+    if (r == expo.modules.callkit.audio.AudioRouter.Route.EARPIECE) {
+      if ((!state.isVideo || !state.isCameraOn) && !state.hasRemoteVideo && !state.isInPip) acquireProximityWakeLock()
+    } else {
+      releaseProximityWakeLock()
+    }
+  }
+
   private fun acquireProximityWakeLock() {
+    // [2026-10-15 viva-voz] Proximity only in earpiece mode (loudspeaker / BT /
+    // wired: the phone is not at the ear — screen must stay on).
+    try {
+      if (expo.modules.callkit.audio.AudioRouter.get(applicationContext).currentRoute !=
+          expo.modules.callkit.audio.AudioRouter.Route.EARPIECE) return
+    } catch (_: Throwable) {}
     try {
       if (proximityWakeLock == null) {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
@@ -1570,6 +1622,7 @@ class CallActivity : ComponentActivity() {
     // speakerphone / MODE_NORMAL before LK disconnect so the next foreground
     // app (or expo-audio session) starts with a clean AudioManager state.
     try {
+      expo.modules.callkit.audio.AudioRouter.get(applicationContext).removeListener(audioRouteListener)
       expo.modules.callkit.audio.AudioRouter.get(applicationContext).teardown()
     } catch (t: Throwable) {
       Log.w(TAG, "AudioRouter.teardown failed: ${t.message}")
@@ -1891,7 +1944,18 @@ class CallActivity : ComponentActivity() {
         }
       } else if (!camGranted) {
         pendingVideoPublish = false
-        state.status = "Permita a câmera para vídeo"
+        pendingVideoAnnounce = false
+        // [2026-10-15 cam-1-toque] Undo the optimistic "on" (button + video
+        // layout) of a voice call: nothing is published.
+        val hasCam = try {
+          room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track != null
+        } catch (_: Throwable) { false }
+        if (!hasCam) {
+          state.isCameraOn = false
+          if (!hasVideo && !state.hasRemoteVideo) state.isVideo = false
+        }
+        CallDiag.log("camera_permission_denied", callId, "", applicationContext)
+        state.status = CallStrings.s("camDenied")
       }
       return
     }
@@ -2124,6 +2188,15 @@ class CallActivity : ComponentActivity() {
     // time — LK docs on createVideoTrack + setCameraEnabled).
     stopCallerRingPreview()
     if (isOutgoing) callerMediaPublished = true
+    // [2026-10-15 cam-1-toque] Camera tapped ON while this voice call rang.
+    if (camOnAnswerPending) {
+      camOnAnswerPending = false
+      state.videoUpgradeRequested = false
+      lifecycleScope.launch {
+        delay(300)
+        if (!finishing && !state.isVideo) enterVideoModeAndPublish(announce = true)
+      }
+    }
     // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
     // actually granted. Calling setMicrophoneEnabled(true) without the
     // perm silently publishes a muted/empty track — call looks connected
@@ -2662,7 +2735,8 @@ class CallActivity : ComponentActivity() {
       Log.w(TAG, "[CALL_E2EE] cold-launch e2ee build failed (${t.message}) — plaintext")
       roomOptions
     }
-    val r = LiveKit.create(applicationContext, options = roomOptionsFinal)
+    // [2026-10-15 viva-voz] No LiveKit AudioSwitch: AudioRouter owns the route.
+    val r = LiveKit.create(applicationContext, options = roomOptionsFinal, overrides = expo.modules.callkit.audio.AudioRouter.liveKitOverrides())
     room = r
     // [2026-10-11 noise] RNNoise capture post-processor (pass-through on failure).
     expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)
@@ -4049,15 +4123,22 @@ class CallActivity : ComponentActivity() {
    *    publish our camera. The peer (on receiving `accepted`) publishes theirs.
    *  - accept=false → reply `declined`; nothing else changes.
    */
+  /** [2026-10-15 founder] Auto-dismiss of the "quer mudar para vídeo" prompt. */
+  private var videoRequestPromptJob: Job? = null
+
   private fun respondVideoRequest(accept: Boolean) {
     state.pendingVideoRequest = false
+    videoRequestPromptJob?.cancel()
+    CallDiag.log("video_request_answer", callId, "accept=$accept", applicationContext)
     if (accept) {
       Log.d(TAG, "respondVideoRequest: accepted — entering video mode + publishing camera")
       sendCallData(org.json.JSONObject().apply {
         put("type", "video_request")
         put("action", "accepted")
       })
-      enterVideoModeAndPublish()
+      // Same as a tap on "Vídeo": P2P path, CAMERA grant (continues on
+      // grant), renderers, proximity off, loudspeaker rule, publish.
+      if (p2p != null) p2pToggleCamera(true) else enterVideoModeAndPublish()
     } else {
       Log.d(TAG, "respondVideoRequest: declined")
       sendCallData(org.json.JSONObject().apply {
@@ -4078,7 +4159,55 @@ class CallActivity : ComponentActivity() {
    *  once the grant lands. */
   @Volatile private var pendingVideoPublish: Boolean = false
 
-  private fun enterVideoModeAndPublish() {
+  /** [2026-10-15 cam-1-toque] Set when the camera-on tap had to wait for the
+   *  CAMERA grant: announce video to the peer once it publishes. */
+  @Volatile private var pendingVideoAnnounce: Boolean = false
+  /** [2026-10-15 cam-1-toque] Camera tapped ON while a voice call rang. */
+  @Volatile private var camOnAnswerPending: Boolean = false
+  /** [2026-10-15 cam-1-toque] True while WE moved audio to the loudspeaker
+   *  because the local camera turned on (undone when it turns off). */
+  private var speakerAutoForVideo = false
+  /** [2026-10-15 cam-1-toque] User picked an output by hand → the camera
+   *  loudspeaker rule leaves the route alone (iOS userSpeakerChoice). */
+  private var speakerTouchedByUser = false
+
+  /** [2026-10-15 cam-1-toque] Local camera ON in a call that started as
+   *  voice → loudspeaker (unless the user picked a route or a headset/BT is
+   *  connected). Mirrors iOS AudioRouter.setLocalVideoActive(true). */
+  private fun applyVideoAudioRoute() {
+    if (hasVideo || speakerTouchedByUser || state.isSpeakerOn || state.audioOutputPreferBluetooth) return
+    try {
+      val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
+      if (router.hasExternalOutput() || router.userPicked) return
+      router.setSpeakerAuto(true, "camera_on")
+      state.isSpeakerOn = true
+      speakerAutoForVideo = true
+      try { ExpoCallKitModule.emitLkSpeakerChanged(true) } catch (_: Throwable) {}
+      try { ExpoCallKitModule.emitAudioRouteChanged("speaker") } catch (_: Throwable) {}
+    } catch (t: Throwable) {
+      Log.w(TAG, "applyVideoAudioRoute failed: ${t.message}")
+    }
+  }
+
+  /** [2026-10-15 cam-1-toque] Inverse of applyVideoAudioRoute + proximity
+   *  back while no video is on screen (voice-started call only). */
+  private fun restoreVoiceAudioAfterCameraOff() {
+    if (hasVideo) return
+    if (speakerAutoForVideo && !speakerTouchedByUser) {
+      speakerAutoForVideo = false
+      try {
+        expo.modules.callkit.audio.AudioRouter.get(applicationContext).setSpeakerAuto(false, "camera_off")
+        state.isSpeakerOn = false
+        try { ExpoCallKitModule.emitLkSpeakerChanged(false) } catch (_: Throwable) {}
+        try { ExpoCallKitModule.emitAudioRouteChanged("earpiece") } catch (_: Throwable) {}
+      } catch (t: Throwable) {
+        Log.w(TAG, "restoreVoiceAudioAfterCameraOff failed: ${t.message}")
+      }
+    }
+    if (!state.hasRemoteVideo && !state.isInPip) acquireProximityWakeLock()
+  }
+
+  private fun enterVideoModeAndPublish(announce: Boolean = false) {
     // [2026-10-10 p2p-android] Ligação P2P: câmera no motor P2P.
     if (p2p != null) {
       state.videoUpgradeRequested = false
@@ -4103,20 +4232,23 @@ class CallActivity : ComponentActivity() {
     ) == PackageManager.PERMISSION_GRANTED
     if (!camGranted) {
       Log.w(TAG, "enterVideoModeAndPublish: CAMERA not granted — requesting; will publish on grant")
+      CallDiag.log("camera_permission_request", callId, "announce=$announce", applicationContext)
       state.isVideo = true
       state.videoUpgradeRequested = false
+      // [2026-10-15 cam-1-toque] Button lit right away while the system
+      // prompt is up (was "off" → users tapped again); reverted on deny.
+      state.isCameraOn = true
       pendingVideoPublish = true
-      try {
-        ActivityCompat.requestPermissions(
-          this, arrayOf(Manifest.permission.CAMERA), REQ_CODE_CAMERA
-        )
-      } catch (t: Throwable) {
-        Log.e(TAG, "requestPermissions(CAMERA) threw: ${t.message}", t)
-      }
+      if (announce) pendingVideoAnnounce = true
+      // ensureCameraPermission arms the self-launch guard: without it the
+      // prompt fired onUserLeaveHint → PiP and the call screen vanished
+      // behind the dialog (2nd tap needed after coming back).
+      ensureCameraPermission()
       return
     }
     state.isVideo = true
     state.videoUpgradeRequested = false
+    state.pendingVideoRequest = false // [2026-10-15 founder] camera on → prompt moot
     // Lazily create renderers that an audio-only onCreate skipped, then init
     // their EGL context against the live Room before any track binds to them.
     try {
@@ -4152,17 +4284,35 @@ class CallActivity : ComponentActivity() {
       Log.w(TAG, "enterVideoModeAndPublish: late remote bind failed: ${t.message}")
     }
     state.isCameraOn = true
+    applyVideoAudioRoute()
+    val firstPublish = try {
+      r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track == null
+    } catch (_: Throwable) { true }
+    val doAnnounce = announce || pendingVideoAnnounce
+    pendingVideoAnnounce = false
     lifecycleScope.launch {
       try {
         r.localParticipant.setCameraEnabled(true)
         bindLocalCameraIfReady(r)
         Log.d(TAG, "enterVideoModeAndPublish: camera published")
+        CallDiag.log("camera_on", callId, "first=$firstPublish announce=$doAnnounce", applicationContext)
+        // [2026-10-15 cam-1-toque] Tell the peer only on our FIRST publish
+        // (iOS parity): its screen flips to video when our track lands; a
+        // re-enable after turning the camera off must not re-trigger the
+        // peer's auto-accept (that would force ITS camera back on).
+        if (doAnnounce && firstPublish) {
+          sendCallData(org.json.JSONObject().apply {
+            put("type", "video_request")
+            put("action", "request")
+          })
+        }
         // [2026-10-06 android-incoming] Confirm a CAMERA publication really
         // exists; otherwise reset the button + surface "Câmera indisponível".
         verifyCameraPublished(r, "upgrade")
       } catch (t: Throwable) {
         Log.w(TAG, "enterVideoModeAndPublish: setCameraEnabled failed: ${t.message}")
         state.isCameraOn = false
+        restoreVoiceAudioAfterCameraOff()
         state.status = "Câmera indisponível"
       }
     }
@@ -4223,10 +4373,24 @@ class CallActivity : ComponentActivity() {
         // the "quem ligou não vê" one-way-video report. Both already consented
         // to the live call; auto-publish + ACK. iOS (CallViewController
         // didReceiveData) now does the same.
-        Log.d(TAG, "video_request:request — auto-accepting (publish our camera + ACK)")
-        state.pendingVideoRequest = false
-        if (!state.isVideo || !state.isCameraOn) {
-          respondVideoRequest(true)
+        // [2026-10-15 founder] ASK first (WhatsApp): NO auto-enable — the
+        // peer's video still shows (TrackSubscribed upgrades the layout), and
+        // a prompt "{name} quer mudar para vídeo" Aceitar/Recusar decides OUR
+        // camera. Accept = same flow as a tap on "Vídeo" (permission 1st time,
+        // camera on, loudspeaker rule); Recusar = `declined` back to the peer.
+        val camLive = state.isVideo && state.isCameraOn && !pendingVideoPublish
+        if (camLive) {
+          Log.d(TAG, "video_request:request — our camera already on, ignoring")
+          state.pendingVideoRequest = false
+          return
+        }
+        Log.d(TAG, "video_request:request — asking the user")
+        CallDiag.log("video_request_prompt", callId, "", applicationContext)
+        state.pendingVideoRequest = true
+        videoRequestPromptJob?.cancel()
+        videoRequestPromptJob = lifecycleScope.launch {
+          delay(30_000)
+          if (state.pendingVideoRequest) state.pendingVideoRequest = false
         }
       }
       "accepted" -> {
@@ -5235,6 +5399,9 @@ private fun CallScreen(
         localRenderer = local,
         isActiveSpeaker = state.localIsActiveSpeaker,
         speakerLevel = state.localSpeakerLevel,
+        // [2026-10-15 espelho] Self-view frontal espelhado (padrão WhatsApp/
+        // FaceTime); traseira nunca. Só a PRÉVIA — o frame enviado não muda.
+        mirror = state.isFrontCamera,
       )
     }
 
@@ -5298,8 +5465,7 @@ private fun CallScreen(
     ) {
       AudioOutputSheet(
         devices = audioDevices,
-        currentSpeaker = state.isSpeakerOn,
-        preferBluetooth = state.audioOutputPreferBluetooth,
+        currentRoute = try { expo.modules.callkit.audio.AudioRouter.get(ctx).routeName } catch (_: Throwable) { if (state.isSpeakerOn) "speaker" else "earpiece" },
         onPick = { type ->
           onPickAudioDevice(type)
           showAudioPicker = false
@@ -5471,7 +5637,7 @@ private fun VideoUpgradePrompt(
       .padding(horizontal = 20.dp, vertical = 16.dp),
   ) {
     Text(
-      text = if (callerName.isNotEmpty()) "$callerName quer ativar o vídeo" else "Ativar vídeo?",
+      text = if (callerName.isNotEmpty()) CallStrings.s("videoReqTitle", "name" to callerName) else CallStrings.s("videoReqTitleNoName"),
       color = Color.White,
       fontSize = 15.sp,
       fontWeight = FontWeight.Medium,
@@ -5481,22 +5647,31 @@ private fun VideoUpgradePrompt(
       horizontalArrangement = Arrangement.spacedBy(16.dp, alignment = Alignment.CenterHorizontally),
       verticalAlignment = Alignment.CenterVertically,
     ) {
-      CircleControlButton(
-        size = 56.dp,
-        background = Color.White,
-        foreground = Color.Black,
-        icon = Icons.Filled.VideocamOff,
-        contentDescription = "Recusar vídeo",
-        onClick = onDecline,
-      )
-      CircleControlButton(
-        size = 56.dp,
-        background = SpeakerRing,
-        foreground = Color.White,
-        icon = Icons.Filled.Videocam,
-        contentDescription = "Aceitar vídeo",
-        onClick = onAccept,
-      )
+      // [2026-10-15 founder] Captioned Recusar / Aceitar (11 idiomas).
+      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        CircleControlButton(
+          size = 56.dp,
+          background = Color.White,
+          foreground = Color.Black,
+          icon = Icons.Filled.VideocamOff,
+          contentDescription = CallStrings.s("videoReqDecline"),
+          onClick = onDecline,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(text = CallStrings.s("videoReqDecline"), color = Color.White, fontSize = 13.sp)
+      }
+      Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        CircleControlButton(
+          size = 56.dp,
+          background = SpeakerRing,
+          foreground = Color.White,
+          icon = Icons.Filled.Videocam,
+          contentDescription = CallStrings.s("videoReqAccept"),
+          onClick = onAccept,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(text = CallStrings.s("videoReqAccept"), color = Color.White, fontSize = 13.sp)
+      }
     }
   }
 }
@@ -6016,6 +6191,7 @@ private fun LocalPreviewTile(
   localRenderer: SurfaceViewRenderer,
   isActiveSpeaker: Boolean,
   speakerLevel: Float,
+  mirror: Boolean = true,
 ) {
   val density = LocalDensity.current
   val baseRightDp = 16.dp
@@ -6060,6 +6236,7 @@ private fun LocalPreviewTile(
     ) {
       AndroidView(
         factory = { localRenderer },
+        update = { v -> try { v.setMirror(mirror) } catch (_: Throwable) {} },
         modifier = Modifier.fillMaxSize(),
       )
 
@@ -6651,7 +6828,16 @@ private fun enumerateAudioOutputs(ctx: android.content.Context): List<AudioOutpu
   val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
   val out = mutableListOf<AudioOutputEntry>()
   // Built-in routes — always present, always offered.
-  out.add(AudioOutputEntry("earpiece", "Telefone", Icons.Filled.PhoneInTalk))
+  // [2026-10-15 viva-voz] WhatsApp labels; the earpiece is hidden while a
+  // wired/USB headset is plugged (the system routes "earpiece" to it).
+  val wiredPlugged = try {
+    am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+      it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+        it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+        it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+    }
+  } catch (_: Throwable) { false }
+  if (!wiredPlugged) out.add(AudioOutputEntry("earpiece", "Fone do aparelho", Icons.Filled.PhoneInTalk))
   out.add(AudioOutputEntry("speaker", "Alto-falante", Icons.Filled.SpeakerPhone))
 
   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -6697,8 +6883,7 @@ private fun enumerateAudioOutputs(ctx: android.content.Context): List<AudioOutpu
 @Composable
 private fun AudioOutputSheet(
   devices: List<AudioOutputEntry>,
-  currentSpeaker: Boolean,
-  preferBluetooth: Boolean,
+  currentRoute: String,
   onPick: (String) -> Unit,
   onDismiss: () -> Unit,
 ) {
@@ -6742,12 +6927,7 @@ private fun AudioOutputSheet(
         verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         devices.forEach { entry ->
-          val selected = when (entry.type) {
-            "speaker" -> currentSpeaker && !preferBluetooth
-            "earpiece" -> !currentSpeaker && !preferBluetooth
-            "bluetooth" -> preferBluetooth
-            else -> false
-          }
+          val selected = entry.type == currentRoute
           AudioRouteRow(entry = entry, selected = selected, onPick = { onPick(entry.type) })
         }
       }

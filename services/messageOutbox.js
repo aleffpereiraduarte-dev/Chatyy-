@@ -706,6 +706,22 @@ async function _setState(cmi, state) {
  * A row already 'sent'/'delivered'/'read' is never demoted (late failure of a
  * duplicate attempt after another path confirmed it).
  */
+// [2026-10-15 confiab] Falha de envio era invisível na telemetria (0 beacons
+// em 72 h). Agregado e sem conteúdo: só tipo, tentativas e a classe do erro
+// (e-mails/números removidos). 'hard' sempre; transitório só nas tentativas
+// 3 e 6 (= o usuário já está vendo o relógio há um tempo). Teto 12/sessão.
+let _sendFailBeacons = 0;
+function _beaconSendFail(kind, attempts, errStr) {
+  try {
+    if (kind === 'offline') return;
+    if (kind !== 'hard' && attempts !== 3 && attempts !== 6) return;
+    if (_sendFailBeacons >= 12) return;
+    _sendFailBeacons++;
+    const cls = String(errStr || '').replace(/\S+@\S+/g, 'E').replace(/\d+/g, 'N').replace(/\s+/g, ' ').slice(0, 80);
+    require('./crashReporter').reportStep('outbox_fail', `k=${kind} n=${attempts} e=${cls}`);
+  } catch {}
+}
+
 export async function markFailed(cmi, err = null, opts = null) {
   _disown(cmi);
   const db = await _db_or_null();
@@ -757,6 +773,7 @@ export async function markFailed(cmi, err = null, opts = null) {
       );
       noteBacklog(row.conversation_id);
     }
+    _beaconSendFail(kind, kind === 'hard' ? prevAttempts + 1 : (kind === 'offline' ? prevAttempts : prevAttempts + 1), errStr);
     _notify(cmi, await getStatus(cmi));
     return true;
   } catch (e) {

@@ -896,8 +896,16 @@ function linkCard(url, C) {
   const fbBg = C.lp && C.lp.color ? C.lp.color(domain || url) : '#444444';
   let fav = pv.favicon || null;
   if (!fav) { try { fav = (url.match(/^https?:\/\/[^/]+/i) || [])[0] + '/favicon.ico'; } catch {} }
+  // [2026-10-15 yt-inline] YouTube → ícone de play sobre a miniatura (toque abre o player embutido).
+  let isYt = false;
+  try { isYt = !!require('./YouTubeInlinePlayer').youTubeInlineInfo(url); } catch {}
   const kids = [
-    pv.image ? image(pv.image, { w: -1, h: 140, bg: '#00000010', fit: 'cover' })
+    pv.image ? (isYt
+      ? zstack([
+        image(pv.image, { w: -1, h: 140, bg: '#00000010', fit: 'cover' }),
+        vstack([icon(IconPlay, { s: 22, c: '#FFFFFF' })], { pos: 'c', w: 52, h: 52, r: 26, bg: 'rgba(0,0,0,0.62)', al: 'c', jc: 'c' }),
+      ], { w: -1, h: 140 })
+      : image(pv.image, { w: -1, h: 140, bg: '#00000010', fit: 'cover' }))
       : vstack([text(letter, { fs: 32, fw: 700, c: '#FFFFFF', ls: 1 })], { w: -1, h: 80, bg: fbBg, al: 'c', jc: 'c' }),
   ];
   const tc = [];
@@ -980,7 +988,12 @@ export function runCardAction(item, action, D) {
   const api = D.api;
   try {
     switch (kind) {
-      case 'lp': { if (arg) D.Linking.openURL(arg).catch?.(() => {}); return; }
+      case 'lp': { // [2026-10-15 native-browser] prévia de link → helper único (app/navegador interno/sistema)
+        if (!arg) return;
+        try { if (require('./YouTubeInlinePlayer').openYouTubeInline(arg)) return; } catch {} // [2026-10-15 yt-inline]
+        try { require('../../services/openLink').openLink(arg, { router: D.router }); } catch { D.Linking.openURL(arg).catch?.(() => {}); }
+        return;
+      }
       case 'loc': {
         const L = _loc(m);
         D.setMapModalData({ lat: L.lat, lng: L.lng, label: L.addr, isLive: L.isLive, liveUntil: L.until, isUnlimited: L.unlimited, messageId: m.id, conversationId: D.conversationId });

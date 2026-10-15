@@ -2534,7 +2534,7 @@ export async function setupNotificationListeners() {
       const userText = response.userText;
       if (userText?.trim()) {
         // [2026-10-09] iOS native handler already sent it → never twice.
-        if (!_handledNatively(response)) handleChatReplyFromNotification(data.conversation_id, userText.trim());
+        if (!_handledNatively(response)) handleChatReplyFromNotification(data.conversation_id, userText.trim(), _notifReplyToId(data));
         // WhatsApp parity: replying from the banner = you read the chat → clear
         // this conversation's notifications from the tray (and trim the badge).
         _dismissAfterChatAction(response, data.conversation_id);
@@ -3083,7 +3083,18 @@ async function handleDeleteFromNotification(data) {
   }
 }
 
-async function handleChatReplyFromNotification(conversationId, text) {
+// [reply-v2] Em GRUPO, responder pela notificação cita a mensagem notificada
+// (WhatsApp/Telegram); em privado não. Kill switch: __chatyy_native_reply_v2.
+function _notifReplyToId(data) {
+  try {
+    if (globalThis.__chatyy_native_reply_v2 === false) return null;
+    const g = data && (data.is_group === '1' || data.is_group === true || data.is_group === 'true' || data.is_group === 1);
+    const mid = Number(data && data.message_id);
+    return g && Number.isFinite(mid) && mid > 0 ? mid : null;
+  } catch { return null; }
+}
+
+async function handleChatReplyFromNotification(conversationId, text, replyToId = null) {
   // [2026-10-15 mensagens-whatsapp] UM client_message_id para a 1ª tentativa E para
   // a fila: antes o chatSend gerava `cli_…` por dentro e, se a resposta se perdesse
   // (POST gravado no servidor), a fila reenviava com um `qr-…` NOVO → mensagem
@@ -3092,7 +3103,7 @@ async function handleChatReplyFromNotification(conversationId, text) {
   _localReadFromNotification(conversationId); // [2026-10-15 unread-instant] lista/aba/ícone/banners na hora
   try {
     const { chatSend, chatRead } = require('./api');
-    const r = await chatSend(conversationId, text, 'text', null, null, null, null, cmid);
+    const r = await chatSend(conversationId, text, 'text', replyToId || null, null, null, null, cmid);
     if (!r || r.success === false) throw new Error(r?.error || r?.message || 'chat_send_failed');
     // Mark as read too — best effort; failure here doesn't roll back the
     // send, just queues a chat_read retry.
@@ -3117,6 +3128,7 @@ async function handleChatReplyFromNotification(conversationId, text) {
         content: text,
         msgType: 'text',
         client_message_id: cmid,
+        ...(replyToId ? { reply_to_id: replyToId } : null),
       });
       // Also queue a chat_read so when the reply finally lands, the
       // conversation is marked read just like the inline tap would.

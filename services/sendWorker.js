@@ -318,7 +318,7 @@ async function _processRow(row) {
   // effect / reply_quote_text existem só no chat_send HTTP. Linha com eles vai
   // direto ao HTTP (nunca reenviar remetente oculto como visível).
   const _po = (payload && payload.opts) || {};
-  if (WS_FIRST_SEND && !(_po.sealed || _po.effect || _po.replyQuoteText || _po.silent || _po.meta)) {
+  if (WS_FIRST_SEND && !(_po.sealed || _po.effect || _po.replyQuoteText || _po.silent || _po.meta || _po.replyExt)) {
     let wsResult = 'skip';
     try {
       wsResult = await _tryWsSend(row);

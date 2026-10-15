@@ -55,6 +55,13 @@
 //          onReact {key, messageId, emoji}; onMenuDismiss {key, reason}.
 //          Kill switch: globalThis.__chatyy_native_ctxmenu = false.
 //
+//   store  [apiVersion 4, native-store] prop storeConv {a: conta, c: conversa,
+//          x: extra do formato (idioma/grupo), n: chave mais nova do JS} → o
+//          nativo lê a FOTO da conversa no store nativo (modules/expo-chat-store)
+//          e pinta sem esperar o 1º applyRows; regrava a foto sozinho depois.
+//          Kill switch: globalThis.__chatyy_native_store = false.
+//          Desenho: docs/native-store-DESIGN.md.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -74,6 +81,7 @@ let _viewChecked = false;
 let _NativeView = null;
 let _sessionDisabled = false; // erro nativo nesta sessão → JS até reiniciar
 let _sessionReason = '';
+let _storeBeacons = 0; // [native-store] amostras de beacon por sessão
 let _api = 0; // apiVersion do binário (1 = fase 1; 2 = blocos/lift/seleção/fixa)
 /** [native-ctxmenu] kill switch OTA do menu de contexto nativo. */
 function _ctxMenuSwitchOn() { try { return globalThis.__chatyy_native_ctxmenu !== false; } catch { return true; } }
@@ -980,7 +988,10 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     keyboardDismissMode = 'interactive', bottomInset = 8, topInset = 0,
     onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll,
     onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, style,
-    stickyDate, ctxMenu, onMenuAction, onReact, onMenuDismiss,
+    stickyDate, ctxMenu, onMenuAction, onReact, onMenuDismiss, storeConv,
+    // [native-store fase 3] shell = lista da CASCA LEVE (só pinta a foto; não
+    // registra nada); shellInfo = dados da tela p/ o registro da casca.
+    shell = false, shellInfo,
   } = props;
   const Native = _getNativeView();
   const nativeRef = useRef(null);
@@ -1081,8 +1092,37 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     return i != null ? d[i] : null;
   };
 
+  // [native-store] t0 da montagem → mede quanto a 1ª pintura levou (foto vs JS).
+  const mountAtRef = useRef(0);
+  if (!mountAtRef.current) mountAtRef.current = Date.now();
+  const storeEvRef = useRef(null);
   const handlers = useMemo(() => ({
-    onReady: () => { readyRef.current = true; },
+    onReady: (e) => {
+      readyRef.current = true;
+      // [native-store fase 3] casca leve: a tela completa pintou → casca sai
+      try {
+        const sc = storeConvRef.current;
+        if (sc && sc.c != null) {
+          const cs = require('../../services/convShell');
+          const el = cs.openElapsed(sc.c);
+          const ne0 = (e && e.nativeEvent) || {};
+          if (shellRef.current) { if (el >= 0) cs.shellBeacon(`shell_paint ms=${el} src=${ne0.src || ''} n=${Number(ne0.count) || 0}`); }
+          else { cs.notifyFullReady(sc.c); if (el >= 0) cs.shellBeacon(`full_ready ms=${el} src=${ne0.src || ''}`); }
+        }
+      } catch {}
+      // [native-store] amostra: as 6 primeiras aberturas da sessão vão p/ o beacon
+      try {
+        const ne = (e && e.nativeEvent) || {};
+        const ms = Date.now() - mountAtRef.current;
+        const st = storeEvRef.current;
+        if (__DEV__) console.log('[native-store] ready', ne.src, ms + 'ms', st);
+        if (ne.src && _storeBeacons < 6) {
+          _storeBeacons++;
+          _beacon('store_ready', `src=${ne.src} ms=${ms} n=${Number(ne.count) || 0}` + (st ? ` store=${st.why}/${st.ms}ms/${st.rows || 0}` : ''));
+        }
+      } catch {}
+    },
+    onStore: (e) => { try { storeEvRef.current = (e && e.nativeEvent) || null; } catch {} },
     onNativeError: (e) => { fail('native:' + (e?.nativeEvent?.message || '')); },
     onRowPress: (e) => {
       const ne = e?.nativeEvent || {};
@@ -1199,6 +1239,13 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
         return p && typeof p.then === 'function' ? p.then(v => !!v, () => false) : Promise.resolve(false);
       },
       dismissContextMenu: () => { if (_api >= 3) call('dismissContextMenu'); },
+      // [reply-v2] "Citar trecho" nativo. Promise<string|null>: trecho ('' = cancelou);
+      // null = binário sem a função (→ modal JS).
+      showQuotePicker: (payload) => {
+        if (_api < 3) return Promise.resolve(null);
+        const p = call('showQuotePicker', payload || {});
+        return p && typeof p.then === 'function' ? p.then(v => (typeof v === 'string' ? v : ''), () => null) : Promise.resolve(null);
+      },
       // [hero] Promise<{x,y,width,height,radius}|null> da miniatura da mensagem (janela)
       mediaFrame: (mid) => {
         if (_api < 3 || mid == null) return Promise.resolve(null);
@@ -1213,6 +1260,12 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     };
     return api;
   }, [keyOf]);
+
+  // [native-store fase 2/3] refs p/ handlers estáveis
+  const storeConvRef = useRef(storeConv);
+  storeConvRef.current = storeConv;
+  const shellRef = useRef(shell);
+  shellRef.current = !!shell;
 
   const nativeTheme = useMemo(() => {
     const th = theme || {};
@@ -1231,11 +1284,68 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     return o;
   }, [stickyDate]);
 
+  // [native-store] {a, c, r, n}: r = assinatura do formato das linhas (versão do
+  // bundle + api + tema/fonte/escuro + idioma/grupo + dia local) — foto de outro
+  // formato não é pintada (o nativo compara e ignora).
+  const nativeStore = useMemo(() => {
+    if (_api < 4 || !storeConv || !storeConv.a || storeConv.c == null || storeConv.c === '') return undefined;
+    let ns = null;
+    try { ns = require('../../services/nativeChatStore'); } catch { ns = null; }
+    if (!ns || !ns.nativeStoreEnabled()) return undefined;
+    const r = ns.fnv(JSON.stringify([_api, _bundleTag(), nativeTheme, fontSize, !!isDark, String(storeConv.x || ''), ns.localDay()]));
+    return { a: String(storeConv.a).trim().toLowerCase(), c: String(storeConv.c), r, n: String(storeConv.n || '') };
+  }, [storeConv, nativeTheme, fontSize, isDark]);
+
+  // [native-store fase 2] ambiente de montagem p/ o sync montar FORA da tela as
+  // linhas das mensagens que chegarem com a conversa fechada (services/nativeStoreRows).
+  const storeKeyC = nativeStore ? nativeStore.c : '';
+  useEffect(() => {
+    if (!nativeStore || shell || !Native) return;
+    try {
+      require('../../services/nativeStoreRows').registerThreadEnv(nativeStore.c, {
+        acct: nativeStore.a, rev: nativeStore.r, ctx, keyOf, data,
+      });
+    } catch {}
+  }, [nativeStore, ctx, keyOf, data, shell, Native]);
+  useEffect(() => {
+    if (!storeKeyC || shell || !Native) return undefined;
+    let rows = null;
+    try { rows = require('../../services/nativeStoreRows'); rows.setThreadMounted(storeKeyC, true); } catch {}
+    return () => { try { rows && rows.setThreadMounted(storeKeyC, false); } catch {} };
+  }, [storeKeyC, shell, Native]);
+
+  // [native-store fase 3] registro da CASCA LEVE: props exatas da lista (mesmo
+  // rev da foto) + posição na janela; gravado pela tela completa.
+  const shellRecRef = useRef({ list: null, info: null });
+  shellRecRef.current.list = (nativeStore && !shell) ? {
+    theme: theme || {}, fontSize, lineHeight, bubbleRadius, isDark: !!isDark, keyboardDismissMode,
+    bottomInset, topInset, ctxMenu: !!ctxMenu, stickyDate: stickyDate || null, x: String(storeConv && storeConv.x || ''),
+  } : null;
+  shellRecRef.current.info = shellInfo || null;
+  const onShellLayout = useCallback(() => {
+    const rec = shellRecRef.current;
+    const sc = storeConvRef.current;
+    if (!rec.list || !sc || !sc.a || sc.c == null) return;
+    const v = nativeRef.current;
+    if (!v || typeof v.measureInWindow !== 'function') return;
+    try {
+      v.measureInWindow((x, y, w, h) => {
+        if (!(h > 100) || !(w > 100)) return;
+        try {
+          require('../../services/convShell').recordShell(sc.a, sc.c, {
+            list: rec.list, info: rec.info, frame: { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) },
+          });
+        } catch {}
+      });
+    } catch {}
+  }, []);
+
   if (!Native) return null;
   return (
     <Native
       ref={nativeRef}
       style={style || styles.fill}
+      {...(nativeStore && !shell ? { onLayout: onShellLayout } : null)}
       theme={nativeTheme}
       fontSize={fontSize}
       lineHeight={lineHeight}
@@ -1246,6 +1356,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       topInset={topInset}
       {...(nativeSticky ? { stickyDate: nativeSticky } : null)}
       {...(_api >= 3 ? { ctxMenu: !!ctxMenu && _ctxMenuSwitchOn() } : null)}
+      {...(nativeStore ? { store: nativeStore } : null)}
       {...handlers}
     />
   );

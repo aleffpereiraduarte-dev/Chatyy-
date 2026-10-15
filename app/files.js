@@ -56,6 +56,9 @@ import ScreenEmptyState from '../components/ScreenEmptyState';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton, NativeHeaderSafeArea } from '../components/nativeHeader';
 import PressableRow from '../components/PressableRow';
 import ErrorBoundary from '../components/ErrorBoundary';
+// [2026-10-15 native-drive] Lista/grade nativa (kill switch __chatyy_native_drive).
+import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriveList';
+import { driveRow } from '../components/native/driveListAdapter';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
@@ -1170,6 +1173,8 @@ function FilesScreenInner() {
   const [viewMode, setViewMode] = useState('list');
   const [multiSelect, setMultiSelect] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  // [2026-10-15 native-drive] Lista/grade nativa; 1ª falha → JS na sessão.
+  const [nativeDriveOn, onNativeDriveFail] = useNativeDrive();
   const [sortBy, setSortBy] = useState('name'); // 'name' | 'date' | 'size' | 'type'
   const [sortAsc, setSortAsc] = useState(true);
   const [showSortMenu, setShowSortMenu] = useState(false);
@@ -2323,6 +2328,93 @@ function FilesScreenInner() {
     ...sortFiles(displayFiles).map(f => ({ ...f, _type: 'file' })),
   ], [displayFolders, displayFiles, sortFiles]);
 
+  // [2026-10-15 native-drive] Linhas da lista nativa (mesmos dados da FlatList).
+  const nativeDriveMeta = useRef(new Map());
+  const nativeDriveRows = useMemo(() => {
+    if (!nativeDriveOn) return [];
+    const meta = new Map();
+    const isTrash = tab === 'trash';
+    const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+    const out = listData.map((item) => {
+      const id = `${item._type}-${item.id}`;
+      meta.set(id, item);
+      if (item._type === 'folder') {
+        return driveRow(item, {
+          id,
+          title: item.name,
+          sub: [t('files.folder'), item.updated_at ? formatDate(item.updated_at, t) : ''].filter(Boolean).join(' · '),
+          chevron: true,
+          selectable: false,
+          swipe: isTrash ? [] : ['delete', 'move'],
+          menu: isTrash ? [] : ['rename', 'move', 'delete'],
+        });
+      }
+      let warn = '';
+      let warnUrgent = false;
+      if (item.is_trashed) {
+        const stamp = item.updated_at || item.deleted_at || item.trashed_at;
+        const ms = stamp ? (typeof stamp === 'number' ? stamp : Date.parse(stamp)) : NaN;
+        if (Number.isFinite(ms)) {
+          const remaining = Math.max(0, 30 - Math.max(0, Math.floor((Date.now() - ms) / 86400000)));
+          warnUrgent = remaining <= 7;
+          warn = remaining <= 0
+            ? tr('files.trashExpiring', 'Será removida em breve')
+            : remaining === 1
+              ? tr('files.trashTomorrow', 'Removida em 1 dia')
+              : `${tr('files.trashIn', 'Removida em')} ${remaining} ${tr('files.days', 'dias')}`;
+        }
+      }
+      const isImg = item.icon_type === 'image';
+      const isVid = item.icon_type === 'video';
+      const thumb = isImg && item.id
+        ? (item.thumbnail_url || item.cdn_url || api.fileDownloadUrl(item.id))
+        : (isVid && item.thumbnail_url ? item.thumbnail_url : '');
+      return driveRow(item, {
+        id,
+        title: item.original_name || item.name,
+        sub: [item.size_formatted || '', item.updated_at ? formatDate(item.updated_at, t) : ''].filter(Boolean).join(' · '),
+        thumb,
+        video: isVid,
+        starred: item.is_starred === 1 || item.is_starred === true,
+        warn,
+        warnUrgent,
+        swipe: isTrash ? ['purge', 'restore'] : ['delete', 'move'],
+        swipeLeft: isTrash ? [] : ['star'],
+        menu: isTrash ? ['restore', 'purge'] : ['open', 'download', 'rename', 'move', 'star', 'delete', 'more'],
+      });
+    });
+    nativeDriveMeta.current = meta;
+    return out;
+  }, [nativeDriveOn, listData, tab, t]);
+
+  const onNativeDrivePress = (id) => {
+    const item = nativeDriveMeta.current.get(id);
+    if (!item) return;
+    if (item._type === 'folder') { navigateToFolder(item.id); return; }
+    if (multiSelect) { toggleSelect(item.id); return; }
+    if (tab === 'trash') { showActionMenu('trash_file', item); return; }
+    const fileIndex = displayFiles.indexOf(displayFiles.find((f) => f.id === item.id));
+    handleFileOpen(item, fileIndex >= 0 ? fileIndex : 0);
+  };
+  const onNativeDriveAction = (id, action) => {
+    const item = nativeDriveMeta.current.get(id);
+    if (!item) return;
+    const isFolder = item._type === 'folder';
+    switch (action) {
+      case 'open': onNativeDrivePress(id); break;
+      case 'download': handleDownload(item.id, item); break;
+      case 'rename': setActionMenu(null); setRenameModal({ id: item.id, type: isFolder ? 'folder' : 'file', name: isFolder ? item.name : item.original_name }); break;
+      case 'move': openMoveModal(item.id); break;
+      case 'star': handleStar(item.id); break;
+      case 'delete': handleDelete(item.id); break;
+      case 'restore': handleRestore(item.id); break;
+      case 'purge': handlePermanentDelete(item.id); break;
+      case 'more': showActionMenu(isFolder ? 'folder' : (tab === 'trash' ? 'trash_file' : 'file'), item); break;
+      default: break;
+    }
+  };
+  const nativeListShown = nativeDriveOn && listData.length > 0;
+
   const renderItem = ({ item }) => {
     // Pass active query so the cards can highlight matching substrings
     // in file/folder names. Empty string when not searching.
@@ -2925,8 +3017,8 @@ function FilesScreenInner() {
         </Animated.View>
       )}
 
-      {/* Upload progress */}
-      {uploading && (
+      {/* Upload progress (na lista nativa a barra é desenhada por ela) */}
+      {uploading && !(nativeListShown && !(mainMode === 'photos' && !searchMode)) && (
         <View style={[styles.uploadBarWrap, { backgroundColor: isDark ? colors.primary + '12' : colors.primary + '08' }]}>
           <View style={styles.uploadBarRow}>
             <View style={styles.uploadSpinner}>
@@ -2985,6 +3077,32 @@ function FilesScreenInner() {
         <View style={{ flex: 1 }}><ListSkeleton count={6} /></View>
       ) : (
         <View style={{ flex: 1 }}>
+          {nativeListShown ? (
+            <NativeDriveList
+              rows={nativeDriveRows}
+              mode={viewMode === 'grid' ? 'grid' : 'list'}
+              columns={3}
+              selectionMode={multiSelect}
+              selectedIds={Array.from(selectedIds).map((x) => `file-${x}`)}
+              uploads={uploading ? [{ id: 'u', name: uploadingFile || t('files.uploading'), progress: uploadProgress, state: 'up' }] : []}
+              labels={{
+                open: t('common.open'), download: t('files.download'), share: t('files.share'),
+                rename: t('files.rename'), move: t('files.moveTo'), star: t('files.star'), unstar: t('files.unstar'),
+                delete: t('files.delete'), restore: t('files.restore'), purge: t('files.deletePermanently'),
+                more: t('common.more'), uploading: t('files.uploading'),
+              }}
+              highlight={searchMode ? (searchText || '') : ''}
+              colors={colors}
+              isDark={isDark}
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              bottomInset={16}
+              onPress={onNativeDrivePress}
+              onLongPress={(id) => { const it = nativeDriveMeta.current.get(id); if (it) { haptic.medium(); showActionMenu(it._type === 'folder' ? 'folder' : (tab === 'trash' ? 'trash_file' : 'file'), it); } }}
+              onAction={onNativeDriveAction}
+              onFailure={onNativeDriveFail}
+            />
+          ) : (
           <FlatList
             key={viewMode}
             data={listData}
@@ -3006,6 +3124,7 @@ function FilesScreenInner() {
             initialNumToRender={20}
             removeClippedSubviews={!isWeb}
           />
+          )}
         </View>
       )}
 

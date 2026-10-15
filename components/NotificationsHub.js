@@ -20,6 +20,17 @@ import {
 import * as api from '../services/api';
 import { swr, getCachedEntrySync, setCache, userScopedKey } from '../services/cache';
 import AvatarCircle from './AvatarCircle';
+// [2026-10-15 native-search-notifs] Lista NATIVA (ChatyyResultList) quando o
+// binário tem a view; kill switch globalThis.__chatyy_native_notifs = false →
+// FlatList JS abaixo (igual antes). Swipe = dispensar (o feed é agregado no
+// servidor: e-mails/menções não têm "apagar"; os ids dispensados ficam no
+// cache POR CONTA e somem também da próxima resposta).
+import NativeResultList, { useNativeResults } from './native/NativeResultList';
+import { contactTile } from './native/resultListAdapter';
+import { peekCached, putCached } from '../hooks/useCachedAction';
+
+const HUB_HIDDEN_CKEY = ['notif_hub', 'hidden'];
+const HUB_GLYPH = { email: 'mail', mention: 'at', follow: 'userPlus', like: 'heart', comment: 'message', chat: 'message', live: 'live' };
 
 // [WAVE 100] Module-scope live store — bell modal mounts/unmounts on each
 // open, so cache that survives unmount kills the loading flash. Per-account
@@ -144,6 +155,27 @@ function AvatarStack({ emails = [], size = 28 }) {
       ))}
     </View>
   );
+}
+
+function hubTitle(item) {
+  const isLikeGroup =
+    item.type === 'like' &&
+    Array.isArray(item.actor_emails) &&
+    item.actor_emails.length > 1;
+  let title = item.title || '';
+  if (isLikeGroup) {
+    const names = (item.actor_names || item.actor_emails).filter(Boolean);
+    const first = names[0] || '';
+    const second = names[1] || '';
+    const rest = names.length - 2;
+    if (rest > 0) title = `${first}, ${second} e mais ${rest} curtiram seu post`;
+    else if (second) title = `${first} e ${second} curtiram seu post`;
+    else title = `${first} curtiu seu post`;
+  }
+  if (item.type === 'follow' && item.actor_name && !item.title?.includes(item.actor_name)) {
+    title = `${item.actor_name} começou a seguir você`;
+  }
+  return { title, isLikeGroup };
 }
 
 const NotifRow = React.memo(function NotifRow({ item, colors, isDark, t, onPress, onAction }) {
@@ -434,11 +466,18 @@ export default function NotificationsHub({
 }) {
   // [WAVE 100] Lazy init from live store → MMKV → []. Modal opens with
   // notifications already rendered if we've fetched recently.
-  const [items, setItems] = useState(() => {
+  const [itemsRaw, setItems] = useState(() => {
     const live = _readHubLive();
     if (live) return live;
     return _readHubDisk() || [];
   });
+  const [hidden, setHidden] = useState(() => { const h = peekCached(HUB_HIDDEN_CKEY); return Array.isArray(h) ? h : []; });
+  const items = useMemo(() => {
+    if (!hidden.length) return itemsRaw;
+    const hs = new Set(hidden.map(String));
+    return itemsRaw.filter(n => !hs.has(String(n.id)));
+  }, [itemsRaw, hidden]);
+  const [nativeOn, onNativeFailure] = useNativeResults('__chatyy_native_notifs');
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
@@ -631,6 +670,61 @@ export default function NotificationsHub({
   ), [colors, isDark, t, onRowPress, handleAction]);
   const keyNotif = useCallback((it) => String(it.id), []);
 
+  // ── [2026-10-15 native-search-notifs] linhas nativas ──────────────────────
+  const dismiss = useCallback((it) => {
+    if (!it || it.id == null) return;
+    setHidden((prev) => {
+      const next = [String(it.id), ...prev.filter(x => x !== String(it.id))].slice(0, 300);
+      putCached(HUB_HIDDEN_CKEY, next);
+      return next;
+    });
+    if (!it.read) { try { api.notificationsRead?.({ ids: [it.id] }); } catch {} }
+  }, []);
+  const nativeMetaRef = useRef(new Map());
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const rows = [];
+    const meta = new Map();
+    const del = (() => { const v = t?.('common.delete'); return v && v !== 'common.delete' ? v : 'Apagar'; })();
+    for (const it of sectioned) {
+      if (it.__section) { rows.push({ id: it.id, k: 's', t: it.label }); continue; }
+      const { title, isLikeGroup } = hubTitle(it);
+      const id = `h:${it.id}`;
+      const row = { id, k: 'r', t: title, tl: 2 };
+      const when = relativeTime(it.created_at, t);
+      if (when) row.tm = when;
+      if (it.preview && !isLikeGroup) row.sb = it.preview;
+      const glyph = HUB_GLYPH[it.type] || 'bell';
+      if (it.type === 'email') row.gl = 'mail';
+      else if (isLikeGroup) { row.tiles = contactTile((it.actor_emails || [])[0], (it.actor_names || [])[0] || ''); row.bd = glyph; }
+      else if (it.actor_email) { row.tiles = contactTile(it.actor_email, it.actor_name || ''); row.bd = glyph; }
+      else row.gl = glyph;
+      const thumb = it.thumbnail_url || it.post_thumbnail;
+      if (thumb && (it.type === 'like' || it.type === 'comment' || it.type === 'mention')) row.rt = thumb;
+      if (!it.read) row.un = 1;
+      if (it.type === 'follow' && !it.action_taken) {
+        row.b1 = t?.('notifications.followBack') || 'Seguir de volta';
+        row.b2 = t?.('notifications.message') || 'Mensagem';
+      }
+      row.sw = del;
+      rows.push(row);
+      meta.set(id, it);
+    }
+    nativeMetaRef.current = meta;
+    return rows;
+  }, [nativeOn, sectioned, t]);
+  const onNativePress = useCallback((id) => {
+    const it = nativeMetaRef.current.get(id);
+    if (it) onRowPress(it);
+  }, [onRowPress]);
+  const onNativeAction = useCallback((id, action) => {
+    const it = nativeMetaRef.current.get(id);
+    if (!it) return;
+    if (action === 'delete') dismiss(it);
+    else if (action === 'b1') handleAction(it, 'follow_back');
+    else if (action === 'b2') handleAction(it, 'message');
+  }, [dismiss, handleAction]);
+
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={close}>
       <Pressable
@@ -647,7 +741,8 @@ export default function NotificationsHub({
             maxWidth: 540,
             borderRadius: 16,
             backgroundColor: colors?.background || '#fff',
-            maxHeight: '85%',
+            // Nativa precisa de altura definida (flex:1 dentro de maxHeight colapsa).
+            ...((nativeOn && sectioned.length > 0) ? { height: '85%' } : { maxHeight: '85%' }),
             overflow: 'hidden',
             ...(Platform.OS === 'web'
               ? { boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }
@@ -709,6 +804,21 @@ export default function NotificationsHub({
             unreadCounts={unreadCounts}
           />
 
+          {(nativeOn && sectioned.length > 0) ? (
+            <NativeResultList
+              rows={nativeRows}
+              colors={colors}
+              isDark={isDark}
+              separators
+              refreshEnabled
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              bottomInset={12}
+              onPress={onNativePress}
+              onAction={onNativeAction}
+              onFailure={onNativeFailure}
+            />
+          ) : (
           <FlatList
             data={sectioned}
             keyExtractor={keyNotif}
@@ -754,6 +864,7 @@ export default function NotificationsHub({
             }
             ListFooterComponent={<View style={{ height: 12 }} />}
           />
+          )}
 
           {/* [follow-back-fix 2026-05-21] Toast pinned to bottom of the
               hub modal — non-blocking, auto-dismiss after ~2.4s. */}

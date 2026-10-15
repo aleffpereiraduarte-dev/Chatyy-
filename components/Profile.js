@@ -4224,7 +4224,7 @@ export default function Profile({
   ) : null;
 
   const reportNode = !actions.is_self && identity?.email ? (
-    <ReportSheet visible={reportOpen} onClose={() => setReportOpen(false)}
+    <ReportSheet visible={reportOpen} onClose={() => setReportOpen(false)} native={mode !== 'peek' /* [2026-10-15 native-sheets-v2] peek = dentro de <Modal> RN → folha JS */}
       target={{ content_type: 'profile', content_id: identity.email, reported_email: identity.email }} />
   ) : null;
 

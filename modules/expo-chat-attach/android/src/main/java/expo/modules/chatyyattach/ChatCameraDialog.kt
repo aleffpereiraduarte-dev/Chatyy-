@@ -107,6 +107,12 @@ class ChatCameraDialog(
   private var rotation = Surface.ROTATION_0
   private var exporting = false
   private var recentLoaded = false
+  // [2026-10-15 native-status-studio] statusModes: 0 Texto · 1 Normal · 2 Boomerang
+  private var camMode = 1
+  private var boomerangRec = false
+  private val modeBar = LinearLayout(ctx)
+  private val modeViews = ArrayList<TextView>()
+  private val boomerangStop = Runnable { if (boomerangRec && recordingActive) stopRecordingIfAny() }
 
   // recentes
   private var recent: List<CAMedia> = emptyList()
@@ -258,6 +264,12 @@ class ChatCameraDialog(
       override fun onDown(e: MotionEvent): Boolean = true
       override fun onSingleTapConfirmed(e: MotionEvent): Boolean { focusAt(e.x, e.y); return true }
       override fun onDoubleTap(e: MotionEvent): Boolean { flip(); return true }
+      override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+        if (!cfg.statusModes || Math.abs(vx) < 600f || Math.abs(vx) < Math.abs(vy) * 1.4f) return false
+        // Dedo para a esquerda → próximo modo (à direita na barra).
+        selectMode(if (vx < 0) camMode + 1 else camMode - 1)
+        return true
+      }
     })
     val sd = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
       override fun onScale(d: ScaleGestureDetector): Boolean {
@@ -365,6 +377,28 @@ class ChatCameraDialog(
     rlp.topMargin = dp(6f)
     bottom.addView(row, rlp)
 
+    if (cfg.statusModes) {
+      // [2026-10-15 native-status-studio] Seletor de modo (estilo Instagram) sob o obturador.
+      modeBar.orientation = LinearLayout.HORIZONTAL
+      modeBar.gravity = Gravity.CENTER
+      val titles = listOf(cfg.t("modeText", "Texto"), cfg.t("modeNormal", "Normal"), cfg.t("modeBoomerang", "Boomerang"))
+      titles.forEachIndexed { i, title ->
+        val tv = TextView(ctx)
+        tv.text = title.uppercase()
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        tv.setShadowLayer(3f, 0f, 0f, 0x80000000.toInt())
+        tv.gravity = Gravity.CENTER
+        tv.setPadding(dp(11f), 0, dp(11f), 0)
+        tv.isClickable = true
+        tv.setOnClickListener { selectMode(i) }
+        modeBar.addView(tv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30f)))
+        modeViews.add(tv)
+      }
+      val mlp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30f))
+      mlp.topMargin = dp(4f)
+      bottom.addView(modeBar, mlp)
+    }
+
     hint.text = cfg.t("hint", "Segure para vídeo, toque para foto")
     hint.setTextColor(0xD9FFFFFF.toInt())
     hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -373,6 +407,7 @@ class ChatCameraDialog(
     hlp.topMargin = dp(2f)
     bottom.addView(hint, hlp)
     root.addView(bottom, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+    if (cfg.statusModes) refreshModeBar()
 
     buildPermission()
     root.addView(screenFlash, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
@@ -485,7 +520,9 @@ class ChatCameraDialog(
       .setQualitySelector(QualitySelector.from(Quality.FHD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
       .build()
     val vc = VideoCapture.Builder(recorder)
-      .setMirrorMode(MirrorMode.MIRROR_MODE_ON_FRONT_ONLY)
+      // [2026-10-15 espelho] Vídeo enviado NÃO espelhado (padrão câmera do
+      // sistema/WhatsApp); só a prévia (PreviewView) espelha a frontal.
+      .setMirrorMode(MirrorMode.MIRROR_MODE_OFF)
       .setTargetRotation(rotation)
       .build()
     preview = pv
@@ -599,10 +636,47 @@ class ChatCameraDialog(
     CAUtil.main.postDelayed(hideZoom, 900)
   }
 
+  // ─── modos do status ────────────────────────────────────────────────────
+
+  private fun refreshModeBar() {
+    modeViews.forEachIndexed { i, tv ->
+      val on = i == camMode
+      tv.setTextColor(if (on) Color.WHITE else 0x99FFFFFF.toInt())
+      tv.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+      tv.isSelected = on
+    }
+    if (camMode == 2) {
+      hint.text = cfg.t("boomerangHint", "Toque para gravar um boomerang")
+      shutter.contentDescription = cfg.t("modeBoomerang", "Boomerang")
+    } else {
+      hint.text = cfg.t("hint", "Segure para vídeo, toque para foto")
+      shutter.contentDescription = cfg.t("shutter", "Toque para foto, segure para vídeo")
+    }
+  }
+
+  private fun selectMode(m: Int) {
+    if (!cfg.statusModes || recordingActive || holdPending || capturing || m < 0 || m > 2 || m == camMode) return
+    CAUtil.haptic(modeBar, "select")
+    if (m == 0) { finish(mapOf("action" to "text")); return }
+    camMode = m
+    refreshModeBar()
+  }
+
   // ─── obturador ──────────────────────────────────────────────────────────
 
   private fun onShutterTouch(ev: MotionEvent) {
     if (camera == null || exporting) return
+    if (cfg.statusModes && camMode == 2) {
+      // Boomerang: toque (ou segurar) grava um clipe curto que para sozinho.
+      when (ev.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+          if (capturing || recordingActive) return
+          startRecording(boomerang = true)
+        }
+        else -> {}
+      }
+      return
+    }
     when (ev.actionMasked) {
       MotionEvent.ACTION_DOWN -> {
         if (capturing || recordingActive) return
@@ -649,7 +723,9 @@ class ChatCameraDialog(
     capturing = true
     CAUtil.haptic(shutter)
     val f = File(CAMediaStore.outDir(ctx), UUID.randomUUID().toString() + ".jpg")
-    val meta = ImageCapture.Metadata().apply { isReversedHorizontal = front }
+    // [2026-10-15 espelho] Foto frontal salva NÃO espelhada (texto legível),
+    // como a câmera do sistema/WhatsApp; a prévia segue espelhada.
+    val meta = ImageCapture.Metadata().apply { isReversedHorizontal = false }
     val opts = ImageCapture.OutputFileOptions.Builder(f).setMetadata(meta).build()
     val screen = front && flashMode != ImageCapture.FLASH_MODE_OFF
     val shoot = Runnable {
@@ -702,14 +778,16 @@ class ChatCameraDialog(
   }
 
   @SuppressLint("MissingPermission")
-  private fun startRecording() {
+  private fun startRecording(boomerang: Boolean = false) {
     val cam = camera ?: return
     if (recordingActive || capturing) return
     if (!ensureVideoBound()) { CAUtil.haptic(shutter, "warn"); return }
     val vc = videoCapture ?: return
     val f = File(CAMediaStore.outDir(ctx), UUID.randomUUID().toString() + ".mp4")
+    val limitMs = ((if (boomerang) cfg.boomerangSec else cfg.maxVideoSec) * 1000).toLong()
+    boomerangRec = boomerang
     val opts = FileOutputOptions.Builder(f)
-      .setDurationLimitMillis((cfg.maxVideoSec * 1000).toLong())
+      .setDurationLimitMillis(limitMs)
       .build()
     try {
       zoomBaseLinear = camera?.cameraInfo?.zoomState?.value?.linearZoom ?: 0f
@@ -723,7 +801,14 @@ class ChatCameraDialog(
       CAUtil.haptic(shutter, "heavy")
       recording = pending.start(ContextCompat.getMainExecutor(ctx)) { ev ->
         when (ev) {
-          is VideoRecordEvent.Start -> shutter.startProgress((cfg.maxVideoSec * 1000).toLong())
+          is VideoRecordEvent.Start -> {
+            shutter.startProgress(limitMs)
+            if (boomerang) {
+              // Rede de segurança além do limite de duração: para sozinho.
+              CAUtil.main.removeCallbacks(boomerangStop)
+              CAUtil.main.postDelayed(boomerangStop, limitMs + 350)
+            }
+          }
           is VideoRecordEvent.Status -> {
             val sec = TimeUnit.NANOSECONDS.toSeconds(ev.recordingStats.recordedDurationNanos)
             timerText.text = CAUtil.fmtDur(sec.toDouble())
@@ -735,6 +820,7 @@ class ChatCameraDialog(
       }
     } catch (t: Throwable) {
       Log.w(TAG, "record failed: ${t.message}")
+      boomerangRec = false
       recordingActive = false
       setRecordingUi(false)
       try { cam.cameraControl.enableTorch(false) } catch (_: Throwable) {}
@@ -750,6 +836,9 @@ class ChatCameraDialog(
   }
 
   private fun onRecordingFinalized(ev: VideoRecordEvent.Finalize, f: File) {
+    val wasBoomerang = boomerangRec
+    boomerangRec = false
+    CAUtil.main.removeCallbacks(boomerangStop)
     recordingActive = false
     recording = null
     try { camera?.cameraControl?.enableTorch(false) } catch (_: Throwable) {}
@@ -768,7 +857,9 @@ class ChatCameraDialog(
       }.start()
       return
     }
-    finish(mapOf("action" to "capture", "items" to listOf(CAMediaStore.cameraVideoItem(f))))
+    val item = CAMediaStore.cameraVideoItem(f).toMutableMap()
+    if (wasBoomerang) item["boomerang"] = true
+    finish(mapOf("action" to "capture", "items" to listOf(item)))
   }
 
   private fun setRecordingUi(on: Boolean) {
@@ -781,6 +872,7 @@ class ChatCameraDialog(
     flipBtn.visibility = vis
     flashBtn.visibility = vis
     closeBtn.visibility = vis
+    if (cfg.statusModes) modeBar.visibility = vis
     shutter.setRecording(on)
     shutter.animate().scaleX(if (on) 1.3f else 1f).scaleY(if (on) 1.3f else 1f).setDuration(220).start()
     if (!on) timerText.text = "0:00"

@@ -196,10 +196,15 @@ final class ChatNotifActionHandler: NotificationDelegate {
       if isReply {
         let cmid = "notif-" + UUID().uuidString.lowercased()
         var ok = false
+        // [reply-v2] em GRUPO a resposta pela notificação cita a última mensagem
+        // notificada (WhatsApp/Telegram); em privado não.
+        var sendBody: [String: Any] = [
+          "conversation_id": conv, "type": "text", "content": text, "client_message_id": cmid,
+        ]
+        let grp = (Self.str(p, "is_group") ?? "").lowercased()
+        if (grp == "1" || grp == "true") && lastMid > 0 { sendBody["reply_to_id"] = lastMid }
         for _ in 0..<2 {
-          let r = Self.post(base: base, bearer: bearer, action: "chat_send", body: [
-            "conversation_id": conv, "type": "text", "content": text, "client_message_id": cmid,
-          ])
+          let r = Self.post(base: base, bearer: bearer, action: "chat_send", body: sendBody)
           if r.ok { ok = true; break }
           if (400..<500).contains(r.code) { break }
         }

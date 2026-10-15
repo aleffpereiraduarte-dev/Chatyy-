@@ -158,6 +158,17 @@ class MLCellView(context: Context) : ViewGroup(context) {
 
   var swipeX = 0f
     set(v) { field = v; vnView?.translationX = v; invalidate() }
+  // [reply-v2] "estalo" do ícone de responder ao cruzar o limiar (escala extra).
+  private var swipePop = 0f
+  private var swipePopAnim: ValueAnimator? = null
+  fun popReplyIcon() {
+    swipePopAnim?.cancel()
+    val a = ValueAnimator.ofFloat(0f, 0.32f, -0.06f, 0f)
+    a.duration = 260
+    a.addUpdateListener { swipePop = it.animatedValue as Float; invalidate() }
+    swipePopAnim = a
+    a.start()
+  }
   private var flashAlpha = 0f
   private var flashAnim: ValueAnimator? = null
   private var spinAngle = 0f
@@ -617,7 +628,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
       val a = min(1f, abs(swipeX) / s.dp(64f))
       val cx = if (swipeX > 0) L.bubble.left + min(swipeX, s.dp(64f)) / 2 - s.dp(4f) else L.bubble.right + max(swipeX, -s.dp(64f)) / 2 + s.dp(4f)
       val cy = L.bubble.centerY()
-      val rad = s.dp(15f) * (0.6f + 0.4f * a)
+      val rad = s.dp(15f) * (0.6f + 0.4f * a + swipePop)
       fill.color = th.pillBg; fill.alpha = (((th.pillBg ushr 24) and 0xFF) * a).toInt().coerceAtLeast(0)
       c.drawCircle(cx, cy, rad, fill)
       fill.alpha = 255

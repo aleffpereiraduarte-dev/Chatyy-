@@ -48,6 +48,21 @@ class NCReplyRecord : Record {
   @Field val italic: Boolean = false
   @Field val thumbUri: String? = null
   @Field val thumbRound: Boolean = false
+  // [reply-v2] cor do remetente (ARGB), tipo, linhas do trecho (0 = legado),
+  // abrir teclado, "pulinho"; ícone vem como paths SVG (viewBox iconVb).
+  @Field val color: Double? = null
+  @Field val icon: String = ""
+  @Field val lines: Int = 0
+  @Field val focus: Boolean = false
+  @Field val pop: Boolean = false
+  @Field val iconVb: Double = 24.0
+  @Field val iconPaths: List<NCIconPathRecord>? = null
+}
+
+class NCIconPathRecord : Record {
+  @Field val d: String = ""
+  @Field val fill: Int = 0
+  @Field val w: Double = 0.0
 }
 
 class NCMentionRecord : Record {

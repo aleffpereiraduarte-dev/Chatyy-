@@ -1,0 +1,8 @@
+{
+  "name": "expo-email-native",
+  "version": "1.0.0",
+  "description": "Chatyy native e-mail reader body (WKWebView / Android WebView: sanitized, no remote JS, remote content blocked by default, auto height, pinch zoom, smart dark) and native rich-text compose editor (UITextView + NSAttributedString / EditText + spans) with HTML in/out.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

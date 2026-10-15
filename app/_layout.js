@@ -444,6 +444,7 @@ import { CallProvider } from '../context/CallContext';
 import CallStatusBar, { CallBarInsetProvider, callBarScreenLayout } from '../components/CallStatusBar';
 // [2026-10-07 voice-native] global voice-note mini player (leaves the chat → keeps playing)
 import VoiceMiniPlayer from '../components/chat/VoiceMiniPlayer';
+import YouTubeInlineHost from '../components/chat/YouTubeInlinePlayer'; // [2026-10-15 yt-inline]
 import EmailUndoBar from '../components/EmailUndoBar';
 
 // Lazy-load call components to break circular dependency
@@ -774,6 +775,11 @@ function useDeepLinking() {
         if (m) {
           try { require('../services/pushNotifications').openConversation(href, decodeURIComponent(m[1])); return; } catch {}
         }
+        // [2026-10-15] Câmera do status → volta à home existente (sem 2ª cópia).
+        try {
+          const sc = require('../services/appShortcuts');
+          if (sc.isStatusCameraHref(href)) { sc.openStatusCamera(router); return; }
+        } catch {}
         router.push(href);
       });
     } catch {}
@@ -2165,6 +2171,7 @@ export default function RootLayout() {
                   <Stack.Screen name="settings-blocked" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
                   <Stack.Screen name="settings-export" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
                   <Stack.Screen name="settings-one" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
+                  <Stack.Screen name="edit-profile" options={{ headerShown: false, ..._FULL_MODAL, contentStyle: { backgroundColor: _navBg } }} />{/* [2026-10-15 edit-profile-x] modal NATIVO: X = router.back() desce c/ animação do sistema (antes: card + <Modal> RN por cima = flash de rota vazia ao fechar) */}
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-outbox" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2254,6 +2261,7 @@ export default function RootLayout() {
                 </Suspense>
                 <CallStatusBar />
                 <VoiceMiniPlayer />
+                <YouTubeInlineHost />
                 <EmailUndoBar />
                 <Suspense fallback={null}>
                   <IncomingCallListener />

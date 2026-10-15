@@ -764,7 +764,16 @@ function _bindNum(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// [2026-10-15 native-store fase 2] escrita dupla: toda gravação de mensagens /
+// conversas no chatyy.db também vai (em lote coalescido) p/ o store NATIVO
+// (services/nativeChatStore). Nunca lança; web/binário sem módulo = no-op.
+function _nsMirror(fn, a, b) {
+  if (isWeb) return;
+  try { const ns = require('./nativeChatStore'); if (ns && typeof ns[fn] === 'function') ns[fn](a, b); } catch {}
+}
+
 export async function dbSaveConversations(conversations) {
+  _nsMirror('mirrorConversations', conversations);
   if (isWeb || !_db || !conversations?.length) return;
   await _runTx('dbSaveConversations', async () => {
     const stmt = await _db.prepareAsync(
@@ -857,6 +866,7 @@ export async function dbUpdateConversationLastReadMessageId(conversationId, mess
 // ══════════════════════════════════════
 
 export async function dbSaveMessages(conversationId, messages) {
+  _nsMirror('mirrorMessages', conversationId, messages);
   if (isWeb || !_db || !messages?.length) return;
   // Unified writer (2026-05-19): localDb.saveMessage / saveMessages delegate
   // here. We persist the SUPERSET of fields so optimistic-send rows from the
@@ -988,6 +998,7 @@ export async function dbGetLastMessageId(conversationId) {
 }
 
 export async function dbDeleteMessage(conversationId, messageId) {
+  _nsMirror('mirrorDeleteMessage', conversationId, messageId);
   if (isWeb || !_db) return;
   await _db.runAsync('DELETE FROM messages WHERE id = ? AND conversation_id = ?', [messageId, conversationId]);
 }

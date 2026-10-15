@@ -96,6 +96,14 @@ async function clearLocalChatStore() {
     ok = false;
     try { console.warn('[auth] clearLocalChatStore: localDb.clearLocalDb failed:', e?.message); } catch {}
   }
+  // [2026-10-15 native-store] P0 PRIVACY: fotos de conversa do store NATIVO
+  // (modules/expo-chat-store, 1 arquivo por conta) somem junto do chatyy.db.
+  // Sem o módulo no binário = no-op; nunca lança.
+  try {
+    try { require('../services/convShell').wipeShellRecords(); } catch {} // [native-store fase 3] registros da casca leve
+    const ok2 = await require('../services/nativeChatStore').wipeNativeStore();
+    if (!ok2) ok = false;
+  } catch {}
   return ok;
 }
 
@@ -2302,6 +2310,20 @@ export function AuthProvider({ children }) {
             if (ws?.resurrect) ws.resurrect('authcontext_refused_during_call');
           } catch {}
           console.warn('[auth] Auth-failure signal during active call — refusing logout (#1165)');
+          return;
+        }
+      } catch {}
+      // [2026-10-15 confiab] Bearer morto SEM caminho de recuperação (api.js
+      // confirmou com 2 sondas check_auth 401, refresh ausente/revogado e sem
+      // senha guardada). A graça abaixo devolvia o app ao loop de 401 eterno
+      // (TOKEN_REJECT ×323 em 72 h num iPhone) — aqui vai direto ao login.
+      try {
+        if (typeof globalThis !== 'undefined' && globalThis.__chatyy_authFailureReason === 'dead_bearer') {
+          globalThis.__chatyy_authFailureReason = null;
+          try { api.recordLogoutAttempt?.('dead_bearer_no_recovery', { source: 'authcontext_signal' }); } catch {}
+          try { api.resetAuthFailureSignal?.(); } catch {}
+          console.warn('[auth] Bearer morto sem refresh/senha — indo para o login');
+          doLogout('dead_bearer');
           return;
         }
       } catch {}

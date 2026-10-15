@@ -1058,6 +1058,10 @@ private fun CameraFill(
                     // SurfaceTextureHelper context. addRenderer below silently
                     // fails on an un-initialised renderer.
                     roomRef?.initVideoRenderer(this)
+                    // [2026-10-15 espelho] Prévia do host = câmera frontal
+                    // (flip ainda é stub) → espelhada como espelho; o stream
+                    // enviado aos viewers segue NÃO espelhado.
+                    try { setMirror(true) } catch (_: Throwable) {}
                 }
             },
             update = { renderer ->

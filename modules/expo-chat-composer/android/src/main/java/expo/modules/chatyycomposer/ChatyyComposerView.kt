@@ -200,6 +200,48 @@ internal class NCActionButton(ctx: Context) : FrameLayout(ctx) {
   }
 }
 
+/** [reply-v2] Ícone do tipo da mensagem citada (paths SVG do mesmo ícone do app). */
+internal class NCPathIcon(ctx: Context) : View(ctx) {
+  private val paths = ArrayList<Pair<android.graphics.Path, Boolean>>()
+  private var vb = 24f
+  private var sw = 2f
+  private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    strokeCap = android.graphics.Paint.Cap.ROUND; strokeJoin = android.graphics.Paint.Join.ROUND
+  }
+  var color: Int = Color.GRAY
+    set(v) { field = v; invalidate() }
+  val hasPaths get() = paths.isNotEmpty()
+
+  fun set(list: List<NCIconPathRecord>?, viewBox: Double) {
+    paths.clear()
+    vb = if (viewBox > 0) viewBox.toFloat() else 24f
+    sw = 2f
+    for (p in list ?: emptyList()) {
+      if (p.d.isEmpty()) continue
+      try {
+        val path = androidx.core.graphics.PathParser.createPathFromPathData(p.d) ?: continue
+        paths.add(path to (p.fill != 0))
+        if (p.w > 0) sw = p.w.toFloat()
+      } catch (_: Throwable) {}
+    }
+    invalidate()
+  }
+
+  override fun onDraw(canvas: android.graphics.Canvas) {
+    if (paths.isEmpty() || width <= 0) return
+    val sc = width / vb
+    canvas.save()
+    canvas.scale(sc, sc)
+    paint.color = color
+    for ((p, fill) in paths) {
+      paint.style = if (fill) android.graphics.Paint.Style.FILL else android.graphics.Paint.Style.STROKE
+      paint.strokeWidth = sw
+      canvas.drawPath(p, paint)
+    }
+    canvas.restore()
+  }
+}
+
 /** Cartão de resposta/edição acima do campo. */
 @SuppressLint("ViewConstructor")
 internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
@@ -213,6 +255,17 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
   private val closeDot = View(ctx)
   var hasThumb = false
   private var thumbToken = ""
+  // [reply-v2]
+  val kindIcon = NCPathIcon(ctx)
+  private var hasIcon = false
+  private var baseInk: Int = Color.BLACK
+  private var accentInk: Int? = null
+
+  private fun applyInk() {
+    val ink = accentInk ?: baseInk
+    (line.background as? GradientDrawable)?.setColor(ink)
+    title.setTextColor(ink)
+  }
 
   init {
     bg.cornerRadius = ncDp(ctx, 16f).toFloat()
@@ -233,6 +286,8 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
     thumb.clipToOutline = true
     thumb.visibility = View.GONE
     addView(thumb)
+    kindIcon.visibility = View.GONE
+    addView(kindIcon)
     closeDot.background = closeBg
     addView(closeDot)
     addView(close)
@@ -241,9 +296,10 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
   fun applyColors(card: Int, border: Int, text: Int, secondary: Int, dark: Boolean) {
     bg.setColor(card)
     bg.setStroke(ncDp(context, 1f), border)
-    (line.background as? GradientDrawable)?.setColor(text)
-    title.setTextColor(text)
+    baseInk = text
+    applyInk()
     body.setTextColor(secondary)
+    kindIcon.color = secondary
     close.tint(secondary)
     closeBg.setColor(if (dark) 0x1AFFFFFF else 0x0F000000)
   }
@@ -251,8 +307,13 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
   fun configure(r: NCReplyRecord) {
     title.text = r.title
     body.text = r.text
-    body.maxLines = if (r.italic) 1 else 3
+    body.maxLines = if (r.lines > 0) r.lines else if (r.italic) 1 else 3
     body.setTypeface(null, if (r.italic) Typeface.ITALIC else Typeface.NORMAL)
+    accentInk = r.color?.let { ncColor(it, baseInk) }
+    applyInk()
+    kindIcon.set(r.iconPaths, r.iconVb)
+    hasIcon = kindIcon.hasPaths
+    kindIcon.visibility = if (hasIcon) View.VISIBLE else View.GONE
     val uri = r.thumbUri ?: ""
     hasThumb = uri.isNotEmpty()
     thumb.visibility = if (hasThumb) View.VISIBLE else View.GONE
@@ -282,10 +343,12 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
     return max(ncDp(context, 40f), tw)
   }
 
+  private fun iconW(): Int = if (hasIcon) ncDp(context, 18f) else 0
+
   fun preferredHeight(w: Int): Int {
     val tw = textWidth(w)
     title.measure(MeasureSpec.makeMeasureSpec(tw, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
-    body.measure(MeasureSpec.makeMeasureSpec(tw, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+    body.measure(MeasureSpec.makeMeasureSpec(tw - iconW(), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
     val h = ncDp(context, 10f) + title.measuredHeight + ncDp(context, 2f) + body.measuredHeight + ncDp(context, 10f)
     return max(ncDp(context, 54f), h)
   }
@@ -296,8 +359,9 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
     setMeasuredDimension(w, h)
     val tw = textWidth(w)
     title.measure(MeasureSpec.makeMeasureSpec(tw, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
-    body.measure(MeasureSpec.makeMeasureSpec(tw, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+    body.measure(MeasureSpec.makeMeasureSpec(tw - iconW(), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
     val ex = { s: Int -> MeasureSpec.makeMeasureSpec(s, MeasureSpec.EXACTLY) }
+    kindIcon.measure(ex(ncDp(context, 14f)), ex(ncDp(context, 14f)))
     line.measure(ex(ncDp(context, 3f)), ex(max(ncDp(context, 34f), h - ncDp(context, 20f))))
     thumb.measure(ex(ncDp(context, 42f)), ex(ncDp(context, 42f)))
     close.measure(ex(ncDp(context, 44f)), ex(ncDp(context, 44f)))
@@ -314,7 +378,13 @@ internal class NCReplyCard(ctx: Context) : ViewGroup(ctx) {
     val y0 = max(d10, (h - block) / 2)
     title.layout(tx, y0, tx + title.measuredWidth, y0 + title.measuredHeight)
     val by = y0 + title.measuredHeight + ncDp(context, 2f)
-    body.layout(tx, by, tx + body.measuredWidth, by + body.measuredHeight)
+    val bx = tx + iconW()
+    body.layout(bx, by, bx + body.measuredWidth, by + body.measuredHeight)
+    if (hasIcon) {
+      val lh = min(body.measuredHeight, body.lineHeight)
+      val iy = by + max(0, (lh - ncDp(context, 14f)) / 2)
+      kindIcon.layout(tx, iy, tx + ncDp(context, 14f), iy + ncDp(context, 14f))
+    }
     val closeX = w - ncDp(context, 4f) - ncDp(context, 44f)
     val cy = (h - ncDp(context, 44f)) / 2
     close.layout(closeX, cy, closeX + ncDp(context, 44f), cy + ncDp(context, 44f))
@@ -422,6 +492,8 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     replyCard.visibility = View.GONE
     replyCard.close.setOnClickListener {
       it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+      // [reply-v2] fecha já (animação local), sem esperar o JS limpar a prop.
+      if (replyRecord?.pop == true) setReply(null)
       onReplyCancel(emptyMap<String, Any>())
     }
     addView(replyCard)
@@ -690,6 +762,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   private fun setReply(r: NCReplyRecord?) {
     if (r != null) {
       val was = replyVisible
+      val keyChanged = replyRecord?.key != r.key
       replyRecord = r
       replyCard.configure(r)
       replyVisible = true
@@ -698,10 +771,23 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
       if (!was) {
         replyCard.animate().cancel()
         replyCard.alpha = 0f
-        replyCard.translationY = dp(12f).toFloat()
-        replyCard.animate().alpha(1f).translationY(0f).setDuration(260)
+        // [reply-v2] entra com mola de baixo (Telegram)
+        replyCard.translationY = dp(if (r.pop) 26f else 12f).toFloat()
+        if (r.pop) { replyCard.scaleX = 0.97f; replyCard.scaleY = 0.97f }
+        replyCard.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(if (r.pop) 340 else 260)
+          .setInterpolator(OvershootInterpolator(if (r.pop) 1.1f else 0.8f)).start()
+      } else if (replyCard.alpha < 1f || replyCard.translationY != 0f) {
+        // estava saindo (X/limpo) e voltou → reverte a saída
+        replyCard.animate().cancel()
+        replyCard.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(220)
           .setInterpolator(OvershootInterpolator(0.8f)).start()
+      } else if (keyChanged && r.pop) {
+        replyCard.animate().cancel()
+        replyCard.scaleX = 0.97f; replyCard.scaleY = 0.97f
+        replyCard.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(OvershootInterpolator(2f)).start()
       }
+      // [reply-v2] responder abre o teclado sozinho
+      if (r.focus && r.kind == "reply" && keyChanged && !voice.isActive && !emojiActive && isAttachedToWindow) focusInput()
     } else if (replyVisible) {
       replyRecord = null
       replyCard.animate().cancel()

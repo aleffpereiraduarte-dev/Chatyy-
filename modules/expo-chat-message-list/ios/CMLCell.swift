@@ -675,6 +675,19 @@ final class CMLCell: UICollectionViewCell {
     }
   }
 
+  /// [reply-v2] "Estalo" do ícone ao cruzar o limiar: escala ADITIVA (não briga
+  /// com o transform que o setSwipe reescreve a cada quadro do arrasto).
+  func popReplyIcon() {
+    if UIAccessibility.isReduceMotionEnabled { return }
+    let k = CAKeyframeAnimation(keyPath: "transform.scale")
+    k.isAdditive = true
+    k.values = [0, 0.32, -0.06, 0]
+    k.keyTimes = [0, 0.4, 0.75, 1]
+    k.duration = 0.26
+    k.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .easeOut)]
+    replyIcon.layer.add(k, forKey: "replyPop")
+  }
+
   func setSwipe(_ x: CGFloat, threshold: CGFloat) {
     slide.transform = CGAffineTransform(translationX: x, y: 0)
     let a = min(1, abs(x) / threshold)

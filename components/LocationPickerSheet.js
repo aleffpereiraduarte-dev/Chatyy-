@@ -695,6 +695,56 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  // [2026-10-15 native-location] Precisão progressiva (WhatsApp "Precisão de X m"):
+  // depois do 1º fix, escuta o GPS em alta precisão por até 15 s e só troca a
+  // posição quando a precisão melhora de verdade (≥25 % ou ≥5 m) — no máx. 6
+  // trocas, para em ≤10 m. O mapa só recentraliza se o usuário não arrastou o
+  // pino (NativePickerMap), e "Enviar localização atual" usa sempre o melhor fix.
+  // Kill switch: globalThis.__chatyy_native_location = false.
+  const refineStartedRef = useRef(false);
+  const coordsRef = useRef(null);
+  coordsRef.current = coords;
+  const hasCoords = !!coords;
+  useEffect(() => { if (!visible) refineStartedRef.current = false; }, [visible]);
+  useEffect(() => {
+    const c0 = coordsRef.current;
+    if (!visible || loading || !c0 || Platform.OS === 'web') return undefined;
+    if (globalThis.__chatyy_native_location === false) return undefined;
+    if (refineStartedRef.current) return undefined;
+    const acc0 = Number(c0.accuracy);
+    if (Number.isFinite(acc0) && acc0 <= 10) return undefined;
+    refineStartedRef.current = true;
+    let sub = null;
+    let stopped = false;
+    let best = Number.isFinite(acc0) ? acc0 : Infinity;
+    let swaps = 0;
+    const stop = () => { stopped = true; try { sub?.remove?.(); } catch {} sub = null; };
+    const timer = setTimeout(stop, 15000);
+    (async () => {
+      try {
+        const Location = require('expo-location');
+        const s = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 0 },
+          (pos) => {
+            if (stopped || cancelRef.current) return;
+            const c = pos?.coords;
+            const acc = Number(c?.accuracy);
+            if (!c || !Number.isFinite(acc)) return;
+            if (acc < best && (best - acc >= 5 || acc <= best * 0.75)) {
+              best = acc;
+              swaps += 1;
+              setCoords(c);
+              setApproxOnly(false);
+            }
+            if (best <= 10 || swaps >= 6) stop();
+          },
+        );
+        if (stopped) { try { s?.remove?.(); } catch {} } else sub = s;
+      } catch {}
+    })();
+    return () => { clearTimeout(timer); stop(); };
+  }, [visible, loading, hasCoords]);
+
   // [2026-10-09 wa-real #6] envia um lugar próximo (nome + endereço).
   const handleSendPlace = (p) => {
     if (!p || sending) return;

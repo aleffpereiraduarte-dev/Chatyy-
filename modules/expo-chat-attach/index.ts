@@ -32,6 +32,8 @@ export type AttachItem = {
   /** Segundos (vídeo) ou null. */
   duration: number | null;
   mediaType: 'image' | 'video';
+  /** [apiVersion 3] Câmera do status no modo Boomerang (clipe curto em loop). */
+  boomerang?: boolean;
 };
 
 export type AttachAction = { key: string; label: string };
@@ -56,6 +58,10 @@ export type AttachOptions = {
   maxVideoSec?: number;
   /** Câmera: grava áudio (false durante ligação). */
   withAudio?: boolean;
+  /** [apiVersion 3] Câmera do status: seletor Texto · Normal · Boomerang (labels modeText/modeNormal/modeBoomerang/boomerangHint). */
+  statusModes?: boolean;
+  /** [apiVersion 3] Duração do boomerang em segundos (padrão 1.5). */
+  boomerangSec?: number;
 };
 
 export type SheetResult =
@@ -68,6 +74,8 @@ export type CameraResult =
   | { action: 'capture'; items: AttachItem[] }
   | { action: 'pick'; items: AttachItem[] }
   | { action: 'gallery' }
+  /** [apiVersion 3] statusModes: usuário escolheu "Texto". */
+  | { action: 'text' }
   | { action: 'cancel' };
 
 type NativeMod = {
@@ -78,7 +86,29 @@ type NativeMod = {
   openSheet(options: AttachOptions): Promise<SheetResult | null>;
   openCamera(options: AttachOptions): Promise<CameraResult | null>;
   dismiss(): Promise<boolean>;
+  isVideoNoteSupported?(): boolean;
+  openVideoNote?(options: VideoNoteOptions): Promise<VideoNoteResult | null>;
 };
+
+// [2026-10-15 native-vnote] Vídeo-recado redondo nativo (nível Telegram).
+// Kill switch OTA/console: globalThis.__chatyy_native_vnote = false.
+export type VideoNoteOptions = {
+  labels?: Record<string, string>;
+  /** Segundos (padrão 60). */
+  maxSec?: number;
+  /** Lado do MP4 quadrado em px (padrão 640). */
+  size?: number;
+  /** Abre já gravando em mãos livres (padrão true). */
+  autoStart?: boolean;
+  withAudio?: boolean;
+  /** bps do H.264 (padrão 1 200 000). */
+  bitrate?: number;
+};
+
+export type VideoNoteResult =
+  | { action: 'send'; item: AttachItem }
+  | { action: 'cancel' }
+  | { action: 'error'; message?: string };
 
 let _mod: NativeMod | null | undefined;
 
@@ -95,6 +125,19 @@ function mod(): NativeMod | null {
 
 function killed(): boolean {
   try { return (globalThis as any).__chatyy_native_attach === false; } catch { return false; }
+}
+
+/** 0 = módulo ausente/desligado · 2 = vídeo-recado · 3 = câmera com statusModes. Nunca lança. */
+export function apiVersion(): number {
+  if (killed()) return 0;
+  const m = mod();
+  if (!m || typeof m.apiVersion !== 'function') return 0;
+  try {
+    const v = Number(m.apiVersion());
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** Folha de anexos nativa disponível neste binário. */
@@ -143,4 +186,19 @@ export async function dismiss(): Promise<boolean> {
   const m = mod();
   if (!m) return false;
   try { return !!(await m.dismiss()); } catch { return false; }
+}
+
+/** Gravador de vídeo-recado nativo disponível neste binário (+ kill switches). */
+export function isVideoNoteAvailable(): boolean {
+  try { if ((globalThis as any).__chatyy_native_vnote === false) return false; } catch {}
+  const m = mod();
+  if (!m || typeof m.openVideoNote !== 'function') return false;
+  try { return m.isVideoNoteSupported ? !!m.isVideoNoteSupported() : true; } catch { return false; }
+}
+
+/** null = não apresentou (o chamador usa o gravador JS). Lança em erro nativo. */
+export async function openVideoNote(options: VideoNoteOptions): Promise<VideoNoteResult | null> {
+  const m = mod();
+  if (!m || typeof m.openVideoNote !== 'function' || !isVideoNoteAvailable()) return null;
+  return (await m.openVideoNote(options || {})) || null;
 }

@@ -42,6 +42,9 @@ let _NativeView = null;
 
 /** Returns the native host component, or null (web / old binary / kill switch). */
 export function getNativeMapView() {
+  // [2026-10-15 native-location] kill switch OTA: globalThis.__chatyy_native_location = false
+  // → todos os mapas voltam ao caminho WebView (MapLibre GL JS) sem rebuild.
+  try { if (globalThis.__chatyy_native_location === false) return null; } catch {}
   if (_checked) return _NativeView;
   _checked = true;
   if (!NATIVE_MAPS_ENABLED || Platform.OS === 'web') return null;

@@ -16,6 +16,10 @@ import { useAuth } from '../../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../../constants/theme';
 import * as api from '../../services/api';
 import { peekCached, putCached } from '../../hooks/useCachedAction'; // [2026-10-14 offline-first]
+// [2026-10-15 native-social] Conteúdo das abas em lista nativa; binário antigo /
+// web / kill switch (__chatyy_native_communities = false) / erro → ScrollView JS.
+import NativeCommunityDetail from '../../components/communities/NativeCommunityDetail';
+import { nativeCommunitiesEnabled, markNativeCommunitiesFailed } from '../../components/communities/communityRows';
 
 const TABS = [
   { key: 'announcements', labelKey: 'community.tabAnnouncements', fallback: 'Anúncios' },
@@ -289,6 +293,22 @@ export default function CommunityScreen() {
     );
   };
 
+  // [2026-10-15 native-social] Lista nativa (mesmas ações do ScrollView JS).
+  const [nativeFailed, setNativeFailed] = useState(false);
+  const useNativeDetail = !nativeFailed && nativeCommunitiesEnabled('detail');
+  const onNativeFailure = useCallback((msg) => { markNativeCommunitiesFailed(msg); setNativeFailed(true); }, []);
+  const openAnnouncements = useCallback(() => {
+    if (!community?.announcement_conv_id) return;
+    require('../../services/openConversation').openConversation(`/chat-conversation?id=${community.announcement_conv_id}&name=${encodeURIComponent(community.name + ' — Avisos')}`);
+  }, [community?.announcement_conv_id, community?.name]);
+  const openGroup = useCallback((g) => {
+    require('../../services/openConversation').openConversation(`/chat-conversation?id=${g.conversation_id}&type=group&name=${encodeURIComponent(g.name || '')}`);
+  }, []);
+  const onMemberLongPressNative = useCallback((m) => {
+    if (isAdmin && m && m.email !== myEmail) onChangeRole(m);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, myEmail, community?.id, isOwner]);
+
   // ---- Render ----
   const sty = makeStyles(colors, isDark);
 
@@ -322,23 +342,93 @@ export default function CommunityScreen() {
     );
   }
 
-  return (
-    <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={sty.header}>
-        <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
-          <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
-        </TouchableOpacity>
-        <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
-          {community.name}
-        </Text>
-        <View style={sty.headerBtn} />
-      </View>
-
-      <ScrollView
-        style={{ flex: 1 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-      >
+  const composerEl = isAdmin ? (
+            <View style={[sty.composer, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={[sty.composerLabel, { color: colors.textSecondary }]}>
+                    {t('community.postAnnouncement') || 'Postar anúncio'}
+                  </Text>
+                  {/* Edit/Preview toggle — pressing "Preview" renders a cheap
+                      markdown view of the current draft (bold/italic/bullets)
+                      so admins can sanity-check the layout before publishing. */}
+                  <TouchableOpacity
+                    onPress={() => setAnnouncePreview(p => !p)}
+                    disabled={!announceText.trim()}
+                    hitSlop={6}
+                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: announcePreview ? colors.primary : 'transparent', borderWidth: 1, borderColor: colors.primary }}
+                  >
+                    <Text style={{ color: announcePreview ? (colors.onPrimary || '#fff') : colors.primary, fontSize: 12, fontWeight: '700' }}>
+                      {announcePreview ? (t('common.edit') || 'Editar') : (t('common.preview') || 'Preview')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {announcePreview ? (
+                  <View style={[sty.composerInput, { borderColor: colors.border, backgroundColor: isDark ? '#101011' : '#fff' }]}>
+                    {renderMdPreview(announceText)}
+                  </View>
+                ) : (
+                  <Animated.View style={{ minHeight: composerHeight }}>
+                    <TextInput
+                      value={announceText}
+                      onChangeText={setAnnounceText}
+                      multiline
+                      onFocus={onComposerFocus}
+                      onBlur={onComposerBlur}
+                      placeholder={t('community.announcementPlaceholder') || 'Escreva um anúncio…'}
+                      placeholderTextColor={colors.textSecondary}
+                      style={[sty.composerInput, { color: colors.text, borderColor: colors.border, minHeight: undefined, height: '100%' }]}
+                    />
+                  </Animated.View>
+                )}
+                <TouchableOpacity
+                  onPress={onAnnounce}
+                  disabled={!announceText.trim() || posting}
+                  style={[sty.primaryBtn, { backgroundColor: colors.primary, opacity: (!announceText.trim() || posting) ? 0.5 : 1 }]}
+                >
+                  <Text style={[sty.primaryBtnText, { color: colors.onPrimary }]}>
+                    {posting ? (t('common.sending') || 'Enviando…') : (t('community.publish') || 'Publicar')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+  ) : null;
+  const memberSearchEl = (
+    <>
+            {/* Quick filter — name or email substring. Saves the user from
+                scrolling 200+ rows in big communities just to find one mod. */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3',
+              borderRadius: BorderRadius.md,
+              paddingHorizontal: 10, paddingVertical: 6,
+              marginBottom: 6,
+            }}>
+              <TextInput
+                value={memberQuery}
+                onChangeText={setMemberQuery}
+                placeholder={t('common.search') || 'Buscar…'}
+                placeholderTextColor={colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={{ flex: 1, color: colors.text, paddingVertical: 4 }}
+              />
+              {!!memberQuery && (
+                <TouchableOpacity onPress={() => setMemberQuery('')} hitSlop={6}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 18 }}>×</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+    </>
+  );
+  const memberHintEl = isAdmin ? (
+              <Text style={[sty.hint, { color: colors.textSecondary }]}>
+                {t('community.longPressMember') || 'Toque e segure um membro para gerir.'}
+              </Text>
+  ) : null;
+  // [2026-10-15 native-social] Pedaços compartilhados entre o ScrollView JS e
+  // a lista nativa (ChatyyCommunityDetail): topo (capa, título, abas) = header
+  // RN da lista; compositor de aviso / dica de membros = rodapé RN.
+  const headerEl = (
+    <>
         {/* Cover / Photo */}
         <View style={sty.cover}>
           {community.cover_url ? (
@@ -408,6 +498,73 @@ export default function CommunityScreen() {
             </TouchableOpacity>
           ))}
         </View>
+      {useNativeDetail && tab === 'members' ? (
+        <View style={[sty.tabContent, { paddingBottom: 0 }]}>
+          {memberSearchEl}
+        </View>
+      ) : null}
+    </>
+  );
+
+  if (useNativeDetail) {
+    return (
+      <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={sty.header}>
+          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
+            <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+          </TouchableOpacity>
+          <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
+            {community.name}
+          </Text>
+          <View style={sty.headerBtn} />
+        </View>
+        <NativeCommunityDetail
+          tab={tab}
+          community={community}
+          groups={groups}
+          members={filteredMembers}
+          isAdmin={!!isAdmin}
+          myEmail={myEmail}
+          t={t}
+          colors={colors}
+          isDark={isDark}
+          refreshing={refreshing}
+          bottomInset={insets.bottom + 24}
+          header={headerEl}
+          footer={(tab === 'announcements' && composerEl) || (tab === 'members' && memberHintEl) ? (
+            <View style={[sty.tabContent, { paddingTop: 0 }]}>
+              {tab === 'announcements' ? composerEl : memberHintEl}
+            </View>
+          ) : null}
+          onRefresh={onRefresh}
+          onOpenAnnouncements={openAnnouncements}
+          onOpenGroup={openGroup}
+          onAddGroup={onAddGroup}
+          onMemberLongPress={onMemberLongPressNative}
+          onFailure={onNativeFailure}
+        />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      {/* Header */}
+      <View style={sty.header}>
+        <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
+          <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+        </TouchableOpacity>
+        <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          {community.name}
+        </Text>
+        <View style={sty.headerBtn} />
+      </View>
+
+      <ScrollView
+        style={{ flex: 1 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      >
+        {headerEl}
 
         {/* Tab content — wrapped in fade animator so swap doesn't flash. */}
         <Animated.View style={{ opacity: tabFade }}>
@@ -426,55 +583,7 @@ export default function CommunityScreen() {
                 </Text>
               </TouchableOpacity>
             )}
-            {isAdmin && (
-              <View style={[sty.composer, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={[sty.composerLabel, { color: colors.textSecondary }]}>
-                    {t('community.postAnnouncement') || 'Postar anúncio'}
-                  </Text>
-                  {/* Edit/Preview toggle — pressing "Preview" renders a cheap
-                      markdown view of the current draft (bold/italic/bullets)
-                      so admins can sanity-check the layout before publishing. */}
-                  <TouchableOpacity
-                    onPress={() => setAnnouncePreview(p => !p)}
-                    disabled={!announceText.trim()}
-                    hitSlop={6}
-                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: announcePreview ? colors.primary : 'transparent', borderWidth: 1, borderColor: colors.primary }}
-                  >
-                    <Text style={{ color: announcePreview ? (colors.onPrimary || '#fff') : colors.primary, fontSize: 12, fontWeight: '700' }}>
-                      {announcePreview ? (t('common.edit') || 'Editar') : (t('common.preview') || 'Preview')}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-                {announcePreview ? (
-                  <View style={[sty.composerInput, { borderColor: colors.border, backgroundColor: isDark ? '#101011' : '#fff' }]}>
-                    {renderMdPreview(announceText)}
-                  </View>
-                ) : (
-                  <Animated.View style={{ minHeight: composerHeight }}>
-                    <TextInput
-                      value={announceText}
-                      onChangeText={setAnnounceText}
-                      multiline
-                      onFocus={onComposerFocus}
-                      onBlur={onComposerBlur}
-                      placeholder={t('community.announcementPlaceholder') || 'Escreva um anúncio…'}
-                      placeholderTextColor={colors.textSecondary}
-                      style={[sty.composerInput, { color: colors.text, borderColor: colors.border, minHeight: undefined, height: '100%' }]}
-                    />
-                  </Animated.View>
-                )}
-                <TouchableOpacity
-                  onPress={onAnnounce}
-                  disabled={!announceText.trim() || posting}
-                  style={[sty.primaryBtn, { backgroundColor: colors.primary, opacity: (!announceText.trim() || posting) ? 0.5 : 1 }]}
-                >
-                  <Text style={[sty.primaryBtnText, { color: colors.onPrimary }]}>
-                    {posting ? (t('common.sending') || 'Enviando…') : (t('community.publish') || 'Publicar')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            {composerEl}
           </View>
         )}
 
@@ -511,30 +620,7 @@ export default function CommunityScreen() {
 
         {tab === 'members' && (
           <View style={sty.tabContent}>
-            {/* Quick filter — name or email substring. Saves the user from
-                scrolling 200+ rows in big communities just to find one mod. */}
-            <View style={{
-              flexDirection: 'row', alignItems: 'center',
-              backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3',
-              borderRadius: BorderRadius.md,
-              paddingHorizontal: 10, paddingVertical: 6,
-              marginBottom: 6,
-            }}>
-              <TextInput
-                value={memberQuery}
-                onChangeText={setMemberQuery}
-                placeholder={t('common.search') || 'Buscar…'}
-                placeholderTextColor={colors.textSecondary}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={{ flex: 1, color: colors.text, paddingVertical: 4 }}
-              />
-              {!!memberQuery && (
-                <TouchableOpacity onPress={() => setMemberQuery('')} hitSlop={6}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 18 }}>×</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            {memberSearchEl}
             {filteredMembers.map((m, idx) => (
               <AnimatedMemberRow key={m.email} index={idx}>
                 <Pressable
@@ -553,11 +639,7 @@ export default function CommunityScreen() {
                 </Pressable>
               </AnimatedMemberRow>
             ))}
-            {isAdmin && (
-              <Text style={[sty.hint, { color: colors.textSecondary }]}>
-                {t('community.longPressMember') || 'Toque e segure um membro para gerir.'}
-              </Text>
-            )}
+            {memberHintEl}
           </View>
         )}
 

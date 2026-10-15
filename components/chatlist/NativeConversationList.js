@@ -12,7 +12,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import { getNativeConversationListView } from '../../modules/expo-chat-conversation-list';
+import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, createPatcher, splitPreviewIcon } from './nativeAdapter';
 
 class NativeListBoundary extends React.Component {
@@ -44,6 +44,20 @@ const _avatarCache = _lazy(() => require('../../services/avatarCache'));
 const _nicknames = _lazy(() => require('../../services/nicknames'));
 const _ringStore = _lazy(() => require('../status/statusRingStore'));
 const _api = _lazy(() => require('../../services/api'));
+const _ns = _lazy(() => require('../../services/nativeChatStore'));
+
+// [2026-10-15 native-store fase 1.5] FOTO DA HOME no store nativo.
+// rev = formato das linhas (bundle + api + escuro + idioma + dia local: hora
+// "ontem"/rótulos mudam); top = assinatura da 1ª conversa que o JS tem.
+function _bundleTag() {
+  try { const U = require('expo-updates'); return String((U && (U.updateId || U.runtimeVersion)) || 'embedded'); } catch { return 'embedded'; }
+}
+function _homeTop(convs) {
+  const c = Array.isArray(convs) ? convs[0] : null;
+  if (!c || c.id == null) return '';
+  const lm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+  return `${c.id}|${(lm && lm.id) || c.last_message_at || c.updated_at || ''}|${Number(c.unread_count) || 0}|${(Array.isArray(convs) ? convs.length : 0)}`;
+}
 
 function NativeConversationListInner(props) {
   const {
@@ -54,9 +68,37 @@ function NativeConversationListInner(props) {
     helpers, bottomInset = 0,
     onOpen, onPressIn, onToggleSelect, onAvatarPress, onAction, onMore, onEnterSelection,
     onCollapsedChange, onFirstPaint, onFailure, scrollToTopSeq = 0, folders,
+    storeMain = false, // [native-store fase 1.5] lista principal (sem filtro/busca/arquivadas)
   } = props;
   const Native = getNativeConversationListView();
   const me = String(user?.email || '').toLowerCase();
+
+  // [native-store fase 1.5] prop `store` + 1ª montagem SEM buildRow quando a foto
+  // gravada bate com o que o JS tem (a lista nativa pinta a foto; o JS monta as
+  // linhas depois do 1º frame e o reset substitui sem diferença visível).
+  const homeStore = useMemo(() => {
+    if (!storeMain || !me || Platform.OS === 'web') return undefined;
+    try { if (_clApiVersion() < 2) return undefined; } catch { return undefined; }
+    const ns = _ns();
+    if (!ns || ns.nativeStoreApi() < 2) return undefined;
+    const r = ns.fnv(JSON.stringify([_bundleTag(), _clApiVersion(), !!isDark, String(language || ''), ns.localDay()]));
+    return { a: me, r, n: _homeTop(conversations), s: 'main' };
+  }, [storeMain, me, isDark, language, conversations]);
+  const [deferBuild, setDeferBuild] = useState(() => {
+    try {
+      if (!homeStore || !homeStore.n) return false;
+      const top = _ns().homeTopSync(me, 'main');
+      return !!(top && top.rev === homeStore.r && top.top === homeStore.n);
+    } catch { return false; }
+  });
+  useEffect(() => {
+    if (!deferBuild) return undefined;
+    // depois do 1º frame (a foto já está na tela) o JS monta as linhas
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setDeferBuild(false)); });
+    const tm = setTimeout(() => setDeferBuild(false), 250);
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); clearTimeout(tm); };
+  }, [deferBuild]);
 
   // Anel de status: um listener só para a lista inteira.
   const [ringToken, setRingToken] = useState(0);
@@ -103,6 +145,7 @@ function NativeConversationListInner(props) {
   const built = useMemo(() => {
     const rows = [];
     const meta = new Map();
+    if (deferBuild) return { rows, meta, deferred: true };
     for (const c of (Array.isArray(conversations) ? conversations : [])) {
       if (!c || c.id == null) continue;
       try {
@@ -112,14 +155,15 @@ function NativeConversationListInner(props) {
       } catch {}
     }
     return { rows, meta };
-  }, [conversations, ctx]);
+  }, [conversations, ctx, deferBuild]);
 
   const { patch, snapshot } = useMemo(
-    () => patcherRef.current.diff(built.rows),
+    () => (built.deferred ? { patch: undefined, snapshot: null } : patcherRef.current.diff(built.rows)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [built, resyncToken]
   );
   useLayoutEffect(() => {
+    if (!snapshot) return; // [native-store] montagem adiada: nada foi ao nativo
     patcherRef.current.commit(snapshot);
     metaRef.current = built.meta;
   }, [snapshot, built]);
@@ -292,11 +336,12 @@ function NativeConversationListInner(props) {
       swipeEnabled={!selectionMode}
       menuEnabled={!selectionMode}
       scrollToTopSeq={scrollToTopSeq}
+      {...(homeStore ? { store: homeStore } : null)}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
         {header}
-        {built.rows.length === 0 ? empty : null}
+        {built.rows.length === 0 && !built.deferred ? empty : null}
       </View>
       <View collapsable={false} style={styles.slot} onLayout={onFooterLayout}>
         {footer}

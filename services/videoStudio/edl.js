@@ -23,7 +23,7 @@
 // Semântica:
 //   - clip.in/out em SEGUNDOS da mídia de origem (tempo-fonte, antes da velocidade).
 //   - clip.speed: 0.3/0.5/1/2/3… O render aplica (setpts/atempo). Duração na timeline = (out-in)/speed.
-//   - clip.mirror: espelhar horizontalmente (câmera frontal grava espelhada no preview, não no arquivo).
+//   - clip.mirror: espelhar horizontalmente (só por ação do usuário no editor; gravação frontal entra false = enviado NÃO espelhado, padrão WhatsApp — 2026-10-15).
 //   - x/y de overlays normalizados 0..1 no canvas.
 //
 // Extensões OPCIONAIS (aceitas por validate; servidor/editor podem ignorar):

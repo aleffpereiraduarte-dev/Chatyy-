@@ -11,7 +11,16 @@
       "ChatyyCallListModule",
       "ChatyyStatusListModule",
       "ChatyyContactListModule",
-      "ChatyySettingsListModule"
+      "ChatyySettingsListModule",
+      "ChatyyResultListModule",
+      "ChatyyWalletListModule",
+      "ChatyyNotesListModule",
+      "ChatyyCalendarViewModule",
+      "ChatyyDriveListModule",
+      "ChatyyChannelListModule",
+      "ChatyyChannelFeedModule",
+      "ChatyyCommunityListModule",
+      "ChatyyCommunityDetailModule"
     ]
   },
   "android": {
@@ -22,7 +31,16 @@
       "expo.modules.chatyyconversationlist.ChatyyCallListModule",
       "expo.modules.chatyyconversationlist.ChatyyStatusListModule",
       "expo.modules.chatyyconversationlist.ChatyyContactListModule",
-      "expo.modules.chatyyconversationlist.ChatyySettingsListModule"
+      "expo.modules.chatyyconversationlist.ChatyySettingsListModule",
+      "expo.modules.chatyyconversationlist.ChatyyResultListModule",
+      "expo.modules.chatyyconversationlist.ChatyyWalletListModule",
+      "expo.modules.chatyyconversationlist.ChatyyNotesListModule",
+      "expo.modules.chatyyconversationlist.ChatyyCalendarViewModule",
+      "expo.modules.chatyyconversationlist.ChatyyDriveListModule",
+      "expo.modules.chatyyconversationlist.ChatyyChannelListModule",
+      "expo.modules.chatyyconversationlist.ChatyyChannelFeedModule",
+      "expo.modules.chatyyconversationlist.ChatyyCommunityListModule",
+      "expo.modules.chatyyconversationlist.ChatyyCommunityDetailModule"
     ]
   }
 }

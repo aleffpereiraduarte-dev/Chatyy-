@@ -1,92 +1,132 @@
 /**
  * GlobalSearch — Spotlight-style unified search overlay.
- * Finds emails, chats, users, and feed posts in one surface.
- * Debounced 250ms to avoid hammering the backend on every keystroke.
+ * Finds chats, messages, people, emails, files and posts in one surface.
+ *
+ * [2026-10-15 native-search-notifs] Busca enquanto digita SEM travar:
+ *   1. LOCAL primeiro (~0 ms): conversas da lista já carregada
+ *      (chatStore.getConversationsSync), contatos do aparelho (contactSync) e
+ *      mensagens do SQLite (FTS5, dbSearchMessages) — aparece na hora e
+ *      funciona offline;
+ *   2. SERVIDOR por cima (debounce 250 ms): search_global + chat_search,
+ *      mesclado por id (servidor ganha no conteúdo). Cada tecla invalida a
+ *      rodada anterior (reqId) e cancela os timers pendentes — resposta velha
+ *      nunca pinta por cima da nova.
+ * Resultados em seções numa lista NATIVA (ChatyyResultList: UICollectionView /
+ * RecyclerView, destaque do termo em NSAttributedString/spans, patches por id)
+ * quando o binário tem a view; senão (web / binário antigo / kill switch
+ * globalThis.__chatyy_native_search = false / erro) a lista JS abaixo, com o
+ * MESMO modelo de seções. Mensagem abre a conversa já NA mensagem
+ * (scrollToMessageId/highlightMessageId).
  */
 
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
-  ScrollView, ActivityIndicator, Platform, StyleSheet, Image, Keyboard,
+  ScrollView, ActivityIndicator, Platform, StyleSheet, Keyboard,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
-import { BASE_URL } from '../services/api';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import EmptyStateCard from './EmptyStateCard';
 import { useLanguageOptional } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import NativeResultList, { useNativeResults } from './native/NativeResultList';
+import {
+  contactTile, photoTile, queryTokens, matchesAll, snippetAround, highlightParts,
+} from './native/resultListAdapter';
 import {
   IconSearch, IconX, IconMail, IconMessageSquare, IconImage,
-  IconUser, IconChevronRight, IconClock, IconFileText, IconFilm, IconFile,
+  IconUser, IconChevronRight, IconClock, IconFilm, IconFile,
 } from './Icons';
 
-// Spotlight-style brand accent — used everywhere the focus needs to pop.
 const BRAND = '#111111';
 const RECENT_KEY = '@chatyy_global_recent_searches'; // legado (sem conta) — só migração
 const RECENT_CKEY = ['global_search', 'recent'];
-const MAX_RECENT = 6;
-// Per-section preview cap. Anything beyond shows "Ver todos →".
+const MAX_RECENT = 8;
+// Itens por seção no filtro "Tudo". Acima disso o cabeçalho mostra "Ver tudo"
+// (troca o chip para a seção).
 const SECTION_PREVIEW = 3;
+const MSG_PREVIEW = 5;
+const SERVER_DEBOUNCE_MS = 250;
+const LOCAL_DEBOUNCE_MS = 60;
+const KILL = '__chatyy_native_search';
+
+const WEB = Platform.OS === 'web';
+const EMPTY_SERVER = { term: '', users: [], chats: [], emails: [], posts: [] };
+const EMPTY_HITS = { term: '', list: [] };
 
 // Compact time formatter (Spotlight-grade): "agora", "5m", "2h", "ter", "12 mai".
+function parseTs(ts) {
+  if (!ts) return null;
+  if (typeof ts === 'number') return new Date(ts * (ts < 1e12 ? 1000 : 1));
+  let v = String(ts);
+  if (/^\d{4}-\d{2}-\d{2} \d/.test(v)) v = v.replace(' ', 'T');
+  if (/^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(v)) v += 'Z';
+  if (/[+-]\d{2}$/.test(v)) v += ':00';
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
 function formatTime(ts, t, language) {
-  if (!ts) return '';
-  const d = typeof ts === 'number' ? new Date(ts * (ts < 1e12 ? 1000 : 1)) : new Date(ts);
-  if (isNaN(d.getTime())) return '';
-  const now = new Date();
-  const diffMs = now - d;
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return (typeof t === 'function' && t('time.justNow')) || 'agora';
+  const d = parseTs(ts);
+  if (!d) return '';
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) { const v = typeof t === 'function' ? t('time.justNow') : ''; return (v && v !== 'time.justNow') ? v : 'agora'; }
   if (diffMin < 60) return `${diffMin}m`;
   const diffH = Math.floor(diffMin / 60);
   if (diffH < 24) return `${diffH}h`;
   const diffD = Math.floor(diffH / 24);
-  // [2026-10-11 ui-sweep] dia/data no idioma do app (antes fixo em pt-BR).
   const loc = language || 'pt-BR';
   if (diffD < 7) {
     try { return d.toLocaleDateString(loc, { weekday: 'short' }).replace(/\.$/, ''); } catch {}
-    const days = ['dom','seg','ter','qua','qui','sex','sáb'];
-    return days[d.getDay()];
+    return ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][d.getDay()];
   }
   try { return d.toLocaleDateString(loc, { day: '2-digit', month: 'short' }); } catch {}
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
-const WEB = Platform.OS === 'web';
-
 function resolveMedia(url) {
   if (!url) return '';
-  if (url.startsWith('http')) return url;
-  return api.getMediaUrl(url);
+  if (String(url).startsWith('http') || String(url).startsWith('data:')) return url;
+  try { return api.getMediaUrl(url); } catch { return ''; }
 }
 
-// Bold + tinted highlight of the matched substring within a result row.
-// Mirrors the chat-new.js HighlightText pattern for visual consistency.
-function HighlightText({ text, highlight, style, highlightColor }) {
-  if (!highlight || !text) return <Text style={style} numberOfLines={1}>{text}</Text>;
-  const lowerText = String(text).toLowerCase();
-  const lowerHighlight = String(highlight).toLowerCase();
-  const idx = lowerText.indexOf(lowerHighlight);
-  if (idx === -1) return <Text style={style} numberOfLines={1}>{text}</Text>;
-  const before = String(text).substring(0, idx);
-  const match = String(text).substring(idx, idx + highlight.length);
-  const after = String(text).substring(idx + highlight.length);
+const POST_KIND = (p) => {
+  const ty = String(p?.type || '').toLowerCase();
+  if (ty === 'video' || ty === 'reel') return 'reel';
+  if (ty === 'file' || ty === 'document' || ty === 'doc' || ty === 'pdf') return 'file';
+  return 'post';
+};
+
+// Chips: ids estáveis; rótulos de chaves que já existem nos 63 idiomas.
+const FILTERS = [
+  { id: 'all', labelKey: 'activity.tabs.all', label: 'Tudo' },
+  { id: 'convs', labelKey: 'search.chats', label: 'Conversas' },
+  { id: 'msg', labelKey: 'gsearch.tab', label: 'Mensagens' },
+  { id: 'people', labelKey: 'search.users', label: 'Pessoas' },
+  { id: 'emails', labelKey: 'search.emails', label: 'E-mails' },
+  { id: 'media', labelKey: 'apps.media', label: 'Mídia' },
+  { id: 'docs', labelKey: 'files.title', label: 'Arquivos' },
+];
+const SECTION_FOR_FILTER = { convs: 'convs', msg: 'msgs', people: 'people', emails: 'emails', media: 'reels', docs: 'files' };
+const FILTER_FOR_SECTION = { convs: 'convs', msgs: 'msg', people: 'people', emails: 'emails', reels: 'media', files: 'docs', posts: 'media' };
+
+// ── JS (fallback) ───────────────────────────────────────────────────────────
+
+function HighlightText({ text, highlight, style, highlightColor, lines = 1 }) {
+  const parts = highlight ? highlightParts(text, highlight) : [{ text: String(text || ''), hit: false }];
   return (
-    <Text style={style} numberOfLines={1}>
-      {before}
-      <Text style={[style, { fontWeight: '700', color: highlightColor }]}>{match}</Text>
-      {after}
+    <Text style={style} numberOfLines={lines}>
+      {parts.map((p, i) => (p.hit
+        ? <Text key={i} style={{ fontWeight: '700', color: highlightColor }}>{p.text}</Text>
+        : p.text))}
     </Text>
   );
 }
 
-function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll, t }) {
-  // Header doubles as a "see all" affordance when the bucket overflows the
-  // preview cap. Stays subtle (no full row) so the section list feels light.
-  const showSeeAll = typeof totalCount === 'number' && totalCount > SECTION_PREVIEW && !!onSeeAll;
+function Section({ title, children, colors, icon: Icon, action, onAction }) {
   return (
     <View style={{ marginTop: 8 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 }}>
@@ -96,13 +136,11 @@ function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll, t 
             {title}
           </Text>
         </View>
-        {showSeeAll && (
-          <TouchableOpacity onPress={onSeeAll} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+        {!!action && (
+          <TouchableOpacity onPress={onAction} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button">
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: BRAND }}>
-                {(typeof t === 'function' && t('snapmap.tapToExpand')) || 'Ver todos'}
-              </Text>
-              <IconChevronRight size={12} color={BRAND} />
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.text || BRAND }}>{action}</Text>
+              <IconChevronRight size={12} color={colors?.text || BRAND} />
             </View>
           </TouchableOpacity>
         )}
@@ -112,15 +150,16 @@ function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll, t 
   );
 }
 
-function Row({ leading, title, subtitle, time, onPress, colors, query }) {
+function Row({ leading, title, subtitle, time, onPress, colors, query, subLines = 1 }) {
   const titleStyle = { fontSize: 14.5, fontWeight: '500', color: colors?.text };
-  const subtitleStyle = { fontSize: 12, color: colors?.textSecondary, marginTop: 2 };
-  const highlightColor = colors?.primary || BRAND;
+  const subtitleStyle = { fontSize: 12.5, color: colors?.textSecondary, marginTop: 2 };
+  const highlightColor = colors?.text || BRAND;
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.6}
       style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}
+      accessibilityRole="button"
     >
       {leading}
       <View style={{ flex: 1 }}>
@@ -129,13 +168,11 @@ function Row({ leading, title, subtitle, time, onPress, colors, query }) {
             <HighlightText text={title} highlight={query} style={titleStyle} highlightColor={highlightColor} />
           </View>
           {!!time && (
-            <Text style={{ fontSize: 11, color: colors?.textTertiary, fontVariant: ['tabular-nums'] }}>
-              {time}
-            </Text>
+            <Text style={{ fontSize: 11, color: colors?.textTertiary, fontVariant: ['tabular-nums'] }}>{time}</Text>
           )}
         </View>
         {!!subtitle && (
-          <HighlightText text={subtitle} highlight={query} style={subtitleStyle} highlightColor={highlightColor} />
+          <HighlightText text={subtitle} highlight={query} style={subtitleStyle} highlightColor={highlightColor} lines={subLines} />
         )}
       </View>
       <IconChevronRight size={16} color={colors?.textTertiary} />
@@ -143,102 +180,25 @@ function Row({ leading, title, subtitle, time, onPress, colors, query }) {
   );
 }
 
-// Spotlight-style filter chips — kept tight (5 items) so the row doesn't need
-// to scroll on iPhone widths. Keys are stable internal IDs; labels stay PT.
-const FILTERS = [
-  { id: 'all',    label: 'Tudo',      labelKey: 'activity.tabs.all' },
-  { id: 'msg',    label: 'Mensagens', labelKey: 'settings.rd2.messages' },
-  { id: 'people', label: 'Pessoas',   labelKey: 'search.people' },
-  { id: 'media',  label: 'Mídia',     labelKey: 'apps.media' },
-  { id: 'docs',   label: 'Arquivos',  labelKey: 'files.title' },
-];
-
-// Loose URL detector — matches plain http(s)://… and bare domain.tld/path forms.
-const URL_RE = /(https?:\/\/[^\s]+)|(\b[a-z0-9.-]+\.[a-z]{2,}(\/[^\s]*)?\b)/i;
-
-function hasLink(text) {
-  if (!text) return false;
-  return URL_RE.test(String(text));
-}
-
-// Apply filter to the unified result buckets. Returns the same shape so the
-// existing render code keeps working without per-section forks. Each filter
-// only emits the relevant bucket(s); the others come back empty.
-function applyFilter(results, filterId) {
-  const empty = { users: [], chats: [], emails: [], posts: [] };
-  if (!results) return empty;
-  const all = {
-    users:  results.users  || [],
-    chats:  results.chats  || [],
-    emails: results.emails || [],
-    posts:  results.posts  || [],
-  };
-  switch (filterId) {
-    case 'people':
-      return { ...empty, users: all.users };
-    case 'convs':
-      return { ...empty, chats: all.chats };
-    case 'msg':
-      // "Mensagens" = chat conversations + emails (text-based threads).
-      return { ...empty, chats: all.chats, emails: all.emails };
-    case 'media':
-      // Only feed posts whose media type is image or video.
-      return {
-        ...empty,
-        posts: all.posts.filter(p => {
-          const ty = String(p?.type || '').toLowerCase();
-          return ty === 'image' || ty === 'video' || ty === 'photo' || ty === 'carousel';
-        }),
-      };
-    case 'audio':
-      return {
-        ...empty,
-        posts: all.posts.filter(p => String(p?.type || '').toLowerCase() === 'audio' || String(p?.type || '').toLowerCase() === 'voice'),
-      };
-    case 'docs':
-      return {
-        ...empty,
-        posts: all.posts.filter(p => {
-          const ty = String(p?.type || '').toLowerCase();
-          return ty === 'document' || ty === 'doc' || ty === 'file' || ty === 'pdf';
-        }),
-      };
-    case 'links':
-      // Surface emails with URL in subject and posts with URL in caption.
-      return {
-        ...empty,
-        emails: all.emails.filter(e => hasLink(e?.subject) || hasLink(e?.from)),
-        posts:  all.posts.filter(p => hasLink(p?.caption)),
-        chats:  all.chats.filter(c => hasLink(c?.name)),
-      };
-    case 'all':
-    default:
-      return all;
-  }
-}
-
 function FilterChip({ label, active, onPress, colors }) {
-  const brand = colors?.primary || '#111111';
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.75}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: !!active }}
       style={{
         paddingHorizontal: 14,
         paddingVertical: 7,
         borderRadius: 999,
         marginRight: 8,
-        backgroundColor: active ? brand : 'transparent',
+        backgroundColor: active ? (colors?.primary || BRAND) : 'transparent',
         borderWidth: active ? 0 : StyleSheet.hairlineWidth,
         borderColor: colors?.border || 'rgba(0,0,0,0.15)',
       }}
     >
       <Text
-        style={{
-          fontSize: 13,
-          fontWeight: active ? '700' : '500',
-          color: active ? '#fff' : (colors?.text || '#000'),
-        }}
+        style={{ fontSize: 13, fontWeight: active ? '700' : '500', color: active ? (colors?.onPrimary || '#fff') : (colors?.text || '#000') }}
         numberOfLines={1}
       >
         {label}
@@ -247,24 +207,59 @@ function FilterChip({ label, active, onPress, colors }) {
   );
 }
 
+const GLYPH_ICON = { message: IconMessageSquare, mail: IconMail, user: IconUser, film: IconFilm, file: IconFile, image: IconImage, clock: IconClock, search: IconSearch };
+
+function Leading({ item, colors }) {
+  if (item.tiles) {
+    return <AvatarCircle email={item.email || undefined} name={item.title} uri={item.avatarUri || undefined} size={40} />;
+  }
+  if (item.thumb) {
+    return WEB
+      ? <img src={item.thumb} style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }} alt="" />
+      : <CachedImage source={{ uri: item.thumb }} style={{ width: 40, height: 40, borderRadius: 8 }} resizeMode="cover" />;
+  }
+  const I = GLYPH_ICON[item.glyph] || IconSearch;
+  return (
+    <View style={{ width: 40, height: 40, borderRadius: item.glyphRound ? 10 : 20, backgroundColor: colors?.surfaceVariant || colors?.surface, alignItems: 'center', justifyContent: 'center' }}>
+      <I size={18} color={colors?.text} />
+    </View>
+  );
+}
+
+// ── Componente ──────────────────────────────────────────────────────────────
+
 export default function GlobalSearch({
   visible, onClose, colors, isDark, t, router,
 }) {
   const _lang = useLanguageOptional();
+  let me = '';
+  try { me = String(useAuth()?.user?.email || '').toLowerCase(); } catch { me = ''; }
+  const tt = useCallback((k, fb) => {
+    const v = typeof t === 'function' ? t(k) : '';
+    return (typeof v === 'string' && v && v !== k) ? v : fb;
+  }, [t]);
+
   const [q, setQ] = useState('');
-  const [results, setResults] = useState({ users: [], chats: [], emails: [], posts: [] });
+  const [server, setServer] = useState(EMPTY_SERVER);
+  const [local, setLocal] = useState({ convs: [], people: [] });
+  const [msgHits, setMsgHitsState] = useState(EMPTY_HITS);
+  const msgRef = useRef(EMPTY_HITS);
+  const setMsgHits = useCallback((v) => { msgRef.current = v; setMsgHitsState(v); }, []);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('all');
   // [2026-10-14 offline-first] recentes POR CONTA (antes: chave global no
   // AsyncStorage, lida async → piscava e vazava entre contas no multi-conta).
   const [recent, setRecent] = useState(() => { const c = peekCached(RECENT_CKEY); return Array.isArray(c) ? c : []; });
   const inputRef = useRef(null);
-  const debounceRef = useRef(null);
-  // Cache results per (filter,query) so toggling chips doesn't refetch when
-  // the underlying unified payload is the same. The unified search payload
-  // itself is the same regardless of filter (we filter client-side), so this
-  // cache is keyed by query alone — the filter purely re-derives.
+  const reqRef = useRef(0);
+  const timersRef = useRef([]);
+  // Cache do payload do servidor por termo (trocar chip / apagar letra = 0 rede).
   const cacheRef = useRef(new Map());
+  const [nativeOn, onNativeFailure] = useNativeResults(KILL);
+  const [scrollTopSeq, setScrollTopSeq] = useState(0);
+
+  const term = q.trim();
+  const active = term.length >= 2;
 
   // Hydrate recent searches when the modal opens (Spotlight empty-state).
   useEffect(() => {
@@ -286,17 +281,23 @@ export default function GlobalSearch({
     })();
   }, [visible]);
 
-  // Persist a query to recents on result-tap. LRU + dedup, capped to MAX_RECENT.
-  const pushRecent = useCallback(async (term) => {
-    const v = String(term || '').trim();
+  const pushRecent = useCallback((v0) => {
+    const v = String(v0 || '').trim();
     if (v.length < 2) return;
-    try {
-      const existing = recent.filter(s => s !== v);
-      const next = [v, ...existing].slice(0, MAX_RECENT);
-      setRecent(next);
+    setRecent((prev) => {
+      const next = [v, ...prev.filter(s => s !== v)].slice(0, MAX_RECENT);
       putCached(RECENT_CKEY, next);
-    } catch {}
-  }, [recent]);
+      return next;
+    });
+  }, []);
+
+  const removeRecent = useCallback((v) => {
+    setRecent((prev) => {
+      const next = prev.filter(s => s !== v);
+      putCached(RECENT_CKEY, next);
+      return next;
+    });
+  }, []);
 
   const clearRecent = useCallback(async () => {
     setRecent([]);
@@ -309,81 +310,386 @@ export default function GlobalSearch({
     if (visible) {
       const h = setTimeout(() => { inputRef.current?.focus?.(); }, 140);
       return () => clearTimeout(h);
-    } else {
-      setQ('');
-      setResults({ users: [], chats: [], emails: [], posts: [] });
-      setFilter('all');
-      cacheRef.current.clear();
     }
+    reqRef.current++;
+    setQ('');
+    setServer(EMPTY_SERVER);
+    setLocal({ convs: [], people: [] });
+    setMsgHits(EMPTY_HITS);
+    setFilter('all');
+    setLoading(false);
+    cacheRef.current.clear();
+    return undefined;
   }, [visible]);
 
-  // Debounced search
+  // Índice local de conversas (lista já carregada; síncrono, nunca outra conta).
+  const convIndex = useMemo(() => {
+    const m = new Map();
+    if (!visible) return m;
+    try {
+      const list = require('../services/chatStore').getConversationsSync() || [];
+      for (const c of list) if (c && c.id != null) m.set(String(c.id), c);
+    } catch {}
+    return m;
+  }, [visible]);
+
+  const convInfo = useCallback((c0, hint) => {
+    const c = c0 || {};
+    const h = hint || {};
+    const type = c.type || h.conv_type || h.type || (c.is_group ? 'group' : 'direct');
+    const peer = (type === 'direct' || type === 'saved')
+      ? String(c.other_email || c.contact_email || c.peer_email || h.peer_email || '')
+      : '';
+    const saved = type === 'saved' || (!!peer && !!me && peer.toLowerCase() === me);
+    let name = saved ? tt('chat.savedMessages', 'Mensagens salvas') : (c.display_name || c.name || c.title || h.conv_name || h.name || '');
+    if (!name && peer) { try { name = api.emailToDisplayName(peer) || peer.split('@')[0]; } catch { name = peer.split('@')[0]; } }
+    if (!name) name = tt('chat.untitled', 'Conversa');
+    const avatar = c.avatar_url || c.group_avatar || c.avatar || h.avatar || '';
+    return { type, peer: saved ? '' : peer, saved, name, avatar };
+  }, [me, tt]);
+
+  // ── Pipeline: local já; servidor com debounce; tecla nova cancela tudo ────
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const term = q.trim();
-    if (term.length < 2) {
-      setResults({ users: [], chats: [], emails: [], posts: [] });
-      setLoading(false);
-      return;
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+    const myReq = ++reqRef.current;
+    if (!visible || !active) {
+      setServer(EMPTY_SERVER); setLocal({ convs: [], people: [] }); setMsgHits(EMPTY_HITS); setLoading(false);
+      return undefined;
     }
-    // Cache hit — reuse the unified payload, no network roundtrip.
+    const toks = queryTokens(term);
+    const stale = () => myReq !== reqRef.current;
+    let online = true;
+    try { online = require('../services/offlineCache').isOnline() !== false; } catch {}
+
+    // 1) LOCAL — conversas + contatos + mensagens do aparelho
+    timersRef.current.push(setTimeout(() => {
+      if (stale()) return;
+      const convs = [];
+      for (const c of convIndex.values()) {
+        const info = convInfo(c);
+        if (matchesAll(toks, info.name, info.peer)) convs.push(c);
+        if (convs.length >= 40) break;
+      }
+      setLocal((prev) => ({ ...prev, convs }));
+      if (!WEB) {
+        (async () => {
+          const people = [];
+          try {
+            const cached = await require('../services/contactSync').getCachedContacts();
+            if (stale()) return;
+            for (const c of (cached?.chatyContacts || [])) {
+              const em = String(c?.email || '').toLowerCase();
+              if (!em || em === me) continue;
+              if (matchesAll(toks, c.name, em)) people.push({ email: em, name: c.name || '' });
+              if (people.length >= 20) break;
+            }
+          } catch {}
+          if (!stale()) setLocal((prev) => ({ ...prev, people }));
+        })();
+        (async () => {
+          try {
+            const { dbSearchMessages } = require('../services/db');
+            const rows = await dbSearchMessages(term, 30, null, { prefix: true });
+            if (stale() || !Array.isArray(rows)) return;
+            const out = [];
+            const seen = new Set();
+            for (const m0 of rows) {
+              const m = m0 && m0._row ? { ...m0, id: m0.id ?? m0._row.id, conversation_id: m0.conversation_id ?? m0._row.conversation_id } : m0;
+              if (!m || m.id == null || m.conversation_id == null) continue;
+              const k = `${m.conversation_id}:${m.id}`;
+              if (seen.has(k)) continue;
+              seen.add(k);
+              out.push({ id: m.id, conversation_id: m.conversation_id, content: m.content, sender_email: m.sender_email, sender_name: m.sender_name, created_at: m.created_at, type: m.type, file_name: m.file_name, _local: true });
+            }
+            // Servidor já respondeu este termo? Só soma o que faltou; senão pinta o local.
+            const cur = msgRef.current;
+            if (cur.term === term && !cur.local) {
+              const seen2 = new Set(cur.list.map(h => `${h.conversation_id}:${h.id}`));
+              const add = out.filter(h => !seen2.has(`${h.conversation_id}:${h.id}`));
+              if (add.length) setMsgHits({ term, list: cur.list.concat(add) });
+            } else if (out.length) {
+              setMsgHits({ term, list: out, local: true });
+            }
+          } catch {}
+        })();
+      }
+    }, LOCAL_DEBOUNCE_MS));
+
+    // 2) SERVIDOR — cache por termo; senão debounce e mescla
     const cached = cacheRef.current.get(term);
     if (cached) {
-      setResults(cached);
+      setServer(cached.server);
+      if (cached.msgs) setMsgHits({ term, list: cached.msgs });
       setLoading(false);
-      return;
+      return () => { timersRef.current.forEach(clearTimeout); timersRef.current = []; };
     }
+    if (!online) { setLoading(false); return () => { timersRef.current.forEach(clearTimeout); timersRef.current = []; }; }
     setLoading(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const r = await api.searchGlobal(term);
-        // Defensive defaults — server pode omitir buckets vazios e os
-        // .length acessados depois quebrariam.
-        if (r?.success) {
-          const data = {
-            users: r.data?.users || [],
-            chats: r.data?.chats || [],
-            emails: r.data?.emails || [],
-            posts: r.data?.posts || [],
-          };
-          cacheRef.current.set(term, data);
-          // Cap cache to last ~20 queries to avoid unbounded growth.
-          if (cacheRef.current.size > 20) {
-            const firstKey = cacheRef.current.keys().next().value;
-            cacheRef.current.delete(firstKey);
-          }
-          setResults(data);
-        }
-      } catch {}
+    timersRef.current.push(setTimeout(async () => {
+      if (stale()) return;
+      const [g, m] = await Promise.all([
+        api.searchGlobal(term).catch(() => null),
+        api.apiCall('chat_search', { query: term, limit: 30 }).catch(() => null),
+      ]);
+      if (stale()) return;
+      const data = g?.success ? {
+        term,
+        users: g.data?.users || [],
+        chats: g.data?.chats || [],
+        emails: g.data?.emails || [],
+        posts: g.data?.posts || [],
+      } : null;
+      const raw = m?.success ? (Array.isArray(m.data) ? m.data : (m.data?.results ?? m.data?.hits ?? [])) : null;
+      if (data) setServer(data);
+      let merged = null;
+      if (Array.isArray(raw)) {
+        const prev = msgRef.current.term === term ? msgRef.current.list : [];
+        const seen = new Set();
+        const out = [];
+        for (const h of raw) { const k = `${h.conversation_id}:${h.id}`; if (seen.has(k)) continue; seen.add(k); out.push(h); }
+        for (const h of prev) { if (!h._local) continue; const k = `${h.conversation_id}:${h.id}`; if (seen.has(k)) continue; seen.add(k); out.push(h); }
+        out.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+        merged = out.slice(0, 60);
+        setMsgHits({ term, list: merged });
+      }
+      if (data) {
+        cacheRef.current.set(term, { server: data, msgs: merged });
+        if (cacheRef.current.size > 20) cacheRef.current.delete(cacheRef.current.keys().next().value);
+      }
       setLoading(false);
-    }, 250);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [q]);
+    }, SERVER_DEBOUNCE_MS));
+    return () => { timersRef.current.forEach(clearTimeout); timersRef.current = []; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [term, visible, active, convIndex]);
 
-  // Derived view = filter applied to the unified payload. Cheap memo so we
-  // don't rebuild on every render.
-  const viewResults = React.useMemo(() => applyFilter(results, filter), [results, filter]);
+  // Volta ao topo quando o termo/filtro muda (lista nativa).
+  useEffect(() => { setScrollTopSeq((s) => s + 1); }, [term, filter]);
 
   const close = useCallback(() => {
     Keyboard.dismiss?.();
     onClose?.();
   }, [onClose]);
 
-  const go = (path) => {
-    // Persist current query so the Recentes section reflects what user just opened.
-    if (q.trim().length >= 2) pushRecent(q.trim());
+  const go = useCallback((target) => {
+    if (term.length >= 2) pushRecent(term);
     close();
     setTimeout(() => {
       // [2026-10-12 nav-dedup] conversation targets go through the shared guard.
-      if (typeof path === 'string' && path.startsWith('/chat-conversation')) {
-        try { require('../services/openConversation').openConversation(path, { source: 'search' }); return; } catch {}
+      if (target && typeof target === 'object') {
+        try { require('../services/openConversation').openConversation(target, { router, source: 'search' }); } catch {}
+        return;
       }
-      router?.push(path);
+      if (typeof target === 'string' && target.startsWith('/chat-conversation')) {
+        try { require('../services/openConversation').openConversation(target, { source: 'search' }); return; } catch {}
+      }
+      router?.push(target);
     }, 60);
-  };
+  }, [term, pushRecent, close, router]);
 
-  const hasAny = (viewResults.users?.length ?? 0) + (viewResults.chats?.length ?? 0) + (viewResults.emails?.length ?? 0) + (viewResults.posts?.length ?? 0) > 0;
+  // ── Modelo de seções (o MESMO para nativo e JS) ──────────────────────────
+  const sections = useMemo(() => {
+    if (!active) return [];
+    const lang = _lang?.language;
+    const out = [];
+    // Enquanto a resposta do termo NOVO não chega, os resultados do termo
+    // anterior são estreitados aqui (sem rede, sem piscar).
+    const toks = queryTokens(term);
+    const srv = server.term === term ? server : {
+      users: (server.users || []).filter(u => matchesAll(toks, u.name, u.email)),
+      chats: (server.chats || []).filter(h => { const c = convIndex.get(String(h.id)); const i = convInfo(c, h); return matchesAll(toks, i.name, i.peer); }),
+      emails: (server.emails || []).filter(e => matchesAll(toks, e.subject, e.from)),
+      posts: (server.posts || []).filter(p => matchesAll(toks, p.caption, p.filename, p.author_email)),
+    };
+    const hitsList = msgHits.term === term ? msgHits.list : msgHits.list.filter(m => matchesAll(toks, m.content, m.file_name));
+    const want = (sec) => filter === 'all' || SECTION_FOR_FILTER[filter] === sec;
+    const cap = (sec, n) => (filter === 'all' ? n : 200);
 
+    // Conversas: locais primeiro (nome certo + avatar), servidor completa.
+    if (want('convs')) {
+      const seen = new Set();
+      const items = [];
+      const addConv = (c, h) => {
+        const id = String(c?.id ?? h?.id ?? '');
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        const info = convInfo(c, h);
+        const lm = c?.last_message;
+        const lmText = lm ? String(lm.content || lm.text || lm.file_name || '').replace(/\s+/g, ' ').trim() : '';
+        const sub = lmText || (info.type === 'group' ? tt('chat.group', 'Grupo') : (info.saved ? '' : tt('chat.direct', 'Conversa direta')));
+        const isGroup = info.type === 'group' || info.type === 'channel';
+        items.push({
+          key: `c:${id}`,
+          title: info.name,
+          sub,
+          time: formatTime(c?.last_message_at || c?.updated_at || lm?.created_at, t, lang),
+          tiles: isGroup ? photoTile(resolveMedia(info.avatar), info.name, id) : contactTile(info.peer, info.name),
+          email: isGroup ? '' : info.peer,
+          avatarUri: isGroup ? resolveMedia(info.avatar) : '',
+          open: () => go({ pathname: '/chat-conversation', params: { id, type: info.type, name: info.name, ...(info.type === 'direct' && info.peer ? { email: info.peer } : {}) } }),
+        });
+      };
+      for (const c of local.convs) addConv(c, null);
+      // Conversa direta sem nome/peer no search_global: o peer sai dos hits de mensagem.
+      const peerOf = new Map();
+      for (const m of hitsList) {
+        const se = String(m.sender_email || '').toLowerCase();
+        if (se && se !== me && !peerOf.has(String(m.conversation_id))) peerOf.set(String(m.conversation_id), se);
+      }
+      for (const h of srv.chats || []) {
+        const pe = peerOf.get(String(h.id));
+        addConv(convIndex.get(String(h.id)), (pe && !h.peer_email && (h.type || 'direct') === 'direct') ? { ...h, peer_email: pe } : h);
+      }
+      if (items.length) out.push({ key: 'convs', title: tt('search.chats', 'Conversas'), icon: IconMessageSquare, items, cap: cap('convs', SECTION_PREVIEW) });
+    }
+
+    // Mensagens: trecho em volta do termo + abre NA mensagem.
+    if (want('msgs') && hitsList.length) {
+      const items = hitsList.map((m) => {
+        const c = convIndex.get(String(m.conversation_id));
+        const se = String(m.sender_email || '').toLowerCase();
+        const info = convInfo(c, (!c && !m.peer_email && se && se !== me && (m.conv_type || 'direct') === 'direct') ? { ...m, peer_email: se } : m);
+        const own = String(m.sender_email || '').toLowerCase() === me;
+        const who = own ? tt('gsearch.you', 'Você') : ((info.type === 'group' || info.type === 'channel') ? (m.sender_name || String(m.sender_email || '').split('@')[0]) : '');
+        const body = snippetAround(m.content || m.file_name || '', term);
+        const isGroup = info.type === 'group' || info.type === 'channel';
+        return {
+          key: `m:${m.conversation_id}:${m.id}`,
+          title: info.name,
+          sub: who ? `${who}: ${body}` : body,
+          subLines: 2,
+          time: formatTime(m.created_at, t, lang),
+          tiles: isGroup ? photoTile(resolveMedia(info.avatar), info.name, String(m.conversation_id)) : contactTile(info.peer, info.name),
+          email: isGroup ? '' : info.peer,
+          avatarUri: isGroup ? resolveMedia(info.avatar) : '',
+          open: () => go({
+            pathname: '/chat-conversation',
+            params: {
+              id: String(m.conversation_id), name: info.name, type: info.type,
+              ...(info.type === 'direct' && info.peer ? { email: info.peer } : {}),
+              scrollToMessageId: String(m.id), highlightMessageId: String(m.id),
+            },
+          }),
+        };
+      });
+      out.push({ key: 'msgs', title: tt('gsearch.tab', 'Mensagens'), icon: IconMessageSquare, items, cap: cap('msgs', MSG_PREVIEW) });
+    }
+
+    // Pessoas: servidor + contatos do aparelho (sem duplicar).
+    if (want('people')) {
+      const seen = new Set();
+      const items = [];
+      const add = (u) => {
+        const em = String(u?.email || '').toLowerCase();
+        if (!em || seen.has(em) || em === me) return;
+        seen.add(em);
+        const name = u.name || (api.emailToDisplayName ? api.emailToDisplayName(em) : '') || em;
+        items.push({ key: `u:${em}`, title: name, sub: em, tiles: contactTile(em, name), email: em, open: () => go(`/u/${encodeURIComponent(em)}`) });
+      };
+      for (const u of local.people) add(u);
+      for (const u of srv.users || []) add(u);
+      if (items.length) out.push({ key: 'people', title: tt('search.users', 'Pessoas'), icon: IconUser, items, cap: cap('people', SECTION_PREVIEW) });
+    }
+
+    if (want('emails') && (srv.emails || []).length) {
+      const items = srv.emails.map((e, i) => ({
+        key: `e:${e.folder}:${e.uid}:${i}`,
+        title: e.subject || tt('reader.noSubject', '(sem assunto)'),
+        sub: e.from || '',
+        time: formatTime(e.date || e.received_at, t, lang),
+        glyph: 'mail', glyphRound: true,
+        open: () => go(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`),
+      }));
+      out.push({ key: 'emails', title: tt('search.emails', 'E-mails'), icon: IconMail, items, cap: cap('emails', SECTION_PREVIEW) });
+    }
+
+    const posts = srv.posts || [];
+    const postItem = (p, kind) => {
+      const thumb = resolveMedia(p.thumbnail || p.thumbnail_url);
+      return {
+        key: `p:${p.id}`,
+        title: p.caption || p.filename || (kind === 'file' ? tt('search.files', 'Arquivos') : tt('feed.untitled', 'Post')),
+        sub: p.author_email || '',
+        time: formatTime(p.created_at, t, lang),
+        thumb: kind === 'file' ? '' : thumb,
+        play: kind === 'reel',
+        glyph: kind === 'file' ? 'file' : (kind === 'reel' ? 'film' : 'image'),
+        glyphRound: true,
+        open: () => go(kind === 'file' ? `/files/${p.id}` : `/feed/${p.id}`),
+      };
+    };
+    const reels = posts.filter(p => POST_KIND(p) === 'reel');
+    const files = posts.filter(p => POST_KIND(p) === 'file');
+    const others = posts.filter(p => POST_KIND(p) === 'post');
+    if (want('reels') && reels.length) out.push({ key: 'reels', title: tt('search.reels', 'Reels'), icon: IconFilm, items: reels.map(p => postItem(p, 'reel')), cap: cap('reels', SECTION_PREVIEW) });
+    if (want('files') && files.length) out.push({ key: 'files', title: tt('search.files', 'Arquivos'), icon: IconFile, items: files.map(p => postItem(p, 'file')), cap: cap('files', SECTION_PREVIEW) });
+    if ((filter === 'all' || filter === 'media') && others.length) out.push({ key: 'posts', title: tt('feed.profilePosts', 'Publicações'), icon: IconImage, items: others.map(p => postItem(p, 'post')), cap: cap('posts', SECTION_PREVIEW) });
+    return out;
+  }, [active, filter, local, server, msgHits, convIndex, convInfo, me, term, t, tt, go, _lang?.language]);
+
+  const hasAny = sections.some(s => s.items.length > 0);
+  const seeAll = tt('common.seeAll', 'Ver tudo');
+
+  // ── Linhas nativas ────────────────────────────────────────────────────────
+  const openById = useRef(new Map());
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const rows = [];
+    const map = new Map();
+    if (!active) {
+      if (recent.length) {
+        rows.push({ id: 's:recent', k: 's', t: tt('search.recent', 'Recentes'), ac: tt('search.clearHistory', 'Limpar') });
+        for (const r of recent) {
+          const id = `r:${r}`;
+          rows.push({ id, k: 'r', t: r, gl: 'clock', sw: tt('common.delete', 'Apagar'), cv: 1 });
+          map.set(id, { recent: r });
+        }
+      } else {
+        rows.push({ id: 'n:hint', k: 'n', t: tt('search.hint', 'Digite pra buscar em conversas, e-mails, pessoas, reels e arquivos.'), gl: 'search', tap: 0 });
+      }
+      openById.current = map;
+      return rows;
+    }
+    for (const s of sections) {
+      const over = s.items.length > s.cap;
+      rows.push({ id: `s:${s.key}`, k: 's', t: s.title, ...(over ? { ac: seeAll } : {}) });
+      map.set(`s:${s.key}`, { section: s.key });
+      for (const it of s.items.slice(0, s.cap)) {
+        const row = { id: it.key, k: 'r', t: it.title, hl: 1 };
+        if (it.sub) row.sb = it.sub;
+        if (it.subLines > 1) row.sl = it.subLines;
+        if (it.time) row.tm = it.time;
+        if (it.tiles) row.tiles = it.tiles;
+        else if (it.thumb) { row.th = it.thumb; if (it.play) row.pv = 1; }
+        else { row.gl = it.glyph || 'search'; if (it.glyphRound) row.gs = 'r'; }
+        rows.push(row);
+        map.set(it.key, { open: it.open });
+      }
+    }
+    if (loading) rows.push({ id: 'l:server', k: 'l', t: hasAny ? tt('search.searching', 'Buscando') + '…' : '' });
+    else if (!hasAny) rows.push({ id: 'n:empty', k: 'n', t: tt('search.emptyTitle', 'Nenhum resultado para "{query}"').replace('{query}', term), gl: 'search', tap: 0 });
+    openById.current = map;
+    return rows;
+  }, [nativeOn, active, recent, sections, loading, hasAny, term, seeAll, tt]);
+
+  const onNativePress = useCallback((id) => {
+    const m = openById.current.get(id);
+    if (!m) return;
+    if (m.recent) { setQ(m.recent); inputRef.current?.focus?.(); return; }
+    m.open?.();
+  }, []);
+
+  const onNativeAction = useCallback((id, action) => {
+    const m = openById.current.get(id);
+    if (action === 'section') {
+      if (id === 's:recent') { clearRecent(); return; }
+      if (m?.section && FILTER_FOR_SECTION[m.section]) setFilter(FILTER_FOR_SECTION[m.section]);
+      return;
+    }
+    if (action === 'delete' && m?.recent) removeRecent(m.recent);
+  }, [clearRecent, removeRecent]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={close}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={close}>
@@ -393,7 +699,8 @@ export default function GlobalSearch({
             marginHorizontal: 12,
             borderRadius: 16,
             backgroundColor: colors?.background || '#fff',
-            maxHeight: '85%',
+            // Nativa precisa de altura definida (flex:1 dentro de maxHeight colapsa).
+            ...(nativeOn ? { height: '85%' } : { maxHeight: '85%' }),
             overflow: 'hidden',
             ...(Platform.OS === 'web'
               ? { boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }
@@ -401,8 +708,7 @@ export default function GlobalSearch({
           }}
           onPress={e => e.stopPropagation?.()}
         >
-          {/* Search bar — Spotlight-grade. Larger height (52px) + brand-tinted
-              icon container + clear-text X distinct from close-overlay X. */}
+          {/* Search bar — Spotlight-grade. */}
           <View
             style={{
               flexDirection: 'row',
@@ -416,15 +722,11 @@ export default function GlobalSearch({
           >
             <View
               style={{
-                width: 32,
-                height: 32,
-                borderRadius: 10,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
+                width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.08)',
               }}
             >
-              <IconSearch size={18} color={BRAND} />
+              <IconSearch size={18} color={colors?.text || BRAND} />
             </View>
             <TextInput
               ref={inputRef}
@@ -443,33 +745,30 @@ export default function GlobalSearch({
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
+              onSubmitEditing={() => { if (term.length >= 2) pushRecent(term); }}
             />
-            {loading && <ActivityIndicator size="small" color={BRAND} />}
-            {!loading && q.length > 0 && (
+            {loading && !nativeOn && <ActivityIndicator size="small" color={colors?.text || BRAND} />}
+            {q.length > 0 && (!loading || nativeOn) && (
               <TouchableOpacity
                 onPress={() => setQ('')}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={tt('common.clear', 'Limpar')}
                 style={{
-                  width: 22,
-                  height: 22,
-                  borderRadius: 11,
-                  alignItems: 'center',
-                  justifyContent: 'center',
+                  width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center',
                   backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
                 }}
               >
                 <IconX size={12} color={colors?.textSecondary} />
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={close} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={close} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button" accessibilityLabel={tt('common.close', 'Fechar')}>
               <IconX size={22} color={colors?.textSecondary} />
             </TouchableOpacity>
           </View>
 
-          {/* Filter chips — WhatsApp-style horizontal scroll row.
-              Only render when the user has typed something useful so we
-              don't waste vertical space on the empty-state hint screen. */}
-          {q.trim().length >= 2 && (
+          {/* Filtros em chips — só com termo útil. */}
+          {active && (
             <View style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border }}>
               <ScrollView
                 horizontal
@@ -480,7 +779,7 @@ export default function GlobalSearch({
                 {FILTERS.map(f => (
                   <FilterChip
                     key={f.id}
-                    label={(t?.(f.labelKey)) || f.label}
+                    label={tt(f.labelKey, f.label)}
                     active={filter === f.id}
                     onPress={() => setFilter(f.id)}
                     colors={colors}
@@ -490,270 +789,112 @@ export default function GlobalSearch({
             </View>
           )}
 
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            {/* Empty state — Spotlight pattern: surface recent searches so the
-                user can re-run prior queries instead of staring at hint text. */}
-            {q.trim().length < 2 && (
-              <View>
-                {recent.length > 0 ? (
-                  <View style={{ marginTop: 8 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                        <IconClock size={14} color={colors?.textSecondary} />
-                        <Text style={{ fontSize: 11, fontWeight: '700', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          {t?.('search.recent') || 'Recentes'}
-                        </Text>
-                      </View>
-                      <TouchableOpacity onPress={clearRecent} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textTertiary }}>
-                          {t?.('search.clearHistory') || 'Limpar'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                    {recent.map((r, i) => (
-                      <TouchableOpacity
-                        key={`${r}-${i}`}
-                        onPress={() => { setQ(r); inputRef.current?.focus?.(); }}
-                        activeOpacity={0.6}
-                        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}
-                      >
-                        <View style={{
-                          width: 32, height: 32, borderRadius: 16,
-                          alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                        }}>
+          {nativeOn ? (
+            <NativeResultList
+              rows={nativeRows}
+              highlight={active ? term : ''}
+              colors={colors}
+              isDark={isDark}
+              scrollToTopSeq={scrollTopSeq}
+              bottomInset={12}
+              onPress={onNativePress}
+              onAction={onNativeAction}
+              onFailure={onNativeFailure}
+            />
+          ) : (
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              {!active && (
+                <View>
+                  {recent.length > 0 ? (
+                    <View style={{ marginTop: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
                           <IconClock size={14} color={colors?.textSecondary} />
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            {tt('search.recent', 'Recentes')}
+                          </Text>
                         </View>
-                        <Text style={{ flex: 1, fontSize: 14.5, color: colors?.text }} numberOfLines={1}>
-                          {r}
-                        </Text>
-                        <IconChevronRight size={16} color={colors?.textTertiary} />
-                      </TouchableOpacity>
-                    ))}
-                    <View style={{ height: 16 }} />
-                  </View>
-                ) : (
-                  <View style={{ padding: 40, alignItems: 'center' }}>
-                    <Text style={{ color: colors?.textSecondary, fontSize: 13, textAlign: 'center' }}>
-                      {t?.('search.hint') || 'Digite pra buscar em conversas, e-mails, pessoas, reels e arquivos.'}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {q.trim().length >= 2 && !loading && !hasAny && (
-              <EmptyStateCard
-                Icon={IconSearch}
-                tone="neutral"
-                title={(t?.('search.emptyTitle') || `Nenhum resultado para "${q.trim()}"`).replace('{query}', q.trim())}
-                subtitle={t?.('search.emptySubtitle') || 'Tente outras palavras-chave ou verifique a ortografia'}
-              />
-            )}
-
-            {/* Conversas — surface chats first (Spotlight ordem: most-actionable). */}
-            {viewResults.chats.length > 0 && (
-              <Section
-                t={t}
-                title={t?.('search.chats') || 'Conversas'}
-                icon={IconMessageSquare}
-                colors={colors}
-                totalCount={viewResults.chats.length}
-                onSeeAll={() => go(`/chat?q=${encodeURIComponent(q.trim())}`)}
-              >
-                {viewResults.chats.slice(0, SECTION_PREVIEW).map(c => (
-                  <Row
-                    key={c.id}
-                    leading={<AvatarCircle name={c.name || String(c.id)} size={40} />}
-                    title={c.name || (t?.('chat.untitled') || 'Conversa')}
-                    subtitle={c.last_message || (c.type === 'group' ? (t?.('chat.group') || 'Grupo') : (t?.('chat.direct') || 'Conversa direta'))}
-                    time={formatTime(c.last_message_at || c.updated_at, t, _lang?.language)}
-                    onPress={() => go(`/chat-conversation?id=${c.id}${c.type ? `&type=${encodeURIComponent(c.type)}` : ''}`)}
-                    colors={colors}
-                    query={q.trim()}
-                  />
-                ))}
-              </Section>
-            )}
-
-            {/* Email */}
-            {viewResults.emails.length > 0 && (
-              <Section
-                t={t}
-                title={t?.('search.emails') || 'Email'}
-                icon={IconMail}
-                colors={colors}
-                totalCount={viewResults.emails.length}
-                onSeeAll={() => go(`/inbox?q=${encodeURIComponent(q.trim())}`)}
-              >
-                {viewResults.emails.slice(0, SECTION_PREVIEW).map((e, i) => (
-                  <Row
-                    key={`${e.folder}:${e.uid}:${i}`}
-                    leading={
-                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border }}>
-                        <IconMail size={18} color={BRAND} />
+                        <TouchableOpacity onPress={clearRecent} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button">
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textTertiary }}>
+                            {tt('search.clearHistory', 'Limpar')}
+                          </Text>
+                        </TouchableOpacity>
                       </View>
-                    }
-                    title={e.subject || '(sem assunto)'}
-                    subtitle={e.from}
-                    time={formatTime(e.date || e.received_at, t, _lang?.language)}
-                    onPress={() => go(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`)}
-                    colors={colors}
-                    query={q.trim()}
-                  />
-                ))}
-              </Section>
-            )}
-
-            {/* Pessoas */}
-            {viewResults.users.length > 0 && (
-              <Section
-                t={t}
-                title={t?.('search.users') || 'Pessoas'}
-                icon={IconUser}
-                colors={colors}
-                totalCount={viewResults.users.length}
-                onSeeAll={() => go(`/contacts?q=${encodeURIComponent(q.trim())}`)}
-              >
-                {viewResults.users.slice(0, SECTION_PREVIEW).map(u => (
-                  <Row
-                    key={u.email}
-                    leading={<AvatarCircle email={u.email} name={u.name} size={40} />}
-                    title={u.name || u.email}
-                    subtitle={u.email}
-                    onPress={() => go(`/u/${encodeURIComponent(u.email)}`)}
-                    colors={colors}
-                    query={q.trim()}
-                  />
-                ))}
-              </Section>
-            )}
-
-            {/* Reels — only video posts. Files/Status get their own buckets below. */}
-            {(() => {
-              const reels = viewResults.posts.filter(p => {
-                const ty = String(p?.type || '').toLowerCase();
-                return ty === 'video' || ty === 'reel';
-              });
-              if (reels.length === 0) return null;
-              return (
-                <Section
-                  t={t}
-                  title={t?.('search.reels') || 'Reels'}
-                  icon={IconFilm}
-                  colors={colors}
-                  totalCount={reels.length}
-                  onSeeAll={() => go(`/feed?q=${encodeURIComponent(q.trim())}&type=reels`)}
-                >
-                  {reels.slice(0, SECTION_PREVIEW).map(p => {
-                    const thumbUrl = resolveMedia(p.thumbnail);
-                    return (
-                      <Row
-                        key={p.id}
-                        leading={
-                          thumbUrl ? (
-                            WEB
-                              ? <img src={thumbUrl} style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }} alt="" />
-                              : <CachedImage source={{ uri: thumbUrl }} style={{ width: 40, height: 40, borderRadius: 8 }} resizeMode="cover" />
-                          ) : (
-                            <View style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center' }}>
-                              <IconFilm size={16} color={colors?.textSecondary} />
+                      {recent.map((r, i) => (
+                        <View key={`${r}-${i}`} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <TouchableOpacity
+                            onPress={() => { setQ(r); inputRef.current?.focus?.(); }}
+                            activeOpacity={0.6}
+                            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingLeft: 16, paddingVertical: 10 }}
+                            accessibilityRole="button"
+                          >
+                            <View style={{
+                              width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+                              backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                            }}>
+                              <IconClock size={14} color={colors?.textSecondary} />
                             </View>
-                          )
-                        }
-                        title={p.caption || (t?.('feed.untitled') || 'Reel')}
-                        subtitle={p.author_email}
-                        time={formatTime(p.created_at, t, _lang?.language)}
-                        onPress={() => go(`/feed/${p.id}`)}
-                        colors={colors}
-                        query={q.trim()}
-                      />
-                    );
-                  })}
-                </Section>
-              );
-            })()}
-
-            {/* Files / Documentos */}
-            {(() => {
-              const files = viewResults.posts.filter(p => {
-                const ty = String(p?.type || '').toLowerCase();
-                return ty === 'file' || ty === 'document' || ty === 'doc' || ty === 'pdf';
-              });
-              if (files.length === 0) return null;
-              return (
-                <Section
-                  t={t}
-                  title={t?.('search.files') || 'Arquivos'}
-                  icon={IconFile || IconImage}
-                  colors={colors}
-                  totalCount={files.length}
-                  onSeeAll={() => go(`/files?q=${encodeURIComponent(q.trim())}`)}
-                >
-                  {files.slice(0, SECTION_PREVIEW).map(p => (
-                    <Row
-                      key={p.id}
-                      leading={
-                        <View style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border }}>
-                          <IconFile size={18} color={BRAND} />
+                            <Text style={{ flex: 1, fontSize: 14.5, color: colors?.text }} numberOfLines={1}>{r}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => removeRecent(r)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={{ paddingHorizontal: 16, paddingVertical: 10 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={tt('common.delete', 'Apagar')}
+                          >
+                            <IconX size={14} color={colors?.textTertiary} />
+                          </TouchableOpacity>
                         </View>
-                      }
-                      title={p.caption || p.filename || (t?.('feed.untitled') || 'Arquivo')}
-                      subtitle={p.author_email}
-                      time={formatTime(p.created_at, t, _lang?.language)}
-                      onPress={() => go(`/files/${p.id}`)}
+                      ))}
+                      <View style={{ height: 16 }} />
+                    </View>
+                  ) : (
+                    <View style={{ padding: 40, alignItems: 'center' }}>
+                      <Text style={{ color: colors?.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                        {tt('search.hint', 'Digite pra buscar em conversas, e-mails, pessoas, reels e arquivos.')}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {active && !loading && !hasAny && (
+                <EmptyStateCard
+                  Icon={IconSearch}
+                  tone="neutral"
+                  title={tt('search.emptyTitle', 'Nenhum resultado para "{query}"').replace('{query}', term)}
+                  subtitle={tt('search.emptySubtitle', 'Tente outras palavras-chave ou verifique a ortografia')}
+                />
+              )}
+
+              {sections.map((s) => (
+                <Section
+                  key={s.key}
+                  title={s.title}
+                  icon={s.icon}
+                  colors={colors}
+                  action={s.items.length > s.cap ? seeAll : ''}
+                  onAction={() => FILTER_FOR_SECTION[s.key] && setFilter(FILTER_FOR_SECTION[s.key])}
+                >
+                  {s.items.slice(0, s.cap).map((it) => (
+                    <Row
+                      key={it.key}
+                      leading={<Leading item={it} colors={colors} />}
+                      title={it.title}
+                      subtitle={it.sub}
+                      subLines={it.subLines || 1}
+                      time={it.time}
+                      onPress={it.open}
                       colors={colors}
-                      query={q.trim()}
+                      query={term}
                     />
                   ))}
                 </Section>
-              );
-            })()}
-
-            {/* Status / Reels-other / image posts — bucket the rest as "Publicações". */}
-            {(() => {
-              const others = viewResults.posts.filter(p => {
-                const ty = String(p?.type || '').toLowerCase();
-                return !['video','reel','file','document','doc','pdf'].includes(ty);
-              });
-              if (others.length === 0) return null;
-              return (
-                <Section
-                  t={t}
-                  title={t?.('search.posts') || 'Publicações'}
-                  icon={IconImage}
-                  colors={colors}
-                  totalCount={others.length}
-                  onSeeAll={() => go(`/feed?q=${encodeURIComponent(q.trim())}`)}
-                >
-                  {others.slice(0, SECTION_PREVIEW).map(p => {
-                    const thumbUrl = resolveMedia(p.thumbnail);
-                    return (
-                      <Row
-                        key={p.id}
-                        leading={
-                          thumbUrl ? (
-                            WEB
-                              ? <img src={thumbUrl} style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }} alt="" />
-                              : <CachedImage source={{ uri: thumbUrl }} style={{ width: 40, height: 40, borderRadius: 8 }} resizeMode="cover" />
-                          ) : (
-                            <View style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: colors?.surface }} />
-                          )
-                        }
-                        title={p.caption || (t?.('feed.untitled') || 'Post')}
-                        subtitle={p.author_email}
-                        time={formatTime(p.created_at, t, _lang?.language)}
-                        onPress={() => go(`/feed/${p.id}`)}
-                        colors={colors}
-                        query={q.trim()}
-                      />
-                    );
-                  })}
-                </Section>
-              );
-            })()}
-            <View style={{ height: 16 }} />
-          </ScrollView>
+              ))}
+              <View style={{ height: 16 }} />
+            </ScrollView>
+          )}
         </Pressable>
       </Pressable>
     </Modal>

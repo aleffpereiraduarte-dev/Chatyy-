@@ -28,6 +28,7 @@ import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import expo.modules.chatyychatstore.ChatyyStoreDB
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -35,6 +36,9 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+
+/** [native-store] linhas mais novas gravadas por conversa no store nativo. */
+private const val STORE_WINDOW = 60
 
 // [2026-10-14 native-list] ChatyyMessageList (Android) — RecyclerView com
 // LinearLayoutManager(reverseLayout = true): posição 0 = mensagem mais nova,
@@ -61,6 +65,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   val onMenuAction by EventDispatcher()
   val onReact by EventDispatcher()
   val onMenuDismiss by EventDispatcher()
+  // [native-store] foto da conversa lida do store nativo (apiVersion 4)
+  val onStore by EventDispatcher()
 
   private val main = Handler(Looper.getMainLooper())
   private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "chatyy-msglist-layout").apply { priority = Thread.NORM_PRIORITY + 1 } }
@@ -88,6 +94,22 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var audioState: MLAudioState? = null
   private var pendingFlash: String? = null
   private var destroyed = false
+
+  // [2026-10-15 native-store] Foto da conversa no store nativo (modules/
+  // expo-chat-store) — espelho do CMLListView.swift. Prop `store` {a,c,r,n}: na
+  // montagem lê a última janela desta conversa e PINTA sem esperar o JS; o 1º
+  // applyRows do JS substitui (linha idêntica mantém o layout); depois de cada
+  // applyRows a janela mais nova é regravada direto no store (debounce).
+  private class StoreCfg(val a: String, val c: String, val r: String, val n: String)
+  private var storeCfg: StoreCfg? = null
+  private var storeLoadStarted = false
+  private var jsApplied = false
+  private val storeDicts = HashMap<String, Map<String, Any?>>()
+  private val rawDicts = HashMap<String, Map<String, Any?>>()
+  private var jsVersion = 0
+  private var persistedVersion = 0
+  private val persistRunnable = Runnable { persistNow() }
+  private val storeInteractive: Boolean get() = jsApplied || storeDicts.isEmpty()
 
   // [fase 2]
   private var liftedKey = ""
@@ -470,10 +492,30 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   // ─── dados (JS → nativo) ─────────────────────────────────────────────────
   fun applyRows(payload: Map<String, Any?>) {
+    val firstJS = !jsApplied
+    jsApplied = true
+    applyRowsCore(payload, false)
+    if (firstJS) { storeDicts.clear(); unwatchStore() }
+    jsVersion += 1
+    schedulePersist()
+  }
+
+  private fun applyRowsCore(payload: Map<String, Any?>, fromStore: Boolean) {
     try {
       (payload["rows"] as? List<*>)?.forEach { d ->
         @Suppress("UNCHECKED_CAST")
         val m = d as? Map<String, Any?> ?: return@forEach
+        val k0 = m["k"] as? String
+        if (k0 != null) {
+          if (fromStore) {
+            storeDicts[k0] = m
+          } else {
+            if (storeCfg != null) rawDicts[k0] = m
+            // mesma linha que a foto já pintou → mantém linha + layout
+            val sd = storeDicts[k0]
+            if (sd != null && rows.containsKey(k0) && sameRow(sd, m)) return@forEach
+          }
+        }
         val r = MLRow(m)
         if (!r.isValid) return@forEach
         rows[r.key] = r
@@ -493,6 +535,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
         if (rows.size > disp.size + 300) {
           rows.keys.retainAll(seen)
           layouts.keys.retainAll(seen)
+          rawDicts.keys.retainAll(seen)
         }
         olderArmed = true
       }
@@ -582,7 +625,118 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private fun sendReady() {
     if (readySent) return
     readySent = true
-    onReady(mapOf("count" to applied.size))
+    onReady(mapOf("count" to applied.size, "src" to if (jsApplied) "js" else "store"))
+  }
+
+  // ─── [native-store] foto da conversa ─────────────────────────────────────
+  /** Igualdade numérica tolerante (JS manda Double; JSON volta Int/Long). */
+  private fun sameRow(a: Any?, b: Any?): Boolean {
+    if (a is Number && b is Number) return a.toDouble() == b.toDouble()
+    if (a is Map<*, *> && b is Map<*, *>) {
+      if (a.size != b.size) return false
+      for ((k, v) in a) { if (!b.containsKey(k) || !sameRow(v, b[k])) return false }
+      return true
+    }
+    if (a is List<*> && b is List<*>) {
+      if (a.size != b.size) return false
+      for (i in a.indices) if (!sameRow(a[i], b[i])) return false
+      return true
+    }
+    return a == b
+  }
+
+  fun setStore(v: Map<String, Any?>?) {
+    if (v == null) { storeCfg = null; return }
+    val a = MLRow.str(v["a"]); val c = MLRow.str(v["c"]); val r = MLRow.str(v["r"]); val n = MLRow.str(v["n"])
+    if (a.isEmpty() || c.isEmpty() || r.isEmpty()) { storeCfg = null; return }
+    val p = storeCfg
+    if (p != null && (p.a != a || p.c != c)) {
+      main.removeCallbacks(persistRunnable)
+      rawDicts.clear()
+      persistedVersion = jsVersion
+    }
+    storeCfg = StoreCfg(a, c, r, n)
+    if (jsApplied || storeLoadStarted) return
+    storeLoadStarted = true
+    val db = try { ChatyyStoreDB.get(context) } catch (_: Throwable) { null } ?: return
+    // [fase 1.5] pré-carga do pressIn da home: pinta SÍNCRONO no set da prop.
+    val mem = try { db.cachedThread(a, c, r) } catch (_: Throwable) { null }
+    if (mem != null && (n.isEmpty() || mem.newest == n)) {
+      applyRowsCore(mapOf("rows" to mem.rows, "keys" to mem.keys, "anim" to 0), true)
+      onStore(mapOf("hit" to 1, "why" to "mem", "ms" to 0, "readMs" to mem.readMs.toLong(), "rows" to mem.keys.size))
+      watchStore(db, a, c)
+      return
+    }
+    loadStoreSnapshot(db, a, c, r, "hit")
+    watchStore(db, a, c)
+  }
+
+  private var storeObsToken: Int? = null
+
+  private fun loadStoreSnapshot(db: ChatyyStoreDB, a: String, c: String, r: String, reason: String) {
+    val t0 = SystemClock.uptimeMillis()
+    db.loadThread(a, c, r) { snap, why ->
+      if (destroyed) return@loadThread
+      val ms = SystemClock.uptimeMillis() - t0
+      if (snap == null) { onStore(mapOf("hit" to 0, "why" to why, "ms" to ms)); return@loadThread }
+      if (jsApplied) { onStore(mapOf("hit" to 0, "why" to "late", "ms" to ms, "rows" to snap.keys.size)); return@loadThread }
+      val cur = storeCfg
+      if (cur == null || cur.a != a || cur.c != c) { onStore(mapOf("hit" to 0, "why" to "moved", "ms" to ms)); return@loadThread }
+      // o JS tem mensagem mais nova que a foto → não pinta algo velho (a fase 2
+      // anexa as novas na foto pelo sync — services/nativeStoreRows)
+      if (cur.n.isNotEmpty() && snap.newest != cur.n) { onStore(mapOf("hit" to 0, "why" to "stale", "ms" to ms, "rows" to snap.keys.size)); return@loadThread }
+      applyRowsCore(mapOf("rows" to snap.rows, "keys" to snap.keys, "anim" to if (reason == "hit") 0 else 1), true)
+      onStore(mapOf("hit" to 1, "why" to reason, "ms" to ms, "readMs" to snap.readMs.toLong(), "rows" to snap.keys.size))
+    }
+  }
+
+  /** [fase 2] só a foto na tela (casca leve): lote do sync nesta conversa → relê. */
+  private fun watchStore(db: ChatyyStoreDB, a: String, c: String) {
+    unwatchStore()
+    storeObsToken = db.addObserver(a, c) {
+      val cfg = storeCfg
+      if (!destroyed && !jsApplied && cfg != null && cfg.a == a && cfg.c == c) {
+        storeCfg = StoreCfg(cfg.a, cfg.c, cfg.r, "")
+        loadStoreSnapshot(db, a, c, cfg.r, "live")
+      }
+    }
+  }
+
+  private fun unwatchStore() {
+    val t = storeObsToken ?: return
+    storeObsToken = null
+    try { ChatyyStoreDB.get(context).removeObserver(t) } catch (_: Throwable) {}
+  }
+
+  private fun schedulePersist() {
+    if (storeCfg == null || !jsApplied) return
+    main.removeCallbacks(persistRunnable)
+    main.postDelayed(persistRunnable, 1200)
+  }
+
+  /** Regrava a janela mais nova (até STORE_WINDOW) como o JS mandou, sem estado transitório. */
+  private fun persistNow() {
+    main.removeCallbacks(persistRunnable)
+    val cfg = storeCfg ?: return
+    if (!jsApplied || persistedVersion == jsVersion) return
+    persistedVersion = jsVersion
+    val keys = ArrayList<String>()
+    val out = ArrayList<Map<String, Any?>>()
+    for (k in target) { // mais nova primeiro
+      if (keys.size >= STORE_WINDOW) break
+      val d0 = rawDicts[k] ?: continue
+      if (d0["kind"] == "unread") continue
+      val id = d0["id"] as? String
+      if (id != null && id.startsWith("tmp")) continue
+      val d = HashMap(d0)
+      d.remove("sel")
+      (d["media"] as? Map<*, *>)?.let { m0 ->
+        if (m0.containsKey("up")) { val m = HashMap<Any?, Any?>(m0); m.remove("up"); d["media"] = m }
+      }
+      keys.add(k); out.add(d)
+    }
+    keys.reverse(); out.reverse()
+    try { ChatyyStoreDB.get(context).saveThread(cfg.a, cfg.c, cfg.r, keys, out) } catch (_: Throwable) {}
   }
 
   // ─── comandos ────────────────────────────────────────────────────────────
@@ -623,7 +777,10 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   }
 
   fun destroy() {
+    persistNow() // [native-store] (idempotente: só grava se mudou desde a última)
+    main.removeCallbacks(persistRunnable)
     destroyed = true
+    unwatchStore()
     ctxOverlay?.dismiss("destroy", false)
     try { vnPlayer.stop() } catch (_: Throwable) {}
     main.removeCallbacks(stickyHide)
@@ -632,6 +789,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
+    persistNow() // [native-store] saiu da conversa → grava já
     ctxOverlay?.dismiss("detach", false)
     try { vnPlayer.stop() } catch (_: Throwable) {}
   }
@@ -741,6 +899,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     })
 
     override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
+      if (!storeInteractive) return false // [native-store] só a foto na tela: JS ainda não conhece os itens
       if (!swiping) detector.onTouchEvent(e)
       when (e.actionMasked) {
         MotionEvent.ACTION_DOWN -> {
@@ -782,7 +941,11 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
           x = min(x, dp(110f))
           c.swipeX = x * dir
           val armedNow = raw >= threshold
-          if (armedNow && !armed) c.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+          if (armedNow && !armed) {
+            // [reply-v2] haptic de limiar (API 34: GESTURE_THRESHOLD_ACTIVATE=23) + estalo do ícone
+            try { c.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 34) 23 else HapticFeedbackConstants.KEYBOARD_TAP) } catch (_: Throwable) {}
+            c.popReplyIcon()
+          }
           armed = armedNow
         }
         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -790,8 +953,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
           val fire = e.actionMasked == MotionEvent.ACTION_UP && armed
           val from = c.swipeX
           val a = ValueAnimator.ofFloat(from, 0f)
-          a.duration = 260
-          a.interpolator = DecelerateInterpolator(1.6f)
+          a.duration = 340
+          a.interpolator = android.view.animation.OvershootInterpolator(0.8f) // [reply-v2] volta com mola
           a.addUpdateListener { c.swipeX = it.animatedValue as Float }
           a.start()
           if (fire) onSwipeReply(mapOf("key" to c.key, "dir" to if (dir > 0) "reply" else "info"))
@@ -805,6 +968,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
 
     private fun tapAt(x: Float, y: Float) {
+      if (!storeInteractive) return
       val c = rv.findChildViewUnder(x, y) as? MLCellView ?: return
       val r = c.row ?: return
       val part = c.partAt(x - c.left, y - c.top)
@@ -846,7 +1010,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     }
 
     private fun longAt(x: Float, y: Float) {
-      if (swiping) return
+      if (swiping || !storeInteractive) return
       val c = rv.findChildViewUnder(x, y) as? MLCellView ?: return
       val r = c.row ?: return
       if (r.kind != MLKind.MSG && r.kind != MLKind.SYSTEM) return

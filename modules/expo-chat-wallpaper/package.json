@@ -1,0 +1,7 @@
+{
+  "name": "expo-chat-wallpaper",
+  "version": "1.0.0",
+  "description": "Chatyy native chat wallpaper: animated 4-color gradient (Telegram-style), vector doodle pattern (overlay or mask), blurred photo, gyro parallax.",
+  "main": "index.js",
+  "private": true
+}

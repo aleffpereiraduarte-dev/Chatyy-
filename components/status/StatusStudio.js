@@ -275,7 +275,7 @@ function VideoStage({ uri, width, height }) {
 const blankEdit = () => ({ base: null, src: null, rotate: 0, aspect: null, filterId: 'original', intensity: 1, adjust: { ...DEFAULT_ADJUST }, thumbUri: null, stats: null, suggestion: null, loading: true });
 const blankOverlays = () => ({ items: [], paths: [] });
 
-export default function StatusStudio({ visible, seed, onClose, onOpenCamera, user, t, router }) {
+function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router }) {
   const { colors, isDark } = useTheme();
   // [2026-10-12] Dentro de Modal o iOS devolve insets 0 → botões do topo em cima do
   // relógio/ilha. Usa a margem real da janela como piso.
@@ -1465,3 +1465,51 @@ const st = StyleSheet.create({
   fontFlash: { position: 'absolute', top: 8, left: 0, right: 0, alignItems: 'center' },
   fontFlashTxt: { color: '#fff', fontSize: 13, fontWeight: '800', backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, overflow: 'hidden' },
 });
+
+// ─── [2026-10-15 native-status-studio] Estúdio NATIVO ───────────────────────
+// Binário com modules/expo-status-studio (e kill switch
+// globalThis.__chatyy_native_status_studio !== false) → o estúdio inteiro é
+// UIKit/Android nativo (components/status/nativeStatusStudio.js) e publica pela
+// MESMA fila durável. Sem o módulo, ou se o nativo não apresentar/der erro →
+// estúdio JS acima, idêntico ao de antes.
+function NativeStudioHost({ visible, seed, onClose, onOpenCamera, user, t, router, onFallback }) {
+  const busyRef = useRef(false);
+  const propsRef = useRef(null);
+  propsRef.current = { onClose, onOpenCamera, user, t, router, onFallback };
+  useEffect(() => {
+    if (!visible || !seed || busyRef.current) return;
+    busyRef.current = true;
+    (async () => {
+      let res = 'unavailable';
+      try {
+        // eslint-disable-next-line global-require
+        const { runNativeStudio } = require('./nativeStatusStudio');
+        const p = propsRef.current;
+        res = await runNativeStudio(seed, {
+          t: p.t, user: p.user, router: p.router,
+          onOpenCamera: p.onOpenCamera,
+          onClose: (r) => { try { propsRef.current.onClose?.(r); } catch {} },
+        });
+      } catch (e) {
+        console.warn('[StatusStudio] native failed', e?.message || e);
+        res = 'unavailable';
+      }
+      busyRef.current = false;
+      if (res !== 'presented') propsRef.current.onFallback?.();
+    })();
+  }, [visible, seed]);
+  return null;
+}
+
+export default function StatusStudio(props) {
+  const nativeOk = useMemo(() => {
+    if (Platform.OS === 'web') return false;
+    try { return require('./nativeStatusStudio').nativeStudioUsable(); } catch { return false; }
+  }, []);
+  const [fallbackSeed, setFallbackSeed] = useState(null);
+  // Fallback vale só para o seed que falhou; o próximo abre no nativo de novo.
+  const useJs = !nativeOk || (fallbackSeed && fallbackSeed === props.seed);
+  if (useJs) return <StatusStudioJS {...props} />;
+  return <NativeStudioHost {...props} onFallback={() => setFallbackSeed(props.seed)} />;
+}
+

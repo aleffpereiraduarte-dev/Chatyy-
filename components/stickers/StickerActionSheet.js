@@ -16,6 +16,7 @@ import { View, Text, TouchableOpacity, Modal, ActivityIndicator, Platform, Style
 import { Image as ExpoImage } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-15 native-sheets-v2]
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
@@ -59,6 +60,20 @@ function Row({ icon: Icon, label, sub, onPress, disabled, busy, colors, right })
 
 function SheetFrame({ visible, onClose, children, colors, t }) {
   const insets = useSafeAreaInsets();
+  // [2026-10-15 native-sheets-v2] Sheet do SISTEMA (grabber/arrastar/fundo nativos);
+  // web (arrastar/colar .webp) e kill-switch → Modal JS abaixo.
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={colors.background}>
+        <View style={{ paddingHorizontal: 20, paddingTop: 26, paddingBottom: nativeSheetBottomPad(insets, 16) }}>
+          <TouchableOpacity onPress={onClose} hitSlop={10} style={[st.close, { top: 14 }]} accessibilityRole="button" accessibilityLabel={t('common.close')}>
+            <IconX size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+          {children}
+        </View>
+      </NativeSheet>
+    );
+  }
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableOpacity activeOpacity={1} onPress={onClose} style={st.backdrop} accessibilityLabel={t('common.close')}>

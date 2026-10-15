@@ -86,12 +86,16 @@ class ChatActionReceiver : BroadcastReceiver() {
                 runAsync {
                     var ok = false
                     for (attempt in 0 until 2) {
-                        val r = apiPost(context, bearer, "chat_send", mapOf(
-                            "conversation_id" to convId,
-                            "type" to "text",
-                            "content" to text,
-                            "client_message_id" to cmid,
-                        ))
+                        // [reply-v2] em GRUPO a resposta pela notificação cita a última
+                        // mensagem notificada (WhatsApp/Telegram); em privado não.
+                        val body = HashMap<String, Any>()
+                        body["conversation_id"] = convId
+                        body["type"] = "text"
+                        body["content"] = text
+                        body["client_message_id"] = cmid
+                        val replyMid = lastMid.toLongOrNull() ?: 0L
+                        if (meta?.optBoolean("group", false) == true && replyMid > 0L) body["reply_to_id"] = replyMid
+                        val r = apiPost(context, bearer, "chat_send", body)
                         if (r.ok) { ok = true; break }
                         if (r.code in 400..499) break // auth/validation — retry won't help
                     }

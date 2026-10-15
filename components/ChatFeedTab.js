@@ -15,6 +15,8 @@ import { useLocalSearchParams } from 'expo-router';
 import AvatarCircle, { bumpAvatarCache } from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
+// [2026-10-15 native-feed] lista nativa de posts (fallback = FlashList abaixo).
+import NativePostFeed, { nativePostFeedEnabled as _nativeFeedEnabled } from './feed/NativePostFeed';
 // [2026-10-11 boot-split] CreatePostModal + ReelsViewer are code-split (they
 // were shared with post-create/spotlight/reels-sound and so sat in the web boot
 // `__common` chunk). Loaded on first open of the composer / Reels mode.
@@ -1595,6 +1597,25 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     return out;
   }, [posts, suggestionsLoaded, suggestions.length]);
 
+  // [2026-10-15 native-feed] Posts em lista NATIVA (UICollectionView /
+  // RecyclerView, vídeo no pool dos Reels). Kill switch OTA:
+  // globalThis.__chatyy_native_feed = false. Erro nativo/render → volta à
+  // FlashList na hora. Feed vazio continua no JS (estado vazio/erro).
+  const [_nativeFeedFailed, _setNativeFeedFailed] = useState(() => !!globalThis.__chatyy_native_feed_failed);
+  const _useNativeFeed = !_nativeFeedFailed && posts.length > 0 && _nativeFeedEnabled();
+  const _onNativeFeedFailure = useCallback((msg) => {
+    try { globalThis.__chatyy_native_feed_failed = true; console.warn('[native-feed] fallback JS:', msg); try { require('../services/crashReporter').reportNativeFallback('native_feed', msg); } catch {} } catch {}
+    _setNativeFeedFailed(true);
+  }, []);
+  const [_feedTopSeq, _setFeedTopSeq] = useState(0);
+  const _handlePatchPost = useCallback((id, patch) => {
+    setPosts(prev => prev.map(p => (String(p.id) === String(id) ? { ...p, ...patch } : p)));
+  }, []);
+  const _onNativeScrollState = useCallback((top, hidden) => {
+    setShowScrollTop(prev => (prev !== top ? top : prev));
+    setFabsHidden(hidden);
+  }, [setFabsHidden]);
+
   // ── Search mode ──
   if (isSearchActive && searchQuery.length > 0) {
     return (
@@ -1671,6 +1692,31 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
 
   return (
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : FEED_CANVAS }]}>
+      {_useNativeFeed ? (
+      <NativePostFeed
+        posts={posts}
+        user={user}
+        t={t}
+        isDark={isDark}
+        colors={colors}
+        router={router}
+        header={<>{renderSearchBar()}{renderTabBar()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />{renderLiveHeader()}{renderSuggestionsRail({ inlineKey: 'rec-rail-native' })}</>}
+        footer={renderFooter()}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        onEndReached={handleLoadMore}
+        onScrollState={_onNativeScrollState}
+        scrollToTopSeq={_feedTopSeq}
+        paused={!parentActive || !!commentsPost || createVisible}
+        bottomInset={FEED_FAB_INSET}
+        onOpenComments={handleOpenComments}
+        onPressUser={handlePressUser}
+        onDeletePost={handleDeletePost}
+        onPostUpdated={handleRepostIntent}
+        onPatchPost={_handlePatchPost}
+        onFailure={_onNativeFeedFailure}
+      />
+      ) : (
       <ListComponent
         ref={feedListRef}
         data={interleavedPosts}
@@ -1722,6 +1768,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         contentContainerStyle={posts.length === 0 && activeLives.length === 0 ? { flex: 1 } : { paddingBottom: FEED_FAB_INSET }}
         keyboardShouldPersistTaps="handled"
       />
+      )}
 
       {/* Scroll-to-top FAB */}
       {showScrollTop && (
@@ -1732,7 +1779,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
             backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)',
             ...(isWeb ? { boxShadow: '0 4px 14px rgba(0,0,0,0.15)' } : {}),
           }]}
-          onPress={scrollFeedToTop}
+          onPress={_useNativeFeed ? () => _setFeedTopSeq(v => v + 1) : scrollFeedToTop}
           activeOpacity={0.8}
           accessibilityLabel={t('feed.scrollTop') || 'Voltar ao topo'}
           accessibilityRole="button"

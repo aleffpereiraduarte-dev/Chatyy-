@@ -1,0 +1,25 @@
+diff --git a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+index 44cd804..088eb97 100644
+--- a/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
++++ b/node_modules/expo-task-manager/android/src/main/java/expo/modules/taskManager/TaskService.java
+@@ -423,7 +423,19 @@ public class TaskService implements SingletonModule, TaskServiceInterface {
+     }
+     mTasksAndEventsRepository.putEventForAppScopeKey(appScopeKey, body);
+ 
+-    getAppLoader().loadApp(mContextRef.get(),
++    // [chatyy 2026-10-15] Play Vitals: NPE aqui = crash nº1 Android (12 users,
++    // 183 relatos, BackgroundFetch acordando o app sem contexto/loader headless).
++    // Sem loader → descarta o evento (o próximo fetch tenta de novo) em vez de
++    // derrubar o processo.
++    HeadlessAppLoader __loader = getAppLoader();
++    if (__loader == null || mContextRef.get() == null) {
++      Log.w(TAG, "executeTask: headless app loader unavailable — dropping event for " + appScopeKey);
++      sEvents.remove(appScopeKey);
++      mTasksAndEventsRepository.removeEvents(appScopeKey);
++      if (eventId != null) sTaskCallbacks.remove(eventId);
++      return;
++    }
++    __loader.loadApp(mContextRef.get(),
+       new HeadlessAppLoader.Params(appScopeKey, task.getAppUrl()),
+       () -> {
+       },

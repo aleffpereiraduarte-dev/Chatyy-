@@ -18,6 +18,12 @@ final class CAEngine: NSObject {
   let movieOutput = AVCaptureMovieFileOutput()
 
   private(set) var position: AVCaptureDevice.Position = .back
+  /// [2026-10-15 espelho] Espelhar a SAÍDA gravada (foto/vídeo) da frontal?
+  /// Padrão false = como a Câmera do iOS/WhatsApp: a prévia é espelhada
+  /// (AVCaptureVideoPreviewLayer faz isso sozinho), mas o arquivo enviado
+  /// NÃO (texto legível). Só o vídeo-recado redondo liga (true): sai igual
+  /// ao preview, como a nota circular do WhatsApp/Telegram.
+  private var mirrorFrontOutput = false
   private(set) var videoInput: AVCaptureDeviceInput?
   private var audioInput: AVCaptureDeviceInput?
   private var configured = false
@@ -97,12 +103,20 @@ final class CAEngine: NSObject {
       if c.isVideoOrientationSupported { c.videoOrientation = .portrait }
       if c.isVideoMirroringSupported {
         c.automaticallyAdjustsVideoMirroring = false
-        c.isVideoMirrored = front
+        c.isVideoMirrored = front && mirrorFrontOutput
       }
       if out === movieOutput, c.isVideoStabilizationSupported {
         c.preferredVideoStabilizationMode = .auto
       }
     }
+  }
+
+  /// Chamar SEMPRE na `queue`, antes de capturar/gravar (a sessão é
+  /// compartilhada entre câmera do chat e vídeo-recado).
+  func setFrontOutputMirrored(_ on: Bool) {
+    guard on != mirrorFrontOutput else { return }
+    mirrorFrontOutput = on
+    applyConnections()
   }
 
   // MARK: execução

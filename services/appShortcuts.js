@@ -1,9 +1,9 @@
 // =============================================================================
 // [2026-10-08 android-otp-shortcuts] App-icon quick actions (long-press icon)
 //
-// Static items (Nova conversa / Câmera / Escrever e-mail) come from
+// Static items (Nova conversa / Câmera do status / Buscar) come from
 // plugins/with-app-shortcuts.js. This service manages:
-//   1. DYNAMIC items = top 4 recent conversations (debounced, deduped by a
+//   1. DYNAMIC items = top 4 conversations, pinned first then recent (debounced, deduped by a
 //      signature so the launcher's rate limiter is never hit on every WS tick).
 //      Android: ShortcutManagerCompat (same "chat_<id>" ids/deep links as the
 //      MessagingStyle notification shortcuts in modules/expo-callkit → update
@@ -47,6 +47,11 @@ function _ts(c) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function _pinned(c) {
+  const v = c?.pinned ?? c?.is_pinned;
+  return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
+}
+
 function _peerEmail(c, meLc) {
   const e = String(c?.other_email || c?.contact_email || '').trim();
   if (e && e.toLowerCase() !== meLc) return e;
@@ -62,7 +67,19 @@ export function pickRecentConversations(conversations, { me = '', lockedIds = nu
     .filter((c) => c && c.id != null && !c.archived && !c.locked && !c.hidden
       && !(lockedIds && typeof lockedIds.has === 'function' && lockedIds.has(c.id))
       && c.type !== 'saved' && c.type !== 'channel' && c.type !== 'broadcast')
-    .sort((a, b) => _ts(b) - _ts(a));
+    // [2026-10-15 system-integration] Pinned chats first (in the list's pin
+    // order when it carries one), then by recency — the icon menu / Direct
+    // Share row show "your" chats like WhatsApp. iOS fits only 1 dynamic item
+    // next to the 3 static actions, so the top pinned chat wins there.
+    .sort((a, b) => {
+      const pa = _pinned(a), pb = _pinned(b);
+      if (pa !== pb) return pa ? -1 : 1;
+      if (pa && pb) {
+        const oa = Number(a.pin_order ?? a.pinned_order ?? NaN), ob = Number(b.pin_order ?? b.pinned_order ?? NaN);
+        if (Number.isFinite(oa) && Number.isFinite(ob) && oa !== ob) return oa - ob;
+      }
+      return _ts(b) - _ts(a);
+    });
   for (const c of sorted) {
     if (out.length >= MAX_RECENTS) break;
     const isGroup = c.type === 'group' || !!c.is_group;
@@ -122,6 +139,22 @@ export function clearAppShortcuts() {
   const m = getModule();
   if (!m?.clear) return;
   try { Promise.resolve(m.clear()).catch(() => {}); } catch {}
+}
+
+/**
+ * [2026-10-15 system-integration] "Câmera do status" quick action on a warm
+ * app: pop back to the existing home (/chat) with ?new=1 instead of pushing a
+ * 2nd copy of it; chat.js reacts to the param (requestNewStatus). dismissTo
+ * replaces the current screen when /chat isn't in the stack.
+ */
+export const STATUS_CAMERA_HREF = '/chat?new=1';
+export function isStatusCameraHref(href) {
+  return typeof href === 'string' && /^\/?chat\?(?:[^#]*&)?new=1(?:&|$)/.test(href.replace(/^[a-z]+:\/\/+/i, '/'));
+}
+export function openStatusCamera(router) {
+  if (!router) return;
+  try { router.dismissTo(STATUS_CAMERA_HREF); return; } catch {}
+  try { router.navigate(STATUS_CAMERA_HREF); } catch {}
 }
 
 /** onemundomail://chat-new?x=1 → /chat-new?x=1 (null when not ours). */

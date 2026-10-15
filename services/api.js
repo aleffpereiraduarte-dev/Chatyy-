@@ -2289,6 +2289,11 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
   // [incidente-sessao 2026-10-14] bearer com que a chamada SAIU (p/ remover do
   // aparelho a conta guardada cujo token o servidor declarar revogado).
   const _tokSent = authToken || '';
+  // [2026-10-15 confiab] Kill switch dead_bearer_logout=false: bearer confirmado
+  // morto NÃO desloga, mas o polling para (sem rede) até o token mudar.
+  if (_deadParkedFp && _tokenFingerprint() === _deadParkedFp && !_DEAD_PARK_PASS.has(action)) {
+    return { success: false, message: 'Not authenticated', parked: true };
+  }
   let result = await _rawApiCall(action, params, method);
 
   // [network-resilience 2026-07-12] Retry-once-with-backoff for transient
@@ -2446,7 +2451,13 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     // fallback de senha. Single-flight interno; re-hidrata do storage se
     // preciso. Mesmo caminho usado agora pelas chamadas Rust e pelo WS.
     try {
-      const refreshed = await ensureFreshBearer();
+      // [2026-10-15 confiab] Tenta o refresh UMA vez por bearer: se já falhou
+      // de forma definitiva para ESTE token (sem refresh guardado / revogado),
+      // não repete a troca a cada 401 do polling.
+      const _fpNow = _tokenFingerprint();
+      const _skipRefresh = !!_fpNow && _deadRefreshFp === _fpNow && !refreshToken;
+      const refreshed = _skipRefresh ? false : await ensureFreshBearer();
+      if (!refreshed && _fpNow && !refreshToken) _deadRefreshFp = _fpNow;
       if (refreshed) {
         const retry = await _rawApiCall(action, params, method);
         if (retry.status !== 401) {
@@ -2619,6 +2630,71 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
         }
       }
 
+      // [2026-10-15 confiab] Loop de bearer revogado: o servidor responde 401
+      // "Not authenticated" SEM campo error quando o token sumiu (log
+      // TOKEN_REJECT — 1 iPhone fez 323 em 72 h em status_list/chat_messages/
+      // register_push_token…). Esses são NOISY → zeravam o streak acima, e a
+      // graça de 90 dias recusava o logout: o app ficava pollando com token
+      // morto para sempre. Aqui: se o refresh JÁ falhou de forma definitiva
+      // para este bearer (sem refresh token / revogado) e não há senha para
+      // relogin, confirma com check_auth (no máx. 1 sonda a cada 15 s); duas
+      // sondas 401 (≥15 s entre elas) ⇒ morto de verdade ⇒ ignora a graça e
+      // vai para o login (o gate de chamada ativa abaixo continua valendo).
+      let _deadConfirmed = false;
+      try {
+        const _fpD = _tokenFingerprint();
+        if (
+          !_authFailureSignaled && _fpD && !_hadErrField &&
+          action !== 'check_auth' &&
+          _deadRefreshFp === _fpD && !refreshToken && // refresh JÁ falhou de vez
+          !(savedCredentials && savedCredentials.password)
+        ) {
+          if (_deadProbe.fp !== _fpD) _deadProbe = { fp: _fpD, hits: 0, lastAt: 0, firstAt: 0 };
+          const _nowD = Date.now();
+          if (_nowD - _deadProbe.lastAt >= 15000) {
+            _deadProbe.lastAt = _nowD;
+            // Sonda SEMPRE na origem US (nunca o edge regional — edges já deram
+            // 401 falso por auth mal configurada) e sem cookie da sessão PHP.
+            const _pr = await _probeCheckAuthOrigin(authToken);
+            if (_pr.status >= 200 && _pr.status < 300) {
+              _deadProbe = { fp: '', hits: 0, lastAt: 0, firstAt: 0 };
+              _deadRefreshFp = '';
+              try { _noteAuthOk(); } catch {}
+            } else if (_pr.status === 401 && _tokenFingerprint() === _fpD) {
+              if (_pr.explicit) {
+                _deadConfirmed = true; // servidor disse logged_out/revoked
+              } else {
+                _deadProbe.hits += 1;
+                if (_deadProbe.hits === 1) _deadProbe.firstAt = _nowD;
+                // 401 genérico: 2 sondas ≥15 s + refresh falho (pré-condição).
+                if (_deadProbe.hits >= 2 && _nowD - _deadProbe.firstAt >= 15000) _deadConfirmed = true;
+              }
+            }
+            // 0/5xx/timeout = inconclusivo → nada.
+          }
+        }
+      } catch {}
+      if (_deadConfirmed) {
+        let _killOff = false;
+        try { _killOff = _deadBearerLogoutDisabled(); } catch {}
+        try {
+          require('./crashReporter').reportStep('dead_bearer_logout',
+            `act=${action} probes=${_deadProbe.hits} kill=${_killOff ? 1 : 0}`);
+        } catch {}
+        if (_killOff) {
+          // Kill switch: não desloga — só estaciona este bearer (apiCall para
+          // de ir à rede até o token mudar por login/refresh/troca de conta).
+          _deadParkedFp = _tokenFingerprint();
+          _deadConfirmed = false;
+          try { console.warn('[auth] bearer morto, dead_bearer_logout=false → polling parado sem logout'); } catch {}
+        } else {
+          shouldSignal = true;
+          try { recordLogoutAttempt('dead_bearer_no_recovery', { source: 'api_401_probe', action }); } catch {}
+          // NÃO chama purgeRevokedStoredAccount: ele apaga os dados locais da
+          // conta (_wipeLocalDataFor) — só mandamos para o login.
+        }
+      }
+
       // WhatsApp-grade refusal: even after 100 strikes, if this token has
       // been confirmed alive (any 2xx) within the last 90 days, REFUSE to
       // logout. Truly revoked tokens never come back successful, so this
@@ -2642,7 +2718,7 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
         Platform.OS === 'web' &&
         !(savedCredentials && savedCredentials.password) &&
         !refreshToken;
-      if (shouldSignal && !_webDeadNoRecovery) {
+      if (shouldSignal && !_webDeadNoRecovery && !_deadConfirmed) {
         const ageMs = _tokenLastOkAgeMs();
         if (ageMs !== Infinity && ageMs < TOKEN_GRACE_MS) {
           shouldSignal = false;
@@ -2706,6 +2782,8 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
         try {
           if (typeof globalThis !== 'undefined') {
             globalThis.__chatyy_authFailure = Date.now();
+            // [2026-10-15 confiab] AuthContext pula a graça de 90 d só p/ este motivo.
+            if (_deadConfirmed) globalThis.__chatyy_authFailureReason = 'dead_bearer';
             if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
           }
         } catch {}
@@ -2748,6 +2826,37 @@ let _consecutive401 = 0;
 let _consecutive401NoError = 0;
 let _ghost401TokenFp = '';
 const GHOST_401_THRESHOLD = 5;
+// [2026-10-15 confiab] Latch do bearer morto sem recuperação (ver apiCall).
+let _deadRefreshFp = '';
+let _deadProbe = { fp: '', hits: 0, lastAt: 0, firstAt: 0 };
+let _deadParkedFp = '';
+const _DEAD_PARK_PASS = new Set(['login', 'signup', 'check_auth', 'auth_refresh', 'logout']);
+// Kill switch remoto: bootstrap.config.dead_bearer_logout === false (persistido
+// em mmkv para valer no cold start com token já morto) ou o global.
+function _deadBearerLogoutDisabled() {
+  try { if (globalThis.__chatyy_dead_bearer_logout === false) return true; } catch {}
+  try { if (require('./mmkv').getString('chatyy_dead_bearer_logout') === '0') return true; } catch {}
+  return false;
+}
+// check_auth direto na ORIGEM US, sem cookie (mesma ideia de
+// verifyStoredAccountToken). explicit = servidor marcou logged_out/revoked.
+async function _probeCheckAuthOrigin(token, timeoutMs = 8000) {
+  if (!token) return { status: 0, explicit: false };
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const to = setTimeout(() => { try { ctl?.abort(); } catch {} }, timeoutMs);
+  try {
+    const res = await fetch(`${ORIGIN_BASE}/api/email.php?action=check_auth`, {
+      method: 'GET',
+      credentials: 'omit',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctl?.signal,
+    });
+    let j = null;
+    try { j = await res.json(); } catch {}
+    const e = (j && (j.error || (j.data && j.data.error) || j.message)) || '';
+    return { status: res.status, explicit: e === 'logged_out' || e === 'revoked' };
+  } catch { return { status: 0, explicit: false }; } finally { clearTimeout(to); }
+}
 function _tokenFingerprint() {
   const t = typeof authToken === 'string' ? authToken : '';
   if (!t) return '';
@@ -5221,6 +5330,13 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   if (opts?.replyQuoteText && replyToId) {
     payload.reply_quote_text = String(opts.replyQuoteText).slice(0, 240);
   }
+  // [responder-privado 2026-10-15] "Responder em privado": citação de OUTRA conversa. O servidor
+  // confere que sou membro de lá e monta a citação do banco (reply_quote_text vira {"xq":1,...}).
+  if (opts?.replyExt && !replyToId && Number(opts.replyExt.cid) > 0 && Number(opts.replyExt.mid) > 0) {
+    payload.reply_ext_conv_id = Number(opts.replyExt.cid);
+    payload.reply_ext_msg_id = Number(opts.replyExt.mid);
+    if (opts.replyQuoteText) payload.reply_quote_text = String(opts.replyQuoteText).slice(0, 240);
+  }
   // Sealed-sender (Signal-mode): when the user has the privacy toggle on,
   // we ask the server NOT to log/return who-sent-what to peers. Sender's
   // own clients still see their messages normally; recipients get the
@@ -5432,14 +5548,14 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
       // [2026-10-07 native-send] Texto puro → hub Go (ack no próprio socket).
       // Qualquer coisa fora disso (mídia, tópico, meta, sem conteúdo) segue
       // direto pro HTTP. null = hub sem a capability / fallback / timeout 4s.
-      if (type === 'text' && !fileUrl && !topicId && !opts?.meta
+      if (type === 'text' && !fileUrl && !topicId && !opts?.meta && !opts?.replyExt
           && typeof content === 'string' && content.trim() !== '') {
         try {
           const nat = await _tryNativeWsSend(payload);
           if (nat?.success) result = nat;
         } catch {}
       }
-      if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta) {
+      if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta && !opts?.replyExt) {
         const rust = await _rustChatPost('send', payload);
         if (rust?.success) { result = rust; }
       }
@@ -11655,6 +11771,15 @@ export async function bootstrap() {
   const r = await apiCall('bootstrap');
   // [2026-10-15 screen-protect-all] flag remota screen_protect_all (+ allowlist em hash).
   try { if (r?.success && r.data?.config) require('./screenProtect').noteServerConfig?.(r.data.config); } catch {}
+  // [2026-10-15 confiab] kill switch do logout por bearer morto (persistido).
+  try {
+    if (r?.success && r.data?.config) {
+      const _dbl = r.data.config.dead_bearer_logout;
+      const { setString } = require('./mmkv');
+      if (_dbl === false) { globalThis.__chatyy_dead_bearer_logout = false; setString('chatyy_dead_bearer_logout', '0'); }
+      else if (_dbl === true) { setString('chatyy_dead_bearer_logout', '1'); }
+    }
+  } catch {}
   if (r?.success && r.data) {
     // Cache locally for offline/instant access
     try {

@@ -485,6 +485,9 @@ function _updateAccelerator(plan) {
       byConv.get(m.conversation_id).push(m);
     }
     for (const [cid, rows] of byConv) {
+      // [2026-10-15 native-store fase 2] mensagens que chegaram em 2º plano
+      // também vão p/ o store nativo (+ foto da conversa fechada)
+      try { require('./nativeChatStore').mirrorMessages(cid, rows); } catch {}
       try {
         const cur = sc.getCachedMessagesSync?.(cid, 1);
         if (Array.isArray(cur) && cur.length) sc.cacheMessages?.(cid, rows);

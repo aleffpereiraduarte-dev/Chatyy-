@@ -8,6 +8,12 @@
  */
 import { Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// [2026-10-15 native-transport] Fio nativo (modules/expo-chat-transport). Ver
+// services/nativeTransport.js. Binário sem o módulo / web / flag
+// __chatyy_native_ws === false → WebSocket JS de sempre.
+import { isNativeTransportEnabled, createNativeSocket, markNativeTransportBroken, getNativeTransportStats } from './nativeTransport';
+// Sentinela de pingTimer no modo nativo (o keepalive roda no nativo).
+const NATIVE_PING = 'native';
 
 // MessagePack codec — lazy-required so a missing/broken module never breaks
 // startup. Gated by globalThis.__chatyy_msgpack_ws feature flag (off by
@@ -523,6 +529,97 @@ class MailWebSocket {
     try { this._emit('foreground', { ts: Date.now() }); } catch {}
   }
 
+  // Frame de auth do protocolo do hub (mesmo no WebSocket JS e no nativo).
+  // [2026-10-06 rock-solid] instance_id (por instância de JS) deixa o hub
+  // derrubar FANTASMAS desta mesma instância (socket velho cujo close nunca
+  // chegou porque o rádio morreu) assim que este autentica. device_id/
+  // client/platform são só diagnóstico (forense por aparelho no log do hub).
+  // Hub antigo ignora campos extras.
+  _authFrame() {
+    let _devId = '';
+    try { _devId = require('./crashReporter').getAnonIdSync?.() || ''; } catch {}
+    return {
+      type: 'auth',
+      token: this.token,
+      instance_id: WS_INSTANCE_ID,
+      device_id: _devId,
+      client: 'js',
+      platform: Platform.OS,
+    };
+  }
+
+  // ─── [2026-10-15 native-transport] Estado do fio nativo ───────────────────
+  // O socket lógico continua OPEN enquanto o nativo reconecta por baixo; aqui
+  // espelhamos o estado físico nas flags/eventos que o app já consome
+  // (SyncBar, lista, conversa). auth_success de cada reconexão chega como frame
+  // normal → _handleMessage → _onAuthenticated (resubscribe/resume/fila).
+  _onNativeState(ns, ev) {
+    if (!ev || this.ws !== ns) return;
+    const st = ev.state;
+    this._logGhost?.('native_' + st, { code: ev.code, attempt: ev.attempt, reason: ev.reason });
+    switch (st) {
+      case 'connecting':
+        break;
+      case 'open':
+        // Reabertura física (a 1ª vira onopen no shim).
+        this.connected = true;
+        this.lastInboundAt = Date.now();
+        this._emit('connection', { status: 'connected', protocol: 'json', transport: 'native' });
+        break;
+      case 'authed':
+        if (ev.regionalBlocked) {
+          _regionalWsBlockedUntil = Date.now() + REGIONAL_WS_BLOCK_MS;
+          try { this._logGhost?.('regional_ws_fallback', { native: true }); } catch {}
+        }
+        if (typeof ev.reconnectMs === 'number') this._lastNativeReconnectMs = ev.reconnectMs;
+        break;
+      case 'reconnecting':
+      case 'offline':
+      case 'paused':
+      case 'auth_wait': {
+        const wasAuthed = this.authenticated;
+        this.connected = false;
+        this.authenticated = false;
+        this._resumeInFlight = false;
+        if (wasAuthed) this._reconnectCount++;
+        // Beacon com o MOTIVO de cada queda/recusa do fio nativo (o mesmo canal
+        // 'ws_close' do WebSocket JS). Só quedas reais: socket que estava
+        // autenticado, recusa HTTP no handshake ou auth pendente; tentativas
+        // repetidas de uma mesma queda não re-reportam.
+        if (wasAuthed || ev.http || st === 'auth_wait') {
+          try {
+            if (require('./api').getAuthToken?.()) {
+              require('./crashReporter').reportStep?.(
+                'ws_close',
+                `native=${st} code=${ev.code || 0} http=${ev.http || 0} reason=${String(ev.reason || '').slice(0, 80)} attempt=${ev.attempt || 0} reconnects=${this._reconnectCount}`,
+              );
+            }
+          } catch {}
+        }
+        if (st === 'offline') {
+          this._emit('connection', { status: 'offline', attempt: ev.attempt || 0, transport: 'native' });
+        } else if (st === 'reconnecting') {
+          this._emit('connection', { status: 'reconnecting', attempt: ev.attempt || 1, nextRetryMs: ev.nextRetryMs || 0, transport: 'native' });
+        } else if (wasAuthed) {
+          this._emit('connection', { status: 'disconnected', code: ev.code || 0, reason: ev.reason || st, transport: 'native' });
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  /** 'native' | 'js' | null — qual fio está em uso agora. */
+  get transportKind() {
+    if (!this.ws) return null;
+    return this.ws.__native ? 'native' : 'js';
+  }
+
+  getTransportStats() {
+    try { return { kind: this.transportKind, lastNativeReconnectMs: this._lastNativeReconnectMs ?? null, ...getNativeTransportStats() }; } catch { return { kind: this.transportKind }; }
+  }
+
   // Fire stopped_typing locally + emit synthetic disconnect to any
   // peers watching us so their "… is typing" clears even when our
   // socket died mid-stream.
@@ -647,6 +744,22 @@ class MailWebSocket {
     const ws = this.ws;
     const age = this._lastConnectAt ? (Date.now() - this._lastConnectAt) : Infinity;
 
+    // [2026-10-15 native-transport] Socket lógico nativo vivo (OPEN): o nativo
+    // é dono do fio — sonda/reconexão vão pra ele (sem matar a sessão, sem
+    // perder a fila nativa). Token diferente = slide (mesma conta) → vale na
+    // próxima reconexão física; troca de CONTA chega com force → sessão nova.
+    if (ws && ws.__native && ws.readyState === OPEN && !(force && token !== this.token)) {
+      if (token !== this.token) { this.token = token; try { ws.setAuthToken(token); } catch {} }
+      if (force) { try { ws.kick(reason, true); } catch {} return 'connecting'; }
+      if (this.authenticated) {
+        if (!this.pingTimer && !this._hidden) this._startPing();
+        if (probe) { try { ws.probe(_netAdapt(probeMs, 3)); } catch {} return 'probing'; }
+        return 'healthy';
+      }
+      try { ws.kick(reason, false); } catch {}
+      return 'in_flight';
+    }
+
     if (!force && ws && ws.readyState === OPEN && this.authenticated) {
       if (token !== this.token) this.token = token; // slide: próximo reconnect usa o fresco
       if (!this.pingTimer && !this._hidden) this._startPing();
@@ -691,6 +804,8 @@ class MailWebSocket {
     ms = _netAdapt(ms, 3);
     const ws = this.ws;
     if (!ws) return;
+    // [native-transport] Sonda roda no nativo (timer fora da thread JS).
+    if (ws.__native) { try { ws.probe(ms); } catch {} return; }
     const sentAt = Date.now();
     this._pingTs = sentAt;
     try { this._send({ type: 'ping', ts: sentAt }); } catch {}
@@ -749,6 +864,23 @@ class MailWebSocket {
     // the previous (eager) token at this point since we assign liveToken below;
     // both come from api.getAuthToken(), so they match on a clean cold start.
     try {
+      // [2026-10-15 native-transport] Socket lógico nativo OPEN = o nativo já
+      // está (re)conectando/autenticado por baixo. Não derruba a sessão (perderia
+      // a fila nativa): token novo vira o auth da próxima conexão física e o
+      // nativo é cutucado a reconectar já se estiver em backoff. Troca de conta
+      // passa por ensureConnected({force}) → sessão nova.
+      if (this.ws && this.ws.__native && !this.destroyed && this.ws.readyState === 1) {
+        if (liveToken && liveToken !== this.token) {
+          this.token = liveToken;
+          try { this.ws.setAuthToken(liveToken); } catch {}
+        }
+        if (this.authenticated) {
+          if (!this.pingTimer && !this._hidden) this._startPing();
+        } else {
+          try { this.ws.kick('connect', false); } catch {}
+        }
+        return;
+      }
       if (this.ws && !this.destroyed && this.token === liveToken &&
           typeof WebSocket !== 'undefined' &&
           (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
@@ -838,7 +970,31 @@ class MailWebSocket {
       // in the same ~second. Reset to 0 in onclose/onerror so a genuine failure
       // reconnects immediately.
       this._lastConnectAt = Date.now();
-      if (_cwpEnabled()) {
+      // [2026-10-15 native-transport] Fio NATIVO quando disponível: conecta,
+      // reautentica, pinga, detecta zumbi e reconecta (troca de rede / volta
+      // do background) fora da thread JS. Só JSON texto → exige CWP e msgpack
+      // desligados (padrão). Qualquer erro → WebSocket JS (abaixo).
+      this.ws = null;
+      if (!_cwpEnabled() && !_msgpackEnabled() && isNativeTransportEnabled()) {
+        try {
+          const ns = createNativeSocket(wsUrl, {
+            fallbackUrl: wsUrl !== US_WS_URL ? US_WS_URL : null,
+            authFrame: this._authFrame(),
+            heartbeat: this._heartbeatProfile(),
+            connectTimeoutMs: CONNECT_TIMEOUT_MS,
+            authWatchdogMs: AUTH_WATCHDOG_MS,
+            fgProbeMs: FG_PROBE_MS,
+          });
+          ns.onnativestate = (ev) => { try { this._onNativeState(ns, ev); } catch {} };
+          this.ws = ns;
+        } catch (e) {
+          markNativeTransportBroken('open: ' + (e?.message || e));
+          this.ws = null;
+        }
+      }
+      if (this.ws) {
+        // nativo
+      } else if (_cwpEnabled()) {
         // RN's WebSocket constructor accepts protocols as second arg
         // (string or string[]).
         this.ws = new WebSocket(wsUrl, ['cwp.1', 'json.legacy']);
@@ -858,7 +1014,8 @@ class MailWebSocket {
     // CONNECT_TIMEOUT_MS (TCP/TLS no vácuo — típico de socket aberto durante a
     // queda de rede ou troca de antena) é descartado e reaberto com backoff, em
     // vez de prender a recuperação até o timeout do SO (~60s no iOS).
-    {
+    // (Modo nativo: o prazo de handshake é por tentativa física, no nativo.)
+    if (!this.ws.__native) {
       const _thisWs = this.ws;
       clearTimeout(this._connectTimer);
       this._connectTimer = setTimeout(() => {
@@ -896,19 +1053,22 @@ class MailWebSocket {
       // chegou porque o rádio morreu) assim que este autentica. device_id/
       // client/platform são só diagnóstico (forense por aparelho no log do hub).
       // Hub antigo ignora campos extras.
-      let _devId = '';
-      try { _devId = require('./crashReporter').getAnonIdSync?.() || ''; } catch {}
-      this._send({
-        type: 'auth',
-        token: this.token,
-        instance_id: WS_INSTANCE_ID,
-        device_id: _devId,
-        client: 'js',
-        platform: Platform.OS,
-      });
+      // [native-transport] No modo nativo o auth já saiu do nativo no open
+      // (frame recebido na criação); este envio só atualiza o frame guardado
+      // (o nativo não reenvia no mesmo socket físico).
+      this._send(this._authFrame());
 
       // Start heartbeat
       this._startPing();
+
+      // Modo nativo: o watchdog de auth roda no nativo, por conexão física.
+      if (this.ws && this.ws.__native) {
+        try {
+          const { notifyWsReconnected } = require('./voicePrefetch');
+          notifyWsReconnected?.();
+        } catch {}
+        return;
+      }
 
       // [2026-10-05 conectando-preso] Arm the auth watchdog. If auth_success
       // doesn't land within AUTH_WATCHDOG_MS, this socket is wedged
@@ -955,11 +1115,15 @@ class MailWebSocket {
       this.lastInboundAt = Date.now();
       try {
         let msg;
+        // [native-transport] Frame já parseado (lote do nativo, 1 JSON.parse por lote).
+        if (event && event.__obj !== undefined) {
+          msg = event.__obj;
+          if (!msg || typeof msg !== 'object') return;
         // Binary frame → server is speaking msgpack to this connection.
         // Decode with @msgpack/msgpack; if module unavailable we have to
         // drop the frame (should never happen with flag off, since we never
         // send upgrade_msgpack and the server defaults to JSON text frames).
-        if (event.data instanceof ArrayBuffer) {
+        } else if (event.data instanceof ArrayBuffer) {
           // Binary frame — could be CWP/1 (magic 0xC7) or msgpack. We sniff
           // the first byte: CWP frames always start with 0xC7, while
           // msgpack maps/arrays start with 0x80–0x9F / 0xDC–0xDF. The
@@ -1045,6 +1209,24 @@ class MailWebSocket {
       if (closeCode === 4002) {
         this._emit('connection', { status: 'session_replaced', message: closeReason });
         return;
+      }
+      // [2026-10-15 native-transport] Fechamentos sintéticos do fio nativo:
+      //  4401 = handshake recusado com 401/403 (token) → mesmo caminho do
+      //         auth_error (1 refresh do bearer; persistindo → para e pede
+      //         re-login). Nunca laço de reconexão.
+      //  4400 = 4xx repetido no handshake (cabeçalho/caminho recusado) e
+      //  4990 = falha interna → fio nativo desligado NESTE processo; a próxima
+      //         tentativa usa o WebSocket JS, com o backoff de sempre.
+      if (closeCode === 4401 || closeCode === 4400 || closeCode === 4990) {
+        try {
+          require('./crashReporter').reportStep?.('ws_close', `native_end code=${closeCode} reason=${closeReason.slice(0, 80)}`);
+        } catch {}
+        if (closeCode === 4401) {
+          try { this._handleMessage({ type: 'auth_error', message: 'handshake_rejected', reason: closeReason }); } catch {}
+          return;
+        }
+        try { markNativeTransportBroken('close ' + closeCode + ' ' + closeReason); } catch {}
+        this.reconnectAttempt = Math.max(this.reconnectAttempt, 3);
       }
       // [2026-10-06 rock-solid] 4009 = hub fechou este socket porque a MESMA
       // instância autenticou um mais novo. Socket órfão já tem handlers
@@ -1278,6 +1460,9 @@ class MailWebSocket {
     if (!this.ws) return true;
     if (this.ws.readyState !== WebSocket.OPEN) return true;
     if (!this.authenticated) return true;
+    // [native-transport] Liveness é medida no nativo (pong/prazo fora da thread
+    // JS) — silêncio visto daqui pode ser só a thread JS ocupada.
+    if (this.ws.__native) return false;
     // Long ping silence — the ping watchdog should have caught this, but if
     // it didn't (timer cleared by a botched AppState cycle, etc.) treat the
     // socket as zombie.
@@ -1337,7 +1522,9 @@ class MailWebSocket {
       // close on its own. We still null out the handlers so any later
       // onopen/onclose can't drive a phantom reconnect.
       try {
-        if (typeof WebSocket !== 'undefined' && this.ws.readyState === WebSocket.CONNECTING) {
+        if (this.ws.__native) {
+          this.ws.close(1000, 'cleanup'); // nativo fecha em qualquer estado
+        } else if (typeof WebSocket !== 'undefined' && this.ws.readyState === WebSocket.CONNECTING) {
           const _dying = this.ws;
           _dying.onopen = () => { try { _dying.close(); } catch {} };
         } else {
@@ -1470,6 +1657,14 @@ class MailWebSocket {
     //     veredito é inválido → re-baseline e julga no próximo ciclo
     //     (fix "falso-zumbi 60s" de 2026-10-05 preservado).
     const { interval, deadline: _baseDeadline } = this._heartbeatProfile();
+    // [native-transport] Keepalive + detecção de zumbi rodam no nativo; aqui só
+    // repassamos o perfil (idle/conversa/chamada). Sentinela mantém a semântica
+    // de "heartbeat ativo" para setChatActive/setCallActive/ensureConnected.
+    if (this.ws && this.ws.__native) {
+      try { this.ws.setHeartbeat(interval, _netAdapt(_baseDeadline, 3)); } catch {}
+      this.pingTimer = NATIVE_PING;
+      return;
+    }
     const tick = () => {
       const deadline = _netAdapt(_baseDeadline, 3);
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -1632,7 +1827,7 @@ class MailWebSocket {
   }
 
   _stopPing() {
-    clearInterval(this.pingTimer);
+    if (this.pingTimer !== NATIVE_PING) clearInterval(this.pingTimer);
     this.pingTimer = null;
     if (this._pongDeadlines && this._pongDeadlines.size) {
       for (const t of this._pongDeadlines) { try { clearTimeout(t); } catch {} }
@@ -1873,7 +2068,7 @@ class MailWebSocket {
         // as a final JSON frame and then all outbound frames become binary.
         // While the flag is off (default), this branch never fires and the
         // socket stays JSON end-to-end — zero behavior change.
-        if (_msgpackEnabled() && !this.binaryUpgraded) {
+        if (_msgpackEnabled() && !this.binaryUpgraded && !(this.ws && this.ws.__native)) {
           try { this._send({ type: 'upgrade_msgpack' }); } catch {}
         }
         this._emit('connection', { status: 'authenticated', userId: this.userId, email: msg.email });
@@ -2181,8 +2376,16 @@ class MailWebSocket {
 
       case 'pong':
         this.lastPongTime = Date.now();
+        // [native-transport] RTT medido no nativo (sem o atraso da thread JS).
+        if (msg.native && typeof msg.rtt === 'number') {
+          if (msg.rtt >= 0) {
+            this._latency = msg.rtt;
+            if (!this._hidden && msg.rtt <= 3000) {
+              try { require('./networkInfo').reportRtt(msg.rtt); } catch {}
+            }
+          }
         // Measure latency
-        if (this._pingTs) {
+        } else if (this._pingTs) {
           this._latency = Date.now() - this._pingTs;
           // [2026-10-09 tf653] Só amostra RTT "limpa": app visível e ping enviado
           // ≥3s depois do boot/volta do background. Antes, o pong de um ping

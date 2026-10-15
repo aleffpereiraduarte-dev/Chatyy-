@@ -310,7 +310,7 @@ function SettingsScreenInner() {
   const useNativeRoot = Platform.OS !== 'web' && !twoPane && !nativeFailed
     && globalThis.__chatyy_native_settings !== false && isNativeSettingsListAvailable();
   const onNativeFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_settings_failed = true; console.warn('[native-settings] fallback JS:', msg); } catch {}
+    try { globalThis.__chatyy_native_settings_failed = true; console.warn('[native-settings] fallback JS:', msg); try { require('../services/crashReporter').reportNativeFallback('native_settings', msg); } catch {} } catch {}
     setNativeFailed(true);
   }, []);
 

@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import Foundation
 import Network
+import UIKit
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -122,6 +123,22 @@ public class ExpoChatyySystemModule: Module {
         "satisfied": self.lastSatisfied,
         "dataSaver": self.lastConstrained,
       ]
+    }
+
+    // [2026-10-15 app-links] Abre o link SÓ se um app instalado reivindica o
+    // universal link (YouTube/Spotify/Apple Music…). false → JS cai no
+    // navegador interno. Nunca abre o Safari.
+    AsyncFunction("openUniversalLink") { (urlString: String, promise: Promise) in
+      guard let url = URL(string: urlString), let scheme = url.scheme?.lowercased(),
+            scheme == "https" || scheme == "http" else {
+        promise.resolve(false)
+        return
+      }
+      DispatchQueue.main.async {
+        UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { ok in
+          promise.resolve(ok)
+        }
+      }
     }
 
     Function("getFocusFilter") { () -> [String: Any]? in

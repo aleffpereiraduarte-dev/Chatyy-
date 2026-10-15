@@ -12,11 +12,17 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconCheckCircle, IconAlertTriangle } from './Icons';
 import * as api from '../services/api';
+import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad, afterRNModal } from './NativeSheet';
 
 // ordem = gravidade (o servidor prioriza a fila pelo motivo)
 export const REPORT_REASONS = ['csam', 'threat', 'self_harm', 'non_consensual', 'hate', 'doxxing', 'harassment', 'violence', 'sexual', 'scam', 'impersonation', 'spam', 'misinformation', 'ip', 'other'];
 
-export default function ReportSheet({ visible, onClose, target, title }) {
+// [2026-10-15 native-sheets-v2] `native` (padrão true): iOS/Android = sheet do SISTEMA
+// (components/NativeSheet). Passe native={false} quando o dono está DENTRO de um <Modal> RN
+// aberto (ex.: Profile peek) — o push da rota-sheet dispensaria o Modal estrangeiro.
+// `fromModal` (padrão true): os chamadores abrem a partir de um menu <Modal> RN que está
+// descendo → no iOS a apresentação espera a saída dele (afterRNModal).
+export default function ReportSheet({ visible, onClose, target, title, native = true, fromModal = true }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
@@ -41,13 +47,21 @@ export default function ReportSheet({ visible, onClose, target, title }) {
     } finally { setBusy(false); }
   }, [reason, busy, target, details, t]);
 
+  const useNative = USE_NATIVE_SHEETS && native !== false;
+  // Visibilidade efetiva do sheet nativo: abrir espera o Modal RN de origem sair (iOS).
+  const [nativeOpen, setNativeOpen] = useState(false);
+  useEffect(() => {
+    if (!useNative) return undefined;
+    if (!visible) { setNativeOpen(false); return undefined; }
+    let alive = true;
+    afterRNModal(() => { if (alive) setNativeOpen(true); }, fromModal);
+    return () => { alive = false; };
+  }, [visible, useNative, fromModal]);
+
   const goMine = useCallback(() => { onClose?.(); setTimeout(() => { try { router.push('/my-reports'); } catch {} }, 50); }, [onClose, router]);
 
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={st.backdrop} onPress={onClose}>
-        <Pressable style={[st.sheet, { backgroundColor: colors.surface || colors.background, paddingBottom: 16 + insets.bottom }]} onPress={() => {}}>
-          <View style={[st.grab, { backgroundColor: colors.border }]} />
+  const content = (
+    <>
           {done ? (
             <View style={{ alignItems: 'center', paddingVertical: 12 }}>
               <IconCheckCircle size={40} color={colors.success || colors.primary} />
@@ -103,6 +117,25 @@ export default function ReportSheet({ visible, onClose, target, title }) {
               </TouchableOpacity>
             </>
           )}
+    </>
+  );
+
+  if (useNative) {
+    return (
+      <NativeSheet visible={nativeOpen} onClose={onClose} detents="fitToContents" backgroundColor={colors.surface || colors.background}>
+        <NativeSheetKeyboardView style={{ flex: 0, paddingHorizontal: 16, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>
+          {content}
+        </NativeSheetKeyboardView>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={st.backdrop} onPress={onClose}>
+        <Pressable style={[st.sheet, { backgroundColor: colors.surface || colors.background, paddingBottom: 16 + insets.bottom }]} onPress={() => {}}>
+          <View style={[st.grab, { backgroundColor: colors.border }]} />
+          {content}
         </Pressable>
       </Pressable>
     </Modal>

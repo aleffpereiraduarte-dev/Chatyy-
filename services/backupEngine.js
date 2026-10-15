@@ -72,7 +72,29 @@ import {
   getUploadSessions, saveUploadSessions,
   KEYS,
   getTooLargeMap, markAssetTooLarge,
+  getMissingMap, markAssetMissing,
 } from './backup/backupStorage';
+
+// [2026-10-15 confiab] context do upload Rust/edge = md5(email minúsculo) para a
+// chave R2 nascer dentro do namespace que drive_register_uploaded exige
+// (`md5(email)/…`). Ver comentário no caminho PRIMARY PATH de _uploadItem.
+// Falha (web sem MD5, e-mail vazio) → 'photo_backup' (comportamento antigo:
+// o register falha e o item segue pelo caminho legado, como antes).
+let _rustCtxCache = { email: '', ctx: '' };
+async function _backupRustContext(email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e || Platform.OS === 'web') return 'photo_backup';
+  if (_rustCtxCache.email === e && _rustCtxCache.ctx) return _rustCtxCache.ctx;
+  try {
+    const Crypto = require('expo-crypto');
+    const h = String(await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.MD5, e) || '').toLowerCase();
+    if (/^[0-9a-f]{32}$/.test(h)) {
+      _rustCtxCache = { email: e, ctx: h };
+      return h;
+    }
+  } catch {}
+  return 'photo_backup';
+}
 
 // ─── Constants ───────────────────────────────────────────────
 // Legacy keys kept for reference only; actual storage goes through backupStorage.
@@ -479,7 +501,9 @@ export class BackupEngine {
     // [2026-10-08 upload-br] assets the server 413'd ("muito grande") are
     // skipped forever — retrying only repeats the same rejection.
     try { this._tooLarge = await getTooLargeMap(); } catch { this._tooLarge = {}; }
-    const _skipTooLarge = (id) => !!(this._tooLarge && this._tooLarge[id]);
+    // [2026-10-15 confiab] + arquivos que sumiram do disco (skip 7 d).
+    try { this._missing = await getMissingMap(); } catch { this._missing = {}; }
+    const _skipTooLarge = (id) => !!((this._tooLarge && this._tooLarge[id]) || (this._missing && this._missing[id]));
 
     // ── Android native fast path ────────────────────────────
     // The Kotlin MediaStoreHelper paginates internally in 500-row chunks
@@ -1297,10 +1321,19 @@ export class BackupEngine {
         const _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
         if (_ctrl) this._inflightCtrls.add(_ctrl);
         let r;
+        // [2026-10-15 confiab] Rust (US) e edge-media (BR) gravam a chave como
+        // `${context}/${id8}_${nome}`. Com context='photo_backup' a chave fica
+        // FORA do namespace md5(email)/ e o drive_register_uploaded responde
+        // 403 "key outside user namespace" (guarda IDOR de 2026-07-05) → toda
+        // foto subia 2× (Rust desperdiçado + caminho legado) e figurinhas do
+        // WhatsApp (content:// já apagado) entravam em loop. 72 h: 1.093×403,
+        // 1.014 rust_upload_throw. context = md5(email) (32 hex, válido nos
+        // dois servidores) ⇒ chave `md5/…` passa no guard.
+        const rustCtx = await _backupRustContext(userEmail);
         try {
           r = useChunked
-            ? await api.rustChunkedUpload(fileForRust, userEmail, 'photo_backup', null, _ctrl ? _ctrl.signal : null)
-            : await api.rustUpload(fileForRust, userEmail, 'photo_backup', _ctrl ? _ctrl.signal : null);
+            ? await api.rustChunkedUpload(fileForRust, userEmail, rustCtx, null, _ctrl ? _ctrl.signal : null)
+            : await api.rustUpload(fileForRust, userEmail, rustCtx, _ctrl ? _ctrl.signal : null);
         } finally {
           if (_ctrl) this._inflightCtrls.delete(_ctrl);
         }
@@ -1531,6 +1564,19 @@ export class BackupEngine {
         }
       } catch (err) {
         api.apiCall('drive_backup_debug', { msg: 'upload_throw', data: `${err?.message || 'unknown'}|native|${item.filename}` }, 'POST').catch(() => {});
+        // [2026-10-15 confiab] Arquivo não existe mais → pulo definitivo
+        // (sem quick-retry, sem os 4 retries exponenciais, sem nova passada).
+        if (/upload_file_missing|file_missing|ENOENT|No such file|FileNotFound/i.test(String(err?.message || ''))) {
+          const _mid = item?.asset?.id || item?.id;
+          if (_mid) {
+            if (this._missing) this._missing[_mid] = { at: Date.now() };
+            markAssetMissing(_mid).catch(() => {});
+          }
+          const e2 = new Error(`file_missing|${item.filename}`);
+          e2.nonRetryable = true;
+          e2.fileMissing = true;
+          throw e2;
+        }
       }
     } else if (Platform.OS !== 'web') {
       // Helper: race against timeout so stuck workers don't hang forever

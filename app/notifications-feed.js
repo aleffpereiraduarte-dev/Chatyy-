@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator,
   RefreshControl, Platform, Animated, Easing,
@@ -13,6 +13,29 @@ import { swr, getCachedEntrySync, userScopedKey } from '../services/cache';
 import { filterSocialNotifications } from '../services/notificationFilter';
 import AvatarCircle from '../components/AvatarCircle';
 import ScreenEmptyState from '../components/ScreenEmptyState';
+// [2026-10-15 native-search-notifs] Lista NATIVA (ChatyyResultList) agrupada por
+// dia, "Seguir de volta" inline e swipe p/ apagar. Kill switch:
+// globalThis.__chatyy_native_notifs = false → FlatList JS abaixo (igual antes).
+import NativeResultList, { useNativeResults } from '../components/native/NativeResultList';
+import { contactTile } from '../components/native/resultListAdapter';
+import { setCache } from '../services/cache';
+
+const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', one_alert: 'bell' };
+function _feedBucket(iso) {
+  if (!iso) return 'older';
+  const d = new Date(String(iso).endsWith('Z') || String(iso).includes('+') ? iso : iso + 'Z');
+  if (isNaN(d.getTime())) return 'older';
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (d.getTime() >= start) return 'today';
+  if (d.getTime() >= start - 7 * 86400000) return 'thisWeek';
+  return 'older';
+}
+const FEED_BUCKETS = [
+  ['today', 'notifications.bucketToday', 'Hoje'],
+  ['thisWeek', 'notifications.bucketThisWeek', 'Esta semana'],
+  ['older', 'notifications.bucketOlder', 'Mais antigas'],
+];
 
 // [WAVE 100] Module-scope live store — paints instant on re-mount.
 const _liveStore = new Map();
@@ -167,6 +190,63 @@ export default function NotificationsFeedScreen() {
   }, [load]);
 
   const onRefresh = () => { setRefreshing(true); setPage(1); load(1); };
+
+  // ── [2026-10-15 native-search-notifs] lista nativa ─────────────────────────
+  const [nativeOn, onNativeFailure] = useNativeResults('__chatyy_native_notifs');
+  const tx = (k, fb) => { const v = t?.(k); return v && v !== k ? v : fb; };
+  const handleDelete = useCallback(async (item) => {
+    if (!item || item.id == null) return;
+    setItems(prev => {
+      const next = prev.filter(n => n.id !== item.id);
+      try { _writeLive(next); setCache(FEED_KEY, { success: true, data: { notifications: next } }, 7 * 24 * 3600 * 1000); } catch {}
+      return next;
+    });
+    try { await api.notificationsDelete(item.id); } catch {}
+  }, []);
+  const nativeMetaRef = useRef(new Map());
+  const nativeRows = useMemo(() => {
+    if (!nativeOn) return [];
+    const list = filterSocialNotifications(items);
+    const groups = { today: [], thisWeek: [], older: [] };
+    for (const n of list) groups[_feedBucket(n.created_at)].push(n);
+    const rows = [];
+    const meta = new Map();
+    const del = tx('common.delete', 'Apagar');
+    const seen = new Set();
+    for (const [key, lk, fb] of FEED_BUCKETS) {
+      if (!groups[key].length) continue;
+      rows.push({ id: `s:${key}`, k: 's', t: tx(lk, fb) });
+      groups[key].forEach((item, i) => {
+        let id = `f:${item.id}`;
+        if (seen.has(id)) id = `${id}#${i}`;
+        seen.add(id);
+        const who = item.author_email?.split('@')[0] || '';
+        const countSuffix = item.count > 1 ? ` +${item.count - 1}` : '';
+        const body = (item.body || '').replace(item.author_email + ' ', '');
+        const row = { id, k: 'r', t: `${who}${countSuffix}${body ? `  ${body}` : ''}`.trim(), tl: 2 };
+        const when = timeAgo(item.created_at, t);
+        if (when) row.tm = when;
+        if (item.author_email) { row.tiles = contactTile(item.author_email, who); row.bd = FEED_GLYPH[item.type] || 'bell'; }
+        else row.gl = FEED_GLYPH[item.type] || 'bell';
+        if (!item.read) row.un = 1;
+        if (item.type === 'follow' && !item.action_taken) row.b1 = tx('notifications.followBack', 'Seguir de volta');
+        if (item.id != null) row.sw = del;
+        rows.push(row);
+        meta.set(id, item);
+      });
+    }
+    if (loading && page > 1) rows.push({ id: 'l:more', k: 'l' });
+    nativeMetaRef.current = meta;
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOn, items, loading, page, t]);
+  const onNativePress = useCallback((id) => { const it = nativeMetaRef.current.get(id); if (it) handlePress(it); });
+  const onNativeAction = useCallback((id, action) => {
+    const it = nativeMetaRef.current.get(id);
+    if (!it) return;
+    if (action === 'delete') handleDelete(it);
+    else if (action === 'b1') handleFollowBack(it);
+  }, [handleDelete, handleFollowBack]);
   const onEndReached = () => {
     if (!hasMore || loading) return;
     const next = page + 1;
@@ -278,6 +358,22 @@ export default function NotificationsFeedScreen() {
           ]}
         />
         </NativeInsetView>
+      ) : nativeOn ? (
+        <NativeResultList
+          rows={nativeRows}
+          colors={colors}
+          isDark={isDark}
+          separators
+          autoInset={USE_NATIVE_HEADER}
+          refreshEnabled
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onEndReached={onEndReached}
+          bottomInset={16}
+          onPress={onNativePress}
+          onAction={onNativeAction}
+          onFailure={onNativeFailure}
+        />
       ) : (
         <FlatList
           {...nativeScrollInsetProps()}

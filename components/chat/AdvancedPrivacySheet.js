@@ -5,6 +5,7 @@
 import React from 'react';
 import { View, Text, Modal, Pressable, Switch, ScrollView, Platform, ActivityIndicator, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet';
 import { IconShield, IconLock, IconEye, IconDownload, IconForward, IconSparkles, IconX } from '../Icons';
 
 function _tt(t, key, fb) {
@@ -38,10 +39,8 @@ export default function AdvancedPrivacySheet({
   const thumbFor = (on) => (Platform.OS === 'ios' ? undefined : (on ? onThumb : '#F4F4F5'));
   const thumb = thumbFor(!!enabled);
 
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={s.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={_tt(t, 'common.close', 'Fechar')} />
-      <View style={[s.panel, { backgroundColor: bg, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+  const content = (
+    <>
         <View style={s.headerRow}>
           <IconShield size={22} color={fg} />
           <Text style={[s.title, { color: fg }]} numberOfLines={2}>{_tt(t, 'advPriv.title', 'Privacidade avançada da conversa')}</Text>
@@ -90,6 +89,26 @@ export default function AdvancedPrivacySheet({
         {!canEdit ? (
           <Text style={[s.note, { color: sub }]}>{_tt(t, 'advPriv.adminOnly', 'Só administradores do grupo podem alterar.')}</Text>
         ) : null}
+    </>
+  );
+
+  // [2026-10-15 native-sheets-v2] iOS/Android: sheet do SISTEMA (detents/grabber/arrastar).
+  // Abre a partir da Info do contato/grupo, que já fecha o próprio <Modal> antes (contactInfoGo/groupInfoGo).
+  if (USE_NATIVE_SHEETS) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={bg}>
+        <View style={{ paddingHorizontal: 18, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 8) }}>
+          {content}
+        </View>
+      </NativeSheet>
+    );
+  }
+
+  return (
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={s.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={_tt(t, 'common.close', 'Fechar')} />
+      <View style={[s.panel, { backgroundColor: bg, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        {content}
       </View>
     </Modal>
   );

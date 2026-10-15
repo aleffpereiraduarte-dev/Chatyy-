@@ -30,3 +30,26 @@ export function isAvailable(): boolean {
   }
   try { return !!_mod && _mod.apiVersion() >= 1; } catch { return false; }
 }
+
+// [2026-10-15 native-feed] Aba FEED (posts) em NATIVO — view `ChatyyPostFeed`
+// no MESMO pacote para reaproveitar o pool de players/cache de vídeo/imagem dos
+// Reels. Wrapper: components/feed/NativePostFeed.js. Kill switch:
+// globalThis.__chatyy_native_feed = false.
+export const POST_FEED_VIEW_NAME = 'ChatyyPostFeed';
+let _postFeedChecked = false;
+let _postFeedView: any = null;
+export function getNativePostFeedView(): any {
+  if (_postFeedChecked) return _postFeedView;
+  _postFeedChecked = true;
+  try {
+    const m = requireOptionalNativeModule<NativeMod>(POST_FEED_VIEW_NAME);
+    if (!m || !(Number(m.apiVersion()) >= 1)) return null;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const req = core.requireNativeViewManager || core.requireNativeView;
+    if (typeof req === 'function') _postFeedView = req(POST_FEED_VIEW_NAME);
+  } catch {
+    _postFeedView = null;
+  }
+  return _postFeedView;
+}

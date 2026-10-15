@@ -186,7 +186,12 @@ final class NCReplyCard: UIView {
   let thumb = UIImageView()
   let closeButton = UIButton(type: .system)
   let closeBg = UIView()
+  /// [reply-v2] ícone do tipo (SF Symbol) antes do trecho + cor do remetente.
+  let kindIcon = UIImageView()
   var hasThumb = false
+  private var hasIcon = false
+  var baseInk: UIColor = .label { didSet { applyInk() } }
+  private var accentInk: UIColor? = nil
   private var thumbToken: String = ""
 
   override init(frame: CGRect) {
@@ -211,6 +216,9 @@ final class NCReplyCard: UIView {
     thumb.layer.cornerRadius = 6
     thumb.isHidden = true
     addSubview(thumb)
+    kindIcon.contentMode = .scaleAspectFit
+    kindIcon.isHidden = true
+    addSubview(kindIcon)
     closeBg.isUserInteractionEnabled = false
     closeBg.layer.cornerRadius = 12
     addSubview(closeBg)
@@ -220,10 +228,47 @@ final class NCReplyCard: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  static func symbol(_ kind: String) -> String? {
+    switch kind {
+    case "photo": return "camera.fill"
+    case "video": return "video.fill"
+    case "vnote": return "video.circle"
+    case "voice": return "mic.fill"
+    case "audio": return "music.note"
+    case "file": return "doc.fill"
+    case "gif": return "play.rectangle.fill"
+    case "sticker": return "face.smiling"
+    case "location": return "mappin.and.ellipse"
+    case "contact": return "person.crop.circle"
+    case "poll": return "chart.bar.fill"
+    case "deleted": return "trash"
+    case "lock": return "lock.fill"
+    case "eye": return "eye"
+    case "quote": return "text.quote"
+    default: return nil
+    }
+  }
+
+  func applyInk() {
+    let ink = accentInk ?? baseInk
+    line.backgroundColor = ink
+    titleLabel.textColor = ink
+  }
+
   func configure(_ r: NCReplyRecord) {
     titleLabel.text = r.title
     bodyLabel.text = r.text
-    bodyLabel.numberOfLines = r.italic ? 1 : 3
+    bodyLabel.numberOfLines = r.lines > 0 ? r.lines : (r.italic ? 1 : 3)
+    accentInk = r.color.map { ncColor($0, baseInk) }
+    applyInk()
+    if let sym = NCReplyCard.symbol(r.icon), let img = UIImage(systemName: sym, withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)) {
+      kindIcon.image = img.withRenderingMode(.alwaysTemplate)
+      hasIcon = true
+    } else {
+      kindIcon.image = nil
+      hasIcon = false
+    }
+    kindIcon.isHidden = !hasIcon
     if r.italic {
       let base = bodyLabel.font ?? .systemFont(ofSize: 13.5)
       if let d = base.fontDescriptor.withSymbolicTraits(.traitItalic) {
@@ -253,7 +298,7 @@ final class NCReplyCard: UIView {
   func preferredHeight(width: CGFloat) -> CGFloat {
     let textW = textWidth(width)
     let th = ceil(titleLabel.sizeThatFits(CGSize(width: textW, height: .greatestFiniteMagnitude)).height)
-    let bh = ceil(bodyLabel.sizeThatFits(CGSize(width: textW, height: .greatestFiniteMagnitude)).height)
+    let bh = ceil(bodyLabel.sizeThatFits(CGSize(width: hasIcon ? textW - 18 : textW, height: .greatestFiniteMagnitude)).height)
     return max(54, 10 + th + 2 + bh + 10)
   }
 
@@ -270,11 +315,18 @@ final class NCReplyCard: UIView {
     line.frame = CGRect(x: 12, y: 10, width: 3, height: max(34, h - 20))
     let tw = textWidth(bounds.width)
     let th = ceil(titleLabel.sizeThatFits(CGSize(width: tw, height: .greatestFiniteMagnitude)).height)
-    let bh = ceil(bodyLabel.sizeThatFits(CGSize(width: tw, height: .greatestFiniteMagnitude)).height)
+    let bh = ceil(bodyLabel.sizeThatFits(CGSize(width: hasIcon ? tw - 18 : tw, height: .greatestFiniteMagnitude)).height)
     let blockH = th + 2 + bh
     let y0 = max(10, (h - blockH) / 2)
     titleLabel.frame = CGRect(x: 25, y: y0, width: tw, height: th)
-    bodyLabel.frame = CGRect(x: 25, y: y0 + th + 2, width: tw, height: bh)
+    if hasIcon {
+      let isz: CGFloat = 14
+      let lineH = min(bh, bodyLabel.font.lineHeight)
+      kindIcon.frame = CGRect(x: 25, y: y0 + th + 2 + max(0, (lineH - isz) / 2), width: isz, height: isz)
+      bodyLabel.frame = CGRect(x: 25 + isz + 4, y: y0 + th + 2, width: tw - isz - 4, height: bh)
+    } else {
+      bodyLabel.frame = CGRect(x: 25, y: y0 + th + 2, width: tw, height: bh)
+    }
     let closeX = bounds.width - 4 - 44
     closeButton.frame = CGRect(x: closeX, y: (h - 44) / 2, width: 44, height: 44)
     closeBg.frame = CGRect(x: closeX + 10, y: (h - 24) / 2, width: 24, height: 24)
@@ -558,9 +610,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     actionButton.apply(background: c.action, icon: c.actionIcon)
     replyCard.backgroundColor = c.replyCard
     replyCard.layer.borderColor = c.replyCardBorder.cgColor
-    replyCard.line.backgroundColor = c.text
-    replyCard.titleLabel.textColor = c.text
+    replyCard.baseInk = c.text
     replyCard.bodyLabel.textColor = c.secondaryText
+    replyCard.kindIcon.tintColor = c.secondaryText
     replyCard.closeButton.tintColor = c.secondaryText
     replyCard.closeBg.backgroundColor = theme.dark ? UIColor.white.withAlphaComponent(0.10) : UIColor.black.withAlphaComponent(0.06)
     voice.applyTheme(c, dark: theme.dark)
@@ -603,19 +655,40 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private func setReply(_ r: NCReplyRecord?) {
     if let r = r {
       let wasVisible = replyVisible
+      let keyChanged = replyRecord?.key != r.key
       replyRecord = r
       replyCard.configure(r)
       replyVisible = true
       replyCard.isHidden = false
       relayout(animated: false)
+      let reduce = UIAccessibility.isReduceMotionEnabled
       if !wasVisible {
         replyCard.alpha = 0
-        replyCard.transform = CGAffineTransform(translationX: 0, y: 12)
-        UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0.2,
+        // [reply-v2] entra com mola de baixo (Telegram)
+        replyCard.transform = (r.pop && !reduce) ? CGAffineTransform(translationX: 0, y: 26).scaledBy(x: 0.97, y: 0.97) : CGAffineTransform(translationX: 0, y: 12)
+        UIView.animate(withDuration: r.pop ? 0.46 : 0.32, delay: 0, usingSpringWithDamping: r.pop ? 0.74 : 0.82, initialSpringVelocity: r.pop ? 0.6 : 0.2,
                        options: [.allowUserInteraction, .beginFromCurrentState], animations: {
           self.replyCard.alpha = 1
           self.replyCard.transform = .identity
         }, completion: nil)
+      } else if (replyCard.layer.presentation()?.opacity ?? 1) < 0.99 || replyCard.alpha < 1 {
+        // estava saindo (X/limpo) e voltou → reverte a saída
+        UIView.animate(withDuration: 0.26, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0,
+                       options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+          self.replyCard.alpha = 1
+          self.replyCard.transform = .identity
+        }, completion: nil)
+      } else if keyChanged && r.pop && !reduce {
+        // outro alvo com o cartão já aberto → "pulinho" sutil
+        replyCard.transform = CGAffineTransform(scaleX: 0.97, y: 0.97)
+        UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.4,
+                       options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+          self.replyCard.transform = .identity
+        }, completion: nil)
+      }
+      // [reply-v2] responder abre o teclado sozinho (menos ida-e-volta pelo JS)
+      if r.focus && r.kind == "reply" && keyChanged && !voice.isActive && !emojiActive && window != nil {
+        focusInput()
       }
     } else if replyVisible {
       replyRecord = nil
@@ -634,6 +707,8 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   @objc private func replyCloseTapped() {
     UISelectionFeedbackGenerator().selectionChanged()
+    // [reply-v2] fecha já (animação local), sem esperar o JS limpar a prop.
+    if replyRecord?.pop == true { setReply(nil) }
     onReplyCancel()
   }
 

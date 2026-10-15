@@ -50,6 +50,13 @@ struct NCReplyRecord: Record {
   @Field var italic: Bool = false
   @Field var thumbUri: String? = nil
   @Field var thumbRound: Bool = false
+  // [reply-v2] cor do remetente (ARGB), ícone por tipo, nº de linhas do trecho
+  // (0 = legado), abrir teclado e "pulinho" ao trocar de alvo.
+  @Field var color: Double? = nil
+  @Field var icon: String = ""
+  @Field var lines: Int = 0
+  @Field var focus: Bool = false
+  @Field var pop: Bool = false
 }
 
 struct NCMentionRecord: Record {

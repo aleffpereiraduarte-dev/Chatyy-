@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyWallpaperModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyywallpaper.ChatyyWallpaperModule"]
+  }
+}

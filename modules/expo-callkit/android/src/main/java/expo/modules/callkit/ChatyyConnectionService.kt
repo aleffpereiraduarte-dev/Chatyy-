@@ -355,6 +355,8 @@ class ChatyyConnection(
     // defensive fallback for devices where the user has revoked self-
     // managed permission.
     setActive()
+    // [2026-10-15 viva-voz] Telecom owns the route from now on → hand it ours.
+    try { expo.modules.callkit.audio.AudioRouter.get(ctx).onTelecomActive() } catch (_: Throwable) {}
 
     // Mark accept across in-process + persisted state so the deleteIntent
     // race we hardened in Stage A doesn't ship a phantom decline.
@@ -423,6 +425,7 @@ class ChatyyConnection(
       }
       Log.i(TAG, "answerFromUi: callId=$callId state=$st → setActive()")
       setActive()
+      try { expo.modules.callkit.audio.AudioRouter.get(ctx).onTelecomActive() } catch (_: Throwable) {}
     } catch (t: Throwable) {
       Log.w(TAG, "answerFromUi failed: ${t.message}")
     }
@@ -625,9 +628,13 @@ class ChatyyConnection(
     // call) while Telecom routed to SPEAKER as fallback — the next JS
     // toggleSpeaker() then flips to the wrong direction (speaker→earpiece
     // instead of speaker→off). Mirror Telecom's view of reality here.
+    // [2026-10-15 viva-voz] SYNC only. This used to call setSpeaker(isSpeaker),
+    // i.e. RE-APPLY Telecom's route (earpiece) right over the loudspeaker the
+    // user had just picked → "viva-voz não funciona". The router now treats
+    // Telecom's report as an observation (re-asserts our fresh choice / adopts
+    // a later external change).
     try {
-      val isSpeaker = s.route == android.telecom.CallAudioState.ROUTE_SPEAKER
-      expo.modules.callkit.audio.AudioRouter.get(ctx).setSpeaker(isSpeaker)
+      expo.modules.callkit.audio.AudioRouter.get(ctx).onTelecomRoute(s.route)
     } catch (_: Throwable) {}
   }
 

@@ -38,11 +38,48 @@ enum CallStrings {
         "hi": ["ssPrivacyTitle": "स्क्रीन शेयर करें?", "ssPrivacyBody": "आपकी स्क्रीन पर मौजूद सब कुछ, सूचनाओं समेत, कॉल में शामिल लोगों को दिखेगा।", "ssContinue": "जारी रखें", "ssYouAreSharing": "आप अपनी स्क्रीन शेयर कर रहे हैं", "ssPeerSharing": "{name} अपनी स्क्रीन शेयर कर रहे हैं", "ssFullScreen": "फ़ुल स्क्रीन"],
     ]
 
+    /// [2026-10-15 cam-1-toque] Câmera negada nos Ajustes (toque em "Vídeo").
+    private static let cameraTable: [String: [String: String]] = [
+        "pt-BR": ["camDeniedTitle": "Câmera bloqueada", "camDeniedBody": "Para ligar o vídeo, permita o acesso à câmera nos Ajustes.", "openSettings": "Abrir Ajustes"],
+        "pt-PT": ["camDeniedTitle": "Câmara bloqueada", "camDeniedBody": "Para ligar o vídeo, permita o acesso à câmara nas Definições.", "openSettings": "Abrir Definições"],
+        "en": ["camDeniedTitle": "Camera blocked", "camDeniedBody": "To turn on video, allow camera access in Settings.", "openSettings": "Open Settings"],
+        "es": ["camDeniedTitle": "Cámara bloqueada", "camDeniedBody": "Para activar el video, permite el acceso a la cámara en Ajustes.", "openSettings": "Abrir Ajustes"],
+        "fr": ["camDeniedTitle": "Caméra bloquée", "camDeniedBody": "Pour activer la vidéo, autorisez l’accès à la caméra dans Réglages.", "openSettings": "Ouvrir Réglages"],
+        "de": ["camDeniedTitle": "Kamera blockiert", "camDeniedBody": "Um Video einzuschalten, erlaube den Kamerazugriff in den Einstellungen.", "openSettings": "Einstellungen öffnen"],
+        "it": ["camDeniedTitle": "Fotocamera bloccata", "camDeniedBody": "Per attivare il video, consenti l’accesso alla fotocamera in Impostazioni.", "openSettings": "Apri Impostazioni"],
+        "ja": ["camDeniedTitle": "カメラがブロックされています", "camDeniedBody": "ビデオをオンにするには、設定でカメラへのアクセスを許可してください。", "openSettings": "設定を開く"],
+        "ar": ["camDeniedTitle": "الكاميرا محظورة", "camDeniedBody": "لتشغيل الفيديو، اسمح بالوصول إلى الكاميرا من الإعدادات.", "openSettings": "فتح الإعدادات"],
+        "id": ["camDeniedTitle": "Kamera diblokir", "camDeniedBody": "Untuk menyalakan video, izinkan akses kamera di Pengaturan.", "openSettings": "Buka Pengaturan"],
+        "hi": ["camDeniedTitle": "कैमरा ब्लॉक है", "camDeniedBody": "वीडियो चालू करने के लिए, सेटिंग्स में कैमरा एक्सेस की अनुमति दें।", "openSettings": "सेटिंग्स खोलें"],
+    ]
+
+    /// [2026-10-15 founder] Pedido de vídeo do outro lado (Aceitar/Recusar).
+    private static let videoRequestTable: [String: [String: String]] = [
+        "pt-BR": ["videoReqTitle": "{name} quer mudar para vídeo", "videoReqTitleNoName": "Mudar para vídeo?", "videoReqAccept": "Aceitar", "videoReqDecline": "Recusar"],
+        "pt-PT": ["videoReqTitle": "{name} quer mudar para vídeo", "videoReqTitleNoName": "Mudar para vídeo?", "videoReqAccept": "Aceitar", "videoReqDecline": "Recusar"],
+        "en": ["videoReqTitle": "{name} wants to switch to video", "videoReqTitleNoName": "Switch to video?", "videoReqAccept": "Accept", "videoReqDecline": "Decline"],
+        "es": ["videoReqTitle": "{name} quiere cambiar a video", "videoReqTitleNoName": "¿Cambiar a video?", "videoReqAccept": "Aceptar", "videoReqDecline": "Rechazar"],
+        "fr": ["videoReqTitle": "{name} veut passer en vidéo", "videoReqTitleNoName": "Passer en vidéo ?", "videoReqAccept": "Accepter", "videoReqDecline": "Refuser"],
+        "de": ["videoReqTitle": "{name} möchte zu Video wechseln", "videoReqTitleNoName": "Zu Video wechseln?", "videoReqAccept": "Annehmen", "videoReqDecline": "Ablehnen"],
+        "it": ["videoReqTitle": "{name} vuole passare al video", "videoReqTitleNoName": "Passare al video?", "videoReqAccept": "Accetta", "videoReqDecline": "Rifiuta"],
+        "ja": ["videoReqTitle": "{name}さんがビデオに切り替えようとしています", "videoReqTitleNoName": "ビデオに切り替えますか？", "videoReqAccept": "承諾", "videoReqDecline": "拒否"],
+        "ar": ["videoReqTitle": "يريد {name} التبديل إلى الفيديو", "videoReqTitleNoName": "التبديل إلى الفيديو؟", "videoReqAccept": "قبول", "videoReqDecline": "رفض"],
+        "id": ["videoReqTitle": "{name} ingin beralih ke video", "videoReqTitleNoName": "Beralih ke video?", "videoReqAccept": "Terima", "videoReqDecline": "Tolak"],
+        "hi": ["videoReqTitle": "{name} वीडियो पर स्विच करना चाहते हैं", "videoReqTitleNoName": "वीडियो पर स्विच करें?", "videoReqAccept": "स्वीकार करें", "videoReqDecline": "अस्वीकार करें"],
+    ]
+
     /// Texto da chave no idioma atual; {name} etc. substituídos por `args`.
     static func s(_ key: String, _ args: [String: String] = [:]) -> String {
         let l = GroupCallStrings.lang
-        var out: String = table[l]?[key] ?? screenShareTable[l]?[key] ?? ""
-        if out.isEmpty { out = table["en"]?[key] ?? screenShareTable["en"]?[key] ?? key }
+        // Loop instead of a long `??` chain (keeps the type checker fast).
+        let tables: [[String: [String: String]]] = [table, screenShareTable, cameraTable, videoRequestTable]
+        var out: String = ""
+        for lang in [l, "en"] where out.isEmpty {
+            for t in tables {
+                if let v = t[lang]?[key] { out = v; break }
+            }
+        }
+        if out.isEmpty { out = key }
         for (k, v) in args { out = out.replacingOccurrences(of: "{" + k + "}", with: v) }
         return out
     }

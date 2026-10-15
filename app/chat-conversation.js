@@ -135,7 +135,7 @@ import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10
 import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
 import VideoTrimBar from '../components/media/VideoTrimBar'; // [2026-10-10 video-trim]
 import * as _imagePaste from '../services/imagePaste'; // [2026-10-10 paste-image]
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 // [VISTO AZUL FALSO causa-raiz 2026-10-06] useIsFocused: recibo de leitura SÓ
 // quando esta tela é a focada na pilha (não há modal/outra tela por cima).
 import { useIsFocused } from '@react-navigation/native';
@@ -146,7 +146,7 @@ import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
 import LazyMount from '../components/chat/LazyMount';
 import NowTicker from '../components/chat/NowTicker'; // [2026-10-15 conv-lite] // [2026-10-15 conv-lite] sheets/modais montados só na 1ª abertura
-import { USE_NATIVE_SHEETS, NativeSheet } from '../components/NativeSheet';
+import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetModal, NativeSheetKeyboardView, afterRNModal, runAfterNativeSheet, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2] +Modal drop-in/teclado
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
@@ -218,6 +218,9 @@ import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
 import AvatarLightbox from '../components/AvatarLightbox';
 import WallpaperPicker, { WallpaperBackground } from '../components/WallpaperPicker';
+// [2026-10-15 native-wallpaper] fundo nativo (gradiente animado/padrão/foto/paralaxe) + bolhas derivadas do tema
+import ChatWallpaper, { notifyWallpaperScroll as _wpNotifyScroll } from '../components/wallpaper/ChatWallpaper';
+import { bubbleFor as _wpBubbleFor } from '../components/wallpaper/wallpaperSpec';
 import OngoingCallChip from '../components/OngoingCallChip';
 import { stopAllAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
@@ -519,7 +522,7 @@ function renderMarkdownLite(text, baseStyle) {
         <Text
           key={`u${keyN++}`}
           style={{ color: '#3b82f6', textDecorationLine: 'underline' }}
-          onPress={() => { try { Linking.openURL(seg.value); } catch {} }}
+          onPress={() => { try { require('../services/openLink').openLink(seg.value); } catch {} }} /* [2026-10-15 native-browser] */
         >
           {seg.value}
         </Text>
@@ -3349,7 +3352,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
       {urlParts.map((part, i) =>
         /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
-            onPress={() => { try { if (/chatyy\.com\.br\/docs\//.test(part) && routerProp) { routerProp.push({ pathname: '/documentos-viewer', params: { url: part } }); /* [2026-10-07 native-ui-build] abre O doc (viewer), não a LISTA /documentos */ } else { Linking.openURL(part); } } catch {} }}>
+            onPress={() => { try { require('../services/openLink').openLink(part, { router: routerProp, colors }); /* [2026-10-15 native-browser] /docs/ → viewer, links do Chatyy → tela do app, resto → navegador interno */ } catch {} }}>
             {part}
           </Text>
         ) : (
@@ -3449,17 +3452,27 @@ function LinkPreview({ url, colors }) {
 
   return (
     <TouchableOpacity
-      onPress={() => { try { Linking.openURL(url); } catch {} }}
+      onPress={() => { try { if (require('../components/chat/YouTubeInlinePlayer').openYouTubeInline(url)) return; } catch {} try { require('../services/openLink').openLink(url, { colors }); } catch {} }} /* [2026-10-15 native-browser + yt-inline] */
       activeOpacity={0.85}
       style={[linkPreviewStyles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}
     >
       {preview.image ? (
-        <ExpoImage
-          source={{ uri: preview.image }}
-          style={linkPreviewStyles.image}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-        />
+        <View>
+          <ExpoImage
+            source={{ uri: preview.image }}
+            style={linkPreviewStyles.image}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+          {(() => { try { return require('../components/chat/YouTubeInlinePlayer').youTubeInlineInfo(url); } catch { return null; } })() ? (
+            /* [2026-10-15 yt-inline] play sobre a miniatura do YouTube */
+            <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(0,0,0,0.62)', alignItems: 'center', justifyContent: 'center' }}>
+                <IconPlay size={22} color="#FFFFFF" />
+              </View>
+            </View>
+          ) : null}
+        </View>
       ) : (
         <View style={[linkPreviewStyles.imageFallback, { backgroundColor: fallbackBg }]}>
           <Text style={linkPreviewStyles.imageFallbackLetter}>{firstLetter}</Text>
@@ -3538,15 +3551,17 @@ const linkPreviewStyles = StyleSheet.create({
 // ============================================================
 function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
   if (!visible) return null;
+  // [2026-10-15 native-sheets-v2] NativeSheetDialog: sheet do sistema no nativo; web = Modal de sempre.
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={onClose}>
-        <Pressable style={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '50%', paddingBottom: 34 }}>
+    <NativeSheetDialog visible onClose={onClose} animationType="slide"
+      overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+      panelStyle={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '50%', paddingBottom: 34 }}
+      nativePanelStyle={{ paddingTop: 10 }}>
           <View style={{ alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border }}>
             <Text style={{ fontSize: 32 }}>{emoji}</Text>
             <Text style={{ color: colors.textSecondary, marginTop: 4, fontSize: 14 }}>{reactors.length}</Text>
           </View>
-          <ScrollView>
+          <ScrollView style={USE_NATIVE_SHEETS ? { maxHeight: Math.round(Dimensions.get('window').height * 0.6) } : undefined}>
             {reactors.map((r, i) => (
               <View key={i} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 }}>
                 <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
@@ -3554,9 +3569,7 @@ function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
               </View>
             ))}
           </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </NativeSheetDialog>
   );
 }
 
@@ -4399,6 +4412,31 @@ function _rtMediaUri(u) {
   if (/^(https?:|data:|blob:|file:|content:|ph:|assets-library:)/i.test(s)) return s;
   try { return api.getMediaUrl(s) || s; } catch { return s; }
 }
+// [reply-v2 2026-10-15] Kill switch (OTA): globalThis.__chatyy_native_reply_v2 = false
+// → cartão/citação/salto voltam ao comportamento anterior.
+function _replyV2On() {
+  try { return globalThis.__chatyy_native_reply_v2 !== false; } catch { return true; }
+}
+// Ícone do describeReplyTarget → tipo p/ o cartão nativo do composer (SF Symbol / path).
+function _rtIconKind(Icon) {
+  switch (Icon) {
+    case IconCamera: return 'photo';
+    case IconVideo: return 'video';
+    case IconVideoNote: return 'vnote';
+    case IconMic: return 'voice';
+    case IconMusic: return 'audio';
+    case IconFileText: return 'file';
+    case IconFilm: return 'gif';
+    case IconStickyNote: return 'sticker';
+    case IconMapPin: return 'location';
+    case IconUser: return 'contact';
+    case IconBarChart: return 'poll';
+    case IconTrash: return 'deleted';
+    case IconLock: return 'lock';
+    case IconEye: return 'eye';
+    default: return '';
+  }
+}
 function describeReplyTarget(rt, ref, t) {
   const r = rt || {};
   const L = ref || null;
@@ -4501,7 +4539,19 @@ function describeReplyTarget(rt, ref, t) {
       const j = _rtJSON(m.content) || {};
       const live = !!(j.live || m.live || /"live"\s*:\s*true/.test(content));
       const addr = String(j.address || j.label || j.name || m.address || _rtField(content, 'address') || _rtField(content, 'label') || '').trim();
-      return { Icon: IconMapPin, label: live ? tr('chatConv.liveLocation', 'Localização ao vivo') : (addr || tr('chatConv.location', 'Localização')), lines: 1, thumb: null };
+      // [reply-v2] miniatura do mapa (estática, P&B do tema) quando há coordenadas.
+      let mapThumb = null;
+      try {
+        if (_replyV2On()) {
+          const la = j.latitude ?? j.lat ?? m.latitude ?? null;
+          const lo = j.longitude ?? j.lng ?? j.lon ?? m.longitude ?? null;
+          if (la != null && lo != null) {
+            const sm = require('../components/BoraMap').chatyyStaticMap(la, lo, { zoom: 14, dark: false, pin: !live });
+            if (sm && sm.api) mapThumb = { kind: 'map', uris: [sm.api] };
+          }
+        }
+      } catch { mapThumb = null; }
+      return { Icon: IconMapPin, label: live ? tr('chatConv.liveLocation', 'Localização ao vivo') : (addr || tr('chatConv.location', 'Localização')), lines: 1, thumb: mapThumb };
     }
     case 'contact': {
       const j = (m.contact && typeof m.contact === 'object') ? m.contact : (_rtJSON(m.content) || {});
@@ -5384,9 +5434,8 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
           </View>
           <TouchableOpacity
             onPress={() => {
-              const url = `https://www.google.com/maps/search/?api=1&query=${numLat},${numLng}`;
-              if (Platform.OS === 'web') { try { window.open(url, '_blank'); } catch {} }
-              else Linking.openURL(url).catch(() => {});
+              // [2026-10-15 native-location] Apple Maps (iOS) / geo: (Android) — sem Google.
+              try { require('../services/openLink').openInMaps(numLat, numLng, ''); } catch {}
             }}
             style={{ padding: 8 }}
             accessibilityLabel={t('chatConv.openMaps') || 'Abrir no Maps'}
@@ -5738,7 +5787,60 @@ function useAndroidKavGate(focused) {
 // ============================================================
 // POLL CREATOR MODAL
 // ============================================================
-function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null }) {
+// [2026-10-15 native-sheets-v2] Casca do menu ⋮ do cabeçalho. `native` = sheet
+// do SISTEMA (fitToContents, grabber, arrastar) com as MESMAS linhas; senão o
+// dropdown JS de sempre (Modal fade + painel ancorado no canto).
+function HeaderMenuShell({ visible, onClose, native, bg, bottomPad, panelStyle, children }) {
+  if (native) {
+    return (
+      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={bg}>
+        <View style={{ paddingTop: 22, paddingHorizontal: 8, paddingBottom: bottomPad }}>{children}</View>
+      </NativeSheet>
+    );
+  }
+  return (
+    <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={onClose}>
+        <Animated.View style={panelStyle}>
+          <Pressable onPress={e => e.stopPropagation()} style={{ flexShrink: 1 }}>
+            {children}
+          </Pressable>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// [2026-10-15 native-sheets-v2] Casca dos criadores (enquete/encontro): `native`
+// = conteúdo do sheet do SISTEMA (sem backdrop/alça/raio — o UIKit/BottomSheet
+// desenha; teclado via NativeSheetKeyboardView). Senão = sheet JS de sempre.
+function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, children }) {
+  if (native) {
+    const bottom = Math.max(0, (insets && insets.bottom) || 0);
+    return (
+      <NativeSheetKeyboardView absorb={bottom} style={{ backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 26, paddingBottom: bottom + 14 }}>
+        {children}
+      </NativeSheetKeyboardView>
+    );
+  }
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      enabled={kavEnabled}
+      style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
+      keyboardVerticalOffset={0}
+    >
+      <Pressable style={{ flex: 1 }} onPress={onClose} />
+      <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: (insets.bottom || 16) + 16, maxHeight: '88%' }}>
+        {/* Grab handle */}
+        <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 16 }} />
+        {children}
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false }) {
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState(['', '']);
   const [multipleChoice, setMultipleChoice] = useState(false);
@@ -5786,16 +5888,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, reply
   const canCreate = !!question.trim() && options.filter(o => o.trim()).length >= 2;
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      enabled={kavEnabled}
-      style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
-      keyboardVerticalOffset={0}
-    >
-      <Pressable style={{ flex: 1 }} onPress={onClose} />
-      <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: (insets.bottom || 16) + 16, maxHeight: '88%' }}>
-        {/* Grab handle */}
-        <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 16 }} />
+    <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets}>
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
           <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: ACCENT_TINT, alignItems: 'center', justifyContent: 'center' }}>
@@ -5850,15 +5943,14 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, reply
             : <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{t('chat.pollCreate') || 'Criar enquete'}</Text>
           }
         </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+    </CreatorSheetShell>
   );
 }
 
 // ============================================================
 // MEETUP CREATOR MODAL
 // ============================================================
-function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null }) {
+function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false }) {
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
   const [dateText, setDateText] = useState('');
@@ -5966,16 +6058,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
   const canCreate = !!title.trim() && !!dateText.trim();
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      enabled={kavEnabled}
-      style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
-      keyboardVerticalOffset={0}
-    >
-      <Pressable style={{ flex: 1 }} onPress={onClose} />
-      <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: (insets.bottom || 16) + 16, maxHeight: '88%' }}>
-        {/* Grab handle */}
-        <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 16 }} />
+    <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets}>
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
           <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: ACCENT_TINT, alignItems: 'center', justifyContent: 'center' }}>
@@ -6096,8 +6179,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
           }
         </TouchableOpacity>
         </ScrollView>
-      </View>
-    </KeyboardAvoidingView>
+    </CreatorSheetShell>
   );
 }
 
@@ -10196,12 +10278,30 @@ function ChatConversationInner() {
       const local = _chatOrder().isTimeOrdered(conversationId) ? null : require('../services/sqliteStore').getMessagesAroundSync?.(conversationId, numericId, 30, 10);
       if (Array.isArray(local) && local.length > 0 && spliceAndScroll(local)) return;
     } catch {}
+    // [reply-v2] indicador quando o servidor demora + aviso se a original não existe mais.
+    const _v2 = _replyV2On();
+    let _ldShown = false;
+    const _ldTimer = _v2 ? setTimeout(() => {
+      _ldShown = true;
+      try { setScheduleToast(_rtTr(t, 'chatConv.loadingOriginal', 'Carregando mensagem original…')); } catch {}
+    }, 250) : null;
+    let _ok = false;
     try {
       const r = await api.chatLoadAround?.(conversationId, numericId, 30, 10);
-      spliceAndScroll(r?.data?.messages);
+      const _sl = r?.data?.messages;
+      _ok = spliceAndScroll(_sl) || (Array.isArray(_sl) && _sl.some(m => m && String(m.id) === targetId));
     } catch (e) {
       // Best-effort — silent on failure (no banner spam for a tap miss).
       try { console.warn?.('[safeScrollToMsg] load_around failed:', e?.message || e); } catch {}
+    }
+    if (_ldTimer) clearTimeout(_ldTimer);
+    if (_v2) {
+      try {
+        if (!_ok) {
+          setScheduleToast(_rtTr(t, 'chatConv.originalUnavailable', 'A mensagem original não está mais disponível'));
+          setTimeout(() => setScheduleToast(''), 2200);
+        } else if (_ldShown) setScheduleToast('');
+      } catch {}
     }
   }, [conversationId]);
 
@@ -11064,11 +11164,11 @@ function ChatConversationInner() {
   // RECEBIDA = cinza claro #EEEEF0 (claro) / #1C1C1E (escuro). Fundo da
   // conversa = branco puro / preto puro. Contraste AA: texto ≥ 12:1; meta
   // (hora/✓) ≥ 4.5:1 nas 4 combinações.
-  const ownBubbleBg = isDark ? '#333336' : '#111111';
+  let ownBubbleBg = isDark ? '#333336' : '#111111'; // [2026-10-15 native-wallpaper] let: tema pode derivar (após wallpaperColor)
   const otherBubbleBg = isDark ? '#1C1C1E' : '#EEEEF0';
   const chatWallBg = isDark ? '#000000' : '#FFFFFF';
-  const ownTextColor = isDark ? '#F5F5F7' : '#FFFFFF';
-  const ownMetaColor = isDark ? 'rgba(245,245,247,0.62)' : 'rgba(255,255,255,0.62)';
+  let ownTextColor = isDark ? '#F5F5F7' : '#FFFFFF';
+  let ownMetaColor = isDark ? 'rgba(245,245,247,0.62)' : 'rgba(255,255,255,0.62)';
   const otherMetaColor = isDark ? 'rgba(235,235,245,0.55)' : 'rgba(60,60,67,0.74)';
   // Tinta de destaque dentro da bolha RECEBIDA (links/ícones/menções). Antes
   // era colors.primary (#111 nos DOIS temas) → sumia no escuro.
@@ -13293,6 +13393,12 @@ function ChatConversationInner() {
   const wallpaperColor = (perConvWallpaper && perConvWallpaper !== '__global__')
     ? perConvWallpaper
     : (chatyySettings.wallpaper || wallpaperDefaultPref || 'none');
+  // [2026-10-15 native-wallpaper] tema colorido → bolhas próprias derivadas
+  // (P&B continua o padrão: 'none', cores/fotos e temas mono não tingem).
+  {
+    const _wpb = _wpBubbleFor(wallpaperColor, isDark);
+    if (_wpb) { ownBubbleBg = _wpb.bg; ownTextColor = _wpb.text; ownMetaColor = _wpb.meta; }
+  }
   const [showWallpaperPicker, setShowWallpaperPicker] = _useStateT(false);
   const [showHeaderMenu, setShowHeaderMenu] = _useStateT(false);
   // [2026-10-10 contact-info] Menu ⋮ enxuto: atalhos rápidos + "Mais" (sub-lista).
@@ -13558,20 +13664,22 @@ function ChatConversationInner() {
   };
 
   // Report user — opens reason picker modal
-  const handleReportUser = (email, messageId = null) => {
+  // [2026-10-15 native-sheets-v2] fromModal: chamadores = menu de contexto / menu ⋮
+  // (<Modal> RN descendo) → o sheet nativo espera (iOS). Info do contato já espera.
+  const handleReportUser = (email, messageId = null, fromModal = true) => {
     if (!email) return;
     setReportTargetEmail(email);
     setReportMessageId(messageId);
-    setShowReportModal(true);
+    afterRNModal(() => setShowReportModal(true), fromModal);
   };
 
   const submitReport = async (reason) => {
     setShowReportModal(false);
     try {
       await api.chatReportUser(reportTargetEmail, reason, reportMessageId);
-      safeAlert(t('chat.userReported'));
+      runAfterNativeSheet(() => safeAlert(t('chat.userReported'))); // [native-sheets-v2] alerta só depois do sheet descer
     } catch (e) {
-      safeAlert(t('common.error'), e.message || 'Failed to report user');
+      runAfterNativeSheet(() => safeAlert(t('common.error'), e.message || 'Failed to report user'));
     }
     setReportTargetEmail('');
     setReportMessageId(null);
@@ -18832,6 +18940,8 @@ function ChatConversationInner() {
       _pending: true,
       _client_id: msgId,
       effect: stagedEffect || null,
+      // [responder-privado 2026-10-15] citação de outra conversa já na bolha otimista
+      ...((!replyId && !(e2eEnabled && e2eKeys?.v4)) ? (() => { try { const q = require('../utils/privateReplyQuote').optimisticExtQuoteText(replyTo); return q ? { reply_quote_text: q } : {}; } catch { return {}; } })() : {}),
     };
     setMessages(prev => [...prev, optimisticMsg]);
     // Sender also gets the screen overlay so the effect feels confirmed.
@@ -18871,6 +18981,7 @@ function ChatConversationInner() {
     if (stagedEffect) _outboxSendOpts.effect = stagedEffect;
     if (sealedSenderRef.current) _outboxSendOpts.sealed = true;
     if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _outboxSendOpts.replyQuoteText = replyTo.quoteText;
+    if (!(e2eEnabled && e2eKeys?.v4)) { const _xq = require('../utils/privateReplyQuote').extSendOpts(replyTo); if (_xq) _outboxSendOpts.replyExt = _xq; } // [responder-privado 2026-10-15]
     let _outboxReady = Promise.resolve();
     if (OUTBOX_V2_ONLY) {
       _outboxReady = (async () => {
@@ -19219,6 +19330,7 @@ function ChatConversationInner() {
       const _sendOpts = {};
       // [2026-10-09 e2ee v4] Citação em texto puro NUNCA sai numa conversa cifrada.
       if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _sendOpts.replyQuoteText = replyTo.quoteText;
+      if (!(e2eEnabled && e2eKeys?.v4)) { const _xq = require('../utils/privateReplyQuote').extSendOpts(replyTo); if (_xq) _sendOpts.replyExt = _xq; } // [responder-privado 2026-10-15]
       if (stagedEffect) _sendOpts.effect = stagedEffect;
       // Sealed-sender (Signal-mode metadata hiding) — when the user has the
       // privacy toggle on, every send goes out with `sealed=true` so the
@@ -23842,7 +23954,7 @@ function ChatConversationInner() {
       labels: { seeAll: t('chat.nprofile.seeAll') || 'Ver tudo', empty: t('chat.nprofile.empty') || 'Nada por aqui ainda' },
       maxItems: 9,
       onItem: (tab, key) => {
-        if (tab === 'links') { try { Linking.openURL(key); } catch {} return; }
+        if (tab === 'links') { try { require('../services/openLink').openLink(key, { router, colors }); } catch {} return; } // [2026-10-15 native-browser]
         go(() => setShowMediaGallery(true));
       },
       onSeeAll: () => go(() => setShowMediaGallery(true)),
@@ -24324,10 +24436,13 @@ function ChatConversationInner() {
   };
 
   const handleForward = async (msg) => {
+    // [2026-10-15 native-sheets-v2] Vindo do menu de contexto (<Modal> RN): o sheet
+    // nativo só pode subir depois que o Modal desceu (iOS) — afterRNModal.
+    const _fromCtx = !!selectedMsg;
     setSelectedMsg(null);
     setForwardSearch('');
     setForwardSelected(new Set());
-    setForwardMsg(msg);
+    afterRNModal(() => setForwardMsg(msg), _fromCtx);
     setForwardLoading(true);
     try {
       const r = await api.chatConversations();
@@ -25584,7 +25699,9 @@ function ChatConversationInner() {
   // até a recarga da janela (history_imported) substituir por id → aqui o sintético vira o membro
   // que NÃO importou, só quando dá para saber sem ambiguidade (um único remetente real nas importadas).
   const reversedMessages = useMemo(() => {
-    const arr = [...messagesWithSeparators].reverse();
+    let arr = [...messagesWithSeparators].reverse();
+    // [responder-privado 2026-10-15] citação de outra conversa ({"xq"...}) → reply_to sintético (JS + nativa)
+    try { arr = require('../utils/privateReplyQuote').applyExtQuotes(arr); } catch {}
     if (conversationType === 'group') return arr;
     try {
       const _syn = (m) => _chatOrder().isImportedMsg(m) && /@import\.chatyy\.invalid$/i.test(String(m.sender_email || ''));
@@ -26799,6 +26916,7 @@ function ChatConversationInner() {
     // [2026-10-07 flashlist] distance from the NEWEST message, engine-agnostic
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
     const _distLatest = threadScroll.distanceFromLatest(e);
+    _wpNotifyScroll(_distLatest); // [2026-10-15 native-wallpaper] rolagem → passo do gradiente (acumula ~420 pt)
     const _prevDistLatest = threadScrollStateRef.current.lastDistance || 0; // [2026-10-14 grupo-rajada]
     threadScrollStateRef.current.lastDistance = _distLatest; // [2026-10-08 chat-gaps2] jumpToLatest
     _sendMotionState.atBottom = _distLatest <= 120; // [2026-10-08 send-motion] recebida só anima no fim
@@ -31901,7 +32019,7 @@ function ChatConversationInner() {
                   // when the target row isn't mounted, which broke jumping
                   // to old replies in long threads.
                   const targetId = msg.reply_to?.id;
-                  if (!targetId) return;
+                  if (!targetId) { try { require('../utils/privateReplyQuote').openExtSource(msg.reply_to); } catch {} return; } // [responder-privado 2026-10-15]
                   // Tactile cue on jump — parity with swipe-reply / long-press /
                   // double-tap, which all buzz. Makes the quote feel tappable.
                   try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
@@ -32202,7 +32320,7 @@ function ChatConversationInner() {
                     const onPress = () => {
                       try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
                       if (btn.url && /^https?:/i.test(btn.url)) {
-                        try { Linking.openURL(btn.url); } catch {}
+                        try { require('../services/openLink').openLink(btn.url, { router, colors }); } catch {} // [2026-10-15 native-browser]
                       } else if (btn.callback_data) {
                         // For inline callback_data: fire-and-forget hint to
                         // external bot servers via the WS bot_callback event.
@@ -32587,8 +32705,42 @@ function ChatConversationInner() {
     selection: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)', highlight: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)',
     failed: '#E5484D',
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [isDark, colors.textTertiary]);
-  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || threadListData.length === 0)); // vazio → estado vazio JS
+  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema
+  // [2026-10-15 native-store] foto da conversa no store NATIVO (services/nativeChatStore):
+  // a lista nativa pinta a última janela sem esperar o 1º applyRows. n = chave mais
+  // nova que o JS tem (foto mais velha que isso não é pintada). _nlStoreHas: cache JS
+  // ainda vazio + foto existe → monta a lista nativa mesmo assim (só enquanto carrega).
+  const _nlStoreHasRef = useRef({ cid: undefined, has: false });
+  if (_nlStoreHasRef.current.cid !== conversationId) {
+    let _has = false;
+    try { if (Platform.OS !== 'web' && (!threadListData || threadListData.length === 0)) _has = !!require('../services/nativeChatStore').threadNewestSync(currentEmail, conversationId); } catch {}
+    _nlStoreHasRef.current = { cid: conversationId, has: _has };
+  }
+  const _nlStoreHas = !!(_nlStoreHasRef.current.has && loading);
+  const _nlStoreNewest = (() => { try { const d = threadListData; return d && d.length ? msgKeyExtractor(d[d.length - 1]) : ''; } catch { return ''; } })();
+  const _nlStore = useMemo(() => (Platform.OS === 'web' || !currentEmail || !conversationId || isSavedMode ? undefined
+    : { a: currentEmail, c: String(conversationId), x: `${language || ''}|${conversationType || ''}`, n: _nlStoreNewest }),
+  [currentEmail, conversationId, isSavedMode, language, conversationType, _nlStoreNewest]);
+  // [2026-10-15 native-store fase 3] registro da CASCA LEVE (services/convShell):
+  // o que a casca precisa p/ desenhar igual a esta tela no próximo abrir.
+  const _nlShellInfo = useMemo(() => (Platform.OS === 'web' ? undefined : {
+    pad: composerBottomPad, vn: !!VideoNoteRecorder, wp: wallpaperColor || 'none',
+    name: conversationName || '', type: conversationType || '',
+    members: conversationType === 'group' ? (members || []).slice(0, 8).map(m => ({ email: m && m.email, display_name: m && m.display_name })) : undefined,
+  }), [composerBottomPad, wallpaperColor, conversationName, conversationType, members]);
+  const _shellHdrRef = useRef(null);
+  const _onShellHdrLayout = useCallback(() => {
+    if (Platform.OS === 'web' || !currentEmail || !conversationId) return;
+    const v = _shellHdrRef.current;
+    if (!v || typeof v.measureInWindow !== 'function') return;
+    try {
+      v.measureInWindow((x, y, w, h) => {
+        if (!(h > 0)) return;
+        try { require('../services/convShell').recordShell(currentEmail, conversationId, { hb: Math.round(y + h) }); } catch {}
+      });
+    } catch {}
+  }, [currentEmail, conversationId]);
+  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas))); // vazio → estado vazio JS (salvo foto nativa enquanto carrega)
   const _nlActRef = useRef(null);
   _nlActRef.current = { handleLongPress, handleDoubleTap, handleMessageInfo, toggleSelection, handleReact, safeScrollToMsg, selectionMode,
     promptFailed: _promptFailedMsg, tapRetry: _tapRetryFailed, smartAction: _onSmartAction }; // [fase 2]
@@ -32734,7 +32886,7 @@ function ChatConversationInner() {
       }
       case 'audio': _nlToggleAudio(target); return;
       case 'file': _nlOpenFile(target); return;
-      case 'reply': if (target.reply_to && target.reply_to.id) A.safeScrollToMsg({ id: target.reply_to.id }); return;
+      case 'reply': if (target.reply_to && target.reply_to.id) A.safeScrollToMsg({ id: target.reply_to.id }); else if (target.reply_to && target.reply_to._ext) { try { require('../utils/privateReplyQuote').openExtSource(target.reply_to); } catch {} } return; // [responder-privado 2026-10-15]
       case 'reaction': {
         const emoji = url;
         if (!emoji) return;
@@ -32765,7 +32917,8 @@ function ChatConversationInner() {
             return;
           }
           if (/chatyy\.com\.br\/docs\//.test(u)) { router.push({ pathname: '/documentos-viewer', params: { url: u } }); return; }
-          if (/^https?:\/\//i.test(u)) Linking.openURL(u).catch(() => {});
+          // [2026-10-15 native-browser] links do Chatyy → tela do app; resto → SFSafariViewController/Custom Tab; mailto/tel → sistema.
+          if (/^(https?:\/\/|www\.|mailto:|tel:|sms:)/i.test(u)) require('../services/openLink').openLink(u, { router, colors });
         } catch {}
         return;
       }
@@ -32816,6 +32969,29 @@ function ChatConversationInner() {
     handleTranslate, handleMessageInfo, handleStarMessage, handleSaveMedia, handleReportUser, handleDelete,
     setMessages, mapKeep: _mapKeep, Haptics, setSelectionMode, toggleSelection, setStickerSheet,
     setStickerMakerSrc, router, api, t, mt: _mt, safeAlert, emailToDisplayName, mountedRef, setAudioTranscription,
+    conversationId, // [responder-privado 2026-10-15]
+    // [reply-v2] "Citar trecho" no seletor nativo (false = usar o modal JS)
+    nativeQuote: (msg) => {
+      if (!_replyV2On() || !msg) return false;
+      const L = flashListRef.current;
+      if (!L || typeof L.showQuotePicker !== 'function') return false;
+      const p = L.showQuotePicker({
+        text: String(msg.content || ''),
+        title: _rtTr(t, 'chatConv.quoteTitle', 'Citar trecho'),
+        hint: _rtTr(t, 'chatConv.quoteHint', 'Arraste as alças para escolher o trecho'),
+        confirm: _rtTr(t, 'chatConv.quote', 'Citar'),
+        cancel: _rtTr(t, 'common.cancel', 'Cancelar'),
+        dark: isDark ? 1 : 0, max: 240,
+      });
+      if (!p || typeof p.then !== 'function') return false;
+      p.then((sel) => {
+        if (sel === null) { setQuoteSelectModal({ msg, draft: '' }); return; }
+        if (!sel) return;
+        setReplyTo({ ..._replyTargetOf(msg), quoteText: String(sel).slice(0, 240) });
+        try { inputRef.current?.focus(); } catch {}
+      }, () => {});
+      return true;
+    },
   });
   const _nlCtxOpen = (key, target) => {
     if (!key || !target || target.type === 'system') return false;
@@ -33172,7 +33348,7 @@ function ChatConversationInner() {
         </View>
       ) : (
       /* Header with presence — gradient on web for premium feel */
-      <View style={[styles.header, {
+      <View ref={_shellHdrRef} onLayout={_onShellHdrLayout} style={[styles.header, {
         backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
@@ -33360,7 +33536,10 @@ function ChatConversationInner() {
       )}
       {wallpaperColor !== 'none' && (
         <View style={styles.wallpaper} pointerEvents="none">
-          <WallpaperBackground value={wallpaperColor} isDark={isDark} />
+          {/* [2026-10-15 native-wallpaper] antigos → WallpaperBackground (idêntico);
+              'wp2:' → view nativa (fallback JS). pulseKey = msg mais nova → 1 passo do gradiente. */}
+          <ChatWallpaper value={wallpaperColor} isDark={isDark}
+            pulseKey={threadListData && threadListData.length ? msgKeyExtractor(threadListData[threadListData.length - 1]) : ''} />
         </View>
       )}
       {/* Vanish mode purple gradient overlay */}
@@ -33980,10 +34159,16 @@ function ChatConversationInner() {
                 } catch {}
               }
               if (lat && lng) {
-                const url = Platform.OS === 'ios'
-                  ? `http://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent(addr || 'Localização')}`
-                  : `https://maps.google.com/?q=${lat},${lng}`;
-                Linking.openURL(url).catch(() => {});
+                // [2026-10-15 native-location] abre o visualizador NATIVO do app (MapKit/MapLibre:
+                // rota, distância, ao vivo) como o resto do chat; kill switch → app de mapas.
+                if (globalThis.__chatyy_native_location !== false && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))) {
+                  setMapModalData({ lat: Number(lat), lng: Number(lng), label: addr || (t('chatConv.location') || 'Localização') });
+                } else {
+                  const url = Platform.OS === 'ios'
+                    ? `http://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent(addr || 'Localização')}`
+                    : `https://maps.google.com/?q=${lat},${lng}`;
+                  Linking.openURL(url).catch(() => {});
+                }
               }
               return;
             }
@@ -34207,7 +34392,7 @@ function ChatConversationInner() {
             if (!msg) return;
             switch (action) {
               case 'reply': setReplyTo(_replyTargetOf(msg)); try { inputRef.current?.focus(); } catch {} break;
-              case 'forward': setForwardMsg(msg); break;
+              case 'forward': handleForward(msg); break; // [2026-10-15 native-sheets-v2] carrega conversas
               case 'star': handleStarMessage?.(msg); break;
               case 'delete': handleDelete?.(msg?.id); break;
               case 'react':
@@ -34385,6 +34570,8 @@ function ChatConversationInner() {
           onViewableItemsChanged={onViewableItemsChanged}
           onFallback={_nlOnFallback}
           stickyDate={_nlStickyCfg}
+          storeConv={_nlStore}
+          shellInfo={_nlShellInfo}
         />
         {/* digitando… fica logo acima do composer (a lista invertida mantém o fim) */}
         {listHeader}
@@ -34571,8 +34758,9 @@ function ChatConversationInner() {
       </Modal>)}</LazyMount>
 
       {/* Contact Picker (WhatsApp-style) */}
-      <LazyMount when={showContactPicker}>{(_lmV) => (<Modal visible={_lmV} animationType="slide" onRequestClose={() => setShowContactPicker(false)}>
-        <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
+      {/* [2026-10-15 native-sheets-v2] Nativo: sheet grande do sistema (arrastar p/ fechar, fundo escala); web = Modal tela cheia de sempre. */}
+      <LazyMount when={showContactPicker}>{(_lmV) => (<NativeSheetModal visible={_lmV} animationType="slide" onRequestClose={() => setShowContactPicker(false)} detents={[1]} backgroundColor={isDark ? '#0b0b0b' : '#ffffff'}>
+        <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={{ flex: 1, backgroundColor: colors.background, paddingTop: USE_NATIVE_SHEETS ? 12 : insets.top }}>
           {/* Header */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -34680,8 +34868,8 @@ function ChatConversationInner() {
               </View>
             }
           />
-        </View>
-      </Modal>)}</LazyMount>
+        </NativeSheetKeyboardView>
+      </NativeSheetModal>)}</LazyMount>
 
       {/* Floating "Citar" pill — web-only. Appears above the user's text
           selection so they can quote an arbitrary substring of a bubble
@@ -36077,6 +36265,24 @@ function ChatConversationInner() {
               italic: !_q && !!_d.italic,
               thumbUri: _u ? _encMediaUri(_u) : null,
               thumbRound: !!(_d.thumb && _d.thumb.kind === 'round'),
+              // [reply-v2] cor do remetente (grupo), ícone por tipo, 1 linha, teclado abre.
+              ...(_replyV2On() ? (() => {
+                const _x = { lines: 1, focus: true, pop: true, icon: _q ? 'quote' : _rtIconKind(_d.Icon) };
+                if (_q) _x.key = 'r' + String(replyTo.id ?? '') + ':' + String(replyTo.quoteText).length;
+                try {
+                  const _em = String(replyTo?.sender_email || '');
+                  if (conversationType === 'group' && _em && _em.toLowerCase() !== String(currentEmail || '').toLowerCase()) {
+                    _x.color = require('../components/chat/argb').toArgb(senderColorFromEmail(_em));
+                  }
+                } catch {}
+                try {
+                  if (Platform.OS === 'android' && !_q && _d.Icon && _x.icon) {
+                    const _n = require('../components/chat/nativeNodes').icon(_d.Icon, { s: 16, c: '#000000' });
+                    if (_n && _n.ps) { _x.iconVb = Number(_n.vb) || 24; _x.iconPaths = _n.ps.map((p) => ({ d: String(p.d || ''), fill: p.f ? 1 : 0, w: Number(p.w) || 0 })).filter((p) => p.d); }
+                  }
+                } catch {}
+                return _x;
+              })() : null),
             };
           } catch { return null; }
         })() : null;
@@ -36667,8 +36873,9 @@ function ChatConversationInner() {
 
       {/* Poll Creator Modal — only mounted when open (lazy) */}
       {showPollCreator && (
-        <Modal visible transparent animationType="slide" onRequestClose={() => setShowPollCreator(false)}>
+        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowPollCreator(false)} detents={[1]} backgroundColor={colors.surface}>
           <PollCreatorModal
+            native={USE_NATIVE_SHEETS}
             colors={colors}
             t={t}
             conversationId={conversationId}
@@ -36676,13 +36883,14 @@ function ChatConversationInner() {
             onClose={() => setShowPollCreator(false)}
             onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowPollCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
-        </Modal>
+        </NativeSheetModal>
       )}
 
       {/* Meetup Creator Modal — only mounted when open (lazy) */}
       {showMeetupCreator && (
-        <Modal visible transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)}>
+        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)} detents={[1]} backgroundColor={colors.surface}>
           <MeetupCreatorModal
+            native={USE_NATIVE_SHEETS}
             colors={colors}
             t={t}
             conversationId={conversationId}
@@ -36690,7 +36898,7 @@ function ChatConversationInner() {
             onClose={() => setShowMeetupCreator(false)}
             onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
-        </Modal>
+        </NativeSheetModal>
       )}
 
       {/* Playlist Creator Modal — only mounted when open (lazy) */}
@@ -36990,7 +37198,7 @@ function ChatConversationInner() {
                     const m = selectedMsg;
                     setSelectedMsg(null);
                     const _sid = Number(m?.id);
-                    setStickerSheet({ messageId: Number.isFinite(_sid) && _sid > 0 ? _sid : null, url: m?.file_url || m?.content || '' });
+                    afterRNModal(() => setStickerSheet({ messageId: Number.isFinite(_sid) && _sid > 0 ? _sid : null, url: m?.file_url || m?.content || '' })); // [native-sheets-v2] menu (Modal RN) descendo
                   }}
                   activeOpacity={0.6}
                 >
@@ -37075,6 +37283,8 @@ function ChatConversationInner() {
                         content: previewSource,
                         quoteText: previewSource,
                         type: srcMsg.type || 'text',
+                        // [responder-privado 2026-10-15] origem → servidor monta a citação cruzada
+                        ...(require('../utils/privateReplyQuote').extSourceOf(srcMsg, conversationId)),
                       };
                       // chatCreate upserts the DM via direct_key dedup —
                       // returns existing id if a conversation already exists.
@@ -38121,7 +38331,9 @@ function ChatConversationInner() {
               const mid = item?.messageId || item?.id || mv.messageId;
               const msg = messages.find(m => String(m.id) === String(mid));
               setMediaViewer(v => ({ ...v, visible: false }));
-              if (msg) setForwardMsg(msg);
+              // [2026-10-15 native-sheets-v2] visualizador = <Modal> RN descendo → afterRNModal;
+              // handleForward carrega as conversas (antes abria a lista vazia/velha).
+              if (msg) afterRNModal(() => handleForward(msg));
             }}
             t={t}
           />
@@ -38602,7 +38814,7 @@ function ChatConversationInner() {
                       <GroupDivider colors={colors} />
                       <GroupRow colors={colors} Icon={IconFlag} titleColor={colors.error || '#EF4444'}
                         title={`${t('chat.reportUser') || 'Denunciar'} ${peerName}`.trim()}
-                        onPress={() => contactInfoGo(() => handleReportUser(peer))} />
+                        onPress={() => contactInfoGo(() => handleReportUser(peer, null, false))} />
                       <GroupDivider colors={colors} />
                       <GroupRow colors={colors} Icon={IconLogOut} titleColor={colors.error || '#EF4444'}
                         title={t('chatConv.reportAndLeave') || 'Reportar e sair'}
@@ -38650,10 +38862,14 @@ function ChatConversationInner() {
 
       {/* Header More Menu — WhatsApp/Telegram-grade polish: spring entrance,
           group dividers, tinted icon containers, premium AI highlight. */}
-      <LazyMount when={showHeaderMenu}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => setShowHeaderMenu(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setShowHeaderMenu(false)}>
-          <Animated.View
-            style={{
+      {/* [2026-10-15 native-sheets-v2] Nativo: sheet do sistema (mesmas linhas); web/kill-switch: dropdown de sempre. */}
+      <LazyMount when={showHeaderMenu}>{(_lmV) => (<HeaderMenuShell
+        visible={_lmV}
+        onClose={() => setShowHeaderMenu(false)}
+        native={USE_NATIVE_SHEETS}
+        bg={colors.surface}
+        bottomPad={nativeSheetBottomPad(insets, 10)}
+        panelStyle={{
               position: 'absolute', top: insets.top + 56, right: 10,
               backgroundColor: colors.surface, borderRadius: 16,
               minWidth: 284, padding: 8, overflow: 'hidden',
@@ -38672,8 +38888,7 @@ function ChatConversationInner() {
                 android: { elevation: 14 },
                 web: { boxShadow: '0 8px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08)' },
               }),
-            }}
-          >
+            }}>
           {/* Tap-inside guard: blocks the backdrop Pressable from collapsing
               the modal when the user just wanted to scroll the list. Without
               `flex:1` here the inner ScrollView never got a measurable
@@ -38681,7 +38896,7 @@ function ChatConversationInner() {
               hidden — user couldn't reach items past the visible region.
               Now the ScrollView itself owns the height (flex:1 inside the
               capped Animated.View) and accepts vertical drag gestures. */}
-          <Pressable onPress={e => e.stopPropagation()} style={{ flexShrink: 1 }}>
+
           {/* Header label — tiny uppercase title for visual context, like
               iOS share sheets. Subtle and small so it doesn't compete. */}
           {!headerMenuMore && (
@@ -38740,7 +38955,7 @@ function ChatConversationInner() {
                   { Icon: IconTrash, danger: true, label: t('chatConv.clearChat') || 'Limpar conversa', onPress: () => { closeMenu(); confirmClearHistory(); }},
                 ]},
                 ...(isDirectConv ? [{ divider: true, items: [
-                  { Icon: IconFlag, danger: true, label: t('chat.reportUser') || 'Denunciar', onPress: () => { closeMenu(); handleReportUser(params.email || ''); }},
+                  { Icon: IconFlag, danger: true, label: t('chat.reportUser') || 'Denunciar', onPress: () => { closeMenu(); handleReportUser(params.email || '', null, !USE_NATIVE_SHEETS); }},
                   iBlockedThem
                     ? { Icon: IconAlertTriangle, label: t('chat.unblockUser') || 'Desbloquear', onPress: () => { closeMenu(); handleUnblockUser(params.email || ''); }}
                     : { Icon: IconAlertTriangle, danger: true, label: t('chat.blockUser') || 'Bloquear', onPress: () => { closeMenu(); handleBlockUser(params.email || ''); }},
@@ -38785,6 +39000,9 @@ function ChatConversationInner() {
                       }}
                       onPress={() => {
                         try { Haptics.selectionAsync(); } catch {}
+                        // [2026-10-15 native-sheets-v2] Sheet do sistema: a ação (que abre
+                        // Modal/sheet/alerta) roda depois que o sheet desceu.
+                        if (USE_NATIVE_SHEETS && !item.keepOpen) { closeMenu(); runAfterNativeSheet(() => item.onPress?.()); return; }
                         item.onPress?.();
                       }}
                       activeOpacity={0.6}
@@ -38818,19 +39036,20 @@ function ChatConversationInner() {
               return out;
             })()}
           </ScrollView>
-          </Pressable>
-          </Animated.View>
-        </Pressable>
-      </Modal>)}</LazyMount>
+      </HeaderMenuShell>)}</LazyMount>
 
       {/* Forward picker — WhatsApp-style: avatars, recents on top, search */}
-      <LazyMount when={!!forwardMsg}>{(_lmV) => (<Modal
+      <LazyMount when={!!forwardMsg}>{(_lmV) => (<NativeSheetModal
         visible={_lmV}
         transparent
         animationType="slide"
         onRequestClose={() => setForwardMsg(null)}
+        onDismiss={() => { setForwardMsg(null); setForwardSelected(new Set()); }}
+        detents={[1]}
+        backgroundColor={colors.background}
       >
-        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+        {/* [2026-10-15 native-sheets-v2] Nativo: sheet grande do sistema (fundo escala/escurece, arrastar 1:1); teclado da busca via NativeSheetKeyboardView. */}
+        <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={USE_NATIVE_SHEETS ? { paddingTop: 14 } : [styles.forwardModal, { backgroundColor: colors.background }]}>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => { setForwardMsg(null); setForwardSelected(new Set()); }} style={{ marginRight: 12 }}>
               <IconX size={22} color={colors.text} />
@@ -39022,8 +39241,8 @@ function ChatConversationInner() {
               </View>
             );
           })()}
-        </View>
-      </Modal>)}</LazyMount>
+        </NativeSheetKeyboardView>
+      </NativeSheetModal>)}</LazyMount>
       {/* Group Info Modal */}
       <LazyMount when={showGroupInfo}>{(_lmV) => (<Modal
         visible={_lmV}
@@ -39161,7 +39380,7 @@ function ChatConversationInner() {
                   tint="#F59E0B"
                   title={`${pendingMembers.length} ${pendingMembers.length === 1 ? (t('chatConv.pendingRequestSingular') || 'solicitação pendente') : (t('chatConv.pendingRequestsPlural') || 'solicitações pendentes')}`}
                   subtitle={t('chatConv.pendingTapToReview') || 'Toque para revisar'}
-                  onPress={() => { refreshPendingMembers(); groupInfoGo(() => setShowPendingModal(true), true); }} // [2026-10-07 group-admin]
+                  onPress={() => { refreshPendingMembers(); groupInfoGo(() => setShowPendingModal(true), !USE_NATIVE_SHEETS); }} // [2026-10-07 group-admin]
                   right="chevron"
                 />
               </GroupCard>
@@ -39902,9 +40121,11 @@ function ChatConversationInner() {
 
       {/* Pending Group Join Requests — admin reviews each requester
           and approves or rejects. List refreshes optimistically on action. */}
-      <LazyMount when={showPendingModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowPendingModal(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowPendingModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+      {/* [2026-10-15 native-sheets-v2] Solicitações pendentes: sheet do sistema no nativo (Info do grupo fecha antes — groupInfoGo). */}
+      <LazyMount when={showPendingModal}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowPendingModal(false)} animationType="slide"
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        panelStyle={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }}
+        nativePanelStyle={{ paddingBottom: nativeSheetBottomPad(insets, 20) }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <IconUserPlus size={22} color="#f59e0b" />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -39962,9 +40183,7 @@ function ChatConversationInner() {
                 })}
               </ScrollView>
             )}
-          </Pressable>
-        </Pressable>
-      </Modal>)}</LazyMount>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Slow Mode Picker */}
       <LazyMount when={showSlowModePicker}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowSlowModePicker(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }}>
@@ -40520,9 +40739,10 @@ function ChatConversationInner() {
       />)}</LazyMount>
 
       {/* Report User Modal */}
-      <LazyMount when={showReportModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => setShowReportModal(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowReportModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 20, width: 300 }} onPress={e => e.stopPropagation()}>
+      {/* [2026-10-15 native-sheets-v2] Motivo da denúncia: sheet do sistema no nativo; web = diálogo central de sempre. */}
+      <LazyMount when={showReportModal}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowReportModal(false)}
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+        panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, padding: 20, width: 300 }}>
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 4 }}>{t('chat.reportUser')}</Text>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 16 }}>{t('chat.reportConfirm')}</Text>
             {[
@@ -40542,9 +40762,7 @@ function ChatConversationInner() {
             <TouchableOpacity style={{ paddingVertical: 13, alignItems: 'center' }} onPress={() => setShowReportModal(false)}>
               <Text style={{ fontSize: 15, color: colors.textSecondary }}>{t('common.cancel')}</Text>
             </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>)}</LazyMount>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Wallpaper Picker Modal */}
       {/* [2026-10-07 native-maps] native viewer; falls back to MapModal (WebView) on old binaries/web */}
@@ -41679,6 +41897,171 @@ const _ChatListTabLazy = React.lazy(() => import('../components/ChatListTab'));
 const SPLIT_MIN_WIDTH = 1024;
 const SPLIT_LIST_WIDTH = 400;
 
+// ─── [2026-10-15 native-store fase 3] CASCA LEVE da conversa ───────────────
+// 1º frame: cabeçalho + lista NATIVA lendo a foto do store (pré-carregada no
+// pressIn da home) + composer nativo. A tela completa (ChatConversationInner,
+// inalterada) monta POR BAIXO depois da transição; quando a lista dela fica
+// pronta, a casca sai. Só entra com registro "simples" desta conversa
+// (services/convShell) e foto no store; senão = caminho de antes, sem wrapper.
+// Kill switch: globalThis.__chatyy_conv_light_shell = false.
+const _SHELL_PARAM_KEYS = new Set(['id', 'name', 'type', 'email', 'unread']);
+function _pickLightShell(params, acct, isDark, language, insetsTop) {
+  try {
+    const cs = require('../services/convShell');
+    if (!cs.lightShellEnabled()) return null;
+    const cid = params && params.id != null ? String(params.id) : '';
+    if (!cid || !acct) return null;
+    for (const k of Object.keys(params || {})) {
+      if (params[k] == null || params[k] === '') continue;
+      if (!_SHELL_PARAM_KEYS.has(k)) return null; // salto p/ mensagem, compartilhar, salvas… → tela de antes
+    }
+    if (params.unread != null && Number(params.unread) > 0) return null; // abre no divisor "não lidas"
+    const rec = cs.getShell(acct, cid);
+    if (!rec || !rec.list || !rec.info || rec.hb == null) return null;
+    if (Math.abs(Number(rec.frame.y) - Number(rec.hb)) > 2) return null; // havia faixa entre header e lista
+    if (Number(rec.frame.y) - (insetsTop || 0) > 120) return null;
+    if (!!rec.list.isDark !== !!isDark) return null;
+    const ty = String(params.type || rec.info.type || '');
+    if (rec.list.x !== `${language || ''}|${ty}`) return null; // rev da foto não bateria
+    if (!require('../services/nativeChatStore').threadNewestSync(acct, cid)) return null; // sem foto
+    return rec;
+  } catch { return null; }
+}
+
+function ConvLightShell({ rec, params, acct, colors, isDark, t, insets, onBack }) {
+  const L = rec.list; const I = rec.info || {}; const F = rec.frame;
+  const name = String(I.name || params.name || '');
+  const type = String(params.type || I.type || 'direct');
+  const stores = useMemo(() => ({ typing: _createValueStore(new Map()), presence: _createValueStore(null), at: { current: 0 } }), []);
+  const storeConv = useMemo(() => ({ a: acct, c: String(params.id), x: L.x, n: '' }), [acct, params.id, L.x]);
+  const peer = type === 'direct' ? (params.email || '') : null;
+  let composer = null;
+  try {
+    if (shouldUseNativeComposer()) {
+      composer = (
+        <NativeComposerBridge
+          fallback={() => null}
+          text=""
+          t={t}
+          isDark={isDark}
+          colors={colors}
+          placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
+          bottomInset={Number(I.pad) || 0}
+          showVideoNote={!!I.vn}
+        />
+      );
+    }
+  } catch { composer = null; }
+  const wall = (L.theme && L.theme.wall) || colors.background;
+  return (
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: wall }]}>
+      {I.wp && I.wp !== 'none' ? (
+        <View style={styles.wallpaper} pointerEvents="none"><WallpaperBackground value={I.wp} isDark={isDark} /></View>
+      ) : null}
+      <View style={[styles.header, {
+        backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+        paddingTop: insets.top + 6,
+      }]}>
+        <TouchableOpacity onPress={onBack} hitSlop={8} style={[styles.headerBtn, { width: 36 }, Platform.OS === 'ios' && { marginLeft: -4 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
+          {Platform.OS === 'ios'
+            ? <IconChevronLeft size={30} color={colors.text} />
+            : <IconArrowLeft size={24} color={colors.text} />}
+        </TouchableOpacity>
+        <View pointerEvents="none" style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44 }]}>
+          <View style={{ position: 'relative', width: 38, height: 38 }}>
+            <AvatarCircle name={name} email={peer || null} size={38} />
+          </View>
+          <ConvHeaderTitleStack
+            typingStore={stores.typing} conversationType={type} presenceStore={stores.presence} members={Array.isArray(I.members) ? I.members : []}
+            t={t} wsConnected={false} currentEmail={acct} presenceUpdatedAtRef={stores.at}
+            colors={colors} conversationName={name} e2eEnabled={false} advPrivEnabled={false}
+          />
+        </View>
+        <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={styles.headerBtn}><IconSearch size={22} color={colors.text} /></View>
+          <View style={styles.headerBtn}><IconPhone size={22} color={colors.text} /></View>
+          <View style={styles.headerBtn}><IconVideo size={24} color={colors.text} /></View>
+          <View style={[styles.headerBtn, { width: 36 }]}><IconMoreVert size={22} color={colors.text} /></View>
+        </View>
+      </View>
+      <View style={{ position: 'absolute', top: F.y, left: F.x || 0, width: F.w, height: F.h }}>
+        <ChatyyMessageList
+          shell
+          data={_SHELL_EMPTY}
+          ctx={_SHELL_EMPTY_CTX}
+          theme={L.theme}
+          fontSize={L.fontSize}
+          lineHeight={L.lineHeight}
+          bubbleRadius={L.bubbleRadius}
+          isDark={!!L.isDark}
+          keyboardDismissMode={L.keyboardDismissMode}
+          bottomInset={L.bottomInset}
+          topInset={L.topInset}
+          ctxMenu={!!L.ctxMenu}
+          stickyDate={L.stickyDate || undefined}
+          storeConv={storeConv}
+        />
+      </View>
+      {composer ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0 }}>{composer}</View> : null}
+    </View>
+  );
+}
+const _SHELL_EMPTY = [];
+const _SHELL_EMPTY_CTX = {};
+
+function ConvLightShellHost() {
+  const params = useLocalSearchParams();
+  const { user } = useAuth();
+  const { colors, isDark } = useTheme();
+  const { t, language } = useLanguage();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const navigation = useNavigation();
+  const acct = String(user?.email || '').trim().toLowerCase();
+  // Decidido UMA vez (montagem): casca ou caminho de antes.
+  const [rec] = useState(() => _pickLightShell(params, acct, isDark, language, insets.top));
+  const [full, setFull] = useState(!rec);
+  const [shellOn, setShellOn] = useState(!!rec);
+  const cid = params && params.id != null ? String(params.id) : '';
+
+  // tela completa monta depois do 1º frame da casca + fim da transição (ou 400 ms)
+  useEffect(() => {
+    if (full) return undefined;
+    let done = false; let r1 = 0; let r2 = 0; let tm = null; let unsub = null;
+    const go = () => { if (done) return; done = true; setFull(true); };
+    r1 = requestAnimationFrame(() => {
+      r2 = requestAnimationFrame(() => {
+        tm = setTimeout(go, 400);
+        try { unsub = navigation && navigation.addListener ? navigation.addListener('transitionEnd', go) : null; } catch { unsub = null; }
+      });
+    });
+    return () => { done = true; cancelAnimationFrame(r1); cancelAnimationFrame(r2); if (tm) clearTimeout(tm); try { unsub && unsub(); } catch {} };
+  }, [full, navigation]);
+
+  // tela completa pintou a lista → casca sai (próximo frame); teto de 1,5 s
+  useEffect(() => {
+    if (!full || !shellOn) return undefined;
+    let off = false; let raf = 0;
+    const drop = () => { if (off) return; off = true; raf = requestAnimationFrame(() => setShellOn(false)); };
+    let unsub = null;
+    try { unsub = require('../services/convShell').onFullReady(cid, drop); } catch {}
+    const tm = setTimeout(drop, 1500);
+    return () => { off = true; clearTimeout(tm); cancelAnimationFrame(raf); try { unsub && unsub(); } catch {} };
+  }, [full, shellOn, cid]);
+
+  const onBack = useCallback(() => { try { router.back(); } catch {} }, [router]);
+
+  if (!rec) return <ChatConversationInner />;
+  return (
+    <View style={{ flex: 1 }}>
+      {full ? <ChatConversationInner /> : null}
+      {shellOn ? <ConvLightShell rec={rec} params={params} acct={acct} colors={colors} isDark={isDark} t={t} insets={insets} onBack={onBack} /> : null}
+    </View>
+  );
+}
+
 export default function ChatConversationScreen() {
   const { width: _winW } = useWindowDimensions();
   const { colors, isDark } = useTheme();
@@ -41738,7 +42121,7 @@ export default function ChatConversationScreen() {
   const isSplit = Platform.OS === 'web'
     ? _winW >= SPLIT_MIN_WIDTH
     : isNativeTabletSplit(_winW);
-  if (!isSplit) return <ChatConversationInner />;
+  if (!isSplit) return <ConvLightShellHost />; // [native-store fase 3] casca leve (ou a tela de antes)
   return (
     <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.background }}>
       <View

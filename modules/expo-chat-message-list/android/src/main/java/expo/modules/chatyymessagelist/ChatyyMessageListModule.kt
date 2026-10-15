@@ -12,10 +12,11 @@ class ChatyyMessageListModule : Module() {
 
     // 3 = [native-ctxmenu] menu de contexto nativo (prop ctxMenu,
     //     showContextMenu/dismissContextMenu, onMenuAction/onReact/onMenuDismiss).
-    Function("apiVersion") { 3 }
+    // 4 = [native-store] prop `store` {a,c,r,n} + evento onStore; onReady traz src.
+    Function("apiVersion") { 4 }
 
     View(MLListView::class) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore")
 
       Prop("theme") { view: MLListView, v: Map<String, Any?>? -> view.setTheme(v ?: emptyMap()) }
       Prop("fontSize") { view: MLListView, v: Double? -> view.setFontSize(v) }
@@ -28,6 +29,7 @@ class ChatyyMessageListModule : Module() {
       Prop("topInset") { view: MLListView, v: Double? -> view.setInsets(null, v) }
       // [fase 2]
       Prop("stickyDate") { view: MLListView, v: Map<String, Any?>? -> view.setStickyDate(v) }
+      Prop("store") { view: MLListView, v: Map<String, Any?>? -> view.setStore(v) }
 
       OnViewDestroys { view: MLListView -> view.destroy() }
 
@@ -61,6 +63,11 @@ class ChatyyMessageListModule : Module() {
 
       AsyncFunction("dismissContextMenu") { view: MLListView ->
         view.dismissContextMenu()
+      }.runOnQueue(Queues.MAIN)
+
+      // [reply-v2] "Citar trecho" nativo → resolve com o trecho ("" = cancelou)
+      AsyncFunction("showQuotePicker") { _: MLListView, payload: Map<String, Any?>, promise: expo.modules.kotlin.Promise ->
+        MLQuotePicker.present(appContext.currentActivity, payload) { promise.resolve(it) }
       }.runOnQueue(Queues.MAIN)
 
       // [hero] frame atual da miniatura de uma mensagem (null = fora da tela)

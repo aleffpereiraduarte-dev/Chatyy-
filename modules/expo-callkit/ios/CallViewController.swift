@@ -650,7 +650,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 await MainActor.run { self.localAudioTrackRef = track }
             }
             // Video calls: the camera track died with the Room too.
-            if self.hasVideo {
+            // [2026-10-15 cam-1-toque] Also a VOICE call upgraded to video
+            // (camEnabled is now false by default on voice calls, so this
+            // only republishes when the user really turned the camera on).
+            do {
                 let camOn: Bool = await MainActor.run { self.session.camEnabled }
                 if camOn {
                     do {
@@ -789,6 +792,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // lands after 45s got the call killed as "unanswered").
         VoipPushAppDelegateSubscriber.cancelOutgoingTimeout(callId: callId)
         nativeCallDiag("outgoing_mic_gate_open", callId, reason)
+        // [2026-10-15 cam-1-toque] Camera tapped ON while a voice call was
+        // ringing → publish it now that the callee answered.
+        if camOnAnswerPending {
+            camOnAnswerPending = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self = self, !self.didHangup,
+                      self.session.camEnabled, !self.isTogglingCamera else { return }
+                self.isTogglingCamera = true
+                self.applyCamEnabled(true)
+            }
+        }
         // [2026-10-09 p2p-ios] Ligação 1:1 de voz com P2P ligado: o P2P vira
         // dono da mídia e o Room LiveKit fica em espera quente (nada publicado).
         // Se o P2P cair, P2PCallBridge publica o mic nesse mesmo Room.
@@ -914,7 +928,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         self.lkToken = lkToken
         self.isOutgoing = isOutgoing
         self.conversationId = conversationId
+        // [2026-10-15 cam-1-toque] camEnabled MUST follow hasVideo. The
+        // CallSessionState default is `true`, so a VOICE call started with
+        // camEnabled=true while the camera was off: the 1st tap on "Vídeo"
+        // computed desired = !true = false (a no-op "turn off") and only the
+        // 2nd tap turned the camera on (founder: "tem que clicar 2 vezes").
+        // Same stale `true` made the screen-share auto-pause/resume turn the
+        // camera ON after sharing in a voice call.
         self.session = CallSessionState(
+            camEnabled: hasVideo,
             isGroup: false,
             isVideoDefault: hasVideo
         )
@@ -2464,7 +2486,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         updateFlipButtonVisibility(false)
     }
 
+    /// [2026-10-15 cam-1-toque] Voice call, caller still RINGING: the camera
+    /// tap is remembered and published on answer (ring-leak gate — nothing
+    /// goes out to a callee who hasn't accepted). See openOutgoingMicGate.
+    private var camOnAnswerPending = false
+
     private func applyCamEnabled(_ enabled: Bool) {
+        if isOutgoing && !outgoingMicGateOpen && !hasVideo {
+            camOnAnswerPending = enabled
+            Task { @MainActor in self.isTogglingCamera = false }
+            return
+        }
         // [2026-10-09 p2p-ios] v1 do P2P iOS é só áudio: ligar a câmera devolve
         // a ligação ao LiveKit (já conectado) e segue o caminho normal.
         if enabled && P2PCallBridge.ownsMedia(callId) {
@@ -4757,7 +4789,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // LK Swift 2.0.18: computeVideoEncodings(isScreenShare:) uses
         // `screenShareEncoding` + `screenShareSimulcastLayers`; with one
         // preset it emits [low, base] (q + h rids).
-        let simulcast = CallVideoQuality.simulcastEnabled
+        //
+        // [2026-10-15 screen-share sharpness] SIMULCAST OFF for screen share.
+        // Founder: "compartilhando a tela, mesmo com internet boa, a qualidade
+        // fica muito ruim". SFU log call_1792087759356_yufd6wjh4: only rid "q"
+        // (589x1280 ≤900 kbps) EVER reached the SFU in 14 s — the 884x1920
+        // "h" layer was never sent; the Android viewer logged rx=590x1280.
+        // A (mostly static) screen keeps the sender application-limited, so
+        // the BWE never ramps past the low layer and libwebrtc never turns the
+        // top layer on. QA harness (qa_ssq_*, 30 s, same layers): simulcast →
+        // h=0x0 "bandwidth" the whole time, BWE 220-420 kbps, viewer 720p-
+        // class; single → full resolution from t=4 s, BWE 1.1-1.4 Mbps,
+        // limitation none. Single layer + maintainResolution = full sharpness
+        // always; under real congestion VP8 raises QP / drops fps instead.
+        // (`screenShareLowLayer` kept for reference / quick revert.)
         let top = CallVideoQuality.isDataSaver
             ? VideoEncoding(maxBitrate: 1_500_000, maxFps: 10)
             : CallVideoQuality.screenShareEncoding
@@ -4765,9 +4810,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             name: nil,
             encoding: top,
             screenShareEncoding: top,
-            simulcast: simulcast,
+            simulcast: false,
             simulcastLayers: [],
-            screenShareSimulcastLayers: simulcast ? [CallVideoQuality.screenShareLowLayer] : [],
+            screenShareSimulcastLayers: [],
             preferredCodec: .vp8,
             degradationPreference: .maintainResolution
         )
@@ -5489,15 +5534,193 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         guard !isTogglingCamera else { return }
         isTogglingCamera = true
         let desired = !session.camEnabled
+        let btn = view.viewWithTag(9005) as? UIButton
+        tapFeedback(btn)
+        nativeCallDiag("camera_toggle", callId, "on=\(desired ? 1 : 0) video_call=\(hasVideo ? 1 : 0) track=\(session.localVideoTrack != nil ? 1 : 0) room=\(room != nil ? 1 : 0)")
+        // [2026-10-15 cam-1-toque] Camera permission gate: 1st time asks and,
+        // when granted, CONTINUES the same tap (camera turns on — no 2nd tap).
+        // Denied → the button never lights up; offer Settings instead.
+        if desired {
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized:
+                break
+            case .notDetermined:
+                // Immediate feedback while the system prompt is up.
+                setControlActive(btn, active: true, symbol: "video.fill")
+                AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        nativeCallDiag("camera_permission", self.callId, "granted=\(granted ? 1 : 0)")
+                        if granted && !self.didHangup {
+                            self.commitCameraToggle(true)
+                        } else {
+                            self.isTogglingCamera = false
+                            self.setControlActive(self.view.viewWithTag(9005) as? UIButton, active: false, symbol: "video.slash.fill")
+                        }
+                    }
+                }
+                return
+            default: // .denied / .restricted
+                isTogglingCamera = false
+                nativeCallDiag("camera_permission", callId, "denied=1")
+                presentCameraDeniedAlert()
+                return
+            }
+        }
+        commitCameraToggle(desired)
+    }
+
+    /// [2026-10-15 cam-1-toque] The actual on/off once permission is settled.
+    /// Main thread; caller already holds `isTogglingCamera`.
+    private func commitCameraToggle(_ desired: Bool) {
         session.camEnabled = desired
+        if desired { dismissVideoRequestPrompt(animated: true) }
+        reportCallKitHasVideo(desired)
         applyCamEnabled(desired)
         // [2026-10-07 audio-route] Camera on → loudspeaker (unless the user
         // picked a route) + proximity sensor off; camera off → back.
         AudioRouter.shared.setLocalVideoActive(desired)
-        let btn = view.viewWithTag(9005) as? UIButton
-        tapFeedback(btn)
         // Active (filled) when the camera is ON.
-        setControlActive(btn, active: desired, symbol: desired ? "video.fill" : "video.slash.fill")
+        setControlActive(view.viewWithTag(9005) as? UIButton, active: desired, symbol: desired ? "video.fill" : "video.slash.fill")
+    }
+
+    // MARK: - [2026-10-15 founder] Peer asked for video → Aceitar / Recusar
+
+    private var videoRequestCard: UIView?
+    private var videoRequestDismissWork: DispatchWorkItem?
+
+    private func presentVideoRequestPrompt() {
+        dismissVideoRequestPrompt(animated: false)
+        let who = callerName.isEmpty ? callerEmail : callerName
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = UIColor.black.withAlphaComponent(0.8)
+        card.layer.cornerRadius = 20
+        card.alpha = 0
+        card.transform = CGAffineTransform(translationX: 0, y: 24)
+
+        let title = UILabel()
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.text = who.isEmpty ? CallStrings.s("videoReqTitleNoName") : CallStrings.s("videoReqTitle", ["name": who])
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.textAlignment = .center
+        title.numberOfLines = 2
+        card.addSubview(title)
+
+        func pill(_ text: String, filled: Bool, action: Selector) -> UIButton {
+            let b = UIButton(type: .system)
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.setTitle(text, for: .normal)
+            b.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            b.setTitleColor(filled ? .white : .black, for: .normal)
+            b.backgroundColor = filled
+                ? UIColor(red: 0x25/255.0, green: 0xD3/255.0, blue: 0x66/255.0, alpha: 1)
+                : UIColor.white
+            b.layer.cornerRadius = 20
+            b.contentEdgeInsets = UIEdgeInsets(top: 10, left: 22, bottom: 10, right: 22)
+            b.addTarget(self, action: action, for: .touchUpInside)
+            return b
+        }
+        let decline = pill(CallStrings.s("videoReqDecline"), filled: false, action: #selector(videoRequestDeclineTap))
+        let accept = pill(CallStrings.s("videoReqAccept"), filled: true, action: #selector(videoRequestAcceptTap))
+        let row = UIStackView(arrangedSubviews: [decline, accept])
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.spacing = 16
+        row.distribution = .fillEqually
+        card.addSubview(row)
+
+        view.addSubview(card)
+        let bar = view.viewWithTag(9008)
+        var cons: [NSLayoutConstraint] = [
+            card.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
+            card.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+            title.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            title.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            row.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 14),
+            row.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+            row.leadingAnchor.constraint(greaterThanOrEqualTo: card.leadingAnchor, constant: 16),
+        ]
+        if let bar = bar {
+            cons.append(card.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -20))
+        } else {
+            cons.append(card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -160))
+        }
+        NSLayoutConstraint.activate(cons)
+        view.bringSubviewToFront(card)
+        videoRequestCard = card
+        // Controls must stay visible while the question is up (video mode
+        // auto-hides them after 5 s).
+        controlsHideTimer?.invalidate()
+        setControlsHidden(false, animated: true)
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.5, options: [.allowUserInteraction]) {
+            card.alpha = 1
+            card.transform = .identity
+        }
+        let work = DispatchWorkItem { [weak self] in self?.dismissVideoRequestPrompt(animated: true) }
+        videoRequestDismissWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: work)
+    }
+
+    private func dismissVideoRequestPrompt(animated: Bool) {
+        videoRequestDismissWork?.cancel()
+        videoRequestDismissWork = nil
+        guard let card = videoRequestCard else { return }
+        videoRequestCard = nil
+        if animated {
+            UIView.animate(withDuration: 0.2, animations: { card.alpha = 0 }) { _ in card.removeFromSuperview() }
+        } else {
+            card.removeFromSuperview()
+        }
+        resetControlsAutoHide()
+    }
+
+    @objc private func videoRequestAcceptTap() {
+        dismissVideoRequestPrompt(animated: true)
+        nativeCallDiag("video_request_answer", callId, "accept=1")
+        sendVideoRequest(action: "accepted")
+        // Same flow as a tap on "Vídeo" (permission 1st time → camera on,
+        // loudspeaker rule). Toggle only if it's really off.
+        if !session.camEnabled { uikitOnVideoToggle() }
+    }
+
+    @objc private func videoRequestDeclineTap() {
+        dismissVideoRequestPrompt(animated: true)
+        nativeCallDiag("video_request_answer", callId, "accept=0")
+        sendVideoRequest(action: "declined")
+    }
+
+    /// [2026-10-15 founder] CallKit reflects the voice→video upgrade (Recents
+    /// entry / system UI). Only for calls that started as voice. Dual-fire on
+    /// both providers like the end paths (unknown UUID = harmless no-op).
+    private func reportCallKitHasVideo(_ on: Bool) {
+        guard !hasVideo, let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) else { return }
+        let update = CXCallUpdate()
+        update.hasVideo = on
+        ExpoCallKitModule.sharedProvider?.reportCall(with: uuid, updated: update)
+        if let p = VoipPushAppDelegateSubscriber.earlyProvider, p !== ExpoCallKitModule.sharedProvider {
+            p.reportCall(with: uuid, updated: update)
+        }
+    }
+
+    /// [2026-10-15 cam-1-toque] Camera access denied in iOS Settings — the
+    /// toggle can't work; say so and offer the Settings shortcut.
+    private func presentCameraDeniedAlert() {
+        guard presentedViewController == nil else { return }
+        let alert = UIAlertController(title: CallStrings.s("camDeniedTitle"),
+                                      message: CallStrings.s("camDeniedBody"),
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: CallStrings.s("cancel"), style: .cancel))
+        alert.addAction(UIAlertAction(title: CallStrings.s("openSettings"), style: .default) { _ in
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        })
+        present(alert, animated: true)
     }
 
     // [#1358 video parity 2026-05-25] "More" action sheet — re-wires the
@@ -6903,9 +7126,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private func showLocalPip(_ show: Bool) {
         guard let pip = localPipContainer else { return }
         if show {
+            // [2026-10-15 cam-1-toque] Self-view pops in (scale + fade spring)
+            // the moment the camera goes live — clear feedback for the tap.
+            let wasHidden = pip.isHidden || pip.alpha < 0.05
             pip.isHidden = false
             view.bringSubviewToFront(pip)
-            UIView.animate(withDuration: 0.2) { pip.alpha = 1 }
+            if wasHidden {
+                pip.transform = CGAffineTransform(scaleX: 0.82, y: 0.82)
+                UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.72,
+                               initialSpringVelocity: 0.6, options: [.allowUserInteraction, .beginFromCurrentState]) {
+                    pip.alpha = 1
+                    pip.transform = .identity
+                }
+            } else {
+                UIView.animate(withDuration: 0.2) { pip.alpha = 1 }
+            }
         } else {
             UIView.animate(withDuration: 0.2, animations: { pip.alpha = 0 }) { _ in
                 if pip.alpha == 0 { pip.isHidden = true }
@@ -7897,32 +8132,24 @@ extension CallViewController: RoomDelegate {
         // had ZERO video_request handling, so when the peer (or the JS caller)
         // turned on their camera and sent {type:video_request,action:request},
         // iOS ignored it → never enabled ITS camera → the requester never got a
-        // remote video track to render → one-way video. We auto-accept (both
-        // sides already consented to the live call) so a 1:1 audio→video switch
-        // makes BOTH cameras turn on, exactly like WhatsApp.
+        // remote video track to render → one-way video. (2026-10-15: no more
+        // auto-accept — the user is asked, see presentVideoRequestPrompt.)
         if str.hasPrefix("{"), let jd = str.data(using: .utf8),
            let obj = (try? JSONSerialization.jsonObject(with: jd)) as? [String: Any],
            (obj["type"] as? String) == "video_request" {
             let action = (obj["action"] as? String) ?? ""
             if action == "request" {
+                // [2026-10-15 founder] ASK first (WhatsApp): never auto-enable
+                // our camera. The peer's video still shows (remote track →
+                // video layout); a card "{name} quer mudar para vídeo"
+                // Aceitar/Recusar decides OUR camera. Accept = same flow as a
+                // tap on "Vídeo"; Recusar = `declined` back (Android/JS clear
+                // their awaiting state on it).
                 DispatchQueue.main.async { [weak self] in
-                    guard let self = self else { return }
-                    if !self.session.camEnabled, !self.isTogglingCamera {
-                        // [2026-10-08 call-video-fix] Same bookkeeping as a
-                        // user tap (uikitOnVideoToggle): serialise with the
-                        // toggle guard, flip the "Vídeo" button to ON and move
-                        // audio to the loudspeaker — before, the auto-accept
-                        // left the button showing OFF while the camera was
-                        // live, so the next tap "did nothing" (it turned the
-                        // already-live camera off).
-                        self.isTogglingCamera = true
-                        self.session.camEnabled = true
-                        self.applyCamEnabled(true)
-                        AudioRouter.shared.setLocalVideoActive(true)
-                        self.setControlActive(self.view.viewWithTag(9005) as? UIButton, active: true, symbol: "video.fill")
-                        // ACK so the requester's "waiting for video" UI clears.
-                        self.sendVideoRequest(action: "accepted")
-                    }
+                    guard let self = self, !self.didHangup else { return }
+                    if self.session.camEnabled { return } // already on
+                    nativeCallDiag("video_request_prompt", self.callId)
+                    self.presentVideoRequestPrompt()
                 }
             }
             return

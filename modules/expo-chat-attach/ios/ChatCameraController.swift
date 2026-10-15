@@ -33,6 +33,12 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
   private var holdStartY: CGFloat = 0
   private var savedBrightness: CGFloat = -1
   private var exporting = false
+  // [2026-10-15 native-status-studio] statusModes: 0 Texto · 1 Normal · 2 Boomerang
+  private var camMode = 1
+  private var boomerangRec = false
+  private var recordLimit: Double = 60
+  private let modeBar = UIStackView()
+  private var modeButtons: [UIButton] = []
 
   // recentes
   private var recent: PHFetchResult<PHAsset>?
@@ -104,6 +110,13 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     preview.addGestureRecognizer(tap)
     preview.addGestureRecognizer(dbl)
     preview.addGestureRecognizer(pinch)
+    if config.statusModes {
+      for dir in [UISwipeGestureRecognizer.Direction.left, .right] {
+        let sw = UISwipeGestureRecognizer(target: self, action: #selector(onModeSwipe(_:)))
+        sw.direction = dir
+        preview.addGestureRecognizer(sw)
+      }
+    }
 
     focusSquare.layer.borderColor = UIColor.white.cgColor
     focusSquare.layer.borderWidth = 1.5
@@ -367,7 +380,6 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     NSLayoutConstraint.activate([
       hintLabel.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -10),
       hintLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-      shutter.bottomAnchor.constraint(equalTo: hintLabel.topAnchor, constant: -14),
       shutter.centerXAnchor.constraint(equalTo: view.centerXAnchor),
       shutter.widthAnchor.constraint(equalToConstant: s),
       shutter.heightAnchor.constraint(equalToConstant: s),
@@ -397,6 +409,76 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     ])
     stripSendWidth = stripSend.widthAnchor.constraint(equalToConstant: 0)
     stripSendWidth.isActive = true
+
+    if config.statusModes {
+      // [2026-10-15 native-status-studio] Seletor de modo (estilo Instagram) sob o obturador.
+      modeBar.axis = .horizontal
+      modeBar.spacing = 22
+      modeBar.alignment = .center
+      modeBar.translatesAutoresizingMaskIntoConstraints = false
+      let titles = [config.t("modeText", "Texto"), config.t("modeNormal", "Normal"), config.t("modeBoomerang", "Boomerang")]
+      for (i, title) in titles.enumerated() {
+        let b = UIButton(type: .custom)
+        b.tag = i
+        b.setTitle(title.uppercased(), for: .normal)
+        b.titleLabel?.layer.shadowColor = UIColor.black.cgColor
+        b.titleLabel?.layer.shadowOpacity = 0.5
+        b.titleLabel?.layer.shadowRadius = 3
+        b.titleLabel?.layer.shadowOffset = .zero
+        b.accessibilityTraits = .button
+        b.addTarget(self, action: #selector(onModeButton(_:)), for: .touchUpInside)
+        modeBar.addArrangedSubview(b)
+        modeButtons.append(b)
+      }
+      view.addSubview(modeBar)
+      NSLayoutConstraint.activate([
+        modeBar.bottomAnchor.constraint(equalTo: hintLabel.topAnchor, constant: -6),
+        modeBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        modeBar.heightAnchor.constraint(equalToConstant: 30),
+        shutter.bottomAnchor.constraint(equalTo: modeBar.topAnchor, constant: -10),
+      ])
+      refreshModeBar()
+    } else {
+      shutter.bottomAnchor.constraint(equalTo: hintLabel.topAnchor, constant: -14).isActive = true
+    }
+  }
+
+  // MARK: modos do status
+
+  private func refreshModeBar() {
+    for b in modeButtons {
+      let on = b.tag == camMode
+      b.titleLabel?.font = .systemFont(ofSize: 13, weight: on ? .heavy : .semibold)
+      b.setTitleColor(on ? .white : UIColor(white: 1, alpha: 0.6), for: .normal)
+      b.accessibilityTraits = on ? [.button, .selected] : .button
+    }
+    if camMode == 2 {
+      hintLabel.text = config.t("boomerangHint", "Toque para gravar um boomerang")
+      shutter.accessibilityLabel = config.t("modeBoomerang", "Boomerang")
+    } else {
+      hintLabel.text = config.t("hint", "Segure para vídeo, toque para foto")
+      shutter.accessibilityLabel = config.t("shutter", "Toque para foto, segure para vídeo")
+    }
+  }
+
+  private func selectMode(_ m: Int) {
+    guard config.statusModes, !recording, !wantsRecording, !capturing, m >= 0, m <= 2, m != camMode else { return }
+    caHaptic("select")
+    if m == 0 {
+      finish(["action": "text"])
+      return
+    }
+    camMode = m
+    UIView.transition(with: modeBar, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction], animations: { self.refreshModeBar() })
+  }
+
+  @objc private func onModeButton(_ b: UIButton) {
+    selectMode(b.tag)
+  }
+
+  @objc private func onModeSwipe(_ g: UISwipeGestureRecognizer) {
+    // Dedo para a esquerda → próximo modo (à direita na barra).
+    selectMode(g.direction == .left ? camMode + 1 : camMode - 1)
   }
 
   private var stripSendWidth: NSLayoutConstraint!
@@ -532,6 +614,10 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
 
   @objc private func onShutterTap() {
     guard acquired, !capturing, !recording, engine.session.isRunning else { return }
+    if config.statusModes && camMode == 2 {
+      if !wantsRecording { startRecording(boomerang: true) }
+      return
+    }
     capturing = true
     caHaptic("light")
     UIView.animate(withDuration: 0.08, animations: { self.shutter.transform = CGAffineTransform(scaleX: 0.88, y: 0.88) }) { _ in
@@ -553,6 +639,7 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     let flash = flashMode
     let orientation = CAEngine.orientationFromDevice()
     engine.queue.async {
+      self.engine.setFrontOutputMirrored(false)   // [2026-10-15 espelho] foto frontal NÃO espelhada (padrão iOS)
       self.engine.setCaptureOrientation(orientation)
       let settings: AVCapturePhotoSettings
       if out.availablePhotoCodecTypes.contains(.jpeg) {
@@ -599,11 +686,16 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     switch g.state {
     case .began:
       guard !capturing, !recording, engine.session.isRunning else { return }
+      if config.statusModes && camMode == 2 {
+        // Boomerang: segurar = mesmo clipe curto (para sozinho).
+        if !wantsRecording { startRecording(boomerang: true) }
+        return
+      }
       holdStartY = g.location(in: view).y
       zoomBase = engine.zoom
       startRecording()
     case .changed:
-      guard wantsRecording else { return }
+      guard wantsRecording, !boomerangRec else { return }
       let dy = holdStartY - g.location(in: view).y
       let travel = max(120, view.bounds.height * 0.45)
       let p = max(0, min(1, dy / travel))
@@ -612,23 +704,27 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
       engine.setZoom(z)
       if p > 0 { showZoom(engine.zoom) }
     case .ended, .cancelled, .failed:
+      if boomerangRec { return }
       stopRecording()
     default:
       break
     }
   }
 
-  private func startRecording() {
+  private func startRecording(boomerang: Bool = false) {
     wantsRecording = true
+    boomerangRec = boomerang
     caHaptic("heavy")
     let url = AttachExporter.freshURL(ext: "mov")
-    let maxSec = config.maxVideoSec
+    let maxSec = boomerang ? config.boomerangSec : config.maxVideoSec
+    recordLimit = maxSec
     let orientation = CAEngine.orientationFromDevice()
     let torch = flashMode == .on && engine.position == .back
     if torch { engine.setTorch(true) }
     setRecordingUI(true)
     engine.queue.async {
       guard self.wantsRecording else { return }
+      self.engine.setFrontOutputMirrored(false)   // [2026-10-15 espelho] enviado NÃO espelhado
       self.engine.setCaptureOrientation(orientation)
       self.engine.movieOutput.maxRecordedDuration = CMTime(seconds: maxSec, preferredTimescale: 600)
       if !self.engine.movieOutput.isRecording {
@@ -656,6 +752,7 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     flipButton.isHidden = on
     flashButton.isHidden = on
     closeButton.isHidden = on
+    modeBar.isHidden = on
     let s = ChatCameraController.shutterSize
     UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.75, initialSpringVelocity: 0.4, options: [.beginFromCurrentState]) {
       self.shutter.transform = on ? CGAffineTransform(scaleX: 1.3, y: 1.3) : .identity
@@ -680,7 +777,7 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
       let anim = CABasicAnimation(keyPath: "strokeEnd")
       anim.fromValue = 0
       anim.toValue = 1
-      anim.duration = self.config.maxVideoSec
+      anim.duration = self.recordLimit
       anim.fillMode = .forwards
       anim.isRemovedOnCompletion = false
       self.ring.add(anim, forKey: "progress")
@@ -692,6 +789,13 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
       }
       if !self.wantsRecording {
         self.engine.queue.async { if self.engine.movieOutput.isRecording { self.engine.movieOutput.stopRecording() } }
+      } else if self.boomerangRec {
+        // Rede de segurança além do maxRecordedDuration: para sozinho.
+        let lim = self.recordLimit
+        DispatchQueue.main.asyncAfter(deadline: .now() + lim + 0.35) { [weak self] in
+          guard let self = self, self.boomerangRec, self.recording else { return }
+          self.stopRecording()
+        }
       }
     }
   }
@@ -699,14 +803,17 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
   func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
     var ok = error == nil
     if let e = error as NSError?, let fin = e.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool { ok = fin }
-    let item = ok ? AttachExporter.cameraVideoItem(outputFileURL) : nil
+    let rawItem = ok ? AttachExporter.cameraVideoItem(outputFileURL) : nil
     DispatchQueue.main.async {
+      var vidItem = rawItem
+      if self.boomerangRec { vidItem?["boomerang"] = true }
+      self.boomerangRec = false
       self.recording = false
       self.wantsRecording = false
       self.engine.setTorch(false)
       self.setRecordingUI(false)
       self.engine.setZoom(1)
-      guard let item = item, let dur = item["duration"] as? NSNumber, dur.doubleValue >= 0.6 else {
+      guard let item = vidItem, let dur = item["duration"] as? NSNumber, dur.doubleValue >= 0.6 else {
         try? FileManager.default.removeItem(at: outputFileURL)
         self.flashHint()
         return

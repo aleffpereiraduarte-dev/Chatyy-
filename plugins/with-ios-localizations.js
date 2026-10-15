@@ -67,10 +67,26 @@ function readStrings() {
       }
       if (Object.keys(clean).length) out[APPLE_CODE[lang] || lang] = clean;
     }
+    mergeShortcutTitles(out);
     return out;
   } catch (e) {
     console.warn('[with-ios-localizations] could not read ' + DATA_FILE + ': ' + e.message);
     return {};
+  }
+}
+
+// [2026-10-15 system-integration] Home-screen quick action titles
+// (UIApplicationShortcutItemTitle, English in Info.plist) are localized here
+// too: InfoPlist.strings key = the English title. Source of truth:
+// plugins/with-app-shortcuts.js (curated pt/en/es + the JS i18n tables).
+function mergeShortcutTitles(out) {
+  try {
+    const titles = require('./with-app-shortcuts').iosShortcutTitleStrings(path.join(__dirname, '..'));
+    for (const [lang, map] of Object.entries(titles || {})) {
+      out[lang] = { ...(out[lang] || {}), ...map };
+    }
+  } catch (e) {
+    console.warn('[with-ios-localizations] shortcut titles skipped: ' + e.message);
   }
 }
 

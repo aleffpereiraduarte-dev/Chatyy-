@@ -249,7 +249,9 @@ struct GroupCallView: View {
 
             // Local PiP — floats over the grid, draggable. Hidden when no
             // video or local camera is off / not published yet.
-            if hasVideo, let local = localParticipant, let track = local.videoTrack {
+            // [2026-10-15 cam-1-toque] Also a VOICE group call whose camera
+            // was turned on mid-call.
+            if hasVideo || session.camEnabled, let local = localParticipant, let track = local.videoTrack {
                 localPreviewTile(track)
             }
 
@@ -351,7 +353,7 @@ struct GroupCallView: View {
                 iconChip(systemName: "message.fill", action: { hapticTap(); openChat() })
                     .accessibilityLabel(Text(OngoingCallStrings.message))
             }
-            if hasVideo {
+            if hasVideo || session.camEnabled {
                 iconChip(systemName: "camera.rotate.fill", action: { hapticTap(); onSwitchCamera() })
                 // [2026-10-14 group-ui] Camera on/off chip removed here (same
                 // toggle is in the bottom bar) — room for the participants chip.
@@ -440,7 +442,10 @@ struct GroupCallView: View {
                 }
             }
 
-            HStack(spacing: 20) {
+            // [2026-10-15 cam-1-toque] 10pt (was 20): five buttons now in voice
+            // calls too — 4×60 + 68 + 4×10 = 348pt fits 390/393pt screens
+            // (minus the 16pt side padding) and nearly a 375pt one.
+            HStack(spacing: 10) {
                 circleButton(
                     size: 60,
                     background: session.micEnabled ? chipColor : Color.white,
@@ -453,18 +458,18 @@ struct GroupCallView: View {
                     onToggleMute(desired)
                 }
 
-                if hasVideo {
-                    circleButton(
-                        size: 60,
-                        background: session.camEnabled ? chipColor : Color.white,
-                        foreground: session.camEnabled ? .white : .black,
-                        systemName: session.camEnabled ? "video.fill" : "video.slash.fill"
-                    ) {
-                        let desired = !session.camEnabled
-                        session.camEnabled = desired
-                        hapticTap()
-                        onToggleCam(desired)
-                    }
+                // [2026-10-15 cam-1-toque] Camera button in VOICE group calls
+                // too (WhatsApp): 1 tap turns it on mid-call.
+                circleButton(
+                    size: 60,
+                    background: session.camEnabled ? chipColor : Color.white,
+                    foreground: session.camEnabled ? .white : .black,
+                    systemName: session.camEnabled ? "video.fill" : "video.slash.fill"
+                ) {
+                    let desired = !session.camEnabled
+                    session.camEnabled = desired
+                    hapticTap()
+                    onToggleCam(desired)
                 }
 
                 circleButton(

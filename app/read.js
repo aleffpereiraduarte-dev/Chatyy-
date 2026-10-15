@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Animated, Easing, Alert, useWindowDimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,12 +7,13 @@ import { getMessageFromCache, getMessageFromCacheSync, saveMessageToCache } from
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { Shadow, Spacing, FontSize, BorderRadius, AnimTiming } from '../constants/theme';
+import { Shadow, Spacing, FontSize, BorderRadius, AnimTiming, haptic } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import ThreadView from '../components/ThreadView';
 import { IconChevronLeft, IconChevronRight, IconReply, IconReplyAll, IconArchive, IconTrash, IconForward, IconClock, IconWifiOff, IconRefresh } from '../components/Icons';
 import SnoozePickerModal from '../components/SnoozePickerModal';
 import { MessageSkeleton } from '../components/SkeletonLoader';
+import { isNativeEmailBodyOn } from '../components/email/NativeEmailBody';
 
 export default function ReadScreen() {
   const { uid, folder = 'INBOX', prevUid, nextUid } = useLocalSearchParams();
@@ -49,6 +50,14 @@ export default function ReadScreen() {
   // Reading progress indicator
   const scrollProgress = useRef(new Animated.Value(0)).current;
 
+  // [2026-10-15 native-email] Deslizar na horizontal troca de e-mail (Gmail /
+  // Apple Mail): ← próximo (mais antigo), → anterior. RNGH (thread nativa de
+  // gestos); desliga com o corpo ampliado na pinça e no web.
+  // Kill switch: globalThis.__chatyy_email_swipe = false.
+  const [bodyZoomed, setBodyZoomed] = useState(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const swipeNavRef = useRef(null);
+
   // Entrance animation
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(15)).current;
@@ -81,6 +90,50 @@ export default function ReadScreen() {
     const n = (idx >= 0 && idx < emails.length - 1) ? emails[idx + 1].uid : '';
     router.replace(`/read?uid=${targetUid}&folder=${encodeURIComponent(folder)}&prevUid=${p}&nextUid=${n}`);
   };
+  swipeNavRef.current = navigateToEmail;
+
+  const swipeGH = useMemo(() => {
+    if (Platform.OS === 'web') return null;
+    // Junto com o leitor nativo (binário antigo = comportamento antigo).
+    if (!isNativeEmailBodyOn()) return null;
+    try { if (globalThis.__chatyy_email_swipe === false) return null; } catch {}
+    try {
+      const GH = require('react-native-gesture-handler');
+      if (!GH?.Gesture?.Pan || !GH?.GestureDetector) return null;
+      const canPrev = !!prevUid;
+      const canNext = !!nextUid;
+      const gesture = GH.Gesture.Pan()
+        .enabled(!bodyZoomed && (canPrev || canNext))
+        .activeOffsetX([-24, 24])
+        .failOffsetY([-12, 12])
+        .runOnJS(true)
+        .onUpdate((e) => {
+          const tx = e.translationX;
+          // resistência quando não há e-mail daquele lado
+          const allowed = (tx < 0 && canNext) || (tx > 0 && canPrev);
+          swipeX.setValue(tx * (allowed ? 0.45 : 0.12));
+        })
+        .onEnd((e) => {
+          const tx = e.translationX;
+          const vx = e.velocityX;
+          const goNext = canNext && (tx < -90 || (tx < -30 && vx < -650));
+          const goPrev = canPrev && (tx > 90 || (tx > 30 && vx > 650));
+          if (goNext || goPrev) {
+            haptic.light();
+            Animated.timing(swipeX, { toValue: goNext ? -60 : 60, duration: 90, useNativeDriver: true }).start(() => {
+              swipeX.setValue(0);
+              try { swipeNavRef.current?.(goNext ? nextUid : prevUid); } catch {}
+            });
+          } else {
+            Animated.spring(swipeX, { toValue: 0, tension: 220, friction: 20, useNativeDriver: true }).start();
+          }
+        })
+        .onFinalize(() => {});
+      return { GH, gesture };
+    } catch { return null; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bodyZoomed, prevUid, nextUid]);
+  const withSwipe = (node) => (swipeGH ? <swipeGH.GH.GestureDetector gesture={swipeGH.gesture}>{node}</swipeGH.GH.GestureDetector> : node);
 
   // Keyboard shortcuts (web only)
   useEffect(() => {
@@ -581,6 +634,7 @@ export default function ReadScreen() {
         {navBar}
         {progressBar}
         {followupChip}
+        {withSwipe(<Animated.View style={{ flex: 1, transform: [{ translateX: swipeX }] }} collapsable={false}>
         <ThreadView
           thread={thread}
           email={email}
@@ -593,6 +647,7 @@ export default function ReadScreen() {
           hasActionBar={!!showChrome}
           focusUid={uid}
         />
+        </Animated.View>)}
         {actionBar}
         <SnoozePickerModal visible={showSnooze} onClose={() => setShowSnooze(false)} onSnooze={onSnoozePick} />
       </View>
@@ -604,7 +659,7 @@ export default function ReadScreen() {
       {navBar}
       {progressBar}
       {followupChip}
-      <Animated.View style={{ flex: 1, opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
+      {withSwipe(<Animated.View style={{ flex: 1, opacity: fadeAnim, transform: [{ translateY: slideAnim }, { translateX: swipeX }] }} collapsable={false}>
         <EmailReader
           email={email}
           folder={folder}
@@ -634,12 +689,20 @@ export default function ReadScreen() {
           onScrollProgress={(progress) => {
             scrollProgress.setValue(progress);
           }}
+          onBodyZoomChange={setBodyZoomed}
         />
-      </Animated.View>
+      </Animated.View>)}
       {actionBar}
       <SnoozePickerModal visible={showSnooze} onClose={() => setShowSnooze(false)} onSnooze={onSnoozePick} />
     </View>
   );
+}
+
+// [2026-10-15 native-email] Haptic do rodapé só no binário com o leitor nativo.
+let _nativeFeel = null;
+function _nativeEmailFeel() {
+  if (_nativeFeel == null) { try { _nativeFeel = isNativeEmailBodyOn(); } catch { _nativeFeel = false; } }
+  return _nativeFeel;
 }
 
 // Action bar button with press scale animation.
@@ -665,7 +728,7 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
   return (
     <TouchableOpacity
       style={s.actionBarBtn}
-      onPress={onPress}
+      onPress={(e) => { if (_nativeEmailFeel()) haptic.light(); onPress?.(e); }}
       accessibilityLabel={accessibilityLabel || label}
       accessibilityRole="button"
       onPressIn={() => {

@@ -1,0 +1,8 @@
+{
+  "name": "expo-status-studio",
+  "version": "1.0.0",
+  "description": "Chatyy native status creator (text status, photo/video layers, interactive stickers, drawing, color-matrix filters, audience, publish).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

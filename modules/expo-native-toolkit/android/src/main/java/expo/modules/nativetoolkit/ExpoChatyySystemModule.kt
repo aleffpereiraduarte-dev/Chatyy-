@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
+import android.net.Uri
 import android.util.Log
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
@@ -106,6 +107,26 @@ class ExpoChatyySystemModule : Module() {
 
     Function("getNetworkConstraints") {
       constraints()
+    }
+
+    // [2026-10-15 app-links] ACTION_VIEW preso ao pacote (YouTube/Spotify/
+    // Apple Music). App ausente → ActivityNotFoundException → false e o JS
+    // abre o navegador interno. startActivity não depende de <queries>.
+    AsyncFunction("openInAppPackage") { url: String, pkg: String ->
+      val c = ctx ?: return@AsyncFunction false
+      if (pkg.isBlank() || !(url.startsWith("https://") || url.startsWith("http://"))) {
+        return@AsyncFunction false
+      }
+      try {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        i.setPackage(pkg)
+        i.addCategory(Intent.CATEGORY_BROWSABLE)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        c.startActivity(i)
+        true
+      } catch (t: Throwable) {
+        false
+      }
     }
 
     Function("getFocusFilter") {

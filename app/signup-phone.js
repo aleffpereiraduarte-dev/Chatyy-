@@ -694,6 +694,16 @@ export default function SignupPhone() {
     setCode(smsCode);
     setTimeout(() => { try { checkOtpRef.current?.(smsCode); } catch {} }, 150);
   }, resendCountdown > 0);
+  // [2026-10-15 native-otp] Teclado numérico já aberto no passo do código
+  // (autoFocus se perde quando o input monta durante a transição de passo).
+  // Kill switch: globalThis.__chatyy_native_otp = false.
+  useEffect(() => {
+    if (Platform.OS === 'web' || globalThis.__chatyy_native_otp === false || step !== 'otp') return undefined;
+    const tms = [320, 700].map((ms) => setTimeout(() => {
+      try { const r = otpRefs.current?.[0]; if (r && !(r.isFocused && r.isFocused())) r.focus(); } catch {}
+    }, ms));
+    return () => tms.forEach(clearTimeout);
+  }, [step]);
   // [2026-10-15 phone-hint] Android: seletor nativo do Google com o numero do chip
   // (Phone Number Hint API) — 1 vez por tela, so com o campo vazio. Escolheu ->
   // preenche pais + numero pelo MESMO parsePhoneInput do campo. Binario antigo = no-op.

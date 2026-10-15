@@ -6,8 +6,10 @@
 // links, tipo de conta; e-mail/telefone só leitura). Aqui ele é hospedado
 // como rota: carrega a identidade via profile_get e volta ao fechar.
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IconX } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -16,11 +18,11 @@ import ProfileEditSheet from '../components/ProfileEditSheet';
 
 export default function EditProfileScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user, loading } = useAuth();
   const [identity, setIdentity] = useState(null);
-  const [visible, setVisible] = useState(true);
 
   useEffect(() => {
     if (loading) return;
@@ -37,23 +39,39 @@ export default function EditProfileScreen() {
     return () => { alive = false; };
   }, [user?.email, loading]);
 
+  // [2026-10-15 edit-profile-x] Fecha DIRETO com router.back() → a rota (modal
+  // nativo no Stack) desce com a animação do sistema. Antes: setVisible(false)
+  // baixava um <Modal> RN por cima desta rota vazia (fundo liso) e só depois
+  // fazia back = "página branca e depois fecha". O "Descartar alterações?"
+  // continua no ProfileEditSheet (requestClose) antes de chamar este close.
+  const closingRef = React.useRef(false);
   const close = useCallback(() => {
-    setVisible(false);
-    setTimeout(() => {
-      try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
-      try { router.replace('/settings'); } catch {}
-    }, 0);
+    if (closingRef.current) return;
+    closingRef.current = true;
+    try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
+    try { router.replace('/settings'); } catch {}
   }, [router]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors?.background }} testID="edit-profile-screen">
       {!identity ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator color={colors?.text} />
+        <View style={{ flex: 1, paddingTop: insets.top }}>
+          <TouchableOpacity
+            onPress={close}
+            style={{ width: 52, height: 52, alignItems: 'center', justifyContent: 'center' }}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('common.cancel') || 'Cancelar'}
+          >
+            <IconX size={22} color={colors?.text || '#111'} />
+          </TouchableOpacity>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator color={colors?.text} />
+          </View>
         </View>
       ) : (
         <ProfileEditSheet
-          visible={visible}
+          asScreen
+          visible
           onClose={close}
           initial={identity}
           currentEmail={identity?.email || user?.email}

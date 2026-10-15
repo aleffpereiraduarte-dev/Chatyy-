@@ -483,9 +483,13 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // file under a versioned filename, so the next render reads the fresh
   // cached file instead of the old one. (User reported avatar cache
   // sticking on mobile after desktop upload.)
-  if (email && remoteAvatarUrl && _NativeCache?.prefetchAvatar) {
-    try { _NativeCache.prefetchAvatar(email, remoteAvatarUrl, cacheBust); } catch {}
-  }
+  // [2026-10-15 confiab] prefetchAvatar REMOVIDO daqui. O nativo (iOS/Android)
+  // declara prefetchAvatar(email, remoteUrl) — 2 args — e esta chamada passava
+  // 3 (cacheBust) → TODA chamada rejeitava ("Received 3 arguments, but 2 was
+  // expected": unhandled promise em todo boot iOS, 7 aparelhos/72 h) e o
+  // download nunca aconteceu. Como `nativeLocal` acima é sempre null (o cache
+  // nativo não é lido), o prefetch não tem consumidor: conserto = não chamar
+  // (corrigir só a aridade passaria a baixar avatares à toa).
   // Explicit `uri` prop wins over the email-derived avatar (used for groups
   // where there's no email to look up, and the conversation carries its own
   // avatar_url). Resolve relative /data/... paths against the API origin.

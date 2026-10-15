@@ -28,7 +28,7 @@
 //    carry the scaled size (LiveKit's own uploader does the same with its
 //    scaleFactor).
 //
-//  BUDGET: long side <= 1920 (short <= 1080), <= 15 fps, JPEG q 0.7. A
+//  BUDGET: long side <= 1920 (short <= 1080), <= 15 fps, JPEG q 0.85. A
 //  footprint probe (task_vm_info.phys_footprint) every 2 s steps quality
 //  down (1280 / 960, 10 / 8 fps) before the 50 MB jetsam line.
 //
@@ -95,7 +95,12 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private var maxLongSide: CGFloat = 1920
     private var maxShortSide: CGFloat = 1080
     private var minFrameInterval: CFTimeInterval = 1.0 / 15.0
-    private var jpegQuality: CGFloat = 0.7
+    /// [2026-10-15 screen-share sharpness] 0.7 → 0.85: the JPEG is only the
+    /// extension→app hop (unix socket, no network cost) but its ringing /
+    /// chroma blur on small text survives the VP8 re-encode. Field data:
+    /// peakMB=27.8 at 884x1918 q0.7 — the size of the JPEG body barely
+    /// moves the footprint (CIContext intermediates dominate).
+    private var jpegQuality: CGFloat = 0.85
 
     // Stats
     private var framesSent = 0
@@ -394,10 +399,10 @@ final class SampleHandler: RPBroadcastSampleHandler {
         if mb > peakMB { peakMB = mb }
         budgetLock.lock()
         if mb > 42 {
-            maxLongSide = 960; maxShortSide = 540; minFrameInterval = 1.0 / 8.0; jpegQuality = 0.55
+            maxLongSide = 960; maxShortSide = 540; minFrameInterval = 1.0 / 8.0; jpegQuality = 0.65
         } else if mb > 34 {
             if maxLongSide > 1280 {
-                maxLongSide = 1280; maxShortSide = 720; minFrameInterval = 1.0 / 10.0; jpegQuality = 0.6
+                maxLongSide = 1280; maxShortSide = 720; minFrameInterval = 1.0 / 10.0; jpegQuality = 0.75
             }
         }
         budgetLock.unlock()
@@ -441,6 +446,11 @@ final class SampleHandler: RPBroadcastSampleHandler {
         writeStats(reason: reason)
     }
 
+    private func jpegQualityNow() -> CGFloat {
+        budgetLock.lock(); defer { budgetLock.unlock() }
+        return jpegQuality
+    }
+
     private func writeStats(reason: String) {
         let dur = startedAt > 0 ? CACurrentMediaTime() - startedAt : 0
         let stats: [String: Any] = [
@@ -451,6 +461,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
             "peakMB": (peakMB * 10).rounded() / 10,
             "w": lastW,
             "h": lastH,
+            "q": Double((jpegQualityNow() * 100).rounded()) / 100,
             "durS": Int(dur),
             "connected": everConnected,
             "at": Date().timeIntervalSince1970,

@@ -562,7 +562,7 @@ const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
   );
 });
 
-function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost, isActive = true }) {
+function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost, isActive = true, headless = false, command = null }) {
   const [liked, setLiked] = useState(!!post.user_liked);
   // [2026-10-08 apps-native] tolerate likes_count/likes (WS feed_new_post + older shapes) — was like_count only → 0.
   const [likeCount, setLikeCount] = useState(Number(post.like_count ?? post.likes_count ?? post.likes) || 0);
@@ -1068,6 +1068,327 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       (i) => { const a = actions[i]; if (a) { try { a.run(); } catch {} } }
     );
   };
+
+  // [2026-10-15 native-feed] Folhas/modais do post (curtidas, coleções,
+  // compartilhar, análises, impulsionar, presente) num só nó, para o modo
+  // `headless` reaproveitar: a lista NATIVA do feed desenha o cartão e só
+  // monta este FeedPost (sem cartão) quando uma ação precisa de folha JS.
+  const _cmdSeqRef = useRef(0);
+  useEffect(() => {
+    if (!headless || !command || !command.seq || command.seq === _cmdSeqRef.current) return;
+    _cmdSeqRef.current = command.seq;
+    try {
+      switch (command.kind) {
+        case 'share': setShareMenuOpen(true); break;
+        case 'likers': openLikers(); break;
+        case 'collections': openCollectionPicker(); break;
+        case 'gift': if (DIAMONDS_ENABLED && !isOwner) setGiftOpen(true); break;
+        case 'pin': togglePin(); break;
+        case 'analytics': openAnalytics(); break;
+        case 'promote': if (MONETIZATION_ENABLED) setShowPromoteModal(true); break;
+        case 'delete': handleDelete(); break;
+        default: break;
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headless, command]);
+
+  const _sheets = (
+    <>
+      {/* Likers modal — Instagram-style sheet with avatar+name+follow button */}
+      <Modal visible={likersOpen} transparent animationType="slide" onRequestClose={() => setLikersOpen(false)}>
+        <Pressable style={styles.likersBackdrop} onPress={() => setLikersOpen(false)}>
+          <Pressable style={[styles.likersSheet, { backgroundColor: colors.background, borderColor: colors.border }]} onPress={() => {}}>
+            <View style={[styles.likersHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.likersTitle, { color: colors.text }]}>{t('feed.likesTitle') || 'Curtidas'}</Text>
+            {likersList === null ? (
+              <View style={{ paddingVertical: 32 }}>
+                <ActivityIndicator color={colors.textTertiary} />
+              </View>
+            ) : likersList.length === 0 ? (
+              <Text style={[styles.likersEmpty, { color: colors.textTertiary }]}>{t('feed.noLikesYet') || 'Ninguém curtiu ainda'}</Text>
+            ) : (
+              // [2026-10-08 apps-native] FlatList (virtualized) — a viral post's
+              // likers list mounted every row up front inside a ScrollView.
+              <FlatList
+                style={styles.likersScroll}
+                data={likersList}
+                extraData={likersBusy}
+                keyExtractor={(u, idx) => String(u?.email || idx)}
+                showsVerticalScrollIndicator={false}
+                initialNumToRender={12}
+                maxToRenderPerBatch={12}
+                windowSize={7}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item: u }) => {
+                  const display = u.display_name || u.name || (u.email ? u.email.split('@')[0] : '');
+                  const isMe = user?.email && u.email && String(u.email).toLowerCase() === String(user.email).toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      style={styles.likersRow}
+                      onPress={() => {
+                        setLikersOpen(false);
+                        onPressUser?.(u.email, display);
+                      }}
+                    >
+                      <AvatarCircle email={u.email} name={display} size={42} />
+                      <View style={styles.likersInfo}>
+                        <Text style={[styles.likersName, { color: colors.text }]} numberOfLines={1}>{display}</Text>
+                        <Text style={[styles.likersHandle2, { color: colors.textTertiary }]} numberOfLines={1}>{u.email}</Text>
+                      </View>
+                      {!isMe && (
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          disabled={likersBusy.has(u.email)}
+                          onPress={(e) => { e.stopPropagation?.(); toggleFollowLiker(u.email, !!u.is_following); }}
+                          style={[
+                            styles.likersFollowBtn,
+                            u.is_following
+                              ? { backgroundColor: 'transparent', borderColor: colors.border }
+                              : { backgroundColor: colors.primary, borderColor: colors.primary },
+                          ]}
+                        >
+                          <Text style={[styles.likersFollowText, { color: u.is_following ? colors.text : colors.onPrimary }]}>
+                            {u.is_following ? (t('profile.following') || 'Seguindo') : (t('profile.follow') || 'Seguir')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Save-to-collection bottom sheet (long-press bookmark) */}
+      <Modal visible={collectionsOpen} transparent animationType="slide" onRequestClose={() => setCollectionsOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setCollectionsOpen(false)}>
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingBottom: 32, maxHeight: '70%' }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 8 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 14 }}>
+              {t('feed.saveToCollection') || 'Salvar em...'}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12, gap: 10 }}>
+              <TextInput
+                value={newCollectionName}
+                onChangeText={setNewCollectionName}
+                placeholder={t('feed.newCollection') || '+ Nova coleção'}
+                placeholderTextColor={colors.textTertiary}
+                style={{ flex: 1, fontSize: 14, color: colors.text, backgroundColor: colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
+                onSubmitEditing={createCollection}
+              />
+              <TouchableOpacity
+                onPress={createCollection}
+                disabled={!newCollectionName.trim() || creatingCollection}
+                style={{ backgroundColor: newCollectionName.trim() ? colors.primary : colors.border, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
+              >
+                <Text style={{ color: newCollectionName.trim() ? colors.onPrimary : colors.textSecondary, fontWeight: '700', fontSize: 13 }}>+</Text>
+              </TouchableOpacity>
+            </View>
+            {collections === null ? (
+              <ActivityIndicator color={colors.primary || ACCENT} style={{ marginVertical: 24 }} />
+            ) : collections.length === 0 ? (
+              <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', paddingVertical: 16 }}>
+                {t('feed.collections') || 'Coleções'}
+              </Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 320 }}>
+                {collections.map(c => (
+                  <TouchableOpacity
+                    key={c.id}
+                    onPress={() => saveToCollection(c.id)}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+                  >
+                    <IconBookmarkFilled size={20} color={colors.text} />
+                    <Text style={{ flex: 1, marginLeft: 12, fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{c.name}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textTertiary }}>{c.post_count}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* [2026-10-11 social-qa] toast "Link copiado" */}
+      {linkCopied && (
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 110, alignItems: 'center', zIndex: 30 }}>
+          <View style={{ backgroundColor: 'rgba(17,17,17,0.92)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 }}>
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('feed.linkCopied') || 'Link copiado'}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Share menu — bottom sheet with Repostar / Compartilhar fora / Copiar link */}
+      <Modal visible={shareMenuOpen} transparent animationType="slide" onRequestClose={() => setShareMenuOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShareMenuOpen(false)}>
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 36, ...(isWeb ? { width: '100%', maxWidth: 640, alignSelf: 'center' } : {}) }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 6 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
+            </View>
+            <TouchableOpacity
+              onPress={handleRepost}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
+            >
+              <IconShare size={22} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
+                {t('feed.repost') || 'Repostar'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleExternalShare}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
+            >
+              <IconShare size={22} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
+                {t('feed.shareOutside') || 'Compartilhar fora'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleCopyLink}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('feed.copyLink') || 'Copiar link'}
+            >
+              <IconLink size={22} color={colors.text} />
+              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
+                {t('feed.copyLink') || 'Copiar link'}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Analytics modal — owner-only post insights. Lazy-loaded on tap so
+          the network only fires for posts the user actually inspects. */}
+      <Modal visible={analyticsOpen} animationType="slide" transparent onRequestClose={() => setAnalyticsOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setAnalyticsOpen(false)}>
+          <Pressable
+            onPress={(e) => e.stopPropagation?.()}
+            style={{ backgroundColor: isDark ? '#0b0b0b' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 10 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb' }} />
+            </View>
+            <Text style={{ fontSize: 17, fontWeight: '700', textAlign: 'center', color: colors.text, marginBottom: 16 }}>
+              {t('feed.analytics') || 'Análises do post'}
+            </Text>
+            {analyticsLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 30 }} />
+            ) : analyticsData ? (
+              <ScrollView style={{ paddingHorizontal: 20 }}>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
+                  {[
+                    { k: 'views',       label: t('feed.views') || 'Views' },
+                    { k: 'reach',       label: t('feed.reach') || 'Reach' },
+                    { k: 'impressions', label: t('feed.impressions') || 'Impressions' },
+                    { k: 'likes',       label: t('feed.likes') || 'Curtidas' },
+                    { k: 'comments',    label: t('feed.comments') || 'Comentários' },
+                    { k: 'shares',      label: t('feed.shares') || 'Shares' },
+                    { k: 'saves',       label: t('feed.saves') || 'Saves' },
+                  ].map(({ k, label }) => (
+                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 12 }}>
+                      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>{label}</Text>
+                      <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 }}>
+                        {Number(analyticsData[k] || 0).toLocaleString()}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                {/* 7-day SVG chart */}
+                {Array.isArray(analyticsData.series) && analyticsData.series.length > 0 ? (
+                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 }}>
+                      {t('feed.last7Days') || 'Últimos 7 dias'}
+                    </Text>
+                    {(() => {
+                      const W = 280, H = 80;
+                      const pts = analyticsData.series.map(p => Number(p.views || 0));
+                      const max = Math.max(1, ...pts);
+                      const path = pts.map((v, i) => {
+                        const x = (i / (pts.length - 1 || 1)) * W;
+                        const y = H - (v / max) * (H - 6) - 3;
+                        return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+                      }).join(' ');
+                      return (
+                        <Svg width={W} height={H}>
+                          <Path d={path} stroke={colors.primary} strokeWidth="2" fill="none" />
+                        </Svg>
+                      );
+                    })()}
+                  </View>
+                ) : null}
+                {/* Audience breakdown */}
+                {Array.isArray(analyticsData.audience) && analyticsData.audience.length > 0 ? (
+                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 14 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6 }}>
+                      {t('feed.audience') || 'Audiência'}
+                    </Text>
+                    {analyticsData.audience.map((a, i) => (
+                      <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                        <Text style={{ color: colors.text, fontSize: 13 }}>{a.dom || a.domain || '—'}</Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{Number(a.n || 0)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </ScrollView>
+            ) : (
+              <Text style={{ textAlign: 'center', color: colors.textSecondary, padding: 30 }}>
+                {t('feed.analyticsEmpty') || 'Sem dados'}
+              </Text>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Reels P2 — Promote modal (budget tiers + duration).
+          [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
+      {MONETIZATION_ENABLED && <PromotePostModal
+        visible={showPromoteModal}
+        onClose={() => setShowPromoteModal(false)}
+        post={post}
+        onPromoted={(data) => {
+          setShowPromoteModal(false);
+          onPostUpdated?.({ ...post, is_promoted: true, sponsored: true, promotion: data });
+          try { Alert.alert(t?.('feed.promoteDoneTitle') || 'Post impulsionado', t?.('feed.promoteDoneBody') || `Seu post ficará em destaque por ${data?.duration_days || 7} dias.`); } catch {}
+        }}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        submitting={promoteSubmitting}
+        setSubmitting={setPromoteSubmitting}
+      />}
+      {DIAMONDS_ENABLED && giftOpen && post?.id ? (
+        <GiftSheet
+          visible
+          onClose={() => setGiftOpen(false)}
+          context="post"
+          targetId={post.id}
+          recipientName={post.author_name || String(post.author_email || '').split('@')[0]}
+        />
+      ) : null}
+    </>
+  );
+
+  if (headless) {
+    return (
+      <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        {_sheets}
+      </View>
+    );
+  }
 
   if (hidden) {
     return (
@@ -1831,290 +2152,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         );
       })()}
 
-      {/* Likers modal — Instagram-style sheet with avatar+name+follow button */}
-      <Modal visible={likersOpen} transparent animationType="slide" onRequestClose={() => setLikersOpen(false)}>
-        <Pressable style={styles.likersBackdrop} onPress={() => setLikersOpen(false)}>
-          <Pressable style={[styles.likersSheet, { backgroundColor: colors.background, borderColor: colors.border }]} onPress={() => {}}>
-            <View style={[styles.likersHandle, { backgroundColor: colors.border }]} />
-            <Text style={[styles.likersTitle, { color: colors.text }]}>{t('feed.likesTitle') || 'Curtidas'}</Text>
-            {likersList === null ? (
-              <View style={{ paddingVertical: 32 }}>
-                <ActivityIndicator color={colors.textTertiary} />
-              </View>
-            ) : likersList.length === 0 ? (
-              <Text style={[styles.likersEmpty, { color: colors.textTertiary }]}>{t('feed.noLikesYet') || 'Ninguém curtiu ainda'}</Text>
-            ) : (
-              // [2026-10-08 apps-native] FlatList (virtualized) — a viral post's
-              // likers list mounted every row up front inside a ScrollView.
-              <FlatList
-                style={styles.likersScroll}
-                data={likersList}
-                extraData={likersBusy}
-                keyExtractor={(u, idx) => String(u?.email || idx)}
-                showsVerticalScrollIndicator={false}
-                initialNumToRender={12}
-                maxToRenderPerBatch={12}
-                windowSize={7}
-                keyboardShouldPersistTaps="handled"
-                renderItem={({ item: u }) => {
-                  const display = u.display_name || u.name || (u.email ? u.email.split('@')[0] : '');
-                  const isMe = user?.email && u.email && String(u.email).toLowerCase() === String(user.email).toLowerCase();
-                  return (
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      style={styles.likersRow}
-                      onPress={() => {
-                        setLikersOpen(false);
-                        onPressUser?.(u.email, display);
-                      }}
-                    >
-                      <AvatarCircle email={u.email} name={display} size={42} />
-                      <View style={styles.likersInfo}>
-                        <Text style={[styles.likersName, { color: colors.text }]} numberOfLines={1}>{display}</Text>
-                        <Text style={[styles.likersHandle2, { color: colors.textTertiary }]} numberOfLines={1}>{u.email}</Text>
-                      </View>
-                      {!isMe && (
-                        <TouchableOpacity
-                          activeOpacity={0.7}
-                          disabled={likersBusy.has(u.email)}
-                          onPress={(e) => { e.stopPropagation?.(); toggleFollowLiker(u.email, !!u.is_following); }}
-                          style={[
-                            styles.likersFollowBtn,
-                            u.is_following
-                              ? { backgroundColor: 'transparent', borderColor: colors.border }
-                              : { backgroundColor: colors.primary, borderColor: colors.primary },
-                          ]}
-                        >
-                          <Text style={[styles.likersFollowText, { color: u.is_following ? colors.text : colors.onPrimary }]}>
-                            {u.is_following ? (t('profile.following') || 'Seguindo') : (t('profile.follow') || 'Seguir')}
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Save-to-collection bottom sheet (long-press bookmark) */}
-      <Modal visible={collectionsOpen} transparent animationType="slide" onRequestClose={() => setCollectionsOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setCollectionsOpen(false)}>
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingBottom: 32, maxHeight: '70%' }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 8 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
-            </View>
-            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 14 }}>
-              {t('feed.saveToCollection') || 'Salvar em...'}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12, gap: 10 }}>
-              <TextInput
-                value={newCollectionName}
-                onChangeText={setNewCollectionName}
-                placeholder={t('feed.newCollection') || '+ Nova coleção'}
-                placeholderTextColor={colors.textTertiary}
-                style={{ flex: 1, fontSize: 14, color: colors.text, backgroundColor: colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
-                onSubmitEditing={createCollection}
-              />
-              <TouchableOpacity
-                onPress={createCollection}
-                disabled={!newCollectionName.trim() || creatingCollection}
-                style={{ backgroundColor: newCollectionName.trim() ? colors.primary : colors.border, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 }}
-              >
-                <Text style={{ color: newCollectionName.trim() ? colors.onPrimary : colors.textSecondary, fontWeight: '700', fontSize: 13 }}>+</Text>
-              </TouchableOpacity>
-            </View>
-            {collections === null ? (
-              <ActivityIndicator color={colors.primary || ACCENT} style={{ marginVertical: 24 }} />
-            ) : collections.length === 0 ? (
-              <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', paddingVertical: 16 }}>
-                {t('feed.collections') || 'Coleções'}
-              </Text>
-            ) : (
-              <ScrollView style={{ maxHeight: 320 }}>
-                {collections.map(c => (
-                  <TouchableOpacity
-                    key={c.id}
-                    onPress={() => saveToCollection(c.id)}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
-                  >
-                    <IconBookmarkFilled size={20} color={colors.text} />
-                    <Text style={{ flex: 1, marginLeft: 12, fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{c.name}</Text>
-                    <Text style={{ fontSize: 12, color: colors.textTertiary }}>{c.post_count}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* [2026-10-11 social-qa] toast "Link copiado" */}
-      {linkCopied && (
-        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 110, alignItems: 'center', zIndex: 30 }}>
-          <View style={{ backgroundColor: 'rgba(17,17,17,0.92)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 }}>
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('feed.linkCopied') || 'Link copiado'}</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Share menu — bottom sheet with Repostar / Compartilhar fora / Copiar link */}
-      <Modal visible={shareMenuOpen} transparent animationType="slide" onRequestClose={() => setShareMenuOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShareMenuOpen(false)}>
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
-            style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 36, ...(isWeb ? { width: '100%', maxWidth: 640, alignSelf: 'center' } : {}) }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 6 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
-            </View>
-            <TouchableOpacity
-              onPress={handleRepost}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
-            >
-              <IconShare size={22} color={colors.text} />
-              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
-                {t('feed.repost') || 'Repostar'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleExternalShare}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
-            >
-              <IconShare size={22} color={colors.text} />
-              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
-                {t('feed.shareOutside') || 'Compartilhar fora'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={handleCopyLink}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}
-              accessibilityRole="button"
-              accessibilityLabel={t('feed.copyLink') || 'Copiar link'}
-            >
-              <IconLink size={22} color={colors.text} />
-              <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }}>
-                {t('feed.copyLink') || 'Copiar link'}
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Analytics modal — owner-only post insights. Lazy-loaded on tap so
-          the network only fires for posts the user actually inspects. */}
-      <Modal visible={analyticsOpen} animationType="slide" transparent onRequestClose={() => setAnalyticsOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setAnalyticsOpen(false)}>
-          <Pressable
-            onPress={(e) => e.stopPropagation?.()}
-            style={{ backgroundColor: isDark ? '#0b0b0b' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 10 }}>
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb' }} />
-            </View>
-            <Text style={{ fontSize: 17, fontWeight: '700', textAlign: 'center', color: colors.text, marginBottom: 16 }}>
-              {t('feed.analytics') || 'Análises do post'}
-            </Text>
-            {analyticsLoading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginVertical: 30 }} />
-            ) : analyticsData ? (
-              <ScrollView style={{ paddingHorizontal: 20 }}>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
-                  {[
-                    { k: 'views',       label: t('feed.views') || 'Views' },
-                    { k: 'reach',       label: t('feed.reach') || 'Reach' },
-                    { k: 'impressions', label: t('feed.impressions') || 'Impressions' },
-                    { k: 'likes',       label: t('feed.likes') || 'Curtidas' },
-                    { k: 'comments',    label: t('feed.comments') || 'Comentários' },
-                    { k: 'shares',      label: t('feed.shares') || 'Shares' },
-                    { k: 'saves',       label: t('feed.saves') || 'Saves' },
-                  ].map(({ k, label }) => (
-                    <View key={k} style={{ width: '47%', backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 12 }}>
-                      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase' }}>{label}</Text>
-                      <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800', marginTop: 4 }}>
-                        {Number(analyticsData[k] || 0).toLocaleString()}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-                {/* 7-day SVG chart */}
-                {Array.isArray(analyticsData.series) && analyticsData.series.length > 0 ? (
-                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 8 }}>
-                      {t('feed.last7Days') || 'Últimos 7 dias'}
-                    </Text>
-                    {(() => {
-                      const W = 280, H = 80;
-                      const pts = analyticsData.series.map(p => Number(p.views || 0));
-                      const max = Math.max(1, ...pts);
-                      const path = pts.map((v, i) => {
-                        const x = (i / (pts.length - 1 || 1)) * W;
-                        const y = H - (v / max) * (H - 6) - 3;
-                        return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-                      }).join(' ');
-                      return (
-                        <Svg width={W} height={H}>
-                          <Path d={path} stroke={colors.primary} strokeWidth="2" fill="none" />
-                        </Svg>
-                      );
-                    })()}
-                  </View>
-                ) : null}
-                {/* Audience breakdown */}
-                {Array.isArray(analyticsData.audience) && analyticsData.audience.length > 0 ? (
-                  <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#f5f5f5', borderRadius: 12, padding: 14 }}>
-                    <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', marginBottom: 6 }}>
-                      {t('feed.audience') || 'Audiência'}
-                    </Text>
-                    {analyticsData.audience.map((a, i) => (
-                      <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
-                        <Text style={{ color: colors.text, fontSize: 13 }}>{a.dom || a.domain || '—'}</Text>
-                        <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{Number(a.n || 0)}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-              </ScrollView>
-            ) : (
-              <Text style={{ textAlign: 'center', color: colors.textSecondary, padding: 30 }}>
-                {t('feed.analyticsEmpty') || 'Sem dados'}
-              </Text>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Reels P2 — Promote modal (budget tiers + duration).
-          [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
-      {MONETIZATION_ENABLED && <PromotePostModal
-        visible={showPromoteModal}
-        onClose={() => setShowPromoteModal(false)}
-        post={post}
-        onPromoted={(data) => {
-          setShowPromoteModal(false);
-          onPostUpdated?.({ ...post, is_promoted: true, sponsored: true, promotion: data });
-          try { Alert.alert(t?.('feed.promoteDoneTitle') || 'Post impulsionado', t?.('feed.promoteDoneBody') || `Seu post ficará em destaque por ${data?.duration_days || 7} dias.`); } catch {}
-        }}
-        colors={colors}
-        isDark={isDark}
-        t={t}
-        submitting={promoteSubmitting}
-        setSubmitting={setPromoteSubmitting}
-      />}
-      {DIAMONDS_ENABLED && giftOpen && post?.id ? (
-        <GiftSheet
-          visible
-          onClose={() => setGiftOpen(false)}
-          context="post"
-          targetId={post.id}
-          recipientName={post.author_name || String(post.author_email || '').split('@')[0]}
-        />
-      ) : null}
+      {_sheets}
     </View>
   );
 }
@@ -2688,3 +2726,7 @@ const styles = StyleSheet.create({
 });
 
 export default memo(FeedPost);
+
+// [2026-10-15 native-feed] Helpers reaproveitados pela lista nativa do feed
+// (components/feed/NativePostFeed.js) — mesma regra de mídia/hora do cartão JS.
+export { timeAgo as feedTimeAgo, resolveMediaUrl as feedResolveMediaUrl, isVideoMedia as feedIsVideoMedia, parseMediaUrls as feedParseMediaUrls };

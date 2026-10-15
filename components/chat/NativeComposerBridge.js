@@ -87,6 +87,7 @@ class NativeComposerBoundary extends React.Component {
   componentDidCatch(err) {
     _failed = true;
     try { console.warn('[native-composer] fallback to JS composer:', err?.message || err); } catch {}
+    try { require('../../services/crashReporter').reportNativeFallback('native_composer', err); } catch {}
     try { this.props.onFatal?.(err); } catch {}
   }
 

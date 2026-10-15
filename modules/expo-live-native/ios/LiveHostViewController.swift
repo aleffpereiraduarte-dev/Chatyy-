@@ -537,7 +537,7 @@ struct LiveHostView: View {
         ZStack {
             // Camera preview (own camera) — mirrored.
             if let local = session.localVideoTrack {
-                SwiftUIVideoView(local, layoutMode: .fill, mirrorMode: .mirror)
+                SwiftUIVideoView(local, layoutMode: .fill, mirrorMode: .auto) // [2026-10-15 espelho] frontal espelhada, traseira não
                     .ignoresSafeArea()
             } else {
                 Color.black.ignoresSafeArea()

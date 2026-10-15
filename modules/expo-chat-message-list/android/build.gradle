@@ -21,6 +21,8 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+  // [native-store] foto da conversa lida/gravada direto no store nativo
+  implementation project(':expo-chat-store')
   implementation 'androidx.core:core-ktx:1.13.1'
   // [2026-10-14 native-list] Mesmas versões que o binário já carrega
   // (expo-media-viewer / expo-image): zero bytes novos de terceiros.

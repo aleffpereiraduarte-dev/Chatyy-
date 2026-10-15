@@ -36,6 +36,9 @@ class CAConfig(o: Map<String, Any?>) {
   val allowCamera: Boolean
   val maxVideoSec: Double
   val withAudio: Boolean
+  // [2026-10-15 native-status-studio] câmera do status: seletor Texto · Normal · Boomerang.
+  val statusModes: Boolean
+  val boomerangSec: Double
 
   init {
     val l = HashMap<String, String>()
@@ -63,6 +66,8 @@ class CAConfig(o: Map<String, Any?>) {
     allowCamera = (o["allowCamera"] as? Boolean) ?: true
     maxVideoSec = ((o["maxVideoSec"] as? Number)?.toDouble() ?: 60.0).coerceAtLeast(3.0)
     withAudio = (o["withAudio"] as? Boolean) ?: true
+    statusModes = (o["statusModes"] as? Boolean) ?: false
+    boomerangSec = ((o["boomerangSec"] as? Number)?.toDouble() ?: 1.5).coerceIn(0.8, 4.0)
   }
 
   fun t(key: String, fallback: String): String {

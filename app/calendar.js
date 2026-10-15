@@ -57,6 +57,8 @@ import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-sec
 // (pim_changed) e datas locais corretas (parseCalDate — ver utils/calDate.js).
 import DayTimeline from '../components/calendar/DayTimeline';
 import CalendarSmartBar from '../components/calendar/CalendarSmartBar';
+// [2026-10-15 native-apps] visão Mês/Agenda em nativo (grade + agenda do dia); kill switch __chatyy_native_calendar.
+import NativeCalendarView, { useNativeCalendar, argb as calArgb } from '../components/native/NativeCalendarView';
 import * as pim from '../services/pim';
 import { parseCalDate, toCalString, startOfDay as calStartOfDay, addDays as calAddDays, dayKey as calDayKey } from '../utils/calDate';
 
@@ -2981,6 +2983,167 @@ function CalendarScreenInner() {
     />
   );
 
+  // [2026-10-15 native-apps] Calendário NATIVO (Mês + Agenda). Mesmos dados e
+  // fluxos da FlatList abaixo; web / binário antigo / falha → FlatList JS.
+  const [nativeCalOn, onNativeCalFail] = useNativeCalendar();
+  const useNativeCal = nativeCalOn && Platform.OS !== 'web' && (calendarView === 'month' || calendarView === 'agenda');
+
+  const nativeCalMarks = useMemo(() => {
+    if (!useNativeCal) return null;
+    const out = {};
+    const get = (k) => (out[k] = out[k] || { c: [], n: 0, lv: 0, st: [] });
+    (events || []).forEach((evt) => {
+      const s = parseCalDate(evt.start_at);
+      if (isNaN(s.getTime())) return;
+      const m = get(calDayKey(s));
+      m.n += 1;
+      const ink = calArgb(eventInk(evt.color || evt.calendar_color, colors));
+      if (m.c.length < 3 && ink !== undefined) m.c.push(ink);
+      if (eventIsLive(evt)) m.lv = 1;
+      if (spansMultipleDays(evt)) {
+        const e = parseCalDate(evt.end_at);
+        let d = calStartOfDay(s);
+        const last = calStartOfDay(e).getTime();
+        for (let guard = 0; guard < 62 && d.getTime() <= last; guard++) {
+          const mk = get(calDayKey(d));
+          if (mk.st.length < 2 && ink !== undefined) {
+            mk.st.push({ c: ink, f: guard === 0 ? 1 : 0, l: d.getTime() === last ? 1 : 0 });
+          }
+          d = calAddDays(d, 1);
+        }
+      }
+    });
+    return out;
+  }, [useNativeCal, events, colors]);
+
+  const nativeCalEventById = useRef(new Map());
+  const nativeCalRows = useMemo(() => {
+    if (!useNativeCal) return [];
+    const byId = new Map();
+    const displayTz = tzPref === 'system' ? null : effectiveTz;
+    const evRow = (event) => {
+      const id = `e:${event.id}|${event.start_at || ''}`;
+      byId.set(id, event);
+      const meetUrlPattern = /\/meet\/([a-zA-Z0-9_-]+)/;
+      const meetMatch = (event.location && meetUrlPattern.exec(event.location)) ||
+        (event.meeting_room_id ? { 1: event.meeting_room_id } : null) ||
+        (event.description && meetUrlPattern.exec(event.description));
+      const roomId = meetMatch ? (meetMatch[1] || meetMatch['1']) : null;
+      const accent = eventInk(event.color || event.calendar_color, colors);
+      const r = {
+        id, k: 'e',
+        t: event.title || t('calendar.untitledEvent'),
+        tm: formatTimeRange(event.start_at, event.end_at, event.all_day, t, { showTz, tz: displayTz }),
+        sw: 1,
+      };
+      const rel = getRelativeTime(event.start_at, t); if (rel) r.rel = rel;
+      if (event.location) r.loc = String(event.location);
+      if (event.recurrence_rule) r.rr = formatRecurrenceLabel(event.recurrence_rule, event.start_at, t);
+      if (meetMatch) r.mt = t('calendar.meetingEvent');
+      if (meetMatch && roomId) r.jn = t('calendar.joinMeeting');
+      if (event.calendar_name) { r.cal = String(event.calendar_name); const cc = calArgb(event.calendar_color || colors.primary); if (cc !== undefined) r.cc = cc; }
+      const ac = calArgb(accent); if (ac !== undefined) r.ac = ac;
+      if (event.calendar_name || event.source === 'device') r.sy = 1;
+      if (event.reminder && event.reminder !== 'none') r.rm = 1;
+      return r;
+    };
+    const out = [];
+    if (calendarView === 'agenda') {
+      agendaItems.forEach((it, i) => {
+        if (it._agendaHeader) out.push({ id: 'h:' + it.key, k: 'h', t: it.label, sb: eventCountLabel(t, it.count), top: i === 0 ? 0 : 1 });
+        else out.push(evRow(it));
+      });
+      if (!agendaItems.length && !loading) {
+        out.push({ id: 'n:agenda', k: 'n', t: t('calendar.noEventsThisDay'), sb: t('calendar.emptyDesc'), b: t('calendar.newEvent') });
+      }
+    } else {
+      out.push({ id: 'h:day', k: 'h', t: selectedDateStr, sb: eventCountLabel(t, dayEvents.length) });
+      dayEvents.forEach((e) => out.push(evRow(e)));
+      if (!dayEvents.length && !loading) {
+        out.push({ id: 'n:day', k: 'n', t: t('calendar.noEventsThisDay'), sb: t('calendar.emptyDesc'), b: t('calendar.newEvent') });
+      }
+    }
+    nativeCalEventById.current = byId;
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useNativeCal, calendarView, agendaItems, dayEvents, selectedDateStr, loading, colors, t, showTz, tzPref, effectiveTz]);
+
+  const nativeCalLabels = useMemo(() => ({
+    edit: t('calendar.edit'),
+    delete: t('calendar.delete'),
+    months: Array.isArray(t('calendar.months')) ? t('calendar.months') : [],
+    hint: t('calendar.longPressToAdd'),
+  }), [t]);
+
+  const keyToDate = (k) => {
+    const [y, m, d] = String(k || '').split('-').map(Number);
+    return (y && m && d) ? new Date(y, m - 1, d) : null;
+  };
+  const onNativeCalAction = (id, action) => {
+    if (action === 'add') { setPrefill(null); setShowAddModal(true); return; }
+    const ev = nativeCalEventById.current.get(id);
+    if (!ev) return;
+    if (action === 'edit') handleSwipeEdit(ev);
+    else if (action === 'delete') handleSwipeDelete(ev);
+    else if (action === 'join') {
+      const m = (ev.location && /\/meet\/([a-zA-Z0-9_-]+)/.exec(ev.location)) || (ev.description && /\/meet\/([a-zA-Z0-9_-]+)/.exec(ev.description));
+      const room = ev.meeting_room_id || (m && m[1]);
+      if (room) handleJoinMeeting(room);
+    }
+  };
+
+  // [2026-10-15 native-apps] Resumo do dia + avisos: mesmo bloco na FlatList JS
+  // e no calendário nativo (filho RN entre a grade e a agenda).
+  const calListExtras = (
+    <>
+      {/* [2026-10-13] topo inteligente: resumo do dia, criar com a Bia, livres, sincronizar */}
+      <CalendarSmartBar
+        date={selectedDate || new Date()}
+        events={events}
+        tasks={pimTasks}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        locale={t('_locale') || undefined}
+        onCreate={createFromDraft}
+        onOpenEditor={(d) => { setPrefill(d); if (d?.start) handleSelectDate(d.start); setShowAddModal(true); }}
+        onCreateAt={openEditorAt}
+        onOpenSync={() => router.push('/calendar-sync')}
+        onOpenTasks={() => router.push('/tasks')}
+      />
+      {/* Import result banner */}
+      {importResult && (
+        <View style={[styles.importBanner, {
+          backgroundColor: importResult.failed === 0 ? colors.successBg : colors.warningBg,
+          borderColor: importResult.failed === 0 ? colors.success : colors.warning,
+        }]}>
+          <IconCheck size={16} color={importResult.failed === 0 ? colors.success : colors.warning} />
+          <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? colors.success : colors.warning }]}>
+            {t('calendar.importedCount', { success: importResult.success, total: importResult.total })}{importResult.failed > 0 ? ` (${importResult.failed} ${t('calendar.failed')})` : ''}
+          </Text>
+          <TouchableOpacity onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <IconX size={14} color={importResult.failed === 0 ? colors.success : colors.warning} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {aiReminders.length > 0 && (
+        <View style={[styles.remindersCard, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
+          <View style={styles.remindersHeader}>
+            <IconSparkles size={14} color={colors.primary} />
+            <Text style={[styles.remindersTitle, { color: colors.primary }]}>{t('calendar.smartReminders')}</Text>
+            <TouchableOpacity onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconX size={14} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+          {aiReminders.map((reminder, i) => (
+            <Text key={i} style={[styles.reminderText, { color: colors.text }]}>{reminder}</Text>
+          ))}
+        </View>
+      )}
+    </>
+  );
+
   const renderEmpty = () => {
     if (loading) return null;
     return <CalendarEmptyState colors={colors} isDark={isDark} t={t} onAdd={() => setShowAddModal(true)} />;
@@ -3262,6 +3425,35 @@ function CalendarScreenInner() {
           onNextWeek={handleNextWeek}
           t={t}
         />
+      ) : useNativeCal ? (
+        <NativeCalendarView
+          year={currentYear}
+          month={currentMonth}
+          selectedKey={selectedDate ? calDayKey(selectedDate) : ''}
+          todayKey={calDayKey(realToday)}
+          firstWeekday={0}
+          marks={nativeCalMarks}
+          showGrid={calendarView !== 'agenda'}
+          rows={nativeCalRows}
+          colors={colors}
+          isDark={isDark}
+          labels={nativeCalLabels}
+          refreshing={refreshing}
+          bottomInset={Spacing.xl + insets.bottom}
+          onSelectDate={(k) => { const d = keyToDate(k); if (d) handleSelectDate(d); }}
+          onLongPressDate={(k) => { const d = keyToDate(k); if (d) { handleSelectDate(d); handleQuickAdd(d); } }}
+          onMonthChange={(dir) => (dir > 0 ? handleNextMonth() : handlePrevMonth())}
+          onPress={(id) => { const ev = nativeCalEventById.current.get(id); if (ev) handleEventPress(ev); }}
+          onAction={onNativeCalAction}
+          onRefresh={onRefresh}
+          onFailure={onNativeCalFail}
+          header={(
+            <>
+              {calListExtras}
+              {loading && !refreshing && events.length === 0 && <CalendarSkeleton />}
+            </>
+          )}
+        />
       ) : (
         <FlatList
           data={calendarView === 'agenda' ? agendaItems : dayEvents}
@@ -3295,51 +3487,7 @@ function CalendarScreenInner() {
                 />
               )}
 
-              {/* [2026-10-13] topo inteligente: resumo do dia, criar com a Bia, livres, sincronizar */}
-              <CalendarSmartBar
-                date={selectedDate || new Date()}
-                events={events}
-                tasks={pimTasks}
-                colors={colors}
-                isDark={isDark}
-                t={t}
-                locale={t('_locale') || undefined}
-                onCreate={createFromDraft}
-                onOpenEditor={(d) => { setPrefill(d); if (d?.start) handleSelectDate(d.start); setShowAddModal(true); }}
-                onCreateAt={openEditorAt}
-                onOpenSync={() => router.push('/calendar-sync')}
-                onOpenTasks={() => router.push('/tasks')}
-              />
-              {/* Import result banner */}
-              {importResult && (
-                <View style={[styles.importBanner, {
-                  backgroundColor: importResult.failed === 0 ? colors.successBg : colors.warningBg,
-                  borderColor: importResult.failed === 0 ? colors.success : colors.warning,
-                }]}>
-                  <IconCheck size={16} color={importResult.failed === 0 ? colors.success : colors.warning} />
-                  <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? colors.success : colors.warning }]}>
-                    {t('calendar.importedCount', { success: importResult.success, total: importResult.total })}{importResult.failed > 0 ? ` (${importResult.failed} ${t('calendar.failed')})` : ''}
-                  </Text>
-                  <TouchableOpacity onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <IconX size={14} color={importResult.failed === 0 ? colors.success : colors.warning} />
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {aiReminders.length > 0 && (
-                <View style={[styles.remindersCard, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
-                  <View style={styles.remindersHeader}>
-                    <IconSparkles size={14} color={colors.primary} />
-                    <Text style={[styles.remindersTitle, { color: colors.primary }]}>{t('calendar.smartReminders')}</Text>
-                    <TouchableOpacity onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                      <IconX size={14} color={colors.textTertiary} />
-                    </TouchableOpacity>
-                  </View>
-                  {aiReminders.map((reminder, i) => (
-                    <Text key={i} style={[styles.reminderText, { color: colors.text }]}>{reminder}</Text>
-                  ))}
-                </View>
-              )}
+              {calListExtras}
 
               {/* Selected day header */}
               {calendarView !== 'agenda' && (

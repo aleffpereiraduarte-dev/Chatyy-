@@ -211,7 +211,7 @@ object NativeCallRoom {
         // Audio routing (earpiece for audio / speaker for video, BT hot-plug) —
         // mirror CallActivity.onCreate's AudioRouter.configureForCall(hasVideo).
         try {
-            expo.modules.callkit.audio.AudioRouter.get(app).configureForCall(hasVideo)
+            expo.modules.callkit.audio.AudioRouter.get(app).configureForCall(hasVideo, callId)
         } catch (t: Throwable) {
             Log.w(TAG, "warm FGS: AudioRouter.configureForCall failed: ${t.message}")
         }
@@ -814,7 +814,8 @@ object NativeCallRoom {
                 // same audio tuning the group already has (Opus 48k + RED + DTX
                 // + AEC/AGC/NS). buildCallRoomOptions folds e2ee in when present,
                 // so the no-key path == the old default + audio knobs.
-                val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(ctx.applicationContext, e2ee))
+                // [2026-10-15 viva-voz] No LiveKit AudioSwitch: AudioRouter owns the route.
+                val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(ctx.applicationContext, e2ee), expo.modules.callkit.audio.AudioRouter.liveKitOverrides())
                 // [2026-10-11 noise] RNNoise capture post-processor before any mic publish.
                 expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)
                 // [2026-10-07 audio-route] Ring-time preconnect: call type not
@@ -1404,7 +1405,39 @@ object CallVideoQuality {
     }
 
     fun screenShareCaptureDefaults(): LocalVideoTrackOptions =
-        LocalVideoTrackOptions(isScreencast = true, captureParams = SCREEN_CAPTURE)
+        LocalVideoTrackOptions(isScreencast = true, captureParams = screenCaptureParams())
+
+    /** [2026-10-15 screen-share sharpness] Capture size with the DISPLAY's own
+     *  aspect ratio, long side ≤ 1920, multiples of 16 (MediaCodec alignment).
+     *  LK 2.24.1 LocalScreencastVideoTrack only swaps (w,h) to the display
+     *  orientation and the VirtualDisplay mirrors the panel letterboxed — a
+     *  fixed 1920x1080 on a 1080x2424 phone put the content in ~856x1920
+     *  with black bars (and encoded the bars). Fallback = old 1920x1080. */
+    private fun screenCaptureParams(): VideoCaptureParameter {
+        return try {
+            val dm = android.util.DisplayMetrics()
+            val c = appCtx
+            if (c != null) {
+                val dmgr = c.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+                val d = dmgr?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                @Suppress("DEPRECATION")
+                if (d != null) d.getRealMetrics(dm) else dm.setTo(android.content.res.Resources.getSystem().displayMetrics)
+            } else {
+                dm.setTo(android.content.res.Resources.getSystem().displayMetrics)
+            }
+            val long = maxOf(dm.widthPixels, dm.heightPixels)
+            val short = minOf(dm.widthPixels, dm.heightPixels)
+            if (long <= 0 || short <= 0) return SCREEN_CAPTURE
+            val scale = minOf(1.0, 1920.0 / long, 1080.0 / short)
+            val w = maxOf(16, ((long * scale) / 16).toInt() * 16)
+            val h = maxOf(16, ((short * scale) / 16).toInt() * 16)
+            // Landscape order; LK swaps to the display orientation itself.
+            VideoCaptureParameter(w, h, SCREEN_CAPTURE.maxFps)
+        } catch (t: Throwable) {
+            Log.w(TAG, "screenCaptureParams: ${t.message}")
+            SCREEN_CAPTURE
+        }
+    }
 
     // [2026-10-15 screen-share WA] Adaptive screen share: top layer 1080p@15
     // 3 Mbps + a 720p@10 0.9 Mbps simulcast (= iOS) layer, so a subscriber on a poor
@@ -1415,14 +1448,21 @@ object CallVideoQuality {
     // Respects the simulcast safety net (simulcastEnabled) like the camera.
     private val SCREEN_LOW_LAYER = CustomVideoPreset(VideoCaptureParameter(1280, 720, 10), VideoEncoding(900_000, 10))
 
+    // [2026-10-15 screen-share sharpness] SIMULCAST OFF (mirror of iOS
+    // screenSharePublishOptions). A mostly static screen keeps the sender
+    // application-limited → BWE never ramps → libwebrtc never enables the top
+    // layer and every viewer gets the 720p-class layer at ≤0.9 Mbps (SFU log
+    // call_1792087759356_yufd6wjh4: only rid "q" ever arrived; QA harness
+    // qa_ssq_*: simulcast h=0x0 "bandwidth" for 30 s, single = full res from
+    // t=4 s). Single layer + MAINTAIN_RESOLUTION keeps text sharp.
+    // SCREEN_LOW_LAYER kept for a quick revert.
     fun screenSharePublishDefaults(): VideoTrackPublishDefaults {
-        val sim = simulcastEnabled()
         return VideoTrackPublishDefaults(
             videoEncoding = SCREEN_ENCODING,
-            simulcast = sim,
+            simulcast = false,
             videoCodec = NativeCallRoom.preferredVideoCodec(),
             degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION,
-            simulcastLayers = if (sim) listOf(SCREEN_LOW_LAYER) else null
+            simulcastLayers = null
         )
     }
 

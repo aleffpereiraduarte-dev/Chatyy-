@@ -1,21 +1,35 @@
 // AudioRouter.kt — Wave B (Audio WhatsApp-grade), 2026-05-18
+// [2026-10-15 viva-voz] Rewritten as the ONE owner of call audio routing.
 //
-// Central helper that owns AudioManager during a native call. Mirrors the
-// iOS AudioRouter API. Replaces the ad-hoc applyAudioRoute() block in
-// CallActivity so audio/video calls have consistent routing + mid-call BT
-// handling.
+// Bug (founder): "o viva-voz no Android não funciona". There were THREE
+// writers of the route and they undid each other:
+//   1. LiveKit's AudioSwitchHandler (com.twilio.audioswitch) — started on every
+//      Room.connect; re-applies ITS selected device (setSpeakerphoneOn(false)
+//      for Earpiece) on activate / device-scan / focus events → the loudspeaker
+//      the user picked fell back to the earpiece a moment later.
+//   2. This router — AudioManager.setSpeakerphoneOn only. On Android 12+
+//      (API 31) that is deprecated and, when another client owns the
+//      communication route (Telecom for our self-managed Connection = mode
+//      owner on incoming calls), it is IGNORED (Pixel/Samsung).
+//   3. Telecom (ChatyyConnection, self-managed) — owns the route of incoming
+//      calls; its onCallAudioStateChanged called setSpeaker(route==SPEAKER),
+//      i.e. it RE-APPLIED Telecom's earpiece over the user's choice.
 //
-// Policy:
-//   • Audio call -> earpiece by default; speaker via explicit toggle.
-//   • Video call -> speaker by default.
-//   • Wired headset / BT headset present at start -> route to it (skip the
-//                    initial default).
-//   • BT connect mid-call  -> re-route to BT.
-//   • BT disconnect mid-call -> fall back to call default (speaker if video,
-//                                earpiece if audio).
-//
-// Note: AudioDeviceCallback is API 23+ (we target 26+). Builds before 23
-// will silently lose the mid-call BT re-route — UI toggle still works.
+// Now:
+//   • LiveKit runs with NoAudioHandler for 1:1/group call Rooms
+//     ([liveKitOverrides]) — no AudioSwitch.
+//   • API 31+: AudioManager.setCommunicationDevice / getAvailableCommunication
+//     Devices (BUILTIN_SPEAKER / BUILTIN_EARPIECE / BLUETOOTH_SCO|BLE / WIRED /
+//     USB); < 31: setSpeakerphoneOn + startBluetoothSco.
+//   • When a Telecom Connection is live, the route also goes through
+//     Connection.setAudioRoute so Telecom agrees (it is the mode owner).
+//   • Telecom / communication-device callbacks only SYNC the state (and re-assert
+//     our choice if something stomps it right after we applied it).
+//   • The user's choice wins over the automatic rules (camera, initial default)
+//     until the user changes it again; a headset/BT connecting mid-call still
+//     takes the route (WhatsApp behaviour).
+//   • Listeners ([addListener]) get every real route change → the UI button
+//     reflects the actual route, CallActivity gates proximity on EARPIECE.
 
 package expo.modules.callkit.audio
 
@@ -29,14 +43,28 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.twilio.audioswitch.AudioDevice
-import io.livekit.android.audio.AudioSwitchHandler
+import io.livekit.android.AudioOptions
+import io.livekit.android.LiveKitOverrides
+import io.livekit.android.audio.NoAudioHandler
 import io.livekit.android.room.Room
+import java.util.concurrent.CopyOnWriteArraySet
 
 class AudioRouter private constructor(private val appContext: Context) {
 
+    enum class Route { EARPIECE, SPEAKER, BLUETOOTH, WIRED;
+        val wire: String get() = when (this) {
+            EARPIECE -> "earpiece"; SPEAKER -> "speaker"; BLUETOOTH -> "bluetooth"; WIRED -> "wired"
+        }
+    }
+
+    fun interface Listener { fun onRouteChanged(route: Route) }
+
     companion object {
         private const val TAG = "AudioRouter"
+        /** Window after we applied a route in which a different observed route
+         *  is treated as "someone stomped it" and re-asserted. */
+        private const val REASSERT_WINDOW_MS = 2500L
+        private const val MAX_REASSERTS = 3
 
         @Volatile private var instance: AudioRouter? = null
 
@@ -52,101 +80,44 @@ class AudioRouter private constructor(private val appContext: Context) {
                 return fresh
             }
         }
+
+        /** [2026-10-15 viva-voz] LiveKit overrides for CALL rooms: no
+         *  AudioSwitch — this router is the single owner of the route. */
+        @JvmStatic
+        fun liveKitOverrides(): LiveKitOverrides =
+            LiveKitOverrides(audioOptions = AudioOptions(audioHandler = NoAudioHandler()))
     }
 
     private val am: AudioManager =
         appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val handler = Handler(Looper.getMainLooper())
+    private val listeners = CopyOnWriteArraySet<Listener>()
 
     @Volatile private var hasVideo: Boolean = false
-    @Volatile var speakerOn: Boolean = false
+    @Volatile private var active: Boolean = false
+    @Volatile private var activeCallId: String = ""
+    @Volatile private var diagCallId: String = ""
+
+    /** Route we want (last decision). */
+    @Volatile var desiredRoute: Route = Route.EARPIECE
+        private set
+    /** Route actually in effect (as observed). */
+    @Volatile var currentRoute: Route = Route.EARPIECE
+        private set
+    /** True once the user picked an output by hand (wins over auto rules). */
+    @Volatile var userPicked: Boolean = false
         private set
 
+    val speakerOn: Boolean get() = currentRoute == Route.SPEAKER
+    val routeName: String get() = currentRoute.wire
+
+    private var lastApplyAt = 0L
+    private var reasserts = 0
+
     private var deviceCallback: AudioDeviceCallback? = null
+    private var commListener: Any? = null // AudioManager.OnCommunicationDeviceChangedListener (API 31+)
 
-    // [2026-10-07 audio-route] LiveKit Android's AudioSwitchHandler (started by
-    // Room.connect → audioHandler.start()) activates AudioSwitch with its
-    // DEFAULT preferredDeviceList = [BluetoothHeadset, WiredHeadset,
-    // Speakerphone, Earpiece] (AudioSwitchHandler.kt v2.24.1
-    // defaultPreferredDeviceList) → it selects the LOUDSPEAKER on connect,
-    // silently overriding the earpiece configureForCall() picked at onCreate.
-    // We set an earpiece-first list for voice calls (speaker-first for video)
-    // BEFORE connect, and route the speaker toggle through AudioSwitch too so
-    // both layers agree.
-    @Volatile private var lkHandler: AudioSwitchHandler? = null
-
-    private val voicePreference: List<Class<out AudioDevice>> = listOf(
-        AudioDevice.BluetoothHeadset::class.java,
-        AudioDevice.WiredHeadset::class.java,
-        AudioDevice.Earpiece::class.java,
-        AudioDevice.Speakerphone::class.java,
-    )
-    private val videoPreference: List<Class<out AudioDevice>> = listOf(
-        AudioDevice.BluetoothHeadset::class.java,
-        AudioDevice.WiredHeadset::class.java,
-        AudioDevice.Speakerphone::class.java,
-        AudioDevice.Earpiece::class.java,
-    )
-
-    /**
-     * [2026-10-07 audio-route] Bind LiveKit's AudioSwitchHandler for this
-     * Room. Call right after LiveKit.create() (before connect) and again when
-     * the call type is known (warm adopt). If AudioSwitch is already running
-     * (preconnect connected during the ring), re-select the preferred device.
-     */
-    fun attachLiveKit(room: Room?, hasVideo: Boolean) {
-        val h = try { room?.audioSwitchHandler } catch (_: Throwable) { null } ?: return
-        lkHandler = h
-        this.hasVideo = hasVideo
-        val pref = if (hasVideo) videoPreference else voicePreference
-        try {
-            h.preferredDeviceList = pref
-            val avail = h.availableAudioDevices
-            if (avail.isNotEmpty()) {
-                val pick = pref.firstNotNullOfOrNull { cls -> avail.firstOrNull { cls.isInstance(it) } }
-                if (pick != null) h.selectDevice(pick)
-                Log.d(TAG, "attachLiveKit(hasVideo=$hasVideo): running — selected ${pick?.name}")
-            } else {
-                Log.d(TAG, "attachLiveKit(hasVideo=$hasVideo): preferredDeviceList set before start")
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "attachLiveKit failed: ${t.message}")
-        }
-    }
-
-    /** Mirror a route decision into AudioSwitch (no-op when no Room bound). */
-    private fun selectLk(speaker: Boolean, preferBt: Boolean = false) {
-        val h = lkHandler ?: return
-        try {
-            val avail = h.availableAudioDevices
-            if (avail.isEmpty()) return
-            val order: List<Class<out AudioDevice>> = when {
-                speaker -> listOf(AudioDevice.Speakerphone::class.java)
-                preferBt -> listOf(AudioDevice.BluetoothHeadset::class.java)
-                else -> listOf(
-                    AudioDevice.BluetoothHeadset::class.java,
-                    AudioDevice.WiredHeadset::class.java,
-                    AudioDevice.Earpiece::class.java,
-                )
-            }
-            val pick = order.firstNotNullOfOrNull { cls -> avail.firstOrNull { cls.isInstance(it) } }
-            if (pick != null) h.selectDevice(pick)
-        } catch (t: Throwable) {
-            Log.w(TAG, "selectLk failed: ${t.message}")
-        }
-    }
-
-    // [#1201 audio fix, 2026-05-19] Real audio focus listener + request handle.
-    // Replaces the leaked `requestAudioFocus(null, …)` that IncomingCallActivity.onAccept
-    // used to fire pre-pre-warm — that call could never be abandoned (no listener
-    // to match) and on the iOS→Android receive path it shadowed WebRTC's internal
-    // ADM focus request once playback started, manifesting as "Android receives
-    // call, says Conectado, but no remote voice plays" while the reverse direction
-    // (Android→iOS = Android never visits IncomingCallActivity = clean focus) worked.
     private val focusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
-        // Log only — we don't want LK's audio publish/playback to flap on
-        // transient focus loss/gain. The peer-side speaker volume bouncing
-        // is way worse than tolerating a momentary other-app blip.
         Log.d(TAG, "onAudioFocusChange: change=$focusChange")
     }
     private var focusRequest: AudioFocusRequest? = null
@@ -154,30 +125,398 @@ class AudioRouter private constructor(private val appContext: Context) {
 
     // ───────────────────────── Public API
 
+    fun addListener(l: Listener) { listeners.add(l) }
+    fun removeListener(l: Listener) { listeners.remove(l) }
+
+    /** Kept for call sites: with [liveKitOverrides] there is no AudioSwitch,
+     *  so this only records the call type. If a Room still carries an
+     *  AudioSwitchHandler (legacy path), align it with our route. */
+    fun attachLiveKit(room: Room?, hasVideo: Boolean) {
+        val h = try { room?.audioSwitchHandler } catch (_: Throwable) { null }
+        if (h != null) {
+            Log.w(TAG, "attachLiveKit: Room has AudioSwitchHandler — create it with AudioRouter.liveKitOverrides()")
+        }
+        if (active && hasVideo && !this.hasVideo) {
+            this.hasVideo = true
+            if (!userPicked && !hasAnyExternalAudioDevice() && desiredRoute == Route.EARPIECE) {
+                selectRoute(Route.SPEAKER, user = false, reason = "attach_video")
+            }
+        }
+    }
+
     /**
      * Initial setup at call start. Pins MODE_IN_COMMUNICATION, claims audio
-     * focus (STREAM_VOICE_CALL), picks the initial route (speaker for video,
-     * earpiece for audio, override to BT if connected). Idempotent.
+     * focus, picks the initial route (BT > wired > speaker for video /
+     * earpiece for voice). Idempotent for the same call: a second call (warm
+     * FGS path + CallActivity.onCreate) never resets the user's choice.
      */
-    fun configureForCall(hasVideo: Boolean) {
-        this.hasVideo = hasVideo
-        this.speakerOn = hasVideo
-
+    fun configureForCall(hasVideo: Boolean, callId: String = "") {
+        val sameCall = active && (callId.isEmpty() || activeCallId.isEmpty() || callId == activeCallId)
+        if (callId.isNotEmpty()) { activeCallId = callId; diagCallId = callId }
         try {
-            am.mode = AudioManager.MODE_IN_COMMUNICATION
+            if (am.mode != AudioManager.MODE_IN_COMMUNICATION) am.mode = AudioManager.MODE_IN_COMMUNICATION
         } catch (t: Throwable) {
             Log.w(TAG, "set MODE_IN_COMMUNICATION failed: ${t.message}")
         }
-
-        // [#1201 audio fix] Claim audio focus with a real listener BEFORE LK
-        // initializes its AudioDeviceModule. This gives WebRTC's internal
-        // focus dance a stable parent to coexist with — and lets us
-        // properly abandonAudioFocus(listener) in teardown() so the next
-        // foreground app inherits a clean AudioManager state.
         requestVoiceCallFocus()
+        installListenersIfNeeded()
+        if (sameCall) {
+            if (hasVideo && !this.hasVideo) attachLiveKit(null, true)
+            else if (userPicked) applyRoute(desiredRoute, "reconfigure")
+            Log.d(TAG, "configureForCall(same call) hasVideo=$hasVideo route=$desiredRoute user=$userPicked")
+            return
+        }
+        active = true
+        userPicked = false
+        reasserts = 0
+        this.hasVideo = hasVideo
+        val initial = defaultRoute()
+        selectRoute(initial, user = false, reason = "initial")
+    }
 
-        applyInitialRoute()
-        installDeviceCallbackIfNeeded()
+    /** Toggle the speaker. Returns the new speaker-on state. */
+    fun toggleSpeaker(): Boolean = setSpeaker(!speakerOn)
+
+    /** Wired / BT output connected (the camera-on loudspeaker rule must not
+     *  steal the route from a headset). */
+    fun hasExternalOutput(): Boolean = hasAnyExternalAudioDevice()
+
+    /** User/explicit speaker on/off. Off → BT > wired > earpiece. */
+    fun setSpeaker(on: Boolean): Boolean {
+        val r = if (on) Route.SPEAKER else bestNonSpeaker()
+        selectRoute(r, user = true, reason = "set_speaker")
+        return on
+    }
+
+    /** Automatic rule (camera on/off). Never overrides a user choice. */
+    fun setSpeakerAuto(on: Boolean, reason: String): Boolean {
+        if (userPicked) return speakerOn
+        if (hasAnyExternalAudioDevice()) return speakerOn
+        selectRoute(if (on) Route.SPEAKER else Route.EARPIECE, user = false, reason = reason)
+        return on
+    }
+
+    /** Force-route through Bluetooth (HFP/LE) if available. */
+    fun preferBluetooth() {
+        if (!hasAnyBluetoothDevice()) return
+        selectRoute(Route.BLUETOOTH, user = true, reason = "prefer_bt")
+    }
+
+    /** Route picked from the output sheet ("earpiece"/"speaker"/"bluetooth"/"wired"). */
+    fun selectRouteByName(name: String) {
+        val r = when (name) {
+            "speaker" -> Route.SPEAKER
+            "bluetooth" -> Route.BLUETOOTH
+            "wired" -> Route.WIRED
+            else -> Route.EARPIECE
+        }
+        selectRoute(r, user = true, reason = "picker")
+    }
+
+    fun selectRoute(route: Route, user: Boolean, reason: String) {
+        if (user) userPicked = true
+        desiredRoute = route
+        reasserts = 0
+        applyRoute(route, reason)
+    }
+
+    /**
+     * Telecom (self-managed ChatyyConnection) reported its route. SYNC only —
+     * if it differs from what we just applied, re-assert ours (bounded);
+     * otherwise adopt it (system output switcher / Android Auto / BT key).
+     */
+    fun onTelecomRoute(telecomRoute: Int) {
+        val r = when (telecomRoute) {
+            android.telecom.CallAudioState.ROUTE_SPEAKER -> Route.SPEAKER
+            android.telecom.CallAudioState.ROUTE_BLUETOOTH -> Route.BLUETOOTH
+            android.telecom.CallAudioState.ROUTE_WIRED_HEADSET -> Route.WIRED
+            else -> Route.EARPIECE
+        }
+        handler.post { reconcile(r, "telecom") }
+    }
+
+    /** Telecom Connection just went ACTIVE (it now owns the route and resets
+     *  it to its own default) → push our desired route to it. */
+    fun onTelecomActive() {
+        handler.post {
+            if (!active) return@post
+            lastApplyAt = System.currentTimeMillis()
+            reasserts = 0
+            applyRoute(desiredRoute, "telecom_active")
+        }
+    }
+
+    /** End-of-call cleanup. */
+    fun teardown() {
+        try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                am.clearCommunicationDevice()
+            }
+        } catch (_: Throwable) {}
+        try {
+            @Suppress("DEPRECATION")
+            am.isBluetoothScoOn = false
+            @Suppress("DEPRECATION")
+            am.stopBluetoothSco()
+        } catch (_: Throwable) {}
+        try {
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = false
+        } catch (_: Throwable) {}
+        try { am.mode = AudioManager.MODE_NORMAL } catch (_: Throwable) {}
+        abandonVoiceCallFocus()
+
+        val cb = deviceCallback
+        if (cb != null) {
+            try { am.unregisterAudioDeviceCallback(cb) } catch (_: Throwable) {}
+        }
+        deviceCallback = null
+        if (Build.VERSION.SDK_INT >= 31) {
+            val l = commListener
+            if (l is AudioManager.OnCommunicationDeviceChangedListener) {
+                try { am.removeOnCommunicationDeviceChangedListener(l) } catch (_: Throwable) {}
+            }
+        }
+        commListener = null
+        hasVideo = false
+        active = false
+        activeCallId = ""
+        userPicked = false
+        desiredRoute = Route.EARPIECE
+        currentRoute = Route.EARPIECE
+        reasserts = 0
+        Log.d(TAG, "teardown")
+    }
+
+    // ───────────────────────── Routing internals
+
+    private fun defaultRoute(): Route = when {
+        hasAnyBluetoothDevice() -> Route.BLUETOOTH
+        hasWiredDevice() -> Route.WIRED
+        hasVideo -> Route.SPEAKER
+        else -> Route.EARPIECE
+    }
+
+    private fun bestNonSpeaker(): Route = when {
+        hasAnyBluetoothDevice() -> Route.BLUETOOTH
+        hasWiredDevice() -> Route.WIRED
+        else -> Route.EARPIECE
+    }
+
+    private fun applyRoute(route: Route, reason: String) {
+        lastApplyAt = System.currentTimeMillis()
+        var applied = false
+        try {
+            if (active && am.mode != AudioManager.MODE_IN_COMMUNICATION) {
+                am.mode = AudioManager.MODE_IN_COMMUNICATION
+            }
+        } catch (_: Throwable) {}
+        // 1) Telecom (when our self-managed Connection is live it owns the route).
+        val telecomOk = applyTelecomRoute(route)
+        // 2) AudioManager.
+        if (Build.VERSION.SDK_INT >= 31) {
+            applied = applyCommunicationDevice(route)
+        } else {
+            applied = applyLegacy(route)
+        }
+        Log.i(TAG, "applyRoute $route reason=$reason applied=$applied telecom=$telecomOk")
+        diag("audio_route_set", "route=${route.wire} reason=$reason user=$userPicked applied=$applied telecom=$telecomOk sdk=${Build.VERSION.SDK_INT}")
+        // Read back what is really in effect (setCommunicationDevice is sync
+        // for the request; the listener corrects us later if it changes).
+        handler.postDelayed({ reconcile(observeRoute(), "readback") }, 350L)
+        if (applied && observeRoute() == route) setCurrent(route)
+    }
+
+    private fun applyTelecomRoute(route: Route): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val conn = try { expo.modules.callkit.IncomingCallRegistry.activeTelecomConnection() } catch (_: Throwable) { null }
+            ?: return false
+        val tr = when (route) {
+            Route.SPEAKER -> android.telecom.CallAudioState.ROUTE_SPEAKER
+            Route.BLUETOOTH -> android.telecom.CallAudioState.ROUTE_BLUETOOTH
+            Route.WIRED -> android.telecom.CallAudioState.ROUTE_WIRED_HEADSET
+            Route.EARPIECE -> android.telecom.CallAudioState.ROUTE_EARPIECE
+        }
+        return try {
+            @Suppress("DEPRECATION")
+            conn.setAudioRoute(tr)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "telecom setAudioRoute failed: ${t.message}")
+            false
+        }
+    }
+
+    private fun applyCommunicationDevice(route: Route): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return false
+        return try {
+            val devs = am.availableCommunicationDevices
+            val target: AudioDeviceInfo? = when (route) {
+                Route.SPEAKER -> devs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                Route.EARPIECE -> devs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+                    ?: devs.firstOrNull { isWiredType(it.type) }
+                Route.BLUETOOTH -> devs.firstOrNull { isBtCommType(it.type) }
+                Route.WIRED -> devs.firstOrNull { isWiredType(it.type) }
+                    ?: devs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
+            }
+            if (target == null) {
+                Log.w(TAG, "no communication device for $route (avail=${devs.joinToString { it.type.toString() }})")
+                if (route == Route.EARPIECE) { am.clearCommunicationDevice(); true } else false
+            } else {
+                val ok = am.setCommunicationDevice(target)
+                if (!ok) Log.w(TAG, "setCommunicationDevice($route type=${target.type}) returned false")
+                ok
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "applyCommunicationDevice($route) failed: ${t.message}")
+            false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applyLegacy(route: Route): Boolean {
+        return try {
+            when (route) {
+                Route.SPEAKER -> {
+                    am.isBluetoothScoOn = false
+                    am.stopBluetoothSco()
+                    am.isSpeakerphoneOn = true
+                }
+                Route.BLUETOOTH -> {
+                    am.isSpeakerphoneOn = false
+                    am.startBluetoothSco()
+                    am.isBluetoothScoOn = true
+                }
+                Route.EARPIECE, Route.WIRED -> {
+                    am.isBluetoothScoOn = false
+                    am.stopBluetoothSco()
+                    am.isSpeakerphoneOn = false
+                }
+            }
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "applyLegacy($route) failed: ${t.message}")
+            false
+        }
+    }
+
+    /** Route really in effect right now. */
+    private fun observeRoute(): Route {
+        if (Build.VERSION.SDK_INT >= 31) {
+            val d = try { am.communicationDevice } catch (_: Throwable) { null }
+            if (d != null) return routeForType(d.type)
+        }
+        @Suppress("DEPRECATION")
+        return when {
+            am.isSpeakerphoneOn -> Route.SPEAKER
+            am.isBluetoothScoOn -> Route.BLUETOOTH
+            hasWiredDevice() -> Route.WIRED
+            else -> Route.EARPIECE
+        }
+    }
+
+    private fun matches(observed: Route, desired: Route): Boolean =
+        observed == desired ||
+            // earpiece request with a wired headset plugged → the system uses the headset.
+            (desired == Route.EARPIECE && observed == Route.WIRED) ||
+            (desired == Route.WIRED && observed == Route.EARPIECE && !hasWiredDevice()) ||
+            // < API 31: SCO connects asynchronously (~1 s) after startBluetoothSco.
+            (desired == Route.BLUETOOTH && Build.VERSION.SDK_INT < 31 && observed == Route.EARPIECE && hasAnyBluetoothDevice())
+
+    /** Main thread. Observed route vs desired: re-assert a stomp right after
+     *  we applied, else adopt (external change). */
+    private fun reconcile(observed: Route, source: String) {
+        if (!active) return
+        if (matches(observed, desiredRoute)) {
+            reasserts = 0
+            setCurrent(if (desiredRoute == Route.BLUETOOTH) Route.BLUETOOTH else observed)
+            return
+        }
+        val sinceApply = System.currentTimeMillis() - lastApplyAt
+        val desiredAvailable = when (desiredRoute) {
+            Route.BLUETOOTH -> hasAnyBluetoothDevice()
+            Route.WIRED -> hasWiredDevice()
+            else -> true
+        }
+        if (desiredAvailable && sinceApply < REASSERT_WINDOW_MS && reasserts < MAX_REASSERTS) {
+            reasserts++
+            Log.w(TAG, "reconcile($source): observed=$observed desired=$desiredRoute — re-assert #$reasserts")
+            diag("audio_route_reassert", "src=$source observed=${observed.wire} desired=${desiredRoute.wire} n=$reasserts")
+            val keep = lastApplyAt
+            applyRoute(desiredRoute, "reassert_$source")
+            lastApplyAt = keep // the window is anchored to the ORIGINAL decision
+            return
+        }
+        // External change (system output switcher, Telecom fallback, device gone).
+        Log.i(TAG, "reconcile($source): adopting observed=$observed (desired was $desiredRoute)")
+        diag("audio_route_adopt", "src=$source observed=${observed.wire} desired=${desiredRoute.wire}")
+        desiredRoute = observed
+        setCurrent(observed)
+    }
+
+    private fun setCurrent(r: Route) {
+        val changed = currentRoute != r
+        currentRoute = r
+        if (changed) {
+            try { expo.modules.callkit.CurrentCallTracker.setSpeaker(r == Route.SPEAKER) } catch (_: Throwable) {}
+        }
+        // Always notify (cheap): the UI may hold a stale optimistic value.
+        handler.post { listeners.forEach { l -> try { l.onRouteChanged(r) } catch (_: Throwable) {} } }
+    }
+
+    private fun installListenersIfNeeded() {
+        if (deviceCallback == null) {
+            val cb = object : AudioDeviceCallback() {
+                override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                    val added = addedDevices ?: return
+                    if (!active) return
+                    val bt = added.any { isBluetoothDevice(it) }
+                    val wired = added.any { isWiredType(it.type) }
+                    if (!bt && !wired) return
+                    Log.d(TAG, "onAudioDevicesAdded bt=$bt wired=$wired")
+                    // A headset connecting mid-call takes the route (WhatsApp).
+                    selectRoute(if (bt) Route.BLUETOOTH else Route.WIRED, user = false, reason = "device_added")
+                }
+
+                override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                    val removed = removedDevices ?: return
+                    if (!active) return
+                    if (!removed.any { isExternalDevice(it) }) return
+                    val stillOk = when (desiredRoute) {
+                        Route.BLUETOOTH -> hasAnyBluetoothDevice()
+                        Route.WIRED -> hasWiredDevice()
+                        else -> true
+                    }
+                    if (stillOk) return
+                    Log.d(TAG, "onAudioDevicesRemoved — $desiredRoute gone, fallback")
+                    val fb = when {
+                        hasAnyBluetoothDevice() -> Route.BLUETOOTH
+                        hasWiredDevice() -> Route.WIRED
+                        hasVideo -> Route.SPEAKER
+                        else -> Route.EARPIECE
+                    }
+                    selectRoute(fb, user = false, reason = "device_removed")
+                }
+            }
+            try {
+                am.registerAudioDeviceCallback(cb, handler)
+                deviceCallback = cb
+            } catch (t: Throwable) {
+                Log.w(TAG, "registerAudioDeviceCallback failed: ${t.message}")
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 31 && commListener == null) {
+            try {
+                val l = AudioManager.OnCommunicationDeviceChangedListener { dev ->
+                    val r = if (dev != null) routeForType(dev.type) else Route.EARPIECE
+                    handler.post { reconcile(r, "comm_device") }
+                }
+                am.addOnCommunicationDeviceChangedListener({ cmd -> handler.post(cmd) }, l)
+                commListener = l
+            } catch (t: Throwable) {
+                Log.w(TAG, "addOnCommunicationDeviceChangedListener failed: ${t.message}")
+            }
+        }
     }
 
     private fun requestVoiceCallFocus() {
@@ -229,199 +568,54 @@ class AudioRouter private constructor(private val appContext: Context) {
         }
     }
 
-    /**
-     * Toggle the speaker. Returns the new speaker-on state.
-     */
-    fun toggleSpeaker(): Boolean = setSpeaker(!speakerOn)
-
-    /**
-     * Explicit setter. Returns the new state.
-     */
-    fun setSpeaker(on: Boolean): Boolean {
-        speakerOn = on
-        selectLk(on)
-        try {
-            am.isSpeakerphoneOn = on
-            if (on) {
-                @Suppress("DEPRECATION")
-                am.isBluetoothScoOn = false
-                @Suppress("DEPRECATION")
-                am.stopBluetoothSco()
-            }
-            Log.d(TAG, "speaker → $on")
-        } catch (t: Throwable) {
-            Log.w(TAG, "setSpeaker($on) failed: ${t.message}")
-        }
-        return on
-    }
-
-    /**
-     * Force-route through Bluetooth SCO (HFP) if available. CallActivity uses
-     * this via the long-press picker. No-op if no BT device.
-     */
-    fun preferBluetooth() {
-        if (!hasAnyBluetoothDevice()) return
-        try {
-            am.isSpeakerphoneOn = false
-            @Suppress("DEPRECATION")
-            am.startBluetoothSco()
-            @Suppress("DEPRECATION")
-            am.isBluetoothScoOn = true
-            speakerOn = false
-            selectLk(speaker = false, preferBt = true)
-            Log.d(TAG, "preferBluetooth: SCO requested")
-        } catch (t: Throwable) {
-            Log.w(TAG, "preferBluetooth failed: ${t.message}")
-        }
-    }
-
-    /**
-     * End-of-call cleanup. Abandons audio focus, drops MODE_IN_COMMUNICATION,
-     * tears down the BT device callback. Speakerphone is reset off.
-     */
-    fun teardown() {
-        try {
-            @Suppress("DEPRECATION")
-            am.isBluetoothScoOn = false
-            @Suppress("DEPRECATION")
-            am.stopBluetoothSco()
-        } catch (_: Throwable) {}
-        try { am.isSpeakerphoneOn = false } catch (_: Throwable) {}
-        try { am.mode = AudioManager.MODE_NORMAL } catch (_: Throwable) {}
-        // [#1201 audio fix] Release focus so the next foreground app sees
-        // a clean STREAM_VOICE_CALL handle. Doing this AFTER setting mode
-        // back to NORMAL matches the Android sample call apps.
-        abandonVoiceCallFocus()
-
-        val cb = deviceCallback
-        if (cb != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try { am.unregisterAudioDeviceCallback(cb) } catch (_: Throwable) {}
-        }
-        deviceCallback = null
-        lkHandler = null
-        hasVideo = false
-        speakerOn = false
-        Log.d(TAG, "teardown")
-    }
-
-    // ───────────────────────── Routing internals
-
-    private fun applyInitialRoute() {
-        // If a wired / BT headset is currently connected, route through it
-        // and skip the default. Same behaviour as the iOS path.
-        if (hasAnyExternalAudioDevice()) {
-            try {
-                am.isSpeakerphoneOn = false
-            } catch (_: Throwable) {}
-            speakerOn = false
-            // If BT specifically, prefer SCO so mic input also routes there.
-            if (hasAnyBluetoothDevice()) {
-                preferBluetooth()
-            }
-            Log.d(TAG, "initial route — external device present, leaving alone")
-            return
-        }
-        // No external device — apply default policy.
-        val wantSpeaker = hasVideo
-        try {
-            am.isSpeakerphoneOn = wantSpeaker
-            speakerOn = wantSpeaker
-            Log.d(TAG, "initial route → ${if (wantSpeaker) "speaker" else "earpiece"}")
-        } catch (t: Throwable) {
-            Log.w(TAG, "initial speakerphone set failed: ${t.message}")
-        }
-    }
-
-    private fun installDeviceCallbackIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        if (deviceCallback != null) return
-        val cb = object : AudioDeviceCallback() {
-            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
-                val added = addedDevices ?: return
-                val newExternal = added.any { isExternalDevice(it) }
-                if (!newExternal) return
-                Log.d(TAG, "onAudioDevicesAdded — external device joined")
-                // Re-route to it: clear speakerphone; for BT specifically,
-                // request SCO so mic + earpiece both ride the headset.
-                try { am.isSpeakerphoneOn = false } catch (_: Throwable) {}
-                speakerOn = false
-                if (added.any { isBluetoothDevice(it) }) {
-                    preferBluetooth()
-                }
-            }
-
-            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-                val removed = removedDevices ?: return
-                val externalGone = removed.any { isExternalDevice(it) }
-                if (!externalGone) return
-                Log.d(TAG, "onAudioDevicesRemoved — external device left")
-                // If another external device is still connected, leave it.
-                if (hasAnyExternalAudioDevice()) {
-                    Log.d(TAG, "  another external device still present — no fallback")
-                    return
-                }
-                // Otherwise: drop SCO, fall back to call default.
-                try {
-                    @Suppress("DEPRECATION")
-                    am.isBluetoothScoOn = false
-                    @Suppress("DEPRECATION")
-                    am.stopBluetoothSco()
-                } catch (_: Throwable) {}
-                val wantSpeaker = hasVideo
-                try {
-                    am.isSpeakerphoneOn = wantSpeaker
-                    speakerOn = wantSpeaker
-                    Log.d(TAG, "  fallback → ${if (wantSpeaker) "speaker" else "earpiece"}")
-                } catch (t: Throwable) {
-                    Log.w(TAG, "fallback speakerphone set failed: ${t.message}")
-                }
-            }
-        }
-        try {
-            am.registerAudioDeviceCallback(cb, handler)
-            deviceCallback = cb
-        } catch (t: Throwable) {
-            Log.w(TAG, "registerAudioDeviceCallback failed: ${t.message}")
-        }
+    private fun diag(event: String, detail: String) {
+        try { expo.modules.callkit.CallDiag.log(event, diagCallId, detail, appContext) } catch (_: Throwable) {}
     }
 
     // ───────────────────────── Device-type helpers
 
-    private fun hasAnyExternalAudioDevice(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
-        val devices = try {
-            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        } catch (_: Throwable) { return false }
-        return devices.any { isExternalDevice(it) }
-    }
+    private fun outputs(): Array<AudioDeviceInfo> =
+        try { am.getDevices(AudioManager.GET_DEVICES_OUTPUTS) } catch (_: Throwable) { emptyArray() }
+
+    private fun hasAnyExternalAudioDevice(): Boolean = outputs().any { isExternalDevice(it) }
 
     private fun hasAnyBluetoothDevice(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
-        val devices = try {
-            am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        } catch (_: Throwable) { return false }
-        return devices.any { isBluetoothDevice(it) }
+        if (Build.VERSION.SDK_INT >= 31) {
+            val comm = try { am.availableCommunicationDevices } catch (_: Throwable) { null }
+            if (comm != null) return comm.any { isBtCommType(it.type) }
+        }
+        return outputs().any { isBluetoothDevice(it) }
     }
 
-    private fun isBluetoothDevice(d: AudioDeviceInfo): Boolean {
-        return when (d.type) {
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> true
-            else -> false
-        }
+    private fun hasWiredDevice(): Boolean = outputs().any { isWiredType(it.type) }
+
+    private fun routeForType(type: Int): Route = when {
+        type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> Route.SPEAKER
+        isBtCommType(type) || type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> Route.BLUETOOTH
+        isWiredType(type) -> Route.WIRED
+        else -> Route.EARPIECE
     }
 
-    private fun isExternalDevice(d: AudioDeviceInfo): Boolean {
-        return when (d.type) {
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
-            AudioDeviceInfo.TYPE_WIRED_HEADSET,
-            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
-            AudioDeviceInfo.TYPE_USB_DEVICE,
-            AudioDeviceInfo.TYPE_USB_HEADSET,
-            AudioDeviceInfo.TYPE_USB_ACCESSORY,
-            AudioDeviceInfo.TYPE_HEARING_AID -> true
-            else -> false
-        }
+    private fun isBtCommType(type: Int): Boolean = when (type) {
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        AudioDeviceInfo.TYPE_HEARING_AID,
+        26 /* TYPE_BLE_HEADSET */,
+        27 /* TYPE_BLE_SPEAKER */ -> true
+        else -> false
     }
+
+    private fun isWiredType(type: Int): Boolean = when (type) {
+        AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+        AudioDeviceInfo.TYPE_USB_DEVICE,
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+        AudioDeviceInfo.TYPE_USB_ACCESSORY -> true
+        else -> false
+    }
+
+    private fun isBluetoothDevice(d: AudioDeviceInfo): Boolean =
+        isBtCommType(d.type) || d.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+
+    private fun isExternalDevice(d: AudioDeviceInfo): Boolean =
+        isBluetoothDevice(d) || isWiredType(d.type)
 }

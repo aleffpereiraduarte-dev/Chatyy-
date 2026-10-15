@@ -1881,7 +1881,7 @@ export default function ChatNewScreen() {
   const [_nativeContactsFailed, _setNativeContactsFailed] = useState(() => !!globalThis.__chatyy_native_contacts_failed);
   const _useNativeContacts = Platform.OS !== 'web' && !_nativeContactsFailed && nativeContactsEnabled();
   const _onNativeContactsFailure = useCallback((msg) => {
-    try { globalThis.__chatyy_native_contacts_failed = true; console.warn('[native-contacts] fallback SectionList:', msg); } catch {}
+    try { globalThis.__chatyy_native_contacts_failed = true; console.warn('[native-contacts] fallback SectionList:', msg); try { require('../services/crashReporter').reportNativeFallback('native_contacts', msg); } catch {} } catch {}
     _setNativeContactsFailed(true);
   }, []);
   const _nativeSections = useMemo(

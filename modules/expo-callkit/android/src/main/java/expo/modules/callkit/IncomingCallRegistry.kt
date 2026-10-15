@@ -283,6 +283,13 @@ object IncomingCallRegistry {
         }
     }
 
+    /** [2026-10-15 viva-voz] The live ACTIVE Telecom Connection (one call at
+     *  a time) — AudioRouter routes through Connection.setAudioRoute. */
+    fun activeTelecomConnection(): ChatyyConnection? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        return connections.values.firstOrNull { it.state == android.telecom.Connection.STATE_ACTIVE }
+    }
+
     fun hasConnection(callId: String): Boolean = callId.isNotEmpty() && connections.containsKey(callId)
 
     /**
