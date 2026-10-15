@@ -198,6 +198,7 @@ const US_WS_URL = 'wss://ws.chatyy.com.br/ws';
 const REGIONAL_WS_URLS = {
   br: 'wss://api-br.chatyy.com.br/ws',
   eu: 'wss://api-eu.chatyy.com.br/ws',
+  sg: 'wss://api-sg.chatyy.com.br/ws', // [2026-10-15] relay Jacarta→hub US (WG)
   in: 'wss://api-in.chatyy.com.br/ws', // [2026-10-15] relay Mumbai→hub US (WG)
   usw: 'wss://api-usw.chatyy.com.br/ws', // [2026-10-14 nivel-whatsapp] relay Seattle→hub US (WG); nativo sem 'usw' cai em 'us'
 };

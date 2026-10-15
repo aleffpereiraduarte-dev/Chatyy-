@@ -19,6 +19,8 @@ const EDGE_SERVERS = [
   { url: 'https://api-usw.chatyy.com.br', region: 'usw', base: 'https://api-usw.chatyy.com.br' },
   // [2026-10-15] Índia (Mumbai): relay igual ao Seattle (QA: chat_list 545 ms vs 1286 ms direto ao US).
   { url: 'https://api-in.chatyy.com.br', region: 'in', base: 'https://api-in.chatyy.com.br' },
+  // [2026-10-15] Ásia (Jacarta, região lógica sg): relay pelo WG até o US.
+  { url: 'https://api-sg.chatyy.com.br', region: 'sg', base: 'https://api-sg.chatyy.com.br' },
 ];
 
 // US origin/master is the INVIOLABLE fallback. Whenever latency detection has
@@ -37,8 +39,8 @@ export function getOriginBase() { return ORIGIN_BASE; }
 // v12 [2026-10-08 region-pick] = escolha com dica do servidor + probe aquecido
 // + histerese. Sobe a versão para descartar as escolhas v11 (1 probe frio) —
 // ~20% dos clientes nos EUA estavam presos em EU/BR (+150-300ms por escrita).
-const EDGE_CACHE_VERSION = 13; // v13 [2026-10-15] + edge Índia
-const VALID_REGIONS = ['us', 'br', 'eu', 'usw', 'in'];
+const EDGE_CACHE_VERSION = 14; // v13 [2026-10-15] + edge Índia · v14 + edge Ásia (sg)
+const VALID_REGIONS = ['us', 'br', 'eu', 'usw', 'in', 'sg'];
 
 let _bestServer = null;
 let _detecting = false;

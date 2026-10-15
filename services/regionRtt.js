@@ -29,13 +29,14 @@ const DEFAULT_TARGETS = {
   eu: 'https://lk-eu.chatyy.com.br/ping',
   usw: 'https://lk-usw.chatyy.com.br/ping',
   in: 'https://lk-in.chatyy.com.br/ping', // [2026-10-15] edge Índia (Mumbai)
+  sg: 'https://lk-sg.chatyy.com.br/ping', // [2026-10-15] edge Ásia (Jacarta; região lógica sg)
 };
 // Mesmo IP do SFU; usados só se o alvo principal não responder no warm-up.
 const ALT_TARGETS = {
   br: 'https://api-br.chatyy.com.br/ping',
   eu: 'https://api-eu.chatyy.com.br/ping',
 };
-const REGIONS = ['us', 'br', 'eu', 'usw', 'in'];
+const REGIONS = ['us', 'br', 'eu', 'usw', 'in', 'sg'];
 const SAMPLES = 5;
 const MIN_OK_SAMPLES = 3;
 const ROUND_GAP_MS = 150;
