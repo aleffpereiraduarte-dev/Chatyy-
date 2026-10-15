@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Kontot ei saanud praegu vahetada. Kontrolli ühendust ja proovi uuesti.",
+  "account.confirmSwitchIdle": "Kinnita, et see oled sina, et minna kontole {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Hiljutised",
   "chat.nattach.selectedCount": "{count} valitud",

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Kunne ikke skifte konto lige nu. Tjek din forbindelse, og prøv igen.",
+  "account.confirmSwitchIdle": "Bekræft, at det er dig, for at skifte til {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Seneste",
   "chat.nattach.selectedCount": "{count} valgt",

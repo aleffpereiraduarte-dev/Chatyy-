@@ -946,6 +946,7 @@ export async function ensureFreshBearer() {
   if (!refreshToken || !refreshDeviceId) return false;
   if (!_authRefreshInFlight) {
     _authRefreshInFlight = (async () => {
+      const _tokBeforeRefresh = authToken; // _rawApiCall adota data.token da resposta
       try {
         const r = await _rawApiCall('auth_refresh', {
           refresh_token: refreshToken,
@@ -953,8 +954,30 @@ export async function ensureFreshBearer() {
         }, 'POST');
         const newAccess = r?.data?.data?.token || r?.data?.token;
         const newRefresh = r?.data?.data?.refresh_token || r?.data?.refresh_token;
+        const _owner = r?.data?.data?.email || r?.data?.email || '';
+        // [2026-10-15 troca-sem-senha] O refresh global pode ser de OUTRA conta
+        // (aparelho que trocou de conta antes desta versão). Nunca adota bearer
+        // de conta diferente da ativa: guarda o refresh rotacionado sob o dono
+        // (ele foi consumido) e zera o global.
+        const _activeNow = _canonAcct(getActiveAccountEmail());
+        if (newAccess && r.status >= 200 && r.status < 300 && _owner && _activeNow && _canonAcct(_owner) !== _activeNow) {
+          if (newRefresh) await _storeAcctRefresh(_owner, newRefresh, refreshDeviceId).catch(() => {});
+          try { _setStoredAccountToken(_owner, newAccess); } catch {}
+          // Desfaz a adoção automática do bearer da OUTRA conta.
+          if (authToken === newAccess) {
+            authToken = _tokBeforeRefresh;
+            try { await storeToken(_tokBeforeRefresh || null); } catch {}
+          }
+          refreshToken = '';
+          await storeRefreshToken(null).catch(() => {});
+          try { console.warn('[refresh] refresh global era de outra conta — não adotado'); } catch {}
+          return false;
+        }
         if (newAccess && r.status >= 200 && r.status < 300) {
           authToken = newAccess;
+          // Linha da conta no mail_accounts acompanha o bearer novo (troca futura).
+          if (_owner) { try { _setStoredAccountToken(_owner, newAccess); } catch {} }
+          if (_owner && newRefresh) { try { await _storeAcctRefresh(_owner, newRefresh, refreshDeviceId); } catch {} }
           await storeToken(newAccess).catch(() => {});
           try { _noteAuthOk(); } catch {}
           // Um bearer novo merece uma chance limpa no caminho Rust rápido.
@@ -983,6 +1006,172 @@ export async function ensureFreshBearer() {
 // o mesmo single-flight de /auth_refresh para curar um bearer órfão antes
 // de entrar em backoff/relogin-stop. Mesma função — nomes históricos.
 export const forceBearerRefresh = ensureFreshBearer;
+
+// ── [2026-10-15 troca-sem-senha] Refresh token POR CONTA ──────────────────
+// Antes havia UM refresh_token global: adicionar a conta B sobrescrevia o da
+// conta A (A perdia a auto-cura) e, depois de trocar B→A, o refresh global
+// ainda era o de B — um 401 em A fazia ensureFreshBearer() mintar um bearer
+// de B com a UI em A (vazamento entre contas). Agora cada conta guarda o seu
+// (SecureStore no nativo; no web o mesmo localStorage do refresh global) e
+// a troca de conta ativa o da conta destino. O global continua existindo
+// (compat com o boot/auto-cura) e sempre aponta p/ a conta ativa ou fica vazio.
+const _canonAcct = (e) => String(e || '').trim().toLowerCase().replace('@onemundo.com.br', '@chatyy.com.br');
+function _acctRefreshKey(email) {
+  // SecureStore aceita só [A-Za-z0-9._-] na chave.
+  const c = _canonAcct(email);
+  return c ? 'rt_acct_' + c.replace(/[^a-z0-9._-]/g, '_') : '';
+}
+async function _storeAcctRefresh(email, token, deviceId) {
+  const k = _acctRefreshKey(email);
+  if (!k) return;
+  try {
+    const val = token ? JSON.stringify({ t: token, d: deviceId || '' }) : '';
+    if (Platform.OS === 'web') {
+      if (typeof localStorage === 'undefined') return;
+      if (val) localStorage.setItem(k, val); else localStorage.removeItem(k);
+      return;
+    }
+    const SecureStore = require('expo-secure-store');
+    if (val) await SecureStore.setItemAsync(k, val);
+    else await SecureStore.deleteItemAsync(k).catch(() => {});
+  } catch {}
+}
+async function _getAcctRefresh(email) {
+  const k = _acctRefreshKey(email);
+  if (!k) return null;
+  try {
+    let raw = null;
+    if (Platform.OS === 'web') {
+      raw = typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null;
+    } else {
+      raw = await require('expo-secure-store').getItemAsync(k);
+    }
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    return o && o.t ? { token: String(o.t), deviceId: String(o.d || '') } : null;
+  } catch { return null; }
+}
+/** Apaga o refresh guardado de UMA conta (logout/remoção/revogação dela). */
+export async function forgetAccountRefreshToken(email) { await _storeAcctRefresh(email, null); }
+
+// Atualiza só o bearer da linha da conta no mail_accounts (sem mexer em
+// lastActiveAt — renovação não é "uso" da conta).
+function _setStoredAccountToken(email, token) {
+  try {
+    const c = _canonAcct(email);
+    if (!c || !token) return;
+    const accounts = getStoredAccounts();
+    const idx = accounts.findIndex(a => _canonAcct(a && a.email) === c);
+    if (idx < 0 || accounts[idx].token === token) return;
+    const next = accounts.slice();
+    next[idx] = { ...accounts[idx], token };
+    storeAccounts(next);
+  } catch {}
+}
+
+/**
+ * Aponta o refresh global (auto-cura) p/ a conta `email`. Se a conta não tem
+ * refresh próprio, o global fica VAZIO — nunca o de outra conta.
+ */
+export async function activateAccountRefresh(email) {
+  const own = await _getAcctRefresh(email);
+  if (own && own.token && own.deviceId) {
+    refreshToken = own.token;
+    refreshDeviceId = own.deviceId;
+    await storeRefreshToken(own.token, own.deviceId).catch(() => {});
+  } else {
+    refreshToken = '';
+    refreshDeviceId = '';
+    await storeRefreshToken(null).catch(() => {});
+  }
+}
+
+/**
+ * Verifica o bearer de uma conta guardada SEM cookie: com o cookie da sessão
+ * PHP ativa, o check_auth responde pela conta ATUAL quando o bearer alvo é
+ * inválido (restoreFromBearer só troca a sessão se o bearer valer) — a troca
+ * via apiCall('check_auth') não distinguia "revogado" de "falha transitória"
+ * e caía sempre no modal de senha.
+ * @returns {Promise<{ok:boolean, email?:string, data?:object, revoked?:boolean, transient?:boolean, status:number}>}
+ */
+export async function verifyStoredAccountToken(token, { timeoutMs = 6000 } = {}) {
+  if (!token) return { ok: false, status: 0 };
+  const once = async () => {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const to = setTimeout(() => { try { ctl?.abort(); } catch {} }, timeoutMs);
+    try {
+      const res = await fetch(`${API_URL}?action=check_auth`, {
+        method: 'GET',
+        credentials: 'omit',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: ctl?.signal,
+      });
+      let j = null;
+      try { j = await res.json(); } catch {}
+      return { status: res.status, json: j };
+    } catch { return { status: 0, json: null }; } finally { clearTimeout(to); }
+  };
+  let r = await once();
+  if (r.status === 0 || r.status >= 500) r = await once(); // 1 retry em rede/5xx
+  const j = r.json;
+  if (r.status >= 200 && r.status < 300 && j && j.success && j.data && j.data.email) {
+    return { ok: true, email: String(j.data.email), data: j.data, status: r.status };
+  }
+  let revoked = false;
+  try { revoked = require('./storedAccountRevocation').isRevokedAuthPayload(j, r.status); } catch {}
+  // 401 sem marcador = "Not authenticated" (bearer órfão/desconhecido) → o
+  // refresh da conta ainda pode curar. 0/5xx = rede/servidor.
+  return { ok: false, revoked, transient: !revoked && (r.status === 0 || r.status >= 500), status: r.status };
+}
+
+/**
+ * Minta um bearer novo p/ uma conta guardada usando o refresh token DELA
+ * (não toca no authToken/refresh global). Rotaciona e guarda o refresh novo.
+ * @returns {Promise<{token?:string, email?:string, revoked?:boolean, invalid?:boolean, none?:boolean}>}
+ */
+export async function refreshBearerForAccount(email) {
+  const own = await _getAcctRefresh(email);
+  if (!own || !own.token || !own.deviceId) return { none: true };
+  try {
+    // fetch direto e SEM cookie: _rawApiCall adotaria o bearer da resposta
+    // (data.token) como authToken global — o da conta ativa.
+    let r = { status: 0, data: null };
+    for (let i = 0; i < 2 && (r.status === 0 || r.status >= 500); i++) {
+      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const to = setTimeout(() => { try { ctl?.abort(); } catch {} }, 8000);
+      try {
+        const res = await fetch(`${API_URL}?action=auth_refresh`, {
+          method: 'POST',
+          credentials: 'omit',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'auth_refresh', refresh_token: own.token, device_id: own.deviceId }),
+          signal: ctl?.signal,
+        });
+        let j = null;
+        try { j = await res.json(); } catch {}
+        r = { status: res.status, data: j };
+      } catch { r = { status: 0, data: null }; } finally { clearTimeout(to); }
+    }
+    const d = (r && r.data && (r.data.data || r.data)) || {};
+    const newAccess = d.token;
+    const owner = d.email || '';
+    if (newAccess && r.status >= 200 && r.status < 300) {
+      // Guarda o refresh rotacionado sob o DONO declarado pelo servidor.
+      if (d.refresh_token) await _storeAcctRefresh(owner || email, d.refresh_token, own.deviceId);
+      if (owner && _canonAcct(owner) !== _canonAcct(email)) return {}; // nunca adota bearer de outra conta
+      return { token: newAccess, email: owner || email };
+    }
+    const err = d.error || (r && r.data && r.data.error);
+    if (err === 'revoked' || err === 'expired') {
+      await _storeAcctRefresh(email, null);
+      return { revoked: true };
+    }
+    // 401 sem marcador (invalid_refresh): sem refresh utilizável agora, mas não
+    // apaga (pode ser réplica atrasada num edge).
+    if (r.status === 401) return { invalid: true };
+    return {};
+  } catch { return {}; }
+}
 
 // --- Multi-account storage (works on web + mobile) ---
 let _cachedAccounts = null;
@@ -1126,17 +1315,21 @@ function removeStoredAccount(email) {
   try {
     const acct = getStoredAccounts().find(a => a.email === email);
     if (acct?.token) {
-      fetch(`${API_URL}?action=logout`, {
+      // [2026-10-15 troca-sem-senha] device_id no corpo: sem ele o servidor
+      // revoga os refresh tokens da conta em TODOS os aparelhos.
+      const _tok = acct.token;
+      _getDeviceIdSafe().catch(() => null).then((dev) => fetch(`${API_URL}?action=logout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${acct.token}`,
+          'Authorization': `Bearer ${_tok}`,
         },
-        body: '{}',
+        body: JSON.stringify(dev ? { token: _tok, device_id: dev } : { token: _tok }),
         credentials: 'omit',
-      }).catch(() => {});
+      })).catch(() => {});
     }
   } catch {}
+  _storeAcctRefresh(email, null).catch(() => {});
   const accounts = getStoredAccounts().filter(a => a.email !== email);
   storeAccounts(accounts);
   if (getActiveAccountEmail() === email) setActiveAccountEmail('');
@@ -2613,6 +2806,14 @@ export async function login(email, password) {
       refreshToken = newRefresh;
       refreshDeviceId = newRefreshDev;
       storeRefreshToken(newRefresh, newRefreshDev).catch(() => {});
+      // [2026-10-15 troca-sem-senha] cópia por conta (troca de conta sem senha).
+      _storeAcctRefresh(r?.data?.email || email, newRefresh, newRefreshDev).catch(() => {});
+    } else {
+      // Sem refresh novo: o global ainda seria o da conta ANTERIOR → passa a
+      // ser o refresh guardado DESTA conta, ou vazio (a cópia da anterior fica).
+      refreshToken = '';
+      refreshDeviceId = '';
+      activateAccountRefresh(r?.data?.email || email).catch(() => {});
     }
     const token = r?.data?.token || r?.token;
     if (token) {
@@ -2762,6 +2963,8 @@ export async function setActiveAccountEmailAsync(email) {
 // the user can quickly log back in (Face ID / handle suggestion / etc.)
 // but kills the auto-relogin path. Awaits the SecureStore write on native.
 export async function clearStoredAccountTokenAsync(email) {
+  // [2026-10-15 troca-sem-senha] logout desta conta mata também o refresh dela.
+  try { await _storeAcctRefresh(email, null); } catch {}
   try {
     const lower = String(email || '').toLowerCase();
     if (!lower) return;
@@ -2798,7 +3001,12 @@ export async function logout() {
   // header se perca / authToken já esteja vazio nesse instante.
   const _tokForRevoke = (() => { try { return authToken || getAuthToken?.() || ''; } catch { return ''; } })();
   try {
-    r = await apiCall('logout', _tokForRevoke ? { token: _tokForRevoke } : {}, 'POST');
+    // [2026-10-15 troca-sem-senha] device_id → servidor revoga só o refresh
+    // DESTE aparelho (sem ele, revogava o da conta em todos os aparelhos).
+    const _devForLogout = await _getDeviceIdSafe().catch(() => null);
+    const _lp = _tokForRevoke ? { token: _tokForRevoke } : {};
+    if (_devForLogout) _lp.device_id = _devForLogout;
+    r = await apiCall('logout', _lp, 'POST');
   } catch (e) {
     r = { success: false, error: e?.message };
   }

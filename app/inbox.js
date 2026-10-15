@@ -1719,6 +1719,11 @@ function InboxScreenInner() {
                           const result = await switchAccount(acc.email);
                           if (result && result.removed) {
                             // [incidente-sessao 2026-10-14] conta revogada removida do aparelho (aviso global).
+                          } else if (result && result.cancelled) {
+                            // [2026-10-15 troca-sem-senha] dono cancelou o Face ID da conta parada.
+                          } else if (result && result.transient) {
+                            // [2026-10-15 troca-sem-senha] rede/servidor: NÃO pede senha.
+                            try { Alert.alert(t('account.switch') || 'Trocar conta', t('account.switchFailedNetwork') || 'Não foi possível trocar de conta agora. Verifique sua conexão e tente de novo.'); } catch {}
                           } else if (!result || !result.success) {
                             setSwitchLoginEmail(acc.email);
                             setSwitchLoginPassword('');
@@ -1728,9 +1733,7 @@ function InboxScreenInner() {
                             resetMailState?.();
                           }
                         } catch (e) {
-                          setSwitchLoginEmail(acc.email);
-                          setSwitchLoginPassword('');
-                          setSwitchLoginError('');
+                          try { Alert.alert(t('account.switch') || 'Trocar conta', t('account.switchFailedNetwork') || 'Não foi possível trocar de conta agora. Verifique sua conexão e tente de novo.'); } catch {}
                         }
                       }}
                       activeOpacity={0.6}

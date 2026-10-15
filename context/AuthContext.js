@@ -194,6 +194,41 @@ async function _chatStoreSetActiveAccountColdStart(email) {
     mod?.setActiveAccount?.((email || '').toLowerCase(), { coldStart: true, deviceAccounts });
   } catch {}
 }
+// [2026-10-15 troca-sem-senha] Conta guardada parada >30 dias (incidente
+// 14/10: sessão de outra pessoa esquecida no aparelho): antes de trocar sem
+// senha, confirma o DONO do aparelho com Face ID/digital/código. Sem fator
+// local (web, aparelho sem biometria/código) → 'unavailable' → pede a senha.
+// Retorna 'ok' | 'cancel' | 'unavailable'.
+async function _confirmDeviceOwnerForSwitch(email) {
+  if (Platform.OS === 'web') return 'unavailable';
+  let LA = null;
+  try { LA = require('expo-local-authentication'); } catch {}
+  if (!LA || typeof LA.authenticateAsync !== 'function') return 'unavailable';
+  try {
+    const [hw, enrolled] = await Promise.all([
+      LA.hasHardwareAsync?.().catch(() => false),
+      LA.isEnrolledAsync?.().catch(() => false),
+    ]);
+    let level = 0;
+    try { level = Number(await LA.getEnrolledLevelAsync?.()) || 0; } catch {}
+    // level>0 = pelo menos código do aparelho (SecurityLevel.SECRET).
+    if (!(hw && enrolled) && level <= 0) return 'unavailable';
+    let reason = 'Confirme para entrar em {email}';
+    try {
+      const L = require('../i18n');
+      const lang = (() => { try { const l = api.getUserLanguage?.() || 'pt'; return l === 'pt' ? 'pt-BR' : (l === 'zh' ? 'zh-CN' : l); } catch { return 'pt-BR'; } })();
+      const chain = L.fallbackChain ? L.fallbackChain(lang) : [lang, 'en', 'pt-BR'];
+      for (const c of chain) { const v = L.translations?.[c]?.['account.confirmSwitchIdle']; if (typeof v === 'string' && v) { reason = v; break; } }
+    } catch {}
+    reason = reason.replace('{email}', String(email || ''));
+    const res = await LA.authenticateAsync({ promptMessage: reason, disableDeviceFallback: false });
+    if (res && res.success) return 'ok';
+    const err = String((res && res.error) || '');
+    if (err === 'not_enrolled' || err === 'passcode_not_set' || err === 'not_available') return 'unavailable';
+    return 'cancel';
+  } catch { return 'unavailable'; }
+}
+
 function _chatStoreClearForSwitch(prevEmail) {
   try {
     const mod = require('../services/chatStore');
@@ -1524,6 +1559,8 @@ export function AuthProvider({ children }) {
       }
       api.swrInvalidate();
     } catch {}
+    // [2026-10-15 troca-sem-senha] identidade nova → refresh global = o dela (ou vazio).
+    if (_prevEmail !== _newEmail) { try { await api.activateAccountRefresh?.(data?.email || ''); } catch {} }
     loadAccounts();
     registerPushAfterAuth();
     _bootSyncEngines();
@@ -1600,6 +1637,8 @@ export function AuthProvider({ children }) {
     // e quebrava o reuso do token nas trocas de conta seguintes.
     api.upsertAccount(data.email || email, api.getAuthToken?.() || '', name);
     api.setActiveAccountEmail(data.email || email);
+    // [2026-10-15 troca-sem-senha] identidade nova → refresh global = o dela (ou vazio).
+    if (isAccountSwitch || !prevEmail) { try { await api.activateAccountRefresh?.(data.email || email); } catch {} }
     // Surgically clear the three bare-key MMKV blobs + legacy localStorage
     // twin when the bearer-token login lands on a potentially different
     // identity:
@@ -1959,193 +1998,230 @@ export function AuthProvider({ children }) {
     } catch {}
   }, []);
 
-  // Switch to a different stored account using bearer token
+  // Switch to a different stored account using its OWN stored bearer.
+  // [2026-10-15 troca-sem-senha] Nível Instagram/Gmail: cada conta adicionada
+  // guarda bearer próprio (mail_accounts, SecureStore) + refresh próprio
+  // (api.js rt_acct_*). A troca:
+  //   1. conta parada >30d (incidente 14/10) → confirma o dono do aparelho
+  //      (Face ID/digital/código); sem esse fator → senha;
+  //   2. valida o bearer guardado SEM cookie (o cookie da sessão atual fazia o
+  //      check_auth responder pela conta ATUAL quando o bearer alvo falhava →
+  //      "Session expired" → modal de senha, inclusive em erro de rede);
+  //   3. bearer órfão (401 sem marcador) → refresh da própria conta minta outro;
+  //   4. só pede senha quando o servidor disse REVOGADO (bearer e refresh) ou a
+  //      conta não tem credencial guardada (ex.: saiu dela com "Sair"). Revogado
+  //      → remove a conta do aparelho (storedAccountRevocation), como antes.
+  //   Rede/5xx → { transient } (a UI avisa; NÃO pede senha).
   const switchAccount = useCallback(async (email) => {
     const stored = api.getStoredAccounts();
     const account = stored.find(a => a.email === email);
-    if (!account) return { success: false, message: 'Account not found' };
+    if (!account) return { success: false, needsPassword: true, message: 'Account not found' };
+    const normalize = (e) => (e || '').toLowerCase().replace('@onemundo.com.br', '@chatyy.com.br');
 
     setSwitching(true);
     try {
-      // If we have a stored token, try it FIRST before logging out current session
-      if (account.token) {
-        // Save current token in case we need to restore it
-        const previousToken = api.getAuthToken();
+      // 1. Guarda do incidente: conta guardada sem uso há 30 dias.
+      try {
+        if (typeof api.isStoredAccountFresh === 'function' && !api.isStoredAccountFresh(account)) {
+          const gate = await _confirmDeviceOwnerForSwitch(email);
+          if (gate === 'cancel') return { success: false, cancelled: true };
+          if (gate !== 'ok') return { success: false, needsPassword: true, message: 'idle_account' };
+        }
+      } catch {}
 
-        // Try the stored token — server will switch session if bearer is for a different user
-        api.setAuthTokenDirect(account.token);
-        try {
-          const check = await api.checkAuth();
-          if (check.success && check.data?.email) {
-            // Verify the server returned the TARGET account (not the old session)
-            const normalize = (e) => (e || '').toLowerCase().replace('@onemundo.com.br', '@chatyy.com.br');
-            if (normalize(check.data.email) !== normalize(email)) {
-              // Server returned old session user — token may be for wrong account
-              if (previousToken) api.setAuthTokenDirect(previousToken);
-              return { success: false, message: 'Session expired, please login again' };
-            }
-            // Token valid - clear caches and switch.
-            // CRITICAL: reset the WS too so listeners + subscriptions from
-            // the previous account don't fire into the new one. Without
-            // this, Account A's chat_summary events would land on Account
-            // B's state (cross-account leak).
-            try {
-              const ws = require('../services/websocket').default;
-              ws?.disconnect?.();
-              ws?.reset?.(true); // fullWipe=true on account switch
-            } catch {}
-            // ── Paint-race fence ────────────────────────────────────────
-            // 1. Lock cache scope BEFORE any await so sync getters that
-            //    might fire during the awaits below already short-circuit.
-            // 2. Clear caches (awaited).
-            // 3. Setting the new user repaints from the now-empty cache,
-            //    which fills via the fresh fetch shortly after.
-            // (Previously also did `setUser(null)` between to force chat
-            //  screens to unmount, but that dual-fired MailContext's WS
-            //  effect — root cause 3 of reconnect storm fix 2026-05-19.
-            //  The cache-scope lock + cleared SmartCache below keep stale
-            //  data from painting; minor flash is acceptable for stable
-            //  WS lifecycle.)
-            // [#1223 2026-05-20 Wave 6] Clear chatyy_offline_user FIRST so a
-            // hard kill DURING the cache wipe doesn't resurrect the previous
-            // account on next cold start via hydrateOffline. Previously this
-            // ran AFTER clearAllCache, leaving a window where User A's
-            // payload remained in AsyncStorage even though SmartCache was
-            // already nuked — could flash User A's data to User B.
-            try { await AsyncStorage.removeItem('chatyy_offline_user'); } catch {}
-            _lockCacheScopeSync(500);
-            setCacheUser(null);
-            try { await clearAllCache(); } catch {}
-            // [2026-07-03] clearChatCache was referenced bare here but is NOT in
-            // switchAccount's scope (only login()/completeLoginAfterChallenge()
-            // resolve the lazy loader) → it threw a swallowed ReferenceError, so
-            // the chat cache was NEVER flushed on a stored-token account switch →
-            // account A's conversations/messages leaked into account B's first
-            // paint. Resolve the loader exactly like login() does, and drop the
-            // bare account-scoped MMKV blobs too (switchAccount was the only auth
-            // path missing clearAccountScopedMmkv).
-            try { const _clearChat = await getLazyClearChatCache(); await _clearChat(); } catch {}
-            try { await clearAccountScopedMmkv(); } catch {}
-            // Email caches (offlineCache MMKV list_/msg_ + web IDB) are now
-            // account-namespaced, but purge every account's entries on switch
-            // so the previous account's inbox/bodies can't paint under the new
-            // one on the first render (belt-and-suspenders alongside the NS).
-            try { require('../services/offlineCache').purgeEmailCaches?.(); } catch {}
-            try { api.purgeOfflineLastKnown?.(); } catch {}
-            // P0 PRIVACY: clearChatCache() deliberately does NOT touch the
-            // native SQLite store (see its "SQLite cleared separately via
-            // dbClearAll()" note). switchAccount NEVER wiped it — so the
-            // switched-to account read the previous account's
-            // messages/conversations straight off disk. Wipe it here, BEFORE
-            // setUser, and fail-closed so a throwing clear holds the cache
-            // scope locked rather than painting the prior account's rows.
-            // Builder 2: the active-account marker is still the OUTGOING one
-            // here (setActiveAccountEmail runs after setUser below), so purge
-            // the durable store facade for it before the new identity paints.
-            try {
-              const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
-              _chatStoreClearForSwitch(_prevEmail);
-            } catch {}
-            await clearLocalChatStoreFailClosed();
-            // P0 PRIVACY: the api.js SWR memory cache (get_profile, contacts,
-            // feed_list, chat_list…) is keyed by action+params with NO account
-            // component, and is only cleared on logout — NOT on switch. Without
-            // this, the switched-to account reads the previous account's cached
-            // API responses for up to the SWR TTL (~60s). Clear it here, in the
-            // same wipe cluster, before setUser paints the new account.
-            try { api.swrInvalidate(); } catch {}
-            setCacheUser(check.data.email);
-            // Builder 2: scope the durable store to the switched-to identity
-            // BEFORE setUser so frame-1 reads never serve the prior account.
-            _chatStoreSetActiveAccount(check.data.email);
-            setUser(check.data);
-            // [2026-10-08 offline-first] re-seed the offline user for the NEW
-            // identity (the old one was removed above) so an offline relaunch
-            // right after a switch opens this account, not /login.
-            try { AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(check.data)).catch(() => {}); } catch {}
-            // SECURITY (P1): identity changed → force the biometric app-lock
-            // to re-fire so the new account can't ride in on the previous
-            // user's already-unlocked overlay. No-op if biometrics are off.
-            _forceBiometricLock();
-            // Update active account marker
-            api.setActiveAccountEmail(check.data.email);
-            // Update stored token (server may have rotated it)
-            // Persiste o token atual — antes passava `null` e apagava o
-            // token armazenado, quebrando troca de conta sem re-login.
-            const currentToken = api.getAuthToken();
-            if (currentToken) {
-              api.upsertAccount(check.data.email, currentToken, check.data.name || check.data.email);
-            }
-            // Re-arm the once-per-process auth-failure guard — login(),
-            // loginWithToken() and completeLoginAfterChallenge() all do this.
-            // Without it, if the switched-to account's token expires later the
-            // global 401 handler swallows it (guard still `true` from a prior
-            // expiry) and the user sees empty chat instead of /login.
-            try { api.resetAuthFailureSignal?.(); } catch {}
-            // Refresh Face ID credentials to the switched-to account so a cold
-            // start unlocks the CURRENT account, not the previous one. Mirrors
-            // the bio_email/bio_token writes in loginWithToken / login.js.
-            try {
-              if (Platform.OS !== 'web') {
-                const SecureStore = require('expo-secure-store');
-                const bioEmail = (check.data.email || '').toString();
-                const bioTok = (currentToken || '').toString();
-                if (bioEmail) { try { await SecureStore.setItemAsync('bio_email', bioEmail); } catch {} }
-                if (bioTok) { try { await SecureStore.setItemAsync('bio_token', bioTok); } catch {} }
-                // P1: per-account twin so Face ID after a cold start unlocks
-                // the CURRENTLY-active identity, not whichever global pair
-                // happened to be last written.
-                try {
-                  const { bioTokenKeyFor } = require('./BiometricContext');
-                  const k = bioTokenKeyFor(bioEmail);
-                  if (k && bioTok) await SecureStore.setItemAsync(k, bioTok);
-                } catch {}
-              }
-            } catch {}
-            // WEB: the cache wipe above (clearAllCache + clearChatCache) doesn't
-            // reach the SW CacheStorage or IndexedDB — nuke both so the switched
-            // -to account doesn't see the previous account's cached chat data.
-            if (Platform.OS === 'web') {
-              try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {}
-              try { require('../services/localDb').webClearAll?.(); } catch {}
-            }
-            loadAccounts();
-            prefetchAvatar(check.data.email);
-            prefetchProfile(check.data.email);
-            // [2026-10-02] Register the device push token under the switched-to
-            // account. Every other auth path (login/loginWithToken/challenge)
-            // does this; switchAccount didn't, so after an in-app A→B switch the
-            // token was never POSTed under B and B stayed push-deaf (the
-            // AppState→active re-register never fires because the app is already
-            // active during a switch). The token-send guards are now keyed by
-            // {token, account} so this isn't swallowed by A's recent send.
-            try { registerPushAfterAuth(); } catch {}
-            return { success: true, data: check.data };
-          }
-          // [incidente-sessao 2026-10-14] servidor declarou o token da conta
-          // guardada REVOGADO → restaura a sessão atual e remove a conta do aparelho.
+      // 2. Bearer guardado da conta destino (cookie-less).
+      let targetToken = account.token || '';
+      let verified = null;
+      let bearerRevoked = false;
+      let transient = false;
+      if (targetToken) {
+        const v = await api.verifyStoredAccountToken(targetToken);
+        if (v.ok && normalize(v.email) === normalize(email)) verified = v.data;
+        else if (v.revoked) bearerRevoked = true;
+        else if (v.transient) transient = true;
+      }
+      // 3. Bearer órfão/ausente → refresh DESTA conta (nunca o global).
+      let refreshRevoked = false;
+      let noRefresh = false;
+      if (!verified && !transient) {
+        const rf = await api.refreshBearerForAccount(email);
+        if (rf && rf.token) {
+          const v2 = await api.verifyStoredAccountToken(rf.token);
+          if (v2.ok && normalize(v2.email) === normalize(email)) { verified = v2.data; targetToken = rf.token; }
+          else if (v2.transient) transient = true;
+        } else if (rf && rf.revoked) refreshRevoked = true;
+        else if (rf && (rf.none || rf.invalid)) noRefresh = true;
+        else transient = true; // auth_refresh sem resposta definitiva
+      }
+      if (!verified) {
+        // 4. Revogado pelo servidor → conta sai do aparelho (aviso global) e,
+        //    se ainda assim a UI quiser, o modal de senha.
+        if (bearerRevoked && (refreshRevoked || noRefresh) && account.token) {
           try {
             const _rv = require('../services/storedAccountRevocation');
-            if (_rv.isRevokedAuthPayload(check)) {
-              if (previousToken) api.setAuthTokenDirect(previousToken);
-              const _removed = await _rv.purgeRevokedStoredAccount({ email, token: account.token, source: 'switch_account' });
-              if (_removed) {
-                loadAccounts();
-                return { success: false, removed: true, message: 'Account removed' };
-              }
+            const _removed = await _rv.purgeRevokedStoredAccount({ email, token: account.token, source: 'switch_account' });
+            if (_removed) {
+              loadAccounts();
+              return { success: false, removed: true, message: 'Account removed' };
             }
           } catch {}
-        } catch {
-          // checkAuth failed (network error etc.)
+          return { success: false, needsPassword: true, message: 'revoked' };
         }
-
-        // Token expired or error - restore previous session so user stays logged in
-        if (previousToken) {
-          api.setAuthTokenDirect(previousToken);
-        }
+        if (transient && !refreshRevoked) return { success: false, transient: true, message: 'network' };
+        // Sem credencial utilizável (sem token e sem refresh, ou refresh revogado).
+        return { success: false, needsPassword: true, message: 'Session expired, please login again' };
       }
-      // Token expired — user needs to re-login (don't logout current session)
-      return { success: false, message: 'Session expired, please login again' };
+
+      // Bearer validado → aplica e segue o fluxo de troca (wipe/escopo/push).
+      api.setAuthTokenDirect(targetToken);
+      {
+        // Token valid - clear caches and switch.
+        // CRITICAL: reset the WS too so listeners + subscriptions from
+        // the previous account don't fire into the new one. Without
+        // this, Account A's chat_summary events would land on Account
+        // B's state (cross-account leak).
+        try {
+          const ws = require('../services/websocket').default;
+          ws?.disconnect?.();
+          ws?.reset?.(true); // fullWipe=true on account switch
+        } catch {}
+        // ── Paint-race fence ────────────────────────────────────────
+        // 1. Lock cache scope BEFORE any await so sync getters that
+        //    might fire during the awaits below already short-circuit.
+        // 2. Clear caches (awaited).
+        // 3. Setting the new user repaints from the now-empty cache,
+        //    which fills via the fresh fetch shortly after.
+        // (Previously also did `setUser(null)` between to force chat
+        //  screens to unmount, but that dual-fired MailContext's WS
+        //  effect — root cause 3 of reconnect storm fix 2026-05-19.
+        //  The cache-scope lock + cleared SmartCache below keep stale
+        //  data from painting; minor flash is acceptable for stable
+        //  WS lifecycle.)
+        // [#1223 2026-05-20 Wave 6] Clear chatyy_offline_user FIRST so a
+        // hard kill DURING the cache wipe doesn't resurrect the previous
+        // account on next cold start via hydrateOffline. Previously this
+        // ran AFTER clearAllCache, leaving a window where User A's
+        // payload remained in AsyncStorage even though SmartCache was
+        // already nuked — could flash User A's data to User B.
+        try { await AsyncStorage.removeItem('chatyy_offline_user'); } catch {}
+        _lockCacheScopeSync(500);
+        setCacheUser(null);
+        try { await clearAllCache(); } catch {}
+        // [2026-07-03] clearChatCache was referenced bare here but is NOT in
+        // switchAccount's scope (only login()/completeLoginAfterChallenge()
+        // resolve the lazy loader) → it threw a swallowed ReferenceError, so
+        // the chat cache was NEVER flushed on a stored-token account switch →
+        // account A's conversations/messages leaked into account B's first
+        // paint. Resolve the loader exactly like login() does, and drop the
+        // bare account-scoped MMKV blobs too (switchAccount was the only auth
+        // path missing clearAccountScopedMmkv).
+        try { const _clearChat = await getLazyClearChatCache(); await _clearChat(); } catch {}
+        try { await clearAccountScopedMmkv(); } catch {}
+        // Email caches (offlineCache MMKV list_/msg_ + web IDB) are now
+        // account-namespaced, but purge every account's entries on switch
+        // so the previous account's inbox/bodies can't paint under the new
+        // one on the first render (belt-and-suspenders alongside the NS).
+        try { require('../services/offlineCache').purgeEmailCaches?.(); } catch {}
+        try { api.purgeOfflineLastKnown?.(); } catch {}
+        // P0 PRIVACY: clearChatCache() deliberately does NOT touch the
+        // native SQLite store (see its "SQLite cleared separately via
+        // dbClearAll()" note). switchAccount NEVER wiped it — so the
+        // switched-to account read the previous account's
+        // messages/conversations straight off disk. Wipe it here, BEFORE
+        // setUser, and fail-closed so a throwing clear holds the cache
+        // scope locked rather than painting the prior account's rows.
+        // Builder 2: the active-account marker is still the OUTGOING one
+        // here (setActiveAccountEmail runs after setUser below), so purge
+        // the durable store facade for it before the new identity paints.
+        try {
+          const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
+          _chatStoreClearForSwitch(_prevEmail);
+        } catch {}
+        await clearLocalChatStoreFailClosed();
+        // P0 PRIVACY: the api.js SWR memory cache (get_profile, contacts,
+        // feed_list, chat_list…) is keyed by action+params with NO account
+        // component, and is only cleared on logout — NOT on switch. Without
+        // this, the switched-to account reads the previous account's cached
+        // API responses for up to the SWR TTL (~60s). Clear it here, in the
+        // same wipe cluster, before setUser paints the new account.
+        try { api.swrInvalidate(); } catch {}
+        setCacheUser(verified.email);
+        // Builder 2: scope the durable store to the switched-to identity
+        // BEFORE setUser so frame-1 reads never serve the prior account.
+        _chatStoreSetActiveAccount(verified.email);
+        setUser(verified);
+        // [2026-10-08 offline-first] re-seed the offline user for the NEW
+        // identity (the old one was removed above) so an offline relaunch
+        // right after a switch opens this account, not /login.
+        try { AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(verified)).catch(() => {}); } catch {}
+        // SECURITY (P1): identity changed → force the biometric app-lock
+        // to re-fire so the new account can't ride in on the previous
+        // user's already-unlocked overlay. No-op if biometrics are off.
+        _forceBiometricLock();
+        // Update active account marker
+        api.setActiveAccountEmail(verified.email);
+        // [2026-10-15 troca-sem-senha] refresh global passa a ser o DA CONTA
+        // DESTINO (ou vazio) — antes ficava o da conta anterior e a auto-cura
+        // de um 401 mintava bearer da conta errada.
+        try { await api.activateAccountRefresh?.(verified.email || email); } catch {}
+        // Alinha a sessão PHP (cookie) + CSRF com a conta destino em 2º plano —
+        // toda chamada já leva o bearer novo, que vence o cookie no servidor.
+        try { api.checkAuth().catch(() => {}); } catch {}
+        // Update stored token (server may have rotated it)
+        // Persiste o token atual — antes passava `null` e apagava o
+        // token armazenado, quebrando troca de conta sem re-login.
+        const currentToken = api.getAuthToken();
+        if (currentToken) {
+          api.upsertAccount(verified.email, currentToken, verified.name || verified.email);
+        }
+        // Re-arm the once-per-process auth-failure guard — login(),
+        // loginWithToken() and completeLoginAfterChallenge() all do this.
+        // Without it, if the switched-to account's token expires later the
+        // global 401 handler swallows it (guard still `true` from a prior
+        // expiry) and the user sees empty chat instead of /login.
+        try { api.resetAuthFailureSignal?.(); } catch {}
+        // Refresh Face ID credentials to the switched-to account so a cold
+        // start unlocks the CURRENT account, not the previous one. Mirrors
+        // the bio_email/bio_token writes in loginWithToken / login.js.
+        try {
+          if (Platform.OS !== 'web') {
+            const SecureStore = require('expo-secure-store');
+            const bioEmail = (verified.email || '').toString();
+            const bioTok = (currentToken || '').toString();
+            if (bioEmail) { try { await SecureStore.setItemAsync('bio_email', bioEmail); } catch {} }
+            if (bioTok) { try { await SecureStore.setItemAsync('bio_token', bioTok); } catch {} }
+            // P1: per-account twin so Face ID after a cold start unlocks
+            // the CURRENTLY-active identity, not whichever global pair
+            // happened to be last written.
+            try {
+              const { bioTokenKeyFor } = require('./BiometricContext');
+              const k = bioTokenKeyFor(bioEmail);
+              if (k && bioTok) await SecureStore.setItemAsync(k, bioTok);
+            } catch {}
+          }
+        } catch {}
+        // WEB: the cache wipe above (clearAllCache + clearChatCache) doesn't
+        // reach the SW CacheStorage or IndexedDB — nuke both so the switched
+        // -to account doesn't see the previous account's cached chat data.
+        if (Platform.OS === 'web') {
+          try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {}
+          try { require('../services/localDb').webClearAll?.(); } catch {}
+        }
+        loadAccounts();
+        prefetchAvatar(verified.email);
+        prefetchProfile(verified.email);
+        // [2026-10-02] Register the device push token under the switched-to
+        // account. Every other auth path (login/loginWithToken/challenge)
+        // does this; switchAccount didn't, so after an in-app A→B switch the
+        // token was never POSTed under B and B stayed push-deaf (the
+        // AppState→active re-register never fires because the app is already
+        // active during a switch). The token-send guards are now keyed by
+        // {token, account} so this isn't swallowed by A's recent send.
+        try { registerPushAfterAuth(); } catch {}
+        return { success: true, data: verified };
+      }
+    } catch {
+      return { success: false, transient: true, message: 'network' };
     } finally {
       setSwitching(false);
     }

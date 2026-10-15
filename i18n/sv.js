@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Det gick inte att byta konto just nu. Kontrollera anslutningen och försök igen.",
+  "account.confirmSwitchIdle": "Bekräfta att det är du för att byta till {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Senaste",
   "chat.nattach.selectedCount": "{count} valda",

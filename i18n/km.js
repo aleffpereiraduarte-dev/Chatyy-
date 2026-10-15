@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "មិនអាចប្ដូរគណនីបានទេឥឡូវនេះ។ សូមពិនិត្យការតភ្ជាប់ ហើយព្យាយាមម្ដងទៀត។",
+  "account.confirmSwitchIdle": "បញ្ជាក់ថាជាអ្នក ដើម្បីប្ដូរទៅ {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "ថ្មីៗ",
   "chat.nattach.selectedCount": "បានជ្រើស {count}",

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Nie można teraz przełączyć konta. Sprawdź połączenie i spróbuj ponownie.",
+  "account.confirmSwitchIdle": "Potwierdź, że to Ty, aby przełączyć na {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Ostatnie",
   "chat.nattach.selectedCount": "Wybrano: {count}",

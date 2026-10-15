@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Účet sa teraz nedá prepnúť. Skontrolujte pripojenie a skúste to znova.",
+  "account.confirmSwitchIdle": "Potvrďte, že ste to vy, a prepnite na {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Nedávne",
   "chat.nattach.selectedCount": "Vybrané: {count}",

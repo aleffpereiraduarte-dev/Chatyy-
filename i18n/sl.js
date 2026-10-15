@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Računa trenutno ni mogoče zamenjati. Preverite povezavo in poskusite znova.",
+  "account.confirmSwitchIdle": "Potrdite, da ste to vi, za preklop na {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Nedavno",
   "chat.nattach.selectedCount": "Izbrano: {count}",

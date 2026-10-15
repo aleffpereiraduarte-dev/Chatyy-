@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Δεν ήταν δυνατή η εναλλαγή λογαριασμού τώρα. Ελέγξτε τη σύνδεσή σας και δοκιμάστε ξανά.",
+  "account.confirmSwitchIdle": "Επιβεβαιώστε ότι είστε εσείς για να μεταβείτε στο {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Πρόσφατα",
   "chat.nattach.selectedCount": "{count} επιλεγμένα",

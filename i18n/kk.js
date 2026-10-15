@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Қазір аккаунтты ауыстыру мүмкін болмады. Байланысты тексеріп, қайталап көріңіз.",
+  "account.confirmSwitchIdle": "{email} аккаунтына өту үшін өзіңіз екеніңізді растаңыз",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Соңғылар",
   "chat.nattach.selectedCount": "{count} таңдалды",

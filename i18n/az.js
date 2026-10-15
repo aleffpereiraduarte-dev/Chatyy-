@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Hazırda hesabı dəyişmək mümkün olmadı. Bağlantınızı yoxlayıb yenidən cəhd edin.",
+  "account.confirmSwitchIdle": "{email} hesabına keçmək üçün siz olduğunuzu təsdiqləyin",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Son",
   "chat.nattach.selectedCount": "{count} seçildi",

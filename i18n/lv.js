@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Pašlaik neizdevās pārslēgt kontu. Pārbaudiet savienojumu un mēģiniet vēlreiz.",
+  "account.confirmSwitchIdle": "Apstipriniet, ka tas esat jūs, lai pārslēgtos uz {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Nesenie",
   "chat.nattach.selectedCount": "Atlasīti: {count}",

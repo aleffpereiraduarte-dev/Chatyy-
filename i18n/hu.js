@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Most nem sikerült fiókot váltani. Ellenőrizd a kapcsolatot, és próbáld újra.",
+  "account.confirmSwitchIdle": "Erősítsd meg, hogy te vagy, a váltáshoz: {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Legutóbbiak",
   "chat.nattach.selectedCount": "{count} kijelölve",

@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "לא ניתן להחליף חשבון כרגע. בדקו את החיבור ונסו שוב.",
+  "account.confirmSwitchIdle": "אשרו שזה אתם כדי לעבור אל {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "אחרונים",
   "chat.nattach.selectedCount": "{count} נבחרו",

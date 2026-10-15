@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Šiuo metu nepavyko perjungti paskyros. Patikrinkite ryšį ir bandykite dar kartą.",
+  "account.confirmSwitchIdle": "Patvirtinkite, kad tai jūs, norėdami pereiti į {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Naujausi",
   "chat.nattach.selectedCount": "Pasirinkta: {count}",

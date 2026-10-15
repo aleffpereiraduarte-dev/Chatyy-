@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "ບໍ່ສາມາດສະຫຼັບບັນຊີໄດ້ໃນຕອນນີ້. ກວດສອບການເຊື່ອມຕໍ່ແລ້ວລອງໃໝ່.",
+  "account.confirmSwitchIdle": "ຢືນຢັນວ່າແມ່ນທ່ານເພື່ອສະຫຼັບໄປ {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "ຫຼ້າສຸດ",
   "chat.nattach.selectedCount": "ເລືອກແລ້ວ {count}",

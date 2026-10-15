@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Одоогоор бүртгэл солих боломжгүй байна. Холболтоо шалгаад дахин оролдоно уу.",
+  "account.confirmSwitchIdle": "{email} руу шилжихийн тулд та мөн гэдгээ баталгаажуулна уу",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Сүүлийн",
   "chat.nattach.selectedCount": "{count} сонгосон",

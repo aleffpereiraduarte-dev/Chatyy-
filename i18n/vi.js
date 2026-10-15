@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Hiện không thể chuyển tài khoản. Hãy kiểm tra kết nối và thử lại.",
+  "account.confirmSwitchIdle": "Xác nhận đó là bạn để chuyển sang {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Gần đây",
   "chat.nattach.selectedCount": "Đã chọn {count}",

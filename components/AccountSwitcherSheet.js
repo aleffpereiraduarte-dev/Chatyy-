@@ -87,13 +87,18 @@ export default function AccountSwitcherSheet({ visible, onClose }) {
       } else if (result && result.removed) {
         // [incidente-sessao 2026-10-14] bearer revogado: conta já saiu do aparelho (aviso global).
         onClose?.();
+      } else if (result && result.cancelled) {
+        // [2026-10-15 troca-sem-senha] Face ID da conta parada cancelado: fica onde está.
+      } else if (result && result.transient) {
+        // [2026-10-15 troca-sem-senha] rede/servidor: avisa, NÃO pede senha.
+        try { Alert.alert(tr(t, 'account.switchTitle', 'Trocar conta'), tr(t, 'account.switchFailedNetwork', 'Não foi possível trocar de conta agora. Verifique sua conexão e tente de novo.')); } catch {}
       } else {
         goReLogin(email);
       }
     } catch {
-      goReLogin(email);
+      try { Alert.alert(tr(t, 'account.switchTitle', 'Trocar conta'), tr(t, 'account.switchFailedNetwork', 'Não foi possível trocar de conta agora. Verifique sua conexão e tente de novo.')); } catch {}
     }
-  }, [switching, switchAccount, resetMailState, onClose, goReLogin]);
+  }, [switching, switchAccount, resetMailState, onClose, goReLogin, t]);
 
   const handleSignOut = useCallback((email, isActive) => {
     const title = tr(t, 'account.signOutThis', 'Sair desta conta');

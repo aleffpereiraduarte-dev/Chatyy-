@@ -179,6 +179,8 @@ export async function purgeRevokedStoredAccount({ email, token, source } = {}) {
     try { if (d.SecureStore) await d.SecureStore.setItemAsync('mail_accounts', JSON.stringify(next)); } catch {}
     try { console.warn('[accounts] conta guardada removida (bearer revogado) via', source || '?'); } catch {}
     await _wipeLocalDataFor(target);
+    // [2026-10-15 troca-sem-senha] refresh guardado desta conta também sai.
+    try { await api.forgetAccountRefreshToken?.(target); } catch {}
     // Nativo (NSE iOS / Android reply/mark-read): re-entrega o mapa sem ela.
     try {
       const pn = d.push();

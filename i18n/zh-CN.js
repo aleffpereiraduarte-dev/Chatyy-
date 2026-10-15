@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "暂时无法切换账号。请检查网络连接后重试。",
+  "account.confirmSwitchIdle": "请确认是你本人以切换到 {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "最近项目",
   "chat.nattach.selectedCount": "已选择 {count} 项",

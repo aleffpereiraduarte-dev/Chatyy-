@@ -461,8 +461,11 @@ jobs:
             --file ./build.ipa \
             --apiKey "$ASC_KEY_ID" \
             --apiIssuer "$ASC_ISSUER_ID" \
-            --verbose 2>&1 | tail -50
+            --verbose > /tmp/altool.log 2>&1; ALT_RC=$?
+          tail -50 /tmp/altool.log
           rm -f ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          # [2026-10-15] antes o `| tail` engolia o exit code: upload recusado (90062/90186) aparecia como sucesso.
+          if [ $ALT_RC -ne 0 ] || grep -qE "UPLOAD FAILED|Failed to upload package" /tmp/altool.log; then echo "::error::altool upload FAILED (veja acima — ex.: versão fechada 90062/90186 → subir expo.version)"; exit 1; fi
           echo "✓ Submitted to ASC"
 
       - name: Auto-attach new build to TestFlight beta groups

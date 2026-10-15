@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Tidak dapat menukar akaun sekarang. Semak sambungan anda dan cuba lagi.",
+  "account.confirmSwitchIdle": "Sahkan bahawa ini anda untuk bertukar ke {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Terkini",
   "chat.nattach.selectedCount": "{count} dipilih",

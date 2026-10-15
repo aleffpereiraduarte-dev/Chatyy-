@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Imeshindwa kubadilisha akaunti sasa. Angalia muunganisho wako kisha ujaribu tena.",
+  "account.confirmSwitchIdle": "Thibitisha kuwa ni wewe ili kubadili kwenda {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Za hivi karibuni",
   "chat.nattach.selectedCount": "{count} zimechaguliwa",

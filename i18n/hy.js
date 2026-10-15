@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Այժմ հնարավոր չեղավ փոխել հաշիվը։ Ստուգեք կապը և նորից փորձեք։",
+  "account.confirmSwitchIdle": "Հաստատեք, որ դուք եք՝ {email} անցնելու համար",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Վերջինները",
   "chat.nattach.selectedCount": "Ընտրված է՝ {count}",

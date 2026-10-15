@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Сейчас не удалось сменить аккаунт. Проверьте подключение и попробуйте снова.",
+  "account.confirmSwitchIdle": "Подтвердите, что это вы, чтобы перейти в {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Недавние",
   "chat.nattach.selectedCount": "Выбрано: {count}",

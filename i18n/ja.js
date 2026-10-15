@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "現在アカウントを切り替えられません。接続を確認してもう一度お試しください。",
+  "account.confirmSwitchIdle": "{email} に切り替えるには本人確認をしてください",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "最近の項目",
   "chat.nattach.selectedCount": "{count}件を選択",

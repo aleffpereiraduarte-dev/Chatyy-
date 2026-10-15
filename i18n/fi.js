@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Tiliä ei voitu vaihtaa juuri nyt. Tarkista yhteys ja yritä uudelleen.",
+  "account.confirmSwitchIdle": "Vahvista henkilöllisyytesi vaihtaaksesi tiliin {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Viimeisimmät",
   "chat.nattach.selectedCount": "{count} valittu",

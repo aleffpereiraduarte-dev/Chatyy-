@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "ابھی اکاؤنٹ تبدیل نہیں ہو سکا۔ اپنا کنکشن چیک کریں اور دوبارہ کوشش کریں۔",
+  "account.confirmSwitchIdle": "{email} پر جانے کے لیے تصدیق کریں کہ یہ آپ ہیں",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "حالیہ",
   "chat.nattach.selectedCount": "{count} منتخب",

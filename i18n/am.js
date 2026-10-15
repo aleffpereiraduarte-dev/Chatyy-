@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "አሁን መለያ መቀየር አልተቻለም። ግንኙነትዎን ያረጋግጡና እንደገና ይሞክሩ።",
+  "account.confirmSwitchIdle": "ወደ {email} ለመቀየር እርስዎ መሆንዎን ያረጋግጡ",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "የቅርብ ጊዜ",
   "chat.nattach.selectedCount": "{count} ተመርጠዋል",

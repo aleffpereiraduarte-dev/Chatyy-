@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Hindi makalipat ng account ngayon. Tingnan ang iyong koneksyon at subukang muli.",
+  "account.confirmSwitchIdle": "Kumpirmahing ikaw ito para lumipat sa {email}",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Kamakailan",
   "chat.nattach.selectedCount": "{count} ang napili",

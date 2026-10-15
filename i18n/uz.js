@@ -1,4 +1,7 @@
 export default {
+  // [2026-10-15 troca-sem-senha]
+  "account.switchFailedNetwork": "Hozir hisobni almashtirib bo'lmadi. Ulanishni tekshirib, qayta urinib ko'ring.",
+  "account.confirmSwitchIdle": "{email} hisobiga o'tish uchun siz ekanligingizni tasdiqlang",
   // [2026-10-15 native-attach]
   "chat.nattach.recents": "Soʻnggilar",
   "chat.nattach.selectedCount": "{count} ta tanlandi",
