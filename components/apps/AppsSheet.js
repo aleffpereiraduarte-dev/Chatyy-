@@ -321,6 +321,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   }, [editing, togglePin, handlePress]);
 
   // ── Apresentação do Modal JS (web / kill-switch do sheet nativo) ──────────
+  const _NATIVE_SHEET = USE_NATIVE_SHEETS && globalThis.__chatyy_apps_native_sheet === true; // [hotfix-3]
   const _winH = Dimensions.get('window').height || 800;
   const [mounted, setMounted] = useState(!!visible);
   const [openTick, setOpenTick] = useState(0);
@@ -332,7 +333,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
-    if (USE_NATIVE_SHEETS) return;
+    if (_NATIVE_SHEET) return;
     if (visible) { closingByDragRef.current = false; setMounted(true); setOpenTick(n => n + 1); return; }
     if (!mounted) return;
     if (closingByDragRef.current) { sheetY.setValue(sheetHRef.current); dragY.setValue(0); setMounted(false); return; }
@@ -343,7 +344,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
   useEffect(() => {
-    if (USE_NATIVE_SHEETS || !mounted || !visible) return;
+    if (_NATIVE_SHEET || !mounted || !visible) return;
     dragY.setValue(0);
     Animated.parallel([
       Animated.timing(backdropA, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
@@ -580,7 +581,9 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
     );
   };
 
-  if (USE_NATIVE_SHEETS) {
+  // [2026-10-15 hotfix-3] formSheet nativo: lista sumia (painel branco) / sobrepunha no iPhone →
+  // painel volta ao modal próprio (caminho testado). Religar p/ teste: globalThis.__chatyy_apps_native_sheet = true.
+  if (_NATIVE_SHEET) {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents={[0.62, 1]} backgroundColor={sheetBg}>
         <NativeSheetKeyboardView style={{ flex: 1, paddingTop: 22, paddingHorizontal: 16, backgroundColor: sheetBg }}>
