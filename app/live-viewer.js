@@ -4435,7 +4435,7 @@ export default function LiveViewerScreen() {
                     onPress={() => {
                       // Tap a viewer row → close sheet + navigate to their
                       // profile. Profile screen accepts ?email= query param.
-                      try { setShowViewersList(false); router.push(`/profile?email=${encodeURIComponent(v.email)}`); } catch {}
+                      try { setShowViewersList(false); router.push(`/u/${encodeURIComponent(v.email)}`); /* [2026-10-14 piscada-android] direto, sem a ponte /profile */ } catch {}
                     }}
                     accessibilityRole="button"
                     accessibilityLabel={v.name}
@@ -4566,7 +4566,7 @@ export default function LiveViewerScreen() {
               <TouchableOpacity
                 onPress={() => {
                   setHostPeekOpen(false);
-                  try { router.push(`/profile?email=${encodeURIComponent(displayHostEmail)}`); } catch {}
+                  try { router.push(`/u/${encodeURIComponent(displayHostEmail)}`); /* [2026-10-14 piscada-android] direto, sem a ponte /profile */ } catch {}
                 }}
                 activeOpacity={0.7}
                 style={styles.peekProfileLink}

@@ -422,7 +422,7 @@ import { useReducedMotion } from '../components/reducedMotion'; // [2026-10-04] 
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { nativeSheetScreenOptions } from '../components/NativeSheet'; // [2026-10-09 native-sheets] formSheet nativo (rota-ponte /native-sheet)
 import { MailProvider } from '../context/MailContext';
-import { ThemeProvider, useStableColorScheme } from '../context/ThemeContext';
+import { ThemeProvider, useStableColorScheme, primeThemeMode, APP_THEME_DARK_EVENT } from '../context/ThemeContext';
 import { LanguageProvider, useLanguage, useLanguageOptional, preloadBootLanguage, bootLanguageNeedsPreload } from '../context/LanguageContext';
 import { CurrencyProvider } from '../context/CurrencyContext';
 import { BiometricProvider } from '../context/BiometricContext';
@@ -1872,12 +1872,27 @@ export default function RootLayout() {
             AsyncStorage.getItem('theme_mode'),
             AsyncStorage.getItem('theme_dark'),
           ]);
+          // [2026-10-14 piscada-android] semeia o ThemeProvider (monta depois do gate).
+          try { primeThemeMode(m === 'dark' || m === 'light' || m === 'system' ? m : legacy === 'true' ? 'dark' : legacy === 'false' ? 'light' : 'system'); } catch {}
           if (alive) _setNavIsDark(resolve(m, legacy));
         }
       } catch { if (alive) _setNavIsDark(_osScheme === 'dark'); }
     })();
     return () => { alive = false; };
   }, [_osScheme]);
+  // [2026-10-14 piscada-android] Tema trocado em Ajustes (ou por outro aparelho via
+  // WS) → fundo do stack/raiz acompanha na hora (ThemeContext emite após hidratar).
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let sub = null;
+    try {
+      const { DeviceEventEmitter } = require('react-native');
+      sub = DeviceEventEmitter.addListener(APP_THEME_DARK_EVENT, (dark) => {
+        if (typeof dark === 'boolean') _setNavIsDark((p) => (p === dark ? p : dark));
+      });
+    } catch {}
+    return () => { try { sub && sub.remove(); } catch {} };
+  }, []);
   // [2026-10-08 dark-black] = DarkColors.background (true black, no navy).
   const _navBg = _navIsDark ? '#000000' : '#ffffff';
   // [2026-10-04] Reduce Motion: swap directional slides for a quick cross-fade
@@ -1902,7 +1917,16 @@ export default function RootLayout() {
   // = transição do SISTEMA (Material 3 shared-axis no Android 14+, fade/zoom antes)
   // em vez do clone do iOS. Web: o stack não anima (troca instantânea); o valor só
   // fica por compat.
-  const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : 'default');
+  // [2026-10-14 piscada-android] Android: 'default' do react-native-screens NÃO é a
+  // transição M3 do sistema — é a cópia do zoom+fade do Android 10
+  // (rns_default_enter_in: a tela nova fica alpha 0 nos 1ºs 100 ms enquanto a de
+  // baixo escala/fica 40%; no voltar as duas ficam semitransparentes) → o fundo
+  // da janela aparece no meio = "piscada". 'ios_from_right' no Android é tween
+  // 100% opaco (translate: nova entra da direita, a de baixo faz parallax -30%,
+  // 200 ms = config_shortAnimTime), com reordenação de desenho no voltar — o
+  // padrão WhatsApp/Telegram Android, sem nenhum frame vazio. iOS segue 'default'
+  // (push do UINavigationController).
+  const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : Platform.OS === 'android' ? 'ios_from_right' : 'default');
   // [2026-10-14 piscada-voltar] FadeSlideIn que monta JUNTO com o push nativo nasce
   // assentado (components/FadeSlideIn.js); o focus marca quando a rota apareceu.
   const _fadeSlideScreenListeners = React.useCallback(({ route }) => ({
@@ -2018,7 +2042,10 @@ export default function RootLayout() {
   if (!cacheReady) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    // [2026-10-14 piscada-android] Raiz pintada com a cor do tema do app: qualquer
+    // pixel não coberto por tela durante transição/abertura mostra o tema, não o
+    // windowBackground nativo (cinza #303030 do DayNight no escuro em builds antigos).
+    <GestureHandlerRootView style={Platform.OS === 'web' ? { flex: 1 } : { flex: 1, backgroundColor: _navBg }}>
     <ChatyyKeyboardProvider>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

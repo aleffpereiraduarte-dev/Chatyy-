@@ -119,6 +119,15 @@
       "package": "com.onemundo.mail",
       "versionCode": 644,
       "googleServicesFile": "./google-services.json",
+      "splash": {
+        "image": "./assets/splash-blank.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff",
+        "dark": {
+          "image": "./assets/splash-blank-dark.png",
+          "backgroundColor": "#000000"
+        }
+      },
       "permissions": [
         "android.permission.VIBRATE",
         "android.permission.RECEIVE_BOOT_COMPLETED",

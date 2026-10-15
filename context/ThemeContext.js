@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform, useColorScheme, InteractionManager, Appearance, AppState } from 'react-native';
+import { Platform, useColorScheme, InteractionManager, Appearance, AppState, DeviceEventEmitter } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, DarkColors, FontFamily } from '../constants/theme';
 
@@ -103,6 +103,21 @@ export function useStableColorScheme() {
   return Platform.OS === 'web' ? live : (stable || live);
 }
 
+// [2026-10-14 piscada-android] Ponte com o RootLayout (app/_layout.js), que fica
+// ACIMA deste provider e pinta o fundo do navegador/raiz:
+//  - primeThemeMode(): o RootLayout já lê `theme_mode` do storage enquanto o gate
+//    de cache segura o 1º frame; semeando aqui, o provider nasce no modo salvo
+//    (antes: nascia 'system' e só aplicava o modo forçado após InteractionManager
+//    → claro→escuro (ou vice-versa) já com a lista na tela = piscada no boot).
+//  - APP_THEME_DARK_EVENT: trocar o tema em Ajustes atualiza o fundo do stack na
+//    hora (antes o RootLayout só relia o storage quando o tema do SO mudava →
+//    transições pintavam a cor do tema ANTERIOR até reiniciar o app).
+export const APP_THEME_DARK_EVENT = 'chatyy:appThemeDark';
+let _primedThemeMode = null;
+export function primeThemeMode(mode) {
+  if (THEME_MODES.has(mode)) _primedThemeMode = mode;
+}
+
 export function ThemeProvider({ children }) {
   // Nativo: semeia do SO já no 1º frame (antes: false → 1 frame claro no escuro).
   const [systemIsDark, setSystemIsDark] = useState(() => Platform.OS !== 'web' && _readScheme() === 'dark');
@@ -110,7 +125,10 @@ export function ThemeProvider({ children }) {
   // the OS until the user explicitly forces light/dark. Backward compat: the
   // hydrate effect below maps a legacy `theme_dark` value into a mode when no
   // `theme_mode` key exists yet.
-  const [themeMode, setThemeModeState] = useState('system');
+  const [themeMode, setThemeModeState] = useState(() => _primedThemeMode || 'system');
+  // Só emite APP_THEME_DARK_EVENT depois de hidratar (o valor inicial pode ser o
+  // default 'system' e sobrescreveria o que o RootLayout já resolveu do storage).
+  const _hydratedRef = useRef(Platform.OS === 'web');
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
   const [accentColor, setAccentColorState] = useState('#111111');
@@ -179,6 +197,7 @@ export function ThemeProvider({ children }) {
           if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
           if (savedInbox) setInboxTypeState(savedInbox);
           if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
+          _hydratedRef.current = true;
         }).catch(() => {});
         try {
           const { getString } = require('../services/mmkv');
@@ -405,6 +424,10 @@ export function ThemeProvider({ children }) {
   // 'system'). This eliminates the setIsDark races between the hydrate effect
   // and the OS-scheme watcher that left web rendering light under forced dark.
   const isDark = themeMode === 'system' ? systemIsDark : themeMode === 'dark';
+  useEffect(() => {
+    if (Platform.OS === 'web' || !_hydratedRef.current) return;
+    try { DeviceEventEmitter.emit(APP_THEME_DARK_EVENT, isDark); } catch {}
+  }, [isDark]);
   const baseColors = isDark ? DarkColors : Colors;
   // [2026-10-08 dark-black] The default accent is near-black ink (#111111). In
   // dark mode that is invisible on the black surfaces, so a near-black accent

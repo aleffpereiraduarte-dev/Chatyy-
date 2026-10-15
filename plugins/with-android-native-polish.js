@@ -22,6 +22,12 @@
  *     i18n/manifest.json (core + every remote locale) so it never drifts from
  *     what LanguageContext can actually render.
  *
+ *  4. [2026-10-14 piscada-android] windowBackground do AppTheme = cor do tema
+ *     do app (claro #ffffff / escuro #000000 via values-night). Antes ficava o
+ *     default do Theme.AppCompat.DayNight (#fafafa / #303030 cinza): aparecia
+ *     entre o splash e o 1º frame do RN, ao abrir activities nativas e atrás
+ *     das telas durante as transições do native-stack → "piscada" cinza no escuro.
+ *
  *  3. Legacy storage permissions stay capped at maxSdkVersion=32 with
  *     tools:replace (libraries such as expo-file-system / expo-image /
  *     expo-image-picker declare them UNCAPPED; without the replace the merged
@@ -32,8 +38,36 @@ const path = require('path');
 const {
   withAndroidManifest,
   withDangerousMod,
+  withAndroidStyles,
+  withAndroidColors,
+  withAndroidColorsNight,
   AndroidConfig,
 } = require('@expo/config-plugins');
+
+const WINDOW_BG = 'chatyy_window_background';
+const WINDOW_BG_LIGHT = '#ffffff'; // = Colors.background (constants/theme.js)
+const WINDOW_BG_DARK = '#000000';  // = DarkColors.background ([2026-10-08 dark-black])
+
+function withWindowBackground(config) {
+  config = withAndroidColors(config, (cfg) => {
+    cfg.modResults = AndroidConfig.Colors.assignColorValue(cfg.modResults, { name: WINDOW_BG, value: WINDOW_BG_LIGHT });
+    return cfg;
+  });
+  config = withAndroidColorsNight(config, (cfg) => {
+    cfg.modResults = AndroidConfig.Colors.assignColorValue(cfg.modResults, { name: WINDOW_BG, value: WINDOW_BG_DARK });
+    return cfg;
+  });
+  config = withAndroidStyles(config, (cfg) => {
+    cfg.modResults = AndroidConfig.Styles.assignStylesValue(cfg.modResults, {
+      add: true,
+      parent: AndroidConfig.Styles.getAppThemeGroup(),
+      name: 'android:windowBackground',
+      value: `@color/${WINDOW_BG}`,
+    });
+    return cfg;
+  });
+  return config;
+}
 
 const LOCALES_XML = 'locales_config';
 
@@ -120,5 +154,6 @@ function withLocalesXml(config) {
 module.exports = function withAndroidNativePolish(config) {
   config = withManifestTweaks(config);
   config = withLocalesXml(config);
+  config = withWindowBackground(config);
   return config;
 };

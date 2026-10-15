@@ -520,7 +520,7 @@ export default function MeetingDetailScreen() {
                   style={styles.participantTile}
                   activeOpacity={0.7}
                   onPress={() => {
-                    if (p.email) router.push('/profile?email=' + encodeURIComponent(p.email));
+                    if (p.email) router.push('/u/' + encodeURIComponent(p.email)); /* [2026-10-14 piscada-android] direto: /profile é rota-ponte (push + replace = 2 transições) */
                   }}
                 >
                   <View style={styles.participantAvatarWrap}>
