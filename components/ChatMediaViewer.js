@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { KEYBOARD_CONTROLLER_ACTIVE as _KC_ACTIVE } from '../utils/threadKeyboard'; // [2026-10-08 photo-editor] gate do zoom UI-thread
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Modal, Image, Platform,
@@ -102,13 +102,29 @@ function _DismissBackdrop({ sv }) {
   return <RA.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, st]} />;
 }
 
-function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDismissEnd, onZoomChange }) {
+// [2026-10-14 swipe-album] Reescrito p/ o swipe do álbum ficar nível Fotos do iOS:
+//  • sem zoom: o arrasto horizontal FALHA o pan em ~4 px (o UIScrollView paginado
+//    do FlatList assume sozinho, 1 página por gesto, velocidade decide);
+//    vertical p/ baixo = fechar; 2 dedos = pinça (o pan ativa só p/ segurar o pager
+//    enquanto pinça — antes a pinça a partir de 1× podia passar de página).
+//  • ampliado: o pan ativa em ~5 px (antes do UIScrollView, ~10 pt) e move a foto;
+//    se a foto JÁ está encostada na borda e o arrasto começa p/ fora → o pan falha
+//    e o pager pagina (handoff do Fotos). Soltar puxando além da borda (elástico)
+//    também troca de página (onEdgeSwipe).
+//  • o pager NÃO é mais desligado ao ampliar (scrollEnabled fixo): quem segura o
+//    pager é o pan ativo do RNGH. Página que sai (isActive=false) volta a 1×.
+//  • natW/natH em shared values: o gesto não é recriado quando a foto termina de
+//    carregar (antes o useMemo dependia de nw/nh → handlers nativos refeitos no
+//    meio do swipe p/ uma página que acabou de carregar).
+function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDismissEnd, onZoomChange, isActive = true, onEdgeSwipe, onDoubleTap, onPageableChange }) {
   const RA = _ZRea.default;
   const sc = _ZRea.useSharedValue(1);
   const tx = _ZRea.useSharedValue(0);
   const ty = _ZRea.useSharedValue(0);
   const cw = _ZRea.useSharedValue(SCREEN_W);
   const ch = _ZRea.useSharedValue(SCREEN_H);
+  const nwSV = _ZRea.useSharedValue(natW || 0);
+  const nhSV = _ZRea.useSharedValue(natH || 0);
   const s0 = _ZRea.useSharedValue(1);
   const tx0 = _ZRea.useSharedValue(0);
   const ty0 = _ZRea.useSharedValue(0);
@@ -116,41 +132,90 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
   const fy0 = _ZRea.useSharedValue(0);
   const sx = _ZRea.useSharedValue(0);
   const sy = _ZRea.useSharedValue(0);
-  const mode = _ZRea.useSharedValue(0); // 0 nada, 1 pan ampliado, 2 dispensar
+  const rawX = _ZRea.useSharedValue(0);
+  const rawY = _ZRea.useSharedValue(0);
+  const lastTX = _ZRea.useSharedValue(0);
+  const lastTY = _ZRea.useSharedValue(0);
+  const edge = _ZRea.useSharedValue(0); // bit1 = encostada à esquerda, bit2 = à direita (no toque)
+  const want = _ZRea.useSharedValue(0); // modo pedido antes do activate()
+  const decided = _ZRea.useSharedValue(0); // já chamou activate()/fail() neste gesto
+  const pinched = _ZRea.useSharedValue(0); // houve pinça neste gesto
+  const pinchLive = _ZRea.useSharedValue(0); // pinça em andamento
+  const mode = _ZRea.useSharedValue(0); // 0 nada, 1 pan ampliado, 2 dispensar, 3 segurar (pinça a partir de 1×)
   const zoomed = _ZRea.useSharedValue(0);
+  const pageable = _ZRea.useSharedValue(1); // o pager pode pegar o arrasto (sem zoom, ou ampliada encostada na borda)
+
+  useEffect(() => { nwSV.set(natW || 0); nhSV.set(natH || 0); }, [natW, natH, nwSV, nhSV]);
 
   const cbRef = useRef({});
-  cbRef.current = { onDismissStart, onDismissEnd, onZoomChange };
+  cbRef.current = { onDismissStart, onDismissEnd, onZoomChange, onEdgeSwipe, onDoubleTap, onPageableChange };
   const jsDismissStart = useCallback(() => { try { cbRef.current.onDismissStart && cbRef.current.onDismissStart(); } catch {} }, []);
   const jsDismissEnd = useCallback((d) => { try { cbRef.current.onDismissEnd && cbRef.current.onDismissEnd(!!d); } catch {} }, []);
   const jsZoom = useCallback((z) => { try { cbRef.current.onZoomChange && cbRef.current.onZoomChange(!!z); } catch {} }, []);
+  const jsEdge = useCallback((d) => { try { cbRef.current.onEdgeSwipe && cbRef.current.onEdgeSwipe(d); } catch {} }, []);
+  const jsDbl = useCallback(() => { try { cbRef.current.onDoubleTap && cbRef.current.onDoubleTap(); } catch {} }, []);
+  const jsPageable = useCallback((p) => { try { cbRef.current.onPageableChange && cbRef.current.onPageableChange(!!p); } catch {} }, []);
 
-  // Ao desmontar ampliado (troca de mídia / fechar) devolve a paginação.
-  useEffect(() => () => { if (zoomed.get() === 1) jsZoom(false); }, [zoomed, jsZoom]);
-
-  const nw = natW || 0;
-  const nh = natH || 0;
+  // Ao desmontar ampliado (troca de mídia / fechar) devolve o estado "sem zoom".
+  useEffect(() => () => { if (zoomed.get() === 1) jsZoom(false); if (pageable.get() !== 1) jsPageable(true); }, [zoomed, jsZoom, pageable, jsPageable]);
+  // Página que saiu da tela volta a 1× (como o Fotos/WhatsApp).
+  useEffect(() => {
+    if (isActive) return;
+    try {
+      if (sc.get() !== 1 || tx.get() !== 0 || ty.get() !== 0) { sc.set(1); tx.set(0); ty.set(0); }
+      if (zoomed.get() === 1) { zoomed.set(0); jsZoom(false); }
+      if (pageable.get() !== 1) { pageable.set(1); jsPageable(true); }
+    } catch {}
+  }, [isActive, sc, tx, ty, zoomed, jsZoom, pageable, jsPageable]);
 
   const gesture = useMemo(() => {
     const G = _ZGH.Gesture;
+    const setPageable = (p) => {
+      'worklet';
+      if (p !== pageable.get()) {
+        pageable.set(p);
+        _zRunOnJS(jsPageable)(p === 1);
+      }
+    };
     const setZoomFlag = (z) => {
       'worklet';
       if (z !== zoomed.get()) {
         zoomed.set(z);
         _zRunOnJS(jsZoom)(z === 1);
       }
+      if (z === 0) setPageable(1);
+      else setPageable(0); // ampliando: trava o pager até a foto assentar (reportEdge decide)
+    };
+    const bx = (s) => { 'worklet'; return _zBoundX(s, cw.get(), ch.get(), nwSV.get(), nhSV.get()); };
+    const by = (s) => { 'worklet'; return _zBoundY(s, cw.get(), ch.get(), nwSV.get(), nhSV.get()); };
+    // Depois que a foto assenta: ampliada e encostada numa borda horizontal →
+    // libera o pager (o arrasto p/ fora pagina); no meio da foto → pager travado.
+    const reportEdge = (finished) => {
+      'worklet';
+      if (finished === false) return;
+      const s = sc.get();
+      if (s <= 1.02 || zoomed.get() !== 1) { setPageable(1); return; }
+      const mx = bx(s);
+      const x = tx.get();
+      setPageable((x >= mx - 2 || x <= -mx + 2) ? 1 : 0);
+    };
+    const rubber = (v, m) => {
+      'worklet';
+      if (v > m) return m + (v - m) * 0.35;
+      if (v < -m) return -m + (v + m) * 0.35;
+      return v;
     };
     const settle = () => {
       'worklet';
       let s = _zClamp(sc.get(), 1, _Z_MAX);
       const reset = s <= 1.02;
       if (reset) s = 1;
-      const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
-      const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+      const mx = bx(s);
+      const my = by(s);
       // Escala volta ao teto → recentra proporcionalmente.
       const ratio = sc.get() > 0 ? s / sc.get() : 1;
       sc.set(_zWithSpring(s, _Z_SPRING));
-      tx.set(_zWithSpring(reset ? 0 : _zClamp(tx.get() * ratio, -mx, mx), _Z_SPRING));
+      tx.set(_zWithSpring(reset ? 0 : _zClamp(tx.get() * ratio, -mx, mx), _Z_SPRING, reportEdge));
       ty.set(_zWithSpring(reset ? 0 : _zClamp(ty.get() * ratio, -my, my), _Z_SPRING));
       setZoomFlag(reset ? 0 : 1);
     };
@@ -158,6 +223,9 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
     const pinch = G.Pinch()
       .onStart((e) => {
         'worklet';
+        pinched.set(1);
+        pinchLive.set(1);
+        setPageable(0);
         s0.set(sc.get());
         tx0.set(tx.get());
         ty0.set(ty.get());
@@ -178,59 +246,99 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
         tx.set(fx - ns * cx);
         ty.set(fy - ns * cy);
       })
-      .onEnd(() => { 'worklet'; settle(); });
+      .onEnd(() => { 'worklet'; pinchLive.set(0); settle(); });
 
     const pan = G.Pan()
       .manualActivation(true)
       .averageTouches(true)
       .onTouchesDown((e) => {
         'worklet';
-        if (e.allTouches && e.allTouches.length === 1) {
+        const n = e.allTouches ? e.allTouches.length : 0;
+        if (n === 1 && e.allTouches[0]) {
           sx.set(e.allTouches[0].absoluteX);
           sy.set(e.allTouches[0].absoluteY);
+          pinched.set(0);
+          want.set(0);
+          decided.set(0);
+          const s = sc.get();
+          if (s > 1.02) {
+            const mx = bx(s);
+            const x = tx.get();
+            edge.set((x >= mx - 2 ? 1 : 0) + (x <= -mx + 2 ? 2 : 0));
+          } else {
+            edge.set(3);
+          }
         }
       })
       .onTouchesMove((e, mgr) => {
         'worklet';
+        if (decided.get() === 1) return; // decide UMA vez por gesto (activate repetido re-setava o estado do recognizer)
         const n = e.numberOfTouches;
         const isZoomed = sc.get() > 1.02;
-        if (n !== 1) { if (!isZoomed) mgr.fail(); return; }
+        const act = (w) => { decided.set(1); want.set(w); mgr.activate(); };
+        const fail = () => { decided.set(1); mgr.fail(); };
+        if (n >= 2) {
+          // Pinça: o pan ativa só p/ SEGURAR o pager (sem ele, o UIScrollView
+          // pode reconhecer o arrasto de 2 dedos e passar de página no meio da pinça).
+          act(isZoomed ? 1 : 3);
+          return;
+        }
+        if (n !== 1) return;
         const t0 = e.allTouches[0];
         if (!t0) return;
         const dx = t0.absoluteX - sx.get();
         const dy = t0.absoluteY - sy.get();
+        const adx = dx < 0 ? -dx : dx;
+        const ady = dy < 0 ? -dy : dy;
         if (isZoomed) {
-          if (dx * dx + dy * dy > 16) mgr.activate();
+          if (dx * dx + dy * dy < 25) return; // decide em ~5 px (o UIScrollView só começa em ~10 pt)
+          const ed = edge.get();
+          if (adx > ady && ((dx > 0 && (ed & 1)) || (dx < 0 && (ed & 2)))) {
+            fail(); // já na borda e puxando p/ fora → o pager pagina
+            return;
+          }
+          act(1);
           return;
         }
-        const adx = dx < 0 ? -dx : dx;
-        if (dy > 10 && dy > adx * 1.2) mgr.activate();
-        else if (adx > 10 || dy < -12) mgr.fail();
+        // Sem zoom: horizontal é 100% do pager → falha JÁ (não fica "pendente").
+        if (adx > 4 && adx >= ady) { fail(); return; }
+        if (dy < -8 && ady > adx) { fail(); return; }
+        if (dy > 8 && dy > adx * 1.2) act(2);
       })
       .onStart(() => {
         'worklet';
+        let w = want.get();
+        if (w === 0) w = sc.get() > 1.02 ? 1 : 3;
+        mode.set(w);
+        lastTX.set(0);
+        lastTY.set(0);
+        rawX.set(tx.get());
+        rawY.set(ty.get());
         tx0.set(tx.get());
         ty0.set(ty.get());
-        if (sc.get() > 1.02) {
-          mode.set(1);
-        } else {
-          mode.set(2);
-          _zRunOnJS(jsDismissStart)();
-        }
+        if (w === 2) _zRunOnJS(jsDismissStart)();
       })
       .onUpdate((e) => {
         'worklet';
         const m = mode.get();
         if (m === 1) {
+          const ddx = e.translationX - lastTX.get();
+          const ddy = e.translationY - lastTY.get();
+          lastTX.set(e.translationX);
+          lastTY.set(e.translationY);
+          if (e.numberOfPointers > 1 || pinchLive.get() === 1) {
+            // a pinça manda na posição; só ressincroniza a base
+            rawX.set(tx.get());
+            rawY.set(ty.get());
+            return;
+          }
           const s = sc.get();
-          const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
-          const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
-          let nx = tx0.get() + e.translationX;
-          let ny = ty0.get() + e.translationY;
-          if (nx > mx) nx = mx + (nx - mx) * 0.35; else if (nx < -mx) nx = -mx + (nx + mx) * 0.35;
-          if (ny > my) ny = my + (ny - my) * 0.35; else if (ny < -my) ny = -my + (ny + my) * 0.35;
-          tx.set(nx);
-          ty.set(ny);
+          const mx = bx(s);
+          const my = by(s);
+          rawX.set(rawX.get() + ddx);
+          rawY.set(rawY.get() + ddy);
+          tx.set(rubber(rawX.get(), mx));
+          ty.set(rubber(rawY.get(), my));
         } else if (m === 2) {
           const dy = e.translationY > 0 ? e.translationY : 0;
           ty.set(e.translationY > 0 ? e.translationY : e.translationY * 0.2);
@@ -244,12 +352,31 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
         const m = mode.get();
         mode.set(0);
         if (m === 1) {
+          if (pinched.get() === 1) {
+            // settle() da pinça já assentou; se depois dela ainda arrastou com 1
+            // dedo, só devolve p/ dentro dos limites da escala final.
+            if (zoomed.get() !== 1) return;
+            const sF = _zClamp(sc.get(), 1, _Z_MAX);
+            const fmx = bx(sF);
+            const fmy = by(sF);
+            const fx = tx.get();
+            const fy = ty.get();
+            if (fx > fmx || fx < -fmx) tx.set(_zWithSpring(_zClamp(fx, -fmx, fmx), _Z_SPRING, reportEdge));
+            if (fy > fmy || fy < -fmy) ty.set(_zWithSpring(_zClamp(fy, -fmy, fmy), _Z_SPRING));
+            return;
+          }
           const s = sc.get();
-          const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
-          const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+          const mx = bx(s);
+          const my = by(s);
           const x = tx.get();
           const y = ty.get();
-          tx.set((x > mx || x < -mx) ? _zWithSpring(_zClamp(x, -mx, mx), _Z_SPRING) : _zWithDecay({ velocity: e.velocityX, clamp: [-mx, mx] }));
+          // Soltou puxando além da borda (elástico) → troca de página.
+          const over = x > mx ? x - mx : (x < -mx ? x + mx : 0);
+          let dir = 0;
+          if (over > 40 || (over > 6 && e.velocityX > 600)) dir = -1;
+          else if (over < -40 || (over < -6 && e.velocityX < -600)) dir = 1;
+          if (dir !== 0) _zRunOnJS(jsEdge)(dir);
+          tx.set((x > mx || x < -mx) ? _zWithSpring(_zClamp(x, -mx, mx), _Z_SPRING, reportEdge) : _zWithDecay({ velocity: e.velocityX, clamp: [-mx, mx] }, reportEdge));
           ty.set((y > my || y < -my) ? _zWithSpring(_zClamp(y, -my, my), _Z_SPRING) : _zWithDecay({ velocity: e.velocityY, clamp: [-my, my] }));
         } else if (m === 2) {
           const go = success !== false && (e.translationY > 110 || e.velocityY > 900);
@@ -270,9 +397,11 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
     const dbl = G.Tap()
       .numberOfTaps(2)
       .maxDelay(260)
+      .maxDistance(24) // arrasto não conta como toque (2 swipes rápidos ≠ duplo toque)
       .onEnd((e, success) => {
         'worklet';
         if (success === false) return;
+        _zRunOnJS(jsDbl)();
         if (sc.get() > 1.02) {
           sc.set(_zWithSpring(1, _Z_SPRING));
           tx.set(_zWithSpring(0, _Z_SPRING));
@@ -283,16 +412,16 @@ function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDism
         const s = _Z_DOUBLE;
         const fx = e.x - cw.get() / 2;
         const fy = e.y - ch.get() / 2;
-        const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
-        const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+        const mx = bx(s);
+        const my = by(s);
         sc.set(_zWithSpring(s, _Z_SPRING));
-        tx.set(_zWithSpring(_zClamp(-fx * (s - 1), -mx, mx), _Z_SPRING));
-        ty.set(_zWithSpring(_zClamp(-fy * (s - 1), -my, my), _Z_SPRING));
         setZoomFlag(1);
+        tx.set(_zWithSpring(_zClamp(-fx * (s - 1), -mx, mx), _Z_SPRING, reportEdge));
+        ty.set(_zWithSpring(_zClamp(-fy * (s - 1), -my, my), _Z_SPRING));
       });
 
     return G.Simultaneous(pinch, pan, dbl);
-  }, [nw, nh, dismissSV, jsZoom, jsDismissStart, jsDismissEnd, sc, tx, ty, cw, ch, s0, tx0, ty0, fx0, fy0, sx, sy, mode, zoomed]);
+  }, [dismissSV, jsZoom, jsDismissStart, jsDismissEnd, jsEdge, jsDbl, sc, tx, ty, cw, ch, nwSV, nhSV, s0, tx0, ty0, fx0, fy0, sx, sy, rawX, rawY, lastTX, lastTY, edge, want, pinched, pinchLive, mode, zoomed, pageable, jsPageable]);
 
   const aStyle = _ZRea.useAnimatedStyle(() => ({
     transform: [{ translateX: tx.get() }, { translateY: ty.get() }, { scale: sc.get() }],
@@ -537,7 +666,7 @@ function NativeImageViewerWithLoading({ url }) {
 // crashing). Defined at module scope so it isn't remounted each render.
 function _PinchPassthrough({ children }) { return children; }
 
-function ImageViewer({ url, messageId, conversationId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange }) {
+function ImageViewer({ url, messageId, conversationId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange, isActive = true, onEdgeSwipe, onDoubleTap, onPageableChange }) {
   // [2026-10-08 photo-editor] tamanho natural (limites do pan no zoom UI-thread)
   const [_nat, _setNat] = useState(null);
   // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
@@ -961,6 +1090,10 @@ function ImageViewer({ url, messageId, conversationId, fileSize, createdAt, t, p
           onDismissStart={onDismissStart}
           onDismissEnd={onDismissEnd}
           onZoomChange={onZoomChange}
+          isActive={isActive}
+          onEdgeSwipe={onEdgeSwipe}
+          onDoubleTap={onDoubleTap}
+          onPageableChange={onPageableChange}
         >
           {_imgEl}
         </UIZoomSurface>
@@ -1796,6 +1929,43 @@ function isAssistantSender(name, email) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
+// [2026-10-14 swipe-album] Página do álbum memoizada: trocar de página só
+// re-renderiza as 2 páginas cujo isActive mudou (antes o extraData re-renderizava
+// TODAS as páginas montadas + recalculava a URL — que virava file:// depois do
+// cache e recarregava a foto vizinha no meio do swipe). URL congelada por item.
+const _AlbumPage = memo(function _AlbumPage({ item, isActive, pageW, webH, conversationId, viewOnce, t, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange, onEdgeSwipe, onDoubleTap, onPageableChange }) {
+  const fileUrl = item?.fileUrl;
+  const u = useMemo(() => getFullUrl(fileUrl), [fileUrl]);
+  const e = getExt(item?.fileName);
+  const isImg = item?.type === 'image' || IMAGE_EXTS.includes(e);
+  const isVid = item?.type === 'video' || VIDEO_EXTS.includes(e);
+  const isPrv = PREVIEWABLE_EXTS.includes(e);
+  return (
+    // [2026-10-14 album-swipe] Web: a célula do VirtualizedList (row,
+    // altura = conteúdo) deixava a página com 0 px → foto PRETA no
+    // álbum. Altura explícita = altura medida do pager.
+    <View style={Platform.OS === 'web' && webH > 0 ? { width: pageW, height: webH } : { width: pageW, flex: 1 }}>
+      {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} conversationId={conversationId} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={onDismissMove} onDismissEnd={onDismissEnd} dismissSV={dismissSV} onDismissStart={onDismissStart} onZoomChange={onZoomChange} isActive={isActive} onEdgeSwipe={onEdgeSwipe} onDoubleTap={onDoubleTap} onPageableChange={onPageableChange} /> :
+       isVid ? <VideoPlayer url={u} isActive={isActive} allowPip={!viewOnce} noCache={!!viewOnce} /> :
+       isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
+       <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
+    </View>
+  );
+}, (a, b) => {
+  // O chat-conversation remonta o mediaList (objetos novos) a cada render dele;
+  // compara só os campos que a página usa.
+  for (const k of ['isActive', 'pageW', 'webH', 'conversationId', 'viewOnce', 't', 'onDismissMove', 'onDismissEnd', 'dismissSV', 'onDismissStart', 'onZoomChange', 'onEdgeSwipe', 'onDoubleTap', 'onPageableChange']) {
+    if (a[k] !== b[k]) return false;
+  }
+  const x = a.item || {};
+  const y = b.item || {};
+  if (x === y) return true;
+  for (const k of ['fileUrl', 'fileName', 'type', 'messageId', 'id', 'fileSize', 'createdAt', 'created_at', 'placeholderUri', 'thumbB64Uri', 'blurhash', 'thumbUri']) {
+    if (x[k] !== y[k]) return false;
+  }
+  return true;
+});
+
 export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
@@ -1842,12 +2012,18 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const _dismissSV = _useMaybeSharedValue(0);
   const [_zoomed, _setZoomed] = useState(false);
   const _onZoomChange = useCallback((z) => { _setZoomed(!!z); }, []);
+  // [2026-10-14 swipe-album] iOS: ampliada no MEIO da foto → pager travado
+  // (o arrasto é só da foto); encostada na borda → pager liberado p/ o arrasto
+  // p/ fora paginar (Fotos do iOS). Decidido na UI thread (UIZoomSurface).
+  const [_pagerLocked, _setPagerLocked] = useState(false);
+  const _onPageableChange = useCallback((p) => { _setPagerLocked(!p); }, []);
   const _onDismissStart = useCallback(() => {
     Animated.timing(_chromeOpacity, { toValue: 0, duration: 120, useNativeDriver: true }).start();
   }, [_chromeOpacity]);
   useEffect(() => {
     if (!visible) return;
     _setZoomed(false);
+    _setPagerLocked(false);
     try { if (_dismissSV) _dismissSV.set(0); } catch {}
   }, [visible, _dismissSV]);
   const _toggleChrome = useCallback(() => {
@@ -1861,6 +2037,22 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       return next;
     });
   }, [_chromeOpacity]);
+  // [2026-10-14 swipe-album] Toque simples mostra/esconde a barra; no nativo
+  // espera a janela do duplo toque (260 ms) — antes o 1º toque do duplo-toque-
+  // pra-zoom também piscava a barra.
+  const _chromeTapTimer = useRef(null);
+  const _dblTapAt = useRef(0);
+  const _onBackdropPress = useCallback(() => {
+    if (!_UI_ZOOM) { _toggleChrome(); return; }
+    if (Date.now() - _dblTapAt.current < 400) return; // 2º toque do duplo toque
+    if (_chromeTapTimer.current) clearTimeout(_chromeTapTimer.current);
+    _chromeTapTimer.current = setTimeout(() => { _chromeTapTimer.current = null; _toggleChrome(); }, 280);
+  }, [_toggleChrome]);
+  const _onDoubleTap = useCallback(() => {
+    _dblTapAt.current = Date.now();
+    if (_chromeTapTimer.current) { clearTimeout(_chromeTapTimer.current); _chromeTapTimer.current = null; }
+  }, []);
+  useEffect(() => () => { if (_chromeTapTimer.current) clearTimeout(_chromeTapTimer.current); }, []);
   // Reset chrome to visible whenever a new media is opened so the user
   // doesn't open a fresh image and find a bare black screen.
   useEffect(() => {
@@ -1879,7 +2071,19 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const _list = (Array.isArray(mediaList) && mediaList.length > 0)
     ? mediaList
     : (visible ? [{ fileUrl, hlsUrl, fileName, fileSize, type }] : []);
-  const _initial = Math.max(0, Math.min(_list.length - 1, Number(initialIndex) || 0));
+  const _initialLive = Math.max(0, Math.min(_list.length - 1, Number(initialIndex) || 0));
+  // [2026-10-14 swipe-album] Índice inicial CONGELADO por abertura. O
+  // chat-conversation recalcula mediaList/initialIndex a cada render dele (upload
+  // terminando, id temp→real, álbum reagrupado); se o initialIndex mudava com o
+  // viewer aberto, o efeito abaixo devolvia o contador à foto tocada ("volta pra
+  // página original").
+  const _initRef = useRef(null);
+  if (!visible) _initRef.current = null;
+  else if (_initRef.current === null) _initRef.current = _initialLive;
+  const _initial = _initRef.current !== null ? Math.min(_initRef.current, Math.max(0, _list.length - 1)) : _initialLive;
+  const _initOffsetRef = useRef(null);
+  if (!visible) _initOffsetRef.current = null;
+  else if (_initOffsetRef.current === null) _initOffsetRef.current = { x: _initial * SCREEN_W, y: 0 };
   const [_currentIdx, _setCurrentIdx] = useState(_initial);
   // Reset on every open so reopening from a different index doesn't restore
   // the previous viewer position.
@@ -1890,20 +2094,66 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const [_webPagerH, _setWebPagerH] = useState(0);
   const _idxRef = useRef(_initial);
   _idxRef.current = _currentIdx;
+  // [2026-10-14 swipe-album] Largura REAL da página = largura medida do pager
+  // (antes: SCREEN_W de quando o módulo carregou; se a janela difere, o
+  // pagingEnabled do UIScrollView pagina pela largura do bounds e a página
+  // "parava no meio"). getItemLayout/offsets/índice usam esta largura.
+  const [_pageW, _setPageW] = useState(SCREEN_W);
+  const _pageWRef = useRef(SCREEN_W);
+  _pageWRef.current = _pageW;
   const _onWebPagerScroll = useCallback((e) => {
     const x = e?.nativeEvent?.contentOffset?.x;
-    if (typeof x !== 'number' || !(SCREEN_W > 0)) return;
-    const i = Math.round(x / SCREEN_W);
+    const w = _pageWRef.current;
+    if (typeof x !== 'number' || !(w > 0)) return;
+    const i = Math.round(x / w);
     if (i >= 0 && i !== _idxRef.current) _setCurrentIdx(i);
   }, []);
+  // Fim do swipe (nativo): índice pela posição final. onScrollEndDrag cobre o
+  // caso sem momentum (soltou exatamente alinhado → iOS não emite momentum).
+  const _settleFromOffset = useCallback((e, requireAligned) => {
+    const x = e?.nativeEvent?.contentOffset?.x;
+    const w = _pageWRef.current;
+    if (typeof x !== 'number' || !(w > 0)) return;
+    const i = Math.round(x / w);
+    if (requireAligned && Math.abs(x - i * w) > 1) return;
+    const n = Array.isArray(mediaList) ? mediaList.length : 0;
+    if (i >= 0 && (n === 0 || i < n) && i !== _idxRef.current) _setCurrentIdx(i);
+  }, [mediaList]);
   const _goToPage = useCallback((i) => {
     const n = Array.isArray(mediaList) ? mediaList.length : 0;
     if (!(n > 1) || i < 0 || i >= n) return;
     try { _pagerRef.current?.scrollToIndex?.({ index: i, animated: true }); } catch {
-      try { _pagerRef.current?.scrollToOffset?.({ offset: i * SCREEN_W, animated: true }); } catch {}
+      try { _pagerRef.current?.scrollToOffset?.({ offset: i * _pageWRef.current, animated: true }); } catch {}
     }
     _setCurrentIdx(i);
   }, [mediaList]);
+  // [2026-10-14 swipe-album] Web: o scroll-snap "x mandatory" do RNW deixava um
+  // flick longo no touch pular VÁRIAS fotos (medido: 2→5 num arraste rápido).
+  // scroll-snap-stop: always nas células = 1 página por gesto, como no nativo.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    try {
+      if (document.getElementById('chatyy-pager-snapstop')) return;
+      const st = document.createElement('style');
+      st.id = 'chatyy-pager-snapstop';
+      st.textContent = '[data-chatyy-pager] > div > div { scroll-snap-stop: always; }';
+      document.head.appendChild(st);
+    } catch {}
+  }, []);
+  // Ampliado e soltou puxando além da borda → página vizinha (Fotos do iOS).
+  const _onEdgeSwipe = useCallback((dir) => { _goToPage(_idxRef.current + (dir > 0 ? 1 : -1)); }, [_goToPage]);
+  const _onPagerLayout = useCallback((e) => {
+    const w = e?.nativeEvent?.layout?.width || 0;
+    const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+    if (w > 0 && Math.abs(w - _pageWRef.current) > 0.5) {
+      _pageWRef.current = w;
+      _setPageW(w);
+      // realinha na página atual com a largura nova (sem animação)
+      const i = _idxRef.current;
+      requestAnimationFrame(() => { try { _pagerRef.current?.scrollToOffset?.({ offset: i * w, animated: false }); } catch {} });
+    }
+    if (Platform.OS === 'web' && h > 0) _setWebPagerH((old) => (old === h ? old : h));
+  }, []);
   useEffect(() => {
     if (Platform.OS !== 'web' || !visible || !(Array.isArray(mediaList) && mediaList.length > 1) || typeof document === 'undefined') return undefined;
     const onKey = (e) => {
@@ -2557,49 +2807,66 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             backdrop toggles top/bottom chrome (Instagram parity). Pan/zoom
             gestures inside ImageViewer still win because PanResponder
             captures movement; only the unmodified tap reaches us here. */}
-        <TouchableWithoutFeedback onPress={_toggleChrome} accessible={false}>
+        <TouchableWithoutFeedback onPress={_onBackdropPress} accessible={false}>
         <Animated.View style={{ flex: 1, transform: [{ scale: _openScale }] }}>
         {_multi ? (
           <FlatList
             ref={_pagerRef}
+            dataSet={Platform.OS === 'web' ? { chatyyPager: '1' } : undefined}
             data={_list}
-            extraData={Platform.OS === 'web' ? `${_currentIdx}_${_webPagerH}` : _currentIdx}
-            keyExtractor={(it, i) => `${it?.fileUrl || ''}_${i}`}
+            extraData={Platform.OS === 'web' ? `${_currentIdx}_${_webPagerH}_${_pageW}` : `${_currentIdx}_${_pageW}`}
+            // chave = posição: a URL muda com o viewer aberto (upload terminou,
+            // local→remoto) e remontava a página visível (flash/zoom perdido).
+            keyExtractor={(it, i) => `p${i}`}
             horizontal
+            // [2026-10-14 swipe-album] Paginação NATIVA do UIScrollView: 1 página
+            // por gesto, velocidade/flick decide. O pager fica SEMPRE ligado —
+            // ampliado, quem segura o arrasto é o pan do zoom (UIZoomSurface)
+            // ativando antes do UIScrollView; na borda ele falha e o pager pagina.
             pagingEnabled
-            scrollEnabled={!_zoomed}
+            // Android: mantém o comportamento antigo (pager desligado enquanto
+            // ampliado — o HorizontalScrollView intercepta o toque do filho).
+            scrollEnabled={Platform.OS === 'android' ? !_zoomed : !_pagerLocked}
+            decelerationRate="fast"
+            disableIntervalMomentum
+            directionalLockEnabled
+            removeClippedSubviews={false}
+            initialNumToRender={3}
+            maxToRenderPerBatch={2}
+            windowSize={5}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={_initial}
-            getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
+            // nativo: já nasce na página certa (sem 1 frame da página 0 antes do scrollToIndex)
+            contentOffset={Platform.OS !== 'web' && _initial > 0 ? _initOffsetRef.current || undefined : undefined}
+            getItemLayout={(_, i) => ({ length: _pageW, offset: _pageW * i, index: i })}
             onScrollToIndexFailed={() => {}}
-            onMomentumScrollEnd={(e) => {
-              const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
-              if (i !== _currentIdx) _setCurrentIdx(i);
-            }}
+            onMomentumScrollEnd={(e) => _settleFromOffset(e, false)}
+            onScrollEndDrag={Platform.OS !== 'web' ? (e) => _settleFromOffset(e, true) : undefined}
             // [2026-10-14 album-swipe] Web (react-native-web) não emite
             // onMomentumScrollEnd → o contador ficava parado em "2 / 3" depois
             // de passar. No web o índice sai do onScroll.
             onScroll={Platform.OS === 'web' ? _onWebPagerScroll : undefined}
-            onLayout={Platform.OS === 'web' ? (e) => { const h = Math.round(e?.nativeEvent?.layout?.height || 0); if (h > 0 && h !== _webPagerH) _setWebPagerH(h); } : undefined}
-            scrollEventThrottle={Platform.OS === 'web' ? 32 : undefined}
-            renderItem={({ item, index }) => {
-              const u = getFullUrl(item?.fileUrl);
-              const e = getExt(item?.fileName);
-              const isImg = item?.type === 'image' || IMAGE_EXTS.includes(e);
-              const isVid = item?.type === 'video' || VIDEO_EXTS.includes(e);
-              const isPrv = PREVIEWABLE_EXTS.includes(e);
-              return (
-                // [2026-10-14 album-swipe] Web: a célula do VirtualizedList (row,
-                // altura = conteúdo) deixava a página com 0 px → foto PRETA no
-                // álbum. Altura explícita = altura medida do pager.
-                <View style={Platform.OS === 'web' && _webPagerH > 0 ? { width: SCREEN_W, height: _webPagerH } : { width: SCREEN_W, flex: 1 }}>
-                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} conversationId={conversationId} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} dismissSV={_dismissSV} onDismissStart={_onDismissStart} onZoomChange={_onZoomChange} /> :
-                   isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} noCache={!!viewOnce} /> :
-                   isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
-                   <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
-                </View>
-              );
-            }}
+            onLayout={_onPagerLayout}
+            scrollEventThrottle={32}
+            renderItem={({ item, index }) => (
+              <_AlbumPage
+                item={item}
+                isActive={index === _currentIdx}
+                pageW={_pageW}
+                webH={Platform.OS === 'web' ? _webPagerH : 0}
+                conversationId={conversationId}
+                viewOnce={viewOnce}
+                t={t}
+                onDismissMove={_onDismissMove}
+                onDismissEnd={_onDismissEnd}
+                dismissSV={_dismissSV}
+                onDismissStart={_onDismissStart}
+                onZoomChange={_onZoomChange}
+                onEdgeSwipe={_onEdgeSwipe}
+                onDoubleTap={_onDoubleTap}
+                onPageableChange={_onPageableChange}
+              />
+            )}
           />
         ) : (
           isImage ? (
@@ -2634,6 +2901,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 dismissSV={_dismissSV}
                 onDismissStart={_onDismissStart}
                 onZoomChange={_onZoomChange}
+                onDoubleTap={_onDoubleTap}
               />
             )
           ) : isVideo ? (
