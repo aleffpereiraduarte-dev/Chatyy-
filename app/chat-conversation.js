@@ -10397,9 +10397,21 @@ function ChatConversationInner() {
     try { setShowGifPicker(false); } catch {}
     try { setShowStickerPicker(false); } catch {}
     try { setSelectionMode(false); } catch {}
-    try { setSelectedIds(new Set()); } catch {}
+    // [2026-10-14 piscada-voltar] Set NOVO sempre = re-render da conversa inteira
+    // no 1º frame do pop; só troca se havia seleção.
+    try { setSelectedIds(prev => (prev && prev.size === 0 ? prev : new Set())); } catch {}
 
     if (Platform.OS === 'web') {
+      // [2026-10-14 piscada-voltar] replace('/chat') DESMONTAVA a lista que já
+      // estava viva embaixo e montava outra (DOM da lista inteira removido e
+      // recriado, avatares re-setando src = piscada). Com a lista na pilha,
+      // volta POP (mesmo caminho do nativo); sem ela (deep link), replace.
+      try {
+        if (typeof router.canDismiss === 'function' && router.canDismiss() && typeof router.dismissTo === 'function') {
+          router.dismissTo('/chat');
+          return;
+        }
+      } catch {}
       try { router.replace('/chat'); return; } catch {}
       try { if (typeof window !== 'undefined') window.location.href = '/chat'; } catch {}
       return;

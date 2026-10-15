@@ -1903,6 +1903,11 @@ export default function RootLayout() {
   // em vez do clone do iOS. Web: o stack não anima (troca instantânea); o valor só
   // fica por compat.
   const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : 'default');
+  // [2026-10-14 piscada-voltar] FadeSlideIn que monta JUNTO com o push nativo nasce
+  // assentado (components/FadeSlideIn.js); o focus marca quando a rota apareceu.
+  const _fadeSlideScreenListeners = React.useCallback(({ route }) => ({
+    focus: () => { try { require('../components/FadeSlideIn').noteRouteSeen(route?.key); } catch {} },
+  }), []);
   const _FULL_MODAL = Platform.OS === 'ios' ? { presentation: 'fullScreenModal' } : { presentation: 'modal', animation: _navAnim('slide_from_bottom') };
   // Telas com header NATIVO (settings/contacts/chat-new → components/nativeHeader.js):
   // headerShown já no 1º frame (senão o header "entra" depois do push e o
@@ -2049,7 +2054,7 @@ export default function RootLayout() {
                     (always mounted — never remounts the navigator). */}
                 <CallBarInsetProvider>
                 <NavThemeProvider value={_navTheme}>
-                <Stack screenLayout={callBarScreenLayout} screenOptions={{
+                <Stack screenLayout={callBarScreenLayout} screenListeners={_fadeSlideScreenListeners} screenOptions={{
                   headerShown: false,
                   animation: _PUSH,
                   // [2026-09-24] Pinta o fundo do container de cada tela com a cor

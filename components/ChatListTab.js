@@ -18,7 +18,7 @@ const ListComponent = FlashList;
 // [2026-10-07 native-ui-build] offset (px) em que o large title "Conversas" já passou
 // por baixo do header → chat.js mostra o título compacto + hairline.
 const LARGE_TITLE_COLLAPSE_Y = 34;
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useNavigation } from 'expo-router';
 import * as api from '../services/api';
 import { regionalLocale } from '../utils/dateFormat'; // [2026-10-09 geo-qa]
 import { useConfirm } from './ConfirmModal';
@@ -4624,8 +4624,31 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // background sync, leaving the Archived bucket stale on back-out.
   const focusConvsRef = useRef(null);
   const loadConvSeqRef = useRef(0);
+  // [2026-10-14 piscada-voltar] O 'focus' do POP chega no INÍCIO da animação
+  // nativa (conversa → lista). O refresh daqui (chat_list + chat_get_locked)
+  // voltava em ~200 ms, NO MEIO do slide, e re-renderizava lista + cabeçalho
+  // (stories/fixadas) com o push ainda andando = "piscada". A lista ficou
+  // montada (e viva por WS) embaixo da conversa, então ela já aparece
+  // exatamente como estava; a reconciliação espera o fim da transição
+  // (transitionEnd nativo; fallback por tempo p/ swipe-back/web) e faz merge
+  // silencioso (fingerprint + _reuseConvRows).
+  const _focusNav = useNavigation();
+  const runAfterFocusTransition = useCallback((fn) => {
+    let done = false; let unsub = null; let timer = null;
+    const run = () => {
+      if (done) return; done = true;
+      try { clearTimeout(timer); } catch {}
+      try { unsub?.(); } catch {}
+      try { fn(); } catch {}
+    };
+    try {
+      unsub = _focusNav?.addListener?.('transitionEnd', (e) => { if (!e?.data?.closing) run(); }) || null;
+    } catch {}
+    timer = setTimeout(run, Platform.OS === 'web' ? 350 : 650);
+    return () => { done = true; try { clearTimeout(timer); } catch {} try { unsub?.(); } catch {} };
+  }, [_focusNav]);
   useFocusEffect(
-    useCallback(() => {
+    useCallback(() => runAfterFocusTransition(() => {
       const now = Date.now();
       if (now - lastFocusRefreshRef.current < 800) return;
       lastFocusRefreshRef.current = now;
@@ -4661,7 +4684,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           }
         }
       }).catch(() => {});
-    }, [searchText, reconcileReceipts])
+    }), [searchText, reconcileReceipts, runAfterFocusTransition])
   );
 
   // [locked-chats 2026-10-08] Lock set reconciliation. Before this, lockedIds
@@ -4679,11 +4702,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     lockedFetchAtRef.current = now;
     api.chatGetLocked().then(r => {
       const ids = r?.success ? (r.data?.locked_conversations || r.data?.conversation_ids) : null;
-      if (Array.isArray(ids)) setLockedIds(new Set(ids.map(Number)));
+      // [2026-10-14 piscada-voltar] Set NOVO a cada foco (mesmo conteúdo) trocava
+      // a identidade → filtered/visible/pinned/header/extraData/renderItem
+      // recalculavam e a lista inteira re-renderizava na volta da conversa.
+      if (Array.isArray(ids)) setLockedIds(prev => {
+        const next = new Set(ids.map(Number));
+        if (prev && prev.size === next.size) { let same = true; for (const v of next) { if (!prev.has(v)) { same = false; break; } } if (same) return prev; }
+        return next;
+      });
     }).catch(() => {});
   }, []);
   useEffect(() => { refreshLockedIds(); }, [refreshLockedIds]);
-  useFocusEffect(useCallback(() => { refreshLockedIds(); refreshKeepArchived(); }, [refreshLockedIds, refreshKeepArchived]));
+  useFocusEffect(useCallback(() => runAfterFocusTransition(() => { refreshLockedIds(); refreshKeepArchived(); }), [refreshLockedIds, refreshKeepArchived, runAfterFocusTransition]));
   // Rows flagged `locked` by the server (another device locked it) join the
   // id-set. ADD-ONLY on purpose: a stale cached row must never un-hide a
   // locked chat — removals come from 'chatyy:lockChanged' (this device) and
@@ -6666,7 +6696,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         if (legacyKeys.length > 0) {
           AsyncStorage.multiRemove(legacyKeys).catch(() => {});
         }
-        if (scopedKeys.length === 0) { if (alive) setDrafts({}); return; }
+        // [2026-10-14 piscada-voltar] objeto NOVO a cada mudança de `conversations`
+        // (ex.: refresh da volta da conversa) trocava a identidade de `drafts` →
+        // renderItem novo → FlashList re-renderizava todas as células visíveis.
+        if (scopedKeys.length === 0) { if (alive) setDrafts(prev => (prev && Object.keys(prev).length === 0 ? prev : {})); return; }
         const pairs = await AsyncStorage.multiGet(scopedKeys);
         const d = {};
         for (const [key, val] of pairs) {
@@ -6675,7 +6708,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             d[convId] = val;
           }
         }
-        if (alive) setDrafts(d);
+        if (alive) setDrafts(prev => {
+          const pk = prev ? Object.keys(prev) : []; const dk = Object.keys(d);
+          if (pk.length === dk.length && dk.every(k => prev[k] === d[k])) return prev;
+          return d;
+        });
       } catch {}
     })();
     return () => { alive = false; };
@@ -6687,18 +6724,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       const sub = DeviceEventEmitter.addListener('chatyy:draft', (p) => {
         if (!p?.conversationId) return;
         const cid = String(p.conversationId);
+        const _dt = (p.text || '').trim();
         setDrafts(prev => {
+          // [2026-10-14 piscada-voltar] sem mudança → mesmo objeto (sem re-render da lista).
+          if (_dt ? prev[cid] === _dt : !(cid in prev)) return prev;
           const next = { ...prev };
-          const t = (p.text || '').trim();
-          if (t) next[cid] = t;
+          if (_dt) next[cid] = _dt;
           else delete next[cid];
           return next;
         });
         // Stamp the edit time on every draft event (audit gap #2) so the row
         // can fade red→grey as the draft ages past 1h.
         setDraftTimes(prev => {
+          if (!_dt && !(cid in prev)) return prev;
           const next = { ...prev };
-          if ((p.text || '').trim()) next[cid] = Date.now();
+          if (_dt) next[cid] = Date.now();
           else delete next[cid];
           return next;
         });

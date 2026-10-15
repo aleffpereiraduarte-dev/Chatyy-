@@ -26,8 +26,41 @@
 // RN Animated only (no Reanimated) → ships via OTA. useNativeDriver:true so
 // it runs on the UI thread and never jank-blocks JS.
 import React, { useRef, useEffect } from 'react';
-import { Animated, Easing } from 'react-native';
+import { Animated, Easing, Platform } from 'react-native';
 import { isReduceMotionEnabled } from './reducedMotion';
+
+// [2026-10-14 piscada-voltar] Founder: "TODA transição entre páginas em
+// nativo". No iOS/Android a tela já entra com o push NATIVO (slide + parallax
+// do UINavigationController / transição do sistema); um fade-in JS do corpo
+// da tela montando JUNTO com o push = a tela chega "vazia" e o conteúdo
+// aparece depois (sensação de piscada). Regra: no nativo, o FadeSlideIn que
+// monta junto com a rota (≤ 700 ms desde a 1ª vez que a rota foi vista)
+// nasce assentado; conteúdo que chega depois (lista após skeleton, resumo de
+// IA carregado, empty state tardio) continua com o fade. Web (stack sem
+// animação) mantém o fade como transição.
+let _NavRouteCtx = null;
+try { _NavRouteCtx = require('@react-navigation/native').NavigationRouteContext || null; } catch {}
+const _routeFirstSeen = new Map();
+const _NAV_SETTLE_MS = 700;
+// Chamado pelo Stack raiz (screenListeners.focus em app/_layout.js): marca o
+// momento em que a rota apareceu, p/ um FadeSlideIn que só monta DEPOIS (dados
+// carregados) saber que não está mais na transição e manter o fade.
+export function noteRouteSeen(routeKey) {
+  if (!routeKey || _routeFirstSeen.has(routeKey)) return;
+  _routeFirstSeen.set(routeKey, Date.now());
+  if (_routeFirstSeen.size > 300) { const k = _routeFirstSeen.keys().next().value; _routeFirstSeen.delete(k); }
+}
+function _mountedWithRouteTransition(routeKey) {
+  if (Platform.OS === 'web' || !routeKey) return false;
+  const now = Date.now();
+  let first = _routeFirstSeen.get(routeKey);
+  if (first == null) {
+    first = now;
+    _routeFirstSeen.set(routeKey, now);
+    if (_routeFirstSeen.size > 300) { const k = _routeFirstSeen.keys().next().value; _routeFirstSeen.delete(k); }
+  }
+  return now - first < _NAV_SETTLE_MS;
+}
 
 export default function FadeSlideIn({
   children,
@@ -43,7 +76,10 @@ export default function FadeSlideIn({
 }) {
   // Reduce Motion: skip the fade + slide-up entirely — content appears
   // settled (opacity 1, no offset) so low-animation users get no movement.
-  const reduceMotion = isReduceMotionEnabled() || !!skip;
+  const _route = _NavRouteCtx ? React.useContext(_NavRouteCtx) : null; // eslint-disable-line react-hooks/rules-of-hooks
+  const _settledByNav = useRef(null);
+  if (_settledByNav.current === null) _settledByNav.current = _mountedWithRouteTransition(_route?.key);
+  const reduceMotion = isReduceMotionEnabled() || !!skip || _settledByNav.current;
   const fade = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
   const slide = useRef(new Animated.Value(reduceMotion ? 0 : distance)).current;
 
