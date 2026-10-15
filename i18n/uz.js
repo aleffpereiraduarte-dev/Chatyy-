@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Galereyaga saqlash",
+  "mediaVis.titleIos": "Kamera tasmasiga saqlash",
+  "mediaVis.default": "Standart ({value})",
+  "mediaVis.yes": "Ha",
+  "mediaVis.no": "Yoʻq",
+  "mediaVis.settingsDesc": "Yuklab olgan qabul qilingan rasm va videolaringiz telefonning Rasmlar ilovasida, Chatyy albomida ham koʻrinadi. Oʻchirilganda faqat Chatyy ichida qoladi. Kontakt yoki guruh maʼlumotlarida har bir chat uchun oʻzgartirish mumkin.",
+  "mediaVis.convHint": "Bu chatda yuklab olgan qabul qilingan rasm va videolaringiz telefonning Rasmlar ilovasida, Chatyy albomida ham koʻrinadi.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Bugun",
   "photosNative.yesterday": "Kecha",

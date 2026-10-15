@@ -37,7 +37,7 @@ struct PBConfig: Codable {
   var labels: [String: String] = [:]
 }
 
-enum PBError: Error { case gone, noResource, io }
+enum PBError: Error { case gone, noResource, io, excluded }
 
 final class PBEngine: NSObject, URLSessionDataDelegate {
   static let shared = PBEngine()
@@ -471,8 +471,10 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
           if !inserted.isEmpty {
             let res = PHAsset.fetchAssets(withLocalIdentifiers: Array(inserted), options: nil)
             var items: [(id: String, created: Double, media: Int)] = []
+            let skip = PBEngine.chatyyAlbumAssetIds()
             res.enumerateObjects { a, _, _ in
               guard a.mediaType == .image || a.mediaType == .video else { return }
+              if skip.contains(a.localIdentifier) { return }
               items.append((a.localIdentifier, a.creationDate?.timeIntervalSince1970 ?? 0, a.mediaType == .video ? 2 : 1))
             }
             _ = st.insertMissing(items, includeVideos: config.includeVideos)
@@ -493,6 +495,42 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
     }
   }
 
+  // [2026-10-15 media-visibility] Álbum onde o Chatyy salva a mídia RECEBIDA
+  // ("Salvar na galeria" — services/mediaCache GALLERY_ALBUM). O backup de fotos
+  // ignora tudo que está nele (senão a foto recebida voltaria ao Drive como
+  // "foto do aparelho"). Mesmo nome no Android (Pictures|Movies/Chatyy).
+  static let chatyyAlbumTitle = "Chatyy"
+
+  static func chatyyAlbums() -> [PHAssetCollection] {
+    let o = PHFetchOptions()
+    o.predicate = NSPredicate(format: "localizedTitle == %@", chatyyAlbumTitle)
+    let res = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumRegular, options: o)
+    var out: [PHAssetCollection] = []
+    res.enumerateObjects { c, _, _ in out.append(c) }
+    return out
+  }
+
+  static func chatyyAlbumAssetIds() -> Set<String> {
+    var ids = Set<String>()
+    for c in chatyyAlbums() {
+      let a = PHAsset.fetchAssets(in: c, options: nil)
+      a.enumerateObjects { x, _, _ in ids.insert(x.localIdentifier) }
+    }
+    return ids
+  }
+
+  static func isInChatyyAlbum(_ asset: PHAsset) -> Bool {
+    let cols = PHAssetCollection.fetchAssetCollectionsContaining(asset, with: .album, options: nil)
+    var hit = false
+    cols.enumerateObjects { c, _, stop in
+      if c.assetCollectionSubtype == .albumRegular && c.localizedTitle == chatyyAlbumTitle {
+        hit = true
+        stop.pointee = true
+      }
+    }
+    return hit
+  }
+
   private func fullScan(_ st: PBStore) {
     let opts = PHFetchOptions()
     opts.predicate = NSPredicate(format: "mediaType == %d || mediaType == %d",
@@ -503,7 +541,9 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
     items.reserveCapacity(res.count)
     var seen = Set<String>()
     seen.reserveCapacity(res.count)
+    let skip = PBEngine.chatyyAlbumAssetIds()
     res.enumerateObjects { a, _, _ in
+      if skip.contains(a.localIdentifier) { return }
       items.append((a.localIdentifier, a.creationDate?.timeIntervalSince1970 ?? 0, a.mediaType == .video ? 2 : 1))
       seen.insert(a.localIdentifier)
     }
@@ -691,6 +731,10 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
     } catch PBError.gone {
       let removed = st.remove([r.localId])
       q.async { self.dropRows(removed) }
+    } catch PBError.excluded {
+      r.state = PBState.skipped.rawValue
+      r.err = "chatyy_album"
+      st.update(r)
     } catch PBError.noResource {
       r.state = PBState.failedPerm.rawValue
       r.err = "no_resource"
@@ -721,6 +765,8 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
   private func export(_ row: PBRow) async throws -> PBRow {
     var r = row
     guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [r.localId], options: nil).firstObject else { throw PBError.gone }
+    // Mídia recebida no chat que o Chatyy salvou no álbum "Chatyy" → nunca vai p/ o Drive.
+    if PBEngine.isInChatyyAlbum(asset) { throw PBError.excluded }
     let isVideo = asset.mediaType == .video
     let res = PHAssetResource.assetResources(for: asset)
     let pick: PHAssetResource? = isVideo

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Tallenna galleriaan",
+  "mediaVis.titleIos": "Tallenna kamerarullaan",
+  "mediaVis.default": "Oletus ({value})",
+  "mediaVis.yes": "Kyllä",
+  "mediaVis.no": "Ei",
+  "mediaVis.settingsDesc": "Lataamasi vastaanotetut kuvat ja videot näkyvät myös puhelimen Kuvat-sovelluksessa Chatyy-albumissa. Pois päältä ne jäävät vain Chatyyhin. Voit muuttaa tätä keskustelukohtaisesti yhteystiedon tai ryhmän tiedoissa.",
+  "mediaVis.convHint": "Tämän keskustelun vastaanotetut kuvat ja videot, jotka lataat, näkyvät myös puhelimen Kuvat-sovelluksessa Chatyy-albumissa.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Tänään",
   "photosNative.yesterday": "Eilen",

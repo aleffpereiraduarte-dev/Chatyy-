@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "保存到相册",
+  "mediaVis.titleIos": "存储到相机胶卷",
+  "mediaVis.default": "默认（{value}）",
+  "mediaVis.yes": "是",
+  "mediaVis.no": "否",
+  "mediaVis.settingsDesc": "你下载的收到的照片和视频也会出现在手机“照片”App 的 Chatyy 相簿中。关闭后仅保留在 Chatyy 内。可在联系人或群组信息中按聊天单独更改。",
+  "mediaVis.convHint": "你在此聊天中下载的收到的照片和视频也会出现在手机“照片”App 的 Chatyy 相簿中。",
   // [2026-10-15 photos-native]
   "photosNative.today": "今天",
   "photosNative.yesterday": "昨天",

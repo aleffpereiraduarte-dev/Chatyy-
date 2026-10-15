@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Enregistrer dans la galerie",
+  "mediaVis.titleIos": "Enregistrer dans la pellicule",
+  "mediaVis.default": "Par défaut ({value})",
+  "mediaVis.yes": "Oui",
+  "mediaVis.no": "Non",
+  "mediaVis.settingsDesc": "Les photos et vidéos reçues que vous téléchargez apparaissent aussi dans l'app Photos du téléphone, dans l'album Chatyy. Désactivé, elles restent uniquement dans Chatyy. Modifiable par discussion dans les infos du contact ou du groupe.",
+  "mediaVis.convHint": "Les photos et vidéos reçues dans cette discussion que vous téléchargez apparaissent aussi dans l'app Photos du téléphone, dans l'album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Aujourd'hui",
   "photosNative.yesterday": "Hier",

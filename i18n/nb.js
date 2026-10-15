@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Lagre i galleriet",
+  "mediaVis.titleIos": "Lagre i kamerarullen",
+  "mediaVis.default": "Standard ({value})",
+  "mediaVis.yes": "Ja",
+  "mediaVis.no": "Nei",
+  "mediaVis.settingsDesc": "Mottatte bilder og videoer du laster ned, vises også i Bilder-appen på telefonen, i albumet Chatyy. Når det er av, blir de bare i Chatyy. Kan endres per chat i kontakt- eller gruppeinfo.",
+  "mediaVis.convHint": "Mottatte bilder og videoer i denne chatten som du laster ned, vises også i Bilder-appen på telefonen, i albumet Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "I dag",
   "photosNative.yesterday": "I går",

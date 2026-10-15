@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "บันทึกลงแกลเลอรี",
+  "mediaVis.titleIos": "บันทึกลงม้วนฟิล์ม",
+  "mediaVis.default": "ค่าเริ่มต้น ({value})",
+  "mediaVis.yes": "ใช่",
+  "mediaVis.no": "ไม่",
+  "mediaVis.settingsDesc": "รูปภาพและวิดีโอที่ได้รับซึ่งคุณดาวน์โหลดจะแสดงในแอปรูปภาพของโทรศัพท์ในอัลบั้ม Chatyy ด้วย เมื่อปิด จะอยู่ใน Chatyy เท่านั้น เปลี่ยนได้ทีละแชทในข้อมูลผู้ติดต่อหรือกลุ่ม",
+  "mediaVis.convHint": "รูปภาพและวิดีโอที่ได้รับในแชทนี้ซึ่งคุณดาวน์โหลดจะแสดงในแอปรูปภาพของโทรศัพท์ในอัลบั้ม Chatyy ด้วย",
   // [2026-10-15 photos-native]
   "photosNative.today": "วันนี้",
   "photosNative.yesterday": "เมื่อวาน",

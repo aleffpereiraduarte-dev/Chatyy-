@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ගැලරියට සුරකින්න",
+  "mediaVis.titleIos": "කැමරා රෝල් වෙත සුරකින්න",
+  "mediaVis.default": "පෙරනිමි ({value})",
+  "mediaVis.yes": "ඔව්",
+  "mediaVis.no": "නැත",
+  "mediaVis.settingsDesc": "ඔබ බාගන්නා ලැබුණු ඡායාරූප සහ වීඩියෝ දුරකථනයේ ඡායාරූප යෙදුමේ Chatyy ඇල්බමයේද පෙන්වයි. අක්‍රිය විට ඒවා Chatyy තුළ පමණක් රැඳේ. සම්බන්ධතාවයේ හෝ කණ්ඩායමේ තොරතුරුවල එක් එක් කතාබහ සඳහා මෙය වෙනස් කළ හැක.",
+  "mediaVis.convHint": "මෙම කතාබහේ ඔබ බාගන්නා ලැබුණු ඡායාරූප සහ වීඩියෝ දුරකථනයේ ඡායාරූප යෙදුමේ Chatyy ඇල්බමයේද පෙන්වයි.",
   // [2026-10-15 photos-native]
   "photosNative.today": "අද",
   "photosNative.yesterday": "ඊයේ",

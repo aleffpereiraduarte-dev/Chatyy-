@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Spremi u galeriju",
+  "mediaVis.titleIos": "Spremi u Snimke kamere",
+  "mediaVis.default": "Zadano ({value})",
+  "mediaVis.yes": "Da",
+  "mediaVis.no": "Ne",
+  "mediaVis.settingsDesc": "Primljene fotografije i videozapisi koje preuzmete pojavljuju se i u aplikaciji Fotografije na telefonu, u albumu Chatyy. Kad je isključeno, ostaju samo u Chatyyju. Možete promijeniti za svaki razgovor u podacima kontakta ili grupe.",
+  "mediaVis.convHint": "Primljene fotografije i videozapisi iz ovog razgovora koje preuzmete pojavljuju se i u aplikaciji Fotografije na telefonu, u albumu Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Danas",
   "photosNative.yesterday": "Jučer",

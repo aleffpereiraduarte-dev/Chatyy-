@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ਗੈਲਰੀ ਵਿੱਚ ਸੇਵ ਕਰੋ",
+  "mediaVis.titleIos": "ਕੈਮਰਾ ਰੋਲ ਵਿੱਚ ਸੇਵ ਕਰੋ",
+  "mediaVis.default": "ਡਿਫੌਲਟ ({value})",
+  "mediaVis.yes": "ਹਾਂ",
+  "mediaVis.no": "ਨਹੀਂ",
+  "mediaVis.settingsDesc": "ਤੁਹਾਡੀਆਂ ਡਾਊਨਲੋਡ ਕੀਤੀਆਂ ਪ੍ਰਾਪਤ ਫ਼ੋਟੋਆਂ ਅਤੇ ਵੀਡੀਓ ਫ਼ੋਨ ਦੀ ਫ਼ੋਟੋਜ਼ ਐਪ ਵਿੱਚ Chatyy ਐਲਬਮ ਵਿੱਚ ਵੀ ਦਿਖਦੀਆਂ ਹਨ। ਬੰਦ ਹੋਣ ’ਤੇ ਇਹ ਸਿਰਫ਼ Chatyy ਵਿੱਚ ਰਹਿੰਦੀਆਂ ਹਨ। ਸੰਪਰਕ ਜਾਂ ਗਰੁੱਪ ਦੀ ਜਾਣਕਾਰੀ ਵਿੱਚ ਹਰ ਚੈਟ ਲਈ ਇਹ ਬਦਲ ਸਕਦੇ ਹੋ।",
+  "mediaVis.convHint": "ਇਸ ਚੈਟ ਵਿੱਚ ਤੁਹਾਡੀਆਂ ਡਾਊਨਲੋਡ ਕੀਤੀਆਂ ਪ੍ਰਾਪਤ ਫ਼ੋਟੋਆਂ ਅਤੇ ਵੀਡੀਓ ਫ਼ੋਨ ਦੀ ਫ਼ੋਟੋਜ਼ ਐਪ ਵਿੱਚ Chatyy ਐਲਬਮ ਵਿੱਚ ਵੀ ਦਿਖਦੀਆਂ ਹਨ।",
   // [2026-10-15 photos-native]
   "photosNative.today": "ਅੱਜ",
   "photosNative.yesterday": "ਕੱਲ੍ਹ",

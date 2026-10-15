@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Mentés a galériába",
+  "mediaVis.titleIos": "Mentés a Fotógalériába",
+  "mediaVis.default": "Alapértelmezett ({value})",
+  "mediaVis.yes": "Igen",
+  "mediaVis.no": "Nem",
+  "mediaVis.settingsDesc": "A letöltött fogadott fotók és videók a telefon Fotók alkalmazásában, a Chatyy albumban is megjelennek. Kikapcsolva csak a Chatyyben maradnak. Csevegésenként módosítható a kapcsolat vagy a csoport adatainál.",
+  "mediaVis.convHint": "Az ebben a csevegésben fogadott, általad letöltött fotók és videók a telefon Fotók alkalmazásában, a Chatyy albumban is megjelennek.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Ma",
   "photosNative.yesterday": "Tegnap",

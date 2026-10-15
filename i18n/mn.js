@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Галерейд хадгалах",
+  "mediaVis.titleIos": "Камерын цуглуулгад хадгалах",
+  "mediaVis.default": "Өгөгдмөл ({value})",
+  "mediaVis.yes": "Тийм",
+  "mediaVis.no": "Үгүй",
+  "mediaVis.settingsDesc": "Таны татаж авсан хүлээн авсан зураг, видео утасны Зураг аппын Chatyy цомогт мөн харагдана. Унтраасан үед зөвхөн Chatyy-д үлдэнэ. Харилцагч эсвэл бүлгийн мэдээллээс чат тус бүрээр өөрчилж болно.",
+  "mediaVis.convHint": "Энэ чатад таны татаж авсан хүлээн авсан зураг, видео утасны Зураг аппын Chatyy цомогт мөн харагдана.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Өнөөдөр",
   "photosNative.yesterday": "Өчигдөр",

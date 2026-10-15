@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ಗ್ಯಾಲರಿಗೆ ಉಳಿಸಿ",
+  "mediaVis.titleIos": "ಕ್ಯಾಮೆರಾ ರೋಲ್‌ಗೆ ಉಳಿಸಿ",
+  "mediaVis.default": "ಡೀಫಾಲ್ಟ್ ({value})",
+  "mediaVis.yes": "ಹೌದು",
+  "mediaVis.no": "ಇಲ್ಲ",
+  "mediaVis.settingsDesc": "ನೀವು ಡೌನ್‌ಲೋಡ್ ಮಾಡುವ ಸ್ವೀಕರಿಸಿದ ಫೋಟೋ ಮತ್ತು ವೀಡಿಯೊಗಳು ಫೋನ್‌ನ ಫೋಟೋಸ್ ಆ್ಯಪ್‌ನಲ್ಲಿ Chatyy ಆಲ್ಬಮ್‌ನಲ್ಲೂ ಕಾಣಿಸುತ್ತವೆ. ಆಫ್ ಇದ್ದಾಗ ಅವು Chatyy ಯಲ್ಲಿ ಮಾತ್ರ ಉಳಿಯುತ್ತವೆ. ಸಂಪರ್ಕ ಅಥವಾ ಗುಂಪಿನ ಮಾಹಿತಿಯಲ್ಲಿ ಪ್ರತಿ ಚಾಟ್‌ಗೆ ಇದನ್ನು ಬದಲಾಯಿಸಬಹುದು.",
+  "mediaVis.convHint": "ಈ ಚಾಟ್‌ನಲ್ಲಿ ನೀವು ಡೌನ್‌ಲೋಡ್ ಮಾಡುವ ಸ್ವೀಕರಿಸಿದ ಫೋಟೋ ಮತ್ತು ವೀಡಿಯೊಗಳು ಫೋನ್‌ನ ಫೋಟೋಸ್ ಆ್ಯಪ್‌ನಲ್ಲಿ Chatyy ಆಲ್ಬಮ್‌ನಲ್ಲೂ ಕಾಣಿಸುತ್ತವೆ.",
   // [2026-10-15 photos-native]
   "photosNative.today": "ಇಂದು",
   "photosNative.yesterday": "ನಿನ್ನೆ",

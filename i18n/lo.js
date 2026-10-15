@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ບັນທຶກລົງຄັງຮູບ",
+  "mediaVis.titleIos": "ບັນທຶກລົງມ້ວນຟິມ",
+  "mediaVis.default": "ຄ່າເລີ່ມຕົ້ນ ({value})",
+  "mediaVis.yes": "ແມ່ນ",
+  "mediaVis.no": "ບໍ່",
+  "mediaVis.settingsDesc": "ຮູບ ແລະ ວິດີໂອທີ່ໄດ້ຮັບທີ່ທ່ານດາວໂຫຼດຈະສະແດງໃນແອັບຮູບພາບຂອງໂທລະສັບ ໃນອັລບັມ Chatyy ນຳ. ເມື່ອປິດ ຈະຢູ່ໃນ Chatyy ເທົ່ານັ້ນ. ປ່ຽນໄດ້ແຕ່ລະແຊັດໃນຂໍ້ມູນຜູ້ຕິດຕໍ່ ຫຼື ກຸ່ມ.",
+  "mediaVis.convHint": "ຮູບ ແລະ ວິດີໂອທີ່ໄດ້ຮັບໃນແຊັດນີ້ທີ່ທ່ານດາວໂຫຼດຈະສະແດງໃນແອັບຮູບພາບຂອງໂທລະສັບ ໃນອັລບັມ Chatyy ນຳ.",
   // [2026-10-15 photos-native]
   "photosNative.today": "ມື້ນີ້",
   "photosNative.yesterday": "ມື້ວານ",

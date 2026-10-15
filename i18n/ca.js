@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Desa a la galeria",
+  "mediaVis.titleIos": "Desa al carret",
+  "mediaVis.default": "Predeterminat ({value})",
+  "mediaVis.yes": "Sí",
+  "mediaVis.no": "No",
+  "mediaVis.settingsDesc": "Les fotos i vídeos rebuts que baixis també apareixen a l'app Fotos del telèfon, a l'àlbum Chatyy. Desactivat, només es queden a Chatyy. Ho pots canviar per xat a la info del contacte o del grup.",
+  "mediaVis.convHint": "Les fotos i vídeos rebuts en aquest xat que baixis també apareixen a l'app Fotos del telèfon, a l'àlbum Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Avui",
   "photosNative.yesterday": "Ahir",

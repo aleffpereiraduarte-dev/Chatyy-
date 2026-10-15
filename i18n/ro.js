@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Salvează în galerie",
+  "mediaVis.titleIos": "Salvează în Rola camerei",
+  "mediaVis.default": "Implicit ({value})",
+  "mediaVis.yes": "Da",
+  "mediaVis.no": "Nu",
+  "mediaVis.settingsDesc": "Fotografiile și videoclipurile primite pe care le descarci apar și în aplicația Poze a telefonului, în albumul Chatyy. Dezactivat, rămân doar în Chatyy. Poți schimba pentru fiecare conversație în informațiile contactului sau ale grupului.",
+  "mediaVis.convHint": "Fotografiile și videoclipurile primite în această conversație pe care le descarci apar și în aplicația Poze a telefonului, în albumul Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Astăzi",
   "photosNative.yesterday": "Ieri",

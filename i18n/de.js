@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "In Galerie speichern",
+  "mediaVis.titleIos": "In Aufnahmen speichern",
+  "mediaVis.default": "Standard ({value})",
+  "mediaVis.yes": "Ja",
+  "mediaVis.no": "Nein",
+  "mediaVis.settingsDesc": "Empfangene Fotos und Videos, die du herunterlädst, erscheinen auch in der Fotos-App deines Telefons im Album Chatyy. Wenn aus, bleiben sie nur in Chatyy. Pro Chat änderbar in den Kontakt- oder Gruppeninfos.",
+  "mediaVis.convHint": "Empfangene Fotos und Videos aus diesem Chat, die du herunterlädst, erscheinen auch in der Fotos-App deines Telefons im Album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Heute",
   "photosNative.yesterday": "Gestern",

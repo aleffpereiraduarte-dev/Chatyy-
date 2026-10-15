@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "שמירה בגלריה",
+  "mediaVis.titleIos": "שמירה בגליל המצלמה",
+  "mediaVis.default": "ברירת מחדל ({value})",
+  "mediaVis.yes": "כן",
+  "mediaVis.no": "לא",
+  "mediaVis.settingsDesc": "תמונות וסרטונים שהתקבלו ושהורדת יופיעו גם באפליקציית התמונות בטלפון, באלבום Chatyy. כשהאפשרות כבויה, הם נשארים רק ב-Chatyy. אפשר לשנות לכל צ׳אט בפרטי איש הקשר או הקבוצה.",
+  "mediaVis.convHint": "תמונות וסרטונים שהתקבלו בצ׳אט הזה ושהורדת יופיעו גם באפליקציית התמונות בטלפון, באלבום Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "היום",
   "photosNative.yesterday": "אתמול",

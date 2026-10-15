@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Gem i galleri",
+  "mediaVis.titleIos": "Gem i kamerarulle",
+  "mediaVis.default": "Standard ({value})",
+  "mediaVis.yes": "Ja",
+  "mediaVis.no": "Nej",
+  "mediaVis.settingsDesc": "Modtagne billeder og videoer, du downloader, vises også i telefonens Fotos-app i albummet Chatyy. Når det er slået fra, bliver de kun i Chatyy. Kan ændres pr. chat i kontakt- eller gruppeinfo.",
+  "mediaVis.convHint": "Modtagne billeder og videoer i denne chat, som du downloader, vises også i telefonens Fotos-app i albummet Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "I dag",
   "photosNative.yesterday": "I går",

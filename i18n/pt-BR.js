@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Salvar na galeria",
+  "mediaVis.titleIos": "Salvar no Rolo da Câmera",
+  "mediaVis.default": "Padrão ({value})",
+  "mediaVis.yes": "Sim",
+  "mediaVis.no": "Não",
+  "mediaVis.settingsDesc": "Fotos e vídeos recebidos que você baixar também aparecem no app Fotos do celular, no álbum Chatyy. Desligado, ficam só no Chatyy. Dá para mudar por conversa nos dados do contato ou do grupo.",
+  "mediaVis.convHint": "Fotos e vídeos recebidos nesta conversa que você baixar também aparecem no app Fotos do celular, no álbum Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Hoje",
   "photosNative.yesterday": "Ontem",

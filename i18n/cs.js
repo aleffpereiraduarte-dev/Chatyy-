@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Ukládat do galerie",
+  "mediaVis.titleIos": "Ukládat do Fotoaparátu",
+  "mediaVis.default": "Výchozí ({value})",
+  "mediaVis.yes": "Ano",
+  "mediaVis.no": "Ne",
+  "mediaVis.settingsDesc": "Přijaté fotky a videa, které stáhnete, se zobrazí i v aplikaci Fotky v telefonu, v albu Chatyy. Když je vypnuto, zůstanou jen v Chatyy. Lze změnit pro každý chat v informacích o kontaktu nebo skupině.",
+  "mediaVis.convHint": "Přijaté fotky a videa z tohoto chatu, které stáhnete, se zobrazí i v aplikaci Fotky v telefonu, v albu Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Dnes",
   "photosNative.yesterday": "Včera",

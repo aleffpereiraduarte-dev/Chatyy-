@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "გალერეაში შენახვა",
+  "mediaVis.titleIos": "კამერის ფირში შენახვა",
+  "mediaVis.default": "ნაგულისხმევი ({value})",
+  "mediaVis.yes": "დიახ",
+  "mediaVis.no": "არა",
+  "mediaVis.settingsDesc": "მიღებული ფოტოები და ვიდეოები, რომლებსაც ჩამოტვირთავთ, ასევე გამოჩნდება ტელეფონის ფოტოების აპში, Chatyy ალბომში. გამორთვისას ისინი მხოლოდ Chatyy-ში რჩება. შეგიძლიათ შეცვალოთ თითოეული ჩატისთვის კონტაქტის ან ჯგუფის ინფორმაციაში.",
+  "mediaVis.convHint": "ამ ჩატში მიღებული ფოტოები და ვიდეოები, რომლებსაც ჩამოტვირთავთ, ასევე გამოჩნდება ტელეფონის ფოტოების აპში, Chatyy ალბომში.",
   // [2026-10-15 photos-native]
   "photosNative.today": "დღეს",
   "photosNative.yesterday": "გუშინ",

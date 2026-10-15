@@ -295,7 +295,10 @@ TaskManager.defineTask(TASK_NAME, async () => {
             mediaType: [ML.MediaType.photo, ML.MediaType.video],
             first: 200, sortBy: [ML.SortBy.creationTime],
           });
-          const pending = (assets?.assets || []).filter(a => !backedUpIds[a.id]);
+          // [2026-10-15 media-visibility] mídia recebida salva no álbum Chatyy não vai p/ o backup.
+          let _chatyyIds = new Set();
+          try { _chatyyIds = await require('./mediaVisibility').getChatyyAlbumAssetIds(); } catch {}
+          const pending = (assets?.assets || []).filter(a => !backedUpIds[a.id] && !_chatyyIds.has(a.id));
           if (pending.length > 0) {
             const cacheDir = FS.cacheDirectory + 'backup_queue/';
             await FS.makeDirectoryAsync(cacheDir, { intermediates: true }).catch(() => {});
@@ -911,7 +914,10 @@ export async function startForegroundBackup(onProgress, options = {}) {
           after = page.endCursor || (batch[batch.length - 1]?.id);
           if (!after) break;
         }
-        const allPending = allAssets.filter(a => !backedUpIds[a.id]);
+        // [2026-10-15 media-visibility] mídia recebida salva no álbum Chatyy não vai p/ o backup.
+        let _chatyyIds = new Set();
+        try { _chatyyIds = await require('./mediaVisibility').getChatyyAlbumAssetIds(); } catch {}
+        const allPending = allAssets.filter(a => !backedUpIds[a.id] && !_chatyyIds.has(a.id));
         if (allPending.length === 0) {
           console.log('[backup] all done!');
         } else {

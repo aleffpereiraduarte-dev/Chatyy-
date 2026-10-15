@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Lưu vào thư viện",
+  "mediaVis.titleIos": "Lưu vào Cuộn camera",
+  "mediaVis.default": "Mặc định ({value})",
+  "mediaVis.yes": "Có",
+  "mediaVis.no": "Không",
+  "mediaVis.settingsDesc": "Ảnh và video nhận được mà bạn tải xuống cũng xuất hiện trong ứng dụng Ảnh của điện thoại, trong album Chatyy. Khi tắt, chúng chỉ ở trong Chatyy. Có thể thay đổi cho từng cuộc trò chuyện trong thông tin liên hệ hoặc nhóm.",
+  "mediaVis.convHint": "Ảnh và video nhận được trong cuộc trò chuyện này mà bạn tải xuống cũng xuất hiện trong ứng dụng Ảnh của điện thoại, trong album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Hôm nay",
   "photosNative.yesterday": "Hôm qua",

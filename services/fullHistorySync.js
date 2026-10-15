@@ -381,7 +381,8 @@ async function _drainConv(apiCall, convId) {
         const enriched = (m.conversation_id == null && convId != null)
           ? { ...m, conversation_id: convId }
           : m;
-        try { prefetchIncomingMessageMedia?.(enriched); } catch {}
+        // [2026-10-15 media-visibility] histórico em massa nunca vai p/ a galeria.
+        try { prefetchIncomingMessageMedia?.(enriched, { noGallery: true }); } catch {}
         // Force path (#1238 follow-up): user pressed "Baixar tudo agora", so
         // bypass the per-bucket auto-DL gate and ALSO push the file_url
         // directly through cacheMedia({ force: true }). This catches buckets

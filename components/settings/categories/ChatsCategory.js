@@ -67,6 +67,12 @@ export default function ChatsCategory() {
         <SettingsRow title={t('sidebar.backup')} subtitle={t('settings.backupSub')} onPress={() => safeNav('/backup')} />
       </SettingsGroup>
 
+      {Platform.OS !== 'web' && (
+        <View ref={registerAnchor('mediaVisibility')}>
+          <MediaVisibilityGroup />
+        </View>
+      )}
+
       <SettingsGroup header={t('settings.rd2.typing') || 'Digitação'}>
         <SettingsSwitchRow
           title={t('settings.enterSends.title') || 'Enter envia mensagem'}
@@ -138,6 +144,33 @@ export default function ChatsCategory() {
         />
       </SettingsGroup>
     </View>
+  );
+}
+
+// [2026-10-15 media-visibility] "Salvar na galeria" (WhatsApp: Visibilidade da
+// mídia / Salvar no Rolo da Câmera) — global da CONTA, sincronizado
+// (chat_settings.save_media_to_gallery). Cada conversa pode sobrescrever nos
+// dados do contato/grupo. Lógica em services/mediaVisibility.
+function MediaVisibilityGroup() {
+  const { t } = useLanguage();
+  const snap = useSection('chat_settings');
+  const mv = require('../../../services/mediaVisibility');
+  // useSection re-renderiza a cada commit/revalidação da seção (snap muda).
+  void snap;
+  const on = mv.isGlobalOn();
+  const title = Platform.OS === 'ios'
+    ? (t('mediaVis.titleIos') || 'Salvar no Rolo da Câmera')
+    : (t('mediaVis.title') || 'Salvar na galeria');
+  return (
+    <SettingsGroup footer={t('mediaVis.settingsDesc') || 'Fotos e vídeos recebidos que você baixar também aparecem no app Fotos do celular, no álbum Chatyy. Desligado, ficam só no Chatyy. Dá para mudar por conversa nos dados do contato ou do grupo.'}>
+      <SettingsSwitchRow
+        title={title}
+        value={on}
+        onValueChange={(v) => {
+          mv.setGlobal(v).then((r) => { if (r && r.ok === false && r.r) settingsCache.notifySaveFailed(t); }).catch(() => {});
+        }}
+      />
+    </SettingsGroup>
   );
 }
 

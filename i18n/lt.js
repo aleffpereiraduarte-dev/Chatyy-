@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Išsaugoti galerijoje",
+  "mediaVis.titleIos": "Išsaugoti fotoaparato juostoje",
+  "mediaVis.default": "Numatytasis ({value})",
+  "mediaVis.yes": "Taip",
+  "mediaVis.no": "Ne",
+  "mediaVis.settingsDesc": "Gautos nuotraukos ir vaizdo įrašai, kuriuos atsisiunčiate, taip pat rodomi telefono programoje Nuotraukos, albume Chatyy. Išjungus lieka tik Chatyy. Galite keisti kiekvienam pokalbiui kontakto ar grupės informacijoje.",
+  "mediaVis.convHint": "Šiame pokalbyje gautos nuotraukos ir vaizdo įrašai, kuriuos atsisiunčiate, taip pat rodomi telefono programoje Nuotraukos, albume Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Šiandien",
   "photosNative.yesterday": "Vakar",

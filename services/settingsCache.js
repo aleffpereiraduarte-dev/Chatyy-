@@ -132,6 +132,13 @@ export function peek(section) {
   const o = _read(section);
   return o ? o.v : null;
 }
+/** Snapshot de uma conta específica (não necessariamente a ativa) — ou null. */
+export function peekFor(section, acct) {
+  const a = String(acct || '').trim().toLowerCase();
+  if (!a) return null;
+  const o = _read(section, a);
+  return o ? o.v : null;
+}
 export function ageMs(section) {
   const o = _read(section);
   return o ? Date.now() - (o.at || 0) : Infinity;

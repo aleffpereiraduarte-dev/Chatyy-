@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ギャラリーに保存",
+  "mediaVis.titleIos": "カメラロールに保存",
+  "mediaVis.default": "デフォルト（{value}）",
+  "mediaVis.yes": "はい",
+  "mediaVis.no": "いいえ",
+  "mediaVis.settingsDesc": "ダウンロードした受信写真・動画は、端末の写真アプリの「Chatyy」アルバムにも表示されます。オフの場合は Chatyy 内にのみ保存されます。連絡先またはグループの情報からチャットごとに変更できます。",
+  "mediaVis.convHint": "このチャットでダウンロードした受信写真・動画は、端末の写真アプリの「Chatyy」アルバムにも表示されます。",
   // [2026-10-15 photos-native]
   "photosNative.today": "今日",
   "photosNative.yesterday": "昨日",

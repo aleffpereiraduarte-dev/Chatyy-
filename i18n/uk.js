@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Зберігати в галерею",
+  "mediaVis.titleIos": "Зберігати у Фотоплівку",
+  "mediaVis.default": "За замовчуванням ({value})",
+  "mediaVis.yes": "Так",
+  "mediaVis.no": "Ні",
+  "mediaVis.settingsDesc": "Отримані фото й відео, які ви завантажуєте, також з’являються в застосунку «Фото» на телефоні, в альбомі Chatyy. Якщо вимкнено, вони залишаються лише в Chatyy. Можна змінити для кожного чату в даних контакту або групи.",
+  "mediaVis.convHint": "Отримані в цьому чаті фото й відео, які ви завантажуєте, також з’являються в застосунку «Фото» на телефоні, в альбомі Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Сьогодні",
   "photosNative.yesterday": "Учора",

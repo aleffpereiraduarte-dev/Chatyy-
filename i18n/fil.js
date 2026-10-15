@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "I-save sa gallery",
+  "mediaVis.titleIos": "I-save sa Camera Roll",
+  "mediaVis.default": "Default ({value})",
+  "mediaVis.yes": "Oo",
+  "mediaVis.no": "Hindi",
+  "mediaVis.settingsDesc": "Lalabas din ang mga natanggap na larawan at video na dina-download mo sa Photos app ng telepono, sa album na Chatyy. Kapag naka-off, sa Chatyy lang sila. Mababago ito kada chat sa info ng contact o grupo.",
+  "mediaVis.convHint": "Lalabas din ang mga natanggap na larawan at video sa chat na ito na dina-download mo sa Photos app ng telepono, sa album na Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Ngayon",
   "photosNative.yesterday": "Kahapon",

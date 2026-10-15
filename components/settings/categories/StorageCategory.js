@@ -36,7 +36,6 @@ export default function StorageCategory() {
   const { defaults, updateDefault } = useChatDefaults();
 
   const [roaming, setRoaming] = useState(false);
-  const [gallery, setGallery] = useState(true);
   const [lowDataCalls, setLowDataCalls] = useState(false);
   // null = ponte indisponível (web / binário antigo) → vale o AsyncStorage.
   const nativeCallDataSaver = useRef(null);
@@ -59,9 +58,9 @@ export default function StorageCategory() {
       }
     } catch {}
   }, []);
-  useLocalKeys(['media_auto_dl_roaming', 'autoSaveMediaToGallery', 'chatyy_low_data_calls'], (kv) => {
+  // [2026-10-15 media-visibility] "Salvar na galeria" mudou p/ Conversas (por conta, sincronizado).
+  useLocalKeys(['media_auto_dl_roaming', 'chatyy_low_data_calls'], (kv) => {
     if (kv.media_auto_dl_roaming === 'true') setRoaming(true);
-    if (kv.autoSaveMediaToGallery === 'false' || kv.autoSaveMediaToGallery === '0') setGallery(false);
     if ((kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') && nativeCallDataSaver.current === null) setLowDataCalls(true);
   });
 
@@ -105,16 +104,6 @@ export default function StorageCategory() {
                 setRoaming(v);
                 setStorage('media_auto_dl_roaming', String(v));
                 try { require('../../../services/mediaCache').setMediaDownloadPrefs?.({ media_auto_dl_roaming: v }); } catch {}
-              }}
-            />
-            <SettingsSwitchRow
-              title={t('settings.autoSaveGallery') || 'Salvar na galeria'}
-              subtitle={t('settings.autoSaveGalleryDesc') || 'Fotos e vídeos recebidos vão para o app Fotos automaticamente.'}
-              value={gallery}
-              onValueChange={(v) => {
-                setGallery(v);
-                setStorage('autoSaveMediaToGallery', String(v));
-                try { require('../../../services/mediaCache').setAutoSaveMediaToGallery?.(v); } catch {}
               }}
             />
           </SettingsGroup>

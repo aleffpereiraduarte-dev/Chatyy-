@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ગેલેરીમાં સેવ કરો",
+  "mediaVis.titleIos": "કૅમેરા રોલમાં સેવ કરો",
+  "mediaVis.default": "ડિફૉલ્ટ ({value})",
+  "mediaVis.yes": "હા",
+  "mediaVis.no": "ના",
+  "mediaVis.settingsDesc": "તમે ડાઉનલોડ કરેલા મળેલા ફોટા અને વીડિયો ફોનની ફોટો ઍપમાં Chatyy આલ્બમમાં પણ દેખાય છે. બંધ હોય ત્યારે તે ફક્ત Chatyyમાં રહે છે. સંપર્ક કે ગ્રુપની માહિતીમાં દરેક ચેટ માટે આ બદલી શકાય છે.",
+  "mediaVis.convHint": "આ ચેટમાં તમે ડાઉનલોડ કરેલા મળેલા ફોટા અને વીડિયો ફોનની ફોટો ઍપમાં Chatyy આલ્બમમાં પણ દેખાય છે.",
   // [2026-10-15 photos-native]
   "photosNative.today": "આજે",
   "photosNative.yesterday": "ગઈકાલે",

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Save to gallery",
+  "mediaVis.titleIos": "Save to Camera Roll",
+  "mediaVis.default": "Default ({value})",
+  "mediaVis.yes": "Yes",
+  "mediaVis.no": "No",
+  "mediaVis.settingsDesc": "Received photos and videos you download also appear in your phone's Photos app, in the Chatyy album. When off, they stay only in Chatyy. You can change this per chat in the contact or group info.",
+  "mediaVis.convHint": "Received photos and videos you download in this chat also appear in your phone's Photos app, in the Chatyy album.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Today",
   "photosNative.yesterday": "Yesterday",

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Simpan ke galeri",
+  "mediaVis.titleIos": "Simpan ke Rol Kamera",
+  "mediaVis.default": "Default ({value})",
+  "mediaVis.yes": "Ya",
+  "mediaVis.no": "Tidak",
+  "mediaVis.settingsDesc": "Foto dan video yang diterima dan Anda unduh juga muncul di aplikasi Foto ponsel, di album Chatyy. Jika nonaktif, hanya ada di Chatyy. Bisa diubah per chat di info kontak atau grup.",
+  "mediaVis.convHint": "Foto dan video yang diterima di chat ini dan Anda unduh juga muncul di aplikasi Foto ponsel, di album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Hari ini",
   "photosNative.yesterday": "Kemarin",

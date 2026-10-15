@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Salvesta galeriisse",
+  "mediaVis.titleIos": "Salvesta kaamerarulli",
+  "mediaVis.default": "Vaikimisi ({value})",
+  "mediaVis.yes": "Jah",
+  "mediaVis.no": "Ei",
+  "mediaVis.settingsDesc": "Saadud fotod ja videod, mille alla laadid, ilmuvad ka telefoni rakendusse Fotod albumisse Chatyy. Väljas olles jäävad need ainult Chatyysse. Saad seda muuta vestluse kaupa kontakti või grupi infos.",
+  "mediaVis.convHint": "Selle vestluse saadud fotod ja videod, mille alla laadid, ilmuvad ka telefoni rakendusse Fotod albumisse Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Täna",
   "photosNative.yesterday": "Eile",

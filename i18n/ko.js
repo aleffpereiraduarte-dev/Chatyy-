@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "갤러리에 저장",
+  "mediaVis.titleIos": "카메라 롤에 저장",
+  "mediaVis.default": "기본값 ({value})",
+  "mediaVis.yes": "예",
+  "mediaVis.no": "아니요",
+  "mediaVis.settingsDesc": "다운로드한 받은 사진과 동영상이 휴대폰 사진 앱의 Chatyy 앨범에도 표시됩니다. 끄면 Chatyy에만 남습니다. 연락처 또는 그룹 정보에서 채팅별로 변경할 수 있습니다.",
+  "mediaVis.convHint": "이 채팅에서 다운로드한 받은 사진과 동영상이 휴대폰 사진 앱의 Chatyy 앨범에도 표시됩니다.",
   // [2026-10-15 photos-native]
   "photosNative.today": "오늘",
   "photosNative.yesterday": "어제",

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "गॅलरीत सेव्ह करा",
+  "mediaVis.titleIos": "कॅमेरा रोलमध्ये सेव्ह करा",
+  "mediaVis.default": "डीफॉल्ट ({value})",
+  "mediaVis.yes": "होय",
+  "mediaVis.no": "नाही",
+  "mediaVis.settingsDesc": "तुम्ही डाउनलोड केलेले प्राप्त फोटो आणि व्हिडिओ फोनच्या फोटो ॲपमध्ये Chatyy अल्बममध्येही दिसतात. बंद असताना ते फक्त Chatyy मध्ये राहतात. संपर्क किंवा ग्रुपच्या माहितीत प्रत्येक चॅटसाठी हे बदलता येते.",
+  "mediaVis.convHint": "या चॅटमध्ये तुम्ही डाउनलोड केलेले प्राप्त फोटो आणि व्हिडिओ फोनच्या फोटो ॲपमध्ये Chatyy अल्बममध्येही दिसतात.",
   // [2026-10-15 photos-native]
   "photosNative.today": "आज",
   "photosNative.yesterday": "काल",

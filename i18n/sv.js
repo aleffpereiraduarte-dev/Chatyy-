@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Spara i galleriet",
+  "mediaVis.titleIos": "Spara i kamerarullen",
+  "mediaVis.default": "Standard ({value})",
+  "mediaVis.yes": "Ja",
+  "mediaVis.no": "Nej",
+  "mediaVis.settingsDesc": "Mottagna bilder och videor som du laddar ner visas också i telefonens Bilder-app, i albumet Chatyy. När det är av stannar de bara i Chatyy. Kan ändras per chatt i kontakt- eller gruppinfo.",
+  "mediaVis.convHint": "Mottagna bilder och videor i den här chatten som du laddar ner visas också i telefonens Bilder-app, i albumet Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Idag",
   "photosNative.yesterday": "Igår",

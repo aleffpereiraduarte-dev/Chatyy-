@@ -48,6 +48,29 @@ internal object PBScanner {
 
   private fun genKey(): String = "gen:" + (if (Build.VERSION.SDK_INT >= 30) "v" else "x")
 
+  // [2026-10-15 media-visibility] Mídia recebida que o Chatyy salva na galeria
+  // vai p/ Pictures/Chatyy (foto) e Movies/Chatyy (vídeo) — "Salvar na galeria"
+  // (services/mediaCache GALLERY_ALBUM). O backup de fotos ignora essas pastas
+  // (senão a foto recebida voltaria ao Drive como "foto do aparelho").
+  private const val CHATYY_ALBUM = "Chatyy"
+
+  private fun excludeSelection(): Pair<String, Array<String>> {
+    return if (Build.VERSION.SDK_INT >= 29) {
+      val col = MediaStore.MediaColumns.RELATIVE_PATH
+      Pair(
+        "($col IS NULL OR ($col NOT LIKE ? AND $col NOT LIKE ?))",
+        arrayOf("Pictures/$CHATYY_ALBUM/%", "Movies/$CHATYY_ALBUM/%")
+      )
+    } else {
+      @Suppress("DEPRECATION")
+      val col = MediaStore.MediaColumns.DATA
+      Pair(
+        "($col IS NULL OR ($col NOT LIKE ? AND $col NOT LIKE ?))",
+        arrayOf("%/Pictures/$CHATYY_ALBUM/%", "%/Movies/$CHATYY_ALBUM/%")
+      )
+    }
+  }
+
   /** Lista leve: id → (created ms, media 1/2). */
   private fun listAll(context: Context): HashMap<String, Pair<Double, Int>> {
     val out = HashMap<String, Pair<Double, Int>>(4096)
@@ -56,19 +79,25 @@ internal object PBScanner {
       MediaStore.Video.Media.EXTERNAL_CONTENT_URI to 2
     )) {
       val proj = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_TAKEN, MediaStore.MediaColumns.DATE_ADDED)
-      try {
-        context.contentResolver.query(base, proj, null, null, null)?.use { c ->
-          val iId = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
-          val iTk = c.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
-          val iAd = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
-          while (c.moveToNext()) {
-            val taken = if (iTk >= 0 && !c.isNull(iTk)) c.getLong(iTk) else 0L
-            val ms = if (taken > 0) taken else c.getLong(iAd) * 1000L
-            out[c.getLong(iId).toString()] = Pair(ms / 1000.0, media)
+      val (sel, selArgs) = excludeSelection()
+      // Com o filtro do álbum Chatyy; se o aparelho recusar a seleção, cai na
+      // lista sem filtro (nunca devolve vazio por causa da exclusão).
+      for (filtered in listOf(true, false)) {
+        try {
+          context.contentResolver.query(base, proj, if (filtered) sel else null, if (filtered) selArgs else null, null)?.use { c ->
+            val iId = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+            val iTk = c.getColumnIndex(MediaStore.MediaColumns.DATE_TAKEN)
+            val iAd = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+            while (c.moveToNext()) {
+              val taken = if (iTk >= 0 && !c.isNull(iTk)) c.getLong(iTk) else 0L
+              val ms = if (taken > 0) taken else c.getLong(iAd) * 1000L
+              out[c.getLong(iId).toString()] = Pair(ms / 1000.0, media)
+            }
           }
+          break
+        } catch (e: Throwable) {
+          Log.w(TAG, "query $base (filtered=$filtered) failed: ${e.message}")
         }
-      } catch (e: Throwable) {
-        Log.w(TAG, "query $base failed: ${e.message}")
       }
     }
     return out
@@ -87,7 +116,10 @@ internal object PBScanner {
     }
     val lastGen = store.meta(genKey())?.toLongOrNull() ?: -2L
     val seeded = store.meta("seeded") == "1"
-    if (!force && seeded && gen >= 0 && gen == lastGen) return false
+    // 1ª varredura com a exclusão do álbum Chatyy: força o diff (tira da fila o
+    // que já estava pendente nessas pastas).
+    val exclDone = store.meta("excl_chatyy_v1") == "1"
+    if (!force && exclDone && seeded && gen >= 0 && gen == lastGen) return false
 
     val device = listAll(context)
     val known = store.allIds()
@@ -102,6 +134,7 @@ internal object PBScanner {
       if (seed(store, prefs)) store.setMeta("seeded", "1")
     }
     if (gen >= 0) store.setMeta(genKey(), gen.toString())
+    if (!exclDone && device.isNotEmpty()) store.setMeta("excl_chatyy_v1", "1")
     return added.isNotEmpty() || removed.isNotEmpty()
   }
 

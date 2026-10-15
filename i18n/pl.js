@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Zapisuj w galerii",
+  "mediaVis.titleIos": "Zapisuj w rolce aparatu",
+  "mediaVis.default": "Domyślnie ({value})",
+  "mediaVis.yes": "Tak",
+  "mediaVis.no": "Nie",
+  "mediaVis.settingsDesc": "Odebrane zdjęcia i filmy, które pobierzesz, pojawiają się też w aplikacji Zdjęcia w telefonie, w albumie Chatyy. Po wyłączeniu zostają tylko w Chatyy. Możesz to zmienić dla każdego czatu w informacjach o kontakcie lub grupie.",
+  "mediaVis.convHint": "Odebrane w tym czacie zdjęcia i filmy, które pobierzesz, pojawiają się też w aplikacji Zdjęcia w telefonie, w albumie Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Dziś",
   "photosNative.yesterday": "Wczoraj",

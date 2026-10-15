@@ -41,7 +41,7 @@ export function categoryTitle(t, key) {
 const SECTION_TO_CATEGORY = {
   account: 'account', profile: 'account', security: 'account', devices: 'account', one: 'account',
   privacy: 'privacy', privacy_granular: 'privacy', defaultDisappearing: 'privacy', blocked: 'privacy',
-  chat: 'chat', chats: 'chat', appearance: 'chat', theme: 'chat', wallpaper: 'chat', mutedWords: 'chat',
+  chat: 'chat', chats: 'chat', appearance: 'chat', theme: 'chat', wallpaper: 'chat', mutedWords: 'chat', mediaVisibility: 'chat',
   notifications: 'notifications',
   storage: 'storage_data', storage_data: 'storage_data', mediaAutoDownload: 'storage_data', data: 'storage_data',
   accessibility: 'accessibility', reading: 'accessibility', fontSize: 'accessibility',

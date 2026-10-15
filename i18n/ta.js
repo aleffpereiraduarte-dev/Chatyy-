@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "கேலரியில் சேமி",
+  "mediaVis.titleIos": "கேமரா ரோலில் சேமி",
+  "mediaVis.default": "இயல்புநிலை ({value})",
+  "mediaVis.yes": "ஆம்",
+  "mediaVis.no": "இல்லை",
+  "mediaVis.settingsDesc": "நீங்கள் பதிவிறக்கும் பெறப்பட்ட படங்களும் வீடியோக்களும் ஃபோனின் Photos ஆப்பில் Chatyy ஆல்பத்திலும் தோன்றும். அணைத்திருந்தால் அவை Chatyy-யில் மட்டுமே இருக்கும். தொடர்பு அல்லது குழு தகவலில் ஒவ்வொரு உரையாடலுக்கும் மாற்றலாம்.",
+  "mediaVis.convHint": "இந்த உரையாடலில் நீங்கள் பதிவிறக்கும் பெறப்பட்ட படங்களும் வீடியோக்களும் ஃபோனின் Photos ஆப்பில் Chatyy ஆல்பத்திலும் தோன்றும்.",
   // [2026-10-15 photos-native]
   "photosNative.today": "இன்று",
   "photosNative.yesterday": "நேற்று",

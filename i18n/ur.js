@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "گیلری میں محفوظ کریں",
+  "mediaVis.titleIos": "کیمرہ رول میں محفوظ کریں",
+  "mediaVis.default": "ڈیفالٹ ({value})",
+  "mediaVis.yes": "ہاں",
+  "mediaVis.no": "نہیں",
+  "mediaVis.settingsDesc": "موصول شدہ تصاویر اور ویڈیوز جو آپ ڈاؤن لوڈ کرتے ہیں فون کی فوٹوز ایپ میں Chatyy البم میں بھی نظر آتی ہیں۔ بند ہونے پر یہ صرف Chatyy میں رہتی ہیں۔ آپ رابطے یا گروپ کی معلومات میں ہر چیٹ کے لیے اسے بدل سکتے ہیں۔",
+  "mediaVis.convHint": "اس چیٹ میں موصول شدہ تصاویر اور ویڈیوز جو آپ ڈاؤن لوڈ کرتے ہیں فون کی فوٹوز ایپ میں Chatyy البم میں بھی نظر آتی ہیں۔",
   // [2026-10-15 photos-native]
   "photosNative.today": "آج",
   "photosNative.yesterday": "کل",

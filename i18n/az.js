@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Qalereyada saxla",
+  "mediaVis.titleIos": "Kamera lentində saxla",
+  "mediaVis.default": "Defolt ({value})",
+  "mediaVis.yes": "Bəli",
+  "mediaVis.no": "Xeyr",
+  "mediaVis.settingsDesc": "Yüklədiyiniz alınmış foto və videolar telefonun Şəkillər tətbiqində, Chatyy albomunda da görünür. Söndürüləndə yalnız Chatyy-də qalır. Kontakt və ya qrup məlumatında hər söhbət üçün dəyişə bilərsiniz.",
+  "mediaVis.convHint": "Bu söhbətdə yüklədiyiniz alınmış foto və videolar telefonun Şəkillər tətbiqində, Chatyy albomunda da görünür.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Bu gün",
   "photosNative.yesterday": "Dünən",

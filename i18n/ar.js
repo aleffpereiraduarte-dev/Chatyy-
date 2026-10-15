@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "الحفظ في المعرض",
+  "mediaVis.titleIos": "الحفظ في ألبوم الكاميرا",
+  "mediaVis.default": "افتراضي ({value})",
+  "mediaVis.yes": "نعم",
+  "mediaVis.no": "لا",
+  "mediaVis.settingsDesc": "تظهر الصور والفيديوهات المستلمة التي تنزّلها أيضًا في تطبيق الصور بالهاتف، في ألبوم Chatyy. عند الإيقاف تبقى في Chatyy فقط. يمكنك تغيير ذلك لكل دردشة من معلومات جهة الاتصال أو المجموعة.",
+  "mediaVis.convHint": "تظهر الصور والفيديوهات المستلمة في هذه الدردشة التي تنزّلها أيضًا في تطبيق الصور بالهاتف، في ألبوم Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "اليوم",
   "photosNative.yesterday": "أمس",

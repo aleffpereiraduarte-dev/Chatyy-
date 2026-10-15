@@ -71,6 +71,9 @@ export async function getPhotosToBackup(limit = 50) {
     const needsBackup = [];
     let after = undefined;
     const PAGE_SIZE = 100;
+    // [2026-10-15 media-visibility] mídia recebida salva no álbum Chatyy não vai p/ o backup.
+    let _chatyyIds = new Set();
+    try { _chatyyIds = await require('./mediaVisibility').getChatyyAlbumAssetIds(); } catch {}
 
     while (needsBackup.length < limit) {
       const page = await MediaLibrary.getAssetsAsync({
@@ -81,7 +84,7 @@ export async function getPhotosToBackup(limit = 50) {
       });
       if (!page.assets || page.assets.length === 0) break;
       for (const asset of page.assets) {
-        if (!backedUpMap[asset.id]) {
+        if (!backedUpMap[asset.id] && !_chatyyIds.has(asset.id)) {
           needsBackup.push(asset);
           if (needsBackup.length >= limit) break;
         }

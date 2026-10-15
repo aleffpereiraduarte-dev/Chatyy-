@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Salva nella galleria",
+  "mediaVis.titleIos": "Salva nel rullino",
+  "mediaVis.default": "Predefinito ({value})",
+  "mediaVis.yes": "Sì",
+  "mediaVis.no": "No",
+  "mediaVis.settingsDesc": "Le foto e i video ricevuti che scarichi appaiono anche nell'app Foto del telefono, nell'album Chatyy. Se disattivato, restano solo in Chatyy. Puoi cambiarlo per ogni chat nelle info del contatto o del gruppo.",
+  "mediaVis.convHint": "Le foto e i video ricevuti in questa chat che scarichi appaiono anche nell'app Foto del telefono, nell'album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Oggi",
   "photosNative.yesterday": "Ieri",

@@ -1198,6 +1198,32 @@ export function setAutoSaveMediaToGallery(on) {
   return next;
 }
 
+// [2026-10-15 media-visibility] Mensagem enviada pela conta ativa?
+function _isOwnMessage(m) {
+  try {
+    if (!m) return false;
+    if (m.is_mine === true || m.isMine === true || m.from_me === true || m.fromMe === true) return true;
+    const se = String(m.sender_email || m.sender || m.from_email || '').trim().toLowerCase();
+    if (!se) return false;
+    const me = _galleryAcct();
+    return !!me && se === me;
+  } catch { return false; }
+}
+
+// [2026-10-15 media-visibility] Religar (global/conversa) limpa o latch de
+// "permissão negada" da sessão sem mexer na chave antiga do aparelho.
+export function resetAutoSavePermLatch() { _autoSavePermDenied = false; }
+
+// [2026-10-15 media-visibility] Decisão por CONTA + conversa (services/
+// mediaVisibility: chat_settings.save_media_to_gallery[_convs]); sem valor na
+// conta cai na chave antiga do aparelho (isAutoSaveMediaToGalleryOn).
+function _galleryAllowed(cid, acct) {
+  try { return !!require('./mediaVisibility').shouldSaveToGallery(cid, acct); } catch { return isAutoSaveMediaToGalleryOn(); }
+}
+function _galleryAcct() {
+  try { return require('./mediaVisibility').activeAccount() || ''; } catch { return ''; }
+}
+
 // Persisted Set of already-saved media keys (urlToKey buckets). Lives in MMKV
 // so it survives relaunch — without persistence, every cold start would re-save
 // the entire visible history to the gallery.
@@ -1265,8 +1291,10 @@ export function maybeAutoSaveToGallery(localUri, key, mediaType, opts) {
   if (_advPrivBlocksGallery(opts && opts.conversationId)) return;
   if (!localUri || typeof localUri !== 'string' || !localUri.startsWith('file://')) return;
   if (!key) return;
-  // Setting gate (default ON).
-  if (!isAutoSaveMediaToGalleryOn()) return;
+  // Histórico em massa (restauração / "baixar tudo") nunca vai p/ a galeria.
+  if (opts && opts.noGallery) return;
+  // Setting gate: conversa (Padrão/Sim/Não) → global da conta → aparelho (padrão LIGADO).
+  if (!_galleryAllowed(opts && opts.conversationId)) return;
   if (_autoSavePermDenied) return;
   // Only photos + videos go to the gallery. Audio / docs / stickers / gifs
   // stay inside the app's media store. _bucketForType folds image/photo →
@@ -1292,7 +1320,7 @@ export function maybeAutoSaveToGallery(localUri, key, mediaType, opts) {
   // só copiamos depois de GALLERY_DELAY_MS e se a mensagem NÃO foi apagada p/
   // todos nesse meio-tempo (lápide checada na hora de gravar). Fila persistida
   // (MMKV) → app morto no meio continua no próximo boot, com nova carência.
-  _queueGallerySave({ f: localUri, k: key, m: opts && opts.messageId != null ? String(opts.messageId) : null, u: (opts && typeof opts.url === 'string') ? opts.url : null, c: (opts && opts.conversationId != null) ? String(opts.conversationId) : null, d: Date.now() + GALLERY_DELAY_MS });
+  _queueGallerySave({ f: localUri, k: key, m: opts && opts.messageId != null ? String(opts.messageId) : null, u: (opts && typeof opts.url === 'string') ? opts.url : null, c: (opts && opts.conversationId != null) ? String(opts.conversationId) : null, a: _galleryAcct() || null, d: Date.now() + GALLERY_DELAY_MS });
 }
 
 // [2026-10-14 adv-privacy] services/chatPrivacy (lazy: evita ciclo de import).
@@ -1301,9 +1329,13 @@ function _advPrivBlocksGallery(cid) {
 }
 
 const GALLERY_DELAY_MS = 60 * 1000;
+// Nome do álbum (iOS) / pasta (Android Pictures|Movies/Chatyy). O backup de
+// fotos nativo exclui exatamente este nome — mudar aqui = mudar lá também.
+export const GALLERY_ALBUM = 'Chatyy';
 const GALLERY_PENDING_KEY = 'media_autosave_gallery_pending_v1';
 const _galleryPending = new Map(); // key → { f, k, m, u, d }
 const _galleryTimers = new Map();  // key → timeout
+let _gallerySaveChain = Promise.resolve();
 let _galleryPendingHydrated = false;
 function _persistGalleryPending() {
   if (Platform.OS === 'web') return;
@@ -1317,7 +1349,8 @@ function _armGalleryTimer(item) {
     _galleryTimers.delete(item.k);
     _galleryPending.delete(item.k);
     _persistGalleryPending();
-    _runGallerySave(item).catch(() => {});
+    // Um de cada vez: duas gravações simultâneas criariam 2 álbuns "Chatyy" no iOS.
+    _gallerySaveChain = _gallerySaveChain.then(() => _runGallerySave(item)).catch(() => {});
   }, wait));
 }
 function _queueGallerySave(item) {
@@ -1365,7 +1398,9 @@ async function _runGallerySave(item) {
   const localUri = item.f;
   const key = item.k;
   if (_isDeletedBlocked(item.u, { messageId: item.m })) return;
-  if (!isAutoSaveMediaToGalleryOn() || _autoSavePermDenied) return;
+  // [2026-10-15 media-visibility] Reavalia na hora (a pessoa pode ter desligado
+  // durante a carência) com a conta DONA da mensagem (troca de conta no meio).
+  if (!_galleryAllowed(item.c, item.a || undefined) || _autoSavePermDenied) return;
   // [2026-10-14 adv-privacy] ligaram a privacidade avançada durante a carência.
   if (item.c && _advPrivBlocksGallery(item.c)) return;
   _hydrateAutoSavedKeys();
@@ -1386,8 +1421,20 @@ async function _runGallerySave(item) {
     try { ML = require('expo-media-library'); } catch { return; }
     if (!ML) return;
     try {
-      // Request write permission once. true = write-only access on iOS.
-      const perm = await ML.requestPermissionsAsync(true);
+      // [2026-10-15 media-visibility] Sempre no álbum "Chatyy" (o backup de
+      // fotos nativo — modules/expo-photos-backup — EXCLUI esse álbum, então
+      // o que o Chatyy salva nunca é re-enviado ao Drive).
+      //  • Android: createAlbumAsync(nome, sem asset, uri) grava DIRETO via
+      //    MediaStore em Pictures/Chatyy (foto) ou Movies/Chatyy (vídeo) —
+      //    sem o "Permitir que o app modifique?" do mover-para-álbum.
+      //  • iOS com acesso total/limitado: cria o asset e põe no álbum.
+      //  • iOS sem acesso de leitura: pede só "adicionar" (addOnly) e salva no
+      //    Rolo (sem álbum — o iOS não deixa ver/criar álbum nesse modo; e sem
+      //    leitura o backup de fotos também não roda).
+      let full = null;
+      try { full = await ML.getPermissionsAsync(false); } catch {}
+      const fullOk = !!(full && (full.status === 'granted' || full.granted === true));
+      const perm = fullOk ? full : await ML.requestPermissionsAsync(true);
       const granted = perm && (perm.status === 'granted' || perm.accessPrivileges === 'all' || perm.accessPrivileges === 'limited' || perm.granted === true);
       if (!granted) {
         // Silently disable for the session — no alert spam (WhatsApp behavior).
@@ -1395,30 +1442,33 @@ async function _runGallerySave(item) {
         // Roll back the dedupe mark so that, if the user grants permission
         // later (re-toggle clears the latch), this media can still be saved.
         _autoSavedKeys.delete(key);
+        _scheduleAutoSavedPersist();
         return;
       }
-      // Mirror ChatMediaViewer's robust pipeline: createAssetAsync → album.
-      // Fall back to saveToLibraryAsync if createAssetAsync doesn't return an id.
-      let savedAsset = null;
-      try {
-        const asset = await ML.createAssetAsync(localUri);
-        if (asset && asset.id) savedAsset = asset;
-        else await ML.saveToLibraryAsync(localUri);
-      } catch {
-        try { await ML.saveToLibraryAsync(localUri); } catch { /* save failed; keep dedupe mark */ }
+      let saved = false;
+      if (Platform.OS === 'android') {
+        try { await ML.createAlbumAsync(GALLERY_ALBUM, undefined, true, localUri); saved = true; } catch {}
+        if (!saved) { try { await ML.createAssetAsync(localUri); saved = true; } catch {} }
+        if (!saved) { try { await ML.saveToLibraryAsync(localUri); saved = true; } catch {} }
+      } else if (fullOk) {
+        let album = null;
+        try { album = await ML.getAlbumAsync(GALLERY_ALBUM); } catch {}
+        if (album) {
+          try { await ML.createAssetAsync(localUri, album); saved = true; } catch {}
+        } else {
+          try { await ML.createAlbumAsync(GALLERY_ALBUM, undefined, undefined, localUri); saved = true; } catch {}
+        }
+        if (!saved) {
+          try {
+            const asset = await ML.createAssetAsync(localUri);
+            saved = !!asset;
+            if (asset && asset.id) { try { await ML.createAlbumAsync(GALLERY_ALBUM, asset, false); } catch {} }
+          } catch {}
+        }
+      } else {
+        try { await ML.saveToLibraryAsync(localUri); saved = true; } catch {}
       }
-      // Best-effort: group into a "Chatyy" album so it's discoverable in
-      // Photos > Albums (iOS) / Gallery > Chatyy (Android). Failure here does
-      // NOT undo the save — the asset is already in the library.
-      if (savedAsset && savedAsset.id) {
-        try {
-          // [2026-10-13] Android 11+: mover para o álbum pede 'Permitir que o app modifique essa foto?' — no Android fica só na galeria.
-          if (Platform.OS === 'android') throw new Error('skip-album-android');
-          const album = await ML.getAlbumAsync('Chatyy');
-          if (album) await ML.addAssetsToAlbumAsync([savedAsset], album, false);
-          else await ML.createAlbumAsync('Chatyy', savedAsset, false);
-        } catch {}
-      }
+      if (!saved) { /* falhou: mantém a marca (sem re-tentar em loop) */ }
     } catch {
       // Unexpected ML error — keep the dedupe mark (don't retry-spam).
     }
@@ -2518,7 +2568,7 @@ export async function cacheMedia(url, opts = {}) {
     // De-duped + permission-gated + type-filtered inside the helper, so it's
     // safe to call unconditionally on every successful inbound download.
     if (opts.received && result && typeof result === 'string' && result.startsWith('file://') && Platform.OS !== 'web') {
-      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url), { viewOnce: !!opts.viewOnce, messageId: opts.messageId, url, conversationId: opts.conversationId }); } catch {}
+      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url), { viewOnce: !!opts.viewOnce, messageId: opts.messageId, url, conversationId: opts.conversationId, noGallery: !!opts.noGallery }); } catch {}
     }
     // [#1215 2026-05-19] PHONE-FIRST MEDIA WRITE-BACK
     // When a foto/áudio/vídeo/gif/sticker/file download lands, mirror the
@@ -2803,8 +2853,13 @@ export async function adoptLocalFileAsCache(remoteUrl, localUri, opts = {}) {
 //
 // Idempotent: if the URL is already cached or in-flight, no-op (cacheMedia
 // dedup via syncIndex + _inflightDownloads).
-export function prefetchIncomingMessageMedia(message) {
+export function prefetchIncomingMessageMedia(message, ctx) {
   if (!message || Platform.OS === 'web') return;
+  // [2026-10-15 media-visibility] Só mídia RECEBIDA vai p/ a galeria: a própria
+  // (eco do envio / enviada de outro aparelho meu) nunca é duplicada (WhatsApp).
+  // ctx.noGallery = histórico em massa (restauração / "baixar tudo").
+  const _fromMe = _isOwnMessage(message);
+  const _noGallery = !!(ctx && ctx.noGallery);
   const t = String(message.type || '').toLowerCase();
   // Full scope for offline playback parity (task #1103 round 2): every
   // media-bearing message type is eligible for background download. Heavy
@@ -2905,6 +2960,7 @@ export function prefetchIncomingMessageMedia(message) {
         : (message.id != null
             ? { messageId: message.id, received: true, mediaType: _mediaType }
             : { received: true, mediaType: _mediaType });
+      if (_fromMe || _noGallery) _opts.noGallery = true;
       cacheMedia(url, _opts).catch(() => {});
     }
   } catch {}

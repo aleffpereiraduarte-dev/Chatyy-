@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ወደ ማዕከለ-ስዕላት አስቀምጥ",
+  "mediaVis.titleIos": "ወደ ካሜራ ጥቅል አስቀምጥ",
+  "mediaVis.default": "ነባሪ ({value})",
+  "mediaVis.yes": "አዎ",
+  "mediaVis.no": "አይ",
+  "mediaVis.settingsDesc": "ያወረዷቸው የተቀበሏቸው ፎቶዎችና ቪዲዮዎች በስልኩ የፎቶዎች መተግበሪያ ውስጥ በChatyy አልበም ላይም ይታያሉ። ሲጠፋ በChatyy ውስጥ ብቻ ይቆያሉ። በእውቂያ ወይም በቡድን መረጃ ውስጥ ለእያንዳንዱ ውይይት መቀየር ይችላሉ።",
+  "mediaVis.convHint": "በዚህ ውይይት ያወረዷቸው የተቀበሏቸው ፎቶዎችና ቪዲዮዎች በስልኩ የፎቶዎች መተግበሪያ ውስጥ በChatyy አልበም ላይም ይታያሉ።",
   // [2026-10-15 photos-native]
   "photosNative.today": "ዛሬ",
   "photosNative.yesterday": "ትናንት",

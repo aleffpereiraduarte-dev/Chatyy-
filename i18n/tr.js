@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Galeriye kaydet",
+  "mediaVis.titleIos": "Film Rulosuna kaydet",
+  "mediaVis.default": "Varsayılan ({value})",
+  "mediaVis.yes": "Evet",
+  "mediaVis.no": "Hayır",
+  "mediaVis.settingsDesc": "İndirdiğiniz gelen fotoğraf ve videolar telefonun Fotoğraflar uygulamasında, Chatyy albümünde de görünür. Kapalıyken yalnızca Chatyy'de kalır. Kişi veya grup bilgilerinden sohbet bazında değiştirebilirsiniz.",
+  "mediaVis.convHint": "Bu sohbette indirdiğiniz gelen fotoğraf ve videolar telefonun Fotoğraflar uygulamasında, Chatyy albümünde de görünür.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Bugün",
   "photosNative.yesterday": "Dün",

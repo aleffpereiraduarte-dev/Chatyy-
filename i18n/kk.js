@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Галереяға сақтау",
+  "mediaVis.titleIos": "Камера таспасына сақтау",
+  "mediaVis.default": "Әдепкі ({value})",
+  "mediaVis.yes": "Иә",
+  "mediaVis.no": "Жоқ",
+  "mediaVis.settingsDesc": "Жүктеп алған алынған фото мен бейнелер телефонның «Фото» қолданбасында, Chatyy альбомында да көрінеді. Өшірулі болса, тек Chatyy ішінде қалады. Контакт немесе топ ақпаратында әр чат үшін өзгертуге болады.",
+  "mediaVis.convHint": "Осы чатта жүктеп алған алынған фото мен бейнелер телефонның «Фото» қолданбасында, Chatyy альбомында да көрінеді.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Бүгін",
   "photosNative.yesterday": "Кеше",

@@ -23759,6 +23759,40 @@ function ChatConversationInner() {
     if (Platform.OS === 'ios') setTimeout(() => { try { fn(); } catch {} }, 350);
     else { try { fn(); } catch {} }
   };
+  // ── [2026-10-15 media-visibility] "Salvar na galeria" desta conversa
+  // (Padrão = global da conta / Sim / Não) — services/mediaVisibility.
+  const [mediaVisSheet, setMediaVisSheet] = _useStateT(false);
+  const [, _setMediaVisTick] = _useStateT(0);
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    try { return require('../services/mediaVisibility').subscribe(() => _setMediaVisTick((x) => x + 1)); } catch { return undefined; }
+  }, []);
+  const _mediaVis = (() => {
+    if (Platform.OS === 'web') return null;
+    let mode = 'default'; let globalOn = true;
+    try {
+      const mv = require('../services/mediaVisibility');
+      mode = mv.getConvMode(conversationId);
+      globalOn = mv.isGlobalOn();
+    } catch {}
+    const yes = t('mediaVis.yes') || 'Sim';
+    const no = t('mediaVis.no') || 'Não';
+    const defLabel = (t('mediaVis.default') || 'Padrão ({value})').replace('{value}', globalOn ? yes : no);
+    return {
+      mode, yes, no, defLabel,
+      title: Platform.OS === 'ios' ? (t('mediaVis.titleIos') || 'Salvar no Rolo da Câmera') : (t('mediaVis.title') || 'Salvar na galeria'),
+      subtitle: mode === 'on' ? yes : mode === 'off' ? no : defLabel,
+    };
+  })();
+  const _setMediaVisMode = (mode) => {
+    setMediaVisSheet(false);
+    try {
+      require('../services/mediaVisibility').setConvMode(conversationId, mode)
+        .then((r) => { if (r && r.ok === false && r.r) { try { require('../services/settingsCache').notifySaveFailed(t); } catch {} } })
+        .catch(() => {});
+    } catch {}
+    _setMediaVisTick((x) => x + 1);
+  };
   // ── [2026-10-15 native-profile] Cabeçalho nativo estilo Telegram + mídia em
   // abas + listas nativas (modules/expo-chat-profile). Todas as ações chamam
   // os MESMOS handlers da folha JS. Kill switch: globalThis.__chatyy_native_profile = false.
@@ -38418,6 +38452,14 @@ function ChatConversationInner() {
                       <GroupRow colors={colors} Icon={IconPalette}
                         title={t('chatConv.wallpaper') || 'Papel de parede'} right="chevron"
                         onPress={() => contactInfoGo(() => setShowWallpaperPicker(true))} />
+                      {_mediaVis && !_advPriv.enabled && (
+                        <>
+                          <GroupDivider colors={colors} />
+                          <GroupRow colors={colors} Icon={IconImage}
+                            title={_mediaVis.title} subtitle={_mediaVis.subtitle} right="chevron"
+                            onPress={() => contactInfoGo(() => setMediaVisSheet(true))} />
+                        </>
+                      )}
                     </GroupCard>
 
                     <GroupCard colors={colors} isDark={isDark}>
@@ -39769,6 +39811,14 @@ function ChatConversationInner() {
               <GroupRow colors={colors} Icon={IconPalette}
                 title={t('chatConv.wallpaper') || 'Papel de parede'} right="chevron"
                 onPress={() => groupInfoGo(() => setShowWallpaperPicker(true))} />
+              {_mediaVis && !_advPriv.enabled && (
+                <>
+                  <GroupDivider colors={colors} />
+                  <GroupRow colors={colors} Icon={IconImage}
+                    title={_mediaVis.title} subtitle={_mediaVis.subtitle} right="chevron"
+                    onPress={() => groupInfoGo(() => setMediaVisSheet(true))} />
+                </>
+              )}
               {/* Admin já vê "Mensagens temporárias" em Administração do grupo. */}
               {(members || []).find(m => m.email === currentEmail)?.role !== 'admin' && (
                 <>
@@ -40411,6 +40461,21 @@ function ChatConversationInner() {
               );
             })}
       </NativeSheetDialog>)}</LazyMount>
+
+      {/* [2026-10-15 media-visibility] Salvar na galeria — Padrão / Sim / Não. */}
+      <LazyMount when={!!mediaVisSheet}>{(_lmV) => (<BWOptionSheet
+        visible={_lmV}
+        onClose={() => setMediaVisSheet(false)}
+        title={_mediaVis ? _mediaVis.title : ''}
+        subtitle={t('mediaVis.convHint') || 'Fotos e vídeos recebidos nesta conversa que você baixar também aparecem no app Fotos do celular, no álbum Chatyy.'}
+        colors={colors}
+        cancelLabel={t('common.cancel') || 'Cancelar'}
+        options={_mediaVis ? [
+          { key: 'default', label: _mediaVis.defLabel, selected: _mediaVis.mode === 'default', onPress: () => _setMediaVisMode('default') },
+          { key: 'on', label: _mediaVis.yes, selected: _mediaVis.mode === 'on', onPress: () => _setMediaVisMode('on') },
+          { key: 'off', label: _mediaVis.no, selected: _mediaVis.mode === 'off', onPress: () => _setMediaVisMode('off') },
+        ] : []}
+      />)}</LazyMount>
 
       {/* Pin Duration sheet (Android / web) — iOS uses native ActionSheetIOS
           in handlePinMessage. Same 3 buckets WhatsApp exposes:

@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Opslaan in galerij",
+  "mediaVis.titleIos": "Opslaan in filmrol",
+  "mediaVis.default": "Standaard ({value})",
+  "mediaVis.yes": "Ja",
+  "mediaVis.no": "Nee",
+  "mediaVis.settingsDesc": "Ontvangen foto's en video's die je downloadt verschijnen ook in de Foto's-app van je telefoon, in het album Chatyy. Uit: ze blijven alleen in Chatyy. Per chat te wijzigen in de contact- of groepsinfo.",
+  "mediaVis.convHint": "Ontvangen foto's en video's uit deze chat die je downloadt verschijnen ook in de Foto's-app van je telefoon, in het album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Vandaag",
   "photosNative.yesterday": "Gisteren",

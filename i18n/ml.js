@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ഗാലറിയിൽ സേവ് ചെയ്യുക",
+  "mediaVis.titleIos": "ക്യാമറ റോളിൽ സേവ് ചെയ്യുക",
+  "mediaVis.default": "ഡിഫോൾട്ട് ({value})",
+  "mediaVis.yes": "അതെ",
+  "mediaVis.no": "ഇല്ല",
+  "mediaVis.settingsDesc": "നിങ്ങൾ ഡൗൺലോഡ് ചെയ്യുന്ന ലഭിച്ച ഫോട്ടോകളും വീഡിയോകളും ഫോണിലെ ഫോട്ടോസ് ആപ്പിൽ Chatyy ആൽബത്തിലും കാണാം. ഓഫ് ആണെങ്കിൽ അവ Chatyy-യിൽ മാത്രം. കോൺടാക്റ്റ് അല്ലെങ്കിൽ ഗ്രൂപ്പ് വിവരത്തിൽ ഓരോ ചാറ്റിനും ഇത് മാറ്റാം.",
+  "mediaVis.convHint": "ഈ ചാറ്റിൽ നിങ്ങൾ ഡൗൺലോഡ് ചെയ്യുന്ന ലഭിച്ച ഫോട്ടോകളും വീഡിയോകളും ഫോണിലെ ഫോട്ടോസ് ആപ്പിൽ Chatyy ആൽബത്തിലും കാണാം.",
   // [2026-10-15 photos-native]
   "photosNative.today": "ഇന്ന്",
   "photosNative.yesterday": "ഇന്നലെ",

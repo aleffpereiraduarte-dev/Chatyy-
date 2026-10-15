@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Saglabāt galerijā",
+  "mediaVis.titleIos": "Saglabāt kameras rullī",
+  "mediaVis.default": "Noklusējums ({value})",
+  "mediaVis.yes": "Jā",
+  "mediaVis.no": "Nē",
+  "mediaVis.settingsDesc": "Saņemtie foto un video, ko lejupielādējat, parādās arī tālruņa lietotnē Fotoattēli, albumā Chatyy. Ja izslēgts, tie paliek tikai Chatyy. To var mainīt katrai sarunai kontakta vai grupas informācijā.",
+  "mediaVis.convHint": "Šajā sarunā saņemtie foto un video, ko lejupielādējat, parādās arī tālruņa lietotnē Fotoattēli, albumā Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Šodien",
   "photosNative.yesterday": "Vakar",

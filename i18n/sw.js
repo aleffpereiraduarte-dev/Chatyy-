@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Hifadhi kwenye matunzio",
+  "mediaVis.titleIos": "Hifadhi kwenye Picha za Kamera",
+  "mediaVis.default": "Chaguomsingi ({value})",
+  "mediaVis.yes": "Ndiyo",
+  "mediaVis.no": "Hapana",
+  "mediaVis.settingsDesc": "Picha na video ulizopokea na kupakua pia zinaonekana kwenye programu ya Picha ya simu, katika albamu ya Chatyy. Ikizimwa, zinabaki ndani ya Chatyy pekee. Unaweza kubadilisha kwa kila gumzo katika maelezo ya mwasiliani au kikundi.",
+  "mediaVis.convHint": "Picha na video ulizopokea kwenye gumzo hili na kupakua pia zinaonekana kwenye programu ya Picha ya simu, katika albamu ya Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Leo",
   "photosNative.yesterday": "Jana",

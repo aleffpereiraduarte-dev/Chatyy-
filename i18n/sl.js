@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Shrani v galerijo",
+  "mediaVis.titleIos": "Shrani v zvitek fotoaparata",
+  "mediaVis.default": "Privzeto ({value})",
+  "mediaVis.yes": "Da",
+  "mediaVis.no": "Ne",
+  "mediaVis.settingsDesc": "Prejete fotografije in videoposnetki, ki jih prenesete, se prikažejo tudi v aplikaciji Fotografije v telefonu, v albumu Chatyy. Ko je izklopljeno, ostanejo samo v Chatyy. To lahko spremenite za vsak klepet v podatkih o stiku ali skupini.",
+  "mediaVis.convHint": "Prejete fotografije in videoposnetki v tem klepetu, ki jih prenesete, se prikažejo tudi v aplikaciji Fotografije v telefonu, v albumu Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Danes",
   "photosNative.yesterday": "Včeraj",

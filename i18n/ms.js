@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "Simpan ke galeri",
+  "mediaVis.titleIos": "Simpan ke Gulungan Kamera",
+  "mediaVis.default": "Lalai ({value})",
+  "mediaVis.yes": "Ya",
+  "mediaVis.no": "Tidak",
+  "mediaVis.settingsDesc": "Foto dan video yang diterima dan anda muat turun juga muncul dalam apl Foto telefon, dalam album Chatyy. Apabila dimatikan, ia hanya kekal dalam Chatyy. Boleh ditukar bagi setiap sembang dalam maklumat kenalan atau kumpulan.",
+  "mediaVis.convHint": "Foto dan video yang diterima dalam sembang ini dan anda muat turun juga muncul dalam apl Foto telefon, dalam album Chatyy.",
   // [2026-10-15 photos-native]
   "photosNative.today": "Hari ini",
   "photosNative.yesterday": "Semalam",

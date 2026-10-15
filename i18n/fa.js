@@ -1,4 +1,12 @@
 export default {
+  // [2026-10-15 media-visibility]
+  "mediaVis.title": "ذخیره در گالری",
+  "mediaVis.titleIos": "ذخیره در رول دوربین",
+  "mediaVis.default": "پیش‌فرض ({value})",
+  "mediaVis.yes": "بله",
+  "mediaVis.no": "خیر",
+  "mediaVis.settingsDesc": "عکس‌ها و ویدیوهای دریافتی که دانلود می‌کنید در برنامه عکس‌های گوشی، در آلبوم Chatyy هم نمایش داده می‌شوند. اگر خاموش باشد، فقط در Chatyy می‌مانند. می‌توانید برای هر گفتگو در اطلاعات مخاطب یا گروه تغییرش دهید.",
+  "mediaVis.convHint": "عکس‌ها و ویدیوهای دریافتی این گفتگو که دانلود می‌کنید در برنامه عکس‌های گوشی، در آلبوم Chatyy هم نمایش داده می‌شوند.",
   // [2026-10-15 photos-native]
   "photosNative.today": "امروز",
   "photosNative.yesterday": "دیروز",
