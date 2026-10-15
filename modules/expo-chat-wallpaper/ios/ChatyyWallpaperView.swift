@@ -27,7 +27,7 @@ final class ChatyyWallpaperView: ExpoView {
   private let gradientView = UIView()
   private let imageView = UIView()
   private let patternView = UIView()
-  private let maskView = UIView()
+  private let wpMaskView = UIView()
   private let dimView = UIView()
   private var gradientLayer: CALayer { return gradientView.layer }
   private var imageLayer: CALayer { return imageView.layer }
@@ -79,7 +79,7 @@ final class ChatyyWallpaperView: ExpoView {
     content.isUserInteractionEnabled = false
     content.backgroundColor = .clear
     addSubview(content)
-    for v in [gradientView, imageView, patternView, dimView, maskView] {
+    for v in [gradientView, imageView, patternView, dimView, wpMaskView] {
       v.isUserInteractionEnabled = false
       v.backgroundColor = .clear
     }
@@ -183,7 +183,7 @@ final class ChatyyWallpaperView: ExpoView {
     imageView.frame = r
     patternView.frame = r
     dimView.frame = r
-    maskView.frame = gradientView.bounds
+    wpMaskView.frame = gradientView.bounds
     CATransaction.commit()
   }
 
@@ -362,9 +362,9 @@ final class ChatyyWallpaperView: ExpoView {
     if patternMask {
       patternView.isHidden = true
       patternView.backgroundColor = .clear
-      maskView.backgroundColor = pc
-      maskView.frame = gradientView.bounds
-      gradientView.mask = maskView
+      wpMaskView.backgroundColor = pc
+      wpMaskView.frame = gradientView.bounds
+      gradientView.mask = wpMaskView
       gradientView.alpha = patternIntensity
       gradientView.isHidden = rgb.isEmpty
     } else {
