@@ -82,8 +82,10 @@ final class CAEngine: NSObject {
 
   private func configurePhotoOutput() {
     guard let dev = videoInput?.device else { return }
-    if let maxDim = dev.activeFormat.supportedMaxPhotoDimensions.last {
-      photoOutput.maxPhotoDimensions = maxDim
+    if #available(iOS 16.0, *) {
+      if let maxDim = dev.activeFormat.supportedMaxPhotoDimensions.last {
+        photoOutput.maxPhotoDimensions = maxDim
+      }
     }
     photoOutput.maxPhotoQualityPrioritization = .balanced
   }

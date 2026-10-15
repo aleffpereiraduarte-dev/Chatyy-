@@ -438,7 +438,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       pm.setOnMenuItemClickListener { mi ->
         if (mi.hasSubMenu()) return@setOnMenuItemClickListener false
         val body = actions.getOrNull(mi.itemId)
-        if (body != null) onRowAction(body)
+        if (body != null) onRowAction(body.entries.mapNotNull { (k, v) -> v?.let { k to it } }.toMap())
         true
       }
       pm.show()

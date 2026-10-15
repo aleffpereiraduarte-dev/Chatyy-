@@ -560,8 +560,10 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
       } else {
         settings = AVCapturePhotoSettings()
       }
-      let md = out.maxPhotoDimensions
-      if md.width > 0 && md.height > 0 { settings.maxPhotoDimensions = md }
+      if #available(iOS 16.0, *) {
+        let md = out.maxPhotoDimensions
+        if md.width > 0 && md.height > 0 { settings.maxPhotoDimensions = md }
+      }
       settings.photoQualityPrioritization = .balanced
       if !screenFlashed && out.supportedFlashModes.contains(flash) { settings.flashMode = flash }
       out.capturePhoto(with: settings, delegate: self)
