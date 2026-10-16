@@ -12,6 +12,7 @@ import { useLanguage } from '../context/LanguageContext';
 import {
   IconArrowLeft, IconMail, IconCalendar, IconBell, IconMenu, IconCamera, IconEdit,
   IconChevronDown, IconCopy, IconRepeat, IconThumbsDown, IconCheck, IconGlobe, IconSliders,
+  IconImage, IconMessageCircle, IconZap,
 } from '../components/Icons';
 // [2026-10-15 bia-bonita] markdown completo + cartões de ferramenta + "pensando"
 import { BiaMarkdown, BiaToolCards, BiaThinking } from '../components/BiaRich';
@@ -25,7 +26,7 @@ import SmartReplyChips from '../components/SmartReplyChips';
 import BiaOrb from '../components/bia/BiaOrb';
 import {
   biaPalette, BiaFadeIn, BiaSuggestionGrid, BiaComposer, BiaMessageActions,
-  BiaHistoryDrawer, BiaVoiceScreen,
+  BiaHistoryDrawer, BiaVoiceScreen, BiaAttachSheet, GlyphWave,
 } from '../components/bia/BiaUI';
 import { createStreamLevelMeter, dbToLevel } from '../components/bia/biaAudioLevel';
 
@@ -413,6 +414,12 @@ const MessageRow = memo(function MessageRow({ item, isDark, onSpeak, speakingId,
   const isStreaming = !!item._streaming;
   const isToolPending = !!item._toolPending;
   const shownText = isUser ? '' : extractFollowups(item.content || '').text;
+  const [revealed, setRevealed] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const hoverTmr = useRef(null);
+  const hoverIn = () => { if (hoverTmr.current) { clearTimeout(hoverTmr.current); hoverTmr.current = null; } setHovered(true); };
+  const hoverOut = () => { if (hoverTmr.current) clearTimeout(hoverTmr.current); hoverTmr.current = setTimeout(() => setHovered(false), 700); };
+  useEffect(() => () => { if (hoverTmr.current) clearTimeout(hoverTmr.current); }, []);
 
   if (isUser) {
     return (
@@ -428,6 +435,10 @@ const MessageRow = memo(function MessageRow({ item, isDark, onSpeak, speakingId,
   }
 
   const thinkingOnly = (isToolPending || isStreaming) && !shownText;
+  // [2026-10-16 bia-repagina] ações (copiar/ouvir/…) só na ÚLTIMA resposta;
+  // nas anteriores aparecem no toque (ou passando o mouse no web) — sem a
+  // fileira pesada repetida em toda mensagem.
+  const showActions = isLastAI || revealed || hovered;
   return (
     <BiaFadeIn dy={6} duration={300} style={st.aiRow}>
       <View style={st.aiHeaderRow}>
@@ -436,8 +447,11 @@ const MessageRow = memo(function MessageRow({ item, isDark, onSpeak, speakingId,
       </View>
       <Pressable
         delayLongPress={320}
+        onPress={() => { if (item.content && !isStreaming && !isLastAI) setRevealed(r => !r); }}
         onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
-        style={{ alignSelf: 'stretch' }}
+        onHoverIn={Platform.OS === 'web' ? hoverIn : undefined}
+        onHoverOut={Platform.OS === 'web' ? hoverOut : undefined}
+        style={[{ alignSelf: 'stretch' }, Platform.OS === 'web' ? { cursor: 'default' } : null]}
       >
         {thinkingOnly ? (
           <BiaThinking isDark={isDark} t={t} toolName={isToolPending ? item._toolName : null} />
@@ -474,19 +488,23 @@ const MessageRow = memo(function MessageRow({ item, isDark, onSpeak, speakingId,
         </TouchableOpacity>
       )}
 
-      {item.content && !isStreaming ? (
-        <BiaMessageActions
-          item={item} isDark={isDark} t={t}
-          onCopy={onCopy}
-          onSpeak={onSpeak} speaking={isSpeaking}
-          onRegenerate={isLastAI ? onRegenerate : null}
-          onShare={onShare}
-          onFeedback={onFeedback}
-        />
+      {item.content && !isStreaming && showActions ? (
+        <Pressable onHoverIn={Platform.OS === 'web' ? hoverIn : undefined} onHoverOut={Platform.OS === 'web' ? hoverOut : undefined} style={{ alignSelf: 'flex-start' }} accessible={false}>
+          <BiaMessageActions
+            item={item} isDark={isDark} t={t}
+            onCopy={onCopy}
+            onSpeak={onSpeak} speaking={isSpeaking}
+            onRegenerate={isLastAI ? onRegenerate : null}
+            onShare={onShare}
+            onFeedback={onFeedback}
+          />
+        </Pressable>
       ) : null}
     </BiaFadeIn>
   );
 });
+
+const GlyphWaveIcon = ({ size, color }) => <GlyphWave size={size} color={color} />;
 
 // ─── Model picker pill (top center) + bottom sheet ───
 const MODEL_OPTIONS = [
@@ -609,6 +627,8 @@ export default function OneScreen() {
   const [modelSheetOpen, setModelSheetOpen] = useState(false);
   // Long-press AI message context sheet (Copy / Regenerate / Bad response).
   const [ctxSheetItem, setCtxSheetItem] = useState(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [pinnedIds, setPinnedIds] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [isListening, setIsListening] = useState(false);
   const [speakingId, setSpeakingId] = useState(null);
@@ -1532,6 +1552,35 @@ export default function OneScreen() {
     setMessages([]); setConversationId(null); setLastFollowups([]); loadConversations(false);
   }, [loadConversations]);
 
+  // [2026-10-16 bia-repagina] conversas fixadas (por conta, no aparelho) + renomear (servidor)
+  const pinsKey = `bia_pins_${user?.email || 'anon'}`;
+  useEffect(() => {
+    let alive = true;
+    getCached(pinsKey).then((v) => { if (alive && Array.isArray(v)) setPinnedIds(v); }).catch(() => {});
+    return () => { alive = false; };
+  }, [pinsKey]);
+  const togglePin = useCallback((c) => {
+    haptic('light');
+    setPinnedIds((prev) => {
+      const next = prev.includes(c.id) ? prev.filter(x => x !== c.id) : [c.id, ...prev].slice(0, 20);
+      setCache(pinsKey, next, 86400000 * 3650).catch(() => {});
+      return next;
+    });
+  }, [pinsKey]);
+  const renameConv = useCallback(async (c, title) => {
+    const prevTitle = c.title;
+    setConversations(prev => prev.map(x => (x.id === c.id ? { ...x, title } : x)));
+    try {
+      const r = await api.apiCall('one_history_rename', { conversation_id: c.id, title }, 'POST');
+      if (!r?.success) throw new Error('rename');
+      haptic('success');
+    } catch {
+      setConversations(prev => prev.map(x => (x.id === c.id ? { ...x, title: prevTitle } : x)));
+      if (Platform.OS === 'web') { try { window.alert(t('common.networkError')); } catch {} }
+      else Alert.alert(t('common.error'), t('common.networkError'));
+    }
+  }, [t]);
+
   // ─── Voice Input (Speech-to-Text) ───
 
   const startListening = useCallback(async () => {
@@ -2336,15 +2385,26 @@ export default function OneScreen() {
 
   // ─── Tela inicial: orb + saudação grande + grade de sugestões (cascata) ───
   const renderEmpty = () => {
-    const sugCards = [
-      { key: 'today', label: t('one.sugAgendaTitle'), sub: t('one.sugAgendaSub'), msg: t('one.whatsToday'), icon: IconCalendar },
-      { key: 'mail', label: t('one.sugEmailTitle'), sub: t('one.sugEmailSub'), msg: t('one.todaySummary'), icon: IconMail },
-      { key: 'write', label: t('one.sugWriteTitle'), sub: t('one.sugWriteSub'), prefill: t('one.sugWriteMsg'), icon: IconEdit },
-      { key: 'remind', label: t('one.sugReminderTitle'), sub: t('one.sugReminderSub'), prefill: t('one.sugReminderMsg'), icon: IconBell },
-      { key: 'web', label: t('one.sugWebTitle'), sub: t('one.sugWebSub'), prefill: t('one.sugWebMsg'), icon: IconGlobe },
-      { key: 'photo', label: t('one.sugPhotoTitle'), sub: t('one.sugPhotoSub'), action: 'photo', icon: IconCamera },
-    ];
-    const greet = firstName ? `${getGreeting(t)}, ${firstName}` : getGreeting(t);
+    // [2026-10-16 bia-repagina] sugestões pela hora do dia (mesma ideia do
+    // biaSuggestion do painel Apps): manhã = agenda/e-mails; tarde = e-mails/
+    // responder; noite = agenda de amanhã/lembretes. Foto/câmera foram p/ o "+".
+    const SUG = {
+      today: { key: 'today', label: t('one.sugAgendaTitle'), sub: t('one.sugAgendaSub'), msg: t('one.whatsToday'), icon: IconCalendar },
+      tomorrow: { key: 'tomorrow', label: t('one.tomorrowAgenda'), sub: t('one.sugTomorrowSub'), msg: t('one.sugTomorrowMsg'), icon: IconCalendar },
+      mail: { key: 'mail', label: t('one.sugEmailTitle'), sub: t('one.sugEmailSub'), msg: t('one.sugEmailMsg'), icon: IconMail },
+      reply: { key: 'reply', label: t('one.sugReplyTitle'), sub: t('one.sugReplySub'), msg: t('one.sugReplyMsg'), icon: IconMessageCircle },
+      write: { key: 'write', label: t('one.sugWriteTitle'), sub: t('one.sugWriteSub'), prefill: t('one.sugWriteMsg'), icon: IconEdit },
+      remind: { key: 'remind', label: t('one.sugReminderTitle'), sub: t('one.sugReminderSub'), prefill: t('one.sugReminderMsg'), icon: IconBell },
+      ideas: { key: 'ideas', label: t('one.sugIdeasTitle'), sub: t('one.sugIdeasSub'), prefill: t('one.sugIdeasMsg'), icon: IconZap },
+      web: { key: 'web', label: t('one.sugWebTitle'), sub: t('one.sugWebSub'), prefill: t('one.sugWebMsg'), icon: IconGlobe },
+    };
+    const tod = getTimeOfDay();
+    const order = tod === 'morning' ? ['today', 'mail', 'reply', 'write', 'remind', 'ideas']
+      : tod === 'afternoon' ? ['mail', 'reply', 'today', 'write', 'ideas', 'remind']
+      : ['tomorrow', 'reply', 'mail', 'remind', 'ideas', 'web'];
+    const sugCards = order.map(k => SUG[k]);
+    const nm = firstName ? firstName.charAt(0).toUpperCase() + firstName.slice(1) : '';
+    const greet = nm ? `${getGreeting(t)}, ${nm}` : getGreeting(t);
     return (
       <ScrollView
         style={{ flex: 1 }}
@@ -2446,7 +2506,7 @@ export default function OneScreen() {
               loading && !messages.some(m => m._streaming) ? (
                 <View style={[st.aiRow, { marginTop: 4 }]}>
                   <View style={st.aiHeaderRow}>
-                    <BiaOrb size={20} lite isDark={isDark} mode="thinking" />
+                    <BiaOrb size={20} lite isDark={isDark} mode="thinking" animated />
                     <Text style={[st.aiHeaderLabel, { color: P.fg }]}>Bia</Text>
                   </View>
                   <BiaThinking isDark={isDark} t={t} />
@@ -2483,7 +2543,7 @@ export default function OneScreen() {
           onStop={stopGenerating}
           onVoice={enterVoiceMode}
           onMic={toggleListening}
-          onAttach={pickImage}
+          onAttach={() => { haptic('light'); setAttachOpen(true); }}
           listening={isListening}
           loading={loading}
           attachedImage={attachedImage}
@@ -2543,6 +2603,21 @@ export default function OneScreen() {
         }}
       />
 
+      {/* "+": câmera · fotos · voz · ajustes */}
+      <BiaAttachSheet
+        visible={attachOpen}
+        onClose={() => setAttachOpen(false)}
+        isDark={isDark}
+        t={t}
+        insets={insets}
+        items={[
+          Platform.OS !== 'web' ? { key: 'cam', label: t('one.attachCamera'), icon: IconCamera, onPress: takePhoto } : null,
+          { key: 'photos', label: Platform.OS === 'web' ? t('one.attachPhotosFiles') : t('one.attachPhotos'), icon: IconImage, onPress: Platform.OS === 'web' ? pickImage : pickFromLibrary },
+          { key: 'voice', label: t('one.voiceConversation'), icon: GlyphWaveIcon, onPress: enterVoiceMode },
+          { key: 'settings', label: t('one.biaSettings'), icon: IconSliders, onPress: () => router.push('/bia-settings') },
+        ]}
+      />
+
       {/* Histórico: gaveta lateral com busca + agrupamento por data */}
       <BiaHistoryDrawer
         visible={historyOpen}
@@ -2554,24 +2629,21 @@ export default function OneScreen() {
         t={t}
         insets={insets}
         onNewChat={newChat}
-        onDelete={(c) => {
-          const doDel = async () => {
-            try {
-              await api.oneHistoryDelete({ conversationId: c.id });
-              setConversations(prev => prev.filter(x => x.id !== c.id));
-              if (conversationId === c.id) { setMessages([]); setConversationId(null); }
-              haptic('success');
-            } catch {
-              // [2026-10-08 apps-native] falha era silenciosa (item ficava e nada avisava)
-              if (Platform.OS === 'web') { try { window.alert(t('common.networkError')); } catch {} }
-              else Alert.alert(t('common.error'), t('common.networkError'));
-            }
-          };
-          if (Platform.OS === 'web') { if (window.confirm(t('one.deleteConfirm') || 'Apagar essa conversa?')) doDel(); }
-          else Alert.alert(t('one.deleteConv') || 'Apagar conversa', t('one.deleteConfirm') || 'Apagar essa conversa do histórico?', [
-            { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-            { text: t('common.delete') || 'Apagar', style: 'destructive', onPress: doDel },
-          ]);
+        pinnedIds={pinnedIds}
+        onTogglePin={togglePin}
+        onRename={renameConv}
+        onDelete={async (c) => {
+          // a gaveta já mostrou "Conversa apagada · Desfazer" (4,5 s) antes de chamar aqui
+          try {
+            await api.oneHistoryDelete({ conversationId: c.id });
+            setConversations(prev => prev.filter(x => x.id !== c.id));
+            if (pinnedIds.includes(c.id)) togglePin(c);
+            if (conversationId === c.id) { setMessages([]); setConversationId(null); }
+          } catch {
+            // [2026-10-08 apps-native] falha era silenciosa (item ficava e nada avisava)
+            if (Platform.OS === 'web') { try { window.alert(t('common.networkError')); } catch {} }
+            else Alert.alert(t('common.error'), t('common.networkError'));
+          }
         }}
         onClearAll={() => {
           const doAll = async () => {

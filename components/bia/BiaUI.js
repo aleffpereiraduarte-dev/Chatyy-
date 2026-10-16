@@ -6,14 +6,15 @@
 //   BiaSuggestionGrid  grade 2 colunas de cartões de sugestão com ícone
 //   BiaComposer        barra de entrada flutuante de vidro: anexar, ditado (vira onda), enviar/voz (morph)
 //   BiaMessageActions  copiar · ouvir · regenerar · compartilhar · curtir/descurtir (aparecem suaves)
-//   BiaHistoryDrawer   gaveta lateral com busca + agrupamento por data
+//   BiaHistoryDrawer   gaveta: títulos limpos, sem duplicatas, Fixadas, busca, deslizar p/ apagar (+Desfazer), menu Renomear/Fixar/Apagar
+//   BiaAttachSheet     folha do "+": câmera · fotos · voz · ajustes
 //   BiaVoiceScreen     modo voz em tela cheia: orb grande reagindo ao volume + legenda ao vivo
 //
 // Tudo com ícones SVG (components/Icons) — sem emoji. Animações em native driver.
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Pressable, Animated, Easing, Platform, StyleSheet,
-  Modal, SectionList, Image, ScrollView, Dimensions,
+  Modal, SectionList, Image, ScrollView, Dimensions, PanResponder,
 } from 'react-native';
 import Svg, { Path, Rect } from 'react-native-svg';
 import {
@@ -272,7 +273,7 @@ export function BiaComposer({
             </TouchableOpacity>
             <TextInput
               style={[cs.input, { color: P.fg }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
-              placeholder={listening ? (t('one.voiceListening') || 'Ouvindo...') : (t('one.placeholder') || 'Fale com a Bia...')}
+              placeholder={listening ? (t('one.voiceListening') || 'Ouvindo...') : (t('one.askAnything') || t('one.placeholder') || 'Pergunte qualquer coisa')}
               placeholderTextColor={P.faint}
               value={value}
               onChangeText={onChangeText}
@@ -284,9 +285,10 @@ export function BiaComposer({
               onBlur={onBlur}
               returnKeyType="send"
               multiline
+              {...(Platform.OS === 'web' ? { rows: 1 } : null)}
               maxLength={2000}
               editable={!loading}
-              accessibilityLabel={t('one.placeholder') || 'Mensagem'}
+              accessibilityLabel={t('one.askAnything') || t('one.placeholder') || 'Mensagem'}
             />
             <TouchableOpacity onPress={onMic} style={cs.micBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={listening ? (t('one.speakStop') || 'Parar') : (t('one.dictate'))}>
               {listening ? <MicWave color={P.fg} /> : <IconMic size={20} color={P.sub} />}
@@ -341,26 +343,31 @@ export const BiaMessageActions = memo(function BiaMessageActions({ item, isDark,
       {icon}
     </TouchableOpacity>
   );
-  const c = P.sub;
+  const c = isDark ? '#8E8E93' : '#86868D';
   return (
     <BiaFadeIn delay={120} dy={4} duration={320} style={as.row}>
-      {onCopy ? btn('copy', copied ? (t('common.copied') || 'Copiado') : (t('common.copy') || 'Copiar'), copied ? <IconCheck size={16} color={P.fg} /> : <IconCopy size={16} color={c} />, doCopy) : null}
-      {onSpeak ? btn('speak', speaking ? (t('one.speakStop') || 'Parar') : (t('oneScreen.readAloud') || 'Ouvir'), speaking ? <IconVolumeX size={16} color={P.fg} /> : <IconVolume2 size={16} color={c} />, () => onSpeak(item), speaking) : null}
-      {onRegenerate ? btn('regen', t('one.regenerate') || 'Regenerar', <IconRepeat size={16} color={c} />, () => onRegenerate(item)) : null}
-      {onShare ? btn('share', t('common.share') || 'Compartilhar', <IconShare size={16} color={c} />, () => onShare(item)) : null}
-      {onFeedback ? btn('up', t('one.goodResponse'), <GlyphThumb filled={vote === 1} color={vote === 1 ? P.fg : c} />, () => doVote(1), vote === 1) : null}
-      {onFeedback ? btn('down', t('one.badResponse'), <GlyphThumb down filled={vote === -1} color={vote === -1 ? P.fg : c} />, () => doVote(-1), vote === -1) : null}
+      {onCopy ? btn('copy', copied ? (t('common.copied') || 'Copiado') : (t('common.copy') || 'Copiar'), copied ? <IconCheck size={15} color={P.fg} /> : <IconCopy size={15} color={c} />, doCopy) : null}
+      {onSpeak ? btn('speak', speaking ? (t('one.speakStop') || 'Parar') : (t('oneScreen.readAloud') || 'Ouvir'), speaking ? <IconVolumeX size={15} color={P.fg} /> : <IconVolume2 size={15} color={c} />, () => onSpeak(item), speaking) : null}
+      {onRegenerate ? btn('regen', t('one.regenerate') || 'Regenerar', <IconRepeat size={15} color={c} />, () => onRegenerate(item)) : null}
+      {onShare ? btn('share', t('common.share') || 'Compartilhar', <IconShare size={15} color={c} />, () => onShare(item)) : null}
+      {onFeedback ? btn('up', t('one.goodResponse'), <GlyphThumb size={15} filled={vote === 1} color={vote === 1 ? P.fg : c} />, () => doVote(1), vote === 1) : null}
+      {onFeedback ? btn('down', t('one.badResponse'), <GlyphThumb size={15} down filled={vote === -1} color={vote === -1 ? P.fg : c} />, () => doVote(-1), vote === -1) : null}
     </BiaFadeIn>
   );
 });
 const as = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 2, marginTop: 8, marginLeft: -6 },
-  btn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 0, marginTop: 6, marginLeft: -7 },
+  btn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
 });
 
 // ─── gaveta de histórico ─────────────────────────────────────────────────────
-function convTime(c) {
-  const raw = c?.updated_at || c?.created_at;
+// [2026-10-16 bia-repagina] Gaveta nível ChatGPT/Claude: títulos limpos (sem
+// "Oi Bia," / "." vira "Conversa sem título"), duplicatas escondidas (o app
+// antigo criava 2 conversas por envio quando o stream caía no fallback),
+// Fixadas no topo, busca, deslizar p/ apagar (com Desfazer), toque longo /
+// clique direito → Renomear · Fixar · Apagar. Sem lixeira em cada linha.
+function convTime(c, field) {
+  const raw = field ? c?.[field] : (c?.updated_at || c?.created_at);
   if (!raw) return NaN;
   let s = String(raw).trim().replace(' ', 'T');
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
@@ -369,12 +376,62 @@ function convTime(c) {
   return Number.isFinite(ms) ? ms : NaN;
 }
 
-export function groupConversations(conversations, t, query) {
+const GREET_RE = /^(?:(?:oi+e*|ol[aá]+|opa+|oie+|ouee*|eai|e a[ií]|hey+|hi+|hello|hola|salve|fala|bom dia|boa tarde|boa noite|good (?:morning|afternoon|evening))(?![A-Za-z0-9À-ɏͰ-ϿЀ-ӿ԰-ۿऀ-෿฀-໿ᄀ-ᇿ぀-ヿ㐀-鿿가-힯]))[\s,!.?;:~-]*(?:(?:bia|one)(?![A-Za-z0-9À-ɏͰ-ϿЀ-ӿ԰-ۿऀ-෿฀-໿ᄀ-ᇿ぀-ヿ㐀-鿿가-힯])[\s,!.?;:~-]*)?/i;
+const BIA_WORD_RE = /[A-Za-z0-9À-ɏͰ-ϿЀ-ӿ԰-ۿऀ-෿฀-໿ᄀ-ᇿ぀-ヿ㐀-鿿가-힯]/;
+const BIA_PREFIX_RE = /^(?:bia|one)[\s,!.:;-]+/i;
+const DANGLING_RE = /\s+(?:para|pra|pro|de|do|da|dos|das|e|com|a|o|as|os|em|no|na|nos|nas|por|um|uma|que|se|ao|à|the|of|to|and|for|with|in|on|a|an)$/i;
+
+// título "humano" a partir do título cru (1ª frase cortada em 50 chars pelo servidor)
+export function prettyBiaTitle(raw, t) {
+  let s = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+  if (!BIA_WORD_RE.test(s)) return (t && t('one.histUntitled')) || 'Conversa sem título';
+  const wasCut = s.length >= 50;
+  const noGreet = s.replace(GREET_RE, '').replace(BIA_PREFIX_RE, '').trim();
+  if (!BIA_WORD_RE.test(noGreet)) return (t && t('one.histGreeting')) || 'Conversa rápida';
+  s = noGreet;
+  if (wasCut) {
+    const sp = s.lastIndexOf(' ');
+    if (sp > 18) s = s.slice(0, sp);
+    for (let i = 0; i < 3 && DANGLING_RE.test(s); i++) s = s.replace(DANGLING_RE, '');
+  }
+  s = s.replace(/[\s,;:.!-]+$/, '');
+  if (s.length > 64) s = s.slice(0, 62).replace(/\s+\S*$/, '');
+  return s.charAt(0).toLocaleUpperCase() + s.slice(1);
+}
+
+// esconde duplicatas (mesmo título criado < 3 min) e conversas vazias
+export function cleanBiaConversations(list, currentId) {
+  const arr = Array.isArray(list) ? list.slice() : [];
+  const key = (c) => String(c.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const created = (c) => { const a = convTime(c, 'created_at'); return Number.isFinite(a) ? a : convTime(c); };
+  const n = (c) => (c && c.n != null ? Number(c.n) : null);
+  const hidden = new Set();
+  for (let i = 0; i < arr.length; i++) {
+    const a = arr[i];
+    if (a.id !== currentId && n(a) === 0) { hidden.add(a.id); continue; }
+    for (let j = i + 1; j < arr.length; j++) {
+      const b = arr[j];
+      if (hidden.has(b.id) || key(a) !== key(b)) continue;
+      const ta = created(a); const tb = created(b);
+      if (!Number.isFinite(ta) || !Number.isFinite(tb) || Math.abs(ta - tb) > 180000) continue;
+      // fica a que tem mais mensagens; empate → a mais recente (a lista vem do mais novo)
+      const na = n(a); const nb = n(b);
+      const dropA = (na != null && nb != null && nb > na) && a.id !== currentId;
+      if (dropA) { hidden.add(a.id); break; }
+      if (b.id !== currentId) hidden.add(b.id);
+    }
+  }
+  return arr.filter(c => !hidden.has(c.id));
+}
+
+export function groupConversations(conversations, t, query, pinned) {
   const q = (query || '').trim().toLowerCase();
-  const list = (conversations || []).filter(c => !q || String(c.title || '').toLowerCase().includes(q));
+  const pin = pinned instanceof Set ? pinned : new Set(pinned || []);
+  const list = (conversations || []).filter(c => !q || String(c._title || c.title || '').toLowerCase().includes(q) || String(c.title || '').toLowerCase().includes(q));
   const now = new Date();
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const DAY = 86400000;
+  const pinnedB = { key: 'pin', title: t('one.histPinned') || 'Fixadas', data: [] };
   const buckets = [
     { key: 'today', title: t('common.today') || 'Hoje', min: startToday, data: [] },
     { key: 'yest', title: t('common.yesterday') || 'Ontem', min: startToday - DAY, data: [] },
@@ -383,117 +440,435 @@ export function groupConversations(conversations, t, query) {
     { key: 'old', title: t('one.histOlder') || 'Mais antigas', min: -Infinity, data: [] },
   ];
   for (const c of list) {
+    if (pin.has(c.id)) { pinnedB.data.push(c); continue; }
     const ms = convTime(c);
     const b = Number.isFinite(ms) ? buckets.find(x => ms >= x.min) : buckets[buckets.length - 1];
     (b || buckets[buckets.length - 1]).data.push(c);
   }
-  return buckets.filter(b => b.data.length);
+  return [pinnedB, ...buckets].filter(b => b.data.length);
 }
 
-export function BiaHistoryDrawer({ visible, onClose, conversations, onSelect, currentId, isDark, t, insets, onDelete, onClearAll, onNewChat }) {
+export function GlyphPin({ size = 15, color = '#000', filled = false }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M12 17v5" stroke={color} strokeWidth={1.9} strokeLinecap="round" />
+      <Path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
+        stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" fill={filled ? color : 'none'} />
+    </Svg>
+  );
+}
+function GlyphMore({ size = 16, color = '#000' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <Rect x="3.5" y="10.5" width="3.2" height="3.2" rx="1.6" />
+      <Rect x="10.4" y="10.5" width="3.2" height="3.2" rx="1.6" />
+      <Rect x="17.3" y="10.5" width="3.2" height="3.2" rx="1.6" />
+    </Svg>
+  );
+}
+
+// linha com deslizar-p/-apagar (PanResponder: funciona em iOS/Android/web, sem lib nativa)
+const DEL_W = 88;
+const SwipeRow = memo(function SwipeRow({ onDelete, deleteLabel, children, onOpenChange, closeSignal }) {
+  const x = useRef(new Animated.Value(0)).current;
+  const base = useRef(0);
+  const widthRef = useRef(320);
+  const snap = useCallback((to, cb) => {
+    base.current = to;
+    onOpenChange?.(to !== 0);
+    if (isReduceMotionEnabled()) { x.setValue(to); cb?.(); return; }
+    Animated.spring(x, { toValue: to, tension: 210, friction: 24, useNativeDriver: ND }).start(cb ? () => cb() : undefined);
+  }, [x, onOpenChange]);
+  useEffect(() => { if (base.current !== 0) snap(0); }, [closeSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+  const doDelete = useCallback(() => {
+    const W = widthRef.current;
+    if (isReduceMotionEnabled()) { onDelete?.(); return; }
+    Animated.timing(x, { toValue: -W, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: ND }).start(() => onDelete?.());
+  }, [x, onDelete]);
+  const pr = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
+    onMoveShouldSetPanResponderCapture: (_, g) => Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => { x.stopAnimation(); },
+    onPanResponderMove: (_, g) => {
+      const W = widthRef.current;
+      let v = base.current + g.dx;
+      if (v > 0) v = v * 0.15;
+      if (v < -W) v = -W;
+      x.setValue(v);
+    },
+    onPanResponderRelease: (_, g) => {
+      const W = widthRef.current;
+      const v = base.current + g.dx;
+      if (v < -W * 0.58 || (g.vx < -1.6 && v < -DEL_W)) { base.current = 0; doDelete(); return; }
+      if (v < -DEL_W * 0.5 || g.vx < -0.5) snap(-DEL_W); else snap(0);
+    },
+    onPanResponderTerminate: () => snap(base.current < -DEL_W * 0.5 ? -DEL_W : 0),
+  }), [x, snap, doDelete]);
+  const reveal = x.interpolate({ inputRange: [-DEL_W, -10, 0], outputRange: [1, 0.2, 0], extrapolate: 'clamp' });
+  return (
+    <View style={hs.swipeWrap} onLayout={(e) => { widthRef.current = Math.max(200, e.nativeEvent.layout.width); }}>
+      <Animated.View style={[hs.delUnder, { opacity: reveal }]}>
+        <TouchableOpacity onPress={doDelete} style={hs.delBtn} activeOpacity={0.8} accessibilityRole="button" accessibilityLabel={deleteLabel}>
+          <IconTrash size={17} color="#FFFFFF" />
+          <Text style={hs.delText} numberOfLines={1}>{deleteLabel}</Text>
+        </TouchableOpacity>
+      </Animated.View>
+      <Animated.View {...pr.panHandlers} style={{ transform: [{ translateX: x }] }}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+});
+
+const HistRow = memo(function HistRow({ c, active, pinned, P, t, onSelect, onMenu, onDelete, closeSignal }) {
+  const [hover, setHover] = useState(false);
+  const title = c._title;
+  const webCtx = Platform.OS === 'web' ? {
+    onContextMenu: (e) => { try { e.preventDefault(); } catch {} onMenu(c); },
+  } : null;
+  return (
+    <SwipeRow onDelete={() => onDelete(c)} deleteLabel={t('common.delete') || 'Apagar'} closeSignal={closeSignal}>
+      <Pressable
+        testID="bia-hist-row"
+        onPress={() => onSelect(c)}
+        onLongPress={() => onMenu(c)}
+        delayLongPress={360}
+        onHoverIn={() => setHover(true)}
+        onHoverOut={() => setHover(false)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        accessibilityLabel={title}
+        accessibilityHint={t('one.histRowHint') || undefined}
+        style={({ pressed }) => [
+          hs.item,
+          { backgroundColor: active ? P.cardHi : (pressed || hover) ? P.chip : P.bg },
+          Platform.OS === 'web' ? { cursor: 'pointer' } : null,
+        ]}
+        {...webCtx}
+      >
+        {active ? <View style={[hs.activeBar, { backgroundColor: P.fg }]} /> : null}
+        {pinned ? <View style={{ marginRight: 8 }}><GlyphPin size={13} color={P.sub} filled /></View> : null}
+        <Text style={[hs.itemText, { color: P.fg }, active && { fontWeight: '600' }]} numberOfLines={1}>{title}</Text>
+        {Platform.OS === 'web' && (hover || active) ? (
+          <TouchableOpacity onPress={() => onMenu(c)} hitSlop={6} style={hs.moreBtn} accessibilityRole="button" accessibilityLabel={t('common.more') || 'Mais'}>
+            <GlyphMore size={16} color={P.sub} />
+          </TouchableOpacity>
+        ) : null}
+      </Pressable>
+    </SwipeRow>
+  );
+});
+
+export function BiaHistoryDrawer({
+  visible, onClose, conversations, onSelect, currentId, isDark, t, insets,
+  onDelete, onClearAll, onNewChat, pinnedIds, onTogglePin, onRename,
+}) {
   const P = biaPalette(isDark);
   const [mounted, setMounted] = useState(visible);
   const [query, setQuery] = useState('');
+  const [menu, setMenu] = useState(null);         // conversa com o menu aberto
+  const [renaming, setRenaming] = useState(null); // { c, text }
+  const [undo, setUndo] = useState(null);         // { c } — apagada há pouco
+  const [closeSignal, setCloseSignal] = useState(0);
+  const undoTimer = useRef(null);
+  const pendingRef = useRef(null);
   const v = useRef(new Animated.Value(0)).current;
-  const W = Math.min(360, Math.round(Dimensions.get('window').width * 0.86));
+  const menuV = useRef(new Animated.Value(0)).current;
+  const W = Math.min(380, Math.round(Dimensions.get('window').width * 0.86));
+
+  const commitPending = useCallback(() => {
+    if (undoTimer.current) { clearTimeout(undoTimer.current); undoTimer.current = null; }
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    setUndo(null);
+    if (p) onDelete?.(p, { confirmed: true });
+  }, [onDelete]);
+
   useEffect(() => {
     if (visible) {
       setMounted(true);
       if (isReduceMotionEnabled()) v.setValue(1);
-      else Animated.spring(v, { toValue: 1, tension: 180, friction: 26, useNativeDriver: ND }).start();
+      else Animated.spring(v, { toValue: 1, tension: 170, friction: 22, useNativeDriver: ND }).start();
     } else if (mounted) {
-      const done = () => { setMounted(false); setQuery(''); };
-      if (isReduceMotionEnabled()) { v.setValue(0); done(); } else Animated.timing(v, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: ND }).start(done);
+      commitPending();
+      const done = () => { setMounted(false); setQuery(''); setMenu(null); setRenaming(null); };
+      if (isReduceMotionEnabled()) { v.setValue(0); done(); } else Animated.timing(v, { toValue: 0, duration: 210, easing: Easing.in(Easing.cubic), useNativeDriver: ND }).start(done);
     }
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
-  const sections = useMemo(() => groupConversations(conversations, t, query), [conversations, t, query]);
+  useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+    menuV.setValue(0);
+    if (isReduceMotionEnabled()) menuV.setValue(1);
+    else Animated.spring(menuV, { toValue: 1, tension: 260, friction: 22, useNativeDriver: ND }).start();
+  }, [menu, menuV]);
+
+  const pinSet = useMemo(() => new Set(pinnedIds || []), [pinnedIds]);
+  const cleaned = useMemo(() => {
+    const hiddenId = undo?.c?.id;
+    return cleanBiaConversations(conversations, currentId)
+      .filter(c => c.id !== hiddenId)
+      .map(c => ({ ...c, _title: prettyBiaTitle(c.title, t) }));
+  }, [conversations, currentId, t, undo]);
+  const sections = useMemo(() => groupConversations(cleaned, t, query, pinSet), [cleaned, t, query, pinSet]);
+
+  const select = useCallback((c) => { onSelect(c); onClose(); }, [onSelect, onClose]);
+  const openMenu = useCallback((c) => {
+    try { const H = require('../../services/haptics').HapticsCompat; H.impactAsync(H.ImpactFeedbackStyle.Medium); } catch {}
+    setMenu(c);
+  }, []);
+  const softDelete = useCallback((c) => {
+    if (pendingRef.current) commitPending();
+    pendingRef.current = c;
+    setUndo({ c });
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(commitPending, 4500);
+  }, [commitPending]);
+  const undoDelete = () => {
+    if (undoTimer.current) { clearTimeout(undoTimer.current); undoTimer.current = null; }
+    pendingRef.current = null;
+    setUndo(null);
+    setCloseSignal(s => s + 1);
+  };
+
   if (!mounted) return null;
-  const tx = v.interpolate({ inputRange: [0, 1], outputRange: [-W, 0] });
+  const tx = v.interpolate({ inputRange: [0, 1], outputRange: [-W - 24, 0] });
+  const menuSc = menuV.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] });
+  const menuItem = (key, label, icon, onPress, danger) => (
+    <TouchableOpacity key={key} onPress={onPress} activeOpacity={0.6} style={hs.menuItem} accessibilityRole="button" accessibilityLabel={label}>
+      <Text style={[hs.menuText, { color: danger ? '#E5484D' : P.fg }]}>{label}</Text>
+      {icon}
+    </TouchableOpacity>
+  );
+  const menuPinned = menu ? pinSet.has(menu.id) : false;
+
   return (
-    <Modal transparent visible animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <Modal transparent visible animationType="none" onRequestClose={() => { if (renaming) setRenaming(null); else if (menu) setMenu(null); else onClose(); }} statusBarTranslucent>
       <View style={StyleSheet.absoluteFill}>
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)', opacity: v }]}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(10,10,14,0.32)', opacity: v }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} />
         </Animated.View>
-        <Animated.View style={[hs.panel, { width: W, backgroundColor: P.bg, paddingTop: (insets?.top || 0) + 10, paddingBottom: (insets?.bottom || 0) + 8, transform: [{ translateX: tx }] }, softShadow(isDark, 2)]}>
-          <View style={hs.head}>
-            <Text style={[hs.title, { color: P.fg }]} accessibilityRole="header">{t('one.history') || 'Histórico'}</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={10} style={[hs.iconBtn, { backgroundColor: P.chip }]} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
-              <IconX size={16} color={P.fg} />
-            </TouchableOpacity>
-          </View>
-          <View style={[hs.search, { backgroundColor: P.card, borderColor: P.hair }]}>
-            <IconSearch size={16} color={P.sub} />
-            <TextInput
-              value={query} onChangeText={setQuery} placeholder={t('common.search') || 'Buscar'} placeholderTextColor={P.faint}
-              style={[hs.searchInput, { color: P.fg }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
-              returnKeyType="search" accessibilityLabel={t('common.search') || 'Buscar'}
-            />
-            {query ? <TouchableOpacity onPress={() => setQuery('')} hitSlop={8} accessibilityLabel={t('common.clear') || 'Limpar'}><IconX size={14} color={P.sub} /></TouchableOpacity> : null}
-          </View>
-          {onNewChat ? (
-            <TouchableOpacity onPress={() => { onNewChat(); onClose(); }} activeOpacity={0.7} style={[hs.newBtn, { backgroundColor: P.ink }]} accessibilityRole="button" accessibilityLabel={t('one.newChat') || 'Nova conversa'}>
-              <IconEdit size={16} color={P.onInk} />
-              <Text style={[hs.newText, { color: P.onInk }]}>{t('one.newChat') || 'Nova conversa'}</Text>
-            </TouchableOpacity>
-          ) : null}
-          <SectionList
-            style={{ flex: 1 }}
-            sections={sections}
-            keyExtractor={(c) => String(c.id)}
-            stickySectionHeadersEnabled={false}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-            initialNumToRender={20}
-            ListEmptyComponent={
-              <View style={hs.empty}>
-                <IconMessageSquare size={22} color={P.faint} />
-                <Text style={[hs.emptyText, { color: P.sub }]}>{t('one.noConversations') || 'Nenhuma conversa ainda'}</Text>
+        {/* sombra fica no invólucro (overflow:hidden no painel cortava a sombra no iOS) */}
+        <Animated.View style={[hs.panelShadow, { width: W, transform: [{ translateX: tx }] }, softShadow(isDark, 3)]}>
+          <View style={[hs.panel, { backgroundColor: P.bg, borderColor: P.hair, paddingTop: (insets?.top || 0) + 10, paddingBottom: (insets?.bottom || 0) + 6 }]}>
+            <View style={hs.head}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <BiaOrb size={26} lite isDark={isDark} mode="idle" animated={false} />
+                <Text style={[hs.title, { color: P.fg }]} accessibilityRole="header">{t('one.history') || 'Histórico'}</Text>
               </View>
-            }
-            renderSectionHeader={({ section }) => <Text style={[hs.section, { color: P.sub }]}>{section.title}</Text>}
-            renderItem={({ item: c }) => {
-              const active = c.id === currentId;
-              return (
-                <View style={[hs.item, active && { backgroundColor: P.chip }]}>
-                  <TouchableOpacity style={{ flex: 1, paddingVertical: 11, paddingLeft: 12 }} activeOpacity={0.6} onPress={() => { onSelect(c); onClose(); }} accessibilityRole="button" accessibilityState={{ selected: active }}>
-                    <Text style={[hs.itemText, { color: P.fg }, active && { fontWeight: '600' }]} numberOfLines={1}>{c.title || `#${c.id}`}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => onDelete?.(c)} hitSlop={6} style={hs.trash} accessibilityRole="button" accessibilityLabel={t('common.delete') || 'Apagar'}>
-                    <IconTrash size={15} color={P.faint} />
-                  </TouchableOpacity>
+              {onNewChat ? (
+                <BiaPressScale onPress={() => { onNewChat(); onClose(); }} scaleTo={0.9} style={[hs.iconBtn, { backgroundColor: P.ink }]} accessibilityLabel={t('one.newChat') || 'Nova conversa'}>
+                  <IconEdit size={16} color={P.onInk} />
+                </BiaPressScale>
+              ) : null}
+            </View>
+            <View style={[hs.search, { backgroundColor: P.chip }]}>
+              <IconSearch size={16} color={P.sub} />
+              <TextInput
+                value={query} onChangeText={setQuery} placeholder={t('common.search') || 'Buscar'} placeholderTextColor={P.faint}
+                style={[hs.searchInput, { color: P.fg }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
+                returnKeyType="search" accessibilityLabel={t('common.search') || 'Buscar'}
+                autoCorrect={false}
+              />
+              {query ? <TouchableOpacity onPress={() => setQuery('')} hitSlop={8} accessibilityLabel={t('common.clear') || 'Limpar'}><IconX size={14} color={P.sub} /></TouchableOpacity> : null}
+            </View>
+            <SectionList
+              style={{ flex: 1, marginTop: 6 }}
+              sections={sections}
+              keyExtractor={(c) => String(c.id)}
+              stickySectionHeadersEnabled={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={24}
+              ListEmptyComponent={
+                <View style={hs.empty}>
+                  <View style={[hs.emptyIcon, { backgroundColor: P.chip }]}>
+                    {query ? <IconSearch size={20} color={P.sub} /> : <IconMessageSquare size={20} color={P.sub} />}
+                  </View>
+                  <Text style={[hs.emptyText, { color: P.sub }]}>
+                    {query ? (t('one.histNoResults') || 'Nada encontrado') : (t('one.noConversations') || 'Nenhuma conversa ainda')}
+                  </Text>
                 </View>
-              );
-            }}
-            ListFooterComponent={conversations?.length ? (
-              <TouchableOpacity onPress={onClearAll} style={hs.clearAll} accessibilityRole="button" accessibilityLabel={t('one.clearAll') || 'Limpar tudo'}>
-                <IconTrash size={14} color="#E5484D" />
-                <Text style={hs.clearText}>{t('one.clearAll') || 'Limpar tudo'}</Text>
-              </TouchableOpacity>
+              }
+              renderSectionHeader={({ section }) => (
+                <Text style={[hs.section, { color: P.faint }]} accessibilityRole="header">{section.title}</Text>
+              )}
+              renderItem={({ item: c }) => (
+                <HistRow
+                  c={c} P={P} t={t}
+                  active={c.id === currentId}
+                  pinned={pinSet.has(c.id)}
+                  onSelect={select}
+                  onMenu={openMenu}
+                  onDelete={softDelete}
+                  closeSignal={closeSignal}
+                />
+              )}
+              ListFooterComponent={cleaned.length && !query ? (
+                <TouchableOpacity onPress={onClearAll} style={hs.clearAll} accessibilityRole="button" accessibilityLabel={t('one.clearAll') || 'Limpar tudo'}>
+                  <Text style={[hs.clearText, { color: P.faint }]}>{t('one.clearAll') || 'Limpar tudo'}</Text>
+                </TouchableOpacity>
+              ) : <View style={{ height: 16 }} />}
+            />
+
+            {undo ? (
+              <BiaFadeIn dy={10} duration={220} style={[hs.toast, { backgroundColor: P.ink }]}>
+                <Text style={[hs.toastText, { color: P.onInk }]} numberOfLines={1}>{t('one.histDeleted') || 'Conversa apagada'}</Text>
+                <TouchableOpacity onPress={undoDelete} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('common.undo') || 'Desfazer'}>
+                  <Text style={[hs.toastBtn, { color: P.onInk }]}>{t('common.undo') || 'Desfazer'}</Text>
+                </TouchableOpacity>
+              </BiaFadeIn>
             ) : null}
-          />
+
+            {menu ? (
+              <View style={[StyleSheet.absoluteFill, hs.menuLayer]}>
+                <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.55)' }]} onPress={() => setMenu(null)} accessibilityLabel={t('common.close') || 'Fechar'} />
+                <Animated.View style={[hs.menuCard, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderColor: P.hair, opacity: menuV, transform: [{ scale: menuSc }] }, softShadow(isDark, 2.4)]}>
+                  <Text style={[hs.menuTitle, { color: P.sub }]} numberOfLines={2}>{menu._title}</Text>
+                  <View style={[hs.menuSep, { backgroundColor: P.hair }]} />
+                  {onRename ? menuItem('ren', t('one.histRename') || 'Renomear', <IconEdit size={17} color={P.fg} />, () => { setRenaming({ c: menu, text: menu._title }); setMenu(null); }) : null}
+                  {onTogglePin ? (
+                    <>
+                      <View style={[hs.menuSep, { backgroundColor: P.hair }]} />
+                      {menuItem('pin', menuPinned ? (t('one.histUnpin') || 'Desafixar') : (t('one.histPin') || 'Fixar'), <GlyphPin size={17} color={P.fg} filled={menuPinned} />, () => { onTogglePin(menu); setMenu(null); })}
+                    </>
+                  ) : null}
+                  <View style={[hs.menuSep, { backgroundColor: P.hair }]} />
+                  {menuItem('del', t('common.delete') || 'Apagar', <IconTrash size={17} color="#E5484D" />, () => { const c = menu; setMenu(null); softDelete(c); }, true)}
+                </Animated.View>
+              </View>
+            ) : null}
+
+            {renaming ? (
+              <View style={[StyleSheet.absoluteFill, hs.menuLayer]}>
+                <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.55)' }]} onPress={() => setRenaming(null)} />
+                <BiaFadeIn dy={8} duration={220} style={[hs.menuCard, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderColor: P.hair, padding: 16 }, softShadow(isDark, 2.4)]}>
+                  <Text style={[hs.renameTitle, { color: P.fg }]}>{t('one.histRenameTitle') || 'Renomear conversa'}</Text>
+                  <TextInput
+                    value={renaming.text}
+                    onChangeText={(text) => setRenaming(r => ({ ...r, text }))}
+                    autoFocus
+                    selectTextOnFocus
+                    maxLength={80}
+                    onSubmitEditing={() => { const s = (renaming.text || '').trim(); if (s) onRename?.(renaming.c, s); setRenaming(null); }}
+                    returnKeyType="done"
+                    style={[hs.renameInput, { color: P.fg, backgroundColor: P.chip }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
+                    accessibilityLabel={t('one.histRenameTitle') || 'Renomear conversa'}
+                  />
+                  <View style={hs.renameRow}>
+                    <TouchableOpacity onPress={() => setRenaming(null)} style={[hs.renameBtn, { backgroundColor: P.chip }]} accessibilityRole="button">
+                      <Text style={[hs.renameBtnText, { color: P.fg }]}>{t('common.cancel') || 'Cancelar'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => { const s = (renaming.text || '').trim(); if (s) onRename?.(renaming.c, s); setRenaming(null); }}
+                      style={[hs.renameBtn, { backgroundColor: P.ink }]} accessibilityRole="button"
+                    >
+                      <Text style={[hs.renameBtnText, { color: P.onInk }]}>{t('common.save') || 'Salvar'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </BiaFadeIn>
+              </View>
+            ) : null}
+          </View>
         </Animated.View>
       </View>
     </Modal>
   );
 }
 const hs = StyleSheet.create({
-  panel: { position: 'absolute', top: 0, bottom: 0, left: 0, borderTopRightRadius: 24, borderBottomRightRadius: 24, paddingHorizontal: 12, overflow: 'hidden' },
-  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 6, paddingBottom: 12 },
-  title: { fontSize: 24, fontWeight: '700', letterSpacing: -0.5 },
-  iconBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 12, height: 42 },
+  panelShadow: { position: 'absolute', top: 0, bottom: 0, left: 0, borderTopRightRadius: 28, borderBottomRightRadius: 28 },
+  panel: { flex: 1, borderTopRightRadius: 28, borderBottomRightRadius: 28, paddingHorizontal: 10, overflow: 'hidden', borderRightWidth: StyleSheet.hairlineWidth },
+  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingBottom: 14, paddingTop: 2 },
+  title: { fontSize: 22, fontWeight: '700', letterSpacing: -0.5 },
+  iconBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  search: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingHorizontal: 12, height: 40, marginHorizontal: 2 },
   searchInput: { flex: 1, fontSize: 15.5, paddingVertical: 0 },
-  newBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 44, borderRadius: 14, marginTop: 10, marginBottom: 4 },
-  newText: { fontSize: 15, fontWeight: '600' },
-  section: { fontSize: 12.5, fontWeight: '600', letterSpacing: 0.2, paddingHorizontal: 12, paddingTop: 18, paddingBottom: 6 },
-  item: { flexDirection: 'row', alignItems: 'center', borderRadius: 12 },
-  itemText: { fontSize: 15, letterSpacing: -0.1 },
-  trash: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-  empty: { alignItems: 'center', gap: 10, paddingTop: 48 },
-  emptyText: { fontSize: 14 },
-  clearAll: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 18 },
-  clearText: { fontSize: 14, color: '#E5484D', fontWeight: '600' },
+  section: { fontSize: 12, fontWeight: '600', letterSpacing: 0.3, textTransform: 'uppercase', paddingHorizontal: 12, paddingTop: 20, paddingBottom: 6 },
+  swipeWrap: { position: 'relative', borderRadius: 12, overflow: 'hidden', marginVertical: 1 },
+  delUnder: { ...StyleSheet.absoluteFillObject, backgroundColor: '#E5484D', borderRadius: 12, alignItems: 'flex-end', justifyContent: 'center' },
+  delBtn: { width: DEL_W, height: '100%', alignItems: 'center', justifyContent: 'center', gap: 2 },
+  delText: { color: '#FFFFFF', fontSize: 11.5, fontWeight: '600' },
+  item: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, minHeight: 44, paddingLeft: 12, paddingRight: 8 },
+  activeBar: { position: 'absolute', left: 0, top: 12, bottom: 12, width: 3, borderRadius: 2 },
+  itemText: { flex: 1, fontSize: 15, letterSpacing: -0.15, paddingVertical: 11 },
+  moreBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  empty: { alignItems: 'center', gap: 12, paddingTop: 56 },
+  emptyIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  emptyText: { fontSize: 14.5 },
+  clearAll: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingTop: 22, paddingBottom: 18 },
+  clearText: { fontSize: 13.5, fontWeight: '500' },
+  toast: { position: 'absolute', left: 12, right: 12, bottom: 16, borderRadius: 14, minHeight: 46, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  toastText: { flex: 1, fontSize: 14.5, fontWeight: '500' },
+  toastBtn: { fontSize: 14.5, fontWeight: '700' },
+  menuLayer: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 22 },
+  menuCard: { alignSelf: 'stretch', borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  menuTitle: { fontSize: 13, fontWeight: '500', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, textAlign: 'center' },
+  menuSep: { height: StyleSheet.hairlineWidth },
+  menuItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, minHeight: 50 },
+  menuText: { fontSize: 16, letterSpacing: -0.2 },
+  renameTitle: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3, marginBottom: 12 },
+  renameInput: { fontSize: 16, borderRadius: 12, paddingHorizontal: 12, height: 44 },
+  renameRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  renameBtn: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  renameBtnText: { fontSize: 15.5, fontWeight: '600' },
+});
+
+// ─── folha do "+" (anexar · voz · ajustes) ───────────────────────────────────
+export function BiaAttachSheet({ visible, onClose, isDark, t, insets, items }) {
+  const P = biaPalette(isDark);
+  const [mounted, setMounted] = useState(visible);
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      if (isReduceMotionEnabled()) v.setValue(1);
+      else Animated.spring(v, { toValue: 1, tension: 200, friction: 24, useNativeDriver: ND }).start();
+    } else if (mounted) {
+      if (isReduceMotionEnabled()) { v.setValue(0); setMounted(false); } else Animated.timing(v, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: ND }).start(() => setMounted(false));
+    }
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!mounted) return null;
+  const ty = v.interpolate({ inputRange: [0, 1], outputRange: [360, 0] });
+  const pick = (it) => { onClose(); setTimeout(() => it.onPress?.(), Platform.OS === 'ios' ? 280 : 60); };
+  return (
+    <Modal transparent visible animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <View style={StyleSheet.absoluteFill}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(10,10,14,0.3)', opacity: v }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} />
+        </Animated.View>
+        <Animated.View style={[ss.sheet, { backgroundColor: isDark ? '#111113' : '#FFFFFF', borderColor: P.hair, paddingBottom: (insets?.bottom || 0) + 14, transform: [{ translateY: ty }] }, softShadow(isDark, 3)]}>
+          <View style={[ss.grabber, { backgroundColor: P.hair }]} />
+          <View style={ss.grid}>
+            {items.filter(Boolean).map((it, i) => {
+              const Icon = it.icon;
+              return (
+                <BiaFadeIn key={it.key} delay={40 + i * 35} dy={8} duration={260} style={ss.cell}>
+                  <BiaPressScale onPress={() => pick(it)} accessibilityLabel={it.label} style={[ss.tile, { backgroundColor: P.card, borderColor: P.hair }]}>
+                    <View style={[ss.tileIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF' }, !isDark && softShadow(false, 0.5)]}>
+                      {Icon ? <Icon size={19} color={P.fg} /> : null}
+                    </View>
+                    <Text style={[ss.tileText, { color: P.fg }]} numberOfLines={2} maxFontSizeMultiplier={1.3}>{it.label}</Text>
+                  </BiaPressScale>
+                </BiaFadeIn>
+              );
+            })}
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+const ss = StyleSheet.create({
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingTop: 8 },
+  grabber: { alignSelf: 'center', width: 38, height: 5, borderRadius: 3, marginBottom: 14 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -5 },
+  cell: { width: '50%', padding: 5 },
+  tile: { borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, padding: 14, minHeight: 92, justifyContent: 'space-between' },
+  tileIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  tileText: { fontSize: 15, fontWeight: '600', letterSpacing: -0.2 },
 });
 
 // ─── modo voz em tela cheia ──────────────────────────────────────────────────
