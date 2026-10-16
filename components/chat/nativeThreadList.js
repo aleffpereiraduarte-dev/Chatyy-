@@ -91,20 +91,35 @@
 //                      (fase 1 = opt-in com true)
 // Fallback automático: erro nativo (onNativeError), view que não ficou pronta
 // em 2,5 s, ou crash do processo com a lista montada (2× → desliga até a
-// próxima versão do bundle).
+// próxima versão do bundle). Erro/timeout desliga SÓ a conversa, com
+// expiração (disableNativeThreadListForConv) — nunca a sessão [wave10-A].
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 
 // Padrão LIGADO quando o binário tem o módulo. Kill switch acima.
 const NATIVE_LIST_DEFAULT_ON = true;
 const READY_TIMEOUT_MS = 2500;
+// [wave10-A] applyRows: portão até a view nativa existir + reenvio por frame
+const GATE_FALLBACK_MS = 600;
+const APPLY_RAF_TRIES = 3;
+const APPLY_MAX_TRIES = 7; // 3 frames + recuo 16/64/144/256 ms
+let _retryBeacons = 0;
+/** Rejeição de applyRows por ref/view inválida (não montada no Fabric ou já saiu). */
+export function isStaleViewError(msg) {
+  return /Unable to find|view with tag|1st argument|argument cannot be|cannot be (cast|converted)|No view found|not found for tag|ViewNotFound/i.test(String(msg || ''));
+}
 const CRASH_KEY = 'native_list_guard_v1';
 
 // ─── disponibilidade ────────────────────────────────────────────────────────
 let _viewChecked = false;
 let _NativeView = null;
-let _sessionDisabled = false; // erro nativo nesta sessão → JS até reiniciar
-let _sessionReason = '';
+// [2026-10-16 wave10-A] desligamento POR CONVERSA com expiração (antes: 1 erro
+// derrubava a lista nativa da sessão inteira → telemetria 37/39 aberturas 'off').
+// cid → { until, reason }. Ref de view inválida esgotada = curto; demais = longo.
+const CONV_OFF_SHORT_MS = 2 * 60 * 1000;
+const CONV_OFF_LONG_MS = 15 * 60 * 1000;
+const CONV_OFF_MAX = 200;
+const _convOff = new Map();
 let _storeBeacons = 0; // [native-store] amostras de beacon por sessão
 let _api = 0; // apiVersion do binário (1 = fase 1; 2 = blocos/lift/seleção/fixa)
 /** [native-ctxmenu] kill switch OTA do menu de contexto nativo. */
@@ -191,24 +206,51 @@ function _beacon(step, info) {
   try { require('../../services/nativeTelemetry').nativeBeacon('native_list', step, info); } catch {}
 }
 
-export function isNativeThreadListAvailable() {
-  if (_sessionDisabled) return false;
-  try {
-    const o = globalThis.__chatyy_native_list;
-    if (o === false) return false;
-    if (o !== true && !NATIVE_LIST_DEFAULT_ON) return false;
-  } catch {}
-  if (!_getNativeView()) return false;
-  if (_checkGuardOnce()) return false;
-  return true;
+function _convOffEntry(cid) {
+  if (cid == null || cid === '') return null;
+  const k = String(cid);
+  const e = _convOff.get(k);
+  if (!e) return null;
+  if (Date.now() >= e.until) { _convOff.delete(k); return null; }
+  return e;
 }
 
-export function disableNativeThreadListForSession(reason) {
-  if (_sessionDisabled) return;
-  _sessionDisabled = true;
-  _sessionReason = String(reason || '');
-  _beacon('disabled', _sessionReason);
+/** Motivo exato de a lista nativa estar desligada ('' = disponível). */
+export function nativeThreadListOffReason(cid) {
+  try {
+    const o = globalThis.__chatyy_native_list;
+    if (o === false) return 'kill_switch';
+    if (o !== true && !NATIVE_LIST_DEFAULT_ON) return 'default_off';
+  } catch {}
+  if (!_getNativeView()) return _api ? 'no_view' : 'no_module';
+  if (_checkGuardOnce()) return 'crash_guard';
+  const e = _convOffEntry(cid);
+  if (e) return 'conv_off:' + e.reason;
+  return '';
 }
+
+/** Sem cid = disponibilidade global (casca/transição); com cid = também a da conversa. */
+export function isNativeThreadListAvailable(cid) {
+  return nativeThreadListOffReason(cid) === '';
+}
+
+/**
+ * Desliga a lista nativa SÓ nesta conversa, por ttlMs (padrão: longo; ref de
+ * view inválida esgotada usa curto). Nunca pela sessão inteira.
+ */
+export function disableNativeThreadListForConv(cid, reason, ttlMs) {
+  const why = String(reason || 'error').replace(/\s+/g, ' ').slice(0, 80);
+  if (cid == null || cid === '') { _beacon('disabled', 'conv=? ' + why); return; }
+  const k = String(cid);
+  if (_convOffEntry(k)) return;
+  const ttl = Number(ttlMs) > 0 ? Number(ttlMs) : (/^stale:/.test(why) ? CONV_OFF_SHORT_MS : CONV_OFF_LONG_MS);
+  if (_convOff.size >= CONV_OFF_MAX) { const first = _convOff.keys().next().value; _convOff.delete(first); }
+  _convOff.set(k, { until: Date.now() + ttl, reason: why });
+  _beacon('disabled', `conv ttl=${Math.round(ttl / 1000)}s ${why}`);
+}
+
+/** [teste/diag] limpa os desligamentos por conversa. */
+export function _resetNativeThreadListConvOff() { _convOff.clear(); }
 
 function _richAllowed() {
   // [fase 2] links/menções/# LIGADOS por padrão (api >= 2); kill switch OTA:
@@ -1193,8 +1235,12 @@ export function useNativeThreadList(conversationId, data, ctx, blockers) {
   const [, force] = useState(0);
   const st = stickyRef.current;
   if (st.cid !== conversationId) { st.cid = conversationId; st.off = false; st.reason = ''; }
-  const available = isNativeThreadListAvailable();
-  let on = available && !st.off && !!conversationId && !blockers;
+  // [wave10-A] motivo exato (kill_switch/crash_guard/conv_off:…) em vez de 'off' genérico
+  const offWhy = nativeThreadListOffReason(conversationId);
+  // Desligada → fica JS até trocar de conversa (mesmo se o desligamento expirar
+  // com a tela aberta: nunca JS → nativo no meio).
+  if (offWhy && !st.off && conversationId) { st.off = true; st.reason = offWhy; }
+  let on = !offWhy && !st.off && !!conversationId && !blockers;
   // Cache por objeto de linha (as linhas são referencialmente estáveis entre
   // renders) — a tela re-renderiza muito; só linhas novas são checadas.
   const memoRef = useRef({ ctx: null, map: new WeakMap() });
@@ -1220,6 +1266,7 @@ export function useNativeThreadList(conversationId, data, ctx, blockers) {
     const s = stickyRef.current;
     if (s.off) return;
     s.off = true; s.reason = String(reason || 'error');
+    disableNativeThreadListForConv(s.cid, s.reason);
     force(x => x + 1);
   }, []);
   return { on, reason: st.reason, fallback };
@@ -1241,7 +1288,8 @@ export function useNativeThreadList(conversationId, data, ctx, blockers) {
  *   onRowPress({ item, key, part, url, index }), onRowLongPress({ item, key }),
  *   onSwipeReply({ item, key }), onLoadOlder(), onScroll(syntheticEvent),
  *   onScrollBeginDrag(), onScrollEndDrag(), onViewableItemsChanged({ viewableItems }),
- *   onFallback(reason)
+ *   onFallback(reason), conversationId (opcional; senão storeConv.c — p/ o
+ *   desligamento por conversa; o hook também marca via onFallback)
  * ref (subconjunto do FlashList usado pelo threadScroll do chat-conversation):
  *   scrollToEnd({animated}), scrollToIndex({index, viewPosition, animated}),
  *   scrollToOffset({offset, animated}) (só offset 0 = mais nova),
@@ -1270,38 +1318,72 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer };
   const failRef = useRef(false);
 
-  // [2026-10-16 android-wave8] applyRows rejeitado porque a view nativa já
-  // saiu (casca leve trocada pela lista cheia, conversa fechada) ou ainda não
-  // foi registrada ("Unable to find … view with tag N" no Android, "1st
-  // argument" no iOS) NÃO é falha da lista: antes desligava a lista nativa
-  // pela sessão inteira (telemetria b=662/b=697: fb native_list). Agora:
-  // desmontada → ignora; montada → reenvia tudo no próximo frame (até 4x).
+  // [2026-10-16 android-wave8 + wave10-A] applyRows rejeitado porque a view
+  // nativa ainda não está montada no Fabric (iOS "The 1st argument cannot be
+  // cast…" = ref ainda não-nativa no 1º commit; Android "Unable to find view
+  // with tag N") ou já saiu (casca trocada, conversa fechada) NÃO é falha da
+  // lista. Agora: (1) applyRows só depois do onLayout/onReady nativo (fila de
+  // pendências até lá); (2) ref inválida → reenvia tudo no próximo frame (rAF
+  // ×3, depois recuo 16/64/144/256 ms); desmontada → ignora; (3) esgotou →
+  // desliga SÓ esta conversa (com expiração), nunca a sessão; (4) beacon com o
+  // motivo exato.
   const aliveRef = useRef(true);
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
   const [applyRetry, setApplyRetry] = useState(0);
   const applyRetryRef = useRef(0);
+  const retryMsgRef = useRef('');
+  // Portão: a view nativa existe de fato (onLayout ou onReady vieram).
+  const gateRef = useRef(false);
+  const pendingRef = useRef(false);
+  const [gateOpen, setGateOpen] = useState(false);
+  const openGate = useCallback(() => {
+    if (gateRef.current) return;
+    gateRef.current = true;
+    if (aliveRef.current) setGateOpen(true);
+  }, []);
+  const convIdRef = useRef(null);
+  convIdRef.current = props.conversationId != null ? props.conversationId : (storeConv && storeConv.c != null ? storeConv.c : null);
 
   const fail = useCallback((reason) => {
     if (failRef.current) return;
     failRef.current = true;
-    disableNativeThreadListForSession(reason);
-    try { cbRef.current.onFallback && cbRef.current.onFallback(reason); } catch {}
+    const why = String(reason || 'error');
+    // Por conversa (o hook também marca via onFallback; idempotente).
+    disableNativeThreadListForConv(convIdRef.current, why);
+    try { cbRef.current.onFallback && cbRef.current.onFallback(why); } catch {}
+  }, []);
+  const scheduleRetry = useCallback(() => {
+    const n = ++applyRetryRef.current;
+    sentRef.current = { ...sentRef.current, keys: [], json: new Map() };
+    const go = () => { if (aliveRef.current && !failRef.current) setApplyRetry(n); };
+    if (n <= APPLY_RAF_TRIES) {
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f) => setTimeout(f, 16);
+      raf(go);
+    } else {
+      const m = n - APPLY_RAF_TRIES;
+      setTimeout(go, 16 * m * m);
+    }
   }, []);
   const onApplyError = useCallback((e, view, prefix) => {
     const msg = String((e && e.message) || e || '');
-    const stale = /Unable to find|view with tag|1st argument|No view found|not found for tag/i.test(msg);
-    if (stale) {
-      if (!aliveRef.current || nativeRef.current !== view) return;
-      if (applyRetryRef.current < 4) {
-        applyRetryRef.current += 1;
-        sentRef.current = { ...sentRef.current, keys: [], json: new Map() };
-        const n = applyRetryRef.current;
-        setTimeout(() => { if (aliveRef.current) setApplyRetry(n); }, 16 * n * n);
-        return;
-      }
+    if (isStaleViewError(msg)) {
+      if (!aliveRef.current) return; // desmontada → nada a fazer
+      retryMsgRef.current = msg;
+      if (applyRetryRef.current < APPLY_MAX_TRIES) { scheduleRetry(); return; }
+      fail('stale:' + prefix + msg.slice(0, 60));
+      return;
     }
     fail(prefix + msg);
-  }, [fail]);
+  }, [fail, scheduleRetry]);
+  const onApplyOk = useCallback(() => {
+    const n = applyRetryRef.current;
+    applyRetryRef.current = 0;
+    if (n > 0 && _retryBeacons < 8) {
+      _retryBeacons++;
+      _beacon('apply_retry_ok', `n=${n} gate=${gateRef.current ? 1 : 0} ${retryMsgRef.current.slice(0, 50)}`);
+    }
+    retryMsgRef.current = '';
+  }, []);
 
   // ctxRev: qualquer troca de ctx (tema, seleção, idioma) renormaliza tudo.
   const ctxRevRef = useRef({ ctx: null, rev: 0 });
@@ -1311,8 +1393,17 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   // Diff → nativo. Roda no commit (useEffect) para não bloquear o render.
   useEffect(() => {
     if (!Native || failRef.current) return;
+    // (1) view nativa ainda não montada → guarda e manda quando o portão abrir
+    if (!gateOpen) { pendingRef.current = true; return; }
+    pendingRef.current = false;
     const view = nativeRef.current;
-    if (!view || typeof view.applyRows !== 'function') return;
+    if (!view || typeof view.applyRows !== 'function') {
+      // ref ainda null/não-nativa com o portão aberto → próximo frame (limite)
+      if (aliveRef.current && view == null && applyRetryRef.current < APPLY_MAX_TRIES) { retryMsgRef.current = 'ref-null'; scheduleRetry(); }
+      else if (aliveRef.current && view != null) fail('stale:no-applyRows');
+      else if (aliveRef.current) fail('stale:ref-null');
+      return;
+    }
     const sent = sentRef.current;
     const list = Array.isArray(data) ? data : [];
     const keys = new Array(list.length);
@@ -1357,12 +1448,12 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     try {
       const p = view.applyRows(payload);
       if (p && typeof p.then === 'function') {
-        p.then(() => { applyRetryRef.current = 0; }, (e) => onApplyError(e, view, 'apply:'));
-      }
+        p.then(onApplyOk, (e) => onApplyError(e, view, 'apply:'));
+      } else onApplyOk();
     } catch (e) {
       onApplyError(e, view, 'apply-throw:');
     }
-  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, applyRetry]);
+  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, onApplyOk, scheduleRetry, applyRetry, gateOpen]);
 
   // [native-media-dl] política atualizada + view registrada p/ setTransfers +
   // progresso dos downloads do JS (mediaCache) pintando o MESMO anel nativo.
@@ -1434,6 +1525,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const handlers = useMemo(() => ({
     onReady: (e) => {
       readyRef.current = true;
+      openGate();
       // [native-store fase 3] casca leve: a tela completa pintou → casca sai
       try {
         const sc = storeConvRef.current;
@@ -1567,7 +1659,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       try { cbRef.current.onViewableItemsChanged({ viewableItems, changed: [] }); } catch {}
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [fail]);
+  }), [fail, openGate]);
 
   useImperativeHandle(ref, () => {
     const call = (fn, ...args) => {
@@ -1705,12 +1797,25 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     } catch {}
   }, []);
 
+  const shellLayoutOn = !!(nativeStore && !shell);
+  const onNativeLayout = useCallback((e) => {
+    openGate();
+    if (shellLayoutOn) onShellLayout(e);
+  }, [openGate, shellLayoutOn, onShellLayout]);
+  // Rede de segurança: sem onLayout/onReady em GATE_FALLBACK_MS abre mesmo
+  // assim (rejeição → reenvio por frame acima; o ready-timeout continua valendo).
+  useEffect(() => {
+    if (!Native) return undefined;
+    const tm = setTimeout(() => { if (!gateRef.current) { if (_retryBeacons < 8) { _retryBeacons++; _beacon('gate_timeout', 'pend=' + (pendingRef.current ? 1 : 0)); } openGate(); } }, GATE_FALLBACK_MS);
+    return () => clearTimeout(tm);
+  }, [Native, openGate]);
+
   if (!Native) return null;
   return (
     <Native
       ref={nativeRef}
       style={style || styles.fill}
-      {...(nativeStore && !shell ? { onLayout: onShellLayout } : null)}
+      onLayout={onNativeLayout}
       theme={nativeTheme}
       fontSize={fontSize}
       lineHeight={lineHeight}
