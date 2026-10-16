@@ -61,18 +61,39 @@ function _legacyDevice() {
   try { return !!require('./mediaCache').isAutoSaveMediaToGalleryOn(); } catch { return true; }
 }
 
+// [2026-10-16 media-vis-compiler] Versões PURAS (recebem o snapshot da seção).
+// Telas React DEVEM usar estas com o snapshot vindo de um hook (useSection /
+// estado): o React Compiler (app.json experiments.reactCompiler) memoiza para
+// sempre uma chamada sem dependência reativa — `mv.isGlobalOn()` virava
+// constante do 1º render e o interruptor "Salvar no Rolo da Câmera" voltava
+// para LIGADO a cada toque (gravava false no servidor, mas a tela não mudava).
+/** Snapshot atual da seção chat_settings (conta ativa) — ou null. */
+export function snapshot(acct) { return _snapshot(acct); }
+
+/** Global a partir de um snapshot (sem valor na conta → chave antiga do aparelho). */
+export function isGlobalOnIn(snap) {
+  const s = snap && typeof snap === 'object' && !Array.isArray(snap) ? snap : null;
+  const b = _bool(s?.[KEY_GLOBAL]);
+  return b != null ? b : _legacyDevice();
+}
+
+/** 'default' | 'on' | 'off' para a conversa, a partir de um snapshot. */
+export function getConvModeIn(snap, cid) {
+  const k = _ck(cid);
+  if (!k) return 'default';
+  const s = snap && typeof snap === 'object' && !Array.isArray(snap) ? snap : null;
+  const b = _bool(_convMap(s)[k]);
+  return b == null ? 'default' : (b ? 'on' : 'off');
+}
+
 /** Global da conta (true/false). */
 export function isGlobalOn(acct) {
-  const b = _bool(_snapshot(acct)?.[KEY_GLOBAL]);
-  return b != null ? b : _legacyDevice();
+  return isGlobalOnIn(_snapshot(acct));
 }
 
 /** 'default' | 'on' | 'off' para a conversa. */
 export function getConvMode(cid, acct) {
-  const k = _ck(cid);
-  if (!k) return 'default';
-  const b = _bool(_convMap(_snapshot(acct))[k]);
-  return b == null ? 'default' : (b ? 'on' : 'off');
+  return getConvModeIn(_snapshot(acct), cid);
 }
 
 /** Decisão final: a conversa sobrescreve o global. */

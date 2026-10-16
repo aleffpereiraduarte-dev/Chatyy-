@@ -24032,18 +24032,25 @@ function ChatConversationInner() {
   // ── [2026-10-15 media-visibility] "Salvar na galeria" desta conversa
   // (Padrão = global da conta / Sim / Não) — services/mediaVisibility.
   const [mediaVisSheet, setMediaVisSheet] = _useStateT(false);
-  const [, _setMediaVisTick] = _useStateT(0);
+  // [2026-10-16 media-vis-compiler] O SNAPSHOT fica em estado e entra no
+  // cálculo abaixo: com o React Compiler, ler mv.getConvMode()/isGlobalOn()
+  // sem dependência reativa (o antigo "tick" descartado) ficava memoizado →
+  // a folha mostrava o modo velho (Padrão/Sim/Não não mudava).
+  const _mvSnapNow = () => { try { return require('../services/mediaVisibility').snapshot(); } catch { return null; } };
+  const [_mediaVisSnap, _setMediaVisSnap] = _useStateT(() => (Platform.OS === 'web' ? null : _mvSnapNow()));
   useEffect(() => {
     if (Platform.OS === 'web') return undefined;
-    try { return require('../services/mediaVisibility').subscribe(() => _setMediaVisTick((x) => x + 1)); } catch { return undefined; }
+    _setMediaVisSnap(_mvSnapNow());
+    try { return require('../services/mediaVisibility').subscribe(() => _setMediaVisSnap(_mvSnapNow())); } catch { return undefined; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const _mediaVis = (() => {
     if (Platform.OS === 'web') return null;
     let mode = 'default'; let globalOn = true;
     try {
       const mv = require('../services/mediaVisibility');
-      mode = mv.getConvMode(conversationId);
-      globalOn = mv.isGlobalOn();
+      mode = mv.getConvModeIn(_mediaVisSnap, conversationId);
+      globalOn = mv.isGlobalOnIn(_mediaVisSnap);
     } catch {}
     const yes = t('mediaVis.yes') || 'Sim';
     const no = t('mediaVis.no') || 'Não';
@@ -24061,7 +24068,7 @@ function ChatConversationInner() {
         .then((r) => { if (r && r.ok === false && r.r) { try { require('../services/settingsCache').notifySaveFailed(t); } catch {} } })
         .catch(() => {});
     } catch {}
-    _setMediaVisTick((x) => x + 1);
+    _setMediaVisSnap(_mvSnapNow());
   };
   // ── [2026-10-15 native-profile] Cabeçalho nativo estilo Telegram + mídia em
   // abas + listas nativas (modules/expo-chat-profile). Todas as ações chamam

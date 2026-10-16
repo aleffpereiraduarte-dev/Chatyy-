@@ -14,6 +14,7 @@ import SettingsSegmented from '../../SettingsSegmented';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, useGroupedColors } from '../SettingsKit';
 import { AccentColorGroup, WallpaperRow } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useLocalKeys, setStorage, useSection, catStyles as s } from './shared';
+import * as mediaVis from '../../../services/mediaVisibility';
 
 const LOCAL_KEYS = ['enter_sends', 'autocorrect_enabled', 'double_tap_react', 'voice_speed_default', 'bubble_shape', 'data_saver', 'beta_features'];
 
@@ -153,11 +154,11 @@ export default function ChatsCategory() {
 // dados do contato/grupo. Lógica em services/mediaVisibility.
 function MediaVisibilityGroup() {
   const { t } = useLanguage();
+  // [2026-10-16 media-vis-compiler] O valor SAI do snapshot do hook: com o
+  // React Compiler, `mv.isGlobalOn()` sem dependência reativa era memoizado no
+  // 1º render → o interruptor nunca desligava (voltava para ligado).
   const snap = useSection('chat_settings');
-  const mv = require('../../../services/mediaVisibility');
-  // useSection re-renderiza a cada commit/revalidação da seção (snap muda).
-  void snap;
-  const on = mv.isGlobalOn();
+  const on = mediaVis.isGlobalOnIn(snap);
   const title = Platform.OS === 'ios'
     ? (t('mediaVis.titleIos') || 'Salvar no Rolo da Câmera')
     : (t('mediaVis.title') || 'Salvar na galeria');
@@ -167,7 +168,7 @@ function MediaVisibilityGroup() {
         title={title}
         value={on}
         onValueChange={(v) => {
-          mv.setGlobal(v).then((r) => { if (r && r.ok === false && r.r) settingsCache.notifySaveFailed(t); }).catch(() => {});
+          mediaVis.setGlobal(v).then((r) => { if (r && r.ok === false && r.r) settingsCache.notifySaveFailed(t); }).catch(() => {});
         }}
       />
     </SettingsGroup>
