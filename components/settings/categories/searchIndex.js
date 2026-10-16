@@ -17,8 +17,7 @@ const ENTRIES = [
   ['account', 'settings.biometricLock', 'Bloqueio biométrico', 'security', 'face id touch id biometric digital', 'native'],
   ['account', 'settings.autoLockInterval', 'Bloqueio automático', 'security', 'auto lock', 'native'],
   ['account', 'settings.changePassword', 'Alterar senha', 'security', 'senha password'],
-  ['account', 'settings.twoFactor', 'Verificação em duas etapas', 'security', '2fa pin', 'native'],
-  ['account', 'settings.registrationLock', 'PIN de segurança', 'security', 'sim swap pin', 'native'],
+  ['account', 'settings.twoFactor', 'Verificação em duas etapas', 'security', '2fa pin sim swap segurança security two-step'],
   ['account', 'settings.changePhone', 'Alterar número de telefone', 'security', 'phone telefone', 'native'],
   ['account', 'settings.loginAlerts.history', 'Histórico de logins', 'security', 'login', 'native'],
   ['account', 'settings.activityLog', 'Histórico de atividades', 'security', 'activity atividade', 'native'],
@@ -44,6 +43,7 @@ const ENTRIES = [
   ['privacy', 'settings.privacyKeepArchived', 'Manter conversas arquivadas', 'privacy_granular', 'archived arquivadas'],
   ['privacy', 'settings.blockUnknown', 'Bloquear desconhecidos', 'privacy_granular', 'unknown spam'],
   ['privacy', 'settings.blockedContacts', 'Contatos bloqueados', 'privacy_granular', 'blocked bloqueados'],
+  ['privacy', 'calls.silenceUnknown', 'Silenciar chamadas desconhecidas', 'privacy_granular', 'ligações calls silence silenciar desconhecidos unknown'], // [2026-10-16 wave12-D]
   ['privacy', 'settings.personalizationOffers', 'Personalização e ofertas', null, 'lgpd reels anúncios ads'],
   ['privacy', 'settings.defaultDisappearing', 'Mensagens temporárias', 'defaultDisappearing', 'disappearing temporárias'],
   ['chat', 'settings.theme.label', 'Tema', null, 'tema claro escuro sistema dark light theme aparência appearance'],

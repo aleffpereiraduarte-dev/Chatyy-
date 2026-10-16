@@ -11803,6 +11803,7 @@ function ChatConversationInner() {
   // EVERY send (before api.chatSend even fired), adding latency to the actual
   // dispatch. Reading a ref is synchronous.
   const sealedSenderRef = useRef(false);
+  const sendSilentNextRef = useRef(false); // [2026-10-16 w12e] "Enviar sem som" (one-shot, menu do Enviar)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -12779,6 +12780,7 @@ function ChatConversationInner() {
   const [forwardSending, setForwardSending] = _useStateT(false);
   const [forwardLoading, setForwardLoading] = _useStateT(false);
   const [forwardSearch, setForwardSearch] = _useStateT('');
+  const [forwardComment, setForwardComment] = _useStateT(''); // [2026-10-16 w12e] legenda opcional do encaminhar
   const [showGifPicker, setShowGifPicker] = _useStateT(false);
   const [showStickerPicker, setShowStickerPicker] = _useStateT(false);
   // [2026-10-15 native-emoji] Painel NATIVO Emoji | Figurinhas | GIF (modules/expo-chat-emoji)
@@ -18828,6 +18830,7 @@ function ChatConversationInner() {
     // cellular HTTP round-trip + any client-side waits). Reported at markSent.
     const _sendStartedAt = Date.now();
     const inputText = composerStore.get(); // [2026-10-06 thread-tech] live value at call time
+    const _sendSilent = sendSilentNextRef.current === true; sendSilentNextRef.current = false; // [w12e] one-shot
     _reportChatDebug('handleSend-start', { len: inputText?.length || 0, hasReply: !!replyTo, conversationId });
     const text = compressText(inputText.trim());
     // Whitespace-only guard: even after trim, weird unicode whitespace
@@ -19163,6 +19166,7 @@ function ChatConversationInner() {
     const _outboxTopicId = activeTopic?.id || null;
     const _outboxSendOpts = { skipRust: true };
     if (stagedEffect) _outboxSendOpts.effect = stagedEffect;
+    if (_sendSilent) _outboxSendOpts.silent = true; // [w12e] sem som também no reenvio
     if (sealedSenderRef.current) _outboxSendOpts.sealed = true;
     if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _outboxSendOpts.replyQuoteText = replyTo.quoteText;
     if (!(e2eEnabled && e2eKeys?.v4)) { const _xq = require('../utils/privateReplyQuote').extSendOpts(replyTo); if (_xq) _outboxSendOpts.replyExt = _xq; } // [responder-privado 2026-10-15]
@@ -19516,6 +19520,7 @@ function ChatConversationInner() {
       if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _sendOpts.replyQuoteText = replyTo.quoteText;
       if (!(e2eEnabled && e2eKeys?.v4)) { const _xq = require('../utils/privateReplyQuote').extSendOpts(replyTo); if (_xq) _sendOpts.replyExt = _xq; } // [responder-privado 2026-10-15]
       if (stagedEffect) _sendOpts.effect = stagedEffect;
+      if (_sendSilent) _sendOpts.silent = true; // [2026-10-16 w12e] push sem som/banner (chat.php/hub honram 'silent')
       // Sealed-sender (Signal-mode metadata hiding) — when the user has the
       // privacy toggle on, every send goes out with `sealed=true` so the
       // server scrubs sender_email/sender_name from the row recipients see.
@@ -24024,6 +24029,37 @@ function ChatConversationInner() {
     }
   };
 
+  // [2026-10-16 w12e] "Denunciar grupo" (WhatsApp): chat_report_thread action='report'
+  // (servidor guarda as últimas 50 mensagens p/ análise + fila de moderação). Em grupo
+  // NÃO usa 'block'/'block_and_leave' (bloquearia um membro qualquer) — "Denunciar e
+  // sair" = report + chatLeaveGroup de verdade (o 'leave' do servidor só arquiva).
+  const handleReportGroup = () => {
+    if (!conversationId) return;
+    const doReport = async (leave) => {
+      try {
+        const r = await api.chatReportThread(conversationId, '', 'report');
+        if (r && r.success === false) throw new Error(r.message || r.error || 'report_failed');
+      } catch (e) {
+        safeAlert(t('common.error') || 'Erro', String(e?.message || t('w12e.reportFailed')));
+        return;
+      }
+      if (leave) {
+        try {
+          const lr = await api.chatLeaveGroup(conversationId);
+          if (lr?.success) { setShowGroupInfo(false); safeAlert(t('w12e.groupReported')); try { router.back(); } catch {} return; }
+        } catch {}
+        safeAlert(t('common.error') || 'Erro', t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo');
+        return;
+      }
+      safeAlert(t('w12e.groupReported'));
+    };
+    require('../services/alerts').safeAlert(t('w12e.reportGroupTitle'), t('w12e.reportGroupMsg'), [
+      { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+      { text: t('w12e.report'), onPress: () => { doReport(false); } },
+      { text: t('w12e.reportAndLeave'), style: 'destructive', onPress: () => { doReport(true); } },
+    ]);
+  };
+
   const handleGenerateInviteLink = async (regenerate = false) => {
     setInviteLinkLoading(true);
     try {
@@ -24657,6 +24693,7 @@ function ChatConversationInner() {
     const _fromCtx = !!selectedMsg;
     setSelectedMsg(null);
     setForwardSearch('');
+    setForwardComment('');
     setForwardSelected(new Set());
     afterRNModal(() => setForwardMsg(msg), _fromCtx);
     setForwardLoading(true);
@@ -24723,6 +24760,7 @@ function ChatConversationInner() {
       return;
     }
     setForwardSending(true);
+    const _fwdNote = String(forwardComment || '').trim().slice(0, 4000); // [w12e]
     // Defensive cap re-enforced here in case state was mutated externally.
     const cap = (Number(forwardMsg?.forward_count) || 0) >= 5 ? 1 : FORWARD_MAX_TARGETS;
     const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0).slice(0, cap);
@@ -24787,7 +24825,15 @@ function ChatConversationInner() {
     setForwardSending(false);
     setForwardMsg(null);
     setForwardSearch('');
+    setForwardComment('');
     setForwardSelected(new Set());
+    // [2026-10-16 w12e] Mensagem opcional (WhatsApp "Adicionar mensagem"): vai LOGO
+    // DEPOIS do encaminhamento, em cada destino que confirmou. Na fila (sem rede) não
+    // vai junto — a ordem não seria garantida; o encaminhamento segue sozinho.
+    if (_fwdNote) {
+      const _noteTargets = targets.filter(id => !failedTargets.includes(id) && !queuedTargets.includes(id));
+      Promise.allSettled(_noteTargets.map(id => api.chatSend(id, _fwdNote, 'text'))).catch(() => {});
+    }
     const fail = failedTargets.length;
     if (fail === 0) {
       // [2026-10-12 wa-parity] Sucesso é silencioso (WhatsApp só fecha o
@@ -36308,8 +36354,18 @@ function ChatConversationInner() {
                   borderWidth: 1, borderColor: colors.border,
                 }, Shadow.lg]}>
                   <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 }}>
-                    {t('chat.schedule')}
+                    {t('w12e.sendOptions')}
                   </Text>
+                  {/* [2026-10-16 w12e] Enviar sem som (destinatário recebe sem toque/banner). */}
+                  <TouchableOpacity
+                    onPress={() => { setShowScheduleMenu(false); if (!sending) { sendSilentNextRef.current = true; handleSend(); } }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('w12e.sendSilent')}
+                  >
+                    <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M13.73 21a2 2 0 01-3.46 0M18.63 13A17.9 17.9 0 0118 8M6.26 6.26A5.86 5.86 0 006 8c0 7-3 9-3 9h14M18 8a6 6 0 00-9.33-5M2 2l20 20" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" /></Svg>
+                    <Text style={{ fontSize: 14, color: colors.text, fontWeight: '600' }}>{t('w12e.sendSilent')}</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => { setShowScheduleMenu(false); setShowEffectPicker(true); }}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
@@ -36325,6 +36381,9 @@ function ChatConversationInner() {
                       </View>
                     ) : null}
                   </TouchableOpacity>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 2 }}>
+                    {t('w12e.scheduleMessage')}
+                  </Text>
                   {getScheduleOptions().map((opt, idx) => (
                     <TouchableOpacity
                       key={idx}
@@ -36512,7 +36571,7 @@ function ChatConversationInner() {
             mentionCandidates={conversationType === 'group'
               ? (members || []).filter((m) => typeof m?.email === 'string' && m.email !== currentEmail).map((m) => ({ token: m.email.split('@')[0], email: m.email }))
               : undefined}
-            sendMenu={[{ key: 'effect', label: t('effects.title') || 'Enviar com efeito' }, ...getScheduleOptions().map((o) => ({ key: 'sched:' + o.value, label: o.label }))]}
+            sendMenu={[{ key: 'silent', label: t('w12e.sendSilent') }, { key: 'effect', label: t('effects.title') || 'Enviar com efeito' }, ...getScheduleOptions().map((o) => ({ key: 'sched:' + o.value, label: t('w12e.scheduleItem', { when: o.label }) }))]}
             bottomInset={(showStickerPicker || showGifPicker || showNativeEmoji) ? Spacing.sm : composerBottomPad}
             sending={sending}
             uploading={uploading}
@@ -36576,6 +36635,7 @@ function ChatConversationInner() {
             onSendMenu={(key) => {
               if (!(composerStore.get() || '').trim()) return;
               if (key === 'effect') { setShowEffectPicker(true); return; }
+              if (key === 'silent') { if (!sending) { sendSilentNextRef.current = true; handleSend(); } return; } // [w12e]
               if (key.startsWith('sched:')) {
                 const _v = key.slice(6);
                 if (_v === 'custom') setShowCustomSchedule(true);
@@ -39224,6 +39284,7 @@ function ChatConversationInner() {
                     : { Icon: IconAlertTriangle, danger: true, label: t('chat.blockUser') || 'Bloquear', onPress: () => { closeMenu(); handleBlockUser(params.email || ''); }},
                 ]}] : []),
                 ...(isGroupConv ? [{ divider: true, items: [
+                  { Icon: IconFlag, danger: true, label: t('w12e.reportGroup'), onPress: () => { closeMenu(); afterRNModal(() => runAfterNativeSheet(handleReportGroup), !USE_NATIVE_SHEETS); }},
                   { Icon: IconLogOut, danger: true, label: t('chatConv.leaveGroup') || 'Sair do grupo', onPress: () => { closeMenu(); handleLeaveGroup(); }},
                 ]}] : []),
               ];
@@ -39425,7 +39486,7 @@ function ChatConversationInner() {
                   data={[]}
                   keyExtractor={(_, i) => String(i)}
                   renderItem={null}
-                  contentContainerStyle={{ paddingBottom: forwardSelected.size > 0 ? 80 : 12 }}
+                  contentContainerStyle={{ paddingBottom: forwardSelected.size > 0 ? 136 : 12 }}
                   ListHeaderComponent={
                     <>
                       {recents.length > 0 && !q && (
@@ -39459,6 +39520,30 @@ function ChatConversationInner() {
                     position: 'absolute',
                     left: 12, right: 12, bottom: 16,
                   }}>
+                    {/* [2026-10-16 w12e] "Adicionar mensagem" (opcional) — enviada logo após o encaminhamento em cada destino. */}
+                    <TextInput
+                      value={forwardComment}
+                      onChangeText={setForwardComment}
+                      placeholder={t('w12e.forwardAddMessage')}
+                      placeholderTextColor={colors.textTertiary}
+                      maxLength={4000}
+                      multiline
+                      editable={!forwardSending}
+                      accessibilityLabel={t('w12e.forwardAddMessage')}
+                      style={{
+                        backgroundColor: isDark ? '#1f1f1f' : '#f2f2f4',
+                        color: colors.text,
+                        borderRadius: 18,
+                        paddingHorizontal: 14,
+                        paddingTop: 10,
+                        paddingBottom: 10,
+                        fontSize: 15,
+                        maxHeight: 96,
+                        marginBottom: 8,
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: colors.border,
+                      }}
+                    />
                     <TouchableOpacity
                       onPress={handleForwardSendMulti}
                       disabled={forwardSending}
@@ -40366,6 +40451,10 @@ function ChatConversationInner() {
               <GroupRow colors={colors} Icon={IconTrash} titleColor={colors.error || '#dc2626'}
                 title={t('chatConv.clearChat') || 'Limpar conversa'}
                 onPress={() => groupInfoGo(confirmClearHistory)} />
+              <GroupDivider colors={colors} />
+              <GroupRow colors={colors} Icon={IconFlag} titleColor={colors.error || '#dc2626'}
+                title={t('w12e.reportGroup')}
+                onPress={handleReportGroup} />
               <GroupDivider colors={colors} />
               <GroupRow
                 colors={colors}

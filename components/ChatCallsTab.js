@@ -7,7 +7,7 @@ import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
 import { PSTN_ENABLED } from '../constants/featureFlags';
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal, IconFlag, IconCopy, IconShield } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal, IconFlag, IconCopy, IconShield, IconChevronRight } from './Icons';
 import Sheet from './ui/Sheet'; import ActionList from './ui/ActionList'; // [2026-10-14 vis-audit] menu "…" do histórico
 import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-15 native-sheets-v2]
@@ -30,6 +30,9 @@ const _NOFLEX = { flex: 0 };
 // RecyclerView). Binário sem a view → isCallListAvailable() false → ScrollView
 // JS abaixo (idêntico ao antigo). Desligar por OTA: globalThis.__chatyy_native_calls = false.
 import NativeCallList from './calls/NativeCallList';
+import MyCallLinksSheet from './calls/MyCallLinksSheet'; // [2026-10-16 wave12-D]
+import { addMyCallLink, useMyCallLinks, callLinkState } from './calls/myCallLinks';
+import { useSilenceUnknownCallers } from './calls/silenceUnknownCallers';
 import { isCallListAvailable as _nativeCallsAvailable } from '../modules/expo-chat-conversation-list';
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
@@ -462,75 +465,64 @@ const DTMF_KEYS = [
 ];
 
 // ============================================================
-// SEGMENT TABS (Recentes / Chatyy / Telefone)
+// FILTER CHIPS (Todas / Perdidas (n) / Chatyy / Telefone)
+// [2026-10-16 wave12-D] era um segmento de 3 (Recentes/Chatyy/Telefone) sem
+// "Perdidas". Chips P&B (ativo = preenchido); contador de perdidas no vermelho
+// padrão das ligações perdidas. "Telefone" só com PSTN ou histórico de telefone.
 // ============================================================
-const SegmentTabs = memo(function SegmentTabs({ activeTab, onTabChange, isDark, t }) {
+const CallFilterChips = memo(function CallFilterChips({ activeTab, onTabChange, isDark, t, missedCount, showPhone }) {
   const tabs = [
-    { key: 'recent', label: t?.('calls.recent') || 'Recentes' },
+    { key: 'recent', label: t?.('calls.filterAll') || 'Todas' },
+    { key: 'missed', label: t?.('calls.filterMissed') || 'Perdidas', count: missedCount },
     { key: 'chatyy', label: t?.('calls.chatyy') || 'Chatyy' },
-    { key: 'phone', label: t?.('calls.phone') || 'Telefone' },
-  ];
-
-  const activeBg = isDark ? '#3a3a3c' : '#ffffff';
-  const containerBg = isDark ? '#1c1c1e' : '#e9e9ea';
-
-  // Sliding pill — animate translateX as a fraction (0/1/2) of tab width
-  // and use percentage-based positioning so we don't need onLayout.
-  const idx = Math.max(0, tabs.findIndex(tt => tt.key === activeTab));
-  const slide = useRef(new Animated.Value(idx)).current;
-  useEffect(() => {
-    Animated.spring(slide, {
-      toValue: idx,
-      tension: 240,
-      friction: 22,
-      useNativeDriver: false,
-    }).start();
-  }, [idx]);
-  const pillLeft = slide.interpolate({
-    inputRange: [0, 1, 2],
-    outputRange: ['0%', '33.333%', '66.666%'],
-  });
-
+    showPhone ? { key: 'phone', label: t?.('calls.phone') || 'Telefone' } : null,
+  ].filter(Boolean);
+  const ink = isDark ? '#F5F5F7' : '#111111';
+  const onInk = isDark ? '#000000' : '#ffffff';
+  const idleBg = isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)';
   return (
-    <View style={[s.segmentContainer, { backgroundColor: containerBg }]}>
-      <Animated.View style={{
-        position: 'absolute',
-        top: 2, bottom: 2, left: pillLeft,
-        width: '33.333%',
-        backgroundColor: activeBg,
-        borderRadius: 7,
-        ...(Platform.OS === 'ios' ? {
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: isDark ? 0.4 : 0.08,
-          shadowRadius: 3,
-        } : Platform.OS === 'android' ? { elevation: 2 } : {
-          boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.4)' : '0 1px 3px rgba(0,0,0,0.08)',
-        }),
-      }} />
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={{ marginHorizontal: -16, flexGrow: 0 }}
+      contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16 }}
+      accessibilityRole="tablist"
+    >
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
         return (
-          <TouchableOpacity
+          <PressableScale
             key={tab.key}
-            style={s.segmentTab}
+            haptic="select"
+            scaleTo={0.95}
             onPress={() => onTabChange(tab.key)}
-            activeOpacity={0.7}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, minHeight: 32,
+              backgroundColor: active ? ink : idleBg,
+            }}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
+            accessibilityLabel={tab.count ? `${tab.label} ${tab.count}` : tab.label}
+            testID={`calls-filter-${tab.key}`}
           >
-            <Text style={[
-              s.segmentLabel,
-              { color: isDark ? '#ffffff' : '#000000' },
-              active && { fontWeight: '600' },
-              !active && { color: isDark ? '#8e8e93' : '#6c6c70' },
-            ]}>
+            <Text style={{ fontSize: 14, fontWeight: active ? '600' : '500', color: active ? onInk : ink }}>
               {tab.label}
             </Text>
-          </TouchableOpacity>
+            {tab.count > 0 && (
+              <View style={{
+                minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5,
+                alignItems: 'center', justifyContent: 'center', backgroundColor: RED,
+              }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#ffffff' }}>
+                  {tab.count > 99 ? '99+' : tab.count}
+                </Text>
+              </View>
+            )}
+          </PressableScale>
         );
       })}
-    </View>
+    </ScrollView>
   );
 });
 
@@ -591,26 +583,13 @@ const DialKey = memo(function DialKey({ digit, sub, onPress, onLongPress, isDark
 // CALL HISTORY ROW - iPhone style
 // ============================================================
 // Silence unknown callers — state persists in AsyncStorage
+// [2026-10-16 wave12-D] estado compartilhado com Configurações > Privacidade.
 function SilenceToggle({ isDark }) {
-  const [on, setOn] = useState(false);
-  useEffect(() => {
-    (async () => {
-      try {
-        const AS = require('@react-native-async-storage/async-storage').default;
-        setOn((await AS.getItem('silence_unknown_callers')) === 'true');
-      } catch {}
-    })();
-  }, []);
+  const [on, setOn] = useSilenceUnknownCallers();
   return (
     <NativeSwitch
       value={on}
-      onValueChange={async (v) => {
-        setOn(v);
-        try {
-          const AS = require('@react-native-async-storage/async-storage').default;
-          await AS.setItem('silence_unknown_callers', v ? 'true' : 'false');
-        } catch {}
-      }}
+      onValueChange={setOn}
       trackColor={{ false: isDark ? '#39393d' : '#e9e9ea', true: GREEN }}
       thumbColor="#ffffff"
     />
@@ -3309,6 +3288,10 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   // then opens the native share sheet with the returned url. Backend contract:
   //   chat_create_call_link { call_type } → { link_id, url, is_video }
   const [creatingLink, setCreatingLink] = useState(false);
+  // [2026-10-16 wave12-D] "Meus links de chamada" (revogar/copiar/compartilhar).
+  const [myLinksOpen, setMyLinksOpen] = useState(false);
+  const myLinks = useMyCallLinks();
+  const myLinksActive = myLinks.reduce((n, l) => n + (callLinkState(l) === 'active' ? 1 : 0), 0);
   const createAndShareLink = useCallback(async (callType) => {
     if (creatingLink) return;
     setCreatingLink(true);
@@ -3325,6 +3308,8 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         );
         return;
       }
+      // [2026-10-16 wave12-D] guarda em "Meus links" (cache por conta) p/ revogar depois.
+      try { addMyCallLink({ link_id: data?.link_id || String(url).split('/').pop(), url, is_video: data?.is_video ?? callType === 'video' }); } catch {}
       try {
         if (Platform.OS === 'web') {
           // Web: no native share sheet — copy to clipboard, fall back to prompt.
@@ -3452,11 +3437,15 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
 
   const filteredHistory = useMemo(() => {
     switch (activeTab) {
+      case 'missed': return allHistory.filter(h => callDirection(h) === 'missed');
       case 'chatyy': return allHistory.filter(h => h.source === 'chat');
       case 'phone': return allHistory.filter(h => h.source === 'voip');
       default: return allHistory;
     }
   }, [allHistory, activeTab]);
+  // [2026-10-16 wave12-D] contador do chip "Perdidas" + "Telefone" só se fizer sentido.
+  const missedCount = useMemo(() => allHistory.reduce((n, h) => n + (callDirection(h) === 'missed' ? 1 : 0), 0), [allHistory]);
+  const hasPhoneRows = useMemo(() => allHistory.some(h => h.source === 'voip'), [allHistory]);
 
   // Group calls by date
   const groupedCalls = useMemo(() => {
@@ -3577,12 +3566,15 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             items={[{ key: 'clear', label: t?.('calls.clearHistory') || 'Limpar histórico', icon: IconTrash, destructive: true, onPress: handleClearAll }]}
           />
         </Sheet>
-        <SegmentTabs
+        <CallFilterChips
           activeTab={activeTab}
           onTabChange={setActiveTab}
           isDark={isDark}
           t={t}
+          missedCount={missedCount}
+          showPhone={PSTN_ENABLED || hasPhoneRows || activeTab === 'phone'}
         />
+        <MyCallLinksSheet visible={myLinksOpen} onClose={() => setMyLinksOpen(false)} t={t} language={language} />
       </View>
 
       {/* Plan status */}
@@ -3648,6 +3640,33 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           </Text>
         </View>
       </PressableScale>
+
+      {/* [2026-10-16 wave12-D] Meus links de chamada — só depois do 1º link criado aqui. */}
+      {myLinks.length > 0 && (
+        <PressableScale
+          onPress={() => setMyLinksOpen(true)}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row', alignItems: 'center',
+            marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+            paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14, minHeight: 56,
+            backgroundColor: cardBg,
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t?.('calls.myCallLinks') || 'Meus links de chamada'}
+          testID="calls-my-links"
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: textColor }}>
+              {t?.('calls.myCallLinks') || 'Meus links de chamada'}
+            </Text>
+            <Text style={{ fontSize: 13, lineHeight: 17, color: subColor, marginTop: 2 }}>
+              {t?.('calls.myCallLinksActive', { n: myLinksActive }) || `Ativos: ${myLinksActive}`}
+            </Text>
+          </View>
+          <IconChevronRight size={18} color={subColor} />
+        </PressableScale>
+      )}
     </>
   );
 
@@ -3708,10 +3727,14 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           <View style={s.emptyState}>
             <ChatyyMascot pose="sleep" size={132} dark={isDark} />{/* [2026-10-16 mascote] era CallEmptyIllustration */}
             <Text style={[s.emptyTitle, { color: textColor }]}>
-              {t?.('calls.noCallsTitle') || 'Nenhuma ligação recente'}
+              {activeTab === 'missed'
+                ? (t?.('calls.noMissedTitle') || 'Nenhuma ligação perdida')
+                : (t?.('calls.noCallsTitle') || 'Nenhuma ligação recente')}
             </Text>
             <Text style={[s.emptySubtitle, { color: subColor }]}>
-              {t?.('calls.noCallsSubtitle') || 'Seu histórico de ligações aparecerá aqui'}
+              {activeTab === 'missed'
+                ? (t?.('calls.noMissedSubtitle') || 'Ligações que você não atender aparecem aqui')
+                : (t?.('calls.noCallsSubtitle') || 'Seu histórico de ligações aparecerá aqui')}
             </Text>
             {/* CTA — primes the user to make a call instead of staring at nothing. */}
             {PSTN_ENABLED && (
@@ -3859,33 +3882,6 @@ const s = StyleSheet.create({
   },
   editBtn: {
     paddingVertical: 4,
-  },
-
-  // Segment tabs
-  segmentContainer: {
-    flexDirection: 'row',
-    borderRadius: 8,
-    padding: 2,
-  },
-  segmentTab: {
-    flex: 1,
-    paddingVertical: 7,
-    alignItems: 'center',
-    borderRadius: 6,
-  },
-  segmentTabActive: {
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
-    } : Platform.OS === 'ios' ? {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.12,
-      shadowRadius: 3,
-    } : { elevation: 2 }),
-  },
-  segmentLabel: {
-    fontSize: 13,
-    fontWeight: '500',
   },
 
   // Plan badge

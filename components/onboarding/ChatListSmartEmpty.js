@@ -9,17 +9,20 @@
 // With a filter/search active it falls back to the generic ScreenEmptyState
 // (the list isn't really empty then, just filtered).
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Platform, ActivityIndicator, DeviceEventEmitter } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '../../context/ThemeContext';
 import AvatarCircle from '../AvatarCircle';
 import ScreenEmptyState from '../ScreenEmptyState';
-import { IconBookmark, IconUserPlus, IconPlus, IconShare } from '../Icons';
+import { IconBookmark, IconUserPlus, IconPlus, IconShare, IconUsersSmall, IconMegaphone } from '../Icons';
 import { useReducedMotion } from '../reducedMotion';
 import FadeSlideIn from '../FadeSlideIn';
 import { useOnbCopy } from './copy';
 import ChatyyMascot from '../mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { shareInvite } from './invite';
+
+// [2026-10-16 wave12-c] app/chat.js escuta e troca de aba (Comunidades/Canais).
+export const OPEN_HOME_TAB_EVENT = 'chatyy:openHomeTab';
 
 function Chevron({ color }) {
   return (
@@ -209,6 +212,30 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
             ))}
           </View>
         ) : null}
+
+        {/* [2026-10-16 wave12-c] Descobrir Comunidades/Canais — antes só na gaveta Apps. */}
+        <View style={{ marginTop: 22 }}>
+          <Text style={[st.section, { color: sub }]}>{t('discoverHome.section') || 'Descobrir'}</Text>
+          {[
+            { k: 'communities', title: t('community.title') || 'Comunidades', subT: t('discoverHome.communitiesSub'), Icon: IconUsersSmall },
+            { k: 'channels', title: t('channel.title') || 'Canais', subT: t('discoverHome.channelsSub'), Icon: IconMegaphone },
+          ].map(({ k, title, subT, Icon }) => (
+            <Pressable
+              key={k}
+              onPress={() => { try { DeviceEventEmitter.emit(OPEN_HOME_TAB_EVENT, k); } catch {} }}
+              style={({ pressed }) => [st.card, { borderColor: hair, marginTop: 8, opacity: pressed ? 0.7 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel={title}
+            >
+              <View style={[st.cardIcon, { backgroundColor: muted }]}><Icon size={20} color={fg} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={[st.cardTitle, { color: fg }]}>{title}</Text>
+                {subT ? <Text style={[st.cardSub, { color: sub }]}>{subT}</Text> : null}
+              </View>
+              <Chevron color={sub} />
+            </Pressable>
+          ))}
+        </View>
 
         <Pressable
           onPress={openSaved}

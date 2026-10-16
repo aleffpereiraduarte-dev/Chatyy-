@@ -450,7 +450,13 @@ export function isLocaleSupported(code) {
 // [2026-10-09 i18n-complete] Idiomas oferecidos no seletor de Configurações:
 // só os com tradução completa (≥ 98% das chaves do pt-BR). Conferir com
 // `node scripts/i18n-coverage.js` (marca com * e falha se algum cair < 98%).
-export const SELECTABLE_LOCALES = ['pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'ja', 'hi', 'id', 'ar'];
+// [2026-10-16 wave12f-idiomas] +9 (ru tr zh-CN ko vi th pl uk nl): completados
+// (2,7-2,8 mil chaves faltantes + ~400 que ainda estavam em inglês, cada) e
+// placeholders conferidos → 100% de cobertura, 0 placeholder quebrado.
+export const SELECTABLE_LOCALES = [
+  'pt-BR', 'pt-PT', 'en', 'es', 'fr', 'de', 'it', 'nl', 'pl', 'ru', 'uk', 'tr',
+  'ar', 'hi', 'id', 'vi', 'th', 'ja', 'ko', 'zh-CN',
+];
 
 // Idiomas escritos da direita p/ a esquerda (layout espelhado).
 export function isRTLLanguage(code) {
@@ -458,67 +464,86 @@ export function isRTLLanguage(code) {
 }
 
 export const LANGUAGES = [
-  { code: 'pt-BR', label: 'Português (Brasil)', flag: '🇧🇷' },
-  { code: 'pt-PT', label: 'Português (Portugal)', flag: '🇵🇹' },
-  { code: 'en', label: 'English', flag: '🇺🇸' },
-  { code: 'es', label: 'Español', flag: '🇪🇸' },
-  { code: 'fr', label: 'Français', flag: '🇫🇷' },
-  { code: 'de', label: 'Deutsch', flag: '🇩🇪' },
-  { code: 'it', label: 'Italiano', flag: '🇮🇹' },
-  { code: 'ja', label: '日本語', flag: '🇯🇵' },
-  { code: 'zh-CN', label: '中文 (简体)', flag: '🇨🇳' },
-  { code: 'ko', label: '한국어', flag: '🇰🇷' },
-  { code: 'ar', label: 'العربية', flag: '🇸🇦' },
-  { code: 'ru', label: 'Русский', flag: '🇷🇺' },
-  { code: 'hi', label: 'हिन्दी', flag: '🇮🇳' },
-  { code: 'tr', label: 'Türkçe', flag: '🇹🇷' },
-  { code: 'nl', label: 'Nederlands', flag: '🇳🇱' },
-  { code: 'pl', label: 'Polski', flag: '🇵🇱' },
-  { code: 'sv', label: 'Svenska', flag: '🇸🇪' },
-  { code: 'nb', label: 'Norsk', flag: '🇳🇴' },
-  { code: 'da', label: 'Dansk', flag: '🇩🇰' },
-  { code: 'fi', label: 'Suomi', flag: '🇫🇮' },
-  { code: 'cs', label: 'Čeština', flag: '🇨🇿' },
-  { code: 'ro', label: 'Română', flag: '🇷🇴' },
-  { code: 'hu', label: 'Magyar', flag: '🇭🇺' },
-  { code: 'el', label: 'Ελληνικά', flag: '🇬🇷' },
-  { code: 'uk', label: 'Українська', flag: '🇺🇦' },
-  { code: 'th', label: 'ไทย', flag: '🇹🇭' },
-  { code: 'vi', label: 'Tiếng Việt', flag: '🇻🇳' },
-  { code: 'id', label: 'Bahasa Indonesia', flag: '🇮🇩' },
-  { code: 'ms', label: 'Bahasa Melayu', flag: '🇲🇾' },
-  { code: 'fil', label: 'Filipino', flag: '🇵🇭' },
-  { code: 'he', label: 'עברית', flag: '🇮🇱' },
-  { code: 'fa', label: 'فارسی', flag: '🇮🇷' },
-  { code: 'bn', label: 'বাংলা', flag: '🇧🇩' },
-  { code: 'sw', label: 'Kiswahili', flag: '🇰🇪' },
-  { code: 'ta', label: 'தமிழ்', flag: '🇮🇳' },
-  { code: 'te', label: 'తెలుగు', flag: '🇮🇳' },
-  { code: 'mr', label: 'मराठी', flag: '🇮🇳' },
-  { code: 'gu', label: 'ગુજરાતી', flag: '🇮🇳' },
-  { code: 'kn', label: 'ಕನ್ನಡ', flag: '🇮🇳' },
-  { code: 'my', label: 'မြန်မာ', flag: '🇲🇲' },
-  { code: 'km', label: 'ខ្មែរ', flag: '🇰🇭' },
-  { code: 'am', label: 'አማርኛ', flag: '🇪🇹' },
-  { code: 'ka', label: 'ქართული', flag: '🇬🇪' },
-  { code: 'hy', label: 'Հայերեն', flag: '🇦🇲' },
-  { code: 'az', label: 'Azərbaycan', flag: '🇦🇿' },
-  { code: 'kk', label: 'Қазақ', flag: '🇰🇿' },
-  { code: 'uz', label: "O'zbek", flag: '🇺🇿' },
-  { code: 'mn', label: 'Монгол', flag: '🇲🇳' },
-  { code: 'lo', label: 'ລາວ', flag: '🇱🇦' },
-  { code: 'hr', label: 'Hrvatski', flag: '🇭🇷' },
-  { code: 'sk', label: 'Slovenčina', flag: '🇸🇰' },
-  { code: 'bg', label: 'Български', flag: '🇧🇬' },
-  { code: 'sr', label: 'Srpski', flag: '🇷🇸' },
-  { code: 'sl', label: 'Slovenščina', flag: '🇸🇮' },
-  { code: 'lt', label: 'Lietuvių', flag: '🇱🇹' },
-  { code: 'lv', label: 'Latviešu', flag: '🇱🇻' },
-  { code: 'et', label: 'Eesti', flag: '🇪🇪' },
-  { code: 'ca', label: 'Català', flag: '🇪🇸' },
+  { code: 'pt-BR', label: 'Português (Brasil)', en: 'Portuguese (Brazil)', pt: 'Português (Brasil)', flag: '🇧🇷' },
+  { code: 'pt-PT', label: 'Português (Portugal)', en: 'Portuguese (Portugal)', pt: 'Português (Portugal)', flag: '🇵🇹' },
+  { code: 'en', label: 'English', en: 'English', pt: 'Inglês', flag: '🇺🇸' },
+  { code: 'es', label: 'Español', en: 'Spanish', pt: 'Espanhol', flag: '🇪🇸' },
+  { code: 'fr', label: 'Français', en: 'French', pt: 'Francês', flag: '🇫🇷' },
+  { code: 'de', label: 'Deutsch', en: 'German', pt: 'Alemão', flag: '🇩🇪' },
+  { code: 'it', label: 'Italiano', en: 'Italian', pt: 'Italiano', flag: '🇮🇹' },
+  { code: 'ja', label: '日本語', en: 'Japanese', pt: 'Japonês', flag: '🇯🇵' },
+  { code: 'zh-CN', label: '中文 (简体)', en: 'Chinese (Simplified)', pt: 'Chinês (simplificado)', flag: '🇨🇳' },
+  { code: 'ko', label: '한국어', en: 'Korean', pt: 'Coreano', flag: '🇰🇷' },
+  { code: 'ar', label: 'العربية', en: 'Arabic', pt: 'Árabe', flag: '🇸🇦' },
+  { code: 'ru', label: 'Русский', en: 'Russian', pt: 'Russo', flag: '🇷🇺' },
+  { code: 'hi', label: 'हिन्दी', en: 'Hindi', pt: 'Hindi', flag: '🇮🇳' },
+  { code: 'tr', label: 'Türkçe', en: 'Turkish', pt: 'Turco', flag: '🇹🇷' },
+  { code: 'nl', label: 'Nederlands', en: 'Dutch', pt: 'Holandês', flag: '🇳🇱' },
+  { code: 'pl', label: 'Polski', en: 'Polish', pt: 'Polonês', flag: '🇵🇱' },
+  { code: 'sv', label: 'Svenska', en: 'Swedish', pt: 'Sueco', flag: '🇸🇪' },
+  { code: 'nb', label: 'Norsk bokmål', en: 'Norwegian Bokmål', pt: 'Norueguês', flag: '🇳🇴' },
+  { code: 'da', label: 'Dansk', en: 'Danish', pt: 'Dinamarquês', flag: '🇩🇰' },
+  { code: 'fi', label: 'Suomi', en: 'Finnish', pt: 'Finlandês', flag: '🇫🇮' },
+  { code: 'cs', label: 'Čeština', en: 'Czech', pt: 'Tcheco', flag: '🇨🇿' },
+  { code: 'ro', label: 'Română', en: 'Romanian', pt: 'Romeno', flag: '🇷🇴' },
+  { code: 'hu', label: 'Magyar', en: 'Hungarian', pt: 'Húngaro', flag: '🇭🇺' },
+  { code: 'el', label: 'Ελληνικά', en: 'Greek', pt: 'Grego', flag: '🇬🇷' },
+  { code: 'uk', label: 'Українська', en: 'Ukrainian', pt: 'Ucraniano', flag: '🇺🇦' },
+  { code: 'th', label: 'ไทย', en: 'Thai', pt: 'Tailandês', flag: '🇹🇭' },
+  { code: 'vi', label: 'Tiếng Việt', en: 'Vietnamese', pt: 'Vietnamita', flag: '🇻🇳' },
+  { code: 'id', label: 'Bahasa Indonesia', en: 'Indonesian', pt: 'Indonésio', flag: '🇮🇩' },
+  { code: 'ms', label: 'Bahasa Melayu', en: 'Malay', pt: 'Malaio', flag: '🇲🇾' },
+  { code: 'fil', label: 'Filipino', en: 'Filipino', pt: 'Filipino', flag: '🇵🇭' },
+  { code: 'he', label: 'עברית', en: 'Hebrew', pt: 'Hebraico', flag: '🇮🇱' },
+  { code: 'fa', label: 'فارسی', en: 'Persian', pt: 'Persa', flag: '🇮🇷' },
+  { code: 'bn', label: 'বাংলা', en: 'Bengali', pt: 'Bengali', flag: '🇧🇩' },
+  { code: 'sw', label: 'Kiswahili', en: 'Swahili', pt: 'Suaíli', flag: '🇰🇪' },
+  { code: 'ta', label: 'தமிழ்', en: 'Tamil', pt: 'Tâmil', flag: '🇮🇳' },
+  { code: 'te', label: 'తెలుగు', en: 'Telugu', pt: 'Telugu', flag: '🇮🇳' },
+  { code: 'mr', label: 'मराठी', en: 'Marathi', pt: 'Marati', flag: '🇮🇳' },
+  { code: 'gu', label: 'ગુજરાતી', en: 'Gujarati', pt: 'Guzerate', flag: '🇮🇳' },
+  { code: 'kn', label: 'ಕನ್ನಡ', en: 'Kannada', pt: 'Canarês', flag: '🇮🇳' },
+  { code: 'my', label: 'မြန်မာဘာသာ', en: 'Burmese', pt: 'Birmanês', flag: '🇲🇲' },
+  { code: 'km', label: 'ខ្មែរ', en: 'Khmer', pt: 'Khmer', flag: '🇰🇭' },
+  { code: 'am', label: 'አማርኛ', en: 'Amharic', pt: 'Amárico', flag: '🇪🇹' },
+  { code: 'ka', label: 'ქართული', en: 'Georgian', pt: 'Georgiano', flag: '🇬🇪' },
+  { code: 'hy', label: 'Հայերեն', en: 'Armenian', pt: 'Armênio', flag: '🇦🇲' },
+  { code: 'az', label: 'Azərbaycanca', en: 'Azerbaijani', pt: 'Azerbaijano', flag: '🇦🇿' },
+  { code: 'kk', label: 'Қазақ тілі', en: 'Kazakh', pt: 'Cazaque', flag: '🇰🇿' },
+  { code: 'uz', label: 'O\'zbekcha', en: 'Uzbek', pt: 'Uzbeque', flag: '🇺🇿' },
+  { code: 'mn', label: 'Монгол', en: 'Mongolian', pt: 'Mongol', flag: '🇲🇳' },
+  { code: 'lo', label: 'ລາວ', en: 'Lao', pt: 'Laosiano', flag: '🇱🇦' },
+  { code: 'hr', label: 'Hrvatski', en: 'Croatian', pt: 'Croata', flag: '🇭🇷' },
+  { code: 'sk', label: 'Slovenčina', en: 'Slovak', pt: 'Eslovaco', flag: '🇸🇰' },
+  { code: 'bg', label: 'Български', en: 'Bulgarian', pt: 'Búlgaro', flag: '🇧🇬' },
+  { code: 'sr', label: 'Srpski', en: 'Serbian', pt: 'Sérvio', flag: '🇷🇸' },
+  { code: 'sl', label: 'Slovenščina', en: 'Slovenian', pt: 'Esloveno', flag: '🇸🇮' },
+  { code: 'lt', label: 'Lietuvių', en: 'Lithuanian', pt: 'Lituano', flag: '🇱🇹' },
+  { code: 'lv', label: 'Latviešu', en: 'Latvian', pt: 'Letão', flag: '🇱🇻' },
+  { code: 'et', label: 'Eesti', en: 'Estonian', pt: 'Estoniano', flag: '🇪🇪' },
+  { code: 'ca', label: 'Català', en: 'Catalan', pt: 'Catalão', flag: '🇪🇸' },
 ];
 
 export const DEFAULT_LANGUAGE = 'pt-BR';
+
+// [2026-10-16 wave12f-idiomas] Nome do idioma `code` escrito no idioma da UI
+// (`uiLang`) — p/ o seletor mostrar "Русский · Russo". Intl.DisplayNames quando
+// existe (web; Hermes não tem); senão pt-* → nome em português, demais → inglês.
+const _dnCache = {};
+export function languageDisplayName(code, uiLang) {
+  const entry = LANGUAGES.find((l) => l.code === code);
+  if (!entry) return String(code || '');
+  const ui = String(uiLang || DEFAULT_LANGUAGE);
+  if (ui === code) return entry.label;
+  try {
+    if (typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+      if (!_dnCache[ui]) _dnCache[ui] = new Intl.DisplayNames([ui], { type: 'language' });
+      const v = _dnCache[ui].of(code);
+      if (v && v !== code) return v.charAt(0).toLocaleUpperCase(ui) + v.slice(1);
+    }
+  } catch {}
+  return /^pt(-|$)/i.test(ui) ? (entry.pt || entry.en || entry.label) : (entry.en || entry.label);
+}
 
 // [2026-10-15 boot-i18n] Web: quem NÃO usa português precisa do en (idioma ativo
 // ou fallback do idioma remoto) — começa a baixar o chunk já na avaliação deste

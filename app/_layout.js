@@ -463,6 +463,8 @@ const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').the
 // <Suspense fallback={null}> below, so the deferred chunk resolving later has
 // no visible effect — until then they'd render null anyway.
 const LoginChallengePrompt = React.lazy(() => import('../components/LoginChallengePrompt'));
+// [2026-10-16 two-step] lembrete periódico do PIN da verificação em duas etapas (estilo WhatsApp).
+const TwoStepReminder = React.lazy(() => import('../components/TwoStepReminder'));
 const LocationRequestModal = React.lazy(() => import('../components/LocationRequestModal'));
 const PushLoginRequestModal = React.lazy(() => import('../components/PushLoginRequestModal'));
 const PWAPrompts = React.lazy(() => import('../components/PWAPrompts'));
@@ -2222,6 +2224,7 @@ export default function RootLayout() {
                   {/* [2026-10-15 native-group-create] Novo grupo/canal — passo de detalhes (lista agrupada nativa). */}
                   <Stack.Screen name="group-new-details" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
                   <Stack.Screen name="locked-chats" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 more-native] */ }} />
+                  <Stack.Screen name="chat-folders" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED /* [2026-10-16 wave12-B pastas] */ }} />
                   <Stack.Screen name="saved-messages" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="call-schedule" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 more-native] */ }} />
@@ -2362,6 +2365,9 @@ export default function RootLayout() {
                 </Suspense>
                 <Suspense fallback={null}>
                   <LoginChallengePrompt />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <TwoStepReminder />
                 </Suspense>
                 <Suspense fallback={null}>
                   <LocationRequestModal />

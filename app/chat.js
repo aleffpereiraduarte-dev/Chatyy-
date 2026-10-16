@@ -63,6 +63,7 @@ import NativeHomeTabBar, { nativeTabsAvailable } from '../components/NativeHomeT
 import { useCollapsedTitleAnim } from '../components/LargeTitleHeader'; // [2026-10-15 nav-motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2]
 import AppsDrawerModal from '../components/apps/AppsSheet'; // [2026-10-15 apps-v3]
+import HomeDiscoverPills from '../components/home/HomeDiscoverPills'; // [2026-10-16 wave12-c]
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -383,17 +384,33 @@ function ChatHub() {
   // upgrade, abre um tour de 5 slides explicando o que desbloqueou. AsyncStorage
   // guarda o flag pra não mostrar de novo. Delay de 1.2s pra deixar a tela
   // assentar antes do modal aparecer.
+  // [2026-10-16 wave12-c] Só depois do 1º uso REAL (1ª mensagem enviada ou 3ª
+  // abertura da home, e first-run concluído) — nunca por cima do 1º contato.
   const [showPlusTour, setShowPlusTour] = useState(false);
+  const _plusTourEmail = String(user?.email || '').toLowerCase();
   useEffect(() => {
+    if (!_plusTourEmail) return undefined;
     let cancelled = false;
-    const t = setTimeout(async () => {
+    let stopWatch = null;
+    const { noteHomeOpen, isPastFirstUse, watchFirstMessageSent } = require('../components/onboarding/firstUse');
+    const tryShow = async () => {
       try {
+        if (cancelled || !(await isPastFirstUse(_plusTourEmail))) return false;
         const should = await checkShouldShowPlusOnboarding();
         if (!cancelled && should) setShowPlusTour(true);
       } catch {}
+      return true;
+    };
+    const tm = setTimeout(async () => {
+      try { await noteHomeOpen(_plusTourEmail); } catch {}
+      if (cancelled) return;
+      const past = await tryShow();
+      // Só registra: a 1ª mensagem sai de dentro da conversa e o tour não pode
+      // abrir por cima dela — aparece na próxima abertura da home.
+      if (!past && !cancelled) stopWatch = watchFirstMessageSent(_plusTourEmail);
     }, 1200);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, []);
+    return () => { cancelled = true; clearTimeout(tm); try { stopWatch?.(); } catch {} };
+  }, [_plusTourEmail]);
 
   // Track window dimensions for responsive layout
   const [windowWidth, setWindowWidth] = useState(Dimensions.get('window').width);
@@ -473,6 +490,14 @@ function ChatHub() {
   // [2026-10-16 motion-telegram] Conversas usa a MESMA mola (e Reduzir
   // Movimento) do título compacto de Ligações/Status — antes timing 160ms linear.
   const [chatTitleAnim, onChatTitleCollapse] = useCollapsedTitleAnim();
+  // [2026-10-16 wave12-c] Atalhos Comunidades/Canais moram no espaço livre do
+  // header e saem de cena quando o título compacto entra (lista rolada).
+  const [chatTitleCollapsed, setChatTitleCollapsed] = useState(false);
+  const onChatTitleCollapseHome = useCallback((c) => {
+    onChatTitleCollapse(c);
+    setChatTitleCollapsed(!!c);
+  }, [onChatTitleCollapse]);
+  const discoverPillsOpacity = useMemo(() => chatTitleAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }), [chatTitleAnim]);
   // [2026-10-16 wave8-list] Lista nativa (api 3) com o header POR CIMA: as
   // conversas rolam por baixo de um vidro NATIVO (UIVisualEffectView / blur
   // RenderEffect no Android 12+) que a própria lista desenha no topo — o
@@ -967,6 +992,17 @@ function ChatHub() {
   // Apps drawer already dropped its Status tile; this handler was dead wiring.
   const openChannelsFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('channels'); }, [handleTabPress]);
   const openCommunitiesFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('communities'); }, [handleTabPress]);
+  // [2026-10-16 wave12-c] atalhos à vista na home (HomeDiscoverPills).
+  const openDiscoverTab = useCallback((k) => { try { haptic.select(); } catch {} handleTabPress(k); }, [handleTabPress]);
+  // Vazio da lista (components/onboarding/ChatListSmartEmpty) pede a troca de aba por evento.
+  const openDiscoverTabRef = useRef(openDiscoverTab);
+  useEffect(() => { openDiscoverTabRef.current = openDiscoverTab; }, [openDiscoverTab]);
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('chatyy:openHomeTab', (k) => {
+      if (k === 'channels' || k === 'communities') openDiscoverTabRef.current?.(k);
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, []);
 
   // Handle hardware/browser back button on web
   useEffect(() => {
@@ -1434,6 +1470,8 @@ function ChatHub() {
   const barDark = isDark || activeTab === 'reels';
   // [wave8-list] header sobreposto à lista (só Conversas, busca fechada).
   const homeOverlay = homeTopBar && LIST_LARGE_TITLE && activeTab === 'chats' && !searchOpen && !reelsImmersive && homeHeaderH > 0;
+  // [2026-10-16 wave12-c] web/fallback: atalhos Comunidades/Canais numa linha sob o header.
+  const showDiscoverRow = !LIST_LARGE_TITLE && !isKids && activeTab === 'chats' && !searchOpen && !reelsImmersive;
   return (
     <View style={[styles.container, {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
@@ -1449,6 +1487,7 @@ function ChatHub() {
         // [2026-10-07 native-ui-build] large title: sem hairline fixa — ela
         // aparece (fade) só quando a lista rola por baixo do header.
         ...(LIST_LARGE_TITLE && (activeTab === 'chats' || _ltTab) ? { borderBottomWidth: 0 } : {}),
+        ...(showDiscoverRow ? { borderBottomWidth: 0 } : null),
         // [wave8-list] por cima da lista: o vidro nativo da lista é o fundo.
         ...(homeOverlay ? { backgroundColor: 'transparent' } : null),
       }]}>
@@ -1502,7 +1541,17 @@ function ChatHub() {
             // Chatyy wordmark. Uses the i18n label already defined in `titles`.
             // [2026-10-07 native-ui-build] Nativo: o título grande foi p/ dentro
             // da lista (large title que colapsa); aqui fica vazio.
-            LIST_LARGE_TITLE ? null : (
+            // [2026-10-16 wave12-c] …e o vazio vira os atalhos Comunidades/Canais.
+            LIST_LARGE_TITLE ? (isKids || searchOpen ? null : (
+            <Animated.View
+              pointerEvents={chatTitleCollapsed ? 'none' : 'auto'}
+              accessibilityElementsHidden={chatTitleCollapsed}
+              importantForAccessibility={chatTitleCollapsed ? 'no-hide-descendants' : 'auto'}
+              style={{ flex: 1, minWidth: 0, opacity: discoverPillsOpacity }}
+            >
+              <HomeDiscoverPills t={t} isDark={isDark} colors={colors} onOpen={openDiscoverTab} />
+            </Animated.View>
+            )) : (
             <SyncStatusTitle
               title={titles.chats}
               announce
@@ -1527,6 +1576,13 @@ function ChatHub() {
           {renderHeaderAction()}
         </View>
       </View>
+
+      {/* [2026-10-16 wave12-c] Web/fallback (título no header): atalhos numa linha fina abaixo. */}
+      {showDiscoverRow && (
+        <View style={[glassHeader, { paddingHorizontal: 14, paddingBottom: 8 }]}>
+          <HomeDiscoverPills t={t} isDark={isDark} colors={colors} onOpen={openDiscoverTab} />
+        </View>
+      )}
 
       {/* Animated search bar */}
       <Animated.View style={[styles.searchBarOuter, {
@@ -1569,7 +1625,7 @@ function ChatHub() {
             key={'cl_' + (user?.email || 'anon')}
             {...tabProps}
             largeTitle={LIST_LARGE_TITLE ? titles.chats : undefined}
-            onLargeTitleCollapsedChange={LIST_LARGE_TITLE ? onChatTitleCollapse : undefined}
+            onLargeTitleCollapsedChange={LIST_LARGE_TITLE ? onChatTitleCollapseHome : undefined}
             bottomInset={GLASS_TAB_BAR ? tabBarH : 0}
             topOverlayInset={homeOverlay ? homeHeaderH : 0}
             onNativeTopBar={LIST_LARGE_TITLE ? setHomeTopBar : undefined}

@@ -5400,6 +5400,7 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
         client_message_id: stableCMI,
         topic_id: topicId || null,
         effect: opts?.effect || null,
+        ...(opts?.silent ? { opts: { silent: true } } : {}), // [2026-10-16 w12e] "Enviar sem som" sobrevive à fila
       });
     } catch {}
     return { success: false, _deferred: true, message: 'queued_behind_older', error: 'queued_behind_older' };
@@ -5584,7 +5585,8 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
           }
         } catch {}
       }
-      if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta && !opts?.replyExt) {
+      // [2026-10-16 w12e] silent → pula o Rust (não lê 'silent' → push sairia com som); hub Go e PHP honram.
+      if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta && !opts?.replyExt && !opts?.silent) {
         const rust = await _rustChatPost('send', payload);
         if (rust?.success) { result = rust; }
       }

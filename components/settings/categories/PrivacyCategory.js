@@ -9,6 +9,7 @@ import { useLanguage } from '../../../context/LanguageContext';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, OptionSheet } from '../SettingsKit';
 import { PrivacyExtrasGroup } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useChatPrivacy, useChatDefaults, privacyValueLabel } from './shared';
+import { useSilenceUnknownCallers } from '../../calls/silenceUnknownCallers'; // [2026-10-16 wave12-D]
 
 const FIELDS = ['last_seen', 'online', 'profile_photo', 'about', 'phone_visibility', 'story_privacy', 'group_add'];
 
@@ -20,6 +21,7 @@ export default function PrivacyCategory() {
   const { privacy, savePrivacy } = useChatPrivacy();
   const { defaults, updateDefault } = useChatDefaults();
   const [picker, setPicker] = useState(null);
+  const [silenceUnknown, setSilenceUnknown] = useSilenceUnknownCallers();
 
   const fieldTitle = (field) => (
     field === 'last_seen' ? t('settings.privacyLastSeen')
@@ -75,6 +77,10 @@ export default function PrivacyCategory() {
         <SettingsGroup footer={t('settings.blockUnknownDesc')}>
           <SettingsSwitchRow title={t('settings.blockUnknown')} value={!!privacy.block_unknown} onValueChange={(v) => savePrivacy({ block_unknown: !!v })} />
           <SettingsRow title={t('settings.blockedContacts')} onPress={() => safeNav('/settings-blocked')} testID="settings-row-blocked" />
+        </SettingsGroup>
+        {/* [2026-10-16 wave12-D] mesmo ajuste do cartão da aba Ligações (estado compartilhado). */}
+        <SettingsGroup header={t('chat.tabCalls')} footer={t('calls.silenceUnknownDesc')}>
+          <SettingsSwitchRow title={t('calls.silenceUnknown')} value={silenceUnknown} onValueChange={setSilenceUnknown} testID="settings-row-silence-unknown" />
         </SettingsGroup>
         <PrivacyExtrasGroup cloudChats={privacy.cloud_chats_default} onCloudChatsChange={(v) => savePrivacy({ cloud_chats_default: !!v })} />
       </View>

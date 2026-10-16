@@ -225,7 +225,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     sendVoice: _tr(t, 'chatConv.send', 'Enviar'),
     record: _tr(t, 'chatConv.recordAudio', 'Gravar áudio'),
     holdToRecord: _tr(t, 'chatConv.holdToRecordHint', 'Segure para gravar, solte para enviar'),
-    sendMenuTitle: _tr(t, 'chat.schedule', ''),
+    sendMenuTitle: _tr(t, 'w12e.sendOptions', _tr(t, 'chat.schedule', '')), // [2026-10-16 w12e] menu = sem som + efeito + agendar
     slideToCancel: _tr(t, 'chatConv.slideToCancel', 'Deslize para cancelar'),
     deleteRecording: _tr(t, 'nativeComposer.deleteRecording', 'Apagar gravação'),
     cancelRecording: _tr(t, 'chatConv.cancelRecording', 'Cancelar gravação'),

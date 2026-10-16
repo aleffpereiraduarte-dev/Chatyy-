@@ -20,7 +20,7 @@ import { buildContactQrPayload, buildProfileLink, parseContactQr } from '../util
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
-  IllustrationSearch, IconCamera, IconShare,
+  IllustrationSearch, IconCamera, IconShare, IconUsersSmall,
   IconChevronDown, IconChevronRight,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
@@ -2083,6 +2083,13 @@ export default function ChatNewScreen() {
           {Platform.OS !== 'web' && (
             <ShortcutTile label={t('chat.findNewContact')} colors={colors} isDark={isDark} onPress={handleNewContact}>
               <IconUserPlus size={20} color="#fff" />
+            </ShortcutTile>
+          )}
+          {/* [2026-10-16 wave12-c] "+" com Nova comunidade à vista (o fluxo nativo já tem;
+              web ficava só com o cartão no rodapé). Só web: 5 blocos não cabem no celular. */}
+          {Platform.OS === 'web' && (
+            <ShortcutTile label={t('groupNew.newCommunity') || 'Nova comunidade'} colors={colors} isDark={isDark} onPress={() => { try { router.push('/community/create'); } catch {} }}>
+              <IconUsersSmall size={20} color="#fff" />
             </ShortcutTile>
           )}
           <ShortcutTile label={t('chat.findScanQr')} colors={colors} isDark={isDark} onPress={handleOpenQrScanner}>

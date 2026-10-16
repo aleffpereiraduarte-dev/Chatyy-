@@ -10,6 +10,25 @@ import { evaluateFirstRun, completeFirstRun } from '../../services/firstRun';
 
 const SETTLE_MS = 900;
 
+/** Name (2+ chars, not just the address/phone) AND a photo already saved on the server. */
+async function profileAlreadyComplete(user) {
+  try {
+    const api = require('../../services/api');
+    const r = await Promise.race([
+      api.getProfile(),
+      new Promise((res) => setTimeout(() => res(null), 4000)),
+    ]);
+    if (!r?.success || !r.data) return false;
+    const d = r.data;
+    const email = String(user?.email || d.email || '').toLowerCase();
+    const local = email.split('@')[0];
+    const name = String(d.name || [d.first_name, d.last_name].filter(Boolean).join(' ') || '').trim();
+    const nameOk = name.length >= 2 && name.toLowerCase() !== local && !/^[+\d\s()-]+$/.test(name);
+    const photoOk = !!(d.avatar || d.avatar_url || d.avatar_updated);
+    return nameOk && photoOk;
+  } catch { return false; }
+}
+
 export default function FirstRunGate() {
   const { user } = useAuth();
   const router = useRouter();
@@ -30,7 +49,12 @@ export default function FirstRunGate() {
         if (cancelled) return;
         // [2026-10-11 funnel-qa] Steps the signup screen already covered
         // (phone signup = name + photo) are not asked again.
-        const skip = Array.isArray(r.skip) ? r.skip : [];
+        const skip = Array.isArray(r.skip) ? [...r.skip] : [];
+        // [2026-10-16 wave12-c] …nor when the account ALREADY has a name + photo
+        // on the server (login on a new device, signup on another device, the
+        // native onboarding's skip lost) — never ask for the same profile twice.
+        if (steps.includes('profile') && !skip.includes('profile') && await profileAlreadyComplete(user)) skip.push('profile');
+        if (cancelled) return;
         if (skip.length) {
           const left = steps.filter((s) => !skip.includes(s));
           // A lone theme picker right after signup is just one more tap

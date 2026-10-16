@@ -1,7 +1,7 @@
 // [2026-10-15 settings-split] Modais de segurança da categoria Conta (antes
 // no fim do app/settings.js, com ~30 useState na tela inteira). Cada modal é
 // dono do próprio estado e só monta quando aberto. Mesmo visual/fluxo/APIs.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable, ActivityIndicator,
   ScrollView, Platform,
@@ -13,7 +13,7 @@ import { USE_NATIVE_SHEETS } from '../../NativeSheet';
 import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import { Spacing } from '../../../constants/theme';
-import { IconCheck, IconShield } from '../../Icons';
+import { IconCheck } from '../../Icons';
 import * as api from '../../../services/api';
 
 const webShadow = Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {};
@@ -144,130 +144,9 @@ export function ChangePasswordModal({ visible, onClose }) {
   );
 }
 
-// ── PIN de 4 dígitos (2FA e trava de registro anti-SIM-swap) ──────────────
-export function PinModal({ visible, onClose, kind }) {
-  const { colors } = useTheme();
-  const { t } = useLanguage();
-  const reg = kind === 'regLock';
-  const L = reg ? {
-    title: t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)',
-    desc: t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.',
-    ok: t('settings.registrationLockEnabled') || 'PIN ativado com sucesso',
-    len: t('settings.registrationLockPinLen') || 'Digite os 4 dígitos',
-    fail: t('settings.registrationLockFailed') || 'Não foi possível ativar o PIN',
-    enable: t('settings.registrationLockEnable') || 'Ativar PIN',
-  } : {
-    title: t('settings.twoFactor') || 'Verificação em duas etapas',
-    desc: t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy',
-    ok: t('settings.twoFactorEnabled') || 'PIN ativado com sucesso',
-    len: t('settings.twoFactorPinLen') || 'Digite os 4 dígitos',
-    fail: t('settings.twoFactorFailed') || 'Não foi possível ativar o PIN',
-    enable: t('settings.twoFactorEnable') || 'Ativar PIN',
-  };
-  const [digits, setDigits] = useState(['', '', '', '']);
-  const refs = useRef([null, null, null, null]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState(false);
-  useEffect(() => {
-    if (!visible) return undefined;
-    setDigits(['', '', '', '']); setError(''); setSuccess(false);
-    const tm = setTimeout(() => { try { refs.current[0]?.focus?.(); } catch {} }, 250);
-    return () => clearTimeout(tm);
-  }, [visible]);
-  const submit = async () => {
-    const pin = digits.join('');
-    if (pin.length !== 4) { setError(L.len); return; }
-    setError(''); setLoading(true);
-    try {
-      const r = reg ? await api.setRegistrationLock(pin) : await api.enable2fa(pin);
-      if (r?.success) {
-        setSuccess(true);
-        setTimeout(() => { onClose?.(); setSuccess(false); }, 1100);
-      } else setError(r?.message || L.fail);
-    } catch (e) {
-      setError(e?.message || L.fail);
-    } finally {
-      setLoading(false);
-    }
-  };
-  return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }} onPress={onClose}>
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
-            style={{ margin: 20, backgroundColor: colors.surface, borderRadius: 20, padding: 24, ...webShadow }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
-                <IconShield size={28} color={colors.primary} />
-              </View>
-              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, textAlign: 'center' }}>{L.title}</Text>
-              <Text style={{ fontSize: 13, color: colors.textTertiary, marginTop: 6, textAlign: 'center', lineHeight: 18 }}>{L.desc}</Text>
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginVertical: 18 }}>
-              {[0, 1, 2, 3].map(idx => (
-                <TextInput
-                  key={idx}
-                  ref={el => { refs.current[idx] = el; }}
-                  value={digits[idx]}
-                  onChangeText={(v) => {
-                    const digit = (v || '').replace(/\D/g, '').slice(-1);
-                    setDigits(prev => { const next = [...prev]; next[idx] = digit; return next; });
-                    setError('');
-                    if (digit && idx < 3) { try { refs.current[idx + 1]?.focus?.(); } catch {} }
-                  }}
-                  onKeyPress={(e) => {
-                    if (e?.nativeEvent?.key === 'Backspace' && !digits[idx] && idx > 0) {
-                      try { refs.current[idx - 1]?.focus?.(); } catch {}
-                    }
-                  }}
-                  keyboardType="number-pad"
-                  maxLength={1}
-                  secureTextEntry
-                  style={{
-                    width: 56, height: 64, borderRadius: 14,
-                    borderWidth: 1.5, borderColor: digits[idx] ? colors.primary : colors.border,
-                    backgroundColor: colors.surfaceVariant || colors.surface,
-                    color: colors.text, textAlign: 'center',
-                    fontSize: 26, fontWeight: '700',
-                    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
-                  }}
-                />
-              ))}
-            </View>
-            {!!error && <Text style={{ color: colors.error || '#EF4444', fontSize: 13, textAlign: 'center', marginBottom: 8 }}>{error}</Text>}
-            {success && <Text style={{ color: colors.success, fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>{L.ok}</Text>}
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={onClose}
-                disabled={loading}
-                style={{
-                  flex: 1, paddingVertical: 14, borderRadius: 12,
-                  backgroundColor: colors.surfaceVariant || 'transparent',
-                  borderWidth: 1, borderColor: colors.border,
-                  alignItems: 'center', opacity: loading ? 0.5 : 1,
-                }}
-              >
-                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={submit}
-                disabled={loading}
-                style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', opacity: loading ? 0.6 : 1 }}
-              >
-                {loading
-                  ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
-                  : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{L.enable}</Text>}
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </SheetKeyboardAvoider>
-    </Modal>
-  );
-}
+// ── [2026-10-16 two-step] O antigo PinModal (2FA de 4 dígitos que só sabia
+// ligar + "PIN de segurança" duplicado) virou components/settings/TwoStepSheet.js
+// (ativar/alterar/e-mail/desativar + lembrete) — os dois gravavam o mesmo PIN.
 
 // ── Backup com criptografia (criar / redefinir frase) ─────────────────────
 // A frase nunca sai do aparelho: chave derivada localmente, só o

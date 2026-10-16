@@ -2,7 +2,7 @@
 // números, aparelhos, dados; Segurança (bloqueio, senha, PINs, atividade,
 // denúncias, criptografia, família) e Zona de perigo. Estado local — os
 // modais só montam quando abertos (SecurityModals.js).
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Alert, Linking, Platform, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../../context/ThemeContext';
@@ -15,7 +15,9 @@ import { BorderRadius, FontSize, Spacing } from '../../../constants/theme';
 import { IconAlertTriangle, IconCheck, IconShield } from '../../Icons';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow } from '../SettingsKit';
 import { useSafeNav, useSettingsHost } from './shared';
-import { ChangePasswordModal, PinModal, BackupPassphraseModal, LoginHistorySheet } from './SecurityModals';
+import { ChangePasswordModal, BackupPassphraseModal, LoginHistorySheet } from './SecurityModals';
+import TwoStepSheet from '../TwoStepSheet';
+import { getCachedTwoStep, loadTwoStep, fetchTwoStep, subscribeTwoStep } from '../twoStepState';
 
 const ADMIN_EMAIL = 'aleffpereiraduarte@gmail.com';
 
@@ -26,13 +28,26 @@ export default function AccountCategory() {
   const { registerAnchor, openAccountSwitcher } = useSettingsHost();
   const { user, accounts } = useAuth();
   const { biometricEnabled, biometricAvailable, toggleBiometric, autoLockInterval, setAutoLockInterval } = useBiometric();
-  // null | 'password' | '2fa' | 'regLock' | 'e2e' | 'backupKey' | 'logins'
+  // null | 'password' | '2fa' | 'e2e' | 'backupKey' | 'logins'
   const [modal, setModalState] = useState(null);
   // Monta cada modal no 1º uso e mantém montado (anima ao fechar).
   const [mounted, setMounted] = useState({});
   const setModal = (m) => { if (m) setMounted(p => (p[m] ? p : { ...p, [m]: true })); setModalState(m); };
   const close = () => setModalState(null);
   const isWeb = Platform.OS === 'web';
+  // [2026-10-16 two-step] Status (Ativada/Desativada) da verificação em duas
+  // etapas — cache local na hora + confirma no servidor; a folha atualiza via store.
+  const myEmail = user?.email || '';
+  const [twoStep, setTwoStep] = useState(() => getCachedTwoStep(myEmail));
+  useEffect(() => {
+    if (!myEmail) return undefined;
+    let alive = true;
+    const me = myEmail.toLowerCase();
+    const un = subscribeTwoStep((e, s2) => { if (alive && e === me) setTwoStep(s2); });
+    loadTwoStep(myEmail).then((c) => { if (alive && c) setTwoStep((p) => p || c); });
+    fetchTwoStep(myEmail).then((s2) => { if (alive && s2) setTwoStep(s2); }).catch(() => {});
+    return () => { alive = false; un(); };
+  }, [myEmail]);
   const AUTO_LOCK_OPTIONS = [
     { value: '0', label: t('biometric.lockImmediate') || 'Imediatamente' },
     { value: '60', label: t('biometric.lock1Min') || 'Após 1 minuto' },
@@ -88,20 +103,15 @@ export default function AccountCategory() {
             subtitle={t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
             onPress={() => setModal('password')}
           />
-          {!isWeb && (
-            <SettingsRow
-              title={t('settings.twoFactor') || 'Verificação em duas etapas'}
-              subtitle={t('settings.twoFactorDesc') || 'Adicione uma camada extra de segurança ao seu Chatyy'}
-              onPress={() => setModal('2fa')}
-            />
-          )}
-          {!isWeb && (
-            <SettingsRow
-              title={t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
-              subtitle={t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
-              onPress={() => setModal('regLock')}
-            />
-          )}
+          {/* [2026-10-16 two-step] Uma linha só (nível WhatsApp): o "PIN de
+              segurança (anti-SIM-swap)" é o MESMO PIN — fundido aqui. */}
+          <SettingsRow
+            testID="settings-row-two-step"
+            title={t('settings.twoFactor') || 'Verificação em duas etapas'}
+            subtitle={t('twoStep.rowDesc') || 'PIN pedido ao registrar seu número em outro aparelho'}
+            value={twoStep ? (twoStep.enabled ? (t('twoStep.on') || 'Ativada') : (t('twoStep.off') || 'Desativada')) : undefined}
+            onPress={() => setModal('2fa')}
+          />
           {!isWeb && (
             <SettingsRow
               title={t('settings.changePhone') || 'Alterar número de telefone'}
@@ -191,8 +201,7 @@ export default function AccountCategory() {
       <DangerZone />
 
       {mounted.password && <ChangePasswordModal visible={modal === 'password'} onClose={close} />}
-      {mounted['2fa'] && <PinModal visible={modal === '2fa'} kind="2fa" onClose={close} />}
-      {mounted.regLock && <PinModal visible={modal === 'regLock'} kind="regLock" onClose={close} />}
+      {mounted['2fa'] && <TwoStepSheet visible={modal === '2fa'} onClose={close} />}
       {mounted.e2e && <BackupPassphraseModal visible={modal === 'e2e'} onClose={close} />}
       {mounted.backupKey && <BackupPassphraseModal visible={modal === 'backupKey'} rotate onClose={close} />}
       {mounted.logins && <LoginHistorySheet visible={modal === 'logins'} onClose={close} />}

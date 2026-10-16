@@ -31,7 +31,7 @@ import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconFolder, IconArrowRight, IconPencil } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconArrowRight, IconPencil } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -92,6 +92,8 @@ import FadeSlideIn from './FadeSlideIn';
 import NativeConversationList from './chatlist/NativeConversationList';
 import { isAvailable as _nativeHomeAvailable, apiVersion as _nativeHomeApi } from '../modules/expo-chat-conversation-list';
 // [2026-10-15 native-pins] Fileira de FIXADAS nativa (menu nativo + arrastar p/ reordenar).
+import FolderGlyph from './chatlist/FolderGlyph';
+import { useChatFolders, setFolderItems, loadFolders, folderMatcher, publishConversations } from './chatlist/chatFoldersStore'; // [2026-10-16 wave12-B pastas]
 import PinnedStripSlot, { createPinBridge, autoPinAvatarSize, pinStripHeight } from './chatlist/NativePinnedStrip';
 import { isPinnedStripAvailable as _pinsNativeAvailable } from '../modules/expo-chat-conversation-list';
 import { haptic } from '../constants/theme';
@@ -3993,7 +3995,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showDiscoverChannels, setShowDiscoverChannels] = useState(false);
-  const [chatFolders, setChatFolders] = useState([]);
+  // [2026-10-16 wave12-B pastas] Listas vêm do store compartilhado com /chat-folders
+  // (useSyncExternalStore): criar/reordenar/editar lá reflete nos chips na hora.
+  const chatFolders = useChatFolders().items;
+  const setChatFolders = setFolderItems;
   // [paridade-wa 2026-10-14] lpActions é montado num effect que NÃO depende de
   // chatFolders → "Adicionar a lista" via listas velhas ([] no cold start).
   const chatFoldersRef = useRef([]);
@@ -4020,32 +4025,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [showStatusComposer, setShowStatusComposer] = useState(false);
   const [noteInput, setNoteInput] = useState('');
 
-  // Load chat folders (custom user filters)
-  useEffect(() => {
-    let alive = true;
-    api.chatFoldersList().then(r => {
-      if (!alive) return;
-      // Lester 2026-05-28: backend retorna {items: [...]}, frontend lia
-      // r.data.folders (que não existe) → setChatFolders([]) → lista some
-      // após cold start. Aceita ambos: items (atual) ou folders (legacy).
-      if (r?.success && r?.data) {
-        const raw = Array.isArray(r.data.items)
-          ? r.data.items
-          : (Array.isArray(r.data.folders) ? r.data.folders : []);
-        // 2026-05-29: keep ONLY user-created manual lists as chips. The legacy
-        // seed folders (id 1 "All"/filter_type='all', "Groups"/"Personal"/
-        // "Channels"=type, "Unread") were rendered as list chips, and the chip
-        // filter falls through to `return true` for all/type → tapping one
-        // showed EVERY conversation. Founder read that as "criar uma lista
-        // jogou toda a chatlist pra dentro dela". The built-in FilterChips
-        // (Todos/Não lidas/Grupos/Canais) already cover those, so the seeds are
-        // pure duplicates — drop them.
-        const list = raw.filter(f => (f?.filter_type || 'manual') === 'manual');
-        setChatFolders(list);
-      }
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
+  // Load chat folders (custom user filters) — store único (ver chatFoldersStore).
+  useEffect(() => { loadFolders(); }, []);
 
   // Load Instagram Notes
   useEffect(() => {
@@ -6492,13 +6473,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             try {
               const trimmed = String(rawName || '').trim();
               if (!trimmed) return;
-              const r = await api.chatFoldersCreate(trimmed, '📂', 'manual', null);
+              const r = await api.chatFoldersCreate(trimmed, '', 'manual', null);
               if (r?.success && r?.data?.id) {
                 const newId = r.data.id;
-                await api.chatFoldersUpdate(newId, { conversation_ids: [Number(conv.id)] });
+                // [2026-10-16 wave12-B pastas] nova lista vai pro FIM da ordem (posição gravada)
+                const _cur = Array.isArray(chatFoldersRef.current) ? chatFoldersRef.current : [];
+                const _pos = _cur.reduce((m, x) => Math.max(m, Number(x?.position) || 0), -1) + 1;
+                await api.chatFoldersUpdate(newId, { conversation_ids: [Number(conv.id)], position: _pos });
                 setChatFolders(prev => [
-                  ...prev,
-                  { id: newId, name: trimmed, icon: '📂', conversation_ids: [Number(conv.id)], position: prev.length },
+                  ...prev.filter(x => Number(x.id) !== Number(newId)),
+                  { id: newId, name: trimmed, icon: '', conversation_ids: [Number(conv.id)], filter_type: 'manual', position: _pos },
                 ]);
               }
             } catch {}
@@ -6747,6 +6731,27 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     for (const c of archivedConversations) if (c && (c.unread_count || 0) > 0 && !c.muted) n++;
     return n;
   }, [archivedConversations]);
+
+  // [2026-10-16 wave12-B pastas] Contador de NÃO LIDAS por lista (conversas com
+  // não lidas que a lista mostra — mesmas regras do filtro; trancadas ficam fora).
+  const folderUnreadCounts = useMemo(() => {
+    const out = {};
+    if (!chatFolders.length) return out;
+    const archIds = new Set(archivedConversations.map(c => c.id));
+    const pool = [...conversations.filter(c => !archIds.has(c.id)), ...archivedConversations]
+      .filter(c => c && (c.unread_count || 0) > 0 && !c.locked && !lockedIds.has(c.id));
+    for (const f of chatFolders) {
+      const m = folderMatcher(f);
+      let n = 0;
+      for (const c of pool) if (m(c, archIds.has(c.id))) n++;
+      out[f.id] = n;
+    }
+    return out;
+  }, [chatFolders, conversations, archivedConversations, lockedIds]);
+  // Foto das conversas p/ o seletor da tela /chat-folders (abre sem refetch).
+  useEffect(() => {
+    publishConversations(conversations.filter(c => !c.locked && !lockedIds.has(c.id)), archivedConversations);
+  }, [conversations, archivedConversations, lockedIds]);
 
   // ─── Pinned avatar grid: user-defined order + size ───
   // Persisted per user in AsyncStorage (chatyy:pinned_order_v1 = id[],
@@ -7017,7 +7022,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // up as "Desconhecido / Nenhuma mensagem" rows. They get created when a
     // chat is initiated but never receives a message and the peer email
     // wasn't persisted; pure clutter for the user.
-    let list = (_isArchView ? archivedConversations : conversations).filter(c => {
+    // [2026-10-16 wave12-B pastas] Lista do usuário = ids escolhidos + regras rápidas
+    // (contatos/grupos/canais/não lidas; excluir arquivadas/silenciadas). Sem a regra
+    // "excluir arquivadas" as arquivadas que casam também aparecem (Telegram).
+    const _fm = folderFilter && (folderFilter.filter_type || 'manual') === 'manual' ? folderMatcher(folderFilter) : null;
+    const _archIds = _fm && _fm.includesArchived ? new Set(archivedConversations.map(c => c.id)) : null;
+    let list = (_isArchView ? archivedConversations : (_archIds ? [...conversations.filter(c => !_archIds.has(c.id)), ...archivedConversations] : conversations)).filter(c => {
       // Locked chats live in the dedicated hidden folder. Excluding them
       // here keeps the main list free of "redacted" rows that would
       // otherwise leak metadata (timestamp, unread count) to a shoulder-
@@ -7045,12 +7055,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // Lester 2026-05-28: lista 'manual' não tinha case — caía no `return true`
         // e a lista virava TODOS os contatos em vez de só os que o user adicionou.
         // conversation_ids vem como JSON array do backend; normaliza pra Number.
-        if (ft === 'manual') {
-          const ids = Array.isArray(folderFilter.conversation_ids)
-            ? folderFilter.conversation_ids.map(Number)
-            : [];
-          return ids.includes(Number(c.id));
-        }
+        if (_fm) return _fm(c, !!(_archIds && _archIds.has(c.id)));
         return true;
       }
       return true;
@@ -7451,6 +7456,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       t('chat.listOptionsMsg') || 'Renomear ou excluir esta lista?',
       [
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        // [2026-10-16 wave12-B pastas] editar (nome, ícone, regras, conversas) na tela própria
+        {
+          text: t('folders12b.edit') || 'Editar lista',
+          onPress: () => { router.push(`/chat-folders?edit=${folder.id}`); },
+        },
         // [paridade-wa 2026-10-14] renomear lista (antes só dava p/ excluir)
         {
           text: t('chat.renameList') || 'Renomear',
@@ -7477,7 +7487,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         },
       ]
     );
-  }, [t, askListName]);
+  }, [t, askListName, router]);
 
   const FilterChip = useCallback(({ label, value, count, folder }) => {
     const active = filter === value;
@@ -7500,7 +7510,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         accessibilityState={{ selected: active }}
       >
         {/* [2026-10-12 chatlist-polish] folder chips: SVG glyph instead of the stored emoji icon */}
-        {folder ? <IconFolder size={14} color={pillTxt} /> : null}
+        {folder ? <FolderGlyph folder={folder} size={14} color={pillTxt} /> : null}
         <Text maxFontSizeMultiplier={1.25} style={[s.chipText, { color: pillTxt, fontWeight: active ? '600' : '500' }]}>
           {label}
         </Text>
@@ -8556,13 +8566,24 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
         {chatFolders.map(f => (
-          <FilterChip key={f.id} label={f.name} value={`folder_${f.id}`} folder={f} />
+          <FilterChip key={f.id} label={f.name} value={`folder_${f.id}`} folder={f} count={folderUnreadCounts[f.id] || 0} />
         ))}
         <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
+        {/* [2026-10-16 wave12-B pastas] "+" no fim → tela de listas (criar/ordenar/editar) */}
+        <TouchableOpacity
+          style={[s.chip, { backgroundColor: P.chipBg, paddingHorizontal: 11 }, isWeb && { cursor: 'pointer' }]}
+          onPress={() => { try { haptic.light?.(); } catch {} router.push(chatFolders.length ? '/chat-folders' : '/chat-folders?new=1'); }}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={t('folders12b.manage') || 'Listas de conversas'}
+          testID="chat-folders-add-chip"
+        >
+          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={P.chipTxt} strokeWidth={2.2} strokeLinecap="round"><Path d="M12 5v14M5 12h14" /></Svg>
+        </TouchableOpacity>
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, P, t, FilterChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders, folderUnreadCounts, router]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer
