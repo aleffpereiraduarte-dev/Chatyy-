@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "ഇതുവരെ സന്ദേശങ്ങളില്ല",
+  "mascot.emptyConvSub": "ഒരു സന്ദേശം അയയ്ക്കൂ അല്ലെങ്കിൽ താഴെയുള്ള കൈവീശലിൽ ടാപ്പ് ചെയ്യൂ",
+  "mascot.tapToWave": "കൈവീശി ഹലോ അയയ്ക്കൂ",
+  "mascot.offlineTitle": "ഇന്റർനെറ്റ് ഇല്ല",
+  "mascot.offlineSub": "കണക്ഷൻ തിരികെ വന്നാലുടൻ സന്ദേശങ്ങൾ കാണാം.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "സൈൻ അപ്പിന് ഫോൺ നമ്പർ ആവശ്യമാണ്",
   "phoneLink.title": "നിങ്ങളുടെ നമ്പർ ചേർക്കുക",

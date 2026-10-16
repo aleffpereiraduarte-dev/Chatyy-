@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "இன்னும் செய்திகள் இல்லை",
+  "mascot.emptyConvSub": "ஒரு செய்தியை அனுப்புங்கள் அல்லது கீழே உள்ள கை அசைப்பைத் தட்டுங்கள்",
+  "mascot.tapToWave": "கை அசைத்து வணக்கம் அனுப்பு",
+  "mascot.offlineTitle": "இணையம் இல்லை",
+  "mascot.offlineSub": "இணைப்பு திரும்பியதும் செய்திகள் தோன்றும்.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "பதிவு செய்ய தொலைபேசி எண் தேவை",
   "phoneLink.title": "உங்கள் எண்ணைச் சேர்க்கவும்",

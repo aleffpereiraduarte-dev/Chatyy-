@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "ຍັງບໍ່ມີຂໍ້ຄວາມ",
+  "mascot.emptyConvSub": "ສົ່ງຂໍ້ຄວາມ ຫຼື ແຕະການໂບກມືດ້ານລຸ່ມ",
+  "mascot.tapToWave": "ສົ່ງການໂບກມື",
+  "mascot.offlineTitle": "ບໍ່ມີອິນເຕີເນັດ",
+  "mascot.offlineSub": "ຂໍ້ຄວາມຈະປາກົດທັນທີທີ່ການເຊື່ອມຕໍ່ກັບມາ.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "ການລົງທະບຽນຕ້ອງໃຊ້ເບີໂທລະສັບ",
   "phoneLink.title": "ເພີ່ມເບີຂອງທ່ານ",

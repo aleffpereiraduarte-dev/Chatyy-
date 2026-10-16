@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Žinučių dar nėra",
+  "mascot.emptyConvSub": "Išsiųskite žinutę arba bakstelėkite pamojavimą žemiau",
+  "mascot.tapToWave": "Siųsti pamojavimą",
+  "mascot.offlineTitle": "Nėra interneto",
+  "mascot.offlineSub": "Žinutės pasirodys, kai tik grįš ryšys.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Registracijai reikia telefono numerio",
   "phoneLink.title": "Pridėkite savo numerį",

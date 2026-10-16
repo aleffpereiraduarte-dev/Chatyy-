@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "እስካሁን ምንም መልዕክት የለም",
+  "mascot.emptyConvSub": "መልዕክት ይላኩ ወይም ከታች ያለውን የእጅ ሰላምታ ይንኩ",
+  "mascot.tapToWave": "የእጅ ሰላምታ ላክ",
+  "mascot.offlineTitle": "ኢንተርኔት የለም",
+  "mascot.offlineSub": "ግንኙነቱ እንደተመለሰ መልዕክቶቹ ይታያሉ።",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "ለመመዝገብ ስልክ ቁጥር ያስፈልጋል",
   "phoneLink.title": "ቁጥርዎን ያክሉ",

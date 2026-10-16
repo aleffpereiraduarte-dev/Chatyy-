@@ -349,6 +349,7 @@ export default function NotificationsFeedScreen() {
         <NativeInsetView>
         <ScreenEmptyState
           kind="notifications"
+          mascot="sleep"
           title={t('notifications.empty') || 'Sem notificações ainda'}
           subtitle={t('notifications.emptyHint') || 'Curtidas, comentários e novos seguidores aparecem aqui.'}
           tips={[

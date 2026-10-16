@@ -33,7 +33,7 @@ public enum ChatyyStoreIngest {
       if isBool(n) { return n.boolValue ? "true" : "false" }
       if CFNumberIsFloatType(n) {
         let d = n.doubleValue
-        if d == d.rounded() && abs(d) < 9e15 { return String(Int64(d)) }
+        if d == d.rounded() && abs(d) < 9.0e18 { return String(Int64(d)) } // ids Snowflake até 2^53-1 (> 9e15)
         return String(d)
       }
       return n.stringValue

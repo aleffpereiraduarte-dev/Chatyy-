@@ -11,7 +11,7 @@ enum CLVal {
     if let n = v as? NSNumber {
       // Ids numéricos chegam como Double ("12.0" seria errado).
       let d = n.doubleValue
-      if d == d.rounded() && abs(d) < 1e15 { return String(Int64(d)) }
+      if d == d.rounded() && abs(d) < 9.0e18 { return String(Int64(d)) } // ids Snowflake até 2^53-1
       return n.stringValue
     }
     return ""

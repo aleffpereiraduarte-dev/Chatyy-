@@ -31,6 +31,7 @@ import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import EmptyStateCard from './EmptyStateCard';
+import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { useLanguageOptional } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import NativeResultList, { useNativeResults } from './native/NativeResultList';
@@ -862,6 +863,7 @@ export default function GlobalSearch({
               {active && !loading && !hasAny && (
                 <EmptyStateCard
                   Icon={IconSearch}
+                  illustration={<ChatyyMascot pose="search" size={120} dark={!!isDark} />}
                   tone="neutral"
                   title={tt('search.emptyTitle', 'Nenhum resultado para "{query}"').replace('{query}', term)}
                   subtitle={tt('search.emptySubtitle', 'Tente outras palavras-chave ou verifique a ortografia')}

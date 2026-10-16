@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "هنوز پیامی نیست",
+  "mascot.emptyConvSub": "پیامی بفرستید یا روی دست تکان دادن پایین ضربه بزنید",
+  "mascot.tapToWave": "ارسال سلام",
+  "mascot.offlineTitle": "اینترنت قطع است",
+  "mascot.offlineSub": "پیام‌ها به‌محض برگشتن اتصال نمایش داده می‌شوند.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "ثبت‌نام فقط با شماره تلفن",
   "phoneLink.title": "شماره‌تان را اضافه کنید",

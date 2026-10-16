@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "まだメッセージはありません",
+  "mascot.emptyConvSub": "メッセージを送るか、下の手を振るをタップしてください",
+  "mascot.tapToWave": "手を振る",
+  "mascot.offlineTitle": "インターネットに接続されていません",
+  "mascot.offlineSub": "接続が戻るとすぐにメッセージが表示されます。",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "登録には電話番号が必要です",
   "phoneLink.title": "電話番号を追加",

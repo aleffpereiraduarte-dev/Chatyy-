@@ -145,9 +145,25 @@ function _key(m) {
  * TOPO do histórico a cada reordenação (recarga de janela, msg fora de ordem,
  * conversa por data) — "mandei um vídeo e ele SUMIU" (conv 973, 13/10).
  */
+// [ids-53bit 2026-10-16] id do servidor (Snowflake até 2^53-1) como number OU
+// string só-dígitos (relay/cache/HTTP podem mandar string). Devolve null p/
+// linhas locais (tmp_/envelope/outbox) e ids negativos (placeholders).
+const _DIGITS = /^\d{1,16}$/;
+export function serverIdOf(m) {
+  if (!m || typeof m !== 'object') return null;
+  const v = m.id;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && _DIGITS.test(v)) {
+    const n = Number(v);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return null;
+}
+
 export function orderKey(m) {
   if (!m || typeof m !== 'object') return Number.MAX_SAFE_INTEGER;
-  if (typeof m.id === 'number') return m.id;
+  const sid = serverIdOf(m);
+  if (sid != null) return sid;
   const n = Number(m._negId);
   if (Number.isFinite(n) && n > 0) return n;
   const t = m.created_at ? Date.parse(m.created_at) : NaN;
@@ -156,7 +172,15 @@ export function orderKey(m) {
 }
 
 /** Comparador "por id" (conversas sem importação) que nunca joga pendentes p/ o topo. */
+// [ids-53bit 2026-10-16] Camada antes do número: linha do servidor (0) sempre
+// antes de linha local pendente (1). Antes dependia de _negId=Date.now()*1000
+// (~1.8e15) ser > qualquer id; com Snowflake (ms<<12) isso deixa de valer ~2044
+// e pendentes passariam a ir para o MEIO do histórico.
+function _tier(m) { return serverIdOf(m) != null ? 0 : 1; }
+
 export function compareById(a, b) {
+  const ta0 = _tier(a), tb0 = _tier(b);
+  if (ta0 !== tb0) return ta0 - tb0;
   const ai = orderKey(a);
   const bi = orderKey(b);
   if (ai !== bi) return ai < bi ? -1 : 1;
@@ -174,14 +198,15 @@ export function compareById(a, b) {
  * Demais (tmp_/envelope): regra antiga — id numérico vs _negId, depois created_at.
  */
 export function compareMsgs(a, b) {
-  const an = a && typeof a.id === 'number';
-  const bn = b && typeof b.id === 'number';
-  if (an && bn) {
+  const sa = serverIdOf(a);
+  const sb = serverIdOf(b);
+  if (sa != null && sb != null) {
     const ka = _key(a);
     const kb = _key(b);
     if (ka && kb && ka !== kb) return ka < kb ? -1 : 1;
-    return a.id - b.id;
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
   }
+  if ((sa != null) !== (sb != null)) return sa != null ? -1 : 1; // [ids-53bit] servidor antes de pendente
   const ai = orderKey(a);
   const bi = orderKey(b);
   if (ai !== bi) return ai < bi ? -1 : 1;
@@ -205,7 +230,7 @@ export const SQL_SORT_EXPR = "substr(replace(created_at, 'T', ' '), 1, 19)";
 
 /** Linha local ainda não confirmada pelo servidor (bolha otimista/outbox). */
 export function isLocalPending(m) {
-  if (!m || typeof m.id === 'number') return false;
+  if (!m || serverIdOf(m) != null) return false;
   if (typeof m.id === 'string' && m.id.startsWith('tmp_')) return true;
   return !!(m._pending || m._uploading || m._queued || m._failed);
 }
@@ -245,6 +270,6 @@ export function keepLocalPending(prev, next) {
 
 export default {
   isImportedMsg, isTimeOrdered, markTimeOrdered, noteImportRev, forgetImportRev,
-  timeModeFor, sortKeyOf, compareMsgs, compareById, orderKey, sortByTime, SQL_SORT_EXPR,
+  timeModeFor, sortKeyOf, compareMsgs, compareById, orderKey, serverIdOf, sortByTime, SQL_SORT_EXPR,
   isLocalPending, keepLocalPending,
 };

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Դեռ հաղորդագրություններ չկան",
+  "mascot.emptyConvSub": "Ուղարկեք հաղորդագրություն կամ հպեք ստորև ձեռքի թափահարմանը",
+  "mascot.tapToWave": "Ուղարկել ողջույն",
+  "mascot.offlineTitle": "Ինտերնետ չկա",
+  "mascot.offlineSub": "Հաղորդագրությունները կհայտնվեն, հենց կապը վերականգնվի։",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Գրանցման համար անհրաժեշտ է հեռախոսահամար",
   "phoneLink.title": "Ավելացրեք ձեր համարը",

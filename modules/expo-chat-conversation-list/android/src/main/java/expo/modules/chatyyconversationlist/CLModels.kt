@@ -11,7 +11,7 @@ internal object CLVal {
   fun str(v: Any?): String {
     if (v is String) return v
     if (v is Double) {
-      if (v == Math.floor(v) && Math.abs(v) < 1e15) return v.toLong().toString()
+      if (v == Math.floor(v) && Math.abs(v) < 9.2e18) return v.toLong().toString() // ids Snowflake até 2^53-1 (era < 1e15 → "9.0E15")
       return v.toString()
     }
     if (v is Number) return v.toString()

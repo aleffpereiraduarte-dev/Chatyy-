@@ -133,6 +133,9 @@ import ReactionSparks from '../components/chat/motion/ReactionSparks';
 const _HDR_STACK_STYLE = { flex: 1 };
 import { motionOn as _motionOn, SPRING_SEND as _SPRING_SEND, SPRING_IN as _SPRING_IN } from '../components/chat/motion/motionFlag';
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
+import ChatGreetingCard from '../components/chat/ChatGreetingCard'; // [2026-10-16 mascote]
+import ChatyyMascot, { MASCOT_GREETING_URL, mascotPoseFromUrl } from '../components/mascot/ChatyyMascot'; // [2026-10-16 mascote]
+import { celebrate as celebrateConfetti } from '../components/mascot/ConfettiHost'; // [2026-10-16 mascote]
 import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
 import VideoTrimBar from '../components/media/VideoTrimBar'; // [2026-10-10 video-trim]
 import * as _imagePaste from '../services/imagePaste'; // [2026-10-10 paste-image]
@@ -17967,7 +17970,6 @@ function ChatConversationInner() {
           }
           }).catch(() => {});
         };
-        const _tcpSortKey = (r) => _chatOrder().orderKey(r); // [2026-10-13 vídeo-sumiu] pendente sem _negId = fim (era 0 = topo)
         setMessages(prev => {
           const incomingIdStr = String(msg.id);
           // [2026-10-06 thread-tech] scan from the tail (new/echoed rows live there)
@@ -18046,13 +18048,13 @@ function ChatConversationInner() {
           // sort on every incoming message.
           const _newRow = { ...msg, _animateIn: !!isFromOther };
           const _last = prev.length ? prev[prev.length - 1] : null;
-          if (!_last || _tcpSortKey(_newRow) >= _tcpSortKey(_last)) {
+          if (!_last || _chatOrder().compareById(_newRow, _last) >= 0) { // [ids-53bit] camada servidor<pendente
             return [...prev, _newRow];
           }
           const appended = [...prev, _newRow];
           // [import-ordem 2026-10-13] conversa com histórico importado → ordem por data.
           if (_chatOrder().timeModeFor(conversationId, prev)) return appended.sort(_chatOrder().compareMsgs);
-          appended.sort((a, b) => _tcpSortKey(a) - _tcpSortKey(b));
+          appended.sort(_chatOrder().compareById);
           return appended;
           // [2026-10-06 thread-tech] (former inline cache/sound/haptic/ack block now lives in _tcpNewMsgFx above)
         });
@@ -20052,7 +20054,10 @@ function ChatConversationInner() {
   // ============================================================
   // SEND STICKER
   // ============================================================
-  const handleSendSticker = async (sticker) => {
+  // [2026-10-16 mascote] stType 'lottie_sticker' = figurinha animada (saudação do
+  // estado vazio): mesma fila/cmid/outbox; file_url = URL do JSON Lottie.
+  const handleSendSticker = async (sticker, stType = 'sticker') => {
+    if (stType !== 'lottie_sticker') stType = 'sticker';
     setShowStickerPicker(false);
     // Sticker can be either an emoji string ("😀") or an image URL (custom
     // sticker uploaded via the picker's "Criar" button). Image stickers go
@@ -20065,7 +20070,7 @@ function ChatConversationInner() {
     const isImage = typeof sticker === 'string' && (sticker.startsWith('http://') || sticker.startsWith('https://'));
     // Aquece o cache de imagem (o picker já baixou a miniatura) p/ a bolha pintar
     // a figurinha no 1º frame em vez de um quadro vazio + fade.
-    if (isImage && _expoImagePrefetch) { try { _expoImagePrefetch(api.getMediaUrl(sticker) || sticker, 'memory-disk')?.catch?.(() => {}); } catch {} }
+    if (isImage && stType === 'sticker' && _expoImagePrefetch) { try { _expoImagePrefetch(api.getMediaUrl(sticker) || sticker, 'memory-disk')?.catch?.(() => {}); } catch {} }
     // [2026-10-12] Arrastou p/ responder e mandou figurinha → vai como RESPOSTA
     // (antes ia solta: reply_to_id null e a barra de resposta continuava aberta).
     // [2026-10-13 P2-7] Alvo 'tmp_' → espera o ack e usa o id do servidor.
@@ -20074,7 +20079,7 @@ function ChatConversationInner() {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
-      content: sticker, type: 'sticker',
+      content: sticker, type: stType,
       file_url: isImage ? sticker : null,
       reply_to_id: replyId,
       reply_to: (replyId && _rt) ? {
@@ -20107,24 +20112,24 @@ function ChatConversationInner() {
         sender_email: currentEmail,
         sender_name: user?.name || currentEmail,
         content: '',
-        type: 'sticker',
+        type: stType,
         created_at: optimisticMsg.created_at,
         _local: true,
       });
     } catch {}
 
     // [2026-10-07 send-media] Native: durable outbox.
-    if (await _sendRichViaOutbox({ msgId, tempId, type: 'sticker', content: sticker, fileUrl: isImage ? sticker : null, createdAt: optimisticMsg.created_at, replyToId: replyId })) {
+    if (await _sendRichViaOutbox({ msgId, tempId, type: stType, content: sticker, fileUrl: isImage ? sticker : null, createdAt: optimisticMsg.created_at, replyToId: replyId })) {
       requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
       return;
     }
     // ⭐ Save pending sticker BEFORE network attempt
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sticker, type: 'sticker', file_url: isImage ? sticker : null, reply_to_id: replyId, created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sticker, type: stType, file_url: isImage ? sticker : null, reply_to_id: replyId, created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, 'sticker', replyId, null, isImage ? sticker : null, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, stType, replyId, null, isImage ? sticker : null, tempId, msgId));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null.
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
@@ -20133,7 +20138,7 @@ function ChatConversationInner() {
       } else {
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -20142,7 +20147,7 @@ function ChatConversationInner() {
     } catch {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: 'sticker', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -26561,19 +26566,55 @@ function ChatConversationInner() {
   // PERF: ListFooterComponent — same story as listHeader. The "load more"
   // spinner only ever has 2 states (visible/hidden) but the inline form
   // built a fresh element on each parent render.
+  // [2026-10-16 mascote] Grupo/canal recém-criado só tem a msg de sistema
+  // ("Fulano criou o grupo") → também mostra o cartão de saudação (no topo).
+  const _onlySystemMsgs = !loading && Array.isArray(messages) && messages.length > 0 && messages.length <= 5
+    && messages.every((m) => m && m.type === 'system');
   const listFooter = useMemo(() => (
+    <>
     <ThreadComposerHost store={loadingMoreStore} render={(v) => (v ? (
       <View style={styles.loadMoreBtn}>
         <ActivityIndicator size="small" color={colors.primary} />
       </View>
     ) : null)} />
-  ), [loadingMoreStore, colors.primary]);
+    {_onlySystemMsgs ? (
+      <View style={{ paddingTop: 28, paddingBottom: 12 }}>
+        <ChatGreetingCard
+          isDark={isDark}
+          t={t}
+          offline={!netReachable}
+          canSend={!composerBlocked && !blockedByPeer && !iBlockedPeer}
+          onGreet={() => _greetSendRef.current?.()}
+        />
+      </View>
+    ) : null}
+    </>
+  ), [loadingMoreStore, colors.primary, _onlySystemMsgs, isDark, t, netReachable, composerBlocked, blockedByPeer, iBlockedPeer]);
 
   // PERF: ListEmptyComponent was a huge inline ternary subtree
   // (skeleton / loadError / empty-state with two SVGs + 4 Text). Re-built
   // and reconciled per keystroke on the empty state path (a freshly opened
   // chat shows this until first message). Memoize so only the underlying
   // dependencies trigger a refresh.
+  // [2026-10-16 mascote] saudação do estado vazio → figurinha Lottie pela fila
+  // normal (cmid/outbox). Ref = sempre a versão atual de handleSendSticker.
+  const _greetSendRef = useRef(null);
+  _greetSendRef.current = () => handleSendSticker(MASCOT_GREETING_URL, 'lottie_sticker');
+  // Confete leve na 1ª mensagem de uma conversa que abriu VAZIA (sem histórico).
+  const _convWasEmptyRef = useRef(false);
+  useEffect(() => {
+    if (loading) return;
+    const real = Array.isArray(messages) ? messages.filter((x) => x && x.type !== 'system') : [];
+    const n = real.length;
+    if (n === 0) { _convWasEmptyRef.current = true; return; }
+    if (!_convWasEmptyRef.current) return;
+    _convWasEmptyRef.current = false;
+    const m = real[n - 1];
+    if (n <= 2 && m && m._pending && String(m.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase()) {
+      try { celebrateConfetti({ y: 0.78 }); } catch {}
+    }
+  }, [loading, messages, currentEmail]);
+
   const listEmpty = useMemo(() => {
     if (loading && ChatBubbleSkeleton) {
       // [FIX 2026-05-20] One <ChatBubbleSkeleton count={6}> instead of 6× nested
@@ -26613,58 +26654,22 @@ function ChatConversationInner() {
         </View>
       );
     }
+    // [2026-10-16 mascote] Cartão "Nenhuma mensagem ainda" com o mascote do
+    // Chatyy acenando — tocar envia a figurinha animada de saudação (Telegram-
+    // style, arte original). Offline = mascote "sem sinal", sem toque.
     return (
       <View style={[styles.emptyMessages, THREAD_EMPTY_FLIP]}>
-        <View style={{
-          width: 96, height: 96, borderRadius: 48,
-          // [2026-10-10 conv-polish] anéis #111 + cadeado #111 sumiam no fundo
-          // preto; no claro, sombra difusa pesada removida (visual chapado).
-          backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17, 17, 17,0.05)',
-          alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-        }}>
-          <View style={{
-            width: 72, height: 72, borderRadius: 36,
-            backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(17, 17, 17,0.08)',
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            <IconLock size={32} color={isDark ? '#F5F5F7' : '#111111'} />
-          </View>
-        </View>
-        <Text style={{
-          fontSize: 17, fontWeight: '700', textAlign: 'center', // [2026-10-13 conv-pb] 17/700 = título de empty state
-          color: isDark ? '#F5F5F7' : '#111b21',
-          marginBottom: 6, letterSpacing: -0.2,
-        }}>
-          {e2eEnabled
-            ? (t('chatConv.e2eEmptyTitle') || 'Conversa protegida')
-            : (t('chatConv.emptyTitle') || 'Diga olá')}
-        </Text>
-        <Text style={{
-          fontSize: 13.5, textAlign: 'center', lineHeight: 19,
-          paddingHorizontal: 48,
-          color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.64)', // AA ≥ 4.5 no branco
-        }}>
-          {e2eEnabled
-            ? (t('chatConv.e2eEmpty') || 'Mensagens protegidas com criptografia de ponta a ponta. Ninguém fora desta conversa pode ler.')
-            : (t('chatConv.empty') || 'Envie uma mensagem para iniciar a conversa.')}
-        </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16 }}>
-          {/* [2026-10-13 conv-pb] sem opacity 0.6 extra (0.6×0.55 ≈ 2:1, ilegível) */}
-          <IconSparkles size={12} color={isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)'} />
-          <Text style={{
-            marginLeft: 6,
-            fontSize: 11.5,
-            fontWeight: '600',
-            letterSpacing: 0.4,
-            textTransform: 'uppercase',
-            color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
-          }}>
-            {_mt('chatConv.conversationStart', 'Início da conversa')}
-          </Text>
-        </View>
+        <ChatGreetingCard
+          isDark={isDark}
+          t={t}
+          e2e={!!e2eEnabled}
+          offline={!netReachable}
+          canSend={!composerBlocked && !blockedByPeer && !iBlockedPeer}
+          onGreet={() => _greetSendRef.current?.()}
+        />
       </View>
     );
-  }, [loading, loadError, e2eEnabled, isDark, colors, t, loadMessages, netReachable]);
+  }, [loading, loadError, e2eEnabled, isDark, colors, t, loadMessages, netReachable, composerBlocked, blockedByPeer, iBlockedPeer]);
 
   // Edit history viewer
   const [editHistoryModal, setEditHistoryModal] = _useStateT({ visible: false, loading: false, versions: [], currentContent: '' });
@@ -30028,6 +30033,17 @@ function ChatConversationInner() {
           // web bundle pulling @lottiefiles/dotlottie-react (transitive
           // dep not installed). On web we show the emoji fallback.
           const lottieUrl = resolveMediaUri(msg.file_url || msg.content);
+          // [2026-10-16 mascote] Figurinha do mascote do Chatyy (saudação) →
+          // desenha local (SVG animado, todas as plataformas, sem download).
+          const _mPose = mascotPoseFromUrl(msg.file_url || msg.content);
+          if (_mPose) {
+            return (
+              <View>
+                <ChatyyMascot pose={_mPose} size={150} dark={isDark} />
+                <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
+              </View>
+            );
+          }
           if (Platform.OS === 'web' || !lottieUrl) {
             return (
               <View>
@@ -31740,7 +31756,7 @@ function ChatConversationInner() {
     // vídeo redondo e emoji grande — sem rabicho/sombra. Mídia (foto/vídeo)
     // usa overflow:'hidden' (cortaria o rabicho) → sem rabicho também, igual
     // ao recorte atual; a 1ª do grupo mantém o canto redondo.
-    const _bubbleBare = !isDeleted && (msg.type === 'sticker' || msg.type === 'gif' || isVideoNoteMessage(msg) || _jumboNoBubble);
+    const _bubbleBare = !isDeleted && (msg.type === 'sticker' || msg.type === 'lottie_sticker' /* [2026-10-16 mascote] */ || msg.type === 'gif' || isVideoNoteMessage(msg) || _jumboNoBubble);
     const _bubbleClips = !isDeleted && (msg.type === 'image' || msg.type === 'video');
     const _showTail = isFirstInGroup && !_bubbleBare && !_bubbleClips;
     const _bubbleBg = isOwn ? ownBubbleBg : (isUserMentioned(msg, currentEmail) ? (isDark ? '#2A2A2E' : '#E2E2E6') : otherBubbleBg);
@@ -31906,7 +31922,7 @@ function ChatConversationInner() {
             // [2026-10-12 bubble-wa-tail] cantos por posição no grupo (tabela memo).
             bubbleCornerStyles[`${isOwn ? 1 : 0}${isFirstInGroup ? 1 : 0}${isLastInGroup ? 1 : 0}${_showTail ? 1 : 0}`],
             isDeleted && styles.bubbleDeleted,
-            (msg.type === 'sticker' || msg.type === 'gif') && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
+            (msg.type === 'sticker' || msg.type === 'lottie_sticker' || msg.type === 'gif') && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
             // [2026-10-10] Vídeo redondo = só o círculo (sem a bolha preta atrás), igual WhatsApp.
             isVideoNoteMessage(msg) && !isDeleted && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0, elevation: 0, shadowOpacity: 0 },
             // [2026-10-08 location-bubble-fast] emoji-only = sem bolha; localização = mapa rente à bolha (inset 4).
@@ -32153,7 +32169,7 @@ function ChatConversationInner() {
           {/* [2026-10-10 conv-polish] foto/vídeo/figurinha APAGADOS viram lápide
               comum → precisam da linha de hora como qualquer bolha (antes saía
               uma pílula sem hora e com padding 3 colado na borda). */}
-          {(isDeleted || (msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video')) && (
+          {(isDeleted || (msg.type !== 'sticker' && msg.type !== 'lottie_sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video')) && (
             <View onLayout={_waTextMetaKey ? (e) => { const l = e?.nativeEvent?.layout; if (l) _waPutMetaBox(_waTextMetaKey, l.width, l.height); } : undefined /* [2026-10-14 meta-inline] largura REAL da meta → WaMetaText */}
               ref={_waMetaRefFor(_waTextMetaKey) /* [2026-10-14 open-still] web: meta medida no commit */}
               style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline,
@@ -32802,7 +32818,7 @@ function ChatConversationInner() {
       });
     } catch {}
   }, [currentEmail, conversationId]);
-  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas))); // vazio → estado vazio JS (salvo foto nativa enquanto carrega)
+  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas) || _onlySystemMsgs)); // [2026-10-16 mascote] só-sistema → JS (cartão de saudação) · vazio → estado vazio JS (salvo foto nativa enquanto carrega)
   _nlOnRef.current = !!(_nl && _nl.on); // [native-media-dl]
   useConvOpenMetric(conversationId, _nl, threadListData ? threadListData.length : 0, !loading || !!(threadListData && threadListData.length)); // [wave7] toque→1º frame
   const _nlActRef = useRef(null);

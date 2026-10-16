@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Encara no hi ha missatges",
+  "mascot.emptyConvSub": "Envia un missatge o toca la salutació de sota",
+  "mascot.tapToWave": "Envia una salutació",
+  "mascot.offlineTitle": "Sense internet",
+  "mascot.offlineSub": "Els missatges apareixeran quan torni la connexió.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "El registre requereix un número de telèfon",
   "phoneLink.title": "Afegeix el teu número",

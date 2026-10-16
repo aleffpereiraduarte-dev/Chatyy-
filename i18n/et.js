@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Sõnumeid veel pole",
+  "mascot.emptyConvSub": "Saada sõnum või puuduta allolevat lehvitust",
+  "mascot.tapToWave": "Saada lehvitus",
+  "mascot.offlineTitle": "Internet puudub",
+  "mascot.offlineSub": "Sõnumid ilmuvad kohe, kui ühendus taastub.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Registreerumiseks on vaja telefoninumbrit",
   "phoneLink.title": "Lisa oma number",

@@ -919,6 +919,14 @@ function buildVoicemail(m, row, C, own) {
   row.cw = 260; row.pad = PAD; row.mp = 'below';
 }
 function buildLottie(m, row, C) {
+  // [2026-10-16 mascote] saudação do mascote → quadro estático (PNG) na lista
+  // nativa; toque abre a linha JS (mascote animado) na folha.
+  const _mu = String(m.file_url || m.content || '');
+  if (/\/stickers\/chatyy-[a-z]+\.json(?:[?#].*)?$/i.test(_mu)) {
+    row.bl = [image(_mu.replace(/\.json(?=[?#]|$)/i, '.png'), { w: 150, h: 150, fit: 'contain', a: 'jsrow' })];
+    row.cw = 150; row.bare = 1; row.pad = [0, 0, 0, 0]; row.mp = 'below';
+    return;
+  }
   const ink = C.isDark ? '#F5F5F7' : '#111111';
   row.bl = [vstack([
     icon(IconFilm, { s: 44, c: ink }),

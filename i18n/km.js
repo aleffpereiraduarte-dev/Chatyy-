@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "មិនទាន់មានសារនៅឡើយទេ",
+  "mascot.emptyConvSub": "ផ្ញើសារ ឬចុចលើការគ្រវីដៃខាងក្រោម",
+  "mascot.tapToWave": "ផ្ញើការគ្រវីដៃ",
+  "mascot.offlineTitle": "គ្មានអ៊ីនធឺណិត",
+  "mascot.offlineSub": "សារនឹងបង្ហាញភ្លាមៗពេលការតភ្ជាប់ត្រឡប់មកវិញ។",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "ការចុះឈ្មោះត្រូវការលេខទូរស័ព្ទ",
   "phoneLink.title": "បន្ថែមលេខរបស់អ្នក",

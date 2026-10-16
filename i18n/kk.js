@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Әзірге хабар жоқ",
+  "mascot.emptyConvSub": "Хабар жіберіңіз немесе төмендегі сәлемдесуді түртіңіз",
+  "mascot.tapToWave": "Сәлем жіберу",
+  "mascot.offlineTitle": "Интернет жоқ",
+  "mascot.offlineSub": "Байланыс қалпына келгенде хабарлар көрінеді.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Тіркелу үшін телефон нөмірі қажет",
   "phoneLink.title": "Нөміріңізді қосыңыз",

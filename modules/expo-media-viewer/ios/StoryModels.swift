@@ -177,7 +177,7 @@ final class SVItem {
 
   static func numberString(_ n: NSNumber) -> String {
     let d = n.doubleValue
-    if d == d.rounded() && abs(d) < 9.0e15 { return String(Int64(d)) }
+    if d == d.rounded() && abs(d) < 9.0e18 { return String(Int64(d)) } // ids Snowflake até 2^53-1
     return n.stringValue
   }
 

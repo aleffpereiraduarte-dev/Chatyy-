@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "अहिलेसम्म कुनै सन्देश छैन",
+  "mascot.emptyConvSub": "सन्देश पठाउनुहोस् वा तलको हात हल्लाउनेमा ट्याप गर्नुहोस्",
+  "mascot.tapToWave": "हात हल्लाएर नमस्ते पठाउनुहोस्",
+  "mascot.offlineTitle": "इन्टरनेट छैन",
+  "mascot.offlineSub": "जडान फर्किनेबित्तिकै सन्देशहरू देखिनेछन्।",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "साइन अप गर्न फोन नम्बर चाहिन्छ",
   "phoneLink.title": "आफ्नो नम्बर थप्नुहोस्",

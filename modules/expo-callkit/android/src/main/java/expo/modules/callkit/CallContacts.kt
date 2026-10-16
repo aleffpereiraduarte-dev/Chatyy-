@@ -128,7 +128,7 @@ object CallContacts {
             put("action", "chat_call_add")
             put("call_id", callId)
             if (conversationId.isNotEmpty()) {
-                put("conversation_id", conversationId.toIntOrNull() ?: 0)
+                put("conversation_id", conversationId.toLongOrNull() ?: 0L)
             }
             put("video", if (isVideo) 1 else 0)
             put("emails", JSONArray().put(email))
@@ -327,7 +327,7 @@ object CallContacts {
         val body = JSONObject().apply {
             put("action", "chat_call_add")
             put("call_id", callId)
-            conversationId.toIntOrNull()?.let { put("conversation_id", it) }
+            conversationId.toLongOrNull()?.let { put("conversation_id", it) }
             put("video", if (isVideo) 1 else 0)
             put("emails", JSONArray().apply { list.forEach { put(it) } })
         }.toString()

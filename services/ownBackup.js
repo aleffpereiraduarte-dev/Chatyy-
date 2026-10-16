@@ -380,7 +380,15 @@ function _pickMsg(m, cid) {
 function _isBoundary(id) {
   // corte definido pelo conteúdo (id) → mesmos blocos a cada backup
   const n = Number(id) || 0;
-  return ((Math.imul(n, 2654435761) >>> 0) & 255) === 255;
+  if (n >= 0 && n < 4294967296) return ((Math.imul(n, 2654435761) >>> 0) & 255) === 255; // ids legados: mesmos blocos de antes
+  // [ids-53bit 2026-10-16] Snowflake ((ms<<12)|região<<8|seq): Math.imul trunca a
+  // 32 bits e `& 255` só enxergava os 8 bits baixos (= seq, quase sempre 0) →
+  // nunca cortava (ou sempre). Mistura hi/lo e usa os bits ALTOS do produto.
+  const lo = n % 4294967296;
+  const hi = Math.floor(n / 4294967296);
+  let h = Math.imul(lo ^ Math.imul(hi, 0x9E3779B1), 0x85EBCA6B) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xC2B2AE35) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 24) === 255;
 }
 function _chunkMessages(msgs) {
   const blocks = [];
@@ -443,7 +451,7 @@ async function _fetchConv(cid, minId, onPage) {
     before = oldest;
   }
   const seen = new Set();
-  return out.filter((m) => (seen.has(m.id) ? false : seen.add(m.id)))
+  return out.filter((m) => (seen.has(String(m.id)) ? false : seen.add(String(m.id)))) // [ids-53bit] chave string
     .sort((a, b) => Number(a.id) - Number(b.id));
 }
 

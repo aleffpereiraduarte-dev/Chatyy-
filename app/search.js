@@ -11,6 +11,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
+import ChatyyMascot from '../components/mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
 import GlobalMessageSearch from '../components/GlobalMessageSearch'; // [2026-10-14 busca-global]
@@ -197,7 +198,10 @@ export default function SearchScreen() {
         </TouchableOpacity>
       )}
       ListEmptyComponent={!loading && query.trim().length >= 2 ? (
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('feed.noResults') || 'Sem resultados'}</Text>
+        <View style={{ alignItems: 'center', paddingTop: 40 }}>{/* [2026-10-16 mascote] procurando com a lupa */}
+          <ChatyyMascot pose="search" size={124} dark={!!isDark} />
+          <Text style={[styles.emptyText, { color: colors.textSecondary, paddingTop: 6 }]}>{t('feed.noResults') || 'Sem resultados'}</Text>
+        </View>
       ) : (!loading ? (
         // [2026-10-14 vis3] estado vazio inicial — antes a tela ficava em branco.
         <View style={{ alignItems: 'center', paddingTop: 72, paddingHorizontal: 32, gap: 12 }}>

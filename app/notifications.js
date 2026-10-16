@@ -447,6 +447,7 @@ function EmptyState({ colors, isDark, t, tab, onOpenSettings }) {
   return (
     <ScreenEmptyState
       kind="notifications"
+      mascot="celebrate"
       title={tl(t, 'notifications.allCaughtUp', { pt: 'Você está em dia', en: "You're all caught up", es: 'Estás al día' })}
       subtitle={sub}
       secondary={onOpenSettings ? {

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Одоогоор мессеж алга",
+  "mascot.emptyConvSub": "Мессеж илгээх эсвэл доорх мэндчилгээн дээр дарна уу",
+  "mascot.tapToWave": "Мэндчилгээ илгээх",
+  "mascot.offlineTitle": "Интернэт алга",
+  "mascot.offlineSub": "Холболт сэргэмэгц мессежүүд гарч ирнэ.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Бүртгүүлэхэд утасны дугаар шаардлагатай",
   "phoneLink.title": "Дугаараа нэмэх",

@@ -648,7 +648,7 @@ public class ExpoChatCacheModule: Module {
         var results: [[String: Any]] = []
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_int64(stmt, 1, Int64(conversationId))
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_int64(stmt, 2, Int64(limit))
             while sqlite3_step(stmt) == SQLITE_ROW {
                 var row: [String: Any] = [:]
 
@@ -973,7 +973,7 @@ public class ExpoChatCacheModule: Module {
                 bindString(stmt, idx, "%" + escaped + "%")
                 idx += 1
             }
-            sqlite3_bind_int(stmt, idx, Int32(limit))
+            sqlite3_bind_int64(stmt, idx, Int64(limit))
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let cstr = sqlite3_column_text(stmt, 0) {
                     let json = String(cString: cstr)
@@ -1032,7 +1032,7 @@ public class ExpoChatCacheModule: Module {
             sqlite3_bind_text(stmt, bindIdx, (tokens as NSString).utf8String, -1,
                               unsafeBitCast(-1, to: sqlite3_destructor_type.self))
             bindIdx += 1
-            sqlite3_bind_int(stmt, bindIdx, Int32(limit))
+            sqlite3_bind_int64(stmt, bindIdx, Int64(limit))
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let cstr = sqlite3_column_text(stmt, 0) {
                     let json = String(cString: cstr)
@@ -1059,7 +1059,7 @@ public class ExpoChatCacheModule: Module {
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_text(stmt, 1, (folder as NSString).utf8String, -1,
                               unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_int64(stmt, 2, Int64(limit))
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let cstr = sqlite3_column_text(stmt, 0) {
                     let json = String(cString: cstr)
@@ -1117,7 +1117,7 @@ public class ExpoChatCacheModule: Module {
         var results: [[String: Any]] = []
         if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
             sqlite3_bind_int64(stmt, 1, Int64(parentId))
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_int64(stmt, 2, Int64(limit))
             while sqlite3_step(stmt) == SQLITE_ROW {
                 if let cstr = sqlite3_column_text(stmt, 0) {
                     let json = String(cString: cstr)

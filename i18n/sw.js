@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Bado hakuna ujumbe",
+  "mascot.emptyConvSub": "Tuma ujumbe au gusa salamu ya mkono hapa chini",
+  "mascot.tapToWave": "Tuma salamu ya mkono",
+  "mascot.offlineTitle": "Hakuna intaneti",
+  "mascot.offlineSub": "Ujumbe utaonekana mara tu muunganisho utakaporudi.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Usajili unahitaji nambari ya simu",
   "phoneLink.title": "Ongeza nambari yako",

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Zatiaľ žiadne správy",
+  "mascot.emptyConvSub": "Pošlite správu alebo ťuknite na zamávanie nižšie",
+  "mascot.tapToWave": "Poslať zamávanie",
+  "mascot.offlineTitle": "Bez internetu",
+  "mascot.offlineSub": "Správy sa zobrazia hneď, ako sa pripojenie obnoví.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Registrácia vyžaduje telefónne číslo",
   "phoneLink.title": "Pridajte svoje číslo",

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "No messages yet",
+  "mascot.emptyConvSub": "Send a message or tap the wave below",
+  "mascot.tapToWave": "Send a wave",
+  "mascot.offlineTitle": "No internet",
+  "mascot.offlineSub": "Messages will show up as soon as you're back online.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Sign-up requires a phone number",
   "phoneLink.title": "Add your number",

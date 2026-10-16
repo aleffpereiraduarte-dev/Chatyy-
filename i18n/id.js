@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Belum ada pesan",
+  "mascot.emptyConvSub": "Kirim pesan atau ketuk lambaian di bawah",
+  "mascot.tapToWave": "Kirim lambaian",
+  "mascot.offlineTitle": "Tidak ada internet",
+  "mascot.offlineSub": "Pesan akan muncul begitu koneksi kembali.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Pendaftaran memerlukan nomor telepon",
   "phoneLink.title": "Tambahkan nomor Anda",

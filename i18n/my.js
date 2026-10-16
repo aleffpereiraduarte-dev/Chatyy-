@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "မက်ဆေ့ချ် မရှိသေးပါ",
+  "mascot.emptyConvSub": "မက်ဆေ့ချ်ပို့ပါ သို့မဟုတ် အောက်ရှိ လက်ပြခြင်းကို တို့ပါ",
+  "mascot.tapToWave": "လက်ပြ နှုတ်ဆက်ရန်",
+  "mascot.offlineTitle": "အင်တာနက် မရှိပါ",
+  "mascot.offlineSub": "ချိတ်ဆက်မှု ပြန်ရသည်နှင့် မက်ဆေ့ချ်များ ပေါ်လာပါမည်။",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "စာရင်းသွင်းရန် ဖုန်းနံပါတ် လိုအပ်သည်",
   "phoneLink.title": "သင့်နံပါတ်ကို ထည့်ပါ",

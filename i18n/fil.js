@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Wala pang mensahe",
+  "mascot.emptyConvSub": "Magpadala ng mensahe o i-tap ang kaway sa ibaba",
+  "mascot.tapToWave": "Magpadala ng kaway",
+  "mascot.offlineTitle": "Walang internet",
+  "mascot.offlineSub": "Lalabas ang mga mensahe sa sandaling bumalik ang koneksyon.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Kailangan ng numero ng telepono para mag-sign up",
   "phoneLink.title": "Idagdag ang numero mo",

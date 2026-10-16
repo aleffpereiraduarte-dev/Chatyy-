@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "还没有消息",
+  "mascot.emptyConvSub": "发送消息，或点按下方的挥手打招呼",
+  "mascot.tapToWave": "挥手打招呼",
+  "mascot.offlineTitle": "没有网络",
+  "mascot.offlineSub": "网络恢复后消息会立即显示。",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "注册需要手机号码",
   "phoneLink.title": "添加你的手机号",

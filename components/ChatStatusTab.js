@@ -16,6 +16,7 @@ import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles, IconMoreHorizontal, IconMessageCircle } from './Icons';
 import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-13 status-viewers]
+import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -3868,7 +3869,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         {/* Empty state */}
         {recentStatuses.length === 0 && viewedStatuses.length === 0 && mutedStatuses.length === 0 && !hasMyStatus && (
           <View style={styles.emptyContainer}>
-            <EmptyStatusIllustration isDark={isDark} />
+            <ChatyyMascot pose="celebrate" size={132} dark={isDark} />{/* [2026-10-16 mascote] era EmptyStatusIllustration */}
             <Text style={[styles.emptyText, { color: colors.text }]}>
               {t?.('status.firstTitle') || 'Adicione seu primeiro status'}
             </Text>

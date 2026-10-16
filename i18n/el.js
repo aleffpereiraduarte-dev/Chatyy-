@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Δεν υπάρχουν ακόμα μηνύματα",
+  "mascot.emptyConvSub": "Στείλτε ένα μήνυμα ή πατήστε τον χαιρετισμό παρακάτω",
+  "mascot.tapToWave": "Στείλε χαιρετισμό",
+  "mascot.offlineTitle": "Χωρίς internet",
+  "mascot.offlineSub": "Τα μηνύματα θα εμφανιστούν μόλις επανέλθει η σύνδεση.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Η εγγραφή απαιτεί αριθμό τηλεφώνου",
   "phoneLink.title": "Προσθέστε τον αριθμό σας",

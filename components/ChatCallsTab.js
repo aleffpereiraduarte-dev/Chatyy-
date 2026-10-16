@@ -6,6 +6,7 @@ import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-nati
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
 import { PSTN_ENABLED } from '../constants/featureFlags';
+import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal } from './Icons';
 import Sheet from './ui/Sheet'; import ActionList from './ui/ActionList'; // [2026-10-14 vis-audit] menu "…" do histórico
 import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
@@ -3724,7 +3725,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           <CallListSkeleton count={6} />
         ) : filteredHistory.length === 0 ? (
           <View style={s.emptyState}>
-            <CallEmptyIllustration isDark={isDark} ink={colors?.primary || '#111111'} onInk={colors?.onPrimary || '#fff'} />
+            <ChatyyMascot pose="sleep" size={132} dark={isDark} />{/* [2026-10-16 mascote] era CallEmptyIllustration */}
             <Text style={[s.emptyTitle, { color: textColor }]}>
               {t?.('calls.noCallsTitle') || 'Nenhuma ligação recente'}
             </Text>

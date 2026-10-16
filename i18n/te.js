@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "ఇంకా సందేశాలు లేవు",
+  "mascot.emptyConvSub": "సందేశం పంపండి లేదా కింద ఉన్న చేయి ఊపడంపై నొక్కండి",
+  "mascot.tapToWave": "చేయి ఊపి హలో పంపండి",
+  "mascot.offlineTitle": "ఇంటర్నెట్ లేదు",
+  "mascot.offlineSub": "కనెక్షన్ తిరిగి రాగానే సందేశాలు కనిపిస్తాయి.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "సైన్ అప్‌కు ఫోన్ నంబర్ అవసరం",
   "phoneLink.title": "మీ నంబర్‌ను జోడించండి",

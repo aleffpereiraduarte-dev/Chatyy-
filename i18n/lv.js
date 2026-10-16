@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Vēl nav ziņu",
+  "mascot.emptyConvSub": "Nosūtiet ziņu vai pieskarieties mājienam zemāk",
+  "mascot.tapToWave": "Nosūtīt mājienu",
+  "mascot.offlineTitle": "Nav interneta",
+  "mascot.offlineSub": "Ziņas parādīsies, tiklīdz savienojums atjaunosies.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Reģistrācijai nepieciešams tālruņa numurs",
   "phoneLink.title": "Pievieno savu numuru",

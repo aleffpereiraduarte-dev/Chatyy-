@@ -82,6 +82,8 @@ internal data class MGItem(
     private fun s(m: Map<*, *>, k: String): String = when (val v = m[k]) {
       null -> ""
       is String -> v
+      // número do JS chega Double: 1e14.toString() = "1.0E14" (chave errada p/ ids Snowflake)
+      is Double -> if (v == Math.floor(v) && Math.abs(v) < 9.2E18) v.toLong().toString() else v.toString()
       is Number -> v.toString()
       else -> v.toString()
     }

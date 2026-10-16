@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Hozircha xabarlar yoʻq",
+  "mascot.emptyConvSub": "Xabar yuboring yoki pastdagi qoʻl silkitishga bosing",
+  "mascot.tapToWave": "Salom yuborish",
+  "mascot.offlineTitle": "Internet yoʻq",
+  "mascot.offlineSub": "Aloqa tiklanishi bilan xabarlar paydo boʻladi.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Roʻyxatdan oʻtish uchun telefon raqami kerak",
   "phoneLink.title": "Raqamingizni qoʻshing",

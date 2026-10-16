@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Сообщений пока нет",
+  "mascot.emptyConvSub": "Отправьте сообщение или нажмите на приветствие ниже",
+  "mascot.tapToWave": "Отправить приветствие",
+  "mascot.offlineTitle": "Нет интернета",
+  "mascot.offlineSub": "Сообщения появятся, как только вернётся связь.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Регистрация только по номеру телефона",
   "phoneLink.title": "Добавьте свой номер",

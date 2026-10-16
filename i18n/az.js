@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Hələ mesaj yoxdur",
+  "mascot.emptyConvSub": "Mesaj göndərin və ya aşağıdakı əl yelləməyə toxunun",
+  "mascot.tapToWave": "Əl yellə",
+  "mascot.offlineTitle": "İnternet yoxdur",
+  "mascot.offlineSub": "Bağlantı bərpa olunan kimi mesajlar görünəcək.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Qeydiyyat üçün telefon nömrəsi tələb olunur",
   "phoneLink.title": "Nömrənizi əlavə edin",

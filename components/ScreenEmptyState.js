@@ -29,6 +29,7 @@ import PressableScale from './PressableScale';
 import Svg, { Path, Circle, Rect, Defs, LinearGradient, RadialGradient, Stop, G, Line } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
+import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 
 const AC = '#111111'; // brand accent
 
@@ -183,6 +184,7 @@ export default function ScreenEmptyState({
   accent,
   compact = false,
   style,
+  mascot,         // [2026-10-16 mascote] 'wave'|'sleep'|'search'|'celebrate'|'offline' → mascote animado no lugar do ícone
 }) {
   const { colors, isDark } = useTheme();
   // [2026-10-08 dark-black] A near-black accent (the default ink, or an explicit
@@ -216,9 +218,13 @@ export default function ScreenEmptyState({
     <Animated.View style={[styles.wrapBase, compact ? styles.wrapCompact : styles.wrapFull, { opacity: fade, transform: [{ translateY: slide }] }, style]}>
       {/* Soft circle + glyph */}
       <Animated.View style={{ transform: [{ scale }] }}>
+        {mascot ? (
+          <ChatyyMascot pose={mascot} size={compact ? 104 : 132} dark={isDark} />
+        ) : (
         <View style={{ width: circle, height: circle, borderRadius: circle / 2, backgroundColor: circleBg, alignItems: 'center', justifyContent: 'center' }}>
           <Glyph kind={kind} color={A} size={Math.round(circle * 0.55)} />
         </View>
+        )}
       </Animated.View>
 
       {!!title && <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{title}</Text>}

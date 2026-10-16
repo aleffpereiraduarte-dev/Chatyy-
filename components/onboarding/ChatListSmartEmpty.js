@@ -18,7 +18,7 @@ import { IconBookmark, IconUserPlus, IconPlus, IconShare } from '../Icons';
 import { useReducedMotion } from '../reducedMotion';
 import FadeSlideIn from '../FadeSlideIn';
 import { useOnbCopy } from './copy';
-import { ChatArt } from './illustrations';
+import ChatyyMascot from '../mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { shareInvite } from './invite';
 
 function Chevron({ color }) {
@@ -95,13 +95,14 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
       return (
         <ScreenEmptyState
           kind="search"
+          mascot="search"
           title={t('chat.emptySearchTitle')}
           subtitle={t('chat.emptySearchDesc', { query: q.length > 40 ? `${q.slice(0, 40)}…` : q })}
         />
       );
     }
     if (filter === 'unread') {
-      return <ScreenEmptyState kind="chat" title={t('chat.emptyUnreadTitle')} subtitle={t('chat.emptyUnreadDesc')} secondary={back} />;
+      return <ScreenEmptyState kind="chat" mascot="celebrate" title={t('chat.emptyUnreadTitle')} subtitle={t('chat.emptyUnreadDesc')} secondary={back} />;
     }
     if (filter === 'favorites') {
       return <ScreenEmptyState kind="chat" title={t('chat.emptyFavoritesTitle')} subtitle={t('chat.emptyFavoritesDesc')} secondary={back} />;
@@ -144,7 +145,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
     <FadeSlideIn distance={reduceMotion ? 0 : 10} duration={reduceMotion ? 0 : 320}>
       <View style={st.wrap}>
         <View style={st.hero}>
-          <ChatArt size={132} fg={fg} bg={bg} muted={muted} />
+          <ChatyyMascot pose="wave" size={140} dark={isDark} />{/* [2026-10-16 mascote] era ChatArt estático */}
           <Text style={[st.title, { color: fg }]} accessibilityRole="header">{c('empty.title')}</Text>
           <Text style={[st.sub, { color: sub }]}>{c('empty.sub')}</Text>
         </View>

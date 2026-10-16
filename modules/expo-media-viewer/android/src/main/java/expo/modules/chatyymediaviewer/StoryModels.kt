@@ -112,7 +112,7 @@ class SVItem(
       is String -> v
       is Number -> {
         val d = v.toDouble()
-        if (d == Math.floor(d) && abs(d) < 9.0E15) d.toLong().toString() else d.toString()
+        if (d == Math.floor(d) && abs(d) < 9.2E18) d.toLong().toString() else d.toString()
       }
       else -> ""
     }

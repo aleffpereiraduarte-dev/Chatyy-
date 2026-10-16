@@ -436,6 +436,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ChatyyKeyboardProvider } from '../utils/threadKeyboard';
 import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
+import ConfettiHost from '../components/mascot/ConfettiHost'; // [2026-10-16 mascote]
 import NotificationToast from '../components/NotificationToast';
 import { ToastHost } from '../components/ui/Toast'; // [2026-10-12 overlays] snackbar global único
 import RemovedAccountNotice from '../components/RemovedAccountNotice'; // [incidente-sessao 2026-10-14]
@@ -2270,6 +2271,7 @@ export default function RootLayout() {
                 <VoiceMiniPlayer />
                 <YouTubeInlineHost />
                 <EmailUndoBar />
+                <ConfettiHost />{/* [2026-10-16 mascote] confete leve (1ª msg / grupo criado) */}
                 <Suspense fallback={null}>
                   <IncomingCallListener />
                 </Suspense>

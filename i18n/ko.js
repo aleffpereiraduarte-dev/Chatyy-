@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "아직 메시지가 없습니다",
+  "mascot.emptyConvSub": "메시지를 보내거나 아래 손 흔들기를 탭하세요",
+  "mascot.tapToWave": "손 흔들기 보내기",
+  "mascot.offlineTitle": "인터넷 연결 없음",
+  "mascot.offlineSub": "연결이 돌아오면 바로 메시지가 표시됩니다.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "가입하려면 전화번호가 필요합니다",
   "phoneLink.title": "전화번호 추가",

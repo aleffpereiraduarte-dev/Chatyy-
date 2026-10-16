@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Încă nu există mesaje",
+  "mascot.emptyConvSub": "Trimite un mesaj sau atinge salutul de mai jos",
+  "mascot.tapToWave": "Trimite un salut",
+  "mascot.offlineTitle": "Fără internet",
+  "mascot.offlineSub": "Mesajele vor apărea imediat ce revine conexiunea.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Înregistrarea necesită un număr de telefon",
   "phoneLink.title": "Adaugă-ți numărul",

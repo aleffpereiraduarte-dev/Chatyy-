@@ -254,7 +254,7 @@ function _rememberSent(id) {
   try {
     const g = globalThis;
     if (!g.__chatyy_nativeSentIds) g.__chatyy_nativeSentIds = new Set();
-    g.__chatyy_nativeSentIds.add(id);
+    g.__chatyy_nativeSentIds.add(String(id)); // [ids-53bit] chave string
     if (g.__chatyy_nativeSentIds.size > 500) g.__chatyy_nativeSentIds.delete(g.__chatyy_nativeSentIds.values().next().value);
   } catch {}
 }

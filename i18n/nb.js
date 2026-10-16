@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Ingen meldinger ennå",
+  "mascot.emptyConvSub": "Send en melding eller trykk på vinkingen nedenfor",
+  "mascot.tapToWave": "Send en vinking",
+  "mascot.offlineTitle": "Ingen internett",
+  "mascot.offlineSub": "Meldingene vises så snart tilkoblingen er tilbake.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Registrering krever et telefonnummer",
   "phoneLink.title": "Legg til nummeret ditt",

@@ -1368,6 +1368,7 @@ export default function ChatNewScreen() {
       const r = await api.chatCreate(members, finalName, 'group');
       const convId = r.data?.conversation_id || r.data?.id;
       if (r.success && convId) {
+        try { require('../components/mascot/ConfettiHost').celebrate({ y: 0.42 }); } catch {} // [2026-10-16 mascote]
         require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r.data?.name || finalName)}&type=group`, { replace: true });
       } else {
         safeAlert(t('common.error'), r?.message || t('chat.createGroupError'));

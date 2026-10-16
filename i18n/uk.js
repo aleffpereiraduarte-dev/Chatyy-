@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Повідомлень поки немає",
+  "mascot.emptyConvSub": "Надішліть повідомлення або торкніться привітання нижче",
+  "mascot.tapToWave": "Надіслати привітання",
+  "mascot.offlineTitle": "Немає інтернету",
+  "mascot.offlineSub": "Повідомлення з’являться, щойно повернеться зв’язок.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Реєстрація лише за номером телефону",
   "phoneLink.title": "Додайте свій номер",

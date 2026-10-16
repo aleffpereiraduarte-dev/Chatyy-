@@ -781,8 +781,8 @@ public final class ChatyyStoreDB {
         : "SELECT raw FROM messages WHERE conv = ? ORDER BY id DESC LIMIT ?;"
       if sqlite3_prepare_v2(db, sql, -1, &st, nil) == SQLITE_OK {
         bind(st, 1, conv)
-        if beforeId > 0 { sqlite3_bind_int64(st, 2, beforeId); sqlite3_bind_int(st, 3, Int32(max(1, limit))) }
-        else { sqlite3_bind_int(st, 2, Int32(max(1, limit))) }
+        if beforeId > 0 { sqlite3_bind_int64(st, 2, beforeId); sqlite3_bind_int64(st, 3, Int64(max(1, limit))) }
+        else { sqlite3_bind_int64(st, 2, Int64(max(1, limit))) }
         while sqlite3_step(st) == SQLITE_ROW { let r = colText(st, 0); if !r.isEmpty { raws.append(r) } }
       }
       sqlite3_finalize(st)

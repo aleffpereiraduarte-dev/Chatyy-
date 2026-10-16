@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "لا توجد رسائل بعد",
+  "mascot.emptyConvSub": "أرسل رسالة أو اضغط على التلويح بالأسفل",
+  "mascot.tapToWave": "إرسال تلويحة",
+  "mascot.offlineTitle": "لا يوجد اتصال بالإنترنت",
+  "mascot.offlineSub": "ستظهر الرسائل فور عودة الاتصال.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "التسجيل يتطلب رقم هاتف",
   "phoneLink.title": "أضف رقمك",

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Nog geen berichten",
+  "mascot.emptyConvSub": "Stuur een bericht of tik hieronder op de zwaai",
+  "mascot.tapToWave": "Zwaai sturen",
+  "mascot.offlineTitle": "Geen internet",
+  "mascot.offlineSub": "Berichten verschijnen zodra de verbinding terug is.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Registreren kan alleen met een telefoonnummer",
   "phoneLink.title": "Voeg je nummer toe",

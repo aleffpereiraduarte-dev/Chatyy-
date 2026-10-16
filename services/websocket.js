@@ -1997,6 +1997,10 @@ class MailWebSocket {
   // next reconnect, causing duplicate bubbles. 5000 covers ~24h of normal
   // traffic and stays well under any RN memory pressure.
   _trackMsgId(id) {
+    // [ids-53bit 2026-10-16] Chave sempre string: o mesmo id chega como number
+    // (WS) e como string (relay/HTTP/cache) → Set misto não deduplicava.
+    if (!id && id !== 0) return false;
+    id = String(id);
     if (!id || this._seenMsgIds.has(id)) return false; // duplicate
     this._seenMsgIds.add(id);
     this._seenMsgIdQueue.push(id);
@@ -2799,7 +2803,7 @@ class MailWebSocket {
     // ws_event_log). Re-relayar só duplicaria frames/linhas de log nos pares.
     try {
       const nid = message && message.id;
-      if (nid != null && globalThis.__chatyy_nativeSentIds && globalThis.__chatyy_nativeSentIds.has(nid)) {
+      if (nid != null && globalThis.__chatyy_nativeSentIds && (globalThis.__chatyy_nativeSentIds.has(nid) || globalThis.__chatyy_nativeSentIds.has(String(nid)))) {
         this._trackMsgId(nid);
         return Promise.resolve({ viaNative: true, msg_id: nid });
       }

@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Még nincsenek üzenetek",
+  "mascot.emptyConvSub": "Küldj üzenetet, vagy koppints az alábbi integetésre",
+  "mascot.tapToWave": "Integetés küldése",
+  "mascot.offlineTitle": "Nincs internet",
+  "mascot.offlineSub": "Az üzenetek megjelennek, amint visszatér a kapcsolat.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "A regisztrációhoz telefonszám kell",
   "phoneLink.title": "Add meg a számodat",

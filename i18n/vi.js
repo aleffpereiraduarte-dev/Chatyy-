@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "Chưa có tin nhắn nào",
+  "mascot.emptyConvSub": "Gửi tin nhắn hoặc chạm vào lời vẫy tay bên dưới",
+  "mascot.tapToWave": "Gửi lời vẫy tay",
+  "mascot.offlineTitle": "Không có internet",
+  "mascot.offlineSub": "Tin nhắn sẽ hiện ngay khi có kết nối trở lại.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "Đăng ký cần số điện thoại",
   "phoneLink.title": "Thêm số của bạn",

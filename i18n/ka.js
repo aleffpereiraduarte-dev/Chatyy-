@@ -1,4 +1,10 @@
 export default {
+  // [2026-10-16 mascote] estado vazio da conversa + sem internet
+  "mascot.emptyConvTitle": "შეტყობინებები ჯერ არ არის",
+  "mascot.emptyConvSub": "გაგზავნეთ შეტყობინება ან შეეხეთ ქვემოთ მისალმებას",
+  "mascot.tapToWave": "მისალმების გაგზავნა",
+  "mascot.offlineTitle": "ინტერნეტი არ არის",
+  "mascot.offlineSub": "შეტყობინებები გამოჩნდება, როგორც კი კავშირი აღდგება.",
   // [phone-obrigatorio 2026-10-15] "Adicione seu número" + cadastro só com telefone
   "auth.phoneRequired": "რეგისტრაციისთვის საჭიროა ტელეფონის ნომერი",
   "phoneLink.title": "დაამატეთ თქვენი ნომერი",

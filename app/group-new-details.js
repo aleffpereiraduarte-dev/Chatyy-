@@ -239,6 +239,7 @@ export default function GroupNewDetailsScreen() {
           ...(!isChannel && desc.trim() ? { description: desc.trim() } : {}),
         };
         clearGroupDraft();
+        try { require('../components/mascot/ConfettiHost').celebrate({ y: 0.42 }); } catch {} // [2026-10-16 mascote]
         runPostCreate(convId);
         goToConversation(conv);
         return;
