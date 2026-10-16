@@ -11824,6 +11824,8 @@ export async function bootstrap() {
   const r = await apiCall('bootstrap');
   // [2026-10-15 screen-protect-all] flag remota screen_protect_all (+ allowlist em hash).
   try { if (r?.success && r.data?.config) require('./screenProtect').noteServerConfig?.(r.data.config); } catch {}
+  // [2026-10-16 wave10-B] canário/kill do KV SQLite (config.kv_sqlite / kv_sqlite_pct).
+  try { if (r?.success && r.data?.config) require('./mmkv').noteKvRemoteConfig?.(r.data.config); } catch {}
   // [2026-10-15 confiab] kill switch do logout por bearer morto (persistido).
   try {
     if (r?.success && r.data?.config) {

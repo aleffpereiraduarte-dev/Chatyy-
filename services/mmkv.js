@@ -40,8 +40,12 @@
 //      is a safe rollback (that boot also wipes the KV table so a later re-enable
 //      re-migrates instead of serving stale rows). Every SQLite failure falls
 //      back to AsyncStorage.
+//   6. [2026-10-16 wave10-B] Canário: KV_SQLITE_ROLLOUT_PCT (10 %) por balde do
+//      aparelho, flag remota via bootstrap config (kv_sqlite=false kill,
+//      kv_sqlite_pct, kv_sqlite_reset), trava de crash, migração do zero,
+//      kill/falha apagam o marcador na hora, telemetria nativeBeacon('kv_store').
 import { Platform } from 'react-native';
-import { MMKV_LAZY_IOS, KV_SQLITE_ENABLED } from '../constants/featureFlags';
+import { MMKV_LAZY_IOS, KV_SQLITE_ENABLED, KV_SQLITE_ROLLOUT_PCT, KV_SQLITE_KILL } from '../constants/featureFlags';
 
 const PFX = 'mmkv_';
 const HYDRATE_BATCH = 40;
@@ -78,47 +82,188 @@ function _lazySql() {
   return `((${inc}) AND NOT (${exc}))`;
 }
 
-// ─── SQLite KV backend (flag KV_SQLITE_ENABLED) ──────────────────────────────
+// ─── SQLite KV backend (canário KV_SQLITE_*) ─────────────────────────────────
+// [2026-10-16 wave10-B] Revisão + canário remoto. Contrato:
+//   • Decisão por boot (_kvDecide): override global → kill OTA → kill remoto →
+//     trava de crash local → KV_SQLITE_ENABLED (100 %) → % remoto (bootstrap
+//     config.kv_sqlite_pct) ou KV_SQLITE_ROLLOUT_PCT compilado, por BALDE do
+//     aparelho (0..99, sorteado 1× e guardado em kv_meta).
+//   • kv_meta (mesmo arquivo) guarda balde / flag remota / trava de crash e é
+//     lido de forma SÍNCRONA antes de decidir — a flag remota recebida num boot
+//     vale a partir do boot seguinte (ou na hora, se for kill).
+//   • A tabela kv é um ESPELHO do AsyncStorage (dual-write). Toda vez que uma
+//     sessão roda SEM espelhar (flag off, falha de boot/escrita), o marcador é
+//     apagado na hora (síncrono) → o próximo boot com a flag NÃO lê dado velho;
+//     ele refaz a migração, que começa APAGANDO todas as linhas mmkv_ (senão uma
+//     chave removida no AsyncStorage — ex.: wipe de logout da conta A —
+//     ressuscitaria do SQLite para a conta B).
+//   • Arquivo corrompido → fecha + apaga o .db (recria/remigra no próximo boot).
+//   • Telemetria: nativeBeacon('kv_store', …) — boot (backend/ms/motivo/balde),
+//     migração, rollback, erros.
 const KV_DB_NAME = 'chatyy_kv.db';
 const KV_MIGRATED = '__kv_migrated_v1';      // row inside kv (not mmkv_-prefixed)
-const AS_KV_MARKER = 'kvsql_migrated_v1';    // AsyncStorage twin of the marker
+const AS_KV_MARKER = 'kvsql_migrated_v1';    // legado (só é limpo)
 const KV_DUAL_WRITE = true;                  // keep AsyncStorage current (rollback)
 const KV_MIGRATE_DELAY_MS = 8000;            // stay off the cold-start path
 const KV_MIGRATE_BATCH = 12;                 // ≤ ~18 MB of strings per batch
 const KV_FLUSH_MS = 30;
-let _kv = null;           // expo-sqlite handle (sync API) while a kv mode is on
+const KV_CRASH_LIMIT = 3;                    // boots seguidos sem chegar a +30 s
+const KV_CRASH_CLEAR_MS = 30000;
+const KV_WIPE_DELAY_MS = 3000;
+let _db = null;           // expo-sqlite handle (sync API): kv_meta sempre, kv se modo ≠ off
+let _kv = null;           // = _db enquanto um modo kv está ativo
 let _kvMode = 'off';      // 'off' | 'migrating' (AsyncStorage primary) | 'primary'
 let _kvTouched = null;    // keys written/removed while migrating → copy skips them
 const _kvDirty = new Map(); // fullKey → string (upsert) | null (delete)
 let _kvFlushTimer = null;
+let _kvFlushMicro = false;
+let _kvDecision = { on: false, why: 'init', bucket: -1, pct: 0, src: 'default' };
+let _SQLite = null;
 
-function _kvFlagOn() {
-  if (Platform.OS === 'web') return false;
-  try {
-    const o = typeof globalThis !== 'undefined' ? globalThis.__chatyy_kv_sqlite : undefined;
-    if (o === true || o === false) return o;
-  } catch {}
-  return KV_SQLITE_ENABLED === true;
+function _errMsg(e) { return String((e && e.message) || e).slice(0, 120); }
+function _isCorrupt(e) { return /corrupt|malformed|not a database|SQLITE_NOTADB|file is encrypted|disk image/i.test(_errMsg(e)); }
+
+function _kvOpenRaw() {
+  if (!_SQLite) _SQLite = require('expo-sqlite');
+  if (!_SQLite || typeof _SQLite.openDatabaseSync !== 'function') return null;
+  const db = _SQLite.openDatabaseSync(KV_DB_NAME);
+  try { db.execSync('PRAGMA journal_mode = WAL;'); } catch {}
+  try { db.execSync('PRAGMA synchronous = NORMAL;'); } catch {}
+  try { db.execSync('PRAGMA busy_timeout = 3000;'); } catch {}
+  db.execSync('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY NOT NULL, v TEXT NOT NULL);');
+  db.execSync('CREATE TABLE IF NOT EXISTS kv_meta (k TEXT PRIMARY KEY NOT NULL, v TEXT NOT NULL);');
+  // sonda: um arquivo corrompido costuma abrir e só falhar na 1ª leitura
+  db.getFirstSync('SELECT v FROM kv_meta LIMIT 1');
+  return db;
+}
+
+// Fecha e apaga o arquivo (corrupção / handle inutilizável). Nunca lança.
+function _kvDropFile(db, why) {
+  try { db?.closeSync?.(); } catch {}
+  let ok = false;
+  try { if (_SQLite && typeof _SQLite.deleteDatabaseSync === 'function') { _SQLite.deleteDatabaseSync(KV_DB_NAME); ok = true; } } catch {}
+  _kvTele('corrupt_reset', `why=${why} deleted=${ok ? 1 : 0}`);
+  return ok;
 }
 
 function _kvOpen() {
-  try {
-    const SQLite = require('expo-sqlite');
-    if (!SQLite || typeof SQLite.openDatabaseSync !== 'function') return null;
-    const db = SQLite.openDatabaseSync(KV_DB_NAME);
-    try { db.execSync('PRAGMA journal_mode = WAL;'); } catch {}
-    try { db.execSync('PRAGMA synchronous = NORMAL;'); } catch {}
-    try { db.execSync('PRAGMA busy_timeout = 3000;'); } catch {}
-    db.execSync('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY NOT NULL, v TEXT NOT NULL);');
-    return db;
-  } catch (e) {
-    _beacon('kv_open_failed', String(e?.message || e).slice(0, 120));
+  try { return _kvOpenRaw(); } catch (e) {
+    if (_isCorrupt(e)) {
+      _kvDropFile(null, 'open:' + _errMsg(e).slice(0, 60));
+      try { return _kvOpenRaw(); } catch (e2) { _kvTele('open_failed', _errMsg(e2)); return null; }
+    }
+    _kvTele('open_failed', _errMsg(e));
     return null;
   }
 }
 
+function _metaGet(k) {
+  try { const r = _db?.getFirstSync('SELECT v FROM kv_meta WHERE k = ?', [k]); return r && typeof r.v === 'string' ? r.v : null; } catch { return null; }
+}
+function _metaSet(k, v) {
+  try {
+    if (!_db) return;
+    if (v === null || v === undefined) _db.runSync('DELETE FROM kv_meta WHERE k = ?', [k]);
+    else _db.runSync('INSERT OR REPLACE INTO kv_meta (k, v) VALUES (?, ?)', [k, String(v)]);
+  } catch {}
+}
+
+// Decisão pura (exportada p/ teste). meta = { bucket, remote_kill, remote_pct, local_off }.
+export function _kvDecide(meta, opts) {
+  const o = opts || {};
+  const flags = o.flags || { KV_SQLITE_ENABLED, KV_SQLITE_ROLLOUT_PCT, KV_SQLITE_KILL };
+  const m = meta || {};
+  const bucket = Number.isInteger(m.bucket) ? m.bucket : -1;
+  const base = { bucket, pct: 0, src: 'default' };
+  if (o.override === true) return { ...base, on: true, why: 'override', pct: 100, src: 'global' };
+  if (o.override === false) return { ...base, on: false, why: 'override', src: 'global' };
+  if (flags.KV_SQLITE_KILL === true) return { ...base, on: false, why: 'ota_kill', src: 'ota' };
+  if (m.remote_kill === '1') return { ...base, on: false, why: 'remote_kill', src: 'remote' };
+  if (m.local_off) return { ...base, on: false, why: 'crash_guard', src: 'local' };
+  if (flags.KV_SQLITE_ENABLED === true) return { ...base, on: true, why: 'ota_all', pct: 100, src: 'ota' };
+  let pct = Number(flags.KV_SQLITE_ROLLOUT_PCT) || 0; let src = 'default';
+  const rp = m.remote_pct === null || m.remote_pct === undefined || m.remote_pct === '' ? NaN : Number(m.remote_pct);
+  if (Number.isFinite(rp)) { pct = rp; src = 'remote'; }
+  pct = Math.max(0, Math.min(100, Math.floor(pct)));
+  if (bucket < 0) return { ...base, on: false, why: 'no_bucket', pct, src };
+  const on = bucket < pct;
+  return { ...base, on, why: on ? 'cohort' : 'out', pct, src };
+}
+
+function _globalOverride() {
+  try {
+    const o = typeof globalThis !== 'undefined' ? globalThis.__chatyy_kv_sqlite : undefined;
+    if (o === true || o === false) return o;
+  } catch {}
+  return undefined;
+}
+
+// Abre o .db (sempre, no nativo), lê kv_meta e decide. Off com resto de KV →
+// apaga o marcador JÁ (síncrono) e agenda o wipe das linhas.
+function _kvPrepare() {
+  if (Platform.OS === 'web') return { on: false, why: 'web', bucket: -1, pct: 0, src: 'default' };
+  const ov = _globalOverride();
+  const db = _kvOpen();
+  if (!db) { const d = _kvDecide({}, { override: ov }); return { ...d, on: false, why: 'no_sqlite' }; }
+  _db = db;
+  let bucket = parseInt(_metaGet('bucket') || '', 10);
+  if (!(bucket >= 0 && bucket <= 99)) {
+    bucket = Math.floor(Math.random() * 100);
+    _metaSet('bucket', bucket);
+  }
+  const meta = { bucket, remote_kill: _metaGet('remote_kill'), remote_pct: _metaGet('remote_pct'), local_off: _metaGet('local_off') };
+  let d = _kvDecide(meta, { override: ov });
+  if (d.on && ov === undefined) {
+    // trava de crash: n boots seguidos com KV sem sobreviver 30 s → desliga local
+    const n = parseInt(_metaGet('boot_inflight') || '0', 10) || 0;
+    if (n >= KV_CRASH_LIMIT) {
+      _metaSet('local_off', 'crash:' + n);
+      _metaSet('boot_inflight', null);
+      _kvTele('crash_guard', `boots=${n}`);
+      d = { ...d, on: false, why: 'crash_guard', src: 'local' };
+    } else {
+      _metaSet('boot_inflight', n + 1);
+    }
+  }
+  if (!d.on) {
+    let hasRows = false;
+    try { hasRows = !!db.getFirstSync('SELECT 1 AS x FROM kv LIMIT 1'); } catch {}
+    if (hasRows) {
+      let hadMarker = false;
+      try { hadMarker = !!db.getFirstSync('SELECT 1 AS x FROM kv WHERE k = ?', [KV_MIGRATED]); } catch {}
+      try { db.runSync('DELETE FROM kv WHERE k = ?', [KV_MIGRATED]); } catch (e) {
+        _db = null; _kvDropFile(db, 'unmark:' + _errMsg(e).slice(0, 60));
+        return d;
+      }
+      setTimeout(() => {
+        try { if (_kvMode === 'off' && _db) _db.runSync('DELETE FROM kv'); } catch {}
+        if (hadMarker) _kvTele('rollback_wipe', `why=${d.why}`);
+      }, KV_WIPE_DELAY_MS);
+    }
+  }
+  return d;
+}
+
 function _kvTx(db, fn) {
   if (typeof db.withTransactionSync === 'function') db.withTransactionSync(fn); else fn();
+}
+
+// Sessão deixa de espelhar no KV (falha de escrita/leitura, kill remoto):
+// marcador fora (próximo boot remigra do zero) e, se nem isso der, apaga o .db.
+// AsyncStorage tem tudo (dual-write) → as chaves pendentes caem nele.
+function _kvAbandon(why) {
+  const db = _kv || _db;
+  _kvMode = 'off';
+  _kv = null;
+  _kvTouched = null;
+  _kvDirty.clear();
+  _stats.backend = 'async';
+  if (!db) return;
+  try { db.runSync('DELETE FROM kv WHERE k = ?', [KV_MIGRATED]); } catch (e) {
+    _db = null;
+    _kvDropFile(db, 'abandon:' + _errMsg(e).slice(0, 60));
+  }
+  _kvTele('abandon', why);
 }
 
 // Persist queued kv writes in ONE sync transaction. Never throws.
@@ -136,11 +281,10 @@ export function flushStorageWrites() {
     });
   } catch (e) {
     _stats.kvErrors++;
-    _beacon('kv_write_failed', `n=${items.length} err=${String(e?.message || e).slice(0, 100)}`);
-    // AsyncStorage still has everything (dual-write). Distrust the kv copy:
-    // drop the marker so the next launch boots from AsyncStorage + re-migrates.
-    try { _kv.runSync('DELETE FROM kv WHERE k = ?', [KV_MIGRATED]); } catch {}
-    try { _asyncStorage?.removeItem(AS_KV_MARKER).catch(() => {}); } catch {}
+    _beacon('kv_write_failed', `n=${items.length} err=${_errMsg(e).slice(0, 100)}`);
+    // AsyncStorage still has everything (dual-write). Distrust the kv copy for
+    // the rest of the session and the next boot (re-migrates from scratch).
+    _kvAbandon(`write_failed n=${items.length} corrupt=${_isCorrupt(e) ? 1 : 0} err=${_errMsg(e).slice(0, 60)}`);
   }
 }
 
@@ -148,28 +292,49 @@ function _kvQueue(fullKey, value) {
   if (!_kv || _kvMode === 'off') return;
   if (_kvTouched) _kvTouched.add(fullKey);
   _kvDirty.set(fullKey, value);
+  if (value === null) {
+    // [privacidade] remoção (wipe de logout/troca de conta) vai pro disco no fim
+    // do tick — não fica 30 ms exposta a um kill do processo.
+    if (!_kvFlushMicro) {
+      _kvFlushMicro = true;
+      Promise.resolve().then(() => { _kvFlushMicro = false; flushStorageWrites(); });
+    }
+    return;
+  }
   if (!_kvFlushTimer) _kvFlushTimer = setTimeout(flushStorageWrites, KV_FLUSH_MS);
 }
 
 // Sync single-key read for the 'primary' mode. undefined = read failed.
 function _kvReadSync(fullKey) {
+  if (!_kv) return undefined;
   try {
     const row = _kv.getFirstSync('SELECT v FROM kv WHERE k = ?', [fullKey]);
     return row && typeof row.v === 'string' ? row.v : null;
   } catch (e) {
     _stats.kvErrors++;
+    if (_isCorrupt(e)) _kvAbandon('read_corrupt ' + _errMsg(e).slice(0, 60));
     return undefined;
   }
 }
 
 // Synchronous boot from the KV table. true = fully booted from SQLite.
 function _bootFromKv() {
-  const db = _kvOpen();
+  const db = _db;
   if (!db) return false;
   _kv = db;
   let migrated = false;
   try { migrated = !!db.getFirstSync('SELECT v FROM kv WHERE k = ?', [KV_MIGRATED]); } catch {}
-  if (!migrated) { _kvMode = 'migrating'; _kvTouched = new Set(); return false; }
+  if (!migrated) {
+    // Migração começa do ZERO: linha que sobrou de uma sessão sem espelho
+    // (chave apagada no AsyncStorage depois) não pode ressuscitar.
+    try { db.runSync(`DELETE FROM kv WHERE substr(k,1,${PFX.length})='${PFX}'`); } catch (e) {
+      _kv = null; _db = null;
+      _kvDropFile(db, 'premigrate:' + _errMsg(e).slice(0, 60));
+      return false;
+    }
+    _kvMode = 'migrating'; _kvTouched = new Set();
+    return false;
+  }
   try {
     const rows = db.getAllSync(
       `SELECT k, CASE WHEN ${_lazySql()} THEN NULL ELSE v END AS v FROM kv WHERE substr(k,1,${PFX.length})='${PFX}'`
@@ -186,9 +351,15 @@ function _bootFromKv() {
     _stats.backend = 'sqlite';
     return true;
   } catch (e) {
-    _beacon('kv_boot_failed', String(e?.message || e).slice(0, 120));
+    _stats.kvErrors++;
+    _beacon('kv_boot_failed', _errMsg(e));
     _mem = {}; _pending.clear();
     _kv = null; _kvMode = 'off';
+    // Esta sessão vai rodar só no AsyncStorage → o espelho fica velho: tira o
+    // marcador (ou apaga o arquivo se corrompido/inacessível).
+    if (_isCorrupt(e)) { _db = null; _kvDropFile(db, 'boot:' + _errMsg(e).slice(0, 60)); }
+    else { try { db.runSync('DELETE FROM kv WHERE k = ?', [KV_MIGRATED]); } catch { _db = null; _kvDropFile(db, 'boot_unmark'); } }
+    _kvTele('boot_failed', `corrupt=${_isCorrupt(e) ? 1 : 0} err=${_errMsg(e).slice(0, 80)}`);
     return false;
   }
 }
@@ -198,15 +369,16 @@ const _yield = () => new Promise(r => setTimeout(r, 0));
 async function _kvMigrate() {
   if (_kvMode !== 'migrating' || !_kv || !_asyncStorage) return;
   const t0 = Date.now();
-  let copied = 0;
+  let copied = 0; let bytes = 0;
   try {
     const all = (await _asyncStorage.getAllKeys()) || [];
     const keys = all.filter(k => typeof k === 'string' && k.startsWith(PFX));
     for (let i = 0; i < keys.length; i += KV_MIGRATE_BATCH) {
-      if (_kvMode !== 'migrating' || !_kv) return; // clearAll / failure mid-way
+      if (_kvMode !== 'migrating' || !_kv) { _kvTele('migrate_aborted', `copied=${copied} mode=${_kvMode}`); return; }
       const chunk = keys.slice(i, i + KV_MIGRATE_BATCH).filter(k => !_kvTouched?.has(k));
       if (!chunk.length) continue;
       const pairs = await _multiGetSafe(chunk);
+      if (_kvMode !== 'migrating' || !_kv) { _kvTele('migrate_aborted', `copied=${copied} mode=${_kvMode}`); return; }
       const rows = [];
       for (const p of pairs) {
         // Re-check AFTER the await: a write/remove during the read wins.
@@ -217,39 +389,88 @@ async function _kvMigrate() {
           for (const [k, v] of rows) _kv.runSync('INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)', [k, v]);
         });
         copied += rows.length;
+        for (const r of rows) bytes += r[1].length;
       }
       await _yield();
     }
     flushStorageWrites();
+    if (_kvMode !== 'migrating' || !_kv) { _kvTele('migrate_aborted', `copied=${copied} mode=${_kvMode}`); return; }
     _kv.runSync('INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)', [KV_MIGRATED, String(Date.now())]);
-    try { await _asyncStorage.setItem(AS_KV_MARKER, '1'); } catch {}
     _stats.kvMigrated = copied;
     _stats.kvMigrateMs = Date.now() - t0;
     _beacon('kv_migrated', `keys=${copied} ms=${_stats.kvMigrateMs}`);
+    _kvTele('migrated', `keys=${copied} mb=${(bytes / 1048576).toFixed(1)} ms=${_stats.kvMigrateMs}`);
   } catch (e) {
     _stats.kvErrors++;
-    _beacon('kv_migrate_failed', `copied=${copied} err=${String(e?.message || e).slice(0, 100)}`);
+    _beacon('kv_migrate_failed', `copied=${copied} err=${_errMsg(e).slice(0, 100)}`);
+    _kvTele('migrate_failed', `copied=${copied} corrupt=${_isCorrupt(e) ? 1 : 0} err=${_errMsg(e).slice(0, 80)}`);
+    // sem marcador → próximo boot tenta de novo do zero; sessão segue no AsyncStorage
+    _kvAbandon('migrate_failed');
   }
 }
 
-// Flag turned OFF after a migration: AsyncStorage becomes the only writer
-// again, so the kv copy goes stale → wipe it (a later re-enable re-migrates).
-async function _kvInvalidate() {
+// ─── Flag remota (bootstrap → data.config) ──────────────────────────────────
+// config.kv_sqlite === false → kill (desliga já nesta sessão + próximos boots);
+// config.kv_sqlite_pct = 0..100 → % de aparelhos (vale no próximo boot).
+// Chaves ausentes → volta ao padrão compilado. Nunca lança.
+export function noteKvRemoteConfig(cfg) {
+  if (Platform.OS === 'web' || !cfg || typeof cfg !== 'object' || !_db) return;
   try {
-    const db = _kvOpen();
-    if (db) { db.runSync('DELETE FROM kv'); try { db.closeSync?.(); } catch {} }
-    await _asyncStorage.removeItem(AS_KV_MARKER);
+    const prevKill = _metaGet('remote_kill'); const prevPct = _metaGet('remote_pct');
+    const kill = cfg.kv_sqlite === false ? '1' : null;
+    const p = Number(cfg.kv_sqlite_pct);
+    const pct = cfg.kv_sqlite_pct !== undefined && cfg.kv_sqlite_pct !== null && Number.isFinite(p)
+      ? String(Math.max(0, Math.min(100, Math.floor(p)))) : null;
+    if (kill !== prevKill) _metaSet('remote_kill', kill);
+    if (pct !== prevPct) _metaSet('remote_pct', pct);
+    // reset remoto da trava de crash (config.kv_sqlite_reset = número que muda)
+    if (cfg.kv_sqlite_reset !== undefined && cfg.kv_sqlite_reset !== null) {
+      const ep = String(cfg.kv_sqlite_reset);
+      if (ep !== _metaGet('reset_epoch')) { _metaSet('reset_epoch', ep); _metaSet('local_off', null); _metaSet('boot_inflight', null); }
+    }
+    if (kill !== prevKill || pct !== prevPct) _kvTele('remote', `kill=${kill || 0} pct=${pct === null ? '-' : pct} mode=${_kvMode}`);
+    if (kill === '1' && _kvMode !== 'off' && _globalOverride() !== true) _kvAbandon('remote_kill');
   } catch {}
 }
 
+// ─── Telemetria (nativeBeacon 'kv_store'; espera o login, sem PII) ──────────
+const _teleQ = [];
+let _teleTimer = null;
+let _teleTries = 0;
+function _kvTele(step, info) {
+  if (Platform.OS === 'web') return;
+  try {
+    if (_teleQ.length < 12) _teleQ.push([String(step), String(info || '')]);
+    if (!_teleTimer) _teleTimer = setTimeout(_teleDrain, 1500);
+  } catch {}
+}
+function _teleDrain() {
+  _teleTimer = null;
+  try {
+    const m = require('./api');
+    const api = m.default || m;
+    const tok = (api.getAuthToken && api.getAuthToken()) || (api.getToken && api.getToken());
+    if (!tok) {
+      if (++_teleTries < 40) _teleTimer = setTimeout(_teleDrain, 3000); // até ~2 min
+      else _teleQ.length = 0;
+      return;
+    }
+    const { nativeBeacon } = require('./nativeTelemetry');
+    while (_teleQ.length) { const [s, i] = _teleQ.shift(); nativeBeacon('kv_store', s, i); }
+  } catch { _teleQ.length = 0; }
+}
+
+function _perfNow() { try { return Math.round(globalThis.performance?.now?.() || 0); } catch { return 0; } }
+
 let _asyncStorage = null;
+let _clearKeep = null; // chaves escritas enquanto o multiRemove do clearAll está em voo
 let _mem = {};
 const _pending = new Set();   // full keys present on disk but not yet loaded
 const _listeners = new Set(); // (logicalKeys: string[]) => void
 let _ready = false;
 let _readyResolve = null;
 const _readyPromise = new Promise(r => { _readyResolve = r; });
-const _stats = { bootMs: 0, bootKeys: 0, lazyKeys: 0, dropped: 0, truncated: 0, refused: 0, backend: 'async', lazyLoads: 0, lazySyncHits: 0, kvMigrated: 0, kvMigrateMs: 0, kvErrors: 0 };
+const _stats = { bootMs: 0, bootKeys: 0, lazyKeys: 0, dropped: 0, truncated: 0, refused: 0, backend: 'async', lazyLoads: 0, lazySyncHits: 0, kvMigrated: 0, kvMigrateMs: 0, kvErrors: 0, kvWhy: '', kvBucket: -1 };
 
 // ─── Beacons (lazy require; deferred so boot never waits on the reporter) ───
 function _beacon(context, message) {
@@ -323,20 +544,33 @@ async function _loadKeys(fullKeys, onlyIfPending) {
   return loaded;
 }
 
+function _bootTele(t0) {
+  try {
+    const d = _kvDecision;
+    const ms = _stats.bootMs;
+    _kvTele('boot', `be=${_stats.backend} ms=${ms} t=${_perfNow()} keys=${_stats.bootKeys} lazy=${_stats.lazyKeys} to=${ms > 1500 ? 1 : 0} why=${d.why} b=${d.bucket} pct=${d.pct} src=${d.src} err=${_stats.kvErrors}`);
+  } catch {}
+}
+
 async function _init() {
   if (Platform.OS === 'web') { _ready = true; _readyResolve(); return; }
   const t0 = Date.now();
   try { _asyncStorage = require('@react-native-async-storage/async-storage').default; } catch { _asyncStorage = null; }
   // [2026-10-10] SQLite KV primary: fully synchronous boot (ready before the
   // first await → smartChatCache's sync hydrate pass already sees the data).
-  const kvOn = _kvFlagOn();
-  if (kvOn) {
+  // [2026-10-16] decisão por canário/flag remota (_kvPrepare, síncrono).
+  try { _kvDecision = _kvPrepare(); } catch (e) { _kvDecision = { on: false, why: 'prepare_err', bucket: -1, pct: 0, src: 'default' }; }
+  _stats.kvWhy = _kvDecision.why;
+  _stats.kvBucket = _kvDecision.bucket;
+  if (_kvDecision.on) {
     let ok = false;
-    try { ok = _bootFromKv(); } catch { ok = false; }
+    try { ok = _bootFromKv(); } catch { ok = false; _kv = null; _kvMode = 'off'; }
     if (ok) {
       _stats.bootMs = Date.now() - t0;
       _ready = true;
       _readyResolve();
+      _bootTele(t0);
+      try { setTimeout(() => _metaSet('boot_inflight', null), KV_CRASH_CLEAR_MS); } catch {}
       return;
     }
   }
@@ -355,9 +589,14 @@ async function _init() {
   if (_kvMode === 'migrating') _stats.backend = 'async+migrating';
   _ready = true;
   _readyResolve();
+  _bootTele(t0);
   try {
-    if (_kvMode === 'migrating') setTimeout(() => { _kvMigrate().catch(() => {}); }, KV_MIGRATE_DELAY_MS);
-    else if (!kvOn && Array.isArray(keys) && keys.includes(AS_KV_MARKER)) setTimeout(() => { _kvInvalidate().catch(() => {}); }, 3000);
+    if (_kvMode === 'migrating') {
+      setTimeout(() => { _kvMigrate().catch(() => {}); }, KV_MIGRATE_DELAY_MS);
+      setTimeout(() => _metaSet('boot_inflight', null), KV_CRASH_CLEAR_MS);
+    }
+    // legado: marcador do AsyncStorage da versão 10-10 (a decisão hoje é pelo marcador do .db)
+    if (Array.isArray(keys) && keys.includes(AS_KV_MARKER)) setTimeout(() => { _asyncStorage.removeItem(AS_KV_MARKER).catch(() => {}); }, KV_WIPE_DELAY_MS);
   } catch {}
 }
 _init();
@@ -496,6 +735,7 @@ export function setString(key, value) {
   const fk = PFX + key;
   _pending.delete(fk);
   _mem[fk] = value;
+  if (_clearKeep) _clearKeep.add(fk);
   if (!_asyncStorage) {
     if (_kvMode === 'primary') _kvQueue(fk, typeof value === 'string' ? value : String(value));
     return;
@@ -591,17 +831,25 @@ export function clearAll() {
   _pending.clear();
   if (_kv && _kvMode !== 'off') {
     _kvDirty.clear();
-    try { _kv.runSync(`DELETE FROM kv WHERE substr(k,1,${PFX.length})='${PFX}'`); } catch {}
-    if (_kvTouched) {
+    let ok = true;
+    try { _kv.runSync(`DELETE FROM kv WHERE substr(k,1,${PFX.length})='${PFX}'`); } catch { ok = false; }
+    if (!ok) _kvAbandon('clearall_failed');
+    else if (_kvMode === 'migrating') {
       // Mid-migration: anything the copy would still read is being removed
       // from AsyncStorage too → stop it; the next launch re-migrates.
-      _kvMode = 'off';
-      try { _kv.runSync('DELETE FROM kv WHERE k = ?', [KV_MIGRATED]); } catch {}
+      _kvAbandon('clearall_migrating');
     }
+  } else if (_db) {
+    // off: espelho velho não pode guardar dado da conta que saiu
+    try { _db.runSync('DELETE FROM kv'); } catch {}
   }
   if (_asyncStorage) {
+    // [2026-10-16] o multiRemove é assíncrono: chave gravada DEPOIS do clearAll
+    // (ex.: 1ª escrita da conta nova na troca) não pode ser apagada junto.
+    const keep = (_clearKeep = new Set());
     _asyncStorage.getAllKeys().then(keys => {
-      const mk = (keys || []).filter(k => k.startsWith('mmkv_'));
+      if (_clearKeep === keep) _clearKeep = null;
+      const mk = (keys || []).filter(k => k.startsWith('mmkv_') && !keep.has(k));
       if (mk.length) _asyncStorage.multiRemove(mk).catch(() => {});
     }).catch(() => {});
   }
@@ -609,6 +857,7 @@ export function clearAll() {
 
 
 export function getStorageBackend() { return _kvMode === 'primary' ? 'sqlite' : (_kvMode === 'migrating' ? 'async+migrating' : 'async'); }
+export function getKvDecision() { return { ..._kvDecision, mode: _kvMode }; }
 
 // Flush queued KV writes when the app leaves the foreground (iOS may suspend
 // before the 30 ms timer fires).

@@ -307,7 +307,20 @@ export const MMKV_LAZY_IOS = true;
 //   binários (sqliteStore usa openDatabaseSync); require guardado + fallback.
 //   Override de teste: globalThis.__chatyy_kv_sqlite = true ANTES do 1º import de
 //   services/mmkv (ex.: index.js). DEFAULT OFF até validar em device.
+// [2026-10-16 wave10-B] KV_SQLITE_ENABLED=true agora significa 100 % (ignora o
+//   canário). O rollout normal é por % de aparelhos:
+//   KV_SQLITE_ROLLOUT_PCT: % padrão (balde 0..99 sorteado 1× por aparelho e
+//     guardado em chatyy_kv.db/kv_meta). O servidor sobrepõe via bootstrap →
+//     data.config.kv_sqlite_pct (0..100) — vale no boot seguinte.
+//   Kill switch: data.config.kv_sqlite = false (remoto, desliga na hora) OU
+//     KV_SQLITE_KILL = true (OTA). Rollback é seguro (dual-write; o marcador do
+//     SQLite é apagado e a migração refaz do zero ao religar).
+//   Trava local: 3 boots seguidos com KV sem sobreviver 30 s → desliga no aparelho
+//     (config.kv_sqlite_reset = valor novo limpa a trava).
+//   Telemetria: nativeBeacon('kv_store', boot|migrated|migrate_failed|abandon|…).
 export const KV_SQLITE_ENABLED = false;
+export const KV_SQLITE_ROLLOUT_PCT = 10;
+export const KV_SQLITE_KILL = false;
 //
 // NATIVE_CHAT_CACHE_ENABLED: religa modules/expo-chat-cache (Swift SQLite) no
 //   chat (saveMessages/leitura frame-1/mídia). Só ativa se o binário expõe
