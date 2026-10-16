@@ -37,7 +37,7 @@ export default function VideoStudioDrafts() {
   const { t } = useLanguage();
   const { width } = useWindowDimensions();
   const [items, setItems] = useState(null);
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0); // [2026-10-16] tick vai p/ a FlatList (React Compiler memoizava o selo 'Publicando')
 
   const reload = useCallback(() => { listDrafts().then((l) => setItems(l || [])).catch(() => setItems([])); }, []);
   useFocusEffect(useCallback(() => { reload(); }, [reload]));
@@ -88,6 +88,7 @@ export default function VideoStudioDrafts() {
       ) : (
         <FlatList
           data={items}
+          extraData={tick}
           keyExtractor={(x) => x.id}
           numColumns={cols}
           columnWrapperStyle={{ gap }}

@@ -74,7 +74,8 @@ function _truthy(v) {
   return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
 }
 
-export function getAdvancedPrivacy(cid) {
+// `_ver`: ignorado — versão do hook p/ o memo do React Compiler (useAdvancedPrivacy).
+export function getAdvancedPrivacy(cid, _ver) {
   _hydrate();
   const k = _key(cid);
   if (!k) return { enabled: false, screenshotNotice: true, known: false };
@@ -113,12 +114,16 @@ export function subscribeAdvancedPrivacy(cb) {
 
 /** React hook: { enabled, screenshotNotice, known } da conversa, ao vivo. */
 export function useAdvancedPrivacy(cid) {
-  const [, force] = useReducer((x) => x + 1, 0);
+  // [2026-10-16 wave10-D compiler] A versão vai como ARGUMENTO: com o React
+  // Compiler, `getAdvancedPrivacy(cid)` ficava memoizado só por `cid` e o
+  // force() re-renderizava devolvendo o estado antigo (liga/desliga da
+  // privacidade avançada não aparecia até remontar a tela).
+  const [ver, force] = useReducer((x) => x + 1, 0);
   useEffect(() => {
     const k = _key(cid);
     return subscribeAdvancedPrivacy((changed) => { if (!k || changed === k) force(); });
   }, [cid]);
-  return getAdvancedPrivacy(cid);
+  return getAdvancedPrivacy(cid, ver);
 }
 
 // WS: o servidor manda `conversation_privacy` no canal pessoal de cada membro.

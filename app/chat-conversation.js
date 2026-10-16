@@ -56,7 +56,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
-import { useConvOpenMetric, noteConvOpen } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open
+import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -19492,6 +19492,11 @@ function ChatConversationInner() {
       // user long-presses again to set another effect before the request
       // completes, that's the next message — don't let this one bleed in.
       if (stagedEffect) setStagedEffect(null);
+      // [2026-10-16 wave10-D send_ack] toque→enfileirar (pre) · fila da tela (q) ·
+      // api.chatSend inteiro (net) + foto do socket ao enfileirar (s0) e ao sair (s1).
+      const _ackT = { q0: Date.now(), n0: 0, n1: 0, s0: null, s1: null };
+      const _ackNet = () => (_netStateCache.type ? _netStateCache.type + (_netStateCache.cellularGeneration ? ':' + _netStateCache.cellularGeneration : '') : '');
+      try { _ackT.s0 = sendSocketSnapshot(_ackNet()); } catch {}
       const sendPromise = enqueueChatSend(async () => {
         if (OUTBOX_V2_ONLY) {
           // Re-check at OUR turn in the per-screen chain: the previous message
@@ -19508,7 +19513,10 @@ function ChatConversationInner() {
           }
         }
         try {
+          _ackT.n0 = Date.now();
+          try { _ackT.s1 = sendSocketSnapshot(_ackNet()); } catch {}
           const _res = await api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, _sendOpts);
+          _ackT.n1 = Date.now();
           if (OUTBOX_V2_ONLY) {
             const _k = messageOutbox.classifySendResult?.(_res);
             if (_k === 'transient' || _k === 'offline') messageOutbox.noteBacklog?.(conversationId);
@@ -19600,6 +19608,13 @@ function ChatConversationInner() {
         // [send-latency 2026-06-03] Tap→ack wall-clock. Lets us see if the
         // user's "5s" is HTTP round-trip (network) vs client-side stalls.
         try { _reportChatDebug('send-ack-timing', { ms: Date.now() - _sendStartedAt, convId: conversationId, e2e: !!e2eEnabled }); } catch {}
+        try {
+          noteSendAck({
+            ms: Date.now() - _sendStartedAt, pre: _ackT.q0 - _sendStartedAt,
+            q: _ackT.n0 ? _ackT.n0 - _ackT.q0 : -1, net: (_ackT.n0 && _ackT.n1) ? _ackT.n1 - _ackT.n0 : -1,
+            r, s0: _ackT.s0, s1: _ackT.s1, e2e: !!e2eEnabled,
+          });
+        } catch {}
         // Delete the synthetic-id row from native cache, then add the real
         // server message. AWAIT both before reload so the native view sees
         // the swap atomically (no missing-message gap).
@@ -25874,8 +25889,10 @@ function ChatConversationInner() {
     try { arr = require('../utils/privateReplyQuote').applyExtQuotes(arr); } catch {}
     // [2026-10-16 multi-região fase 4] envio próprio rejeitado pelo master após o ✓
     // (re-gate) → "Mensagem não enviada" (JS + lista nativa); nunca "apagada".
-    void _leafRejVer;
-    try { arr = require('../services/leafSeq').applyRejected(arr, currentEmail); } catch {}
+    // [2026-10-16 wave10-D compiler] a versão vai como ARGUMENTO (não `void x;`):
+    // o React Compiler descarta expressão sem efeito e o registro externo ficaria
+    // fora das dependências do memo → bolha "não enviada" não aparecia.
+    try { arr = require('../services/leafSeq').applyRejected(arr, currentEmail, _leafRejVer); } catch {}
     if (conversationType === 'group') return arr;
     try {
       const _syn = (m) => _chatOrder().isImportedMsg(m) && /@import\.chatyy\.invalid$/i.test(String(m.sender_email || ''));

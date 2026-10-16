@@ -191,8 +191,11 @@ export function hideRejected(msg) {
 /**
  * Lista da conversa (ordem qualquer) → bolhas próprias rejeitadas viram
  * "não enviada" (nunca "apagada"); escondidas saem. Sem registro = mesma lista.
+ * `ver` (= version()/subscribe) é ignorado aqui: o chamador passa a versão do
+ * registro como ARGUMENTO p/ o React Compiler a pôr nas dependências do memo
+ * (`void ver;` some na compilação — expressão sem efeito).
  */
-export function applyRejected(list, me) {
+export function applyRejected(list, me, ver) {
   if (!enabled() || !Array.isArray(list) || (!_byId.size && !_byCmi.size)) return list;
   const self = _canon(me);
   let changed = false;

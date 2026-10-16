@@ -2,7 +2,7 @@
 // papel de parede/backup, digitação, mensagens, importar do WhatsApp,
 // palavras silenciadas, economia de dados e recursos beta. Preferências do
 // aparelho (mesmas chaves locais lidas pelo chat) + settingsCache 'muted_words'.
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useSyncExternalStore } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../../context/ThemeContext';
@@ -15,6 +15,18 @@ import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, Setti
 import { AccentColorGroup, WallpaperRow } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useLocalKeys, setStorage, useSection, catStyles as s } from './shared';
 import * as mediaVis from '../../../services/mediaVisibility';
+
+// [2026-10-16 wave10-D compiler] Economia de dados do SISTEMA (iOS Modo Dados
+// Reduzidos / Android Data Saver) é estado de módulo: lido direto no render, o
+// React Compiler memoizava o 1º valor (bloco sentinela) e o subtítulo não mudava.
+// Agora entra por useSyncExternalStore (subscribe/getSnapshot do serviço).
+function _sysDsSubscribe(cb) {
+  try { return require('../../../services/systemIntegration').onSystemDataSaverChange(() => cb()); } catch { return () => {}; }
+}
+function _sysDsSnapshot() {
+  try { return !!require('../../../services/systemIntegration').isSystemDataSaverOn(); } catch { return false; }
+}
+function _sysDsServer() { return false; }
 
 const LOCAL_KEYS = ['enter_sends', 'autocorrect_enabled', 'double_tap_react', 'voice_speed_default', 'bubble_shape', 'data_saver', 'beta_features'];
 
@@ -42,8 +54,7 @@ export default function ChatsCategory() {
   });
   const setPref = (k, storageKey, v) => { setPrefs(p => ({ ...p, [k]: v })); setStorage(storageKey, String(v)); };
 
-  let sysDataSaver = false;
-  try { sysDataSaver = require('../../../services/systemIntegration').isSystemDataSaverOn(); } catch {}
+  const sysDataSaver = useSyncExternalStore(_sysDsSubscribe, _sysDsSnapshot, _sysDsServer);
 
   return (
     <View>

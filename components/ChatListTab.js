@@ -6526,7 +6526,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // guard here.
       onReorderPinned: () => setPinnedEditMode(true),
       // [paridade-wa 2026-10-14] passo "Listas" no sheet: marca/desmarca a conversa em cada lista.
-      getFolders: () => (Array.isArray(chatFoldersRef.current) ? chatFoldersRef.current : []),
+      getFolders: (_tick) => (Array.isArray(chatFoldersRef.current) ? chatFoldersRef.current : []), // _tick: versão p/ o memo do chamador
       onToggleList: async (conv, f) => {
         try {
           const cur = (Array.isArray(f?.conversation_ids) ? f.conversation_ids : []).map(Number);
@@ -9416,9 +9416,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     { label: t('chat.clearChat') || 'Limpar conversa', icon: Ic.XCircle, color: danger, onPress: () => actions.onClear?.(conv) },
     { label: t('chat.delete') || 'Excluir', icon: Ic.Trash, color: danger, onPress: () => actions.onDelete?.(conv) },
   ];
-  // listTick força re-render após marcar (as listas vêm do ref do pai)
-  void listTick;
-  const _folders = (listStep && typeof actions.getFolders === 'function') ? (actions.getFolders() || []) : [];
+  // listTick força re-render após marcar (as listas vêm do ref do pai).
+  // [2026-10-16 wave10-D compiler] vai como ARGUMENTO de getFolders (não `void listTick;`,
+  // que o React Compiler descarta): assim a leitura do ref do pai depende do tick no memo.
+  const _folders = (listStep && typeof actions.getFolders === 'function') ? (actions.getFolders(listTick) || []) : [];
   const listItems = [
     ..._folders.map(f => {
       const inList = (Array.isArray(f?.conversation_ids) ? f.conversation_ids : []).map(Number).includes(Number(conv?.id));

@@ -137,6 +137,89 @@ export function nativeBeacon(prefix, step, info) {
   _send(p, `${p} ${s} ${info || ''}`.trim());
 }
 
+// ─── send_ack: caminho real do envio de texto ──────────────────────────────
+// [2026-10-16 wave10-D] Explica ack p50 433–731 ms no cliente vs ~29 ms no hub:
+// cada amostra diz POR ONDE o envio saiu (ws nativo/fila nativa/ws JS/http/
+// envelope; leaf/regional) + espera na fila da tela + estado do socket NO
+// MOMENTO do envio. Em lote (10/POST, teto 80/sessão) p/ caber no rate-limit.
+// Kill switch (OTA): globalThis.__chatyy_send_ack_telemetry = false.
+const SEND_ACK_BATCH = 10;
+const SEND_ACK_MAX = 80;
+let _ackBuf = [];
+let _ackTotal = 0;
+
+/** Foto barata do transporte (síncrona, sem I/O). */
+export function sendSocketSnapshot(net) {
+  const o = {};
+  if (net) o.net = String(net).slice(0, 12);
+  try {
+    const ws = require('./websocket').default;
+    if (ws) {
+      o.js = ws.ws ? ws.ws.readyState : -1; // 0 conectando · 1 aberto · 2/3 fechando/fechado · -1 sem socket
+      o.auth = ws.authenticated ? 1 : 0;
+      o.hl = ws.isHealthy ? 1 : 0;
+      o.pong = ws.lastPongTime ? Math.min(999999, Date.now() - ws.lastPongTime) : -1;
+      o.cap = Array.isArray(ws.serverCaps) && ws.serverCaps.includes('native_send') ? 1 : 0;
+    }
+  } catch {}
+  try { const nc = require('./nativeCore'); o.nc = nc.canSendNative?.() ? 1 : 0; } catch {}
+  try { const no = require('./nativeOutbox'); o.no = no.nativeOutboxEnabled?.() ? 1 : 0; } catch {}
+  try { if (globalThis.__chatyy_native_send_off === true) o.off = 1; } catch {}
+  return o;
+}
+
+/** Caminho real a partir do resultado de api.chatSend. */
+export function sendPathOf(r) {
+  if (!r || typeof r !== 'object') return 'none';
+  let p = 'http'; // Rust ou PHP (apiCall) — ambos HTTP do JS
+  if (r.envelope_mode) p = 'envelope';
+  else if (r._native_outbox) p = 'nout_' + (r._via || '?'); // fila nativa: via ws|http nativo
+  else if (r._native_core) p = 'ncore_ws';
+  else if (r._native_send) p = 'ws_js';
+  const tags = [];
+  try { if (typeof r._hub === 'string' && /^leaf-/.test(r._hub)) tags.push('leaf'); } catch {}
+  try { if (r.data && require('./leafSeq').isPreApplyRow(r.data, r._hub)) tags.push('preapply'); } catch {}
+  try { if (require('./regionalAccept').isRegionalProvisional(r)) tags.push('regional'); } catch {}
+  if (r._dedup) tags.push('dedup');
+  return tags.length ? `${p}+${tags.join('+')}` : p;
+}
+
+/**
+ * Uma amostra de ack de envio. info: { ms (toque→✓), pre (toque→enfileirar), q (espera na fila da tela),
+ * net (api.chatSend inteiro), r (resultado), s0 (foto ao enfileirar), s1 (foto
+ * ao sair p/ a rede), e2e }.
+ */
+export function noteSendAck(info) {
+  try {
+    if (_off() || globalThis.__chatyy_send_ack_telemetry === false) return;
+  } catch {}
+  if (!info || _ackTotal >= SEND_ACK_MAX) return;
+  _ackTotal++;
+  const r = info.r;
+  _ackBuf.push({
+    ms: Math.round(Number(info.ms) || 0),
+    pre: Math.round(Number(info.pre) || 0),
+    q: Math.round(Number(info.q ?? -1)),
+    net: Math.round(Number(info.net ?? -1)),
+    path: sendPathOf(r),
+    hub: (r && typeof r._hub === 'string') ? r._hub.slice(0, 24) : '',
+    s0: info.s0 || null,
+    s1: info.s1 || null,
+    e2e: info.e2e ? 1 : 0,
+    at: Date.now(),
+  });
+  _ensureLifecycle();
+  if (_ackBuf.length >= SEND_ACK_BATCH) _flushAcks();
+}
+
+function _flushAcks() {
+  if (!_ackBuf.length) return;
+  const rows = _ackBuf; _ackBuf = [];
+  const paths = {};
+  for (const x of rows) paths[x.path] = (paths[x.path] || 0) + 1;
+  _send('send_ack', `send_ack n=${rows.length} ` + Object.keys(paths).map((k) => `${k}:${paths[k]}`).join(' '), { rows });
+}
+
 // ─── conv_open ─────────────────────────────────────────────────────────────
 /**
  * 1º frame da conversa. path: 'shell' (casca leve) | 'native' | 'js'.
@@ -267,6 +350,7 @@ function _coverage() {
 export function flushNativeTelemetry(why) {
   if (_off()) return;
   try { _flushConv(); } catch {}
+  try { _flushAcks(); } catch {}
   try {
     if (_coverageDirty && _coverageSends < COVERAGE_MAX_SENDS) {
       _coverageDirty = false;
