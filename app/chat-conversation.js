@@ -199,7 +199,7 @@ import {
   IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconVideoNote,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus, IconType,
   IconHeart,
-  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconChevronLeft,
+  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconChevronUp, IconChevronLeft,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus,
@@ -5826,15 +5826,50 @@ function HeaderMenuShell({ visible, onClose, native, bg, bottomPad, panelStyle, 
   );
 }
 
+// [2026-10-16 poll-wa] Criadores (enquete/encontro) = modal JS próprio por
+// padrão. No formSheet nativo (rn-screens 4.23, detents numéricos) o sistema
+// "caça" o ScrollView do sheet e força o frame dele p/ (0,0,tela inteira) →
+// conteúdo colado na borda sem padding, rótulo cortado no topo, cabeçalho
+// coberto e botão "Criar" flutuando (print do founder 16/10). Mesmo defeito do
+// painel Apps ([hotfix-3]). Religar p/ teste: globalThis.__chatyy_creator_native_sheet = true.
+function _creatorNativeSheet() {
+  try { return USE_NATIVE_SHEETS && globalThis.__chatyy_creator_native_sheet === true; } catch { return false; }
+}
+
 // [2026-10-15 native-sheets-v2] Casca dos criadores (enquete/encontro): `native`
 // = conteúdo do sheet do SISTEMA (sem backdrop/alça/raio — o UIKit/BottomSheet
 // desenha; teclado via NativeSheetKeyboardView). Senão = sheet JS de sempre.
-function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, children }) {
-  if (native) {
-    const bottom = Math.max(0, (insets && insets.bottom) || 0);
-    return (
-      <NativeSheetKeyboardView absorb={bottom} style={{ backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 26, paddingBottom: bottom + 14 }}>
+// [2026-10-16 poll-wa] `header`/`footer` opcionais: cabeçalho fixo em cima,
+// rodapé (botão principal) fixo embaixo acima do teclado/safe area e só o meio
+// rola (com padding). Sem eles = layout antigo (children livres).
+function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, children, header, footer }) {
+  const bottomInset = Math.max(0, (insets && insets.bottom) || 0);
+  const framed = !!(header || footer);
+  const body = framed ? (
+    <>
+      {header ? <View collapsable={false} style={{ paddingHorizontal: 20 }}>{header}</View> : null}
+      <ScrollView
+        style={{ flexGrow: 0, flexShrink: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 12 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        showsVerticalScrollIndicator={false}
+      >
         {children}
+      </ScrollView>
+      {footer ? (
+        <View collapsable={false} style={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: bottomInset + 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, backgroundColor: colors.surface }}>
+          {footer}
+        </View>
+      ) : null}
+    </>
+  ) : children;
+  if (native) {
+    return (
+      <NativeSheetKeyboardView absorb={bottomInset} style={framed
+        ? { backgroundColor: colors.surface, paddingTop: 18 }
+        : { backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 26, paddingBottom: bottomInset + 14 }}>
+        {body}
       </NativeSheetKeyboardView>
     );
   }
@@ -5846,24 +5881,42 @@ function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, childr
       keyboardVerticalOffset={0}
     >
       <Pressable style={{ flex: 1 }} onPress={onClose} />
-      <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: (insets.bottom || 16) + 16, maxHeight: '88%' }}>
+      <View style={framed
+        ? { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 10, maxHeight: '92%', overflow: 'hidden' }
+        : { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, paddingBottom: (insets.bottom || 16) + 16, maxHeight: '88%' }}>
         {/* Grab handle */}
-        <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 16 }} />
-        {children}
+        <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: framed ? 8 : 16 }} />
+        {body}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false }) {
+  const _PL = require('../components/chat/pollLook');
+  const MAX_OPTS = _PL.POLL_MAX_OPTIONS; // = servidor (chat.php: 10)
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState(['', '']);
   const [multipleChoice, setMultipleChoice] = useState(false);
   const [sending, setSending] = useState(false);
+  const optRefs = useRef([]);
+  const focusNext = useRef(-1);
 
-  const addOption = () => { if (options.length < 12) setOptions([...options, '']); };
+  const addOption = () => {
+    if (options.length >= MAX_OPTS) return;
+    focusNext.current = options.length;
+    setOptions([...options, '']);
+  };
   const updateOption = (idx, val) => { const o = [...options]; o[idx] = val; setOptions(o); };
   const removeOption = (idx) => { if (options.length > 2) setOptions(options.filter((_, i) => i !== idx)); };
+  const moveUp = (idx) => {
+    if (idx <= 0) return;
+    const o = [...options]; const x = o[idx]; o[idx] = o[idx - 1]; o[idx - 1] = x; setOptions(o);
+  };
+  useEffect(() => {
+    const i = focusNext.current;
+    if (i >= 0) { focusNext.current = -1; setTimeout(() => { try { optRefs.current[i]?.focus?.(); } catch {} }, 60); }
+  }, [options.length]);
 
   const handleCreate = async () => {
     const q = question.trim();
@@ -5891,73 +5944,98 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, reply
     setSending(false);
   };
 
-  // Visual-only presentation helpers (unified sheet language) — no logic change.
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
   const kavEnabled = useAndroidKavGate(focusedField != null);
-  // [2026-10-11 qa] P&B — sem verde: tinta = texto, fundo = surfaceVariant.
-  const ACCENT = colors.text;
-  const ACCENT_TINT = colors.surfaceVariant;
-  const ON_ACCENT = colors.background || colors.surface;
-  const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.text };
-  const canCreate = !!question.trim() && options.filter(o => o.trim()).length >= 2;
+  const tr = (k, fb) => { try { const v = t(k); return v && v !== k ? v : fb; } catch { return fb; } };
+  // P&B: tinta = texto; trilho desligado neutro (sem cinza-azulado).
+  const INK = colors.text;
+  const ON_INK = colors.background || colors.surface;
+  const isDarkSheet = _PL.onInk(colors.surface || '#ffffff') === '#FFFFFF';
+  const fieldBg = colors.surfaceVariant || (isDarkSheet ? '#1C1C1E' : '#F2F2F7');
+  const inputBase = { backgroundColor: fieldBg, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 10, fontSize: 16, color: colors.text };
+  const labelStyle = { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 8, marginTop: 4 };
+  const filled = options.filter(o => o.trim()).length;
+  const canCreate = !!question.trim() && filled >= 2;
+  const smallBtn = { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' };
+
+  const header = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 4, paddingBottom: 12 }}>
+      <TouchableOpacity onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel={tr('common.cancel', 'Cancelar')} style={{ minWidth: 72, paddingVertical: 6 }}>
+        <Text style={{ fontSize: 16, color: colors.text }}>{tr('common.cancel', 'Cancelar')}</Text>
+      </TouchableOpacity>
+      <Text style={{ flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+        {tr('chat.pollNew', 'Nova enquete')}
+      </Text>
+      <View style={{ minWidth: 72 }} />
+    </View>
+  );
+
+  const footer = (
+    <TouchableOpacity onPress={handleCreate} disabled={sending || !canCreate} activeOpacity={0.85}
+      accessibilityRole="button"
+      style={{ backgroundColor: canCreate ? INK : (isDarkSheet ? '#2C2C2E' : '#E5E5EA'), borderRadius: 14, paddingVertical: 15, alignItems: 'center', opacity: sending ? 0.7 : 1 }}>
+      {sending
+        ? <ActivityIndicator color={ON_INK} size="small" />
+        : <Text style={{ color: canCreate ? ON_INK : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{tr('chat.pollCreate', 'Criar enquete')}</Text>}
+    </TouchableOpacity>
+  );
 
   return (
-    <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets}>
-        {/* Header */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
-          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: ACCENT_TINT, alignItems: 'center', justifyContent: 'center' }}>
-            <IconBarChart size={22} color={ACCENT} />
-          </View>
-          <Text style={{ flex: 1, marginLeft: 14, fontSize: 21, fontWeight: '800', color: colors.text }}>{t('chat.pollCreate') || 'Criar enquete'}</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
-            <IconX size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-        <ScrollView style={{ maxHeight: 420 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 8 }}>{t('chat.pollQuestion') || 'Pergunta'}</Text>
-          <TextInput value={question} onChangeText={setQuestion} placeholder={t('chat.pollQuestion') || 'Pergunta'}
-            placeholderTextColor={colors.textTertiary} multiline
-            onFocus={() => setFocusedField('q')} onBlur={() => setFocusedField(null)}
-            style={{ ...inputBase, borderColor: focusedField === 'q' ? ACCENT : colors.border, minHeight: 52, marginBottom: 20, textAlignVertical: 'top' }} />
-          <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginBottom: 10 }}>{t('chat.pollOption') || 'Opções'}</Text>
-          {options.map((opt, idx) => (
-            <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-              <TextInput value={opt} onChangeText={v => updateOption(idx, v)}
-                placeholder={`${t('chat.pollOption') || 'Opção'} ${idx + 1}`}
-                placeholderTextColor={colors.textTertiary}
-                onFocus={() => setFocusedField('opt' + idx)} onBlur={() => setFocusedField(null)}
-                style={{ ...inputBase, flex: 1, borderColor: focusedField === ('opt' + idx) ? ACCENT : colors.border }} />
-              {options.length > 2 && (
-                <TouchableOpacity onPress={() => removeOption(idx)} hitSlop={6} style={{ marginLeft: 10, width: 30, height: 30, borderRadius: 15, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
-                  <IconX size={15} color={colors.textTertiary} />
-                </TouchableOpacity>
-              )}
-            </View>
-          ))}
-          {options.length < 12 && (
-            <TouchableOpacity onPress={addOption} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, marginTop: 2 }}>
-              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: ACCENT_TINT, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                <IconPlus size={16} color={ACCENT} />
-              </View>
-              <Text style={{ color: ACCENT, fontSize: 15, fontWeight: '600' }}>{t('chat.pollAddOption') || 'Adicionar opção'}</Text>
+    <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets} header={header} footer={footer}>
+      <Text style={labelStyle}>{tr('chat.pollQuestion', 'Pergunta')}</Text>
+      <TextInput value={question} onChangeText={setQuestion} placeholder={tr('chat.pollAsk', 'Faça uma pergunta')}
+        placeholderTextColor={colors.textTertiary} multiline maxLength={_PL.POLL_MAX_QUESTION_LEN}
+        onFocus={() => setFocusedField('q')} onBlur={() => setFocusedField(null)}
+        style={{ ...inputBase, borderColor: focusedField === 'q' ? INK : 'transparent', minHeight: 50, maxHeight: 120, textAlignVertical: 'top' }} />
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
+        <Text style={[labelStyle, { marginTop: 0 }]}>{tr('chat.pollOptions', 'Opções')}</Text>
+        <Text style={{ fontSize: 12, color: colors.textTertiary, marginBottom: 8, fontVariant: ['tabular-nums'] }}>{options.length}/{MAX_OPTS}</Text>
+      </View>
+      {options.map((opt, idx) => (
+        <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 }}>
+          <TextInput ref={(r) => { optRefs.current[idx] = r; }} value={opt} onChangeText={v => updateOption(idx, v)}
+            placeholder={`${tr('chat.pollOption', 'Opção')} ${idx + 1}`}
+            placeholderTextColor={colors.textTertiary} maxLength={_PL.POLL_MAX_OPTION_LEN}
+            returnKeyType={idx === options.length - 1 && options.length < MAX_OPTS ? 'next' : 'done'}
+            blurOnSubmit={!(idx === options.length - 1 && options.length < MAX_OPTS && !!opt.trim())}
+            onSubmitEditing={() => { if (idx === options.length - 1 && options.length < MAX_OPTS && opt.trim()) addOption(); else if (idx < options.length - 1) { try { optRefs.current[idx + 1]?.focus?.(); } catch {} } }}
+            onFocus={() => setFocusedField('opt' + idx)} onBlur={() => setFocusedField(null)}
+            style={{ ...inputBase, flex: 1, minWidth: 0, borderColor: focusedField === ('opt' + idx) ? INK : 'transparent' }} />
+          {idx > 0 && !!opt.trim() ? (
+            <TouchableOpacity onPress={() => moveUp(idx)} hitSlop={6} accessibilityRole="button" accessibilityLabel={tr('chat.pollMoveUp', 'Mover para cima')} style={smallBtn}>
+              <IconChevronUp size={18} color={colors.textSecondary} />
             </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={() => setMultipleChoice(!multipleChoice)} activeOpacity={0.8}
-            style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, paddingVertical: 6 }}>
-            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{t('chat.pollMultiple') || 'Múltipla escolha'}</Text>
-            <View style={{ width: 46, height: 28, borderRadius: 14, padding: 3, backgroundColor: multipleChoice ? ACCENT : colors.textTertiary, alignItems: multipleChoice ? 'flex-end' : 'flex-start', justifyContent: 'center' }}>
-              <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: multipleChoice ? ON_ACCENT : '#fff', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 }} />
-            </View>
-          </TouchableOpacity>
-        </ScrollView>
-        <TouchableOpacity onPress={handleCreate} disabled={sending || !question.trim() || options.filter(o => o.trim()).length < 2} activeOpacity={0.85}
-          style={{ backgroundColor: canCreate ? ACCENT : colors.border, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 20, opacity: sending ? 0.7 : 1 }}>
-          {sending
-            ? <ActivityIndicator color={ON_ACCENT} size="small" />
-            : <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{t('chat.pollCreate') || 'Criar enquete'}</Text>
-          }
+          ) : null}
+          {options.length > 2 ? (
+            <TouchableOpacity onPress={() => removeOption(idx)} hitSlop={6} accessibilityRole="button" accessibilityLabel={tr('chat.pollRemoveOption', 'Remover opção')} style={{ ...smallBtn, backgroundColor: fieldBg }}>
+              <IconX size={15} color={colors.textSecondary} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ))}
+      {options.length < MAX_OPTS ? (
+        <TouchableOpacity onPress={addOption} activeOpacity={0.7} accessibilityRole="button" style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, alignSelf: 'flex-start' }}>
+          <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: fieldBg, alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+            <IconPlus size={16} color={INK} />
+          </View>
+          <Text style={{ color: INK, fontSize: 15, fontWeight: '600' }}>{tr('chat.pollAddOption', 'Adicionar opção')}</Text>
         </TouchableOpacity>
+      ) : (
+        <Text style={{ fontSize: 12.5, color: colors.textTertiary, paddingVertical: 8 }}>
+          {String(tr('chat.pollMaxOptions', 'Máximo de {n} opções')).replace('{n}', String(MAX_OPTS))}
+        </Text>
+      )}
+
+      <TouchableOpacity onPress={() => setMultipleChoice(!multipleChoice)} activeOpacity={0.8}
+        accessibilityRole="switch" accessibilityState={{ checked: multipleChoice }}
+        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 12, backgroundColor: fieldBg }}>
+        <Text style={{ flex: 1, color: colors.text, fontSize: 15, fontWeight: '500', marginRight: 12 }}>{tr('chat.pollAllowMultiple', 'Permitir várias respostas')}</Text>
+        <View style={{ width: 50, height: 30, borderRadius: 15, padding: 3, backgroundColor: multipleChoice ? INK : (isDarkSheet ? '#39393D' : '#D1D1D6'), alignItems: multipleChoice ? 'flex-end' : 'flex-start', justifyContent: 'center' }}>
+          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: multipleChoice ? ON_INK : '#FFFFFF', shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 }} />
+        </View>
+      </TouchableOpacity>
     </CreatorSheetShell>
   );
 }
@@ -31118,70 +31196,34 @@ function ChatConversationInner() {
               pollVoteLocksRef.current.delete(pollKey);
             }
           };
-          // Card sólido com contraste forte — user reportou que o módulo
-          // "se mistura" com o balão lilás. Agora o card tem fundo branco
-          // (light) ou cinza escuro (dark) com borda sólida, e o accent
-          // fica vibrante. Bar fill usa o accent direto pra leitura fácil.
-          const cardBg = isDark ? '#1c1c1e' : '#ffffff';
-          const cardBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
-          const cardText = isDark ? '#f5f5f5' : '#111827';
-          const cardSubtext = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
-          // [2026-10-10 conv-polish] accent/preenchimento #111 fixos sumiam no
-          // cartão escuro (#1c1c1e): ícone, barras, ✓ e "Ver votos" invisíveis.
-          const accent = isDark ? '#F5F5F7' : '#111111';
-          const bgFill = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)';
-          const bgFillVoted = isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.42)';
-          const trackBg = isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9';
+          // [2026-10-16 poll-wa] Estilo WhatsApp (mesmo visual da lista nativa —
+          // components/chat/pollLook.js + nativeRowCards.buildPoll): a enquete
+          // ocupa a bolha toda (sem cartão branco aninhado, que no claro ficava
+          // estranho e cortava o rodapé), título em negrito, "Selecione…",
+          // opção = check redondo + texto + contagem + barra fina; hairline +
+          // "Ver votos". Tinta = cor do texto da bolha (P&B).
+          const _PL = require('../components/chat/pollLook');
+          const _ptr = (k) => t(k);
+          const _ink = isOwn ? ownTextColor : colors.text;
+          const _meta = isOwn ? ownMetaColor : otherMetaColor;
+          const _S = _PL.pollStats(poll);
+          const _T = _PL.pollTexts(poll, _ptr);
+          const _track = _PL.inkAlpha(_ink, isOwn ? 0.28 : 0.14);
+          const _green = '#10B981'; const _red = '#EF4444';
           return (
-            <View style={{
-              minWidth: 220, maxWidth: 280, paddingVertical: 10, paddingHorizontal: 10,
-              backgroundColor: cardBg, borderRadius: 12,
-              borderWidth: 1, borderColor: cardBorder,
-              ...Platform.select({
-                ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
-                android: { elevation: 2 },
-                web: { boxShadow: '0 2px 8px rgba(0,0,0,0.10)' },
-              }),
-            }}>
-              {/* Header */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 7 }}>
-                <View style={{
-                  width: 28, height: 28, borderRadius: 14,
-                  backgroundColor: 'rgba(17, 17, 17,0.14)',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <IconBarChart size={14} color={accent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: cardSubtext, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 1 }}>
-                    {poll.multiple_choice ? (t('chat.pollMultipleBadge') || 'Enquete \u00B7 m\u00FAltipla') : (t('chat.pollBadge') || 'Enquete')}
-                  </Text>
-                  <Text style={{ fontWeight: '700', fontSize: msgFontSize, color: cardText, lineHeight: msgFontSize + 3 }}>
-                    {poll.question}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Options with gradient progress bars */}
-              {pollOptions.map((opt, idx) => {
-                const voted = poll.my_votes?.includes(idx);
-                const count = poll.vote_counts?.[idx] || 0;
-                const pct = poll.total_votes > 0 ? Math.round((count / poll.total_votes) * 100) : 0;
-                const isWinning = pct > 0 && pct === Math.max(...(pollOptions.map((_, i) => {
-                  const c = poll.vote_counts?.[i] || 0;
-                  return poll.total_votes > 0 ? Math.round((c / poll.total_votes) * 100) : 0;
-                })));
-                // Quiz mode: when this poll is a quiz, after the user has
-                // voted on ANY option we reveal which is correct (green) and
-                // mark wrong choices (red). Telegram parity.
-                const isQuiz = !!poll.is_quiz;
-                const correctIdx = Number.isInteger(poll.correct_option) ? poll.correct_option : -1;
-                const hasVoted = (poll.my_votes || []).length > 0;
-                const showQuizResult = isQuiz && hasVoted && correctIdx >= 0;
-                const isCorrect = showQuizResult && idx === correctIdx;
-                const isWrongChosen = showQuizResult && voted && idx !== correctIdx;
-                const quizGreen = '#10B981';
-                const quizRed = '#EF4444';
+            <View style={{ minWidth: 240, maxWidth: 300, alignSelf: 'stretch', paddingTop: 2 }}>
+              <Text style={{ fontWeight: '700', fontSize: msgFontSize + 1, lineHeight: msgFontSize + 6, color: _ink }}>
+                {poll.question}
+              </Text>
+              <Text style={{ fontSize: 12.5, color: _meta, marginTop: 3, marginBottom: 6 }}>
+                {_S.isQuiz ? `${_T.quiz} · ${_T.sub}` : _T.sub}
+              </Text>
+              {_S.rows.map((r, idx) => {
+                const showQuiz = _S.isQuiz && _S.hasVoted && _S.correct >= 0;
+                const isCorrect = showQuiz && idx === _S.correct;
+                const isWrong = showQuiz && r.mine && idx !== _S.correct;
+                const filled = r.mine || isCorrect || isWrong;
+                const dot = isCorrect ? _green : (isWrong ? _red : _ink);
                 return (
                   <TouchableOpacity
                     key={idx}
@@ -31192,108 +31234,68 @@ function ChatConversationInner() {
                     }}
                     onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
                     delayLongPress={350}
-                    activeOpacity={0.7}
-                    style={{
-                      marginBottom: 5, borderRadius: 12, overflow: 'hidden',
-                      backgroundColor: trackBg,
-                      borderWidth: (voted || isCorrect) ? 1.5 : 1,
-                      // Border mais visível pra options não votadas — antes
-                      // ficava quase invisível em light mode com bg lilás claro.
-                      borderColor: isCorrect ? quizGreen
-                                 : isWrongChosen ? quizRed
-                                 : voted ? accent
-                                 : (isOwn ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.20)')),
-                    }}
+                    activeOpacity={0.6}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: !!r.mine }}
+                    accessibilityLabel={`${r.text}, ${_PL.votesLabel(r.count, _ptr)}`}
+                    style={{ paddingTop: 8, paddingBottom: 7 }}
                   >
-                    {/* Gradient progress fill */}
-                    <View
-                      style={{
-                        position: 'absolute', left: 0, top: 0, bottom: 0,
-                        width: `${pct}%`,
-                        backgroundColor: voted ? bgFillVoted : bgFill,
-                        borderRadius: 12,
-                        ...(Platform.OS === 'web' ? {
-                          background: voted
-                            ? (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.15) 100%)' : (isDark ? 'linear-gradient(90deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.08) 100%)' : 'linear-gradient(90deg, rgba(17, 17, 17,0.35) 0%, rgba(17, 17, 17,0.12) 100%)'))
-                            : (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)' : (isDark ? 'linear-gradient(90deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.05) 100%)' : 'linear-gradient(90deg, rgba(17, 17, 17,0.18) 0%, rgba(17, 17, 17,0.06) 100%)')),
-                          transition: 'width 0.3s ease',
-                        } : {}),
-                      }}
-                    />
-                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, gap: 7 }}>
-                      {/* Vote indicator. In quiz mode after vote: green \u2713
-                          on correct option, red \u2717 on wrong-and-chosen. */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                       <View style={{
-                        width: 18, height: 18, borderRadius: 9,
-                        borderWidth: 1.5,
-                        borderColor: isCorrect ? quizGreen
-                                   : isWrongChosen ? quizRed
-                                   : voted ? accent
-                                   : (isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)'),
-                        backgroundColor: isCorrect ? quizGreen
-                                       : isWrongChosen ? quizRed
-                                       : voted ? accent
-                                       : 'transparent',
+                        width: 22, height: 22, borderRadius: 11,
                         alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: filled ? dot : 'transparent',
+                        borderWidth: filled ? 0 : 1.5,
+                        borderColor: _PL.inkAlpha(_ink, isOwn ? 0.6 : 0.4),
                       }}>
-                        {isCorrect && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
-                        {isWrongChosen && <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2715'}</Text>}
-                        {!isCorrect && !isWrongChosen && voted && <Text style={{ fontSize: 10, color: isDark ? '#000' : '#fff', fontWeight: '800', marginTop: -1 }}>{'\u2713'}</Text>}
+                        {filled ? (isWrong
+                          ? <IconX size={13} color="#FFFFFF" />
+                          : <IconCheck size={13} color={isCorrect ? '#FFFFFF' : _PL.onInk(_ink)} strokeWidth={3} />) : null}
                       </View>
-                      <Text style={{
-                        flex: 1, fontSize: 13, color: cardText,
-                        fontWeight: voted ? '700' : '500',
-                      }} numberOfLines={2}>
-                        {opt}
+                      <Text style={{ flex: 1, fontSize: 15, lineHeight: 20, color: _ink, fontWeight: r.mine ? '600' : '400' }}>
+                        {r.text}
                       </Text>
-                      {pct > 0 && (
-                        <Text style={{
-                          fontSize: 12, fontWeight: '700',
-                          color: voted ? accent : cardSubtext,
-                          minWidth: 32, textAlign: 'right',
-                        }}>
-                          {pct}%
+                      {_S.total > 0 ? (
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: r.mine ? _ink : _meta, fontVariant: ['tabular-nums'] }}>
+                          {r.count}
                         </Text>
-                      )}
+                      ) : null}
+                    </View>
+                    <View style={{ marginLeft: 32, marginTop: 7, height: 5, borderRadius: 2.5, backgroundColor: _track, overflow: 'hidden' }}>
+                      <View style={{
+                        width: `${Math.round(r.frac * 100)}%`, height: 5, borderRadius: 2.5,
+                        backgroundColor: isCorrect ? _green : (isWrong ? _red : _ink),
+                        ...(Platform.OS === 'web' ? { transition: 'width 0.3s ease' } : {}),
+                      }} />
                     </View>
                   </TouchableOpacity>
                 );
               })}
 
-              {/* Quiz explanation \u2014 shown only after user votes in a quiz.
-                  Helps "why" the answer is correct (Telegram parity). */}
-              {!!poll.is_quiz && (poll.my_votes || []).length > 0 && poll.explanation ? (
-                <View style={{
-                  marginTop: 6, paddingHorizontal: 10, paddingVertical: 8,
-                  borderRadius: 8,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
-                }}>
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: cardSubtext, marginBottom: 2 }}>
-                    {t('chat.quizExplanation') || 'Explica\u00E7\u00E3o'}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: cardText, lineHeight: 16 }}>
-                    {poll.explanation}
-                  </Text>
+              {/* Quiz: explicação depois de votar (Telegram parity). */}
+              {_S.isQuiz && _S.hasVoted && poll.explanation ? (
+                <View style={{ marginTop: 6, marginBottom: 2, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, backgroundColor: _PL.inkAlpha(_ink, 0.08) }}>
+                  <Text style={{ fontSize: 11.5, fontWeight: '700', color: _meta, marginBottom: 2 }}>{_T.explanation}</Text>
+                  <Text style={{ fontSize: 13, color: _ink, lineHeight: 17 }}>{poll.explanation}</Text>
                 </View>
               ) : null}
 
-              {/* Footer */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
-                <Text style={{ fontSize: 11, color: cardSubtext, fontWeight: '500' }}>
-                  {!!poll.is_quiz ? (t('chat.quiz') || 'Quiz') + ' \u00B7 ' : ''}
-                  {(() => {
-                    const tv = Number(poll.total_votes || 0);
-                    if (tv === 0) return t('chat.pollNoVotes') || 'Nenhum voto ainda';
-                    if (tv === 1) return '1 voto';
-                    return `${tv} votos`;
-                  })()}
-                </Text>
-                {poll.my_votes?.length > 0 && (
-                  <Text style={{ fontSize: 11, color: accent, fontWeight: '600' }}>
-                    {'\u2713'} {t('chat.youVoted') || 'Voc\u00EA votou'}
-                  </Text>
-                )}
-              </View>
+              {/* Rodapé: hairline + "Ver votos" (resumo por opção). */}
+              <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: _PL.inkAlpha(_ink, isOwn ? 0.3 : 0.16), marginTop: 6 }} />
+              <TouchableOpacity
+                disabled={!(_S.total > 0)}
+                onPress={() => {
+                  if (selectionMode) return toggleSelection(msg.id);
+                  _PL.showPollVotes(poll, _ptr, (a, b) => {
+                    try { Platform.OS === 'web' ? window.alert(`${a}\n\n${b}`) : Alert.alert(a, b); } catch {}
+                  });
+                }}
+                activeOpacity={0.6}
+                accessibilityRole="button"
+                style={{ paddingTop: 10, paddingBottom: 2, alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: _S.total > 0 ? _ink : _meta }}>{_T.viewVotes}</Text>
+              </TouchableOpacity>
             </View>
           );
         }
@@ -36941,9 +36943,9 @@ function ChatConversationInner() {
 
       {/* Poll Creator Modal — only mounted when open (lazy) */}
       {showPollCreator && (
-        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowPollCreator(false)} detents={[1]} backgroundColor={colors.surface}>
+        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowPollCreator(false)} detents={[1]} backgroundColor={colors.surface} disableNative={!_creatorNativeSheet() /* [2026-10-16 poll-wa] */}>
           <PollCreatorModal
-            native={USE_NATIVE_SHEETS}
+            native={_creatorNativeSheet()}
             colors={colors}
             t={t}
             conversationId={conversationId}
@@ -36956,9 +36958,9 @@ function ChatConversationInner() {
 
       {/* Meetup Creator Modal — only mounted when open (lazy) */}
       {showMeetupCreator && (
-        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)} detents={[1]} backgroundColor={colors.surface}>
+        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)} detents={[1]} backgroundColor={colors.surface} disableNative={!_creatorNativeSheet() /* [2026-10-16 poll-wa] */}>
           <MeetupCreatorModal
-            native={USE_NATIVE_SHEETS}
+            native={_creatorNativeSheet()}
             colors={colors}
             t={t}
             conversationId={conversationId}

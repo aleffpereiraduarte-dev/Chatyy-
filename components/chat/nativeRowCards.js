@@ -29,12 +29,13 @@
 //   call_join · st_open · vn_open · lp:<url>
 import { Platform } from 'react-native';
 import {
-  vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb,
+  vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb, spacer,
 } from './nativeNodes';
+import { inkAlpha, onInk, pollStats, pollTexts, showPollVotes } from './pollLook'; // [2026-10-16 poll-wa]
 import {
   IconMapPin, IconUser, IconUserPlus, IconPlus, IconPhone, IconVideo, IconCalendar, IconClock,
-  IconCheckCircle, IconHelpCircle, IconBarChart, IconPlay, IconPencil, IconMusic, IconEye, IconLock,
-  IconCheck, IconMic, IconImage, IconVideoNote, IconGlobe, IconDiamond,
+  IconCheckCircle, IconHelpCircle, IconPlay, IconPencil, IconMusic, IconEye, IconLock,
+  IconCheck, IconMic, IconImage, IconVideoNote, IconGlobe, IconDiamond, IconX,
 } from '../Icons';
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
@@ -508,85 +509,69 @@ function buildContact(m, row, ctx, C, own) {
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 
+// [2026-10-16 poll-wa] Enquete estilo WhatsApp: ocupa a bolha toda (sem cartão
+// branco aninhado — a altura do cartão antigo saía errada e cortava o rodapé),
+// título em negrito, "Selecione…", opção = check redondo + texto + contagem e
+// barra FINA embaixo; hairline + "Ver votos"; hora/✓✓ abaixo (mp 'below').
+// Sem z-stack/pb "preencher" (o iOS media pb w:-1 como 24 dp) → larguras explícitas.
 function buildPoll(m, row, ctx, C, own) {
   const poll = _poll(m);
-  const isDark = !!C.isDark;
+  const P = _palette(own, C);
+  const ink = own ? C.ownText : (P.col.text || C.otherInk || '#111111');
+  const meta = P.meta || inkAlpha(ink, 0.6);
   const fs = Number(C.fontSize) || 16;
-  const opts = Array.isArray(poll.options) ? poll.options : [];
-  const cardBg = isDark ? '#1c1c1e' : '#ffffff';
-  const cardBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
-  const cardText = isDark ? '#f5f5f5' : '#111827';
-  const cardSub = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
-  const accent = isDark ? '#F5F5F7' : '#111111';
-  const bgFill = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)';
-  const bgFillVoted = isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.42)';
-  const trackBg = isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9';
-  let longest = _estW(poll.question, fs, true) + 28 + 7;
-  for (const o of opts) longest = Math.max(longest, _estW(o, 13, true) + 18 + 7 + 7 + 32 + 20);
-  const w = _clampW(220, 280, longest + 22);
-  const optW = w - 22;
-  const total = Number(poll.total_votes) || 0;
-  const counts = poll.vote_counts || [];
-  const mine = poll.my_votes || [];
-  const pcts = opts.map((_, i) => (total > 0 ? Math.round(((counts[i] || 0) / total) * 100) : 0));
-  const isQuiz = !!poll.is_quiz;
-  const correct = Number.isInteger(poll.correct_option) ? poll.correct_option : -1;
-  const hasVoted = mine.length > 0;
-  const kids = [hstack([
-    vstack([icon(IconBarChart, { s: 14, c: accent })], { w: 28, h: 28, r: 14, bg: 'rgba(17, 17, 17,0.14)', al: 'c', jc: 'c' }),
-    vstack([
-      text(String(poll.multiple_choice ? _tr(C, 'chat.pollMultipleBadge', 'Enquete · múltipla') : _tr(C, 'chat.pollBadge', 'Enquete')).toUpperCase(), { fs: 10, fw: 700, c: cardSub, ls: 0.3, m: [0, 0, 1, 0] }),
-      text(String(poll.question || ''), { fs, fw: 700, c: cardText, lh: fs + 3 }),
-    ], { fl: 1 }),
-  ], { g: 7, m: [0, 0, 8, 0], al: 'c' })];
-  opts.forEach((opt, idx) => {
-    const voted = mine.includes(idx);
-    const pct = pcts[idx];
-    const showQuiz = isQuiz && hasVoted && correct >= 0;
-    const isCorrect = showQuiz && idx === correct;
-    const isWrong = showQuiz && voted && idx !== correct;
-    const green = '#10B981'; const red = '#EF4444';
-    const pctW = pct > 0 ? (pct >= 100 ? 36 : 32) : 0;
-    const textW = optW - 20 - 18 - 7 - (pct > 0 ? 7 + pctW : 0);
-    const lines = _estW(opt, 13, voted) > textW ? 2 : 1;
-    const rowH = 16 + 17 * lines;
+  const S = pollStats(poll);
+  const T = pollTexts(poll, (k) => _tr(C, k, k));
+  let longest = Math.min(_estW(poll.question, fs + 1, true), 300);
+  for (const r of S.rows) longest = Math.max(longest, 32 + Math.min(_estW(r.text, 15), 240) + 28);
+  const w = _clampW(250, 300, longest);
+  const BAR_X = 32; // círculo 22 + vão 10 → barra alinhada ao texto
+  const barW = Math.max(40, w - BAR_X);
+  const track = inkAlpha(ink, own ? 0.28 : 0.14);
+  const fill = ink;
+  const green = '#10B981'; const red = '#EF4444';
+  const kids = [
+    text(String(poll.question || ''), { fs: fs + 1, fw: 700, c: ink, lh: fs + 6 }),
+    text(S.isQuiz ? `${T.quiz} · ${T.sub}` : T.sub, { fs: 12.5, c: meta, m: [3, 0, 6, 0] }),
+  ];
+  S.rows.forEach((r, idx) => {
+    const showQuiz = S.isQuiz && S.hasVoted && S.correct >= 0;
+    const isCorrect = showQuiz && idx === S.correct;
+    const isWrong = showQuiz && r.mine && idx !== S.correct;
+    const filled = r.mine || isCorrect;
+    const dot = isCorrect ? green : (isWrong ? red : ink);
     const circle = vstack([
-      isCorrect ? text('✓', { fs: 10, fw: 800, c: '#FFFFFF' })
-        : isWrong ? text('✕', { fs: 10, fw: 800, c: '#FFFFFF' })
-          : voted ? text('✓', { fs: 10, fw: 800, c: isDark ? '#000000' : '#FFFFFF' }) : null,
+      filled || isWrong ? icon(isWrong ? IconX : IconCheck, { s: 13, c: (isCorrect || isWrong) ? '#FFFFFF' : onInk(ink) }) : null,
     ], {
-      w: 18, h: 18, r: 9, bw: 1.5, al: 'c', jc: 'c',
-      bc: isCorrect ? green : isWrong ? red : voted ? accent : (isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)'),
-      bg: isCorrect ? green : isWrong ? red : voted ? accent : undefined,
+      w: 22, h: 22, r: 11, al: 'c', jc: 'c',
+      bg: (filled || isWrong) ? dot : undefined,
+      bc: (filled || isWrong) ? undefined : inkAlpha(ink, own ? 0.6 : 0.4),
+      bw: (filled || isWrong) ? 0 : 1.5,
     });
-    kids.push(zstack([
-      { t: 'pb', id: `p${m.id}_${idx}`, v: pct / 100, h: rowH, w: -1, r: 12, c: toArgb(voted ? bgFillVoted : bgFill), bg: toArgb(trackBg) },
+    kids.push(vstack([
       hstack([
         circle,
-        text(String(opt), { fs: 13, lh: 17, c: cardText, fw: voted ? 700 : 500, ml: 2, fl: 1 }),
-        pct > 0 ? text(`${pct}%`, { fs: 12, fw: 700, c: voted ? accent : cardSub, w: pctW, ta: 'r' }) : null,
-      ], { pos: 'l', w: -1, h: rowH, p: [0, 10, 0, 10], g: 7, al: 'c' }),
-    ], {
-      m: [0, 0, 5, 0], r: 12, w: -1,
-      bw: (voted || isCorrect) ? 1.5 : 1,
-      bc: isCorrect ? green : isWrong ? red : voted ? accent : (own ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.20)')),
-      a: `poll:${idx}`,
-    }));
+        text(r.text, { fs: 15, lh: 20, c: ink, fw: r.mine ? 600 : 400, fl: 1, ml: 3 }),
+        S.total > 0 ? text(String(r.count), { fs: 14, fw: 600, c: r.mine ? ink : meta, ta: 'r' }) : null,
+      ], { w: -1, g: 10, al: 'c' }),
+      hstack([
+        spacer({ w: BAR_X, h: 5 }),
+        { t: 'pb', id: `p${m.id}_${idx}`, v: r.frac, h: 5, w: barW, r: 2.5, c: toArgb(isCorrect ? green : (isWrong ? red : fill)), bg: toArgb(track) },
+      ], { m: [7, 0, 0, 0] }),
+    ], { w: -1, p: [8, 0, 7, 0], a: `poll:${idx}` }));
   });
-  if (isQuiz && hasVoted && poll.explanation) {
+  if (S.isQuiz && S.hasVoted && poll.explanation) {
     kids.push(vstack([
-      text(_tr(C, 'chat.quizExplanation', 'Explicação'), { fs: 11, fw: 700, c: cardSub, m: [0, 0, 2, 0] }),
-      text(String(poll.explanation), { fs: 12, c: cardText, lh: 16 }),
-    ], { m: [6, 0, 0, 0], p: [8, 10, 8, 10], r: 8, w: -1, bg: own ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)') }));
+      text(T.explanation, { fs: 11.5, fw: 700, c: meta, m: [0, 0, 2, 0] }),
+      text(String(poll.explanation), { fs: 13, c: ink, lh: 17 }),
+    ], { m: [6, 0, 2, 0], p: [8, 10, 8, 10], r: 10, w: -1, bg: inkAlpha(ink, 0.08) }));
   }
-  const tv = total;
-  const votesLbl = tv === 0 ? _tr(C, 'chat.pollNoVotes', 'Nenhum voto ainda') : (tv === 1 ? '1 voto' : `${tv} votos`);
-  kids.push(hstack([
-    text((isQuiz ? _tr(C, 'chat.quiz', 'Quiz') + ' · ' : '') + votesLbl, { fs: 11, c: cardSub, fw: 500 }),
-    hasVoted ? text(`✓ ${_tr(C, 'chat.youVoted', 'Você votou')}`, { fs: 11, c: accent, fw: 600 }) : null,
-  ], { jc: 'sb', al: 'c', m: [2, 0, 0, 0], w: -1 }));
-  row.bl = [vstack(kids, { w, p: [10, 10, 10, 10], bg: cardBg, r: 12, bc: cardBorder, bw: 1 })];
-  row.cw = w; row.pad = PAD; row.mp = 'below';
+  kids.push(vstack([], { w: -1, h: 0.5, bg: inkAlpha(ink, own ? 0.3 : 0.16), m: [6, 0, 0, 0] }));
+  kids.push(vstack([
+    text(T.viewVotes, { fs: 15, fw: 600, c: S.total > 0 ? ink : meta, ta: 'c' }),
+  ], { w: -1, al: 'c', p: [10, 0, 2, 0], a: S.total > 0 ? 'poll_votes' : undefined }));
+  row.bl = [vstack(kids, { w })];
+  row.cw = w; row.pad = [9, 12, 7, 12]; row.mp = 'below';
 }
 
 function buildMeetup(m, row, ctx, C, own) {
@@ -1077,6 +1062,7 @@ export function runCardAction(item, action, D) {
         return;
       }
       case 'poll': { _vote(m, Number(arg), D); return; }
+      case 'poll_votes': { showPollVotes(_poll(m), tt, (a, b) => D.safeAlert(a, b)); return; } // [2026-10-16 poll-wa]
       case 'rsvp': {
         (async () => {
           const r = await api.chatMeetupRsvp(m.id, arg);

@@ -395,11 +395,13 @@ enum CMLNodeLayout {
       M.size = CGSize(width: sz, height: sz)
       return M
     case .pb:
-      let w: CGFloat = (n.w ?? 0) > 0 ? min(n.w!, avail) : 24
+      // [2026-10-16 poll-wa] w:-1 (preencher) = largura disponível (antes 24 dp →
+      // base do z-stack da enquete saía com 24 dp e o texto quebrava letra a letra).
+      let w: CGFloat = (n.w ?? 0) > 0 ? min(n.w!, avail) : (n.isFill ? avail : 24)
       M.size = CGSize(width: w, height: n.h ?? 6)
       return M
     case .dv:
-      let w: CGFloat = (n.w ?? 0) > 0 ? min(n.w!, avail) : 0
+      let w: CGFloat = (n.w ?? 0) > 0 ? min(n.w!, avail) : (n.isFill ? avail : 0)
       M.size = CGSize(width: w, height: n.h ?? 0.5)
       return M
     case .sp:
