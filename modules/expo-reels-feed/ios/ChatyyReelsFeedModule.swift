@@ -8,8 +8,10 @@ public class ChatyyReelsFeedModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyReelsFeed")
 
+    // 2 = [2026-10-16 reels-rail-v2] labels.railStyle/countK/countM/decimalSep +
+    //     item.shares/saves/verified/musicCover (trilho redesenhado).
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(RFFeedView.self) {

@@ -23,6 +23,7 @@ import {
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconPlus, IconVolume2, IconVolumeX, IconEye,
   IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders, IconGiftBox,
+  IconCheck,
 } from './Icons';
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
 // as Live gifts. The gift panel is components/gifts/GiftSheet (context 'post' →
@@ -478,6 +479,36 @@ function reelWhyText(reel, t) {
   if (!m) return '';
   if (m[1] && !cat) return t?.('reels.why.popular') || 'Está em alta no Chatyy';
   return String(m[0]).replace('{cat}', cat).replace('{name}', name);
+}
+
+// [2026-10-16 reels-rail-v2] contador do trilho: sempre visível (0 inclusive) e no
+// formato do idioma ("1,2 mil" / "3,4 mi") — mesmas chaves do trilho nativo.
+function formatRailCount(n, t) {
+  const v = Math.max(0, Math.floor(Number(n) || 0));
+  if (v < 1000) return String(v);
+  const sep = t?.('reels.native.decimalSep') || '.';
+  const trim = (x) => x.toFixed(1).replace(/\.0$/, '').replace('.', sep);
+  const tpl = (k, def) => { const s = t?.(k); return s && s.includes('{n}') ? s : def; };
+  if (v >= 1000000) return tpl('reels.native.countM', '{n}M').replace('{n}', trim(v / 1000000));
+  const k = v / 1000;
+  return tpl('reels.native.countK', '{n}K').replace('{n}', k >= 100 ? String(Math.floor(k)) : trim(k));
+}
+
+// #hashtags e @menções em seminegrito dentro da legenda.
+function renderCaptionTags(text) {
+  const str = String(text || '');
+  const re = /[#@][^\s#@,!?;:()\[\]{}"']+/g;
+  const out = [];
+  let last = 0;
+  let m;
+  let i = 0;
+  while ((m = re.exec(str)) !== null) {
+    if (m.index > last) out.push(str.slice(last, m.index));
+    out.push(<Text key={`t${i++}`} style={{ fontWeight: '700' }}>{m[0]}</Text>);
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) out.push(str.slice(last));
+  return out.length ? out : str;
 }
 
 function formatCount(n) {
@@ -992,7 +1023,9 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
 // (computed from index → angle) plus its own scale/opacity timeline.
 // Mounted only briefly via `key` change so the parent can retrigger
 // without us tracking visibility ourselves.
-const HeartParticleBurst = memo(function HeartParticleBurst() {
+// [2026-10-16 reels-rail-v2] `origin` {x,y} = nasce no ponto (coração do trilho ou dedo
+// do duplo toque); `small` = raio curto p/ o trilho. Sem origin → âncora antiga.
+const HeartParticleBurst = memo(function HeartParticleBurst({ origin = null, small = false }) {
   const COUNT = 8;
   const particles = useRef(
     Array.from({ length: COUNT }, () => ({
@@ -1006,7 +1039,7 @@ const HeartParticleBurst = memo(function HeartParticleBurst() {
   useEffect(() => {
     const anims = particles.map((p, i) => {
       const angle = (i / COUNT) * Math.PI * 2;
-      const radius = 70 + Math.random() * 30;
+      const radius = small ? 30 + Math.random() * 14 : 70 + Math.random() * 30;
       const dx = Math.cos(angle) * radius;
       const dy = Math.sin(angle) * radius - 20; // slight upward bias
       p.tx.setValue(0);
@@ -1027,17 +1060,18 @@ const HeartParticleBurst = memo(function HeartParticleBurst() {
   }, []);
 
   return (
-    <View pointerEvents="none" style={styles.particleBurstWrap}>
+    <View pointerEvents="none" style={origin ? { position: 'absolute', left: origin.x, top: origin.y, width: 0, height: 0, zIndex: 19 } : styles.particleBurstWrap}>
       {particles.map((p, i) => (
         <Animated.View
           key={i}
           style={{
             position: 'absolute',
+            ...(origin ? { left: small ? -6 : -9, top: small ? -6 : -9 } : null),
             transform: [{ translateX: p.tx }, { translateY: p.ty }, { scale: p.scale }],
             opacity: p.opacity,
           }}
         >
-          <IconHeart size={18} color="#FF2D55" />
+          <IconHeart size={small ? 12 : 18} color={i % 2 && small ? '#fff' : '#FF2D55'} />
         </Animated.View>
       ))}
     </View>
@@ -1433,6 +1467,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   // Burst particle key — bump to remount HeartParticleBurst so the
   // animation reruns on every double-tap or like-button trigger.
   const [particleKey, setParticleKey] = useState(0);
+  // [2026-10-16 reels-rail-v2] origem das partículas/coração grande (dedo ou ícone)
+  const [burstAt, setBurstAt] = useState(null);
+  const [heartPos, setHeartPos] = useState(null);
+  const railYRef = useRef(0);
+  const likeYRef = useRef(0);
   const [viewCount, setViewCount] = useState(Number(reel.view_count) || 0);
   // Subtitles (TikTok auto-captions). CC enabled persists across sessions to
   // AsyncStorage (REELS_CC_KEY) so the user keeps their preference. We still
@@ -1491,9 +1530,15 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   // "Follow" button next to the avatar only renders for other users we
   // don't already follow. Optimistic flip + rollback on failure.
   const [followed, setFollowed] = useState(!!(reel.user_following || reel.is_following));
+  // [2026-10-16 reels-rail-v2] "+" vira visto, pulsa e some (em vez de sumir seco)
+  const [followBadgeOn, setFollowBadgeOn] = useState(!(reel.user_following || reel.is_following));
+  const [followCheck, setFollowCheck] = useState(false);
+  const followBadgeScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
-    setFollowed(!!(reel.user_following || reel.is_following));
-  }, [reel.user_following, reel.is_following, reel.id]);
+    const f = !!(reel.user_following || reel.is_following);
+    setFollowed(f);
+    if (!f) { setFollowBadgeOn(true); setFollowCheck(false); followBadgeScale.setValue(1); }
+  }, [reel.user_following, reel.is_following, reel.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const isOtherUser = !!reel.author_email
     && String(reel.author_email).toLowerCase() !== String(user?.email || '').toLowerCase();
   const followInFlightRef = useRef(false);
@@ -1502,12 +1547,22 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     if (!reel?.author_email) return;
     followInFlightRef.current = true;
     setFollowed(true);
+    setFollowCheck(true);
+    Animated.sequence([
+      Animated.spring(followBadgeScale, { toValue: 1.25, tension: 320, friction: 6, useNativeDriver: !isWeb }),
+      Animated.timing(followBadgeScale, { toValue: 1, duration: 110, useNativeDriver: !isWeb }),
+      Animated.delay(420),
+      Animated.timing(followBadgeScale, { toValue: 0, duration: 220, easing: Easing.in(Easing.quad), useNativeDriver: !isWeb }),
+    ]).start(({ finished }) => { if (finished) setFollowBadgeOn(false); });
     try { trackReelEvent(reel.id, 'follow'); } catch {} // [reels-v1]
     try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
     try {
       await api.followUser?.(reel.author_email);
     } catch {
       setFollowed(false);
+      setFollowCheck(false);
+      setFollowBadgeOn(true);
+      followBadgeScale.setValue(1);
     } finally {
       followInFlightRef.current = false;
     }
@@ -1584,6 +1639,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const videoUrl = useMemo(() => resolveMediaUrl(mediaUrls[0]), [mediaUrls]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
   const commentCount = Number(reel.comment_count ?? reel.comments_count ?? reel.comments) || 0;
+  // [2026-10-16 reels-rail-v2] compartilhamentos/salvos (servidor quando manda; salvo segue o toque)
+  const shareCount = Number(reel.share_count ?? reel.shares_count ?? reel.shares) || 0;
+  const saveCount = Math.max(0, (Number(reel.save_count ?? reel.bookmark_count ?? reel.saves_count) || 0)
+    + (bookmarked ? 1 : 0) - (reel.user_bookmarked ? 1 : 0));
   // [2026-10-13 reels-visual] "♫ Áudio original · autor" (uma linha; marquee só se não couber)
   const musicName = reel.audio_name || `${t('feed.originalAudio') || 'Áudio original'} · ${authorDisplay}`;
 
@@ -1784,6 +1843,12 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       Animated.spring(likeScale, { toValue: 1, tension: 220, friction: 9, useNativeDriver: true }),
     ]).start();
     if (!wasLiked) {
+      const _h = containerHeight || SCREEN_HEIGHT;
+      const _w = _reelItemWidth(containerWidth, _h);
+      const _desk = isWeb && _w < (containerWidth || SCREEN_WIDTH) - 1;
+      setBurstAt(railYRef.current > 0 && !_desk
+        ? { x: _w - 8 - 26, y: railYRef.current + likeYRef.current + 17, small: true }
+        : null);
       setParticleKey(k => k + 1);
       try { require('../services/haptics').HapticsCompat.impactAsync('light'); } catch {}
     }
@@ -1817,15 +1882,21 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     } finally {
       likeInFlightRef.current = false;
     }
-  }, [liked, likeCount, reel.id, likeScale, onLikeChange]);
+  }, [liked, likeCount, reel.id, likeScale, onLikeChange, containerWidth, containerHeight]);
 
-  const handleDoubleTap = useCallback(() => {
+  const handleDoubleTap = useCallback((e) => {
     const now = Date.now();
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
       // Double tap = like (with medium haptic + particle burst). Always
       // burst even when already liked — the affordance feels good and
       // matches TikTok behavior of always firing the heart on double-tap.
       if (!liked) toggleLike();
+      // [2026-10-16 reels-rail-v2] coração grande nasce NO PONTO do toque
+      const ne = e && e.nativeEvent;
+      const pt = ne && Number.isFinite(ne.locationX) && Number.isFinite(ne.locationY) && (ne.locationX || ne.locationY)
+        ? { x: ne.locationX, y: ne.locationY, rot: Math.round(Math.random() * 30 - 15) } : null;
+      setHeartPos(pt);
+      setBurstAt(pt ? { x: pt.x, y: pt.y, small: false } : null);
       showHeartAnimation();
       setParticleKey(k => k + 1);
       try { require('../services/haptics').HapticsCompat.impactAsync('medium'); } catch {}
@@ -2075,18 +2146,20 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       {/* Heart animation (double-tap) - big white heart center screen */}
       <Animated.View
         pointerEvents="none"
-        style={[styles.heartAnimOverlay, {
+        style={[heartPos
+          ? { position: 'absolute', left: heartPos.x - 55, top: heartPos.y - 55, width: 110, height: 110, zIndex: 20 }
+          : styles.heartAnimOverlay, {
           opacity: heartOpacity,
-          transform: [{ scale: heartScale }],
+          transform: [{ scale: heartScale }, ...(heartPos ? [{ rotate: `${heartPos.rot}deg` }] : [])],
         }]}
       >
-        <IconHeart size={110} color="#fff" />
+        <IconHeart size={110} color={heartPos ? '#FF2D55' : '#fff'} />
       </Animated.View>
 
       {/* Particle burst — fires on like (double-tap or button). `key`
           remount is what restarts the per-particle Animated timeline. */}
       {particleKey > 0 && (
-        <HeartParticleBurst key={particleKey} />
+        <HeartParticleBurst key={particleKey} origin={burstAt} small={!!burstAt?.small} />
       )}
 
       {/* ── TOP BAR (right side only - tabs are rendered by parent) ── */}
@@ -2145,7 +2218,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       </View>
 
       {/* ── RIGHT SIDE BUTTONS ── */}
-      <View style={[styles.rightSidebar, { bottom: insets.bottom + 78 }, desktopFrame && { right: -68, bottom: 24 }]}>
+      <View
+        style={[styles.rightSidebar, { bottom: insets.bottom + 78 }, desktopFrame && { right: -68, bottom: 24 }]}
+        onLayout={(ev) => { railYRef.current = ev.nativeEvent.layout.y; }}
+      >
         {/* Profile avatar with white border + follow badge. Tapping opens
             the author's unified profile at /u/{email}. Previously had no
             onPress so the tap was a silent no-op. */}
@@ -2164,26 +2240,31 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             </LiveBadgeRing>
           ) : (
             <View style={styles.profileAvatarRing}>
-              <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
+              <AvatarCircle email={reel.author_email} name={reel.author_name} size={42} />
             </View>
           )}
           {/* Plus-badge only when not yet followed and is another user. */}
-          {!followed && isOtherUser && !reel.is_catalog ? (
-            <TouchableOpacity
-              onPress={handleFollow}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={styles.profileFollowBadge}
-              accessibilityLabel={t?.('feed.follow') || 'Follow'}
-              accessibilityRole="button"
-            >
-              <Text style={styles.profileFollowPlus}>+</Text>
-            </TouchableOpacity>
+          {followBadgeOn && isOtherUser && !reel.is_catalog ? (
+            <Animated.View style={[styles.profileFollowBadgeWrap, { transform: [{ scale: followBadgeScale }] }]}>
+              <TouchableOpacity
+                onPress={followed ? undefined : handleFollow}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={styles.profileFollowBadge}
+                accessibilityLabel={t?.('feed.follow') || 'Follow'}
+                accessibilityRole="button"
+              >
+                {followCheck ? <IconCheck size={12} color="#000" strokeWidth={3} /> : <IconPlus size={13} color="#000" strokeWidth={3} />}
+              </TouchableOpacity>
+            </Animated.View>
           ) : null}
         </TouchableOpacity>
 
         {/* Like */}
         {/* [2026-10-13 reels-visual] contagem centralizada SOB o ícone; "0" escondido (Instagram) */}
-        <Animated.View style={[styles.sidebarItem, { transform: [{ scale: likeScale }] }]}>
+        <Animated.View
+          style={[styles.sidebarItem, { transform: [{ scale: likeScale }] }]}
+          onLayout={(ev) => { likeYRef.current = ev.nativeEvent.layout.y; }}
+        >
           <TouchableOpacity
             style={styles.sidebarBtn}
             onPress={toggleLike}
@@ -2201,9 +2282,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           </TouchableOpacity>
           {likeCount > 0 ? (
             <TouchableOpacity onPress={() => onOpenLikers?.(reel)} activeOpacity={0.7} hitSlop={{ top: 4, bottom: 6, left: 10, right: 10 }}>
-              <Text style={styles.sidebarCount}>{formatCount(likeCount)}</Text>
+              <Text style={styles.sidebarCount}>{formatRailCount(likeCount, t)}</Text>
             </TouchableOpacity>
-          ) : null}
+          ) : (
+            <Text style={styles.sidebarCount}>0</Text>
+          )}
         </Animated.View>
 
         {/* Tip / Diamond — Reels P1 monetization. Opens LivePaidGiftSheet,
@@ -2233,7 +2316,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           accessibilityRole="button"
         >
           <View style={styles.sidebarIcon}><IconMessageCircle size={29} color="#fff" /></View>
-          {commentCount > 0 ? <Text style={styles.sidebarCount}>{formatCount(commentCount)}</Text> : null}
+          {!(reel.allow_comments === false && String(reel.author_email || '').toLowerCase() !== String(user?.email || '').toLowerCase())
+            ? <Text style={styles.sidebarCount}>{formatRailCount(commentCount, t)}</Text> : null}
         </PressableScale>
 
         {/* Share */}
@@ -2246,6 +2330,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           accessibilityRole="button"
         >
           <View style={styles.sidebarIcon}><IconSend size={28} color="#fff" /></View>
+          <Text style={styles.sidebarCount}>{formatRailCount(shareCount, t)}</Text>
         </PressableScale>
 
         {/* [2026-10-13 reels-visual] Velocidade e visualizações saíram do trilho → menu "…". */}
@@ -2268,6 +2353,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
                 <IconBookmark size={28} color="#fff" />
               )}
             </View>
+            <Text style={styles.sidebarCount}>{formatRailCount(saveCount, t)}</Text>
           </PressableScale>
         </Animated.View>
 
@@ -2327,7 +2413,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             activeOpacity={0.9}
           >
             <Text style={styles.caption} numberOfLines={captionExpanded ? undefined : 2}>
-              {reel.caption}
+              {renderCaptionTags(reel.caption)}
             </Text>
             {!captionExpanded && (reel.caption.length > 80 || (String(reel.caption).match(/\n/g) || []).length >= 2) && (
               <Text style={styles.moreText}>{t('feed.more') || 'mais'}</Text>
@@ -3519,6 +3605,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         commentsDisabled: r.allow_comments === false && isOther,
         // [2026-10-15 reels-gaps] anel "ao vivo" no avatar — mesma regra do ReelItem JS
         live: !!showLiveRing && !!(r.is_live || r.live_id),
+        // [2026-10-16 reels-rail-v2] contadores/selo/capa do áudio (binário v1 ignora)
+        shares: Number(r.share_count ?? r.shares_count ?? r.shares) || 0,
+        saves: Number(r.save_count ?? r.bookmark_count ?? r.saves_count) || 0,
+        verified: !!(r.author_verified || r.is_verified || r.verified),
+        musicCover: (r.sound_cover_url || r.audio_cover_url || r.sound_cover) ? resolveMediaUrl(r.sound_cover_url || r.audio_cover_url || r.sound_cover) : '',
         width: Number(r.video_width || r.width) || 0,
         height: Number(r.video_height || r.height) || 0,
         subtitles: Array.isArray(r.subtitles) ? r.subtitles : [],
@@ -3542,6 +3633,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     likers: t('reels.native.likers'),
     sound: t('reels.native.sound'),
     live: t('reels.native.live'),
+    // [2026-10-16 reels-rail-v2]
+    seeMore: t('feed.more'),
+    countK: t('reels.native.countK'),
+    countM: t('reels.native.countM'),
+    decimalSep: t('reels.native.decimalSep'),
   }), [t]);
   const nativeInsets = useMemo(() => ({
     top: reelHeaderTop(outerInsets) + REEL_HEADER_H,
@@ -3690,7 +3786,12 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     const reel = findReelRef.current(e?.id);
     if (!reel) return;
     const saved = !!e.saved;
-    patchReel(reel.id, { user_bookmarked: saved });
+    // [2026-10-16 reels-rail-v2] contador de salvos acompanha (o trilho v2 mostra)
+    const wasSaved = !!reel.user_bookmarked;
+    const baseSaves = Number(reel.save_count ?? reel.bookmark_count ?? reel.saves_count) || 0;
+    patchReel(reel.id, wasSaved === saved
+      ? { user_bookmarked: saved }
+      : { user_bookmarked: saved, save_count: Math.max(0, baseSaves + (saved ? 1 : -1)) });
     try { trackReelEvent(reel.id, saved ? 'save' : 'unsave'); } catch {}
     nEnqueue(`b:${reel.id}`, async (isLast) => {
       try {
@@ -4283,28 +4384,32 @@ const styles = StyleSheet.create({
   },
   profileAvatarBtn: {
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 10,
   },
   profileAvatarRing: {
     borderWidth: 2,
     borderColor: '#fff',
-    borderRadius: 20,
-    padding: 1,
+    borderRadius: 24,
+    padding: 0,
     overflow: 'hidden',
     ...(isWeb ? {} : { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.4, shadowRadius: 4 }),
   },
-  profileFollowBadge: {
+  profileFollowBadgeWrap: {
     position: 'absolute',
-    bottom: -6,
+    bottom: -10,
+  },
+  profileFollowBadge: {
     // [2026-10-13 visual] P&B brand: white badge / black plus (was pink #FF2D55)
+    // [2026-10-16 reels-rail-v2] 20 px, sem borda preta, sombra leve, centrado na borda do avatar
     backgroundColor: '#fff',
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#000',
+    ...(isWeb
+      ? { boxShadow: '0 1px 3px rgba(0,0,0,0.35)' }
+      : { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 2, elevation: 2 }),
   },
   profileFollowPlus: {
     color: '#000',

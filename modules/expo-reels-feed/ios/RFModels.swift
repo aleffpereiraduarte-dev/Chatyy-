@@ -31,6 +31,11 @@ final class RFItem {
   var commentsDisabled = false
   /// [2026-10-15 reels-gaps] autor transmitindo agora → anel "ao vivo" no avatar.
   var live = false
+  /// [2026-10-16 reels-rail-v2] contadores extras + selo + capa do áudio (JS api ≥ 2).
+  var shares = 0
+  var saves = 0
+  var verified = false
+  var musicCover = ""
   var width: Double = 0
   var height: Double = 0
   var subtitles: [RFSubtitle] = []
@@ -59,6 +64,10 @@ final class RFItem {
     if d.keys.contains("canFollow") { canFollow = RFItem.bool(d["canFollow"]) }
     if d.keys.contains("commentsDisabled") { commentsDisabled = RFItem.bool(d["commentsDisabled"]) }
     if d.keys.contains("live") { live = RFItem.bool(d["live"]) }
+    if d.keys.contains("shares") { shares = max(0, Int(RFItem.num(d["shares"]))) }
+    if d.keys.contains("saves") { saves = max(0, Int(RFItem.num(d["saves"]))) }
+    if d.keys.contains("verified") { verified = RFItem.bool(d["verified"]) }
+    if d.keys.contains("musicCover") { musicCover = RFItem.str(d["musicCover"]) ?? "" }
     if d.keys.contains("width") { width = RFItem.num(d["width"]) }
     if d.keys.contains("height") { height = RFItem.num(d["height"]) }
     if d.keys.contains("subtitles") {
@@ -130,6 +139,14 @@ struct RFLabels {
   var likers = "Ver curtidas"
   var sound = "Usar este som"
   var live = "AO VIVO"
+  /// [2026-10-16 reels-rail-v2] 1 = trilho original (SF Symbols + spinner central);
+  /// 2 = trilho novo (ícones de linha do app, contadores, buffer na barra). O JS
+  /// só manda 2 com apiVersion ≥ 2 e sem o kill switch __chatyy_reels_rail_v2.
+  var railStyle = 1
+  /// Formato dos contadores ("{n} mil" / "{n} mi" / vírgula decimal) vindo do i18n.
+  var countK = "{n} mil"
+  var countM = "{n} mi"
+  var decimalSep = ","
 
   init() {}
 
@@ -154,7 +171,13 @@ struct RFLabels {
     likers = pick("likers", likers)
     sound = pick("sound", sound)
     live = pick("live", live)
+    countK = pick("countK", countK)
+    countM = pick("countM", countM)
+    decimalSep = pick("decimalSep", decimalSep)
+    if let n = d["railStyle"] as? NSNumber { railStyle = n.intValue }
   }
+
+  var v2: Bool { return railStyle >= 2 }
 }
 
 enum RFFormat {
@@ -164,6 +187,25 @@ enum RFFormat {
     if n >= 1_000_000 { return trim(Double(n) / 1_000_000) + "M" }
     if n >= 1000 { return trim(Double(n) / 1000) + "K" }
     return String(n)
+  }
+
+  /// Trilho v2: sempre mostra o número (0 inclusive), "1,2 mil" / "3,4 mi" no idioma.
+  static func count(_ n: Int, _ l: RFLabels) -> String {
+    let v = max(0, n)
+    if v < 1000 { return String(v) }
+    if v >= 1_000_000 {
+      return l.countM.replacingOccurrences(of: "{n}", with: trim(Double(v) / 1_000_000).replacingOccurrences(of: ".", with: l.decimalSep))
+    }
+    // 10 mil+ sem casa decimal (TikTok: "12,3 mil" → "123 mil")
+    let k = Double(v) / 1000
+    let s = k >= 100 ? String(Int(k)) : trim(k).replacingOccurrences(of: ".", with: l.decimalSep)
+    return l.countK.replacingOccurrences(of: "{n}", with: s)
+  }
+
+  /// "m:ss" para o rótulo do arrastar.
+  static func clock(_ seconds: Double) -> String {
+    let t = max(0, Int(seconds.isFinite ? seconds : 0))
+    return String(format: "%d:%02d", t / 60, t % 60)
   }
 
   private static func trim(_ v: Double) -> String {

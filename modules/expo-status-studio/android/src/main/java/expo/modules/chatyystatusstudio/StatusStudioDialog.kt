@@ -795,11 +795,13 @@ class StatusStudioDialog(
     if (txt.isBlank() || busy) return
     if (audienceBlocked()) return
     val bg = opts.backgrounds.getOrNull(bgIdx) ?: SSBackground("#111111", intArrayOf(Color.rgb(17, 17, 17)))
-    if (align == "center" && letterBg == 0) {
+    // [status-texto 2026-10-16] alinhamento vai como meta.text_align (servidor + viewers entendem);
+    // só o "fundo da letra" ainda precisa virar imagem.
+    if (letterBg == 0) {
       val r = baseResult()
       r["caption"] = ""
       r["music"] = null
-      r["text"] = mapOf("text" to txt.trim(), "bg" to bg.value, "font" to curFont())
+      r["text"] = mapOf("text" to txt.trim(), "bg" to bg.value, "font" to curFont(), "align" to align)
       finishWith(r)
       return
     }

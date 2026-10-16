@@ -16,6 +16,10 @@
 // interesse") — nunca a lista inteira a cada render.
 //
 // Desligar (OTA/console): globalThis.__chatyy_native_reels = false
+// [2026-10-16 reels-rail-v2] Trilho redesenhado (ícones de linha do app, contadores
+// "1,2 mil", "+" seguir animado, disco com capa, "… mais", buffer na barra fina no
+// lugar do spinner central) só em binário com apiVersion ≥ 2. Voltar ao trilho
+// antigo sem build: globalThis.__chatyy_reels_rail_v2 = false
 // Fallback automático p/ a FlatList JS: erro nativo (onNativeError), view que
 // não ficou pronta em 3 s, ou crash do processo com o feed montado (2× →
 // desliga até a próxima versão do bundle).
@@ -29,6 +33,7 @@ const CRASH_KEY = 'native_reels_guard_v1';
 let _viewChecked = false;
 let _NativeView = null;
 let _sessionDisabled = false;
+let _api = 0;
 
 function _getNativeView() {
   if (_viewChecked) return _NativeView;
@@ -43,6 +48,7 @@ function _getNativeView() {
     let api = 0;
     try { api = Number(mod.apiVersion()) || 0; } catch { api = 0; }
     if (api < 1) return null;
+    _api = api;
     // requireNativeView não lança quando a view não existe — confirma pela
     // config registrada no binário (mesma técnica de nativeThreadList).
     const g = globalThis;
@@ -112,6 +118,18 @@ export function isNativeReelsAvailable() {
   return true;
 }
 
+/** apiVersion do binário (0 = sem feed nativo). */
+export function getNativeReelsApi() {
+  _getNativeView();
+  return _api;
+}
+
+/** Trilho v2: binário api ≥ 2 e kill switch não desligado. */
+function _railV2() {
+  try { if (globalThis.__chatyy_reels_rail_v2 === false) return false; } catch {}
+  return _api >= 2;
+}
+
 export function disableNativeReelsForSession(reason) {
   if (_sessionDisabled) return;
   _sessionDisabled = true;
@@ -138,7 +156,8 @@ function _call(view, payload) {
  * Props:
  *   items        [{ id, videoUrl, hlsUrl, thumb, avatar, author, caption, music, credit,
  *                   likes, comments, liked, saved, durationMs, canGift, canFollow,
- *                   commentsDisabled, live, width, height, subtitles }]  (já normalizados)
+ *                   commentsDisabled, live, width, height, subtitles,
+ *                   shares, saves, verified, musicCover (api ≥ 2) }]  (já normalizados)
  *   resetKey     muda → reset completo (troca de aba / feed por som)
  *   startIndex   índice inicial no reset
  *   muted, paused, rate, captionsEnabled, labels, insets {top,bottom}, imageHeaders,
@@ -156,6 +175,12 @@ const NativeReelsFeed = forwardRef(function NativeReelsFeed(props, ref) {
     labels, insets, imageHeaders, refreshEnabled = false, refreshing = false, style,
   } = props;
   const NativeView = _getNativeView();
+  const railStyle = _railV2() ? 2 : 1;
+  // railStyle viaja dentro de labels (binário v1 ignora a chave → zero risco).
+  const mergedLabels = React.useMemo(
+    () => (railStyle >= 2 ? { ...(labels || {}), railStyle } : labels),
+    [labels, railStyle],
+  );
   const viewRef = useRef(null);
   const sentRef = useRef({ key: undefined, ids: [], sigs: new Map() });
   const currentIdRef = useRef(null);
@@ -276,7 +301,7 @@ const NativeReelsFeed = forwardRef(function NativeReelsFeed(props, ref) {
     <NativeView
       ref={viewRef}
       style={style || StyleSheet.absoluteFill}
-      labels={labels}
+      labels={mergedLabels}
       muted={!!muted}
       paused={!!paused}
       rate={Number(rate) || 1}

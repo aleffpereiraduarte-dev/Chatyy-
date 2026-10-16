@@ -47,6 +47,7 @@ import {
 } from './studioEngine';
 import {
   TEXT_STATUS_COLORS, TEXT_STATUS_FONTS, TEXT_STATUS_MAX, textStatusFontStyle, autoFitFontSize, estimateTextLines, firstLink,
+  TEXT_STATUS_BACKGROUNDS, TEXT_STATUS_ALIGNS, normalizeTextAlign,
 } from './textStatus'; // [status-texto 2026-10-14]
 import { enqueueStatusPublish } from '../../services/statusPublishQueue';
 
@@ -316,7 +317,9 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
   const [textDraft, setTextDraft] = useState(null); // { id?, text, font, color, bg, align }
   // status de texto
   // [status-texto 2026-10-14] cor sólida da paleta (índice) + fonte (sans/serif/mono/script/condensed)
-  const [txt, setTxt] = useState({ text: '', color: 0, font: 'sans' });
+  // [status-texto 2026-10-16] color = índice em TEXT_STATUS_BACKGROUNDS (sólidas + gradientes).
+  const [txt, setTxt] = useState({ text: '', color: 0, font: 'sans', align: 'center' });
+  const [showTextPalette, setShowTextPalette] = useState(false);
   const [fontFlash, setFontFlash] = useState(null);
   const fontFlashTimer = useRef(null);
   const [kbH, setKbH] = useState(0); // iOS: altura do teclado p/ o auto-ajuste do texto
@@ -384,7 +387,8 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
     setTool(its.length && its[0].type !== 'video' && filtersAvailable() ? 'filters' : null);
     setCaption('');
     setTextDraft(null);
-    setTxt({ text: '', color: Math.floor(Math.random() * TEXT_STATUS_COLORS.length), font: 'sans' });
+    setTxt({ text: '', color: Math.floor(Math.random() * TEXT_STATUS_COLORS.length), font: 'sans', align: 'center' });
+    setShowTextPalette(false);
     setPublishing(false);
     setCapturing(null);
     // Público lembrado
@@ -635,9 +639,10 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
     if (mode === 'text') {
       const text = txt.text.trim();
       if (!text) return;
-      // [status-texto 2026-10-14] fundo sólido da paleta + fonte escolhida (servidor valida ambos).
-      const bg = TEXT_STATUS_COLORS[txt.color] || TEXT_STATUS_COLORS[0];
-      await enqueueStatusPublish({ email, kind: 'text', content: Array.from(text).slice(0, TEXT_STATUS_MAX).join(''), background: bg, meta: { ...base, font_style: txt.font || 'sans' } });
+      // [status-texto 2026-10-14] fundo da paleta (hex ou gradient:<id>) + fonte (servidor valida ambos).
+      const bg = (TEXT_STATUS_BACKGROUNDS[txt.color] || TEXT_STATUS_BACKGROUNDS[0]).value;
+      const align = normalizeTextAlign(txt.align);
+      await enqueueStatusPublish({ email, kind: 'text', content: Array.from(text).slice(0, TEXT_STATUS_MAX).join(''), background: bg, meta: { ...base, font_style: txt.font || 'sans', ...(align !== 'center' ? { text_align: align } : {}) } });
       try { _Haptics?.notificationAsync?.(_Haptics.NotificationFeedbackType?.Success); } catch {}
       onClose?.({ published: true });
       return;
@@ -945,12 +950,18 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
     if (fontFlashTimer.current) clearTimeout(fontFlashTimer.current);
     fontFlashTimer.current = setTimeout(() => setFontFlash(null), 900);
   };
-  const cycleColor = () => { tick(); setTxt(s => ({ ...s, color: (s.color + 1) % TEXT_STATUS_COLORS.length })); };
+  // [status-texto 2026-10-16] paleta visível (sólidas + gradientes) e alinhamento.
+  const togglePalette = () => { tick(); setShowTextPalette(v => !v); };
+  const pickTextBg = (i) => { tick(); setTxt(s => ({ ...s, color: i })); };
+  const cycleAlign = () => {
+    tick();
+    setTxt(s => ({ ...s, align: TEXT_STATUS_ALIGNS[(TEXT_STATUS_ALIGNS.indexOf(normalizeTextAlign(s.align)) + 1) % TEXT_STATUS_ALIGNS.length] }));
+  };
   const renderTextComposer = () => {
     const len = Array.from(txt.text).length;
     const bottomBarH = 64;
     const kb = Platform.OS === 'ios' ? kbH : Platform.OS === 'android' ? androidKb : 0;
-    const areaH = Math.max(120, WIN.height - insets.top - insets.bottom - topBarH - bottomBarH - kb - 24);
+    const areaH = Math.max(120, WIN.height - insets.top - insets.bottom - topBarH - bottomBarH - kb - 24 - (showTextPalette ? 44 : 0));
     const fs = autoFitFontSize(txt.text, { width: WIN.width, height: areaH, max: 40, min: 14, font: txt.font });
     const lineH = Math.round(fs * 1.25);
     const lines = estimateTextLines(txt.text || 'x', { width: WIN.width, fontSize: fs, font: txt.font });
@@ -967,7 +978,8 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
             <GlassBtn onPress={cycleFont} label={t('status.text.changeFont')}>
               <Text style={[{ color: chrome, fontSize: 16, includeFontPadding: false }, textStatusFontStyle(txt.font), { textTransform: 'none' }]}>Aa</Text>
             </GlassBtn>
-            <GlassBtn onPress={cycleColor} label={t('status.text.changeColor')}><IconPalette size={19} color={chrome} /></GlassBtn>
+            <GlassBtn onPress={cycleAlign} label={t(`status.studio.align_${normalizeTextAlign(txt.align)}`)}><AlignGlyph align={normalizeTextAlign(txt.align)} color={chrome} /></GlassBtn>
+            <GlassBtn onPress={togglePalette} label={t('status.text.changeColor')}><IconPalette size={19} color={chrome} /></GlassBtn>
             <GlassBtn onPress={pickFromGallery} label={t('status.gallery')}><IconImage size={19} color={chrome} /></GlassBtn>
             {Platform.OS !== 'web' && onOpenCamera ? (
               <GlassBtn onPress={() => { onClose?.(); setTimeout(() => onOpenCamera?.(), Platform.OS === 'ios' ? 500 : 200); }} label={t('status.camera')}><IconCamera size={19} color={chrome} /></GlassBtn>
@@ -988,7 +1000,7 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
             selectionColor="#FFFFFF"
             accessibilityLabel={t('status.text.placeholder')}
             testID="text-status-input"
-            style={[{ color: '#FFFFFF', fontSize: fs, lineHeight: lineH, textAlign: 'center', paddingHorizontal: 24, width: '100%' },
+            style={[{ color: '#FFFFFF', fontSize: fs, lineHeight: lineH, textAlign: normalizeTextAlign(txt.align), paddingHorizontal: 24, width: '100%' },
               Platform.OS === 'web' ? { outlineStyle: 'none', height: inputH, resize: 'none' } : { maxHeight: areaH },
               textStatusFontStyle(txt.font)]}
           />
@@ -1001,6 +1013,22 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
             <IconLink size={14} color="#fff" />
             <Text style={st.linkPillTxt} numberOfLines={1}>{linkHost}</Text>
           </View>
+        ) : null}
+        {showTextPalette ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always"
+            style={{ flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 14, gap: 10, paddingVertical: 6, alignItems: 'center' }}
+            accessibilityLabel={t('status.studio.textBackground')} testID="text-status-palette">
+            {TEXT_STATUS_BACKGROUNDS.map((b, i) => {
+              const on = i === txt.color;
+              return (
+                <TouchableOpacity key={b.value} onPress={() => pickTextBg(i)} activeOpacity={0.8}
+                  style={[st.swatch, on && st.swatchOn]} accessibilityRole="button" accessibilityState={{ selected: on }}
+                  accessibilityLabel={`${t('status.studio.textBackground')} ${i + 1}`}>
+                  <BgFill colors={b.colors} id={`sw${i}`} radius={15} />
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         ) : null}
         <View style={[st.bottomRow, { height: bottomBarH }]}>
           <TouchableOpacity onPress={() => { try { Keyboard.dismiss(); } catch {} setTool('audience'); }} style={[st.audPill, { backgroundColor: 'rgba(0,0,0,0.22)' }]} accessibilityRole="button" accessibilityLabel={t('status.audience.title')}>
@@ -1027,7 +1055,8 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => (tool ? setTool(null) : onClose?.())} statusBarTranslucent>
-      <View style={[st.root, { paddingTop: insets.top, paddingBottom: insets.bottom }, mode === 'text' ? { backgroundColor: TEXT_STATUS_COLORS[txt.color] || TEXT_STATUS_COLORS[0] } : null]}>
+      <View style={[st.root, { paddingTop: insets.top, paddingBottom: insets.bottom }, mode === 'text' ? { backgroundColor: (TEXT_STATUS_BACKGROUNDS[txt.color] || TEXT_STATUS_BACKGROUNDS[0]).colors.slice(-1)[0] } : null]}>
+        {mode === 'text' ? <BgFill colors={(TEXT_STATUS_BACKGROUNDS[txt.color] || TEXT_STATUS_BACKGROUNDS[0]).colors} id="txtbg" /> : null}
         {mode === 'text' ? renderTextComposer() : (<>
         {/* Topo */}
         <View style={[st.topBar, { height: topBarH }]}>
@@ -1334,6 +1363,22 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
   );
 }
 
+// [status-texto 2026-10-16] Fundo sólido/gradiente (mesmo desenho do viewer: diagonal TL→BR).
+function BgFill({ colors, id, radius = 0 }) {
+  const cs = Array.isArray(colors) && colors.length ? colors : ['#111111'];
+  if (cs.length === 1) return <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: cs[0], borderRadius: radius }]} />;
+  return (
+    <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 1 1">
+      <Defs>
+        <LinearGradient id={`bg_${id}`} x1="0" y1="0" x2="1" y2="1">
+          {cs.map((c, i) => <Stop key={i} offset={`${Math.round((i / (cs.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />)}
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="1" height="1" rx={radius ? 0.5 : 0} ry={radius ? 0.5 : 0} fill={`url(#bg_${id})`} />
+    </Svg>
+  );
+}
+
 function AlignGlyph({ align, color }) {
   const widths = [14, 9, 12];
   return (
@@ -1433,6 +1478,8 @@ const st = StyleSheet.create({
   chipOn: { backgroundColor: '#FFFFFF' },
   chipTxt: { color: '#fff', fontWeight: '700', fontSize: 13 },
   chipTxtOn: { color: '#000' },
+  swatch: { width: 30, height: 30, borderRadius: 15, overflow: 'hidden', borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)' },
+  swatchOn: { borderColor: '#FFFFFF', borderWidth: 3, transform: [{ scale: 1.12 }] },
   alignBtn: { width: 34, height: 32, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   brushBtn: { width: 38, height: 38, borderRadius: 19, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' },
   gradDot: { width: 34, height: 34, borderRadius: 17, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.4)', padding: 1.5 },

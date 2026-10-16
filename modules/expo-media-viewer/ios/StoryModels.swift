@@ -105,6 +105,8 @@ final class SVItem {
   let linkUrl: String
   let linkLabel: String
   let textAnim: String
+  /// [status-texto 2026-10-16] alinhamento do status de texto: left | center | right.
+  let textAlign: String
   let loop: Bool
   let translatable: Bool
   var translated: Bool
@@ -148,6 +150,7 @@ final class SVItem {
     linkUrl = (link["url"] as? String) ?? ""
     linkLabel = (link["label"] as? String) ?? ""
     textAnim = (dict["textAnim"] as? String) ?? ""
+    textAlign = (dict["align"] as? String) ?? "center"
     loop = (dict["loop"] as? Bool) ?? false
     translatable = (dict["translatable"] as? Bool) ?? false
     translated = (dict["translated"] as? Bool) ?? false

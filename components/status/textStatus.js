@@ -11,7 +11,7 @@
 // 'normal'/'classic' = sans). Só fontes do sistema (nada baixado).
 import React from 'react';
 import { Linking, Platform, Text, View } from 'react-native';
-import { resolveTextGradient } from './textGradients';
+import { resolveTextGradient, TEXT_BG_GRADIENTS } from './textGradients';
 
 export const TEXT_STATUS_MAX = 700;
 
@@ -21,6 +21,25 @@ export const TEXT_STATUS_COLORS = [
   '#111111', '#54656F', '#0F766E', '#15803D', '#0E7490', '#2563EB',
   '#4F46E5', '#7C3AED', '#C026D3', '#DB2777', '#DC2626', '#EA580C',
 ];
+
+// [status-texto 2026-10-16] Fundos do editor: 12 sólidas + gradientes (P&B primeiro).
+// Gradiente publica `gradient:<id>` (servidor aceita qualquer id [a-z0-9_]; o
+// viewer resolve pela textGradients.js — só ids que JÁ existem lá).
+export const TEXT_STATUS_GRADIENT_IDS = ['noir', 'graphite', 'midnight', 'ocean', 'dusk', 'peach', 'ember', 'forest', 'lagoon', 'sunset', 'blue_cyan'];
+export const TEXT_STATUS_BACKGROUNDS = [
+  ...TEXT_STATUS_COLORS.map(c => ({ value: c, colors: [c] })),
+  ...TEXT_STATUS_GRADIENT_IDS.map(id => TEXT_BG_GRADIENTS.find(g => g.id === id)).filter(Boolean)
+    .map(g => ({ value: `gradient:${g.id}`, colors: g.colors })),
+];
+
+// Alinhamento (meta.text_align; centro = padrão, não é enviado).
+export const TEXT_STATUS_ALIGNS = ['center', 'left', 'right'];
+export function normalizeTextAlign(a) {
+  return a === 'left' || a === 'right' ? a : 'center';
+}
+export function itemTextAlign(it) {
+  return normalizeTextAlign(it?.text_align || it?.meta?.text_align);
+}
 
 export const TEXT_STATUS_FONTS = [
   { id: 'sans', labelKey: 'status.text.fontSans' },

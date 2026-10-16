@@ -88,6 +88,7 @@ class SVItem(
   val linkUrl: String,
   val linkLabel: String,
   val textAnim: String = "",
+  val textAlign: String = "center", // [status-texto 2026-10-16] left | center | right
   val loop: Boolean = false,
   val translatable: Boolean = false,
   var translated: Boolean = false,
@@ -171,6 +172,7 @@ class SVItem(
         linkUrl = str(link, "url"),
         linkLabel = str(link, "label"),
         textAnim = str(m, "textAnim"),
+        textAlign = str(m, "align").ifEmpty { "center" },
         loop = (m["loop"] as? Boolean) ?: false,
         translatable = (m["translatable"] as? Boolean) ?: false,
         translated = (m["translated"] as? Boolean) ?: false,

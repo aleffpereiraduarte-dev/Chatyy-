@@ -102,6 +102,10 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var tickerOn = false
   private var lastTick = 0L
   private var stallSince = 0L
+  /** [2026-10-16 reels-rail-v2] posição no tick anterior: andou → está tocando (nunca "carregando"). */
+  private var lastHead = -1L
+  private var lastHeadId = ""
+  private var bufferTick = 0
   private var impId = ""
   private var impMs = 0.0
   private var impCompleted = false
@@ -569,6 +573,13 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
     val dur = p.duration
     val pos = p.currentPosition
     if (dur != C.TIME_UNSET && dur > 0) page.setProgress(pos.toFloat() / dur.toFloat())
+    val advancing = lastHeadId == currentId && lastHead >= 0 && pos != lastHead
+    lastHead = pos
+    lastHeadId = currentId
+    if (page.isV2 && dur != C.TIME_UNSET && dur > 0) {
+      bufferTick += 1
+      if (bufferTick % 8 == 1) page.setBuffered(p.bufferedPosition.toFloat() / dur.toFloat())
+    }
     if (p.isPlaying) {
       if (impId != currentId) {
         impId = currentId
@@ -579,7 +590,7 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
       if (dt in 1..499) impMs += dt.toDouble()
       stallSince = 0L
       page.setBuffering(false)
-    } else if (p.playWhenReady && p.playbackState == Player.STATE_BUFFERING && !s.failed) {
+    } else if (p.playWhenReady && p.playbackState == Player.STATE_BUFFERING && !s.failed && !advancing) {
       if (stallSince == 0L) stallSince = now
       page.setBuffering(now - stallSince > 450)
     } else {
@@ -625,6 +636,7 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
       it.likes += 1
       page.refresh()
       page.likeBtn.pop()
+      page.burstLike()
       onLike(mapOf("id" to it.id, "liked" to true, "likes" to it.likes, "source" to "double_tap", "index" to items.indexOf(it)))
     }
   }
@@ -644,10 +656,12 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
       0 -> {
         scrubbing = true
         page.setScrubbing(true, fraction)
+        if (dur != C.TIME_UNSET && dur > 0) page.setScrubTime(fraction * dur / 1000.0, dur / 1000.0)
         updatePlayback()
       }
       1 -> {
         page.setScrubbing(true, fraction)
+        if (dur != C.TIME_UNSET && dur > 0) page.setScrubTime(fraction * dur / 1000.0, dur / 1000.0)
         val now = SystemClock.uptimeMillis()
         if (dur != C.TIME_UNSET && dur > 0 && now - lastScrubSeek > 120) {
           lastScrubSeek = now
@@ -678,7 +692,10 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
         it.likes = (it.likes + if (it.liked) 1 else -1).coerceAtLeast(0)
         page.refresh()
         page.likeBtn.pop()
-        if (it.liked) page.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        if (it.liked) {
+          page.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+          page.burstLike()
+        }
         body["liked"] = it.liked
         body["likes"] = it.likes
         body["source"] = "button"
@@ -686,6 +703,7 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
       }
       "save" -> {
         it.saved = !it.saved
+        it.saves = (it.saves + if (it.saved) 1 else -1).coerceAtLeast(0)
         page.refresh()
         page.saveBtn.pop()
         body["saved"] = it.saved
@@ -698,6 +716,7 @@ class RFFeedView(context: Context, appContext: AppContext) : ExpoView(context, a
       "author" -> onAuthorPress(body)
       "follow" -> {
         it.canFollow = false
+        page.animateFollowed()
         page.refresh()
         page.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         onFollow(body)

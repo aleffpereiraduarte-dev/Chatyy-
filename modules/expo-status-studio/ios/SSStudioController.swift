@@ -1395,7 +1395,7 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
       }
       ssHaptic("success")
       finish(["action": "publish", "audience": audience, "caption": "", "music": NSNull(),
-              "text": ["text": text, "bg": c.bgValue, "font": c.font]])
+              "text": ["text": text, "bg": c.bgValue, "font": c.font, "align": c.alignValue]])
       return
     }
     guard !items.isEmpty else { return }

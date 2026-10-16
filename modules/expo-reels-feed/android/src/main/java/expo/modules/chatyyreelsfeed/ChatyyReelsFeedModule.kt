@@ -11,7 +11,9 @@ class ChatyyReelsFeedModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyReelsFeed")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-16 reels-rail-v2] labels.railStyle/countK/countM/decimalSep +
+    //     item.shares/saves/verified/musicCover (trilho redesenhado).
+    Function("apiVersion") { 2 }
 
     OnActivityEntersBackground {
       for (v in RFFeedView.live.toList()) v.enterBackground()

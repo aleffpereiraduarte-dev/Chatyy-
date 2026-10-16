@@ -156,3 +156,20 @@ export function openTextStatusComposer() {
   if (!_textOpener) return false;
   try { _textOpener(); return true; } catch { return false; }
 }
+
+// [status-texto 2026-10-16] Atalho "Texto" (faixa de status da home/feed): se o
+// ChatStatusTab já está montado abre na hora; senão marca o pedido e monta a
+// superfície do status via requestNewStatus() — o ChatStatusTab consome a marca
+// no 1º pedido e abre o editor de TEXTO em vez da câmera.
+let _pendingTextAt = 0;
+export function consumePendingTextComposer() {
+  const p = _pendingTextAt && Date.now() - _pendingTextAt < 10000;
+  _pendingTextAt = 0;
+  return !!p;
+}
+export function requestTextStatusComposer(requestNewStatus) {
+  if (openTextStatusComposer()) return true;
+  _pendingTextAt = Date.now();
+  try { requestNewStatus?.(); } catch {}
+  return false;
+}

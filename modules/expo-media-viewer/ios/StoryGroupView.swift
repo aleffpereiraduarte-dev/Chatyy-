@@ -505,7 +505,7 @@ final class SVGroupView: UIView {
     let maxH = h * 0.7
     let text = item.text
     let para = NSMutableParagraphStyle()
-    para.alignment = .center
+    para.alignment = item.textAlign == "left" ? .left : (item.textAlign == "right" ? .right : .center)
     para.lineBreakMode = .byWordWrapping
     // Maior fonte (44 → 14) cujo texto quebrado cabe na caixa — medida real.
     var lo: CGFloat = 14

@@ -19,7 +19,7 @@
 // status_delete — e aos callbacks do chamador (cache do hook, fechar, etc.).
 import { Platform } from 'react-native';
 import * as api from '../../services/api';
-import { firstLink, itemBg, itemFontStyle, normalizeTextFont, textStatusDurationMs, textStatusSolid } from './textStatus';
+import { firstLink, itemBg, itemFontStyle, normalizeTextFont, textStatusDurationMs, textStatusSolid, itemTextAlign } from './textStatus';
 import { resolveTextGradient } from './textGradients';
 
 let _NS; // undefined = não resolvido; null = indisponível
@@ -348,6 +348,7 @@ function _toNativeItem(it, t, isSelf) {
     bg: (type === 'text' || type === 'voice') ? textStatusSolid(bgRaw) : '#000000',
     bgColors: grad && Array.isArray(grad.colors) ? grad.colors : [],
     font: normalizeTextFont(itemFontStyle(it)),
+    align: type === 'text' ? itemTextAlign(it) : 'center', // [status-texto 2026-10-16] binário antigo ignora
     duration: poll ? 10000 : voiceUrl ? 30000 : boomerang ? 7000 : type === 'text' ? textStatusDurationMs(text) : 5000,
     timeLabel: _relTime(it.created_at || it.createdAt, t),
     viewed: !!it.viewed,

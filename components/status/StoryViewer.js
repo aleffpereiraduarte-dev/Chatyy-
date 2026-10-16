@@ -33,7 +33,7 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, 
 // StoryViewer, AnimatedStatusText and ChatStatusTab never drift apart.
 import { resolveTextGradient as _resolveTextGradient } from './textGradients';
 import AnimatedStatusText from './AnimatedStatusText'; // [status-texto 2026-10-14]
-import { textStatusDurationMs } from './textStatus';
+import { textStatusDurationMs, itemTextAlign } from './textStatus';
 import { cachedVideoSource } from '../../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 import { tryOpenNativeStories, nativeStoriesAvailable, isNativeStoryGroup, closeNativeStories, setNativeStoryHasMore } from './nativeStories'; // [2026-10-15 native-story]
 
@@ -521,6 +521,7 @@ const StoryMedia = React.memo(function StoryMedia({
           text={cur.content || ''}
           bgColor={_bg || '#111111'}
           fontStyle={cur.font_style || cur.meta?.font_style || 'sans'}
+          textAlign={itemTextAlign(cur)}
           animation={cur.text_animation || cur.meta?.text_animation || 'none'}
         />
       );

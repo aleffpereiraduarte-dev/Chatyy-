@@ -644,13 +644,19 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     val maxH = (h * 0.7f).toInt()
     val tf = typefaceFor(it.font)
     val shown = if (it.font == "condensed") it.text.uppercase() else it.text
+    val layoutAlign = when (it.textAlign) { "left" -> Layout.Alignment.ALIGN_NORMAL; "right" -> Layout.Alignment.ALIGN_OPPOSITE; else -> Layout.Alignment.ALIGN_CENTER }
+    textView.gravity = when (it.textAlign) {
+      "left" -> Gravity.START or Gravity.CENTER_VERTICAL
+      "right" -> Gravity.END or Gravity.CENTER_VERTICAL
+      else -> Gravity.CENTER
+    }
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG)
     paint.typeface = tf
     val dm = resources.displayMetrics
     fun heightFor(sp: Float): Int {
       paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, dm)
       val l = StaticLayout.Builder.obtain(shown, 0, shown.length, paint, max(1, maxW))
-        .setAlignment(Layout.Alignment.ALIGN_CENTER)
+        .setAlignment(layoutAlign)
         .setLineSpacing(0f, 1.12f)
         .setIncludePad(false)
         .build()

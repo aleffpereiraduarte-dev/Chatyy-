@@ -361,7 +361,12 @@ export async function runNativeStudio(seed, ctx) {
         email, kind: 'text',
         content: Array.from(String(r.text.text).trim()).slice(0, TEXT_STATUS_MAX).join(''),
         background: String(r.text.bg || TEXT_STATUS_COLORS[0]),
-        meta: { ...base, font_style: TEXT_STATUS_FONTS.some(f => f.id === r.text.font) ? r.text.font : 'sans' },
+        meta: {
+          ...base,
+          font_style: TEXT_STATUS_FONTS.some(f => f.id === r.text.font) ? r.text.font : 'sans',
+          // [status-texto 2026-10-16] binário novo manda o alinhamento (antes virava imagem).
+          ...(r.text.align === 'left' || r.text.align === 'right' ? { text_align: r.text.align } : {}),
+        },
       });
     } else {
       const items = Array.isArray(r.items) ? r.items : [];

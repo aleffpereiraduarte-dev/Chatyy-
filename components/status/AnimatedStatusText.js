@@ -43,6 +43,8 @@ export default function AnimatedStatusText({
   bgColor = '#111111',
   animation = 'none',
   fontStyle = 'normal',
+  // [status-texto 2026-10-16] meta.text_align ('left'|'center'|'right').
+  textAlign = 'center',
   // Reset the animation whenever this key changes (e.g. status id).
   animKey = 0,
 }) {
@@ -133,6 +135,7 @@ export default function AnimatedStatusText({
           TEXT_BASE,
           { fontSize: fs, lineHeight: Math.round(fs * 1.25) },
           textStatusFontStyle(fontStyle),
+          textAlign === 'left' || textAlign === 'right' ? { textAlign, alignSelf: 'stretch' } : null,
           { transform: [{ scale }], opacity },
         ]}
       >

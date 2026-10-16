@@ -27,7 +27,7 @@ import LazyMount from './LazyMount';
 import ReelPublishProgress from './ReelPublishProgress'; // [2026-10-08 reels-publish]
 import UnifiedComposeFab from './UnifiedComposeFab';
 import Profile from './Profile';
-import { IconPlus, IconVideo, IconSearch, IconX, IconBell, IconChevronUp } from './Icons';
+import { IconPlus, IconVideo, IconSearch, IconX, IconBell, IconChevronUp, IconPencil } from './Icons';
 import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
@@ -335,7 +335,7 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
         maxToRenderPerBatch={6}
         windowSize={5}
         ListHeaderComponent={
-          <View>
+          <View style={{ flexDirection: 'row', gap: 16 }}>
             {/* Your status — always first */}
             <TouchableOpacity onPress={openOwn} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
               <StoryRingAvatar
@@ -355,6 +355,21 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
               />
               <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
                 {myEntry ? myDisplay : (t?.('status.yourStory') || 'Seu status')}
+              </Text>
+            </TouchableOpacity>
+            {/* [status-texto 2026-10-16] Atalho p/ status de TEXTO (sem foto). */}
+            <TouchableOpacity
+              onPress={() => { try { require('./status/statusRingStore').requestTextStatusComposer(requestNewStatus); } catch {} }}
+              activeOpacity={0.75}
+              style={{ alignItems: 'center', width: 64 }}
+              accessibilityRole="button"
+              accessibilityLabel={t?.('statusTab.newTextStatus') || 'Novo status de texto'}
+            >
+              <View style={{ width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)' }}>
+                <IconPencil size={22} color={colors.text} />
+              </View>
+              <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
+                {t?.('status.text.openEditor') || 'Texto'}
               </Text>
             </TouchableOpacity>
           </View>

@@ -295,8 +295,10 @@ final class SSTextComposer: UIView, UITextViewDelegate {
     }
   }
 
-  /// Exporta como IMAGEM (alinhamento ≠ centro ou fundo da letra) — senão vai como status de texto.
-  var needsImage: Bool { return align != .center || letterBg != 0 }
+  /// Exporta como IMAGEM só com fundo da letra — alinhamento vai como meta.text_align
+  /// do status de texto ([status-texto 2026-10-16]; servidor e viewers já entendem).
+  var needsImage: Bool { return letterBg != 0 }
+  var alignValue: String { return align == .left ? "left" : (align == .right ? "right" : "center") }
 
   /// Atributos de "fundo da letra" sobre o texto do layout do viewer.
   static func styled(_ base: NSAttributedString, letterBg: Int) -> NSAttributedString {

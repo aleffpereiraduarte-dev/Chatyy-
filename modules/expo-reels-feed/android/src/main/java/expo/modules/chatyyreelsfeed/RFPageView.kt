@@ -6,7 +6,18 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Typeface
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.StaticLayout
+import android.text.style.ForegroundColorSpan
+import android.text.style.ImageSpan
+import android.text.style.StyleSpan
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.GestureDetector
@@ -42,6 +53,28 @@ import kotlin.math.min
 
 private const val PINK = 0xFFFF2B55.toInt()
 private const val LIVE_RED = 0xFFFF3B30.toInt()
+private val TAG_RE = Regex("[#@][\\p{L}\\p{N}_.]+")
+
+/** [2026-10-16 reels-rail-v2] Selo de verificado P&B (círculo branco + visto preto). */
+class RFVerifiedDrawable(private val side: Int) : Drawable() {
+  private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+  private val check = RFIconDrawable(RFIconPaths.L_CHECK, Color.BLACK, false).apply { strokeWidth24 = 3.2f }
+
+  override fun draw(canvas: Canvas) {
+    val b = bounds
+    canvas.drawOval(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat(), bg)
+    val inset = (b.width() * 0.2f).toInt()
+    check.setBounds(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset)
+    check.draw(canvas)
+  }
+
+  override fun getIntrinsicWidth(): Int = side
+  override fun getIntrinsicHeight(): Int = side
+  override fun setAlpha(alpha: Int) { bg.alpha = alpha }
+  override fun setColorFilter(colorFilter: ColorFilter?) {}
+  @Deprecated("Deprecated in Java")
+  override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
 
 @SuppressLint("ViewConstructor")
 class RFRailButton(context: Context, path: String) : LinearLayout(context) {
@@ -70,6 +103,38 @@ class RFRailButton(context: Context, path: String) : LinearLayout(context) {
     drawable.color = color
     count.text = text
     count.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+  }
+
+  // [2026-10-16 reels-rail-v2] ícone de LINHA do app (~30 dp) + sombra suave + contador.
+  var v2 = false
+    private set
+
+  fun setLine(path: String, filled: Boolean, color: Int, text: String) {
+    val d = resources.displayMetrics.density
+    if (!v2) {
+      v2 = true
+      val pad = (2 * d).toInt()
+      icon.setPadding(pad, pad, pad, pad)
+      drawable.setShadow(4f * d, 1f * d, 0x80000000.toInt())
+      count.setShadowLayer(4f, 0f, 1.5f, 0xA6000000.toInt())
+    }
+    drawable.setPathData(path)
+    drawable.strokeWidth24 = 1.6f
+    drawable.fillToo = filled
+    set(color, text)
+  }
+
+  /** Volta ao visual v1 (kill switch em tempo de execução, página reaproveitada). */
+  fun useLegacy(path: String) {
+    if (v2) {
+      v2 = false
+      icon.setPadding(0, 0, 0, 0)
+      drawable.setShadow(3f, 1f, 0x66000000)
+      drawable.strokeWidth24 = 0f
+      drawable.fillToo = false
+      count.setShadowLayer(3f, 0f, 1f, 0x80000000.toInt())
+    }
+    drawable.setPathData(path)
   }
 
   override fun dispatchSetPressed(pressed: Boolean) {
@@ -142,6 +207,29 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
   private val flash = ImageView(context)
   private val flashDrawableOff = RFIconDrawable(RFIconPaths.VOLUME_OFF, Color.WHITE, false)
   private val flashDrawableOn = RFIconDrawable(RFIconPaths.VOLUME_ON, Color.WHITE, false)
+  // [2026-10-16 reels-rail-v2] peças do trilho novo (escondidas no v1)
+  private val followIcon = ImageView(context)
+  private val followPlusV1 = RFIconDrawable(RFIconPaths.PLUS, Color.BLACK, false)
+  private val followPlusV2 = RFIconDrawable(RFIconPaths.L_PLUS, Color.BLACK, false).apply { strokeWidth24 = 2.6f }
+  private val followCheck = RFIconDrawable(RFIconPaths.L_CHECK, Color.BLACK, false).apply { strokeWidth24 = 2.8f }
+  private val discInner = FrameLayout(context)
+  private val musicNote = ImageView(context)
+  private val musicNoteV1 = RFIconDrawable(RFIconPaths.MUSIC, Color.WHITE)
+  private val musicNoteV2 = RFIconDrawable(RFIconPaths.L_MUSIC, Color.WHITE).apply { strokeWidth24 = 2.2f }
+  private val avatarInitials = TextView(context)
+  private val discNote = ImageView(context)
+  private val bufferedFill = View(context)
+  private val shimmer = View(context)
+  private var shimmerAnim: ObjectAnimator? = null
+  private val scrubKnob = View(context)
+  private val scrubTime = TextView(context)
+  private var appliedStyle = 0
+  private var followAnimating = false
+  private var captionKey = ""
+  private var isBuffering = false
+  private var buffered = 0f
+  private var coverUrl = ""
+  val isV2: Boolean get() = labels.v2
 
   var item: RFItem? = null
     private set
@@ -217,8 +305,8 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     avatarBox.addView(liveRing, 0, LayoutParams(dp(56f), dp(56f), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = -dp(3f) })
     // P&B como o JS (profileFollowBadge): selo branco, "+" preto, borda preta.
     followBtn.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setStroke(dp(1.5f), Color.BLACK) }
-    val plus = ImageView(context).apply { setImageDrawable(RFIconDrawable(RFIconPaths.PLUS, Color.BLACK, false)) }
-    followBtn.addView(plus, LayoutParams(dp(14f), dp(14f), Gravity.CENTER))
+    followIcon.setImageDrawable(followPlusV1)
+    followBtn.addView(followIcon, LayoutParams(dp(14f), dp(14f), Gravity.CENTER))
     followBtn.isClickable = true
     avatarBox.addView(followBtn, LayoutParams(dp(22f), dp(22f), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
     livePill.setTextColor(Color.WHITE)
@@ -240,9 +328,7 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     likeBtn.count.setPadding(dp(10f), dp(2f), dp(10f), dp(4f))
     // disco (JS albumArt: 40dp, aro #333 de 8dp, miolo #222 de 24dp, avatar 18dp)
     disc.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF1A1A1A.toInt()); setStroke(dp(8f), 0xFF333333.toInt()) }
-    val discInner = FrameLayout(context).apply {
-      background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF222222.toInt()) }
-    }
+    discInner.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF222222.toInt()) }
     discAvatar.scaleType = ImageView.ScaleType.CENTER_CROP
     discAvatar.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF404040.toInt()) }
     discInner.addView(discAvatar, LayoutParams(dp(18f), dp(18f), Gravity.CENTER))
@@ -280,8 +366,8 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     musicRow.orientation = LinearLayout.HORIZONTAL
     musicRow.gravity = Gravity.CENTER_VERTICAL
     musicRow.isClickable = true
-    val note = ImageView(context).apply { setImageDrawable(RFIconDrawable(RFIconPaths.MUSIC, Color.WHITE)) }
-    musicRow.addView(note, LinearLayout.LayoutParams(dp(15f), dp(15f)).apply { rightMargin = dp(5f) })
+    musicNote.setImageDrawable(musicNoteV1)
+    musicRow.addView(musicNote, LinearLayout.LayoutParams(dp(15f), dp(15f)).apply { rightMargin = dp(5f) })
     musicRow.addView(musicText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
     info.addView(authorText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     info.addView(creditText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
@@ -343,6 +429,38 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     flash.alpha = 0f
     addView(flash, LayoutParams(dp(72f), dp(72f), Gravity.CENTER))
 
+    // [2026-10-16 reels-rail-v2]
+    avatarInitials.setTextColor(Color.WHITE)
+    avatarInitials.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+    avatarInitials.typeface = Typeface.DEFAULT_BOLD
+    avatarInitials.gravity = Gravity.CENTER
+    avatarInitials.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xFF3A3A3C.toInt()); setStroke(dp(2f), Color.WHITE) }
+    avatarInitials.visibility = View.GONE
+    avatarBox.addView(avatarInitials, avatarBox.indexOfChild(avatar) + 1, LayoutParams(dp(48f), dp(48f), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+    discNote.setImageDrawable(RFIconDrawable(RFIconPaths.L_MUSIC, Color.WHITE, false).apply { strokeWidth24 = 2.2f })
+    discNote.visibility = View.GONE
+    discInner.addView(discNote, LayoutParams(dp(13f), dp(13f), Gravity.CENTER))
+    bufferedFill.setBackgroundColor(0x47FFFFFF)
+    bufferedFill.pivotX = 0f
+    bufferedFill.scaleX = 0f
+    bufferedFill.visibility = View.GONE
+    progressTrack.addView(bufferedFill, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    progressTrack.clipChildren = true
+    shimmer.background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0x00FFFFFF, 0xF2FFFFFF.toInt(), 0x00FFFFFF))
+    shimmer.visibility = View.GONE
+    progressTrack.addView(shimmer, LayoutParams(dp(120f), LayoutParams.MATCH_PARENT, Gravity.START))
+    scrubKnob.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
+    scrubKnob.elevation = 2 * d
+    scrubKnob.alpha = 0f
+    addView(scrubKnob, LayoutParams(dp(14f), dp(14f), Gravity.BOTTOM or Gravity.START))
+    scrubTime.setTextColor(Color.WHITE)
+    scrubTime.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+    scrubTime.typeface = Typeface.DEFAULT_BOLD
+    scrubTime.gravity = Gravity.CENTER
+    scrubTime.setShadowLayer(6f, 0f, 1.5f, 0x99000000.toInt())
+    scrubTime.alpha = 0f
+    addView(scrubTime, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+
     val wire = listOf<Pair<View, String>>(
       avatar to "author", followBtn to "follow", likeBtn to "like", likeBtn.count to "likers", commentBtn to "comment",
       giftBtn to "gift", shareBtn to "share", saveBtn to "save", moreBtn to "more",
@@ -352,6 +470,10 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     captionText.setOnClickListener {
       captionExpanded = !captionExpanded
       captionText.maxLines = if (captionExpanded) 12 else 2
+      if (labels.v2) {
+        captionKey = ""
+        applyCaptionV2()
+      }
     }
   }
 
@@ -360,7 +482,11 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     val changed = item?.id != it.id
     item = it
     this.labels = labels
+    applyStyle()
     if (changed) {
+      captionKey = ""
+      buffered = 0f
+      bufferedFill.scaleX = 0f
       captionExpanded = false
       captionText.maxLines = 2
       setProgress(0f)
@@ -378,36 +504,66 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     }
     if (changed || thumbUrl != it.thumb) loadThumb(it.thumb)
     if (changed || avatarUrl != it.avatar) loadAvatar(it.avatar)
+    val cover = if (labels.v2) it.musicCover else ""
+    if (changed || coverUrl != cover) loadCover(cover, it.avatar)
     if (it.width > 0 && it.height > 0 && videoW <= 0) setAspectFromItem(it.width, it.height)
     refresh()
   }
 
   fun refresh() {
     val it = item ?: return
-    likeBtn.set(if (it.liked) PINK else Color.WHITE, RFFormat.compact(it.likes))
+    val v2 = labels.v2
+    if (v2) {
+      likeBtn.setLine(RFIconPaths.L_HEART, it.liked, if (it.liked) PINK else Color.WHITE, RFFormat.count(it.likes, labels))
+      commentBtn.setLine(RFIconPaths.L_COMMENT, false, Color.WHITE, if (it.commentsDisabled) "" else RFFormat.count(it.comments, labels))
+      giftBtn.setLine(RFIconPaths.L_GIFT, false, Color.WHITE, "")
+      shareBtn.setLine(RFIconPaths.L_SEND, false, Color.WHITE, RFFormat.count(it.shares, labels))
+      saveBtn.setLine(RFIconPaths.L_BOOKMARK, it.saved, Color.WHITE, RFFormat.count(it.saves, labels))
+      moreBtn.setLine(RFIconPaths.L_MORE, true, Color.WHITE, "")
+    } else {
+      likeBtn.useLegacy(RFIconPaths.HEART)
+      commentBtn.useLegacy(RFIconPaths.COMMENT)
+      giftBtn.useLegacy(RFIconPaths.GIFT)
+      shareBtn.useLegacy(RFIconPaths.SHARE)
+      saveBtn.useLegacy(if (it.saved) RFIconPaths.BOOKMARK else RFIconPaths.BOOKMARK_OUTLINE)
+      moreBtn.useLegacy(RFIconPaths.MORE)
+      likeBtn.set(if (it.liked) PINK else Color.WHITE, RFFormat.compact(it.likes))
+      commentBtn.set(Color.WHITE, RFFormat.compact(it.comments))
+      giftBtn.set(Color.WHITE, "")
+      shareBtn.set(Color.WHITE, "")
+      // P&B igual ao JS: salvo = marcador cheio branco; não salvo = vazado branco (antes: amarelo).
+      saveBtn.set(Color.WHITE, "")
+      moreBtn.set(Color.WHITE, "")
+    }
     likeBtn.contentDescription = labels.like
     likeBtn.count.contentDescription = labels.likers
-    commentBtn.set(Color.WHITE, RFFormat.compact(it.comments))
+    likeBtn.count.isClickable = it.likes > 0
     commentBtn.alpha = if (it.commentsDisabled) 0.4f else 1f
     commentBtn.contentDescription = labels.comment
-    giftBtn.set(Color.WHITE, "")
     giftBtn.visibility = if (it.canGift) View.VISIBLE else View.GONE
     giftBtn.contentDescription = labels.gift
-    shareBtn.set(Color.WHITE, "")
     shareBtn.contentDescription = labels.share
-    // P&B igual ao JS: salvo = marcador cheio branco; não salvo = vazado branco (antes: amarelo).
-    saveBtn.drawable.setPathData(if (it.saved) RFIconPaths.BOOKMARK else RFIconPaths.BOOKMARK_OUTLINE)
-    saveBtn.set(Color.WHITE, "")
     saveBtn.contentDescription = if (it.saved) labels.saved else labels.save
-    moreBtn.set(Color.WHITE, "")
     moreBtn.contentDescription = labels.more
-    followBtn.visibility = if (it.canFollow) View.VISIBLE else View.GONE
+    followBtn.visibility = if (it.canFollow || (v2 && followAnimating)) View.VISIBLE else View.GONE
     followBtn.contentDescription = labels.follow
     avatar.contentDescription = it.author
-    authorText.text = it.author
+    if (v2) {
+      val a = SpannableStringBuilder(it.author)
+      if (it.verified) {
+        a.append("  ")
+        val badge = RFVerifiedDrawable(dp(15f))
+        badge.setBounds(0, 0, dp(15f), dp(15f))
+        a.setSpan(ImageSpan(badge, ImageSpan.ALIGN_BASELINE), a.length - 1, a.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+      }
+      authorText.text = a
+      avatarInitials.text = initials(it.author)
+    } else {
+      authorText.text = it.author
+    }
     creditText.text = it.credit
     creditText.visibility = if (it.credit.isEmpty()) View.GONE else View.VISIBLE
-    captionText.text = it.caption
+    if (v2) applyCaptionV2() else captionText.text = it.caption
     captionText.visibility = if (it.caption.isEmpty()) View.GONE else View.VISIBLE
     if (musicText.text.toString() != it.music) musicText.text = it.music
     musicRow.visibility = if (it.music.isEmpty()) View.GONE else View.VISIBLE
@@ -422,7 +578,212 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     (rail.layoutParams as LayoutParams).bottomMargin = bottomInsetPx + dp(20f)
     (info.layoutParams as LayoutParams).bottomMargin = bottomInsetPx + dp(18f)
     (progressTrack.layoutParams as LayoutParams).bottomMargin = bottomInsetPx + dp(1f)
+    (scrubKnob.layoutParams as LayoutParams).bottomMargin = bottomInsetPx + dp(1f) + dp(3f) - dp(7f)
+    (scrubTime.layoutParams as LayoutParams).bottomMargin = bottomInsetPx + dp(56f)
     requestLayout()
+  }
+
+  // ─── trilho v2 (estilo) ────────────────────────────────────────────────────
+  /** Liga/desliga o visual v2 nas peças compartilhadas (página reaproveitada). */
+  private fun applyStyle() {
+    val style = if (labels.v2) 2 else 1
+    if (style == appliedStyle) return
+    appliedStyle = style
+    val v2 = style == 2
+    val av = if (v2) 48f else 50f
+    (avatar.layoutParams as LayoutParams).apply { width = dp(av); height = dp(av) }
+    avatar.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(if (v2) 0xFF3A3A3C.toInt() else 0xFF404040.toInt())
+      setStroke(dp(if (v2) 2f else 1.5f), Color.WHITE)
+    }
+    val pad = dp(if (v2) 2f else 1.5f)
+    avatar.setPadding(pad, pad, pad, pad)
+    (followBtn.layoutParams as LayoutParams).apply { width = dp(if (v2) 20f else 22f); height = dp(if (v2) 20f else 22f) }
+    followBtn.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.WHITE)
+      if (!v2) setStroke(dp(1.5f), Color.BLACK)
+    }
+    followBtn.elevation = if (v2) 2 * d else 0f
+    followIcon.setImageDrawable(if (v2) followPlusV2 else followPlusV1)
+    (followIcon.layoutParams as LayoutParams).apply { width = dp(if (v2) 13f else 14f); height = dp(if (v2) 13f else 14f) }
+    val dsz = if (v2) 44f else 40f
+    (disc.layoutParams as LinearLayout.LayoutParams).apply { width = dp(dsz); height = dp(dsz); topMargin = dp(if (v2) 4f else 2f) }
+    disc.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(if (v2) 0xFF121212.toInt() else 0xFF1A1A1A.toInt())
+      if (v2) setStroke(dp(1f), 0x38FFFFFF) else setStroke(dp(8f), 0xFF333333.toInt())
+    }
+    val inner = if (v2) 26f else 24f
+    (discInner.layoutParams as LayoutParams).apply { width = dp(inner); height = dp(inner) }
+    discInner.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (v2) 0xFF333333.toInt() else 0xFF222222.toInt()) }
+    (discAvatar.layoutParams as LayoutParams).apply { width = dp(if (v2) 26f else 18f); height = dp(if (v2) 26f else 18f) }
+    musicNote.setImageDrawable(if (v2) musicNoteV2 else musicNoteV1)
+    for (i in 1 until rail.childCount) {
+      val c = rail.getChildAt(i)
+      if (c is RFRailButton) (c.layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(if (v2) 14f else 12f)
+    }
+    (avatarBox.layoutParams as LinearLayout.LayoutParams).apply {
+      bottomMargin = dp(if (v2) 18f else 14f)
+      height = dp(if (v2) 58f else 61f) // v2: "+" (20) centrado na borda de baixo do avatar (48)
+    }
+    bottomShade.background = if (v2) {
+      GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xB8000000.toInt(), 0x47000000, 0))
+    } else {
+      GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0x9E000000.toInt(), 0))
+    }
+    authorText.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (v2) 15.5f else 16f)
+    bufferedFill.visibility = if (v2) View.VISIBLE else View.GONE
+    if (!v2) {
+      stopShimmer()
+      scrubKnob.alpha = 0f
+      scrubTime.alpha = 0f
+    }
+    captionKey = ""
+    syncPlaceholders()
+    requestLayout()
+  }
+
+  private fun syncPlaceholders() {
+    val v2 = labels.v2
+    val noAvatar = avatarUrl.isEmpty()
+    avatarInitials.visibility = if (v2 && noAvatar) View.VISIBLE else View.GONE
+    val noDisc = if (v2 && coverUrl.isNotEmpty()) false else noAvatar
+    discNote.visibility = if (v2 && noDisc) View.VISIBLE else View.GONE
+  }
+
+  private fun initials(name: String): String {
+    val n = name.trim().trimStart('@')
+    val parts = n.split(' ', '.', '_', '-').filter { it.isNotEmpty() }
+    val sb = StringBuilder()
+    for (p in parts.take(2)) sb.appendCodePoint(p.codePointAt(0))
+    if (sb.isEmpty() && n.isNotEmpty()) sb.appendCodePoint(n.codePointAt(0))
+    return sb.toString().uppercase()
+  }
+
+  private fun styledCaption(text: String): SpannableStringBuilder {
+    val a = SpannableStringBuilder(text)
+    for (m in TAG_RE.findAll(text)) {
+      a.setSpan(StyleSpan(Typeface.BOLD), m.range.first, m.range.last + 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+    return a
+  }
+
+  private fun lineCount(t: CharSequence, w: Int): Int = try {
+    StaticLayout.Builder.obtain(t, 0, t.length, captionText.paint, w)
+      .setIncludePad(captionText.includeFontPadding)
+      .setLineSpacing(captionText.lineSpacingExtra, captionText.lineSpacingMultiplier)
+      .build().lineCount
+  } catch (_: Throwable) { 1 }
+
+  /** Legenda recolhida: corta no ponto exato e termina com "… mais" (2 linhas). */
+  private fun applyCaptionV2() {
+    val it = item ?: return
+    val text = it.caption
+    val lp = info.layoutParams as LayoutParams
+    val w0 = if (info.width > 0) info.width else width - lp.leftMargin - lp.rightMargin
+    val w = w0 - captionText.paddingLeft - captionText.paddingRight
+    if (w <= 0) {
+      captionText.text = styledCaption(text)
+      return
+    }
+    val key = "${text.hashCode()}|${text.length}|$w|$captionExpanded|${labels.seeMore}"
+    if (key == captionKey) return
+    captionKey = key
+    val full = styledCaption(text)
+    if (captionExpanded) {
+      captionText.maxLines = 12
+      captionText.text = full
+      return
+    }
+    captionText.maxLines = 2
+    if (lineCount(full, w) <= 2) {
+      captionText.text = full
+      return
+    }
+    fun cut(n: Int): SpannableStringBuilder {
+      var end = n.coerceIn(0, text.length)
+      if (end > 0 && end < text.length && Character.isLowSurrogate(text[end])) end -= 1
+      val a = styledCaption(text.substring(0, end).trimEnd())
+      a.append("… ")
+      val st = a.length
+      a.append(labels.seeMore)
+      a.setSpan(StyleSpan(Typeface.BOLD), st, a.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+      a.setSpan(ForegroundColorSpan(0xB8FFFFFF.toInt()), st, a.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+      return a
+    }
+    var lo = 0
+    var hi = text.length
+    while (lo < hi) {
+      val mid = (lo + hi + 1) / 2
+      if (lineCount(cut(mid), w) <= 2) lo = mid else hi = mid - 1
+    }
+    captionText.text = cut(lo)
+  }
+
+  /** "+" vira visto, pulsa e some (seguir). */
+  fun animateFollowed() {
+    if (!labels.v2) return
+    val id = item?.id
+    followAnimating = true
+    followBtn.visibility = View.VISIBLE
+    followIcon.setImageDrawable(followCheck)
+    followBtn.animate().cancel()
+    followBtn.scaleX = 1f
+    followBtn.scaleY = 1f
+    followBtn.alpha = 1f
+    // ViewPropertyAnimator guarda atraso/interpolador entre chamadas → fixa em cada passo
+    followBtn.animate().scaleX(1.25f).scaleY(1.25f).setStartDelay(0).setInterpolator(OvershootInterpolator(2f)).setDuration(160).withEndAction {
+      followBtn.animate().scaleX(1f).scaleY(1f).setStartDelay(0).setInterpolator(AccelerateDecelerateInterpolator()).setDuration(120).withEndAction {
+        followBtn.animate().scaleX(0.05f).scaleY(0.05f).alpha(0f).setStartDelay(500).setDuration(240)
+          .setInterpolator(AccelerateInterpolator()).withEndAction {
+            followBtn.animate().setStartDelay(0)
+            if (item?.id != id || !followAnimating) return@withEndAction
+            followAnimating = false
+            followBtn.visibility = if (item?.canFollow == true) View.VISIBLE else View.GONE
+            followBtn.scaleX = 1f
+            followBtn.scaleY = 1f
+            followBtn.alpha = 1f
+            followIcon.setImageDrawable(followPlusV2)
+          }.start()
+      }.start()
+    }.start()
+  }
+
+  /** Partículas + anel saindo do coração do trilho (curtiu). */
+  fun burstLike() {
+    if (!labels.v2) return
+    val ic = likeBtn.icon
+    val cx = rail.left + likeBtn.left + ic.left + ic.width / 2f
+    val cy = rail.top + likeBtn.top + ic.top + ic.height / 2f
+    if (cx <= 0f || cy <= 0f) return
+    val ringSize = dp(36f)
+    val ring = View(context)
+    ring.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT); setStroke(dp(2f), PINK) }
+    addView(ring, LayoutParams(ringSize, ringSize))
+    ring.x = cx - ringSize / 2f
+    ring.y = cy - ringSize / 2f
+    ring.scaleX = 0.45f
+    ring.scaleY = 0.45f
+    ring.alpha = 0.9f
+    ring.animate().scaleX(1.45f).scaleY(1.45f).alpha(0f).setDuration(450).withEndAction { removeView(ring) }.start()
+    val n = 8
+    for (i in 0 until n) {
+      val big = i % 2 == 0
+      val sz = dp(if (big) 5.6f else 4f)
+      val dot = View(context)
+      dot.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (big) PINK else Color.WHITE) }
+      addView(dot, LayoutParams(sz, sz))
+      dot.x = cx - sz / 2f
+      dot.y = cy - sz / 2f
+      val ang = i.toDouble() / n * 2 * Math.PI + (Math.random() * 0.36 - 0.18) - Math.PI / 2
+      val dist = dp(24f) + Math.random() * dp(8f)
+      dot.animate().translationXBy((Math.cos(ang) * dist).toFloat()).translationYBy((Math.sin(ang) * dist).toFloat())
+        .scaleX(0.3f).scaleY(0.3f).alpha(0f).setStartDelay(50).setDuration(500)
+        .setInterpolator(android.view.animation.DecelerateInterpolator())
+        .withEndAction { removeView(dot) }.start()
+    }
   }
 
   private fun glide() = try { Glide.with(context.applicationContext) } catch (_: Throwable) { null }
@@ -446,6 +807,7 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
 
   private fun loadAvatar(url: String) {
     avatarUrl = url
+    syncPlaceholders()
     val g = glide() ?: return
     try {
       g.clear(avatar)
@@ -455,13 +817,30 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
       }
       g.load(RFImageAuth.model(url)).circleCrop().override(dp(50f)).dontAnimate().into(avatar)
     } catch (_: Throwable) {}
+    if (labels.v2 && coverUrl.isNotEmpty()) return
     try {
       g.clear(discAvatar)
       if (url.isEmpty()) {
         discAvatar.setImageDrawable(null)
       } else {
-        g.load(RFImageAuth.model(url)).circleCrop().override(dp(18f)).dontAnimate().into(discAvatar)
+        g.load(RFImageAuth.model(url)).circleCrop().override(dp(if (labels.v2) 26f else 18f)).dontAnimate().into(discAvatar)
       }
+    } catch (_: Throwable) {}
+  }
+
+  /** v2: capa do áudio no disco (sem capa → avatar, como antes). */
+  private fun loadCover(url: String, avatarFallback: String) {
+    val prev = coverUrl
+    coverUrl = url
+    syncPlaceholders()
+    if (url.isEmpty()) {
+      if (prev.isNotEmpty()) loadAvatar(avatarFallback)
+      return
+    }
+    val g = glide() ?: return
+    try {
+      g.clear(discAvatar)
+      g.load(RFImageAuth.model(url)).circleCrop().override(dp(26f)).dontAnimate().into(discAvatar)
     } catch (_: Throwable) {}
   }
 
@@ -545,6 +924,14 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     stopLivePulse()
     thumbUrl = ""
     avatarUrl = ""
+    coverUrl = ""
+    captionKey = ""
+    followAnimating = false
+    followBtn.animate().cancel()
+    followBtn.scaleX = 1f
+    followBtn.scaleY = 1f
+    followBtn.alpha = 1f
+    stopShimmer()
     item = null
     holding = false
     scrubbing = false
@@ -587,6 +974,10 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
 
   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
     super.onSizeChanged(w, h, oldw, oldh)
+    if (labels.v2) {
+      captionKey = ""
+      post { if (labels.v2) applyCaptionV2() }
+    }
     (bottomShade.layoutParams as LayoutParams).height = (h * 0.45f).toInt().coerceAtLeast(dp(200f))
     post { applyVideoTransform(0, 0) }
   }
@@ -608,6 +999,7 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
     if (abs(v - progress) < 0.001f && v != 0f) return
     progress = v
     progressFill.scaleX = v
+    if (labels.v2 && buffered < v) bufferedFill.scaleX = v
   }
 
   fun setScrubbing(on: Boolean, fraction: Float?) {
@@ -615,11 +1007,66 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
       progress = fraction.coerceIn(0f, 1f)
       progressFill.scaleX = progress
     }
+    val v2 = labels.v2
+    if (v2) scrubKnob.translationX = (progress * width - dp(7f)).coerceIn(0f, (width - dp(14f)).toFloat().coerceAtLeast(0f))
     if (on != scrubbing) {
       scrubbing = on
       progressTrack.pivotY = progressTrack.height.toFloat()
-      progressTrack.animate().scaleY(if (on) 2f else 1f).setDuration(150).start()
+      progressTrack.animate().scaleY(if (on) (if (v2) 3f else 2f) else 1f).setDuration(150).start()
+      if (v2) {
+        // TikTok: ao arrastar a tela limpa e aparece o tempo grande + bolinha.
+        setOverlayHidden(on)
+        scrubKnob.animate().alpha(if (on) 1f else 0f).setDuration(150).start()
+        scrubTime.animate().alpha(if (on) 1f else 0f).setDuration(150).start()
+      }
     }
+  }
+
+  /** Fração já baixada (faixa clara atrás do progresso) — v2. */
+  fun setBuffered(f: Float) {
+    val v = f.coerceIn(0f, 1f)
+    if (abs(v - buffered) < 0.005f) return
+    buffered = v
+    if (labels.v2) bufferedFill.scaleX = max(v, progress)
+  }
+
+  /** "0:12  /  0:30" enquanto arrasta — v2. */
+  fun setScrubTime(cur: Double, dur: Double) {
+    if (!labels.v2 || dur <= 0) return
+    val a = SpannableStringBuilder(RFFormat.clock(cur))
+    val st = a.length
+    a.append("  /  ").append(RFFormat.clock(dur))
+    a.setSpan(ForegroundColorSpan(0x99FFFFFF.toInt()), st, a.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+    scrubTime.text = a
+  }
+
+  private fun startShimmer() {
+    if (shimmerAnim?.isStarted == true) return
+    val tw = progressTrack.width.toFloat()
+    if (tw <= 0f) {
+      progressTrack.post { if (isBuffering) startShimmer() }
+      return
+    }
+    val seg = max(dp(60f).toFloat(), tw * 0.32f)
+    val lp = shimmer.layoutParams
+    if (lp.width != seg.toInt()) {
+      lp.width = seg.toInt()
+      shimmer.layoutParams = lp
+    }
+    shimmer.visibility = View.VISIBLE
+    shimmerAnim = ObjectAnimator.ofFloat(shimmer, View.TRANSLATION_X, -seg, tw).apply {
+      duration = 950
+      repeatCount = ValueAnimator.INFINITE
+      interpolator = AccelerateDecelerateInterpolator()
+      start()
+    }
+  }
+
+  private fun stopShimmer() {
+    isBuffering = false
+    shimmerAnim?.cancel()
+    shimmerAnim = null
+    shimmer.visibility = View.GONE
   }
 
   fun setSubtitle(text: String) {
@@ -632,6 +1079,19 @@ class RFPageView(context: Context, private val host: Host) : FrameLayout(context
   }
 
   fun setBuffering(on: Boolean) {
+    if (labels.v2) {
+      // v2: nada de spinner no meio do vídeo — brilho correndo na barra fina da base.
+      if (spinner.visibility != View.GONE) spinner.visibility = View.GONE
+      if (on == isBuffering) return
+      if (on) {
+        isBuffering = true
+        startShimmer()
+      } else {
+        stopShimmer()
+      }
+      return
+    }
+    if (isBuffering) stopShimmer()
     val v = if (on) View.VISIBLE else View.GONE
     if (spinner.visibility != v) spinner.visibility = v
   }

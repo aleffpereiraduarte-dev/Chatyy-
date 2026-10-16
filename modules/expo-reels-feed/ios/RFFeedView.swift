@@ -87,6 +87,11 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
   private var link: CADisplayLink?
   private var lastTick: CFTimeInterval = 0
   private var stallSince: CFTimeInterval = 0
+  /// [2026-10-16 reels-rail-v2] relógio do vídeo no tick anterior: se o tempo andou,
+  /// o vídeo ESTÁ tocando — nunca mostra "carregando" (spinner preso com vídeo rodando).
+  private var lastPlayhead: Double = -1
+  private var lastPlayheadId = ""
+  private var bufferTick = 0
   private var impId = ""
   private var impMs: Double = 0
   private var impCompleted = false
@@ -609,6 +614,24 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
     let dur = s.durationSeconds
     let cur = s.currentSeconds
     if dur > 0 { c.setProgress(CGFloat(cur / dur)) }
+    let shown = c.boundPlayer ?? p
+    let head = CMTimeGetSeconds(shown.currentTime())
+    let advancing = head.isFinite && lastPlayheadId == currentId && lastPlayhead >= 0 && abs(head - lastPlayhead) > 0.004
+    lastPlayhead = head.isFinite ? head : -1
+    lastPlayheadId = currentId
+    if labels.v2 && dur > 0 {
+      bufferTick += 1
+      if bufferTick % 8 == 1, let ranges = p.currentItem?.loadedTimeRanges {
+        var end = 0.0
+        for v in ranges {
+          let r = v.timeRangeValue
+          let st = CMTimeGetSeconds(r.start)
+          let en = CMTimeGetSeconds(CMTimeRangeGetEnd(r))
+          if st.isFinite, en.isFinite, st <= cur + 0.5, en > end { end = en }
+        }
+        c.setBuffered(CGFloat(end / dur))
+      }
+    }
     if p.timeControlStatus == .playing {
       if impId != currentId {
         impId = currentId
@@ -619,7 +642,7 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
       if dt > 0 && dt < 0.5 { impMs += dt * 1000 }
       stallSince = 0
       c.setBuffering(false)
-    } else if p.timeControlStatus == .waitingToPlayAtSpecifiedRate && !s.failed {
+    } else if p.timeControlStatus == .waitingToPlayAtSpecifiedRate && !s.failed && !advancing {
       if stallSince == 0 { stallSince = now }
       c.setBuffering(now - stallSince > 0.45)
     } else {
@@ -700,6 +723,7 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
       it.likes += 1
       c.refresh()
       c.likeBtn.pop()
+      if labels.v2 { c.likeBtn.burst(color: RFCell.likeRed) }
       onLike(["id": it.id, "liked": true, "likes": it.likes, "source": "double_tap"])
     }
   }
@@ -728,9 +752,11 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
     case .began:
       scrubbing = true
       c.setScrubbing(true, fraction: f)
+      c.setScrubTime(Double(f) * s.durationSeconds, s.durationSeconds)
       updatePlayback()
     case .changed:
       c.setScrubbing(true, fraction: f)
+      c.setScrubTime(Double(f) * s.durationSeconds, s.durationSeconds)
       seek(s, CGFloat(f), precise: false)
     case .ended, .cancelled, .failed:
       seek(s, CGFloat(f), precise: true)
@@ -762,13 +788,17 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
       it.likes = max(0, it.likes + (it.liked ? 1 : -1))
       c.refresh()
       c.likeBtn.pop()
-      if it.liked { haptic.impactOccurred() }
+      if it.liked {
+        haptic.impactOccurred()
+        if labels.v2 { c.likeBtn.burst(color: RFCell.likeRed) }
+      }
       body["liked"] = it.liked
       body["likes"] = it.likes
       body["source"] = "button"
       onLike(body)
     case "save":
       it.saved.toggle()
+      it.saves = max(0, it.saves + (it.saved ? 1 : -1))
       c.refresh()
       c.saveBtn.pop()
       body["saved"] = it.saved
@@ -786,6 +816,7 @@ public final class RFFeedView: ExpoView, UICollectionViewDataSource, UICollectio
       onAuthorPress(body)
     case "follow":
       it.canFollow = false
+      if labels.v2 { c.animateFollowed() }
       c.refresh()
       haptic.impactOccurred()
       onFollow(body)

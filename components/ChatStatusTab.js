@@ -45,8 +45,8 @@ import { segmentVideoForStatus } from '../services/statusVideoSegments';
 // [2026-10-09 status-composer] Estúdio nível Instagram (filtros reais, texto,
 // figurinhas, público) + fila durável com progresso no anel do "Seu status".
 import StatusStudio from './status/StatusStudio';
-import { TextStatusThumb, isTextStatusItem, textStatusDurationMs, itemBg, itemFontStyle } from './status/textStatus'; // [status-texto 2026-10-14]
-import { registerTextStatusOpener } from './status/statusRingStore';
+import { TextStatusThumb, isTextStatusItem, textStatusDurationMs, itemBg, itemFontStyle, itemTextAlign } from './status/textStatus'; // [status-texto 2026-10-14]
+import { registerTextStatusOpener, consumePendingTextComposer } from './status/statusRingStore';
 import { formatTime, formatDateTime } from '../utils/dateFormat'; // [2026-10-13 status-viewers]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 import { tryOpenNativeStories } from './status/nativeStories'; // [2026-10-15 native-story]
@@ -2618,6 +2618,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // [2026-10-09 status-composer] Entrada única do "+ Seu status": câmera no
   // nativo (captura → estúdio), estúdio direto no web (texto + galeria).
   openNewStatusRef.current = () => {
+    // [status-texto 2026-10-16] Pedido veio do atalho "Texto" da faixa de status
+    // (aba ainda não montada) → editor de texto direto, sem passar pela câmera.
+    if (consumePendingTextComposer()) { setStudioSeed({ mode: 'text', items: [] }); return; }
     if (Platform.OS !== 'web') openCreator('camera');
     else setStudioSeed({ mode: 'text', items: [] });
   };
@@ -4546,6 +4549,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   text={currentViewerItem?.content || ''}
                   bgColor={currentViewerItem?.bgColor || currentViewerItem?.background || currentViewerItem?.bg_color || '#111111'}
                   fontStyle={currentViewerItem?.font_style || currentViewerItem?.meta?.font_style || 'normal'}
+                  textAlign={itemTextAlign(currentViewerItem)}
                   animation={currentViewerItem?.text_animation || currentViewerItem?.meta?.text_animation || 'none'}
                 />
               ) : currentViewerItem?.type === 'video' ? (
