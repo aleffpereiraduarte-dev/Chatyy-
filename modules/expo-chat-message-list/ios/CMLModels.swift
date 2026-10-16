@@ -120,6 +120,11 @@ final class CMLRow {
   let timer: Bool
   let bubbleBg: UInt32?  // bbg: fundo do balão recebido (menção a mim)
   let opacity: CGFloat
+  // [2026-10-16 wave13-C a11y, apiVersion 6] rótulo completo do leitor de tela
+  // montado no JS (remetente, conteúdo/tipo, hora, status, reações) + máscara
+  // das ações do VoiceOver (1 responder, 2 reagir, 4 copiar, 8 encaminhar, 16 mais).
+  let a11yLabel: String
+  let a11yMask: Int
 
   init?(dict d: [String: Any]) {
     guard let k = d["k"] as? String, !k.isEmpty else { return nil }
@@ -201,12 +206,19 @@ final class CMLRow {
     timer = CMLRow.bool(d["tmr"])
     bubbleBg = CMLRow.color(d["bbg"])
     if let o = CMLRow.num(d["op"]), o.isFinite { opacity = CGFloat(max(0, min(1, o))) } else { opacity = 1 }
+    a11yLabel = CMLRow.str(d["ax"])
+    if let m = CMLRow.num(d["aa"]), m.isFinite, m >= 0 {
+      a11yMask = Int(m)
+    } else {
+      a11yMask = CMLRow.bool(d["del"]) ? 16 : (1 | 2 | 16)
+    }
   }
 
   var isMessage: Bool { return kind == .msg }
 
   /// Texto p/ acessibilidade (inclui os blocos).
   var accessibilityText: String {
+    if !a11yLabel.isEmpty { return a11yLabel }
     var parts: [String] = []
     if !name.isEmpty { parts.append(name) }
     if !text.isEmpty { parts.append(text) }
@@ -298,6 +310,23 @@ struct CMLTheme {
   }
 
   init() {}
+
+  /// [wave13-C a11y] "Escurecer cores" (Ajustes > Acessibilidade) → meta/hora,
+  /// textos de sistema e pílulas mais opacos (contraste ≥ 4,5:1 na prática).
+  func boostedContrast() -> CMLTheme {
+    func opaque(_ c: UIColor, _ minA: CGFloat) -> UIColor {
+      var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+      guard c.getRed(&r, green: &g, blue: &b, alpha: &a) else { return c }
+      return a >= minA ? c : UIColor(red: r, green: g, blue: b, alpha: minA)
+    }
+    var t = self
+    t.ownMeta = opaque(ownMeta, 0.9)
+    t.otherMeta = opaque(otherMeta, 0.9)
+    t.systemText = opaque(systemText, 1)
+    t.pillText = opaque(pillText, 1)
+    t.unreadText = opaque(unreadText, 1)
+    return t
+  }
 
   init(dict: [String: Any]) {
     func c(_ k: String, _ cur: UIColor) -> UIColor {

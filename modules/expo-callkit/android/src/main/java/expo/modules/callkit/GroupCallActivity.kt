@@ -355,6 +355,8 @@ class GroupCallActivity : ComponentActivity() {
   private var screenSharing = false
   private var screenShareInFlight = false
   private var screenBtn: ImageButton? = null
+  /** [2026-10-16 wave13-B] "Efeitos" (fundo + luz) — header, video only. */
+  private var fxBtn: ImageButton? = null
   /** The consent dialog is OUR activity leaving → no auto-PiP meanwhile. */
   private var suppressPipUntil = 0L
 
@@ -1373,6 +1375,23 @@ class GroupCallActivity : ComponentActivity() {
     try { requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT } catch (_: Throwable) {}
   }
 
+  /** [2026-10-16 wave13-B] Native "Efeitos" sheet; the self-view stays visible. */
+  private fun openEffectsSheet() {
+    try {
+      (room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack)?.let {
+        expo.modules.callkit.video.CallFx.attach(applicationContext, it)
+      }
+      expo.modules.callkit.video.CallFxSheet.show(
+        this,
+        cameraOn = { camEnabled && boundLocalTrack != null },
+        beforePick = { suppressPipUntil = System.currentTimeMillis() + 120_000L },
+        afterPick = { suppressPipUntil = System.currentTimeMillis() + 1_500L },
+      )
+    } catch (t: Throwable) {
+      Log.w(TAG, "effects sheet failed: ${t.message}")
+    }
+  }
+
   /** Participant list: name · state (Tocando… / Conectado / Mudo) + Adicionar. */
   private fun showParticipantsList() {
     val rows = ArrayList<String>()
@@ -1516,6 +1535,8 @@ class GroupCallActivity : ComponentActivity() {
   }
 
   private fun bindLocalVideoTrack(track: LocalVideoTrack) {
+    // [2026-10-16 wave13-B] Call effects processor on the camera source (idempotent).
+    try { expo.modules.callkit.video.CallFx.attach(applicationContext, track) } catch (_: Throwable) {}
     val lr = localRenderer ?: return
     if (boundLocalTrack === track) return
     try { boundLocalTrack?.removeRenderer(lr) } catch (_: Throwable) {}
@@ -1587,6 +1608,7 @@ class GroupCallActivity : ComponentActivity() {
     localRenderer?.visibility = if (camEnabled && boundLocalTrack != null) View.VISIBLE else View.GONE
     // [2026-10-15 cam-1-toque] Voice group: flip only while the camera is on.
     switchCamBtn?.visibility = if (hasVideo || camEnabled) View.VISIBLE else View.GONE
+    fxBtn?.visibility = if (hasVideo || camEnabled) View.VISIBLE else View.GONE
     // [2026-10-14 group-ui] Screen share: highlighted (white) while sharing.
     screenBtn?.let { b ->
       (b.background as? GradientDrawable)?.setColor(if (screenSharing) Color.WHITE else Color.parseColor("#2C2C2E"))
@@ -1673,6 +1695,15 @@ class GroupCallActivity : ComponentActivity() {
       showParticipantsList()
     }
     header.addView(people, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) })
+    // [2026-10-16 wave13-B] Efeitos (kill switch → never shown).
+    if (expo.modules.callkit.video.CallFx.isEnabled(applicationContext)) {
+      val fx = roundButton(40, Color.parseColor("#2C2C2E"), android.R.drawable.ic_menu_gallery, Color.WHITE,
+        expo.modules.callkit.video.CallFxStrings.s("title")) { openEffectsSheet() }
+      fx.setImageDrawable(expo.modules.callkit.video.FxIcon(expo.modules.callkit.video.FxIcon.EFFECTS, dp(22)))
+      fx.visibility = if (hasVideo || camEnabled) View.VISIBLE else View.GONE
+      header.addView(fx, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(8) })
+      fxBtn = fx
+    }
     val addTop = roundButton(40, Color.parseColor("#2C2C2E"),
       drawable("gc_person_add", android.R.drawable.ic_menu_add), Color.WHITE, GroupCallStrings.s("addPerson")) {
       showAddParticipant()

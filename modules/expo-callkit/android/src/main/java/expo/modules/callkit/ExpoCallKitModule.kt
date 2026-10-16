@@ -1238,7 +1238,52 @@ class ExpoCallKitModule : Module() {
     // actual VideoProcessor binding lives on LiveKit's LocalVideoTrack and
     // is registered when CallActivity attaches its local camera. UI sets
     // the mode here; the processor picks it up on the next frame.
+    // ─── [2026-10-16 wave13-B] Efeitos em chamada (CallFx) ──────────────
+    // Kill switch (JS mirrors globalThis.__chatyy_call_fx === false → false).
+    Function("setCallEffectsEnabled") { enabled: Boolean ->
+      try {
+        expo.modules.callkit.video.CallFx.setEnabled(context.applicationContext, enabled)
+        expo.modules.callkit.video.CallFx.isEnabled(context.applicationContext)
+      } catch (_: Throwable) { false }
+    }
+
+    Function("getCallEffectsEnabled") {
+      try { expo.modules.callkit.video.CallFx.isEnabled(context.applicationContext) } catch (_: Throwable) { false }
+    }
+
+    Function("getCallEffects") {
+      try {
+        val fx = expo.modules.callkit.video.CallFx
+        mapOf(
+          "enabled" to fx.isEnabled(context.applicationContext),
+          "background" to fx.background,
+          "light" to fx.light,
+          "paused" to fx.pauseReason,
+        )
+      } catch (_: Throwable) { mapOf("enabled" to false) }
+    }
+
+    Function("setCallEffects") { background: String?, light: String? ->
+      try {
+        val ctx = context.applicationContext
+        if (background != null) expo.modules.callkit.video.CallFx.setBackground(ctx, background)
+        if (light != null) expo.modules.callkit.video.CallFx.setLight(ctx, light)
+        true
+      } catch (_: Throwable) { false }
+    }
+
     Function("setBackgroundMode") { mode: String, imageAsset: String? ->
+      // [2026-10-16 wave13-B] Legacy bridge → the REAL CallFx engine too.
+      try {
+        val fx = expo.modules.callkit.video.CallFx
+        val ctx = context.applicationContext
+        when (mode.lowercase()) {
+          "off", "none" -> fx.setBackground(ctx, fx.BG_NONE)
+          "blur_low", "blur-low", "blur_medium", "blur-medium", "blur" -> fx.setBackground(ctx, fx.BG_BLUR_LIGHT)
+          "blur_high", "blur-high" -> fx.setBackground(ctx, fx.BG_BLUR_STRONG)
+          "image", "wallpaper" -> fx.setBackground(ctx, fx.wallpaperKey(0))
+        }
+      } catch (_: Throwable) {}
       try {
         val proc = expo.modules.callkit.video.BackgroundProcessor.get(context.applicationContext)
         proc.mode = when (mode.lowercase()) {

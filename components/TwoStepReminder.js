@@ -3,8 +3,9 @@
 // app, pede o PIN. "Esqueci meu PIN" leva às opções (TwoStepSheet). Opt-out em
 // Conta > Verificação em duas etapas > Lembrete do PIN. Não renderiza nada na
 // maioria das aberturas: lê a agenda local e só consulta o servidor 1×/24 h.
-// Conferência do PIN: enable_2fa {pin: atual, current_pin: atual} — regrava o
-// MESMO PIN (403 current_pin_required = errado; 429 = muitas tentativas).
+// Conferência do PIN: [wave13e] verify_2fa_pin {pin} — só confere, não regrava
+// (403 current_pin_required = errado; 429 = muitas tentativas; 409 not_enabled
+// = PIN já desligado em outro aparelho → atualiza o estado e fecha).
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, Modal, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useAuth } from '../context/AuthContext';
@@ -86,6 +87,9 @@ function ReminderCard({ email, onDone, onForgot }) {
       if (r.data) await applyServerStatus(email, r.data, { resetReminder: true });
       else await saveTwoStep(email, { next: Date.now() + TWO_STEP_REMIND_MS });
       closeTm.current = setTimeout(onDone, 1400);
+    } else if (r && r.data && r.data.not_enabled) {
+      await applyServerStatus(email, r.data);
+      onDone();
     } else {
       setErr(twoStepErrorText(t, r ? twoStepError(r) : 'generic'));
     }

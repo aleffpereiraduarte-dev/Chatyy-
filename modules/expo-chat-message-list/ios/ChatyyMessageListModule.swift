@@ -20,9 +20,14 @@ public class ChatyyMessageListModule: Module {
     // 5 = [native-media-dl] download nativo com anel de progresso (row.media/au/
     //     file/album[].dl {u,k,a,sz,alt,js}), configureTransfers (módulo),
     //     setTransfers (view), evento onMediaTransfer, onRowPress part 'xfer'.
+    // 6 = [wave13-C a11y] linha ax (rótulo do leitor de tela) + aa (máscara de
+    //     ações 1 responder/2 reagir/4 copiar/8 encaminhar/16 mais) + prop a11y
+    //     (nomes das ações + hint). Ações: responder → onSwipeReply dir 'reply';
+    //     reagir/mais → onRowLongPress (a11y: id); copiar/encaminhar → onRowPress
+    //     part 'a11y' url id. Dynamic Type/"Escurecer cores" ao vivo.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 5
+      return 6
       #else
       return 3
       #endif
@@ -70,6 +75,9 @@ public class ChatyyMessageListModule: Module {
       }
       Prop("store") { (view: CMLListView, value: [String: Any]?) in
         view.setStore(value)
+      }
+      Prop("a11y") { (view: CMLListView, value: [String: Any]?) in
+        view.setA11yLabels(value)
       }
 
       AsyncFunction("applyRows") { (view: CMLListView, payload: [String: Any]) in

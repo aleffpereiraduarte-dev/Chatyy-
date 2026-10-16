@@ -119,6 +119,11 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var ctxMenuOn = false
   private var darkHint: Boolean? = null
   private var ctxOverlay: MLCtxOverlay? = null
+  // [2026-10-16 wave13-C a11y, apiVersion 6] nomes traduzidos das ações do TalkBack
+  // (prop a11y {reply, react, copy, forward, more, hint}); vazio = JS antigo → sem ações.
+  private var a11yNames: Map<String, String> = emptyMap()
+  private val a11yOrder = listOf(1 to "reply", 2 to "react", 4 to "copy", 8 to "forward", 16 to "more")
+  private val a11yHandler: (MLCellView, String) -> Boolean = { c, id -> runA11yAction(c, id) }
   private var popKey: String? = null
   private var popSig = ""
   private var popUntil = 0L
@@ -438,6 +443,66 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       p = p.parent
     }
     return last
+  }
+
+  // ─── [2026-10-16 wave13-C] acessibilidade (TalkBack) ─────────────────────
+  fun setA11yLabels(v: Map<String, Any?>?) {
+    val m = HashMap<String, String>()
+    v?.forEach { (k, x) -> val s = MLRow.str(x); if (s.isNotEmpty()) m[k] = s }
+    if (m == a11yNames) return
+    a11yNames = m
+    for (i in 0 until rv.childCount) {
+      val c = rv.getChildAt(i) as? MLCellView ?: continue
+      val r = c.row ?: continue
+      c.a11yActs = a11yActsFor(r)
+    }
+  }
+
+  private fun a11yActsFor(r: MLRow): List<Pair<String, String>> {
+    if (a11yNames.isEmpty() || r.kind != MLKind.MSG || r.sel != 0) return emptyList()
+    val out = ArrayList<Pair<String, String>>(5)
+    for ((bit, id) in a11yOrder) {
+      if ((r.a11yMask and bit) == 0) continue
+      val n = a11yNames[id] ?: continue
+      out.add(id to n)
+    }
+    return out
+  }
+
+  /** Mesmos eventos do toque / arrastar (responder) / toque longo (menu). */
+  private fun runA11yAction(c: MLCellView, id: String): Boolean {
+    if (!storeInteractive || destroyed) return false
+    val r = c.row ?: return false
+    if (r.kind != MLKind.MSG || c.key.isEmpty()) return false
+    val key = c.key
+    when (id) {
+      "activate" -> {
+        val body = HashMap<String, Any>()
+        body["key"] = key
+        if (r.sel > 0 || r.deleted || (r.failed && r.own)) body["part"] = "bubble"
+        else if (r.media != null || r.album.isNotEmpty()) {
+          body["part"] = "media"; body["index"] = 0
+          frameOf(c, 0)?.let { body["frame"] = it }
+        } else if (r.audio != null) body["part"] = "audio"
+        else if (r.file != null) body["part"] = "file"
+        else body["part"] = "bubble"
+        onRowPress(body)
+      }
+      "reply" -> {
+        if (r.sel > 0 || r.deleted) return false
+        onSwipeReply(mapOf("key" to key, "dir" to "reply"))
+      }
+      "react", "more" -> {
+        if (r.sel > 0) return false
+        if (ctxMenuOn && ctxOverlay == null && openCtxOverlay(c, key, r.own)) {
+          onRowLongPress(mapOf("key" to key, "index" to 0, "native" to 1, "a11y" to id))
+        } else {
+          onRowLongPress(mapOf("key" to key, "index" to 0, "a11y" to id))
+        }
+      }
+      else -> onRowPress(mapOf("key" to key, "part" to "a11y", "url" to id))
+    }
+    return true
   }
 
   private fun anchorFor(c: MLCellView, cb: (Map<String, Any>?) -> Unit) {
@@ -902,6 +967,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       val l = layouts[k] ?: return
       val s = style ?: return
       holder.cell.onRecycled = { c -> vnPlayer.stopIf(c) }
+      holder.cell.a11yActs = a11yActsFor(r)
+      holder.cell.onA11yAction = a11yHandler
       holder.cell.bind(k, r, l, s, audioState, liftedKey, k in revealedKeys)
       if (pendingFlash == k) { pendingFlash = null; holder.cell.post { holder.cell.flash() } }
       // [native-media-dl] auto-download (política) das mídias que entram na tela

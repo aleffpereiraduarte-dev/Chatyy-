@@ -167,6 +167,9 @@ struct GroupCallView: View {
     var onTogglePin: (String) -> Void = { _ in }
     /// [2026-10-11 ongoing-call] "Mensagem" shortcut (nil = hidden).
     var onOpenChat: (() -> Void)? = nil
+    /// [2026-10-16 wave13-B efeitos] "Efeitos" (fundo + luz) row in Mais
+    /// opções (nil = hidden — kill switch).
+    var onEffects: (() -> Void)? = nil
 
     // Local UI state
     @State private var showAudioPicker = false
@@ -617,6 +620,12 @@ struct GroupCallView: View {
                     moreRow(icon: "person.3.fill", title: GroupCallStrings.participantsList(participantCount)) {
                         withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { showParticipants = true }
+                    }
+                    if let fx = onEffects, hasVideo || session.camEnabled {
+                        moreRow(icon: "wand.and.stars", title: CallFxStrings.s("title")) {
+                            withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { fx() }
+                        }
                     }
                 }
                 .padding(.horizontal, 20)

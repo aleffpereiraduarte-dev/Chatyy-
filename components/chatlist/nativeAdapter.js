@@ -225,15 +225,20 @@ export function buildRow(conv, ctx) {
   let preview = '';
   let previewSender = null;
   let statusType = null;
+  let previewDeleted = false;
   if (lastMsg && ctx.computePreview) {
     try {
       const r = ctx.computePreview(lastMsg, isGroup, isChannel, me, conv.members) || {};
       preview = r.preview || '';
       previewSender = r.previewSender || null;
       statusType = r.statusType || null;
+      previewDeleted = !!r.deleted;
     } catch {}
   }
-  const { icon, text } = splitPreviewIcon(preview);
+  const _sp = splitPreviewIcon(preview);
+  const text = _sp.text;
+  // [wave13-C] apagada → glifo ⊘ "ban" + itálico (binário sem o glifo: só o texto, como antes)
+  const icon = previewDeleted ? 'ban' : _sp.icon;
 
   // Digitando
   const typers = ctx.normalizeTypers ? ctx.normalizeTypers(ctx.typingUsers?.[conv.id]) : [];

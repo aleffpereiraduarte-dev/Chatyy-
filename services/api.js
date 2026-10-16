@@ -6563,6 +6563,24 @@ export async function chatMessagesByDate(conversationId, date) {
   return apiCall('chat_messages_by_date', { conversation_id: conversationId, date }, 'POST');
 }
 
+// [busca-conversa 2026-10-16] Dias (fuso do aparelho) com mensagem visível —
+// o calendário "Ir para data" só habilita esses dias. Servidor velho → erro (o
+// calendário então libera todos os dias até hoje).
+export async function chatMessageDays(conversationId) {
+  let tz = 0;
+  try { tz = -new Date().getTimezoneOffset(); } catch {}
+  return apiCall('chat_message_days', { conversation_id: conversationId, tz_offset_min: tz }, 'POST');
+}
+
+// [busca-conversa 2026-10-16] "Mídia, links e docs" paginados no servidor.
+// kind = image|video|media|audio|file|link; cursor opaco ("" = mais recentes).
+// → { items, next_cursor, has_more }. Links trazem title/favicon/image do cache de prévia.
+export async function chatSharedItems(conversationId, kind, cursor = '', limit = 60) {
+  const params = { conversation_id: conversationId, kind, limit };
+  if (cursor) params.cursor = cursor;
+  return apiCall('chat_shared_items', params, 'POST');
+}
+
 // chat_load_around — fetch a window of messages centered on a target id.
 // Used when the user taps a pinned banner / reply-jump and the target is
 // outside the currently rendered window: backend returns N before + M after

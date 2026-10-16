@@ -64,6 +64,14 @@ export function syncNativeGroupCallFlag(email) {
   if (Platform.OS === 'web') return false;
   try { globalThis.__chatyyMyEmail = String(email || '').toLowerCase() || globalThis.__chatyyMyEmail; } catch {}
   const m = _callkit();
+  // [2026-10-16 wave13-B] Efeitos em chamada — kill switch OTA/console:
+  // globalThis.__chatyy_call_fx = false desliga (nativo para de mexer nos
+  // frames da câmera e some a linha "Efeitos"). Padrão = ligado.
+  try {
+    if (m && typeof m.setCallEffectsEnabled === 'function') {
+      m.setCallEffectsEnabled(globalThis.__chatyy_call_fx !== false);
+    }
+  } catch {}
   if (!m || typeof m.setNativeGroupCallUiEnabled !== 'function') return false;
   try {
     return m.setNativeGroupCallUiEnabled(canUseNativeGroupCall(email));

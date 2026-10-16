@@ -19,17 +19,15 @@ import { IconDiamond } from '../Icons';
 import PressableScale from '../PressableScale';
 import { isReduceMotionEnabled } from '../reducedMotion';
 import { Type, Space, Radius } from '../../constants/theme';
-import { formatMoney, formatMoneyActive, getActiveCurrency } from '../../services/currencyService';
+import { formatMoney } from '../../services/currencyService';
 import { formatInt } from '../../utils/dateFormat';
 
 export function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
 // Ganhos/saques são SEMPRE em reais (servidor paga via Pix em BRL).
 export function moneyBRL(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
-// "≈ US$ 0,08" quando a moeda de exibição não é BRL (só referência).
-export function approxActive(cents) {
-  const n = Number(cents) || 0;
-  return getActiveCurrency() !== 'BRL' && n > 0 ? '≈ ' + formatMoneyActive(n) : '';
-}
+// [2026-10-16 carteira-clara] Diretriz do founder: NADA de "≈" na carteira —
+// só valores exatos. Mantido (vazio) p/ não quebrar import antigo.
+export function approxActive() { return ''; }
 export const TABULAR = { fontVariant: ['tabular-nums'] };
 // FadeSlideIn traz flex:1 — numa coluna de conteúdo isso estica/encolhe o bloco.
 export const NOFLEX = { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' };
@@ -89,11 +87,11 @@ export function HeroCard({ children, style, isDark, glow = true }) {
   );
 }
 
-export function HeroButton({ label, onPress, primary = false, icon, disabled, accessibilityLabel, haptic = 'light', testID }) {
+export function HeroButton({ label, onPress, primary = false, icon, disabled, accessibilityLabel, haptic = 'light', testID, weight }) {
   // flex:1 fica no wrapper: PressableScale aplica `style` no Animated.View
   // interno (no web, flex:1 ali zera a altura — flex-basis 0 numa coluna).
   return (
-    <View style={[styles.heroBtnWrap, primary && { flex: 1.45 }]}>
+    <View style={[styles.heroBtnWrap, weight ? { flex: weight } : primary && { flex: 1.45 }]}>
     <PressableScale
       onPress={onPress}
       disabled={disabled}

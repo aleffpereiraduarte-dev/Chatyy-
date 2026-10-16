@@ -4,7 +4,7 @@ package expo.modules.chatyyconversationlist
 // manual (sem ConstraintLayout/medições aninhadas): altura fixa por escala de
 // fonte, então o RecyclerView não remede nada no scroll. Visual = ConversationRow
 // do ChatListTab.js (avatar 54, gutter 16, gap 14, nome 16, prévia 14, hora 12
-// tabular, pílula 22, ícones 15, sem divisórias no Material).
+// tabular, pílula 22, ícones 15; linha inset entre linhas desenhada pela lista — wave13).
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
@@ -64,6 +64,15 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   private val unreadTv = CLCounterView(ctx)
   private val mentionBg = GradientDrawable()
   private val rowBgDrawable = ColorDrawable(0xFFFFFFFF.toInt())
+  // [2026-10-16 wave13 swipe-ios] linha arrastada = cinza + cantos arredondados
+  // (UICellConfigurationState.isSwiped do iOS: #F0F0F0 / #1A1A1A).
+  private var swiped = false
+  private var baseBg = 0xFFFFFFFF.toInt()
+  private val swipeOutline = object : android.view.ViewOutlineProvider() {
+    override fun getOutline(view: View, outline: android.graphics.Outline) {
+      outline.setRoundRect(0, 0, view.width, view.height, px(22f).toFloat())
+    }
+  }
 
   private val tfName = CLType.weight(600)
   private val tfNameBold = CLType.weight(700)
@@ -159,7 +168,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       r.pinned -> t.pinnedBg
       else -> t.bg
     }
-    rowBgDrawable.color = base
+    baseBg = base
+    rowBgDrawable.color = if (swiped) swipeBg() else base
     if (background !is RippleDrawable) {
       background = RippleDrawable(ColorStateList.valueOf(t.press), rowBgDrawable, null)
     } else {
@@ -271,6 +281,24 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     invalidate()
   }
 
+  private fun swipeBg(): Int = if (theme.dark) 0xFF1A1A1A.toInt() else 0xFFF0F0F0.toInt()
+
+  /** [wave13 swipe-ios] Visual da linha enquanto arrastada/aberta. */
+  fun setSwiped(on: Boolean) {
+    if (swiped == on) return
+    swiped = on
+    rowBgDrawable.color = if (on) swipeBg() else baseBg
+    if (on) {
+      outlineProvider = swipeOutline
+      clipToOutline = true
+    } else {
+      clipToOutline = false
+      outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+    }
+    invalidateOutline()
+    invalidate()
+  }
+
   private fun pop(v: View) {
     v.scaleX = 0.8f
     v.scaleY = 0.8f
@@ -323,7 +351,12 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val icon = CLIcons.preview(r.icon)
     if (icon != 0) appendIcon(sb, icon, body)
     val txt = if (r.text.isEmpty() && r.sender.isEmpty() && r.icon.isEmpty()) r.empty else r.text
-    styled(sb, txt, body, null)
+    if (r.icon == "ban") {
+      // [wave13-C] mensagem apagada: ⊘ + itálico (como o WhatsApp)
+      val st = sb.length
+      styled(sb, txt, body, null)
+      if (sb.length > st) sb.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), st, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    } else styled(sb, txt, body, null)
     return sb
   }
 

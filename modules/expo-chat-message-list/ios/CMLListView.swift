@@ -174,6 +174,11 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   private var stickyTop: CGFloat = 8
   private var stickyHide: DispatchWorkItem?
   private var stickyLabel = ""
+  // [2026-10-16 wave13-C a11y, apiVersion 6] nomes traduzidos das ações do
+  // VoiceOver (prop a11y {reply, react, copy, forward, more, hint}); vazio =
+  // binário novo com JS antigo → sem ações (só o rótulo, como antes).
+  private var a11yNames: [String: String] = [:]
+  private static let a11yOrder: [(Int, String)] = [(1, "reply"), (2, "react"), (4, "copy"), (8, "forward"), (16, "more")]
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -210,6 +215,8 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       }
       cell.isAccessibilityElement = true
       cell.accessibilityLabel = row.accessibilityText
+      self.applyA11y(cell, row)
+      cell.onA11yActivate = { [weak self] c in self?.a11yActivate(c) ?? false }
       if self.pendingFlash == key {
         self.pendingFlash = nil
         DispatchQueue.main.async { cell.flash() }
@@ -237,6 +244,96 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     addSubview(sticky)
     CMLListView.cleanupLiftFiles()
     CMLTransfers.shared.addObserver(self)
+    // [wave13-C a11y] Dynamic Type / "Escurecer cores" mudados com a tela aberta → refaz o estilo
+    NotificationCenter.default.addObserver(self, selector: #selector(a11yEnvChanged), name: UIContentSizeCategory.didChangeNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(a11yEnvChanged), name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification, object: nil)
+  }
+
+  // MARK: [2026-10-16 wave13-C] acessibilidade (VoiceOver)
+
+  @objc private func a11yEnvChanged() {
+    markStyleDirty()
+  }
+
+  func setA11yLabels(_ d: [String: Any]?) {
+    var m: [String: String] = [:]
+    for (k, v) in d ?? [:] {
+      let s = CMLRow.str(v)
+      if !s.isEmpty { m[k] = s }
+    }
+    if m == a11yNames { return }
+    a11yNames = m
+    for c in cv.visibleCells {
+      guard let cell = c as? CMLCell, let row = cell.row else { continue }
+      applyA11y(cell, row)
+    }
+  }
+
+  /// Traços + ações personalizadas (rotor "Ações") da bolha — disparam os MESMOS
+  /// eventos do arrastar (responder) e do toque longo (menu de contexto).
+  private func applyA11y(_ cell: CMLCell, _ row: CMLRow) {
+    var traits = UIAccessibilityTraits.none
+    if row.kind == .date || row.kind == .unread { traits.insert(.header) }
+    if row.kind == .msg && row.sel == 2 { traits.insert(.selected) }
+    cell.accessibilityTraits = traits
+    guard !a11yNames.isEmpty, row.kind == .msg, row.sel == 0 else {
+      cell.accessibilityCustomActions = nil
+      cell.accessibilityHint = nil
+      return
+    }
+    let key = cell.key
+    var acts: [UIAccessibilityCustomAction] = []
+    for (bit, id) in CMLListView.a11yOrder where (row.a11yMask & bit) != 0 {
+      guard let name = a11yNames[id] else { continue }
+      acts.append(UIAccessibilityCustomAction(name: name, actionHandler: { [weak self] _ in
+        return self?.runA11yAction(id, key: key) ?? false
+      }))
+    }
+    cell.accessibilityCustomActions = acts.isEmpty ? nil : acts
+    cell.accessibilityHint = acts.isEmpty ? nil : a11yNames["hint"]
+  }
+
+  private func runA11yAction(_ id: String, key: String) -> Bool {
+    guard storeInteractive, let row = rows[key], row.kind == .msg else { return false }
+    switch id {
+    case "reply":
+      onSwipeReply(["key": key, "dir": "reply"])
+    case "react", "more":
+      a11yOpenMenu(key, row: row, reason: id)
+    default:
+      onRowPress(["key": key, "part": "a11y", "url": id])
+    }
+    return true
+  }
+
+  /// Toque duplo do VoiceOver = toque na parte principal (mídia/áudio/arquivo/reenviar/bolha).
+  private func a11yActivate(_ cell: CMLCell) -> Bool {
+    guard storeInteractive, let row = cell.row, row.kind == .msg, !cell.key.isEmpty else { return false }
+    var body: [String: Any] = ["key": cell.key]
+    if row.sel > 0 || row.deleted || (row.fail && row.own) {
+      body["part"] = "bubble"   // seleção / lápide / falhou (o JS reenvia no toque da bolha)
+    } else if row.media != nil || !row.album.isEmpty {
+      body["part"] = "media"; body["index"] = 0
+      if let fr = cell.mediaRectInWindow(0) { body["frame"] = CMLListView.frameDict(fr.0, fr.1) }
+    } else if row.audio != nil {
+      body["part"] = "audio"
+    } else if row.file != nil {
+      body["part"] = "file"
+    } else {
+      body["part"] = "bubble"
+    }
+    onRowPress(body)
+    return true
+  }
+
+  /// Mesmo caminho do toque longo (menu nativo se ligado; senão o menu do JS).
+  private func a11yOpenMenu(_ key: String, row: CMLRow, reason: String) {
+    if row.sel == 0, ctxMenuOn, ctxOverlay == nil, let cell = visibleCell(key), let shot = cell.liftSnapshot(),
+       openCtxOverlay(key: key, image: shot.0, rect: shot.1, own: row.own) {
+      onRowLongPress(["key": key, "index": 0, "native": 1, "a11y": reason])
+      return
+    }
+    onRowLongPress(["key": key, "index": 0, "a11y": reason])
   }
 
   // MARK: [2026-10-15 native-media-dl] transferências

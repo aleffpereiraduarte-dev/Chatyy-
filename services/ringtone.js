@@ -236,7 +236,7 @@ export function startRingtone() {
           });
         } catch {}
         if (generation !== ringtoneGeneration) return;
-        const ringtoneAsset = require('../assets/ringtone.wav');
+        const ringtoneAsset = require('../assets/ringtone.m4a'); // [2026-10-16 wave13a] AAC 121 KB (era WAV PCM 1.3 MB); o .wav fica só p/ som de notificação (app.json)
         const player = createAudioPlayer(ringtoneAsset, { isLooping: true });
         try { player.volume = 1.0; } catch {}
         if (generation !== ringtoneGeneration) {
@@ -327,7 +327,7 @@ export function startCallingTone() {
         if (generation !== ringtoneGeneration) return;
         // Reuse ringtone.wav at lower volume — sounds like a ringback
         // (single tone repeating) without shipping another asset.
-        const ringtoneAsset = require('../assets/ringtone.wav');
+        const ringtoneAsset = require('../assets/ringtone.m4a'); // [2026-10-16 wave13a] AAC 121 KB (era WAV PCM 1.3 MB); o .wav fica só p/ som de notificação (app.json)
         const player = createAudioPlayer(ringtoneAsset, { isLooping: true });
         try { player.volume = 0.55; } catch {}
         if (generation !== ringtoneGeneration) {

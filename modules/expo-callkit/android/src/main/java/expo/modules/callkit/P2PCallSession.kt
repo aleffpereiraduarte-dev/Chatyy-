@@ -343,6 +343,8 @@ class P2PCallSession(
         val cap = en.createCapturer(name, null) ?: return null
         val helper = SurfaceTextureHelper.create("p2pcap", egl!!.eglBaseContext)
         val src = f.createVideoSource(false)
+        // [2026-10-16 wave13-B] Call effects (blur / fundo / luz) on P2P too.
+        try { expo.modules.callkit.video.CallFx.attachSource(appCtx, src) } catch (_: Throwable) {}
         cap.initialize(helper, appCtx, src.capturerObserver)
         cap.startCapture(1280, 720, 30)
         capturer = cap; texHelper = helper; videoSource = src

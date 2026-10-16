@@ -1,10 +1,13 @@
 // components/calls/myCallLinks.js — [2026-10-16 wave12-D] "Meus links de chamada".
 //
-// O servidor NÃO tem ação de listar os links do criador (só create / info /
-// join / revoke em chat.php). Até existir `chat_call_links_list`, guardamos no
-// aparelho os links criados aqui — no cache POR CONTA (services/cache prefixa
-// o e-mail logado → nunca vaza entre contas) — e conferimos o estado real
-// (revogado/expirado) com `chat_call_link_info` ao abrir a folha.
+// Guardamos no aparelho os links criados aqui — no cache POR CONTA
+// (services/cache prefixa o e-mail logado → nunca vaza entre contas) — e, ao
+// abrir a folha, sincronizamos com o servidor: [wave13e 2026-10-16]
+// `chat_call_links_list` (até 50 do criador, de QUALQUER aparelho) é mesclado
+// com o cache (servidor manda no estado; links só-locais ficam). Servidor
+// antigo/sem rede → confere 1 a 1 com `chat_call_link_info` (como antes).
+// "Remover da lista" é local: o id vai para uma lista de ocultos para não
+// voltar na próxima sincronização.
 //
 // Registro: { link_id, url, is_video, created_at (ms), expires_at (ms), revoked }
 // Links mortos há mais de 30 dias saem sozinhos; teto de 50 entradas.
@@ -12,6 +15,7 @@
 import { useEffect, useState } from 'react';
 
 const KEY = 'my_call_links_v1';
+const HIDDEN_KEY = 'my_call_links_hidden_v1'; // [wave13e] removidos à mão (não voltam do servidor)
 const MAX = 50;
 const KEEP_DEAD_MS = 30 * 24 * 3600 * 1000;
 const DEFAULT_TTL_MS = 24 * 3600 * 1000; // servidor: expiry padrão 24h
@@ -57,8 +61,52 @@ export function patchMyCallLink(linkId, patch) {
   _write(_read().map((l) => (l && l.link_id === linkId ? { ...l, ...patch } : l)));
 }
 
+function _hidden() {
+  try {
+    const v = require('../../services/cache').getCachedSync(HIDDEN_KEY);
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+}
+
 export function removeMyCallLink(linkId) {
+  try {
+    const h = _hidden().filter((x) => x !== linkId);
+    require('../../services/cache').setCache(HIDDEN_KEY, [linkId, ...h].slice(0, 200));
+  } catch {}
   _write(_read().filter((l) => l && l.link_id !== linkId));
+}
+
+// [wave13e] Mescla a lista do servidor com o cache local. Servidor manda no
+// estado (revogado/expirado/esgotado, datas); entradas só-locais ficam.
+function _mergeServer(items) {
+  const hidden = new Set(_hidden());
+  const local = _read();
+  const byId = new Map(local.filter((l) => l && l.link_id).map((l) => [l.link_id, l]));
+  const out = [];
+  const seen = new Set();
+  for (const it of items) {
+    const id = it && String(it.link_id || '');
+    if (!id || hidden.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    const prev = byId.get(id) || {};
+    const st = String(it.state || '');
+    out.push({
+      ...prev,
+      link_id: id,
+      url: it.url || prev.url || `https://chatyy.com.br/call/${id}`,
+      is_video: !!it.is_video,
+      created_at: Number(it.created_at) || prev.created_at || 0,
+      expires_at: it.expires_at == null ? 0 : Number(it.expires_at) || 0,
+      revoked: !!it.revoked || st === 'revoked',
+      revoked_at: Number(it.revoked_at) || prev.revoked_at || undefined,
+      expired: st === 'expired' || st === 'exhausted',
+      uses: Number(it.uses) || 0,
+      max_uses: it.max_uses == null ? null : Number(it.max_uses) || null,
+    });
+  }
+  for (const l of local) if (l && l.link_id && !seen.has(l.link_id) && !hidden.has(l.link_id)) out.push(l);
+  out.sort((a, b) => (Number(b.created_at) || 0) - (Number(a.created_at) || 0));
+  _write(out);
 }
 
 export function callLinkState(l, now = Date.now()) {
@@ -83,6 +131,12 @@ export function useMyCallLinks() {
 export async function refreshMyCallLinks() {
   let api;
   try { api = require('../../services/api'); } catch { return; }
+  // [wave13e 2026-10-16] Lista do servidor (links criados em qualquer aparelho).
+  try {
+    const r = await api.apiCall('chat_call_links_list', {}, 'GET', { swr: false });
+    const items = r && r.success && r.data && Array.isArray(r.data.items) ? r.data.items : null;
+    if (items) { _mergeServer(items); return; }
+  } catch {}
   const now = Date.now();
   const alive = getMyCallLinks().filter((l) => callLinkState(l, now) === 'active').slice(0, 20);
   await Promise.all(alive.map(async (l) => {

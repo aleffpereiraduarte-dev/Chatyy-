@@ -99,6 +99,10 @@ class MLRow(d: Map<String, Any?>) {
   /** bbg: fundo do balão recebido (menção a mim). */
   val bubbleBg: Int? = color(d["bbg"])
   val opacity: Float = (num(d["op"]) ?: 1.0).toFloat().coerceIn(0f, 1f)
+  // [2026-10-16 wave13-C a11y, apiVersion 6] rótulo completo do leitor de tela (JS)
+  // + máscara das ações do TalkBack (1 responder, 2 reagir, 4 copiar, 8 encaminhar, 16 mais).
+  val a11yLabel: String = str(d["ax"])
+  val a11yMask: Int = num(d["aa"])?.takeIf { it.isFinite() && it >= 0 }?.toInt() ?: (if (bool(d["del"])) 16 else (1 or 2 or 16))
 
   val isValid: Boolean get() = key.isNotEmpty()
 

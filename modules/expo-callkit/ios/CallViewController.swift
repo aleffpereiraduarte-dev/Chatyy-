@@ -1087,6 +1087,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // the `rnnoise_enabled` pref (default ON); no-op/pass-through on failure.
         RNNoiseAudioProcessor.install()
 
+        // [2026-10-16 wave13-B efeitos] Effects auto-paused (heat / battery):
+        // discreet notice, only while an effect is actually chosen.
+        NotificationCenter.default.addObserver(forName: CallFx.pauseChangedNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.session.camEnabled,
+                  CallFx.shared.background != .none || CallFx.shared.light != .none,
+                  let text = CallFx.pauseToastText(CallFx.shared.pauseReason) else { return }
+            self.showGridToast(text)
+        }
+
         // [WAVE 154 2026-05-22] NUCLEAR — SwiftUI CallView removed entirely.
         //
         // Builds 552-555 ALL crashed in SwiftUI _UIHostingView.layoutSubviews
@@ -5883,6 +5892,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-11 full-hd] "Economizar dados" replaces "Qualidade HD" (same
         // slot as Android). No manual resolution — Full HD adaptive is automatic;
         // this mirrors Configurações › "Usar menos dados em chamadas".
+        // [2026-10-16 wave13-B efeitos] "Efeitos" (fundo + luz) — real now:
+        // CallFx taps the camera output (LK 2.0.18 has no VideoProcessor).
+        if CallFx.shared.isEnabled && (hasVideo || session.camEnabled) {
+            rows.insert(moreMenuRow(symbol: "wand.and.stars", title: CallFxStrings.s("title"),
+                                    tag: 9073, action: #selector(moreMenuEffects)), at: 0)
+        }
         if hasVideo || session.camEnabled {
             let saver = CallVideoQuality.isDataSaver
             rows.append(moreMenuRow(symbol: saver ? "checkmark.circle.fill" : "arrow.down.circle",
@@ -6029,6 +6044,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         tapFeedback(view.viewWithTag(9073) as? UIButton)
         dismissMoreMenu()
         cycleBackground()
+    }
+    @objc private func moreMenuEffects() {
+        tapFeedback(view.viewWithTag(9073) as? UIButton)
+        dismissMoreMenu()
+        // Let the menu card fade before the effects strip slides up.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.presentEffectsPanel()
+        }
+    }
+    /// [2026-10-16 wave13-B efeitos] Native effects strip (fundo + luz). The
+    /// self-view PiP stays visible above it = live preview of the choice.
+    private func presentEffectsPanel() {
+        if view.subviews.contains(where: { $0 is CallFxPanel }) { return }
+        if let t = session.localVideoTrack { CallFx.shared.attach(t) }
+        CallFxPanel.present(in: self, cameraOn: { [weak self] in
+            guard let self = self else { return false }
+            return self.session.camEnabled && self.session.localVideoTrack != nil
+        })
+        if let pip = localPipContainer, !pip.isHidden { view.bringSubviewToFront(pip) }
     }
     @objc private func moreMenuHold() {
         tapFeedback(view.viewWithTag(9074) as? UIButton)
@@ -7169,6 +7203,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// Bind / unbind the local camera into the PiP tile. Visible only while the
     /// camera is enabled (session.camEnabled). Mirrors the front camera.
     private func applyLocalVideoTrack(_ track: LocalVideoTrack?) {
+        // [2026-10-16 wave13-B efeitos] Frame tap (blur / fundo / luz) on the
+        // camera behind this track — idempotent; pass-through when no effect.
+        if let t = track { CallFx.shared.attach(t) }
         guard let local = localVideoView, localPipContainer != nil else { return }
         if videoSwapped { restoreVideoSwap() }   // [2026-10-14 self-view]
         if let track = track, session.camEnabled {

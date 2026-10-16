@@ -38,7 +38,10 @@ import {
   Card, ListRow, SectionHeader, TopBar, useSurface, Skeleton, SkeletonFadeIn, FadeSlideIn,
   ScreenEmptyState, Type, Space, Radius, Layout,
 } from '../components/ui';
-import { HeroCard, HeroButton, HERO, AnimatedNumber, ProgressBar, TABULAR, approxActive, NOFLEX } from '../components/wallet/WalletKit';
+import { HeroCard, HeroButton, HERO, AnimatedNumber, ProgressBar, TABULAR, NOFLEX } from '../components/wallet/WalletKit';
+import WalletHowItWorksSheet from '../components/wallet/WalletHowItWorksSheet';
+import { noteCashoutRules } from '../services/diamonds';
+import PressableScale from '../components/PressableScale';
 import { formatInt } from '../utils/dateFormat';
 // [2026-10-15 native-wallet] Herói + "Presentes recebidos" em NATIVO (kill switch __chatyy_native_wallet).
 import NativeWalletList, { useNativeWallet, walletColors } from '../components/native/NativeWalletList';
@@ -119,6 +122,7 @@ function CreatorEarnings() {
   });
   const [cashouts, setCashouts] = useState(() => (_seed && Array.isArray(_seed.cashouts) ? _seed.cashouts : null)); // null = desconhecido
   const [nativeOn, onNativeFail] = useNativeWallet();
+  const [howOpen, setHowOpen] = useState(false);
 
   const load = useCallback(async () => {
     const [sum, list] = await Promise.allSettled([
@@ -151,6 +155,7 @@ function CreatorEarnings() {
       };
       setData(next);
       setFailed(false);
+      noteCashoutRules(d);
       putCached(EARN_KEY, { data: next, cashouts: _cash !== undefined ? _cash : (peekCached(EARN_KEY)?.cashouts ?? null) });
     } else if (!peekCached(EARN_KEY)) {
       setFailed(true);
@@ -177,6 +182,9 @@ function CreatorEarnings() {
     if (r === 'pending_exists') return tr(t, 'earn.blockPending', 'Você já tem um saque em análise.');
     return '';
   })();
+  // Abaixo do mínimo, sem outro bloqueio → explica a regra (tocável → "Como funciona").
+  const minHint = tr(t, 'walletHow.minHint', 'Você pode sacar a partir de {min} em ganhos de presentes recebidos.').replace('{min}', money(min));
+  const whyText = blockReason || (!canCashout ? minHint : '');
   const perDiamond = data.payout_per_diamond_millicents > 0 ? data.payout_per_diamond_millicents / 1000 : 0; // centavos por diamante
   const progress = Math.max(0, Math.min(1, pending / min));
   const go = (path) => () => { try { router.push(path); } catch {} };
@@ -211,12 +219,11 @@ function CreatorEarnings() {
           <View style={styles.heroAmtRow} accessible accessibilityLabel={`${tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}: ${money(pending)}`}>
             <AnimatedNumber value={pending} format={(n) => money(n)} style={[styles.heroNum, { color: HERO.text }]} adjustsFontSizeToFit minimumFontScale={0.6} />
           </View>
-          {approxActive(pending) ? <Text style={[Type.footnote, TABULAR, { color: HERO.sub }]}>{approxActive(pending)}</Text> : null}
           <View style={[styles.heroStats, { borderTopColor: HERO.line }]}>
             <View style={{ flex: 1 }}>
               <Text style={[Type.caption, { color: HERO.sub }]}>{tr(t, 'walletV3.onHold', 'Em liberação')}</Text>
               <Text style={[Type.callout, TABULAR, { color: HERO.text, fontWeight: '700', marginTop: 2 }]}>{money(data.on_hold_cents)}</Text>
-              <Text style={[Type.caption2, { color: HERO.faint, marginTop: 1 }]}>{tr(t, 'walletV3.holdDays', 'retido {days} dias').replace('{days}', String(data.hold_days || 7))}</Text>
+              {data.hold_days > 0 ? <Text style={[Type.caption2, { color: HERO.faint, marginTop: 1 }]}>{tr(t, 'walletV3.holdDays', 'retido {days} dias').replace('{days}', String(data.hold_days))}</Text> : null}
             </View>
             <View style={[styles.heroDivider, { backgroundColor: HERO.line }]} />
             <View style={{ flex: 1, paddingLeft: Space.lg }}>
@@ -233,20 +240,22 @@ function CreatorEarnings() {
                 : tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}').replace('{missing}', money(min - pending)).replace('{min}', money(min))}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', marginTop: Space.lg }}>
+          <View style={{ flexDirection: 'row', gap: Space.sm, marginTop: Space.lg }}>
             <HeroButton
               primary
               haptic="medium"
               label={tr(t, 'creatorDash.withdraw', 'Sacar')}
               disabled={!canCashout}
               onPress={go('/wallet-cashout')}
-              accessibilityLabel={!canCashout
-                ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${blockReason || tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}`
-                : undefined}
+              accessibilityLabel={!canCashout ? `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${whyText}` : undefined}
             />
+            <HeroButton label={tr(t, 'walletHow.title', 'Como funciona')} onPress={() => setHowOpen(true)} testID="earnings-how" />
           </View>
-          {blockReason ? (
-            <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.sm, textAlign: 'center' }]}>{blockReason}</Text>
+          {whyText ? (
+            <PressableScale onPress={() => setHowOpen(true)} haptic="select" hitSlop={8} accessibilityRole="button"
+              accessibilityHint={tr(t, 'walletHow.tapToLearn', 'Toque para saber como funciona')}>
+              <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.sm, textAlign: 'center' }]}>{whyText}</Text>
+            </PressableScale>
           ) : null}
         </HeroCard>
       </FadeSlideIn>
@@ -364,6 +373,9 @@ function CreatorEarnings() {
             .replace('{value}', formatMoney(perDiamond, 'BRL', 'pt-BR')).replace('{days}', String(data.hold_days || 7))
           : tr(t, 'creatorEarnings.tos', 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.')}
       </Text>
+      <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', paddingHorizontal: Space.lg }]}>
+        {tr(t, 'walletHow.buyNotCashable', 'Diamantes comprados servem só para presentear e não podem ser sacados.')}
+      </Text>
     </>
   );
 
@@ -374,9 +386,9 @@ function CreatorEarnings() {
     const withdraw = tr(t, 'creatorDash.withdraw', 'Sacar');
     return {
       caps, value: pending, fmt: 'brl', text: money(pending), loc: 'pt-BR', numSize: 42, glow: false,
-      sub: approxActive(pending) || '',
+      sub: '',
       stats: [
-        { l: tr(t, 'walletV3.onHold', 'Em liberação'), v: money(data.on_hold_cents), s: tr(t, 'walletV3.holdDays', 'retido {days} dias').replace('{days}', String(data.hold_days || 7)) },
+        { l: tr(t, 'walletV3.onHold', 'Em liberação'), v: money(data.on_hold_cents), s: data.hold_days > 0 ? tr(t, 'walletV3.holdDays', 'retido {days} dias').replace('{days}', String(data.hold_days)) : '' },
         { l: tr(t, 'walletV3.minCashout', 'Saque mínimo'), v: money(min), s: tr(t, 'walletV3.viaPix', 'via Pix') },
       ],
       prog: progress,
@@ -385,13 +397,13 @@ function CreatorEarnings() {
         : tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}').replace('{missing}', money(min - pending)).replace('{min}', money(min)),
       buttons: [{
         id: 'cashout', label: withdraw, primary: true, disabled: !canCashout,
-        a11y: !canCashout ? `${withdraw}. ${blockReason || tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}` : '',
-      }],
-      foot: blockReason || '',
+        a11y: !canCashout ? `${withdraw}. ${whyText}` : '',
+      }, { id: 'how', label: tr(t, 'walletHow.title', 'Como funciona') }],
+      foot: whyText || '',
       a11y: `${caps}: ${money(pending)}`,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nativeOn, t, pending, data, min, progress, reachedMin, canCashout, blockReason]);
+  }, [nativeOn, t, pending, data, min, progress, reachedMin, canCashout, whyText]);
 
   const nativeRows = useMemo(() => {
     if (!nativeOn) return [];
@@ -450,7 +462,7 @@ function CreatorEarnings() {
           heroGap={Space.md}
           refreshing={refreshing}
           onRefresh={onRefresh}
-          onHeroAction={(id) => { if (id === 'cashout' && canCashout) go('/wallet-cashout')(); }}
+          onHeroAction={(id) => { if (id === 'cashout' && canCashout) go('/wallet-cashout')(); else if (id === 'how' || id === 'cashout') setHowOpen(true); }}
           onFailure={onNativeFail}
         />
       ) : (
@@ -462,6 +474,7 @@ function CreatorEarnings() {
           <SkeletonFadeIn style={{ gap: Space.md }}>{body}</SkeletonFadeIn>
         </ScrollView>
       )}
+      <WalletHowItWorksSheet visible={howOpen} onClose={() => setHowOpen(false)} />
     </View>
   );
 }

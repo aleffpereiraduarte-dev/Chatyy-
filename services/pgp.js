@@ -112,8 +112,13 @@ function ensureCryptoGlobals() {
       try { g.crypto.subtle = subtle; } catch {}
     }
   }
-  if (typeof g.TextDecoder === 'undefined') {
-    try { const te = require('text-encoding'); g.TextDecoder = te.TextDecoder; if (!g.TextEncoder) g.TextEncoder = te.TextEncoder; } catch {}
+  // [2026-10-16 wave13a bundle-diet] O fallback `require('text-encoding')` saiu:
+  // ele arrastava ~535 KB (tabelas de encodings legados) para o bundle nativo e
+  // nunca rodava — o runtime WinterCG do Expo (expo/src/winter/runtime.native)
+  // já instala TextDecoder/TextEncoder (UTF-8, com {stream}) no globalThis, e
+  // navegadores têm nativo. Se um dia faltar, usa o do Expo.
+  if (typeof g.TextDecoder === 'undefined' && Platform.OS !== 'web') {
+    try { g.TextDecoder = require('expo/src/winter/TextDecoder').TextDecoder; } catch {}
   }
 }
 export const __test = { sha256js, sha1js, polyDigest };

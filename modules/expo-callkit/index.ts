@@ -168,6 +168,9 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   supportsNativeGroupCallUI?(): number;
   setNativeGroupCallUiEnabled?(enabled: boolean): boolean;
   setNativeAppLanguage?(code: string): boolean;
+  // [2026-10-16 wave13-B] Efeitos em chamada (kill switch + escolha atual).
+  setCallEffectsEnabled?(enabled: boolean): boolean;
+  getCallEffectsEnabled?(): boolean;
   openNativeGroupCall?(params: Record<string, any>): Promise<boolean>;
 
   // [2026-05-17 RNNoise] Per-user ML noise suppression toggle. Default ON.
@@ -878,6 +881,18 @@ export function setNativeAppLanguage(code: string): boolean {
   try {
     if (m && typeof m.setNativeAppLanguage === 'function') {
       return !!m.setNativeAppLanguage(String(code || ''));
+    }
+  } catch {}
+  return false;
+}
+
+/** [2026-10-16 wave13-B] Kill switch for native call effects (blur /
+ *  background / light). Older binaries lack it → false. */
+export function setCallEffectsEnabled(enabled: boolean): boolean {
+  const m = getModule();
+  try {
+    if (m && typeof m.setCallEffectsEnabled === 'function') {
+      return !!m.setCallEffectsEnabled(!!enabled);
     }
   } catch {}
   return false;

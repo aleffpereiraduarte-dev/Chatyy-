@@ -84,6 +84,10 @@ export const fetchTwoStepIfStale = (email) => fetchTwoStep(email, { maxAgeMs: ST
 export function twoStepError(r) {
   const d = (r && r.data) || {};
   const msg = String((r && r.message) || '');
+  // [wave13e] reset por e-mail: código errado / expirado / sem e-mail cadastrado.
+  if (d.reset_expired) return 'expired';
+  if (d.code_invalid) return 'code';
+  if (d.no_recovery_email) return 'noEmail';
   if (d.rate_limited || /muitas tentativas|too many/i.test(msg)) return 'rate';
   if (d.current_pin_required) return 'wrong';
   if (/e-?mail/i.test(msg)) return 'email';
@@ -102,8 +106,24 @@ export function twoStepEnable({ pin, currentPin, recoveryEmail } = {}) {
 export function twoStepDisable(currentPin) {
   return apiCall('disable_2fa', { current_pin: currentPin }, 'POST');
 }
-// Confere o PIN sem mudar nada: regrava o MESMO PIN provando o atual (o
-// e-mail de recuperação fica como está — a chave não é enviada).
-export function twoStepVerify(pin) {
-  return apiCall('enable_2fa', { pin, current_pin: pin }, 'POST');
+function _unknownAction(r) {
+  return !!(r && r.success === false && /unknown action|a[cç][aã]o (desconhecida|inv[aá]lida)|invalid action/i.test(String(r.message || r.error || '')));
+}
+
+// [wave13e 2026-10-16] Confere o PIN sem mudar nada: verify_2fa_pin (o
+// servidor NÃO regrava hash/set_at e o limite conta só os erros). Servidor
+// antigo sem a ação → caminho antigo (regrava o MESMO PIN provando o atual).
+export async function twoStepVerify(pin) {
+  const r = await apiCall('verify_2fa_pin', { pin }, 'POST');
+  if (_unknownAction(r)) return apiCall('enable_2fa', { pin, current_pin: pin }, 'POST');
+  return r;
+}
+
+// [wave13e] "Esqueci meu PIN": código de 6 dígitos (1 h, uso único) no e-mail
+// de recuperação; confirmar desliga a verificação em duas etapas.
+export function twoStepResetRequest() {
+  return apiCall('reset_2fa_request', {}, 'POST');
+}
+export function twoStepResetConfirm(code) {
+  return apiCall('reset_2fa_confirm', { code: String(code || '') }, 'POST');
 }

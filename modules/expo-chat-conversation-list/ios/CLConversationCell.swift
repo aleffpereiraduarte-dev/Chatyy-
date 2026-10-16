@@ -280,7 +280,12 @@ final class CLConversationCell: UICollectionViewListCell {
       out.append(a)
     }
     let body = (r.text.isEmpty && r.sender.isEmpty && r.icon.isEmpty) ? r.empty : r.text
-    out.append(NSAttributedString(string: body, attributes: [.font: previewFont, .foregroundColor: bodyColor]))
+    // [wave13-C] mensagem apagada: ⊘ + itálico (como o WhatsApp)
+    var bodyFont = previewFont
+    if r.icon == "ban", let d = previewFont.fontDescriptor.withSymbolicTraits(.traitItalic) {
+      bodyFont = UIFont(descriptor: d, size: previewFont.pointSize)
+    }
+    out.append(NSAttributedString(string: body, attributes: [.font: bodyFont, .foregroundColor: bodyColor]))
     return out
   }
 

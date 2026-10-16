@@ -86,6 +86,15 @@
 //          Kill switch (volta ao "1 linha ruim = conversa toda no JS"):
 //          globalThis.__chatyy_native_row_fallback = false.
 //
+//   a11y  [apiVersion 6, wave13-C 2026-10-16] linha ax = rótulo completo do
+//          leitor de tela (remetente, conteúdo/tipo, hora, status ✓/✓✓/lida,
+//          reações) + aa = máscara de ações do VoiceOver/TalkBack (1 responder,
+//          2 reagir, 4 copiar, 8 encaminhar, 16 mais); prop a11y = nomes das
+//          ações + hint. responder → onSwipeReply (dir reply); reagir/mais →
+//          onRowLongPress (= toque longo, menu nativo); copiar/encaminhar →
+//          onRowPress part 'a11y' → prop onA11yAction({item, key, action}).
+//          Kill switch: globalThis.__chatyy_native_list_a11y = false.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -126,6 +135,8 @@ let _api = 0; // apiVersion do binário (1 = fase 1; 2 = blocos/lift/seleção/f
 function _ctxMenuSwitchOn() { try { return globalThis.__chatyy_native_ctxmenu !== false; } catch { return true; } }
 /** Menu de contexto nativo disponível (binário apiVersion ≥ 3 + kill switch). */
 export function nativeCtxMenuAvailable() { _getNativeView(); return _api >= 3 && _ctxMenuSwitchOn(); }
+/** [wave13-C] kill switch OTA da acessibilidade nativa (rótulo JS + ações). */
+function _a11ySwitchOn() { try { return globalThis.__chatyy_native_list_a11y !== false; } catch { return true; } }
 /** apiVersion do módulo nativo (0 = ausente). */
 export function nativeListApi() { _getNativeView(); return _api; }
 
@@ -1060,16 +1071,116 @@ function _mediaFor(m, ctx) {
 /** Linha → modelo nativo (objeto simples, serializável). null = não suportada. */
 export function buildRow(item, key, ctx) {
   // [native-cover] nunca devolve null p/ mensagem quando o fallback por linha está ligado
+  let r = null;
   try {
-    const r = _buildRowInner(item, key, ctx);
-    if (r) return r;
+    r = _buildRowInner(item, key, ctx);
   } catch (e) {
     if (__DEV__) console.warn('[native-list] buildRow', e?.message);
-    const fb = _fallbackRowSafe(item, key, ctx, 'throw');
-    if (fb) return fb;
-    throw e;
+    r = _fallbackRowSafe(item, key, ctx, 'throw');
+    if (!r) throw e;
   }
-  return _fallbackRowSafe(item, key, ctx, 'build-null');
+  if (!r) r = _fallbackRowSafe(item, key, ctx, 'build-null');
+  if (r && _api >= 6 && r.kind === 'msg' && _a11ySwitchOn()) { try { _a11yInto(r, item, ctx); } catch {} }
+  return r;
+}
+
+// ─── [wave13-C] acessibilidade (apiVersion 6) ───────────────────────────────
+// Rótulo = o MESMO do caminho JS (_a11yMsgLabelRaw no chat-conversation):
+// "Você/remetente, [Encaminhada], [Em resposta a X], conteúdo, [Editada], hora,
+// status, [Favoritada], [Fixada], Reações: …".
+const AX_REPLY = 1; const AX_REACT = 2; const AX_COPY = 4; const AX_FORWARD = 8; const AX_MORE = 16;
+const AX_MAX = 1500;
+function _axL(ctx) {
+  const p2 = (ctx && ctx.p2) || {};
+  return (k, fb) => { try { const v = p2.label ? p2.label(k, fb) : fb; return v || fb; } catch { return fb; } };
+}
+function _axClean(s) {
+  return String(s || '').replace(/\|\|/g, '').replace(/(\*\*|__|~~|```|`)/g, '').replace(/\s+/g, ' ').trim();
+}
+function _axBody(m, L) {
+  const raw = typeof m.content === 'string' ? m.content : '';
+  const cap = (typeof m.caption === 'string' && m.caption.trim()) ? m.caption.trim() : ((m.type && m.type !== 'text') ? _caption(m) : '');
+  const withCap = (lab) => (cap ? `${lab}: ${_axClean(cap)}` : lab);
+  switch (m.type) {
+    case 'image': return withCap(L('chat.photo', 'Foto'));
+    case 'video': case 'video_note': case 'short_video': return withCap(L('chat.video', 'Vídeo'));
+    case 'gif': return withCap(L('chat.gif', 'GIF'));
+    case 'sticker': return L('chat.sticker', 'Figurinha');
+    case 'audio': case 'voice': {
+      const d = Number(m.duration || m.audio_duration || 0);
+      const lab = m.type === 'voice' ? L('a11y.voiceMessage', 'Mensagem de voz') : L('chat.audio', 'Áudio');
+      return d > 0 ? `${lab}, ${_fmtDur(d)}` : lab;
+    }
+    case 'file': return withCap(`${L('chat.file', 'Arquivo')}${m.file_name ? ' ' + m.file_name : ''}`);
+    case 'location': return L('chat.location', 'Localização');
+    case 'contact': return L('chat.contact', 'Contato');
+    case 'poll': {
+      let q = '';
+      try { const p = raw && raw[0] === '{' ? JSON.parse(raw) : null; q = (p && (p.question || p.title)) || ''; } catch {}
+      return q ? `${L('chat.poll', 'Enquete')}: ${q}` : L('chat.poll', 'Enquete');
+    }
+    default: break;
+  }
+  if (raw && raw[0] === '{') {
+    try { const p = JSON.parse(raw); return _axClean(p.text || p.message || p.caption || cap || ''); } catch {}
+  }
+  return _axClean(raw || cap);
+}
+function _a11yInto(row, item, ctx) {
+  if (!row || !item) return;
+  const L = _axL(ctx);
+  const own = !!row.own;
+  const deleted = !!row.del;
+  const album = item._type === 'album';
+  const base = album ? ((item._items || [])[0] || item) : item;
+  const parts = [];
+  if (own) parts.push(L('common.you', 'Você'));
+  else if (ctx.isGroup) {
+    let n = '';
+    try { n = ctx.senderName ? ctx.senderName(base) : ''; } catch {}
+    parts.push(n || row.name || '');
+  }
+  const vo = _isViewOnce(base);
+  if (deleted) parts.push(row.text || '');
+  else {
+    if (row.fwd) parts.push(L('a11y.forwarded', 'Encaminhada'));
+    if (row.rp) parts.push(row.rp.name ? L('a11y.replyTo', 'Em resposta a {name}').split('{name}').join(row.rp.name) : L('a11y.replyToMsg', 'Em resposta a uma mensagem'));
+    if (vo) parts.push(L('a11y.viewOnce', 'Visualização única'));
+    else if (album) {
+      parts.push(L('files.photoCount', '{count} fotos').split('{count}').join(String((item._items || []).length)));
+      const cap = _caption(item);
+      if (cap) parts.push(_axClean(cap));
+    } else parts.push(_axBody(base, L));
+    if (row.ed) parts.push(L('a11y.edited', 'Editada'));
+  }
+  if (row.time) parts.push(row.time);
+  if (own && !deleted) {
+    const st = row.st;
+    if (row.fail || st === -1) parts.push(L('a11y.msgFailed', 'Não enviada. Toque duas vezes para reenviar'));
+    else if (st === 0) parts.push(L('a11y.msgPending', 'Enviando'));
+    else if (st === 2) parts.push(L('a11y.msgRead', 'Lida'));
+    else if (st === 1.5) parts.push(L('a11y.msgDelivered', 'Entregue'));
+    else if (st === 1) parts.push(L('a11y.msgSent', 'Enviada'));
+  }
+  if (row.star) parts.push(L('a11y.starred', 'Favoritada'));
+  if (row.pin) parts.push(L('a11y.pinned', 'Fixada'));
+  if (Array.isArray(row.rx) && row.rx.length) {
+    parts.push(L('a11y.reactions', 'Reações: {list}').split('{list}').join(row.rx.map(r => `${r.e} ${r.n || 1}`).join(', ')));
+  }
+  let ax = parts.filter(Boolean).join(', ');
+  if (ax.length > AX_MAX) ax = ax.slice(0, AX_MAX) + '…';
+  if (ax) row.ax = ax;
+  // ações (o nativo ainda esconde todas no modo seleção)
+  if (deleted) { row.aa = AX_MORE; return; }
+  let aa = AX_MORE;
+  const pendingSend = _isTmpId(String(base.id ?? '')) || !!base._failed;
+  if (!pendingSend) aa |= AX_REPLY | AX_REACT;
+  if (!vo) {
+    const c = typeof base.content === 'string' ? base.content.trim() : '';
+    if (c && (album ? !!_caption(item) : true)) aa |= AX_COPY;
+    if (!pendingSend) aa |= AX_FORWARD;
+  }
+  row.aa = aa;
 }
 function _buildRowInner(item, key, ctx) {
   const tt = item && item._type;
@@ -1117,7 +1228,7 @@ function _buildRowInner(item, key, ctx) {
     else if (cap) { const p = parseInline(cap); row.text = p.text; if (p.spans.length) row.sp = p.spans; }
     return row;
   }
-  const deleted = !!item.deleted_at;
+  const deleted = !!(item.deleted_at || item.is_deleted);
   if (deleted) {
     row.del = 1;
     row.text = ctx.deletedLabel ? ctx.deletedLabel(own) : '';
@@ -1315,7 +1426,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const keyIndexRef = useRef(new Map());
   const readyRef = useRef(false);
   const cbRef = useRef({});
-  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer };
+  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer, onA11yAction: props.onA11yAction };
   const failRef = useRef(false);
 
   // [2026-10-16 android-wave8 + wave10-A] applyRows rejeitado porque a view
@@ -1585,6 +1696,17 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       }
       const item = itemOf(ne.key);
       if (!item) return;
+      // [wave13-C a11y] copiar/encaminhar do VoiceOver/TalkBack → handler da tela
+      if (ne.part === 'a11y') {
+        const action = String(ne.url || '');
+        if (action !== 'copy' && action !== 'forward') return;
+        const cb = cbRef.current;
+        try {
+          if (cb.onA11yAction) cb.onA11yAction({ item, key: ne.key, action });
+          else if (cb.onRowLongPress) cb.onRowLongPress({ item, key: ne.key, index: 0, anchor: null, native: false });
+        } catch {}
+        return;
+      }
       // [hero] part 'media' traz frame {x,y,w,h,radius} (janela) da miniatura tocada
       const fr = ne.frame && Number(ne.frame.w) > 1 && Number(ne.frame.h) > 1
         ? { x: Number(ne.frame.x) || 0, y: Number(ne.frame.y) || 0, width: Number(ne.frame.w), height: Number(ne.frame.h), radius: Number(ne.frame.radius) || 0 }
@@ -1625,7 +1747,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       const ne = e?.nativeEvent || {};
       const item = itemOf(ne.key);
       if (!item) return;
-      try { cbRef.current.onSwipeReply && cbRef.current.onSwipeReply({ item, key: ne.key }); } catch {}
+      try { cbRef.current.onSwipeReply && cbRef.current.onSwipeReply({ item, key: ne.key, dir: ne.dir === 'info' ? 'info' : 'reply' }); } catch {}
     },
     onLoadOlder: () => { try { cbRef.current.onLoadOlder && cbRef.current.onLoadOlder(); } catch {} },
     onScrollState: (e) => {
@@ -1732,6 +1854,20 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   }, [theme]);
 
   // [fase 2] pílula de data fixa NATIVA (cores → ARGB).
+  // [wave13-C a11y] nomes das ações do VoiceOver/TalkBack (apiVersion 6)
+  const _p2Label = ctx && ctx.p2 ? ctx.p2.label : null;
+  const nativeA11y = useMemo(() => {
+    if (_api < 6 || !_a11ySwitchOn()) return undefined;
+    const L = _axL({ p2: { label: _p2Label } });
+    return {
+      reply: L('chatConv.reply', 'Responder'),
+      react: L('a11y.react', 'Reagir'),
+      copy: L('chatConv.copy', 'Copiar'),
+      forward: L('chatConv.forward', 'Encaminhar'),
+      more: L('a11y.moreOptions', 'Mais opções'),
+      hint: L('a11y.msgHint', 'Há ações para responder, reagir, encaminhar ou apagar.'),
+    };
+  }, [_p2Label]);
   const nativeSticky = useMemo(() => {
     if (!stickyDate || _api < 2) return undefined;
     const o = { on: stickyDate.on ? 1 : 0, top: Number(stickyDate.top) || 0 };
@@ -1827,6 +1963,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       {...(nativeSticky ? { stickyDate: nativeSticky } : null)}
       {...(_api >= 3 ? { ctxMenu: !!ctxMenu && _ctxMenuSwitchOn() } : null)}
       {...(nativeStore ? { store: nativeStore } : null)}
+      {...(nativeA11y ? { a11y: nativeA11y } : null)}
       {...handlers}
     />
   );

@@ -253,6 +253,7 @@ import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScr
 const MessageScreenEffectMemo = React.memo(MessageScreenEffect);
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
+import JumpToDateSheet from '../components/chat/JumpToDateSheet'; // [busca-conversa 2026-10-16]
 import ExportConversationModal from '../components/ExportConversationModal';
 import FormatToolbar from '../components/FormatToolbar';
 import RichTextOverlay from '../components/RichTextOverlay';
@@ -10344,8 +10345,17 @@ function ChatConversationInner() {
   // not yet fetched), findIndex returns -1 → silent no-op. Fall back to a
   // backend `chat_load_around` fetch that returns N before + M after the
   // target, splice into state, then scrollToIndex on next tick.
-  const safeScrollToMsg = useCallback(async (msg) => {
-    if (!msg) return;
+  // [busca-conversa 2026-10-16] "Ir para data" (calendário na barra de busca) +
+  // destaque do separador do dia onde a rolagem pousou.
+  const [showJumpDate, setShowJumpDate] = _useStateT(false);
+  const [dateJumpSepKey, setDateJumpSepKey] = _useStateT(null);
+  const _dateJumpTimerRef = useRef(null);
+  // [busca-conversa 2026-10-16] opts (ir para data): { land() → bool (rolagem própria,
+  // ex. até o separador do dia), before, after (janela do load-around), quiet (sem
+  // os avisos de "mensagem original") }. Retorna true se pousou.
+  const safeScrollToMsg = useCallback(async (msg, opts) => {
+    if (!msg) return false;
+    const _o = opts || null;
     const list = _safeScrollListRef.current;
     const targetId = String(msg.id ?? '');
     if (!targetId) return;
@@ -10365,13 +10375,15 @@ function ChatConversationInner() {
     // [2026-10-08 chat-gaps2] jumpToMessage = salto direto pelo layout (sem os
     // 5 passes do scrollToIndex + animação longa): 0,9-1,3 s → 1-2 frames.
     const tryScroll = () => {
+      if (_o && typeof _o.land === 'function') return !!_o.land();
       if (!threadScroll.jumpToMessage(targetId, { viewPosition: 0.5 })) return false;
       threadScroll.afterScrollSettled(flashHighlight);
       return true;
     };
-    if (tryScroll()) return;
+    if (tryScroll()) return true;
     // Not in current window — load a slice around the target id.
-    if (!conversationId || !Number.isFinite(numericId) || numericId <= 0) return;
+    if (!conversationId || !Number.isFinite(numericId) || numericId <= 0) return false;
+    const _laBefore = (_o && _o.before) || 30; const _laAfter = (_o && _o.after) || 10;
     const spliceAndScroll = (slice) => {
       if (!Array.isArray(slice) || slice.length === 0) return false;
       // Splice into messages by id; keep order ascending. Avoid duplicates.
@@ -10408,11 +10420,11 @@ function ChatConversationInner() {
     try {
       // [import-ordem 2026-10-13] o SQLite local recorta a janela por id — na conversa
       // por data a janela certa vem do servidor (chat_load_around order=time).
-      const local = _chatOrder().isTimeOrdered(conversationId) ? null : require('../services/sqliteStore').getMessagesAroundSync?.(conversationId, numericId, 30, 10);
-      if (Array.isArray(local) && local.length > 0 && spliceAndScroll(local)) return;
+      const local = _chatOrder().isTimeOrdered(conversationId) ? null : require('../services/sqliteStore').getMessagesAroundSync?.(conversationId, numericId, _laBefore, _laAfter);
+      if (Array.isArray(local) && local.length > 0 && spliceAndScroll(local)) return true;
     } catch {}
     // [reply-v2] indicador quando o servidor demora + aviso se a original não existe mais.
-    const _v2 = _replyV2On();
+    const _v2 = _replyV2On() && !(_o && _o.quiet);
     let _ldShown = false;
     const _ldTimer = _v2 ? setTimeout(() => {
       _ldShown = true;
@@ -10420,7 +10432,7 @@ function ChatConversationInner() {
     }, 250) : null;
     let _ok = false;
     try {
-      const r = await api.chatLoadAround?.(conversationId, numericId, 30, 10);
+      const r = await api.chatLoadAround?.(conversationId, numericId, _laBefore, _laAfter);
       const _sl = r?.data?.messages;
       _ok = spliceAndScroll(_sl) || (Array.isArray(_sl) && _sl.some(m => m && String(m.id) === targetId));
     } catch (e) {
@@ -10436,7 +10448,78 @@ function ChatConversationInner() {
         } else if (_ldShown) setScheduleToast('');
       } catch {}
     }
+    return _ok;
   }, [conversationId]);
+
+  // [busca-conversa 2026-10-16] Ir para data: servidor acha a 1ª mensagem visível
+  // do dia (chat_messages_by_date, mesmos filtros de visibilidade); se não estiver
+  // em memória o safeScrollToMsg carrega a janela em volta (SQLite local →
+  // chat_load_around) e a rolagem pousa no SEPARADOR do dia (JS e lista nativa —
+  // ambos pelo threadScroll), que pisca. Sem rede → procura nas já carregadas.
+  const handleJumpToDate = useCallback(async (day) => {
+    if (!conversationId || !(day instanceof Date) || isNaN(day.getTime())) return;
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    const _sepKeyOf = (ca) => {
+      const d = new Date(_normalizeIso(ca));
+      return isNaN(d.getTime()) ? null : { key: `sep-${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`, day: new Date(d.getFullYear(), d.getMonth(), d.getDate()), ca };
+    };
+    let id = 0;
+    try {
+      const r = await api.chatMessagesByDate?.(conversationId, start.toISOString());
+      if (r && r.success) id = Number(r.data?.message_id) || 0;
+      else throw new Error('by_date');
+    } catch {
+      // offline / servidor fora: 1ª mensagem carregada no dia ou depois
+      try {
+        const list = _safeScrollListRef.current || [];
+        let best = null;
+        for (const m of list) {
+          if (!m || m._type || m.id == null || String(m.id).startsWith('tmp_')) continue;
+          const tms = new Date(_normalizeIso(m.created_at)).getTime();
+          if (!(tms >= start.getTime())) continue;
+          if (!best || tms < best.tms) best = { id: Number(m.id), tms };
+        }
+        id = best ? best.id : 0;
+      } catch {}
+    }
+    if (!id) {
+      setScheduleToast(_rtTr(t, 'chatConv.jumpNoMessages', 'Nenhuma mensagem a partir desta data'));
+      setTimeout(() => setScheduleToast(''), 2200);
+      return;
+    }
+    const sid = String(id);
+    const land = () => {
+      const i = threadScroll.indexOfMessage(sid); // solta o "piso" de abertura se preciso
+      if (i < 0) return false;
+      const d = threadDataRef.current || [];
+      const row = d[i];
+      const ca = row && (row.created_at || (row._type === 'album' && row._items && row._items[0] && row._items[0].created_at));
+      const sep = ca ? _sepKeyOf(ca) : null;
+      let target = i;
+      if (sep) { const si = d.findIndex((m) => m && m._type === 'separator' && m._key === sep.key); if (si >= 0) target = si; }
+      if (!threadScroll.jumpToIndex(target, { viewPosition: 0.06 })) return false;
+      threadScroll.afterScrollSettled(() => {
+        if (sep) {
+          setDateJumpSepKey(sep.key);
+          try { flashListRef.current?.flashKey?.(sep.key); } catch {}
+          if (_dateJumpTimerRef.current) clearTimeout(_dateJumpTimerRef.current);
+          _dateJumpTimerRef.current = setTimeout(() => setDateJumpSepKey((p) => (p === sep.key ? null : p)), 1600);
+          if (sep.day.getTime() !== start.getTime()) {
+            // dia escolhido sem mensagens → pousou no próximo dia que tem
+            const lbl = formatDateSeparator(sep.ca, t);
+            setScheduleToast(_rtTr(t, 'chatConv.jumpNextDay', 'Sem mensagens nesse dia — mostrando {date}').replace('{date}', lbl));
+            setTimeout(() => setScheduleToast(''), 2400);
+          }
+        }
+      });
+      return true;
+    };
+    const ok = await safeScrollToMsg({ id }, { land, before: 10, after: 50, quiet: true });
+    if (!ok) {
+      setScheduleToast(_rtTr(t, 'chatConv.jumpFailed', 'Não foi possível abrir essa data'));
+      setTimeout(() => setScheduleToast(''), 2200);
+    }
+  }, [conversationId, safeScrollToMsg, threadScroll, t]);
 
   // [WA-parity 2026-06-29] Jump-to-message when the conversation is opened from
   // a GLOBAL chat-list search hit OR a starred-message tap that lives in another
@@ -13179,6 +13262,7 @@ function ChatConversationInner() {
   // already played so reopening the same conv doesn't refire.
   const offlineEffectReplayedRef = useRef(false);
   const [showMediaGallery, setShowMediaGallery] = _useStateT(false);
+  const [mediaGalleryTab, setMediaGalleryTab] = _useStateT('image'); // [busca-conversa 2026-10-16] aba inicial (Links/Docs da info)
   const [showFormatToolbar, setShowFormatToolbar] = _useStateT(false);
   // inputSelection moved to inputSelectionRef to avoid re-renders on every cursor move
   const [showExportModal, setShowExportModal] = _useStateT(false);
@@ -24168,15 +24252,25 @@ function ChatConversationInner() {
   const _npTheme = _npOn && (showContactInfo || showGroupInfo) ? profileTheme(isDark, colors) : null;
   const _npAvatarBg = isDark ? '#3a3a3c' : '#aeaeb2';
   const _npLabels = { close: t('common.close') || 'Fechar', photo: t('chatConv.viewPhoto') || 'Ver foto' };
-  const [infoNativeMedia, setInfoNativeMedia] = _useStateT({ media: [], files: [] });
+  // [busca-conversa 2026-10-16] miniaturas da info: servidor paginado (só N linhas);
+  // servidor velho → chat_media_gallery.
+  const _sharedOrGallery = (kind, n) => Promise.resolve(api.chatSharedItems?.(conversationId, kind, '', n))
+    .then((r) => (r && r.success ? r : api.chatMediaGallery?.(conversationId, kind, n)))
+    .catch(() => api.chatMediaGallery?.(conversationId, kind, n));
+  const [infoNativeMedia, setInfoNativeMedia] = _useStateT({ media: [], files: [], links: null });
   useEffect(() => {
     if (!_npOn || !(showContactInfo || showGroupInfo) || !conversationId) return undefined;
     let alive = true;
-    Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 9))
+    // [busca-conversa 2026-10-16] só o que a faixa mostra (servidor paginado; antes
+    // vinham 300 linhas p/ exibir 9) + Links do SERVIDOR (antes: só as carregadas).
+    _sharedOrGallery('image', 9)
       .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, media: (r.data?.items || []).filter((it) => it?.file_url).slice(0, 9) })); })
       .catch(() => {});
-    Promise.resolve(api.chatMediaGallery?.(conversationId, 'file', 5))
+    _sharedOrGallery('file', 5)
       .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, files: (r.data?.items || []).slice(0, 5) })); })
+      .catch(() => {});
+    Promise.resolve(api.chatSharedItems?.(conversationId, 'link', '', 12))
+      .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, links: r.data?.items || [] })); })
       .catch(() => {});
     return () => { alive = false; };
   }, [_npOn, showContactInfo, showGroupInfo, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -24194,7 +24288,17 @@ function ChatConversationInner() {
       return { key: String(it.id || i), title: name, subtitle: [size, when].filter(Boolean).join(' · '), ext };
     });
     let links = [];
-    try { links = extractRecentLinks(messages, 5); } catch {}
+    if (Array.isArray(infoNativeMedia.links)) {
+      const seen = new Set();
+      for (const it of infoNativeMedia.links) {
+        if (!it || !it.url || seen.has(it.url)) continue;
+        seen.add(it.url);
+        links.push({ key: it.url, title: String(it.title || it.site_name || it.host || it.url), subtitle: it.title ? String(it.host || it.url) : String(it.url) });
+        if (links.length >= 5) break;
+      }
+    } else {
+      try { links = extractRecentLinks(messages, 5); } catch {}
+    }
     return {
       theme: _npTheme,
       tabs: [
@@ -24207,9 +24311,9 @@ function ChatConversationInner() {
       maxItems: 9,
       onItem: (tab, key) => {
         if (tab === 'links') { try { require('../services/openLink').openLink(key, { router, colors }); } catch {} return; } // [2026-10-15 native-browser]
-        go(() => setShowMediaGallery(true));
+        go(() => { setMediaGalleryTab(tab === 'files' ? 'file' : 'image'); setShowMediaGallery(true); });
       },
-      onSeeAll: () => go(() => setShowMediaGallery(true)),
+      onSeeAll: (tab) => go(() => { setMediaGalleryTab(tab === 'links' ? 'link' : tab === 'files' ? 'file' : 'image'); setShowMediaGallery(true); }),
       onFatal: _npOff,
     };
   };
@@ -24342,7 +24446,7 @@ function ChatConversationInner() {
         .catch(() => {});
     }
     // Últimas fotos p/ a faixa de miniaturas de "Mídia, links e docs".
-    Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 6))
+    _sharedOrGallery('image', 6) // [busca-conversa 2026-10-16]
       .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs(th); _ciPut(_ciThumbKey, th); } })
       .catch(() => {});
     // Pinned ("Favoritas" in the list = pinned) — read from the account-scoped
@@ -24365,7 +24469,7 @@ function ChatConversationInner() {
     let alive = true;
     const _gtKey = ['conv_thumbs', String(conversationId)];
     try { const th = _ciPeek(_gtKey); if (Array.isArray(th)) setInfoMediaThumbs(th); } catch {}
-    Promise.resolve(api.chatMediaGallery?.(conversationId, 'image', 6))
+    _sharedOrGallery('image', 6) // [busca-conversa 2026-10-16]
       .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs(th); _ciPut(_gtKey, th); } })
       .catch(() => {});
     return () => { alive = false; };
@@ -26192,7 +26296,7 @@ function ChatConversationInner() {
     };
     for (let i = 0; i < reversedMessages.length; i++) {
       const item = reversedMessages[i];
-      if (item._type === 'separator') { out[i] = item; continue; }
+      if (item._type === 'separator') { out[i] = (dateJumpSepKey && item._key === dateJumpSepKey) ? { ...item, _dateHl: true } : item; continue; } // [busca-conversa 2026-10-16]
       // Album virtual message — compute its tick from the rolled-up
       // delivered_at/read_at/status fields the album was built with
       // (see messagesWithSeparators). Without this, photo albums sent by
@@ -26284,7 +26388,7 @@ function ChatConversationInner() {
     }
     _enrichCacheRef.current = newCache; // drop stale entries
     return out;
-  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType, members, readReceipts, _searchHlIds, _searchHlTerm]); // [2026-10-07 receipts2] +members/readReceipts (agregado de grupo)
+  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType, members, readReceipts, _searchHlIds, _searchHlTerm, dateJumpSepKey]); // [2026-10-07 receipts2] +members/readReceipts (agregado de grupo) · [busca-conversa] +dateJumpSepKey
 
   // [perf] Overlay live upload progress onto ONLY the row(s) currently
   // uploading. uploadProgress ticks ~60×/s during a media send; folding it
@@ -27677,7 +27781,7 @@ function ChatConversationInner() {
               soft lavender wash + violet ink. Dark: deep glass + muted text. */}
           {/* [2026-10-06 wa-look] WA day pill: received-bubble surface + muted ink. */}
           {/* [2026-10-08 chat-beauty-bubbles] Pílula de data P&B translúcida. */}
-          <Text maxFontSizeMultiplier={1.4} accessibilityRole="header" style={[styles.dateText, isDark ? styles.dateTextDark : styles.dateTextLight]}>
+          <Text maxFontSizeMultiplier={1.4} accessibilityRole="header" style={[styles.dateText, isDark ? styles.dateTextDark : styles.dateTextLight, item._dateHl && (isDark ? styles.dateTextJumpDark : styles.dateTextJump)]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -31459,6 +31563,8 @@ function ChatConversationInner() {
                 disabled={!(_S.total > 0)}
                 onPress={() => {
                   if (selectionMode) return toggleSelection(msg.id);
+                  // [wave13e 2026-10-16] folha "Ver votos" (quem votou); sem host → resumo em Alert.
+                  if (require('../components/chat/PollVotesSheet').openPollVotes(poll, msg.id)) return;
                   _PL.showPollVotes(poll, _ptr, (a, b) => {
                     try { Platform.OS === 'web' ? window.alert(`${a}\n\n${b}`) : Alert.alert(a, b); } catch {}
                   });
@@ -33278,6 +33384,14 @@ function ChatConversationInner() {
     if (!cur || cur.key !== key || !emoji) return;
     try { _nlActRef.current.handleReact(cur.msg.id, emoji); } catch {}
   }, []);
+  // [wave13-C a11y] copiar/encaminhar pelo VoiceOver/TalkBack (lista nativa, api 6)
+  // → MESMOS handlers do menu (responder/reagir/mais chegam por swipe/long-press).
+  const _nlOnA11yAction = useCallback(({ item, action }) => {
+    const target = item && item._type === 'album' ? ((item._items || [])[0] || null) : item;
+    if (!target || target.type === 'system' || target.deleted_at || (action !== 'copy' && action !== 'forward')) return;
+    if (action === 'forward' && ((forwardingDisabled && !isGroupAdmin) || (_advPriv?.enabled && target.file_url))) return;
+    try { require('../components/chat/nativeContextMenu').runNativeCtxAction(action, target, _nlCtxHRef.current()); } catch {}
+  }, [forwardingDisabled, isGroupAdmin, _advPriv?.enabled]);
   const _nlOnMenuDismiss = useCallback(({ key }) => {
     if (_nlCtxMsgRef.current && _nlCtxMsgRef.current.key === key) _nlCtxMsgRef.current = null;
   }, []);
@@ -33951,6 +34065,10 @@ function ChatConversationInner() {
               autoFocus
               returnKeyType="search"
             />
+            {/* [busca-conversa 2026-10-16] Ir para data (calendário) */}
+            <TouchableOpacity onPress={() => { try { searchInputRef.current?.blur?.(); } catch {} setShowJumpDate(true); }} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chatConv.jumpToDate', 'Ir para data')} testID="chat-search-jump-date">
+              <IconCalendar size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
             {/* ★ Filter button */}
             <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.searchFilters', 'Filtros da busca')}>
               <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type || searchFilters.senderEmail || searchFilters.starredOnly ? colors.primary : colors.textSecondary} />
@@ -34816,6 +34934,7 @@ function ChatConversationInner() {
           onRowLongPress={_nlOnRowLongPress}
           ctxMenu={_nlCtxMenuOn}
           onMenuAction={_nlOnMenuAction}
+          onA11yAction={_nlOnA11yAction}
           onReact={_nlOnReact}
           onMenuDismiss={_nlOnMenuDismiss}
           onSwipeReply={_nlOnSwipe}
@@ -37090,10 +37209,23 @@ function ChatConversationInner() {
       {/* Format Toolbar */}
       {/* (FormatToolbar movida pra ACIMA do campo — ver composer) */}
 
+      {/* [busca-conversa 2026-10-16] Ir para data */}
+      <LazyMount when={showJumpDate}>{(_lmV) => (<JumpToDateSheet
+        visible={_lmV}
+        onClose={() => setShowJumpDate(false)}
+        onPick={(d) => { handleJumpToDate(d); }}
+        conversationId={conversationId}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+      />)}</LazyMount>
+
       {/* Media Gallery */}
       <LazyMount when={showMediaGallery}>{(_lmV) => (<MediaGallery
         visible={_lmV}
-        onClose={() => setShowMediaGallery(false)}
+        onClose={() => { setShowMediaGallery(false); setMediaGalleryTab('image'); }}
+        initialTab={mediaGalleryTab}
+        onJumpToMessage={(id) => { setShowMediaGallery(false); setMediaGalleryTab('image'); setTimeout(() => { try { safeScrollToMsg({ id }); } catch {} }, Platform.OS === 'ios' ? 380 : 60); }}
         conversationId={conversationId}
         colors={colors}
         t={t}
@@ -41820,6 +41952,9 @@ const styles = StyleSheet.create({
   },
   dateTextLight: { color: 'rgba(60,60,67,0.82)', backgroundColor: 'rgba(236,236,240,0.88)' },
   dateTextDark: { color: 'rgba(235,235,245,0.72)', backgroundColor: 'rgba(44,44,46,0.82)' },
+  // [busca-conversa 2026-10-16] separador do dia escolhido em "Ir para data" (pisca ~1,6 s).
+  dateTextJump: { color: '#ffffff', backgroundColor: '#111111' },
+  dateTextJumpDark: { color: '#000000', backgroundColor: '#ffffff' },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
   systemText: { fontSize: 12, textAlign: 'center', fontWeight: '500', lineHeight: 17, letterSpacing: 0.1 },
   // [polish] System pill: subtle centered chip (WhatsApp 'X joined'). Neutral wash reads in light + dark.

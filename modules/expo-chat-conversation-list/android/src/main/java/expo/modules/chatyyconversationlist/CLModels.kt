@@ -277,6 +277,7 @@ internal object CLIcons {
     "file" -> R.drawable.ccl_ic_file
     "lock" -> R.drawable.ccl_ic_lock
     "gift" -> R.drawable.ccl_ic_gift
+    "ban" -> R.drawable.ccl_ic_ban // [wave13-C] mensagem apagada (⊘)
     else -> 0
   }
 }

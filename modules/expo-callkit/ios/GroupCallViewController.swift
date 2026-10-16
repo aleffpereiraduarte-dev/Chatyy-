@@ -256,6 +256,11 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         if !conversationId.isEmpty {
             openChatAction = { [weak self] in self?.openChat() }
         }
+        // [2026-10-16 wave13-B efeitos] nil = kill switch off (row hidden).
+        var effectsAction: (() -> Void)? = nil
+        if CallFx.shared.isEnabled {
+            effectsAction = { [weak self] in self?.presentEffectsPanel() }
+        }
 
         let rootView = GroupCallView(
             session: session,
@@ -273,7 +278,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             onHandRaiseToggle: { [weak self] raised in self?.publishHandRaise(raised) },
             onTogglePin: { [weak self] identity in self?.togglePin(identity) },
             // [2026-10-11 ongoing-call] "Mensagem" → minimize + open the group chat.
-            onOpenChat: openChatAction
+            onOpenChat: openChatAction,
+            onEffects: effectsAction
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -290,6 +296,13 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         host.didMove(toParent: self)
 
         installSystemMuteObserver()
+        // [2026-10-16 wave13-B efeitos] Auto-pause notice (heat / battery).
+        NotificationCenter.default.addObserver(forName: CallFx.pauseChangedNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.session.camEnabled,
+                  CallFx.shared.background != .none || CallFx.shared.light != .none,
+                  let text = CallFx.pauseToastText(CallFx.shared.pauseReason) else { return }
+            self.showToast(text)
+        }
         // [2026-10-14 group-ui] Ringing tiles: drop on decline / timeout.
         installInviteDeclinedObserver()
         for bare in pendingInvites.keys { scheduleRingingExpiry(bare) }
@@ -853,6 +866,16 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     }
 
     /// [2026-10-15 cam-1-toque] Camera access denied in iOS Settings.
+    /// [2026-10-16 wave13-B efeitos] Fundo + luz strip over the SwiftUI
+    /// screen; the self-view tile stays visible above it (live preview).
+    private func presentEffectsPanel() {
+        if view.subviews.contains(where: { $0 is CallFxPanel }) { return }
+        if let lt = room?.localParticipant.localVideoTracks.first(where: { $0.source == .camera })?.track as? LocalVideoTrack {
+            CallFx.shared.attach(lt)
+        }
+        CallFxPanel.present(in: self, cameraOn: { [weak self] in self?.session.camEnabled ?? false })
+    }
+
     private func presentCameraDeniedAlert() {
         guard presentedViewController == nil else { return }
         let alert = UIAlertController(title: CallStrings.s("camDeniedTitle"),
@@ -1173,6 +1196,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                                         audioMuted: Bool? = nil,
                                         handRaised: Bool? = nil,
                                         isSpeaking: Bool? = nil) {
+        // [2026-10-16 wave13-B efeitos] Camera frame tap (idempotent).
+        if let vt = videoTrack { CallFx.shared.attach(vt) }
         var arr = session.participants
         if let idx = arr.firstIndex(where: { $0.isLocal }) {
             let cur = arr[idx]

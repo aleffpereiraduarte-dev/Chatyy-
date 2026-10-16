@@ -47,6 +47,8 @@ final class CMLCell: UICollectionViewCell {
   let failIcon = CMLIconView()
   /// (key, "play"|"pause"|"end") da nota de vídeo
   var onVideoNote: ((String, String) -> Void)?
+  /// [wave13-C a11y] toque duplo do VoiceOver → ação principal da bolha (a lista decide)
+  var onA11yActivate: ((CMLCell) -> Bool)?
   private var revealed = false
   private var lifted = false
   /// [2026-10-15 native-effects] emoji grande aguardando o willDisplay p/ animar 1×
@@ -175,6 +177,13 @@ final class CMLCell: UICollectionViewCell {
     guard jumboPending, let r = row else { return }
     jumboPending = false
     if CMLJumboFX.claim(key) { CMLJumboFX.play(textView, text: r.text) }
+  }
+
+  // [wave13-C a11y] o ponto padrão (centro da linha inteira) caía fora de bolhas
+  // curtas → toque duplo não fazia nada.
+  override func accessibilityActivate() -> Bool {
+    if let f = onA11yActivate, f(self) { return true }
+    return super.accessibilityActivate()
   }
 
   // MARK: configure

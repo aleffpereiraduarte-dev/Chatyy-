@@ -31,7 +31,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import FolderGlyph, { FolderIconByKey } from '../components/chatlist/FolderGlyph';
 import {
   useChatFolders, loadFolders, createFolder, updateFolder, deleteFolder, reorderFolders,
-  parseFolderIcon, folderIds, folderMatcher, getConversationsSnapshot, publishConversations,
+  parseFolderIcon, folderRules, folderIds, folderMatcher, getConversationsSnapshot, publishConversations,
   FOLDER_ICON_KEYS,
 } from '../components/chatlist/chatFoldersStore';
 import * as api from '../services/api';
@@ -111,7 +111,7 @@ function countLabel(tf, n) {
 
 function folderSummary(tf, f) {
   const ids = folderIds(f);
-  const { rules } = parseFolderIcon(f?.icon);
+  const rules = folderRules(f); // [wave13e] filter_value → senão ícone curto
   const parts = [];
   if (ids.size) parts.push(countLabel(tf, ids.size));
   for (const r of INCLUDE_RULES) if (rules[r.k]) parts.push(tf(r.label));
@@ -485,7 +485,7 @@ function FolderEditor({ editId, preset }) {
       else setDraft({ name: '', iconKey: '', rules: {}, ids: [] });
     } else if (folder) {
       const p = parseFolderIcon(folder.icon);
-      setDraft({ name: String(folder.name || ''), iconKey: p.iconKey, rules: { ...p.rules }, ids: Array.from(folderIds(folder)) });
+      setDraft({ name: String(folder.name || ''), iconKey: p.iconKey, rules: { ...folderRules(folder) }, ids: Array.from(folderIds(folder)) });
     }
   }, [draft, isNew, folder, preset, tf]);
 

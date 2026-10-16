@@ -5,6 +5,8 @@
 //               Desativar (pede o PIN atual), Esqueci meu PIN.
 // O PIN é o MESMO registration_lock que o login por telefone exige após o OTP
 // (anti-SIM-swap). Servidor: enable_2fa / disable_2fa / get_2fa_status.
+// [wave13e 2026-10-16] Esqueci meu PIN → com e-mail de recuperação: código de
+// 6 dígitos por e-mail (reset_2fa_request) → digitar → desliga (reset_2fa_confirm).
 // PINs só vivem no estado enquanto a folha está aberta (limpos ao fechar).
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -18,7 +20,7 @@ import { IconChevronLeft, IconX, IconShield, IconCheck } from '../Icons';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, useGroupedColors } from './SettingsKit';
 import {
   getCachedTwoStep, loadTwoStep, fetchTwoStep, applyServerStatus, saveTwoStep, subscribeTwoStep,
-  twoStepEnable, twoStepDisable, twoStepError,
+  twoStepEnable, twoStepDisable, twoStepError, twoStepResetRequest, twoStepResetConfirm,
 } from './twoStepState';
 
 const PIN_LEN = 6;
@@ -33,7 +35,7 @@ const webNoOutline = Platform.OS === 'web' ? { outlineStyle: 'none' } : null;
 
 // ── Campo de PIN: 6 casas + um TextInput invisível por cima (funciona igual
 // no iOS/Android/web, cola/backspace nativos, sem foco pulando de casa). ──
-export function PinField({ value, onChange, onComplete, error, autoFocus = true, testID }) {
+export function PinField({ value, onChange, onComplete, error, autoFocus = true, testID, reveal = false }) {
   const g = useGroupedColors();
   const ref = useRef(null);
   useEffect(() => {
@@ -57,7 +59,9 @@ export function PinField({ value, onChange, onComplete, error, autoFocus = true,
                 borderWidth: active ? 2 : 1.5,
               }]}
             >
-              {filled ? <View style={[s.pinDot, { backgroundColor: g.ink }]} /> : null}
+              {filled ? (reveal
+                ? <Text style={[s.pinDigit, { color: g.ink }]}>{v.charAt(i)}</Text>
+                : <View style={[s.pinDot, { backgroundColor: g.ink }]} />) : null}
             </View>
           );
         })}
@@ -81,7 +85,7 @@ export function PinField({ value, onChange, onComplete, error, autoFocus = true,
         caretHidden
         contextMenuHidden
         style={[s.pinInput, webNoOutline]}
-        accessibilityLabel="PIN"
+        accessibilityLabel={reveal ? 'Code' : 'PIN'}
       />
     </Pressable>
   );
@@ -120,11 +124,13 @@ export function twoStepErrorText(t, kind) {
     case 'email': return t('twoStep.invalidEmail') || 'E-mail inválido.';
     case 'mismatch': return t('twoStep.mismatch') || 'Os PINs não coincidem. Tente de novo.';
     case 'short': return t('twoStep.pinShort') || 'Digite os dígitos do seu PIN.';
+    case 'code': return t('twoStep.codeInvalid') || 'Código incorreto. Tente de novo.';
+    case 'expired': return t('twoStep.codeExpired') || 'Código expirado. Peça um novo.';
     default: return t('twoStep.failed') || 'Não foi possível concluir. Verifique sua conexão e tente de novo.';
   }
 }
 
-// step: main | cur | new | confirm | email | forgot
+// step: main | cur | new | confirm | email | forgot | reset
 // flow: enable | change | email | disable
 export default function TwoStepSheet({ visible, onClose, initialStep = 'main' }) {
   const g = useGroupedColors();
@@ -141,15 +147,18 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
   const [newPin, setNewPin] = useState('');
   const [pin2, setPin2] = useState('');
   const [mail, setMail] = useState('');
+  const [code, setCode] = useState('');
+  const [sentTo, setSentTo] = useState('');
+  const [noEmail, setNoEmail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState('');
   const noticeTm = useRef(null);
 
-  const resetFlow = () => { setFlow(null); setCurPin(''); setNewPin(''); setPin2(''); setMail(''); setErr(''); };
+  const resetFlow = () => { setFlow(null); setCurPin(''); setNewPin(''); setPin2(''); setMail(''); setCode(''); setErr(''); };
 
   useEffect(() => {
-    if (!visible) { resetFlow(); setNotice(''); return undefined; }
+    if (!visible) { resetFlow(); setNotice(''); setNoEmail(false); return undefined; }
     setStep(initialStep || 'main');
     let alive = true;
     loadTwoStep(email).then((c) => { if (alive && c) setStatus((p) => p || c); });
@@ -180,6 +189,7 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
   const back = () => {
     setErr('');
     if (step === 'main') { onClose?.(); return; }
+    if (step === 'reset') { setCode(''); setStep('forgot'); return; }
     if (step === 'forgot') { setStep('main'); return; }
     if (step === 'confirm') { setPin2(''); setStep('new'); return; }
     if (step === 'email') { setStep(flow === 'enable' ? 'confirm' : 'cur'); if (flow === 'enable') setPin2(''); return; }
@@ -222,6 +232,32 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
     setBusy(false);
     if (r && r.success) await finish(r, t('twoStep.emailToast') || 'E-mail atualizado', false);
     else handleFail(r, { pinStep: 'cur' });
+  };
+
+  // [wave13e] Esqueci meu PIN → código por e-mail → desliga.
+  const doResetRequest = async () => {
+    setBusy(true); setErr('');
+    const r = await safeCall(() => twoStepResetRequest());
+    setBusy(false);
+    if (r && r.success) {
+      setSentTo(String((r.data && r.data.recovery_email_masked) || status?.emailMasked || ''));
+      setCode(''); setStep('reset');
+      return;
+    }
+    const kind = r ? twoStepError(r) : 'generic';
+    if (kind === 'noEmail') { setNoEmail(true); return; }
+    setErr(twoStepErrorText(t, kind));
+  };
+
+  const doResetConfirm = async (val) => {
+    const c = String(val ?? code);
+    if (c.length !== PIN_LEN || busy) { if (c.length !== PIN_LEN) setErr(twoStepErrorText(t, 'short')); return; }
+    setBusy(true); setErr('');
+    const r = await safeCall(() => twoStepResetConfirm(c));
+    setBusy(false);
+    if (r && r.success) { await finish(r, t('twoStep.resetDone') || 'PIN desativado. Você pode criar um novo quando quiser.', false); return; }
+    setCode('');
+    setErr(twoStepErrorText(t, r ? twoStepError(r) : 'generic'));
   };
 
   const doDisable = async (cur) => {
@@ -410,18 +446,41 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
       </View>
     );
   } else if (step === 'forgot') {
+    const canReset = enabled && !!status?.hasEmail && !noEmail;
     content = (
       <View style={s.pad}>
         <Hero heading={t('twoStep.forgotTitle') || 'Esqueceu seu PIN?'}
-          body={t('twoStep.forgotBody') || 'Neste aparelho sua conta continua funcionando normalmente — o PIN só é pedido ao registrar seu número de telefone em um novo aparelho. Para alterar ou desativar a verificação é preciso o PIN atual; se não lembrar, fale com o suporte em Configurações > Ajuda.'} />
+          body={canReset
+            ? (t('twoStep.forgotEmailBody') || 'Podemos enviar um código para o seu e-mail de recuperação. Com ele, você desativa o PIN e pode criar um novo.')
+            : (t('twoStep.forgotBody') || 'Neste aparelho sua conta continua funcionando normalmente — o PIN só é pedido ao registrar seu número de telefone em um novo aparelho. Para alterar ou desativar a verificação é preciso o PIN atual; se não lembrar, fale com o suporte em Configurações > Ajuda.')} />
         {status?.hasEmail && status?.emailMasked ? (
           <Text style={[s.hint, { color: g.secondary }]}>{(t('twoStep.forgotEmail') || 'E-mail de recuperação cadastrado: {email}').replace('{email}', status.emailMasked)}</Text>
+        ) : null}
+        {canReset ? (
+          <>
+            {errorLine}
+            <PrimaryButton testID="twostep-reset-send" busy={busy} label={t('twoStep.resetSend') || 'Enviar código por e-mail'} onPress={doResetRequest} />
+          </>
         ) : null}
         {enabled && status?.remind !== false ? (
           <PrimaryButton testID="twostep-reminder-off" label={t('twoStep.turnOffReminder') || 'Desligar lembrete'}
             onPress={() => { saveTwoStep(email, { remind: false }); goMain(); }} />
         ) : null}
         <TextButton label={t('common.back') || 'Voltar'} onPress={() => { setErr(''); if (flow) setStep('cur'); else setStep('main'); }} />
+      </View>
+    );
+  } else if (step === 'reset') {
+    content = (
+      <View style={s.pad}>
+        <Hero heading={t('twoStep.resetCodeTitle') || 'Digite o código'}
+          body={(t('twoStep.resetCodeBody') || 'Enviamos um código de 6 dígitos para {email}. Ele vale por 1 hora.').replace('{email}', sentTo || status?.emailMasked || '')} />
+        <PinField testID="twostep-reset-code" reveal value={code} error={!!err}
+          onChange={(v) => { setCode(v); if (err) setErr(''); }}
+          onComplete={(v) => { if (!busy) doResetConfirm(v); }} />
+        {errorLine}
+        <PrimaryButton testID="twostep-reset-confirm" destructive busy={busy} disabled={code.length !== PIN_LEN}
+          label={t('twoStep.disable') || 'Desativar'} onPress={() => doResetConfirm()} />
+        <TextButton testID="twostep-reset-resend" disabled={busy} label={t('twoStep.resendCode') || 'Reenviar código'} onPress={doResetRequest} />
       </View>
     );
   }
@@ -483,6 +542,7 @@ const s = StyleSheet.create({
   pinRow: { flexDirection: 'row', gap: 10 },
   pinCell: { width: 44, height: 54, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   pinDot: { width: 12, height: 12, borderRadius: 6 },
+  pinDigit: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   pinInput: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.015, color: 'transparent', fontSize: 1 },
   err: { fontSize: 14, textAlign: 'center', marginTop: 6, marginBottom: 4 },
   hint: { fontSize: 14, textAlign: 'center', marginBottom: 12 },

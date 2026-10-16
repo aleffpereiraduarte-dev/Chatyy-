@@ -75,6 +75,22 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if ((platform === 'android' || platform === 'ios') && moduleName === 'livekit-client') {
     return { filePath: LIVEKIT_CLIENT_UMD, type: 'sourceFile' };
   }
+  // [2026-10-16 wave13a bundle-diet] Nativo: o index do @livekit/react-native
+  // re-exporta hooks/<LiveKitRoom> do @livekit/components-react (~212 KB) que o
+  // app NUNCA usa (só registerGlobals/AudioSession/VideoView/E2EE). Stub com
+  // contextos reais + funções que lançam erro claro se chamadas. Escopo: só
+  // quem importa de dentro do @livekit/react-native. Para usar um hook do
+  // components-react no nativo, apague este bloco.
+  if ((platform === 'android' || platform === 'ios') && moduleName === '@livekit/components-react'
+      && /[\\/]node_modules[\\/]@livekit[\\/]react-native[\\/]/.test(context.originModulePath || '')) {
+    return { filePath: require.resolve('./stubs/livekit-components-react-native.js'), type: 'sourceFile' };
+  }
+  // [2026-10-16 wave13a bundle-diet] Nativo: 'web-streams-polyfill' (~63 KB) era
+  // uma 2ª cópia do que o prelude do Expo (expo/virtual/streams.js) já instala
+  // em globalThis. O shim reexporta as classes globais.
+  if ((platform === 'android' || platform === 'ios') && moduleName === 'web-streams-polyfill') {
+    return { filePath: require.resolve('./stubs/web-streams-native.js'), type: 'sourceFile' };
+  }
   if (platform === 'web') {
     if (moduleName === 'react-native-gesture-handler') {
       return {

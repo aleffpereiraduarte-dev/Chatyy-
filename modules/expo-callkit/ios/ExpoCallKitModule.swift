@@ -768,8 +768,45 @@ public class ExpoCallKitModule: Module {
       return !CallViewController.CallVideoQuality.isDataSaver
     }
 
+    // ─── [2026-10-16 wave13-B] Efeitos em chamada (CallFx) ─────────────
+    // Kill switch (JS mirrors globalThis.__chatyy_call_fx === false → false).
+    // OFF: no camera tap is installed and the "Efeitos" row is hidden.
+    Function("setCallEffectsEnabled") { (enabled: Bool) -> Bool in
+      CallFx.shared.setEnabled(enabled)
+      return CallFx.shared.isEnabled
+    }
+
+    Function("getCallEffectsEnabled") { () -> Bool in
+      return CallFx.shared.isEnabled
+    }
+
+    // Current choice: { background: "none|blur_light|blur_strong|wp:N|custom", light: "none|retouch|low_light" }.
+    Function("getCallEffects") { () -> [String: Any] in
+      return [
+        "enabled": CallFx.shared.isEnabled,
+        "background": CallFx.shared.background.key,
+        "light": CallFx.shared.light.rawValue,
+        "paused": CallFx.shared.pauseReason.rawValue,
+      ]
+    }
+
+    Function("setCallEffects") { (background: String?, light: String?) -> Bool in
+      if let b = background { CallFx.shared.setBackground(CallFxBackground.from(b)) }
+      if let l = light { CallFx.shared.setLight(CallFxLight(rawValue: l) ?? .none) }
+      return true
+    }
+
     // ─── MediaPipe Background blur / virtual background (2026-05-17) ────
+    // [2026-10-16 wave13-B] Legacy bridge now also drives the REAL CallFx
+    // engine (the BackgroundProcessor below never reached the encoder).
     Function("setBackgroundMode") { (mode: String, imageAsset: String?) -> Bool in
+      switch mode.lowercased() {
+      case "off", "none": CallFx.shared.setBackground(.none)
+      case "blur_low", "blur-low", "blur_medium", "blur-medium", "blur": CallFx.shared.setBackground(.blurLight)
+      case "blur_high", "blur-high": CallFx.shared.setBackground(.blurStrong)
+      case "image", "wallpaper": CallFx.shared.setBackground(.wallpaper(0))
+      default: break
+      }
       let proc = BackgroundProcessor.shared
       switch mode.lowercased() {
       case "off", "none": proc.mode = .off

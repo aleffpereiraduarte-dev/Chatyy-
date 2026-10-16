@@ -1237,7 +1237,11 @@ export function runCardAction(item, action, D) {
         return;
       }
       case 'poll': { _vote(m, Number(arg), D); return; }
-      case 'poll_votes': { showPollVotes(_poll(m), tt, (a, b) => D.safeAlert(a, b)); return; } // [2026-10-16 poll-wa]
+      case 'poll_votes': { // [2026-10-16 poll-wa] + [wave13e] folha com quem votou
+        const _pv = _poll(m);
+        if (require('./PollVotesSheet').openPollVotes(_pv, m.id)) return;
+        showPollVotes(_pv, tt, (a, b) => D.safeAlert(a, b)); return;
+      }
       case 'rsvp': {
         (async () => {
           const r = await api.chatMeetupRsvp(m.id, arg);

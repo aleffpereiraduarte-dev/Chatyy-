@@ -81,6 +81,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.CallEnd
@@ -1338,6 +1339,10 @@ class CallActivity : ComponentActivity() {
           onRespondVideoRequest = { accept -> respondVideoRequest(accept) },
           onToggleHold = { applyUserHold(!state.isOnHold) },
           onToggleDataSaver = { toggleDataSaver() },
+          // [2026-10-16 wave13-B] Efeitos (kill switch → row hidden).
+          onOpenEffects = if (expo.modules.callkit.video.CallFx.isEnabled(applicationContext)) {
+            { openEffectsSheet() }
+          } else null,
         )
       }
     }
@@ -3856,6 +3861,7 @@ class CallActivity : ComponentActivity() {
     if (!camGranted) return
     try {
       val t = r.localParticipant.createVideoTrack(name = "camera_preview")
+      try { expo.modules.callkit.video.CallFx.attach(applicationContext, t) } catch (_: Throwable) {}
       t.startCapture()
       callerPreviewTrack = t
       localRenderer?.let { lv -> t.addRenderer(lv) }
@@ -3922,6 +3928,11 @@ class CallActivity : ComponentActivity() {
 
   private fun bindLocalVideoTrack(track: LocalVideoTrack) {
     state.hasLocalVideo = true
+    // [2026-10-16 wave13-B] Real effects: CallFx processor on this track's
+    // VideoSource (idempotent; pass-through when no effect is chosen).
+    try { expo.modules.callkit.video.CallFx.attach(applicationContext, track) } catch (t: Throwable) {
+      Log.w(TAG, "CallFx attach failed: ${t.message}")
+    }
     // [video-quality 2026-10-06] Local camera up → make sure the beacons run
     // even if the peer never publishes video.
     room?.let { scheduleVideoQualityDiag(it) }
@@ -4605,6 +4616,38 @@ class CallActivity : ComponentActivity() {
 
   private var screenShareInFlight = false
 
+  /** [2026-10-16 wave13-B] Native "Efeitos" sheet (fundo + luz). The local
+   *  PiP stays visible above it = live preview. */
+  private fun openEffectsSheet() {
+    if (finishing) return
+    try {
+      (room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack)?.let {
+        expo.modules.callkit.video.CallFx.attach(applicationContext, it)
+      }
+      expo.modules.callkit.video.CallFxSheet.show(
+        this,
+        cameraOn = { state.isCameraOn && state.hasLocalVideo },
+        beforePick = {
+          // The system photo picker is OUR launch: no PiP / minimize meanwhile.
+          armSelfLaunchGuard("fx_gallery", 120_000L)
+          if (Build.VERSION.SDK_INT >= 31) {
+            try {
+              setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
+            } catch (_: Throwable) {}
+          }
+        },
+        afterPick = {
+          selfLaunchGuardUntilMs = System.currentTimeMillis() + 1_500L
+          if (Build.VERSION.SDK_INT >= 26) {
+            try { setPictureInPictureParams(buildPipParams()) } catch (_: Throwable) {}
+          }
+        },
+      )
+    } catch (t: Throwable) {
+      Log.w(TAG, "effects sheet failed: ${t.message}")
+    }
+  }
+
   private fun toggleScreenShare() {
     if (screenShareInFlight || finishing) return
     if (state.isScreenSharing) {
@@ -5225,6 +5268,8 @@ private fun CallScreen(
   onToggleDataSaver: () -> Unit = {},
   /** [2026-10-15 screen-share WA] Reopen the peer's screen full screen. */
   onOpenScreenViewer: () -> Unit = {},
+  /** [2026-10-16 wave13-B] "Efeitos" (fundo + luz). null = kill switch off. */
+  onOpenEffects: (() -> Unit)? = null,
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   /** [2026-10-11 call-parity] iOS "Mais opções" sheet. */
@@ -5619,6 +5664,7 @@ private fun CallScreen(
         onAddParticipant = { showMore = false; showAddParticipant = true },
         onToggleDataSaver = { showMore = false; onToggleDataSaver() },
         onKeypad = { showMore = false; showKeypad = true; dtmfBuffer = "" },
+        onEffects = onOpenEffects?.let { fx -> { showMore = false; fx() } },
       )
     }
 
@@ -6436,6 +6482,7 @@ private fun MoreOptionsSheet(
   onAddParticipant: () -> Unit,
   onToggleDataSaver: () -> Unit,
   onKeypad: () -> Unit,
+  onEffects: (() -> Unit)? = null,
 ) {
   Box(
     modifier = Modifier
@@ -6464,6 +6511,10 @@ private fun MoreOptionsSheet(
       Spacer(Modifier.height(12.dp))
       Text(text = CallStrings.s("moreOptions"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
       Spacer(Modifier.height(14.dp))
+      // [2026-10-16 wave13-B] "Efeitos" — real camera processing (CallFx).
+      if (onEffects != null && (state.isVideo || state.isCameraOn)) {
+        MoreRow(Icons.Filled.AutoAwesome, expo.modules.callkit.video.CallFxStrings.s("title"), onEffects)
+      }
       MoreRow(Icons.Filled.EmojiEmotions, CallStrings.s("reactions"), onReactions)
       MoreRow(
         if (state.isScreenSharing) Icons.Filled.StopScreenShare else Icons.Filled.ScreenShare,

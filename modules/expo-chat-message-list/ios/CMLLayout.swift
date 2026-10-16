@@ -92,7 +92,8 @@ final class CMLStyle {
     self.fontSize = fs
     self.lineHeight = max(ceil(fs * 1.25), lineHeight * scale)
     self.radius = radius
-    self.theme = theme
+    // [wave13-C a11y] contraste reforçado com "Escurecer cores"
+    self.theme = UIAccessibility.isDarkerSystemColorsEnabled ? theme.boostedContrast() : theme
     self.version = version
     body = UIFont.systemFont(ofSize: fs)
     bodyBold = UIFont.systemFont(ofSize: fs, weight: .semibold)

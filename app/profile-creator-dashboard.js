@@ -29,7 +29,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
-import { formatMoneyActive } from '../services/currencyService';
+import { formatMoney } from '../services/currencyService';
+import { useWallet } from '../services/diamonds';
 import { useCurrency } from '../context/CurrencyContext';
 import { IconChevronRight } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
@@ -44,7 +45,8 @@ import { formatInt } from '../utils/dateFormat';
 const MIN_CASHOUT_CENTS = 5000;
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
-function money(cents) { return formatMoneyActive(Number(cents) || 0); }
+// [2026-10-16 carteira-clara] ganhos = valor EXATO em R$ (sem conversão aproximada).
+function money(cents) { return formatMoney(Number(cents) || 0, 'BRL', 'pt-BR'); }
 
 // Losango P&B (substitui o glifo de texto e o IconDiamond azul).
 function DiamondGlyph({ size = 16, color }) {
@@ -156,6 +158,7 @@ function sourceLabel(t, refKind) {
 function CreatorDashboard() {
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
+  const wallet = useWallet();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const s = useSurface();
@@ -198,8 +201,9 @@ function CreatorDashboard() {
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
 
   const pending = Number(data.pending_payout_cents) || 0;
-  const canCashout = pending >= MIN_CASHOUT_CENTS;
-  const progress = Math.max(0, Math.min(1, pending / MIN_CASHOUT_CENTS));
+  const minC = Number(wallet.minCashoutCents) || MIN_CASHOUT_CENTS; // servidor > constante
+  const canCashout = pending >= minC;
+  const progress = Math.max(0, Math.min(1, pending / minC));
   const series = useMemo(() => (Array.isArray(data.tip_series_7d) ? data.tip_series_7d : []), [data.tip_series_7d]);
   const hasSeries = series.some(x => (Number(x.tip_cents) || 0) > 0);
   const tippers = Array.isArray(data.top_tippers) ? data.top_tippers : [];
@@ -230,8 +234,8 @@ function CreatorDashboard() {
             </View>
             <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>
               {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
-                .replace('{missing}', money(MIN_CASHOUT_CENTS - pending))
-                .replace('{min}', money(MIN_CASHOUT_CENTS))}
+                .replace('{missing}', money(minC - pending))
+                .replace('{min}', money(minC))}
             </Text>
           </View>
         )}

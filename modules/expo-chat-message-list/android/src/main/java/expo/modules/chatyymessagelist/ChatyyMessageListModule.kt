@@ -15,7 +15,12 @@ class ChatyyMessageListModule : Module() {
     // 4 = [native-store] prop `store` {a,c,r,n} + evento onStore; onReady traz src.
     // 5 = [native-media-dl] download nativo com anel (row.media/au/file/album[].dl),
     //     configureTransfers, setTransfers, onMediaTransfer, onRowPress part 'xfer'.
-    Function("apiVersion") { 5 }
+    // 6 = [wave13-C a11y] linha ax (rótulo do TalkBack) + aa (máscara de ações
+    //     1 responder/2 reagir/4 copiar/8 encaminhar/16 mais) + prop a11y (nomes +
+    //     hint). responder → onSwipeReply dir 'reply'; reagir/mais → onRowLongPress
+    //     (a11y: id); copiar/encaminhar → onRowPress part 'a11y' url id; clique do
+    //     TalkBack → toque na parte principal.
+    Function("apiVersion") { 6 }
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.
@@ -38,6 +43,7 @@ class ChatyyMessageListModule : Module() {
       // [fase 2]
       Prop("stickyDate") { view: MLListView, v: Map<String, Any?>? -> view.setStickyDate(v) }
       Prop("store") { view: MLListView, v: Map<String, Any?>? -> view.setStore(v) }
+      Prop("a11y") { view: MLListView, v: Map<String, Any?>? -> view.setA11yLabels(v) }
 
       OnViewDestroys { view: MLListView -> view.destroy() }
 

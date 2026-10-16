@@ -511,6 +511,7 @@ const _LATE_OVERLAYS = {
   RemovedAccountNotice: () => require('../components/RemovedAccountNotice').default, // [incidente-sessao 2026-10-14]
   VoiceMiniPlayer: () => require('../components/chat/VoiceMiniPlayer').default, // [2026-10-07 voice-native]
   YouTubeInlineHost: () => require('../components/chat/YouTubeInlinePlayer').default, // [2026-10-15 yt-inline]
+  PollVotesHost: () => require('../components/chat/PollVotesSheet').default, // [wave13e 2026-10-16] Ver votos
   EmailUndoBar: () => require('../components/EmailUndoBar').default,
   PhoneOfflineBanner: () => require('../components/PhoneOfflineBanner').default,
   PushTokenStaleBanner: () => require('../components/PushTokenStaleBanner').default,
@@ -2340,6 +2341,7 @@ export default function RootLayout() {
                 <CallStatusBar />
                 <Late name="VoiceMiniPlayer" />
                 <Late name="YouTubeInlineHost" />
+                <Late name="PollVotesHost" />
                 <Late name="EmailUndoBar" />
                 <Late name="ConfettiHost" />{/* [2026-10-16 mascote] confete leve (1ª msg / grupo criado) */}
                 <Suspense fallback={null}>

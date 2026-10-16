@@ -991,7 +991,7 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
         ? (t('chatConv.deletedMessageOwn') || 'Você apagou esta mensagem')
         : (t('chatConv.deletedMessage') || 'Esta mensagem foi apagada');
       const _who = (!_ownDel && (isGroup || isChannel)) ? emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '') : null;
-      return { preview: _tomb, previewSender: _who || null, statusType: null };
+      return { preview: _tomb, previewSender: _who || null, statusType: null, deleted: true }; // [wave13-C] deleted → ⊘ itálico na lista nativa
     }
 
     let _callLabeled = false;
@@ -8210,8 +8210,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <BiaHomeCard isDark={isDark} t={t} router={router} P={P} avatarSize={ROW_AVATAR} nameStyle={s.rowName} previewStyle={s.rowPreview} />
       )}
       {/* [2026-10-08 chat-beauty-list] Same inset hairline as the rows (was
-          a full-bleed border that broke the list rhythm). */}
-      {!(searchQuery || '').trim() && Platform.OS !== 'android' && (
+          a full-bleed border that broke the list rhythm).
+          [2026-10-16 wave13 swipe-ios] Android também (a lista nativa agora
+          desenha a mesma linha inset entre as conversas, igual ao iOS). */}
+      {!(searchQuery || '').trim() && (
         <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET }]} />
       )}
 

@@ -11,6 +11,15 @@
 //   flags excluir:  a=arquivadas m=silenciadas
 // Ícone antigo (emoji '📂' do "Adicionar a lista") = sem ícone e sem regras.
 // Assim a regra sincroniza entre aparelhos sem mudar o PHP.
+//
+// [wave13e 2026-10-16] O servidor agora aceita filter_type/filter_value no
+// create/update: as regras vão em filter_value como JSON
+//   {"unread":true,"contacts":true,"groups":true,"channels":true,
+//    "exclude_archived":true,"exclude_muted":true}   (só as verdadeiras)
+// Leitura: filter_value (JSON) primeiro; sem ele, o formato curto do `icon`.
+// Escrita: grava os DOIS (o `icon` curto continua para apps antigos). Pastas
+// antigas só com regras no ícone migram sozinhas no 1º load (1 update cada).
+// Reordenar usa chat_folders_reorder (1 chamada); servidor antigo → N updates.
 import { useSyncExternalStore } from 'react';
 import * as api from '../../services/api';
 
@@ -35,6 +44,37 @@ export function encodeFolderIcon(iconKey, rules) {
   return `~${key}.${flags}`.slice(0, 10);
 }
 
+// Letra curta ↔ chave JSON do servidor.
+const RULE_JSON = { u: 'unread', c: 'contacts', g: 'groups', h: 'channels', a: 'exclude_archived', m: 'exclude_muted' };
+
+/** filter_value (JSON) → regras {u,c,g,h,a,m}; null = sem regras no campo. */
+export function parseFolderValue(v) {
+  if (v == null || v === '') return null;
+  let o = v;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t.charAt(0) !== '{') return null;
+    try { o = JSON.parse(t); } catch { return null; }
+  }
+  if (!o || typeof o !== 'object') return null;
+  const rules = {};
+  for (const ch of RULE_FLAGS) if (o[RULE_JSON[ch]]) rules[ch] = true;
+  return rules;
+}
+
+/** regras {u,c,…} → filter_value JSON ('' = nenhuma). */
+export function encodeFolderValue(rules) {
+  const o = {};
+  for (const ch of RULE_FLAGS) if (rules && rules[ch]) o[RULE_JSON[ch]] = true;
+  return Object.keys(o).length ? JSON.stringify(o) : '';
+}
+
+/** Regras efetivas da pasta (filter_value → senão ícone curto). */
+export function folderRules(folder) {
+  const fromValue = parseFolderValue(folder && folder.filter_value);
+  return fromValue || parseFolderIcon(folder && folder.icon).rules;
+}
+
 export function folderIds(folder) {
   const ids = Array.isArray(folder?.conversation_ids) ? folder.conversation_ids : [];
   const out = new Set();
@@ -45,7 +85,7 @@ export function folderIds(folder) {
 // Pré-calcula (ids + regras) uma vez por pasta — o filtro roda por linha.
 export function folderMatcher(folder) {
   const ids = folderIds(folder);
-  const { rules } = parseFolderIcon(folder?.icon);
+  const rules = folderRules(folder);
   const fn = (c, isArchived) => {
     if (!c) return false;
     if (isArchived && rules.a) return false;
@@ -102,7 +142,9 @@ export function loadFolders() {
     if (r?.success && r?.data) {
       const raw = Array.isArray(r.data.items) ? r.data.items : (Array.isArray(r.data.folders) ? r.data.folders : []);
       // Só listas do usuário (as "seed" all/type duplicavam os chips fixos — 2026-05-29).
-      _set(raw.filter(f => (f?.filter_type || 'manual') === 'manual'), { loaded: true });
+      const mine = raw.filter(f => (f?.filter_type || 'manual') === 'manual');
+      _set(mine, { loaded: true });
+      _migrateRules(mine);
     }
   }).catch(() => {}).finally(() => { _inflight = null; });
   return _inflight;
@@ -110,20 +152,36 @@ export function loadFolders() {
 
 function _ok(r) { return !(r && r.success === false); }
 
+// [wave13e] Pastas com regras só no ícone curto → grava filter_value (1×/sessão).
+const _migrated = new Set();
+function _migrateRules(list) {
+  for (const f of list) {
+    const id = Number(f?.id) || 0;
+    if (!id || _migrated.has(id) || parseFolderValue(f.filter_value)) continue;
+    const v = encodeFolderValue(parseFolderIcon(f.icon).rules);
+    if (!v) continue;
+    _migrated.add(id);
+    api.chatFoldersUpdate(id, { filter_value: v }).then((r) => {
+      if (_ok(r)) _set(_state.items.map(x => (Number(x.id) === id ? { ...x, filter_value: v } : x)));
+    }).catch(() => {});
+  }
+}
+
 export async function createFolder({ name, iconKey, rules, ids }) {
   _checkAcct();
   const nm = String(name || '').trim().slice(0, 40);
   if (!nm) return { ok: false };
   const icon = encodeFolderIcon(iconKey, rules);
+  const filterValue = encodeFolderValue(rules);
   const convIds = Array.from(new Set((ids || []).map(Number).filter(Boolean))).slice(0, 500);
   const position = _state.items.reduce((m, f) => Math.max(m, Number(f.position) || 0), -1) + 1;
   try {
-    const r = await api.chatFoldersCreate(nm, icon, 'manual', null);
+    const r = await api.chatFoldersCreate(nm, icon, 'manual', filterValue || null);
     const id = Number(r?.data?.id) || 0;
     if (!r?.success || !id) return { ok: false, error: r?.message || r?.error };
     // create do api.js não repassa conversation_ids → 1 update com ids + posição.
-    const u = await api.chatFoldersUpdate(id, { conversation_ids: convIds, position, icon, name: nm });
-    const folder = { id, name: nm, icon, conversation_ids: convIds, filter_type: 'manual', position };
+    const u = await api.chatFoldersUpdate(id, { conversation_ids: convIds, position, icon, name: nm, filter_value: filterValue });
+    const folder = { id, name: nm, icon, conversation_ids: convIds, filter_type: 'manual', filter_value: filterValue, position };
     _set([..._state.items.filter(f => Number(f.id) !== id), folder]);
     return { ok: _ok(u), id, existing: !!r?.data?.existing };
   } catch (e) { return { ok: false, error: e?.message }; }
@@ -138,7 +196,9 @@ export async function updateFolder(id, { name, iconKey, rules, ids }) {
   if (name != null) patch.name = String(name).trim().slice(0, 40);
   if (iconKey !== undefined || rules !== undefined) {
     const p = parseFolderIcon(cur.icon);
-    patch.icon = encodeFolderIcon(iconKey !== undefined ? iconKey : p.iconKey, rules !== undefined ? rules : p.rules);
+    const nextRules = rules !== undefined ? rules : folderRules(cur);
+    patch.icon = encodeFolderIcon(iconKey !== undefined ? iconKey : p.iconKey, nextRules);
+    patch.filter_value = encodeFolderValue(nextRules);
   }
   if (ids) patch.conversation_ids = Array.from(new Set(ids.map(Number).filter(Boolean))).slice(0, 500);
   _set(prev.map(f => (Number(f.id) === Number(id) ? { ...f, ...patch } : f)));
@@ -171,6 +231,11 @@ export async function reorderFolders(orderIds) {
   const changed = next.filter(f => (byId.get(Number(f.id))?.position ?? -1) !== f.position);
   _set(next);
   if (!changed.length) return { ok: true };
+  // [wave13e] 1 chamada em lote; servidor antigo ("Unknown action") → N updates.
+  try {
+    const rb = await api.apiCall('chat_folders_reorder', { order: next.map(f => Number(f.id)) }, 'POST');
+    if (rb && rb.success) return { ok: true };
+  } catch {}
   try {
     const rs = await Promise.all(changed.map(f => api.chatFoldersUpdate(f.id, { position: f.position })));
     if (rs.some(r => !_ok(r))) { _set(prev); return { ok: false }; }

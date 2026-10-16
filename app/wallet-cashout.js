@@ -10,8 +10,8 @@
 // MOEDA: Pix paga em REAIS — o servidor valida e debita amount_cents em
 // centavos de BRL (chat.php wallet_cashout_request: mín 5000, máx 5_000_000).
 // Por isso o campo de valor é em BRL (formatMoney(…, 'BRL'), sem "R$" fixo
-// no código) e, se a moeda de exibição for outra, mostramos a conversão
-// (formatMoneyActive) ao lado. Saldo/mínimo/histórico = formatMoneyActive.
+// no código). [2026-10-16 carteira-clara] SEM conversão "≈" para outra moeda:
+// só valores exatos em R$ (valor, taxa e "Você recebe" vindos do servidor).
 //
 // Saques desligados: WALLET_ENABLED=false no app E o servidor responde 410
 // {feature_disabled:true} (bloqueio 2026-06-28). Em vez de redirecionar p/
@@ -39,7 +39,9 @@ import { useTheme } from '../context/ThemeContext';
 import { WALLET_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { formatMoney, formatMoneyActive, getActiveCurrency } from '../services/currencyService';
+import { formatMoney } from '../services/currencyService';
+import { noteCashoutRules } from '../services/diamonds';
+import WalletHowItWorksSheet from '../components/wallet/WalletHowItWorksSheet';
 import { useCurrency } from '../context/CurrencyContext';
 import { IconInfo, IconCheckCircle, IconAlertCircle, IconGlobe } from '../components/Icons';
 import { haptic } from '../constants/theme';
@@ -227,6 +229,7 @@ export default function WalletCashoutScreen() {
   const [canceling, setCanceling] = useState(false);
   const [abroadBusy, setAbroadBusy] = useState(false);
   const reqIdRef = useRef('');
+  const [howOpen, setHowOpen] = useState(false);
 
   const paused = !WALLET_ENABLED || serverDisabled || rules.block === 'disabled';
 
@@ -242,6 +245,7 @@ export default function WalletCashoutScreen() {
         minCents: Number(mg.data.min_cents) || MIN_CENTS,
         maxCents: Number(mg.data.max_cents) || MAX_CENTS,
       });
+      if (Number(mg.data.min_cents) > 0) noteCashoutRules({ min_cashout_cents: mg.data.min_cents });
     }
     const b = bal.status === 'fulfilled' ? bal.value : null;
     if (b?.success && b.data) setAvailable(b.data.available_cents != null ? Number(b.data.available_cents) || 0 : Number(b.data.pending_payout_cents) || 0);
@@ -260,6 +264,8 @@ export default function WalletCashoutScreen() {
         minCents: Number(d.min_cashout_cents) || MIN_CENTS,
       });
       if (d.kyc && d.kyc.full_name) setFullName(prev => prev || String(d.kyc.full_name));
+      // saque v2 (payout_method_get) manda o mínimo vigente → tem prioridade.
+      noteCashoutRules(mg?.success && Number(mg.data?.min_cents) > 0 ? { ...d, min_cashout_cents: mg.data.min_cents } : d);
     }
     const l = list.status === 'fulfilled' ? list.value : null;
     if (l?.success && Array.isArray(l.data?.items)) setHistory(l.data.items);
@@ -293,7 +299,6 @@ export default function WalletCashoutScreen() {
   const maxAllowed = Math.min(available, MAX_C);
   const reachedMin = available >= MIN_C;
   const progress = Math.max(0, Math.min(1, available / MIN_C));
-  const showConverted = getActiveCurrency() !== 'BRL';
   const etaText = opts?.auto
     ? tr(t, 'saque4.etaAuto', 'Após a aprovação, o Pix cai em até 1 dia útil.')
     : tr(t, 'saque4.etaManual', 'Após a aprovação, o Pix cai em até 3 dias úteis.');
@@ -504,13 +509,19 @@ export default function WalletCashoutScreen() {
           {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
             .replace('{missing}', money(MIN_C - available)).replace('{min}', money(MIN_C))}
         </Text>
+        <PressableRow onPress={() => setHowOpen(true)} accessibilityRole="button" style={{ marginTop: Space.md }}>
+          <Text style={[Type.footnote, { color: s.textSecondary }]}>
+            {tr(t, 'walletHow.minHint', 'Você pode sacar a partir de {min} em ganhos de presentes recebidos.').replace('{min}', money(MIN_C))}
+            <Text style={{ color: s.text, fontWeight: '600' }}>{'  ' + tr(t, 'walletHow.title', 'Como funciona')}</Text>
+          </Text>
+        </PressableRow>
       </Card>
     );
   } else if (step === 'review' || step === 'sending') {
     formBlock = (
       <Card>
         <Text style={[Type.headline, { color: s.text, marginBottom: Space.sm }]}>{tr(t, 'cashout2.reviewTitle', 'Confira antes de enviar')}</Text>
-        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.amount', 'Valor')} value={brl(amountCents) + (showConverted ? `  (≈ ${money(amountCents)})` : '')} />
+        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.amount', 'Valor')} value={brl(amountCents)} />
         <DetailRow s={s} label={tr(t, 'saque4.fee', 'Taxa de saque')} value={feeCents > 0 ? '− ' + brl(feeCents) : tr(t, 'saque4.noFee', 'Sem taxa')} />
         <DetailRow s={s} label={tr(t, 'saque4.youReceive', 'Você recebe')} value={brl(netCents)} />
         {useSaved ? (
@@ -543,8 +554,7 @@ export default function WalletCashoutScreen() {
     formBlock = (
       <Card>
         <Field s={s} label={tr(t, 'wallet.cashoutAmount', 'Quanto você quer sacar?')} error={shown('amount')}
-          hint={showConverted && amountCents > 0 ? `≈ ${money(amountCents)}`
-            : feeCents > 0 && amountCents >= MIN_C ? `${tr(t, 'saque4.youReceive', 'Você recebe')}: ${brl(netCents)} (${tr(t, 'saque4.fee', 'Taxa de saque')} ${brl(feeCents)})`
+          hint={feeCents > 0 && amountCents >= MIN_C ? `${tr(t, 'saque4.youReceive', 'Você recebe')}: ${brl(netCents)} (${tr(t, 'saque4.fee', 'Taxa de saque')} ${brl(feeCents)})`
             : tr(t, 'cashout2.amountHint', 'Pix é pago em reais. Mínimo {min}.').replace('{min}', brl(MIN_C))}>
           <View style={[styles.amountRow, { backgroundColor: s.surface, borderColor: shown('amount') ? s.danger : s.separator }]}>
             <Text style={[Type.title3, { color: s.textSecondary }]}>{brl(0).replace(/[\d.,\s ]/g, '') || 'BRL'}</Text>
@@ -688,8 +698,10 @@ export default function WalletCashoutScreen() {
         </Text>
         {rules.onHold > 0 ? (
           <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.xs }]}>
-            {tr(t, 'earn.onHold', '{amount} em liberação (presentes dos últimos {days} dias)')
-              .replace('{amount}', money(rules.onHold)).replace('{days}', String(rules.holdDays || 7))}
+            {rules.holdDays > 0
+              ? tr(t, 'earn.onHold', '{amount} em liberação (presentes dos últimos {days} dias)')
+                .replace('{amount}', money(rules.onHold)).replace('{days}', String(rules.holdDays))
+              : tr(t, 'walletHow.onHoldAmount', '{amount} em liberação').replace('{amount}', money(rules.onHold))}
           </Text>
         ) : null}
       </HeroCard>
@@ -791,6 +803,7 @@ export default function WalletCashoutScreen() {
           </View>
         ) : null}
       </Sheet>
+      <WalletHowItWorksSheet visible={howOpen} onClose={() => setHowOpen(false)} />
     </View>
   );
 }

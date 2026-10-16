@@ -63,6 +63,12 @@ const INITIAL = {
   cashoutEnabled: true,
   isMinor: false,
   blockedReason: null,     // 'minor' | 'disabled' | 'negative_balance' | null
+  // [2026-10-16 carteira-clara] regras de saque vindas do SERVIDOR (null = ainda
+  // não sabemos → a UI omite o número; nunca inventa). wallet_balance e/ou
+  // creator_earnings_summary / payout_method_get (saque v2 pode mudar o mínimo).
+  minCashoutCents: null,
+  holdDays: null,
+  payoutPerDiamondMillicents: null,
 };
 let _state = { ...INITIAL };
 const _listeners = new Set();
@@ -75,6 +81,7 @@ function _set(patch) {
 // abre com o último saldo conhecido; refreshWallet() revalida. O store em
 // memória é reiniciado quando a conta ativa muda (nunca mostra o da outra).
 const BAL_KEY = ['wallet', 'balance'];
+const RULES_KEY = ['wallet', 'cashout-rules'];
 let _stateScope = null;
 function _syncScope() {
   let sc = '';
@@ -84,6 +91,7 @@ function _syncScope() {
   _state = { ...INITIAL };
   if (!sc) return;
   try { const d = peekCached(BAL_KEY); if (d && typeof d === 'object') _state = { ..._state, ..._balancePatch(d), loaded: true }; } catch {}
+  try { const r = peekCached(RULES_KEY); if (r && typeof r === 'object') _state = { ..._state, ..._rulesPatch(r) }; } catch {}
 }
 export function getWallet() { _syncScope(); return _state; }
 export function subscribeWallet(fn) { _listeners.add(fn); return () => _listeners.delete(fn); }
@@ -114,7 +122,35 @@ function _balancePatch(d) {
     cashoutEnabled: enabled && _bool(d.cashout_enabled, true),
     isMinor: !!d.is_minor,
     blockedReason: d.blocked_reason || null,
+    ..._rulesPatch(d),
   };
+}
+// Só copia o que o servidor mandou (ausente ≠ zero → não sobrescreve).
+function _rulesPatch(d) {
+  const out = {};
+  if (!d || typeof d !== 'object' || d._fallback) return out;
+  const min = Number(d.min_cashout_cents != null ? d.min_cashout_cents : d.min_cents);
+  if (min > 0) out.minCashoutCents = min;
+  const hd = Number(d.hold_days);
+  if (hd > 0) out.holdDays = hd;
+  const ppd = Number(d.payout_per_diamond_millicents);
+  if (ppd > 0) out.payoutPerDiamondMillicents = ppd;
+  return out;
+}
+/** Telas de ganhos/saque repassam as regras que receberam do servidor. */
+export function noteCashoutRules(d) {
+  const p = _rulesPatch(d);
+  if (!Object.keys(p).length) return;
+  _syncScope();
+  const cur = { minCashoutCents: _state.minCashoutCents, holdDays: _state.holdDays, payoutPerDiamondMillicents: _state.payoutPerDiamondMillicents };
+  const next = { ...cur, ...p };
+  if (next.minCashoutCents === cur.minCashoutCents && next.holdDays === cur.holdDays && next.payoutPerDiamondMillicents === cur.payoutPerDiamondMillicents) return;
+  _set(p);
+  try {
+    putCached(RULES_KEY, {
+      min_cashout_cents: next.minCashoutCents, hold_days: next.holdDays, payout_per_diamond_millicents: next.payoutPerDiamondMillicents,
+    });
+  } catch {}
 }
 
 let _inflight = null;

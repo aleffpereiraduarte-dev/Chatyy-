@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Platform, StyleSheet, Alert,
 } from 'react-native';
-import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPlay } from './Icons';
+import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPlay, IconLink, IconMessageSquare } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import ChatMediaViewer from './ChatMediaViewer';
@@ -13,7 +13,9 @@ import ChatMediaViewer from './ChatMediaViewer';
 import NativeMediaGrid, { isNativeMediaGridAvailable } from './media/NativeMediaGrid';
 import { useLanguage } from '../context/LanguageContext';
 
-const TABS = ['image', 'video', 'audio', 'file'];
+// [busca-conversa 2026-10-16] + 'link' (servidor chat_shared_items, paginado).
+const TABS = ['image', 'video', 'audio', 'file', 'link'];
+const PAGE = 60;
 
 // Chatyy brand purple. The whole screen reads as ONE coherent purple set —
 // the active-pill, empty-state circle, list icons and accents are all the
@@ -26,7 +28,9 @@ const TAB_THEME = {
   video: { color: BRAND, soft: BRAND_SOFT, Icon: IconFilm },
   audio: { color: BRAND, soft: BRAND_SOFT, Icon: IconMusic },
   file:  { color: BRAND, soft: BRAND_SOFT, Icon: IconFileText },
+  link:  { color: BRAND, soft: BRAND_SOFT, Icon: IconLink },
 };
+const _itemKey = (it) => (it && it.url ? `${it.id}|${it.url}` : String(it && it.id));
 
 function formatSize(bytes) {
   if (!bytes) return '';
@@ -85,13 +89,16 @@ function _nativeItems(items, type) {
   });
 }
 
-function EmptyState({ type, colors }) {
+function EmptyState({ type, colors, t }) {
   const { color, soft, Icon } = TAB_THEME[type] || TAB_THEME.file;
-  const emptyLabel = type === 'image' ? 'Nenhuma foto ainda'
+  const _tr = (k, fb) => { try { const v = t && t(k); return v && v !== k ? v : fb; } catch { return fb; } };
+  const emptyLabel = type === 'link' ? _tr('chat.noLinksYet', 'Nenhum link ainda')
+    : type === 'image' ? 'Nenhuma foto ainda'
     : type === 'video' ? 'Nenhum vídeo ainda'
     : type === 'audio' ? 'Nenhum áudio ainda'
     : 'Nenhum documento ainda';
-  const emptyHint = type === 'image' ? 'As fotos enviadas nesta conversa aparecem aqui.'
+  const emptyHint = type === 'link' ? _tr('chat.noLinksHint', 'Os links compartilhados nesta conversa aparecem aqui.')
+    : type === 'image' ? 'As fotos enviadas nesta conversa aparecem aqui.'
     : type === 'video' ? 'Os vídeos enviados nesta conversa aparecem aqui.'
     : type === 'audio' ? 'As mensagens de voz e áudios aparecem aqui.'
     : 'Os PDFs e documentos compartilhados aparecem aqui.';
@@ -114,8 +121,82 @@ function EmptyState({ type, colors }) {
   );
 }
 
-function MediaGrid({ items, type, colors, onView }) {
-  if (items.length === 0) return <EmptyState type={type} colors={colors} />;
+// [busca-conversa 2026-10-16] Linha de link: prévia (imagem OG ou favicon) do cache
+// do servidor; sem cache → ícone + domínio. Toque abre; botão à direita = mensagem.
+function LinkRow({ item, colors, t, onOpen, onJump }) {
+  const [imgOk, setImgOk] = useState(true);
+  const [favOk, setFavOk] = useState(true);
+  const thumb = imgOk && item.image ? item.image : null;
+  const fav = favOk && item.favicon ? item.favicon : null;
+  const title = (item.title || item.site_name || item.host || item.url || '').trim();
+  return (
+    <TouchableOpacity
+      onPress={() => onOpen(item)}
+      activeOpacity={0.7}
+      accessibilityRole="link"
+      accessibilityLabel={title + (item.host ? `, ${item.host}` : '')}
+      style={{
+        flexDirection: 'row', alignItems: 'center', paddingVertical: 11, paddingHorizontal: 12,
+        borderRadius: 16, backgroundColor: colors.surface,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+      }}
+    >
+      <View style={{ width: 52, height: 52, borderRadius: 12, overflow: 'hidden', backgroundColor: BRAND_SOFT, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+        {thumb ? (
+          <FastImage source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} resizeMode="cover" onError={() => setImgOk(false)} />
+        ) : fav ? (
+          <FastImage source={{ uri: fav }} style={{ width: 24, height: 24 }} resizeMode="contain" onError={() => setFavOk(false)} />
+        ) : (
+          <IconLink size={20} color={BRAND} />
+        )}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', letterSpacing: -0.2 }} numberOfLines={2}>{title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6 }}>
+          {fav && thumb ? <FastImage source={{ uri: fav }} style={{ width: 14, height: 14 }} resizeMode="contain" onError={() => setFavOk(false)} /> : null}
+          <Text style={{ flex: 1, color: colors.textTertiary, fontSize: 12.5 }} numberOfLines={1}>
+            {[item.host, formatDate(item.created_at)].filter(Boolean).join('  ·  ')}
+          </Text>
+        </View>
+      </View>
+      {onJump ? (
+        <TouchableOpacity
+          onPress={() => onJump(item)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={(t && t('chat.showInChat') !== 'chat.showInChat' && t('chat.showInChat')) || 'Mostrar na conversa'}
+          style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, marginLeft: 8 }}
+        >
+          <IconMessageSquare size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+function ListFooter({ busy, colors }) {
+  return busy ? <View style={{ paddingVertical: 18 }}><ActivityIndicator size="small" color={colors.textTertiary} /></View> : null;
+}
+
+function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, onOpenLink, onJump }) {
+  if (items.length === 0) return <EmptyState type={type} colors={colors} t={t} />;
+
+  if (type === 'link') {
+    return (
+      <FlatList
+        key="list-link"
+        data={items}
+        keyExtractor={_itemKey}
+        contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 28 }}
+        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        showsVerticalScrollIndicator={false}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={<ListFooter busy={loadingMore} colors={colors} />}
+        renderItem={({ item }) => <LinkRow item={item} colors={colors} t={t} onOpen={onOpenLink} onJump={onJump} />}
+      />
+    );
+  }
 
   if (type === 'image' || type === 'video') {
     return (
@@ -126,6 +207,9 @@ function MediaGrid({ items, type, colors, onView }) {
         keyExtractor={item => String(item.id)}
         contentContainerStyle={{ padding: 3 }}
         showsVerticalScrollIndicator={false}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={<ListFooter busy={loadingMore} colors={colors} />}
         renderItem={({ item }) => (
           <TouchableOpacity
             onPress={() => onView(item)}
@@ -171,6 +255,9 @@ function MediaGrid({ items, type, colors, onView }) {
       contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 28 }}
       ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
       showsVerticalScrollIndicator={false}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.6}
+      ListFooterComponent={<ListFooter busy={loadingMore} colors={colors} />}
       renderItem={({ item, index }) => {
         const isAudio = type === 'audio';
         const ext = (item.file_name || '').split('.').pop()?.toLowerCase() || '';
@@ -235,10 +322,15 @@ function MediaGrid({ items, type, colors, onView }) {
   );
 }
 
-export default function MediaGallery({ visible, onClose, conversationId, colors, t }) {
-  const [activeTab, setActiveTab] = useState('image');
+export default function MediaGallery({ visible, onClose, conversationId, colors, t, initialTab, onJumpToMessage }) {
+  const [activeTab, setActiveTab] = useState(TABS.includes(initialTab) ? initialTab : 'image');
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  // [busca-conversa 2026-10-16] paginação no servidor (chat_shared_items, cursor).
+  const cursorRef = useRef(null);
+  const moreBusyRef = useRef(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => { if (visible && TABS.includes(initialTab)) setActiveTab(initialTab); }, [visible, initialTab]);
   const [viewerItem, setViewerItem] = useState(null);
   // Guards against a slow request for a previous tab resolving after the user
   // switched tabs (stale response would overwrite the active tab's items).
@@ -271,6 +363,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     video: t?.('chat.videos') || 'Vídeos',
     audio: t?.('chat.audioFiles') || 'Áudios',
     file: t?.('chat.documents') || 'Documentos',
+    link: t?.('chat.nprofile.links') || 'Links',
   };
 
   useEffect(() => {
@@ -280,10 +373,22 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const loadMedia = async (type) => {
     const seq = ++loadSeqRef.current;
     setLoading(true);
+    cursorRef.current = null;
+    moreBusyRef.current = false;
+    setLoadingMore(false);
     try {
-      const r = await api.chatMediaGallery(conversationId, type);
+      // [busca-conversa 2026-10-16] servidor paginado; servidor velho (ação
+      // desconhecida) → galeria antiga (até 300, sem links).
+      let r = null;
+      try { r = await api.chatSharedItems?.(conversationId, type, '', PAGE); } catch { r = null; }
       if (seq !== loadSeqRef.current) return;
-      setItems(r.success ? (r.data?.items || []) : []);
+      if (r && r.success) {
+        cursorRef.current = r.data?.has_more ? (r.data?.next_cursor || null) : null;
+      } else if (type !== 'link') {
+        r = await api.chatMediaGallery(conversationId, type);
+        if (seq !== loadSeqRef.current) return;
+      }
+      setItems(r && r.success ? (r.data?.items || []) : []);
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       console.warn('MediaGallery loadMedia error:', e);
@@ -291,6 +396,35 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     }
     setLoading(false);
   };
+
+  const loadMore = async () => {
+    const cur = cursorRef.current;
+    if (!cur || moreBusyRef.current || loading) return;
+    moreBusyRef.current = true;
+    setLoadingMore(true);
+    const seq = loadSeqRef.current;
+    const type = activeTab;
+    try {
+      const r = await api.chatSharedItems(conversationId, type, cur, PAGE);
+      if (seq !== loadSeqRef.current) return;
+      if (r && r.success) {
+        cursorRef.current = r.data?.has_more ? (r.data?.next_cursor || null) : null;
+        const add = r.data?.items || [];
+        setItems((prev) => {
+          const seen = new Set(prev.map(_itemKey));
+          const out = prev.slice();
+          for (const it of add) { const k = _itemKey(it); if (!seen.has(k)) { seen.add(k); out.push(it); } }
+          return out;
+        });
+      }
+    } catch {} finally {
+      if (seq === loadSeqRef.current) { moreBusyRef.current = false; setLoadingMore(false); }
+    }
+  };
+  const openLinkItem = (item) => {
+    try { require('../services/openLink').openLink(item.url, { colors }); } catch {}
+  };
+  const jumpFromLink = onJumpToMessage ? (item) => { try { onJumpToMessage(item.id); } catch {} } : null;
 
   const handleView = (item) => {
     if (!item?.file_url) return;
@@ -444,10 +578,10 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
                   activeOpacity={0.75}
                 >
                   <Text style={{
-                    fontSize: 13, fontWeight: '700',
+                    fontSize: 12.5, fontWeight: '700',
                     color: active ? '#fff' : colors.textSecondary,
-                    letterSpacing: -0.1,
-                  }} numberOfLines={1}>
+                    letterSpacing: -0.2,
+                  }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
                     {tabLabels[tab]}
                   </Text>
                 </TouchableOpacity>
@@ -473,9 +607,12 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
             onItemPress={onNativePress}
             onItemLongPress={onNativeLongPress}
             onSelectionChange={onNativeSelection}
+            onEndReached={loadMore}
           />
         ) : (
-          <MediaGrid items={items} type={activeTab} colors={colors} onView={handleView} />
+          <MediaGrid items={items} type={activeTab} colors={colors} onView={handleView}
+            onEndReached={loadMore} loadingMore={loadingMore} t={t}
+            onOpenLink={openLinkItem} onJump={jumpFromLink} />
         )}
       </View>
       <ChatMediaViewer

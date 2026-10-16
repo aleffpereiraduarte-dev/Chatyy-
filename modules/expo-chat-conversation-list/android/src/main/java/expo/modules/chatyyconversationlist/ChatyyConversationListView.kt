@@ -2,7 +2,7 @@ package expo.modules.chatyyconversationlist
 
 // [2026-10-14 native-home] Lista de conversas NATIVA (Android): RecyclerView +
 // DiffUtil (payload → atualiza a célula no lugar, sem o crossfade que "pisca"),
-// ItemTouchHelper (swipe → lida/não lida e arquivar), PopupMenu no toque longo,
+// swipe com pílulas iguais ao iOS (SwipeController), PopupMenu no toque longo,
 // Glide para avatares. Mesmo contrato de props/eventos do iOS
 // (ios/ChatyyConversationListView.swift).
 //
@@ -30,7 +30,6 @@ import android.view.ViewGroup
 import android.widget.PopupMenu
 import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import expo.modules.chatyychatstore.ChatyyStoreDB
@@ -38,6 +37,7 @@ import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
@@ -236,7 +236,6 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private val recycler = RecyclerView(context)
   private val layoutManager = LinearLayoutManager(context)
   private val adapter = Adapter()
-  private val touchHelper: ItemTouchHelper = ItemTouchHelper(SwipeCallback())
   private val topBar = CLTopBar(context, recycler)
 
   // ─── [2026-10-15 native-store fase 1.5] foto da HOME ──────────────────────
@@ -450,6 +449,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     // [native-store] foto da home lendo e o JS sem linhas: não aplica vazio.
     if (storeLoading && rows.isEmpty()) return
     var rebindAll = false
+    if (selectionDirty || photoActive) swipe.close(false)
     if (themeDirty || selectionDirty) {
       setBackgroundColor(theme.bg)
       recycler.setBackgroundColor(theme.bg)
@@ -711,6 +711,10 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       bind(holder, position, false)
     }
 
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+      if (holder is RowHolder) swipe.onRecycled(holder.rowView)
+    }
+
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
       bind(holder, position, payloads.isNotEmpty())
     }
@@ -721,6 +725,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       val row = rows[item.id] ?: return
       try {
         holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow)
+        swipe.onBound(holder.rowView)
       } catch (e: Throwable) {
         onNativeError(mapOf("message" to ("bind: " + (e.message ?: e.javaClass.simpleName))))
       }
@@ -729,200 +734,555 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
   // ─── Swipe ───────────────────────────────────────────────────────────────
 
-  private val swipePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-  private val swipeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-    color = 0xFFFFFFFF.toInt()
-    textAlign = Paint.Align.CENTER
-    textSize = 11.5f * density
-    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-  }
-  private val swipeRect = RectF()
-
-  private val swipeReveal = Paint(Paint.ANTI_ALIAS_FLAG)
+  /** Uma ação do swipe (mesmas do iOS, mesma ordem: da borda para dentro). */
+  private class SwipeAct(val action: String, val label: String, val icon: Int, val color: Int)
 
   /**
-   * [2026-10-16 wave8-list] Swipe nível Telegram:
-   *  - até a largura do botão (74 dp) a linha anda 1:1; depois vem com
-   *    RESISTÊNCIA (metade do dedo) — mola elástica;
-   *  - ao cruzar o limiar (42% da largura) o ícone "estala" (cresce com
-   *    passada e assenta), um círculo mais claro se abre atrás dele e vibra
-   *    uma vez; voltar abaixo do limiar desarma (ícone encolhe);
-   *  - soltar armado = ação completa (deslize total). "Lida" volta a linha
-   *    para o lugar deslizando; "Arquivar" leva a linha até o fim.
-   *  - um peteleco rápido NÃO dispara (só o limiar), evitando ação acidental.
-   * Reduzir movimento ("Remover animações"): sem estalo/círculo, só a cor.
+   * [2026-10-16 wave13 swipe-ios] Swipe IGUAL ao iOS (UISwipeActionsConfiguration
+   * de ios/ChatyyConversationListView.swift → swipeConfiguration):
+   *  - "leading" (arrastar para a direita no LTR): Marcar como (não) lida,
+   *    Silenciar, Fixar, E-mail (se o JS mandar o rótulo `email`);
+   *    "trailing" (para a esquerda): Arquivar (borda) + Apagar (vermelho);
+   *  - cada ação = PÍLULA arredondada com ícone + rótulo embaixo (cinza), a
+   *    linha arrastada fica cinza com cantos arredondados (isSwiped do iOS);
+   *  - revelação proporcional ao arrasto (pílulas crescem/abrem com o dedo);
+   *    soltar no meio → abre (mola) ou fecha; toque numa pílula executa;
+   *    toque fora / rolar a lista fecha;
+   *  - arrastar além do limiar = swipe completo da 1ª ação (lida à esquerda,
+   *    arquivar à direita): a pílula primária toma o espaço todo, vibra uma
+   *    vez ao armar (tique ao desarmar); soltar armado executa;
+   *  - rótulos nunca truncam: encolhem a fonte (13→10.5sp) e depois quebram
+   *    em 2 linhas; RTL espelha (leading vira o lado direito);
+   *  - Reduzir movimento ("Remover animações"): sem mola/expansão animada.
    */
-  private inner class SwipeCallback : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
-    private val threshold = 0.42f
-    private var armedId: String? = null
-    private var armedAt = 0L
-    private var disarmedId: String? = null
-    private var disarmedAt = 0L
-    // Última posição com o dedo na tela → a animação de soltar parte dela.
-    private var relId: String? = null
-    private var relRaw = 0f
-    private var relVis = 0f
+  private inner class SwipeController : RecyclerView.ItemDecoration(), RecyclerView.OnItemTouchListener {
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private val minFling = 650f * density
+    private var vt: android.view.VelocityTracker? = null
 
-    override fun getSwipeDirs(rv: RecyclerView, vh: RecyclerView.ViewHolder): Int {
-      if (vh !is RowHolder || !swipeEnabled || selectionMode || photoActive) return 0
-      return super.getSwipeDirs(rv, vh)
-    }
+    // Gesto
+    private var downX = 0f
+    private var downY = 0f
+    private var tracking = false
+    private var dragging = false
+    private var vertical = false
+    private var swallow = false
+    private var pendingTap = -1
+    private var startTx = 0f
+    private var trackId: String? = null
 
-    override fun onMove(rv: RecyclerView, vh: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean = false
+    // Linha ativa (arrastando / aberta / animando) — só uma por vez.
+    private var activeId: String? = null
+    private var tx = 0f
+    private var anim: android.animation.ValueAnimator? = null
+    private var committing = false
 
-    override fun getSwipeThreshold(vh: RecyclerView.ViewHolder): Float = threshold
+    // Swipe completo
+    private var armed = false
+    private var armT = 0f
+    private var armAnim: android.animation.ValueAnimator? = null
 
-    // Só o limiar decide (peteleco não arquiva sem querer).
-    override fun getSwipeEscapeVelocity(defaultValue: Float): Float = Float.MAX_VALUE
+    // Layout das pílulas do lado aberto (recalculado quando o lado muda)
+    private var side = 0               // +1 = linha andou p/ direita, -1 = esquerda
+    private var acts: List<SwipeAct> = emptyList()
+    private var slots = FloatArray(0)  // largura de cada coluna (pílula/rótulo)
+    private var labelsLay: Array<android.text.StaticLayout?> = arrayOf()
+    private var revealW = 0f
+    private var layoutW = 0
+    private var layoutRowId: String? = null
+    private val hit = ArrayList<RectF>()
+    private val labelPaint = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG)
+    private val pillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val hairPaint = Paint()
+    private val rect = RectF()
 
-    override fun getAnimationDuration(rv: RecyclerView, animationType: Int, animateDx: Float, animateDy: Float): Long =
-      if (animationType == ItemTouchHelper.ANIMATION_TYPE_SWIPE_SUCCESS || animationType == ItemTouchHelper.ANIMATION_TYPE_SWIPE_CANCEL) 300L
-      else super.getAnimationDuration(rv, animationType, animateDx, animateDy)
+    private val margin get() = 8f * density
+    private val gap get() = 8f * density
+    private val pillMin get() = 60f * density
 
-    override fun onSwiped(vh: RecyclerView.ViewHolder, direction: Int) {
-      val holder = vh as? RowHolder ?: return
-      val id = holder.rowView.row.id
-      val pos = holder.bindingAdapterPosition
-      val action = if (direction == ItemTouchHelper.RIGHT) "toggleRead" else "archive"
-      onRowAction(mapOf("id" to id, "action" to action, "source" to "swipe"))
-      // Limpa o estado do ItemTouchHelper (a linha de "Lida" já voltou ao
-      // lugar no desenho; a de arquivar some com o patch do JS — se não sumir,
-      // ex. falhou, ela reaparece sozinha).
-      val delay = if (action == "archive") 700L else 0L
-      main.postDelayed({
-        val p = items.indexOfFirst { it is Item.Row && it.id == id }
-        if (p >= 0) adapter.notifyItemChanged(p, PAYLOAD_BIND)
-        else if (pos != RecyclerView.NO_POSITION && pos < adapter.itemCount) adapter.notifyItemChanged(pos)
-      }, delay)
-    }
+    fun enabled(): Boolean = swipeEnabled && !selectionMode && !photoActive
 
-    override fun clearView(rv: RecyclerView, vh: RecyclerView.ViewHolder) {
-      super.clearView(rv, vh)
-      val id = (vh as? RowHolder)?.rowView?.row?.id
-      if (id != null) {
-        if (armedId == id) armedId = null
-        if (disarmedId == id) disarmedId = null
-        if (relId == id) relId = null
+    private fun rtl(): Boolean = recycler.layoutDirection == View.LAYOUT_DIRECTION_RTL
+
+    private fun reduced(): Boolean = CLMotion.reduced(context)
+
+    private fun viewFor(id: String?): CLRowView? {
+      if (id == null) return null
+      for (i in 0 until recycler.childCount) {
+        val h = recycler.getChildViewHolder(recycler.getChildAt(i)) as? RowHolder ?: continue
+        if (h.rowView.row.id == id) return h.rowView
       }
+      return null
     }
 
-    private fun damp(raw: Float, button: Float): Float {
-      val a = abs(raw)
-      val v = if (a <= button) a else button + (a - button) * 0.5f
-      return if (raw < 0) -v else v
-    }
+    // ── Ações (espelho do Swift) ──
 
-    /** Escala do "estalo": 1 → 1.32 → 1.15 ao armar; 1.15 → 1 ao desarmar. */
-    private fun popScale(now: Long, armed: Boolean, since: Long, reduced: Boolean): Float {
-      if (reduced) return if (armed) 1.15f else 1f
-      val t = ((now - since) / 260f).coerceIn(0f, 1f)
-      return if (armed) {
-        if (t < 0.4f) { val u = t / 0.4f; 1f + 0.32f * (1f - (1f - u) * (1f - u)) }
-        else { val u = (t - 0.4f) / 0.6f; 1.32f - 0.17f * (u * u * (3f - 2f * u)) }
+    private fun actsFor(row: CLRow, leading: Boolean): List<SwipeAct> {
+      val L = labels
+      val out = ArrayList<SwipeAct>(4)
+      if (leading) {
+        val unread = row.unread > 0
+        out.add(SwipeAct("toggleRead",
+          if (unread) L.get("markRead", "Marcar como lida") else L.get("markUnread", "Marcar como não lida"),
+          if (unread) R.drawable.ccl_ic_check else R.drawable.ccl_ic_message, 0xFF1C1C1E.toInt()))
+        out.add(SwipeAct("mute",
+          if (row.muted) L.get("unmute", "Reativar") else L.get("mute", "Silenciar"),
+          if (row.muted) R.drawable.ccl_ic_bell else R.drawable.ccl_ic_bell_off, 0xFF3A3A3C.toInt()))
+        out.add(SwipeAct("pin",
+          if (row.pinned) L.get("unpin", "Desafixar") else L.get("pin", "Fixar"),
+          R.drawable.ccl_ic_pin, 0xFF636366.toInt()))
+        if (L.has("email")) out.add(SwipeAct("email", L.get("email", "E-mail"), R.drawable.ccl_ic_mail, 0xFF8E8E93.toInt()))
       } else {
-        1.15f - 0.15f * (1f - (1f - t) * (1f - t))
+        out.add(SwipeAct("archive",
+          if (row.archived) L.get("unarchive", "Desarquivar") else L.get("archive", "Arquivar"),
+          R.drawable.ccl_ic_archive, CLTheme.SWIPE_ARCHIVE))
+        out.add(SwipeAct("delete", L.get("delete", "Apagar"), R.drawable.ccl_ic_trash, CLTheme.SWIPE_DELETE))
       }
+      return out
     }
 
-    override fun onChildDraw(c: Canvas, rv: RecyclerView, vh: RecyclerView.ViewHolder, dX: Float, dY: Float, actionState: Int, isCurrentlyActive: Boolean) {
-      if (actionState != ItemTouchHelper.ACTION_STATE_SWIPE || vh !is RowHolder) {
-        super.onChildDraw(c, rv, vh, dX, dY, actionState, isCurrentlyActive)
+    /** Mede colunas: fonte 13sp → 10.5sp e, se ainda não couber, 2 linhas. */
+    private fun layoutSide(v: CLRowView, s: Int) {
+      val w = v.width
+      if (s == side && w == layoutW && layoutRowId == v.row.id && acts.isNotEmpty()) return
+      side = s
+      layoutW = w
+      layoutRowId = v.row.id
+      val leading = (s > 0) != rtl()
+      acts = actsFor(v.row, leading)
+      val n = acts.size
+      val fs = min(max(context.resources.configuration.fontScale, 0.85f), 1.25f)
+      // Deixa à mostra pelo menos o avatar da linha (como o iOS).
+      val avail = max(pillMin * n + margin + gap * n, w - 76f * density)
+      labelPaint.typeface = CLType.weight(500)
+      var size = 13f * density * fs
+      val minSize = 10.5f * density * fs
+      val tw = FloatArray(n)
+      fun measure() {
+        labelPaint.textSize = size
+        for (i in 0 until n) tw[i] = labelPaint.measureText(acts[i].label)
+      }
+      fun total(sl: FloatArray): Float = margin + sl.sum() + gap * n
+      measure()
+      var sl = FloatArray(n) { max(pillMin, tw[it]) }
+      while (total(sl) > avail && size > minSize) {
+        size -= 0.5f * density
+        measure()
+        sl = FloatArray(n) { max(pillMin, tw[it]) }
+      }
+      if (total(sl) > avail) {
+        // 2 linhas: coluna ~ metade do texto, nunca menor que a maior palavra.
+        sl = FloatArray(n) { i ->
+          val words = acts[i].label.split(' ')
+          val widest = words.maxOfOrNull { labelPaint.measureText(it) } ?: 0f
+          max(pillMin, max(widest, tw[i] * 0.55f))
+        }
+        val t = total(sl)
+        if (t > avail) {
+          val k = (avail - margin - gap * n) / sl.sum()
+          for (i in 0 until n) sl[i] = max(44f * density, sl[i] * k)
+        }
+      }
+      slots = sl
+      labelsLay = Array(n) { i ->
+        val lw = max(1, ceil(sl[i] + 2f * density).toInt())
+        val txt = acts[i].label
+        android.text.StaticLayout.Builder.obtain(txt, 0, txt.length, labelPaint, lw)
+          .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
+          .setMaxLines(2)
+          .setEllipsize(android.text.TextUtils.TruncateAt.END)
+          .setIncludePad(false)
+          .setLineSpacing(0f, 1f)
+          .build()
+      }
+      revealW = margin + sl.sum() + gap * n
+    }
+
+    private fun fullThreshold(w: Float): Float =
+      min(w - 28f * density, max(w * 0.55f, revealW + 36f * density))
+
+    // ── Estado ──
+
+    private fun setTx(v: CLRowView, value: Float, live: Boolean) {
+      tx = value
+      val s = if (value > 0f) 1 else if (value < 0f) -1 else side
+      if (value != 0f) layoutSide(v, s)
+      v.translationX = value
+      v.setSwiped(value != 0f)
+      if (live) {
+        val w = v.width.toFloat()
+        val now = abs(value) >= fullThreshold(w)
+        if (now != armed) setArmed(v, now)
+      }
+      recycler.invalidate()
+    }
+
+    private fun setArmed(v: View, on: Boolean) {
+      armed = on
+      v.performHapticFeedback(if (on) android.view.HapticFeedbackConstants.CONTEXT_CLICK else android.view.HapticFeedbackConstants.CLOCK_TICK)
+      armAnim?.cancel()
+      if (reduced()) { armT = if (on) 1f else 0f; recycler.invalidate(); return }
+      val a = android.animation.ValueAnimator.ofFloat(armT, if (on) 1f else 0f)
+      a.duration = if (on) 220L else 160L
+      a.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+      a.addUpdateListener { armT = it.animatedValue as Float; recycler.invalidate() }
+      armAnim = a
+      a.start()
+    }
+
+    private fun resetVisual(v: CLRowView?) {
+      if (v == null) return
+      v.translationX = 0f
+      v.setSwiped(false)
+    }
+
+    private fun clearActive() {
+      anim?.cancel(); anim = null
+      armAnim?.cancel(); armAnim = null
+      activeId = null
+      tx = 0f
+      armed = false
+      armT = 0f
+      committing = false
+      layoutRowId = null
+      hit.clear()
+      recycler.invalidate()
+    }
+
+    /** Anima a linha ativa até `to`; `end` roda no fim (ou se a linha sumir). */
+    private fun animateTo(to: Float, kind: Int, end: (() -> Unit)? = null) {
+      val id = activeId ?: return
+      anim?.cancel()
+      val v0 = viewFor(id)
+      if (v0 == null || reduced()) {
+        if (v0 != null) setTx(v0, to, false)
+        if (to == 0f && !committing) { resetVisual(v0); clearActive() }
+        end?.invoke()
         return
       }
-      val v = vh.itemView
-      val row = vh.rowView.row
-      val id = row.id
-      val w = v.width.toFloat()
-      val button = 74f * density
-      val reduced = CLMotion.reduced(context)
-      val now = SystemClock.uptimeMillis()
-      var vis: Float
-      if (isCurrentlyActive || relId != id) {
-        vis = damp(dX, button)
-        if (isCurrentlyActive) { relId = id; relRaw = dX; relVis = vis }
-        // Armar / desarmar no limiar (vibra uma vez ao armar).
-        val armedNow = isCurrentlyActive && abs(dX) >= threshold * w
-        if (isCurrentlyActive) {
-          if (armedNow && armedId != id) {
-            armedId = id; armedAt = now
-            if (disarmedId == id) disarmedId = null
-            v.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
-          } else if (!armedNow && armedId == id) {
-            armedId = null
-            disarmedId = id; disarmedAt = now
-            v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-          }
+      val a = android.animation.ValueAnimator.ofFloat(tx, to)
+      when (kind) {
+        0 -> { a.duration = 340L; a.interpolator = android.view.animation.OvershootInterpolator(0.9f) } // abrir (mola)
+        1 -> { a.duration = 280L; a.interpolator = android.view.animation.DecelerateInterpolator(2f) }  // fechar
+        else -> { a.duration = 200L; a.interpolator = android.view.animation.AccelerateInterpolator(1.4f) } // sair da tela
+      }
+      var cancelled = false
+      a.addUpdateListener {
+        val v = viewFor(id)
+        if (v == null || activeId != id) {
+          it.cancel()
+          if (v == null && activeId == id && !committing) clearActive() // linha saiu da tela
+          return@addUpdateListener
+        }
+        setTx(v, it.animatedValue as Float, false)
+      }
+      a.addListener(object : android.animation.AnimatorListenerAdapter() {
+        override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+        override fun onAnimationEnd(animation: android.animation.Animator) {
+          if (anim === a) anim = null
+          if (!cancelled && to == 0f && activeId == id && !committing) { resetVisual(viewFor(id)); clearActive() }
+          if (!cancelled || viewFor(id) == null) end?.invoke()
+        }
+      })
+      anim = a
+      a.start()
+    }
+
+    fun close(animated: Boolean = true) {
+      val id = activeId ?: return
+      if (committing) return
+      if (armed) { armed = false; armAnim?.cancel(); armT = 0f }
+      if (!animated) { anim?.cancel(); resetVisual(viewFor(id)); clearActive(); return }
+      animateTo(0f, 1)
+    }
+
+    private fun emit(id: String, action: String) {
+      onRowAction(mapOf("id" to id, "action" to action, "source" to "swipe"))
+    }
+
+    private fun fire(index: Int) {
+      val id = activeId ?: return
+      val act = acts.getOrNull(index) ?: return
+      viewFor(id)?.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+      emit(id, act.action)
+      close()
+    }
+
+    /** Swipe completo: lida volta para o lugar; arquivar leva a linha embora. */
+    private fun commitPrimary(v: CLRowView) {
+      val id = activeId ?: return
+      val act = acts.firstOrNull() ?: return
+      if (act.action == "archive") {
+        committing = true
+        val w = v.width.toFloat()
+        animateTo(if (tx < 0) -w else w, 2) {
+          emit(id, act.action)
+          // Some com o patch do JS; se não sumir (falhou / filtro), volta.
+          main.postDelayed({
+            if (activeId != id) return@postDelayed
+            committing = false
+            armed = false; armT = 0f
+            if (viewFor(id) == null) { clearActive() } else animateTo(0f, 1)
+          }, 700L)
         }
       } else {
-        // Soltou: o ItemTouchHelper anima dX de relRaw até 0 (cancelou) ou
-        // ±largura (completou). Mapeia isso a partir da posição VISUAL do dedo.
-        val toEnd = abs(dX) > abs(relRaw) + 0.5f
-        val target = if (toEnd) (if (dX > 0) w else -w) else 0f
-        val p = if (abs(target - relRaw) < 1f) 1f else ((dX - relRaw) / (target - relRaw)).coerceIn(0f, 1f)
-        val visTarget = if (toEnd && dX > 0) 0f else target // "Lida": volta para o lugar
-        vis = relVis + (visTarget - relVis) * p
+        emit(id, act.action)
+        armed = false
+        armAnim?.cancel()
+        val from = armT
+        if (!reduced() && from > 0f) {
+          val a = android.animation.ValueAnimator.ofFloat(from, 0f)
+          a.duration = 260L
+          a.addUpdateListener { armT = it.animatedValue as Float; recycler.invalidate() }
+          armAnim = a
+          a.start()
+        } else armT = 0f
+        animateTo(0f, 1)
       }
-      if (vis != 0f) {
-        val right = vis > 0
-        val armed = armedId == id
-        val base = if (right) CLTheme.SWIPE_READ else CLTheme.SWIPE_ARCHIVE
-        swipePaint.color = base
-        if (right) swipeRect.set(v.left.toFloat(), v.top.toFloat(), v.left + vis, v.bottom.toFloat())
-        else swipeRect.set(v.right + vis, v.top.toFloat(), v.right.toFloat(), v.bottom.toFloat())
-        c.drawRect(swipeRect, swipePaint)
-        val aw = abs(vis)
-        // Ícone acompanha a borda da linha depois de abrir o botão inteiro.
-        val cx = if (right) v.left + (if (aw <= button) aw / 2f else aw - button / 2f)
-          else v.right - (if (aw <= button) aw / 2f else aw - button / 2f)
-        val cy = v.top + v.height / 2f
-        // Círculo mais claro que se abre atrás do ícone ao armar.
-        val revealT = when {
-          reduced -> if (armed) 1f else 0f
-          armed -> ((now - armedAt) / 300f).coerceIn(0f, 1f)
-          disarmedId == id -> 1f - ((now - disarmedAt) / 200f).coerceIn(0f, 1f)
-          else -> 0f
+    }
+
+    /** Chamado no bind: linha reciclada para outra conversa não herda o arrasto. */
+    fun onBound(v: CLRowView) {
+      if (v.row.id == activeId) {
+        v.translationX = tx
+        v.setSwiped(tx != 0f)
+      } else if (v.translationX != 0f) {
+        resetVisual(v)
+      }
+    }
+
+    fun onRecycled(v: CLRowView) {
+      if (v.row.id == activeId && !committing) { anim?.cancel(); clearActive() }
+      resetVisual(v)
+    }
+
+    // ── Toque ──
+
+    private fun hitIndex(x: Float, y: Float): Int {
+      for (i in hit.indices) if (hit[i].contains(x, y)) return i
+      return -1
+    }
+
+    override fun onInterceptTouchEvent(rv: RecyclerView, e: android.view.MotionEvent): Boolean {
+      when (e.actionMasked) {
+        android.view.MotionEvent.ACTION_DOWN -> {
+          tracking = false; dragging = false; vertical = false; swallow = false; pendingTap = -1; trackId = null
+          downX = e.x; downY = e.y
+          vt?.recycle(); vt = android.view.VelocityTracker.obtain(); vt?.addMovement(e)
+          if (committing) { swallow = true; return false }
+          val child = rv.findChildViewUnder(e.x, e.y)
+          val holder = child?.let { rv.getChildViewHolder(it) } as? RowHolder
+          if (activeId != null) {
+            val hi = hitIndex(e.x, e.y)
+            if (hi >= 0 && !armed) { pendingTap = hi; return true }
+            if (holder != null && holder.rowView.row.id == activeId && enabled()) {
+              // Arrastar a linha aberta de novo (ou tocar nela = fechar).
+              anim?.cancel(); anim = null
+              tracking = true; trackId = activeId; startTx = tx
+              swallow = true
+              return false
+            }
+            close()
+            swallow = true
+            return false
+          }
+          if (holder != null && enabled() && rv.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+            tracking = true; trackId = holder.rowView.row.id; startTx = 0f
+          }
+          return false
         }
-        if (revealT > 0f) {
-          val maxR = kotlin.math.hypot(aw.toDouble(), v.height.toDouble()).toFloat()
-          val eased = 1f - (1f - revealT) * (1f - revealT) * (1f - revealT)
-          swipeReveal.color = 0x1FFFFFFF
-          c.save()
-          c.clipRect(swipeRect)
-          c.drawCircle(cx, cy, maxR * eased, swipeReveal)
-          c.restore()
+        android.view.MotionEvent.ACTION_MOVE -> {
+          vt?.addMovement(e)
+          if (pendingTap >= 0) return true
+          if (!tracking || dragging || vertical) return false
+          val dx = e.x - downX
+          val dy = e.y - downY
+          if (abs(dy) > slop && abs(dy) > abs(dx)) { vertical = true; tracking = false; return false }
+          if (abs(dx) > slop && abs(dx) > abs(dy) * 1.2f) {
+            val v = viewFor(trackId) ?: return false
+            if (activeId != null && activeId != trackId) close(false)
+            activeId = trackId
+            dragging = true
+            downX = e.x // segue do ponto atual (sem pulo do slop)
+            rv.parent?.requestDisallowInterceptTouchEvent(true)
+            setTx(v, startTx, true)
+            return true
+          }
+          return false
         }
-        val unread = row.unread > 0
-        val label = if (right) {
-          if (unread) labels.get("markRead", "Lida") else labels.get("markUnread", "Não lida")
-        } else {
-          if (row.archived) labels.get("unarchive", "Desarquivar") else labels.get("archive", "Arquivar")
+        android.view.MotionEvent.ACTION_UP -> {
+          // Toque (sem rolar) que só fechou a linha aberta: não abre conversa.
+          val moved = abs(e.x - downX) > slop || abs(e.y - downY) > slop
+          if (swallow && !dragging && !moved && rv.scrollState == RecyclerView.SCROLL_STATE_IDLE) {
+            if (activeId != null && trackId == activeId) close()
+            tracking = false
+            return true
+          }
+          tracking = false
+          return false
         }
-        val iconRes = if (right) (if (unread) R.drawable.ccl_ic_check else R.drawable.ccl_ic_message) else R.drawable.ccl_ic_archive
-        val grow = min(1f, aw / button)
-        val alpha = (grow * 255).toInt()
-        val scale = (0.7f + 0.3f * grow) * when {
-          armed -> popScale(now, true, armedAt, reduced)
-          disarmedId == id -> popScale(now, false, disarmedAt, reduced)
-          else -> 1f
+        android.view.MotionEvent.ACTION_CANCEL -> { tracking = false; return false }
+      }
+      return false
+    }
+
+    override fun onTouchEvent(rv: RecyclerView, e: android.view.MotionEvent) {
+      vt?.addMovement(e)
+      when (e.actionMasked) {
+        android.view.MotionEvent.ACTION_MOVE -> {
+          if (!dragging) return
+          val v = viewFor(activeId) ?: return
+          val w = v.width.toFloat()
+          var raw = startTx + (e.x - downX)
+          // Só abre lados que têm ações; além da largura vem com resistência.
+          val lim = w
+          if (abs(raw) > lim) raw = if (raw > 0) lim + (raw - lim) * 0.2f else -lim + (raw + lim) * 0.2f
+          setTx(v, raw, true)
         }
-        tintedIcon(context, iconRes, 0xFFFFFFFF.toInt())?.let { d ->
-          val s = 20 * density * scale
-          d.alpha = alpha
-          d.setBounds((cx - s / 2f).toInt(), (cy - s - 2 * density).toInt(), (cx + s / 2f).toInt(), (cy - 2 * density).toInt())
+        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+          if (pendingTap >= 0) {
+            val idx = pendingTap
+            pendingTap = -1
+            if (e.actionMasked == android.view.MotionEvent.ACTION_UP && hitIndex(e.x, e.y) == idx) fire(idx)
+            return
+          }
+          if (!dragging) return
+          dragging = false
+          val v = viewFor(activeId)
+          if (v == null) { clearActive(); return }
+          vt?.computeCurrentVelocity(1000)
+          val vx = vt?.xVelocity ?: 0f
+          if (armed && e.actionMasked == android.view.MotionEvent.ACTION_UP) { commitPrimary(v); return }
+          if (armed) setArmed(v, false)
+          val s = if (tx > 0) 1f else -1f
+          val open = tx != 0f && (
+            (vx * s > minFling) ||
+            (abs(tx) > revealW * 0.42f && vx * s > -minFling))
+          if (open) {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            animateTo(s * revealW, 0)
+          } else animateTo(0f, 1)
+        }
+      }
+    }
+
+    override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+      if (disallowIntercept && !dragging) { tracking = false }
+    }
+
+    // ── Desenho (por baixo da linha) ──
+
+    // Separadores POR CIMA (o fundo da linha é opaco), como o UICollectionView.
+    override fun onDrawOver(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
+      drawSeparators(c, parent)
+    }
+
+    override fun onDraw(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
+      hit.clear()
+      val id = activeId ?: return
+      val v = viewFor(id) ?: return
+      if (tx == 0f || acts.isEmpty()) return
+      val n = acts.size
+      val w = v.width.toFloat()
+      val atx = abs(tx)
+      val p = atx / max(1f, revealW)
+      val right = tx > 0                       // pílulas na esquerda (linha foi p/ direita)
+      val top = v.top.toFloat() + v.translationY
+      val h = v.height.toFloat()
+      // Altura do bloco pílula + rótulo
+      var labH = 0f
+      for (l in labelsLay) if (l != null) labH = max(labH, l.height.toFloat())
+      val lgap = 5f * density
+      val pillH = min(46f * density, max(30f * density, h - labH - lgap - 12f * density))
+      val groupH = pillH + lgap + labH
+      val gy = top + (h - groupH) / 2f
+      val extra = max(0f, atx - revealW)
+      val grow = (p).coerceIn(0f, 1f)
+      val reduced = reduced()
+      c.save()
+      if (right) c.clipRect(v.left.toFloat(), top, v.left + atx, top + h)
+      else c.clipRect(v.right - atx, top, v.right.toFloat(), top + h)
+      var off = margin * grow
+      for (i in 0 until n) {
+        val slotW = slots[i] + extra / n
+        val start = off
+        off += (slotW + gap) * grow
+        var cx = start + slotW * grow / 2f
+        val pw = slotW // pílula = largura da coluna
+        var alpha = ((p - 0.12f) / 0.55f).coerceIn(0f, 1f)
+        val sc = if (reduced) 1f else (0.55f + 0.45f * grow)
+        var drawW = pw * sc
+        var drawH = pillH * sc
+        if (i == 0 && armT > 0f) {
+          // Swipe completo: a 1ª pílula toma o espaço revelado inteiro.
+          val fullW = atx - margin - gap
+          val fcx = margin + fullW / 2f
+          cx += (fcx - cx) * armT
+          drawW += (fullW - drawW) * armT
+          drawH += (pillH - drawH) * armT
+          alpha = alpha + (1f - alpha) * armT
+        } else if (armT > 0f) {
+          alpha *= (1f - armT)
+        }
+        if (alpha <= 0.01f) continue
+        val absCx = if (right) v.left + cx else v.right - cx
+        val pcy = gy + pillH / 2f
+        rect.set(absCx - drawW / 2f, pcy - drawH / 2f, absCx + drawW / 2f, pcy + drawH / 2f)
+        val act = acts[i]
+        pillPaint.color = act.color
+        pillPaint.alpha = (alpha * 255).toInt()
+        val rad = drawH / 2f
+        c.drawRoundRect(rect, rad, rad, pillPaint)
+        tintedIcon(context, act.icon, 0xFFFFFFFF.toInt())?.let { d ->
+          val s = 21f * density * sc
+          d.alpha = (alpha * 255).toInt()
+          d.setBounds((absCx - s / 2f).toInt(), (pcy - s / 2f).toInt(), (absCx + s / 2f).toInt(), (pcy + s / 2f).toInt())
           d.draw(c)
         }
-        swipeText.alpha = alpha
-        var txt = label
-        val maxW = button - 6 * density
-        while (txt.length > 3 && swipeText.measureText(txt) > maxW) txt = txt.dropLast(1)
-        if (txt != label) txt = txt.dropLast(1) + "…"
-        c.drawText(txt, cx, cy + 14 * density, swipeText)
-        val animating = !reduced && ((armed && now - armedAt < 320) || (disarmedId == id && now - disarmedAt < 260))
-        if (animating) rv.postInvalidateOnAnimation()
+        val lay = labelsLay.getOrNull(i)
+        if (lay != null) {
+          labelPaint.color = theme.sub
+          labelPaint.alpha = (alpha * 255).toInt()
+          // Centraliza cada linha (StaticLayout ALIGN_NORMAL + deslocamento por linha).
+          for (ln in 0 until lay.lineCount) {
+            val lw = lay.getLineWidth(ln)
+            val ls = lay.getLineStart(ln)
+            val le = lay.getLineEnd(ln)
+            val baseY = gy + pillH + lgap + lay.getLineBaseline(ln)
+            val txt = lay.text.subSequence(ls, le).toString().trimEnd()
+            val ell = lay.getEllipsisCount(ln)
+            val shown = if (ell > 0) txt.substring(0, max(0, txt.length - ell)).trimEnd() + "…" else txt
+            c.drawText(shown, absCx - min(lw, labelPaint.measureText(shown)) / 2f, baseY, labelPaint)
+          }
+        }
+        // Área de toque: coluna inteira (pílula + rótulo).
+        if (p >= 0.98f && armT == 0f) {
+          val hw = slotW / 2f
+          hit.add(RectF(absCx - hw, gy - 6f * density, absCx + hw, gy + groupH + 6f * density))
+        } else hit.add(RectF())
       }
-      super.onChildDraw(c, rv, vh, vis, dY, actionState, isCurrentlyActive)
+      c.restore()
+      if (anim?.isRunning == true || armAnim?.isRunning == true) parent.postInvalidateOnAnimation()
+    }
+
+    /** Linha fina a partir do nome (16 + 54 + 14 dp), como o iOS (sep inset). */
+    private fun drawSeparators(c: Canvas, parent: RecyclerView) {
+      hairPaint.color = if (theme.dark) 0x17FFFFFF else 0x14000000
+      val hh = max(1f, density * 0.5f)
+      val lead = ((if (selectionMode) 36f else 0f) + 16f + 54f + 14f) * density
+      val rtl = rtl()
+      for (i in 0 until parent.childCount) {
+        val ch = parent.getChildAt(i)
+        val h = parent.getChildViewHolder(ch) as? RowHolder ?: continue
+        if (ch.translationX != 0f || h.rowView.row.id == activeId) continue
+        val b = ch.bottom + ch.translationY
+        if (rtl) c.drawRect(ch.left.toFloat(), b - hh, ch.right - lead, b, hairPaint)
+        else c.drawRect(ch.left + lead, b - hh, ch.right.toFloat(), b, hairPaint)
+      }
     }
   }
+
+  private val swipe = SwipeController()
 
   // init no FIM: todas as propriedades acima já estão inicializadas.
   init {
@@ -947,10 +1307,13 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     topBar.visibility = GONE
     stack.addView(topBar, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, 1, Gravity.TOP))
     addView(stack, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.MATCH_PARENT))
-    touchHelper.attachToRecyclerView(recycler)
+    // [wave13 swipe-ios] swipe próprio (pílulas iOS) no lugar do ItemTouchHelper.
+    recycler.addItemDecoration(swipe)
+    recycler.addOnItemTouchListener(swipe)
     recycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
       override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) { onListScrolled() }
       override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+        if (newState == RecyclerView.SCROLL_STATE_DRAGGING) swipe.close()
         if (newState == RecyclerView.SCROLL_STATE_IDLE) snapHeader()
       }
     })

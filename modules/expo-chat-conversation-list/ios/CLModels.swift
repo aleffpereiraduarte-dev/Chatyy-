@@ -303,6 +303,7 @@ enum CLSymbols {
     case "file": return "doc.text"
     case "lock": return "lock"
     case "gift": return "gift"
+    case "ban": return "nosign"   // [wave13-C] mensagem apagada (⊘)
     default: return nil
     }
   }

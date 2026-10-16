@@ -15,8 +15,11 @@ import android.view.animation.DecelerateInterpolator
 import android.graphics.Bitmap
 import android.graphics.LinearGradient
 import android.graphics.Shader
+import android.os.Build
+import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.request.target.CustomTarget
@@ -257,6 +260,35 @@ class MLCellView(context: Context) : ViewGroup(context) {
 
   init { setWillNotDraw(false); clipChildren = false }
 
+  // ─── [2026-10-16 wave13-C] acessibilidade (TalkBack) ─────────────────────
+  /** Ações personalizadas (id, nome traduzido) — a lista monta e executa. */
+  var a11yActs: List<Pair<String, String>> = emptyList()
+  /** (célula, "activate" | "more" | id da ação) → true = tratado. */
+  var onA11yAction: ((MLCellView, String) -> Boolean)? = null
+
+  override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+    super.onInitializeAccessibilityNodeInfo(info)
+    val r = row ?: return
+    if ((r.kind == MLKind.DATE || r.kind == MLKind.UNREAD) && Build.VERSION.SDK_INT >= 28) info.isHeading = true
+    if (r.kind != MLKind.MSG || onA11yAction == null) return
+    info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
+    if (r.sel == 0) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_LONG_CLICK)
+    for ((i, a) in a11yActs.withIndex()) info.addAction(AccessibilityNodeInfo.AccessibilityAction(A11Y_ACTION_BASE + i, a.second))
+  }
+
+  override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+    val cb = onA11yAction
+    if (cb != null && row?.kind == MLKind.MSG) {
+      val id = when (action) {
+        AccessibilityNodeInfo.ACTION_CLICK -> "activate"
+        AccessibilityNodeInfo.ACTION_LONG_CLICK -> "more"
+        else -> a11yActs.getOrNull(action - A11Y_ACTION_BASE)?.first
+      }
+      if (id != null && cb(this, id)) return true
+    }
+    return super.performAccessibilityAction(action, arguments)
+  }
+
   fun bind(key: String, row: MLRow, lay: MLRowLayout, style: MLStyle, audio: MLAudioState?, liftedKey: String = "", revealed: Boolean = false) {
     val changedRow = this.key != key
     val prevRow = this.row
@@ -301,7 +333,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
       else sl.set(u, if (o.kind == MLOp.IMAGE) o.thumb else "", o.rect.width().toInt(), o.rect.height().toInt(), false, o.fit)
     }
     for (i in lay.imageOps until nodeSlots.size) nodeSlots[i].clear()
-    contentDescription = listOf(row.name, row.text, row.time).filter { it.isNotEmpty() }.joinToString(", ")
+    contentDescription = row.a11yLabel.ifEmpty { listOf(row.name, row.text, row.time).filter { it.isNotEmpty() }.joinToString(", ") }
+    isSelected = row.kind == MLKind.MSG && row.sel == 2
     // imagens
     val md = row.media
     if (md != null && !lay.mediaFrame.isEmpty) {
@@ -1420,6 +1453,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
   }
 
   companion object {
+    /** ids das ações personalizadas do TalkBack (fora das ações padrão / android.R.id). */
+    const val A11Y_ACTION_BASE = 0x7E0A1100
     const val XFER_AUDIO = 100
     const val XFER_FILE = 101
     // lucide "pin" e "timer" (viewBox 24) — mesmos ícones do JS

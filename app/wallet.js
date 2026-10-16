@@ -4,8 +4,9 @@
 // Wallet/Cash, Revolut, Nubank P&B, TikTok Coins). O diamante é a única cor;
 // verde/vermelho só p/ estado (+ crédito, saldo negativo).
 //   • Cartão-herói grafite (igual nos 2 temas): saldo com contagem animada,
-//     ≈ valor de referência, "Comprar diamantes" (preenchido) + "Sacar"
-//     (criador) ou "Enviar presente" (demais). Sem duplicação Recarregar/Loja.
+//     "Comprar diamantes" (preenchido) + "Enviar presente". [2026-10-16
+//     carteira-clara] SEM "≈ valor" e SEM "Sacar" aqui: diamante comprado não é
+//     sacável (regra das lojas + antifraude) — o saque mora no cartão de Ganhos.
 //   • Ganhos (criador): disponível p/ saque em R$, retido 7 dias, barra até o
 //     mínimo (R$ 50), link Meus Ganhos.
 //   • Mais vendidos: carrossel com preço da loja local (mesmo fluxo de compra
@@ -32,20 +33,20 @@ import { formatInt } from '../utils/dateFormat';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 import { peekCached, putCached } from '../hooks/useCachedAction';
 import { WALLET_SCREEN, fetchWalletScreen } from '../services/screenData';
-import { useWallet, refreshWallet, isMinorAccount, MIN_CASHOUT_CENTS, getCachedGiftCatalog } from '../services/diamonds';
+import { useWallet, refreshWallet, isMinorAccount, MIN_CASHOUT_CENTS, getCachedGiftCatalog, noteCashoutRules } from '../services/diamonds';
 import useDiamondStore from '../components/diamonds/useDiamondStore';
 import {
-  tr, moneyBRL, approxActive, TABULAR, HERO, HeroCard, HeroButton, AnimatedNumber, DiamondMark,
+  tr, moneyBRL, TABULAR, HERO, HeroCard, HeroButton, AnimatedNumber, DiamondMark,
   ProgressBar, TxGlyph, FilterChips, PackCard, NOFLEX, txCategory,
 } from '../components/wallet/WalletKit';
 // [2026-10-15 native-wallet] Herói + histórico em NATIVO (kill switch __chatyy_native_wallet).
 import NativeWalletList, { useNativeWallet, walletColors } from '../components/native/NativeWalletList';
+import WalletHowItWorksSheet from '../components/wallet/WalletHowItWorksSheet';
 
 let Clipboard = null;
 try { Clipboard = require('expo-clipboard'); } catch {}
 
 const PAGE = 30;
-const HOLD_DAYS = 7;
 const FEATURED = [550, 1700, 6000];
 const RECV = new Set(['gift_recv', 'live_gift_recv', 'tip_recv', 'receive']);
 
@@ -265,7 +266,7 @@ function TxDetailSheet({ item: openItem, onClose, s, t, language }) {
         </View>
         {!mainIsMoney && d.payout != null ? (
           <Text style={[Type.footnote, TABULAR, { color: s.textSecondary, marginTop: 2 }]}>
-            {tr(t, 'walletV3.earnedAmount', 'Você ganhou {amount}').replace('{amount}', moneyBRL(d.payout))}{approxActive(d.payout) ? '  ' + approxActive(d.payout) : ''}
+            {tr(t, 'walletV3.earnedAmount', 'Você ganhou {amount}').replace('{amount}', moneyBRL(d.payout))}
           </Text>
         ) : null}
         <View style={[styles.statusPill, { backgroundColor: s.fill }]}>
@@ -363,6 +364,7 @@ function WalletScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [topupOpen, setTopupOpen] = useState(false);
   const [giftOpen, setGiftOpen] = useState(false);
+  const [howOpen, setHowOpen] = useState(false);
   const [filter, setFilter] = useState('all');
   const [detail, setDetail] = useState(null);
   const busyRef = useRef(false);
@@ -424,11 +426,30 @@ function WalletScreen() {
   const off = wallet.loaded && !wallet.enabled;
   const isCreator = wallet.availableCents > 0 || wallet.onHoldCents > 0 || wallet.pendingCents > 0 || items.some((x) => RECV.has(String(x.kind)));
   const canPurchase = !minor && !off && wallet.purchaseEnabled !== false;
-  const min = MIN_CASHOUT_CENTS || 5000;
+  // Regras de saque = SERVIDOR (wallet_balance / creator_earnings_summary). A
+  // constante só serve p/ a barra enquanto o servidor não respondeu.
+  const minKnown = Number(wallet.minCashoutCents) > 0;
+  const min = minKnown ? Number(wallet.minCashoutCents) : (MIN_CASHOUT_CENTS || 5000);
+  const holdDays = Number(wallet.holdDays) || 0;
   const available = wallet.availableCents || 0;
   const reachedMin = available >= min;
+  const canCashout = reachedMin && wallet.cashoutEnabled && !minor;
   const openTopup = useCallback(() => setTopupOpen(true), []);
-  const goCashout = () => router.push(reachedMin && wallet.cashoutEnabled ? '/wallet-cashout' : '/creator-earnings');
+  const minText = minKnown
+    ? tr(t, 'walletHow.minHint', 'Você pode sacar a partir de {min} em ganhos de presentes recebidos.').replace('{min}', moneyBRL(min))
+    : tr(t, 'walletHow.minHintNoValue', 'Você pode sacar ao atingir o mínimo em ganhos de presentes recebidos.');
+  const goCashout = () => {
+    if (canCashout) { router.push('/wallet-cashout'); return; }
+    try { haptic.light(); } catch {}
+    setHowOpen(true);
+  };
+  // Criador sem regras no cache → pede o resumo 1x (traz mínimo/retenção reais).
+  const rulesAsked = useRef(false);
+  useEffect(() => {
+    if (!isCreator || rulesAsked.current || (minKnown && holdDays > 0)) return;
+    rulesAsked.current = true;
+    api.creatorEarningsSummary?.({ limit: 1 }).then((r) => { if (r?.success && r.data) noteCashoutRules(r.data); }).catch(() => {});
+  }, [isCreator, minKnown, holdDays]);
 
   const featured = useMemo(() => {
     const list = store.packs || [];
@@ -444,9 +465,9 @@ function WalletScreen() {
     { value: 'cashouts', label: tr(t, 'walletV3.filterCashouts', 'Saques') },
   ];
 
-  // Referência na moeda/preço da loja desta pessoa (App Store US → US$; web → R$ Stripe).
-  const refPrice = typeof wallet.diamonds === 'number' && wallet.diamonds > 0 ? store.refValue(wallet.diamonds) : '';
-  const refAmount = refPrice ? tr(t, 'walletV3.refValue', '≈ {amount} em valor de compra').replace('{amount}', refPrice) : '';
+  // [2026-10-16 carteira-clara] nada de "≈ US$ … em valor de compra": diamante
+  // não é dinheiro sacável. Linha-guia do uso real.
+  const heroSub = tr(t, 'walletHow.diamondsUse', 'Use para enviar presentes');
 
   const heroCard = (
       <FadeSlideIn style={NOFLEX}>
@@ -466,7 +487,7 @@ function WalletScreen() {
               minimumFontScale={0.55}
             />
           </View>
-          {refAmount ? <Text style={[Type.footnote, TABULAR, { color: HERO.sub, marginTop: 2 }]}>{refAmount}</Text> : null}
+          <Text style={[Type.footnote, { color: HERO.sub, marginTop: 2 }]}>{heroSub}</Text>
           {negative ? (
             <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.sm }]}>
               {tr(t, 'gifts.negativeBalance', 'Seu saldo está negativo por causa de um reembolso. Recarregue para voltar a enviar.')}
@@ -482,12 +503,8 @@ function WalletScreen() {
             </View>
           ) : (
             <View style={styles.heroActions}>
-              <HeroButton primary haptic="medium" label={tr(t, 'wallet.topup', 'Comprar diamantes')} onPress={openTopup} disabled={!canPurchase} testID="wallet-buy" />
-              {isCreator ? (
-                <HeroButton label={tr(t, 'creatorDash.withdraw', 'Sacar')} onPress={goCashout} testID="wallet-cashout" />
-              ) : (
-                <HeroButton label={tr(t, 'walletV3.sendGift', 'Enviar presente')} onPress={() => setGiftOpen(true)} testID="wallet-gift" />
-              )}
+              <HeroButton primary weight={1.15} haptic="medium" label={tr(t, 'wallet.topup', 'Comprar diamantes')} onPress={openTopup} disabled={!canPurchase} testID="wallet-buy" />
+              <HeroButton label={tr(t, 'walletV3.sendGift', 'Enviar presente')} onPress={() => setGiftOpen(true)} testID="wallet-gift" />
             </View>
           )}
         </HeroCard>
@@ -510,7 +527,6 @@ function WalletScreen() {
             </View>
             <View style={styles.earnAmtRow}>
               <AnimatedNumber value={available} format={(n) => moneyBRL(n)} style={[styles.midNum, { color: s.text }]} />
-              {approxActive(available) ? <Text style={[Type.footnote, TABULAR, { color: s.textSecondary }]}>{approxActive(available)}</Text> : null}
             </View>
             <Text style={[Type.footnote, { color: s.textSecondary }]}>{tr(t, 'creatorEarnings.availableLabel', 'Disponível para saque')}</Text>
             <View style={{ marginTop: Space.md }}>
@@ -519,19 +535,54 @@ function WalletScreen() {
               <Text style={[Type.caption, { color: s.textSecondary, marginTop: Space.sm }]}>
                 {reachedMin
                   ? tr(t, 'walletV3.readyToCashout', 'Pronto para sacar via Pix')
-                  : tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}').replace('{missing}', moneyBRL(min - available)).replace('{min}', moneyBRL(min))}
+                  : minKnown
+                    ? tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}').replace('{missing}', moneyBRL(min - available)).replace('{min}', moneyBRL(min))
+                    : tr(t, 'creatorEarnings.belowMin', 'Abaixo do mínimo para saque.')}
               </Text>
             </View>
             <View style={[styles.holdRow, { borderTopColor: s.separator }]}>
               <View style={{ flex: 1 }}>
                 <Text style={[Type.subhead, { color: s.text }]}>{tr(t, 'walletV3.onHold', 'Em liberação')}</Text>
-                <Text style={[Type.caption, { color: s.textSecondary }]}>{tr(t, 'walletV3.onHoldSub', 'Presentes ficam retidos {days} dias').replace('{days}', String(HOLD_DAYS))}</Text>
+                <Text style={[Type.caption, { color: s.textSecondary }]}>
+                  {holdDays > 0
+                    ? tr(t, 'walletV3.onHoldSub', 'Presentes ficam retidos {days} dias').replace('{days}', String(holdDays))
+                    : tr(t, 'walletHow.onHoldSubNoDays', 'Presentes recentes, ainda no prazo de estorno')}
+                </Text>
               </View>
               <Text style={[Type.subhead, TABULAR, { color: s.text, fontWeight: '700' }]}>{moneyBRL(wallet.onHoldCents)}</Text>
             </View>
+            {/* Sacar mora AQUI (só ganhos são sacáveis). Abaixo do mínimo: visual
+                desabilitado, mas tocável → explica (folha "Como funciona"). */}
+            <PressableScale onPress={goCashout} haptic={canCashout ? 'medium' : false} testID="wallet-cashout"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canCashout }}
+              accessibilityLabel={canCashout ? tr(t, 'creatorDash.withdraw', 'Sacar') : `${tr(t, 'creatorDash.withdraw', 'Sacar')}. ${minText}`}
+              accessibilityHint={canCashout ? undefined : tr(t, 'walletHow.tapToLearn', 'Toque para saber como funciona')}
+              style={[styles.cashBtn, canCashout ? { backgroundColor: s.ink } : { backgroundColor: s.fill }]}>
+              <Text style={[styles.cashBtnText, { color: canCashout ? s.onInk : s.textTertiary }]}>{tr(t, 'creatorDash.withdraw', 'Sacar')}</Text>
+            </PressableScale>
+            {!canCashout ? (
+              <PressableScale onPress={() => setHowOpen(true)} haptic="select" hitSlop={8} accessibilityRole="button" style={styles.cashWhy}>
+                <Text style={[Type.caption, { color: s.textSecondary, textAlign: 'center' }]}>
+                  {!wallet.cashoutEnabled && reachedMin ? tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.') : minText}
+                  <Text style={{ color: s.text, fontWeight: '600' }}>{'  ' + tr(t, 'walletHow.title', 'Como funciona')}</Text>
+                </Text>
+              </PressableScale>
+            ) : null}
           </View>
         </FadeSlideIn>
       ) : null}
+
+      {/* ── Como funciona (todos) ───────────────────────────── */}
+      <PressableScale onPress={() => setHowOpen(true)} haptic="select" accessibilityRole="button"
+        style={[styles.howRow, { backgroundColor: s.surface, borderColor: s.border }]} testID="wallet-how">
+        <View style={[styles.howIcon, { borderColor: s.separator }]}><TxGlyph name="receipt" size={18} color={s.text} /></View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[Type.subhead, { color: s.text, fontWeight: '600' }]}>{tr(t, 'walletHow.title', 'Como funciona')}</Text>
+          <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={2}>{tr(t, 'walletHow.rowSub', 'Diamantes são para presentear. Presentes que você recebe viram ganhos sacáveis.')}</Text>
+        </View>
+        <IconChevronRight size={16} color={s.textSecondary} />
+      </PressableScale>
 
       {/* ── Mais vendidos ───────────────────────────────────── */}
       {canPurchase && featured.length ? (
@@ -598,19 +649,18 @@ function WalletScreen() {
     const bal = typeof wallet.diamonds === 'number' ? wallet.diamonds : null;
     const caps = tr(t, 'wallet.diamondBalance', 'Saldo de diamantes');
     const buttons = [{ id: 'buy', label: tr(t, 'wallet.topup', 'Comprar diamantes'), primary: true, disabled: !canPurchase }];
-    if (isCreator) buttons.push({ id: 'cashout', label: tr(t, 'creatorDash.withdraw', 'Sacar') });
-    else buttons.push({ id: 'gift', label: tr(t, 'walletV3.sendGift', 'Enviar presente') });
+    buttons.push({ id: 'gift', label: tr(t, 'walletV3.sendGift', 'Enviar presente') });
     return {
       caps, brand: 'CHATYY', value: bal, fmt: 'int', loc: language || '',
       text: bal == null ? '—' : formatInt(bal, language), dia: true, danger: !!negative, numSize: 46,
-      sub: refAmount || '',
+      sub: heroSub,
       note: negative ? tr(t, 'gifts.negativeBalance', 'Seu saldo está negativo por causa de um reembolso. Recarregue para voltar a enviar.') : '',
       notice: minor ? tr(t, 'diamondShop.minorBlocked', 'Compras não estão disponíveis para contas supervisionadas.')
         : off ? tr(t, 'diamondShop.purchasesOff', 'Compras de diamantes indisponíveis no momento.') : '',
       buttons, glow: true,
       a11y: `${caps}: ${bal == null ? '—' : formatInt(bal, language)}`,
     };
-  }, [nativeOn, wallet.diamonds, t, language, canPurchase, isCreator, negative, refAmount, minor, off]);
+  }, [nativeOn, wallet.diamonds, t, language, canPurchase, negative, heroSub, minor, off]);
 
   const nativeRows = useMemo(() => {
     if (!nativeOn) return [];
@@ -662,10 +712,8 @@ function WalletScreen() {
 
   const onNativeHero = useCallback((id) => {
     if (id === 'buy') { if (canPurchase) openTopup(); }
-    else if (id === 'cashout') goCashout();
     else if (id === 'gift') setGiftOpen(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canPurchase, openTopup, reachedMin, wallet.cashoutEnabled]);
+  }, [canPurchase, openTopup]);
   const nativeColors = useMemo(() => walletColors(s, isDark), [s, isDark]);
 
   const footer = loadingMore ? (
@@ -735,6 +783,7 @@ function WalletScreen() {
           ]}
         />
       </Sheet>
+      <WalletHowItWorksSheet visible={howOpen} onClose={() => setHowOpen(false)} />
       <TxDetailSheet item={detail} onClose={() => setDetail(null)} s={s} t={t} language={language} />
       {store.checkout}
     </View>
@@ -761,6 +810,11 @@ const styles = StyleSheet.create({
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: 2, minHeight: 32 },
   earnAmtRow: { flexDirection: 'row', alignItems: 'baseline', gap: Space.sm, marginTop: 2 },
   midNum: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8 },
+  cashBtn: { height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginTop: Space.lg },
+  cashBtnText: { fontSize: 16, fontWeight: '700' },
+  cashWhy: { marginTop: Space.sm, paddingHorizontal: Space.sm },
+  howRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, borderRadius: Radius.card + 4, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: Space.lg, paddingVertical: Space.md, minHeight: 64 },
+  howIcon: { width: 36, height: 36, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
   holdRow: { flexDirection: 'row', alignItems: 'center', marginTop: Space.md, paddingTop: Space.md, borderTopWidth: StyleSheet.hairlineWidth },
   secHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Space.md },
   carouselWrap: { marginHorizontal: -Layout.gutter, flexGrow: 0, flexShrink: 0 },
