@@ -33,7 +33,7 @@ export function biaPalette(isDark) {
     card: '#111113', cardHi: '#18181B', chip: 'rgba(255,255,255,0.07)', bubble: '#1C1C1E',
     glass: 'rgba(28,28,30,0.72)', glassSolid: 'rgba(22,22,24,0.97)', ink: '#FFFFFF', onInk: '#000000',
   } : {
-    bg: '#FFFFFF', fg: '#0D0D0D', sub: '#6B7280', faint: '#A3A3AA', hair: 'rgba(0,0,0,0.08)',
+    bg: '#FFFFFF', fg: '#0D0D0D', sub: '#6B6B70' /* [polish3] neutro (Tailwind gray-500 era azulado) */, faint: '#A3A3AA', hair: 'rgba(0,0,0,0.08)',
     card: '#F6F6F8', cardHi: '#EEEEF1', chip: 'rgba(0,0,0,0.045)', bubble: '#F2F2F4',
     glass: 'rgba(255,255,255,0.74)', glassSolid: 'rgba(255,255,255,0.97)', ink: '#0D0D0D', onInk: '#FFFFFF',
   };
@@ -61,7 +61,10 @@ export function BiaFadeIn({ delay = 0, dy = 10, duration = 420, style, children 
 }
 
 // ─── toque com escala ────────────────────────────────────────────────────────
-export function BiaPressScale({ onPress, onLongPress, style, children, scaleTo = 0.965, disabled, accessibilityLabel, accessibilityRole = 'button', accessibilityHint, hitSlop }) {
+// [2026-10-16 polish3] fill: estica até a altura da célula (cartões da grade
+// de sugestões ficavam com alturas diferentes na mesma linha).
+const _fillStyle = { flex: 1 };
+export function BiaPressScale({ onPress, onLongPress, style, children, scaleTo = 0.965, disabled, accessibilityLabel, accessibilityRole = 'button', accessibilityHint, hitSlop, fill }) {
   const s = useRef(new Animated.Value(1)).current;
   const go = (to) => { if (isReduceMotionEnabled()) return; Animated.spring(s, { toValue: to, tension: 320, friction: 18, useNativeDriver: ND }).start(); };
   return (
@@ -69,9 +72,9 @@ export function BiaPressScale({ onPress, onLongPress, style, children, scaleTo =
       onPress={onPress} onLongPress={onLongPress} disabled={disabled} hitSlop={hitSlop}
       onPressIn={() => go(scaleTo)} onPressOut={() => go(1)}
       accessibilityRole={accessibilityRole} accessibilityLabel={accessibilityLabel} accessibilityHint={accessibilityHint}
-      style={Platform.OS === 'web' ? { cursor: disabled ? 'default' : 'pointer' } : undefined}
+      style={[fill ? _fillStyle : null, Platform.OS === 'web' ? { cursor: disabled ? 'default' : 'pointer' } : null]}
     >
-      <Animated.View style={[style, { transform: [{ scale: s }] }]}>{children}</Animated.View>
+      <Animated.View style={[style, fill ? _fillStyle : null, { transform: [{ scale: s }] }]}>{children}</Animated.View>
     </Pressable>
   );
 }
@@ -185,7 +188,7 @@ export function BiaSuggestionGrid({ items, isDark, onPick, baseDelay = 220 }) {
         const Icon = it.icon;
         return (
           <BiaFadeIn key={it.key} delay={baseDelay + i * 55} style={gs.cell}>
-            <BiaPressScale onPress={() => onPick(it)} accessibilityLabel={it.label} accessibilityHint={it.sub}
+            <BiaPressScale fill onPress={() => onPick(it)} accessibilityLabel={it.label} accessibilityHint={it.sub}
               style={[gs.card, { backgroundColor: P.card, borderColor: P.hair }]}>
               <View style={[gs.icon, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#FFFFFF' }, !isDark && softShadow(false, 0.5)]}>
                 {Icon ? <Icon size={17} color={P.fg} /> : null}

@@ -619,7 +619,14 @@ object CallSignalWs {
                 // belt-and-suspenders so native UIs always come down.
                 handleIncomingCallEnd(obj)
             }
-            "call_missed", "call_dismissed", "call_picked_up_elsewhere" -> {
+            "call_missed", "call_dismissed", "call_picked_up_elsewhere", "call_state" -> {
+                // [2026-10-16 call-state] call_state{state} do hub: só
+                // accepted/declined (outro aparelho) derrubam o toque aqui;
+                // ended/missed já chegam como call_end/call_cancel/call_missed.
+                if (type == "call_state") {
+                    val st = obj.optString("state").lowercase()
+                    if (st != "accepted" && st != "declined") return
+                }
                 // [2026-10-11 double-banner] Hub ring timeout (call_missed) and
                 // answered-on-another-device (call_dismissed / picked_up) were
                 // dropped by the `else` below → this device kept ringing until
@@ -635,6 +642,8 @@ object CallSignalWs {
                     IncomingCallRegistry.dismissIncoming(
                         c, cid, "ws_$type",
                         if (type == "call_missed") android.telecom.DisconnectCause.MISSED
+                        else if (obj.optString("state").equals("declined", true) ||
+                                 obj.optString("reason").contains("declin", true)) android.telecom.DisconnectCause.REJECTED
                         else android.telecom.DisconnectCause.ANSWERED_ELSEWHERE,
                         "ws"
                     )

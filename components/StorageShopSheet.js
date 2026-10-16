@@ -13,13 +13,14 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../services/iap';
+import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice, restorePurchases } from '../services/iap';
 import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] loja web = host canônico
 import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
 import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { useSurface, PressableScale, FadeSlideIn } from './ui';
 import { haptic } from '../constants/theme';
+import { safeAlert } from '../services/alerts'; // [2026-10-16 storage-billing] Alert.alert é mudo na web
 
 function formatBrl(v) {
   const n = Number(v) || 0;
@@ -83,6 +84,9 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const onBuy = useCallback(async (tier) => {
     if (pendingTier) return;
     if (Platform.OS === 'web') {
+      // [2026-10-16 storage-billing] Web: o botão principal abria /storage de novo (laço,
+      // nunca cobrava). Na web a compra é o checkout de cartão (Stripe hospedado).
+      if (isStripeStorageCheckoutAvailable()) { onPayCardRef.current?.(tier); return; }
       const base = (typeof getOriginBase === 'function' && getOriginBase()) || 'https://chatyy.com.br';
       Linking.openURL(`${base.replace(/\/$/, '')}/storage?tier=${tier.id}&cycle=${cycle}`).catch(() => {});
       return;
@@ -144,6 +148,29 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
     }
   }, [pendingTier, cycle, t]);
 
+  const onPayCardRef = React.useRef(null);
+  onPayCardRef.current = onPayCard;
+
+  // [2026-10-16 storage-billing] Restaurar compras: loja (iOS/Android) + cartão (Stripe).
+  const [restoring, setRestoring] = useState(false);
+  const onRestore = useCallback(async () => {
+    if (restoring) return;
+    setRestoring(true);
+    try {
+      const r = await restorePurchases();
+      if (r?.success) {
+        try { const u = await storageUsage(); if (u?.success && u.data) setUsage(u.data); } catch {}
+        safeAlert(t('iap.restoreSuccess') || 'Compras restauradas!');
+      } else {
+        safeAlert(t('iap.restoreNotFound') || 'Nenhuma compra encontrada para restaurar.');
+      }
+    } catch {
+      safeAlert(t('iap.restoreNotFound') || 'Nenhuma compra encontrada para restaurar.');
+    } finally {
+      setRestoring(false);
+    }
+  }, [restoring, t]);
+
   const onManageCard = useCallback(async () => {
     const r = await openStripePortal();
     if (!r?.success) {
@@ -151,7 +178,8 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
     }
   }, [t]);
 
-  const showCard = isStripeStorageCheckoutAvailable();
+  // [2026-10-16 storage-billing] na web o botão principal JÁ é o cartão → sem botão duplicado
+  const showCard = isStripeStorageCheckoutAvailable() && Platform.OS !== 'web';
   const showPortal = isStripeCardAvailable();
 
   const tiers = useMemo(() => STORAGE_TIERS, []);
@@ -422,6 +450,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                 </Text>
               </TouchableOpacity>
             )}
+            <TouchableOpacity onPress={onRestore} disabled={restoring} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 6, opacity: restoring ? 0.5 : 1 }}>
+              <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' }}>
+                {t('iap.restorePurchases') || 'Restaurar compras'}
+              </Text>
+            </TouchableOpacity>
             {Platform.OS === 'ios' && (
               <Text style={[styles.foot, { color: muted }]}>
                 {t('storage.manageSite') || 'Gerencie sua assinatura pelo site chatyy.com.br'}

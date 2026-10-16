@@ -34,6 +34,7 @@ export default function PressableScale({
   onPressOut,
   delayLongPress,
   style,
+  containerStyle, // [2026-10-16 polish3] opcional: estilo do Touchable externo (ex.: flex:1 p/ esticar na linha)
   activeOpacity = 0.9,
   haptic = 'light',
   scaleTo = 0.97,
@@ -86,6 +87,7 @@ export default function PressableScale({
       activeOpacity={activeOpacity}
       disabled={disabled}
       {...props}
+      style={containerStyle}
     >
       <Animated.View style={[style, { transform: [{ scale: scaleAnim }] }]}>
         {children}

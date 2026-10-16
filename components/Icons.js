@@ -251,6 +251,12 @@ export function IconDiamond({ size = 22, color = '#60a5fa', style }) {
   );
 }
 
+// [2026-10-16 polish3] "Citar" (resposta parcial) — antes reusava IconReply,
+// idêntico ao "Responder" ao lado no menu da mensagem.
+export function IconQuote({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M17 6H3"/><Path d="M21 12H8"/><Path d="M21 18H8"/><Path d="M3 12v6"/></I>;
+}
+
 export function IconMessageSquare({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></I>;
 }

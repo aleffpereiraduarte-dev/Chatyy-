@@ -99,6 +99,8 @@ struct DVLabels {
     case "restore": return get("restore", "Restaurar")
     case "purge": return get("purge", "Excluir permanentemente")
     case "more": return get("more", "Mais")
+    case "sendcopy": return get("sendcopy", "Enviar cópia") // [2026-10-16 drive-native]
+    case "savefiles": return get("savefiles", "Salvar em Arquivos")
     default: return get(a, a)
     }
   }
@@ -135,6 +137,8 @@ enum DVGlyphs {
     case "restore": return "arrow.uturn.backward"
     case "purge": return "trash"
     case "more": return "ellipsis.circle"
+    case "sendcopy": return "square.and.arrow.up" // [2026-10-16 drive-native]
+    case "savefiles": return "folder.badge.plus"
     default: return "circle"
     }
   }

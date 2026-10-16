@@ -312,8 +312,13 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — local call is connected; ignoring")
                 nativeCallDiag("voip_cancel_ignored_connected", callId, "type=\(pushType)")
             } else if let endUUID = liveExisting {
-                print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — reporting .remoteEnded on \(endUUID.uuidString)")
-                provider.reportCall(with: endUUID, endedAt: Date(), reason: .remoteEnded)
+                // [2026-10-16 call-state] atendida/recusada em outro aparelho →
+                // motivo certo no CallKit (não vira "perdida" nos Recentes).
+                let cancelReason = ((dict["reason"] as? String) ?? "").lowercased()
+                let endReason: CXCallEndedReason = (cancelReason == "answered_elsewhere" || pushType == "answered_elsewhere") ? .answeredElsewhere
+                    : (cancelReason == "declined_elsewhere" ? .declinedElsewhere : .remoteEnded)
+                print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — reporting \(endReason.rawValue) on \(endUUID.uuidString)")
+                provider.reportCall(with: endUUID, endedAt: Date(), reason: endReason)
             } else {
                 // No live UUID for this callId (cancel arrived before/without an
                 // incoming push, or already torn down). Apple still requires a

@@ -223,7 +223,12 @@ function _CollageTile({ member, size, width, height }) {
   useEffect(() => { if (_tileVer) { setTileErr(false); setTileCachedUri(null); } }, [_tileVer]);
   const memberName = member?.display_name || member?.name || memberEmail || '';
   const looksLikeEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(memberEmail);
-  const baseUrl = looksLikeEmail ? getAvatarUrlForEmail(memberEmail) : null;
+  // [2026-10-16 polish3] Meia-fatia (colagem de 2, ou a da esquerda na de 3):
+  // sem foto, o servidor devolvia o PNG de iniciais do CÍRCULO inteiro, que
+  // espremido na meia largura lia "APQA" no grupo. nofallback → 204 → onError
+  // → fica o glifo de 1 letra desenhado aqui embaixo.
+  const _halfTile = typeof width === 'number' && typeof height === 'number' && width < height;
+  const baseUrl = looksLikeEmail ? getAvatarUrlForEmail(memberEmail, _halfTile ? { nofallback: true } : undefined) : null;
   // Prefer an explicit avatar_url passed in by the caller — saves a redirect
   // and lets the caller pin a specific version (e.g. WS-pushed update).
   let uri = '';
@@ -277,7 +282,7 @@ function _CollageTile({ member, size, width, height }) {
           edge and the pair read as one word ("APQA"). One letter per narrow
           tile, slightly smaller glyph. */}
       <Text
-        style={{ color: '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.42 : 0.36)), position: 'absolute' }}
+        style={{ color: '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.6 : 0.36)), position: 'absolute' }}
         allowFontScaling={false}
         numberOfLines={1}
       >

@@ -150,13 +150,13 @@ function FeatureTile({ icon: Icon, title, subtitle, onPress, testID }) {
   const g = useGroupedColors();
   return (
     <View style={{ flex: 1, minWidth: 0 }}>
-    <PressableScale onPress={onPress} haptic="light" scaleTo={0.97} accessibilityRole="button" accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title} testID={testID} style={[st.tile, { backgroundColor: g.cardBg }]}>
+    <PressableScale onPress={onPress} haptic="light" scaleTo={0.97} accessibilityRole="button" accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title} testID={testID} containerStyle={st.tileFill} style={[st.tile, st.tileFill, { backgroundColor: g.cardBg }]}>
       <View style={st.tileTop}>
         <View style={[st.tileIcon, { backgroundColor: g.chipBg }]}><Icon size={17} color={g.chipFg} /></View>
         <IconChevronRight size={15} color={g.tertiary} />
       </View>
       <Text style={[st.tileTitle, { color: g.text }]} numberOfLines={1}>{title}</Text>
-      {!!subtitle && <Text style={[st.tileSub, { color: g.secondary }]} numberOfLines={1}>{subtitle}</Text>}
+      {!!subtitle && <Text style={[st.tileSub, { color: g.secondary }]} numberOfLines={2}>{subtitle}</Text>}
     </PressableScale>
     </View>
   );
@@ -214,6 +214,7 @@ const st = StyleSheet.create({
   pillSquare: { width: 36, paddingHorizontal: 0, justifyContent: 'center' },
   pillText: { fontSize: 14, fontWeight: '600', letterSpacing: -0.15 },
   tilesRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
+  tileFill: { flex: 1 }, // [polish3] os 2 cartões com a mesma altura quando a legenda quebra em 2 linhas
   tile: { borderRadius: 18, padding: 14, minHeight: 92, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
   tileTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   tileIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },

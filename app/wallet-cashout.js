@@ -17,11 +17,18 @@
 // {feature_disabled:true} (bloqueio 2026-06-28). Em vez de redirecionar p/
 // /chat, a tela mostra o aviso + o histórico (acessível de "Meus Ganhos").
 //
+// [2026-10-16 saque-v2] Saque de verdade: chave Pix CADASTRADA (1 toque nos
+// próximos), taxa e valor líquido claros na revisão, idempotência do pedido
+// (client_request_id), status completo (em análise → aprovado → enviando Pix
+// → pago | não concluído | recusado | cancelado) com linha do tempo no detalhe,
+// cancelar enquanto em análise, atualização ao vivo (WS cashout_status) e aviso
+// para quem mora fora do Brasil. Servidor: api/payouts.php.
+//
 // Sem deps nativas novas. OTA-safe.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Platform, RefreshControl, KeyboardAvoidingView,
+  View, Text, StyleSheet, ScrollView, TextInput, Platform, RefreshControl, KeyboardAvoidingView, Linking,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -34,7 +41,7 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { formatMoney, formatMoneyActive, getActiveCurrency } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
-import { IconInfo, IconCheckCircle, IconAlertCircle } from '../components/Icons';
+import { IconInfo, IconCheckCircle, IconAlertCircle, IconGlobe } from '../components/Icons';
 import { haptic } from '../constants/theme';
 import { HeroCard, HERO, TABULAR } from '../components/wallet/WalletKit';
 import {
@@ -110,9 +117,38 @@ function normPixKey(type, key) {
   return k;
 }
 
-function statusTone(st) { return st === 'paid' ? 'success' : st === 'rejected' ? 'danger' : 'neutral'; }
+// [saque-v2] estados do servidor: pending | approved | processing | paid | failed | rejected | canceled
+function statusTone(st) {
+  if (st === 'paid') return 'success';
+  if (st === 'rejected' || st === 'failed') return 'danger';
+  if (st === 'canceled') return 'muted';
+  if (st === 'approved' || st === 'processing') return 'ink';
+  return 'neutral';
+}
 function statusLabel(t, st) {
+  if (st === 'approved') return tr(t, 'saque4.status.approved', 'Aprovado');
+  if (st === 'processing') return tr(t, 'saque4.status.processing', 'Enviando Pix');
+  if (st === 'failed') return tr(t, 'saque4.status.failed', 'Não concluído');
+  if (st === 'canceled') return tr(t, 'saque4.status.canceled', 'Cancelado');
   return tr(t, `wallet.cashoutStatus.${st}`, st === 'paid' ? 'Pago' : st === 'rejected' ? 'Rejeitado' : 'Em análise');
+}
+function eventLabel(t, st) {
+  return tr(t, `saque4.ev.${st}`, {
+    pending: 'Pedido recebido', approved: 'Aprovado pela Chatyy', processing: 'Pix enviado ao banco', paid: 'Pix pago',
+    failed: 'Pix não concluído — valor devolvido', rejected: 'Recusado — valor devolvido', canceled: 'Cancelado — valor devolvido',
+  }[st] || st);
+}
+// Espelha payouts.php pyoFeeCents (fixo + bps, arredonda p/ cima, sobra >= R$ 1).
+function feeFor(amount, rule) {
+  const a = Number(amount) || 0;
+  if (a <= 0 || !rule) return 0;
+  const fixed = Math.max(0, Number(rule.fixed_cents) || 0);
+  const bps = Math.max(0, Math.min(2000, Number(rule.bps) || 0));
+  const fee = fixed + Math.ceil((a * bps) / 10000);
+  return Math.max(0, Math.min(fee, Math.max(0, a - 100)));
+}
+function newRequestId() {
+  return 'co-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
 }
 
 function Field({ label, error, hint, children, s }) {
@@ -182,12 +218,31 @@ export default function WalletCashoutScreen() {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
   // [2026-10-13 diamantes-religados] regras do servidor (resumo de ganhos).
-  const [rules, setRules] = useState({ onHold: 0, holdDays: 0, block: null, minAgeDays: 30, dailyLimit: 0, kyc: null, maxCents: MAX_CENTS });
+  const [rules, setRules] = useState({ onHold: 0, holdDays: 0, block: null, minAgeDays: 30, dailyLimit: 0, kyc: null, maxCents: MAX_CENTS, minCents: MIN_CENTS });
+  // [saque-v2] cadastro de recebimento salvo + opções/taxa do servidor (null = servidor antigo).
+  const [method, setMethod] = useState(null);
+  const [opts, setOpts] = useState(null);
+  const [editMethod, setEditMethod] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [canceling, setCanceling] = useState(false);
+  const [abroadBusy, setAbroadBusy] = useState(false);
+  const reqIdRef = useRef('');
 
   const paused = !WALLET_ENABLED || serverDisabled || rules.block === 'disabled';
 
   const loadAll = useCallback(async () => {
-    const [bal, list, sum] = await Promise.allSettled([api.walletBalance?.(), api.walletCashoutList?.(), api.creatorEarningsSummary?.({ limit: 1 })]);
+    const [bal, list, sum, meth] = await Promise.allSettled([api.walletBalance?.(), api.walletCashoutList?.(), api.creatorEarningsSummary?.({ limit: 1 }), api.payoutMethodGet?.()]);
+    const mg = meth.status === 'fulfilled' ? meth.value : null;
+    if (mg?.success && mg.data) {
+      setMethod(mg.data.method && mg.data.method.method === 'pix' && mg.data.method.ready ? mg.data.method : null);
+      setOpts({
+        feeRule: mg.data.fee_rule || null,
+        auto: !!mg.data.options?.br?.automatic,
+        intl: !!mg.data.options?.intl?.available,
+        minCents: Number(mg.data.min_cents) || MIN_CENTS,
+        maxCents: Number(mg.data.max_cents) || MAX_CENTS,
+      });
+    }
     const b = bal.status === 'fulfilled' ? bal.value : null;
     if (b?.success && b.data) setAvailable(b.data.available_cents != null ? Number(b.data.available_cents) || 0 : Number(b.data.pending_payout_cents) || 0);
     if (b?.data?.feature_disabled) setServerDisabled(true);
@@ -202,6 +257,7 @@ export default function WalletCashoutScreen() {
         dailyLimit: Number(d.daily_limit_cents) || 0,
         kyc: d.kyc && typeof d.kyc === 'object' ? d.kyc : null,
         maxCents: Number(d.max_cashout_cents) || MAX_CENTS,
+        minCents: Number(d.min_cashout_cents) || MIN_CENTS,
       });
       if (d.kyc && d.kyc.full_name) setFullName(prev => prev || String(d.kyc.full_name));
     }
@@ -212,17 +268,40 @@ export default function WalletCashoutScreen() {
   }, []);
   useEffect(() => { loadAll(); }, [loadAll]);
   const onRefresh = useCallback(() => { setRefreshing(true); loadAll(); }, [loadAll]);
+  // [saque-v2] status ao vivo: aprovado/enviando/pago chega pelo WS → recarrega lista e detalhe aberto.
+  useEffect(() => {
+    let off = null; let alive = true;
+    (async () => {
+      try {
+        const ws = (await import('../services/websocket')).default;
+        if (!alive) return;
+        off = ws.on('cashout_status', (d) => {
+          loadAll();
+          setDetail((cur) => (cur && Number(cur.id) === Number(d?.payout_id) ? { ...cur, status: String(d?.status || cur.status), _stale: true } : cur));
+        });
+      } catch {}
+    })();
+    return () => { alive = false; try { off && off(); } catch {} };
+  }, [loadAll]);
 
+  const MIN_C = opts?.minCents || rules.minCents || MIN_CENTS;
+  const MAX_C = Math.min(opts?.maxCents || MAX_CENTS, rules.maxCents || MAX_CENTS);
+  const useSaved = !!method && !editMethod;
   const amountCents = useMemo(() => parseBrlToCents(amountText), [amountText]);
-  const maxAllowed = Math.min(available, MAX_CENTS);
-  const reachedMin = available >= MIN_CENTS;
-  const progress = Math.max(0, Math.min(1, available / MIN_CENTS));
+  const feeCents = feeFor(amountCents, opts?.feeRule);
+  const netCents = Math.max(0, amountCents - feeCents);
+  const maxAllowed = Math.min(available, MAX_C);
+  const reachedMin = available >= MIN_C;
+  const progress = Math.max(0, Math.min(1, available / MIN_C));
   const showConverted = getActiveCurrency() !== 'BRL';
+  const etaText = opts?.auto
+    ? tr(t, 'saque4.etaAuto', 'Após a aprovação, o Pix cai em até 1 dia útil.')
+    : tr(t, 'saque4.etaManual', 'Após a aprovação, o Pix cai em até 3 dias úteis.');
 
   const errors = {
     amount: !amountCents ? tr(t, 'cashout2.errAmountEmpty', 'Informe o valor.')
-      : amountCents < MIN_CENTS ? tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_CENTS))
-      : amountCents > MAX_CENTS ? tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_CENTS))
+      : amountCents < MIN_C ? tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_C))
+      : amountCents > MAX_C ? tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_C))
       : amountCents > available ? tr(t, 'cashout2.errOver', 'Acima do disponível ({available}).').replace('{available}', money(available))
       : '',
     pixKey: (validPixKey(pixType, pixKey) && pixType === 'cpf' && isValidCpf(cpf) && digits(pixKey) !== digits(cpf))
@@ -234,6 +313,7 @@ export default function WalletCashoutScreen() {
       ? '' : tr(t, 'cashout2.errName', 'Informe nome e sobrenome do titular.'),
     cpf: isValidCpf(cpf) ? '' : tr(t, 'cashout2.errCpf', 'CPF inválido.'),
   };
+  if (useSaved) { errors.pixKey = ''; errors.fullName = ''; errors.cpf = ''; }
   const formValid = !errors.amount && !errors.pixKey && !errors.fullName && !errors.cpf;
   const shown = (k) => (touched[k] || touched._all) ? errors[k] : '';
 
@@ -245,7 +325,7 @@ export default function WalletCashoutScreen() {
   const goReview = () => {
     setTouched({ _all: true });
     setError('');
-    if (formValid) { try { haptic.light(); } catch {} setStep('review'); }
+    if (formValid) { if (!reqIdRef.current) reqIdRef.current = newRequestId(); try { haptic.light(); } catch {} setStep('review'); }
     else { try { haptic.warning(); } catch {} }
   };
 
@@ -253,12 +333,15 @@ export default function WalletCashoutScreen() {
     setStep('sending');
     setError('');
     try {
-      const r = await api.walletCashoutRequest({
-        amountCents, pixKey: normPixKey(pixType, pixKey), pixKeyType: pixType, fullName, cpf,
-      });
+      if (!reqIdRef.current) reqIdRef.current = newRequestId();
+      const r = await api.walletCashoutRequest(useSaved
+        ? { amountCents, useSavedMethod: true, clientRequestId: reqIdRef.current }
+        : { amountCents, pixKey: normPixKey(pixType, pixKey), pixKeyType: pixType, fullName, cpf, clientRequestId: reqIdRef.current });
       if (r?.success && r.data) {
+        reqIdRef.current = '';
+        setEditMethod(false);
         setAvailable(r.data.available_cents != null ? Number(r.data.available_cents) || 0 : Number(r.data.pending_payout_cents) || 0);
-        setResult({ amount: Number(r.data.amount_cents) || amountCents });
+        setResult({ amount: Number(r.data.amount_cents) || amountCents, net: r.data.net_cents != null ? Number(r.data.net_cents) : null });
         setAmountText('');
         setTouched({});
         setStep('done');
@@ -272,8 +355,9 @@ export default function WalletCashoutScreen() {
       if (code === 'insufficient_pending' && r?.data?.pending_payout_cents != null) setAvailable(Number(r.data.pending_payout_cents) || 0);
       if ((code === 'insufficient_available' || msg === 'insufficient_available') && r?.data?.available_cents != null) setAvailable(Number(r.data.available_cents) || 0);
       const map = {
-        min_cashout: tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_CENTS)),
-        max_cashout: tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_CENTS)),
+        min_cashout: tr(t, 'cashout2.errMin', 'O mínimo para saque é {min}.').replace('{min}', money(MIN_C)),
+        max_cashout: tr(t, 'cashout2.errMax', 'O máximo por saque é {max}.').replace('{max}', money(MAX_C)),
+        no_payout_method: tr(t, 'saque4.errNoMethod', 'Cadastre sua chave Pix para sacar.'),
         cpf_invalid: tr(t, 'wallet.cashoutCpfError', 'CPF inválido. Deve ter 11 dígitos.'),
         name_invalid: tr(t, 'wallet.cashoutNameError', 'Informe seu nome completo.'),
         pix_key_invalid: tr(t, 'wallet.cashoutKeyError', 'Chave PIX inválida.'),
@@ -293,6 +377,9 @@ export default function WalletCashoutScreen() {
         disabled: tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.'),
       };
       if (msg === 'disabled') { setServerDisabled(true); setStep('form'); return; }
+      if (msg === 'no_payout_method' || code === 'no_payout_method') { setMethod(null); setEditMethod(true); }
+      // Erro de regra (não de rede): o próximo envio é um pedido NOVO.
+      if (msg && msg !== 'internal_error' && msg !== 'cashout_failed') reqIdRef.current = '';
       setError(map[msg] || map[code] || tr(t, 'wallet.cashoutFailed', 'Falha ao solicitar saque.'));
       setStep('review');
       try { haptic.error(); } catch {}
@@ -301,12 +388,64 @@ export default function WalletCashoutScreen() {
       setError(tr(t, 'cashout2.errNetwork', 'Sem conexão. Confira a internet e tente de novo.'));
       setStep('review');
     }
-  }, [amountCents, pixKey, pixType, fullName, cpf, t, loadAll, rules.minAgeDays]);
+  }, [amountCents, pixKey, pixType, fullName, cpf, t, loadAll, rules.minAgeDays, useSaved, MIN_C, MAX_C]);
+
+  // [saque-v2] detalhe com linha do tempo (servidor novo) + cancelar enquanto em análise.
+  const openDetail = useCallback(async (row) => {
+    setDetailRow(row);
+    setDetail(null);
+    try {
+      const r = await api.walletCashoutDetail?.(row.id);
+      if (r?.success && r.data && Number(r.data.id) === Number(row.id)) setDetail(r.data);
+    } catch {}
+  }, []);
+  const cancelPayout = useCallback(async (row) => {
+    if (!row || canceling) return;
+    const go = async () => {
+      setCanceling(true);
+      try {
+        const r = await api.payoutCancel?.(row.id);
+        if (r?.success) {
+          showToast({ message: tr(t, 'saque4.canceled', 'Saque cancelado. O valor voltou para seus ganhos.'), kind: 'success' });
+          setDetailRow(null); setDetail(null);
+          loadAll();
+        } else {
+          const m = String(r?.message || '');
+          showToast({ message: m === 'cannot_cancel' ? tr(t, 'saque4.errCannotCancel', 'Este saque já foi aprovado e não pode mais ser cancelado.') : tr(t, 'wallet.cashoutFailed', 'Falha ao solicitar saque.'), kind: 'error' });
+          loadAll();
+        }
+      } catch {
+        showToast({ message: tr(t, 'cashout2.errNetwork', 'Sem conexão. Confira a internet e tente de novo.'), kind: 'error' });
+      }
+      setCanceling(false);
+    };
+    const q = tr(t, 'saque4.cancelConfirm', 'Cancelar este saque? O valor volta para seus ganhos.');
+    if (Platform.OS === 'web') { try { if (typeof window !== 'undefined' && !window.confirm(q)) return; } catch {} go(); return; }
+    try {
+      const { Alert } = require('react-native');
+      Alert.alert(tr(t, 'saque4.cancel', 'Cancelar saque'), q, [
+        { text: tr(t, 'common.back', 'Voltar'), style: 'cancel' },
+        { text: tr(t, 'saque4.cancel', 'Cancelar saque'), style: 'destructive', onPress: go },
+      ]);
+    } catch { go(); }
+  }, [canceling, t, loadAll]);
+  const openAbroad = useCallback(async () => {
+    if (abroadBusy) return;
+    setAbroadBusy(true);
+    try {
+      const r = await api.payoutOnboardLink?.('US');
+      if (r?.success && r.data?.url) { try { await Linking.openURL(String(r.data.url)); } catch {} }
+      else showToast({ message: tr(t, 'saque4.abroadSoon', 'Por enquanto os saques são via Pix, para contas no Brasil. Saques internacionais chegam em breve.'), kind: 'info' });
+    } catch {}
+    setAbroadBusy(false);
+  }, [abroadBusy, t]);
 
   const copyReceipt = async (row) => {
     const lines = [
       `${tr(t, 'wallet.cashoutDetailTitle', 'Detalhes do saque')} #${row.id}`,
       `${tr(t, 'wallet.cashoutDetail.amount', 'Valor')}: ${brl(row.amount_cents)}`,
+      ...(Number(row.fee_cents) > 0 ? [`${tr(t, 'saque4.youReceive', 'Você recebe')}: ${brl(row.net_cents)}`] : []),
+      ...(row.receipt_ref ? [`${tr(t, 'saque4.receipt', 'Comprovante')}: ${row.receipt_ref}`] : []),
       `${tr(t, 'wallet.cashoutDetail.status', 'Status')}: ${statusLabel(t, String(row.status || 'pending'))}`,
       `${tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')}: ${row.pix_key_masked || row.pix_key || ''}`,
     ];
@@ -336,7 +475,7 @@ export default function WalletCashoutScreen() {
           <IconCheckCircle size={40} color={s.success} />
           <Text style={[Type.title3, { color: s.text, marginTop: Space.md }]}>{tr(t, 'wallet.cashoutSent', 'Saque solicitado')}</Text>
           <Text style={[Type.subhead, { color: s.textSecondary, textAlign: 'center', marginTop: Space.xs }]}>
-            {tr(t, 'cashout3.sentBody', '{amount} em análise. Após a aprovação, o Pix cai em até 3 dias úteis. Acompanhe o status abaixo.').replace('{amount}', brl(result.amount))}
+            {tr(t, 'saque4.sentBody', '{amount} em análise. Você acompanha cada etapa aqui e recebe um aviso quando o Pix for pago.').replace('{amount}', brl(result.net != null ? result.net : result.amount))}
           </Text>
           <Button title={tr(t, 'common.done', 'Concluir')} variant="secondary" style={{ marginTop: Space.lg }} fullWidth
             onPress={() => { setStep('form'); setResult(null); }} />
@@ -363,7 +502,7 @@ export default function WalletCashoutScreen() {
         </View>
         <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>
           {tr(t, 'creatorDash.missing', 'Faltam {missing} para o saque mínimo de {min}')
-            .replace('{missing}', money(MIN_CENTS - available)).replace('{min}', money(MIN_CENTS))}
+            .replace('{missing}', money(MIN_C - available)).replace('{min}', money(MIN_C))}
         </Text>
       </Card>
     );
@@ -372,9 +511,22 @@ export default function WalletCashoutScreen() {
       <Card>
         <Text style={[Type.headline, { color: s.text, marginBottom: Space.sm }]}>{tr(t, 'cashout2.reviewTitle', 'Confira antes de enviar')}</Text>
         <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.amount', 'Valor')} value={brl(amountCents) + (showConverted ? `  (≈ ${money(amountCents)})` : '')} />
-        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={pixType === 'cpf' ? fmtCpf(pixKey) : normPixKey(pixType, pixKey)} mono />
-        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.fullName', 'Titular')} value={fullName.trim()} />
-        <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.cpf', 'CPF')} value={fmtCpf(cpf)} mono />
+        <DetailRow s={s} label={tr(t, 'saque4.fee', 'Taxa de saque')} value={feeCents > 0 ? '− ' + brl(feeCents) : tr(t, 'saque4.noFee', 'Sem taxa')} />
+        <DetailRow s={s} label={tr(t, 'saque4.youReceive', 'Você recebe')} value={brl(netCents)} />
+        {useSaved ? (
+          <>
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={`${String(method?.pix_key_type || '').toUpperCase()} ${method?.pix_key_masked || ''}`} mono />
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.fullName', 'Titular')} value={method?.full_name || rules.kyc?.full_name || ''} />
+            {rules.kyc?.cpf_masked ? <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.cpf', 'CPF')} value={rules.kyc.cpf_masked} mono /> : null}
+          </>
+        ) : (
+          <>
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.key', 'Chave PIX')} value={pixType === 'cpf' ? fmtCpf(pixKey) : normPixKey(pixType, pixKey)} mono />
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.fullName', 'Titular')} value={fullName.trim()} />
+            <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.cpf', 'CPF')} value={fmtCpf(cpf)} mono />
+          </>
+        )}
+        <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.sm }]}>{etaText}</Text>
         {error ? (
           <View style={{ flexDirection: 'row', gap: Space.sm, marginTop: Space.md }} accessibilityLiveRegion="polite">
             <IconAlertCircle size={18} color={s.danger} />
@@ -384,14 +536,16 @@ export default function WalletCashoutScreen() {
         <Button title={tr(t, 'cashout2.confirm', 'Confirmar saque')} size="lg" fullWidth loading={step === 'sending'}
           onPress={submit} style={{ marginTop: Space.lg }} />
         <Button title={tr(t, 'cashout2.edit', 'Editar dados')} variant="ghost" fullWidth disabled={step === 'sending'}
-          onPress={() => { setError(''); setStep('form'); }} style={{ marginTop: Space.xs }} />
+          onPress={() => { setError(''); reqIdRef.current = ''; setStep('form'); }} style={{ marginTop: Space.xs }} />
       </Card>
     );
   } else {
     formBlock = (
       <Card>
         <Field s={s} label={tr(t, 'wallet.cashoutAmount', 'Quanto você quer sacar?')} error={shown('amount')}
-          hint={showConverted && amountCents > 0 ? `≈ ${money(amountCents)}` : tr(t, 'cashout2.amountHint', 'Pix é pago em reais. Mínimo {min}.').replace('{min}', brl(MIN_CENTS))}>
+          hint={showConverted && amountCents > 0 ? `≈ ${money(amountCents)}`
+            : feeCents > 0 && amountCents >= MIN_C ? `${tr(t, 'saque4.youReceive', 'Você recebe')}: ${brl(netCents)} (${tr(t, 'saque4.fee', 'Taxa de saque')} ${brl(feeCents)})`
+            : tr(t, 'cashout2.amountHint', 'Pix é pago em reais. Mínimo {min}.').replace('{min}', brl(MIN_C))}>
           <View style={[styles.amountRow, { backgroundColor: s.surface, borderColor: shown('amount') ? s.danger : s.separator }]}>
             <Text style={[Type.title3, { color: s.textSecondary }]}>{brl(0).replace(/[\d.,\s ]/g, '') || 'BRL'}</Text>
             <TextInput
@@ -407,12 +561,29 @@ export default function WalletCashoutScreen() {
           </View>
           <View style={{ flexDirection: 'row', gap: Space.sm, marginTop: Space.sm }}>
             <Button size="sm" variant="secondary" title={tr(t, 'cashout2.useMin', 'Mínimo')}
-              onPress={() => { setAmountText(centsToInput(MIN_CENTS)); setTouched(p => ({ ...p, amount: true })); }} />
+              onPress={() => { setAmountText(centsToInput(MIN_C)); setTouched(p => ({ ...p, amount: true })); }} />
             <Button size="sm" variant="secondary" title={tr(t, 'cashout2.useAll', 'Tudo ({amount})').replace('{amount}', brl(maxAllowed))}
               onPress={() => { setAmountText(centsToInput(maxAllowed)); setTouched(p => ({ ...p, amount: true })); }} />
           </View>
         </Field>
 
+        {useSaved ? (
+          <Field s={s} label={tr(t, 'saque4.receiveIn', 'Receber em')}>
+            <View style={[styles.savedRow, { backgroundColor: s.surface, borderColor: s.separator }]}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>
+                  {`Pix · ${String(method?.pix_key_type || '').toUpperCase()} ${method?.pix_key_masked || ''}`}
+                </Text>
+                <Text style={[Type.caption, { color: s.textSecondary }]} numberOfLines={1}>
+                  {[method?.full_name || rules.kyc?.full_name, rules.kyc?.cpf_masked].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+              <Button size="sm" variant="secondary" title={tr(t, 'saque4.change', 'Alterar')}
+                onPress={() => { setEditMethod(true); reqIdRef.current = ''; if (rules.kyc?.full_name) setFullName(String(rules.kyc.full_name)); }} />
+            </View>
+          </Field>
+        ) : null}
+        {useSaved ? null : (<>
         <Field s={s} label={tr(t, 'wallet.cashoutPixKeyType', 'Tipo da chave')}>
           <SegmentedControl
             size="sm"
@@ -472,6 +643,7 @@ export default function WalletCashoutScreen() {
             accessibilityLabel={tr(t, 'wallet.cashoutCpf', 'CPF')}
           />
         </Field>
+        </>)}
 
         <Button title={tr(t, 'cashout2.continue', 'Continuar')} size="lg" fullWidth onPress={goReview} style={{ marginTop: Space.xl }} />
         <Text style={[Type.caption, { color: s.textTertiary, textAlign: 'center', marginTop: Space.md }]}>
@@ -480,6 +652,26 @@ export default function WalletCashoutScreen() {
       </Card>
     );
   }
+  // [saque-v2] quem mora fora do Brasil: cadastro hospedado (Stripe) quando o servidor liga; senão "em breve".
+  const abroadBlock = paused || step === 'review' || step === 'sending' ? null : (
+    <Card>
+      <View style={{ flexDirection: 'row', gap: Space.md }}>
+        <IconGlobe size={22} color={s.textSecondary} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={[Type.subhead, { color: s.text, fontWeight: '600' }]}>{tr(t, 'saque4.abroadTitle', 'Mora fora do Brasil?')}</Text>
+          <Text style={[Type.footnote, { color: s.textSecondary, marginTop: 2 }]}>
+            {opts?.intl
+              ? tr(t, 'saque4.abroadBody', 'O cadastro e a verificação de identidade são feitos pela Stripe, com segurança.')
+              : tr(t, 'saque4.abroadSoon', 'Por enquanto os saques são via Pix, para contas no Brasil. Saques internacionais chegam em breve.')}
+          </Text>
+          {opts?.intl ? (
+            <Button size="sm" variant="secondary" title={tr(t, 'saque4.abroadSetup', 'Cadastrar conta de recebimento')}
+              loading={abroadBusy} onPress={openAbroad} style={{ marginTop: Space.sm, alignSelf: 'flex-start' }} />
+          ) : null}
+        </View>
+      </View>
+    </Card>
+  );
 
   const body = (
     <>
@@ -492,7 +684,7 @@ export default function WalletCashoutScreen() {
           {money(available)}
         </Text>
         <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.xs }]}>
-          {tr(t, 'cashout3.heroSub', 'Mínimo {min} · análise manual · Pix em até 3 dias úteis').replace('{min}', money(MIN_CENTS))}
+          {tr(t, 'cashout3.heroSub', 'Mínimo {min} · análise manual · Pix em até 3 dias úteis').replace('{min}', money(MIN_C))}
         </Text>
         {rules.onHold > 0 ? (
           <Text style={[Type.footnote, { color: HERO.sub, marginTop: Space.xs }]}>
@@ -503,6 +695,7 @@ export default function WalletCashoutScreen() {
       </HeroCard>
 
       {formBlock}
+      {abroadBlock}
 
       <SectionHeader variant="grouped" inset={Space.xs} style={{ paddingTop: Space.sm }} title={tr(t, 'wallet.cashoutHistory', 'Saques anteriores')} />
       <Card padding={0}>
@@ -513,7 +706,7 @@ export default function WalletCashoutScreen() {
         ) : history.map((row, idx) => {
           const st = String(row.status || 'pending');
           return (
-            <PressableRow key={String(row.id)} onPress={() => setDetailRow(row)} accessibilityRole="button"
+            <PressableRow key={String(row.id)} onPress={() => openDetail(row)} accessibilityRole="button"
               accessibilityLabel={`${money(row.amount_cents)}, ${statusLabel(t, st)}`}
               style={[styles.histRow, idx < history.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: s.separator }]}>
               <View style={{ flex: 1, minWidth: 0 }}>
@@ -556,7 +749,7 @@ export default function WalletCashoutScreen() {
         </KeyboardAvoidingView>
       )}
 
-      <Sheet visible={!!detailRow} onClose={() => setDetailRow(null)} title={tr(t, 'wallet.cashoutDetailTitle', 'Detalhes do saque')}>
+      <Sheet visible={!!detailRow} onClose={() => { setDetailRow(null); setDetail(null); }} title={tr(t, 'wallet.cashoutDetailTitle', 'Detalhes do saque')}>
         {detailRow ? (
           <View style={{ paddingHorizontal: Space.lg, paddingBottom: Space.lg }}>
             <View style={{ alignItems: 'center', paddingVertical: Space.md }}>
@@ -570,9 +763,31 @@ export default function WalletCashoutScreen() {
             <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.requested', 'Solicitado em')} value={fmtDate(detailRow.requested_at_ts, true)} />
             {detailRow.processed_at_ts ? <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.processed', 'Processado em')} value={fmtDate(detailRow.processed_at_ts, true)} /> : null}
             <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.id', 'ID do saque')} value={`#${detailRow.id}`} />
+            {Number(detailRow.fee_cents) > 0 ? <DetailRow s={s} label={tr(t, 'saque4.fee', 'Taxa de saque')} value={'− ' + brl(detailRow.fee_cents)} /> : null}
+            {Number(detailRow.fee_cents) > 0 ? <DetailRow s={s} label={tr(t, 'saque4.youReceive', 'Você recebe')} value={brl(detailRow.net_cents)} /> : null}
+            {detailRow.receipt_ref ? <DetailRow s={s} label={tr(t, 'saque4.receipt', 'Comprovante')} value={detailRow.receipt_ref} mono /> : null}
             {detailRow.admin_note ? <DetailRow s={s} label={tr(t, 'wallet.cashoutDetail.note', 'Observação')} value={detailRow.admin_note} /> : null}
+            {Array.isArray(detail?.events) && detail.events.length > 0 ? (
+              <View style={{ marginTop: Space.md }}>
+                <Text style={[Type.footnote, { color: s.textSecondary, fontWeight: '600', marginBottom: Space.xs }]}>{tr(t, 'saque4.timeline', 'Andamento')}</Text>
+                {detail.events.map((ev, i) => (
+                  <View key={String(i)} style={styles.evRow}>
+                    <View style={[styles.evDot, { backgroundColor: i === detail.events.length - 1 ? s.ink : s.separator }]} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[Type.subhead, { color: s.text }]}>{eventLabel(t, String(ev.status))}</Text>
+                      {ev.note ? <Text style={[Type.caption, { color: s.textSecondary }]}>{ev.note}</Text> : null}
+                    </View>
+                    <Text style={[Type.caption, { color: s.textTertiary }]}>{fmtDate(ev.ts, true)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
             <Button title={tr(t, 'cashout2.copyReceipt', 'Copiar comprovante')} variant="secondary" fullWidth
               onPress={() => copyReceipt(detailRow)} style={{ marginTop: Space.lg }} />
+            {(detail ? detail.can_cancel && !detail._stale : String(detailRow.status || 'pending') === 'pending' && detailRow.can_cancel) ? (
+              <Button title={tr(t, 'saque4.cancel', 'Cancelar saque')} variant="ghost" fullWidth loading={canceling}
+                onPress={() => cancelPayout(detailRow)} style={{ marginTop: Space.xs }} />
+            ) : null}
           </View>
         ) : null}
       </Sheet>
@@ -600,4 +815,7 @@ const styles = StyleSheet.create({
   },
   histRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, paddingHorizontal: Space.lg, paddingVertical: Space.md },
   detailRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingVertical: Space.sm, gap: Space.md },
+  savedRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, borderRadius: Radius.control, borderWidth: 1, paddingHorizontal: Space.md, paddingVertical: Space.sm, minHeight: 56 },
+  evRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Space.sm, paddingVertical: 6 },
+  evDot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
 });

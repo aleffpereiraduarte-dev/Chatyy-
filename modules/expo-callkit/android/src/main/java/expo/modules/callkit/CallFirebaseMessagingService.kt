@@ -130,7 +130,12 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 IncomingCallRegistry.dismissIncoming(
                     applicationContext, cancelId, "fcm_$type:$reason",
-                    android.telecom.DisconnectCause.REMOTE, "fcm"
+                    // [2026-10-16 call-state] motivo certo p/ o Telecom.
+                    when (reason) {
+                        "answered_elsewhere" -> android.telecom.DisconnectCause.ANSWERED_ELSEWHERE
+                        "declined_elsewhere" -> android.telecom.DisconnectCause.REJECTED
+                        else -> android.telecom.DisconnectCause.REMOTE
+                    }, "fcm"
                 )
             } catch (e: Throwable) {}
             // Stop the authoritative looping ringtone (the FCM-fallback ringer

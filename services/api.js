@@ -9275,9 +9275,13 @@ export async function fileStorageInfo() {
 }
 
 // Get presigned S3 URL for direct upload (bypasses server — celular → R2 direto)
-export async function getPresignedUpload(filename, mimeType = 'image/jpeg', parentId = null) {
+export async function getPresignedUpload(filename, mimeType = 'image/jpeg', parentId = null, size = 0, dest = '') {
   const params = { filename, mime_type: mimeType };
+  // [2026-10-16 drive-native] dest='drive' = envio do Cloud (sem pasta → RAIZ; sem isto ia p/ Photo Backup/AAAA-MM)
+  if (dest) params.dest = dest;
   if (parentId) params.parent_id = parentId;
+  // [2026-10-16 drive-native] tamanho real → o servidor confere cota/limite ANTES do PUT (sem = sonda de 1 byte)
+  if (Number(size) > 0) params.size = Math.round(Number(size));
   return apiCall('drive_presigned_upload', params, 'POST');
 }
 
@@ -9289,7 +9293,7 @@ export async function fileUploadDirect(file, folderId = null, onProgress = null)
   const size = file.size || file.fileSize || 0;
 
   // 1. Get presigned URL
-  const init = await getPresignedUpload(filename, mimeType, folderId);
+  const init = await getPresignedUpload(filename, mimeType, folderId, size, 'drive');
   if (!init.success || !init.data?.upload_url) {
     // Fallback to legacy upload via server
     return fileUpload(file, folderId);
@@ -10908,14 +10912,40 @@ export async function walletHistory({ limit = 50, offset = 0 } = {}) {
 // balance + the payout id so the UI can append it to the history.
 export async function walletCashoutRequest({
   amountCents, pixKey, pixKeyType = 'auto', fullName, cpf,
+  clientRequestId = '', useSavedMethod = false, method = '',
 } = {}) {
+  // [2026-10-16 saque-v2] client_request_id = idempotência (toque duplo / reenvio
+  // após queda de rede não cria 2º saque); use_saved_method = chave Pix cadastrada.
   return apiCall('wallet_cashout_request', {
     amount_cents: Number(amountCents) || 0,
     pix_key: String(pixKey || '').trim(),
     pix_key_type: String(pixKeyType || 'auto').toLowerCase(),
     full_name: String(fullName || '').trim(),
     cpf: String(cpf || '').replace(/[^0-9]/g, ''),
+    ...(clientRequestId ? { client_request_id: String(clientRequestId) } : null),
+    ...(useSavedMethod ? { use_saved_method: 1 } : null),
+    ...(method ? { method: String(method) } : null),
   }, 'POST');
+}
+// [2026-10-16 saque-v2] Cadastro de recebimento (Pix salvo + KYC mascarado + regras/taxa/opções).
+export async function payoutMethodGet() {
+  return apiCall('payout_method_get', {}, 'POST');
+}
+export async function payoutMethodSave({ pixKey, pixKeyType = 'auto', fullName, cpf } = {}) {
+  return apiCall('payout_method_save', {
+    pix_key: String(pixKey || '').trim(),
+    pix_key_type: String(pixKeyType || 'auto').toLowerCase(),
+    full_name: String(fullName || '').trim(),
+    cpf: String(cpf || '').replace(/[^0-9]/g, ''),
+  }, 'POST');
+}
+// Cancela um saque ainda EM ANÁLISE (o valor volta para os ganhos).
+export async function payoutCancel(payoutId) {
+  return apiCall('payout_cancel', { payout_id: Number(payoutId) || 0 }, 'POST');
+}
+// Exterior: link do cadastro hospedado (Stripe Connect Express). Só quando o servidor liga.
+export async function payoutOnboardLink(country) {
+  return apiCall('payout_onboard_link', { country: String(country || '').toUpperCase() }, 'POST');
 }
 // List of past cashout requests for the signed-in user (newest first, max 50).
 // Used by /wallet-cashout history table — status renders as pending/paid/rejected.

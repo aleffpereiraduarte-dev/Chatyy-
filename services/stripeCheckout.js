@@ -34,11 +34,21 @@ async function _openAndRefresh(url) {
   } catch (e) {
     return { success: false, message: 'browser_failed' };
   }
-  // Browser fechado (sucesso OU cancelamento): o webhook e a fonte da verdade,
-  // so re-buscamos o plano.
+  // Browser fechado (sucesso OU cancelamento). [2026-10-16 storage-billing] O webhook
+  // da Stripe NAO esta registrado p/ o Chatyy: o servidor confere a assinatura direto
+  // na API (stripe_storage_sync) e aplica a cota; depois re-buscamos o plano.
+  await syncStripeStorage();
   let plan = null;
   try { plan = await planInfo(); } catch {}
   return { success: true, opened: true, browserResult: result?.type || null, plan };
+}
+
+/** [2026-10-16 storage-billing] Aplica no servidor o armazenamento pago com cartão. */
+export async function syncStripeStorage() {
+  try {
+    const r = await apiCall('stripe_storage_sync', {}, 'POST');
+    return r?.success ? (r.data || null) : null;
+  } catch { return null; }
 }
 
 // tierId: '100gb' | '500gb' | '1tb' | '2tb' | '5tb'; period: 'monthly' | 'annual'.
@@ -56,6 +66,11 @@ export async function startStripeCheckout(tierId, period = 'monthly') {
   const url = r?.data?.url;
   if (!r?.success || typeof url !== 'string' || !/^https:\/\//.test(url)) {
     return { success: false, message: r?.message || 'checkout_failed' };
+  }
+  // [2026-10-16 storage-billing] Web: popup aberto depois de um await é bloqueado pelo
+  // navegador → mesma aba; a Stripe volta em /plans?storage=1&success=1 (que sincroniza).
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+    try { window.location.assign(url); return { success: true, redirected: true }; } catch {}
   }
   return _openAndRefresh(url);
 }

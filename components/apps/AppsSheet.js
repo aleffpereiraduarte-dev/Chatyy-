@@ -113,6 +113,7 @@ const AppIcon = React.memo(function AppIcon({ Comp, isDark, size = TILE }) {
 });
 
 // Um app (faixa Recentes ou grade). Badge com pop; modo editar = tremor + marcador.
+const _tileOuter = { alignSelf: 'stretch' };
 const AppTile = React.memo(function AppTile({ item, badge, onPress, onLongPress, isDark, t, textColor, editing, pinned, seed, width }) {
   const shown = badge > 99 ? '99+' : String(badge || '');
   const a11y = item.label + (badge ? ', ' + t('apps.badgeNew', { count: shown }) : '')
@@ -124,6 +125,7 @@ const AppTile = React.memo(function AppTile({ item, badge, onPress, onLongPress,
         onLongPress={onLongPress}
         delayLongPress={380}
         scaleTo={0.88}
+        outerStyle={_tileOuter}
         style={{ alignItems: 'center', width: '100%' }}
         accessibilityRole="button"
         accessibilityLabel={a11y}
@@ -564,7 +566,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
           return (
             <AppsItem key={'sec-' + section.key} enterDelay={delayFor(70 + secRow * 55 - 30)} style={{ marginBottom: 14 }}>
               <SectionTitle isDark={isDark}>{section.title}</SectionTitle>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -4 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{/* [polish3] sem margem -4: a 4ª coluna vazava 4 px além do recorte e cortava o rótulo ("Mapa de amigo|s") */}
                 {section.items.map((it, i) => (
                   <AppsItem key={it.key} enterDelay={delayFor(delays[i])} style={{ width: '25%' }}>
                     <AppTile

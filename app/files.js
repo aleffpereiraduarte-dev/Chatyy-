@@ -2133,10 +2133,15 @@ function FilesScreenInner() {
     if (isWeb) {
       window.open(url, '_blank');
     } else {
-      Linking.openURL(url).catch(() => {});
+      // [2026-10-16 drive-native] antes: Linking.openURL entregava a URL com o bearer ao
+      // navegador. Agora baixa com permissão curta e salva/compartilha pelo sistema.
+      const item = { ...(file || {}), id: fileId, name: file?.name || file?.original_name };
+      require('../services/driveFileActions').saveToDevice(item)
+        .then((r) => { if (r === 'saved' && Platform.OS === 'android') showToast(t('drive.savedToDownloads') !== 'drive.savedToDownloads' ? t('drive.savedToDownloads') : 'Salvo em Downloads/Chatyy'); })
+        .catch(() => { safeAlert(t('common.error'), t('drive.downloadFailed') !== 'drive.downloadFailed' ? t('drive.downloadFailed') : 'Não foi possível baixar o arquivo.'); });
     }
     setActionMenu(null);
-  }, []);
+  }, [showToast, t]);
 
   // Expose latest handleDownload to bulk handler (forward-ref pattern)
   useEffect(() => { handleDownloadRef.current = handleDownload; }, [handleDownload]);

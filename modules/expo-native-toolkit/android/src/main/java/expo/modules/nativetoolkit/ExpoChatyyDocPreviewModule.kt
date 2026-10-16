@@ -1,8 +1,11 @@
 package expo.modules.nativetoolkit
 
 import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import expo.modules.kotlin.modules.Module
@@ -46,6 +49,41 @@ class ExpoChatyyDocPreviewModule : Module() {
         val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".FileSystemFileProvider", file)
         val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mimeFor(file, mime))
         intent.resolveActivity(ctx.packageManager) != null
+      } catch (_: Throwable) {
+        false
+      }
+    }
+
+    // [2026-10-16 drive-native] 2 = tem saveToDownloads. JS: services/driveFileActions.js
+    Function("apiVersion") { 2 }
+
+    // Copia o arquivo local para Downloads (MediaStore, Android 10+; sem permissão).
+    // Resolve true se salvou; false em Android < 10 ou erro (JS cai no compartilhar).
+    AsyncFunction("saveToDownloads") { path: String, name: String?, mime: String? ->
+      try {
+        val ctx = appContext.reactContext ?: return@AsyncFunction false
+        val file = toFile(path) ?: return@AsyncFunction false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@AsyncFunction false
+        val display = (name?.takeIf { it.isNotBlank() } ?: file.name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val values = ContentValues().apply {
+          put(MediaStore.MediaColumns.DISPLAY_NAME, display)
+          put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(file, mime))
+          put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Chatyy")
+          put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val resolver = ctx.contentResolver
+        val target = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return@AsyncFunction false
+        try {
+          resolver.openOutputStream(target)?.use { out ->
+            file.inputStream().use { input -> input.copyTo(out, 256 * 1024) }
+          } ?: throw IllegalStateException("no stream")
+          val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+          resolver.update(target, done, null, null)
+          true
+        } catch (t: Throwable) {
+          try { resolver.delete(target, null, null) } catch (_: Throwable) {}
+          false
+        }
       } catch (_: Throwable) {
         false
       }

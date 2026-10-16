@@ -192,6 +192,7 @@ let _activeCallId = null;
 // survives remounts, shared across both mounts via the globalThis pin) so
 // the dedup holds regardless of component lifecycle.
 const _recentlyHandledCallIds = new Map(); // callId(String) -> epoch ms
+const _stoppedRingAt = new Map(); // [2026-10-16 call-state] callId -> ms em que call_dismissed parou o toque
 const _HANDLED_TTL_MS = 90 * 1000;
 function markCallHandled(callId) {
   if (!callId) return;
@@ -338,6 +339,33 @@ function _inviteAgeMs(callId) {
   return Number.isFinite(age) ? age : 0;
 }
 
+// [2026-10-16 call-state] "Atendi no celular e ao abrir a web aparece TOCANDO".
+// O hub agora só re-entrega convite que ainda toca; aqui é a 2ª trava: convite
+// com idade conhecida > 45 s nunca toca. Ordem de confiança: replay_age_ms
+// (calculado no servidor) → server_ts (relógio do servidor, tolera 60 s de
+// relógio torto) → call_id (relógio do CALLER, só > 90 s).
+const _INVITE_RING_MAX_MS = 45 * 1000;
+function _inviteStaleReason(data) {
+  try {
+    const r = Number(data?.replay_age_ms);
+    if (Number.isFinite(r) && r > _INVITE_RING_MAX_MS) return 'replay_age';
+    const st = Number(data?.server_ts);
+    if (Number.isFinite(st) && st > 0 && Date.now() - st > _INVITE_RING_MAX_MS + 15000) return 'server_ts';
+    if (_inviteAgeMs(data?.call_id || data?.room_id) > _MAX_INVITE_AGE_MS) return 'call_id_age';
+  } catch {}
+  return '';
+}
+const _ELSEWHERE_TXT = {
+  pt: { accepted: 'Atendida em outro aparelho', declined: 'Recusada em outro aparelho' },
+  es: { accepted: 'Atendida en otro dispositivo', declined: 'Rechazada en otro dispositivo' },
+  en: { accepted: 'Answered on another device', declined: 'Declined on another device' },
+};
+function _elsewhereText(lang, state) {
+  const l = String(lang || 'pt').slice(0, 2).toLowerCase();
+  const tbl = _ELSEWHERE_TXT[l] || _ELSEWHERE_TXT.en;
+  return tbl[state] || '';
+}
+
 function IosCallInviteBridge() {
   const { user } = useAuth();
   const myEmail = (user?.email || '').toLowerCase();
@@ -355,8 +383,9 @@ function IosCallInviteBridge() {
           if (!callId) return;
           const caller = String(data?.caller_email || '').toLowerCase();
           if (!caller || caller === myEmail) return;
-          if (_inviteAgeMs(callId) > _MAX_INVITE_AGE_MS) {
-            voipDiag('js_invite_bridge_skip_stale', callId, { age_ms: _inviteAgeMs(callId) });
+          const _stale = _inviteStaleReason(data);
+          if (_stale) {
+            voipDiag('js_invite_bridge_skip_stale', callId, { age_ms: _inviteAgeMs(callId), why: _stale });
             return;
           }
           const payload = {
@@ -439,7 +468,9 @@ function IncomingCallListenerWeb() {
 
   const { colors } = useTheme();
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const languageRef = useRef(language);
+  languageRef.current = language;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [call, setCall] = useState(null);
@@ -530,6 +561,12 @@ function IncomingCallListenerWeb() {
       return;
     }
     const normalizedCallId = String(data.call_id || data.room_id);
+    // [2026-10-16 call-state] chamada já atendida/recusada/encerrada (aqui ou
+    // em outro aparelho) ou convite velho nunca toca (push atrasado, replay).
+    if (wasCallRecentlyHandled(normalizedCallId) || _inviteStaleReason(data)) {
+      voipDiag('show_call_skipped', normalizedCallId, { reason: wasCallRecentlyHandled(normalizedCallId) ? 'handled' : _inviteStaleReason(data) });
+      return;
+    }
     if (_callActive && (!_activeCallId || _activeCallId !== normalizedCallId)) {
       console.log('[IncomingCall] showCall ignored: active call in progress (other callId)');
       return;
@@ -820,6 +857,15 @@ function IncomingCallListenerWeb() {
           callActive: _callActive,
           alreadyHaveSameCall: !!(callRef.current && callRef.current.call_id === (data?.call_id || data?.room_id)),
         });
+        // [2026-10-16 call-state] Convite velho (replay/resume de sessão que
+        // abriu depois) nunca toca nem pausa mídia.
+        {
+          const _stale = _inviteStaleReason(data);
+          if (_stale) {
+            voipDiag('ws_call_invite_skipped', data?.call_id || data?.room_id || '', { reason: 'stale_' + _stale });
+            return;
+          }
+        }
         // Telegram/WhatsApp parity: the moment a call invite hits the wire,
         // any voice/music/video in the app should pause so the ringtone
         // isn't competing with media. Doing it here (instead of in the
@@ -1110,7 +1156,54 @@ function IncomingCallListenerWeb() {
       // iOS, IncomingCallActivity full-screen on Android) keeps showing
       // even though the JS-side modal/ringtone is cleared — user reported
       // "se eu atender em um dispositivo, o outro continua tocando".
+      // [2026-10-16 call-state] Estado autoritativo do hub p/ TODAS as sessões
+      // do usuário: accepted|declined|ended|missed. Se ESTA sessão está
+      // tocando esse call_id (e não foi ela que atendeu) → para na hora e
+      // avisa "Atendida em outro aparelho". Sempre marca o call_id como
+      // tratado: um convite re-entregue depois fica mudo.
+      unsubs.push(mailWs.on('call_state', (data) => {
+        const cid = data?.call_id ? String(data.call_id) : '';
+        const st = String(data?.state || '').toLowerCase();
+        if (!cid || !st || st === 'ringing') return;
+        const ringingHere = callRef.current?.call_id === cid;
+        if (ringingHere && acceptedRef.current) return; // este aparelho atendeu
+        markCallHandled(cid);
+        if (!ringingHere) {
+          // call_dismissed (mesmo evento, chega antes) já parou o toque: só o aviso.
+          const at = _stoppedRingAt.get(cid);
+          _stoppedRingAt.delete(cid);
+          if (at && Date.now() - at < 5000 && !data?.resumed) {
+            const m = _elsewhereText(languageRef.current, st);
+            if (m) { try { require('./ui/Toast').showToast({ message: m, kind: 'info' }); } catch (_) {} }
+          }
+          return;
+        }
+        voipDiag('call_state_stop_ring', cid, { state: st, reason: data?.reason || '' });
+        _pendingIceByCallId.delete(cid);
+        callRef.current = null;
+        callStateRef.current = null;
+        stopRingtone();
+        if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+        setCall(null);
+        acceptedRef.current = false;
+        handlingRef.current = false;
+        try { if (typeof globalThis !== 'undefined') globalThis.__chatyy_pauseAllPlayback = false; } catch {}
+        // O onEnd que o endCall pode disparar não deve mandar call_end ao caller.
+        callEndSentRef.current[cid] = Date.now();
+        try {
+          const { endCall } = require('../services/callkeep');
+          endCall(cid, st === 'accepted' ? 'answeredElsewhere' : (st === 'declined' ? 'declinedElsewhere' : 'remoteEnded'));
+        } catch (_) {}
+        const msg = _elsewhereText(languageRef.current, st);
+        if (msg) {
+          try { require('./ui/Toast').showToast({ message: msg, kind: 'info' }); } catch (_) {}
+        }
+      }));
+
       unsubs.push(mailWs.on('call_dismissed', (data) => {
+        if (data?.call_id && !(acceptedRef.current && callRef.current?.call_id === data.call_id)) {
+          markCallHandled(data.call_id); // [2026-10-16 call-state] replay posterior fica mudo
+        }
         // [multi-device answered_elsewhere] The backend now fans call_dismissed
         // to BOTH devices of the callee — including the one that just answered.
         // If THIS device already accepted this exact call, ignore its own
@@ -1118,6 +1211,7 @@ function IncomingCallListenerWeb() {
         if (acceptedRef.current && callRef.current?.call_id === data?.call_id) { return; }
         if (callRef.current?.call_id === data?.call_id) {
           console.log('[IncomingCall] call_dismissed received:', data.call_id, 'reason=' + (data?.reason || 'n/a'));
+          _stoppedRingAt.set(String(data.call_id), Date.now()); // [2026-10-16 call-state] p/ o aviso
           if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
           callRef.current = null;
           callStateRef.current = null;

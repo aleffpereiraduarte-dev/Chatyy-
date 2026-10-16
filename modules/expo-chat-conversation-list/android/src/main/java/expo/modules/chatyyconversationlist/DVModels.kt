@@ -102,6 +102,8 @@ internal class DVLabels(m: Map<String, Any?>? = null) {
     "restore" -> get("restore", "Restaurar")
     "purge" -> get("purge", "Excluir permanentemente")
     "more" -> get("more", "Mais")
+    "sendcopy" -> get("sendcopy", "Enviar cópia") // [2026-10-16 drive-native]
+    "savefiles" -> get("savefiles", "Salvar em Downloads")
     else -> get(a, a)
   }
 }
@@ -129,6 +131,8 @@ internal object DVGlyphs {
     "delete", "purge" -> R.drawable.ccl_ic_trash
     "restore" -> R.drawable.dv_ic_restore
     "more" -> R.drawable.dv_ic_more
+    "sendcopy" -> R.drawable.dv_ic_send_copy // [2026-10-16 drive-native]
+    "savefiles" -> R.drawable.dv_ic_download
     else -> R.drawable.dv_ic_more
   }
 

@@ -791,6 +791,7 @@ function GroupAvatarStack({ conversation, size = 56, isDark }) {
 // Format activity status text from last_seen timestamp.
 // Only shown for online state — the "X min atrás" lower-state was redundant
 // with the message timestamp on the right of the row and added visual noise.
+const _rowNameHug = { flexGrow: 0, flexShrink: 1, flexBasis: 'auto' };
 function formatActivityStatus(isOnline, lastSeen, t) {
   if (isOnline) return { text: t?.('chat.online') || 'online', color: '#22c55e' };
   if (lastSeen) {
@@ -1748,7 +1749,9 @@ const ConversationRow = React.memo(function ConversationRow({
                     Tipo de conv (grupo/canal) já fica claro pelo avatar e
                     estilo do row. Member count fica visível dentro do
                     chat-conversation header onde é contexto correto. */}
-                <Text style={[s.rowName, { color: P.text }, unread && s.rowNameUnread]} numberOfLines={1} maxFontSizeMultiplier={1.35}>{displayName}</Text>
+                {/* [2026-10-16 polish3] nome sem flex:1 aqui: empurrava o "online" p/ a
+                    direita, colado na hora ("online 18:17" lia como 1 coisa). */}
+                <Text style={[s.rowName, _rowNameHug, { color: P.text }, unread && s.rowNameUnread]} numberOfLines={1} maxFontSizeMultiplier={1.35}>{displayName}</Text>
                 {!isGroup && !isChannel && (() => {
                   const activity = formatActivityStatus(isOnline, lastSeen, t);
                   if (!activity) return null;

@@ -56,10 +56,13 @@ export const Colors = {
   headerBorder: '#eef0f1',
   sidebarActiveBg: 'rgba(17, 17, 17, 0.10)',
 
-  // Text — WhatsApp ink ramp. name/text #111b21, muted/secondary #667781.
-  text: '#111b21',
-  textSecondary: '#667781',
-  textTertiary: '#8696a0',
+  // Text — ramp NEUTRA (P&B premium). [2026-10-16 polish3] era o ink do
+  // WhatsApp (#111b21 / #667781 / #8696a0, cinza-azulado): perfil, Bia, dados
+  // do contato e cabeçalhos de seção ficavam azulados ao lado da lista neutra.
+  // Mesma luminância → mesmos contrastes (5.3:1 / 3.3:1 sobre branco).
+  text: '#111111',
+  textSecondary: '#6B6B70',
+  textTertiary: '#8E8E93',
   textOnPrimary: '#ffffff',
 
   // Border — very light hairline (#eef0f1) so rows/sections read as airy.
@@ -69,7 +72,7 @@ export const Colors = {
 
   // Chips (filter pills) — inactive = light gray fill, active = small black.
   chipBg: '#f0f2f5',
-  chipText: '#667781',
+  chipText: '#6B6B70',
   chipActiveBg: '#111111',
   chipActiveText: '#ffffff',
 
@@ -845,8 +848,8 @@ export function overlayColors(colors, isDark) {
     groupGap: isDark ? '#000000' : '#f2f2f7',
     pressed: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
     text: c.text || (isDark ? '#F5F5F7' : '#111111'),
-    textSecondary: c.textSecondary || (isDark ? '#8E8E93' : '#667781'),
-    icon: isDark ? '#AEAEB2' : '#54656F',
+    textSecondary: c.textSecondary || (isDark ? '#8E8E93' : '#6B6B70'),
+    icon: isDark ? '#AEAEB2' : '#3C3C43', // [polish3] neutro (era #54656F azulado)
     danger: isDark ? '#FF453A' : '#E5484D',
     dangerTint: isDark ? 'rgba(255,69,58,0.16)' : 'rgba(229,72,77,0.10)',
     neutralButton: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',

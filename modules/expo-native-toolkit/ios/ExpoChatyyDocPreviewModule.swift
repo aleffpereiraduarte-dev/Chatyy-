@@ -42,9 +42,28 @@ private final class ChatyyPreviewSource: NSObject, QLPreviewControllerDataSource
   }
 }
 
+// [2026-10-16 drive-native] "Salvar em Arquivos" (UIDocumentPicker em modo exportação).
+// O delegate é fraco no picker → o módulo segura a referência até terminar.
+private final class ChatyyExportDelegate: NSObject, UIDocumentPickerDelegate {
+  var finish: ((Bool) -> Void)?
+
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    let f = finish
+    finish = nil
+    f?(!urls.isEmpty)
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    let f = finish
+    finish = nil
+    f?(false)
+  }
+}
+
 public class ExpoChatyyDocPreviewModule: Module {
   // QLPreviewController holds its dataSource/delegate weakly → keep it alive here.
   private var activeSource: ChatyyPreviewSource?
+  private var activeExport: ChatyyExportDelegate?
 
   static func fileURL(_ path: String) -> URL? {
     if path.isEmpty { return nil }
@@ -85,6 +104,35 @@ public class ExpoChatyyDocPreviewModule: Module {
       ql.modalPresentationStyle = .fullScreen
       presenter.present(ql, animated: true, completion: nil)
       return true
+    }.runOnQueue(.main)
+
+    // [2026-10-16 drive-native] 2 = tem exportToFiles. JS: services/driveFileActions.js
+    Function("apiVersion") { () -> Int in
+      return 2
+    }
+
+    /// Abre o seletor do app Arquivos para SALVAR uma cópia do arquivo local
+    /// (iCloud Drive, No meu iPhone, Google Drive…). Resolve true se salvou,
+    /// false se cancelou / arquivo ausente.
+    AsyncFunction("exportToFiles") { (path: String, promise: Promise) in
+      guard let url = ExpoChatyyDocPreviewModule.fileURL(path),
+            FileManager.default.fileExists(atPath: url.path),
+            let presenter = self.appContext?.utilities?.currentViewController() else {
+        promise.resolve(false)
+        return
+      }
+      let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+      let delegate = ChatyyExportDelegate()
+      delegate.finish = { [weak self, weak delegate] saved in
+        if let self = self, self.activeExport === delegate { self.activeExport = nil }
+        promise.resolve(saved)
+      }
+      self.activeExport = delegate
+      picker.delegate = delegate
+      picker.modalPresentationStyle = .formSheet
+      // Sem arrastar p/ fechar: só "Cancelar"/"Salvar" → o delegate sempre responde (promise nunca fica pendurada).
+      picker.isModalInPresentation = true
+      presenter.present(picker, animated: true, completion: nil)
     }.runOnQueue(.main)
   }
 }

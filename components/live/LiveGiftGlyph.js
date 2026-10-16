@@ -27,7 +27,11 @@ function Grad({ id }) {
   );
 }
 
-function LiveGiftGlyph({ icon, size = 40 }) {
+// [gift-native 2026-10-16] Função PURA (minúscula → o React Compiler não a
+// transforma em hook). A lista nativa (nativeRowCards._giftGlyph) chama isto
+// fora do render para extrair os paths; chamar o COMPONENTE fora do render
+// lançava (useMemoCache do compilador) → arte vazia no cartão nativo.
+export function giftArt(icon, size = 40) {
   const id = 'lg' + String(icon || 'x');
   const fill = `url(#${id}s)`;
   let body;
@@ -161,6 +165,10 @@ function LiveGiftGlyph({ icon, size = 40 }) {
       {body}
     </Svg>
   );
+}
+
+function LiveGiftGlyph({ icon, size = 40 }) {
+  return giftArt(icon, size);
 }
 
 export default memo(LiveGiftGlyph);

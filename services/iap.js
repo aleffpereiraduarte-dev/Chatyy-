@@ -108,6 +108,11 @@ export const STORAGE_SUB_SKUS = [
   'com.onemundo.mail.storage_1000_annual',
   'com.onemundo.mail.storage_5000',
   'com.onemundo.mail.storage_5000_annual',
+  // [2026-10-16 storage-billing] 2TB está APROVADO no ASC mas não era buscado →
+  // o filtro de catálogo do StorageShopSheet escondia o 2TB no iOS.
+  'com.onemundo.mail.storage_2000',
+  'com.onemundo.mail.storage_2000_annual',
+  'chatyy_storage_2tb',
   // Android (Play Console base-plan format collapses period into the SKU)
   'chatyy_storage_100',
   'chatyy_storage_500',
@@ -417,7 +422,7 @@ async function _finalizePurchase(purchase) {
       try { _pendingTopupCallback({ success: false, message: terminalCode }); } catch {}
       _pendingTopupCallback = null;
     }
-    return;
+    return false;
   }
   if (!verified) {
     if (isDiamond && _pendingTopupCallback) {
@@ -428,7 +433,7 @@ async function _finalizePurchase(purchase) {
       try { _pendingStorageCallback({ success: false, message: 'verify_failed' }); } catch {}
       _pendingStorageCallback = null;
     }
-    return;
+    return false;
   }
   try {
     const mod = _getIAP();
@@ -462,6 +467,7 @@ async function _finalizePurchase(purchase) {
     } catch {}
     _pendingStorageCallback = null;
   }
+  return true; // [2026-10-16 storage-billing] restore conta só o que o servidor confirmou
 }
 
 /**
@@ -752,16 +758,33 @@ export async function restorePurchases() {
       const purchases = await mod.getAvailablePurchases();
       let restored = 0;
       for (const p of purchases || []) {
-        try { await _finalizePurchase(p); restored++; } catch {}
+        try { if (await _finalizePurchase(p)) restored++; } catch {}
       }
+      // [2026-10-16 storage-billing] armazenamento pago com cartão (web/Android) também volta aqui.
+      const card = await _syncCardStorage();
+      if (card) restored++;
       return { success: restored > 0, count: restored };
     } catch (e) {
       return { success: false, message: e?.message || 'restore_failed' };
     }
   }
+  // [2026-10-16 storage-billing] Web: não há recibo de loja — "restaurar" = sincronizar
+  // as assinaturas pagas com cartão (Stripe) direto na API (o webhook não está ligado).
+  if (Platform.OS === 'web') {
+    const card = await _syncCardStorage();
+    return card ? { success: true, count: 1 } : { success: false, message: 'none' };
+  }
   try { return await apiRestore('web'); } catch (e) {
     return { success: false, message: e?.message || 'Erro ao restaurar' };
   }
+}
+
+// true = há armazenamento ativo pago com cartão (e a cota já foi aplicada no servidor).
+async function _syncCardStorage() {
+  try {
+    const r = await apiCall('stripe_storage_sync', {}, 'POST');
+    return !!(r?.success && r?.data?.state === 'active');
+  } catch { return false; }
 }
 
 /** Android-only utility: list purchases that the Play library knows

@@ -6,7 +6,7 @@ import {
   ScrollView, useWindowDimensions, Image, Pressable, Animated,
 } from 'react-native';
 // FlashList reverted to FlatList
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 // [2026-10-09 native-sheets-headers] Header + busca NATIVOS (UINavigationBar/UISearchController; Toolbar Material). Web mantém o header JS.
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,6 +47,9 @@ import CachedImage from '../components/CachedImage';
 // [2026-10-15 native-drive] Lista/grade nativa (kill switch __chatyy_native_drive).
 import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriveList';
 import { driveRow } from '../components/native/driveListAdapter';
+// [2026-10-16 drive-native] fila durável de envio + abrir/enviar/salvar no aparelho (sem URL pública)
+import * as driveQueue from '../services/driveUploadQueue';
+import { openOnDevice, sendCopy, saveToDevice } from '../services/driveFileActions';
 
 // ============================================================
 // Web-only drag/drop wrapper — RN Web's View strips drag props,
@@ -71,7 +74,7 @@ function WebDragDiv({ dragProps, dropProps, style, itemKey, children, ...rest })
 // CONSTANTS
 // ============================================================
 const TABS = ['files', 'photos', 'shared', 'trash'];
-const STORAGE_LIMIT_GB = 200; // Default fallback, real limit comes from plan quota
+const STORAGE_LIMIT_GB = 20; // [2026-10-16] fallback = plano Grátis (era 200 stale); a cota real vem do servidor
 
 // ============================================================
 // HELPERS
@@ -110,6 +113,12 @@ function isVideo(item) {
 function isMedia(item) {
   return isPhoto(item) || isVideo(item);
 }
+
+// [2026-10-16 drive-native] kill switches (OTA/console)
+const quickLookOn = () => { try { return Platform.OS !== 'web' && globalThis.__chatyy_drive_quicklook !== false; } catch { return false; } };
+const drivePushOn = () => { try { return Platform.OS !== 'web' && globalThis.__chatyy_drive_push !== false; } catch { return false; } };
+// t() devolve a própria chave quando falta tradução → cai no texto padrão
+const tt = (t, k, fb) => { const v = t(k); return (v && v !== k) ? v : fb; };
 
 function getFileIcon(iconType, size, color) {
   switch (iconType) {
@@ -187,6 +196,10 @@ function DriveScreenInner() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
+  // [2026-10-16 drive-native] cada pasta = tela empilhada (push nativo, voltar por gesto)
+  const routeParams = useLocalSearchParams();
+  const routeFolder = (routeParams?.folder != null && String(routeParams.folder) !== '') ? (/^\d+$/.test(String(routeParams.folder)) ? Number(routeParams.folder) : String(routeParams.folder)) : null;
+  const routeFolderName = routeFolder != null ? String(routeParams?.fname || '') : '';
 
   // State
   const [activeTab, setActiveTab] = useState('files');
@@ -199,7 +212,7 @@ function DriveScreenInner() {
 
   // Native cache (iOS only) — synchronous SQLite read for instant first paint of root.
   const _initialDrive = (() => {
-    if (Platform.OS !== 'ios') return null;
+    if (Platform.OS !== 'ios' || routeFolder != null) return null;
     try {
       const Native = require('../modules/expo-chat-cache').default;
       const list = Native?.getCachedDriveFilesSync?.(0, 200);
@@ -209,17 +222,22 @@ function DriveScreenInner() {
   })();
 
   // Data
-  const [_seedRoot] = useState(() => _seedDrive(null));
+  const [_seedRoot] = useState(() => _seedDrive(routeFolder));
   const [files, setFiles] = useState(() => _seedRoot ? _seedRoot.files.filter(f => !f.is_folder) : (_initialDrive ? _initialDrive.filter(f => !f.is_folder) : []));
   const [folders, setFolders] = useState(() => _seedRoot ? _seedRoot.files.filter(f => f.is_folder) : (_initialDrive ? _initialDrive.filter(f => f.is_folder) : []));
   const [sharedFiles, setSharedFiles] = useState([]);
   const [trashFiles, setTrashFiles] = useState([]);
   const [storageInfo, setStorageInfo] = useState(() => (_seedRoot && _seedRoot.storage) || null);
-  const [breadcrumbs, setBreadcrumbs] = useState([{ id: null, name: t('drive.home') }]);
+  const [breadcrumbs, setBreadcrumbs] = useState(() => (routeFolder != null
+    ? [{ id: null, name: t('drive.home') }, { id: routeFolder, name: routeFolderName }]
+    : [{ id: null, name: t('drive.home') }]));
   const [loading, setLoading] = useState(() => !_seedRoot && !_initialDrive);
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState([]);
+  const [deviceOp, setDeviceOp] = useState(null); // [2026-10-16 drive-native] { name, pct } baixando p/ abrir/enviar/salvar
+  const deviceOpRef = useRef(false);
+  const queueOn = driveQueue.isDriveQueueEnabled();
   const [allPhotos, setAllPhotos] = useState([]); // All photos across all folders (for Photos tab)
 
   // Selection
@@ -557,6 +575,48 @@ function DriveScreenInner() {
     loadAll();
   }, []);
 
+  // [2026-10-16 drive-native] Fila durável de envio: barra com progresso REAL,
+  // recarrega a pasta quando um arquivo termina e avisa "sem espaço" (507).
+  const reloadAfterUploadRef = useRef(null);
+  reloadAfterUploadRef.current = () => { loadFiles(currentFolderIdRef.current); loadStorage(); };
+  useEffect(() => {
+    if (!queueOn) return undefined;
+    let clearTimer = null;
+    let reloadTimer = null;
+    let retriedQuota = false;
+    driveQueue.setAccount(user?.email || '').catch(() => {});
+    const offList = driveQueue.subscribe((items) => {
+      if (!isMountedRef.current) return;
+      if (!retriedQuota && items.some((i) => i.state === 'quota')) { retriedQuota = true; setTimeout(() => driveQueue.retry(), 800); }
+      const list = items.map((i) => ({
+        id: i.id, name: i.name,
+        progress: i.state === 'done' ? 100 : (i.progress || 0),
+        done: i.state === 'done',
+        error: i.state === 'error' || i.state === 'quota',
+      }));
+      setUploadProgress(list);
+      setUploading(list.length > 0);
+      if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
+      if (list.length && list.every((x) => x.done)) clearTimer = setTimeout(() => driveQueue.clearFinished(), 1500);
+    });
+    const offDone = driveQueue.onItemDone(() => {
+      if (reloadTimer) clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => { if (isMountedRef.current) reloadAfterUploadRef.current?.(); }, 400);
+    });
+    const offQuota = driveQueue.onQuotaExceeded(() => {
+      if (!isMountedRef.current) return;
+      safeAlert(
+        tt(t, 'drive.quotaFullTitle', 'Armazenamento cheio'),
+        tt(t, 'drive.quotaFullBody', 'Não há espaço para este envio. Seus arquivos continuam guardados — libere espaço ou aumente o armazenamento.'),
+        [
+          { text: tt(t, 'drive.cancelUploads', 'Cancelar envios'), style: 'cancel', onPress: () => { driveQueue.getItems().filter((i) => i.state === 'quota').forEach((i) => driveQueue.cancel(i.id)); } },
+          { text: tt(t, 'drive.buyStorage', 'Comprar armazenamento'), onPress: () => router.push('/storage') },
+        ],
+      );
+    });
+    return () => { offList(); offDone(); offQuota(); if (clearTimer) clearTimeout(clearTimer); if (reloadTimer) clearTimeout(reloadTimer); };
+  }, [queueOn, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (activeTab === 'files') loadFiles(currentFolderId);
     if (activeTab === 'trash') loadTrash();
@@ -609,10 +669,14 @@ function DriveScreenInner() {
   }, [slideAnim]);
 
   const navigateToFolder = useCallback((folder) => {
+    if (drivePushOn() && activeTab === 'files') {
+      router.push({ pathname: '/drive', params: { folder: String(folder.id), fname: String(folder.name || '') } });
+      return;
+    }
     setBreadcrumbs(prev => [...prev, { id: folder.id, name: folder.name }]);
     runSlideAnim('forward');
     loadFiles(folder.id);
-  }, [loadFiles, runSlideAnim]);
+  }, [loadFiles, runSlideAnim, activeTab, router]);
 
   const navigateToBreadcrumb = useCallback((index) => {
     const newCrumbs = breadcrumbs.slice(0, index + 1);
@@ -637,6 +701,7 @@ function DriveScreenInner() {
           const filesList = Array.from(e.target.files);
           if (!filesList.length) return;
           const fid = currentFolderIdRef.current;
+          if (queueOn) { driveQueue.enqueue(filesList.map(f => ({ file: f, name: f.name, mimeType: f.type, size: f.size })), fid); return; }
           setUploading(true);
           setUploadProgress(filesList.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
           for (let i = 0; i < filesList.length; i++) {
@@ -655,6 +720,7 @@ function DriveScreenInner() {
         const DocumentPicker = require('expo-document-picker');
         result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
         if (result.canceled || !result.assets?.length) return;
+        if (queueOn) { await driveQueue.enqueue(result.assets.map(f => ({ uri: f.uri, name: f.name, mimeType: f.mimeType, size: f.size })), currentFolderId); return; }
         setUploading(true);
         const assets = result.assets;
         setUploadProgress(assets.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
@@ -684,6 +750,7 @@ function DriveScreenInner() {
           const filesList = Array.from(e.target.files);
           if (!filesList.length) return;
           const fid = currentFolderIdRef.current;
+          if (queueOn) { driveQueue.enqueue(filesList.map(f => ({ file: f, name: f.name, mimeType: f.type, size: f.size })), fid); return; }
           setUploading(true);
           setUploadProgress(filesList.map(f => ({ name: f.name, progress: 0, done: false, error: false })));
           for (let i = 0; i < filesList.length; i++) {
@@ -708,6 +775,15 @@ function DriveScreenInner() {
           quality: 0.9,
         });
         if (result.canceled || !result.assets?.length) return;
+        if (queueOn) {
+          await driveQueue.enqueue(result.assets.map(f => ({
+            uri: f.uri,
+            name: f.fileName || `${f.type === 'video' ? 'video' : 'photo'}_${Date.now()}.${f.type === 'video' ? 'mp4' : 'jpg'}`,
+            mimeType: f.mimeType || (f.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+            size: f.fileSize,
+          })), currentFolderId);
+          return;
+        }
         setUploading(true);
         const assets = result.assets;
         setUploadProgress(assets.map(f => ({ name: f.fileName || 'photo', progress: 0, done: false, error: false })));
@@ -810,6 +886,34 @@ function DriveScreenInner() {
     loadFiles(currentFolderId);
   }, [currentFolderId, loadFiles]);
 
+  // [2026-10-16 drive-native] baixa com permissão curta (dl) e entrega ao sistema:
+  // QuickLook / Abrir com… / folha de compartilhar / Salvar em Arquivos (Downloads no Android).
+  const runDeviceOp = useCallback(async (item, fn, kind) => {
+    if (deviceOpRef.current) return null;
+    deviceOpRef.current = true;
+    setDeviceOp({ name: item.name, pct: 0 });
+    try {
+      const r = await fn(item, (pct) => { if (isMountedRef.current) setDeviceOp({ name: item.name, pct }); });
+      if (kind === 'save' && r === 'saved' && Platform.OS === 'android') safeAlert(tt(t, 'drive.savedToDownloads', 'Salvo em Downloads/Chatyy'));
+      return r;
+    } catch (e) {
+      if (kind !== 'open') safeAlert(tt(t, 'drive.downloadFailed', 'Não foi possível baixar o arquivo. Tente novamente.'));
+      return null;
+    } finally {
+      deviceOpRef.current = false;
+      if (isMountedRef.current) setDeviceOp(null);
+    }
+  }, [t]);
+
+  // Documento (não foto/vídeo) no celular → visualizador do sistema; falhou → visualizador do app.
+  const openFileItem = useCallback((item) => {
+    if (quickLookOn() && !isMedia(item) && !item.unavailable) {
+      runDeviceOp(item, openOnDevice, 'open').then((r) => { if (r == null || r === 'none') setPreviewFile(item); });
+      return;
+    }
+    setPreviewFile(item);
+  }, [runDeviceOp]);
+
   const handleDownload = useCallback(async (item) => {
     setContextMenu(null);
     const url = api.fileDownloadUrl(item.id);
@@ -831,9 +935,10 @@ function DriveScreenInner() {
         window.location.href = url;
       }
     } else {
-      Linking.openURL(url);
+      // [2026-10-16 drive-native] antes: Linking.openURL(url) entregava a URL COM o bearer ao navegador.
+      runDeviceOp(item, saveToDevice, 'save');
     }
-  }, []);
+  }, [runDeviceOp]);
 
   // Drag & drop upload (web) — supports folders via webkitGetAsEntry
   const handleDropUpload = useCallback(async (droppedFiles, targetFolderId) => {
@@ -989,9 +1094,9 @@ function DriveScreenInner() {
         lastClickRef.current = { id: item.id, time: now };
       }
     } else {
-      setPreviewFile(item);
+      openFileItem(item);
     }
-  }, [selectMode, navigateToFolder, isDesktop, folders, files, toggleSelect]);
+  }, [selectMode, navigateToFolder, isDesktop, folders, files, toggleSelect, openFileItem]);
 
   const handleRightClick = useCallback((item, e) => {
     if (Platform.OS !== 'web') return;
@@ -1147,7 +1252,7 @@ function DriveScreenInner() {
           ? ['restore', 'purge']
           : (isFolder
             ? ['open', 'share', 'rename', 'move', 'star', 'delete', 'more']
-            : ['open', 'download', 'share', 'rename', 'move', 'star', 'delete', 'more']),
+            : ['open', 'sendcopy', 'savefiles', 'share', 'rename', 'move', 'star', 'delete', 'more']),
       });
     });
     nativeDriveMeta.current = meta;
@@ -1210,6 +1315,12 @@ function DriveScreenInner() {
             {storagePercent.toFixed(0)}%
           </Text>
         </View>
+        {storagePercent >= 80 && (
+          // [2026-10-16 storage-billing] quase cheio → atalho para a loja de armazenamento
+          <TouchableOpacity onPress={() => router.push('/storage')} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: 4 }}>
+            <Text style={{ color: storageColor, fontSize: 13, fontWeight: '700' }}>{tt(t, 'drive.buyStorage', 'Comprar armazenamento')}</Text>
+          </TouchableOpacity>
+        )}
         <View style={[styles.storageTrack, { backgroundColor: isDark ? colors.surfaceVariant : '#e5e7eb' }]}>
           {segments.length > 0 ? (
             <View style={{ flexDirection: 'row', height: '100%' }}>
@@ -2363,8 +2474,10 @@ function DriveScreenInner() {
     const item = nativeDriveMeta.current.get(id);
     if (!item) return;
     switch (action) {
-      case 'open': if (item.is_folder) navigateToFolder(item); else setPreviewFile(item); break;
+      case 'open': if (item.is_folder) navigateToFolder(item); else openFileItem(item); break;
       case 'download': handleDownload(item); break;
+      case 'savefiles': handleDownload(item); break; // [2026-10-16 drive-native]
+      case 'sendcopy': runDeviceOp(item, sendCopy, 'share'); break;
       case 'share': setShareModal(item); break;
       case 'rename': setRenameModal(item); setRenameText(item.name); break;
       case 'move': setMoveModal(item); loadMoveFolders(); break;
@@ -2499,7 +2612,7 @@ function DriveScreenInner() {
         <Stack.Screen options={nativeHeaderOptions({
           colors,
           isDark,
-          title: 'Chatyy Cloud',
+          title: routeFolder != null ? (routeFolderName || 'Chatyy Cloud') : 'Chatyy Cloud',
           search: {
             placeholder: t('drive.searchPlaceholder'),
             onChangeText: (e) => handleSearch(e?.nativeEvent?.text || ''),
@@ -2635,6 +2748,8 @@ function DriveScreenInner() {
                 rename: t('drive.rename'), move: t('drive.moveTo'), star: t('drive.star'), unstar: t('drive.unstar'),
                 delete: t('drive.delete'), restore: t('drive.restore'), purge: t('drive.deletePermanently'),
                 more: t('common.more'), uploading: t('drive.uploading'),
+                sendcopy: tt(t, 'drive.sendCopy', 'Enviar cópia'),
+                savefiles: Platform.OS === 'ios' ? tt(t, 'drive.saveToFiles', 'Salvar em Arquivos') : tt(t, 'drive.saveToDownloads', 'Salvar em Downloads'),
               }}
               highlight={searchResults !== null ? searchText : ''}
               colors={colors}
@@ -2693,6 +2808,13 @@ function DriveScreenInner() {
 
       {/* Overlays & Modals */}
       {!nativeListShown && renderUploadProgress()}
+      {deviceOp && (
+        <View pointerEvents="none" style={[styles.deviceOpPill, { backgroundColor: colors.surface, borderColor: colors.border, bottom: insets.bottom + 24 }]}>
+          <ActivityIndicator size="small" color={colors.text} />
+          <Text style={[styles.deviceOpText, { color: colors.text }]} numberOfLines={1}>{deviceOp.name}</Text>
+          <Text style={[styles.deviceOpText, { color: colors.textSecondary, fontVariant: ['tabular-nums'] }]}>{deviceOp.pct > 0 ? `${deviceOp.pct}%` : ''}</Text>
+        </View>
+      )}
       {renderFAB()}
       {renderContextMenu()}
       {renderNewFolderModal()}
@@ -2728,6 +2850,8 @@ const styles = StyleSheet.create({
   // Storage
   storageBar: { marginHorizontal: 16, marginTop: 10, padding: 12, borderRadius: BorderRadius.lg, borderWidth: 1 },
   storageInfo: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  deviceOpPill: { position: 'absolute', alignSelf: 'center', maxWidth: '86%', flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 22, borderWidth: StyleSheet.hairlineWidth },
+  deviceOpText: { fontSize: 14, fontWeight: '600', flexShrink: 1 },
   storageText: { fontSize: FontSize.sm, fontWeight: '500' },
   storagePercent: { fontSize: FontSize.sm },
   storageTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },

@@ -108,7 +108,7 @@ export default function UserProfileScreen() {
           [2026-10-11 visual polish] Rendered AFTER <Profile> so it paints on top:
           on web the profile body stacked over it and the arrow was invisible
           (only the 48px gap before @username showed). top aligned with row 1. */}
-      <View style={[styles.backBtnWrap, { top: topPad + 10 }]} pointerEvents="box-none">
+      <View style={[styles.backBtnWrap, { top: topPad + 13 }]} pointerEvents="box-none">{/* [polish3] +3: centro da seta = centro do @usuario */}
         <PressableScale
           onPress={() => { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); }}
           hitSlop={8}

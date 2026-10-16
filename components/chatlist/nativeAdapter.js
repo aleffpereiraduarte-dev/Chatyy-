@@ -62,10 +62,10 @@ function _tile(ctx, url, name, email) {
   return tile;
 }
 
-function _directAvatarUrl(ctx, email, name) {
+function _directAvatarUrl(ctx, email, name, nofallback) {
   if (!email || !_EMAIL_RE.test(email)) return '';
   if (String(email).toLowerCase() === 'ai@chatyy.com.br') return ''; // Bia: sem get_avatar
-  try { return (ctx.buildAvatarUrl && ctx.buildAvatarUrl(email, { name })) || ''; } catch { return ''; }
+  try { return (ctx.buildAvatarUrl && ctx.buildAvatarUrl(email, nofallback ? { name, nofallback: true } : { name })) || ''; } catch { return ''; }
 }
 
 function _canonical(ctx, url) {
@@ -281,10 +281,13 @@ export function buildRow(conv, ctx) {
     } else {
       const mem = (conv.members || []).filter(m => m && (m.email || m.display_name || m.name)).slice(0, 4);
       if (mem.length >= 2) {
-        tiles = mem.map(m => {
+        tiles = mem.map((m, idx) => {
           const em = typeof m === 'string' ? m : (m.email || '');
           const nm = typeof m === 'string' ? '' : (m.display_name || m.name || '');
-          const url = (m && m.avatar_url) ? _canonical(ctx, m.avatar_url) : _directAvatarUrl(ctx, em, nm);
+          // [2026-10-16 polish3] meia-fatia (2 membros, ou a 1ª de 3): sem foto o
+          // PNG de iniciais do servidor (círculo inteiro) espremia "APQA" → nofallback.
+          const _half = mem.length === 2 || (mem.length === 3 && idx === 0);
+          const url = (m && m.avatar_url) ? _canonical(ctx, m.avatar_url) : _directAvatarUrl(ctx, em, nm, _half);
           const tl = _tile(ctx, url, nm, em);
           tl.g = gradientIndex(nm || em);
           return tl;

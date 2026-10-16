@@ -194,7 +194,12 @@ function CreatorEarnings() {
     if (cashouts.length === 0) return tr(t, 'wallet.cashoutHistoryEmpty', 'Nenhum saque ainda.');
     const last = cashouts[0];
     const st = String(last.status || 'pending');
-    const stLabel = tr(t, `wallet.cashoutStatus.${st}`, st === 'paid' ? 'Pago' : st === 'rejected' ? 'Rejeitado' : 'Em análise');
+    // [2026-10-16 saque-v2] estados novos do servidor (aprovado / enviando Pix / não concluído / cancelado).
+    const stLabel = st === 'approved' ? tr(t, 'saque4.status.approved', 'Aprovado')
+      : st === 'processing' ? tr(t, 'saque4.status.processing', 'Enviando Pix')
+      : st === 'failed' ? tr(t, 'saque4.status.failed', 'Não concluído')
+      : st === 'canceled' ? tr(t, 'saque4.status.canceled', 'Cancelado')
+      : tr(t, `wallet.cashoutStatus.${st}`, st === 'paid' ? 'Pago' : st === 'rejected' ? 'Rejeitado' : 'Em análise');
     return tr(t, 'creatorEarnings.historyLast', 'Último: {amount} · {status}')
       .replace('{amount}', money(last.amount_cents)).replace('{status}', stLabel);
   })();

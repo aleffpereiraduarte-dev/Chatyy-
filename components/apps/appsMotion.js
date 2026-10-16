@@ -97,10 +97,13 @@ export function Pop({ popKey, style, children }) {
   return <View key={String(popKey)} style={[style, !reduce && kf.pop]}>{children}</View>;
 }
 
-export function TilePress({ onPress, onLongPress, delayLongPress, scaleTo = 0.9, style, children, ...rest }) {
+export function TilePress({ onPress, onLongPress, delayLongPress, scaleTo = 0.9, style, outerStyle, children, ...rest }) {
   const reduce = useReducedMotion();
+  // [2026-10-16 polish3] outerStyle: o Pressable encolhia ao conteúdo (pai com
+  // alignItems center) → o width:'100%' do filho não limitava o rótulo e
+  // "Mapa de amigos" vazava da coluna em vez de quebrar em 2 linhas.
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} {...rest}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} style={outerStyle} {...rest}>
       {({ pressed }) => (
         <View
           style={[style, {

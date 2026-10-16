@@ -199,7 +199,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import {
   IconArrowLeft, IconSend, IconUsers, IconMoreVert, IconVideo, IconPhone,
-  IconX, IconEdit, IconTrash, IconReply, IconPaperclip, IconImage, IconFileText,
+  IconX, IconEdit, IconTrash, IconReply, IconQuote, IconPaperclip, IconImage, IconFileText,
   IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconVideoNote,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus, IconType,
   IconHeart,
@@ -3925,7 +3925,24 @@ function bumpEmojiUsage(emoji) {
 // iMessage-style reaction button: staggered spring-in on mount, press-down
 // squish + release pop on tap. Each button manages its own Animated.Value so
 // they don't collide with other active reactions on the screen.
-function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActive }) {
+// [2026-10-16 polish3] Grade de ações do menu clássico (web): flexWrap com
+// botões de 62 px deixava 1 ação órfã centralizada na 2ª linha (6 = 5+1).
+// Distribui em colunas iguais: ≤5 numa linha; 6 → 3+3; 7-8 → 4+…; 9+ → 5.
+function CtxIconGrid({ grid, style, children }) {
+  if (!grid) return <View style={style}>{children}</View>;
+  const items = React.Children.toArray(children);
+  const n = items.length;
+  const cols = n <= 5 ? Math.max(1, n) : n === 6 ? 3 : n <= 8 ? 4 : 5;
+  return (
+    <View style={[style, { gap: 0, rowGap: 8, justifyContent: 'flex-start' }]}>
+      {items.map((c, i) => (
+        <View key={c.key != null ? c.key : i} style={{ width: `${100 / cols}%`, alignItems: 'center' }}>{c}</View>
+      ))}
+    </View>
+  );
+}
+
+function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActive, compact }) {
   const scale = useRef(new Animated.Value(0)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -3962,8 +3979,12 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActiv
       onPressOut={handlePressOut}
       activeOpacity={1}
       style={{
-        width: isPlus ? 40 : 48,
-        height: isPlus ? 40 : 48,
+        // [2026-10-16 polish3] compact = menu clássico (web): a prateleira
+        // 6×48+40 estourava o cartão de 343 px e cortava o 1º emoji e o "+"
+        // nas bordas. Botões flexíveis (máx. 48) cabem em qualquer largura.
+        ...(compact
+          ? { flex: 1, maxWidth: isPlus ? 40 : 48, height: isPlus ? 36 : 44, aspectRatio: undefined }
+          : { width: isPlus ? 40 : 48, height: isPlus ? 40 : 48 }),
         borderRadius: isPlus ? 20 : 24,
         // Highlight the emoji the user has ALREADY reacted with (translucent
         // accent chip) so they can see their current pick and understand that
@@ -3978,7 +3999,7 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActiv
       <Animated.View style={{ transform: [{ scale: Animated.multiply(scale, pressScale) }] }}>
         {isPlus
           ? <IconPlus size={20} color={colors.textSecondary} />
-          : <Text style={{ fontSize: 30 }}>{emoji}</Text>}
+          : <Text style={{ fontSize: compact ? 27 : 30 }}>{emoji}</Text>}
       </Animated.View>
     </TouchableOpacity>
   );
@@ -4583,8 +4604,23 @@ function describeReplyTarget(rt, ref, t) {
       const q = String((m.poll && m.poll.question) || (_rtJSON(m.content) || {}).question || _rtField(content, 'question') || '').trim();
       return { Icon: IconBarChart, label: q || tr('chat.poll', 'Enquete'), lines: 1, thumb: null };
     }
-    case 'gift':
-      return { Icon: _IconGiftBox, label: giftPreviewText(t, m.content), lines: 1, thumb: null };
+    case 'gift': {
+      // [gift-native 2026-10-16] citação = miniatura da arte + "Presente · Rosa" (sem emoji/JSON).
+      let lbl = ''; let th = null;
+      try {
+        const gcat = require('../components/gifts/giftCatalog');
+        const j = gcat.parseGiftContent(m.content);
+        if (!j) throw new Error('no-gift');
+        const meta = gcat.giftMeta(j.gift_sku || '');
+        const ic = j.icon || meta.icon;
+        const word = tr('gifts.previewPrefix', 'Presente');
+        const q = Number(j.quantity) || 1;
+        lbl = `${word} · ${gcat.giftLabel(t, ic, j.label || meta.label)}${q > 1 ? ' ×' + q : ''}`;
+        const u = require('../components/gifts/giftThumbs').giftThumbUri(ic);
+        if (u) th = { kind: 'gift', uris: [u] };
+      } catch { lbl = ''; th = null; }
+      return { Icon: _IconGiftBox, label: lbl || giftPreviewText(t, m.content), lines: 1, thumb: th };
+    }
     case 'call_card': {
       const j = _rtJSON(m.content) || {};
       const isVideo = (m.call_type || j.call_type || _rtField(content, 'call_type')) === 'video';
@@ -25054,6 +25090,9 @@ function ChatConversationInner() {
   // Style table for the menu body: vertical list under the lifted bubble,
   // the original icon grid otherwise (web / classic fallback).
   const ctxS = ctxAnchor ? getCtxListStyles() : styles;
+  // [2026-10-16 polish3] fundo dos círculos de ação: border+'50' sumia no claro
+  // (só "Responder" tinha círculo visível) — tom neutro igual nos 2 temas.
+  const _ctxCircleBg = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.055)';
   const CtxBody = ctxAnchor ? ScrollView : View;
   const ctxBodyProps = ctxAnchor
     ? { style: { maxHeight: Math.round(_liftWinH * 0.5) }, bounces: false, showsVerticalScrollIndicator: false }
@@ -25062,10 +25101,10 @@ function ChatConversationInner() {
   // it can render inside the card (classic) or above the lifted bubble).
   const renderCtxReactionsRow = (extraStyle) => (
     <View style={[styles.ctxReactionsRow, {
-      backgroundColor: isDark ? 'rgba(40,40,60,0.7)' : 'rgba(255,255,255,0.85)',
+      backgroundColor: isDark ? 'rgba(44,44,46,0.92)' : 'rgba(255,255,255,0.85)', // [polish3] neutro (era azulado 40,40,60)
       borderRadius: 30, marginHorizontal: 12, marginTop: 8, marginBottom: 4,
       ...(Platform.OS === 'web' ? { backdropFilter: 'blur(20px)', boxShadow: '0 2px 12px rgba(0,0,0,0.1)' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }),
-    }, ctxAnchor ? { backgroundColor: isDark ? 'rgba(40,40,48,0.96)' : 'rgba(255,255,255,0.97)' } : null, extraStyle]}>
+    }, ctxAnchor ? { backgroundColor: isDark ? 'rgba(40,40,42,0.96)' : 'rgba(255,255,255,0.97)' } : { gap: 2, paddingHorizontal: 6 }, extraStyle]}>
       {(() => {
         const _qr = getQuickReactions();
         // Which emoji did the CURRENT user already react with on this
@@ -25097,11 +25136,13 @@ function ChatConversationInner() {
                 colors={colors}
                 isDark={isDark}
                 isActive={!!_myReaction && _myReaction === r.emoji}
+                compact={!ctxAnchor}
                 onPress={() => { handleReact(selectedMsg?.id, r.emoji); setSelectedMsg(null); }}
               />
             ))}
             <ReactionButton
               isPlus
+              compact={!ctxAnchor}
               index={_qr.length}
               colors={colors}
               isDark={isDark}
@@ -37319,7 +37360,7 @@ function ChatConversationInner() {
             ) : (
             <CtxBody {...ctxBodyProps}>
             {/* Primary Action Bar — Horizontal Icons (iMessage-style) */}
-            <View style={[ctxS.ctxIconBar, { borderBottomColor: colors.border + '40' }]}>
+            <CtxIconGrid grid={!ctxAnchor} style={[ctxS.ctxIconBar, { borderBottomColor: colors.border + '40' }]}>
               {/* Reply (ALWAYS first — guaranteed visible even if the bar
                   wraps on narrow screens). User-reported regression: reply
                   kept "disappearing" when extra actions pushed it to the
@@ -37345,8 +37386,8 @@ function ChatConversationInner() {
                   onPress={() => { setQuoteSelectModal({ msg: selectedMsg, draft: '' }); setSelectedMsg(null); }}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
-                    <IconReply size={20} color={colors.text} />
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
+                    <IconQuote size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.quote') || 'Citar'}</Text>
                 </PressableScale>
@@ -37359,7 +37400,7 @@ function ChatConversationInner() {
                   onPress={() => handleCopyMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     <IconCopy size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.copy') || 'Copy'}</Text>
@@ -37378,7 +37419,7 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     <IconStar size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chat.sticker') || 'Figurinha'}</Text>
@@ -37392,7 +37433,7 @@ function ChatConversationInner() {
                   onPress={() => handleSaveMedia(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     <IconDownload size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.saveToGallery') || 'Galeria'}</Text>
@@ -37411,7 +37452,7 @@ function ChatConversationInner() {
                   onPress={() => handleForward(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     <IconForward size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.forward')}</Text>
@@ -37507,10 +37548,10 @@ function ChatConversationInner() {
                   activeOpacity={0.6}
                 >
                   {/* [2026-10-10 conv-polish] = demais ações (ícone #111 fixo sumia no escuro). */}
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     <IconMessageSquare size={20} color={colors.text} />
                   </View>
-                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={2}>{/* [polish3] "Responder em privado" cortava em "Responde…" */}
                     {t('chatConv.replyPrivately') || 'Responder em privado'}
                   </Text>
                 </PressableScale>
@@ -37533,7 +37574,7 @@ function ChatConversationInner() {
                     }}
                     activeOpacity={0.6}
                   >
-                    <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                    <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                       <IconMail size={20} color={colors.text} />
                     </View>
                     <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>{t('chatConv.sendEmail') || 'Enviar e-mail'}</Text>
@@ -37548,7 +37589,7 @@ function ChatConversationInner() {
                   onPress={() => handleStarMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     {selectedMsg?.starred
                       ? <IconStarFilled size={20} color={colors.text} />
                       : <IconStar size={20} color={colors.text} />}
@@ -37579,7 +37620,7 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
                     <IconCheck size={20} color={colors.text} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.select') || 'Selecionar'}</Text>
@@ -37603,7 +37644,7 @@ function ChatConversationInner() {
                   <Text style={[ctxS.ctxIconLabel, { color: colors.error || '#EF4444' }]}>{t('chatConv.delete')}</Text>
                 </PressableScale>
               )}
-            </View>
+            </CtxIconGrid>
 
             {/* Secondary Actions — Vertical List */}
             <View style={ctxS.ctxSecondaryList}>
@@ -37643,7 +37684,7 @@ function ChatConversationInner() {
                       activeOpacity={0.6}
                     >
                       <IconTrash size={18} color={colors.error || '#EF4444'} />
-                      <View style={{ flex: 1, marginLeft: 12 }}>
+                      <View style={{ flex: 1 }}>{/* [polish3] gap 14 do item já separa (marginLeft 12 desalinhava o texto) */}
                         <Text style={[ctxS.ctxSecondaryText, { color: colors.error || '#EF4444', marginLeft: 0 }]}>
                           {t('chatConv.deleteForEveryone') || 'Apagar para todos'}
                         </Text>

@@ -545,6 +545,12 @@ final class CallSignalWs: NSObject {
             handleIncomingCallDeclinedLocked(obj)
         case "call_cancel":
             handleIncomingCallCancelLocked(obj)
+        case "call_dismissed", "call_state":
+            // [2026-10-16 call-state] Atendida/recusada em OUTRO aparelho do
+            // mesmo usuário → este aparelho, se ainda está TOCANDO, para na hora
+            // com .answeredElsewhere / .declinedElsewhere (antes estes frames
+            // caíam no default e o iPhone irmão tocava até o timeout).
+            handleSiblingCallStateLocked(obj, type: type)
         case "call_missed":
             // [2026-10-12 ring-first-try] Hub 50s no-answer timeout (sent only
             // while the call is still RINGING). A ring this socket reported to
@@ -734,6 +740,39 @@ final class CallSignalWs: NSObject {
         ])
     }
 
+    /// [2026-10-16 call-state] Called on `queue`. call_dismissed{reason} /
+    /// call_state{state} do hub. Só derruba um toque que AINDA está tocando
+    /// aqui: nunca uma ligação que este aparelho atendeu (selfAnswered ou
+    /// CallKit já conectado) nem uma saída.
+    private func handleSiblingCallStateLocked(_ obj: [String: Any], type: String) {
+        let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+        guard !callId.isEmpty else { return }
+        let reason = ((obj["reason"] as? String) ?? "").lowercased()
+        var state = ((obj["state"] as? String) ?? "").lowercased()
+        if type == "call_dismissed" {
+            state = reason.contains("declin") ? "declined" : "accepted"
+        }
+        // ended/missed já chegam como call_end/call_cancel/call_missed.
+        guard state == "accepted" || state == "declined" else { return }
+        if selfAnsweredCallIds.contains(callId) || activeCallIds.contains(callId) {
+            NSLog("[CallSignalWs] \(type) \(callId) state=\(state): this device answered — ignore")
+            return
+        }
+        var uuid: UUID? = inviteUUIDsByCallId.first(where: { $0.callId == callId })?.uuid
+        if uuid == nil { uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) }
+        guard let ringUUID = uuid else { return }
+        if let c = CXCallObserver().calls.first(where: { $0.uuid == ringUUID }),
+           c.hasConnected || c.isOutgoing || c.hasEnded {
+            NSLog("[CallSignalWs] \(type) \(callId): CallKit call connected/outgoing/ended — ignore")
+            return
+        }
+        nativeCallDiag("sibling_state_end", callId, "type=\(type) state=\(state)")
+        handleIncomingCallEndLocked([
+            "call_id": callId,
+            "reason": state == "accepted" ? "answered_elsewhere" : "declined_elsewhere",
+        ])
+    }
+
     /// [#1179 cleanup, 2026-05-19] Called on `queue`. Native CallKit cleanup
     /// for inbound `call_end`. Reports the end to CallKit (so the system UI
     /// dismisses) and posts a notification that CallViewController observes
@@ -820,13 +859,17 @@ final class CallSignalWs: NSObject {
             //    stuck after the remote peer hung up (same WAVE 159 pattern).
             if let uuid = stashedUUID {
                 var hit = false
+                // [2026-10-16 call-state] motivo certo p/ o CallKit (Recentes
+                // mostra "atendida em outro aparelho" em vez de perdida).
+                let endReason: CXCallEndedReason = reason == "answered_elsewhere" ? .answeredElsewhere
+                    : (reason == "declined_elsewhere" ? .declinedElsewhere : .remoteEnded)
                 if let p = ExpoCallKitModule.sharedProvider {
-                    p.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+                    p.reportCall(with: uuid, endedAt: Date(), reason: endReason)
                     NSLog("[CallSignalWs] call_end \(callId) reportCall(.remoteEnded) via sharedProvider")
                     hit = true
                 }
                 if let p = VoipPushAppDelegateSubscriber.earlyProvider, p !== ExpoCallKitModule.sharedProvider {
-                    p.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+                    p.reportCall(with: uuid, endedAt: Date(), reason: endReason)
                     NSLog("[CallSignalWs] call_end \(callId) reportCall(.remoteEnded) via earlyProvider")
                     hit = true
                 }

@@ -630,7 +630,12 @@ export default function PlansScreen() {
     if (searchParams?.success === '1' && !successShown) {
       setSuccessShown(true);
       safeAlert(t('iap.purchaseSuccess'), t('plans.subscriptionActivatedBody'));
-      loadPlanInfo();
+      // [2026-10-16 storage-billing] volta do checkout de armazenamento: aplica a cota antes de recarregar
+      if (searchParams?.storage === '1') {
+        Promise.resolve().then(() => require('../services/stripeCheckout').syncStripeStorage()).catch(() => {}).finally(() => loadPlanInfo());
+      } else {
+        loadPlanInfo();
+      }
     } else if (searchParams?.cancelled === '1' && !successShown) {
       setSuccessShown(true);
     }

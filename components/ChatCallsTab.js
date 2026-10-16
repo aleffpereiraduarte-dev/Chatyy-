@@ -367,14 +367,9 @@ function formatCallTime(timestamp, t, locale) {
   const dateStr = date.toDateString();
   const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
 
-  if (dateStr === todayStr) {
-    const todayLabel = t?.('calls.today') || 'Hoje';
-    return `${todayLabel} ${timeStr}`;
-  }
-  if (dateStr === yesterdayStr) {
-    const yesterdayLabel = t?.('calls.yesterday') || 'Ontem';
-    return `${yesterdayLabel} ${timeStr}`;
-  }
+  // [2026-10-16 polish3] Hoje/Ontem já são o cabeçalho da seção ("HOJE") —
+  // repetir "Hoje 09:31" em toda linha era ruído (WhatsApp mostra só a hora).
+  if (dateStr === todayStr || dateStr === yesterdayStr) return timeStr;
   if (diffDays < 7) {
     // toLocaleDateString(undefined, ...) was returning English ("Sat", "Fri")
     // on iOS sim regardless of app locale because the system default is en-US.

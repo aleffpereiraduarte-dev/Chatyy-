@@ -160,72 +160,96 @@ function _avatarNode(name, email, size) {
   return avatar({ s: size, u: u || undefined, tx: _initials(name, email), bg: c1, bg2: toArgb(c2), c: '#ffffff', fs: Math.round(size * 0.38) });
 }
 
-// ─── arte do presente (LiveGiftGlyph → paths; degradês viram prata chapada) ─
+// ─── arte do presente (LiveGiftGlyph.giftArt → paths) ──────────────────────
+// [gift-native 2026-10-16] Raiz do "círculo vazio": antes chamava o COMPONENTE
+// LiveGiftGlyph fora do render; com o React Compiler ele usa useMemoCache e
+// LANÇA fora do render → try/catch engolia → ps vazio → glifo null. Agora usa a
+// função pura giftArt(). Degradês: ...s (prata) → cinza claro chapado, ...g
+// (brilho radial) → branco com alpha baixo, ...d (diamante) → azul.
+// Elipse com transform rotate() vira polígono já girado (o nó 'ic' não tem transform).
 const _giftMemo = new Map();
-function _giftGlyph(iconName, size) {
+export function giftGlyphPaths(iconName) {
   const k = String(iconName || 'gift');
   let ent = _giftMemo.get(k);
-  if (!ent) {
-    const ps = [];
-    let vb = 48;
-    try {
-      const G = require('../live/LiveGiftGlyph').default;
-      const fn = G && typeof G === 'object' && G.type ? G.type : G;
-      const el = typeof fn === 'function' ? fn({ icon: iconName, size: 48 }) : null;
-      const paint = (v) => {
-        if (v === undefined || v === null) return undefined;
-        if (v === 'none' || v === 'transparent') return 0;
-        const s = String(v);
-        if (s.startsWith('url(')) return /g\)$/.test(s) ? 0 : toArgb('#d9d9d9'); // ...s = prata, ...g = brilho
-        return toArgb(s);
-      };
-      const shapeD = (name, p) => {
-        const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
-        if (name === 'Circle' || name === 'Ellipse') {
-          const cx = n(p.cx); const cy = n(p.cy); const rx = name === 'Circle' ? n(p.r) : n(p.rx); const ry = name === 'Circle' ? n(p.r) : n(p.ry);
-          return rx > 0 && ry > 0 ? `M${cx - rx} ${cy}A${rx} ${ry} 0 1 0 ${cx + rx} ${cy}A${rx} ${ry} 0 1 0 ${cx - rx} ${cy}Z` : '';
+  if (ent) return ent;
+  const ps = [];
+  let vb = 48;
+  try {
+    const mod = require('../live/LiveGiftGlyph');
+    const art = mod && mod.giftArt;
+    const el = typeof art === 'function' ? art(iconName, 48) : null;
+    const paint = (v) => {
+      if (v === undefined || v === null) return undefined;
+      if (v === 'none' || v === 'transparent') return 0;
+      const s = String(v);
+      if (s.startsWith('url(')) {
+        if (/g\)$/.test(s)) return { glow: 1 };
+        if (/d\)$/.test(s)) return toArgb('#7CC8FF');
+        return toArgb('#dcdcdc');
+      }
+      return toArgb(s);
+    };
+    const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
+    const shapeD = (name, p) => {
+      if (name === 'Circle' || name === 'Ellipse') {
+        const cx = n(p.cx); const cy = n(p.cy); const rx = name === 'Circle' ? n(p.r) : n(p.rx); const ry = name === 'Circle' ? n(p.r) : n(p.ry);
+        if (!(rx > 0 && ry > 0)) return '';
+        const rot = /rotate\(\s*(-?[\d.]+)/.exec(String(p.transform || ''));
+        if (rot) {
+          const a = (n(rot[1]) * Math.PI) / 180; const ca = Math.cos(a); const sa = Math.sin(a);
+          let d = '';
+          for (let i = 0; i <= 48; i++) {
+            const tt = (i / 48) * Math.PI * 2; const x = rx * Math.cos(tt); const y = ry * Math.sin(tt);
+            d += `${i ? 'L' : 'M'}${(cx + x * ca - y * sa).toFixed(2)} ${(cy + x * sa + y * ca).toFixed(2)}`;
+          }
+          return d + 'Z';
         }
-        if (name === 'Line') return `M${n(p.x1)} ${n(p.y1)}L${n(p.x2)} ${n(p.y2)}`;
-        if (name === 'Rect') { const x = n(p.x); const y = n(p.y); const w = n(p.width); const h = n(p.height); return `M${x} ${y}H${x + w}V${y + h}H${x}Z`; }
-        const pts = String(p.points || '').trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
-        if (pts.length < 4) return '';
-        let d = `M${pts[0]} ${pts[1]}`;
-        for (let i = 2; i + 1 < pts.length; i += 2) d += `L${pts[i]} ${pts[i + 1]}`;
-        return name === 'Polygon' ? d + 'Z' : d;
-      };
-      const walk = (node, inh, depth) => {
-        if (!node || depth > 10) return;
-        if (Array.isArray(node)) { for (const c of node) walk(c, inh, depth + 1); return; }
-        if (typeof node !== 'object' || !node.props) return;
-        let ty = node.type; if (ty && typeof ty === 'object' && ty.type) ty = ty.type;
-        const name = ty ? (typeof ty === 'string' ? ty : (ty.displayName || ty.name || '')) : '';
-        const p = node.props;
-        if (['Path', 'Line', 'Polyline', 'Polygon', 'Circle', 'Ellipse', 'Rect'].includes(name)) {
-          const d = name === 'Path' ? String(p.d || '') : shapeD(name, p);
-          if (!d) return;
-          const f = paint(p.fill); const kk = paint(p.stroke);
-          const e = { d };
-          const fill = f !== undefined ? f : inh.fill;
-          const stroke = kk !== undefined ? kk : inh.stroke;
-          const sw = p.strokeWidth != null ? Number(p.strokeWidth) : inh.sw;
-          if (fill) e.f = fill;
-          if (stroke && sw > 0) { e.k = stroke; e.w = sw; }
-          if (e.f || e.k) ps.push(e);
-          return;
-        }
-        if (name === 'Svg' && p.viewBox) { const a = String(p.viewBox).split(/[\s,]+/).map(Number); if (a[2] > 0) vb = a[2]; }
-        if (name === 'Defs' || name === 'LinearGradient' || name === 'RadialGradient') return;
-        const next = { ...inh };
-        if (p.fill !== undefined) next.fill = paint(p.fill);
-        if (p.stroke !== undefined) next.stroke = paint(p.stroke);
-        if (p.strokeWidth !== undefined) next.sw = Number(p.strokeWidth);
-        walk(p.children, next, depth + 1);
-      };
-      walk(el, { fill: toArgb('#000000'), stroke: 0, sw: 1 }, 0);
-    } catch {}
-    ent = { ps, vb };
-    _giftMemo.set(k, ent);
-  }
+        return `M${cx - rx} ${cy}A${rx} ${ry} 0 1 0 ${cx + rx} ${cy}A${rx} ${ry} 0 1 0 ${cx - rx} ${cy}Z`;
+      }
+      if (name === 'Line') return `M${n(p.x1)} ${n(p.y1)}L${n(p.x2)} ${n(p.y2)}`;
+      if (name === 'Rect') { const x = n(p.x); const y = n(p.y); const w = n(p.width); const h = n(p.height); return `M${x} ${y}H${x + w}V${y + h}H${x}Z`; }
+      const pts = String(p.points || '').trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
+      if (pts.length < 4) return '';
+      let d = `M${pts[0]} ${pts[1]}`;
+      for (let i = 2; i + 1 < pts.length; i += 2) d += `L${pts[i]} ${pts[i + 1]}`;
+      return name === 'Polygon' ? d + 'Z' : d;
+    };
+    const walk = (node, inh, depth) => {
+      if (!node || depth > 10) return;
+      if (Array.isArray(node)) { for (const c of node) walk(c, inh, depth + 1); return; }
+      if (typeof node !== 'object' || !node.props) return;
+      let ty = node.type; if (ty && typeof ty === 'object' && ty.type) ty = ty.type;
+      const name = ty ? (typeof ty === 'string' ? ty : (ty.displayName || ty.name || '')) : '';
+      const p = node.props;
+      if (['Path', 'Line', 'Polyline', 'Polygon', 'Circle', 'Ellipse', 'Rect'].includes(name)) {
+        const d = name === 'Path' ? String(p.d || '') : shapeD(name, p);
+        if (!d) return;
+        const f = paint(p.fill); const kk = paint(p.stroke);
+        const e = { d };
+        const fill = f !== undefined ? f : inh.fill;
+        const stroke = kk !== undefined ? kk : inh.stroke;
+        const sw = p.strokeWidth != null ? Number(p.strokeWidth) : inh.sw;
+        if (fill && typeof fill === 'object') { e.f = toArgb('#ffffff'); e.o = 0.13; } else if (fill) e.f = fill;
+        if (stroke && typeof stroke !== 'object' && sw > 0) { e.k = stroke; e.w = sw; }
+        if (e.f || e.k) ps.push(e);
+        return;
+      }
+      if (name === 'Svg' && p.viewBox) { const a = String(p.viewBox).split(/[\s,]+/).map(Number); if (a[2] > 0) vb = a[2]; }
+      if (name === 'Defs' || name === 'LinearGradient' || name === 'RadialGradient') return;
+      const next = { ...inh };
+      if (p.fill !== undefined) next.fill = paint(p.fill);
+      if (p.stroke !== undefined) next.stroke = paint(p.stroke);
+      if (p.strokeWidth !== undefined) next.sw = Number(p.strokeWidth);
+      walk(p.children, next, depth + 1);
+    };
+    walk(el, { fill: toArgb('#000000'), stroke: 0, sw: 1 }, 0);
+  } catch {}
+  ent = { ps, vb };
+  if (ps.length) _giftMemo.set(k, ent); // falha não fica memorizada
+  return ent;
+}
+function _giftGlyph(iconName, size) {
+  const ent = giftGlyphPaths(iconName);
   if (!ent.ps.length) return null;
   return { t: 'ic', s: size, vb: ent.vb, ps: ent.ps };
 }
@@ -789,12 +813,20 @@ function buildGift(m, row, ctx, C, own) {
   const cost = gc ? gc.humanizeCount(diamonds) : String(diamonds);
   const chipBg = own ? 'rgba(255,255,255,0.14)' : 'rgba(127,127,127,0.14)';
   const dia = fx ? iconPaths(fx.diamondMonoPaths(textColor), { s: 12 }) : icon(IconDiamond, { s: 12, c: '#60a5fa' });
+  // Palco = GiftBubble JS (estático): halo + anel fino, arte grande no centro,
+  // 3 brilhos (sparkle) fixos, selo ×N. Fallback sem arte: caixa de presente.
+  const spark = (sz) => iconPaths([{ d: 'M12 1.5c.7 5.6 4.9 9.8 10.5 10.5-5.6.7-9.8 4.9-10.5 10.5C11.3 16.9 7.1 12.7 1.5 12 7.1 11.3 11.3 7.1 12 1.5Z', f: '#ffffff' }], { s: sz });
+  const art = glyph || _giftGlyph('gift', big ? 84 : 76);
   const stage = zstack([
     vstack([], { w: 220, h: 132, r: 18, bg: '#0b0b0b' }),
+    vstack([], { pos: 'c', w: 180, h: 180, r: 90, bw: 1, bc: 'rgba(255,255,255,0.06)' }),
     vstack([], { pos: 'c', w: big ? 128 : 118, h: big ? 128 : 118, r: 64, bg: big ? 'rgba(255,255,255,0.09)' : 'rgba(255,255,255,0.06)' }),
-    glyph ? vstack([glyph], { pos: 'c' }) : null,
+    art ? vstack([art], { pos: 'c' }) : null,
+    vstack([spark(11)], { pos: 'tl', m: [18, 0, 0, 52], op: 0.85 }),
+    vstack([spark(8)], { pos: 'tr', m: [30, 56, 0, 0], op: 0.5 }),
+    vstack([spark(9)], { pos: 'br', m: [0, 46, 22, 0], op: 0.7 }),
     qty > 1 ? vstack([text(`×${qty}`, { fs: 12, fw: 900, c: '#000000' })], { pos: 'tr', m: [10, 10, 0, 0], h: 22, r: 11, p: [0, 8, 0, 8], bg: '#FFFFFF', al: 'c', jc: 'c' }) : null,
-  ], { m: [0, 0, 10, 0] });
+  ], { m: [0, 0, 10, 0], r: 18 });
   const kids = [
     stage,
     text(label, { fs: 17, fw: 800, c: textColor, ml: 1, ta: 'c' }),

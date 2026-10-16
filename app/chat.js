@@ -1513,12 +1513,13 @@ function ChatHub() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               {/* [2026-10-15 nav-motion] Ligações é aba da barra → sem "voltar"
                   (como Conversas); o título mora na lista (grande → compacto). */}
-              {_ltTab !== 'calls' && (
+              {/* [2026-10-16 polish3] web/fallback (sem large title) também: aba da barra não tem "voltar". */}
+              {_ltTab !== 'calls' && activeTab !== 'calls' && (
               <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
                 <IconArrowLeft size={18} color={colors.text} />
               </TouchableOpacity>
               )}
-              {!_ltTab && <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>}
+              {!_ltTab && <Text style={[activeTab === 'calls' ? styles.bigTitle : styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>}
             </View>
           )}
         </View>
