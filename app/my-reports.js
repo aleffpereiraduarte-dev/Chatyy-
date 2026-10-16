@@ -77,7 +77,7 @@ export default function MyReportsScreen() {
       <Text style={[st.section, { color: colors.textSecondary }]}>{t('mod.accountStatus')}</Text>
       <View style={[st.card, { borderColor: suspended ? (colors.error || '#ef4444') : colors.borderLight, backgroundColor: colors.surface }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          {suspended ? <IconAlertTriangle size={22} color={colors.error || '#ef4444'} /> : <IconShield size={22} color={colors.success || colors.primary} />}
+          {suspended ? <IconAlertTriangle size={22} color={colors.error || '#ef4444'} /> : <IconShield size={22} color={colors.text} />}
           <Text style={{ color: colors.text, fontSize: FontSize.md || 15, fontWeight: '600', flex: 1 }}>
             {suspended ? t('mod.accountSuspended') : t('mod.accountOk')}
           </Text>
@@ -110,7 +110,7 @@ export default function MyReportsScreen() {
 
   const renderItem = ({ item }) => {
     const S = STATUS_STYLE[item.status] || STATUS_STYLE.in_review;
-    const tint = item.status === 'action_taken' ? (colors.success || colors.primary) : item.status === 'no_violation' ? colors.textSecondary : (colors.warning || '#f59e0b');
+    const tint = item.status === 'action_taken' ? colors.text : item.status === 'no_violation' ? colors.textSecondary : colors.text;
     return (
       <View style={[st.row, { borderBottomColor: colors.borderLight }]}>
         <View style={[st.badge, { backgroundColor: colors.primaryLight }]}><IconFlag size={18} color={colors.text} /></View>

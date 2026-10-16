@@ -4,7 +4,7 @@ import UIKit
 // [2026-10-15 native-emoji] Painel Emoji | Figurinhas | GIF do composer.
 // JS: components/chat/NativeEmojiPanelBridge.js (requireNativeView('ChatyyEmojiPanel')).
 // Props: theme{}, labels{}, tab, bottomInset, compact, showStickers, showGifs,
-//        stickerSections[], gifs[], gifLoading.
+//        stickerSections[], gifs[], gifLoading, richStickers (v2).
 // Eventos: onEmoji{emoji}, onBackspace, onSticker{key, uri, section}, onGif{key},
 //        onGifQuery{query}, onSection{key}, onTabChange{tab}, onMore{tab},
 //        onSearchFocus{focused, tab}.
@@ -14,7 +14,8 @@ public class ChatyyEmojiPanelModule: Module {
     Name("ChatyyEmojiPanel")
 
     Function("apiVersion") { () -> Int in
-      return 1
+      // 2 = [2026-10-16 sticker-panel v2] richStickers (Lottie, prévia, voo)
+      return 2
     }
 
     View(ChatyyEmojiPanelView.self) {
@@ -33,6 +34,7 @@ public class ChatyyEmojiPanelModule: Module {
       Prop("stickerSections") { (view: ChatyyEmojiPanelView, v: [Any]?) in view.pendingStickers = (v ?? []).compactMap { $0 as? [String: Any] } }
       Prop("gifs") { (view: ChatyyEmojiPanelView, v: [Any]?) in view.pendingGifs = (v ?? []).compactMap { $0 as? [String: Any] } }
       Prop("gifLoading") { (view: ChatyyEmojiPanelView, v: Bool?) in view.gifLoading = v ?? false }
+      Prop("richStickers") { (view: ChatyyEmojiPanelView, v: Bool?) in view.richStickers = v ?? false }
 
       OnViewDidUpdateProps { (view: ChatyyEmojiPanelView) in
         view.didUpdateProps()

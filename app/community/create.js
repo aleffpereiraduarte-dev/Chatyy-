@@ -242,12 +242,14 @@ export default function CommunityCreateScreen() {
         <TouchableOpacity
           onPress={onNext}
           disabled={!canAdvance() || submitting}
-          style={[sty.primaryBtn, { backgroundColor: colors.primary, opacity: (!canAdvance() || submitting) ? 0.5 : 1 }]}
+          style={[sty.primaryBtn, (!canAdvance() && !submitting)
+            ? { backgroundColor: isDark ? '#1c1c1e' : '#E5E5EA' }
+            : { backgroundColor: colors.primary, opacity: submitting ? 0.7 : 1 }]}
         >
           {submitting ? (
             <ActivityIndicator color={colors.onPrimary || '#fff'} />
           ) : (
-            <Text style={[sty.primaryBtnText, { color: colors.onPrimary }]}>
+            <Text style={[sty.primaryBtnText, { color: canAdvance() ? colors.onPrimary : (isDark ? '#636366' : '#8E8E93') }]}>
               {step < STEPS.length - 1
                 ? (t('community.next') || 'Continuar')
                 : (t('community.create') || 'Criar comunidade')}
@@ -277,6 +279,6 @@ const makeStyles = (colors, isDark) => StyleSheet.create({
   photoBtnText: { fontSize: 15, fontWeight: '600' },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: '#888', alignItems: 'center', justifyContent: 'center' },
   footer: { padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
-  primaryBtn: { paddingVertical: 14, borderRadius: BorderRadius.md, alignItems: 'center' },
+  primaryBtn: { paddingVertical: 15, borderRadius: 26, borderCurve: 'continuous', alignItems: 'center' }, // [2026-10-16 polish-r2] pílula + desabilitado legível
   primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

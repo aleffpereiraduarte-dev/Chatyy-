@@ -18,6 +18,15 @@
 //
 // Binário sem o módulo (build antigo, Expo Go, web) → isAvailable() === false
 // e o chamador usa os painéis JS. Kill switch: globalThis.__chatyy_native_emoji = false.
+//
+// [2026-10-16 sticker-panel v2] apiVersion 2 (prop richStickers=true):
+//   • figurinhas Lottie (item.lottie ou URL .json) tocando na grade — só as
+//     visíveis tocam (pausa fora da tela / aba / painel fechado);
+//   • segurar figurinha = prévia grande + haptic (arrastar troca a prévia);
+//   • toque = figurinha "voa" da grade até a conversa (snapshot nativo);
+//   • onSticker ganha `lottie` (true → JS envia como lottie_sticker).
+// Binário apiVersion 1 ignora a prop e o JS não manda itens Lottie.
+// Kill switch das figurinhas/GIF nativos: globalThis.__chatyy_native_sticker_panel = false.
 
 import { requireOptionalNativeModule } from 'expo-modules-core';
 
@@ -44,7 +53,7 @@ export type StickerSection = {
   icon?: string;
   coverUri?: string | null;
   loading?: boolean;
-  items: { key: string; uri: string }[];
+  items: { key: string; uri: string; lottie?: boolean }[];
 };
 
 export type GifItem = { key: string; uri: string; width?: number; height?: number };
@@ -52,7 +61,7 @@ export type GifItem = { key: string; uri: string; width?: number; height?: numbe
 export type EmojiPanelEvents = {
   onEmoji: { emoji: string };
   onBackspace: Record<string, never>;
-  onSticker: { key: string; uri: string; section: string };
+  onSticker: { key: string; uri: string; section: string; lottie?: boolean };
   onGif: { key: string };
   onGifQuery: { query: string };
   onSection: { key: string };
@@ -93,4 +102,20 @@ export function isAvailable(): boolean {
   return !!getNativeEmojiPanelView();
 }
 
-export default { isAvailable, getNativeEmojiPanelView };
+let _apiVersion: number | null = null;
+/** 1 = painel 2026-10-15; 2 = Lottie + prévia + voo (richStickers). 0 = sem módulo. */
+export function getApiVersion(): number {
+  if (_apiVersion != null) return _apiVersion;
+  let v = 0;
+  try {
+    const mod: any = requireOptionalNativeModule('ChatyyEmojiPanel');
+    const n = mod && typeof mod.apiVersion === 'function' ? Number(mod.apiVersion()) : 0;
+    v = Number.isFinite(n) ? n : 0;
+  } catch {
+    v = 0;
+  }
+  _apiVersion = v;
+  return v;
+}
+
+export default { isAvailable, getNativeEmojiPanelView, getApiVersion };

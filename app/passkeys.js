@@ -4,7 +4,8 @@
 // react-native-passkeys + Associated Domains; mesmo com a flag ligada, num
 // binário sem o módulo nativo o botão vira um aviso (nada quebra).
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, ActivityIndicator, Alert, Platform, StyleSheet } from 'react-native';
+import FadeSlideIn from '../components/FadeSlideIn';
 import { SettingsScreen, SettingsGroup, SettingsRow, SettingsCardContent, useGroupedColors } from '../components/settings/SettingsKit';
 import { IconKey, IconPlus, IconTrash } from '../components/Icons';
 import { useLanguage } from '../context/LanguageContext';
@@ -87,13 +88,28 @@ export default function PasskeysScreen() {
   }, [reload, t]);
 
   if (!PASSKEYS_ENABLED) {
+    // [2026-10-16 polish-r2] Era uma pílula solta com 1 linha cinza. Agora um
+    // estado vazio de verdade (ícone, o que é, quando chega) — só textos que
+    // já existiam no i18n.
     return (
       <SettingsScreen title={t('settings.passkeys.title')}>
-        <SettingsGroup>
-          <SettingsCardContent>
-            <Text style={{ color: g.secondary, fontSize: 15 }}>{t('settings.passkeys.unavailable')}</Text>
-          </SettingsCardContent>
-        </SettingsGroup>
+        <FadeSlideIn style={{ alignItems: 'center', paddingHorizontal: 32, paddingTop: 36, paddingBottom: 12 }}>
+          <View style={{ width: 88, height: 88, borderRadius: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: g.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: g.separator }}>
+            <IconKey size={38} color={g.text} />
+          </View>
+          <Text accessibilityRole="header" style={{ color: g.text, fontSize: 22, fontWeight: '700', letterSpacing: -0.3, marginTop: 18, textAlign: 'center' }}>
+            {t('settings.passkeys.title')}
+          </Text>
+          <Text style={{ color: g.secondary, fontSize: 15, lineHeight: 21, marginTop: 6, textAlign: 'center' }}>
+            {t('settings.passkeys.rowSub')}
+          </Text>
+          <View style={{ marginTop: 16, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, backgroundColor: g.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: g.separator }}>
+            <Text style={{ color: g.text, fontSize: 13, fontWeight: '600' }}>{t('settings.passkeys.unavailable')}</Text>
+          </View>
+        </FadeSlideIn>
+        <Text style={{ color: g.secondary, fontSize: 13, lineHeight: 18, textAlign: 'center', paddingHorizontal: 32, marginTop: 8 }}>
+          {t('settings.passkeys.footer')}
+        </Text>
       </SettingsScreen>
     );
   }

@@ -47,23 +47,41 @@ function BoundaryText({ k, fb }) {
 function getColors() {
   const scheme = Appearance?.getColorScheme?.() || 'light';
   if (scheme === 'dark') {
+    // [2026-10-16 polish-r2] Preto verdadeiro + botão invertido (era slate
+    // #111827 com botão #111 — o "Tentar novamente" sumia no escuro).
     return {
-      bg: '#111827',
-      text: '#f1f5f9',
-      sub: '#94a3b8',
+      dark: true,
+      bg: '#000000',
+      text: '#F5F5F7',
+      sub: '#A1A1A6',
       error: '#f87171',
-      btnBg: '#111111',
-      btnText: '#fff',
+      btnBg: '#FFFFFF',
+      btnText: '#000',
     };
   }
   return {
-    bg: '#f8fafc',
-    text: '#0f172a',
-    sub: '#64748b',
+    bg: '#FFFFFF',
+    text: '#111111',
+    sub: '#5F5F66',
     error: '#dc2626',
     btnBg: '#111111',
     btnText: '#fff',
   };
+}
+
+// [2026-10-16 polish-r2] Mascote (pose "offline") no lugar do triângulo —
+// isolado num boundary próprio: se o próprio SVG falhar, cai no ícone.
+class SafeMascot extends React.Component {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch() {}
+  render() {
+    if (this.state.failed) return this.props.fallback;
+    let M = null;
+    try { M = require('./mascot/ChatyyMascot').default; } catch {}
+    if (!M) return this.props.fallback;
+    return <View style={{ marginBottom: 12 }}><M pose="offline" size={132} dark={this.props.dark} /></View>;
+  }
 }
 
 export default class ErrorBoundary extends React.Component {
@@ -146,7 +164,7 @@ export default class ErrorBoundary extends React.Component {
       // for months. Now strict: prod sees friendly text, dev sees details.
       return (
         <View style={[s.container, { backgroundColor: c.bg }]}>
-          <IconAlertTriangle size={48} color={c.error} style={{ marginBottom: 16 }} />
+          <SafeMascot dark={!!c.dark} fallback={<IconAlertTriangle size={48} color={c.text} style={{ marginBottom: 16 }} />} />
           <Text style={[s.title, { color: c.text }]}><BoundaryText k="common.somethingWentWrong" fb="Algo deu errado" /></Text>
           <Text style={[s.message, { color: c.sub }]}>
             <BoundaryText k="uiG.errorBoundary.body" fb="Não foi possível carregar esta tela. Tente novamente em instantes." />
@@ -203,6 +221,6 @@ const s = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
   message: { fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
   debug: { fontSize: 11, textAlign: 'center', marginBottom: 16, fontFamily: 'monospace' },
-  button: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 24 },
-  buttonText: { fontSize: 14, fontWeight: '700' },
+  button: { borderRadius: 26, borderCurve: 'continuous', paddingVertical: 14, paddingHorizontal: 28 },
+  buttonText: { fontSize: 15, fontWeight: '700' },
 });

@@ -26,6 +26,52 @@ final class CLChildHost: UIView {
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
+/// [2026-10-16 wave8-list] Barra de VIDRO no topo da lista (Telegram /
+/// UINavigationBar): quando o header do app fica por cima da lista (prop
+/// `topInset` > 0), as linhas rolam por baixo desta faixa, que vai do
+/// transparente (título grande visível) ao material borrado + hairline (título
+/// compacto) acompanhando o scroll 1:1 — sem passar pela ponte.
+final class CLTopBarView: UIView {
+  private let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+  private let tint = UIView()
+  private let hairline = UIView()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    isUserInteractionEnabled = false
+    backgroundColor = .clear
+    addSubview(blur)
+    addSubview(tint)
+    addSubview(hairline)
+    setProgress(0)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  func apply(theme: CLTheme) {
+    // O tema do app manda (pode diferir do tema do sistema).
+    overrideUserInterfaceStyle = theme.dark ? .dark : .light
+    tint.backgroundColor = theme.bg.withAlphaComponent(theme.dark ? 0.55 : 0.6)
+    hairline.backgroundColor = theme.dark ? UIColor(white: 1, alpha: 0.12) : UIColor(white: 0, alpha: 0.12)
+  }
+
+  /// 0 = transparente, 1 = vidro completo.
+  func setProgress(_ p: CGFloat) {
+    let v = max(0, min(1, p))
+    blur.alpha = v
+    tint.alpha = v
+    hairline.alpha = v
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    blur.frame = bounds
+    tint.frame = bounds
+    let h = 1 / max(1, window?.screen.scale ?? UIScreen.main.scale)
+    hairline.frame = CGRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
+  }
+}
+
 public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegate {
   let onRowPress = EventDispatcher()
   let onRowPressIn = EventDispatcher()
@@ -79,6 +125,11 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   private var didInitialOffset = false
   private var scrollTopSeq: Double = 0
   private var endReachedFor: CGFloat = -1
+  // [2026-10-16 wave8-list] header do app por cima da lista (vidro) + snap do
+  // título grande (fica todo aberto ou todo fechado ao soltar o dedo).
+  private let topBar = CLTopBarView()
+  private var topInset: CGFloat = 0
+  var snapOffset: CGFloat = 0
 
   // Listas do usuário (submenu "Adicionar à lista")
   private var folders: [CLFolder] = []
@@ -125,6 +176,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     cv.onLayout = { [weak self] in self?.layoutHosts() }
     addSubview(cv)
     collectionView = cv
+    topBar.isHidden = true
+    addSubview(topBar)
 
     let reg = UICollectionView.CellRegistration<CLConversationCell, String> { [weak self] cell, _, id in
       guard let self = self else { return }
@@ -259,6 +312,15 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     bottomInset = max(0, b)
   }
 
+  func setTopInset(_ v: CGFloat) {
+    let next = max(0, v)
+    if abs(next - topInset) < 0.5 { return }
+    topInset = next
+    topBar.isHidden = topInset < 0.5
+    setNeedsLayout()
+    refreshInsets()
+  }
+
   func setFolders(_ list: [[String: Any]]?) {
     folders = (list ?? []).map { CLFolder($0) }.filter { !$0.id.isEmpty && !$0.name.isEmpty }
   }
@@ -286,6 +348,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       collectionView.backgroundColor = theme.bg
       collectionView.indicatorStyle = theme.dark ? .white : .black
       collectionView.setCollectionViewLayout(makeLayout(), animated: false)
+      topBar.apply(theme: theme)
       reconfigureAll = appliedOnce
       themeDirty = false
       selectionDirty = false
@@ -399,7 +462,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       }
     }
     order = ids
-    let oldIds = Set(dataSource.snapshot().itemIdentifiers)
+    let oldList = dataSource.snapshot().itemIdentifiers
+    let oldIds = Set(oldList)
     var snap = NSDiffableDataSourceSnapshot<Int, String>()
     snap.appendSections([0])
     snap.appendItems(ids, toSection: 0)
@@ -414,6 +478,21 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     let animate = appliedOnce && !pendingReset && !reconfigureAll && window != nil
     pendingReset = false
     appliedOnce = true
+    if animate && CLMotion.reduced {
+      // Reduzir movimento: reordena sem deslizar.
+      dataSource.apply(snap, animatingDifferences: false) { [weak self] in self?.afterApply() }
+      return
+    }
+    if animate && oldList != ids {
+      // [2026-10-16 wave8-list] Conversa que recebeu mensagem SOBE com mola
+      // suave e as outras deslizam para baixo (Telegram) — o batch update da
+      // diffable herda a curva do bloco de animação.
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0,
+                     options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        self.dataSource.apply(snap, animatingDifferences: true) { [weak self] in self?.afterApply() }
+      }, completion: nil)
+      return
+    }
     dataSource.apply(snap, animatingDifferences: animate) { [weak self] in
       self?.afterApply()
     }
@@ -467,17 +546,21 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       for v in rnChildren[1...] { fh = max(fh, v.frame.maxY) }
     }
     let newFooter = fh > 0.5 ? fh : footerHint
-    let insets = UIEdgeInsets(top: newHeader, left: 0, bottom: newFooter + bottomInset, right: 0)
+    let insets = UIEdgeInsets(top: newHeader + topInset, left: 0, bottom: newFooter + bottomInset, right: 0)
     if cv.contentInset != insets {
       let oldTop = cv.contentInset.top
       let atTop = cv.contentOffset.y <= -oldTop + 0.5
       cv.contentInset = insets
-      cv.verticalScrollIndicatorInsets = UIEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+      cv.verticalScrollIndicatorInsets = UIEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
       if !didInitialOffset || (atTop && !cv.isTracking && !cv.isDecelerating) {
-        cv.contentOffset = CGPoint(x: 0, y: -newHeader)
+        cv.contentOffset = CGPoint(x: 0, y: -insets.top)
         didInitialOffset = newHeader > 0 || appliedOnce
+      } else if abs(insets.top - oldTop) > 0.5 && !cv.isTracking {
+        // topInset ligou/desligou longe do topo: o conteúdo fica parado na tela.
+        cv.contentOffset.y -= insets.top - oldTop
       }
     }
+    updateTopBar()
     headerH = newHeader
     footerH = newFooter
     layoutHosts()
@@ -495,7 +578,20 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   public override func layoutSubviews() {
     super.layoutSubviews()
     if collectionView.frame != bounds { collectionView.frame = bounds }
+    let tf = CGRect(x: 0, y: 0, width: bounds.width, height: topInset)
+    if topBar.frame != tf { topBar.frame = tf }
+    bringSubviewToFront(topBar)
     layoutHosts()
+  }
+
+  /// Vidro do topo acompanha o scroll: some com o título grande na tela e
+  /// fica inteiro quando ele termina de passar por baixo (collapseOffset).
+  private func updateTopBar() {
+    guard topInset > 0.5, let cv = collectionView else { return }
+    let rel = cv.contentOffset.y + cv.contentInset.top
+    let start = collapseOffset * 0.45
+    let span = max(8, collapseOffset - start)
+    topBar.setProgress((rel - start) / span)
   }
 
   // MARK: - Ações
@@ -506,7 +602,9 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
 
   private func contextual(_ id: String, _ action: String, title: String, symbol: String, color: UInt32) -> UIContextualAction {
     let a = UIContextualAction(style: .normal, title: title) { [weak self] _, _, done in
-      UISelectionFeedbackGenerator().selectionChanged()
+      // [2026-10-16 wave8-list] "estalo" ao executar (o próprio UIKit já dá o
+      // toque ao cruzar o limiar do swipe completo).
+      UIImpactFeedbackGenerator(style: .light).impactOccurred()
       self?.emitAction(id, action, source: "swipe")
       done(true)
     }
@@ -560,7 +658,16 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   public func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
     collectionView.deselectItem(at: indexPath, animated: true)
     guard let id = dataSource.itemIdentifier(for: indexPath) else { return }
-    onRowPress(["id": id])
+    // [wave8 row-zoom] navigationHint: frame da linha em coords da janela (pt)
+    // p/ a transição "a conversa cresce a partir da linha" (modules/expo-chat-row-zoom).
+    var ev: [String: Any] = ["id": id]
+    if let cell = collectionView.cellForItem(at: indexPath), let win = cell.window {
+      let f = cell.convert(cell.bounds, to: win)
+      let fr: [String: Any] = ["x": Double(f.origin.x), "y": Double(f.origin.y),
+                               "w": Double(f.size.width), "h": Double(f.size.height), "unit": "pt"]
+      ev["frame"] = fr
+    }
+    onRowPress(ev)
   }
 
   public func collectionView(_ collectionView: UICollectionView, didHighlightItemAt indexPath: IndexPath) {
@@ -597,7 +704,20 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
 
   // MARK: - UIScrollViewDelegate
 
+  public func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+    // [2026-10-16 wave8-list] Snap do título grande: soltar no meio do caminho
+    // termina aberto ou fechado (UINavigationBar / Telegram).
+    let zone = snapOffset
+    if zone < 1 { return }
+    let top = scrollView.contentInset.top
+    let rel = targetContentOffset.pointee.y + top
+    if rel <= 0.5 || rel >= zone - 0.5 { return }
+    let open = velocity.y < -0.2 || (abs(velocity.y) <= 0.2 && rel < zone / 2)
+    targetContentOffset.pointee.y = (open ? 0 : zone) - top
+  }
+
   public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    updateTopBar()
     let rel = scrollView.contentOffset.y + scrollView.contentInset.top
     let c = rel > collapseOffset
     if c != collapsed {

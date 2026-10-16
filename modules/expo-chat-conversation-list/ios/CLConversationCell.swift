@@ -176,6 +176,14 @@ final class CLConversationCell: UICollectionViewListCell {
     }
 
     previewLabel.attributedText = buildPreview(typing: typing, drafting: drafting, unread: unread)
+    // [2026-10-16 wave8-list] "digitando…" entra/sai em crossfade curto (sem
+    // trocar o texto num corte seco).
+    if animated, let p = previous, p.typing.isEmpty != r.typing.isEmpty, !CLMotion.reduced {
+      let fade = CATransition()
+      fade.type = .fade
+      fade.duration = 0.18
+      previewLabel.layer.add(fade, forKey: "typingFade")
+    }
 
     muteIcon.isHidden = !r.muted
     if r.muted {
@@ -205,7 +213,11 @@ final class CLConversationCell: UICollectionViewListCell {
     unreadPill.backgroundColor = mutedPill ? theme.mutedPillBg : theme.pillBg
     unreadPill.label.textColor = mutedPill ? theme.mutedPillTxt : theme.pillTxt
     unreadPill.label.font = pillFont
-    unreadPill.label.text = r.unread > 99 ? "99+" : String(r.unread)
+    // [2026-10-16 wave8-list] Dígitos rolando quando o número muda com a pílula
+    // já na tela (2→3 sobe, 3→2 desce); pílula que acabou de aparecer só "pula".
+    let pillText = r.unread > 99 ? "99+" : String(r.unread)
+    let rollPill = animated && (previous?.unreadVisible ?? false) && unread && (previous?.unread ?? r.unread) != r.unread
+    unreadPill.setRollingText(pillText, animated: rollPill)
 
     // Pulo da pílula só quando o número SOBE (mesma regra do JS).
     if animated, let p = previous {
@@ -220,6 +232,13 @@ final class CLConversationCell: UICollectionViewListCell {
     accessibilityCustomActions = selectionMode ? [] : buildA11yActions()
 
     setNeedsLayout()
+    // [2026-10-16 wave8-list] ✓ → ✓✓ alarga o recibo 7 pt: a prévia desliza
+    // junto (mola curta) em vez de pular.
+    if animated, let p = previous, p.receipt == 1, r.receipt >= 2, showReceipt, p.text == r.text, !CLMotion.reduced {
+      UIView.animate(withDuration: 0.26, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut, .overrideInheritedDuration, .overrideInheritedCurve], animations: {
+        self.layoutIfNeeded()
+      }, completion: nil)
+    }
   }
 
   private func attachment(_ symbol: String, color: UIColor, font: UIFont) -> NSAttributedString? {
@@ -319,6 +338,7 @@ final class CLConversationCell: UICollectionViewListCell {
     super.prepareForReuse()
     typingDots.stop()
     unreadPill.layer.removeAllAnimations()
+    unreadPill.cancelRoll()
     mentionPill.layer.removeAllAnimations()
     receipt.layer.removeAllAnimations()
   }

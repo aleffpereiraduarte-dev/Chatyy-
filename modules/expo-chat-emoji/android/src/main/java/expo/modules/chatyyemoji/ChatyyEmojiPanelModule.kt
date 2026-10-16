@@ -9,7 +9,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * Figurinhas | GIF. Mesmo contrato do iOS (ios/ChatyyEmojiPanelModule.swift):
  *
  * Props: theme{}, labels{}, tab, bottomInset, compact, showStickers, showGifs,
- *   stickerSections[], gifs[], gifLoading.
+ *   stickerSections[], gifs[], gifLoading, richStickers (v2).
  * Eventos: onEmoji{emoji}, onBackspace, onSticker{key, uri, section}, onGif{key},
  *   onGifQuery{query}, onSection{key}, onTabChange{tab}, onMore{tab},
  *   onSearchFocus{focused, tab}.
@@ -25,7 +25,8 @@ class ChatyyEmojiPanelModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyEmojiPanel")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-16 sticker-panel v2] richStickers (Lottie, prévia, voo)
+    Function("apiVersion") { 2 }
 
     View(ChatyyEmojiPanelView::class) {
       Events(
@@ -43,6 +44,7 @@ class ChatyyEmojiPanelModule : Module() {
       Prop("stickerSections") { view: ChatyyEmojiPanelView, v: List<Map<String, Any?>>? -> view.setStickerSections(v ?: emptyList()) }
       Prop("gifs") { view: ChatyyEmojiPanelView, v: List<Map<String, Any?>>? -> view.setGifs(v ?: emptyList()) }
       Prop("gifLoading") { view: ChatyyEmojiPanelView, v: Boolean? -> view.setGifLoading(v ?: false) }
+      Prop("richStickers") { view: ChatyyEmojiPanelView, v: Boolean? -> view.setRichStickers(v ?: false) }
 
       OnViewDidUpdateProps { view: ChatyyEmojiPanelView -> view.didUpdateProps() }
 

@@ -8,6 +8,7 @@ import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import { IconChevronRight } from '../../Icons';
 import NativeSheetDialog from '../../NativeSheetDialog';
+import ChatyyMascot from '../../mascot/ChatyyMascot'; // [2026-10-16 polish-r2]
 import { USE_NATIVE_SHEETS } from '../../NativeSheet';
 import { PrivacyModal, TermsModal } from '../../LoginModals';
 import { SettingsGroup, SettingsRow } from '../SettingsKit';
@@ -20,7 +21,7 @@ export function appVersionLabel() {
 }
 
 export default function HelpCategory() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const { registerAnchor } = useSettingsHost();
@@ -116,10 +117,15 @@ export default function HelpCategory() {
           onClose={() => setAboutOpen(false)}
           animationType="slide"
           overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
-          panelStyle={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
+          panelStyle={{ backgroundColor: colors.surface, borderRadius: 22, borderCurve: 'continuous', padding: 22 }}
         >
-          <Text style={{ color: colors.text, fontWeight: '800', fontSize: 20, marginBottom: 6 }}>{t('settings.about.title') || 'Sobre'}</Text>
-          <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>{build ? `${verLabel} • build ${build}` : verLabel}</Text>
+          {/* [2026-10-16 polish-r2] Cabeçalho com o mascote acenando + nome do
+              app centrado (era só "Sobre" + versão soltos no canto). */}
+          <View style={{ alignItems: 'center', marginBottom: 14 }}>
+            <ChatyyMascot pose="wave" size={96} dark={isDark} />
+            <Text accessibilityRole="header" style={{ color: colors.text, fontWeight: '800', fontSize: 22, letterSpacing: -0.4, marginTop: 6 }}>Chatyy</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] }}>{build ? `${verLabel} • build ${build}` : verLabel}</Text>
+          </View>
           <TouchableOpacity onPress={() => after(() => setShowTerms(true))} style={[st.link, { borderBottomColor: colors.borderLight }]}>
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
             <IconChevronRight size={16} color={colors.textTertiary} />
@@ -128,7 +134,7 @@ export default function HelpCategory() {
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.privacy') || 'Política de privacidade'}</Text>
             <IconChevronRight size={16} color={colors.textTertiary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setAboutOpen(false)} style={{ marginTop: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => setAboutOpen(false)} style={{ marginTop: 18, paddingVertical: 14, borderRadius: 26, borderCurve: 'continuous', backgroundColor: colors.primary, alignItems: 'center' }}>
             <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
           </TouchableOpacity>
         </NativeSheetDialog>

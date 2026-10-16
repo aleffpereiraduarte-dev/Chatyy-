@@ -12,7 +12,11 @@ class ChatyyConversationListModule : Module() {
     Name("ChatyyConversationList")
 
     // 2 = [native-store fase 1.5] prop `store` {a, r, n, s} (foto da home no store nativo)
-    Function("apiVersion") { 2 }
+    // 3 = [2026-10-16 wave8-list] props `topInset` (vidro no topo, header do app
+    //     por cima), `snapOffset` (snap do título grande) e `peekMode` ("peek" =
+    //     prévia estilo Telegram no toque longo); dígitos rolando, ✓→✓✓, swipe
+    //     com resistência/estalo.
+    Function("apiVersion") { 3 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -45,6 +49,9 @@ class ChatyyConversationListModule : Module() {
       Prop("menuEnabled") { view: ChatyyConversationListView, v: Boolean? -> view.menuEnabled = v ?: true }
       Prop("scrollToTopSeq") { view: ChatyyConversationListView, v: Double? -> view.setScrollToTopSeqProp(v ?: 0.0) }
       Prop("store") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setStore(v) }
+      Prop("topInset") { view: ChatyyConversationListView, v: Double? -> view.setTopInset(v ?: 0.0) }
+      Prop("snapOffset") { view: ChatyyConversationListView, v: Double? -> view.setSnapOffset(v ?: 0.0) }
+      Prop("peekMode") { view: ChatyyConversationListView, v: String? -> view.setPeekModeProp(v) }
 
       OnViewDidUpdateProps { view: ChatyyConversationListView -> view.commitProps() }
 

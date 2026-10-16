@@ -1,8 +1,11 @@
 package expo.modules.chatyyemoji
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -33,6 +36,9 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.airbnb.lottie.LottieAnimationView
+import com.airbnb.lottie.LottieDrawable
+import com.bumptech.glide.Glide
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -147,6 +153,16 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
   private var toneSel = -1
 
   private val gifDebounce = Runnable { onGifQuery(mapOf("query" to gifQuery)) }
+
+  // [2026-10-16 sticker-panel v2] Lottie na grade + prévia ao segurar + voo.
+  override var richStickers: Boolean = false
+    private set
+  private var previewHost: FrameLayout? = null
+  private var previewCard: FrameLayout? = null
+  private var previewImage: ImageView? = null
+  private var previewLottie: LottieAnimationView? = null
+  private var previewKey: String? = null
+  private var previewActive = false
 
   init {
     orientation = VERTICAL
@@ -318,6 +334,32 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
         }
       }
     })
+    // Prévia aberta (segurou uma figurinha): a grade não rola; arrastar troca a
+    // figurinha da prévia; soltar fecha.
+    stickerGrid.addOnItemTouchListener(object : RecyclerView.OnItemTouchListener {
+      override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
+        if (!previewActive) return false
+        val a = e.actionMasked
+        if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) { hidePreview(); return false }
+        return true
+      }
+
+      override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {
+        when (e.actionMasked) {
+          MotionEvent.ACTION_MOVE -> {
+            val child = rv.findChildViewUnder(e.x, e.y) ?: return
+            val it = child.tag as? EPItem.Sticker ?: return
+            if (it.key != previewKey) {
+              child.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+              setPreview(it, true)
+            }
+          }
+          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> hidePreview()
+        }
+      }
+
+      override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
+    })
     stickerPage.addView(stickerGrid, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
   }
 
@@ -435,6 +477,12 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
   fun setStickerSections(v: List<Map<String, Any?>>) { sections = v; stickersDirty = true }
   fun setGifs(v: List<Map<String, Any?>>) { gifList = v; gifsDirty = true }
   fun setGifLoading(v: Boolean) { if (v != gifLoading) { gifLoading = v; gifsDirty = true } }
+  fun setRichStickers(v: Boolean) {
+    if (v == richStickers) return
+    richStickers = v
+    if (!v) hidePreview()
+    stickerAdapter.notifyDataSetChanged()
+  }
 
   fun didUpdateProps() {
     if (labelsDirty) {
@@ -536,6 +584,8 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
     else backspace.animate().alpha(0f).setDuration(120).withEndAction { if (tab != "emoji") backspace.visibility = View.INVISIBLE }.start()
     moveSegPill(animated)
     tintSegment()
+    if (t != old) hidePreview()
+    refreshStickerPlayback()
     if (t == "stickers") requestFirstStickerSection()
     if (fromUser) onTabChange(mapOf("tab" to t))
   }
@@ -575,6 +625,7 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
     gifStrip.visibility = if (compact) View.VISIBLE else View.GONE
     bottomBar.visibility = if (compact) View.GONE else View.VISIBLE
     if (compact) rebuildEmojiStrip()
+    refreshStickerPlayback()
   }
 
   private fun emitSearchFocus(f: Boolean) {
@@ -805,7 +856,8 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
       if (its.isEmpty() && (s["loading"] as? Boolean) == true) grid.add(EPItem.Spinner(key))
       for (it in its) {
         val uri = it["uri"] as? String ?: continue
-        grid.add(EPItem.Sticker(it["key"] as? String ?: uri, uri, key))
+        val lottie = (it["lottie"] as? Boolean) == true || epIsLottieUri(uri)
+        grid.add(EPItem.Sticker(it["key"] as? String ?: uri, uri, key, lottie))
       }
     }
     stickerSectionStart = starts
@@ -833,8 +885,224 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   override fun onStickerTap(v: View, item: EPItem.Sticker) {
+    if (previewActive) return
+    if (richStickers) {
+      v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+      flySticker(v)
+    }
     pop(v)
-    onSticker(mapOf("key" to item.key, "uri" to item.uri, "section" to item.section))
+    onSticker(mapOf("key" to item.key, "uri" to item.uri, "section" to item.section, "lottie" to item.lottie))
+  }
+
+  // ───────────── [2026-10-16 sticker-panel v2] reprodução / prévia / voo ─────────────
+
+  override fun stickersActive(): Boolean = isAttachedToWindow && tab == "stickers" && !compact
+
+  /** Só a grade de figurinhas visível (aba ativa, painel na janela) anima. */
+  private fun refreshStickerPlayback() {
+    val on = stickersActive()
+    for (i in 0 until stickerGrid.childCount) {
+      val h = stickerGrid.getChildViewHolder(stickerGrid.getChildAt(i)) as? EPHolder ?: continue
+      val lv = h.lottie ?: continue
+      if (lv.visibility != View.VISIBLE) continue
+      if (on) lv.resumeAnimation() else lv.pauseAnimation()
+    }
+  }
+
+  override fun onStickerLongPress(v: View, item: EPItem.Sticker): Boolean {
+    if (!richStickers || compact) return false
+    v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    v.animate().cancel()
+    v.scaleX = 1f; v.scaleY = 1f
+    try { stickerGrid.parent?.requestDisallowInterceptTouchEvent(true) } catch (_: Throwable) {}
+    showPreview(item)
+    return true
+  }
+
+  private fun showPreview(item: EPItem.Sticker) {
+    hidePreview(immediate = true)
+    val decor = rootView as? ViewGroup ?: return
+    val dw = decor.width
+    val dh = decor.height
+    if (dw <= 0 || dh <= 0) return
+    val hostF = FrameLayout(context)
+    hostF.isClickable = false
+    hostF.isFocusable = false
+    val dim = View(context)
+    dim.setBackgroundColor(if (theme.dark) 0x8C000000.toInt() else 0x4D000000)
+    hostF.addView(dim, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    val side = minOf((dw * 0.62f).toInt(), dp(280f))
+    val card = FrameLayout(context)
+    val iv = ImageView(context)
+    iv.scaleType = ImageView.ScaleType.FIT_CENTER
+    card.addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    val lv = LottieAnimationView(context)
+    lv.repeatCount = LottieDrawable.INFINITE
+    lv.scaleType = ImageView.ScaleType.FIT_CENTER
+    lv.setFailureListener { }
+    lv.visibility = View.GONE
+    card.addView(lv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    val loc = IntArray(2)
+    val dloc = IntArray(2)
+    getLocationInWindow(loc)
+    decor.getLocationInWindow(dloc)
+    val panelTop = loc[1] - dloc[1]
+    val topInset = try { decor.rootWindowInsets?.systemWindowInsetTop ?: dp(24f) } catch (_: Throwable) { dp(24f) }
+    val minCy = topInset + side / 2 + dp(12f)
+    val cy = max(minCy, minOf(dh / 2, panelTop - side / 2 - dp(28f)))
+    val clp = FrameLayout.LayoutParams(side, side)
+    clp.leftMargin = (dw - side) / 2
+    clp.topMargin = cy - side / 2
+    hostF.addView(card, clp)
+    try { decor.addView(hostF, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)) } catch (_: Throwable) { return }
+    previewHost = hostF
+    previewCard = card
+    previewImage = iv
+    previewLottie = lv
+    previewActive = true
+    previewKey = null
+    setPreview(item, false)
+    dim.alpha = 0f
+    dim.animate().alpha(1f).setDuration(180).start()
+    card.alpha = 0f
+    card.scaleX = 0.4f; card.scaleY = 0.4f
+    card.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(OvershootInterpolator(1.4f)).start()
+  }
+
+  private fun setPreview(item: EPItem.Sticker, animated: Boolean) {
+    val iv = previewImage ?: return
+    val lv = previewLottie ?: return
+    previewKey = item.key
+    if (item.lottie) {
+      try { Glide.with(context).clear(iv) } catch (_: Throwable) {}
+      iv.setImageDrawable(null)
+      iv.visibility = View.GONE
+      lv.visibility = View.VISIBLE
+      try { lv.setAnimationFromUrl(item.uri, item.uri) } catch (_: Throwable) {}
+      lv.playAnimation()
+    } else {
+      lv.cancelAnimation()
+      lv.visibility = View.GONE
+      iv.visibility = View.VISIBLE
+      try { Glide.with(context).load(item.uri).override(dp(280f), dp(280f)).into(iv) } catch (_: Throwable) {}
+    }
+    if (animated) {
+      val card = previewCard ?: return
+      card.animate().cancel()
+      card.scaleX = 0.86f; card.scaleY = 0.86f
+      card.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(OvershootInterpolator(2f)).start()
+    }
+  }
+
+  private fun hidePreview(immediate: Boolean = false) {
+    previewActive = false
+    previewKey = null
+    val hostF = previewHost ?: return
+    val lv = previewLottie
+    val iv = previewImage
+    previewHost = null
+    previewCard = null
+    previewImage = null
+    previewLottie = null
+    val remove = {
+      try { lv?.cancelAnimation() } catch (_: Throwable) {}
+      try { if (iv != null) Glide.with(context).clear(iv) } catch (_: Throwable) {}
+      try { (hostF.parent as? ViewGroup)?.removeView(hostF) } catch (_: Throwable) {}
+    }
+    if (immediate) { remove(); return }
+    hostF.animate().alpha(0f).setDuration(160).withEndAction { remove() }.start()
+  }
+
+  /** Toque na figurinha: cópia dela "voa" da grade até a conversa (acima do
+   *  composer, lado das mensagens enviadas) e some — a bolha real entra no lugar. */
+  private fun flySticker(cell: View) {
+    val decor = rootView as? ViewGroup ?: return
+    val w = cell.width
+    val h = cell.height
+    if (w <= 0 || h <= 0) return
+    val holder = try { stickerGrid.getChildViewHolder(cell) as? EPHolder } catch (_: Throwable) { null }
+    val flyer: View
+    val lvSrc = holder?.lottie
+    val ivSrc = holder?.image
+    if (lvSrc != null && lvSrc.visibility == View.VISIBLE) {
+      val comp = lvSrc.composition ?: return
+      val lv = LottieAnimationView(context)
+      lv.setFailureListener { }
+      lv.scaleType = ImageView.ScaleType.FIT_CENTER
+      lv.setComposition(comp)
+      lv.progress = lvSrc.progress
+      flyer = lv
+    } else {
+      val d = ivSrc?.drawable ?: return
+      val copy = d.constantState?.newDrawable(resources)
+      val iv = ImageView(context)
+      iv.scaleType = ImageView.ScaleType.FIT_CENTER
+      if (copy != null) {
+        iv.setImageDrawable(copy)
+      } else {
+        // sem constantState (ex.: AnimatedImageDrawable): quadro atual em software
+        val bmp = try {
+          val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+          cell.draw(Canvas(b))
+          b
+        } catch (_: Throwable) { null } ?: return
+        iv.setImageBitmap(bmp)
+      }
+      flyer = iv
+    }
+    val loc = IntArray(2)
+    val dloc = IntArray(2)
+    val ploc = IntArray(2)
+    cell.getLocationInWindow(loc)
+    decor.getLocationInWindow(dloc)
+    getLocationInWindow(ploc)
+    val sx = (loc[0] - dloc[0]).toFloat()
+    val sy = (loc[1] - dloc[1]).toFloat()
+    val pad = dp(5f)
+    try { decor.addView(flyer, ViewGroup.LayoutParams(w, h)) } catch (_: Throwable) { return }
+    flyer.setPadding(pad, pad, pad, pad)
+    flyer.x = sx
+    flyer.y = sy
+    flyer.pivotX = w / 2f
+    flyer.pivotY = h / 2f
+    val side = minOf(dp(150f).toFloat(), w * 1.6f)
+    val endScale = side / w
+    val panelTop = (ploc[1] - dloc[1]).toFloat()
+    val topInset = try { (decor.rootWindowInsets?.systemWindowInsetTop ?: 0).toFloat() } catch (_: Throwable) { 0f }
+    val endCx = decor.width - side / 2f - dp(14f)
+    val endCy = max(topInset + side / 2f + dp(8f), panelTop - side / 2f - dp(64f))
+    val startCx = sx + w / 2f
+    val startCy = sy + h / 2f
+    val ctrlX = (startCx + endCx) / 2f
+    val ctrlY = minOf(startCy, endCy) - dp(36f)
+    cell.alpha = 0.3f
+    cell.animate().alpha(1f).setStartDelay(200).setDuration(250).start()
+    val anim = ValueAnimator.ofFloat(0f, 1f)
+    anim.duration = 440
+    anim.interpolator = DecelerateInterpolator(1.4f)
+    anim.addUpdateListener { va ->
+      val t = va.animatedValue as Float
+      val u = 1f - t
+      val cx = u * u * startCx + 2f * u * t * ctrlX + t * t * endCx
+      val cy = u * u * startCy + 2f * u * t * ctrlY + t * t * endCy
+      flyer.x = cx - w / 2f
+      flyer.y = cy - h / 2f
+      val sc = if (t < 0.45f) 1f + 0.3f * (t / 0.45f) else 1.3f + (endScale - 1.3f) * ((t - 0.45f) / 0.55f)
+      flyer.scaleX = sc
+      flyer.scaleY = sc
+      flyer.alpha = if (t < 0.7f) 1f else max(0f, 1f - (t - 0.7f) / 0.3f)
+    }
+    anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        try { decor.removeView(flyer) } catch (_: Throwable) {}
+      }
+    })
+    anim.start()
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    post { refreshStickerPlayback() }
   }
 
   // ───────────────────────── GIF ─────────────────────────
@@ -865,6 +1133,8 @@ class ChatyyEmojiPanelView(context: Context, appContext: AppContext) : ExpoView(
     super.onDetachedFromWindow()
     main.removeCallbacksAndMessages(null)
     dismissTones()
+    hidePreview(immediate = true)
+    refreshStickerPlayback()
   }
 }
 

@@ -14,6 +14,9 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # [2026-10-16 sticker-panel v2] figurinhas Lottie — mesmo pod (4.6.0) que o
+  # lottie-react-native já traz no binário (sem versão aqui p/ não conflitar).
+  s.dependency 'lottie-ios'
 
   s.source_files = '**/*.swift'
 

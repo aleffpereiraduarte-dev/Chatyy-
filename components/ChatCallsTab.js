@@ -7,7 +7,7 @@ import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
 import { PSTN_ENABLED } from '../constants/featureFlags';
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal, IconFlag, IconCopy, IconShield } from './Icons';
 import Sheet from './ui/Sheet'; import ActionList from './ui/ActionList'; // [2026-10-14 vis-audit] menu "…" do histórico
 import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
 import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-15 native-sheets-v2]
@@ -3161,6 +3161,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     }
   }, [handleDeleteEntry]);
 
+  const [rowMenu, setRowMenu] = useState(null);
   const handleRowLongPress = useCallback((item) => {
     if (!item) return;
     const caller = item.contactEmail || item.contact_email || '';
@@ -3181,38 +3182,20 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       if (label === optAddContact) return runRowMenuAction('addContact', item);
     };
 
-    if (Platform.OS === 'ios') {
-      try {
-        const { ActionSheetIOS } = require('react-native');
-        const options = [optBlock, optReport, optAddContact, optCopyNumber, optDelete, cancel];
-        ActionSheetIOS.showActionSheetWithOptions({
-          options,
-          cancelButtonIndex: options.length - 1,
-          destructiveButtonIndex: options.length - 2, // Delete
-          title: name || number || caller,
-        }, (idx) => {
-          if (idx == null || idx === options.length - 1) return;
-          handleSelected(options[idx]);
-        });
-      } catch {}
-    } else {
-      // Android + web — Alert with buttons. Alert caps at ~3 buttons on
-      // Android so we collapse into a small list; if there are more than
-      // 3 entries we use 'options' style which shows a popup.
-      Alert.alert(
-        name || number || caller || '',
-        '',
-        [
-          { text: optBlock,       onPress: () => handleSelected(optBlock) },
-          { text: optReport,      onPress: () => handleSelected(optReport) },
-          { text: optAddContact,  onPress: () => handleSelected(optAddContact) },
-          { text: optCopyNumber,  onPress: () => handleSelected(optCopyNumber) },
-          { text: optDelete,      style: 'destructive', onPress: () => handleSelected(optDelete) },
-          { text: cancel,         style: 'cancel' },
-        ],
-        { cancelable: true }
-      );
-    }
+    // [2026-10-16 polish-r2] Folha P&B do design system nas 3 plataformas
+    // (Android: o Alert do sistema só mostra 3 botões e cortava "Apagar").
+    void cancel;
+    setRowMenu({
+      title: name || number || caller || '',
+      items: [
+        { key: 'block', label: optBlock, icon: IconShield, onPress: () => handleSelected(optBlock) },
+        { key: 'report', label: optReport, icon: IconFlag, onPress: () => handleSelected(optReport) },
+        { key: 'add', label: optAddContact, icon: IconUserPlus, onPress: () => handleSelected(optAddContact) },
+        { key: 'copy', label: optCopyNumber, icon: IconCopy, onPress: () => handleSelected(optCopyNumber) },
+        { separator: true, key: 'sep' },
+        { key: 'delete', label: optDelete, icon: IconTrash, destructive: true, onPress: () => handleSelected(optDelete) },
+      ],
+    });
   }, [t, runRowMenuAction]);
 
   // Memory #832: tap on the green phone icon in a call history row should
@@ -3590,6 +3573,9 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             </>
           )}
         </ScrollView>
+        <Sheet native visible={!!rowMenu} onClose={() => setRowMenu(null)} title={rowMenu?.title}>
+          <ActionList onDone={() => setRowMenu(null)} items={rowMenu?.items || []} />
+        </Sheet>
         <Sheet native visible={historyMenuOpen} onClose={() => setHistoryMenuOpen(false)}>
           <ActionList
             onDone={() => setHistoryMenuOpen(false)}

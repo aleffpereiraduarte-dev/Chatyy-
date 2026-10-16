@@ -41,9 +41,10 @@ import * as api from '../services/api';
 import { safeAlert } from '../services/alerts';
 import { setCache, getCached } from '../services/cache';
 import {
-  IconArrowLeft, IconX, IconEdit, IconPlus, IconPlay,
+  IconArrowLeft, IconX, IconEdit, IconPlus, IconPlay, IconImage,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
+import PressableScale from '../components/PressableScale'; // [2026-10-16 polish-r2]
 import Svg, { Path } from 'react-native-svg';
 
 const MAX_ITEMS = 10;
@@ -356,7 +357,7 @@ export default function PhotoNew() {
       overflow: 'hidden',
     },
     thumbActive: { borderColor: colors.primary },
-    thumbReorder: { borderColor: '#F59E0B', borderWidth: 2 },
+    thumbReorder: { borderColor: isDark ? '#FFFFFF' : '#111111', borderWidth: 3 },
     thumbImg: { width: '100%', height: '100%' },
     addMoreTile: {
       width: 60, height: 60, borderRadius: 8,
@@ -380,7 +381,7 @@ export default function PhotoNew() {
     },
     reorderHint: {
       paddingHorizontal: Spacing.md, paddingBottom: 4,
-      fontSize: 12, color: '#F59E0B', fontWeight: '600',
+      fontSize: 12, color: colors.textSecondary, fontWeight: '600',
     },
   }), [colors, isDark]);
 
@@ -416,9 +417,24 @@ export default function PhotoNew() {
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>
           {/* Carousel */}
           <View
-            style={s.carouselWrap}
+            style={[s.carouselWrap, items.length === 0 && { backgroundColor: isDark ? '#0d0d0f' : '#F2F2F7' }]}
             onLayout={e => setCarouselWidth(e.nativeEvent.layout.width)}
           >
+            {/* [2026-10-16 polish-r2] Sem itens: área vazia virava um quadrado
+                preto mudo. Agora um alvo grande de "Adicionar" (mesma ação do +). */}
+            {items.length === 0 && (
+              <PressableScale onPress={addMore} haptic="light" accessibilityRole="button"
+                accessibilityLabel={t('photoNew.addMore') || 'Adicionar'}
+                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+                <View style={{ width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1c1c1e' : '#FFFFFF', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }}>
+                  <IconImage size={34} color={colors.text} />
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, height: 40, borderRadius: 20, backgroundColor: isDark ? '#FFFFFF' : '#111111' }}>
+                  <IconPlus size={16} color={isDark ? '#000' : '#fff'} />
+                  <Text style={{ color: isDark ? '#000' : '#fff', fontSize: 15, fontWeight: '700' }}>{t('photoNew.addMore') || 'Adicionar'}</Text>
+                </View>
+              </PressableScale>
+            )}
             {carouselWidth > 0 && items.length > 0 && (
               <FlatList
                 ref={carouselRef}
@@ -520,9 +536,11 @@ export default function PhotoNew() {
               style={s.captionInput}
             />
           </View>
-          <Text style={[s.counter, { paddingHorizontal: Spacing.md }]}>
-            {captionRemaining}
-          </Text>
+          {caption.length > 0 && (
+            <Text style={[s.counter, { paddingHorizontal: Spacing.md }]}>
+              {captionRemaining}
+            </Text>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
 

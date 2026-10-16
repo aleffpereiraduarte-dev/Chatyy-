@@ -177,12 +177,18 @@ final class EPImageCell: UICollectionViewCell {
   static let reuse = "EPImageCell"
   let imageView = UIImageView()
   let spinner = UIActivityIndicatorView(style: .medium)
+  // [2026-10-16 sticker-panel v2] figurinha Lottie (só toca se setPlaying(true))
+  let lottieView = EPLottieView()
   private(set) var uri: String = ""
+  private(set) var isLottie = false
+  private var playing = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
     imageView.clipsToBounds = true
     contentView.addSubview(imageView)
+    lottieView.isHidden = true
+    contentView.addSubview(lottieView)
     spinner.hidesWhenStopped = true
     contentView.addSubview(spinner)
     isAccessibilityElement = true
@@ -195,27 +201,73 @@ final class EPImageCell: UICollectionViewCell {
     super.layoutSubviews()
     imageView.bounds = CGRect(origin: .zero, size: contentView.bounds.size)
     imageView.center = CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
+    let inset: CGFloat = 4
+    lottieView.bounds = CGRect(x: 0, y: 0, width: max(0, contentView.bounds.width - inset * 2), height: max(0, contentView.bounds.height - inset * 2))
+    lottieView.center = imageView.center
     spinner.center = CGPoint(x: bounds.midX, y: bounds.midY)
   }
 
   override func prepareForReuse() {
     super.prepareForReuse()
     uri = ""
+    isLottie = false
+    playing = false
     imageView.image = nil
     imageView.alpha = 1
+    imageView.isHidden = false
     imageView.stopAnimating()
+    lottieView.reset()
+    lottieView.isHidden = true
+    contentView.alpha = 1
     spinner.stopAnimating()
+  }
+
+  /// Célula visível + aba ativa → anima; fora da tela → pausa (Lottie e GIF/WebP).
+  func setPlaying(_ on: Bool) {
+    playing = on
+    if isLottie {
+      if on { lottieView.play() } else { lottieView.pause() }
+      return
+    }
+    guard imageView.image?.images != nil else { return }
+    if on {
+      if !imageView.isAnimating { imageView.startAnimating() }
+    } else if imageView.isAnimating {
+      imageView.stopAnimating()
+    }
+  }
+
+  /// [2026-10-16 sticker-panel v2] Figurinha Lottie (.json).
+  func configureLottie(uri: String) {
+    imageView.stopAnimating()
+    imageView.image = nil
+    imageView.isHidden = true
+    imageView.backgroundColor = .clear
+    spinner.stopAnimating()
+    isLottie = true
+    lottieView.isHidden = false
+    self.uri = uri
+    lottieView.setURI(uri)
+    if playing { lottieView.play() }
   }
 
   override var isHighlighted: Bool {
     didSet {
       UIView.animate(withDuration: isHighlighted ? 0.08 : 0.25, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
         self.imageView.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.9, y: 0.9) : .identity
+        self.lottieView.transform = self.imageView.transform
       }
     }
   }
 
   func configure(uri: String, fill: Bool, placeholder: UIColor, corner: CGFloat, maxPixel: CGFloat) {
+    if isLottie {
+      isLottie = false
+      lottieView.reset()
+      lottieView.isHidden = true
+      self.uri = ""
+    }
+    imageView.isHidden = false
     imageView.contentMode = fill ? .scaleAspectFill : .scaleAspectFit
     imageView.layer.cornerRadius = corner
     imageView.backgroundColor = fill ? placeholder : .clear

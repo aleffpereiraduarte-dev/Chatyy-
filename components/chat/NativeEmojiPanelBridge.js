@@ -17,6 +17,12 @@
 // (globalThis.__chatyy_native_emoji = false) → shouldUseNativeEmojiPanel() =
 // false e a tela usa StickerPicker/GifPicker JS como antes. Erro de render →
 // ErrorBoundary desliga o nativo pelo resto da sessão (onFatal).
+//
+// [2026-10-16 sticker-panel v2] Binário apiVersion ≥ 2 → richStickers: pacote
+// do mascote (Lottie) como 1º pacote, figurinhas Lottie tocando na grade,
+// prévia grande ao segurar e "voo" até a conversa. Kill switch das abas
+// Figurinhas/GIF nativas: globalThis.__chatyy_native_sticker_panel = false →
+// a tela volta ao StickerPicker/GifPicker JS (shouldUseNativeStickerPanel()).
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, processColor, View } from 'react-native';
@@ -44,6 +50,19 @@ export function shouldUseNativeEmojiPanel() {
   // antigo: nenhum listener extra).
   if (ok) _listenKb();
   return ok;
+}
+
+/** Figurinhas/GIF no painel nativo (false = kill switch → pickers JS). */
+export function shouldUseNativeStickerPanel() {
+  try { if (globalThis.__chatyy_native_sticker_panel === false) return false; } catch {}
+  return true;
+}
+
+/** apiVersion ≥ 2: Lottie na grade + prévia + voo. */
+function _richStickers() {
+  if (!shouldUseNativeStickerPanel()) return false;
+  const m = _nativeModule();
+  try { return !!(m && m.getApiVersion && m.getApiVersion() >= 2); } catch { return false; }
 }
 
 function _tr(t, key, fb, vars) {
@@ -108,6 +127,8 @@ export function getPanelKeyboardHeight(insetBottom = 0, windowHeight = 800) {
 const RECENT_KEY = '@chatyy_recent_stickers';
 const FAV_KEY = '@chatyy_fav_stickers';
 const MINE_KEY = '@chatyy_my_stickers';
+// Recentes Lottie à parte: o StickerPicker JS (mesma RECENT_KEY) não desenha .json.
+const RECENT_LOTTIE_KEY = '@chatyy_recent_stickers_lottie';
 
 async function _storageGet(key) {
   try {
@@ -125,6 +146,26 @@ async function _storageSet(key, value) {
 }
 
 const _isImg = (s) => typeof s === 'string' && (/^https?:\/\//.test(s) || s.startsWith('/data/'));
+const _isLottie = (s) => typeof s === 'string' && /\.json(?:[?#].*)?$/i.test(s);
+
+// Pacote do mascote (public/stickers → https://chatyy.com.br/stickers/). Nova
+// pose gerada por scripts/build-mascot-lottie.js → acrescentar aqui.
+function _mascotPack() {
+  try {
+    const M = require('../mascot/ChatyyMascot');
+    const base = M.MASCOT_STICKER_BASE || 'https://chatyy.com.br/stickers/';
+    const files = ['chatyy-aceno'];
+    return {
+      key: 'chatyy',
+      title: 'Chatyy',
+      icon: 'pack',
+      coverUri: M.MASCOT_GREETING_PNG || (base + 'chatyy-aceno.png'),
+      items: files.map((f) => ({ key: base + f + '.json', uri: base + f + '.json', lottie: true })),
+    };
+  } catch {
+    return null;
+  }
+}
 function _resolve(api, s) {
   if (typeof s !== 'string') return '';
   if (/^https?:\/\//.test(s)) return s;
@@ -134,8 +175,9 @@ function _resolve(api, s) {
   return s;
 }
 
-function useStickerSections(enabled, t) {
+function useStickerSections(enabled, t, rich) {
   const [recents, setRecents] = useState([]);
+  const [recentsLottie, setRecentsLottie] = useState([]); // [{u, ts}]
   const [favorites, setFavorites] = useState([]);
   const [mine, setMine] = useState([]);
   const [packs, setPacks] = useState([]);
@@ -148,7 +190,12 @@ function useStickerSections(enabled, t) {
     loadedOnce.current = true;
     let alive = true;
     const api = require('../../services/api');
-    _storageGet(RECENT_KEY).then((v) => { if (alive) setRecents(v); });
+    _storageGet(RECENT_KEY).then((v) => { if (alive) setRecents((p) => (p.length ? p : v)); });
+    if (rich) {
+      _storageGet(RECENT_LOTTIE_KEY).then((v) => {
+        if (alive && v.length) setRecentsLottie(v);
+      });
+    }
     _storageGet(FAV_KEY).then((v) => { if (alive) setFavorites((p) => (p.length ? p : v)); });
     _storageGet(MINE_KEY).then((v) => { if (alive) setMine((p) => (p.length ? p : v)); });
     (async () => {
@@ -201,6 +248,14 @@ function useStickerSections(enabled, t) {
   }, [packItems]);
 
   const pushRecent = useCallback((item) => {
+    if (_isLottie(item)) {
+      setRecentsLottie((prev) => {
+        const next = [{ u: item, ts: Date.now() }, ...prev.filter((r) => r?.u !== item)].slice(0, 20);
+        _storageSet(RECENT_LOTTIE_KEY, next);
+        return next;
+      });
+      return;
+    }
     setRecents((prev) => {
       const next = [item, ...prev.filter((r) => r !== item)].slice(0, 40);
       _storageSet(RECENT_KEY, next);
@@ -210,21 +265,28 @@ function useStickerSections(enabled, t) {
 
   const sections = useMemo(() => {
     const api = require('../../services/api');
-    const toItems = (list) => (list || []).filter(_isImg).slice(0, 120).map((u) => ({ key: u, uri: _resolve(api, u) }));
+    // binário sem Lottie (apiVersion 1): figurinha .json não desenha → fora.
+    const toItems = (list) => (list || []).filter(_isImg).filter((u) => rich || !_isLottie(u)).slice(0, 120)
+      .map((u) => (_isLottie(u) ? { key: u, uri: _resolve(api, u), lottie: true } : { key: u, uri: _resolve(api, u) }));
     const out = [];
-    const rec = toItems(recents);
+    const mascot = rich ? _mascotPack() : null;
+    // recentes = imagens + Lottie (mais novos primeiro; Lottie só com rich)
+    const lot = rich ? (recentsLottie || []).filter((r) => r && typeof r.u === 'string') : [];
+    const rec = toItems(lot.length ? [...lot.map((r) => r.u), ...recents].slice(0, 40) : recents);
     if (rec.length) out.push({ key: 'recent', title: _tr(t, 'chat.npanel.recent', 'Recentes'), icon: 'recent', items: rec });
     const fav = toItems(favorites);
     if (fav.length) out.push({ key: 'favorites', title: _tr(t, 'chat.npanel.favorites', 'Favoritas'), icon: 'favorites', items: fav });
     const mn = toItems(mine);
     if (mn.length) out.push({ key: 'mine', title: _tr(t, 'chat.npanel.mine', 'Minhas'), icon: 'mine', items: mn });
+    // mascote = 1º pacote (logo depois das abas pessoais)
+    if (mascot) out.push(mascot);
     for (const p of packs || []) {
       const id = p?.id ?? p?.pack_id;
       if (id == null) continue;
       const key = 'mkt-' + id;
       const raw = packItems[id];
       const items = Array.isArray(raw)
-        ? raw.map((it) => it?.url || it?.image_url || it?.sticker_id).filter(_isImg).map((u) => ({ key: u, uri: _resolve(api, u) }))
+        ? toItems(raw.map((it) => it?.url || it?.image_url || it?.sticker_id))
         : [];
       const cover = p?.cover_url || p?.cover || p?.thumb_url || p?.icon_url || p?.preview_url || '';
       out.push({
@@ -237,7 +299,7 @@ function useStickerSections(enabled, t) {
       });
     }
     return out;
-  }, [recents, favorites, mine, packs, packItems, t]);
+  }, [recents, recentsLottie, favorites, mine, packs, packItems, t, rich]);
 
   return { sections, loadPack, pushRecent };
 }
@@ -382,9 +444,13 @@ function NativeEmojiPanelInner(props) {
     composerPad = 0,
     composerGap = 8,
     windowHeight = 800,
-    showStickers = true,
-    showGifs = true,
+    showStickers: showStickersProp = true,
+    showGifs: showGifsProp = true,
   } = props;
+  const stickerPanelOn = shouldUseNativeStickerPanel();
+  const showStickers = !!showStickersProp && stickerPanelOn;
+  const showGifs = !!showGifsProp && stickerPanelOn;
+  const rich = useMemo(() => _richStickers(), []);
 
   const NativeView = useMemo(() => {
     const m = _nativeModule();
@@ -431,7 +497,7 @@ function NativeEmojiPanelInner(props) {
 
   const stickersOn = mounted && showStickers;
   const gifsOn = mounted && showGifs && tab === 'gif';
-  const { sections, loadPack, pushRecent } = useStickerSections(stickersOn && tab === 'stickers', t);
+  const { sections, loadPack, pushRecent } = useStickerSections(stickersOn && tab === 'stickers', t, rich);
   const { gifs, loading: gifLoading, load: loadGifs, getGif } = useGifs(gifsOn);
 
   const themeKey = JSON.stringify([isDark, colors?.text, colors?.textSecondary]);
@@ -482,7 +548,9 @@ function NativeEmojiPanelInner(props) {
     pushRecent(key);
     const api = require('../../services/api');
     const toSend = _resolve(api, key) || String(e?.nativeEvent?.uri || '');
-    try { cbRef.current.onSendSticker?.(toSend); } catch {}
+    // Lottie (mascote / .json) vai como lottie_sticker (bolha toca a animação).
+    const lottie = !!e?.nativeEvent?.lottie || _isLottie(key);
+    try { cbRef.current.onSendSticker?.(toSend, lottie ? 'lottie_sticker' : undefined); } catch {}
   }, [pushRecent]);
   const _onGif = useCallback((e) => {
     const g = getGif(String(e?.nativeEvent?.key || ''));
@@ -533,6 +601,7 @@ function NativeEmojiPanelInner(props) {
         stickerSections={sections}
         gifs={gifs}
         gifLoading={gifLoading}
+        {...(rich ? { richStickers: true } : null)}
         onEmoji={_onEmoji}
         onBackspace={_onBackspace}
         onSticker={_onSticker}

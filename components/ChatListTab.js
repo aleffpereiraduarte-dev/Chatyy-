@@ -90,7 +90,7 @@ import FadeSlideIn from './FadeSlideIn';
 // [2026-10-14 native-home] Lista de conversas NATIVA (UICollectionView / RecyclerView).
 // Binário sem o módulo → isAvailable() false → FlashList abaixo (idêntico ao antigo).
 import NativeConversationList from './chatlist/NativeConversationList';
-import { isAvailable as _nativeHomeAvailable } from '../modules/expo-chat-conversation-list';
+import { isAvailable as _nativeHomeAvailable, apiVersion as _nativeHomeApi } from '../modules/expo-chat-conversation-list';
 // [2026-10-15 native-pins] Fileira de FIXADAS nativa (menu nativo + arrastar p/ reordenar).
 import PinnedStripSlot, { createPinBridge, autoPinAvatarSize, pinStripHeight } from './chatlist/NativePinnedStrip';
 import { isPinnedStripAvailable as _pinsNativeAvailable } from '../modules/expo-chat-conversation-list';
@@ -3693,7 +3693,7 @@ function _reuseConvRows(prev, next) {
   return allSame ? prev : out;
 }
 
-function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0 }) {
+function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0, topOverlayInset = 0, onNativeTopBar }) {
   { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.list++; }
   // [2026-10-14 lista-eco-envio] e-mail da conta (minúsculo) sempre atual p/ closures antigas.
   const _meLcRef = useRef('');
@@ -6079,8 +6079,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // first frame already has the group photo etc. (sync, no I/O).
     try { require('../utils/chatOpenHandoff').stashOpenConversation(conv); } catch {}
     try { require('../services/convShell').markOpenTap(conv.id); } catch {} // [native-store fase 3] t0 do beacon conv_shell
-    require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`, { router, source: 'list' });
-  }, [user?.email, router]);
+    const _openHref = `/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`;
+    const _open = () => require('../services/openConversation').openConversation(_openHref, { router, source: 'list' });
+    // [wave8 row-zoom] a conversa CRESCE a partir da linha tocada (overlay nativo +
+    // push sem animação); qualquer falha/kill switch → push padrão (_open).
+    let _zoomed = false;
+    try { _zoomed = require('../services/rowZoomTransition').openWithRowZoom(conv.id, { open: _open, dark: !!isDark, acct: meLc, unread: conv.unread_count }); } catch { _zoomed = false; }
+    if (!_zoomed) _open();
+  }, [user?.email, router, isDark]);
 
   const toggleFabMenu = useCallback(() => {
     if (showFabMenu) {
@@ -8548,14 +8554,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       titleStyle={[s.largeTitleText, { color: colors.text }]}
     />
   ) : null), [largeTitle, colors.text]);
+  // [2026-10-16 wave8-list] altura real do título grande → snap nativo (soltar
+  // no meio termina aberto/fechado) acompanha a fonte do sistema.
+  const [_ltH, _setLtH] = useState(0);
+  const _onLtLayout = useCallback((e) => {
+    const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+    _setLtH(prev => (prev === h ? prev : h));
+  }, []);
   const _listHeaderEl = useMemo(() => (largeTitle ? (
     <>
-      {_largeTitleEl}
+      <View onLayout={_onLtLayout}>{_largeTitleEl}</View>
       {!selectionMode && <WaImportBanner global />}
       {!selectionMode && _topChromeEl}
       {ListHeaderComponent}
     </>
-  ) : ListHeaderComponent), [largeTitle, _largeTitleEl, selectionMode, _topChromeEl, ListHeaderComponent]);
+  ) : ListHeaderComponent), [largeTitle, _largeTitleEl, _onLtLayout, selectionMode, _topChromeEl, ListHeaderComponent]);
   const _ltCollapsedRef = useRef(false);
   const _ltCbRef = useRef(onLargeTitleCollapsedChange);
   _ltCbRef.current = onLargeTitleCollapsedChange;
@@ -8580,6 +8593,20 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [_nativeHomeFailed, _setNativeHomeFailed] = useState(() => !!globalThis.__chatyy_native_home_failed);
   const _useNativeHome = Platform.OS !== 'web' && !RESP_IS_TABLET && !_nativeHomeFailed
     && globalThis.__chatyy_native_home !== false && _nativeHomeAvailable();
+  // [2026-10-16 wave8-list] Header do app POR CIMA da lista nativa (vidro
+  // nativo no topo, linhas rolam por baixo — Telegram/UINavigationBar). Só com
+  // a lista nativa api 3 na tela, título grande e fora do modo seleção; o
+  // chat.js liga o modo sobreposto quando recebe true. Kill switch:
+  // globalThis.__chatyy_native_topbar = false.
+  const _nativeTopBarOn = _useNativeHome && !!largeTitle && !selectionMode && !(loading && !refreshing)
+    && typeof onNativeTopBar === 'function' && globalThis.__chatyy_native_topbar !== false
+    && (() => { try { return _nativeHomeApi() >= 3; } catch { return false; } })();
+  const _ntbCbRef = useRef(onNativeTopBar);
+  _ntbCbRef.current = onNativeTopBar;
+  useEffect(() => {
+    try { _ntbCbRef.current?.(!!_nativeTopBarOn); } catch {}
+  }, [_nativeTopBarOn]);
+  useEffect(() => () => { try { _ntbCbRef.current?.(false); } catch {} }, []);
   const _onNativeHomeFailure = useCallback((msg) => {
     try { globalThis.__chatyy_native_home_failed = true; console.warn('[native-home] fallback FlashList:', msg); try { require('../services/crashReporter').reportNativeFallback('native_home', msg); } catch {} } catch {}
     _setNativeHomeFailed(true);
@@ -8788,6 +8815,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           onFailure={_onNativeHomeFailure}
           folders={chatFolders}
           storeMain={filter === 'all' && !(debouncedQuery || '').trim() && !selectionMode} /* [native-store fase 1.5] foto da home */
+          topInset={_nativeTopBarOn ? topOverlayInset : 0} /* [wave8-list] header do app por cima (vidro nativo) */
+          snapOffset={largeTitle && _ltH > 0 ? _ltH : 0}
         />
         ) : (
         <ListComponent

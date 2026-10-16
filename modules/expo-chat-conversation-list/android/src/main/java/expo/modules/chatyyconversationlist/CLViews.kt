@@ -46,6 +46,21 @@ internal object CLAuth {
 
 internal fun Context.dp(v: Float): Float = v * resources.displayMetrics.density
 
+/**
+ * [2026-10-16 wave8-list] "Reduzir movimento": Android não tem a chave do iOS;
+ * o equivalente é "Remover animações" (escala de animação 0) — com ela o
+ * ValueAnimator já pula para o fim, mas as animações de enfeite (dígitos
+ * rolando, mola do swipe, ✓ se dividindo) nem começam.
+ */
+internal object CLMotion {
+  fun reduced(ctx: Context): Boolean {
+    return try {
+      if (Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled()) return true
+      android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    } catch (_: Throwable) { false }
+  }
+}
+
 internal object CLType {
   fun weight(w: Int): Typeface {
     if (Build.VERSION.SDK_INT >= 28) return Typeface.create(Typeface.DEFAULT, w, false)
@@ -357,6 +372,7 @@ internal class CLReceiptView(ctx: Context) : View(ctx) {
   var receiptState = 0
     private set
   private var blend = 0f // 0 = cinza, 1 = azul
+  private var split = 1f // [wave8] 0 = 2º ✓ em cima do 1º, 1 = ✓✓ aberto
   private var anim: ValueAnimator? = null
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
@@ -380,7 +396,45 @@ internal class CLReceiptView(ctx: Context) : View(ctx) {
     receiptState = s
     visibility = if (s > 0) VISIBLE else GONE
     anim?.cancel()
-    if (animated && old == 2 && s == 3) {
+    animate().cancel()
+    val motion = animated && !CLMotion.reduced(context)
+    if (motion && old == 1 && s >= 2) {
+      // [2026-10-16 wave8-list] ✓ → ✓✓: o 2º traço nasce em cima do 1º e
+      // desliza 7 dp (Telegram); se já chegou lido, o azul entra no fim.
+      val toRead = s == 3
+      val a = ValueAnimator.ofFloat(0f, 1f)
+      a.duration = if (toRead) 380 else 260
+      a.interpolator = android.view.animation.PathInterpolator(0.2f, 0.9f, 0.3f, 1f)
+      a.addUpdateListener {
+        val p = it.animatedValue as Float
+        split = min(1f, p * (if (toRead) 1.45f else 1f))
+        blend = if (toRead) ((p - 0.3f) / 0.7f).coerceIn(0f, 1f) else 0f
+        val sc = 1f + 0.12f * kotlin.math.sin(min(1f, p * 1.2f) * PI.toFloat())
+        scaleX = sc
+        scaleY = sc
+        invalidate()
+      }
+      split = 0f
+      blend = 0f
+      anim = a
+      a.start()
+      return
+    }
+    if (motion && old == 0 && s == 1) {
+      // ✓ recém-enviado aparece crescendo (sem pular do nada).
+      split = 1f
+      blend = 0f
+      alpha = 0f
+      scaleX = 0.6f
+      scaleY = 0.6f
+      animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200)
+        .setInterpolator(android.view.animation.OvershootInterpolator(1.6f)).start()
+      invalidate()
+      return
+    }
+    split = 1f
+    alpha = 1f
+    if (motion && old == 2 && s == 3) {
       val a = ValueAnimator.ofFloat(0f, 1f)
       a.duration = 280
       a.addUpdateListener {
@@ -414,7 +468,7 @@ internal class CLReceiptView(ctx: Context) : View(ctx) {
     if (receiptState <= 0) return
     path.reset()
     check(0f)
-    if (receiptState >= 2) check(context.dp(7f))
+    if (receiptState >= 2) check(context.dp(7f) * split)
     if (blend < 1f) {
       paint.color = if (receiptState == 1) sentColor else grayColor
       paint.alpha = ((1f - blend) * (paint.color ushr 24)).toInt()
@@ -444,8 +498,12 @@ internal class CLTypingDots(ctx: Context) : View(ctx) {
     if (on && isAttachedToWindow) start() else stop()
   }
 
+  private var still = false
+
   private fun start() {
     if (anim != null) return
+    still = CLMotion.reduced(context)
+    if (still) { invalidate(); return } // Remover animações: pontos parados
     val a = ValueAnimator.ofFloat(0f, 1f)
     a.duration = 1000
     a.repeatCount = ValueAnimator.INFINITE
@@ -477,7 +535,7 @@ internal class CLTypingDots(ctx: Context) : View(ctx) {
     for (i in 0 until 3) {
       var p = (phase - i * 0.16f) % 1f
       if (p < 0) p += 1f
-      val a = if (p < 0.5f) 0.25f + 1.5f * p else 1f - 1.5f * (p - 0.5f)
+      val a = if (still) 1f - 0.3f * i else if (p < 0.5f) 0.25f + 1.5f * p else 1f - 1.5f * (p - 0.5f)
       paint.color = color
       paint.alpha = (a.coerceIn(0.25f, 1f) * 255).toInt()
       canvas.drawCircle(context.dp(3f) + i * context.dp(6f), cy, r, paint)
@@ -564,4 +622,127 @@ internal class CLCheckView(ctx: Context) : View(ctx) {
       canvas.drawCircle(c, c, c - bw / 2f, paint)
     }
   }
+}
+
+// ─── [2026-10-16 wave8-list] Pílula de não lidas com DÍGITOS ROLANDO ─────────
+// Só os dígitos que mudaram rolam (12→13: o "1" fica, o "2" sobe e o "3" entra
+// por baixo; desce quando diminui). Fonte tabular → o prefixo comum tem a mesma
+// largura. Canvas + ValueAnimator na UI thread; "Remover animações" = troca seca.
+
+internal class CLCounterView(ctx: Context) : View(ctx) {
+  private val bg = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+    textAlign = Paint.Align.LEFT
+    fontFeatureSettings = "tnum"
+  }
+  private val rect = RectF()
+  private val clip = Path()
+  private val padH = ctx.dp(7f)
+  var text: String = ""
+    private set
+  private var oldText = ""
+  private var keep = 0
+  private var up = true
+  private var progress = 1f
+  private var anim: ValueAnimator? = null
+
+  var bgColor: Int = 0xFF000000.toInt()
+    set(v) { if (field != v) { field = v; invalidate() } }
+  var textColor: Int = 0xFFFFFFFF.toInt()
+    set(v) { if (field != v) { field = v; invalidate() } }
+
+  fun setTextSizePx(px: Float) { if (tp.textSize != px) { tp.textSize = px; requestLayout(); invalidate() } }
+  fun setTypeface(tf: Typeface?) { if (tp.typeface != tf) { tp.typeface = tf; requestLayout(); invalidate() } }
+
+  /** Troca o número; `animated` = rola os dígitos alterados. */
+  fun setCount(t: String, animated: Boolean) {
+    if (t == text) return
+    val old = text
+    text = t
+    anim?.cancel()
+    anim = null
+    if (!animated || old.isEmpty() || t.isEmpty() || !isAttachedToWindow || CLMotion.reduced(context)) {
+      progress = 1f
+      requestLayout()
+      invalidate()
+      return
+    }
+    var k = 0
+    if (old.length == t.length) {
+      while (k < t.length && old[k] == t[k]) k++
+    }
+    keep = k
+    oldText = old
+    fun num(s: String): Int = s.filter { it.isDigit() }.toIntOrNull() ?: 0
+    up = num(t) >= num(old)
+    progress = 0f
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 340
+    // leve passada do ponto (mola), como o UIView spring 0.78 do iOS
+    a.interpolator = android.view.animation.OvershootInterpolator(0.9f)
+    a.addUpdateListener { progress = it.animatedValue as Float; invalidate() }
+    anim = a
+    a.start()
+    requestLayout()
+  }
+
+  fun cancelRoll() {
+    anim?.cancel()
+    anim = null
+    progress = 1f
+    invalidate()
+  }
+
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    val h = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.EXACTLY) MeasureSpec.getSize(heightMeasureSpec) else context.dp(22f).toInt()
+    val w = if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.EXACTLY) MeasureSpec.getSize(widthMeasureSpec)
+      else max(h, kotlin.math.ceil(tp.measureText(text) + padH * 2).toInt())
+    setMeasuredDimension(w, h)
+  }
+
+  override fun onDetachedFromWindow() {
+    cancelRoll()
+    super.onDetachedFromWindow()
+  }
+
+  override fun onDraw(canvas: Canvas) {
+    super.onDraw(canvas)
+    val w = width.toFloat()
+    val h = height.toFloat()
+    if (w <= 0f || h <= 0f) return
+    val r = h / 2f
+    rect.set(0f, 0f, w, h)
+    bg.color = bgColor
+    canvas.drawRoundRect(rect, r, r, bg)
+    tp.color = textColor
+    val fm = tp.fontMetrics
+    val base = h / 2f - (fm.ascent + fm.descent) / 2f
+    if (progress >= 1f || oldText.isEmpty()) {
+      val tw = tp.measureText(text)
+      canvas.drawText(text, (w - tw) / 2f, base, tp)
+      return
+    }
+    val save = canvas.save()
+    clip.reset()
+    clip.addRoundRect(rect, r, r, Path.Direction.CW)
+    canvas.clipPath(clip)
+    val newW = tp.measureText(text)
+    val oldW = tp.measureText(oldText)
+    val prefix = text.substring(0, keep)
+    val prefW = tp.measureText(prefix)
+    val xNew = (w - newW) / 2f
+    val xOld = (w - oldW) / 2f
+    val d = Math.round(h * 0.7f) * (if (up) 1f else -1f)
+    val p = progress
+    val alphaIn = p.coerceIn(0f, 1f)
+    if (prefix.isNotEmpty()) canvas.drawText(prefix, xNew, base, tp)
+    tp.alpha = (alphaIn * (textColor ushr 24)).toInt()
+    canvas.drawText(text.substring(keep), xNew + prefW, base + d * (1f - p), tp)
+    tp.alpha = ((1f - alphaIn) * (textColor ushr 24)).toInt()
+    canvas.drawText(oldText.substring(keep), xOld + (if (keep > 0) prefW else 0f), base - d * p, tp)
+    tp.color = textColor
+    canvas.restoreToCount(save)
+  }
+
+  override fun hasOverlappingRendering(): Boolean = false
 }

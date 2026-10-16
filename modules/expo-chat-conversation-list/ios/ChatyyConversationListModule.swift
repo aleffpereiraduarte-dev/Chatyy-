@@ -25,9 +25,12 @@ public class ChatyyConversationListModule: Module {
 
     // 2 = [native-store fase 1.5] prop `store` {a, r, n, s}: foto da home lida
     //     direto do store nativo (modules/expo-chat-store) + regravada sozinha.
+    // 3 = [2026-10-16 wave8-list] props `topInset` (header do app por cima da
+    //     lista + vidro nativo no topo) e `snapOffset` (snap do título grande);
+    //     dígitos rolando, ✓→✓✓ animado, reordenação com mola (sem contrato).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 2
+      return 3
       #else
       return 1
       #endif
@@ -94,6 +97,14 @@ public class ChatyyConversationListModule: Module {
       Prop("store") { (view: ChatyyConversationListView, value: [String: Any]?) in
         view.setStore(value)
       }
+      Prop("topInset") { (view: ChatyyConversationListView, value: Double?) in
+        view.setTopInset(CGFloat(value ?? 0))
+      }
+      Prop("snapOffset") { (view: ChatyyConversationListView, value: Double?) in
+        view.snapOffset = CGFloat(max(0, value ?? 0))
+      }
+      // Android usa (prévia do toque longo); iOS já abre a prévia nativa do menu.
+      Prop("peekMode") { (_: ChatyyConversationListView, _: String?) in }
 
       OnViewDidUpdateProps { (view: ChatyyConversationListView) in
         view.commitProps()

@@ -67,9 +67,12 @@ function pseudoQrMatrix(payload, size = 25) {
 
 function QrArtwork({ payload, size = 240, color = '#111' }) {
   const matrix = useMemo(() => pseudoQrMatrix(payload, 25), [payload]);
-  const cell = size / 25;
+  // [2026-10-16 polish-r2] Células cabem DENTRO do padding (antes size/25
+  // vazava 16px à direita/baixo e cortava o QR) + cartão branco com quiet zone.
+  const pad = 14;
+  const cell = (size - pad * 2) / 25;
   return (
-    <View style={{ width: size, height: size, backgroundColor: '#fff', padding: 8, borderRadius: 12 }}>
+    <View style={{ width: size, height: size, backgroundColor: '#fff', padding: pad, borderRadius: 20, borderCurve: 'continuous' }}>
       <View style={{ flex: 1 }}>
         {matrix.map((row, r) => (
           <View key={r} style={{ flexDirection: 'row', height: cell }}>
@@ -263,11 +266,11 @@ export default function CompanionQRScreen() {
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('devices.companionTitle') })} />
       ) : (
-      <View style={[s.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: 10 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <IconArrowLeft size={24} color="#fff" />
+      <View style={[s.header, { backgroundColor: colors.background, paddingTop: 10 }]}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t?.('common.back') || 'Voltar'}>
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={s.title}>{t?.('devices.companionTitle') || 'Vincular outro celular'}</Text>
+        <Text style={[s.title, { color: colors.text }]}>{t?.('devices.companionTitle') || 'Vincular outro celular'}</Text>
       </View>
       )}
 
@@ -278,13 +281,13 @@ export default function CompanionQRScreen() {
           </View>
         ) : status === 'approved' ? (
           <View style={s.approvedBox}>
-            <View style={[s.bigIconBox, { backgroundColor: 'rgba(16,185,129,0.12)' }]}>
-              <IconShield size={48} color="#10B981" />
+            <View style={[s.bigIconBox, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+              <IconShield size={48} color={colors.text} />
             </View>
             <Text style={[s.approvedTitle, { color: colors.text }]}>
               {t?.('devices.companionApproved') || 'Celular vinculado'}
             </Text>
-            <Text style={[s.approvedSub, { color: colors.secondaryText }]}>
+            <Text style={[s.approvedSub, { color: colors.textSecondary }]}>
               {t?.('devices.companionApprovedSub') || 'Seu outro celular já está conectado.'}
             </Text>
 
@@ -302,7 +305,7 @@ export default function CompanionQRScreen() {
                     {t?.('pair.bootstrapping') || 'Sincronizando histórico...'}
                   </Text>
                   {bootstrapProgress.total > 0 && (
-                    <Text style={[s.bootstrapMeta, { color: colors.secondaryText }]}>
+                    <Text style={[s.bootstrapMeta, { color: colors.textSecondary }]}>
                       {(t?.('pair.bootstrap.progress') || '{n} de {total} conversas')
                         .replace('{n}', String(bootstrapProgress.done))
                         .replace('{total}', String(bootstrapProgress.total))}
@@ -312,7 +315,7 @@ export default function CompanionQRScreen() {
               </View>
             )}
             {bootstrapDone && bootstrapProgress && bootstrapProgress.total > 0 && (
-              <View style={[s.bootstrapBox, { borderColor: 'rgba(16,185,129,0.4)' }]}>
+              <View style={[s.bootstrapBox, { borderColor: isDark ? '#3a3a3c' : '#D1D1D6' }]}>
                 <View style={s.bootstrapDoneDot} />
                 <Text style={[s.bootstrapTitle, { color: colors.text }]}>
                   {t?.('pair.bootstrap.done') || 'Histórico sincronizado'}
@@ -320,8 +323,8 @@ export default function CompanionQRScreen() {
               </View>
             )}
 
-            <TouchableOpacity onPress={() => router.back()} style={[s.cta, { backgroundColor: '#111111' }]}>
-              <Text style={s.ctaText}>{t?.('common.done') || 'OK'}</Text>
+            <TouchableOpacity onPress={() => router.back()} style={[s.cta, { backgroundColor: isDark ? '#fff' : '#111111' }]}>
+              <Text style={[s.ctaText, { color: isDark ? '#000' : '#fff' }]}>{t?.('common.done') || 'OK'}</Text>
             </TouchableOpacity>
           </View>
         ) : status === 'error' ? (
@@ -329,33 +332,33 @@ export default function CompanionQRScreen() {
             <Text style={[s.approvedTitle, { color: colors.text }]}>
               {t?.('common.error') || 'Erro'}
             </Text>
-            <Text style={[s.approvedSub, { color: colors.secondaryText }]}>{error || ''}</Text>
-            <TouchableOpacity onPress={mint} style={[s.cta, { backgroundColor: '#111111' }]}>
-              <Text style={s.ctaText}>{t?.('common.retry') || 'Tentar novamente'}</Text>
+            <Text style={[s.approvedSub, { color: colors.textSecondary }]}>{error || ''}</Text>
+            <TouchableOpacity onPress={mint} style={[s.cta, { backgroundColor: isDark ? '#fff' : '#111111' }]}>
+              <Text style={[s.ctaText, { color: isDark ? '#000' : '#fff' }]}>{t?.('common.retry') || 'Tentar novamente'}</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <>
-            <View style={[s.iconBox, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)' }]}>
-              <IconSmartphone size={32} color={colors.primary} />
+            <View style={[s.iconBox, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+              <IconSmartphone size={32} color={colors.text} />
             </View>
             <Text style={[s.heroTitle, { color: colors.text }]}>
               {t?.('devices.companionHero') || 'Mostre este QR no outro celular'}
             </Text>
-            <Text style={[s.heroSub, { color: colors.secondaryText }]}>
+            <Text style={[s.heroSub, { color: colors.textSecondary }]}>
               {t?.('devices.companionHeroSub') || 'Abra o Chatyy no outro celular, vá em Dispositivos vinculados → Vincular outro celular, e escaneie este QR.'}
             </Text>
 
             <View style={s.qrWrap}>
-              <QrArtwork payload={payload} size={240} color={isDark ? '#fff' : '#111'} />
+              <QrArtwork payload={payload} size={240} color="#111" />
             </View>
 
-            <Text style={[s.heroSub, { color: colors.secondaryText, marginTop: 6 }]}>
+            <Text style={[s.heroSub, { color: colors.textSecondary, marginTop: 6 }]}>
               {t?.('devices.companionRefresh') || 'O QR atualiza automaticamente.'}
             </Text>
 
-            <TouchableOpacity onPress={() => router.back()} style={[s.cta, s.cancelCta]}>
-              <Text style={[s.ctaText, { color: colors.primary }]}>
+            <TouchableOpacity onPress={() => router.back()} style={[s.cta, s.cancelCta, { borderColor: isDark ? '#3a3a3c' : '#D1D1D6' }]}>
+              <Text style={[s.ctaText, { color: colors.text }]}>
                 {t?.('common.cancel') || 'Cancelar'}
               </Text>
             </TouchableOpacity>
@@ -378,7 +381,7 @@ const s = StyleSheet.create({
   heroTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center', marginTop: 4 },
   heroSub: { fontSize: 13, textAlign: 'center', lineHeight: 18, paddingHorizontal: 12 },
   qrWrap: { alignItems: 'center', marginTop: 12 },
-  cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, marginTop: 24, alignSelf: 'stretch' },
+  cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 32, borderRadius: 26, borderCurve: 'continuous', marginTop: 24, alignSelf: 'stretch' },
   cancelCta: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#111111' },
   ctaText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   approvedBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
@@ -392,5 +395,5 @@ const s = StyleSheet.create({
   },
   bootstrapTitle: { fontSize: 14, fontWeight: '600' },
   bootstrapMeta: { fontSize: 12, marginTop: 2 },
-  bootstrapDoneDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981' },
+  bootstrapDoneDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#8E8E93' },
 });

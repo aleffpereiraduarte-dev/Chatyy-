@@ -7,13 +7,24 @@
  * AttachmentPicker.js with subtle differences (some used 1024 vs 1000, some
  * added "B" suffix, some didn't). Now everyone uses 1024-base + 1 decimal.
  */
+// [2026-10-16 polish-r2] "57.3 MB de 1024.0 GB" → "57,3 MB de 1024 GB":
+// vírgula decimal fora dos idiomas de ponto (idioma do app em
+// globalThis.__chatyyLang, setado pelo LanguageProvider) e sem ",0" inútil.
+const _DOT_LANGS = /^(en|zh|ja|ko|he|th|hi|bn|ta|te|mr|ur|ms|fil|tl|sw|am|my|km|ne|si|ga|cy)/i;
+function _dec(v) {
+  let s = v.toFixed(1);
+  if (s.endsWith('.0')) s = s.slice(0, -2);
+  let lang = 'pt-BR';
+  try { lang = String(globalThis.__chatyyLang || 'pt-BR'); } catch {}
+  return _DOT_LANGS.test(lang) ? s : s.replace('.', ',');
+}
 export function formatBytes(bytes) {
   const n = Number(bytes);
   if (!Number.isFinite(n) || n < 0) return '—';
   if (n < 1024) return `${Math.round(n)} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (n < 1024 * 1024) return `${_dec(n / 1024)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${_dec(n / (1024 * 1024))} MB`;
+  return `${_dec(n / (1024 * 1024 * 1024))} GB`;
 }
 
 /**

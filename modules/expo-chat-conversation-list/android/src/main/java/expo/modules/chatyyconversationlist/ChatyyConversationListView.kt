@@ -16,8 +16,13 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.RenderEffect
+import android.graphics.RenderNode
+import android.graphics.Shader
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.Menu
 import android.view.View
@@ -79,6 +84,94 @@ internal class CLChildHost(ctx: Context, private val hint: () -> Int) : ViewGrou
   }
 }
 
+/**
+ * [2026-10-16 wave8-list] Faixa de VIDRO no topo da lista (header do app por
+ * cima, prop `topInset`): transparente com o título grande na tela e borrada +
+ * hairline quando ele termina de passar por baixo. Android 12+ = blur de
+ * verdade (RenderNode + RenderEffect sobre o que a lista desenha nessa faixa);
+ * abaixo disso = cor sólida translúcida. Não recebe toques.
+ */
+@SuppressLint("ViewConstructor")
+internal class CLTopBar(ctx: Context, private val source: View) : View(ctx) {
+  private var progress = 0f
+  private var tint = 0xFFFFFFFF.toInt()
+  private var hair = 0x1F000000
+  private val paint = Paint()
+  private var node: RenderNode? = null
+  private var effectRadius = 0f
+  /** true enquanto a lista é regravada para o blur (ignora pedidos de redesenho). */
+  var recording = false
+    private set
+
+  init {
+    isClickable = false
+    isFocusable = false
+    importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    setWillNotDraw(false)
+  }
+
+  fun setColors(bg: Int, dark: Boolean) {
+    tint = bg
+    hair = if (dark) 0x1FFFFFFF else 0x1F000000
+    invalidate()
+  }
+
+  fun setProgress(p: Float) {
+    val v = p.coerceIn(0f, 1f)
+    if (abs(v - progress) < 0.003f) return
+    progress = v
+    invalidate()
+  }
+
+  /** O conteúdo da lista mudou embaixo da faixa (scroll/animação). */
+  fun contentChanged() {
+    if (recording || progress <= 0f || visibility != VISIBLE) return
+    postInvalidateOnAnimation()
+  }
+
+  override fun onDraw(canvas: Canvas) {
+    super.onDraw(canvas)
+    val w = width
+    val h = height
+    if (progress <= 0f || w <= 0 || h <= 0) return
+    var blurred = false
+    if (Build.VERSION.SDK_INT >= 31 && canvas.isHardwareAccelerated) {
+      blurred = try { drawBlur(canvas, w, h) } catch (_: Throwable) { false }
+    }
+    paint.color = tint
+    paint.alpha = ((if (blurred) 0.62f else 0.94f) * 255f * progress).toInt()
+    canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+    paint.color = hair
+    paint.alpha = ((hair ushr 24) * progress).toInt()
+    val hh = max(1f, resources.displayMetrics.density * 0.5f)
+    canvas.drawRect(0f, h - hh, w.toFloat(), h.toFloat(), paint)
+  }
+
+  @androidx.annotation.RequiresApi(31)
+  private fun drawBlur(canvas: Canvas, w: Int, h: Int): Boolean {
+    val n = node ?: RenderNode("chatyyListTopBlur").also { node = it }
+    val r = resources.displayMetrics.density * 20f
+    if (r != effectRadius) {
+      effectRadius = r
+      n.setRenderEffect(RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP))
+    }
+    n.setPosition(0, 0, w, h)
+    val rc = n.beginRecording(w, h)
+    recording = true
+    try {
+      rc.drawColor(tint)
+      rc.translate((source.left - left).toFloat(), (source.top - top).toFloat())
+      source.draw(rc)
+    } finally {
+      recording = false
+      n.endRecording()
+    }
+    n.setAlpha(progress)
+    canvas.drawRenderNode(n)
+    return true
+  }
+}
+
 @SuppressLint("ViewConstructor")
 class ChatyyConversationListView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   // RecyclerView precisa do passe de layout do Android (o RN não refaz layout
@@ -127,6 +220,13 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private var footerHintPx = 0
   private var scrollTopSeq = 0.0
   private var endReachedFor = -1
+  // [2026-10-16 wave8-list] header do app por cima (vidro) + snap do título
+  // grande + prévia do toque longo ("peek") opcional.
+  private var topInsetPx = 0
+  private var snapPx = 0
+  private var peekMode = "menu"
+  private var peekDialog: CLPeekDialog? = null
+  private var lastPeek: Map<String, Any?>? = null
 
   // Filhos RN
   private val rnChildren = ArrayList<View>()
@@ -137,6 +237,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private val layoutManager = LinearLayoutManager(context)
   private val adapter = Adapter()
   private val touchHelper: ItemTouchHelper = ItemTouchHelper(SwipeCallback())
+  private val topBar = CLTopBar(context, recycler)
 
   // ─── [2026-10-15 native-store fase 1.5] foto da HOME ──────────────────────
   // Espelho do iOS: prop `store` {a, r, n, s}; sem linhas do JS ainda → pinta a
@@ -301,8 +402,34 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     val px = (max(0.0, v) * density).toInt()
     if (px != bottomInsetPx) {
       bottomInsetPx = px
-      recycler.setPadding(0, 0, 0, px)
+      recycler.setPadding(0, topInsetPx, 0, px)
     }
+  }
+
+  fun setTopInset(v: Double) {
+    val px = (max(0.0, v) * density).toInt()
+    if (px == topInsetPx) return
+    val delta = px - topInsetPx
+    val atTop = !recycler.canScrollVertically(-1)
+    topInsetPx = px
+    recycler.setPadding(0, px, 0, bottomInsetPx)
+    topBar.visibility = if (px > 0) VISIBLE else GONE
+    topBar.layoutParams = android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, max(1, px), Gravity.TOP)
+    if (atTop) {
+      layoutManager.scrollToPositionWithOffset(0, 0)
+    } else {
+      // Ligou/desligou longe do topo: o conteúdo fica parado na tela.
+      recycler.post { recycler.scrollBy(0, -delta) }
+    }
+    updateTopBar()
+  }
+
+  fun setSnapOffset(v: Double) {
+    snapPx = (max(0.0, v) * density).toInt()
+  }
+
+  fun setPeekModeProp(v: String?) {
+    peekMode = if (v == "peek") "peek" else "menu"
   }
 
   fun setScrollToTopSeqProp(v: Double) {
@@ -313,9 +440,10 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     recycler.smoothScrollToPosition(0)
   }
 
-  @Suppress("UNUSED_PARAMETER")
   fun setPeekProp(m: Map<String, Any?>?) {
-    // Android não tem "peek" (convenção da plataforma: menu no toque longo).
+    // [wave8] prévia aberta → completa com as mensagens que o JS mandou.
+    lastPeek = m
+    if (m != null) peekDialog?.update(m)
   }
 
   fun commitProps() {
@@ -325,6 +453,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     if (themeDirty || selectionDirty) {
       setBackgroundColor(theme.bg)
       recycler.setBackgroundColor(theme.bg)
+      topBar.setColors(theme.bg, theme.dark)
       themeDirty = false
       selectionDirty = false
       rebindAll = true
@@ -387,6 +516,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
         items = next
         diff.dispatchUpdatesTo(adapter)
         if (atTop) recycler.scrollToPosition(0)
+        topBar.contentChanged()
       }
       if (!firstPaintSent) {
         firstPaintSent = true
@@ -431,12 +561,36 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
   // ─── Scroll ──────────────────────────────────────────────────────────────
 
-  private fun onListScrolled() {
+  /** Quanto o topo da lista (header RN) já rolou para cima; enorme se saiu da tela. */
+  private fun headerOffsetPx(): Int {
     val first = layoutManager.findFirstVisibleItemPosition()
-    val offsetPx: Int = if (first == 0) {
-      val v = layoutManager.findViewByPosition(0)
-      if (v != null) -v.top else 0
-    } else Int.MAX_VALUE / 2
+    if (first != 0) return Int.MAX_VALUE / 2
+    val v = layoutManager.findViewByPosition(0) ?: return 0
+    return recycler.paddingTop - v.top
+  }
+
+  private fun updateTopBar() {
+    if (topInsetPx <= 0) return
+    val rel = headerOffsetPx().toFloat()
+    val c = collapseOffsetDp * density
+    val start = c * 0.45f
+    val span = max(8f * density, c - start)
+    topBar.setProgress((rel - start) / span)
+    topBar.contentChanged()
+  }
+
+  /** [wave8] Soltou no meio do título grande → termina aberto ou fechado. */
+  private fun snapHeader() {
+    if (snapPx <= 0) return
+    val off = headerOffsetPx()
+    if (off <= 0 || off >= snapPx) return
+    val dy = if (off < snapPx / 2) -off else snapPx - off
+    if (CLMotion.reduced(context)) recycler.scrollBy(0, dy) else recycler.smoothScrollBy(0, dy)
+  }
+
+  private fun onListScrolled() {
+    updateTopBar()
+    val offsetPx: Int = headerOffsetPx()
     val c = offsetPx > (collapseOffsetDp * density)
     if (c != collapsed) {
       collapsed = c
@@ -466,10 +620,27 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       onLongPress(mapOf("id" to id))
       return
     }
+    if (peekMode == "peek" && showPeek(id, row)) return
     // Menu nativo equivalente ao do iOS (WhatsApp) — CLMenu.kt (o mesmo da
     // fileira de fixados). Confirmação das destrutivas = handlers JS.
     val shown = CLMenu.show(context, anchor, id, row, labels, folders) { body -> onRowAction(body) }
     if (!shown) onLongPress(mapOf("id" to id))
+  }
+
+  /** [2026-10-16 wave8-list] Prévia estilo Telegram (CLPeekDialog). */
+  private fun showPeek(id: String, row: CLRow): Boolean {
+    val act = appContext.currentActivity ?: return false
+    if (act.isFinishing) return false
+    peekDialog?.dismiss()
+    val dlg = CLPeekDialog(act, row, theme, labels,
+      onOpen = { onPeekOpen(mapOf("id" to id)) },
+      onAction = { action -> onRowAction(mapOf("id" to id, "action" to action, "source" to "peek")) },
+      onClosed = { if (peekDialog?.convId == id) peekDialog = null })
+    peekDialog = dlg
+    lastPeek?.let { if (CLVal.str(it["id"]) == id) dlg.update(it) }
+    onPeekRequest(mapOf("id" to id))
+    if (!dlg.show()) { peekDialog = null; return false }
+    return true
   }
 
   // ─── Adapter ─────────────────────────────────────────────────────────────
@@ -477,8 +648,26 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private class HostHolder(v: View) : RecyclerView.ViewHolder(v)
   private class RowHolder(val rowView: CLRowView) : RecyclerView.ViewHolder(rowView)
 
+  // [wave8 row-zoom] edição mínima (agente da transição): só lê a posição da
+  // linha tocada; qualquer falha = evento sem "frame" (JS usa o push padrão).
+  private fun rowZoomHint(id: String): Map<String, Any> {
+    try {
+      for (i in 0 until recycler.childCount) {
+        val v = recycler.getChildAt(i) as? CLRowView ?: continue
+        if (v.row.id != id || v.width <= 0 || v.height <= 0) continue
+        val loc = IntArray(2)
+        v.getLocationInWindow(loc)
+        return mapOf("frame" to mapOf("x" to loc[0].toDouble(), "y" to loc[1].toDouble(),
+          "w" to v.width.toDouble(), "h" to v.height.toDouble(), "unit" to "px"))
+      }
+    } catch (_: Throwable) {}
+    return emptyMap()
+  }
+
   private val rowListener = object : CLRowView.Listener {
-    override fun onPress(id: String) { onRowPress(mapOf("id" to id)) }
+    // [wave8 row-zoom] navigationHint: frame da linha (px, coords da janela) p/ a
+    // transição "a conversa cresce a partir da linha" (modules/expo-chat-row-zoom).
+    override fun onPress(id: String) { onRowPress(mapOf("id" to id) + rowZoomHint(id)) }
     override fun onPressIn(id: String) { onRowPressIn(mapOf("id" to id)) }
     override fun onAvatar(id: String) { onAvatarPress(mapOf("id" to id)) }
     override fun onLongPress(id: String, anchor: View) { showMenu(id, anchor) }
@@ -549,7 +738,31 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   }
   private val swipeRect = RectF()
 
+  private val swipeReveal = Paint(Paint.ANTI_ALIAS_FLAG)
+
+  /**
+   * [2026-10-16 wave8-list] Swipe nível Telegram:
+   *  - até a largura do botão (74 dp) a linha anda 1:1; depois vem com
+   *    RESISTÊNCIA (metade do dedo) — mola elástica;
+   *  - ao cruzar o limiar (42% da largura) o ícone "estala" (cresce com
+   *    passada e assenta), um círculo mais claro se abre atrás dele e vibra
+   *    uma vez; voltar abaixo do limiar desarma (ícone encolhe);
+   *  - soltar armado = ação completa (deslize total). "Lida" volta a linha
+   *    para o lugar deslizando; "Arquivar" leva a linha até o fim.
+   *  - um peteleco rápido NÃO dispara (só o limiar), evitando ação acidental.
+   * Reduzir movimento ("Remover animações"): sem estalo/círculo, só a cor.
+   */
   private inner class SwipeCallback : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT) {
+    private val threshold = 0.42f
+    private var armedId: String? = null
+    private var armedAt = 0L
+    private var disarmedId: String? = null
+    private var disarmedAt = 0L
+    // Última posição com o dedo na tela → a animação de soltar parte dela.
+    private var relId: String? = null
+    private var relRaw = 0f
+    private var relVis = 0f
+
     override fun getSwipeDirs(rv: RecyclerView, vh: RecyclerView.ViewHolder): Int {
       if (vh !is RowHolder || !swipeEnabled || selectionMode || photoActive) return 0
       return super.getSwipeDirs(rv, vh)
@@ -557,17 +770,24 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
     override fun onMove(rv: RecyclerView, vh: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder): Boolean = false
 
-    override fun getSwipeThreshold(vh: RecyclerView.ViewHolder): Float = 0.35f
+    override fun getSwipeThreshold(vh: RecyclerView.ViewHolder): Float = threshold
+
+    // Só o limiar decide (peteleco não arquiva sem querer).
+    override fun getSwipeEscapeVelocity(defaultValue: Float): Float = Float.MAX_VALUE
+
+    override fun getAnimationDuration(rv: RecyclerView, animationType: Int, animateDx: Float, animateDy: Float): Long =
+      if (animationType == ItemTouchHelper.ANIMATION_TYPE_SWIPE_SUCCESS || animationType == ItemTouchHelper.ANIMATION_TYPE_SWIPE_CANCEL) 300L
+      else super.getAnimationDuration(rv, animationType, animateDx, animateDy)
 
     override fun onSwiped(vh: RecyclerView.ViewHolder, direction: Int) {
       val holder = vh as? RowHolder ?: return
       val id = holder.rowView.row.id
       val pos = holder.bindingAdapterPosition
       val action = if (direction == ItemTouchHelper.RIGHT) "toggleRead" else "archive"
-      holder.rowView.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
       onRowAction(mapOf("id" to id, "action" to action, "source" to "swipe"))
-      // Volta a linha para o lugar (arquivar: o patch do JS a remove; se
-      // não remover — ex. falhou —, ela reaparece sozinha).
+      // Limpa o estado do ItemTouchHelper (a linha de "Lida" já voltou ao
+      // lugar no desenho; a de arquivar some com o patch do JS — se não sumir,
+      // ex. falhou, ela reaparece sozinha).
       val delay = if (action == "archive") 700L else 0L
       main.postDelayed({
         val p = items.indexOfFirst { it is Item.Row && it.id == id }
@@ -576,16 +796,101 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       }, delay)
     }
 
+    override fun clearView(rv: RecyclerView, vh: RecyclerView.ViewHolder) {
+      super.clearView(rv, vh)
+      val id = (vh as? RowHolder)?.rowView?.row?.id
+      if (id != null) {
+        if (armedId == id) armedId = null
+        if (disarmedId == id) disarmedId = null
+        if (relId == id) relId = null
+      }
+    }
+
+    private fun damp(raw: Float, button: Float): Float {
+      val a = abs(raw)
+      val v = if (a <= button) a else button + (a - button) * 0.5f
+      return if (raw < 0) -v else v
+    }
+
+    /** Escala do "estalo": 1 → 1.32 → 1.15 ao armar; 1.15 → 1 ao desarmar. */
+    private fun popScale(now: Long, armed: Boolean, since: Long, reduced: Boolean): Float {
+      if (reduced) return if (armed) 1.15f else 1f
+      val t = ((now - since) / 260f).coerceIn(0f, 1f)
+      return if (armed) {
+        if (t < 0.4f) { val u = t / 0.4f; 1f + 0.32f * (1f - (1f - u) * (1f - u)) }
+        else { val u = (t - 0.4f) / 0.6f; 1.32f - 0.17f * (u * u * (3f - 2f * u)) }
+      } else {
+        1.15f - 0.15f * (1f - (1f - t) * (1f - t))
+      }
+    }
+
     override fun onChildDraw(c: Canvas, rv: RecyclerView, vh: RecyclerView.ViewHolder, dX: Float, dY: Float, actionState: Int, isCurrentlyActive: Boolean) {
-      if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE && vh is RowHolder && dX != 0f) {
-        val v = vh.itemView
-        val row = vh.rowView.row
-        val right = dX > 0
-        val color = if (right) CLTheme.SWIPE_READ else CLTheme.SWIPE_ARCHIVE
-        swipePaint.color = color
-        if (right) swipeRect.set(v.left.toFloat(), v.top.toFloat(), v.left + dX, v.bottom.toFloat())
-        else swipeRect.set(v.right + dX, v.top.toFloat(), v.right.toFloat(), v.bottom.toFloat())
+      if (actionState != ItemTouchHelper.ACTION_STATE_SWIPE || vh !is RowHolder) {
+        super.onChildDraw(c, rv, vh, dX, dY, actionState, isCurrentlyActive)
+        return
+      }
+      val v = vh.itemView
+      val row = vh.rowView.row
+      val id = row.id
+      val w = v.width.toFloat()
+      val button = 74f * density
+      val reduced = CLMotion.reduced(context)
+      val now = SystemClock.uptimeMillis()
+      var vis: Float
+      if (isCurrentlyActive || relId != id) {
+        vis = damp(dX, button)
+        if (isCurrentlyActive) { relId = id; relRaw = dX; relVis = vis }
+        // Armar / desarmar no limiar (vibra uma vez ao armar).
+        val armedNow = isCurrentlyActive && abs(dX) >= threshold * w
+        if (isCurrentlyActive) {
+          if (armedNow && armedId != id) {
+            armedId = id; armedAt = now
+            if (disarmedId == id) disarmedId = null
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+          } else if (!armedNow && armedId == id) {
+            armedId = null
+            disarmedId = id; disarmedAt = now
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+          }
+        }
+      } else {
+        // Soltou: o ItemTouchHelper anima dX de relRaw até 0 (cancelou) ou
+        // ±largura (completou). Mapeia isso a partir da posição VISUAL do dedo.
+        val toEnd = abs(dX) > abs(relRaw) + 0.5f
+        val target = if (toEnd) (if (dX > 0) w else -w) else 0f
+        val p = if (abs(target - relRaw) < 1f) 1f else ((dX - relRaw) / (target - relRaw)).coerceIn(0f, 1f)
+        val visTarget = if (toEnd && dX > 0) 0f else target // "Lida": volta para o lugar
+        vis = relVis + (visTarget - relVis) * p
+      }
+      if (vis != 0f) {
+        val right = vis > 0
+        val armed = armedId == id
+        val base = if (right) CLTheme.SWIPE_READ else CLTheme.SWIPE_ARCHIVE
+        swipePaint.color = base
+        if (right) swipeRect.set(v.left.toFloat(), v.top.toFloat(), v.left + vis, v.bottom.toFloat())
+        else swipeRect.set(v.right + vis, v.top.toFloat(), v.right.toFloat(), v.bottom.toFloat())
         c.drawRect(swipeRect, swipePaint)
+        val aw = abs(vis)
+        // Ícone acompanha a borda da linha depois de abrir o botão inteiro.
+        val cx = if (right) v.left + (if (aw <= button) aw / 2f else aw - button / 2f)
+          else v.right - (if (aw <= button) aw / 2f else aw - button / 2f)
+        val cy = v.top + v.height / 2f
+        // Círculo mais claro que se abre atrás do ícone ao armar.
+        val revealT = when {
+          reduced -> if (armed) 1f else 0f
+          armed -> ((now - armedAt) / 300f).coerceIn(0f, 1f)
+          disarmedId == id -> 1f - ((now - disarmedAt) / 200f).coerceIn(0f, 1f)
+          else -> 0f
+        }
+        if (revealT > 0f) {
+          val maxR = kotlin.math.hypot(aw.toDouble(), v.height.toDouble()).toFloat()
+          val eased = 1f - (1f - revealT) * (1f - revealT) * (1f - revealT)
+          swipeReveal.color = 0x1FFFFFFF
+          c.save()
+          c.clipRect(swipeRect)
+          c.drawCircle(cx, cy, maxR * eased, swipeReveal)
+          c.restore()
+        }
         val unread = row.unread > 0
         val label = if (right) {
           if (unread) labels.get("markRead", "Lida") else labels.get("markUnread", "Não lida")
@@ -593,24 +898,29 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
           if (row.archived) labels.get("unarchive", "Desarquivar") else labels.get("archive", "Arquivar")
         }
         val iconRes = if (right) (if (unread) R.drawable.ccl_ic_check else R.drawable.ccl_ic_message) else R.drawable.ccl_ic_archive
-        val w = 74f * density
-        val cx = if (right) v.left + min(abs(dX), w) / 2f else v.right - min(abs(dX), w) / 2f
-        val cy = v.top + v.height / 2f
-        val alpha = (min(1f, abs(dX) / w) * 255).toInt()
+        val grow = min(1f, aw / button)
+        val alpha = (grow * 255).toInt()
+        val scale = (0.7f + 0.3f * grow) * when {
+          armed -> popScale(now, true, armedAt, reduced)
+          disarmedId == id -> popScale(now, false, disarmedAt, reduced)
+          else -> 1f
+        }
         tintedIcon(context, iconRes, 0xFFFFFFFF.toInt())?.let { d ->
-          val s = (20 * density).toInt()
+          val s = 20 * density * scale
           d.alpha = alpha
           d.setBounds((cx - s / 2f).toInt(), (cy - s - 2 * density).toInt(), (cx + s / 2f).toInt(), (cy - 2 * density).toInt())
           d.draw(c)
         }
         swipeText.alpha = alpha
         var txt = label
-        val maxW = w - 6 * density
+        val maxW = button - 6 * density
         while (txt.length > 3 && swipeText.measureText(txt) > maxW) txt = txt.dropLast(1)
         if (txt != label) txt = txt.dropLast(1) + "…"
         c.drawText(txt, cx, cy + 14 * density, swipeText)
+        val animating = !reduced && ((armed && now - armedAt < 320) || (disarmedId == id && now - disarmedAt < 260))
+        if (animating) rv.postInvalidateOnAnimation()
       }
-      super.onChildDraw(c, rv, vh, dX, dY, actionState, isCurrentlyActive)
+      super.onChildDraw(c, rv, vh, vis, dY, actionState, isCurrentlyActive)
     }
   }
 
@@ -625,19 +935,37 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     recycler.setItemViewCacheSize(8)
     recycler.itemAnimator = DefaultItemAnimator().apply {
       supportsChangeAnimations = false
-      moveDuration = 220
-      addDuration = 180
-      removeDuration = 160
+      // [wave8] conversa que recebeu mensagem sobe um pouco mais devagar (as
+      // outras deslizam junto, sem "pulo").
+      moveDuration = 300
+      addDuration = 200
+      removeDuration = 180
     }
-    addView(recycler, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.MATCH_PARENT))
+    // [wave8] lista + vidro do topo empilhados (o ExpoView é um LinearLayout).
+    val stack = android.widget.FrameLayout(context)
+    stack.addView(recycler, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT))
+    topBar.visibility = GONE
+    stack.addView(topBar, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, 1, Gravity.TOP))
+    addView(stack, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.MATCH_PARENT))
     touchHelper.attachToRecyclerView(recycler)
     recycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
       override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) { onListScrolled() }
+      override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+        if (newState == RecyclerView.SCROLL_STATE_IDLE) snapHeader()
+      }
+    })
+    // Animações de itens (sobe/desce) também mudam o que fica sob o vidro.
+    recycler.addItemDecoration(object : RecyclerView.ItemDecoration() {
+      override fun onDrawOver(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
+        if (topInsetPx > 0 && parent.itemAnimator?.isRunning == true) topBar.contentChanged()
+      }
     })
     setBackgroundColor(theme.bg)
   }
 
   override fun onDetachedFromWindow() {
+    peekDialog?.dismiss()
+    peekDialog = null
     persistNow() // [native-store] saiu da home → grava a foto já
     main.removeCallbacksAndMessages(null)
     super.onDetachedFromWindow()

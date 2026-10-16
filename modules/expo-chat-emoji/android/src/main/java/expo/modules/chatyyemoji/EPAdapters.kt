@@ -16,6 +16,8 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
+import com.airbnb.lottie.LottieAnimationView
+import com.airbnb.lottie.LottieDrawable
 import com.bumptech.glide.Glide
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -25,7 +27,7 @@ sealed class EPItem {
   class Header(val title: String) : EPItem()
   class Emo(val display: String, val base: String, val tone: Boolean) : EPItem()
   class Spinner(val section: String) : EPItem()
-  class Sticker(val key: String, val uri: String, val section: String) : EPItem()
+  class Sticker(val key: String, val uri: String, val section: String, val lottie: Boolean = false) : EPItem()
   class Gif(val key: String, val uri: String, val w: Double, val h: Double) : EPItem()
   class Tab(val key: String, val icon: String, val cover: String?, val title: String) : EPItem()
 }
@@ -63,6 +65,17 @@ interface EPHost {
   fun onGifTap(v: View, item: EPItem.Gif)
   fun onTabTap(item: EPItem.Tab)
   fun isTabSelected(key: String): Boolean
+  /** [2026-10-16 sticker-panel v2] Lottie na grade + prévia + voo. */
+  val richStickers: Boolean
+  /** Aba de figurinhas visível (painel na janela) → Lottie toca. */
+  fun stickersActive(): Boolean
+  fun onStickerLongPress(v: View, item: EPItem.Sticker): Boolean
+}
+
+/** URL de figurinha Lottie (.json, com ou sem query). */
+internal fun epIsLottieUri(u: String): Boolean {
+  val s = u.lowercase().substringBefore('?').substringBefore('#')
+  return s.endsWith(".json")
 }
 
 /** Célula quadrada (largura da coluna da grade). */
@@ -87,6 +100,8 @@ internal class EPHolder(v: View, val type: Int) : RecyclerView.ViewHolder(v) {
   var text: TextView? = null
   var image: ImageView? = null
   var bg: View? = null
+  var lottie: LottieAnimationView? = null
+  var lottieUri: String? = null
 }
 
 internal class EPAdapter(private val host: EPHost, private val strip: Boolean) : RecyclerView.Adapter<EPHolder>() {
@@ -169,7 +184,21 @@ internal class EPAdapter(private val host: EPHost, private val strip: Boolean) :
         iv.scaleType = if (viewType == T_STICKER) ImageView.ScaleType.FIT_CENTER else ImageView.ScaleType.CENTER_CROP
         if (viewType == T_GIF) epRound(iv, epDp(c, 6f).toFloat())
         f.addView(iv, lp)
-        EPHolder(f, viewType).also { it.image = iv }
+        val holder = EPHolder(f, viewType).also { it.image = iv }
+        if (viewType == T_STICKER) {
+          // [2026-10-16 sticker-panel v2] figurinha Lottie (criada já; GONE até precisar)
+          val lv = LottieAnimationView(c)
+          lv.repeatCount = LottieDrawable.INFINITE
+          lv.scaleType = ImageView.ScaleType.FIT_CENTER
+          // sem listener o Lottie LANÇA exceção em JSON inválido → engole
+          lv.setFailureListener { }
+          lv.visibility = View.GONE
+          val llp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+          llp.setMargins(pad, pad, pad, pad)
+          f.addView(lv, llp)
+          holder.lottie = lv
+        }
+        holder
       }
       T_GIF_STRIP -> {
         val f = FrameLayout(c)
@@ -218,8 +247,26 @@ internal class EPAdapter(private val host: EPHost, private val strip: Boolean) :
         val iv = h.image ?: return
         h.itemView.tag = item
         h.itemView.scaleX = 1f; h.itemView.scaleY = 1f
+        h.itemView.alpha = 1f
         h.itemView.setOnClickListener { v -> host.onStickerTap(v, item) }
-        load(iv, item.uri, max(1, epDp(c, 110f)))
+        if (host.richStickers) h.itemView.setOnLongClickListener { v -> host.onStickerLongPress(v, item) }
+        else { h.itemView.setOnLongClickListener(null); h.itemView.isLongClickable = false }
+        val lv = h.lottie
+        if (lv != null && host.richStickers && item.lottie) {
+          try { Glide.with(c).clear(iv) } catch (_: Throwable) {}
+          iv.setImageDrawable(null)
+          iv.visibility = View.GONE
+          lv.visibility = View.VISIBLE
+          if (h.lottieUri != item.uri) {
+            h.lottieUri = item.uri
+            try { lv.setAnimationFromUrl(item.uri, item.uri) } catch (_: Throwable) {}
+          }
+          if (host.stickersActive() && h.itemView.isAttachedToWindow) lv.resumeAnimation() else lv.pauseAnimation()
+        } else {
+          if (lv != null && lv.visibility != View.GONE) { lv.cancelAnimation(); lv.visibility = View.GONE }
+          iv.visibility = View.VISIBLE
+          load(iv, item.uri, max(1, epDp(c, 110f)))
+        }
       }
       is EPItem.Gif -> {
         val iv = h.image ?: return
@@ -260,8 +307,20 @@ internal class EPAdapter(private val host: EPHost, private val strip: Boolean) :
   }
 
   override fun onViewRecycled(holder: EPHolder) {
+    holder.lottie?.let { if (it.visibility == View.VISIBLE) it.pauseAnimation() }
     val iv = holder.image ?: return
     try { Glide.with(iv.context).clear(iv) } catch (_: Throwable) {}
+  }
+
+  // [2026-10-16 sticker-panel v2] Lottie só toca enquanto a célula está na tela.
+  override fun onViewAttachedToWindow(holder: EPHolder) {
+    val lv = holder.lottie ?: return
+    if (lv.visibility == View.VISIBLE && host.stickersActive()) lv.resumeAnimation()
+  }
+
+  override fun onViewDetachedFromWindow(holder: EPHolder) {
+    val lv = holder.lottie ?: return
+    if (lv.visibility == View.VISIBLE) lv.pauseAnimation()
   }
 
   private fun load(iv: ImageView, uri: String, sizePx: Int) {

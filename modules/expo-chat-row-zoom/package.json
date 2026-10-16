@@ -1,0 +1,8 @@
+{
+  "name": "expo-chat-row-zoom",
+  "version": "1.0.0",
+  "description": "Chatyy: transição 'a conversa cresce a partir da linha' (overlay nativo de snapshot por cima do push sem animação).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

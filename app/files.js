@@ -13,6 +13,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
+import { formatBytes } from '../services/format'; // [2026-10-16 polish-r2]
 import { getCached, getCachedSync, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
 
 // [2026-10-14 offline-first] Cópia salva da pasta, SÍNCRONA (máx. 7 dias, por
@@ -565,11 +566,13 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
           <IconCloud size={16} color={fillColor} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.storageMainText, { color: colors.text }]}>
-            {Math.round(percent)}% {t('files.storageUsed', { used: '', quota: '' }).trim() || 'usado'}
-          </Text>
-          <Text style={[styles.storageSubLine, { color: colors.textTertiary }]}>
-            {storageInfo.used_formatted || formatStorageBytes(storageInfo.total_used || 0)} / {storageInfo.total_formatted || formatStorageBytes(quota)}
+          {/* [2026-10-16 polish-r2] Era "0% usado de" (frase cortada: a chave
+              tem {used}/{quota} e ia vazia) + "57.3 MB / 1024 GB" embaixo. */}
+          <Text style={[styles.storageMainText, { color: colors.text }]} numberOfLines={1}>
+            {t('files.storageUsed', {
+              used: storageInfo.total_used != null ? formatBytes(storageInfo.total_used) : (storageInfo.used_formatted || '0 B'),
+              quota: quota ? formatBytes(quota) : (storageInfo.total_formatted || ''),
+            })}
           </Text>
         </View>
         <View style={[

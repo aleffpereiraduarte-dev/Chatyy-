@@ -209,14 +209,15 @@ export default function EmailImportScreen() {
               style={[s.tile, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
               activeOpacity={0.85}
             >
-              <View style={[s.tileIcon, { backgroundColor: p.color + '22' }]}>
-                <IconMail size={20} color={p.color} />
+              {/* [2026-10-16 polish-r2] P&B (era vermelho Gmail / azul Outlook) */}
+              <View style={[s.tileIcon, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+                <IconMail size={20} color={colors.text} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.tileLabel, { color: colors.text }]}>{p.label}</Text>
                 <Text style={[s.tileDesc, { color: colors.textTertiary }]}>{p.description}</Text>
               </View>
-              {isActive && importing && <ActivityIndicator color={p.color} />}
+              {isActive && importing && <ActivityIndicator color={colors.text} />}
             </TouchableOpacity>
           );
         })}
@@ -228,7 +229,7 @@ export default function EmailImportScreen() {
                 || `Importando: ${progress.fetched} de ${progress.max} emails`}
             </Text>
             <View style={[s.progressBar, { backgroundColor: colors.borderLight }]}>
-              <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: activeProvider.color }]} />
+              <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: colors.text }]} />
             </View>
             <Text style={[s.progressMeta, { color: colors.textTertiary }]}>
               {progress.imported} entregues · {pct}%
@@ -237,10 +238,10 @@ export default function EmailImportScreen() {
         )}
 
         {done && (
-          <View style={[s.doneCard, { backgroundColor: '#10b98122', borderColor: '#10b981' }]}>
-            <IconCheck size={20} color="#10b981" />
-            <Text style={{ color: '#10b981', fontWeight: '700', marginLeft: 8 }}>
-              {t('emailImport.done') || 'Import concluído'} — {progress.imported} emails na sua caixa.
+          <View style={[s.doneCard, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7', borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }]}>
+            <IconCheck size={20} color={colors.text} />
+            <Text style={{ color: colors.text, fontWeight: '700', marginLeft: 8, flex: 1 }}>
+              {t('emailImport.done') || 'Importação concluída'} — {progress.imported} e-mails na sua caixa.
             </Text>
           </View>
         )}

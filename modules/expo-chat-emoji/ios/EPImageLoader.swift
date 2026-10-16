@@ -56,6 +56,13 @@ final class EPImageLoader {
     }
   }
 
+  /// [2026-10-16 sticker-panel v2] Arquivo local do uri (baixa 1× p/ o disco) —
+  /// figurinhas Lottie (.json). completion na main.
+  func loadFile(_ uri: String, completion: @escaping (URL?) -> Void) {
+    if uri.isEmpty { completion(nil); return }
+    resolveFile(uri, completion: completion)
+  }
+
   private func finish(_ k: String, _ img: UIImage?) {
     let cbs = waiters.removeValue(forKey: k) ?? []
     for cb in cbs { cb(img) }

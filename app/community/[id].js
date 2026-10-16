@@ -15,6 +15,8 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../../constants/theme';
 import * as api from '../../services/api';
+import { Sheet, ActionList } from '../../components/ui'; // [2026-10-16 polish-r2]
+import { IconChevronLeft, IconCheck, IconShield, IconAward, IconUser, IconTrash } from '../../components/Icons';
 import { peekCached, putCached } from '../../hooks/useCachedAction'; // [2026-10-14 offline-first]
 // [2026-10-15 native-social] Conteúdo das abas em lista nativa; binário antigo /
 // web / kill switch (__chatyy_native_communities = false) / erro → ScrollView JS.
@@ -264,6 +266,7 @@ export default function CommunityScreen() {
     });
   }, [members, memberQuery]);
 
+  const [roleMenu, setRoleMenu] = useState(null);
   const onChangeRole = (member) => {
     if (!isOwner && member.role === 'admin') return;
     const options = [
@@ -271,26 +274,30 @@ export default function CommunityScreen() {
       { label: t('community.roleMod')   || 'Moderador', value: 'mod' },
       { label: t('community.roleMember')|| 'Membro', value: 'member' },
     ].filter(o => !o.ownerOnly || isOwner);
-    Alert.alert(
-      member.email,
-      t('community.changeRole') || 'Definir cargo',
-      [
+    // [2026-10-16 polish-r2] Folha P&B (era Alert com até 5 botões: o Android
+    // só mostra 3 e "Remover" sumia). Mesmas ações.
+    const run = (fn) => async () => {
+      const r = await fn();
+      if (r.success) loadMembers();
+      else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
+    };
+    const roleIcon = { admin: IconShield, mod: IconAward, member: IconUser };
+    setRoleMenu({
+      title: member.display_name || member.email,
+      subtitle: t('community.changeRole') || 'Definir cargo',
+      items: [
         ...options.map(o => ({
-          text: o.label,
-          onPress: async () => {
-            const r = await api.communityMemberRole(community.id, member.email, o.value);
-            if (r.success) loadMembers();
-            else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
-          },
+          key: o.value,
+          label: o.label,
+          icon: roleIcon[o.value],
+          right: member.role === o.value ? <IconCheck size={18} color={colors.text} /> : null,
+          onPress: run(() => api.communityMemberRole(community.id, member.email, o.value)),
         })),
-        { text: t('community.kick') || 'Remover', style: 'destructive', onPress: async () => {
-          const r = await api.communityKick(community.id, member.email);
-          if (r.success) loadMembers();
-          else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
-        } },
-        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-      ]
-    );
+        { separator: true, key: 'sep' },
+        { key: 'kick', label: t('community.kick') || 'Remover', icon: IconTrash, destructive: true,
+          onPress: run(() => api.communityKick(community.id, member.email)) },
+      ],
+    });
   };
 
   // [2026-10-15 native-social] Lista nativa (mesmas ações do ScrollView JS).
@@ -316,8 +323,8 @@ export default function CommunityScreen() {
     return (
       <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={sty.header}>
-          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
-            <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+            <IconChevronLeft size={26} color={colors.text} />
           </TouchableOpacity>
         </View>
         <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 80 }} />
@@ -329,8 +336,8 @@ export default function CommunityScreen() {
     return (
       <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={sty.header}>
-          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
-            <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+            <IconChevronLeft size={26} color={colors.text} />
           </TouchableOpacity>
           <Text style={[sty.headerTitle, { color: colors.text }]}>{t('community.title') || 'Comunidade'}</Text>
           <View style={sty.headerBtn} />
@@ -510,8 +517,8 @@ export default function CommunityScreen() {
     return (
       <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={sty.header}>
-          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
-            <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+          <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+            <IconChevronLeft size={26} color={colors.text} />
           </TouchableOpacity>
           <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
             {community.name}
@@ -543,6 +550,9 @@ export default function CommunityScreen() {
           onMemberLongPress={onMemberLongPressNative}
           onFailure={onNativeFailure}
         />
+      <Sheet visible={!!roleMenu} onClose={() => setRoleMenu(null)} title={roleMenu?.title} subtitle={roleMenu?.subtitle}>
+        <ActionList items={roleMenu?.items || []} onDone={() => setRoleMenu(null)} />
+      </Sheet>
       </View>
     );
   }
@@ -551,8 +561,8 @@ export default function CommunityScreen() {
     <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={sty.header}>
-        <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
-          <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+        <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+          <IconChevronLeft size={26} color={colors.text} />
         </TouchableOpacity>
         <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {community.name}
@@ -684,6 +694,9 @@ export default function CommunityScreen() {
         )}
         </Animated.View>
       </ScrollView>
+      <Sheet visible={!!roleMenu} onClose={() => setRoleMenu(null)} title={roleMenu?.title} subtitle={roleMenu?.subtitle}>
+        <ActionList items={roleMenu?.items || []} onDone={() => setRoleMenu(null)} />
+      </Sheet>
     </View>
   );
 }

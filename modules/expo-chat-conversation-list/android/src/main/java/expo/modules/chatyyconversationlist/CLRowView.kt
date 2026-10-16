@@ -60,9 +60,9 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   private val receipt = CLReceiptView(ctx)
   private val typing = CLTypingDots(ctx)
   private val mentionTv = label(13f, 1.15f, 800)
-  private val unreadTv = label(12f, 1.15f, 700)
+  // [2026-10-16 wave8-list] contador desenhado (dígitos rolando)
+  private val unreadTv = CLCounterView(ctx)
   private val mentionBg = GradientDrawable()
-  private val unreadBg = GradientDrawable()
   private val rowBgDrawable = ColorDrawable(0xFFFFFFFF.toInt())
 
   private val tfName = CLType.weight(600)
@@ -90,7 +90,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     addView(check)
     addView(avatar)
-    for (v in listOf(nameTv, activityTv, timeTv, previewTv, mentionTv, unreadTv)) addView(v)
+    for (v in listOf(nameTv, activityTv, timeTv, previewTv, mentionTv)) addView(v)
+    addView(unreadTv)
     for (iv in listOf(lockIv, clockIv, muteIv, pinIv)) {
       iv.scaleType = ImageView.ScaleType.FIT_CENTER
       addView(iv)
@@ -98,16 +99,13 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     addView(receipt)
     addView(typing)
     timeTv.fontFeatureSettings = "tnum"
-    unreadTv.fontFeatureSettings = "tnum"
+    unreadTv.setTextSizePx(sp(12f, 1.15f))
+    unreadTv.setTypeface(CLType.weight(700))
     timeTv.gravity = Gravity.END
     mentionTv.gravity = Gravity.CENTER
-    unreadTv.gravity = Gravity.CENTER
     mentionTv.text = "@"
     mentionBg.cornerRadius = px(11f).toFloat()
-    unreadBg.cornerRadius = px(11f).toFloat()
     mentionTv.background = mentionBg
-    unreadTv.background = unreadBg
-    unreadTv.setPadding(px(7f), 0, px(7f), 0)
     for (i in 0 until childCount) {
       getChildAt(i).importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
@@ -206,6 +204,14 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (sched) clockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_clock, t.sub))
 
     previewTv.text = buildPreview(isTyping, drafting, unread)
+    // [2026-10-16 wave8-list] "digitando…" entra/sai num fade curto.
+    if (prev != null && prev.typing.isEmpty() != r.typing.isEmpty() && !CLMotion.reduced(context)) {
+      previewTv.alpha = 0.35f
+      previewTv.animate().alpha(1f).setDuration(180).start()
+    } else if (prev == null) {
+      previewTv.animate().cancel()
+      previewTv.alpha = 1f
+    }
 
     muteIv.visibility = if (r.muted) VISIBLE else GONE
     if (r.muted) muteIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_bell_off, t.icon))
@@ -224,9 +230,12 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
 
     unreadTv.visibility = if (unread) VISIBLE else GONE
     val mutedPill = r.muted && !r.mention
-    unreadBg.setColor(if (mutedPill) t.mutedPillBg else t.pillBg)
-    unreadTv.setTextColor(if (mutedPill) t.mutedPillTxt else t.pillTxt)
-    unreadTv.text = if (r.unread > 99) "99+" else r.unread.toString()
+    unreadTv.bgColor = if (mutedPill) t.mutedPillBg else t.pillBg
+    unreadTv.textColor = if (mutedPill) t.mutedPillTxt else t.pillTxt
+    // Rola só com a pílula já na tela (2→3 sobe, 3→2 desce); nova = só "pula".
+    if (prev == null) unreadTv.cancelRoll()
+    val rollPill = prev != null && prev.unread > 0 && unread && prev.unread != r.unread
+    unreadTv.setCount(if (r.unread > 99) "99+" else r.unread.toString(), rollPill)
 
     if (prev != null) {
       if (r.unread > prev.unread && unread) pop(unreadTv)

@@ -69,6 +69,7 @@ function NativeConversationListInner(props) {
     onOpen, onPressIn, onToggleSelect, onAvatarPress, onAction, onMore, onEnterSelection,
     onCollapsedChange, onFirstPaint, onFailure, scrollToTopSeq = 0, folders,
     storeMain = false, // [native-store fase 1.5] lista principal (sem filtro/busca/arquivadas)
+    topInset = 0, snapOffset = 0, // [2026-10-16 wave8-list] vidro no topo + snap do título grande
   } = props;
   const Native = getNativeConversationListView();
   const me = String(user?.email || '').toLowerCase();
@@ -250,6 +251,8 @@ function NativeConversationListInner(props) {
       onRowPress: (e) => {
         const m = convOf(e); if (!m) return;
         const p = propsRef.current;
+        // [wave8 row-zoom] navigationHint: frame da linha (coords da janela) → transição linha→conversa
+        if (!p.selectionMode) { try { require('../../services/rowZoomTransition').noteRowHint(m.conv.id, (e?.nativeEvent ?? e)?.frame); } catch {} }
         try {
           if (p.selectionMode) p.onToggleSelect?.(m.conv);
           else p.onOpen?.(m.conv);
@@ -318,6 +321,17 @@ function NativeConversationListInner(props) {
     };
   }, []);
 
+  // [2026-10-16 wave8-list] api 3: header do app por cima da lista (vidro
+  // nativo no topo), snap do título grande e prévia estilo Telegram no toque
+  // longo do Android. Binário antigo: nenhuma destas props vai (nada muda).
+  let _api3 = false;
+  try { _api3 = _clApiVersion() >= 3; } catch {}
+  const wave8Props = _api3 ? {
+    topInset: Math.max(0, Math.round(Number(topInset) || 0)),
+    snapOffset: Math.max(0, Math.round(Number(snapOffset) || 0)),
+    peekMode: (Platform.OS === 'android' && globalThis.__chatyy_native_list_peek !== false) ? 'peek' : 'menu',
+  } : null;
+
   if (!Native) return null;
   return (
     <Native
@@ -337,6 +351,7 @@ function NativeConversationListInner(props) {
       menuEnabled={!selectionMode}
       scrollToTopSeq={scrollToTopSeq}
       {...(homeStore ? { store: homeStore } : null)}
+      {...wave8Props}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>

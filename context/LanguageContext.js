@@ -200,6 +200,7 @@ export function LanguageProvider({ children }) {
   // tela em branco). Quando chega (ou num retry tardio) o tick re-renderiza.
   const languageRef = useRef(language);
   languageRef.current = language;
+  try { globalThis.__chatyyLang = language; } catch {} // [2026-10-16 polish-r2] formatBytes (vírgula decimal)
   useEffect(() => {
     if (!language || translations[language]) return; // já disponível
     let alive = true;

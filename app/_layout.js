@@ -2142,11 +2142,14 @@ export default function RootLayout() {
                   <Stack.Screen name="calendar" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="chat-conversation" options={() => ({
+                  <Stack.Screen name="chat-conversation" options={({ route }) => ({
                     presentation: 'card',
                     // [2026-10-10 tablet-split] tablet largo: a conversa abre na tela
                     // dividida (lista + conversa) → fade curto em vez de deslizar tudo.
-                    animation: _tabletSplitNow() ? 'fade' : _PUSH,
+                    // [wave8 row-zoom] rota aberta "crescendo da linha" → push SEM animação
+                    // (o overlay nativo anima por cima) até a transição acabar; depois a
+                    // tela devolve a animação padrão (setOptions) → voltar = pop nativo.
+                    animation: _rowZoomAnim(route, _tabletSplitNow() ? 'fade' : _PUSH),
                     ...(_tabletSplitNow() ? { animationDuration: 140 } : {}),
                     gestureEnabled: true,
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
@@ -2336,6 +2339,13 @@ export default function RootLayout() {
 }
 
 // [2026-10-10 tablet-split] Largura atual da janela cabe lista + conversa? (nativo)
+// [wave8 row-zoom] services/rowZoomTransition.pushAnimationFor — 'none' só p/ a
+// rota recém-empurrada pela transição linha→conversa; qualquer erro = padrão.
+function _rowZoomAnim(route, fb) {
+  if (Platform.OS === 'web') return fb;
+  try { return require('../services/rowZoomTransition').pushAnimationFor(route, fb); } catch { return fb; }
+}
+
 function _tabletSplitNow() {
   if (Platform.OS === 'web') return false;
   try {

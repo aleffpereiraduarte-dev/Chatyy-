@@ -4,6 +4,12 @@ import UIKit
 // mesmo traço do IconCheck), pontinhos de "digitando", pílula de contador e
 // bolinha de seleção.
 
+/// [2026-10-16 wave8-list] Reduzir movimento (Acessibilidade) — toda animação
+/// "de enfeite" da lista (dígitos rolando, mola, ✓ se dividindo) respeita isto.
+enum CLMotion {
+  static var reduced: Bool { UIAccessibility.isReduceMotionEnabled }
+}
+
 /// ✓ (enviado), ✓✓ cinza (entregue), ✓✓ azul (lido). Entregue→lido faz
 /// crossfade + pulso, como o ListReceiptIcon do JS.
 final class CLReceiptView: UIView {
@@ -90,7 +96,63 @@ final class CLReceiptView: UIView {
     blueLayer.strokeColor = readColor.cgColor
     CATransaction.commit()
     let toRead = newState == 3
-    if animated && old == 2 && toRead {
+    let motion = animated && !CLMotion.reduced
+    // [2026-10-16 wave8-list] ✓ → ✓✓: o 2º traço nasce em cima do 1º e
+    // desliza 7 pt para a direita (Telegram); ✓ novo é "desenhado".
+    if motion && old == 1 && newState >= 2 {
+      let from = CLReceiptView.check(dx: 0)
+      from.append(CLReceiptView.check(dx: 0))
+      for l in [grayLayer, blueLayer] {
+        let a = CABasicAnimation(keyPath: "path")
+        a.fromValue = from.cgPath
+        a.toValue = path.cgPath
+        a.duration = 0.26
+        a.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+        l.add(a, forKey: "split")
+      }
+      let pulse = CAKeyframeAnimation(keyPath: "transform.scale")
+      pulse.values = [1, 1.12, 1]
+      pulse.keyTimes = [0, 0.5, 1]
+      pulse.duration = 0.26
+      layer.add(pulse, forKey: "pulse")
+      if toRead {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = 0.3
+        fade.beginTime = CACurrentMediaTime() + 0.12
+        fade.fillMode = .backwards
+        blueLayer.add(fade, forKey: "fade")
+        let fadeOut = CABasicAnimation(keyPath: "opacity")
+        fadeOut.fromValue = 1
+        fadeOut.toValue = 0
+        fadeOut.duration = 0.3
+        fadeOut.beginTime = CACurrentMediaTime() + 0.12
+        fadeOut.fillMode = .backwards
+        grayLayer.add(fadeOut, forKey: "fade")
+      }
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      blueLayer.opacity = toRead ? 1 : 0
+      grayLayer.opacity = toRead ? 0 : 1
+      CATransaction.commit()
+      return
+    }
+    if motion && old == 0 && newState == 1 {
+      let draw = CABasicAnimation(keyPath: "strokeEnd")
+      draw.fromValue = 0
+      draw.toValue = 1
+      draw.duration = 0.22
+      draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      grayLayer.add(draw, forKey: "draw")
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      blueLayer.opacity = 0
+      grayLayer.opacity = 1
+      CATransaction.commit()
+      return
+    }
+    if motion && old == 2 && toRead {
       // entregue → lido: crossfade cinza→azul + um pulso suave.
       let fade = CABasicAnimation(keyPath: "opacity")
       fade.fromValue = 0
@@ -163,6 +225,16 @@ final class CLTypingDots: UIView {
   }
 
   func start() {
+    if CLMotion.reduced {
+      // Reduzir movimento: três pontos parados em degradê (sem piscar).
+      let ops: [Float] = [1, 0.7, 0.4]
+      for (i, d) in dots.enumerated() {
+        d.removeAnimation(forKey: "blink")
+        d.opacity = ops[min(i, ops.count - 1)]
+      }
+      return
+    }
+    for d in dots { d.opacity = 1 }
     for (i, d) in dots.enumerated() where d.animation(forKey: "blink") == nil {
       let a = CAKeyframeAnimation(keyPath: "opacity")
       a.values = [0.25, 1, 0.25]
@@ -208,6 +280,101 @@ final class CLPillView: UIView {
     super.layoutSubviews()
     layer.cornerRadius = bounds.height / 2
     label.frame = bounds
+    if let p = pendingRoll {
+      pendingRoll = nil
+      startRoll(from: p.old, up: p.up)
+    }
+  }
+
+  // MARK: [2026-10-16 wave8-list] dígitos rolando (Telegram)
+  // Só os dígitos que mudaram rolam: 12→13 mantém o "1" parado e o "2" sobe
+  // enquanto o "3" entra por baixo (desce quando o número diminui). A fonte é
+  // monoespaçada (tabular), então o prefixo comum tem a mesma largura antes e
+  // depois. Tudo em UIView/CA na UI thread; Reduzir movimento = troca seca.
+
+  private var rollViews: [UILabel] = []
+  private var pendingRoll: (old: String, up: Bool)?
+  private var rollToken = 0
+
+  /// Troca o texto da pílula; `animated` = rola os dígitos alterados.
+  func setRollingText(_ text: String, animated: Bool) {
+    let old = label.text ?? ""
+    label.text = text
+    if !animated || old == text || old.isEmpty || text.isEmpty || CLMotion.reduced || window == nil {
+      if old != text { cancelRoll() }
+      return
+    }
+    cancelRoll()
+    let num: (String) -> Int = { Int($0.filter { $0.isNumber }) ?? 0 }
+    let up = num(text) >= num(old)
+    pendingRoll = (old, up)
+    setNeedsLayout()
+  }
+
+  func cancelRoll() {
+    rollToken += 1
+    pendingRoll = nil
+    for v in rollViews { v.layer.removeAllAnimations(); v.removeFromSuperview() }
+    rollViews.removeAll()
+    label.isHidden = false
+  }
+
+  private func makeRollLabel(_ text: String, x: CGFloat) -> UILabel {
+    let l = UILabel()
+    l.text = text
+    l.font = label.font
+    l.textColor = label.textColor
+    l.textAlignment = .left
+    let w = ceil((text as NSString).size(withAttributes: [.font: label.font as Any]).width)
+    l.frame = CGRect(x: x, y: 0, width: w + 1, height: bounds.height)
+    addSubview(l)
+    rollViews.append(l)
+    return l
+  }
+
+  private func startRoll(from old: String, up: Bool) {
+    let new = label.text ?? ""
+    guard let font = label.font, bounds.width > 0, bounds.height > 0 else { return }
+    var keep = 0
+    if old.count == new.count {
+      for (a, b) in zip(old, new) { if a == b { keep += 1 } else { break } }
+    }
+    let attrs: [NSAttributedString.Key: Any] = [.font: font]
+    let width: (String) -> CGFloat = { ($0 as NSString).size(withAttributes: attrs).width }
+    let newW = width(new)
+    let oldW = width(old)
+    let prefix = String(new.prefix(keep))
+    let prefW = width(prefix)
+    let xNew = (bounds.width - newW) / 2
+    let xOld = (bounds.width - oldW) / 2
+    let d = round(bounds.height * 0.7) * (up ? 1 : -1)
+    var incoming = UILabel()
+    var outgoing = UILabel()
+    // Estado inicial sem herdar animação de fora (layout pode rodar dentro
+    // do bloco da reordenação).
+    UIView.performWithoutAnimation {
+      clipsToBounds = true
+      label.isHidden = true
+      if !prefix.isEmpty { _ = makeRollLabel(prefix, x: xNew) }
+      incoming = makeRollLabel(String(new.dropFirst(keep)), x: xNew + prefW)
+      outgoing = makeRollLabel(String(old.dropFirst(keep)), x: xOld + (keep > 0 ? prefW : 0))
+      incoming.transform = CGAffineTransform(translationX: 0, y: d)
+      incoming.alpha = 0
+    }
+    rollToken += 1
+    let token = rollToken
+    UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.78, initialSpringVelocity: 0,
+                   options: [.allowUserInteraction, .beginFromCurrentState, .overrideInheritedDuration, .overrideInheritedCurve, .overrideInheritedOptions], animations: {
+      incoming.transform = .identity
+      incoming.alpha = 1
+      outgoing.transform = CGAffineTransform(translationX: 0, y: -d)
+      outgoing.alpha = 0
+    }, completion: { [weak self] _ in
+      guard let self = self, self.rollToken == token else { return }
+      for v in self.rollViews { v.removeFromSuperview() }
+      self.rollViews.removeAll()
+      self.label.isHidden = false
+    })
   }
 
   func pop() {

@@ -241,7 +241,7 @@ import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
-import NativeEmojiPanel, { shouldUseNativeEmojiPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
+import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
 import { shouldUseNativeProfile, ProfileScrollHost, NativeProfileMedia, NativeProfileList, profileTheme, profileInitials, avatarRefForEmail, avatarRefForUrl, hasRealPhoto, extractRecentLinks, profileColor } from '../components/chat/NativeProfileBridge'; // [2026-10-15 native-profile]
 // [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
 import StickerMaker from '../components/stickers/StickerMaker';
@@ -12813,7 +12813,7 @@ function ChatConversationInner() {
     }, 900);
   }, []);
   const openComposerPanel = useCallback((kind) => {
-    if ((kind === 'sticker' || kind === 'gif') && _nativeEmojiOnRef.current) { openNativeEmojiPanel(kind === 'gif' ? 'gif' : null); return; }
+    if ((kind === 'sticker' || kind === 'gif') && _nativeEmojiOnRef.current && shouldUseNativeStickerPanel() /* [2026-10-16] kill __chatyy_native_sticker_panel */) { openNativeEmojiPanel(kind === 'gif' ? 'gif' : null); return; }
     const wasOpen = dismissComposerKeyboard(kind);
     const apply = () => {
       if (kind === 'sticker') { setShowStickerPicker(true); setShowGifPicker(false); }
@@ -36898,7 +36898,7 @@ function ChatConversationInner() {
           onShown={onNativeEmojiShown}
           onEmoji={handleNativeEmojiInsert}
           onBackspace={handleNativeEmojiBackspace}
-          onSendSticker={(url) => { try { handleSendSticker(url); } catch {} }}
+          onSendSticker={(url, kind) => { try { handleSendSticker(url, kind); } catch {} }}
           onSendGif={(gif) => { try { handleSendGif(gif); } catch {} }}
           onOpenStickerManager={() => { setShowNativeEmoji(false); setShowStickerPicker(true); }}
           onFatal={() => { setNativeEmojiOff(true); setShowNativeEmoji(false); }}
@@ -42183,8 +42183,16 @@ function ConvLightShellHost() {
     const go = () => { if (done) return; done = true; setFull(true); };
     r1 = requestAnimationFrame(() => {
       r2 = requestAnimationFrame(() => {
-        tm = setTimeout(go, 400);
-        try { unsub = navigation && navigation.addListener ? navigation.addListener('transitionEnd', go) : null; } catch { unsub = null; }
+        // [wave8 row-zoom] push sem animação + overlay crescendo: a tela cheia só
+        // monta quando a transição linha→conversa acaba (senão o commit pesado cai
+        // no meio da mola). transitionEnd do push 'none' viria na hora.
+        let _rz = null;
+        try { const m = require('../services/rowZoomTransition'); if (m.isZoomingFor(cid)) _rz = m; } catch { _rz = null; }
+        tm = setTimeout(go, _rz ? 900 : 400);
+        try {
+          unsub = _rz ? _rz.onZoomEnd(cid, go)
+            : (navigation && navigation.addListener ? navigation.addListener('transitionEnd', go) : null);
+        } catch { unsub = null; }
       });
     });
     return () => { done = true; cancelAnimationFrame(r1); cancelAnimationFrame(r2); if (tm) clearTimeout(tm); try { unsub && unsub(); } catch {} };
@@ -42202,6 +42210,24 @@ function ConvLightShellHost() {
   }, [full, shellOn, cid]);
 
   const onBack = useCallback(() => { try { router.back(); } catch {} }, [router]);
+
+  // [wave8 row-zoom] transição linha→conversa: 1º frame pintado (casca ou tela
+  // cheia) → o overlay nativo começa a crescer; no fim, a rota recebe de volta a
+  // animação padrão (o push saiu com 'none') → o voltar é o pop nativo de sempre.
+  useEffect(() => {
+    let rz = null;
+    try { rz = require('../services/rowZoomTransition'); } catch { rz = null; }
+    if (!rz || !rz.isZoomingFor(cid)) return undefined;
+    let r1 = 0; let r2 = 0;
+    r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => { try { rz.noteConversationFirstFrame(cid); } catch {} }); });
+    const unsub = rz.onZoomEnd(cid, () => {
+      try {
+        const a = rz.restoreAnimationFor(cid);
+        if (a && navigation && typeof navigation.setOptions === 'function') navigation.setOptions({ animation: a });
+      } catch {}
+    });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); try { unsub && unsub(); } catch {} };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // [wave7 telemetria] conv_open caminho 'shell': 1º frame da casca leve
   useEffect(() => {

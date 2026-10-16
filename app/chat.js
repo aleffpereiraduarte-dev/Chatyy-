@@ -473,6 +473,17 @@ function ChatHub() {
   // [2026-10-16 motion-telegram] Conversas usa a MESMA mola (e Reduzir
   // Movimento) do título compacto de Ligações/Status — antes timing 160ms linear.
   const [chatTitleAnim, onChatTitleCollapse] = useCollapsedTitleAnim();
+  // [2026-10-16 wave8-list] Lista nativa (api 3) com o header POR CIMA: as
+  // conversas rolam por baixo de um vidro NATIVO (UIVisualEffectView / blur
+  // RenderEffect no Android 12+) que a própria lista desenha no topo — o
+  // ChatListTab avisa quando dá (onNativeTopBar) e aqui o header fica
+  // transparente e a lista sobe por baixo dele (topOverlayInset).
+  const [homeTopBar, setHomeTopBar] = useState(false);
+  const [homeHeaderH, setHomeHeaderH] = useState(0);
+  const onHomeHeaderLayout = useCallback((e) => {
+    const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+    setHomeHeaderH(prev => (prev === h ? prev : h));
+  }, []);
   // Título compacto sobe 6px enquanto aparece (Telegram/UINavigationBar) — só
   // transform/opacity no native driver, interpolação memoizada por valor.
   const _ctMotionCache = useRef(new Map()).current;
@@ -1421,6 +1432,8 @@ function ChatHub() {
   const reelsImmersive = (activeTab === 'feed' && feedReelsMode) || activeTab === 'reels';
   // [reels-v1 2026-10-13] Barra escura sobre o vídeo (Instagram) quando a aba Reels está ativa.
   const barDark = isDark || activeTab === 'reels';
+  // [wave8-list] header sobreposto à lista (só Conversas, busca fechada).
+  const homeOverlay = homeTopBar && LIST_LARGE_TITLE && activeTab === 'chats' && !searchOpen && !reelsImmersive && homeHeaderH > 0;
   return (
     <View style={[styles.container, {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
@@ -1429,13 +1442,15 @@ function ChatHub() {
       paddingTop: activeTab === 'reels' ? 0 : insets.top,
     }]}>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
-      <View style={[styles.header, {
+      <View onLayout={onHomeHeaderLayout} style={[styles.header, {
         ...glassHeader,
         ...(reelsImmersive ? { display: 'none' } : null),
         paddingLeft: 14,
         // [2026-10-07 native-ui-build] large title: sem hairline fixa — ela
         // aparece (fade) só quando a lista rola por baixo do header.
         ...(LIST_LARGE_TITLE && (activeTab === 'chats' || _ltTab) ? { borderBottomWidth: 0 } : {}),
+        // [wave8-list] por cima da lista: o vidro nativo da lista é o fundo.
+        ...(homeOverlay ? { backgroundColor: 'transparent' } : null),
       }]}>
         {/* [2026-10-15 nav-motion] Ligações/Status: título compacto + hairline
             aparecem quando o título grande passa por baixo do header. */}
@@ -1460,10 +1475,12 @@ function ChatHub() {
                 titleStyle={[styles.compactTitle, { color: colors.text }]}
               />
             </Animated.View>
+            {!homeOverlay && (
             <Animated.View
               pointerEvents="none"
               style={[styles.headerHairline, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)', opacity: chatTitleAnim }]}
             />
+            )}
           </>
         )}
         {/* Profile avatar — opens the unified profile (/u/{me}).
@@ -1545,7 +1562,7 @@ function ChatHub() {
       {/* [2026-10-07 native-ui-build] Tab bar de vidro (iOS) é absoluta: as
           outras abas ganham paddingBottom = altura da barra (layout igual ao
           de antes); a de Conversas rola POR BAIXO (bottomInset na lista). */}
-      <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }], ...(GLASS_TAB_BAR && activeTab !== 'chats' ? { paddingBottom: tabBarH } : {}) }}>
+      <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }], ...(GLASS_TAB_BAR && activeTab !== 'chats' ? { paddingBottom: tabBarH } : {}), ...(homeOverlay ? { marginTop: -homeHeaderH } : null) }}>
         <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatListTab
             key={'cl_' + (user?.email || 'anon')}
@@ -1553,6 +1570,8 @@ function ChatHub() {
             largeTitle={LIST_LARGE_TITLE ? titles.chats : undefined}
             onLargeTitleCollapsedChange={LIST_LARGE_TITLE ? onChatTitleCollapse : undefined}
             bottomInset={GLASS_TAB_BAR ? tabBarH : 0}
+            topOverlayInset={homeOverlay ? homeHeaderH : 0}
+            onNativeTopBar={LIST_LARGE_TITLE ? setHomeTopBar : undefined}
           /></ChatErrorBoundary>
         </View>
         {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>

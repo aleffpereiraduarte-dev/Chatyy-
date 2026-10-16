@@ -1,0 +1,16 @@
+{
+  "platforms": [
+    "apple",
+    "android"
+  ],
+  "apple": {
+    "modules": [
+      "ChatyyRowZoomModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.chatyyrowzoom.ChatyyRowZoomModule"
+    ]
+  }
+}

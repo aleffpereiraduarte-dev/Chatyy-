@@ -31,7 +31,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import useIsMounted from '../hooks/useIsMounted';
-import { COUNTRIES, formatPhone, cleanNationalDigits } from '../constants/countries';
+import { COUNTRIES, formatPhone, cleanNationalDigits, countryDisplayName } from '../constants/countries';
 import {
   IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle,
   IconPhone, IconShield, IconChevronRight, IconAlertTriangle,
@@ -40,7 +40,7 @@ import {
 export default function ChangePhone() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const insets = useSafeAreaInsets();
   const nativeHeaderH = useContext(HeaderHeightContext) || 0; // KAV: a tela começa abaixo do header nativo
   const mountedRef = useIsMounted();
@@ -362,9 +362,9 @@ export default function ChangePhone() {
                 </Text>
 
                 {/* Warning banner */}
-                <View style={[styles.warnBanner, { backgroundColor: isDark ? '#3a2a14' : '#fff7ed', borderColor: isDark ? '#5a3a1c' : '#fde6c8' }]}>
-                  <IconAlertTriangle size={18} color="#d97706" />
-                  <Text style={[styles.warnText, { color: isDark ? '#fde6c8' : '#92400e' }]}>
+                <View style={[styles.warnBanner, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7', borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }]}>
+                  <IconAlertTriangle size={18} color={colors.text} />
+                  <Text style={[styles.warnText, { color: colors.text }]}>
                     {t('changePhone.warning') || 'Após a troca, o login passa a ser feito pelo novo número.'}
                   </Text>
                 </View>
@@ -395,7 +395,7 @@ export default function ChangePhone() {
                 >
                   <Text style={{ fontSize: 22, marginRight: 12 }}>{country.flag}</Text>
                   <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
-                    {country.name}
+                    {countryDisplayName(country, language, t)}
                   </Text>
                   <IconChevronRight size={16} color={isDark ? '#9aa0a6' : '#9ca3af'} />
                 </TouchableOpacity>
@@ -553,7 +553,7 @@ export default function ChangePhone() {
                 {/* Confetti dots */}
                 <View style={{ position: 'absolute', top: 50, alignSelf: 'center' }}>
                   {confettiAnims.map((a, i) => {
-                    const palette = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#111111', '#06b6d4'];
+                    const palette = isDark ? ['#FFFFFF', '#8E8E93', '#D1D1D6', '#636366'] : ['#111111', '#8E8E93', '#3A3A3C', '#C7C7CC'];
                     const c = palette[i % palette.length];
                     return (
                       <Animated.View
@@ -573,12 +573,12 @@ export default function ChangePhone() {
                 <Animated.View
                   style={{
                     width: 96, height: 96, borderRadius: 48,
-                    backgroundColor: '#22c55e',
+                    backgroundColor: isDark ? '#FFFFFF' : '#111111',
                     alignItems: 'center', justifyContent: 'center',
                     transform: [{ scale: doneScale }],
                   }}
                 >
-                  <IconCheck size={52} color="#fff" />
+                  <IconCheck size={52} color={isDark ? '#000' : '#fff'} />
                 </Animated.View>
                 <Text style={[styles.title, { color: colors.text, marginTop: 22, textAlign: 'center' }]}>
                   {t('changePhone.doneTitle') || 'Pronto!'}
@@ -681,7 +681,7 @@ export default function ChangePhone() {
                   activeOpacity={0.7}
                 >
                   <Text style={{ fontSize: 22, marginRight: 12 }}>{c.flag}</Text>
-                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{c.name}</Text>
+                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{countryDisplayName(c, language, t)}</Text>
                   <Text style={{ fontSize: 14, color: colors.textSecondary, fontWeight: '500' }}>{c.dial}</Text>
                   {c.code === countryCode && (
                     <IconCheckCircle size={18} color={colors.primary} style={{ marginLeft: 10 }} />

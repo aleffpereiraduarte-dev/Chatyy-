@@ -109,8 +109,11 @@ function _luma(hex) {
   const n = parseInt(m[1], 16);
   return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
 }
+// [2026-10-16 polish-r2] Azul padrão (Google #4285F4 / iOS) = "sem cor
+// escolhida" → tinta P&B do tema; cores escolhidas seguem como estão.
+const _DEFAULT_BLUES = /^#(4285F4|3B82F6|007AFF|0A84FF|1A73E8)$/i;
 function eventInk(color, colors) {
-  const c = color || '';
+  const c = _DEFAULT_BLUES.test(String(color || '')) ? '' : (color || '');
   const l = _luma(c);
   if (l == null) return c || colors.text;
   const bgL = _luma(colors.background) ?? 1;
@@ -1371,8 +1374,8 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
                 </View>
               )}
               {!!event.calendar_name && (
-                <View style={[styles.calBadge, { backgroundColor: (event.calendar_color || colors.primary) + '18' }]}>
-                  <Text style={[styles.calBadgeText, { color: event.calendar_color || colors.primary }]} numberOfLines={1}>
+                <View style={[styles.calBadge, { backgroundColor: eventInk(event.calendar_color, colors) + '18' }]}>
+                  <Text style={[styles.calBadgeText, { color: eventInk(event.calendar_color, colors) }]} numberOfLines={1}>
                     {event.calendar_name}
                   </Text>
                 </View>
@@ -3041,7 +3044,7 @@ function CalendarScreenInner() {
       if (event.recurrence_rule) r.rr = formatRecurrenceLabel(event.recurrence_rule, event.start_at, t);
       if (meetMatch) r.mt = t('calendar.meetingEvent');
       if (meetMatch && roomId) r.jn = t('calendar.joinMeeting');
-      if (event.calendar_name) { r.cal = String(event.calendar_name); const cc = calArgb(event.calendar_color || colors.primary); if (cc !== undefined) r.cc = cc; }
+      if (event.calendar_name) { r.cal = String(event.calendar_name); const cc = calArgb(eventInk(event.calendar_color, colors)); if (cc !== undefined) r.cc = cc; }
       const ac = calArgb(accent); if (ac !== undefined) r.ac = ac;
       if (event.calendar_name || event.source === 'device') r.sy = 1;
       if (event.reminder && event.reminder !== 'none') r.rm = 1;

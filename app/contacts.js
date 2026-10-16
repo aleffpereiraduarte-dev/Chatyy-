@@ -35,6 +35,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import FadeSlideIn from '../components/FadeSlideIn';
+import { Sheet, ActionList } from '../components/ui'; // [2026-10-16 polish-r2]
 import PressableScale from '../components/PressableScale';
 import InviteContactSheet from '../components/InviteContactSheet'; // [2026-10-13 contacts-invite]
 import { shareInvite as shareInviteLink, prefetchInviteRef } from '../services/inviteContact';
@@ -911,6 +912,7 @@ function ContactsScreenInner() {
 
   // Long-press shows an action sheet — the WhatsApp "row hold" affordance.
   // Avoids forcing the user into the profile screen just to send a message.
+  const [quickMenu, setQuickMenu] = useState(null);
   const handleQuickActions = useCallback((c) => {
     const email = c?.email;
     if (!email) { handleEditContact(c); return; }
@@ -934,21 +936,20 @@ function ContactsScreenInner() {
       try { router.push(`/u/${encodeURIComponent(email)}`); } catch {}
       return;
     }
-    Alert.alert(
-      display,
-      email,
-      [
-        { text: t('profile.message') || 'Mensagem', onPress: goChat },
-        { text: t('profile.call') || 'Ligar', onPress: goCall },
-        { text: t('profile.video') || 'Vídeo', onPress: goVideo },
-        { text: t('profile.email') || 'Email', onPress: goEmail },
+    // [2026-10-16 polish-r2] Folha P&B do design system (era Alert.alert com
+    // 7 botões: no Android o diálogo do sistema só mostra 3 e cortava o resto).
+    setQuickMenu({
+      display, email,
+      items: [
+        { key: 'msg', label: t('profile.message') || 'Mensagem', icon: IconMessageSquare, onPress: goChat },
+        { key: 'call', label: t('profile.call') || 'Ligar', icon: IconPhone, onPress: goCall },
+        { key: 'video', label: t('profile.video') || 'Vídeo', icon: IconVideo, onPress: goVideo },
+        { key: 'email', label: t('profile.email') || 'E-mail', icon: IconMail, onPress: goEmail },
         // [WA-parity 2026-05-31] "Compartilhar contato" — sends a contact card.
-        { text: t('contacts.shareContact') || 'Compartilhar contato', onPress: goShare },
-        { text: t('contacts.editContact') || 'Editar', onPress: goEdit },
-        { text: t('common.cancel') || 'Cancel', style: 'cancel' },
+        { key: 'share', label: t('contacts.shareContact') || 'Compartilhar contato', icon: IconSend, onPress: goShare },
+        { key: 'edit', label: t('contacts.editContact') || 'Editar', icon: IconEdit, onPress: goEdit },
       ],
-      { cancelable: true }
-    );
+    });
   }, [router, handleEditContact, t]);
 
   // [WA-parity 2026-05-31] Build a contact card payload from any contact-ish
@@ -2123,6 +2124,9 @@ function ContactsScreenInner() {
 
       {/* [WA-parity 2026-05-31] Share-contact: pick a conversation to send the
           contact card to. Self-contained picker (no extra screen needed). */}
+      <Sheet visible={!!quickMenu} onClose={() => setQuickMenu(null)} title={quickMenu?.display} subtitle={quickMenu?.email}>
+        <ActionList items={quickMenu?.items || []} onDone={() => setQuickMenu(null)} />
+      </Sheet>
       {/* [2026-10-13 contacts-invite] Contato sem Chatyy → convidar (não abre perfil). */}
       <InviteContactSheet
         visible={!!inviteTarget}

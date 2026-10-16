@@ -18,13 +18,26 @@ private struct EPEmojiSection {
   var items: [EPEmojiItem]
 }
 
+private struct EPStickerItem {
+  let key: String
+  let uri: String
+  let lottie: Bool
+}
+
 private struct EPStickerSection {
   let key: String
   let title: String
   let icon: String
   let cover: String
   let loading: Bool
-  let items: [(key: String, uri: String)]
+  let items: [EPStickerItem]
+}
+
+/// URL de figurinha Lottie (.json, com ou sem query).
+private func epIsLottieURI(_ u: String) -> Bool {
+  var s = u.lowercased()
+  if let q = s.firstIndex(where: { $0 == "?" || $0 == "#" }) { s = String(s[..<q]) }
+  return s.hasSuffix(".json")
 }
 
 private struct EPGif {
@@ -57,6 +70,9 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
   var pendingStickers: [[String: Any]]? = nil
   var pendingGifs: [[String: Any]]? = nil
   var gifLoading = false { didSet { if gifLoading != oldValue { gifStateDirty = true } } }
+  // [2026-10-16 sticker-panel v2] Lottie na grade + prévia ao segurar + voo.
+  var richStickers = false { didSet { if richStickers != oldValue { richDirty = true } } }
+  private var richDirty = false
 
   private var labelsDirty = true
   private var tabDirty = true
@@ -117,6 +133,10 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
 
   private let selectionHaptic = UISelectionFeedbackGenerator()
   private let impactHaptic = UIImpactFeedbackGenerator(style: .light)
+  private let previewHaptic = UIImpactFeedbackGenerator(style: .medium)
+  private var stickerPreview: EPStickerPreview?
+  private var previewIndex: IndexPath?
+  private var stickerPreviewGesture: UILongPressGestureRecognizer?
 
   // MARK: Metrics
   private let searchH: CGFloat = 36
@@ -251,6 +271,13 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
       g.delegate = self
       c.addGestureRecognizer(g)
     }
+    // Segurar figurinha = prévia grande (só richStickers)
+    let sp = UILongPressGestureRecognizer(target: self, action: #selector(stickerPreviewPress(_:)))
+    sp.minimumPressDuration = 0.32
+    sp.delegate = self
+    sp.isEnabled = false
+    stickerCollection.addGestureRecognizer(sp)
+    stickerPreviewGesture = sp
     applyTheme()
   }
 
@@ -269,11 +296,11 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
     if let s = pendingStickers {
       pendingStickers = nil
       stickerSections = s.map { (d: [String: Any]) -> EPStickerSection in
-        let items = ((d["items"] as? [[String: Any]]) ?? []).compactMap { it -> (key: String, uri: String)? in
+        let items = ((d["items"] as? [[String: Any]]) ?? []).compactMap { it -> EPStickerItem? in
           let u = epStr(it["uri"])
           if u.isEmpty { return nil }
           let k = epStr(it["key"])
-          return (key: k.isEmpty ? u : k, uri: u)
+          return EPStickerItem(key: k.isEmpty ? u : k, uri: u, lottie: epBool(it["lottie"]) || epIsLottieURI(u))
         }
         return EPStickerSection(
           key: epStr(d["key"]), title: epStr(d["title"]), icon: epStr(d["icon"]),
@@ -299,6 +326,12 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
     if gifStateDirty {
       gifStateDirty = false
       updateGifState()
+    }
+    if richDirty {
+      richDirty = false
+      stickerPreviewGesture?.isEnabled = richStickers
+      if !richStickers { endStickerPreview() }
+      stickerCollection.reloadData()
     }
     if tabsDirty {
       tabsDirty = false
@@ -571,6 +604,8 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
     }
     backspaceButton.isUserInteractionEnabled = t == .emoji
     positionPages(animated: animated)
+    if changed { endStickerPreview() }
+    refreshStickerPlayback()
     if t == .stickers { requestVisibleStickerSection() }
     if changed && emit { onTabChange(["tab": tabName(t)]) }
   }
@@ -593,6 +628,7 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
     } else {
       setNeedsLayout()
     }
+    refreshStickerPlayback()
     if !compact {
       rebuildEmojiSections()
       emojiCollection.reloadData()
@@ -985,9 +1021,108 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
     return nil
   }
 
-  private func stickerItems(_ s: Int) -> [(key: String, uri: String)] {
+  private func stickerItems(_ s: Int) -> [EPStickerItem] {
     guard s < stickerSections.count else { return [] }
     return stickerSections[s].items
+  }
+
+  private func stickerItem(_ ip: IndexPath) -> EPStickerItem? {
+    let items = stickerItems(ip.section)
+    return ip.item < items.count ? items[ip.item] : nil
+  }
+
+  // MARK: [2026-10-16 sticker-panel v2] Reprodução / prévia / voo
+
+  /// Só a grade de figurinhas visível (aba ativa, painel na janela) anima.
+  private var stickersActive: Bool { window != nil && tab == .stickers && !compact }
+
+  private func refreshStickerPlayback() {
+    let on = stickersActive
+    for case let cell as EPImageCell in stickerCollection.visibleCells { cell.setPlaying(on) }
+    let gifOn = window != nil && tab == .gif
+    for case let cell as EPImageCell in gifCollection.visibleCells { cell.setPlaying(gifOn && !compact) }
+    for case let cell as EPImageCell in compactCollection.visibleCells { cell.setPlaying(gifOn && compact) }
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { endStickerPreview() }
+    refreshStickerPlayback()
+  }
+
+  @objc private func stickerPreviewPress(_ g: UILongPressGestureRecognizer) {
+    let c = stickerCollection
+    switch g.state {
+    case .began:
+      guard richStickers, let ip = c.indexPathForItem(at: g.location(in: c)), let it = stickerItem(ip), let win = window else { return }
+      endStickerPreview()
+      previewHaptic.impactOccurred()
+      let pv = EPStickerPreview(theme: theme)
+      pv.frame = win.bounds
+      win.addSubview(pv)
+      let panelTop = convert(bounds, to: win).minY
+      pv.epShow(uri: it.uri, lottie: it.lottie, anchorBottom: panelTop, topInset: win.safeAreaInsets.top)
+      stickerPreview = pv
+      previewIndex = ip
+      c.isScrollEnabled = false
+      if let cell = c.cellForItem(at: ip) as? EPImageCell { cell.isHighlighted = false }
+    case .changed:
+      guard let pv = stickerPreview else { return }
+      guard let ip = c.indexPathForItem(at: g.location(in: c)), ip != previewIndex, let it = stickerItem(ip) else { return }
+      previewIndex = ip
+      selectionHaptic.selectionChanged()
+      pv.epSet(uri: it.uri, lottie: it.lottie, animated: true)
+    case .ended, .cancelled, .failed:
+      endStickerPreview()
+    default:
+      break
+    }
+  }
+
+  private func endStickerPreview() {
+    stickerCollection.isScrollEnabled = true
+    previewIndex = nil
+    guard let pv = stickerPreview else { return }
+    stickerPreview = nil
+    pv.epDismiss()
+  }
+
+  /// Toque na figurinha: cópia dela "voa" da grade até a conversa (acima do
+  /// composer, lado das mensagens enviadas) e some — a bolha real entra no lugar.
+  private func flySticker(from cell: UICollectionViewCell) {
+    guard let win = window, let snap = cell.contentView.snapshotView(afterScreenUpdates: false) else { return }
+    let start = cell.contentView.convert(cell.contentView.bounds, to: win)
+    if start.width < 1 { return }
+    snap.frame = start
+    snap.isUserInteractionEnabled = false
+    win.addSubview(snap)
+    let panelTop = convert(bounds, to: win).minY
+    let side = min(150, start.width * 1.6)
+    let endPt = CGPoint(
+      x: win.bounds.width - side / 2 - 14,
+      y: max(win.safeAreaInsets.top + side / 2 + 8, panelTop - side / 2 - 64)
+    )
+    let midPt = CGPoint(x: (start.midX + endPt.x) / 2, y: min(start.midY, endPt.y) - 36)
+    let endScale = side / start.width
+    cell.contentView.alpha = 0.3
+    UIView.animateKeyframes(withDuration: 0.44, delay: 0, options: [.calculationModeCubic], animations: {
+      UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.45) {
+        snap.center = midPt
+        snap.transform = CGAffineTransform(scaleX: 1.3, y: 1.3)
+      }
+      UIView.addKeyframe(withRelativeStartTime: 0.45, relativeDuration: 0.55) {
+        snap.center = endPt
+        snap.transform = CGAffineTransform(scaleX: endScale, y: endScale)
+      }
+      UIView.addKeyframe(withRelativeStartTime: 0.7, relativeDuration: 0.3) {
+        snap.alpha = 0
+      }
+    }, completion: { _ in
+      snap.removeFromSuperview()
+    })
+    UIView.animate(withDuration: 0.25, delay: 0.2, options: [.allowUserInteraction], animations: {
+      cell.contentView.alpha = 1
+    }, completion: nil)
   }
 
   // MARK: UICollectionViewDataSource
@@ -1015,9 +1150,13 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
   func collectionView(_ c: UICollectionView, cellForItemAt ip: IndexPath) -> UICollectionViewCell {
     if c === stickerCollection {
       let cell = c.dequeueReusableCell(withReuseIdentifier: EPImageCell.reuse, for: ip) as! EPImageCell
-      let items = stickerItems(ip.section)
-      let uri = ip.item < items.count ? items[ip.item].uri : ""
-      cell.configure(uri: uri, fill: false, placeholder: .clear, corner: 0, maxPixel: 256)
+      let item = stickerItem(ip)
+      let uri = item?.uri ?? ""
+      if richStickers, let item = item, item.lottie, EPLottieView.supported {
+        cell.configureLottie(uri: uri)
+      } else {
+        cell.configure(uri: uri, fill: false, placeholder: .clear, corner: 0, maxPixel: 256)
+      }
       cell.accessibilityLabel = labels["stickers"]
       return cell
     }
@@ -1121,10 +1260,10 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
       return
     }
     if c === stickerCollection {
-      let items = stickerItems(ip.section)
-      guard ip.item < items.count, ip.section < stickerSections.count else { return }
+      guard let it = stickerItem(ip), ip.section < stickerSections.count else { return }
       impactHaptic.impactOccurred(intensity: 0.6)
-      onSticker(["key": items[ip.item].key, "uri": items[ip.item].uri, "section": stickerSections[ip.section].key])
+      if richStickers, let cell = c.cellForItem(at: ip) { flySticker(from: cell) }
+      onSticker(["key": it.key, "uri": it.uri, "section": stickerSections[ip.section].key, "lottie": it.lottie])
       return
     }
     if c === gifCollection || (c === compactCollection && tab == .gif) {
@@ -1132,6 +1271,17 @@ final class ChatyyEmojiPanelView: ExpoView, UICollectionViewDataSource, UICollec
       impactHaptic.impactOccurred(intensity: 0.6)
       onGif(["key": gifs[ip.item].key])
     }
+  }
+
+  func collectionView(_ c: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt ip: IndexPath) {
+    guard let cell = cell as? EPImageCell else { return }
+    if c === stickerCollection { cell.setPlaying(stickersActive) }
+    else if c === gifCollection { cell.setPlaying(window != nil && tab == .gif && !compact) }
+    else if c === compactCollection { cell.setPlaying(window != nil && tab == .gif && compact) }
+  }
+
+  func collectionView(_ c: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt ip: IndexPath) {
+    (cell as? EPImageCell)?.setPlaying(false)
   }
 
   // MARK: UIScrollViewDelegate

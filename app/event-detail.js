@@ -882,7 +882,11 @@ function EventDetailScreenInner() {
   const isCreator = (event.created_by || event.creator_email || '').toLowerCase() === userEmail
     || (event.owner_email || '').toLowerCase() === userEmail;
   const isAttendee = (event.attendees || []).some(a => (a.email || '').toLowerCase() === userEmail);
-  const eventColor = event.color || event.calendar_color || colors.primary;
+  // [2026-10-16 polish-r2] azul padrão (sem cor escolhida) → tinta P&B do tema
+  const _blue = /^#(4285F4|3B82F6|007AFF|0A84FF|1A73E8)$/i;
+  const _ink = (c) => (!c || _blue.test(String(c)) ? colors.primary : c);
+  const eventColor = _ink(event.color || event.calendar_color);
+  const calColor = _ink(event.calendar_color || eventColor);
   const myRsvp = (event.attendees || []).find(a => (a.email || '').toLowerCase() === userEmail);
   const isSyncedEvent = event?.calendar_name || event?.source === 'device';
   const hasReminder = event?.reminder && event.reminder !== 'none';
@@ -994,9 +998,9 @@ function EventDetailScreenInner() {
           <View style={styles.section}>
             <Text style={[styles.eventTitle, { color: colors.text }]}>{event.title || t('eventDetail.untitled')}</Text>
             {!!event.calendar_name && (
-              <View style={[styles.calNameBadge, { backgroundColor: (event.calendar_color || eventColor) + '18' }]}>
-                <View style={[styles.calNameDot, { backgroundColor: event.calendar_color || eventColor }]} />
-                <Text style={[styles.calNameText, { color: event.calendar_color || eventColor }]}>{event.calendar_name}</Text>
+              <View style={[styles.calNameBadge, { backgroundColor: calColor + '18' }]}>
+                <View style={[styles.calNameDot, { backgroundColor: calColor }]} />
+                <Text style={[styles.calNameText, { color: calColor }]}>{event.calendar_name}</Text>
               </View>
             )}
             {event.status === 'cancelled' && (

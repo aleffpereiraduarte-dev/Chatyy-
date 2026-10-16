@@ -22,6 +22,9 @@
 //          onEndReached, onResync {seq}, onFirstPaint {count},
 //          onNativeError {message}
 //   children: [0] header (rola junto, acima da 1ª linha), [1] rodapé.
+//   api 3 [2026-10-16 wave8-list]: topInset (header do app por cima da lista;
+//          vidro nativo no topo), snapOffset (snap do título grande), peekMode
+//          ('peek' = prévia estilo Telegram no toque longo do Android).
 
 import { Platform } from 'react-native';
 
