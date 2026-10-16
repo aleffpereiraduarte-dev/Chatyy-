@@ -578,6 +578,16 @@ object ChatMessagingStyleHandler {
         try {
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(notifIdFor(conversationId))
+            // [2026-10-15 notif-read-sync] Banners desenhados pelo expo-notifications
+            // (app em 1º plano / binários antigos) usam tag = "chat_<cid>" → saem juntos.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    val tag = "chat_$conversationId"
+                    for (sbn in nm.activeNotifications) {
+                        if (sbn.tag == tag) nm.cancel(sbn.tag, sbn.id)
+                    }
+                } catch (_: Throwable) {}
+            }
             clearThread(ctx, conversationId)
             postSummary(ctx, "pt", null)
         } catch (t: Throwable) {

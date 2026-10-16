@@ -169,9 +169,30 @@ export function setActiveConversation(conversationId) {
   }
 }
 
+// [2026-10-15 notif-read-sync] Conversa de um banner apresentado: data.conversation_id
+// (Expo iOS/Android), JSON em data.body (Android Expo-routed), thread_id /
+// threadIdentifier iOS ou tag Android `chat_<cid>`.
+function _notifConvInfo(n) {
+  const req = n?.request || {};
+  const c = req.content || {};
+  let d = c.data || {};
+  if (d && d.conversation_id == null && typeof d.body === 'string' && d.body.trim()[0] === '{') {
+    try { const p = JSON.parse(d.body); if (p && typeof p === 'object') d = { ...d, ...p }; } catch {}
+  }
+  let cid = d && d.conversation_id != null ? String(d.conversation_id) : '';
+  if (!cid) {
+    for (const t of [d?.thread_id, c.threadIdentifier, req.identifier]) {
+      const m = /^chat_(\d+)$/.exec(String(t || ''));
+      if (m) { cid = m[1]; break; }
+    }
+  }
+  return { cid, mid: Number(d?.message_id) || 0, type: String(d?.type || ''), id: req.identifier, data: d || {} };
+}
+
 // Remove every delivered chat notification that belongs to `conversationId`
 // from the notification tray (and trim the app badge by how many we cleared).
 // Fire-and-forget; all failures are non-fatal.
+// opts.upTo (>0) = lida só até esse id → banner de msg mais nova fica.
 export async function dismissConversationNotifications(conversationId, opts = null) {
   try {
     if (Platform.OS === 'web' || conversationId == null) return;
@@ -184,14 +205,14 @@ export async function dismissConversationNotifications(conversationId, opts = nu
     if (!Notifications?.getPresentedNotificationsAsync) return;
     const presented = await Notifications.getPresentedNotificationsAsync();
     const target = String(conversationId);
+    const upTo = Number(opts && opts.upTo) || 0;
     let cleared = 0;
     for (const n of presented || []) {
-      const data = n?.request?.content?.data || {};
-      if (String(data.conversation_id ?? '') === target) {
-        const id = n?.request?.identifier;
-        if (id) {
-          try { await Notifications.dismissNotificationAsync(id); cleared++; } catch {}
-        }
+      const info = _notifConvInfo(n);
+      if (info.cid !== target) continue;
+      if (upTo > 0 && info.mid > upTo && info.type !== 'chat_reaction') continue;
+      if (info.id) {
+        try { await Notifications.dismissNotificationAsync(info.id); cleared++; } catch {}
       }
     }
     // Keep the app-icon badge honest (don't leave a count for notifications the
@@ -265,15 +286,16 @@ export async function applyNotifClear(raw) {
     const presented = (await Notifications.getPresentedNotificationsAsync()) || [];
     let cleared = 0;
     for (const n of presented) {
-      const nd = n?.request?.content?.data || {};
-      if (String(nd.conversation_id ?? '') !== cid) continue;
-      if (nd.type === 'chat_notif_clear') continue;
-      const nMid = Number(nd.message_id) || 0;
+      const info = _notifConvInfo(n);
+      const nd = info.data;
+      if (info.cid !== cid) continue;
+      if (info.type === 'chat_notif_clear') continue;
+      const nMid = info.mid;
       const hit = kind === 'read'
         ? (!upTo || !nMid || nMid <= upTo)
-        : (!!mid && String(nd.message_id ?? '') === mid && nd.type !== 'chat_reaction');
+        : (!!mid && String(nd.message_id ?? '') === mid && info.type !== 'chat_reaction');
       if (!hit) continue;
-      const id = n?.request?.identifier;
+      const id = info.id;
       if (id) { try { await Notifications.dismissNotificationAsync(id); cleared++; } catch {} }
     }
     // The server sends the fresh badge with kind=read (iOS applies it itself);
@@ -290,6 +312,43 @@ export async function applyNotifClear(raw) {
     }
     return true;
   } catch { return false; }
+}
+
+// [2026-10-15 notif-read-sync] Reconciliação: banners de conversas que a lista
+// local mostra lidas (unread 0) e cuja msg a lista já viu (id <= lastId) saem da
+// central. Chamada por services/unreadBadge (publicação da lista / 1º plano).
+// Reações ficam (WhatsApp só tira ao abrir a conversa). Single-flight.
+let _reconBusy = false;
+export async function reconcileReadNotifications() {
+  if (Platform.OS === 'web' || _reconBusy) return 0;
+  try { if (globalThis.__chatyy_notif_reconcile_off) return 0; } catch {}
+  _reconBusy = true;
+  try {
+    const ub = require('./unreadBadge');
+    if (!ub.hasLocalList?.()) return 0;
+    if (!Notifications) {
+      try { Notifications = await import('expo-notifications'); } catch { return 0; }
+    }
+    if (!Notifications?.getPresentedNotificationsAsync) return 0;
+    const presented = (await Notifications.getPresentedNotificationsAsync()) || [];
+    let cleared = 0;
+    const done = new Set();
+    for (const n of presented) {
+      const info = _notifConvInfo(n);
+      if (!info.cid || !info.id || !info.mid) continue;
+      if (info.type && info.type !== 'chat_message' && info.type !== 'chat_mention' && info.type !== 'chat_keyword') continue;
+      const st = ub.getConvReadState?.(info.cid);
+      if (!st || st.unread > 0 || !st.lastId || info.mid > st.lastId) continue;
+      try { await Notifications.dismissNotificationAsync(info.id); cleared++; done.add(info.cid); } catch {}
+    }
+    for (const cid of done) { try { _nativeChat()?.dismissChatNotification?.(cid); } catch {} }
+    if (cleared > 0) {
+      const tot = ub.getLocalUnreadTotal?.();
+      if (tot != null) { try { await setBadgeCount(tot); } catch {} }
+      _diagPush('notif_reconcile', `cleared=${cleared} convs=${done.size}`);
+    }
+    return cleared;
+  } catch { return 0; } finally { _reconBusy = false; }
 }
 
 // [2026-10-12 nav-dedup] `conversationId` (optional): only clear when it is

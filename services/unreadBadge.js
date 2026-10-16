@@ -55,14 +55,47 @@ export function publishListUnread(conversations) {
       if (id == null) continue;
       const k = String(id);
       seen.add(k);
-      _conv.set(k, { unread: Math.max(0, Number(c.unread_count) || 0), muted: !!c.muted });
+      // [2026-10-15 notif-read-sync] lastId = maior id que a lista já viu (guarda
+      // da reconciliação de banners: banner com id > lastId = lista atrasada).
+      const lm = Number(c.last_message?.id ?? c.last_message_id) || 0;
+      _conv.set(k, { unread: Math.max(0, Number(c.unread_count) || 0), muted: !!c.muted, lastId: lm });
     }
     // Linhas que saíram da lista (apagada/arquivada) não contam mais.
     for (const k of Array.from(_conv.keys())) if (!seen.has(k)) _conv.delete(k);
     _listKnown = true;
     const t = _recomputeTotal();
     if (t !== _total) { _total = t; _notify(); }
+    _scheduleNotifReconcile(1500);
   } catch {}
+}
+
+// [2026-10-15 notif-read-sync] Banners de conversas que a lista JÁ mostra como
+// lidas (lidas aqui, em outro aparelho, na web) somem da central — a cada
+// publicação da lista (trailing 1,5 s) e ao voltar ao 1º plano. Só remove banner
+// cuja msg a lista já viu (id <= lastId) com unread 0 → lista atrasada nunca
+// apaga banner novo. Kill: globalThis.__chatyy_notif_reconcile_off = true.
+let _reconT = null;
+let _appStateSub = null;
+function _scheduleNotifReconcile(ms) {
+  if (Platform.OS === 'web') return;
+  try {
+    if (!_appStateSub) {
+      const { AppState } = require('react-native');
+      _appStateSub = AppState.addEventListener?.('change', (s) => { if (s === 'active') _scheduleNotifReconcile(2500); }) || true;
+    }
+  } catch { _appStateSub = true; }
+  if (_reconT) clearTimeout(_reconT);
+  _reconT = setTimeout(() => {
+    _reconT = null;
+    try { require('./pushNotifications').reconcileReadNotifications?.()?.catch?.(() => {}); } catch {}
+  }, ms);
+}
+
+/** Estado local de uma conversa p/ a reconciliação: { unread, muted, lastId } ou null. */
+export function getConvReadState(cid) {
+  if (!_listKnown) return null;
+  const v = _conv.get(String(cid ?? ''));
+  return v ? { unread: v.unread || 0, muted: !!v.muted, lastId: v.lastId || 0 } : null;
 }
 
 export function getLocalUnreadTotal() { return _listKnown ? _total : null; }
@@ -121,7 +154,7 @@ export function markConversationReadLocal(cid, opts = {}) {
     } catch {}
   }
   if (opts.dismiss !== false && Platform.OS !== 'web') {
-    try { require('./pushNotifications').dismissConversationNotifications?.(cid, { keepBadge: _listKnown })?.catch?.(() => {}); } catch {}
+    try { require('./pushNotifications').dismissConversationNotifications?.(cid, { keepBadge: _listKnown, upTo: Number(opts.upTo) || 0 })?.catch?.(() => {}); } catch {}
   }
 }
 

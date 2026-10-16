@@ -19,7 +19,8 @@
       "RelayWakeAppDelegateSubscriber",
       "ChatBgSyncAppDelegateSubscriber",
       "CallIntentAppDelegateSubscriber",
-      "FriendLocationAppDelegateSubscriber"
+      "FriendLocationAppDelegateSubscriber",
+      "ChatNotifClearAppDelegateSubscriber"
     ]
   },
   "android": {

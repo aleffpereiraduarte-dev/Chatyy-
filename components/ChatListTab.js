@@ -5490,7 +5490,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // [2026-10-15 unread-instant] Lida AQUI ou em OUTRO aparelho/web da conta →
         // banners da conversa somem e o ícone/aba recalculam do estado local já.
         if (readerLower && readerLower === meLower && data?.conversation_id != null) {
-          try { require('../services/unreadBadge').markConversationReadLocal(data.conversation_id, { emitList: false }); } catch {}
+          try { require('../services/unreadBadge').markConversationReadLocal(data.conversation_id, { emitList: false, upTo: data._local ? 0 : (Number(data.last_read_id ?? data.message_id) || 0) }); } catch {} // [2026-10-15 notif-read-sync] lida noutro aparelho até X → banner mais novo fica
         }
         // Who did the reading: me (just opened my own chat) OR the peer
         // (read my outbound). In the peer case we bump last_message.read_at
