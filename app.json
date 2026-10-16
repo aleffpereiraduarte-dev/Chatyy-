@@ -119,7 +119,7 @@
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 658,
+      "versionCode": 660,
       "googleServicesFile": "./google-services.json",
       "splash": {
         "image": "./assets/splash-blank.png",
