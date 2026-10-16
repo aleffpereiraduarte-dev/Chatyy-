@@ -54,6 +54,12 @@ public class ExpoNativeToolkitModule: Module {
             }
         }
 
+        // [2026-10-16 boot-trace] época do processo (ms desde 1970; 0 = indisponível).
+        // Implementação em ExpoChatyySystemModule.swift (mesmo target).
+        Function("processStartTime") { () -> Double in
+            return chatyyProcessStartEpochMs()
+        }
+
         // ─── Reachability ────────────────────────────────────────────
         Function("isOnlineSync") { () -> Bool in
             return self.lastPath?.status == .satisfied

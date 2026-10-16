@@ -35,6 +35,21 @@ private let kBadgeCountKey = "chatyy.badge.count"
 private let kBadgeAtKey = "chatyy.badge.at"
 private let kBadgeLastServerKey = "chatyy.badge.last_server"
 
+// [2026-10-16 boot-trace] Época do PROCESSO (ms desde 1970) via sysctl
+// KERN_PROC_PID → kp_proc.p_starttime (timeval de parede, gravada pelo kernel no
+// fork/exec). O JS (services/bootTrace.js) usa p/ medir nativo+bundle antes do T0
+// do JS. 0 = indisponível (nunca lança).
+func chatyyProcessStartEpochMs() -> Double {
+  var info = kinfo_proc()
+  var size = MemoryLayout<kinfo_proc>.stride
+  var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+  let rc = sysctl(&mib, u_int(mib.count), &info, &size, nil, 0)
+  if rc != 0 { return 0 }
+  let tv = info.kp_proc.p_un.__p_starttime
+  let ms = Double(tv.tv_sec) * 1000.0 + Double(tv.tv_usec) / 1000.0
+  return ms > 0 ? ms : 0
+}
+
 public class ExpoChatyySystemModule: Module {
   private var monitor: NWPathMonitor?
   private let monitorQueue = DispatchQueue(label: "chatyy.system.netmonitor", qos: .utility)
@@ -91,6 +106,11 @@ public class ExpoChatyySystemModule: Module {
       ExpoChatyySystemModule.reloadWidgets()
       ExpoChatyySystemModule.refreshSiriPhrases()
       return clean.count
+    }
+
+    // [2026-10-16 boot-trace] época do processo (ms) — ver chatyyProcessStartEpochMs.
+    Function("processStartTime") { () -> Double in
+      return chatyyProcessStartEpochMs()
     }
 
     // [2026-10-11 badge] Mirror of the icon badge for the NSE (app killed).

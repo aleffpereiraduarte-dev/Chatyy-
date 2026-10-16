@@ -6,6 +6,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Uri
+import android.os.Build
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
@@ -107,6 +110,26 @@ class ExpoChatyySystemModule : Module() {
 
     Function("getNetworkConstraints") {
       constraints()
+    }
+
+    // [2026-10-16 boot-trace] Época do PROCESSO em ms (relógio de parede), p/ o
+    // services/bootTrace.js medir zygote/Application/bundle antes do T0 do JS.
+    // API 33+: getStartRequestedUptimeMillis (pedido de start, inclui o fork do
+    // zygote); antes: getStartUptimeMillis (API 24). Convertido de uptime p/
+    // época com o par (currentTimeMillis, uptimeMillis) lido agora. 0 = falhou.
+    Function("processStartTime") {
+      try {
+        val nowEpoch = System.currentTimeMillis()
+        val nowUp = SystemClock.uptimeMillis()
+        val startUp = if (Build.VERSION.SDK_INT >= 33) {
+          Process.getStartRequestedUptimeMillis()
+        } else {
+          Process.getStartUptimeMillis()
+        }
+        if (startUp <= 0L || startUp > nowUp) 0.0 else (nowEpoch - (nowUp - startUp)).toDouble()
+      } catch (_: Throwable) {
+        0.0
+      }
     }
 
     // [2026-10-15 app-links] ACTION_VIEW preso ao pacote (YouTube/Spotify/
