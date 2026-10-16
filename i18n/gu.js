@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "અમે આ એકાઉન્ટના રિકવરી ઇમેઇલ પર કોડ મોકલીશું. તેનાથી તમે PIN બંધ કરીને લૉગ ઇન કરશો.",
+  "twoStep.loginNoEmail": "આ એકાઉન્ટમાં રિકવરી ઇમેઇલ નથી. ઍક્સેસ પાછો મેળવવા સપોર્ટનો સંપર્ક કરો: {email}",
+  "twoStep.loginResetConfirm": "PIN બંધ કરો અને લૉગ ઇન કરો",
+  "twoStep.loginChallengeExpired": "ચકાસણીની મુદત પૂરી થઈ. પાછા જાઓ અને SMS કોડ ફરી દાખલ કરો.",
+  "chat.docsShort": "દસ્તાવેજ",
+  "chatConv.mediaLinksDocs": "મીડિયા, લિંક અને દસ્તાવેજ",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "પોલના મત",
   "chat.pollAnonymous": "અનામી પોલ: કોણે કયા વિકલ્પને મત આપ્યો તે કોઈ જોઈ શકતું નથી.",

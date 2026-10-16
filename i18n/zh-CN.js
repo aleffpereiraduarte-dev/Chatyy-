@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "我们会向此账号的恢复邮箱发送验证码。用它即可关闭 PIN 并登录。",
+  "twoStep.loginNoEmail": "此账号没有恢复邮箱。如需找回访问权限，请联系客服：{email}",
+  "twoStep.loginResetConfirm": "关闭 PIN 并登录",
+  "twoStep.loginChallengeExpired": "验证已过期。请返回并重新输入短信验证码。",
+  "chat.docsShort": "文档",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "投票详情",
   "chat.pollAnonymous": "匿名投票：没有人能看到谁投了哪个选项。",

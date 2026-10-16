@@ -362,9 +362,11 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     image: t?.('chat.photos') || 'Fotos',
     video: t?.('chat.videos') || 'Vídeos',
     audio: t?.('chat.audioFiles') || 'Áudios',
-    file: t?.('chat.documents') || 'Documentos',
+    // [wave14a 2026-10-16] rótulo curto: 5 abas não cabem "Documentos" (truncava).
+    file: t?.('chat.docsShort') || 'Docs',
     link: t?.('chat.nprofile.links') || 'Links',
   };
+  const tabA11y = { ...tabLabels, file: t?.('chat.documents') || 'Documentos' };
 
   useEffect(() => {
     if (visible && conversationId) loadMedia(activeTab);
@@ -540,7 +542,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
               {t?.('chat.sharedInChat') || 'Compartilhado nesta conversa'}
             </Text>
             <Text style={{ fontSize: 21, fontWeight: '800', color: colors.text, letterSpacing: -0.5, marginTop: 1 }}>
-              {t?.('chat.mediaGallery') || 'Mídia e documentos'}
+              {t?.('chatConv.mediaLinksDocs') || 'Mídia, links e docs'}
             </Text>
           </View>
           )}
@@ -564,6 +566,9 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
                 <TouchableOpacity
                   key={tab}
                   onPress={() => setActiveTab(tab)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={tabA11y[tab]}
                   style={{
                     flex: 1, paddingVertical: 9, paddingHorizontal: 4,
                     borderRadius: 11,

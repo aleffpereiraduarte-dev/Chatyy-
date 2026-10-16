@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "このアカウントの復旧用メールにコードを送信します。そのコードで PIN をオフにしてログインできます。",
+  "twoStep.loginNoEmail": "このアカウントには復旧用メールがありません。アクセスを回復するにはサポートにお問い合わせください：{email}",
+  "twoStep.loginResetConfirm": "PIN をオフにしてログイン",
+  "twoStep.loginChallengeExpired": "確認の有効期限が切れました。戻って SMS コードをもう一度入力してください。",
+  "chat.docsShort": "書類",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "投票の結果",
   "chat.pollAnonymous": "匿名の投票：誰がどの選択肢に投票したかは誰にも見えません。",

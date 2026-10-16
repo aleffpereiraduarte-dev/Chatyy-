@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "ወደዚህ መለያ የመልሶ ማግኛ ኢሜይል ኮድ እንልካለን። በእሱ PIN አጥፍተው ይገባሉ።",
+  "twoStep.loginNoEmail": "ይህ መለያ የመልሶ ማግኛ ኢሜይል የለውም። መዳረሻ ለመመለስ ድጋፍን ያግኙ፦ {email}",
+  "twoStep.loginResetConfirm": "PIN አጥፋና ግባ",
+  "twoStep.loginChallengeExpired": "ማረጋገጫው ጊዜው አልፎበታል። ተመልሰው የSMS ኮዱን እንደገና ያስገቡ።",
+  "chat.docsShort": "ሰነዶች",
+  "chatConv.mediaLinksDocs": "ሚዲያ፣ ሊንኮች እና ሰነዶች",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "የምርጫ ድምጾች",
   "chat.pollAnonymous": "ስም-አልባ ምርጫ፦ ማን ለየትኛው አማራጭ እንደመረጠ ማንም አያይም።",

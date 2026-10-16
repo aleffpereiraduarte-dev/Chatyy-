@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "이 계정의 복구 이메일로 코드를 보내 드립니다. 이 코드로 PIN을 끄고 로그인하세요.",
+  "twoStep.loginNoEmail": "이 계정에는 복구 이메일이 없습니다. 접근 권한을 되찾으려면 고객지원에 문의하세요: {email}",
+  "twoStep.loginResetConfirm": "PIN 끄고 로그인",
+  "twoStep.loginChallengeExpired": "인증이 만료되었습니다. 돌아가서 SMS 코드를 다시 입력하세요.",
+  "chat.docsShort": "문서",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "투표 결과",
   "chat.pollAnonymous": "익명 투표: 누가 어떤 항목에 투표했는지 아무도 볼 수 없습니다.",

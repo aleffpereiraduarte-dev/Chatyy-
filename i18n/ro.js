@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Vom trimite un cod la e-mailul de recuperare al acestui cont. Cu el dezactivezi PIN-ul și intri.",
+  "twoStep.loginNoEmail": "Acest cont nu are e-mail de recuperare. Pentru a recupera accesul, contactează asistența: {email}",
+  "twoStep.loginResetConfirm": "Dezactivează PIN-ul și intră",
+  "twoStep.loginChallengeExpired": "Verificarea a expirat. Revino și introdu din nou codul SMS.",
+  "chat.docsShort": "Doc.",
+  "chatConv.mediaLinksDocs": "Media, linkuri și documente",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Voturile sondajului",
   "chat.pollAnonymous": "Sondaj anonim: nimeni nu vede cine a votat fiecare opțiune.",

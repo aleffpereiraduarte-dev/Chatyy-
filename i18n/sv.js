@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Vi skickar en kod till kontots återställningsmejl. Med den stänger du av PIN-koden och loggar in.",
+  "twoStep.loginNoEmail": "Det här kontot har inget återställningsmejl. Kontakta supporten för att få tillbaka åtkomsten: {email}",
+  "twoStep.loginResetConfirm": "Stäng av PIN och logga in",
+  "twoStep.loginChallengeExpired": "Verifieringen har gått ut. Gå tillbaka och ange sms-koden igen.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Media, länkar och dokument",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Röster i omröstningen",
   "chat.pollAnonymous": "Anonym omröstning: ingen ser vem som röstade på vilket alternativ.",

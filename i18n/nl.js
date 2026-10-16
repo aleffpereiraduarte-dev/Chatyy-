@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "We sturen een code naar het herstel-e-mailadres van dit account. Daarmee zet je de pincode uit en log je in.",
+  "twoStep.loginNoEmail": "Dit account heeft geen herstel-e-mailadres. Neem contact op met support om weer toegang te krijgen: {email}",
+  "twoStep.loginResetConfirm": "Pincode uitzetten en inloggen",
+  "twoStep.loginChallengeExpired": "De verificatie is verlopen. Ga terug en voer de sms-code opnieuw in.",
+  "chat.docsShort": "Docs",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Stemmen van de peiling",
   "chat.pollAnonymous": "Anonieme peiling: niemand ziet wie op welke optie heeft gestemd.",

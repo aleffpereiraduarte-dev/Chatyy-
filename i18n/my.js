@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "ဤအကောင့်၏ ပြန်လည်ရယူရေး အီးမေးလ်သို့ ကုဒ်တစ်ခု ပို့ပါမည်။ ၎င်းဖြင့် PIN ကိုပိတ်ပြီး ဝင်ရောက်ပါ။",
+  "twoStep.loginNoEmail": "ဤအကောင့်တွင် ပြန်လည်ရယူရေး အီးမေးလ် မရှိပါ။ ဝင်ရောက်ခွင့် ပြန်ရရန် အကူအညီကို ဆက်သွယ်ပါ- {email}",
+  "twoStep.loginResetConfirm": "PIN ပိတ်ပြီး ဝင်ရောက်ရန်",
+  "twoStep.loginChallengeExpired": "အတည်ပြုချက် သက်တမ်းကုန်သွားပါပြီ။ နောက်သို့ပြန်ပြီး SMS ကုဒ်ကို ထပ်ထည့်ပါ။",
+  "chat.docsShort": "စာရွက်စာတမ်း",
+  "chatConv.mediaLinksDocs": "မီဒီယာ၊ လင့်ခ်နှင့် စာရွက်စာတမ်း",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "စစ်တမ်းမဲများ",
   "chat.pollAnonymous": "အမည်မဖော်စစ်တမ်း- မည်သူ မည်သည့်ရွေးချယ်မှုကို မဲပေးသည်ကို မည်သူမျှ မမြင်ရပါ။",

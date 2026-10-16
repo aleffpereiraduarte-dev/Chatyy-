@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "இந்தக் கணக்கின் மீட்பு மின்னஞ்சலுக்கு ஒரு குறியீட்டை அனுப்புவோம். அதைக் கொண்டு PIN-ஐ முடக்கி உள்நுழையலாம்.",
+  "twoStep.loginNoEmail": "இந்தக் கணக்கிற்கு மீட்பு மின்னஞ்சல் இல்லை. அணுகலை மீட்க ஆதரவைத் தொடர்புகொள்ளவும்: {email}",
+  "twoStep.loginResetConfirm": "PIN-ஐ முடக்கி உள்நுழை",
+  "twoStep.loginChallengeExpired": "சரிபார்ப்பு காலாவதியானது. பின்சென்று SMS குறியீட்டை மீண்டும் உள்ளிடவும்.",
+  "chat.docsShort": "ஆவணங்கள்",
+  "chatConv.mediaLinksDocs": "மீடியா, இணைப்புகள், ஆவணங்கள்",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "கருத்துக்கணிப்பு வாக்குகள்",
   "chat.pollAnonymous": "அநாமதேய கருத்துக்கணிப்பு: யார் எந்த விருப்பத்திற்கு வாக்களித்தார் என்பதை யாரும் பார்க்க முடியாது.",

@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "ພວກເຮົາຈະສົ່ງລະຫັດໄປຫາອີເມວກູ້ຄືນຂອງບັນຊີນີ້. ໃຊ້ມັນເພື່ອປິດ PIN ແລະ ເຂົ້າສູ່ລະບົບ.",
+  "twoStep.loginNoEmail": "ບັນຊີນີ້ບໍ່ມີອີເມວກູ້ຄືນ. ເພື່ອເຂົ້າເຖິງອີກຄັ້ງ, ກະລຸນາຕິດຕໍ່ຝ່າຍຊ່ວຍເຫຼືອ: {email}",
+  "twoStep.loginResetConfirm": "ປິດ PIN ແລະ ເຂົ້າສູ່ລະບົບ",
+  "twoStep.loginChallengeExpired": "ການຢືນຢັນໝົດອາຍຸແລ້ວ. ກັບຄືນແລ້ວໃສ່ລະຫັດ SMS ອີກຄັ້ງ.",
+  "chat.docsShort": "ເອກະສານ",
+  "chatConv.mediaLinksDocs": "ສື່, ລິ້ງ ແລະ ເອກະສານ",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "ຜົນໂຫວດ",
   "chat.pollAnonymous": "ໂພລແບບບໍ່ລະບຸຕົວຕົນ: ບໍ່ມີໃຜເຫັນວ່າໃຜໂຫວດຕົວເລືອກໃດ.",

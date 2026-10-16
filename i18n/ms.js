@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Kami akan menghantar kod ke e-mel pemulihan akaun ini. Gunakannya untuk mematikan PIN dan log masuk.",
+  "twoStep.loginNoEmail": "Akaun ini tiada e-mel pemulihan. Untuk mendapatkan semula akses, hubungi sokongan: {email}",
+  "twoStep.loginResetConfirm": "Matikan PIN dan log masuk",
+  "twoStep.loginChallengeExpired": "Pengesahan telah tamat tempoh. Kembali dan masukkan kod SMS sekali lagi.",
+  "chat.docsShort": "Dok",
+  "chatConv.mediaLinksDocs": "Media, pautan dan dok",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Undian tinjauan",
   "chat.pollAnonymous": "Tinjauan tanpa nama: tiada sesiapa dapat melihat siapa mengundi pilihan mana.",

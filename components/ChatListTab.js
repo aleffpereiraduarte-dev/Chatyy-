@@ -8646,7 +8646,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // globalThis.__chatyy_native_topbar = false.
   const _nativeTopBarOn = _useNativeHome && !!largeTitle && !selectionMode && !(loading && !refreshing)
     && typeof onNativeTopBar === 'function' && globalThis.__chatyy_native_topbar !== false
-    && (() => { try { return _nativeHomeApi() >= 3; } catch { return false; } })();
+    // [2026-10-16 topbar-hairline] Android api 3 deixava o vidro com progresso 1
+    // ao ligar o topInset (calculado antes do layout) → hairline fixa sob o
+    // header e o cabeçalho "partido" vs iOS. Android só com o binário corrigido (api 4);
+    // até lá o header sólido normal (hairline só quando o título compacto entra).
+    && (() => { try { return _nativeHomeApi() >= (Platform.OS === 'android' ? 4 : 3); } catch { return false; } })();
   const _ntbCbRef = useRef(onNativeTopBar);
   _ntbCbRef.current = onNativeTopBar;
   useEffect(() => {

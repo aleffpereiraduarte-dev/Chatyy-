@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Magpapadala kami ng code sa recovery email ng account na ito. Gamitin ito para i-off ang PIN at mag-log in.",
+  "twoStep.loginNoEmail": "Walang recovery email ang account na ito. Para maibalik ang access, makipag-ugnayan sa support: {email}",
+  "twoStep.loginResetConfirm": "I-off ang PIN at mag-log in",
+  "twoStep.loginChallengeExpired": "Nag-expire na ang verification. Bumalik at ilagay muli ang SMS code.",
+  "chat.docsShort": "Docs",
+  "chatConv.mediaLinksDocs": "Media, mga link at docs",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Mga boto sa poll",
   "chat.pollAnonymous": "Anonymous na poll: walang makakakita kung sino ang bumoto sa bawat opsyon.",

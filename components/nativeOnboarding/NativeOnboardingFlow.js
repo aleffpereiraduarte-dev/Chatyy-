@@ -57,6 +57,7 @@ import CountryPicker from './CountryPicker';
 import LanguageSheet from './LanguageSheet';
 import OtpCells from './OtpCells';
 import RestorePanel from './RestorePanel';
+import LoginPinResetSheet, { ForgotLoginPinLink } from '../settings/LoginPinResetSheet';
 import { computePermissionSteps } from './permissions';
 import { probeRestore } from './restore';
 import { hasNativeCircleCrop } from './flag';
@@ -131,6 +132,10 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const [accountName, setAccountName] = useState(''); // nome da conta existente (só DEPOIS do código)
   const [lockRequired, setLockRequired] = useState(false);
   const [lockPin, setLockPin] = useState('');
+  // [wave14a 2026-10-16] "Esqueci meu PIN" pré-login: desafio do requires_lock (servidor).
+  const [lockChallenge, setLockChallenge] = useState('');
+  const [lockHasEmail, setLockHasEmail] = useState(undefined);
+  const [pinResetOpen, setPinResetOpen] = useState(false);
   const [otpErrorTick, setOtpErrorTick] = useState(0);
   const [showCountry, setShowCountry] = useState(false);
   const [phoneRowW, setPhoneRowW] = useState(0); // [2026-10-16 onb-phone-fit]
@@ -364,6 +369,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         r = await api.phoneLoginVerifyWithPin(fullPhone, cd, pin);
       }
       if (!mountedRef.current) return;
+      if (r?.data?.requires_lock && r.data.lock_challenge) { setLockChallenge(String(r.data.lock_challenge)); setLockHasEmail(r.data.has_recovery_email); }
       if (r?.success && r.data?.requires_lock) { setLockRequired(true); return; }
       if (r && !r.success && r.data?.requires_lock) {
         setLockPin('');
@@ -398,6 +404,19 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     }
   }, [lockRequired, lockPin, fullPhone, loginWithToken, go, t, T, mountedRef]);
   const checkOtpRef = useRef(checkOtp); checkOtpRef.current = checkOtp;
+  // [wave14a] PIN desligado pelo código do e-mail → mesmo caminho do login com token.
+  const onPinResetLoggedIn = useCallback(async (d) => {
+    if (phoneViaFirebaseRef.current) { fbSignOut(); }
+    await loginWithToken(d.token, d.email).catch(() => {});
+    if (!mountedRef.current) return;
+    clearSignupDraft();
+    hSuccess();
+    setPinResetOpen(false); setLockRequired(false); setLockPin(''); setLockChallenge('');
+    setIsNewAccount(false);
+    setAccountEmail(String(d.email || ''));
+    setAccountName(String(d.name || ''));
+    go('welcomeBack', 1);
+  }, [loginWithToken, go, mountedRef]);
 
   useSmsOtpAutofill(step === 'otp', (smsCode) => {
     setCode(smsCode);
@@ -673,7 +692,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     if (s === 'phone') {
       if (entry === 'welcome') go('welcome', -1);
       else exitToLogin();
-    } else if (s === 'otp') { setLockRequired(false); setLockPin(''); setCode(''); go('phone', -1); }
+    } else if (s === 'otp') { setLockRequired(false); setLockPin(''); setLockChallenge(''); setCode(''); go('phone', -1); }
     else if (s === 'profile') {
       if (params?.verify_token && params?.step === 'name') exitToLogin();
       else go('otp', -1);
@@ -931,6 +950,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
               accessibilityLabel={T('signupPhone.lockPinTitle', 'PIN de segurança')}
               onSubmitEditing={() => { if (lockPin.length >= 4) checkOtp(code); }}
             />
+            {!!lockChallenge && <ForgotLoginPinLink color={fg} onPress={() => { setError(''); setPinResetOpen(true); }} />}
           </View>
         )}
         {ErrorLine}
@@ -1298,6 +1318,14 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         />
       ) : null}
 
+      <LoginPinResetSheet
+        visible={pinResetOpen}
+        challenge={lockChallenge}
+        hasEmail={lockHasEmail}
+        onClose={() => setPinResetOpen(false)}
+        onChallengeExpired={() => { setLockRequired(false); setLockPin(''); setLockChallenge(''); setCode(''); }}
+        onLoggedIn={onPinResetLoggedIn}
+      />
       <CountryPicker
         visible={showCountry}
         onClose={() => setShowCountry(false)}

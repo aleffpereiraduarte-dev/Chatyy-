@@ -46,6 +46,7 @@ import { isNativeOnboardingOn } from '../components/nativeOnboarding/flag';
 import { ThreadKeyboardAvoider } from '../utils/threadKeyboard';
 import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
 import { SignupConsentBlock } from '../components/consent/ConsentOptions'; // [2026-10-13 consent-lgpd]
+import LoginPinResetSheet, { ForgotLoginPinLink } from '../components/settings/LoginPinResetSheet';
 import {
   loadSignupDraft, saveSignupDraft, clearSignupDraft, parsePhoneInput,
   usernameCandidates, usernameLocalError, sanitizeUsernameTyping, friendlyServerError,
@@ -213,6 +214,10 @@ function SignupPhoneLegacy() {
   // step then renders an extra PIN input below the OTP boxes. lockPin holds
   // the entered 4-6 digits.
   const [lockRequired, setLockRequired] = useState(false);
+  // [wave14a 2026-10-16] "Esqueci meu PIN" pré-login (desafio do requires_lock).
+  const [lockChallenge, setLockChallenge] = useState('');
+  const [lockHasEmail, setLockHasEmail] = useState(undefined);
+  const [pinResetOpen, setPinResetOpen] = useState(false);
   const [lockPin, setLockPin] = useState('');
   // Country picker modal (Telegram-stacked phone input). The picker shows the
   // full COUNTRIES list with a search box. Replaces the previous PhoneInput
@@ -621,6 +626,17 @@ function SignupPhoneLegacy() {
   // and auto-submit never worked for typed codes. The fresh digits are now
   // passed in; `_otpInFlightRef` blocks a double submit (auto + CTA tap).
   const _otpInFlightRef = useRef(false);
+  // [wave14a] PIN desligado pelo código do e-mail → mesmo fim do login com token.
+  const onPinResetLoggedIn = async (d) => {
+    if (phoneViaFirebaseRef.current) { fbSignOut(); }
+    await loginWithToken(d.token, d.email);
+    if (!mountedRef.current) return;
+    setPinResetOpen(false); setLockRequired(false); setLockPin(''); setLockChallenge('');
+    clearSignupDraft();
+    goStep('done');
+    _maybePromptRestoreThenGoChat();
+  };
+
   const checkOtp = async (codeArg) => {
     const code = typeof codeArg === 'string' ? codeArg : codeRef.current;
     if (code.length !== 6) return;
@@ -657,6 +673,7 @@ function SignupPhoneLegacy() {
         r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
       }
       if (!mountedRef.current) return;
+      if (r?.data?.requires_lock && r.data.lock_challenge) { setLockChallenge(String(r.data.lock_challenge)); setLockHasEmail(r.data.has_recovery_email); }
       // Account locked — show PIN gate and stop.
       if (r?.success && r.data?.requires_lock) {
         setLockRequired(true);
@@ -995,7 +1012,7 @@ function SignupPhoneLegacy() {
     }
     else if (step === 'otp')    {
       // Clear the PIN gate state so a fresh OTP doesn't see stale state.
-      setLockRequired(false); setLockPin('');
+      setLockRequired(false); setLockPin(''); setLockChallenge('');
       goStep('phone');
     }
     else if (step === 'name')   {
@@ -1541,6 +1558,7 @@ function SignupPhoneLegacy() {
                       secureTextEntry
                       autoFocus
                     />
+                    {!!lockChallenge && <ForgotLoginPinLink color={colors.primary} onPress={() => { setError(''); setPinResetOpen(true); }} />}
                   </View>
                 )}
 
@@ -2090,6 +2108,16 @@ function SignupPhoneLegacy() {
       )}
 
       </AuthCardWrap>
+
+      {/* [wave14a 2026-10-16] Esqueci meu PIN (pré-login) */}
+      <LoginPinResetSheet
+        visible={pinResetOpen}
+        challenge={lockChallenge}
+        hasEmail={lockHasEmail}
+        onClose={() => setPinResetOpen(false)}
+        onChallengeExpired={() => { setLockRequired(false); setLockPin(''); setLockChallenge(''); setCode(''); }}
+        onLoggedIn={onPinResetLoggedIn}
+      />
 
       {/* Avatar source picker (Android/Web fallback). iOS uses native
           ActionSheetIOS; this Modal handles every other platform. Same 3

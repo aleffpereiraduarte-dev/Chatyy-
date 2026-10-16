@@ -16,7 +16,10 @@ class ChatyyConversationListModule : Module() {
     //     por cima), `snapOffset` (snap do título grande) e `peekMode` ("peek" =
     //     prévia estilo Telegram no toque longo); dígitos rolando, ✓→✓✓, swipe
     //     com resistência/estalo.
-    Function("apiVersion") { 3 }
+    // 4 = [2026-10-16 topbar-hairline] vidro do topo recalculado após o layout
+    //     (antes ficava com hairline presa sob o header ao ligar o topInset).
+    //     O JS só liga o header sobreposto no Android com api >= 4.
+    Function("apiVersion") { 4 }
 
     View(ChatyyConversationListView::class) {
       Events(

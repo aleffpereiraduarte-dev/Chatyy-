@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Tutatuma msimbo kwa barua pepe ya urejeshaji ya akaunti hii. Kwa huo utazima PIN na kuingia.",
+  "twoStep.loginNoEmail": "Akaunti hii haina barua pepe ya urejeshaji. Ili kurejesha ufikiaji, wasiliana na usaidizi: {email}",
+  "twoStep.loginResetConfirm": "Zima PIN na uingie",
+  "twoStep.loginChallengeExpired": "Uthibitishaji umeisha muda. Rudi na uweke msimbo wa SMS tena.",
+  "chat.docsShort": "Hati",
+  "chatConv.mediaLinksDocs": "Midia, viungo na hati",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Kura za kura ya maoni",
   "chat.pollAnonymous": "Kura ya maoni isiyo na majina: hakuna anayeona nani alipigia chaguo lipi.",

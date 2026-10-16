@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Wyślemy kod na e-mail odzyskiwania tego konta. Dzięki niemu wyłączysz PIN i się zalogujesz.",
+  "twoStep.loginNoEmail": "To konto nie ma e-maila odzyskiwania. Aby odzyskać dostęp, skontaktuj się z pomocą: {email}",
+  "twoStep.loginResetConfirm": "Wyłącz PIN i zaloguj się",
+  "twoStep.loginChallengeExpired": "Weryfikacja wygasła. Wróć i wpisz ponownie kod SMS.",
+  "chat.docsShort": "Dok.",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Głosy w ankiecie",
   "chat.pollAnonymous": "Ankieta anonimowa: nikt nie widzi, kto głosował na którą opcję.",

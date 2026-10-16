@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "کدی به ایمیل بازیابی این حساب می‌فرستیم. با آن پین را خاموش می‌کنید و وارد می‌شوید.",
+  "twoStep.loginNoEmail": "این حساب ایمیل بازیابی ندارد. برای بازیابی دسترسی با پشتیبانی تماس بگیرید: {email}",
+  "twoStep.loginResetConfirm": "خاموش کردن پین و ورود",
+  "twoStep.loginChallengeExpired": "مهلت تأیید تمام شد. برگردید و کد پیامک را دوباره وارد کنید.",
+  "chat.docsShort": "اسناد",
+  "chatConv.mediaLinksDocs": "رسانه، پیوندها و اسناد",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "رأی‌های نظرسنجی",
   "chat.pollAnonymous": "نظرسنجی ناشناس: هیچ‌کس نمی‌بیند چه کسی به هر گزینه رأی داده است.",

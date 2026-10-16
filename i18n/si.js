@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "අපි මෙම ගිණුමේ ප්‍රතිසාධන ඊමේල් වෙත කේතයක් යවන්නෙමු. එයින් PIN අක්‍රිය කර ඇතුළු වන්න.",
+  "twoStep.loginNoEmail": "මෙම ගිණුමට ප්‍රතිසාධන ඊමේල් නැත. ප්‍රවේශය නැවත ලබා ගැනීමට සහාය අමතන්න: {email}",
+  "twoStep.loginResetConfirm": "PIN අක්‍රිය කර ඇතුළු වන්න",
+  "twoStep.loginChallengeExpired": "සත්‍යාපනය කල් ඉකුත් විය. ආපසු ගොස් SMS කේතය නැවත ඇතුළු කරන්න.",
+  "chat.docsShort": "ලේඛන",
+  "chatConv.mediaLinksDocs": "මාධ්‍ය, සබැඳි සහ ලේඛන",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "මත විමසුමේ ඡන්ද",
   "chat.pollAnonymous": "නිර්නාමික මත විමසුම: කවුරු කුමන විකල්පයට ඡන්දය දුන්නාදැයි කිසිවෙකුට නොපෙනේ.",

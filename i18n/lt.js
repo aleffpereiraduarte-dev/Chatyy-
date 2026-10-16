@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Išsiųsime kodą į šios paskyros atkūrimo el. paštą. Juo išjungsite PIN kodą ir prisijungsite.",
+  "twoStep.loginNoEmail": "Ši paskyra neturi atkūrimo el. pašto. Norėdami atgauti prieigą, susisiekite su pagalba: {email}",
+  "twoStep.loginResetConfirm": "Išjungti PIN ir prisijungti",
+  "twoStep.loginChallengeExpired": "Patvirtinimo laikas baigėsi. Grįžkite ir dar kartą įveskite SMS kodą.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Medija, nuorodos ir dokumentai",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Apklausos balsai",
   "chat.pollAnonymous": "Anoniminė apklausa: niekas nemato, kas už kurį variantą balsavo.",

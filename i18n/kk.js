@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Осы аккаунттың қалпына келтіру поштасына код жібереміз. Онымен PIN-ді өшіріп, кіресіз.",
+  "twoStep.loginNoEmail": "Бұл аккаунтта қалпына келтіру поштасы жоқ. Қолжетімділікті қалпына келтіру үшін қолдау қызметіне жазыңыз: {email}",
+  "twoStep.loginResetConfirm": "PIN-ді өшіріп кіру",
+  "twoStep.loginChallengeExpired": "Растау мерзімі бітті. Артқа оралып, SMS кодын қайта енгізіңіз.",
+  "chat.docsShort": "Құжат",
+  "chatConv.mediaLinksDocs": "Медиа, сілтемелер және құжаттар",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Сауалнама дауыстары",
   "chat.pollAnonymous": "Анонимді сауалнама: кім қай нұсқаға дауыс бергенін ешкім көрмейді.",

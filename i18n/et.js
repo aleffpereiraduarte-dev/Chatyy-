@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Saadame koodi selle konto taastemeilile. Sellega lülitad PIN-koodi välja ja logid sisse.",
+  "twoStep.loginNoEmail": "Sellel kontol pole taastemeili. Ligipääsu taastamiseks võta ühendust toega: {email}",
+  "twoStep.loginResetConfirm": "Lülita PIN välja ja logi sisse",
+  "twoStep.loginChallengeExpired": "Kinnitus aegus. Mine tagasi ja sisesta SMS-kood uuesti.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Meedia, lingid ja dokumendid",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Küsitluse hääled",
   "chat.pollAnonymous": "Anonüümne küsitlus: keegi ei näe, kes millise valiku poolt hääletas.",

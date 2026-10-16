@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "យើងនឹងផ្ញើលេខកូដទៅអ៊ីមែលស្ដារនៃគណនីនេះ។ ប្រើវាដើម្បីបិទ PIN ហើយចូល។",
+  "twoStep.loginNoEmail": "គណនីនេះគ្មានអ៊ីមែលស្ដារទេ។ ដើម្បីទទួលបានការចូលប្រើវិញ សូមទាក់ទងផ្នែកជំនួយ៖ {email}",
+  "twoStep.loginResetConfirm": "បិទ PIN ហើយចូល",
+  "twoStep.loginChallengeExpired": "ការផ្ទៀងផ្ទាត់បានផុតកំណត់។ ត្រឡប់ក្រោយ ហើយបញ្ចូលលេខកូដ SMS ម្ដងទៀត។",
+  "chat.docsShort": "ឯកសារ",
+  "chatConv.mediaLinksDocs": "មេឌៀ តំណ និងឯកសារ",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "សន្លឹកឆ្នោតនៃការស្ទង់មតិ",
   "chat.pollAnonymous": "ការស្ទង់មតិអនាមិក៖ គ្មាននរណាឃើញថាអ្នកណាបោះឆ្នោតជម្រើសណាទេ។",

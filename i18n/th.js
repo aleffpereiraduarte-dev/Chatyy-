@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "เราจะส่งรหัสไปยังอีเมลกู้คืนของบัญชีนี้ ใช้รหัสนั้นเพื่อปิด PIN และเข้าสู่ระบบ",
+  "twoStep.loginNoEmail": "บัญชีนี้ไม่มีอีเมลกู้คืน หากต้องการเข้าถึงอีกครั้ง โปรดติดต่อฝ่ายช่วยเหลือ: {email}",
+  "twoStep.loginResetConfirm": "ปิด PIN และเข้าสู่ระบบ",
+  "twoStep.loginChallengeExpired": "การยืนยันหมดอายุแล้ว ย้อนกลับแล้วป้อนรหัส SMS อีกครั้ง",
+  "chat.docsShort": "เอกสาร",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "ผลโหวตโพล",
   "chat.pollAnonymous": "โพลแบบไม่ระบุตัวตน: ไม่มีใครเห็นว่าใครโหวตตัวเลือกใด",

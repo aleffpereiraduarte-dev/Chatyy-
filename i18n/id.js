@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Kami akan mengirim kode ke email pemulihan akun ini. Dengan kode itu, Anda menonaktifkan PIN dan masuk.",
+  "twoStep.loginNoEmail": "Akun ini tidak memiliki email pemulihan. Untuk memulihkan akses, hubungi dukungan: {email}",
+  "twoStep.loginResetConfirm": "Nonaktifkan PIN dan masuk",
+  "twoStep.loginChallengeExpired": "Verifikasi kedaluwarsa. Kembali dan masukkan kode SMS lagi.",
+  "chat.docsShort": "Dok",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Suara polling",
   "chat.pollAnonymous": "Polling anonim: tidak ada yang bisa melihat siapa memilih opsi mana.",

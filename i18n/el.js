@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Θα στείλουμε έναν κωδικό στο email ανάκτησης αυτού του λογαριασμού. Με αυτόν απενεργοποιείτε το PIN και συνδέεστε.",
+  "twoStep.loginNoEmail": "Αυτός ο λογαριασμός δεν έχει email ανάκτησης. Για να ανακτήσετε την πρόσβαση, επικοινωνήστε με την υποστήριξη: {email}",
+  "twoStep.loginResetConfirm": "Απενεργοποίηση PIN και σύνδεση",
+  "twoStep.loginChallengeExpired": "Η επαλήθευση έληξε. Επιστρέψτε και εισαγάγετε ξανά τον κωδικό SMS.",
+  "chat.docsShort": "Έγγρ.",
+  "chatConv.mediaLinksDocs": "Πολυμέσα, σύνδεσμοι και έγγραφα",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Ψήφοι δημοσκόπησης",
   "chat.pollAnonymous": "Ανώνυμη δημοσκόπηση: κανείς δεν βλέπει ποιος ψήφισε κάθε επιλογή.",

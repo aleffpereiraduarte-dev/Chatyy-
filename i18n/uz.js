@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Ushbu akkauntning tiklash e-pochtasiga kod yuboramiz. U bilan PIN kodni o‘chirib, kirasiz.",
+  "twoStep.loginNoEmail": "Bu akkauntda tiklash e-pochtasi yo‘q. Kirishni tiklash uchun qo‘llab-quvvatlash xizmatiga yozing: {email}",
+  "twoStep.loginResetConfirm": "PIN kodni o‘chirib kirish",
+  "twoStep.loginChallengeExpired": "Tasdiqlash muddati tugadi. Orqaga qayting va SMS kodni qayta kiriting.",
+  "chat.docsShort": "Hujjat",
+  "chatConv.mediaLinksDocs": "Media, havolalar va hujjatlar",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "So‘rovnoma ovozlari",
   "chat.pollAnonymous": "Anonim so‘rovnoma: kim qaysi variantga ovoz berganini hech kim ko‘rmaydi.",

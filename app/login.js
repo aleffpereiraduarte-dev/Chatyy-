@@ -48,6 +48,7 @@ import { friendlyServerError } from '../components/signup/signupSmarts'; // [202
 import RememberedAccounts, { BiometricGlyph } from '../components/login/RememberedAccounts';
 import LoginNotice, { SuggestionChip } from '../components/login/LoginNotice';
 import LoginKeyboardScroll from '../components/login/LoginKeyboardScroll';
+import LoginPinResetSheet, { ForgotLoginPinLink } from '../components/settings/LoginPinResetSheet';
 import {
   classifyIdentifier, normalizeLoginEmail, isPlausibleEmail, identifierHints,
   suggestEmailFix, splitInternational, detectDefaultCountry, passwordHints,
@@ -413,6 +414,10 @@ export default function LoginScreen() {
   // when phoneRequiresLock is true; OTP step otherwise.
   const [phoneRequiresLock, setPhoneRequiresLock] = useState(false);
   const [phoneLockPin, setPhoneLockPin] = useState('');
+  // [wave14a 2026-10-16] "Esqueci meu PIN" pré-login (desafio do requires_lock).
+  const [phoneLockChallenge, setPhoneLockChallenge] = useState('');
+  const [phoneLockHasEmail, setPhoneLockHasEmail] = useState(undefined);
+  const [pinResetOpen, setPinResetOpen] = useState(false);
   const [phoneSending, setPhoneSending] = useState(false);
   const [phoneVerifying, setPhoneVerifying] = useState(false);
   const [phoneResendTimer, setPhoneResendTimer] = useState(0);
@@ -860,6 +865,7 @@ export default function LoginScreen() {
       setPhoneOtp(['', '', '', '', '', '']);
       setPhoneRequiresLock(false);
       setPhoneLockPin('');
+      setPhoneLockChallenge('');
       setOtpChannelNote('');
     }, -1);
   };
@@ -1635,6 +1641,23 @@ export default function LoginScreen() {
     } catch { return 'BR'; }
   };
 
+  // [wave14a] PIN desligado pelo código do e-mail → mesmo fim do login com token.
+  const handlePinResetLoggedIn = async (d) => {
+    const fullPhone = phoneCountryCode + phoneNumber.replace(/[^0-9]/g, '').replace(/^0+/, '');
+    if (phoneViaFirebaseRef.current) { fbSignOut(); }
+    await loginWithToken(d.token, d.email);
+    if (!mountedRef.current) return;
+    setPinResetOpen(false);
+    setPhoneRequiresLock(false);
+    setPhoneLockPin('');
+    setPhoneLockChallenge('');
+    saveLastIdentifier(fullPhone);
+    showSuccessPop();
+    setTimeout(() => {
+      if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), d.email);
+    }, 800);
+  };
+
   const handlePhoneVerifyOtp = async () => {
     safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     const code = phoneOtp.join('');
@@ -1678,6 +1701,7 @@ export default function LoginScreen() {
         r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
       }
       if (!mountedRef.current) return;
+      if (r?.data?.requires_lock && r.data.lock_challenge) { setPhoneLockChallenge(String(r.data.lock_challenge)); setPhoneLockHasEmail(r.data.has_recovery_email); }
       // Account has registration lock — show PIN input and stop here.
       if (r.success && r.data?.requires_lock) {
         setPhoneRequiresLock(true);
@@ -2559,6 +2583,7 @@ export default function LoginScreen() {
                                 secureTextEntry
                                 autoFocus
                               />
+                              {!!phoneLockChallenge && <ForgotLoginPinLink color={colors.primary} onPress={() => { setError(''); setPinResetOpen(true); }} />}
                             </View>
                           )}
 
@@ -3010,6 +3035,16 @@ export default function LoginScreen() {
         <_lzLoginModals.PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
         <_lzLoginModals.TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
       </> : null}
+
+      {/* [wave14a 2026-10-16] Esqueci meu PIN (pré-login) */}
+      <LoginPinResetSheet
+        visible={pinResetOpen}
+        challenge={phoneLockChallenge}
+        hasEmail={phoneLockHasEmail}
+        onClose={() => setPinResetOpen(false)}
+        onChallengeExpired={() => { setPhoneRequiresLock(false); setPhoneLockPin(''); setPhoneLockChallenge(''); setPhoneOtp(['', '', '', '', '', '']); }}
+        onLoggedIn={handlePinResetLoggedIn}
+      />
 
       {/* Country code picker modal */}
       {/* [2026-10-11 android-back] sem onRequestClose o Voltar do Android não fechava o seletor */}

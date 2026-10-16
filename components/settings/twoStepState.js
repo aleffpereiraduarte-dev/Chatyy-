@@ -127,3 +127,14 @@ export function twoStepResetRequest() {
 export function twoStepResetConfirm(code) {
   return apiCall('reset_2fa_confirm', { code: String(code || '') }, 'POST');
 }
+
+// [wave14a 2026-10-16] "Esqueci meu PIN" PRÉ-LOGIN (tela de PIN do login por
+// telefone). Sem sessão: o desafio (lock_challenge) vem do requires_lock do
+// phone_login_verify/phone_login_firebase. Confirmar desliga o PIN e devolve o
+// login ({token, email, name}). Desafio inválido/expirado → 403 {challenge_invalid}.
+export function loginPinResetRequest(challenge) {
+  return apiCall('login_2fa_reset_request', { lock_challenge: String(challenge || '') }, 'POST');
+}
+export function loginPinResetConfirm(challenge, code) {
+  return apiCall('login_2fa_reset_confirm', { lock_challenge: String(challenge || ''), code: String(code || '') }, 'POST');
+}

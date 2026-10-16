@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Pošleme kód na obnovovací e-mail tohoto účtu. S ním vypnete PIN a přihlásíte se.",
+  "twoStep.loginNoEmail": "Tento účet nemá obnovovací e-mail. Pro obnovení přístupu kontaktujte podporu: {email}",
+  "twoStep.loginResetConfirm": "Vypnout PIN a přihlásit se",
+  "twoStep.loginChallengeExpired": "Ověření vypršelo. Vraťte se a zadejte kód z SMS znovu.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Média, odkazy a dokumenty",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Hlasy v anketě",
   "chat.pollAnonymous": "Anonymní anketa: nikdo nevidí, kdo hlasoval pro kterou možnost.",

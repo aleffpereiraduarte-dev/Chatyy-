@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "נשלח קוד לאימייל השחזור של החשבון הזה. בעזרתו תכבו את קוד ה-PIN ותתחברו.",
+  "twoStep.loginNoEmail": "לחשבון הזה אין אימייל שחזור. כדי לשחזר את הגישה, פנו לתמיכה: {email}",
+  "twoStep.loginResetConfirm": "כיבוי PIN והתחברות",
+  "twoStep.loginChallengeExpired": "תוקף האימות פג. חזרו והזינו שוב את קוד ה-SMS.",
+  "chat.docsShort": "מסמכים",
+  "chatConv.mediaLinksDocs": "מדיה, קישורים ומסמכים",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "הצבעות בסקר",
   "chat.pollAnonymous": "סקר אנונימי: אף אחד לא רואה מי הצביע לכל אפשרות.",

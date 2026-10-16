@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "ఈ ఖాతా రికవరీ ఇమెయిల్‌కు కోడ్ పంపుతాం. దానితో PIN ఆఫ్ చేసి లాగిన్ అవ్వండి.",
+  "twoStep.loginNoEmail": "ఈ ఖాతాకు రికవరీ ఇమెయిల్ లేదు. యాక్సెస్ తిరిగి పొందడానికి సపోర్ట్‌ను సంప్రదించండి: {email}",
+  "twoStep.loginResetConfirm": "PIN ఆఫ్ చేసి లాగిన్ అవ్వండి",
+  "twoStep.loginChallengeExpired": "ధృవీకరణ గడువు ముగిసింది. వెనక్కి వెళ్లి SMS కోడ్‌ను మళ్లీ నమోదు చేయండి.",
+  "chat.docsShort": "పత్రాలు",
+  "chatConv.mediaLinksDocs": "మీడియా, లింక్‌లు, పత్రాలు",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "పోల్ ఓట్లు",
   "chat.pollAnonymous": "అనామక పోల్: ఎవరు ఏ ఎంపికకు ఓటు వేశారో ఎవరూ చూడలేరు.",

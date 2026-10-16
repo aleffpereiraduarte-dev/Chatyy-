@@ -420,7 +420,12 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       // Ligou/desligou longe do topo: o conteúdo fica parado na tela.
       recycler.post { recycler.scrollBy(0, -delta) }
     }
-    updateTopBar()
+    // [2026-10-16 topbar-hairline] NÃO calcular aqui: o padding acabou de mudar
+    // e o RecyclerView ainda não refez o layout (v.top velho → rel = topInset →
+    // progresso 1 → hairline + vidro "presos" sob o header com o título grande
+    // na tela; sem scroll nada recalculava). Recalcula depois do layout (e o
+    // onDrawOver abaixo mantém em dia a cada quadro).
+    recycler.post { onListScrolled() }
   }
 
   fun setSnapOffset(v: Double) {
@@ -564,18 +569,23 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   /** Quanto o topo da lista (header RN) já rolou para cima; enorme se saiu da tela. */
   private fun headerOffsetPx(): Int {
     val first = layoutManager.findFirstVisibleItemPosition()
+    if (first == RecyclerView.NO_POSITION) return 0 // ainda sem layout: trata como topo
     if (first != 0) return Int.MAX_VALUE / 2
     val v = layoutManager.findViewByPosition(0) ?: return 0
     return recycler.paddingTop - v.top
   }
 
-  private fun updateTopBar() {
-    if (topInsetPx <= 0) return
+  private fun updateTopBarProgress() {
     val rel = headerOffsetPx().toFloat()
     val c = collapseOffsetDp * density
     val start = c * 0.45f
     val span = max(8f * density, c - start)
     topBar.setProgress((rel - start) / span)
+  }
+
+  private fun updateTopBar() {
+    if (topInsetPx <= 0) return
+    updateTopBarProgress()
     topBar.contentChanged()
   }
 
@@ -1320,7 +1330,11 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     // Animações de itens (sobe/desce) também mudam o que fica sob o vidro.
     recycler.addItemDecoration(object : RecyclerView.ItemDecoration() {
       override fun onDrawOver(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
-        if (topInsetPx > 0 && parent.itemAnimator?.isRunning == true) topBar.contentChanged()
+        if (topInsetPx <= 0 || topBar.recording) return
+        // [2026-10-16 topbar-hairline] progresso do vidro sempre do layout atual
+        // (padding/altura do header mudam sem evento de scroll).
+        updateTopBarProgress()
+        if (parent.itemAnimator?.isRunning == true) topBar.contentChanged()
       }
     })
     setBackgroundColor(theme.bg)

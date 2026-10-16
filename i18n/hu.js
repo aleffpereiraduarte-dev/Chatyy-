@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Kódot küldünk a fiók helyreállítási e-mail-címére. Ezzel kikapcsolod a PIN-kódot és belépsz.",
+  "twoStep.loginNoEmail": "Ennek a fióknak nincs helyreállítási e-mail-címe. A hozzáférés visszaszerzéséhez fordulj az ügyfélszolgálathoz: {email}",
+  "twoStep.loginResetConfirm": "PIN kikapcsolása és belépés",
+  "twoStep.loginChallengeExpired": "Az ellenőrzés lejárt. Lépj vissza, és add meg újra az SMS-kódot.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Média, linkek és dokumentumok",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Szavazás eredménye",
   "chat.pollAnonymous": "Névtelen szavazás: senki sem látja, ki melyik lehetőségre szavazott.",

@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "ഈ അക്കൗണ്ടിന്റെ റിക്കവറി ഇമെയിലിലേക്ക് ഒരു കോഡ് അയയ്ക്കും. അതുപയോഗിച്ച് PIN ഓഫാക്കി ലോഗിൻ ചെയ്യാം.",
+  "twoStep.loginNoEmail": "ഈ അക്കൗണ്ടിന് റിക്കവറി ഇമെയിൽ ഇല്ല. ആക്‌സസ് വീണ്ടെടുക്കാൻ പിന്തുണയുമായി ബന്ധപ്പെടുക: {email}",
+  "twoStep.loginResetConfirm": "PIN ഓഫാക്കി ലോഗിൻ ചെയ്യുക",
+  "twoStep.loginChallengeExpired": "പരിശോധനയുടെ കാലാവധി കഴിഞ്ഞു. തിരികെ പോയി SMS കോഡ് വീണ്ടും നൽകുക.",
+  "chat.docsShort": "ഡോക്സ്",
+  "chatConv.mediaLinksDocs": "മീഡിയ, ലിങ്കുകൾ, ഡോക്സ്",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "പോളിലെ വോട്ടുകൾ",
   "chat.pollAnonymous": "അജ്ഞാത പോൾ: ആര് ഏത് ഓപ്ഷന് വോട്ട് ചെയ്തെന്ന് ആർക്കും കാണാനാകില്ല.",

@@ -13711,6 +13711,9 @@ function ChatConversationInner() {
 
   // Search within conversation
   const [showSearchBar, setShowSearchBar] = _useStateT(false);
+  // [wave14a 2026-10-16] altura da barra de busca (+ painel de filtros) → a pílula de data JS desce abaixo dela.
+  const [searchBarH, setSearchBarH] = _useStateT(0);
+  const [searchFiltersH, setSearchFiltersH] = _useStateT(0);
   const [searchQuery, setSearchQuery] = _useStateT('');
   const [searchResults, setSearchResults] = _useStateT([]);
   const [searchIdx, setSearchIdx] = _useStateT(0);
@@ -34046,7 +34049,7 @@ function ChatConversationInner() {
       {/* Search within conversation */}
       {showSearchBar && (
         <>
-          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
+          <View onLayout={(e) => { const h = Math.round(e?.nativeEvent?.layout?.height || 0); if (h !== searchBarH) setSearchBarH(h); }} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
             <TextInput
               ref={searchInputRef}
               value={searchQuery}
@@ -34091,7 +34094,7 @@ function ChatConversationInner() {
 
           {/* ★ Search filters modal */}
           {showSearchBar === 'filters' && (
-            <View style={{ backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 12, gap: 12 }}>
+            <View onLayout={(e) => { const h = Math.round(e?.nativeEvent?.layout?.height || 0); if (h !== searchFiltersH) setSearchFiltersH(h); }} style={{ backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 12, gap: 12 }}>
               <View>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>Type</Text>
                 <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
@@ -35449,7 +35452,7 @@ function ChatConversationInner() {
         <Animated.View
           pointerEvents="none"
           style={{
-            position: 'absolute', top: (insets?.top || 0) + 56 + 8, alignSelf: 'center', zIndex: 100,
+            position: 'absolute', top: (insets?.top || 0) + 56 + 8 + (showSearchBar ? ((searchBarH || 46) + (showSearchBar === 'filters' ? searchFiltersH : 0)) : 0), alignSelf: 'center', zIndex: 100,
             opacity: floatingDateOpacity,
           }}
         >

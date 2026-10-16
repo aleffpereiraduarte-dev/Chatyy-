@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Vi sender en kode til kontoens gendannelsesmail. Med den slår du pinkoden fra og logger ind.",
+  "twoStep.loginNoEmail": "Denne konto har ingen gendannelsesmail. Kontakt support for at få adgang igen: {email}",
+  "twoStep.loginResetConfirm": "Slå pinkode fra og log ind",
+  "twoStep.loginChallengeExpired": "Bekræftelsen er udløbet. Gå tilbage, og indtast sms-koden igen.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Medier, links og dokumenter",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Stemmer i afstemningen",
   "chat.pollAnonymous": "Anonym afstemning: ingen kan se, hvem der stemte på hver mulighed.",

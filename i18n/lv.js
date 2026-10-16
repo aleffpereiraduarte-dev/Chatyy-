@@ -1,4 +1,11 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Mēs nosūtīsim kodu uz šī konta atkopšanas e-pastu. Ar to izslēgsiet PIN un pieteiksieties.",
+  "twoStep.loginNoEmail": "Šim kontam nav atkopšanas e-pasta. Lai atgūtu piekļuvi, sazinieties ar atbalstu: {email}",
+  "twoStep.loginResetConfirm": "Izslēgt PIN un pieteikties",
+  "twoStep.loginChallengeExpired": "Verifikācijas termiņš beidzās. Atgriezieties un vēlreiz ievadiet SMS kodu.",
+  "chat.docsShort": "Dok.",
+  "chatConv.mediaLinksDocs": "Multivide, saites un dokumenti",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Aptaujas balsis",
   "chat.pollAnonymous": "Anonīma aptauja: neviens neredz, kurš par kuru variantu balsoja.",

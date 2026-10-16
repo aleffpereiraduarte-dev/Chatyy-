@@ -1,4 +1,10 @@
 export default {
+  // [wave14a 2026-10-16] Esqueci meu PIN no login + aba Docs da galeria
+  "twoStep.loginForgotBody": "Chúng tôi sẽ gửi mã đến email khôi phục của tài khoản này. Dùng mã để tắt PIN và đăng nhập.",
+  "twoStep.loginNoEmail": "Tài khoản này không có email khôi phục. Để lấy lại quyền truy cập, hãy liên hệ hỗ trợ: {email}",
+  "twoStep.loginResetConfirm": "Tắt PIN và đăng nhập",
+  "twoStep.loginChallengeExpired": "Xác minh đã hết hạn. Hãy quay lại và nhập lại mã SMS.",
+  "chat.docsShort": "Tài liệu",
   // [wave13e 2026-10-16] Ver votos (enquete) + Esqueci meu PIN por e-mail
   "chat.pollVotesTitle": "Phiếu bầu của cuộc thăm dò",
   "chat.pollAnonymous": "Thăm dò ẩn danh: không ai thấy ai đã bầu cho lựa chọn nào.",
