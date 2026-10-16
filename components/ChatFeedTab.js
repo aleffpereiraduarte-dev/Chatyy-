@@ -361,7 +361,7 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
             <TouchableOpacity
               onPress={() => { try { require('./status/statusRingStore').requestTextStatusComposer(requestNewStatus); } catch {} }}
               activeOpacity={0.75}
-              style={{ alignItems: 'center', width: 64 }}
+              style={{ alignItems: 'center', width: 64, display: 'none' /* [2026-10-16] founder: texto fica dentro do + (modo TEXTO da câmera), não na home */ }}
               accessibilityRole="button"
               accessibilityLabel={t?.('statusTab.newTextStatus') || 'Novo status de texto'}
             >

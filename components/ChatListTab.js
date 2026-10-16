@@ -2922,7 +2922,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             try { require('./status/statusRingStore').requestTextStatusComposer(requestNewStatus); } catch {}
           }}
           activeOpacity={0.7}
-          style={{ alignItems: 'center', width: 64 }}
+          style={{ alignItems: 'center', width: 64, display: 'none' /* [2026-10-16] founder: texto fica dentro do + (modo TEXTO da câmera), não na home */ }}
           accessibilityRole="button"
           accessibilityLabel={t('statusTab.newTextStatus')}
           testID="status-strip-text"
