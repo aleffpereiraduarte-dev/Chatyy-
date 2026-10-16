@@ -329,7 +329,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
       const g = globalThis.__chatyy_apps_native_sheet;
       if (g === true || g === false) return g;
     } catch {}
-    return Platform.OS === 'ios' && nativeSheetBoundedOn();
+    return false; // [2026-10-16 hotfix] modal próprio (folha nativa cortava no 697)
   })();
   const _winH = Dimensions.get('window').height || 800;
   const [mounted, setMounted] = useState(!!visible);

@@ -86,6 +86,8 @@ export function nativeSheetBoundedOn() {
     if (g === true) return true;
     if (g === false) return false;
   } catch {}
+  // [2026-10-16 hotfix] build 697: folha "bounded" cortava o conteúdo no meio (painel Apps) → opt-in até corrigir.
+  if (true) return false;
   if (_boundedBin == null) {
     try {
       const m = require('../modules/expo-chat-composer');
