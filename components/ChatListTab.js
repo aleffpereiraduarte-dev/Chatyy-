@@ -31,7 +31,7 @@ import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconFolder, IconArrowRight } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconFolder, IconArrowRight, IconPencil } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -2914,6 +2914,27 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           </Text>
         </TouchableOpacity>
 
+        {/* [status-texto 2026-10-16] Founder: "no status coloca a opção de escrever
+            sem foto também". Atalho direto p/ o status de TEXTO (lápis do
+            WhatsApp) — antes só existia dentro da câmera. */}
+        <TouchableOpacity
+          onPress={() => {
+            try { require('./status/statusRingStore').requestTextStatusComposer(requestNewStatus); } catch {}
+          }}
+          activeOpacity={0.7}
+          style={{ alignItems: 'center', width: 64 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('statusTab.newTextStatus')}
+          testID="status-strip-text"
+        >
+          <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1C1C1E' : '#F2F2F7', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)' }}>
+            <IconPencil size={22} color={colors.text} />
+          </View>
+          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 7, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
+            {t('status.text.openEditor')}
+          </Text>
+        </TouchableOpacity>
+
         {/* Live-only entries — broadcasters with no current status. Painted
             with the red AO VIVO ring + tap routes to /live-viewer. Prepended
             so they always sit at the head of the strip (after Your Story). */}
@@ -3277,8 +3298,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               setShowCustomCamera(false);
               setTimeout(() => {
                 try {
-                  const R = require('./status/statusRingStore');
-                  if (!R.openTextStatusComposer()) { try { requestNewStatus?.(); } catch {} setTimeout(() => { try { R.openTextStatusComposer(); } catch {} }, 900); }
+                  require('./status/statusRingStore').requestTextStatusComposer(requestNewStatus);
                 } catch {}
               }, Platform.OS === 'ios' ? 450 : 0);
             }}
@@ -8605,6 +8625,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   _ntbCbRef.current = onNativeTopBar;
   useEffect(() => {
     try { _ntbCbRef.current?.(!!_nativeTopBarOn); } catch {}
+    if (_nativeTopBarOn) { try { require('../services/nativeTelemetry').noteNativeMount('topbar'); } catch {} } // [android-wave8] cobertura
   }, [_nativeTopBarOn]);
   useEffect(() => () => { try { _ntbCbRef.current?.(false); } catch {} }, []);
   const _onNativeHomeFailure = useCallback((msg) => {

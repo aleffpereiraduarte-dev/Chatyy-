@@ -34,6 +34,9 @@ const PROBE_MODULES = [
   'ChatyyMessageList', 'ChatyyChatStore', 'ChatyyChatCore', 'ChatyyTransport', 'ChatyyReelsFeed',
   'ChatyyPhotosGrid', 'ChatyyMapView', 'ChatyyContextMenuView', 'ChatyyNotifActions', 'ChatyyTransfer',
   'ExpoNativeChatView', 'ExpoNativeToolkit', 'ExpoNativeAudio', 'ExpoLiveNative', 'ExpoShorts',
+  // [2026-10-16 android-wave8] módulos das levas 7/8 — valor = apiVersion (0 = ausente)
+  'ChatyyConversationList', 'ChatyyPinnedStrip', 'ChatyyRowZoom', 'ChatyyEmojiPanel',
+  'ChatyyInAppBanner', 'ChatyyMediaGrid', 'ChatyyComposer',
 ];
 // flags globais de fallback já usadas pelas telas (ErrorBoundary → JS)
 const FAILED_FLAGS = [
@@ -226,9 +229,16 @@ function _probeModules() {
     const { requireOptionalNativeModule } = require('expo-modules-core');
     if (typeof requireOptionalNativeModule !== 'function') return out;
     for (const m of PROBE_MODULES) {
-      let ok = false;
-      try { ok = !!requireOptionalNativeModule(m); } catch {}
-      out[m] = ok ? 1 : 0;
+      let v = 0;
+      try {
+        const mod = requireOptionalNativeModule(m);
+        if (mod) {
+          v = 1;
+          // apiVersion quando o módulo expõe (lista de conversas 3, figurinhas 2…)
+          try { if (typeof mod.apiVersion === 'function') v = Math.max(1, Number(mod.apiVersion()) || 1); } catch {}
+        }
+      } catch {}
+      out[m] = v;
     }
   } catch {}
   return out;

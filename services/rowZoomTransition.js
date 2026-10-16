@@ -110,6 +110,23 @@ function _shellLikely(acct, id, unread) {
   } catch { return false; }
 }
 
+// [2026-10-16 android-wave8] telemetria (native_coverage.fb.row_zoom = 1º motivo
+// de pular) — Android não mostrava a transição e não havia como saber por quê.
+function _rzSkip(reason) {
+  try { require('./nativeTelemetry').noteNativeFallback('row_zoom', reason); } catch {}
+  return false;
+}
+function _shellOffReason() {
+  try {
+    const cs = require('./convShell');
+    if (!cs.lightShellEnabled()) {
+      try { if (!require('../components/chat/nativeThreadList').isNativeThreadListAvailable()) return 'shell_off:list'; } catch {}
+      return 'shell_off';
+    }
+    return 'no_shell_rec';
+  } catch { return 'shell_err'; }
+}
+
 /**
  * Abre a conversa crescendo a partir da linha. Devolve true se assumiu (ela
  * mesma chama `open()` — já, ou depois do overlay); false = o chamador abre.
@@ -118,14 +135,17 @@ function _shellLikely(acct, id, unread) {
  */
 export function openWithRowZoom(id, opts = {}) {
   const hint = _takeHint(id);
-  if (!hint || typeof opts.open !== 'function') return false;
-  if (!rowZoomEnabled() || _tabletSplit()) return false;
+  if (!hint || typeof opts.open !== 'function') return _rzSkip('no_hint');
+  if (!rowZoomEnabled()) return _rzSkip(_mod() ? 'kill' : 'no_module');
+  if (_tabletSplit()) return _rzSkip('tablet');
   if (_pending && !_pending.done) return false;
   if (_alreadyInStack(id)) return false;
-  if (!_shellLikely(opts.acct, id, opts.unread)) return false;
+  if (Number(opts.unread) > 0 && _killState() !== 'always') return _rzSkip('unread');
+  if (!_shellLikely(opts.acct, id, opts.unread)) return _rzSkip(_shellOffReason());
   const mod = _mod();
-  if (!mod || typeof mod.begin !== 'function') return false;
+  if (!mod || typeof mod.begin !== 'function') return _rzSkip('no_begin');
   _ensureSub(mod);
+  try { require('./nativeTelemetry').noteNativeMount('row_zoom'); } catch {}
 
   let decided = false;
   const fallback = () => {

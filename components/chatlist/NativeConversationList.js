@@ -311,6 +311,7 @@ function NativeConversationListInner(props) {
         setResyncToken(v => v + 1);
       },
       onFirstPaint: () => {
+        try { require('../../services/nativeTelemetry').noteNativeMount(_clApiVersion() >= 3 ? 'home3' : 'home'); } catch {} // [android-wave8] cobertura
         try { propsRef.current.onFirstPaint?.(); } catch {}
       },
       onNativeError: (e) => {

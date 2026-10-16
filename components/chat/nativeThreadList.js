@@ -1270,12 +1270,38 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer };
   const failRef = useRef(false);
 
+  // [2026-10-16 android-wave8] applyRows rejeitado porque a view nativa já
+  // saiu (casca leve trocada pela lista cheia, conversa fechada) ou ainda não
+  // foi registrada ("Unable to find … view with tag N" no Android, "1st
+  // argument" no iOS) NÃO é falha da lista: antes desligava a lista nativa
+  // pela sessão inteira (telemetria b=662/b=697: fb native_list). Agora:
+  // desmontada → ignora; montada → reenvia tudo no próximo frame (até 4x).
+  const aliveRef = useRef(true);
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
+  const [applyRetry, setApplyRetry] = useState(0);
+  const applyRetryRef = useRef(0);
+
   const fail = useCallback((reason) => {
     if (failRef.current) return;
     failRef.current = true;
     disableNativeThreadListForSession(reason);
     try { cbRef.current.onFallback && cbRef.current.onFallback(reason); } catch {}
   }, []);
+  const onApplyError = useCallback((e, view, prefix) => {
+    const msg = String((e && e.message) || e || '');
+    const stale = /Unable to find|view with tag|1st argument|No view found|not found for tag/i.test(msg);
+    if (stale) {
+      if (!aliveRef.current || nativeRef.current !== view) return;
+      if (applyRetryRef.current < 4) {
+        applyRetryRef.current += 1;
+        sentRef.current = { ...sentRef.current, keys: [], json: new Map() };
+        const n = applyRetryRef.current;
+        setTimeout(() => { if (aliveRef.current) setApplyRetry(n); }, 16 * n * n);
+        return;
+      }
+    }
+    fail(prefix + msg);
+  }, [fail]);
 
   // ctxRev: qualquer troca de ctx (tema, seleção, idioma) renormaliza tudo.
   const ctxRevRef = useRef({ ctx: null, rev: 0 });
@@ -1330,11 +1356,13 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     sent.json = nextJson;
     try {
       const p = view.applyRows(payload);
-      if (p && typeof p.catch === 'function') p.catch((e) => fail('apply:' + (e?.message || e)));
+      if (p && typeof p.then === 'function') {
+        p.then(() => { applyRetryRef.current = 0; }, (e) => onApplyError(e, view, 'apply:'));
+      }
     } catch (e) {
-      fail('apply-throw:' + (e?.message || e));
+      onApplyError(e, view, 'apply-throw:');
     }
-  }, [data, ctx, ctxRev, keyOf, Native, fail]);
+  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, applyRetry]);
 
   // [native-media-dl] política atualizada + view registrada p/ setTransfers +
   // progresso dos downloads do JS (mediaCache) pintando o MESMO anel nativo.
