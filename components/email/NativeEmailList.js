@@ -51,7 +51,7 @@ const _offline = _lazy(() => require('../../services/offlineCache'));
 
 function _haptic(kind) {
   try {
-    const H = require('expo-haptics');
+    const H = require('../../services/haptics').HapticsCompat;
     if (kind === 'light') H.impactAsync(H.ImpactFeedbackStyle.Light).catch(() => {});
     else if (kind === 'warn') H.notificationAsync(H.NotificationFeedbackType.Warning).catch(() => {});
     else H.impactAsync(H.ImpactFeedbackStyle.Medium).catch(() => {});

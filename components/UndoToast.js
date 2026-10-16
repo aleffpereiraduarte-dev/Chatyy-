@@ -4,6 +4,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, Overlay, OverlayShadow, overlayColors } from '../constants/theme';
 import { IconUndo, IconX } from './Icons';
+import { isReduceMotionEnabled } from './reducedMotion'; // [2026-10-16 motion-telegram]
+import { haptics } from '../services/haptics';
 
 export default function UndoToast({ action, onUndo, onDismiss }) {
   const { colors, isDark } = useTheme();
@@ -17,13 +19,20 @@ export default function UndoToast({ action, onUndo, onDismiss }) {
   useEffect(() => {
     if (action) {
       progressAnim.setValue(1);
-      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 80, friction: 10 }).start();
+      // [2026-10-16 motion-telegram] Mola do design system (Overlay.spring, a
+      // mesma do Toast/Sheet) em vez de tension 80/friction 10 (balançava);
+      // Reduzir Movimento = aparece seco. Haptic leve canônico ('toast').
+      if (isReduceMotionEnabled()) slideAnim.setValue(0);
+      else Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, ...Overlay.spring }).start();
+      try { haptics.toast?.(); } catch {}
       // Auto-dismiss quando a barra chegar ao fim — antes o pai precisava
       // observar o tempo manualmente e o toast podia ficar pendurado.
-      Animated.timing(progressAnim, { toValue: 0, duration: 5000, useNativeDriver: false })
+      // [2026-10-16 motion-telegram] barra de progresso via scaleX no native
+      // driver (antes width % no JS = 300 frames de JS por toast).
+      Animated.timing(progressAnim, { toValue: 0, duration: 5000, useNativeDriver: Platform.OS !== 'web' })
         .start(({ finished }) => { if (finished) onDismiss?.(); });
     } else {
-      Animated.timing(slideAnim, { toValue: 80, duration: 200, useNativeDriver: true }).start();
+      Animated.timing(slideAnim, { toValue: 80, duration: Overlay.exitMs, useNativeDriver: true }).start();
     }
   }, [action, onDismiss]);
 
@@ -50,7 +59,9 @@ export default function UndoToast({ action, onUndo, onDismiss }) {
       </TouchableOpacity>
       <Animated.View style={[s.progress, {
         backgroundColor: oc.toastText,
-        width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+        right: 0,
+        transformOrigin: 'left',
+        transform: [{ scaleX: progressAnim }],
       }]} />
     </Animated.View>
   );

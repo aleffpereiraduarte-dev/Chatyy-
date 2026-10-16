@@ -470,10 +470,20 @@ function ChatHub() {
   // o /chat virar tela com header do RNS + abas internas viradas rotas — refactor
   // grande; isto é o equivalente fiel sem tocar na estrutura.
   const LIST_LARGE_TITLE = Platform.OS !== 'web';
-  const chatTitleAnim = useRef(new Animated.Value(0)).current;
-  const onChatTitleCollapse = useCallback((collapsed) => {
-    Animated.timing(chatTitleAnim, { toValue: collapsed ? 1 : 0, duration: 160, useNativeDriver: true }).start();
-  }, [chatTitleAnim]);
+  // [2026-10-16 motion-telegram] Conversas usa a MESMA mola (e Reduzir
+  // Movimento) do título compacto de Ligações/Status — antes timing 160ms linear.
+  const [chatTitleAnim, onChatTitleCollapse] = useCollapsedTitleAnim();
+  // Título compacto sobe 6px enquanto aparece (Telegram/UINavigationBar) — só
+  // transform/opacity no native driver, interpolação memoizada por valor.
+  const _ctMotionCache = useRef(new Map()).current;
+  const _compactTitleMotion = (anim) => {
+    let st = _ctMotionCache.get(anim);
+    if (!st) {
+      st = { opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [6, 0], extrapolate: 'clamp' }) }] };
+      _ctMotionCache.set(anim, st);
+    }
+    return st;
+  };
   // [2026-10-15 nav-motion] Mesmo título grande colapsável nas abas Ligações e
   // Status (components/LargeTitleHeader.js). Cada aba tem o seu valor (o
   // scroll de cada uma é preservado ao trocar de aba).
@@ -1431,7 +1441,7 @@ function ChatHub() {
             aparecem quando o título grande passa por baixo do header. */}
         {!!_ltTab && (
           <>
-            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, { opacity: _ltTab === 'calls' ? callsTitleAnim : statusTitleAnim }]}>
+            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, _compactTitleMotion(_ltTab === 'calls' ? callsTitleAnim : statusTitleAnim)]}>
               <Text numberOfLines={1} style={[styles.compactTitle, { color: colors.text }]}>{titles[_ltTab]}</Text>
             </Animated.View>
             <Animated.View
@@ -1442,7 +1452,7 @@ function ChatHub() {
         )}
         {LIST_LARGE_TITLE && activeTab === 'chats' && (
           <>
-            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, { opacity: chatTitleAnim }]}>
+            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, _compactTitleMotion(chatTitleAnim)]}>
               <SyncStatusTitle
                 title={titles.chats}
                 align="center"

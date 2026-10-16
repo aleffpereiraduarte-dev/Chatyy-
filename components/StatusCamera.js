@@ -56,7 +56,7 @@ import FastImage from './FastImage'; // [2026-10-15 status-cam] expo-image carre
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../services/haptics').HapticsCompat; } catch {}
 const haptic = (kind) => {
   if (!_Haptics) return;
   try {

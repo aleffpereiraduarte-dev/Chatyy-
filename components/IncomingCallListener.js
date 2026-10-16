@@ -1899,7 +1899,7 @@ function IncomingCallListenerWeb() {
     }
     // [WAVE 104F] Telemetry tap.
     try { const _c = callStateRef.current || call; _callDiagAppend('info', 'incoming call accepted by user', { call_id: _c?.call_id || _c?.room_id, caller: _c?.caller_email }); } catch {}
-    try { if (Platform.OS !== 'web') { const H = require('expo-haptics'); H.impactAsync?.(H.ImpactFeedbackStyle.Medium); } } catch {}
+    try { if (Platform.OS !== 'web') { const H = require('../services/haptics').HapticsCompat; H.impactAsync?.(H.ImpactFeedbackStyle.Medium); } } catch {}
     handlingRef.current = true;
     acceptedRef.current = true; // MUST be set before callKeep.endCall triggers onEnd
 

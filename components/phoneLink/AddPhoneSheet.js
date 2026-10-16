@@ -22,6 +22,7 @@ import { IconX, IconCheck, IconChevronDown, IconSmartphone, IconArrowLeft } from
 import CountryPicker from '../nativeOnboarding/CountryPicker';
 import FlagIcon from '../nativeOnboarding/FlagIcon';
 import OtpCells from '../nativeOnboarding/OtpCells';
+import { fitPhoneFontSize, textEm } from '../nativeOnboarding/phoneFit';
 
 function _deviceRegion() {
   try { return Localization.getLocales?.()[0]?.regionCode || Localization.region || 'BR'; } catch { return 'BR'; }
@@ -47,6 +48,7 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
   const [countdown, setCountdown] = useState(0);
   const [showCountry, setShowCountry] = useState(false);
   const [errTick, setErrTick] = useState(0);
+  const [rowW, setRowW] = useState(0); // [2026-10-16 onb-phone-fit]
   const otpRef = useRef(null);
   const aliveRef = useRef(true);
   const inFlight = useRef(false);
@@ -57,6 +59,11 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
   const fullPhone = useMemo(() => toE164(country.dial, phone), [country, phone]);
   const minDigits = Math.max(8, (country.maxDigits || 11) - 1);
   const phoneValid = digits.length >= minDigits && E164_RE.test(fullPhone);
+  // [2026-10-16 onb-phone-fit] fonte que sempre cabe (prefixo + máscara na mesma linha de base).
+  const phoneShown = formatPhone(digits, country.mask);
+  const phoneFs = fitPhoneFontSize(rowW ? rowW - 58 : 0, [country.dial + (country.mask || '').replace(/#/g, '0'), country.dial + phoneShown], { max: 22, min: 16 });
+  const dialW = Math.ceil(phoneFs * textEm(country.dial) * 1.08) + 2;
+  const phoneLh = Math.round(phoneFs * 1.25);
   const pretty = `${country.dial} ${formatPhone(digits, country.mask)}`.trim();
 
   useEffect(() => {
@@ -156,13 +163,13 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [st.cta, { backgroundColor: disabled ? (colors.surfaceVariant || '#e5e5e5') : fg, opacity: pressed ? 0.85 : 1 }]}
+      style={({ pressed }) => [st.cta, { backgroundColor: fg, opacity: disabled ? 0.3 : (pressed ? 0.85 : 1) }]}
       accessibilityRole="button"
       accessibilityState={{ disabled: !!disabled, busy }}
       testID={testID}
     >
-      {busy ? <ActivityIndicator color={disabled ? sub : colors.background} />
-        : <Text style={[st.ctaText, { color: disabled ? (colors.textTertiary || sub) : colors.background }]} maxFontSizeMultiplier={1.3}>{label}</Text>}
+      {busy ? <ActivityIndicator color={colors.background} />
+        : <Text style={[st.ctaText, { color: colors.background }]} maxFontSizeMultiplier={1.3}>{label}</Text>}
     </Pressable>
   );
 
@@ -223,18 +230,21 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
           onPress={() => { Keyboard.dismiss(); setShowCountry(true); }}
           style={({ pressed }) => [st.countryRow, { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
           accessibilityRole="button"
-          accessibilityLabel={`${countryDisplayName(country, language)} ${country.dial}`}
+          accessibilityLabel={`${countryDisplayName(country, language, t)} ${country.dial}`}
           testID="addphone-country"
         >
           <FlagIcon code={country.code} width={28} borderColor={colors.border} textColor={fg} />
-          <Text style={[st.countryName, { color: fg }]} numberOfLines={1}>{countryDisplayName(country, language)}</Text>
+          <Text style={[st.countryName, { color: fg }]} numberOfLines={1}>{countryDisplayName(country, language, t)}</Text>
           <IconChevronDown size={18} color={sub} />
         </Pressable>
-        <View style={[st.phoneRow, { borderBottomColor: phoneValid ? fg : colors.border }]}>
-          <Text style={[st.dial, { color: fg }]} importantForAccessibility="no">{country.dial}</Text>
+        <View
+          style={[st.phoneRow, { borderBottomColor: phoneValid ? fg : colors.border }]}
+          onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w && w !== rowW) setRowW(w); }}
+        >
+          <Text style={[st.dial, { color: fg, fontSize: phoneFs, lineHeight: phoneLh, width: dialW }]} numberOfLines={1} maxFontSizeMultiplier={1} importantForAccessibility="no">{country.dial}</Text>
           <View style={[st.vline, { backgroundColor: colors.border }]} />
           <TextInput
-            value={formatPhone(digits, country.mask)}
+            value={phoneShown}
             onChangeText={(text) => {
               const p = parsePhoneInput(text, countryCode, COUNTRIES);
               if (p.countryCode !== countryCode) setCountryCode(p.countryCode);
@@ -247,15 +257,15 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
             inputMode="tel"
             textContentType="telephoneNumber"
             autoComplete="tel"
-            returnKeyType="go"
-            onSubmitEditing={sendCode}
+            // [2026-10-16] sem returnKeyType (iOS 26 desenhava "Go" flutuante no phone-pad).
+            onSubmitEditing={Platform.OS === 'web' ? sendCode : undefined}
             editable={!busy}
-            style={[st.phoneInput, { color: fg }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
+            style={[st.phoneInput, { color: fg, fontSize: phoneFs, height: phoneLh + 16 }, Platform.OS === 'web' ? { outlineStyle: 'none', lineHeight: phoneLh } : null]}
             accessibilityLabel={`${t('phoneLink.title')} ${country.dial}`}
-            maxFontSizeMultiplier={1.3}
+            maxFontSizeMultiplier={1}
             testID="addphone-phone"
           />
-          {phoneValid ? <IconCheck size={20} color={fg} strokeWidth={2.6} /> : null}
+          <View style={st.phoneCheck}>{phoneValid ? <IconCheck size={20} color={fg} strokeWidth={2.6} /> : null}</View>
         </View>
         <Text style={[st.hint, { color: sub }]}>{t('phoneLink.hint')}</Text>
         {error ? <Text style={[st.err, { color: fg }]} accessibilityLiveRegion="assertive" testID="addphone-error">{error}</Text> : null}
@@ -318,9 +328,10 @@ const st = StyleSheet.create({
   countryRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 52, borderBottomWidth: 1 },
   countryName: { flex: 1, fontSize: 16, fontWeight: '500' },
   phoneRow: { flexDirection: 'row', alignItems: 'center', minHeight: 58, borderBottomWidth: 1.5 },
-  dial: { fontSize: 20, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  dial: { fontSize: 20, fontWeight: '600', fontVariant: ['tabular-nums'], includeFontPadding: false },
   vline: { width: 1, height: 26, marginHorizontal: 12 },
-  phoneInput: { flex: 1, minWidth: 0, fontSize: 20, fontWeight: '600', letterSpacing: 0.3, paddingVertical: 10, fontVariant: ['tabular-nums'] },
+  phoneInput: { flex: 1, minWidth: 0, fontSize: 20, fontWeight: '600', letterSpacing: 0, paddingVertical: 0, paddingHorizontal: 0, fontVariant: ['tabular-nums'], includeFontPadding: false, textAlignVertical: 'center' },
+  phoneCheck: { width: 26, alignItems: 'flex-end', justifyContent: 'center' },
   hint: { fontSize: 13, lineHeight: 18, marginTop: 10 },
   err: { fontSize: 14, lineHeight: 19, marginTop: 12, fontWeight: '600' },
   cta: { marginTop: 18, borderRadius: 14, minHeight: 52, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },

@@ -42,7 +42,7 @@ import LiveBattleLayer, { BattleHostButton } from '../components/liveBattle/Live
 import { useLiveBattleController, useBattleSelector, selSplitVisible } from '../components/liveBattle/battleStore';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
 import { publishToCfStream, liveDiagAppend } from '../services/cfStreamPublisher';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 // Round 67 #1158 (2026-05-18) — user: "a tela ainda desliga mesmo
 // rolando a live". expo-keep-awake holds the OS display awake while
 // the host is broadcasting. Module is JS-side autolinked; the native

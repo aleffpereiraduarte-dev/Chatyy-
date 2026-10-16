@@ -15,7 +15,7 @@ import { BorderRadius, FontSize, Spacing, Shadow, AnimTiming, haptic } from '../
 import {
   IconArrowLeft, IconPlus, IconSearch, IconX, IconCheck,
   IconStickyNote, IconPin, IconTrash, IconArchive, IconEdit, IconFolder,
-  IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconZap, IconRotateCcw,
+  IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconRotateCcw,
   IconBell, IconClock, IconGrid, IconSmile, IconLink, IconBrush, IconChevronLeft,
 } from '../components/Icons';
 import * as api from '../services/api';
@@ -37,6 +37,8 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderS
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 // [notas-lembrete 2026-10-14] lembrete por PUSH do servidor (Lembrar-me + chip + seção "Com lembrete")
 import NoteReminderSheet, { NoteReminderChip } from '../components/notes/NoteReminderSheet';
+// [2026-10-16 native-notes-editor] corpo da nota em editor NATIVO (texto cru, kill __chatyy_native_notes_editor)
+import NativeNoteBody, { useNativeNotesEditor, SLASH_TO_BLOCK } from '../components/notes/NativeNoteBody';
 // [2026-10-15 native-notes] Lista/grade nativa (UICollectionView / RecyclerView);
 // kill switch globalThis.__chatyy_native_notes = false → FlatList JS (web sempre JS).
 import NativeNotesList, { useNativeNotes } from '../components/native/NativeNotesList';
@@ -704,8 +706,9 @@ function BoardView({
         </View>
       )}
 
-      {/* FAB to create note */}
+      {/* FAB to create note — único "nova nota" no modo quadro */}
       <TouchableOpacity
+        accessibilityLabel={t ? t('notes.newNote') : undefined}
         onPress={() => {
           const cx = (scrollOffsetRef.current.x + 150) / boardScale;
           const cy = (scrollOffsetRef.current.y + 150) / boardScale;
@@ -769,8 +772,49 @@ const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, col
     outputRange: [1, 0.6, 0],
     extrapolate: 'clamp',
   });
+  // [2026-10-16 native-notes-editor] Nativo: gesto do RNGH (reconhecido na
+  // thread de UI, falha sozinho em rolagem vertical — a lista não "trava" mais
+  // ao rolar). Web (celular) segue no PanResponder abaixo.
+  const commitSwipe = (currentX, velocity) => {
+    if (currentX < -DELETE_THRESHOLD || velocity < -1.2) {
+      Animated.timing(swipeX, {
+        toValue: -SCREEN_WIDTH, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }).start(() => {
+        try { haptic.warning(); } catch {}
+        latestRef.current?.onDelete?.(latestRef.current.note);
+        swipeX.setValue(0);
+      });
+    } else {
+      Animated.spring(swipeX, { toValue: 0, stiffness: 400, damping: 30, mass: 0.8, useNativeDriver: true }).start();
+    }
+  };
+  const swipeGH = useMemo(() => {
+    if (Platform.OS === 'web' || isDesktop) return null;
+    try {
+      const GH = require('react-native-gesture-handler');
+      if (!GH?.Gesture?.Pan || !GH?.GestureDetector) return null;
+      const gesture = GH.Gesture.Pan()
+        .activeOffsetX([-10, 10])
+        .failOffsetY([-10, 10])
+        .runOnJS(true)
+        .onStart(() => { swipeX.stopAnimation(); })
+        .onUpdate((e) => {
+          const dx = e.translationX;
+          if (dx > 0) { swipeX.setValue(0); return; }
+          const abs = Math.abs(dx);
+          swipeX.setValue(abs < DELETE_THRESHOLD ? -abs : -(DELETE_THRESHOLD + (abs - DELETE_THRESHOLD) * 0.3));
+        })
+        .onEnd((e) => { commitSwipe(Math.min(0, e.translationX), (e.velocityX || 0) / 1000); })
+        .onFinalize((_e, success) => {
+          if (!success) Animated.spring(swipeX, { toValue: 0, stiffness: 400, damping: 30, mass: 0.8, useNativeDriver: true }).start();
+        });
+      return { GH, gesture };
+    } catch { return null; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const withSwipe = (node) => (swipeGH ? <swipeGH.GH.GestureDetector gesture={swipeGH.gesture}>{node}</swipeGH.GH.GestureDetector> : node);
   const swipeResponder = useRef(
-    !isDesktop ? PanResponder.create({
+    (!isDesktop && Platform.OS === 'web') ? PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => {
         // Only activate on horizontal swipes (mostly left)
         return Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
@@ -848,6 +892,7 @@ const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, col
           </View>
         </Animated.View>
       )}
+      {withSwipe(
       <Animated.View
         style={[
           !isDesktop && { transform: [{ translateX: swipeX }] },
@@ -956,6 +1001,7 @@ const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, col
           </View>
         </Pressable>
       </Animated.View>
+      )}
     </DeletableNoteCard>
   );
 });
@@ -1136,7 +1182,6 @@ export default function NotesScreen() {
   const [notesLayout, setNotesLayoutState] = useState(() => _notesLayoutMemo);
   const setNotesLayout = useCallback((m) => { _notesLayoutMemo = m; setNotesLayoutState(m); }, []);
   const [snapEnabled, setSnapEnabled] = useState(false);
-  const [quickNoteLoading, setQuickNoteLoading] = useState(false);
   const [deletingNoteId, setDeletingNoteId] = useState(null);
   const [recentSearches, setRecentSearches] = useState([]);
   // Soft-delete + undo toast
@@ -1164,7 +1209,6 @@ export default function NotesScreen() {
 
   // Animation refs
   const emptyAnim = useRef(new Animated.Value(0)).current;
-  const quickNoteAnim = useRef(new Animated.Value(1)).current;
   // Floating notes animation for empty state
   const floatAnim1 = useRef(new Animated.Value(0)).current;
   const floatAnim2 = useRef(new Animated.Value(0)).current;
@@ -1295,37 +1339,6 @@ export default function NotesScreen() {
       useNativeDriver: true,
     }).start();
   }, [showSearch]);
-
-  // Quick Note - creates and opens immediately
-  const handleQuickNote = useCallback(async () => {
-    haptic.light(); // [2026-10-08 apps-native]
-    setQuickNoteLoading(true);
-    Animated.sequence([
-      Animated.timing(quickNoteAnim, { toValue: 0.85, duration: 100, useNativeDriver: true }),
-      Animated.spring(quickNoteAnim, { toValue: 1, tension: 200, friction: 10, useNativeDriver: true }),
-    ]).start();
-    try {
-      const randomColors = ['#FFF9C4', '#F8BBD0', '#C8E6C9', '#BBDEFB', '#F1F3F5', '#FFE0B2'];
-      const color = randomColors[Math.floor(Math.random() * randomColors.length)];
-      const res = await api.notesCreate({
-        title: '', content: '', color,
-        is_pinned: 0, is_sticky: 0,
-        notebook_id: selectedNotebook,
-      });
-      if (res?.success && res.data?.id) {
-        const newNote = {
-          id: res.data.id, title: '', content: '', color,
-          notebook_id: selectedNotebook,
-        };
-        openEditor(newNote);
-        loadNotes(false);
-      }
-    } catch (e) {
-      console.warn('Quick note failed:', e);
-    } finally {
-      setQuickNoteLoading(false);
-    }
-  }, [selectedNotebook, loadNotes]);
 
   // Create/Edit note
   const openEditor = useCallback((note = null) => {
@@ -1915,9 +1928,12 @@ export default function NotesScreen() {
                       : <IconGrid size={22} color={colors.text} />)}
                 </HeaderIconButton>
               )}
-              <HeaderIconButton onPress={() => openEditor()} accessibilityLabel={t('notes.newNote')}>
-                <IconPlus size={24} color={colors.text} />
-              </HeaderIconButton>
+              {/* quadro: o "+" é o FAB do próprio quadro (cria na posição visível) */}
+              {viewMode !== 'board' && (
+                <HeaderIconButton onPress={() => openEditor()} accessibilityLabel={t('notes.newNote')}>
+                  <IconPlus size={24} color={colors.text} />
+                </HeaderIconButton>
+              )}
             </View>
           ),
           search: {
@@ -2038,8 +2054,8 @@ export default function NotesScreen() {
 
           {/* [2026-10-14 vis3] no celular (modo lista) o FAB "+" já cria nota — esconder o "+" do topo
               (eram 4 botões de criar na mesma tela: topo, estado vazio, "Nota rápida" e FAB). */}
-          {(isDesktop || editorVisible || viewMode !== 'list') && (
-            <TouchableOpacity onPress={() => openEditor()} style={[s.headerBtn, s.addBtn, {
+          {isDesktop && viewMode !== 'board' && (
+            <TouchableOpacity onPress={() => openEditor()} accessibilityLabel={t('notes.newNote')} style={[s.headerBtn, s.addBtn, {
               backgroundColor: colors.primary,
               ...(Platform.OS === 'web' ? {
                 background: `linear-gradient(135deg, ${colors.primary}, ${colors.primary}cc)`,
@@ -2390,37 +2406,13 @@ export default function NotesScreen() {
         />
       )}
 
-      {/* ---- Quick Note FAB ---- */}
-      {!editorVisible && viewMode === 'list' && (
-        <Animated.View style={[s.quickNoteFab, { bottom: insets.bottom + 86, transform: [{ scale: quickNoteAnim }] }]}>
-          <TouchableOpacity
-            onPress={handleQuickNote}
-            disabled={quickNoteLoading}
-            style={[s.quickNoteFabBtn, {
-              backgroundColor: isDark ? 'rgba(28,28,30,0.92)' : 'rgba(255,255,255,0.95)',
-              borderColor: colors.primary + '33',
-              ...(Platform.OS === 'web' ? {
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                boxShadow: `0 4px 16px rgba(0,0,0,0.12), 0 0 1px ${colors.primary}44`,
-              } : {}),
-            }]}
-            activeOpacity={0.8}
-          >
-            {quickNoteLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <>
-                <IconZap size={16} color={colors.primary} />
-                <Text style={[s.quickNoteFabText, { color: colors.primary }]}>{t('notes.quickNote')}</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
-      )}
-
+      {/* [2026-10-16 native-notes-editor] UM botão "nova nota" por plataforma:
+          nativo = "+" do header (ao lado da busca nativa); web desktop = "+" do
+          header; web celular = este FAB. O "Nota rápida" (criava nota VAZIA no
+          servidor antes de abrir — 549 das 563 notas em prod eram vazias) saiu:
+          o "+" já abre na hora e só cria ao digitar. */}
       {/* ---- Main FAB (Telegram-grade glass orb) ---- */}
-      {!isDesktop && !editorVisible && viewMode === 'list' && (
+      {!USE_NATIVE_HEADER && !isDesktop && !editorVisible && viewMode !== 'board' && (
         <BrandFab
           style={{ position: 'absolute', right: 20, bottom: insets.bottom + 16 }} /* [2026-10-08 header-inset-all] safe-area */
           size={60}
@@ -2432,17 +2424,6 @@ export default function NotesScreen() {
         </BrandFab>
       )}
 
-      {viewMode === 'board' && !editorVisible && (
-        <BrandFab
-          style={{ position: 'absolute', right: 20, bottom: insets.bottom + 16 }} /* [2026-10-08 header-inset-all] safe-area */
-          size={60}
-          color={colors.primary}
-          onPress={() => openEditor()}
-          accessibilityLabel={t('notes.newNote')}
-        >
-          <IconPlus size={28} color={colors.onPrimary} />
-        </BrandFab>
-      )}
 
       </NativeHeaderSafeArea>
 
@@ -2805,6 +2786,49 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const contentInputRef = useRef(null);
   const BRAND = '#111111';
 
+  // [2026-10-16 native-notes-editor] Editor nativo (UITextView/EditText): o
+  // texto cru vai direto p/ contentRef + debounce do onAutoSave; estado React
+  // (contador, pílula "salvo") só é tocado com atraso — digitar não re-renderiza
+  // a tela inteira a cada tecla. Falhou → volta ao TextInput com o texto atual.
+  const [nativeBodyOn, onNativeBodyFailure] = useNativeNotesEditor();
+  const nativeBodyRef = useRef(null);
+  const [bodyFocused, setBodyFocused] = useState(false);
+  const nativeTickRef = useRef(null);
+  const nativePulseRef = useRef(false);
+  const onNativeBodyChange = useCallback((text) => {
+    contentRef.current = text;
+    onAutoSave();
+    if (!nativePulseRef.current) { nativePulseRef.current = true; setSavingPulse(true); }
+    if (nativeTickRef.current) clearTimeout(nativeTickRef.current);
+    nativeTickRef.current = setTimeout(() => {
+      nativeTickRef.current = null;
+      nativePulseRef.current = false;
+      setContent(contentRef.current || '');
+      setSavingPulse(false);
+      setSavedAgo(Date.now());
+    }, 700);
+  }, [onAutoSave]);
+  useEffect(() => () => { if (nativeTickRef.current) clearTimeout(nativeTickRef.current); }, []);
+  const onNativeBodySlash = useCallback((active, query) => {
+    setSlashMenuOpen(!!active);
+    setSlashQuery(active ? (query || '') : '');
+    setSlashSelIdx(0);
+  }, []);
+  // Fechar: lê o texto final do nativo (evento da última tecla pode estar em voo).
+  const closeWithNativeText = useCallback(async () => {
+    if (nativeBodyOn && nativeBodyRef.current) {
+      try {
+        const txt = await Promise.race([nativeBodyRef.current.getText(), new Promise((r) => setTimeout(() => r(null), 250))]);
+        if (typeof txt === 'string') contentRef.current = txt;
+      } catch {}
+    }
+    onClose && onClose();
+  }, [nativeBodyOn, onClose]);
+  const handleNativeBodyFailure = useCallback((msg) => {
+    setContent(contentRef.current || '');
+    onNativeBodyFailure(msg);
+  }, [onNativeBodyFailure]);
+
   // Tick savedAgo every 5s for the pill text
   useEffect(() => {
     const id = setInterval(() => setSavedTick(x => x + 1), 5000);
@@ -2921,6 +2945,20 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   }, [slashQuery, slashOptions]);
 
   const applySlash = useCallback((opt) => {
+    if (nativeBodyOn && nativeBodyRef.current) {
+      const block = SLASH_TO_BLOCK[opt.id];
+      if (block) {
+        nativeBodyRef.current.exec('block', block);
+      } else {
+        // "/imagem": tira o "/consulta" (bloco neutro) e insere o marcador.
+        nativeBodyRef.current.exec('block', 'plain');
+        nativeBodyRef.current.exec('insert', String(opt.insert || '').replace(/^\n/, ''));
+      }
+      setSlashMenuOpen(false);
+      setSlashQuery('');
+      setSlashSelIdx(0);
+      return;
+    }
     const cur = contentRef.current || '';
     // Strip the trailing "/query"
     const upTo = selection.end || cur.length;
@@ -2932,7 +2970,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     setSlashMenuOpen(false);
     setSlashQuery('');
     setSlashSelIdx(0);
-  }, [selection, updateAndSave]);
+  }, [selection, updateAndSave, nativeBodyOn]);
 
   // Auto-convert "- " and "[] " on space
   const handleContentChangeSmart = useCallback((text) => {
@@ -3135,6 +3173,40 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     });
   }, [content, textColor, secondaryText, colors.primary, updateAndSave, isDark]);
 
+  // menu "/" (TextInput JS e editor nativo usam o mesmo)
+  const slashMenuEl = (extraStyle) => (slashMenuOpen ? (
+              <View style={[s.slashMenu, extraStyle, {
+                backgroundColor: isDark ? 'rgba(28,28,42,0.97)' : 'rgba(255,255,255,0.99)',
+                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+              }]}>
+                <Text style={[s.slashMenuHeader, { color: secondaryText }]}>
+                  {filteredSlash.length ? (slashQuery ? `/${slashQuery}` : (t('notes.slashHint') || 'Blocos básicos')) : (t('notes.slashEmpty') || 'Nenhum bloco')}
+                </Text>
+                <ScrollView style={{ maxHeight: 280 }} keyboardShouldPersistTaps="handled">
+                  {filteredSlash.map((opt, i) => (
+                    <TouchableOpacity
+                      key={opt.id}
+                      onPress={() => applySlash(opt)}
+                      style={[s.slashItem, i === slashSelIdx && {
+                        backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)',
+                      }]}
+                    >
+                      <View style={[s.slashIconBox, {
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                      }]}>
+                        <Text style={[s.slashIconText, { color: textColor }]}>{opt.icon}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.slashLabel, { color: textColor }]}>{opt.label}</Text>
+                        <Text style={[s.slashHint, { color: secondaryText }]}>{opt.hint}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null);
+
   const selectedNotebook = notebooks.find(n => n.id === selectedNotebookId);
 
   return (
@@ -3153,11 +3225,12 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
           WebkitBackdropFilter: 'blur(12px)',
         } : {}),
       }]}>
-        <TouchableOpacity onPress={onClose} style={s.editorHeaderBtn}>
+        <TouchableOpacity onPress={closeWithNativeText} style={s.editorHeaderBtn}>
           <IconArrowLeft size={24} color={textColor} />
         </TouchableOpacity>
         <View style={s.editorHeaderActions}>
-          {/* Preview toggle */}
+          {/* Preview toggle — o editor nativo já mostra a formatação ao vivo */}
+          {!nativeBodyOn && (
           <TouchableOpacity
             onPress={() => setShowPreview(!showPreview)}
             style={[s.editorHeaderBtn, showPreview && {
@@ -3168,6 +3241,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
               {showPreview ? t('common.edit') : t('common.preview')}
             </Text>
           </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() => updateAndSave('pinned', !isPinned)}
             style={[s.editorHeaderBtn, isPinned && { backgroundColor: isDark ? 'rgba(255,213,79,0.2)' : 'rgba(249,168,37,0.15)' }]}
@@ -3336,6 +3410,37 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
       />
 
       {/* Title & Content */}
+      {nativeBodyOn ? (
+        <View style={{ flex: 1 }}>
+          <TextInput
+            style={[s.editorTitle, { color: textColor, marginHorizontal: 20, marginBottom: 0 }]}
+            placeholder={t('notes.untitled') || 'Sem título'}
+            placeholderTextColor={secondaryText + '66'}
+            value={title}
+            onChangeText={(v) => updateAndSave('title', v)}
+            multiline
+            blurOnSubmit
+            returnKeyType="next"
+            onSubmitEditing={() => { try { nativeBodyRef.current?.focus(); } catch {} }}
+            scrollEnabled={false}
+          />
+          <NativeNoteBody
+            ref={nativeBodyRef}
+            initialText={contentRef.current || ''}
+            placeholder={t('notes.contentPlaceholder') || ''}
+            textColor={textColor}
+            secondaryColor={secondaryText}
+            isDark={isDark}
+            autoFocus={!titleRef.current && !contentRef.current}
+            onChangeText={onNativeBodyChange}
+            onSlash={onNativeBodySlash}
+            onFocusChange={setBodyFocused}
+            onFailure={handleNativeBodyFailure}
+            t={t}
+          />
+          {slashMenuEl({ top: undefined, bottom: bodyFocused ? 54 : 8, left: 12, right: 12, marginTop: 0 })}
+        </View>
+      ) : (
       <ScrollView style={s.editorBody} keyboardShouldPersistTaps="handled">
         {/* Top bar — cover + emoji affordances */}
         <View style={s.editorTopBar}>
@@ -3477,41 +3582,11 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             />
 
             {/* Slash menu */}
-            {slashMenuOpen ? (
-              <View style={[s.slashMenu, {
-                backgroundColor: isDark ? 'rgba(28,28,42,0.97)' : 'rgba(255,255,255,0.99)',
-                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-              }]}>
-                <Text style={[s.slashMenuHeader, { color: secondaryText }]}>
-                  {filteredSlash.length ? (slashQuery ? `/${slashQuery}` : (t('notes.slashHint') || 'Blocos básicos')) : (t('notes.slashEmpty') || 'Nenhum bloco')}
-                </Text>
-                <ScrollView style={{ maxHeight: 280 }} keyboardShouldPersistTaps="handled">
-                  {filteredSlash.map((opt, i) => (
-                    <TouchableOpacity
-                      key={opt.id}
-                      onPress={() => applySlash(opt)}
-                      style={[s.slashItem, i === slashSelIdx && {
-                        backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)',
-                      }]}
-                    >
-                      <View style={[s.slashIconBox, {
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-                      }]}>
-                        <Text style={[s.slashIconText, { color: BRAND }]}>{opt.icon}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[s.slashLabel, { color: textColor }]}>{opt.label}</Text>
-                        <Text style={[s.slashHint, { color: secondaryText }]}>{opt.hint}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            ) : null}
+            {slashMenuEl()}
           </View>
         )}
       </ScrollView>
+      )}
 
       {/* Auto-save pill (top-right floating) */}
       <View pointerEvents="none" style={s.savePillWrap}>
@@ -3665,8 +3740,9 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
         </View>
       ) : null}
 
-      {/* Bottom bar: color picker + sticky toggle + char count */}
-      <View style={[s.editorBottomBar, {
+      {/* Bottom bar: color picker + sticky toggle + char count
+          (editor nativo focado: some — a barra de formatação fica sobre o teclado) */}
+      <View style={[s.editorBottomBar, nativeBodyOn && bodyFocused && { display: 'none' }, {
         backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.03)',
         borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
         ...(Platform.OS === 'web' ? {

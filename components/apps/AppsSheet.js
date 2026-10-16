@@ -25,7 +25,7 @@ import {
 import PressableScale from '../PressableScale';
 import { WALLET_ENABLED } from '../../constants/featureFlags';
 import { haptic } from '../../constants/theme';
-import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../NativeSheet';
+import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad, nativeSheetBoundedOn } from '../NativeSheet';
 import BiaOrb from '../bia/BiaOrb';
 import { GlyphWave } from '../bia/BiaUI';
 import { AppsItem, Jiggle, Pop, TilePress, prepareLayoutChange } from './appsMotion';
@@ -321,7 +321,16 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   }, [editing, togglePin, handlePress]);
 
   // ── Apresentação do Modal JS (web / kill-switch do sheet nativo) ──────────
-  const _NATIVE_SHEET = USE_NATIVE_SHEETS && globalThis.__chatyy_apps_native_sheet === true; // [hotfix-3]
+  // [hotfix-3] → [2026-10-16 wave7] volta ao formSheet nativo no iOS quando a
+  // altura limitada ao detent está ativa (nativeSheetBoundedOn: binário wave 7+).
+  // Força: globalThis.__chatyy_apps_native_sheet = true/false.
+  const _NATIVE_SHEET = USE_NATIVE_SHEETS && (() => {
+    try {
+      const g = globalThis.__chatyy_apps_native_sheet;
+      if (g === true || g === false) return g;
+    } catch {}
+    return Platform.OS === 'ios' && nativeSheetBoundedOn();
+  })();
   const _winH = Dimensions.get('window').height || 800;
   const [mounted, setMounted] = useState(!!visible);
   const [openTick, setOpenTick] = useState(0);

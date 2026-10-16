@@ -11,67 +11,78 @@ function _timeout(p, ms) {
   return Promise.race([p, new Promise((res) => setTimeout(() => res(null), ms))]);
 }
 
+// [2026-10-16 onb-opening] As 3 sondagens rodavam EM SÉRIE (6 s + 6 s + 8 s + 6 s
+// no pior caso = até ~26 s olhando "Abrindo seu Chatyy…"). Agora rodam em
+// PARALELO e a prioridade (1 → 2 → 3) é aplicada no resultado; o único efeito
+// colateral (marcar "já perguntei" do backup legado) só acontece se ele for o
+// escolhido. Pior caso ≈ 14 s (iCloud), típico = 1 ida e volta.
 export async function probeRestore(accountEmail) {
   const email = String(accountEmail || '').toLowerCase().trim();
   // 1. backup próprio (E2E) no servidor
-  try {
-    const ob = require('../../services/ownBackup');
-    const cand = await _timeout(ob.findRestoreCandidate(email), 6000);
-    if (cand) return { kind: 'own', candidate: cand };
-  } catch {}
-  if (Platform.OS === 'web') return null;
+  const ownP = (async () => {
+    try {
+      const ob = require('../../services/ownBackup');
+      return (await _timeout(ob.findRestoreCandidate(email), 6000)) || null;
+    } catch { return null; }
+  })();
+  if (Platform.OS === 'web') {
+    const cand = await ownP;
+    return cand ? { kind: 'own', candidate: cand } : null;
+  }
 
   // 2. CYB2 / iCloud / Drive
-  try {
-    const skipped = await AsyncStorage.getItem('@chatyy_skip_restore');
-    if (skipped !== '1') {
+  const legacyP = (async () => {
+    try {
+      const skipped = await AsyncStorage.getItem('@chatyy_skip_restore');
+      if (skipped === '1') return null;
       let mmkv = null;
-      let asked = false;
       try {
         const { MMKV } = require('react-native-mmkv');
         mmkv = new MMKV({ id: 'chatyy-backup' });
-        if (email && mmkv.getString(`restore_prompted:${email}`) === '1') asked = true;
+        if (email && mmkv.getString(`restore_prompted:${email}`) === '1') return null;
       } catch {}
       let convs = null;
-      if (!asked) {
+      try {
+        const dbMod = require('../../services/db');
+        if (typeof dbMod.dbGetConversations === 'function') convs = await dbMod.dbGetConversations(true);
+      } catch {}
+      if (Array.isArray(convs) && convs.length > 0) return null;
+      let serverBackups = [];
+      try {
+        const api = require('../../services/api');
+        const resp = await _timeout(api.chatBackupList(), 6000);
+        const list = resp?.backups || resp?.data?.backups || [];
+        serverBackups = Array.isArray(list) ? list : [];
+      } catch {}
+      let cloudBackups = [];
+      if (!serverBackups.length) {
         try {
-          const dbMod = require('../../services/db');
-          if (typeof dbMod.dbGetConversations === 'function') convs = await dbMod.dbGetConversations(true);
-        } catch {}
+          const ChatBackup = require('expo-chat-backup');
+          cloudBackups = (await _timeout(ChatBackup.listBackups(), 8000)) || [];
+        } catch { cloudBackups = []; }
       }
-      if (!asked && !(Array.isArray(convs) && convs.length > 0)) {
-        let serverBackups = [];
-        try {
-          const api = require('../../services/api');
-          const resp = await _timeout(api.chatBackupList(), 6000);
-          const list = resp?.backups || resp?.data?.backups || [];
-          serverBackups = Array.isArray(list) ? list : [];
-        } catch {}
-        let cloudBackups = [];
-        if (!serverBackups.length) {
-          try {
-            const ChatBackup = require('expo-chat-backup');
-            cloudBackups = (await _timeout(ChatBackup.listBackups(), 8000)) || [];
-          } catch { cloudBackups = []; }
-        }
-        const merged = serverBackups.length
-          ? serverBackups.map((b) => ({ source: 'server', id: b.id, filename: `backup-${b.id}.enc`, createdAt: b.created_at, size: b.size_bytes || 0 }))
-          : (Array.isArray(cloudBackups) ? cloudBackups.map((b) => ({ source: 'cloud', ...b })) : []);
-        if (merged.length) {
-          try { if (mmkv && email) mmkv.set(`restore_prompted:${email}`, '1'); } catch {}
-          return { kind: 'legacy', backups: merged };
-        }
-      }
-    }
-  } catch {}
+      const merged = serverBackups.length
+        ? serverBackups.map((b) => ({ source: 'server', id: b.id, filename: `backup-${b.id}.enc`, createdAt: b.created_at, size: b.size_bytes || 0 }))
+        : (Array.isArray(cloudBackups) ? cloudBackups.map((b) => ({ source: 'cloud', ...b })) : []);
+      if (!merged.length) return null;
+      return { backups: merged, mark: () => { try { if (mmkv && email) mmkv.set(`restore_prompted:${email}`, '1'); } catch {} } };
+    } catch { return null; }
+  })();
 
   // 3. histórico completo do servidor
-  try {
-    if ((await AsyncStorage.getItem('@chatyy_skip_history')) !== '1' && email) {
+  const histP = (async () => {
+    try {
+      if ((await AsyncStorage.getItem('@chatyy_skip_history')) === '1' || !email) return false;
       const api = require('../../services/api');
       const { isBootstrapNeeded } = require('../../services/fullHistorySync');
-      if (await _timeout(isBootstrapNeeded(api.apiCall, email), 6000)) return { kind: 'history', email };
-    }
-  } catch {}
+      return !!(await _timeout(isBootstrapNeeded(api.apiCall, email), 6000));
+    } catch { return false; }
+  })();
+
+  const cand = await ownP;
+  if (cand) return { kind: 'own', candidate: cand };
+  const leg = await legacyP;
+  if (leg) { leg.mark(); return { kind: 'legacy', backups: leg.backups }; }
+  if (await histP) return { kind: 'history', email };
   return null;
 }

@@ -74,6 +74,18 @@
 //          onRowPress part 'xfer' url 'cancel-up' (X do envio) chega à tela.
 //          Kill switch: globalThis.__chatyy_native_media_dl = false.
 //
+//   cobertura [2026-10-16 native-cover, SEM build — só nós existentes, api ≥ 2]
+//          linha que o nativo não desenha NÃO derruba mais a conversa: vira
+//          um cartão-resumo nativo (nativeRowCards.buildFallbackCard: ícone +
+//          tipo + trecho, toque url 'jsrow' → a versão JS da linha numa folha,
+//          NativeRowSheet no chat-conversation). Cartões novos: correio de voz,
+//          figurinha animada (Lottie), visualização única recebida ("Toque para
+//          ver" → url 'vo_open' → o MESMO ViewOnceMessage, autoOpen),
+//          video_message (= nota de vídeo), short_video (= vídeo), texto > 6000
+//          (corta + "Ler mais" → folha). buildRow que lança → cartão-resumo.
+//          Kill switch (volta ao "1 linha ruim = conversa toda no JS"):
+//          globalThis.__chatyy_native_row_fallback = false.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -175,10 +187,8 @@ function _markMounted(on) {
 }
 
 function _beacon(step, info) {
-  try {
-    const api = require('../../services/api').default || require('../../services/api');
-    api?.apiCall?.('callkit_diag', { info: `native_list ${step} ${info || ''}`.slice(0, 400), platform: Platform.OS }, 'POST')?.catch?.(() => {});
-  } catch {}
+  // [wave7 telemetria] via services/nativeTelemetry (build/aparelho + cobertura)
+  try { require('../../services/nativeTelemetry').nativeBeacon('native_list', step, info); } catch {}
 }
 
 export function isNativeThreadListAvailable() {
@@ -638,7 +648,8 @@ function _p2Caption(cap, row, ctx, item) {
 function _p2TextReason(item, ctx) {
   const c = typeof item.content === 'string' ? item.content : '';
   if (!c) return 'text-empty';
-  if (c.length > 6000) return 'text-long';
+  // [native-cover] > 6000: buildRow corta (LONG_TEXT_CUT) + "Ler mais" → folha JS
+  if (c.length > LONG_TEXT_MAX && !_rowFbSwitchOn()) return 'text-long';
   if (c.trim().startsWith('{')) return 'json';
   if (/^(Chamada de Voz|Videochamada|Voice Call|Video Call)\n/i.test(c)) return 'call-text';
   if (/^[a-z0-9]+\/[a-z0-9\-]+\.gif$/i.test(c.trim()) || /tenor\.com|giphy\.com|\.gif(\?.*)?$/i.test(c.trim())) return 'gif-text';
@@ -653,6 +664,71 @@ function _cards() {
   try { _cardsMod = require('./nativeRowCards'); } catch { _cardsMod = null; }
   if (!_cardsMod || typeof _cardsMod.cardReason !== 'function') _cardsMod = { cardReason: () => null, buildCard: () => false };
   return _cardsMod;
+}
+
+// ─── [2026-10-16 native-cover] fallback por LINHA ───────────────────────────
+function _rowFbSwitchOn() { try { return globalThis.__chatyy_native_row_fallback !== false; } catch { return true; } }
+/** true = a linha com este motivo vira cartão-resumo nativo (em vez de derrubar a conversa). */
+export function rowFallbackOk(reason) {
+  return !!reason && _api >= 2 && _rowFbSwitchOn();
+}
+const _rowFbStats = Object.create(null);
+/** Contagem (sessão) de linhas que viraram cartão-resumo, por motivo — p/ telemetria. */
+export function nativeRowFallbackStats() { return { ..._rowFbStats }; }
+function _countFb(why) {
+  const k = String(why || '?').split(':')[0] + (String(why).startsWith('type:') || String(why).startsWith('meta:') ? ':' + String(why).split(':')[1] : '');
+  _rowFbStats[k] = (_rowFbStats[k] || 0) + 1;
+}
+// Motivo por (linha, ctx): useNativeThreadList e buildRow consultam o mesmo cache.
+let _reasonMemo = { ctx: null, map: new WeakMap() };
+function _reasonOf(item, ctx) {
+  if (!item || typeof item !== 'object') return unsupportedReason(item, ctx);
+  if (_reasonMemo.ctx !== ctx) _reasonMemo = { ctx, map: new WeakMap() };
+  let why = _reasonMemo.map.get(item);
+  if (why === undefined) { why = unsupportedReason(item, ctx) || ''; _reasonMemo.map.set(item, why); }
+  return why;
+}
+const LONG_TEXT_MAX = 6000;
+const LONG_TEXT_CUT = 3500;
+function _truncLong(c) {
+  let cut = LONG_TEXT_CUT;
+  const ws = c.lastIndexOf(' ', cut);
+  const nl = c.lastIndexOf('\n', cut);
+  const br = Math.max(ws, nl);
+  if (br > cut - 240) cut = br;
+  const code = c.charCodeAt(cut - 1);
+  if (code >= 0xD800 && code <= 0xDBFF) cut -= 1;
+  return c.slice(0, cut).replace(/\s+$/, '') + '…';
+}
+/** Linha mínima + cartão-resumo (buildRow lançou / motivo sem cartão próprio). */
+function _fallbackRowSafe(item, key, ctx, why) {
+  if (!item || item._type === 'separator' || item._type === 'unread_separator' || !rowFallbackOk(why)) return null;
+  try {
+    const own = String(item.sender_email || '').toLowerCase() === String((ctx && ctx.myEmail) || '').toLowerCase();
+    const row = {
+      k: key, kind: 'msg', id: String(item.id ?? ''), own: own ? 1 : 0,
+      first: item._isFirstInGroup === false ? 0 : 1, last: item._isLastInGroup === false ? 0 : 1,
+      time: ctx && ctx.formatTime ? ctx.formatTime(item.created_at) : '',
+    };
+    const st = _status(item, own);
+    if (st !== undefined) row.st = st;
+    if (ctx && ctx.selection && ctx.selection.on) row.sel = ctx.selection.has(item) ? 2 : 1;
+    if (ctx && ctx.isGroup && !own && row.first && item.sender_email) {
+      row.name = ctx.senderName ? ctx.senderName(item) : (item.sender_name || String(item.sender_email).split('@')[0]);
+      row.nc = toArgb(ctx.senderColor ? ctx.senderColor(item.sender_email) : '#888888');
+    }
+    const rx = _reacts(item, ctx && ctx.myEmail);
+    if (rx) row.rx = rx;
+    if (_cards().buildFallbackCard && _cards().buildFallbackCard(item, row, ctx, why)) { _countFb(why); return row; }
+  } catch (e) { if (__DEV__) console.warn('[native-list] fallback row', e?.message); }
+  return null;
+}
+/** Acrescenta um nó DEPOIS do conteúdo (texto simples → row.post; blocos → row.bl). */
+function _appendAfter(row, node) {
+  if (!node) return;
+  if (Array.isArray(row.bl) && row.bl.length) { row.bl.push(node); if (row.mp !== 'none') row.mp = 'below'; return; }
+  row.post = (Array.isArray(row.post) ? row.post : []).concat([node]);
+  if (row.mp !== 'none') row.mp = 'below';
 }
 
 // ─── normalização ───────────────────────────────────────────────────────────
@@ -833,6 +909,12 @@ export function unsupportedReason(item, ctx) {
   }
   if (tt) return 'meta:' + tt;
   const type = item.type || 'text';
+  // [native-cover] apagada de qualquer tipo = rótulo "apagada" nativo (buildRow trata antes do tipo)
+  if (_api >= 2 && item.deleted_at && !_isViewOnce(item)) return '';
+  // [native-cover] short_video (vídeo curto vertical) = vídeo nativo; toque → MESMO viewer
+  if (_api >= 2 && type === 'short_video' && !_isViewOnce(item) && !item._blurred && !(ctx.isVideoNote && ctx.isVideoNote(item))) {
+    return (item.file_url || item._localUri || item.local_path) ? '' : 'media-nourl';
+  }
   if (!SUPPORTED_TYPES.has(type)) return 'type:' + type;
   if (item.deleted_at && !_isViewOnce(item)) return '';
   if (_isViewOnce(item)) return 'view-once';
@@ -844,7 +926,8 @@ export function unsupportedReason(item, ctx) {
   if (item._failed && _api < 2) return 'failed';
   if (item.voicemail) return 'voicemail';
   if (type === 'system') {
-    return ctx.systemText && ctx.systemText(item) != null ? '' : 'system-empty';
+    // [native-cover] sem texto → linha de sistema vazia (altura 1, igual ao JS que não desenha nada)
+    return ctx.systemText && ctx.systemText(item) != null ? '' : (_api >= 2 && _rowFbSwitchOn() ? '' : 'system-empty');
   }
   if (ctx.isVideoNote && ctx.isVideoNote(item)) return 'video-note';
   const c = typeof item.content === 'string' ? item.content : '';
@@ -933,6 +1016,19 @@ function _mediaFor(m, ctx) {
 
 /** Linha → modelo nativo (objeto simples, serializável). null = não suportada. */
 export function buildRow(item, key, ctx) {
+  // [native-cover] nunca devolve null p/ mensagem quando o fallback por linha está ligado
+  try {
+    const r = _buildRowInner(item, key, ctx);
+    if (r) return r;
+  } catch (e) {
+    if (__DEV__) console.warn('[native-list] buildRow', e?.message);
+    const fb = _fallbackRowSafe(item, key, ctx, 'throw');
+    if (fb) return fb;
+    throw e;
+  }
+  return _fallbackRowSafe(item, key, ctx, 'build-null');
+}
+function _buildRowInner(item, key, ctx) {
   const tt = item && item._type;
   if (tt === 'separator') {
     return { k: key, kind: 'date', text: item._label || (ctx.dateLabel ? ctx.dateLabel(item.date) : '') };
@@ -964,6 +1060,9 @@ export function buildRow(item, key, ctx) {
   }
   if (tt === 'album') {
     const its = item._items || [];
+    // [native-cover] álbum com célula que o nativo não desenha → cartão-resumo
+    const awhy = _api >= 2 ? _reasonOf(item, ctx) : '';
+    if (awhy && rowFallbackOk(awhy) && _cards().buildFallbackCard && _cards().buildFallbackCard(item, row, ctx, awhy)) { _countFb(awhy); return row; }
     row.album = its.slice(0, 4).map((c) => {
       const md = _mediaFor(c, ctx);
       md.id = String(c.id ?? '');
@@ -997,9 +1096,26 @@ export function buildRow(item, key, ctx) {
   if (rx) row.rx = rx;
   // [fase 2] cartão rico → row.bl (+ cw/bare/pad/mp); true = pronto.
   if (_api >= 2) _p2Common(item, row, ctx, own);
+  // [native-cover] linha não suportada → cartão-resumo nativo (toque = versão JS em folha)
+  if (_api >= 2) {
+    const why = _reasonOf(item, ctx);
+    if (why && rowFallbackOk(why) && _cards().buildFallbackCard && _cards().buildFallbackCard(item, row, ctx, why)) { _countFb(why); return row; }
+  }
   if (_api >= 2 && _cards().buildCard(item, row, ctx)) return row;
   const type = item.type || 'text';
-  const c = typeof item.content === 'string' ? item.content : '';
+  let c = typeof item.content === 'string' ? item.content : '';
+  // [native-cover] texto > 6000: corta + "Ler mais" (folha JS com o texto inteiro)
+  if (type === 'text' && _api >= 2 && c.length > LONG_TEXT_MAX) {
+    const short = { ...item, content: _truncLong(c) };
+    if (_p2BuildText(short, row, ctx, own)) {
+      const p2 = ctx.p2 || {};
+      const lbl = p2.label ? p2.label('chatConv.nlReadMore', 'Ler mais') : 'Ler mais';
+      const N = _N();
+      if (N) _appendAfter(row, N.text(lbl, { fs: 15, fw: 600, c: own ? (p2.ownText || '#111111') : (p2.accent || '#111111'), a: 'jsrow', m: [4, 0, 0, 0] }));
+      return row;
+    }
+    c = short.content;
+  }
   if (type === 'text' && _api >= 2 && _p2BuildText(item, row, ctx, own)) return row;
   if (type === 'text') {
     const jumbo = !row.rp && !row.fwd && ctx.jumbo ? ctx.jumbo(c) : 0;
@@ -1010,8 +1126,8 @@ export function buildRow(item, key, ctx) {
     if (p.spans.length) row.sp = p.spans;
     return row;
   }
-  if (MEDIA_TYPES.has(type)) {
-    row.media = _mediaFor(item, ctx);
+  if (MEDIA_TYPES.has(type) || (type === 'short_video' && _api >= 2)) {
+    row.media = _mediaFor(type === 'short_video' ? { ...item, type: 'video' } : item, ctx);
     const cap = _caption(item);
     if (cap && _api >= 2) _p2Caption(cap, row, ctx, item);
     else if (cap) {
@@ -1088,10 +1204,11 @@ export function useNativeThreadList(conversationId, data, ctx, blockers) {
       const it = data[i];
       let why = it && typeof it === 'object' ? memo.get(it) : undefined;
       if (why === undefined) {
-        why = unsupportedReason(it, ctx);
+        why = _reasonOf(it, ctx);
         if (it && typeof it === 'object') memo.set(it, why);
       }
-      if (why) {
+      // [native-cover] motivo com cartão-resumo → a linha vai pro nativo; a conversa segue nativa
+      if (why && !rowFallbackOk(why)) {
         st.off = true; st.reason = why; on = false;
         if (__DEV__) console.log('[native-list] JS path:', why);
         break;

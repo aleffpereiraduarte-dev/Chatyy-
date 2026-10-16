@@ -62,7 +62,7 @@ import {
 
 // Haptics (graceful — `expo-haptics` may be absent in some builds).
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../services/haptics').HapticsCompat; } catch {}
 const haptic = (kind) => {
   if (!_Haptics) return;
   try {

@@ -1407,13 +1407,13 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   }, []);
   const cyclePlaybackRate = useCallback(() => {
     setSpeedPickerOpen(true);
-    try { require('expo-haptics').selectionAsync(); } catch {}
+    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
   }, []);
   const handleSelectSpeed = useCallback(async (s) => {
     setPlaybackRate(s);
     setSpeedPickerOpen(false);
     try { await AsyncStorage.setItem(REELS_SPEED_KEY, String(s)); } catch {}
-    try { require('expo-haptics').selectionAsync(); } catch {}
+    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
   }, []);
   // Effective rate sent to the video — boost wins.
   const effectiveRate = rateBoost ? 2 : playbackRate;
@@ -1503,7 +1503,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     followInFlightRef.current = true;
     setFollowed(true);
     try { trackReelEvent(reel.id, 'follow'); } catch {} // [reels-v1]
-    try { require('expo-haptics').selectionAsync(); } catch {}
+    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
     try {
       await api.followUser?.(reel.author_email);
     } catch {
@@ -1574,7 +1574,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           durationSec: Number(reel.video_duration_ms) ? Math.round(Number(reel.video_duration_ms) / 1000) : 30,
         });
       } catch {}
-      try { require('expo-haptics').selectionAsync(); } catch {}
+      try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
     }
   }, [reel, soundSaved, t]);
 
@@ -1705,7 +1705,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       videoRef.current.muted = newMuted;
     }
     onToggleMute?.();
-    try { require('expo-haptics').selectionAsync(); } catch {}
+    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
   }, [muted, onToggleMute]);
 
   const togglePause = useCallback(() => {
@@ -1785,7 +1785,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     ]).start();
     if (!wasLiked) {
       setParticleKey(k => k + 1);
-      try { require('expo-haptics').impactAsync('light'); } catch {}
+      try { require('../services/haptics').HapticsCompat.impactAsync('light'); } catch {}
     }
     try {
       const r = await api.feedLike(reel.id);
@@ -1828,7 +1828,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       if (!liked) toggleLike();
       showHeartAnimation();
       setParticleKey(k => k + 1);
-      try { require('expo-haptics').impactAsync('medium'); } catch {}
+      try { require('../services/haptics').HapticsCompat.impactAsync('medium'); } catch {}
       lastTapRef.current = 0;
     } else {
       lastTapRef.current = now;
@@ -1902,7 +1902,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           try { require('react-native').Clipboard.setString(url); } catch {}
         }
       }
-      try { require('expo-haptics').notificationAsync('success'); } catch {}
+      try { require('../services/haptics').HapticsCompat.notificationAsync('success'); } catch {}
     } catch {}
   }, [reel.id]);
 
@@ -1939,7 +1939,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   // can read it via scrubbingRef.)
   const handleLongPress = useCallback(() => {
     setRateBoost(true);
-    try { require('expo-haptics').impactAsync('medium'); } catch {}
+    try { require('../services/haptics').HapticsCompat.impactAsync('medium'); } catch {}
   }, []);
   const handlePressOut = useCallback(() => {
     if (rateBoost) {
@@ -3787,7 +3787,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     } catch {
       try { require('react-native').Clipboard.setString(url); } catch {}
     }
-    try { require('expo-haptics').notificationAsync('success'); } catch {}
+    try { require('../services/haptics').HapticsCompat.notificationAsync('success'); } catch {}
   }, [nShareReel]);
   const nShareRepost = useCallback(() => {
     const reel = nShareReel;
@@ -3822,14 +3822,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           durationSec: Number(reel.video_duration_ms) ? Math.round(Number(reel.video_duration_ms) / 1000) : 30,
         });
       } catch {}
-      try { require('expo-haptics').selectionAsync(); } catch {}
+      try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
     }
   }, [patchReel, t]);
   const nSelectSpeed = useCallback((sp) => {
     setNRate(sp);
     setNSpeedOpen(false);
     AsyncStorage.setItem(REELS_SPEED_KEY, String(sp)).catch(() => {});
-    try { require('expo-haptics').selectionAsync(); } catch {}
+    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
   }, []);
 
   const keyExtractor = useCallback((item) => String(item.id), []);

@@ -2660,7 +2660,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if (voiceTickRef.current) clearInterval(voiceTickRef.current);
       voiceTickRef.current = setInterval(() => setVoiceElapsed(Math.floor((Date.now() - voiceStartRef.current) / 1000)), 250);
       setVoiceRecording(true);
-      if (Platform.OS !== 'web') { try { require('expo-haptics').impactAsync(); } catch {} }
+      if (Platform.OS !== 'web') { try { require('../services/haptics').HapticsCompat.impactAsync(); } catch {} }
     } catch (e) {
       setVoiceRecording(false);
     }

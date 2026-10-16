@@ -3,12 +3,13 @@
 // Android). Renderiza o conteúdo registrado por <NativeSheet> (components/
 // NativeSheet.js). Não tem conteúdo próprio: sem id válido ela se remove.
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Platform, View, useWindowDimensions } from 'react-native';
+import { Keyboard, Platform, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { StackActions, useRoute } from '@react-navigation/native';
 import {
   getNativeSheetEntry, subscribeNativeSheet, attachNativeSheetRoute, detachNativeSheetRoute,
+  nativeSheetBoundedOn,
 } from '../components/NativeSheet';
 
 export default function NativeSheetRoute() {
@@ -50,44 +51,85 @@ export default function NativeSheetRoute() {
   // enquete 16/10). Aqui o conteúdo ganha ALTURA REAL do detent atual (flex:1
   // volta a funcionar, ScrollView rola dentro do próprio layout Yoga) e um 1º
   // filho vazio que desarma a caça (nada é forçado). fitToContents fica como
-  // estava. OPT-IN até testar no iPhone: globalThis.__chatyy_sheet_bounded = true.
+  // estava.
+  // [2026-10-16 wave7] Altura = área ÚTIL do detent (o UIKit mede detents
+  // custom SEM o inset inferior: sheet = fração × maximumDetentValue + home
+  // indicator; o conteúdo usa nativeSheetBottomPad = só o extra no iOS):
+  //   1º render: estimativa (janela − topo do detent grande − inset inferior);
+  //   depois: CALIBRA medindo o topo real do sheet (measureInWindow lê o frame
+  //   de modelo = final mesmo durante a animação) → exato em iOS 18 e 26
+  //   (grabber não ocupa layout; iOS 26 flutuante só sobra folga, nunca corta).
+  // Gate: nativeSheetBoundedOn() (components/NativeSheet.js) — ligado por
+  // padrão no binário da wave 7+; kill: globalThis.__chatyy_sheet_bounded = false.
   const entry = getNativeSheetEntry(id);
   const detents = entry && Array.isArray(entry.detents) ? entry.detents : null;
-  const bounded = !!detents && detents.length > 0 && Platform.OS === 'ios' && _boundedOn();
+  const bounded = !!detents && detents.length > 0 && Platform.OS === 'ios' && nativeSheetBoundedOn();
   const [detIdx, setDetIdx] = useState(() => {
     const i = Number(entry && entry.initialDetent) || 0;
     return detents ? Math.max(0, Math.min(detents.length - 1, i)) : 0;
   });
-  useEffect(() => {
-    if (!bounded || !navigation || typeof navigation.addListener !== 'function') return undefined;
-    try {
-      return navigation.addListener('sheetDetentChange', (e) => {
-        const i = e && e.data ? Number(e.data.index) : NaN;
-        if (Number.isInteger(i) && i >= 0) setDetIdx(i);
-      });
-    } catch { return undefined; }
-  }, [bounded, navigation]);
+  const [measured, setMeasured] = useState(null); // { [detIdx]: altura útil medida }
   const win = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const wrapRef = useRef(null);
+  const detIdxRef = useRef(detIdx);
+  detIdxRef.current = detIdx;
+  const geoRef = useRef({ h: 0, b: 0 });
+  geoRef.current = { h: win.height || 0, b: (insets && insets.bottom) || 0 };
+  const remeasure = useCallback(() => {
+    const node = wrapRef.current;
+    if (!node || typeof node.measureInWindow !== 'function') return;
+    try { if (Keyboard.isVisible && Keyboard.isVisible()) return; } catch {} // teclado sobe o sheet → topo falso
+    const idx = detIdxRef.current;
+    try {
+      node.measureInWindow((x, y) => {
+        const { h: winH, b } = geoRef.current;
+        if (!(y > 0) || !(winH > 0) || y > winH - 120) return;
+        const v = Math.round(winH - y - b);
+        if (v < 120) return;
+        setMeasured((m) => ((m && Math.abs((m[idx] || 0) - v) < 1) ? m : { ...(m || {}), [idx]: v }));
+      });
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (!bounded || !navigation || typeof navigation.addListener !== 'function') return undefined;
+    const subs = [];
+    const timers = [];
+    const later = (ms) => { timers.push(setTimeout(remeasure, ms)); };
+    try {
+      subs.push(navigation.addListener('sheetDetentChange', (e) => {
+        const i = e && e.data ? Number(e.data.index) : NaN;
+        if (!Number.isInteger(i) || i < 0) return;
+        detIdxRef.current = i;
+        setDetIdx(i);
+        if (!e.data || e.data.stable !== false) later(40);
+      }));
+    } catch {}
+    try { subs.push(navigation.addListener('transitionEnd', () => later(0))); } catch {}
+    later(520); // sem transitionEnd (alguns caminhos do formSheet) → depois da subida
+    return () => {
+      subs.forEach((u) => { try { typeof u === 'function' && u(); } catch {} });
+      timers.forEach(clearTimeout);
+    };
+  }, [bounded, navigation, remeasure]);
 
   if (content == null) return <View />;
   if (!bounded) return content;
-  const frac = Number(detents[Math.min(detIdx, detents.length - 1)]) || 1;
-  // Detent "grande" do UIKit: topo do sheet = safe area de cima (iOS 26) ou
-  // +10 pt (iOS ≤ 18). Detent custom = fração dessa altura máxima.
-  const largeH = Math.max(320, (win.height || 0) - ((insets && insets.top) || 0) - (_iosMajor() >= 26 ? 0 : 10));
-  const h = Math.max(160, Math.round(largeH * Math.max(0.1, Math.min(1, frac))));
+  const di = Math.min(detIdx, detents.length - 1);
+  const frac = Math.max(0.1, Math.min(1, Number(detents[di]) || 1));
+  // Estimativa: detent grande começa ~10 pt abaixo da safe area de cima
+  // (iOS 16–26, iPhone em retrato); maximumDetentValue exclui o inset inferior.
+  const top = (insets && insets.top) || 0;
+  const bottom = (insets && insets.bottom) || 0;
+  const maxDetent = Math.max(320, (win.height || 0) - top - 10 - bottom);
+  const est = Math.round(maxDetent * frac);
+  const got = measured && measured[di];
+  // Medida só vale se coerente com o detent (rotação/teclado/medida no meio do arrasto).
+  const h = Math.max(160, (got && Math.abs(got - est) < 80) ? got : est);
   return (
-    <View collapsable={false} style={{ height: h }}>
+    <View ref={wrapRef} collapsable={false} style={{ height: h }} onLayout={remeasure}>
       <View collapsable={false} pointerEvents="none" style={{ height: 0 }} />
       <View collapsable={false} style={{ flex: 1 }}>{content}</View>
     </View>
   );
-}
-
-function _boundedOn() {
-  try { return globalThis.__chatyy_sheet_bounded === true; } catch { return false; }
-}
-function _iosMajor() {
-  try { return parseInt(String(Platform.Version), 10) || 0; } catch { return 0; }
 }

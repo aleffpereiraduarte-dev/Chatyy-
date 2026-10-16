@@ -1,0 +1,8 @@
+{
+  "name": "expo-inapp-banner",
+  "version": "1.0.0",
+  "description": "Chatyy native in-app notification banner (iOS UIWindow overlay + UIKit springs; Android decorView overlay + ViewPropertyAnimator): avatar, name, preview, swipe up dismiss, swipe down quick reply, tap opens.",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true
+}

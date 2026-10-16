@@ -515,14 +515,37 @@ function _getHaptics() {
   if (!_Haptics) { try { _Haptics = require('expo-haptics'); } catch {} }
   return _Haptics;
 }
+// [2026-10-16 motion-telegram] Rota única: tudo passa pelo shim
+// services/haptics (iOS = Core Haptics do expo-native-toolkit; Android =
+// View.performHapticFeedback — clique nítido do sistema, respeita "toque" das
+// configurações — em vez do vibrador do expo-haptics). Antes este helper (202
+// chamadas, incl. PressableScale) ia direto no expo-haptics → Android zumbia e
+// o iOS misturava geradores com o resto do app. Lazy require (theme.js carrega
+// cedo; evita ciclo). Fallback = caminho antigo. Kill switch OTA:
+// globalThis.__chatyy_theme_haptic_shim = false.
+let _HShim = null;
+function _getShim() {
+  if (_HPlatform.OS === 'web') return null;
+  try { if (globalThis.__chatyy_theme_haptic_shim === false) return null; } catch {}
+  if (_HShim === null) { try { _HShim = require('../services/haptics') || false; } catch { _HShim = false; } }
+  return _HShim || null;
+}
+function _hx(shimFn, legacy) {
+  return () => {
+    const S = _getShim();
+    if (S) { try { shimFn(S); return; } catch {} }
+    const H = _getHaptics();
+    try { legacy(H); } catch {}
+  };
+}
 export const haptic = {
-  light: () => { const H = _getHaptics(); try { H?.impactAsync?.(H.ImpactFeedbackStyle.Light); } catch {} },
-  medium: () => { const H = _getHaptics(); try { H?.impactAsync?.(H.ImpactFeedbackStyle.Medium); } catch {} },
-  heavy: () => { const H = _getHaptics(); try { H?.impactAsync?.(H.ImpactFeedbackStyle.Heavy); } catch {} },
-  select: () => { const H = _getHaptics(); try { H?.selectionAsync?.(); } catch {} },
-  success: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Success); } catch {} },
-  warning: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Warning); } catch {} },
-  error: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Error); } catch {} },
+  light: _hx((S) => S.tap('light'), (H) => H?.impactAsync?.(H.ImpactFeedbackStyle.Light)),
+  medium: _hx((S) => S.tap('medium'), (H) => H?.impactAsync?.(H.ImpactFeedbackStyle.Medium)),
+  heavy: _hx((S) => S.tap('heavy'), (H) => H?.impactAsync?.(H.ImpactFeedbackStyle.Heavy)),
+  select: _hx((S) => S.selection(), (H) => H?.selectionAsync?.()),
+  success: _hx((S) => S.success(), (H) => H?.notificationAsync?.(H.NotificationFeedbackType.Success)),
+  warning: _hx((S) => S.warning(), (H) => H?.notificationAsync?.(H.NotificationFeedbackType.Warning)),
+  error: _hx((S) => S.error(), (H) => H?.notificationAsync?.(H.NotificationFeedbackType.Error)),
 };
 
 // DENSIDADE 2026: raios um pouco menores = visual mais reto/clean tipo Gmail.

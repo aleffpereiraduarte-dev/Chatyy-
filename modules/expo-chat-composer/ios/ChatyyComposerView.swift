@@ -255,7 +255,7 @@ final class NCReplyCard: UIView {
     titleLabel.textColor = ink
   }
 
-  func configure(_ r: NCReplyRecord) {
+  func configure(_ r: NCReply) {
     titleLabel.text = r.title
     bodyLabel.text = r.text
     bodyLabel.numberOfLines = r.lines > 0 ? r.lines : (r.italic ? 1 : 3)
@@ -406,7 +406,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   var placeholderText: String = "" { didSet { textView.placeholderLabel.text = placeholderText } }
   var labels: [String: String] = [:] { didSet { applyLabels() } }
   var pendingTheme: NCThemeRecord? = nil
-  var pendingReply: NCReplyRecord?? = nil
+  var pendingReply: NCReply?? = nil
   var sendMenuItems: [NCMenuItemRecord] = [] { didSet { rebuildSendMenu() } }
   var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { needsRelayout = true } } }
   var sending = false { didSet { if sending != oldValue { actionButton.setSending(sending && actionButton.mode == .send) } } }
@@ -450,8 +450,11 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // MARK: State
   private var theme = NCThemeRecord()
   private var themeColors = NCResolvedTheme()
-  private var replyRecord: NCReplyRecord? = nil
+  private var replyRecord: NCReply? = nil
   private var replyVisible = false
+  private var replyClosing = false // [reply-card-ios] saída em andamento (X local + prop null)
+  private var replyGen = 0         // [reply-card-ios] coalesce props de resposta adiadas
+  private var heightReassertScheduled = false
   private var mentionMap: [String: String] = [:] // token(lower) → email
   private var lastEmittedText: String = ""
   private var changeTimer: Timer?
@@ -554,9 +557,23 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     }
     if let r = pendingReply {
       pendingReply = nil
-      setReply(r)
+      // [2026-10-16 reply-card-ios] FORA da transação de montagem do Fabric:
+      // OnViewDidUpdateProps roda dentro do finalizeUpdates; aplicar o cartão,
+      // pedir altura nova (setStyleSize síncrono) e abrir o teclado ali dentro
+      // perdia a altura/animação (build 692: cartão invisível). Só a última
+      // prop pendente vale (replyGen).
+      replyGen &+= 1
+      let gen = replyGen
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self, self.replyGen == gen else { return }
+        self.setReply(r)
+      }
     }
-    if needsRelayout { relayout(animated: false) }
+    if needsRelayout {
+      relayout(animated: false)
+      // Altura pedida durante a montagem pode não pegar → reafirma depois.
+      reassertHeightSoon()
+    }
   }
 
   func applyDefaultText(_ s: String) {
@@ -652,27 +669,34 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   // MARK: Reply bar
 
-  private func setReply(_ r: NCReplyRecord?) {
+  private func setReply(_ r: NCReply?) {
     if let r = r {
       let wasVisible = replyVisible
+      let wasClosing = replyClosing
       let keyChanged = replyRecord?.key != r.key
       replyRecord = r
+      replyClosing = false
       replyCard.configure(r)
       replyVisible = true
       replyCard.isHidden = false
+      if !wasVisible {
+        // Estado inicial ANTES do layout (sem piscar na posição final).
+        replyCard.layer.removeAllAnimations()
+        replyCard.alpha = 0
+        replyCard.transform = .identity
+      }
       relayout(animated: false)
       let reduce = UIAccessibility.isReduceMotionEnabled
       if !wasVisible {
-        replyCard.alpha = 0
         // [reply-v2] entra com mola de baixo (Telegram)
-        replyCard.transform = (r.pop && !reduce) ? CGAffineTransform(translationX: 0, y: 26).scaledBy(x: 0.97, y: 0.97) : CGAffineTransform(translationX: 0, y: 12)
+        replyCard.transform = reduce ? .identity : ((r.pop) ? CGAffineTransform(translationX: 0, y: 26).scaledBy(x: 0.97, y: 0.97) : CGAffineTransform(translationX: 0, y: 12))
         UIView.animate(withDuration: r.pop ? 0.46 : 0.32, delay: 0, usingSpringWithDamping: r.pop ? 0.74 : 0.82, initialSpringVelocity: r.pop ? 0.6 : 0.2,
                        options: [.allowUserInteraction, .beginFromCurrentState], animations: {
           self.replyCard.alpha = 1
           self.replyCard.transform = .identity
         }, completion: nil)
-      } else if (replyCard.layer.presentation()?.opacity ?? 1) < 0.99 || replyCard.alpha < 1 {
-        // estava saindo (X/limpo) e voltou → reverte a saída
+      } else if wasClosing || (replyCard.layer.presentation()?.opacity ?? 1) < 0.99 || replyCard.alpha < 1 {
+        // estava saindo (X/limpo) e voltou → reverte a saída a partir do ponto atual
         UIView.animate(withDuration: 0.26, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0,
                        options: [.allowUserInteraction, .beginFromCurrentState], animations: {
           self.replyCard.alpha = 1
@@ -686,22 +710,53 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
           self.replyCard.transform = .identity
         }, completion: nil)
       }
-      // [reply-v2] responder abre o teclado sozinho (menos ida-e-volta pelo JS)
+      reassertHeightSoon()
+      // [reply-v2] responder abre o teclado sozinho (menos ida-e-volta pelo JS).
+      // Já estamos fora da montagem (didUpdateProps adia); mais um tick para o
+      // frame novo assentar antes do teclado subir.
       if r.focus && r.kind == "reply" && keyChanged && !voice.isActive && !emojiActive && window != nil {
-        focusInput()
+        DispatchQueue.main.async { [weak self] in
+          guard let self = self, self.replyRecord?.key == r.key, self.window != nil else { return }
+          self.focusInput()
+        }
       }
-    } else if replyVisible {
+    } else if replyVisible && !replyClosing {
       replyRecord = nil
-      UIView.animate(withDuration: 0.16, delay: 0, options: [.beginFromCurrentState, .curveEaseIn], animations: {
+      replyClosing = true
+      UIView.animate(withDuration: 0.16, delay: 0, options: [.beginFromCurrentState, .curveEaseIn, .allowUserInteraction], animations: {
         self.replyCard.alpha = 0
         self.replyCard.transform = CGAffineTransform(translationX: 0, y: 8)
       }, completion: { _ in
-        guard self.replyRecord == nil else { return }
+        // Reaberto durante a saída → a entrada nova é dona do cartão.
+        guard self.replyRecord == nil, self.replyClosing else { return }
+        self.replyClosing = false
         self.replyVisible = false
         self.replyCard.isHidden = true
         self.replyCard.transform = .identity
         self.relayout(animated: false)
+        self.reassertHeightSoon()
       })
+    } else if !replyVisible {
+      replyRecord = nil
+    }
+  }
+
+  /// [2026-10-16 reply-card-ios] Reenvia a altura desejada no próximo tick se o
+  /// frame do Yoga não bateu (setStyleSize pedido dentro da montagem do Fabric
+  /// pode se perder; o onHeightChange garante o caminho JS também).
+  private func reassertHeightSoon() {
+    guard !heightReassertScheduled else { return }
+    heightReassertScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.heightReassertScheduled = false
+      guard self.bounds.width > 0 else { return }
+      let h = ceil(self.computeFrames(width: self.bounds.width).total)
+      guard abs(self.bounds.height - h) >= 0.5 else { return }
+      self.lastHeight = h
+      self.setStyleSize(nil, height: NSNumber(value: Float(h)))
+      self.onHeightChange(["height": Double(h)])
+      self.setNeedsLayout()
     }
   }
 
@@ -1009,7 +1064,11 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let top = bounds.height - f.total
     contentTop = top
     if replyVisible {
-      replyCard.frame = CGRect(x: 8, y: top, width: W - 16, height: f.cardH)
+      // bounds+center (não .frame): o cartão pode estar com transform da
+      // animação de entrada/saída e .frame com transform ≠ identity é indefinido.
+      let cf = CGRect(x: 8, y: top, width: W - 16, height: f.cardH)
+      replyCard.bounds = CGRect(origin: .zero, size: cf.size)
+      replyCard.center = CGPoint(x: cf.midX, y: cf.midY)
     }
     barView.frame = CGRect(x: 0, y: top + f.replyH, width: W, height: max(f.barH, bounds.height - f.replyH - top))
     hairline.frame = CGRect(x: 0, y: 0, width: W, height: 1 / max(1, UIScreen.main.scale))

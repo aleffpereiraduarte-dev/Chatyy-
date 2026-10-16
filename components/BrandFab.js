@@ -15,7 +15,7 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { TouchableOpacity, Animated, Platform, Easing } from 'react-native';
 
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../services/haptics').HapticsCompat; } catch {}
 
 
 export default function BrandFab({

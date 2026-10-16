@@ -60,6 +60,8 @@ import RestorePanel from './RestorePanel';
 import { computePermissionSteps } from './permissions';
 import { probeRestore } from './restore';
 import { hasNativeCircleCrop } from './flag';
+import { fitPhoneFontSize, textEm } from './phoneFit';
+import OpeningScreen from './OpeningScreen';
 
 const FORM_STEPS = ['phone', 'otp', 'profile', 'username'];
 // Nomes do rascunho compartilhado com o fluxo legado (signupSmarts).
@@ -131,6 +133,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const [lockPin, setLockPin] = useState('');
   const [otpErrorTick, setOtpErrorTick] = useState(0);
   const [showCountry, setShowCountry] = useState(false);
+  const [phoneRowW, setPhoneRowW] = useState(0); // [2026-10-16 onb-phone-fit]
   const [showLang, setShowLang] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [photoSheet, setPhotoSheet] = useState(false);
@@ -529,11 +532,17 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     setTimeout(() => { if (mountedRef.current) { try { router.replace(navTarget()); } catch {} } }, 120);
   }, [router, navTarget, mountedRef]);
 
+  // [2026-10-16 onb-opening] geração da sondagem: "Abrir agora"/"Tentar novamente"
+  // invalidam a anterior (resposta atrasada não arrasta o usuário de volta).
+  const probeGenRef = useRef(0);
+  const [openPhase, setOpenPhase] = useState('perm'); // 'perm' | 'probe'
   const goRestoreOrFinish = useCallback(async (email, isNew) => {
     go('finishing', 1);
+    setOpenPhase('probe');
+    const gen = ++probeGenRef.current;
     let r = null;
     try { r = await probeRestore(email); } catch { r = null; }
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || gen !== probeGenRef.current) return;
     if (r?.kind === 'own') { setRestore(r); go('restore', 1); return; }
     if (r?.kind === 'legacy') { setRestore(r); setLegacyModal('backup'); }
     else if (r?.kind === 'history') { setRestore(r); setLegacyModal('history'); }
@@ -547,6 +556,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   }, [goRestoreOrFinish]);
 
   afterAuthRef.current = async (email, isNew) => {
+    setOpenPhase('perm');
     go('finishing', 1);
     let steps = [];
     try { steps = await computePermissionSteps(); } catch { steps = []; }
@@ -688,7 +698,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     <Pressable
       onPress={onPress}
       disabled={!!(loading || disabled)}
-      style={({ pressed }) => [st.primary, { backgroundColor: fg, opacity: disabled ? 0.38 : (pressed ? 0.86 : 1), transform: [{ scale: pressed && !disabled ? 0.985 : 1 }] }]}
+      style={({ pressed }) => [st.primary, { backgroundColor: fg, opacity: disabled ? 0.3 : (pressed ? 0.86 : 1), transform: [{ scale: pressed && !disabled ? 0.985 : 1 }] }]}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!(loading || disabled), busy: !!loading }}
@@ -771,6 +781,13 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     );
   } else if (step === 'phone') {
     const left = Math.max(0, minDigits - phoneDigits.length);
+    // [2026-10-16 onb-phone-fit] fonte calculada p/ "+1 (954) 707-7804" nunca cortar:
+    // o mesmo tamanho no prefixo e no campo (mesma linha de base).
+    const phoneShown = formatPhone(phoneDigits, country.mask);
+    const maskPh = (country.mask || '').replace(/#/g, '0');
+    const phoneFs = fitPhoneFontSize(phoneRowW ? phoneRowW - 54 : 0, [country.dial + maskPh, country.dial + phoneShown], { max: 28, min: 17 });
+    const dialW = Math.ceil(phoneFs * textEm(country.dial) * 1.08) + 2;
+    const phoneLh = Math.round(phoneFs * 1.25);
     body = (
       <>
         <Text style={[st.title, { color: fg }]} accessibilityRole="header" maxFontSizeMultiplier={1.3}>{titles.phone}</Text>
@@ -791,19 +808,28 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           onPress={() => { Keyboard.dismiss(); setShowCountry(true); }}
           style={({ pressed }) => [st.countryRow, { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
           accessibilityRole="button"
-          accessibilityLabel={`${T('onb.countryLabel', 'País')}: ${countryDisplayName(country, language)} ${country.dial}`}
+          accessibilityLabel={`${T('onb.countryLabel', 'País')}: ${countryDisplayName(country, language, t)} ${country.dial}`}
           accessibilityHint={T('login.selectCountry', 'Selecionar país')}
           testID="nob-country"
         >
           <FlagIcon code={country.code} width={30} borderColor={colors.border} textColor={fg} />
-          <Text style={[st.countryName, { color: fg }]} numberOfLines={1}>{countryDisplayName(country, language)}</Text>
+          <Text style={[st.countryName, { color: fg }]} numberOfLines={1}>{countryDisplayName(country, language, t)}</Text>
           <IconChevronDown size={18} color={sub} />
         </Pressable>
-        <View style={[st.phoneRow, { borderBottomColor: phoneValid ? fg : colors.border }]}>
-          <Text style={[st.dial, { color: fg }]} accessibilityElementsHidden importantForAccessibility="no">{country.dial}</Text>
+        <View
+          style={[st.phoneRow, { borderBottomColor: phoneValid ? fg : colors.border }]}
+          onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w && w !== phoneRowW) setPhoneRowW(w); }}
+        >
+          <Text
+            style={[st.dial, { color: fg, fontSize: phoneFs, lineHeight: phoneLh, width: dialW }]}
+            numberOfLines={1}
+            maxFontSizeMultiplier={1}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+          >{country.dial}</Text>
           <View style={[st.vline, { backgroundColor: colors.border }]} />
           <TextInput
-            value={formatPhone(phoneDigits, country.mask)}
+            value={phoneShown}
             onChangeText={(text) => {
               const parsed = parsePhoneInput(text, countryCode, COUNTRIES);
               if (parsed.countryCode !== countryCode) { setCountryCode(parsed.countryCode); try { hSelection(); } catch {} }
@@ -818,14 +844,16 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
             textContentType="telephoneNumber"
             autoComplete="tel"
             autoFocus={Platform.OS !== 'android'}
-            returnKeyType="go"
-            onSubmitEditing={() => { if (phoneValid && !busy) setConfirmOpen(true); }}
-            style={[st.phoneInput, { color: fg }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
+            // [2026-10-16] sem returnKeyType: no iOS 26 o phone-pad desenhava um
+            // botão flutuante "Go" sobre o teclado. O "Continuar" já existe.
+            // Web (teclado físico): Enter continua confirmando.
+            onSubmitEditing={Platform.OS === 'web' ? () => { if (phoneValid && !busy) setConfirmOpen(true); } : undefined}
+            style={[st.phoneInput, { color: fg, fontSize: phoneFs, height: phoneLh + 16 }, Platform.OS === 'web' ? { outlineStyle: 'none', lineHeight: phoneLh } : null]}
             accessibilityLabel={`${T('signupPhone.titlePhone', 'Seu telefone')} ${country.dial}`}
-            maxFontSizeMultiplier={1.3}
+            maxFontSizeMultiplier={1}
             testID="nob-phone"
           />
-          {phoneValid ? <IconCheck size={20} color={fg} strokeWidth={2.6} /> : null}
+          <View style={st.phoneCheck}>{phoneValid ? <IconCheck size={20} color={fg} strokeWidth={2.6} /> : null}</View>
         </View>
         <Text style={[st.hint, { color: sub }]} accessibilityLiveRegion="polite" testID="nob-phone-hint">
           {phoneDigits.length === 0 ? ' '
@@ -1161,12 +1189,9 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
       />
     );
   } else if (step === 'finishing' || (step === 'restore' && restore?.kind !== 'own')) {
-    body = (
-      <View style={st.finishing} accessibilityLiveRegion="polite">
-        <ActivityIndicator size="large" color={fg} />
-        <Text style={[st.sub, { color: sub, marginTop: 16, textAlign: 'center' }]}>{T('signupPhone.redirecting', 'Abrindo seu Chatyy…')}</Text>
-      </View>
-    );
+    // [2026-10-16 onb-opening] esqueleto da lista + marca + status — desenhado
+    // em tela cheia fora da coluna (ver <OpeningScreen> no layout).
+    body = null;
   } else if (step === 'done') {
     const first = (name || '').trim().split(/\s+/)[0] || '';
     body = (
@@ -1256,6 +1281,22 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           {footer ? <View style={[st.footer, { paddingBottom: padBottom }]}>{footer}</View> : <View style={{ height: padBottom }} />}
         </Animated.View>
       </View>
+
+      {(step === 'finishing' || (step === 'restore' && restore?.kind !== 'own')) ? (
+        <OpeningScreen
+          colors={colors}
+          T={T}
+          reduced={reduced}
+          topPad={topPad}
+          bottomPad={padBottom}
+          phase={legacyModal ? 'modal' : openPhase}
+          onRetry={() => { if (openPhase === 'probe') goRestoreOrFinish(accountEmail, isNewAccount); }}
+          onOpenNow={() => {
+            probeGenRef.current += 1; // descarta a sondagem em voo
+            if (isNewAccount) go('done', 1); else leaveToApp();
+          }}
+        />
+      ) : null}
 
       <CountryPicker
         visible={showCountry}
@@ -1399,9 +1440,10 @@ const st = StyleSheet.create({
   countryRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 54, borderBottomWidth: StyleSheet.hairlineWidth, marginTop: 22 },
   countryName: { flex: 1, fontSize: 17, fontWeight: '600' },
   phoneRow: { flexDirection: 'row', alignItems: 'center', minHeight: 60, borderBottomWidth: 1.5 },
-  dial: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'], minWidth: 48 },
+  dial: { fontSize: 24, fontWeight: '600', fontVariant: ['tabular-nums'], letterSpacing: 0, includeFontPadding: false },
   vline: { width: StyleSheet.hairlineWidth, height: 24, marginHorizontal: 10 },
-  phoneInput: { flex: 1, minWidth: 0, fontSize: 24, fontWeight: '600', letterSpacing: 0.4, paddingVertical: 12, fontVariant: ['tabular-nums'] },
+  phoneInput: { flex: 1, minWidth: 0, fontSize: 24, fontWeight: '600', letterSpacing: 0, paddingVertical: 0, paddingHorizontal: 0, fontVariant: ['tabular-nums'], includeFontPadding: false, textAlignVertical: 'center' },
+  phoneCheck: { width: 26, alignItems: 'flex-end', justifyContent: 'center' },
   errRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 },
   errText: { flex: 1, fontSize: 13, lineHeight: 18 },
   primary: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 4 },

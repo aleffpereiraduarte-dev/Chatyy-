@@ -2229,7 +2229,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       try { if (typeof ctx.onForward === 'function') ctx.onForward(it); } catch {}
     } else if (e.action === 'star') {
       _setStarred(!!e.starred);
-      try { require('expo-haptics').selectionAsync?.(); } catch {}
+      try { require('../services/haptics').HapticsCompat.selectionAsync?.(); } catch {}
     }
   }, []);
   useEffect(() => {
@@ -3393,7 +3393,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                             const C = require('expo-clipboard');
                             await C.setStringAsync(_ocr.text);
                             _setOcrCopied(true);
-                            try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Success); } catch {}
+                            try { require('../services/haptics').HapticsCompat.notificationAsync(require('../services/haptics').HapticsCompat.NotificationFeedbackType.Success); } catch {}
                           } catch {}
                         }}
                         style={{ marginTop: 12, height: 46, borderRadius: 23, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}

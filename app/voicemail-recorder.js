@@ -26,7 +26,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import { IconMic, IconPlay, IconPause } from '../components/Icons';
 
 const MAX_DURATION_SEC = 60; // matches server-side cap

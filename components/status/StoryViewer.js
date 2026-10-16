@@ -44,7 +44,7 @@ let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch {}
 
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../../services/haptics').HapticsCompat; } catch {}
 
 let _cacheMedia = null;
 try { _cacheMedia = require('../../services/mediaCache').cacheMedia; } catch {}

@@ -56,6 +56,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
+import { useConvOpenMetric, noteConvOpen } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -192,7 +193,7 @@ import { humanizeSystemText } from '../utils/systemMessageText';
 import { formatBytes } from '../services/format';
 import * as e2eService from '../services/e2e';
 import * as DocumentPicker from 'expo-document-picker';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import {
   IconArrowLeft, IconSend, IconUsers, IconMoreVert, IconVideo, IconPhone,
   IconX, IconEdit, IconTrash, IconReply, IconPaperclip, IconImage, IconFileText,
@@ -32803,6 +32804,7 @@ function ChatConversationInner() {
   }, [currentEmail, conversationId]);
   const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas))); // vazio → estado vazio JS (salvo foto nativa enquanto carrega)
   _nlOnRef.current = !!(_nl && _nl.on); // [native-media-dl]
+  useConvOpenMetric(conversationId, _nl, threadListData ? threadListData.length : 0, !loading || !!(threadListData && threadListData.length)); // [wave7] toque→1º frame
   const _nlActRef = useRef(null);
   _nlActRef.current = { handleLongPress, handleDoubleTap, handleMessageInfo, toggleSelection, handleReact, safeScrollToMsg, selectionMode,
     promptFailed: _promptFailedMsg, tapRetry: _tapRetryFailed, smartAction: _onSmartAction }; // [fase 2]
@@ -32854,7 +32856,7 @@ function ChatConversationInner() {
       return;
     }
     if (m._uploading) return;
-    if (!isAlbum && m.type !== 'gif') { _nlActRef.current.handleDoubleTap(m); return; }
+    if (!isAlbum && m.type !== 'gif') { _nlActRef.current.handleDoubleTap(m.type === 'short_video' ? { ...m, type: 'video' } : m); return; } // [native-cover] short_video = vídeo
     const b64 = m.thumb_b64 || getThumbB64Sync(m.id);
     setMediaViewer({
       visible: true,
@@ -32922,6 +32924,12 @@ function ChatConversationInner() {
     try { off = require('../services/mediaHero').setHeroResolver((mid) => flashListRef.current?.mediaFrame?.(mid) || null); } catch {}
     return () => { try { off && off(); } catch {} };
   }, [_nl.on]);
+  // [2026-10-16 native-cover] fallback por LINHA: cartão-resumo nativo → toque
+  // abre a versão JS desta linha numa folha (o resto da conversa segue nativo);
+  // visualização única recebida → o MESMO ViewOnceMessage com autoOpen.
+  const [_nlRowSheet, _setNlRowSheet] = useState(null); // { key, item }
+  const [_nlVoHost, _setNlVoHost] = useState(null); // msg view-once a abrir
+  useEffect(() => { _setNlRowSheet(null); _setNlVoHost(null); }, [conversationId]);
   const _nlOnRowPress = useCallback(({ item, part, url, index, frame }) => {
     const A = _nlActRef.current;
     if (!item || item._type === 'separator' || item._type === 'unread_separator') return;
@@ -32933,6 +32941,12 @@ function ChatConversationInner() {
       // nota de vídeo toca INLINE no nativo (play/pause/end) — JS só observa.
       case 'vnote': return;
       case 'action': {
+        if (url === 'jsrow') { let k = null; try { k = msgKeyExtractor(item); } catch {} _setNlRowSheet({ key: k, item }); return; } // [native-cover]
+        if (url === 'vo_open') { // [native-cover]
+          if (target.type === 'audio' || target.type === 'voice' || /\.(m4a|opus|ogg|mp3|aac|wav)(\?|$)/i.test(String(target.file_url || ''))) { let k = null; try { k = msgKeyExtractor(item); } catch {} _setNlRowSheet({ key: k, item }); }
+          else _setNlVoHost(target);
+          return;
+        }
         if (_nlTextAction(target, url)) return;
         try { if (typeof _nlCardActionRef.current === 'function') _nlCardActionRef.current(item, target, url, index); } catch {}
         return;
@@ -38410,6 +38424,52 @@ function ChatConversationInner() {
         );
       })()}
 
+      {/* [2026-10-16 native-cover] versão JS de UMA linha (cartão-resumo da lista nativa). */}
+      {_nlRowSheet ? (() => {
+        let live = _nlRowSheet.item;
+        try {
+          if (_nlRowSheet.key != null && Array.isArray(threadListData)) {
+            const f = threadListData.find(x => { try { return msgKeyExtractor(x) === _nlRowSheet.key; } catch { return false; } });
+            if (f) live = f;
+          }
+        } catch {}
+        const NativeRowSheet = require('../components/chat/NativeRowSheet').default;
+        return (
+          <NativeRowSheet visible onClose={() => _setNlRowSheet(null)} title={t('chatConv.nlMessage') || 'Mensagem'} isDark={isDark} wallBg={chatWallBg} bottomInset={insets?.bottom || 0}>
+            <MemoizedMessageRow item={live} renderRef={renderMessageRef} overlayStore={rowOverlayStore} isDark={isDark} themeColors={colors} lang={language} />
+          </NativeRowSheet>
+        );
+      })() : null}
+      {_nlVoHost ? (() => {
+        const ViewOnceMessage = require('../components/ViewOnceMessage').default;
+        const m = _nlVoHost;
+        return (
+          <View style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', opacity: 0 }}>
+            <ViewOnceMessage
+              key={'vo-host-' + String(m.id)}
+              msg={{ ...m, file_url: resolveMediaUri(m.file_url) }}
+              colors={colors} isOwn={false} t={t} currentEmail={currentEmail}
+              autoOpen onAutoDone={() => _setNlVoHost(null)}
+              onView={async (messageId) => {
+                try {
+                  await api.chatViewOnceOpen(messageId);
+                  const meLc = String(currentEmail || '').toLowerCase();
+                  // viewed_by com o próprio e-mail → o cartão nativo passa a "Aberta"
+                  setMessages(prev => _mapKeep(prev, x => {
+                    if (String(x.id) !== String(messageId)) return x;
+                    let vb = x.viewed_by;
+                    if (typeof vb === 'string') { try { vb = JSON.parse(vb); } catch { vb = []; } }
+                    vb = Array.isArray(vb) ? vb : [];
+                    if (meLc && !vb.some(e => String(e || '').toLowerCase() === meLc)) vb = vb.concat([currentEmail]);
+                    return { ...x, viewed_at: new Date().toISOString(), viewed_by: vb };
+                  }));
+                } catch (err) { console.warn('Failed to mark view-once as viewed:', err); }
+              }}
+            />
+          </View>
+        );
+      })() : null}
+
       {/* Round video note viewer — stays circular (WhatsApp parity).
           Never opens rectangular fullscreen for video_note messages. */}
       {RoundVideoViewer && (
@@ -42126,6 +42186,13 @@ function ConvLightShellHost() {
   }, [full, shellOn, cid]);
 
   const onBack = useCallback(() => { try { router.back(); } catch {} }, [router]);
+
+  // [wave7 telemetria] conv_open caminho 'shell': 1º frame da casca leve
+  useEffect(() => {
+    if (!rec) return undefined;
+    const raf = requestAnimationFrame(() => { try { noteConvOpen(cid, 'shell', { rows: -1 }); } catch {} });
+    return () => cancelAnimationFrame(raf);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!rec) return <ChatConversationInner />;
   return (

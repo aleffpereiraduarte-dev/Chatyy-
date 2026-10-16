@@ -54,7 +54,7 @@ let StickerPicker = null;
 try { StickerPicker = require('../StickerPicker').default; } catch { StickerPicker = null; }
 
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../../services/haptics').HapticsCompat; } catch {}
 const tick = () => { try { _Haptics?.selectionAsync?.(); } catch {} };
 
 const WIN = Dimensions.get('window');

@@ -349,7 +349,7 @@ export default function LiveDiscoverScreen() {
   const onLongPressCard = useCallback((item) => {
     if (Platform.OS !== 'web') {
       try {
-        const Haptics = require('expo-haptics');
+        const Haptics = require('../services/haptics').HapticsCompat;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch {}
     }

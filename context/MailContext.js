@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Platform, LayoutAnimation, UIManager, AppState, DeviceEventEmitter } from 'react-native';
 import { usePathname } from 'expo-router';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import * as api from '../services/api';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}

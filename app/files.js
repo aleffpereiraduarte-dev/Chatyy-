@@ -642,7 +642,7 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
 function triggerHaptic(kind = 'light') {
   if (isWeb) return;
   try {
-    const H = require('expo-haptics');
+    const H = require('../services/haptics').HapticsCompat;
     if (kind === 'medium') H.impactAsync?.(H.ImpactFeedbackStyle?.Medium);
     else if (kind === 'heavy') H.impactAsync?.(H.ImpactFeedbackStyle?.Heavy);
     else H.impactAsync?.(H.ImpactFeedbackStyle?.Light);

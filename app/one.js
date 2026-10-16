@@ -368,7 +368,7 @@ function playActivationSound() {
     } catch {}
   }
   try {
-    const Haptics = require('expo-haptics');
+    const Haptics = require('../services/haptics').HapticsCompat;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   } catch {}
 }
@@ -392,7 +392,7 @@ function playReactivationSound() {
 
 function haptic(type = 'light') {
   try {
-    const Haptics = require('expo-haptics');
+    const Haptics = require('../services/haptics').HapticsCompat;
     if (type === 'light') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     else if (type === 'medium') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -2216,7 +2216,7 @@ export default function OneScreen() {
         await Clipboard.setStringAsync(text);
       }
       try {
-        const Haptics = require('expo-haptics');
+        const Haptics = require('../services/haptics').HapticsCompat;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       } catch {}
       return true;

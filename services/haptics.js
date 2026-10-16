@@ -190,6 +190,51 @@ Object.assign(haptics, {
   callIncoming: () => warning(),
 });
 
+// [2026-10-16 motion-telegram] Tabela CANÔNICA evento → intensidade (fixa).
+// Telas novas devem chamar hapticEvent('nome') em vez de escolher Light/Medium
+// na hora — assim a mesma ação vibra igual no app inteiro (Telegram).
+//   selection : trocar aba/segmento, picker, alternar toggle, snap de folha
+//   light     : toque em ação primária, reação, mostrar toast, swipe passou do limiar
+//   medium    : long-press / abrir menu de contexto, segurar p/ gravar, arquivar
+//   rigid     : obturador, encaixe de ponto (reordenar)
+//   soft      : fechar/soltar, parar gravação, pull-to-refresh armado
+//   success/warning/error : RESULTADO (enviado, bloqueado, falhou)
+const EVENT_MAP = {
+  tap: () => tap('light'),
+  tabSwitch: selection,
+  segment: selection,
+  toggle: selection,
+  sheetSnap: selection,
+  sheetOpen: () => tap('soft'),
+  sheetClose: () => tap('soft'),
+  toast: () => tap('light'),
+  swipeThreshold: () => tap('light'),
+  reaction: () => tap('light'),
+  longPress: () => tap('medium'),
+  contextMenu: () => tap('medium'),
+  pin: () => tap('medium'),
+  archive: () => tap('medium'),
+  reorderPick: () => tap('rigid'),
+  reorderDrop: () => tap('soft'),
+  refresh: () => tap('soft'),
+  send: () => haptics.send(),
+  success,
+  warning,
+  error,
+};
+Object.assign(haptics, {
+  tabSwitch: EVENT_MAP.tabSwitch,
+  toast: EVENT_MAP.toast,
+  pin: EVENT_MAP.pin,
+  archive: EVENT_MAP.archive,
+  sheetSnap: EVENT_MAP.sheetSnap,
+});
+export function hapticEvent(name) {
+  if (Platform.OS === 'web') return;
+  const fn = EVENT_MAP[name] || EVENT_MAP.tap;
+  try { fn(); } catch {}
+}
+
 // [2026-10-11 haptics consistency] Drop-in for `import * as Haptics from
 // 'expo-haptics'` (same impactAsync / notificationAsync / selectionAsync +
 // enum API) that routes through THIS shim, so screens still calling the

@@ -341,7 +341,11 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
  *    user can retry and the pill stays tap-to-view.
  *  - Receiver viewed: locked "Aberta" / "Expirou" pill, no re-open.
  */
-export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, currentEmail }) {
+// [2026-10-16 native-cover] autoOpen: a lista NATIVA desenha o cartão "Toque
+// para ver" e, no toque, monta este componente escondido com autoOpen → abre
+// direto o MESMO viewer (mesmas regras de queima/captura). onAutoDone quando
+// fecha (ou quando já estava visto/expirado).
+export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, currentEmail, autoOpen = false, onAutoDone }) {
   const safeColors = {
     surface: '#fff',
     border: '#e0e0e0',
@@ -398,6 +402,23 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
     if (isOwn || !msg) return;
     try { _mc()?.markViewOnceMedia?.(msg.file_url, msg.id); } catch {}
   }, [isOwn, msg?.id, msg?.file_url]);
+
+  const _autoRef = useRef(false);
+  const _autoDoneRef = useRef(onAutoDone);
+  _autoDoneRef.current = onAutoDone;
+  useEffect(() => {
+    if (!autoOpen || _autoRef.current || isOwn || isAudio) return;
+    _autoRef.current = true;
+    (async () => {
+      let seen = false;
+      try { const set = await _loadLocalViewed(); seen = msg?.id != null && set.has(String(msg.id)); } catch {}
+      if (seen || !!msg?.expired_at || vbHasMe || !fileUrl) { try { _autoDoneRef.current?.(); } catch {} return; }
+      viewLoadedRef.current = false;
+      setOpenedUri(fileUrl);
+      setModalOpen(true);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
 
   // ───────────── SENDER BRANCH ─────────────
   if (isOwn) {
@@ -527,6 +548,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
             // saw anything ("abre e fecha na hora"). WhatsApp parity: lock
             // only after user dismisses.
             setModalOpen(false);
+            if (autoOpen) { try { _autoDoneRef.current?.(); } catch {} } // [native-cover]
             // [2026-10-12 P1] Falhou/fechou antes de carregar → NÃO queima:
             // o pill continua "Toque para ver" p/ tentar de novo.
             if (!viewLoadedRef.current) return;

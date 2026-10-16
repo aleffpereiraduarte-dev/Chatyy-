@@ -29,12 +29,12 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
     for (const c of COUNTRIES) {
       if (seen.has(c.code)) continue;
       seen.add(c.code);
-      const label = countryDisplayName(c, loc);
+      const label = countryDisplayName(c, loc, t);
       list.push({ ...c, label, _k: `${_norm(label)} ${_norm(c.name)} ${c.code.toLowerCase()} ${c.dial} ${c.dial.replace('+', '')}` });
     }
     try { list.sort((a, b) => a.label.localeCompare(b.label, loc)); } catch { list.sort((a, b) => (a.label > b.label ? 1 : -1)); }
     return list;
-  }, [language]);
+  }, [language, t]);
 
   const data = useMemo(() => {
     const nq = _norm(q).replace(/^\+/, '');

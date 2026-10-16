@@ -308,12 +308,19 @@ export default function GroupNewDetailsScreen() {
         accessibilityRole="button"
         accessibilityLabel={T('groupNew.photoAdd', 'Foto do grupo')}
       >
+        {/* [2026-10-16 native-wave7] A foto ia POR CIMA do selo da câmera: a ExpoImage
+            (view nativa) não fica recortada pelo círculo do Pressable (sem overflow) e
+            no Android/Fabric podia subir acima do irmão absoluto. Agora a foto mora
+            numa camada própria recortada (absoluteFill + overflow hidden) e o selo
+            tem zIndex/elevation explícitos — sempre por cima. */}
         {photo?.uri ? (
-          <ExpoImage source={{ uri: photo.uri }} style={styles.photoImg} contentFit="cover" transition={150} />
+          <View style={styles.photoClip} pointerEvents="none">
+            <ExpoImage source={{ uri: photo.uri }} style={styles.photoImg} contentFit="cover" transition={150} />
+          </View>
         ) : (
           <IconCamera size={30} color={g.secondary} />
         )}
-        <View style={[styles.photoBadge, { backgroundColor: g.ink, borderColor: g.pageBg }]}>
+        <View style={[styles.photoBadge, { backgroundColor: g.ink, borderColor: g.pageBg }]} pointerEvents="none">
           <IconCamera size={13} color={g.onInk} />
         </View>
       </Pressable>
@@ -484,10 +491,12 @@ const styles = StyleSheet.create({
     width: 104, height: 104, borderRadius: 52, alignSelf: 'center',
     alignItems: 'center', justifyContent: 'center', marginTop: 8, marginBottom: 20,
   },
-  photoImg: { width: 104, height: 104, borderRadius: 52 },
+  photoClip: { ...StyleSheet.absoluteFillObject, borderRadius: 52, overflow: 'hidden', zIndex: 0 },
+  photoImg: { width: 104, height: 104 },
   photoBadge: {
     position: 'absolute', right: 0, bottom: 2, width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center', borderWidth: 2.5,
+    zIndex: 2, elevation: 4,
   },
   card: { borderRadius: 18, overflow: 'hidden' },
   nameRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, minHeight: 52 },

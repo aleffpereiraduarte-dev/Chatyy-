@@ -18,7 +18,8 @@ import EmailReader from '../components/EmailReader';
 import ThreadView from '../components/ThreadView';
 import Sidebar from '../components/Sidebar';
 import EmailOutboxBanner from '../components/EmailOutboxBanner';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
+import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-16 motion-telegram]
 // Cold-start: these overlays (search, notifications hub, shortcut refs,
 // snooze/context/quick-settings panels) are never visible on the first paint
 // of /inbox — they all start closed (`visible={false}`) and only render UI
@@ -702,6 +703,11 @@ function InboxScreenInner() {
   useEffect(() => {
     if (!isDesktop) {
       const nd = Platform.OS !== 'web';
+      if (isReduceMotionEnabled()) { // [2026-10-16 motion-telegram]
+        sidebarSlideAnim.setValue(showSidebar ? 0 : -310);
+        sidebarOverlayOpacity.setValue(showSidebar ? 1 : 0);
+        return;
+      }
       if (showSidebar) {
         Animated.parallel([
           Animated.spring(sidebarSlideAnim, { toValue: 0, tension: 80, friction: 14, useNativeDriver: nd }),
@@ -733,6 +739,14 @@ function InboxScreenInner() {
     }
     // Smooth staggered entry animation
     const nd = Platform.OS !== 'web';
+    // [2026-10-16 motion-telegram] No nativo o /inbox entra pelo PUSH do stack
+    // (UINavigationController / slide c/ parallax): o cabeçalho descendo -40px
+    // + fade JUNTO com o push era movimento duplo ("cara de site"). Nativo e
+    // Reduzir Movimento nascem assentados; web mantém a cascata.
+    if (nd || isReduceMotionEnabled()) {
+      headerAnim.setValue(1); sidebarAnim.setValue(1); listAnim.setValue(1);
+      return;
+    }
     Animated.stagger(50, [
       Animated.timing(headerAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
       Animated.timing(sidebarAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: nd }),

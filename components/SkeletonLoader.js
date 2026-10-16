@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { View, Animated, StyleSheet, Platform, Easing } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { AnimTiming } from '../constants/theme';
+import { isReduceMotionEnabled } from './reducedMotion'; // [2026-10-16 motion-telegram]
 
 // ── Shared shimmer clock ──
 // One native-driven value drives EVERY Shimmer on screen, so the highlight
@@ -15,6 +16,8 @@ function acquireShimmerClock() {
   if (!_shClock) _shClock = new Animated.Value(0);
   if (_shUsers++ === 0) {
     _shClock.setValue(0);
+    // [2026-10-16 motion-telegram] Reduzir Movimento: placeholder estático (sem varredura).
+    if (isReduceMotionEnabled()) { _shLoop = null; return _shClock; }
     _shLoop = Animated.loop(
       Animated.timing(_shClock, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.quad), useNativeDriver: true })
     );
@@ -54,7 +57,9 @@ export function Shimmer({ style, delay = 0 }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [w, setW] = useState(0);
 
+  const _still = isReduceMotionEnabled(); // [2026-10-16 motion-telegram]
   useEffect(() => {
+    if (_still) { fadeAnim.setValue(1); return () => { releaseShimmerClock(); }; }
     // Staggered entrance fade
     const fade = Animated.timing(fadeAnim, {
       toValue: 1,
@@ -91,12 +96,12 @@ export function Shimmer({ style, delay = 0 }) {
           ...(Platform.OS === 'web' ? {
             background: `linear-gradient(90deg, ${base} 25%, ${isDark ? 'rgba(255,255,255,0.13)' : 'rgba(17,17,17,0.025)'} 50%, ${base} 75%)`,
             backgroundSize: '200% 100%',
-            animation: 'shimmerSlide 1.4s infinite ease-in-out',
+            animation: _still ? 'none' : 'shimmerSlide 1.4s infinite ease-in-out',
           } : {}),
         },
       ]}
     >
-      {w > 0 && Platform.OS !== 'web' ? (
+      {w > 0 && Platform.OS !== 'web' && !_still ? (
         <Animated.View
           pointerEvents="none"
           style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: band, flexDirection: 'row', transform: [{ translateX }] }}

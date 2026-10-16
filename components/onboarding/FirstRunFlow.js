@@ -57,7 +57,7 @@ export async function computeFirstRunSteps() {
 function _haptic(kind = 'select') {
   if (Platform.OS === 'web') return;
   try {
-    const H = require('expo-haptics');
+    const H = require('../../services/haptics').HapticsCompat;
     if (kind === 'success') H.notificationAsync(H.NotificationFeedbackType.Success);
     else H.selectionAsync();
   } catch {}

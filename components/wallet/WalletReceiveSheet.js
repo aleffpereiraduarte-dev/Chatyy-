@@ -13,7 +13,7 @@ import {
   View, Text, Modal, TouchableOpacity, StyleSheet, Share, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 
 // Lazy-load — environments without react-native-svg (web SSR) shouldn't crash
 // the sheet. Falls back to a placeholder square with the link text.

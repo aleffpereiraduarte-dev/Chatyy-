@@ -811,7 +811,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     // without any feedback.
     try {
       if (Platform.OS !== 'web') {
-        const Haptics = require('expo-haptics');
+        const Haptics = require('../services/haptics').HapticsCompat;
         if (liked) {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
         } else {

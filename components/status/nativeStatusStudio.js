@@ -354,7 +354,7 @@ export async function runNativeStudio(seed, ctx) {
   if (aud === 'except' && envNow.exceptList.length) base.except_emails = envNow.exceptList;
   const email = ctx?.user?.email || '';
   let haptic = null;
-  try { haptic = require('expo-haptics'); } catch {}
+  try { haptic = require('../../services/haptics').HapticsCompat; } catch {}
   try {
     if (r.text && String(r.text.text || '').trim()) {
       await enqueueStatusPublish({

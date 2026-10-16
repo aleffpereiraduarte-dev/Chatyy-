@@ -150,7 +150,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
       onChange([...value, fixed]);
       if (Platform.OS !== 'web') {
         try {
-          require('expo-haptics').selectionAsync?.();
+          require('../services/haptics').HapticsCompat.selectionAsync?.();
         } catch {}
       }
     }

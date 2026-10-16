@@ -63,7 +63,7 @@ export const MIC_UI_THREAD = !!(
 );
 
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../../services/haptics').HapticsCompat; } catch {}
 
 const haptic = (kind = 'medium') => {
   if (!_Haptics || Platform.OS === 'web') return;

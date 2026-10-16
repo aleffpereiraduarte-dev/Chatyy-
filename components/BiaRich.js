@@ -150,7 +150,7 @@ function BiaCodeBlock({ code, lang, isDark, t }) {
       if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) await navigator.clipboard.writeText(code);
       else { const Clipboard = require('expo-clipboard'); await Clipboard.setStringAsync(code); }
       setCopied(true);
-      try { const H = require('expo-haptics'); H.impactAsync(H.ImpactFeedbackStyle.Light); } catch {}
+      try { const H = require('../services/haptics').HapticsCompat; H.impactAsync(H.ImpactFeedbackStyle.Light); } catch {}
       setTimeout(() => setCopied(false), 1800);
     } catch {}
   }, [code]);

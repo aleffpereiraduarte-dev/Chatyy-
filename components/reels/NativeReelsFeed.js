@@ -99,8 +99,7 @@ function _markMounted(on) {
 
 function _beacon(step, info) {
   try {
-    const api = require('../../services/api').default || require('../../services/api');
-    api?.apiCall?.('callkit_diag', { info: `native_reels ${step} ${info || ''}`.slice(0, 400), platform: Platform.OS }, 'POST')?.catch?.(() => {});
+    require('../../services/nativeTelemetry').nativeBeacon('native_reels', step, info); // [wave7]
   } catch {}
 }
 

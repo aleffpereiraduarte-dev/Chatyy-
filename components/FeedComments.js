@@ -695,7 +695,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         // interaction loop tactile end-to-end.
         if (Platform.OS !== 'web') {
           try {
-            const Haptics = require('expo-haptics');
+            const Haptics = require('../services/haptics').HapticsCompat;
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           } catch {}
         }
@@ -758,7 +758,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       recStartRef.current = Date.now();
       setRecording(true);
       if (Platform.OS !== 'web') {
-        try { require('expo-haptics').impactAsync(); } catch {}
+        try { require('../services/haptics').HapticsCompat.impactAsync(); } catch {}
       }
     } catch (e) {
       setRecording(false);

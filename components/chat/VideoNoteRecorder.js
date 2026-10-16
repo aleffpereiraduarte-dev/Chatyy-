@@ -52,7 +52,7 @@ function loadCamera() {
 let _haptics = null;
 function loadHaptics() {
   if (_haptics !== null) return _haptics;
-  try { _haptics = require('expo-haptics'); }
+  try { _haptics = require('../../services/haptics').HapticsCompat; }
   catch { _haptics = false; }
   return _haptics || null;
 }

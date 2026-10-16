@@ -73,6 +73,29 @@ export function nativeSheetBottomPad(insets, extra = 12) {
   return Math.max(0, (insets && insets.bottom) || 0) + extra;
 }
 
+// [2026-10-16 wave7] Altura limitada ao detent no formSheet iOS (app/native-sheet.js):
+// desarma a "caça ao ScrollView" do react-native-screens 4.23 que esticava a
+// lista p/ o sheet inteiro. Ligado por padrão no binário da wave 7+ (marcador:
+// composer nativo apiVersion >= 2 — mesmo binário em que isto foi validado);
+// globalThis.__chatyy_sheet_bounded = true/false força (OTA). Só iOS.
+let _boundedBin = null;
+export function nativeSheetBoundedOn() {
+  if (Platform.OS !== 'ios') return false;
+  try {
+    const g = globalThis.__chatyy_sheet_bounded;
+    if (g === true) return true;
+    if (g === false) return false;
+  } catch {}
+  if (_boundedBin == null) {
+    try {
+      const m = require('../modules/expo-chat-composer');
+      const f = m && (m.apiVersion || (m.default && m.default.apiVersion));
+      _boundedBin = typeof f === 'function' && Number(f()) >= 2;
+    } catch { _boundedBin = false; }
+  }
+  return _boundedBin;
+}
+
 export function getNativeSheetEntry(id) {
   return _entries.get(String(id || '')) || null;
 }

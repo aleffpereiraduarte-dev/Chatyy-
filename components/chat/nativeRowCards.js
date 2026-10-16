@@ -36,6 +36,7 @@ import {
   IconMapPin, IconUser, IconUserPlus, IconPlus, IconPhone, IconVideo, IconCalendar, IconClock,
   IconCheckCircle, IconHelpCircle, IconPlay, IconPencil, IconMusic, IconEye, IconLock,
   IconCheck, IconMic, IconImage, IconVideoNote, IconGlobe, IconDiamond, IconX,
+  IconFile, IconFilm, IconMessageCircle, IconChevronRight, IconSmile,
 } from '../Icons';
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
@@ -337,7 +338,10 @@ function cardKind(item, ctx) {
   switch (type) {
     case 'location': case 'contact': case 'poll': case 'meetup': case 'playlist':
     case 'call_card': case 'gift': case 'status_reply':
+    case 'voicemail': case 'lottie_sticker': // [2026-10-16 native-cover]
       return type;
+    // [2026-10-16 native-cover] vídeo redondo antigo (200 px) → mesma nota de vídeo nativa
+    case 'video_message': return (item.file_url || item._localUri) ? 'vn' : null;
     default: break;
   }
   if (type !== 'text') return null;
@@ -367,11 +371,9 @@ export function cardReason(item, ctx) {
   if (item._searchTerm) return 'search';
   if (item._filtered && item._hidden) return 'filtered';
   switch (k) {
-    case 'vo': {
-      const own = _own(item, ctx);
-      if (own) return '';
-      return _viewOnce(item, ctx).locked ? '' : 'vo-unviewed'; // receptor sem ver: viewer próprio do JS
-    }
+    // [2026-10-16 native-cover] receptor sem ver: cartão nativo "Toque para ver"
+    // (ação vo_open → o MESMO viewer do JS, ViewOnceMessage autoOpen).
+    case 'vo': return '';
     case 'vn': return (item.file_url || item.content || item._localUri) ? '' : 'vn-nourl';
     case 'poll': return _poll(item) ? '' : 'poll-raw';
     case 'meetup': case 'playlist': case 'call_card': return _json(item.content) ? '' : k + '-raw';
@@ -855,6 +857,16 @@ function buildViewOnce(m, row, ctx, C, own) {
     circleBg = /^#[0-9a-f]{6}$/i.test(accent) ? accent + '1f' : 'rgba(17,17,17,0.12)';
     Ic = V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye;
     sub = V.anyViewed ? _tr(C, 'chatConv.viewOnceOpened', 'Visualizada') : _tr(C, 'chatConv.viewOnceSent', 'Visualização única');
+  } else if (!V.locked) {
+    // [2026-10-16 native-cover] receptor, ainda não vista (mesmo visual do pill do ViewOnceMessage)
+    accent = col.primary || '#111111'; subtle = col.textSecondary || '#666666';
+    const w0 = _clampW(180, 260, 36 + 10 + Math.max(_estW(title, 14, true), _estW(_tr(C, 'chatConv.tapToView', 'Toque para ver'), 12)) + 8);
+    row.bl = [hstack([
+      vstack([icon(V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye, { s: 18, c: accent })], { w: 36, h: 36, r: 18, bg: C.isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17,17,17,0.14)', al: 'c', jc: 'c' }),
+      vstack([text(title, { fs: 14, fw: 700, c: accent, ml: 1 }), text(_tr(C, 'chatConv.tapToView', 'Toque para ver'), { fs: 12, c: subtle, ml: 1, m: [1, 0, 0, 0] })], { fl: 1 }),
+    ], { g: 10, al: 'c', p: [6, 4, 6, 0], w: w0, a: 'vo_open' })];
+    row.cw = w0; row.pad = PAD; row.mp = 'below';
+    return;
   } else {
     accent = col.primary || '#111111'; subtle = col.textSecondary || '#666666';
     circleBg = 'rgba(17, 17, 17,0.12)';
@@ -868,6 +880,93 @@ function buildViewOnce(m, row, ctx, C, own) {
     icon(IconLock, { s: 13, c: subtle }),
   ], { g: 10, al: 'c', p: [6, 4, 6, 0], w })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
+}
+
+// ─── [2026-10-16 native-cover] correio de voz / figurinha animada / fallback por LINHA ──
+// Toque ('jsrow') abre a versão JS da linha numa folha (NativeRowSheet no
+// chat-conversation) — o resto da conversa continua na lista nativa.
+function _durMS(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+function buildVoicemail(m, row, C, own) {
+  const col = C.colors || {};
+  const vm = _json(m.content);
+  const ink = own ? C.ownText : col.text;
+  const meta = own ? C.ownMeta : (col.textTertiary || C.otherMeta);
+  if (!vm || !vm.voicemail_id) {
+    row.bl = [text(_tr(C, 'voicemail.unavailable', 'Mensagem de voz indisponível'), { fs: 15, c: ink, it: 1, mi: 1 })];
+    row.pad = PAD; row.mp = 'in';
+    return;
+  }
+  const title = _tr(C, 'voicemail.title', 'Mensagem de voz');
+  const sub = `${_tr(C, 'voicemail.afterMissedCall', 'Após chamada perdida')} · ${_durMS(vm.duration || vm.duration_sec)}`;
+  const play = _tr(C, 'voicemail.tapToPlay', 'Tocar mensagem');
+  const tx = m.voicemail_transcription || vm.transcription || '';
+  const pillBg = own ? 'rgba(127,127,127,0.18)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const kids = [
+    hstack([
+      icon(IconMic, { s: 18, c: ink }),
+      vstack([text(title, { fs: 13, fw: 700, c: ink, ml: 1 }), text(sub, { fs: 11, c: meta, ml: 1 })], { fl: 1 }),
+    ], { g: 8, al: 'c', m: [0, 0, 6, 0] }),
+    hstack([
+      vstack([icon(IconPlay, { s: 16, c: C.isDark && !own ? '#111111' : '#FFFFFF' })], { w: 36, h: 36, r: 18, bg: C.isDark && !own ? '#F5F5F7' : '#111111', al: 'c', jc: 'c' }),
+      text(play, { fs: 13, c: ink, fl: 1, ml: 1 }),
+    ], { g: 10, al: 'c', p: [8, 12, 8, 8], r: 18, bg: pillBg, w: -1 }),
+  ];
+  if (tx) kids.push(text(`${_tr(C, 'voicemail.transcriptionPrefix', 'Transcrição:')} ${tx}`, { fs: 12, it: 1, lh: 16, c: own ? C.ownText : (col.textSecondary || col.text), m: [8, 0, 0, 0], ml: 6 }));
+  row.bl = [vstack(kids, { w: 260, p: [2, 0, 2, 0], a: 'jsrow' })];
+  row.cw = 260; row.pad = PAD; row.mp = 'below';
+}
+function buildLottie(m, row, C) {
+  const ink = C.isDark ? '#F5F5F7' : '#111111';
+  row.bl = [vstack([
+    icon(IconFilm, { s: 44, c: ink }),
+    text(_tr(C, 'chatConv.nlAnimatedSticker', 'Figurinha animada'), { fs: 11, fw: 600, c: ink, ml: 1, m: [6, 0, 0, 0], ta: 'c' }),
+  ], { w: 120, h: 120, r: 16, bg: C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)', al: 'c', jc: 'c', a: 'jsrow' })];
+  row.cw = 120; row.bare = 1; row.pad = [0, 0, 0, 0]; row.mp = 'below';
+}
+
+/**
+ * Linha que o nativo não sabe desenhar → cartão-resumo (ícone + tipo + trecho)
+ * com toque 'jsrow' (abre a versão JS em folha). Nunca derruba a conversa.
+ * Devolve true quando preencheu row.bl.
+ */
+export function buildFallbackCard(item, row, ctx, reason) {
+  const C = ctx && ctx.cards;
+  const isAlbum = item && item._type === 'album';
+  const m = isAlbum ? ((item._items || [])[0] || item) : item;
+  const type = (m && m.type) || 'text';
+  let Ic = IconMessageCircle; let title = _tr(C, 'chatConv.nlMessage', 'Mensagem');
+  if (type === 'image' || type === 'gif') { Ic = IconImage; title = _tr(C, 'chat.photo', 'Foto'); }
+  else if (type === 'video' || type === 'short_video' || type === 'video_note' || type === 'video_message') { Ic = IconVideo; title = _tr(C, 'chat.video', 'Vídeo'); }
+  else if (type === 'audio' || type === 'voice' || type === 'voicemail') { Ic = IconMic; title = _tr(C, 'chat.audio', 'Áudio'); }
+  else if (type === 'file' || type === 'document') { Ic = IconFile; title = String(m.file_name || '').trim() || _tr(C, 'chat.file', 'Arquivo'); }
+  else if (type === 'sticker' || type === 'lottie_sticker') { Ic = IconSmile; title = _tr(C, 'chat.sticker', 'Figurinha'); }
+  if (isAlbum && (item._items || []).length > 1) title = `${title} · ${(item._items || []).length}`;
+  let sub = '';
+  const raw = typeof (isAlbum ? item.content : m.content) === 'string' ? String(isAlbum ? item.content : m.content) : '';
+  const rc = raw.trim();
+  const hidden = !!(item._blurred || (item._filtered && item._hidden) || _isViewOnce(m));
+  if (!hidden && rc && !/^[{[]/.test(rc) && !/^(https?:\/\/|\/?data\/)/i.test(rc) && !rc.startsWith('🔒')) {
+    sub = rc.split('\n')[0].slice(0, 90);
+  }
+  if (!sub) sub = _tr(C, 'chatConv.nlTapToOpen', 'Toque para abrir');
+  const own = _own(item, ctx || {});
+  const col = (C && C.colors) || {};
+  const ink = own ? ((C && C.ownText) || '#111111') : (col.text || '#111111');
+  const subtle = own ? ((C && C.ownMeta) || 'rgba(0,0,0,0.5)') : (col.textSecondary || '#666666');
+  const dark = !!(C && C.isDark);
+  const w = _clampW(200, 280, 36 + 10 + Math.max(_estW(title, 14, true), Math.min(_estW(sub, 12), 190)) + 10 + 14 + 8);
+  row.bl = [hstack([
+    vstack([icon(Ic, { s: 18, c: ink })], { w: 36, h: 36, r: 18, bg: dark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.08)', al: 'c', jc: 'c' }),
+    vstack([text(title, { fs: 14, fw: 600, c: ink, ml: 1 }), text(sub, { fs: 12, c: subtle, ml: 2, m: [1, 0, 0, 0] })], { fl: 1 }),
+    icon(IconChevronRight, { s: 14, c: subtle }),
+  ], { g: 10, al: 'c', p: [6, 2, 6, 0], w, a: 'jsrow' })];
+  row.cw = w; row.pad = PAD; row.mp = 'below';
+  row.fb = String(reason || '').slice(0, 24); // diagnóstico (ignorado pelo nativo)
+  if (item._failed && own) row.fail = 1;
+  return !!(row.bl[0]);
 }
 
 function linkCard(url, C) {
@@ -942,6 +1041,8 @@ export function buildCard(item, row, ctx) {
       case 'gift': buildGift(item, row, ctx, C, own); break;
       case 'status_reply': buildStatusReply(item, row, ctx, C, own); break;
       case 'vo': buildViewOnce(item, row, ctx, C, own); break;
+      case 'voicemail': buildVoicemail(item, row, C, own); break;
+      case 'lottie_sticker': buildLottie(item, row, C); break;
       default: return false;
     }
   } catch (e) {

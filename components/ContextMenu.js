@@ -4,6 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Overlay, OverlayShadow, overlayColors } from '../constants/theme';
 import Sheet from './ui/Sheet';
+import { isReduceMotionEnabled } from './reducedMotion';
 import ActionList from './ui/ActionList';
 import {
   IconSend, IconArchive, IconTrash, IconStar, IconStarFilled,
@@ -23,13 +24,15 @@ export default function ContextMenu({ visible, position, email, onClose, actions
 
   useEffect(() => {
     if (visible) {
+      // [2026-10-16 motion-telegram] Reduzir Movimento: aparece seco.
+      if (isReduceMotionEnabled()) { fadeAnim.setValue(1); scaleAnim.setValue(1); return; }
       fadeAnim.setValue(0);
       scaleAnim.setValue(0.96);
       // Spring scale + linear fade gives the menu a tiny "snap" entrance
       // (iOS context-menu pattern) instead of a flat fade.
       Animated.parallel([
         Animated.timing(fadeAnim, { toValue: 1, duration: 140, useNativeDriver: true }),
-        Animated.spring(scaleAnim, { toValue: 1, tension: 320, friction: 14, useNativeDriver: true }),
+        Animated.spring(scaleAnim, { toValue: 1, ...Overlay.spring, useNativeDriver: true }), // mola do design system
       ]).start();
     }
   }, [visible]);

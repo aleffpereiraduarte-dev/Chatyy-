@@ -135,16 +135,15 @@ let _openT0 = 0;
 let _openConv = '';
 let _beacons = 0;
 export function markOpenTap(conv) { _openT0 = Date.now(); _openConv = String(conv); }
+/** {conv, t0} do último toque na home (nativeTelemetry: conv_open). */
+export function openTapInfo() { return _openT0 ? { conv: _openConv, t0: _openT0 } : null; }
 export function openElapsed(conv) { return _openConv === String(conv) && _openT0 ? Date.now() - _openT0 : -1; }
 export function shellBeacon(info) {
   if (_beacons >= 8) return;
   _beacons++;
   try {
-    setTimeout(() => {
-      try {
-        const api = require('./api').default || require('./api');
-        api?.apiCall?.('callkit_diag', { info: `conv_shell ${info || ''}`.slice(0, 400), platform: Platform.OS }, 'POST')?.catch?.(() => {});
-      } catch {}
-    }, 0);
+    // [wave7] via nativeTelemetry (build/aparelho; o servidor agora grava callkit_diag)
+    const s = String(info || ''); const i = s.indexOf(' ');
+    require('./nativeTelemetry').nativeBeacon('conv_shell', i > 0 ? s.slice(0, i) : s, i > 0 ? s.slice(i + 1) : '');
   } catch {}
 }

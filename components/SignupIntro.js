@@ -42,7 +42,7 @@ const SLIDES = [
 
 function _haptic() {
   if (Platform.OS === 'web') return;
-  try { require('expo-haptics').selectionAsync(); } catch {}
+  try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
 }
 
 function _markSeen() {
@@ -99,7 +99,7 @@ export default function SignupIntro({ onFinish, onLogin }) {
     leavingRef.current = true;
     _markSeen();
     if (Platform.OS !== 'web') {
-      try { require('expo-haptics').impactAsync(require('expo-haptics').ImpactFeedbackStyle.Light); } catch {}
+      try { require('../services/haptics').HapticsCompat.impactAsync(require('../services/haptics').HapticsCompat.ImpactFeedbackStyle.Light); } catch {}
     }
     const done = () => {
       if (mode === 'login' && typeof onLogin === 'function') onLogin();

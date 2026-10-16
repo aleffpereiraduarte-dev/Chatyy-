@@ -3172,6 +3172,15 @@ function _notifReplyToId(data) {
   } catch { return null; }
 }
 
+// [2026-10-16 native-toast] Resposta rápida digitada no banner in-app nativo
+// (components/NotificationToast.js → modules/expo-inapp-banner). Mesmo caminho
+// da ação "Responder" do push: cmid único, fila offline, marca como lida.
+export function sendQuickReplyFromBanner(data, text) {
+  const t = String(text || '').trim();
+  if (!data || !data.conversation_id || !t) return Promise.resolve(false);
+  return handleChatReplyFromNotification(data.conversation_id, t, _notifReplyToId(data)).then(() => true, () => false);
+}
+
 async function handleChatReplyFromNotification(conversationId, text, replyToId = null) {
   // [2026-10-15 mensagens-whatsapp] UM client_message_id para a 1ª tentativa E para
   // a fila: antes o chatSend gerava `cli_…` por dentro e, se a resposta se perdesse

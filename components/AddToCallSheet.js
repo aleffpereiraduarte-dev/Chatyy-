@@ -54,7 +54,7 @@ import {
 } from '../services/callAddParticipants';
 
 let Haptics = null;
-try { Haptics = require('expo-haptics'); } catch {}
+try { Haptics = require('../services/haptics').HapticsCompat; } catch {}
 function hSelect() { try { Haptics?.selectionAsync?.(); } catch {} }
 function hImpact() { try { Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle?.Medium); } catch {} }
 

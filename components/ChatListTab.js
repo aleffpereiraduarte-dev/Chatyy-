@@ -4178,7 +4178,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const showLongPressMenu = useCallback((conv) => {
     // Haptic medium impact — same WhatsApp gives on long-press preview.
     try {
-      const H = require('expo-haptics');
+      const H = require('../services/haptics').HapticsCompat;
       H.impactAsync(H.ImpactFeedbackStyle.Medium).catch(() => {});
     } catch {}
     lpMenuRef.current?.(conv);

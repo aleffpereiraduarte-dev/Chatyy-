@@ -33,6 +33,8 @@ import { getCachedEntrySync, setCache, hasCacheUser, cacheUserScope, invalidate 
 import { cachedKey, CACHED_MAX_AGE } from '../hooks/useCachedAction';
 import { profileCacheKey } from '../services/screenData';
 import { computeContentMaxWidth } from '../utils/responsive';
+// [2026-10-16 native-media-grid] grade do perfil NATIVA (kill __chatyy_native_media_grid)
+import NativeMediaGrid, { isNativeMediaGridAvailable, compactCount as _mgCount, formatDuration as _mgDur } from './media/NativeMediaGrid';
 import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
 import AvatarLightbox from './AvatarLightbox';
@@ -1036,6 +1038,57 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
 });
 
 
+// [2026-10-16 native-media-grid] Tile -> item compacto da grade nativa
+// (mesmas regras de miniatura/selos do GridItem/LiveGridItem acima).
+function _nativeTileKey(it, kind) {
+  if (kind === 'lives') return 'l:' + String(it?.session_id || it?.id || '');
+  return String(it?.id ?? '') + '-' + String(it?.type || '');
+}
+function _toNativeTile(it, kind, t) {
+  const k = _nativeTileKey(it, kind);
+  if (kind === 'lives') {
+    let dateLabel = '';
+    try {
+      const raw = it?.ended_at || it?.started_at;
+      if (raw) {
+        const d = api.parseServerDate(raw);
+        if (!isNaN(d.getTime())) dateLabel = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+      }
+    } catch {}
+    const liveLbl = t?.('live.live') || 'AO VIVO';
+    return {
+      k,
+      u: it?.thumbnail_url ? resolveMedia(it.thumbnail_url) : '',
+      tl: liveLbl + (dateLabel ? ` · ${dateLabel}` : ''),
+      tld: true,
+      tr: 'play',
+      bl: _mgCount(it?.viewer_count || it?.view_count || it?.views || 0),
+      blp: true,
+      br: _mgDur(it?.duration || 0),
+      a: it?.title || liveLbl,
+    };
+  }
+  const rawThumb = it?.thumbnail || it?.url || '';
+  const url = resolveMedia(rawThumb);
+  const isReel = kind === 'reels' || (kind === 'posts' && (it?.type === 'video' || it?.media_type === 'video'));
+  const looksLikeVideo = /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i.test(url) || it?.type === 'video' || it?.media_type === 'video' || isReel;
+  const thumbIsImage = /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(rawThumb);
+  if (looksLikeVideo) {
+    const poster = url ? (thumbIsImage ? url : resolveMedia(rawThumb + '.thumb.jpg')) : '';
+    const videoUrl = url && !thumbIsImage ? url : '';
+    const showBadge = it?.type === 'video' || isReel;
+    return {
+      k, u: poster, vu: videoUrl, v: true,
+      tr: showBadge ? 'video' : '',
+      bl: showBadge ? _mgCount(it?.view_count || it?.views || it?.play_count || 0) : '',
+      blp: true,
+      a: it?.caption || '',
+    };
+  }
+  const multi = Number(it?.count || (Array.isArray(it?.media_urls) ? it.media_urls.length : 0)) > 1;
+  return { k, u: url, tr: multi ? 'multi' : '', a: it?.caption || '' };
+}
+
 // [2026-10-15 profile-virt] Uma linha (ate 3 tiles) da grade virtualizada. memo:
 // re-render do cabecalho (presenca, live, destaques...) nao re-renderiza os tiles.
 const ProfileGridRow = memo(function ProfileGridRow({ row, size, kind, onItemPress, onItemLongPress, onCreate, createLabel, isDark, t }) {
@@ -1084,6 +1137,7 @@ const ProfileGridRow = memo(function ProfileGridRow({ row, size, kind, onItemPre
 });
 const _gridRowKey = (r) => r.key;
 const _EMPTY_ROWS = [];
+const _EMPTY_NATIVE_GRID = { items: _EMPTY_ROWS, byKey: new Map(), kind: null };
 
 // ─── Status camera boundary ─────────────────────────────────────────
 // 2026-05-28 Lester QA: clicking "Adicionar ao status" on the avatar
@@ -1858,6 +1912,33 @@ export default function Profile({
     }
     return rows;
   }, [mode, _gridKind, combinedPostsAll, reels, lives, sharedMedia, _isSelf]);
+
+  // [2026-10-16 native-media-grid] Modo full no iOS/Android: grade NATIVA
+  // (UICollectionView/RecyclerView, miniaturas c/ cache nativo, 120 Hz) com o
+  // cabecalho (`body`) como filho que rola junto. Sem modulo/kill → FlashList.
+  const _nativeGridOn = mode === 'full' && !WEB && isNativeMediaGridAvailable();
+  const _sharedMediaKey = (data?.shared_media || _EMPTY_ROWS);
+  const nativeGrid = useMemo(() => {
+    if (!_nativeGridOn || !_gridKind) return _EMPTY_NATIVE_GRID;
+    const list = _gridKind === 'posts' ? combinedPostsAll
+      : _gridKind === 'reels' ? reels
+      : _gridKind === 'lives' ? lives
+      : _sharedMediaKey;
+    const items = [];
+    const byKey = new Map();
+    if (_gridKind === 'reels' && _isSelf && list && list.length) {
+      const v = t?.('videoStudio.create');
+      items.push({ k: '__create', create: true, cl: v && v !== 'videoStudio.create' ? v : 'Criar' });
+    }
+    for (const it of (list || [])) {
+      if (!it) continue;
+      const tile = _toNativeTile(it, _gridKind, t);
+      if (byKey.has(tile.k)) continue;
+      byKey.set(tile.k, it);
+      items.push(tile);
+    }
+    return { items, byKey, kind: _gridKind };
+  }, [_nativeGridOn, _gridKind, combinedPostsAll, reels, lives, _sharedMediaKey, _isSelf, t]);
 
   // Handlers
   const handleChat = useCallback(() => { onOpenChat?.(identity?.email); onClose?.(); }, [identity, onOpenChat, onClose]);
@@ -4334,12 +4415,59 @@ export default function Profile({
   const gridFooter = morePostsLoading && activeTab === 'posts'
     ? <View style={{ paddingVertical: 18, alignItems: 'center' }}><ActivityIndicator color={colors?.primary} /></View>
     : null;
+  // [2026-10-16 native-media-grid] eventos da grade nativa -> mesmos handlers.
+  const _nativeGridRef = useRef(nativeGrid);
+  _nativeGridRef.current = nativeGrid;
+  const _endPendingRef = useRef(false);
+  const onNativeGridPress = useCallback((e) => {
+    if (e?.create) { onGridCreate(); return; }
+    const g = _nativeGridRef.current;
+    const it = g?.byKey?.get(String(e?.key));
+    if (it) onGridItemPress(it, g.kind);
+  }, [onGridCreate, onGridItemPress]);
+  const onNativeGridLongPress = useCallback((e) => {
+    const g = _nativeGridRef.current;
+    const it = g?.byKey?.get(String(e?.key));
+    if (it) onGridItemLongPress(it, g.kind);
+  }, [onGridItemLongPress]);
+  const onNativeGridScrollBegin = useCallback(() => {
+    if (_gridUserScrolledRef.current) return;
+    _gridUserScrolledRef.current = true;
+    // o fim ja tinha chegado antes do 1o arrasto (grade curta): pagina agora
+    if (_endPendingRef.current) { _endPendingRef.current = false; onGridEndReached(); }
+  }, [onGridEndReached]);
+  const onNativeGridEnd = useCallback(() => {
+    if (!_gridUserScrolledRef.current) { _endPendingRef.current = true; return; }
+    onGridEndReached();
+  }, [onGridEndReached]);
+  const nativeGridTheme = useMemo(() => ({
+    bg: (typeof colors?.background === 'string' && /^#[0-9a-f]{6}$/i.test(colors.background)) ? colors.background : (isDark ? '#000000' : '#FFFFFF'),
+    placeholder: isDark ? '#1C1C1E' : '#E9E9EB',
+    sectionText: isDark ? '#F1F3F5' : '#111111',
+    createBg: isDark ? '#0A0A0A' : '#FAFAFA',
+    createText: isDark ? '#F1F3F5' : '#111111',
+  }), [colors?.background, isDark]);
 
   // ─── Render ──────────────────────────────────────────────────────────
   if (mode === 'full') {
     return (
       <>
-        {(_FlashList && !loading && !err) ? (
+        {(_nativeGridOn && !loading && !err) ? (
+          <NativeMediaGrid
+            style={{ flex: 1, backgroundColor: colors?.background }}
+            items={nativeGrid.items}
+            header={body}
+            footer={gridFooter}
+            spacing={1}
+            maxContentWidth={computeContentMaxWidth(SCREEN_W)}
+            contentInsetBottom={60}
+            theme={nativeGridTheme}
+            onItemPress={onNativeGridPress}
+            onItemLongPress={onNativeGridLongPress}
+            onEndReached={onNativeGridEnd}
+            onScrollBegin={onNativeGridScrollBegin}
+          />
+        ) : (_FlashList && !loading && !err) ? (
           <_FlashList
             style={{ flex: 1, backgroundColor: colors?.background }}
             data={gridRows}

@@ -19,11 +19,17 @@
 // Kill switches OTA:
 //   globalThis.__chatyy_native_email_reader = false  → leitor volta ao JS
 //   globalThis.__chatyy_native_compose = false       → editor volta ao WebView
+//   globalThis.__chatyy_native_notes_editor = false  → notas voltam ao TextInput JS
+//
+// [2026-10-16 native-notes-editor] ChatyyNotesEditor — editor de NOTAS
+//   (UITextView TextKit 1 / EditText + spans). O texto da nota (markdown-leve)
+//   entra e sai CRU: só atributos mudam → ida e volta sem perda.
 
 import { Platform } from 'react-native';
 
 export const EMAIL_BODY_VIEW = 'ChatyyEmailBody';
 export const RICH_EDITOR_VIEW = 'ChatyyRichEditor';
+export const NOTES_EDITOR_VIEW = 'ChatyyNotesEditor';
 
 const _views: Record<string, any> = {};
 
@@ -68,6 +74,12 @@ export function getNativeRichEditorView(): any {
   return _probe(RICH_EDITOR_VIEW);
 }
 
+/** View nativa do editor de notas, ou null (binário sem a view / kill switch). */
+export function getNativeNotesEditorView(): any {
+  if (_flagOff('__chatyy_native_notes_editor')) return null;
+  return _probe(NOTES_EDITOR_VIEW);
+}
+
 export function isEmailBodyAvailable(): boolean {
   return !!getNativeEmailBodyView();
 }
@@ -76,4 +88,4 @@ export function isRichEditorAvailable(): boolean {
   return !!getNativeRichEditorView();
 }
 
-export default { getNativeEmailBodyView, getNativeRichEditorView, isEmailBodyAvailable, isRichEditorAvailable };
+export default { getNativeEmailBodyView, getNativeRichEditorView, getNativeNotesEditorView, isEmailBodyAvailable, isRichEditorAvailable };

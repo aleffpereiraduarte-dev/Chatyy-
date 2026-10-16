@@ -917,7 +917,7 @@ function ContactsScreenInner() {
     const display = c.name || c.display_name || email.split('@')[0];
     // Lazy haptic — same pattern used elsewhere (chat list long-press).
     try {
-      const Haptics = require('expo-haptics');
+      const Haptics = require('../services/haptics').HapticsCompat;
       Haptics.selectionAsync?.().catch?.(() => {});
     } catch {}
     const goChat = () => require('../services/openConversation').openConversation(`/chat-conversation?name=${encodeURIComponent(display)}&email=${encodeURIComponent(email)}`);

@@ -1942,6 +1942,10 @@ export default function RootLayout() {
     focus: () => { try { require('../components/FadeSlideIn').noteRouteSeen(route?.key); } catch {} },
   }), []);
   const _FULL_MODAL = Platform.OS === 'ios' ? { presentation: 'fullScreenModal' } : { presentation: 'modal', animation: _navAnim('slide_from_bottom') };
+  // [2026-10-16 motion-telegram] Telas imersivas (ligação, live, câmera, reels)
+  // pintam #000: o container da rota nascia na cor do tema (branco no claro) →
+  // flash branco no fade/slide de entrada e no swipe de saída. Mesmo preto da tela.
+  const _DARK_BG = { contentStyle: { backgroundColor: '#000000' } };
   // Telas com header NATIVO (settings/contacts/chat-new → components/nativeHeader.js):
   // headerShown já no 1º frame (senão o header "entra" depois do push e o
   // conteúdo pula). Título/cores finais vêm do setOptions da própria tela.
@@ -2122,10 +2126,10 @@ export default function RootLayout() {
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="settings" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' && !(typeof route?.params?.section === 'string' && route.params.section) ? _LARGE_TITLE_HDR : {}) })} />{/* [2026-10-15 nav-motion] raiz nasce c/ título grande (o settings.js aplica o mesmo) — ?section= abre direto na categoria, compacto */}
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
-                  <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
-                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false }} />
+                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false, ..._DARK_BG }} />
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />{/* [2026-10-14 nav-nativa] era fade 120ms (página de link de chamada, não é o player) */}
                   <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
                   <Stack.Screen name="meetings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
@@ -2192,10 +2196,10 @@ export default function RootLayout() {
                   <Stack.Screen name="drive" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="photos" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="photo-new" options={{ ..._FULL_MODAL }} />
-                  <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
+                  <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="lives-saved" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
-                  <Stack.Screen name="live-replay" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="live-replay" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="live-discover" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
@@ -2211,7 +2215,7 @@ export default function RootLayout() {
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
                   <Stack.Screen name="notifications" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
-                  <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false }} />
+                  <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false, ..._DARK_BG }} />
                   <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="share-receive" options={{ ..._FULL_MODAL }} />
                   <Stack.Screen name="parental" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
@@ -2226,11 +2230,11 @@ export default function RootLayout() {
                   {/* Snap-Map / Friends-on-a-Map (Find My Friends style). */}
                   <Stack.Screen name="snap-map" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   {/* Reels P0 — "Use this sound" deep link + Duet/Stitch composer. */}
-                  <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150, ..._DARK_BG }} />
                   {/* Reels recorder — dedicated full-screen camera (TikTok/Instagram-style). */}
-                  <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
+                  <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), ..._DARK_BG }} />
                   {/* [2026-10-13 video-studio] Câmera de criação em segmentos (→ /video-studio/editor). */}
-                  <Stack.Screen name="video-studio/camera" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, freezeOnBlur: false /* desmontar a câmera ao ir pro editor */ }} />
+                  <Stack.Screen name="video-studio/camera" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, freezeOnBlur: false /* desmontar a câmera ao ir pro editor */, ..._DARK_BG }} />
                   {/* [2026-10-13 video-studio] Editor (timeline/texto/sons/filtros/legendas/capa) → Publicar; Rascunhos. */}
                   <Stack.Screen name="video-studio/editor" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('fade'), gestureEnabled: false }} />
                   <Stack.Screen name="video-studio/publish" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
@@ -2238,8 +2242,8 @@ export default function RootLayout() {
                   {/* Reels drafts — grid of persisted drafts; tap to resume. */}
                   <Stack.Screen name="reels-drafts" options={{ headerShown: false, ..._FULL_MODAL }} />
                   {/* [2026-10-08 reels-publish] Reels composer — galeria/câmera → corte/capa/legenda → Publicar (2º plano). */}
-                  <Stack.Screen name="reels-compose" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false }} />
-                  <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
+                  <Stack.Screen name="reels-compose" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, ..._DARK_BG }} />
+                  <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), ..._DARK_BG }} />
                   <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="community/discover" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

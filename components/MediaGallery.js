@@ -1,13 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
-  Platform, StyleSheet,
+  Platform, StyleSheet, Alert,
 } from 'react-native';
 import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPlay } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import ChatMediaViewer from './ChatMediaViewer';
+// [2026-10-16 native-media-grid] Fotos/Vídeos em grade NATIVA (seções por mês,
+// 1º quadro + duração do vídeo, seleção) — kill __chatyy_native_media_grid.
+import NativeMediaGrid, { isNativeMediaGridAvailable } from './media/NativeMediaGrid';
+import { useLanguage } from '../context/LanguageContext';
 
 const TABS = ['image', 'video', 'audio', 'file'];
 
@@ -50,6 +54,35 @@ function formatDate(d) {
   const dt = new Date(d);
   if (isNaN(dt.getTime())) return '';
   return dt.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// [2026-10-16 native-media-grid] cor do tema → "#RRGGBB" p/ o nativo.
+function _hex(c, fallback) {
+  if (typeof c !== 'string') return fallback;
+  const v = c.trim();
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(v)) return v;
+  const m = v.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (m) return '#' + [m[1], m[2], m[3]].map((x) => Math.max(0, Math.min(255, Number(x))).toString(16).padStart(2, '0')).join('');
+  return fallback;
+}
+
+function _ts(d) {
+  if (!d) return 0;
+  try {
+    const dt = api.parseServerDate ? api.parseServerDate(d) : new Date(d);
+    const n = dt && dt.getTime ? dt.getTime() : NaN;
+    return Number.isFinite(n) ? n : 0;
+  } catch { return 0; }
+}
+
+function _nativeItems(items, type) {
+  const isVideo = type === 'video';
+  return (items || []).filter(it => it && it.file_url).map((it) => {
+    const url = resolveUrl(it.file_url);
+    return isVideo
+      ? { k: String(it.id), u: '', vu: url, v: true, ad: true, tr: 'video', t: _ts(it.created_at), a: it.file_name || '' }
+      : { k: String(it.id), u: url, t: _ts(it.created_at), a: it.file_name || '' };
+  });
 }
 
 function EmptyState({ type, colors }) {
@@ -210,6 +243,28 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   // Guards against a slow request for a previous tab resolving after the user
   // switched tabs (stale response would overwrite the active tab's items).
   const loadSeqRef = useRef(0);
+  const { language } = useLanguage() || {};
+  // [2026-10-16 native-media-grid] grade nativa p/ Fotos/Vídeos + seleção.
+  const gridRef = useRef(null);
+  const useNativeGrid = (activeTab === 'image' || activeTab === 'video') && isNativeMediaGridAvailable();
+  const [sel, setSel] = useState({ active: false, keys: [], count: 0 });
+  const [selBusy, setSelBusy] = useState(false);
+  const nativeItems = useMemo(() => (useNativeGrid ? _nativeItems(items, activeTab) : []), [useNativeGrid, items, activeTab]);
+  const itemsById = useMemo(() => {
+    const m = new Map();
+    for (const it of items || []) m.set(String(it.id), it);
+    return m;
+  }, [items]);
+  const gridTheme = useMemo(() => ({
+    bg: _hex(colors?.background, '#FFFFFF'),
+    placeholder: _hex(colors?.surface, '#8E8E93'),
+    sectionText: _hex(colors?.text, '#111111'),
+  }), [colors?.background, colors?.surface, colors?.text]);
+  useEffect(() => {
+    // trocou de aba / fechou → sai da seleção
+    setSel({ active: false, keys: [], count: 0 });
+    try { gridRef.current?.clearSelection?.(); } catch {}
+  }, [activeTab, visible]);
 
   const tabLabels = {
     image: t?.('chat.photos') || 'Fotos',
@@ -249,6 +304,57 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     });
   };
 
+  const onNativePress = useCallback((e) => {
+    const it = itemsById.get(String(e?.key));
+    if (it) handleView(it);
+  }, [itemsById, activeTab]);
+  const onNativeLongPress = useCallback((e) => {
+    if (e?.key == null || e?.selectionActive) return;
+    try { gridRef.current?.beginSelection?.(String(e.key)); } catch {}
+  }, []);
+  const onNativeSelection = useCallback((e) => {
+    setSel({ active: !!e?.active, keys: Array.isArray(e?.keys) ? e.keys : [], count: Number(e?.count) || 0 });
+  }, []);
+  const exitSelection = useCallback(() => {
+    try { gridRef.current?.clearSelection?.(); } catch {}
+    setSel({ active: false, keys: [], count: 0 });
+  }, []);
+  const selectedItems = () => sel.keys.map(k => itemsById.get(String(k))).filter(Boolean);
+  const saveSelected = async () => {
+    if (selBusy) return;
+    const list = selectedItems();
+    if (!list.length) return;
+    setSelBusy(true);
+    let ok = 0;
+    try {
+      const ML = require('expo-media-library');
+      const perm = await ML.requestPermissionsAsync(false);
+      if (perm?.status === 'granted') {
+        const { ensureLocalFile } = require('../utils/mediaNativeActions');
+        for (const it of list) {
+          try {
+            const f = await ensureLocalFile(resolveUrl(it.file_url), it.file_name || '');
+            if (f) { await ML.saveToLibraryAsync(f); ok++; }
+          } catch {}
+        }
+      }
+    } catch {}
+    setSelBusy(false);
+    // (dentro de <Modal>: o ToastHost global fica atrás — Alert só na falha)
+    if (ok > 0) exitSelection();
+    else { try { Alert.alert(t?.('common.error') || 'Erro'); } catch {} }
+  };
+  const shareSelected = async () => {
+    const list = selectedItems();
+    if (list.length !== 1 || selBusy) return;
+    setSelBusy(true);
+    try {
+      const { shareMediaFile } = require('../utils/mediaNativeActions');
+      await shareMediaFile({ url: resolveUrl(list[0].file_url), fileName: list[0].file_name || '' });
+    } catch {}
+    setSelBusy(false);
+  };
+
   if (!visible) return null;
 
   const activeTheme = TAB_THEME[activeTab] || TAB_THEME.image;
@@ -263,7 +369,9 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
           backgroundColor: colors.surface,
         }}>
           <TouchableOpacity
-            onPress={onClose}
+            onPress={sel.active ? exitSelection : onClose}
+            accessibilityRole="button"
+            accessibilityLabel={sel.active ? (t?.('common.cancel') || 'Cancelar') : (t?.('common.close') || 'Fechar')}
             style={{
               width: 38, height: 38, borderRadius: 19,
               alignItems: 'center', justifyContent: 'center',
@@ -274,6 +382,25 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
           >
             <IconX size={20} color={colors.text} />
           </TouchableOpacity>
+          {sel.active ? (
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ flex: 1, fontSize: 19, fontWeight: '800', color: colors.text, letterSpacing: -0.4 }} numberOfLines={1}>
+                {(t?.('chat.selected') || '{count} selecionada(s)').replace('{count}', String(sel.count))}
+              </Text>
+              {sel.count === 1 && (
+                <TouchableOpacity onPress={shareSelected} disabled={selBusy} accessibilityRole="button"
+                  style={{ paddingHorizontal: 12, paddingVertical: 8, opacity: selBusy ? 0.5 : 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{t?.('common.share') || 'Compartilhar'}</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={saveSelected} disabled={selBusy || sel.count === 0} accessibilityRole="button"
+                style={{ paddingHorizontal: 12, paddingVertical: 8, opacity: (selBusy || sel.count === 0) ? 0.5 : 1 }}>
+                {selBusy
+                  ? <ActivityIndicator size="small" color={colors.text} />
+                  : <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{t?.('common.save') || 'Salvar'}</Text>}
+              </TouchableOpacity>
+            </View>
+          ) : (
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 11, fontWeight: '700', color: activeTheme.color, letterSpacing: 0.6, textTransform: 'uppercase' }}>
               {t?.('chat.sharedInChat') || 'Compartilhado nesta conversa'}
@@ -282,6 +409,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
               {t?.('chat.mediaGallery') || 'Mídia e documentos'}
             </Text>
           </View>
+          )}
         </View>
 
         {/* Tabs — segmented control on a tray */}
@@ -333,6 +461,19 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
             <ActivityIndicator size="large" color={activeTheme.color} />
           </View>
+        ) : (useNativeGrid && nativeItems.length > 0) ? (
+          <NativeMediaGrid
+            ref={gridRef}
+            items={nativeItems}
+            sections
+            spacing={2}
+            locale={language || ''}
+            theme={gridTheme}
+            contentInsetBottom={28}
+            onItemPress={onNativePress}
+            onItemLongPress={onNativeLongPress}
+            onSelectionChange={onNativeSelection}
+          />
         ) : (
           <MediaGrid items={items} type={activeTab} colors={colors} onView={handleView} />
         )}

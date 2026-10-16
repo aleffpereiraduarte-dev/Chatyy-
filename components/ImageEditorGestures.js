@@ -19,7 +19,7 @@ const VIEWPORT = Dimensions.get('window');
 
 // Optional haptics — gracefully no-op if expo-haptics isn't installed.
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../services/haptics').HapticsCompat; } catch {}
 function _hapticLight() {
   try {
     if (_Haptics?.impactAsync) {

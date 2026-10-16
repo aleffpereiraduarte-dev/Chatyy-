@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyInAppBannerModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.inappbanner.ChatyyInAppBannerModule"]
+  }
+}

@@ -51,9 +51,7 @@ export function disableNativeOnboardingForSession(reason) {
   _sessionOff = true;
   _sessionReason = String(reason || '').slice(0, 300);
   try {
-    const api = require('../../services/api');
-    const call = api?.apiCall || api?.default?.apiCall;
-    call?.('callkit_diag', { info: `native_onboarding disabled ${_sessionReason}`, platform: Platform.OS }, 'POST')?.catch?.(() => {});
+    require('../../services/nativeTelemetry').nativeBeacon('native_onboarding', 'disabled', _sessionReason); // [wave7]
   } catch {}
 }
 

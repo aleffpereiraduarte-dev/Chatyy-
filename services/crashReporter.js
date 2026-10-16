@@ -316,6 +316,7 @@ export function reportNativeFallback(name, msg) {
     const m = String((msg && (msg.message || msg)) || '').replace(/\s+/g, ' ').slice(0, 240);
     addBreadcrumb('native_fallback', n);
     _post('native_fallback', `${n} ${_buildTag()} ${m}`);
+    try { require('./nativeTelemetry').noteNativeFallback(n, m); } catch {} // [wave7] cobertura
   } catch {}
 }
 
@@ -351,6 +352,9 @@ function _buildTag() {
   _buildTagCache = `[b=${b || '?'} ota=${c.ota || '?'} rt=${c.rt || '?'}]`;
   return _buildTagCache;
 }
+
+/** "[b=686 ota=01a13ede rt=2.6.0]" — build do binário + OTA (nativeTelemetry). */
+export function getBuildTag() { try { return _buildTag(); } catch { return ''; } }
 
 export function reportCrash(payload) {
   try {

@@ -205,7 +205,7 @@ function EmailRow({
     }).start();
     try {
       if (Platform.OS !== 'web') {
-        const Haptics = require('expo-haptics');
+        const Haptics = require('../services/haptics').HapticsCompat;
         Haptics.selectionAsync().catch(() => {});
       }
     } catch {}
@@ -230,7 +230,7 @@ function EmailRow({
   const handleStar = useCallback((e) => {
     e?.stopPropagation?.();
     if (Platform.OS !== 'web') {
-      import('expo-haptics').then(h => h.impactAsync(h.ImpactFeedbackStyle.Light)).catch(() => {});
+      Promise.resolve(require('../services/haptics').HapticsCompat).then(h => h.impactAsync(h.ImpactFeedbackStyle.Light)).catch(() => {});
     }
     starSpin(starScale, starRotate).start();
     onStar?.(email);
@@ -239,7 +239,7 @@ function EmailRow({
   const handleArchive = useCallback((e) => {
     e?.stopPropagation?.();
     if (Platform.OS !== 'web') {
-      import('expo-haptics').then(h => h.impactAsync(h.ImpactFeedbackStyle.Medium)).catch(() => {});
+      Promise.resolve(require('../services/haptics').HapticsCompat).then(h => h.impactAsync(h.ImpactFeedbackStyle.Medium)).catch(() => {});
     }
     onArchive?.(email);
   }, [email, onArchive]);
@@ -247,7 +247,7 @@ function EmailRow({
   const handleDelete = useCallback((e) => {
     e?.stopPropagation?.();
     if (Platform.OS !== 'web') {
-      import('expo-haptics').then(h => h.notificationAsync(h.NotificationFeedbackType.Warning)).catch(() => {});
+      Promise.resolve(require('../services/haptics').HapticsCompat).then(h => h.notificationAsync(h.NotificationFeedbackType.Warning)).catch(() => {});
     }
     onDelete?.(email);
   }, [email, onDelete]);

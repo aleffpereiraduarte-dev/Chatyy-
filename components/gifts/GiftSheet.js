@@ -34,7 +34,7 @@ import {
 
 function haptic(kind) {
   try {
-    const H = require('expo-haptics');
+    const H = require('../../services/haptics').HapticsCompat;
     if (kind === 'success') H.notificationAsync(H.NotificationFeedbackType.Success);
     else if (kind === 'error') H.notificationAsync(H.NotificationFeedbackType.Error);
     else H.selectionAsync();

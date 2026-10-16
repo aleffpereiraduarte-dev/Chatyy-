@@ -263,7 +263,10 @@ export const E164_RE = /^\+[1-9]\d{7,14}$/;
 // falls back to the English name when the API is missing (Hermes on some
 // Android builds) or throws. One DisplayNames instance is cached per locale.
 const _displayNamesCache = {};
-export function countryDisplayName(c, locale) {
+// [2026-10-16 onb-country-i18n] `t` opcional: sem Intl.DisplayNames (Hermes no
+// iOS) cai na tabela i18n 'country.XX' (gerada do CLDR p/ os 63 idiomas) antes
+// do nome em inglês — o cadastro mostrava "United States" com o app em pt-BR.
+export function countryDisplayName(c, locale, t) {
   if (!c) return '';
   const code = typeof c.code === 'string' ? c.code.toUpperCase() : '';
   const loc = String(locale || 'en').replace('_', '-');
@@ -280,5 +283,12 @@ export function countryDisplayName(c, locale) {
       }
     }
   } catch {}
+  if (code && typeof t === 'function') {
+    try {
+      const k = `country.${code}`;
+      const v = t(k);
+      if (typeof v === 'string' && v && v !== k) return v;
+    } catch {}
+  }
   return c.name || code || '';
 }

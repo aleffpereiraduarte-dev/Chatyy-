@@ -49,7 +49,7 @@ function sanitizeQuotedHtml(html) {
   return _safeFallbackSanitize(html);
 }
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import * as Haptics from 'expo-haptics';
+import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sendEmail, getMessage, aliasesList, archiveEmail, emailUrlPreview } from '../services/api';
 import { detectSensitive, sensitiveTypeLabel } from '../services/sensitiveDetect'; // [2026-10-09 on-device-privacy]

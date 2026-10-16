@@ -5,7 +5,7 @@ import { useLanguageOptional } from '../context/LanguageContext';
 // Static import — Metro precisa do módulo no bundle de qualquer jeito;
 // `require` dentro do handler escondia a dependência e dificultava bundle.
 let _Haptics = null;
-try { _Haptics = require('expo-haptics'); } catch {}
+try { _Haptics = require('../services/haptics').HapticsCompat; } catch {}
 
 // WhatsApp/Telegram-grade markdown toolbar.
 // Pills com glyph estilizado por tipo (B negrito, I itálico, S tachado, etc).
