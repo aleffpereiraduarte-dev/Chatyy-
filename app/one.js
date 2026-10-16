@@ -12,7 +12,7 @@ import { useLanguage } from '../context/LanguageContext';
 import {
   IconArrowLeft, IconMail, IconCalendar, IconBell, IconMenu, IconCamera, IconEdit,
   IconChevronDown, IconCopy, IconRepeat, IconThumbsDown, IconCheck, IconGlobe, IconSliders,
-  IconImage, IconMessageCircle, IconZap,
+  IconImage, IconMessageCircle, IconZap, IconArrowRight,
 } from '../components/Icons';
 // [2026-10-15 bia-bonita] markdown completo + cartões de ferramenta + "pensando"
 import { BiaMarkdown, BiaToolCards, BiaThinking } from '../components/BiaRich';
@@ -2518,12 +2518,38 @@ export default function OneScreen() {
                 && messages.some(m => m.role === 'assistant' && !m._streaming)
                   ? (
                     <BiaFadeIn delay={200} style={{ paddingBottom: 8, ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center', width: '100%' } : null) }}>
-                      <SmartReplyChips
-                        replies={lastFollowups}
-                        label={t('one.followupSuggested') || 'Continue com'}
-                        onSelectReply={(chip) => setInputText(chip)}
-                        onSendReply={(chip) => { setLastFollowups([]); sendMessage(chip); }}
-                      />
+                      {/* [2026-10-16 bia-followups-v2] lista leve estilo ChatGPT (antes: pílulas pesadas cortadas c/ bloco preto) */}
+                      {(() => {
+                        const P2 = biaPalette(isDark);
+                        // descarta "sugestões" que são perguntas DA Bia ("como posso ajudar…", "precisa de…")
+                        const items = lastFollowups
+                          .map((x) => String(x || '').trim())
+                          .filter((x) => x.length > 2 && !/^(como posso|posso te|precisa de|quer que eu|em que posso|deseja)/i.test(x))
+                          .slice(0, 3);
+                        if (!items.length) return null;
+                        return (
+                          <View style={{ marginTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: P2.hair }}>
+                            {items.map((chip, i) => (
+                              <Pressable
+                                key={chip + i}
+                                onPress={() => { haptic('light'); setLastFollowups([]); sendMessage(chip); }}
+                                onLongPress={() => setInputText(chip)}
+                                accessibilityRole="button"
+                                accessibilityLabel={chip}
+                                style={({ pressed }) => ({
+                                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                                  paddingVertical: 12, paddingHorizontal: 2,
+                                  borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: P2.hair,
+                                  opacity: pressed ? 0.55 : 1,
+                                })}
+                              >
+                                <Text style={{ flex: 1, fontSize: 15.5, lineHeight: 21, color: P2.fg, letterSpacing: -0.2 }} numberOfLines={2}>{chip}</Text>
+                                <IconArrowRight size={16} color={P2.faint} />
+                              </Pressable>
+                            ))}
+                          </View>
+                        );
+                      })()}
                     </BiaFadeIn>
                   )
                   : null
