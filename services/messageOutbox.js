@@ -595,6 +595,11 @@ export async function markSent(cmi, serverId = null) {
   // US: a linha fica em 'accepted' (continua no outbox) até o id numérico
   // chegar (services/regionalAccept.js confirma / re-dirige).
   if (typeof serverId === 'string' && /^tmp_/.test(serverId)) return markAccepted(cmi);
+  // [2026-10-16 multi-região fase 4] ✓ da casa regional ANTES do apply no master
+  // (linha sem conv_pts): a linha fica 'accepted' (com o id final) até a cópia
+  // canônica chegar — regionalAccept confirma (markSent de novo) ou reenvia com o
+  // mesmo cmi. RPO ≈ 0: o outbox não esquece no ack.
+  try { if (require('./regionalAccept').isAwaitingCanonical?.(cmi)) return markAccepted(cmi, serverId); } catch {}
   _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
@@ -624,15 +629,18 @@ export async function markSent(cmi, serverId = null) {
  * ainda não deu o id numérico. Não é terminal: sem confirmação em ~45 s o
  * regionalAccept volta a linha p/ 'queued' (mesmo client_message_id).
  */
-export async function markAccepted(cmi) {
+export async function markAccepted(cmi, serverId = null) {
   _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
+  // [fase 4] leaf-seq: guarda o id final (o tmp_ do aceite regional não é id)
+  const sid = (serverId != null && /^\d{1,19}$/.test(String(serverId))) ? Number(serverId) : null;
   try {
     await db.runAsync(
       `UPDATE outbox
-          SET state = 'accepted', updated_at = ?, last_error = NULL
+          SET state = 'accepted', server_id = COALESCE(?, server_id), updated_at = ?, last_error = NULL
         WHERE client_message_id = ? AND state NOT IN ('sent','delivered','read')`,
+      sid,
       Date.now(),
       String(cmi),
     );
@@ -685,8 +693,10 @@ async function _setState(cmi, state) {
   const db = await _db_or_null();
   if (!db) return false;
   try {
+    // [fase 4] ✓✓ pode vir antes do apply (entrega local no edge): a linha
+    // 'accepted' continua aguardando a cópia canônica (não sai da varredura).
     await db.runAsync(
-      `UPDATE outbox SET state = ?, updated_at = ? WHERE client_message_id = ?`,
+      `UPDATE outbox SET state = ?, updated_at = ? WHERE client_message_id = ? AND state <> 'accepted'`,
       state, Date.now(), String(cmi)
     );
     _notify(cmi, await getStatus(cmi));
@@ -742,7 +752,8 @@ export async function markFailed(cmi, err = null, opts = null) {
       String(cmi)
     );
     if (!row) return false;
-    if (row.state === 'sent' || row.state === 'delivered' || row.state === 'read') return false;
+    // opts.force: rejeição do master DEPOIS do ✓ (re-gate do leaf-seq / tombstone)
+    if (!(opts && opts.force) && (row.state === 'sent' || row.state === 'delivered' || row.state === 'read')) return false;
     const prevAttempts = (row.attempts ?? 0) | 0;
     if (kind === 'hard') {
       await db.runAsync(
@@ -1020,6 +1031,11 @@ export async function reconcileWithServer(conversationId, serverMessages) {
     // Only trust rows the server actually confirmed (numeric id, no pending flags).
     if (typeof m.id !== 'number') continue;
     if (m._pending || m._failed || m._queued) continue;
+    // [fase 4] linha apagada pelo re-gate do master (envio rejeitado): o outbox
+    // 'failed' é a bolha "não enviada" — não é confirmação.
+    if (m.deleted_at && m.client_message_id) {
+      try { if (require('./leafSeq').getRejected?.(m)) continue; } catch {}
+    }
     if (m.client_message_id) confirmedCmi.add(String(m.client_message_id));
     if (m.client_action_id) confirmedAid.add(String(m.client_action_id));
     const url = typeof m.file_url === 'string' ? m.file_url : '';

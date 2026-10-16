@@ -45,6 +45,8 @@ struct ChatyyMapMarkerRecord: Record {
   @Field var initials: String? = nil
   @Field var stale: Bool = false
   @Field var highlight: Bool = false
+  // [2026-10-16 mapa-chat] anel pulsando no avatar (localização AO VIVO)
+  @Field var pulse: Bool = false
 }
 
 public class ChatyyMapViewModule: Module {
@@ -61,6 +63,10 @@ public class ChatyyMapViewModule: Module {
       Prop("rotateEnabled") { (view: ChatyyMapView, value: Bool?) in view.setRotateEnabled(value ?? false) }
       Prop("camera") { (view: ChatyyMapView, value: ChatyyMapCameraRecord?) in view.setCamera(value) }
       Prop("markers") { (view: ChatyyMapView, value: [ChatyyMapMarkerRecord]?) in view.setMarkers(value ?? []) }
+      // [2026-10-16 mapa-chat] viewer repaginado: POIs do Apple Maps + ênfase "muted"
+      // (mapa menos chapado, P&B do app). Sem as props = comportamento antigo.
+      Prop("showsPOI") { (view: ChatyyMapView, value: Bool?) in view.setShowsPOI(value ?? false) }
+      Prop("appearance") { (view: ChatyyMapView, value: String?) in view.setAppearance(value ?? "default") }
 
       OnViewDidUpdateProps { (view: ChatyyMapView) in view.commit() }
     }
@@ -205,6 +211,30 @@ private enum ChatyyMarkerFactory {
         iv.isHidden = false
         ini.isHidden = true
       }
+    }
+    if r.pulse {
+      // [2026-10-16 mapa-chat] halo do anel pulsando (Buscar/Find My)
+      let halo = UIView(frame: circle.bounds)
+      halo.isUserInteractionEnabled = false
+      halo.layer.cornerRadius = ring / 2
+      halo.layer.borderWidth = 2.5
+      halo.layer.borderColor = ringColor.cgColor
+      halo.backgroundColor = ringColor.withAlphaComponent(0.12)
+      let scale = CABasicAnimation(keyPath: "transform.scale")
+      scale.fromValue = 1
+      scale.toValue = 1.9
+      let fade = CABasicAnimation(keyPath: "opacity")
+      fade.fromValue = 0.8
+      fade.toValue = 0
+      let g = CAAnimationGroup()
+      g.animations = [scale, fade]
+      g.duration = 1.8
+      g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      g.repeatCount = .infinity
+      g.isRemovedOnCompletion = false
+      halo.layer.add(g, forKey: "pulse")
+      circle.insertSubview(halo, at: 0)
+      circle.clipsToBounds = false
     }
     parts.append(circle)
     let fg: UIColor = dark ? .white : UIColor(white: 0.07, alpha: 1)
@@ -368,6 +398,8 @@ public final class ChatyyMapView: ExpoView, MKMapViewDelegate, UIGestureRecogniz
   private var dark = false
   private var interactive = true
   private var rotateEnabled = false
+  private var showsPOI = false
+  private var appearance = "default"
   private var camera: ChatyyMapCameraRecord?
   private var appliedSeq: Double = .nan
   private var cameraDirty = false
@@ -408,6 +440,28 @@ public final class ChatyyMapView: ExpoView, MKMapViewDelegate, UIGestureRecogniz
     dark = v
     overrideUserInterfaceStyle = v ? .dark : .light
     mapView?.overrideUserInterfaceStyle = v ? .dark : .light
+  }
+
+  func setShowsPOI(_ v: Bool) {
+    showsPOI = v
+    if let mv = mapView { applyMapLook(mv) }
+  }
+
+  func setAppearance(_ v: String) {
+    appearance = v
+    if let mv = mapView { applyMapLook(mv) }
+  }
+
+  private func applyMapLook(_ mv: MKMapView) {
+    let filter: MKPointOfInterestFilter = showsPOI ? .includingAll : .excludingAll
+    if #available(iOS 16.0, *) {
+      let cfg = MKStandardMapConfiguration(elevationStyle: .flat, emphasisStyle: appearance == "muted" ? .muted : .default)
+      cfg.pointOfInterestFilter = filter
+      cfg.showsTraffic = false
+      mv.preferredConfiguration = cfg
+    } else {
+      mv.pointOfInterestFilter = filter
+    }
   }
 
   func setInteractive(_ v: Bool) {
@@ -486,6 +540,7 @@ public final class ChatyyMapView: ExpoView, MKMapViewDelegate, UIGestureRecogniz
     mv.isPitchEnabled = false
     mv.showsUserLocation = false
     mv.pointOfInterestFilter = .excludingAll
+    applyMapLook(mv)
     mv.register(ChatyyAnnotationView.self, forAnnotationViewWithReuseIdentifier: "chatyy")
     insertSubview(mv, at: 0)
     mapView = mv
@@ -544,7 +599,7 @@ public final class ChatyyMapView: ExpoView, MKMapViewDelegate, UIGestureRecogniz
   }
 
   private func signature(_ r: ChatyyMapMarkerRecord) -> String {
-    return "\(r.kind)|\(r.color ?? "")|\(r.label ?? "")|\(r.sublabel ?? "")|\(r.imageUrl ?? "")|\(r.initials ?? "")|\(r.stale)|\(r.highlight)|\(dark)"
+    return "\(r.kind)|\(r.color ?? "")|\(r.label ?? "")|\(r.sublabel ?? "")|\(r.imageUrl ?? "")|\(r.initials ?? "")|\(r.stale)|\(r.highlight)|\(r.pulse)|\(dark)"
   }
 
   private func syncAnnotations() {

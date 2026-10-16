@@ -5241,7 +5241,8 @@ async function _tryNativeWsSend(payload) {
       const row = m.message;
       if (!row || row.id == null) { finish(null); return; }
       _rememberNativeSent(row.id);
-      finish({ success: true, data: row, message: m.status || 'Message sent', _native_send: true, _dedup: !!m.dedup });
+      // [fase 4] _hub: "leaf-<região>-seq" = ✓ da casa regional antes do apply (leafSeq)
+      finish({ success: true, data: row, message: m.status || 'Message sent', _native_send: true, _dedup: !!m.dedup, _hub: m.hub || '' });
     });
     offFb = ws.on('chat_send_fallback', (m) => {
       if (!m || m.client_message_id !== cmi) return;
@@ -5616,6 +5617,17 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     if (result && _ra.isRegionalProvisional(result)) {
       _raProv = true;
       _ra.noteAccepted(stableCMI, { conversationId, tempId: localTempId });
+    }
+    // [2026-10-16 multi-região fase 4] ✓ da casa regional com o id final mas
+    // ANTES do apply no master (sem conv_pts) → o outbox segura a linha até a
+    // cópia canônica (RPO ≈ 0); resposta já canônica → nada a esperar.
+    if (!_raProv && result && result.success && result.data && !result.envelope_mode) {
+      const _ls = require('./leafSeq');
+      if (_ls.enabled() && _ls.isPreApplyRow(result.data, result._hub)) {
+        _ra.noteLocalSeq(stableCMI, { conversationId, tempId: localTempId, id: result.data.id });
+      } else {
+        _ra.noteCanonical(stableCMI);
+      }
     }
   } catch {}
 

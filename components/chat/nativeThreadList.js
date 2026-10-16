@@ -553,7 +553,8 @@ function _failMetaNode(item, row, ctx) {
   kids.push(N.text(row.time || '', { fs: 11, c: metaC }));
   kids.push(N.vstack([
     N.icon(I.IconAlertTriangle, { s: 12, c: '#EF4444' }),
-    N.text(p2.label('chatConv.tapToRetry', 'Tocar para tentar de novo'), { fs: 11, c: err, m: [2, 0, 0, 0] }),
+    // [2026-10-16 multi-região fase 4] envio rejeitado pelo master depois do ✓ (re-gate)
+    N.text(item && item._leafRejected ? p2.label('chatConv.notSent', 'Mensagem não enviada') : p2.label('chatConv.tapToRetry', 'Tocar para tentar de novo'), { fs: 11, c: err, m: [2, 0, 0, 0] }),
   ], { al: 'c', m: [0, 0, 0, 2], a: 'retry' }));
   return N.hstack(kids, { al: 'c', jc: 'e', w: -1, m: [2, 0, 0, 0] });
 }

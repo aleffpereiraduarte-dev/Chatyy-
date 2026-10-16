@@ -97,11 +97,83 @@ export function chatyyStaticMap(lat, lng, { zoom = 15, dark = false, pin = true 
   const sLa = la.toFixed(5);
   const sLo = lo.toFixed(5);
   const key = `sm/v1/${theme}/${z}/${sLa},${sLo}${pin ? '' : '_np'}.jpg`;
+  // [2026-10-16 mapa-chat] `r=2`: fura o cache do aparelho p/ as imagens que o
+  // renderizador gerou CINZA VAZIAS fora do Brasil (bbox do BR engolia o Chile
+  // etc.; corrigido no servidor por sonda de cobertura). O servidor ignora `r`.
   return {
     key,
-    cdn: CHATYY_MEDIA_CDN + key,
-    api: `${CHATYY_STATIC_MAP_API}?lat=${sLa}&lng=${sLo}&z=${z}&theme=${theme}&pin=${pin ? 1 : 0}`,
+    cdn: CHATYY_MEDIA_CDN + key + '?r=2',
+    api: `${CHATYY_STATIC_MAP_API}?lat=${sLa}&lng=${sLo}&z=${z}&theme=${theme}&pin=${pin ? 1 : 0}&r=2`,
   };
+}
+
+// [2026-10-16 mapa-chat] Style por COBERTURA REAL de tiles (mesma regra do
+// renderizador do servidor, /opt/chatyy-staticmap/coverage.js). Os bboxes dos
+// países são retângulos: o do BR cobre Chile/Argentina/Paraguai..., o do US
+// cobre Canadá/México — e os tiles do país vêm 204 fora do polígono → mapa
+// cinza. Sonda 1 tile z14 do país; vazio → world-cinza. Memo por tile z10.
+const _tplMemo = new Map();
+const _probeMemo = new Map();
+function _tileXY(lat, lng, z) {
+  const n = 2 ** z;
+  const x = Math.floor(((lng + 180) / 360) * n);
+  const r = (lat * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2) * n);
+  return [Math.max(0, Math.min(n - 1, x)), Math.max(0, Math.min(n - 1, y))];
+}
+async function _fetchJson(url, ms) {
+  let ctrl = null; let tm = null;
+  try { ctrl = new AbortController(); tm = setTimeout(() => { try { ctrl.abort(); } catch {} }, ms); } catch {}
+  try {
+    const r = await fetch(url, ctrl ? { signal: ctrl.signal } : undefined);
+    if (!r.ok) throw new Error('http ' + r.status);
+    return await r.json();
+  } finally { if (tm) clearTimeout(tm); }
+}
+function _tileTemplate(id) {
+  let p = _tplMemo.get(id);
+  if (!p) {
+    p = (async () => {
+      const st = await _fetchJson(`${BORA_TILES_BASE}/styles/${id}/style.json`, 4000);
+      const src = (st && st.sources && st.sources.openmaptiles) || {};
+      let tiles = src.tiles; let maxzoom = src.maxzoom;
+      if (!tiles && src.url) { const tj = await _fetchJson(src.url, 4000); tiles = tj && tj.tiles; maxzoom = tj && tj.maxzoom; }
+      if (!Array.isArray(tiles) || !tiles[0]) return null;
+      return { tpl: tiles[0], maxzoom: Math.min(14, Number(maxzoom) || 14) };
+    })().catch(() => { _tplMemo.delete(id); return null; });
+    _tplMemo.set(id, p);
+  }
+  return p;
+}
+/** true quando o tileset do style `id` tem dado no ponto (sonda 1 tile). Erro de rede → true. */
+export async function boraStyleHasData(id, lat, lng) {
+  const la = Number(lat); const lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return true;
+  const [x10, y10] = _tileXY(la, lo, 10);
+  const ck = `${id}|${x10}|${y10}`;
+  if (_probeMemo.has(ck)) return _probeMemo.get(ck);
+  const t = await _tileTemplate(id);
+  if (!t) return true;
+  const [x, y] = _tileXY(la, lo, t.maxzoom);
+  const url = t.tpl.replace('{z}', String(t.maxzoom)).replace('{x}', String(x)).replace('{y}', String(y));
+  try {
+    const r = await fetch(url);
+    let ok = false;
+    if (r.status === 200) { const b = await r.arrayBuffer(); ok = !!(b && b.byteLength > 0); }
+    _probeMemo.set(ck, ok);
+    if (_probeMemo.size > 500) _probeMemo.delete(_probeMemo.keys().next().value);
+    return ok;
+  } catch { return true; }
+}
+/** style.json certo p/ o ponto: dark → mapa escuro BoraUm (base mundial); claro → país (se tem dado) ou world-cinza. */
+export async function resolveBoraStyleUrl(lat, lng, isDark = false) {
+  if (isDark) return `${BORA_TILES_BASE}/styles/boraum-mapa-escuro/style.json`;
+  const id = coverageStyleFor(lng, lat);
+  if (id !== BORA_STYLE_IDS.WORLD) {
+    const ok = await boraStyleHasData(id, lat, lng);
+    if (!ok) return `${BORA_TILES_BASE}/styles/${BORA_STYLE_IDS.WORLD}/style.json`;
+  }
+  return `${BORA_TILES_BASE}/styles/${id}/style.json`;
 }
 
 /**

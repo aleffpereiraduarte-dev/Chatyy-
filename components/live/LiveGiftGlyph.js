@@ -32,12 +32,20 @@ function LiveGiftGlyph({ icon, size = 40 }) {
   const fill = `url(#${id}s)`;
   let body;
   switch (icon) {
-    case 'rose':
+    case 'rose': // [gift-premium 2026-10-16] rosa reconhecível: botão com pétalas em espiral, caule, folhas e sépalas
       body = (
         <G>
-          <Path d="M24 6c-6 0-10 4-10 10 0 4 2 7 5 9-3 2-5 5-5 9 0 6 4 10 10 10s10-4 10-10c0-4-2-7-5-9 3-2 5-5 5-9 0-6-4-10-10-10Z" fill={fill} stroke={INK} strokeWidth={1.4} />
-          <Path d="M24 26c3 0 5-2 5-5s-2-5-5-5-5 2-5 5 2 5 5 5Z" fill="none" stroke={INK} strokeWidth={1.2} />
-          <Path d="M24 44v-4M20 42c-2 0-3-2-3-3" stroke={INK} strokeWidth={1.6} strokeLinecap="round" fill="none" />
+          <Path d="M23 25.5h2.3c.1 6.5-.1 13 .3 19.5h-2.5c-.4-7-.3-13-.1-19.5Z" fill={fill} stroke={INK} strokeWidth={0.9}/>
+          <Path d="M23.4 37.5c-2.6-4.4-7.6-5.8-11.4-3.8 2.6 4.4 7.6 5.8 11.4 3.8Z" fill={fill} stroke={INK} strokeWidth={1.1} strokeLinejoin="round"/>
+          <Path d="M23.2 37.3c-3.2-1.8-6.6-2.8-10.2-3.4" fill="none" stroke={INK} strokeWidth={0.8} strokeLinecap="round"/>
+          <Path d="M25 32.5c2.4-4 7-5.4 10.8-3.6-2.4 4-7 5.4-10.8 3.6Z" fill={fill} stroke={INK} strokeWidth={1.1} strokeLinejoin="round"/>
+          <Path d="M25.2 32.3c3-1.6 6.2-2.6 9.6-3.2" fill="none" stroke={INK} strokeWidth={0.8} strokeLinecap="round"/>
+          <Path d="M19.5 25.5l4.6 2.6 4.4-2.6-1.8-1.4h-5.4Z" fill={fill} stroke={INK} strokeWidth={1} strokeLinejoin="round"/>
+          <Path d="M12.5 11.5c2.2 1.4 4.4 1.8 6.6 1 1.4-2.8 3-4.6 4.9-5.6 1.9 1 3.5 2.8 4.9 5.6 2.2.8 4.4.4 6.6-1 .9 6.6-1 11.6-4.6 14.2-2 1.4-4.3 2-6.9 2s-4.9-.6-6.9-2c-3.6-2.6-5.5-7.6-4.6-14.2Z" fill={fill} stroke={INK} strokeWidth={1.4} strokeLinejoin="round"/>
+          <Path d="M13.6 13.2c.6 5.4 3.6 9.4 8.2 10.6" fill="none" stroke={INK} strokeWidth={1.1} strokeLinecap="round"/>
+          <Path d="M34.4 13.2c-.6 5.4-3.6 9.4-8.2 10.6" fill="none" stroke={INK} strokeWidth={1.1} strokeLinecap="round"/>
+          <Path d="M17.4 15.6c1.2 4.2 3.6 6.4 6.6 6.4s5.4-2.2 6.6-6.4c-1.6 1.2-3.4 1.6-5 1.2" fill="none" stroke={INK} strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round"/>
+          <Path d="M19.6 12.6c.4 2.8 2.2 4.6 4.6 4.6 2.6 0 4.2-1.8 4.2-4.2 0-2-1.4-3.4-3.2-3.4-1.6 0-2.8 1.2-2.8 2.8 0 1.2 1 2.2 2.2 2.2" fill="none" stroke={INK} strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round"/>
         </G>
       );
       break;

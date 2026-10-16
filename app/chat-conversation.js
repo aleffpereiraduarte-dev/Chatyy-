@@ -16694,6 +16694,7 @@ function ChatConversationInner() {
           // carries one. Bubble effects play themselves via MessageBubbleEffect
           // on first render — only screen-class effects need this trigger.
           // Also mark as seen so the offline-replay scan won't refire it.
+          if (msg.type === 'gift' && msg.sender_email !== currentEmail) { try { require('../components/gifts/giftFx').celebrateGiftReceived(msg); } catch {} } // [gift-premium 2026-10-16]
           if (msg.sender_email !== currentEmail && msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
             playScreenEffect(msg.effect);
             if (msg.id && !String(msg.id).startsWith('tmp_')) {
@@ -17181,20 +17182,41 @@ function ChatConversationInner() {
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const rjCmi = data?.client_message_id ? String(data.client_message_id) : '';
         const rjTid = data?.temp_id ? String(data.temp_id) : '';
-        if (!rjCmi && !rjTid) return;
+        // [2026-10-16 multi-região fase 4] re-gate do master DEPOIS do ✓ da casa
+        // regional: a bolha já tem o id final (Snowflake) → casa também por id.
+        const rjId = data?.id != null ? String(data.id) : '';
+        const rjLeaf = data?.reason === 'regate' || !!data?._leaf;
+        if (!rjCmi && !rjTid && !rjId) return;
         setMessages(prev => {
           let hit = false;
           const next = prev.map(m => {
             const isTmp = typeof m.id === 'string' && m.id.startsWith('tmp_');
-            if (!isTmp) return m;
-            if (!((rjTid && m.id === rjTid) || (rjCmi && (m._client_id === rjCmi || m.client_message_id === rjCmi)))) return m;
+            const byId = !!rjId && String(m.id) === rjId;
+            const byCmi = !!rjCmi && (m._client_id === rjCmi || m.client_message_id === rjCmi);
+            const byTid = !!rjTid && m.id === rjTid;
+            if (isTmp) { if (!(byTid || byCmi)) return m; }
+            else if (!(rjLeaf && (byId || byCmi))) return m;
+            if (rjLeaf) { try { require('../services/leafSeq').markRejected?.({ id: typeof m.id === 'number' ? m.id : rjId, client_message_id: rjCmi || m._client_id || m.client_message_id, conversation_id: conversationId, content: m.content, type: m.type, reason: 'regate' }); } catch {} }
             hit = true;
-            return { ...m, _failed: true, _pending: false, _queued: false, _client_id: m._client_id || rjCmi, _sendError: String(data?.error || 'rejected') };
+            return { ...m, _failed: true, _pending: false, _queued: false, _client_id: m._client_id || rjCmi || undefined, _leafRejected: rjLeaf || m._leafRejected, _sendError: String(data?.error || data?.reason || 'rejected') };
           });
           return hit ? next : prev;
         });
       });
       wsUnsubs.push(unsubRaRejected);
+
+      // [2026-10-16 multi-região fase 4] dup_other: o mesmo cmi já existia no
+      // master com outro id → a bolha local troca de id (ou some, se a canônica
+      // já está na tela). Nunca duplica.
+      const unsubLeafRemap = mailWs.on('chat_message_remap', (ev) => {
+        if (!mountedRef.current || !ev) return;
+        if (String(ev.conversation_id) !== String(conversationId)) return;
+        try {
+          const ls = require('../services/leafSeq');
+          setMessages(prev => ls.remapList(prev, ev));
+        } catch {}
+      });
+      wsUnsubs.push(unsubLeafRemap);
 
       // Listen for push notification refresh (when push arrives before WS)
       const unsubPush = mailWs.on('push_chat_refresh', (data) => {
@@ -17949,6 +17971,7 @@ function ChatConversationInner() {
           if (!mountedRef.current) return;
           // Trigger receive sound only for genuinely new messages from others
           if (isFromOther) {
+            if (msg.type === 'gift') { try { require('../components/gifts/giftFx').celebrateGiftReceived(msg); } catch {} } // [gift-premium 2026-10-16]
             try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
             // iMessage-style mini-tap haptic when a new bubble slides in.
             if (Platform.OS !== 'web') {
@@ -23233,6 +23256,13 @@ function ChatConversationInner() {
     setSelectedMsg(null);
     inputRef.current?.focus();
   };
+  // [gift-premium 2026-10-16] "Agradecer" no presente recebido: responde ao presente com o texto pronto (editável).
+  const _thankGift = (msg) => {
+    try { setReplyTo(_replyTargetOf(msg)); } catch {}
+    const _tx = t('gifts.thanksText');
+    setInputText(_tx && _tx !== 'gifts.thanksText' ? _tx : 'Obrigado pelo presente!');
+    inputRef.current?.focus();
+  };
 
   // WhatsApp-style: tap to transcribe audio/voice. Backend caches per-message,
   // so subsequent taps return instantly. We persist on the message object so
@@ -25826,10 +25856,19 @@ function ChatConversationInner() {
   // Cache local antigo ainda pode ter a linha com o remetente sintético (wa-…@import.chatyy.invalid)
   // até a recarga da janela (history_imported) substituir por id → aqui o sintético vira o membro
   // que NÃO importou, só quando dá para saber sem ambiguidade (um único remetente real nas importadas).
+  // [2026-10-16 multi-região fase 4] versão do registro de envios rejeitados (leafSeq)
+  const [_leafRejVer, _setLeafRejVer] = _useStateT(0);
+  useEffect(() => {
+    try { return require('../services/leafSeq').subscribe((v) => _setLeafRejVer(v)); } catch { return undefined; }
+  }, []);
   const reversedMessages = useMemo(() => {
     let arr = [...messagesWithSeparators].reverse();
     // [responder-privado 2026-10-15] citação de outra conversa ({"xq"...}) → reply_to sintético (JS + nativa)
     try { arr = require('../utils/privateReplyQuote').applyExtQuotes(arr); } catch {}
+    // [2026-10-16 multi-região fase 4] envio próprio rejeitado pelo master após o ✓
+    // (re-gate) → "Mensagem não enviada" (JS + lista nativa); nunca "apagada".
+    void _leafRejVer;
+    try { arr = require('../services/leafSeq').applyRejected(arr, currentEmail); } catch {}
     if (conversationType === 'group') return arr;
     try {
       const _syn = (m) => _chatOrder().isImportedMsg(m) && /@import\.chatyy\.invalid$/i.test(String(m.sender_email || ''));
@@ -25848,7 +25887,7 @@ function ChatConversationInner() {
       if (!real) return arr;
       return arr.map(m => (m && _syn(m)) ? { ...m, sender_email: real } : m);
     } catch { return arr; }
-  }, [messagesWithSeparators, conversationType, members, currentEmail, params?.email]);
+  }, [messagesWithSeparators, conversationType, members, currentEmail, params?.email, _leafRejVer]);
 
   // id → message index for O(1) reply-target resolution. Replaces a per-row
   // `messages.find()` linear scan that ran for EVERY reply bubble rendered
@@ -27338,6 +27377,10 @@ function ChatConversationInner() {
                   }
   };
   const _tapRetryFailed = (msg) => {
+              // [2026-10-16 multi-região fase 4] rejeitada pelo master depois do ✓:
+              // o cmi antigo já existe no servidor (linha apagada) → reenviar com o
+              // MESMO cmi deduplicaria nela. Abre Tentar (cmi novo) / Apagar.
+              if (msg && msg._leafRejected) { _promptFailedMsg(msg); return; }
               // WhatsApp-grade tap-to-retry: tap on a red-❗failed bubble
               // immediately re-queues it for replay. Mark optimistic-pending
               // again so the UI shows clock instead of red, then drain the
@@ -27435,10 +27478,19 @@ function ChatConversationInner() {
                         // If neither _client_id nor client_message_id is present
                         // we DERIVE a stable id from the tempId so re-retries still
                         // hit the same dedup bucket (was creating new CMI each tap).
-                        const retryMsgId = msg._client_id || msg.client_message_id || `cmi_from_${retryTempId}`;
+                        // [2026-10-16 multi-região fase 4] re-gate do master: cmi NOVO (o antigo
+                        // deduplicaria na linha apagada e "voltaria" como enviada-apagada).
+                        const retryMsgId = msg._leafRejected
+                          ? `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+                          : (msg._client_id || msg.client_message_id || `cmi_from_${retryTempId}`);
                         const sendContent = isText ? msg.content : (msg.file_url || msg.content || '');
                         const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
                         if (r.success && r.data?.id) {
+                          if (msg._leafRejected) {
+                            // a bolha velha (id/cmi rejeitados) some de vez; a nova é r.data
+                            try { require('../services/leafSeq').hideRejected?.(msg); } catch {}
+                            try { const _oc = msg._client_id || msg.client_message_id; if (_oc) messageOutbox.remove?.(String(_oc))?.catch?.(() => {}); } catch {}
+                          }
                           // [#1188 fix] Preserve sender_email — envelope mode returns null.
                           setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
                           if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
@@ -27453,12 +27505,11 @@ function ChatConversationInner() {
                         setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                       }
                       };
-                      safeAlert(
-                        t('chat.msgFailed') || 'Falha ao enviar',
-                        t('chatConv.failedMsgPrompt') || 'Esta mensagem não foi enviada. Deseja tentar de novo ou remover?',
-                        [
+                      const _failBtns = [
                           { text: t('chat.retry') || 'Tentar', onPress: doRetry },
-                          { text: t('chat.clearQueued') || 'Limpar', style: 'destructive', onPress: async () => {
+                          { text: msg._leafRejected ? (t('common.delete') || 'Apagar') : (t('chat.clearQueued') || 'Limpar'), style: 'destructive', onPress: async () => {
+                            // [fase 4] rejeitada pelo master: some também depois de recarregar
+                            if (msg._leafRejected) { try { require('../services/leafSeq').hideRejected?.(msg); } catch {} }
                             try {
                               // Purge from EVERY persistence layer so a permanently-failed
                               // message can't rehydrate on reopen (chatCache list + pending,
@@ -27489,7 +27540,17 @@ function ChatConversationInner() {
                             } catch {}
                           } },
                           { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                        ]
+                        ];
+                      // [fase 4] web: confirm() só tem OK/Cancelar → Cancelar oferece Apagar (rejeitada)
+                      if (Platform.OS === 'web' && msg._leafRejected) {
+                        _failBtns[2] = { ..._failBtns[2], onPress: () => { try { if (window.confirm((t('common.delete') || 'Apagar') + '?')) _failBtns[1].onPress(); } catch {} } };
+                      }
+                      safeAlert(
+                        msg._leafRejected ? (t('chatConv.notSent') || 'Mensagem não enviada') : (t('chat.msgFailed') || 'Falha ao enviar'),
+                        msg._leafRejected
+                          ? (t('chatConv.notSentRejectedPrompt') || 'Esta mensagem não pôde ser entregue nesta conversa. Deseja tentar de novo ou apagar?')
+                          : (t('chatConv.failedMsgPrompt') || 'Esta mensagem não foi enviada. Deseja tentar de novo ou remover?'),
+                        _failBtns,
                       );
   };
   const renderMessage = ({ item, ov }) => {
@@ -29598,6 +29659,7 @@ function ChatConversationInner() {
                   isUnlimited,
                   messageId: msg.id,
                   conversationId,
+                  senderEmail: msg.sender_email || '', senderName: msg.sender_name || '', isOwn, updatedAt: loc.updated_at || msg.created_at || null, // [2026-10-16 mapa-chat]
                 });
               }}
               onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
@@ -29626,6 +29688,13 @@ function ChatConversationInner() {
                       <Text style={{ fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.3 }}>
                         {t('chatConv.liveBadge') || 'AO VIVO'}
                       </Text>
+                      {(() => { // [2026-10-16 mapa-chat] tempo restante no selo
+                        if (isUnlimited) return <Text style={{ fontSize: 10, fontWeight: '600', color: 'rgba(255,255,255,0.8)' }}>∞</Text>;
+                        const _rem = Number(liveUntilTs) - Math.floor(vanishTickNow / 1000);
+                        if (!(_rem > 0)) return null;
+                        const _mm = Math.max(1, Math.floor(_rem / 60));
+                        return <Text style={{ fontSize: 10, fontWeight: '600', color: 'rgba(255,255,255,0.8)' }}>{_mm >= 60 ? `${Math.floor(_mm / 60)} h${_mm % 60 ? ` ${_mm % 60} min` : ''}` : `${_mm} min`}</Text>;
+                      })()}
                     </View>
                   )}
                   {isLiveExpired && (
@@ -29635,33 +29704,7 @@ function ChatConversationInner() {
                       </Text>
                     </View>
                   )}
-                  {/* Live-share countdown overlay — bottom strip on the map.
-                      Re-renders every 30s via vanishTickNow. */}
-                  {isLiveActive && liveUntilTs && (() => {
-                    const _now = Math.floor(vanishTickNow / 1000);
-                    const remaining = Number(liveUntilTs) - _now;
-                    if (remaining <= 0) return null;
-                    let label;
-                    if (isUnlimited) {
-                      label = `∞ ${t('snapmap.alwaysOn') || 'sempre ativo'}`;
-                    } else if (remaining < 3600) {
-                      const m = Math.floor(remaining / 60);
-                      const s = remaining % 60;
-                      label = `${t('chatConv.liveEndsIn') || 'Acaba em'} ${m}m${s.toString().padStart(2, '0')}s`;
-                    } else {
-                      const endDate = new Date(Number(liveUntilTs) * 1000);
-                      const hh = endDate.getHours().toString().padStart(2, '0');
-                      const mm = endDate.getMinutes().toString().padStart(2, '0');
-                      label = `${t('chatConv.liveSharingUntil') || 'Compartilhamento ao vivo até'} ${hh}:${mm}`;
-                    }
-                    return (
-                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 8, paddingVertical: 4 }}>
-                        <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '600', color: '#fff', textAlign: 'center', letterSpacing: 0.2 }}>
-                          {label}
-                        </Text>
-                      </View>
-                    );
-                  })()}
+                  {/* [2026-10-16 mapa-chat] faixa inferior "Compartilhando até…" removida: o tempo restante agora vai no selo AO VIVO */}
                 </View>
               ) : (
                 <View style={{ width: '100%', height: MAP_H, borderRadius: _mapRadius, backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA', alignItems: 'center', justifyContent: 'center' }}>
@@ -29690,7 +29733,7 @@ function ChatConversationInner() {
                     {isLiveExpired
                       ? (t('chatConv.tapToSeeLastLocation') || 'Toque para ver última localização')
                       : (isLiveActive
-                          ? `${t('chatConv.sharingLive') || 'Compartilhando'} • ${isUnlimited ? ('∞ ' + (t('snapmap.alwaysOn') || 'sempre ativo')) : formatLiveTimeRemaining(liveUntilTs, t)}`
+                          ? ((addr && !/^\s*-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\s*$/.test(addr)) ? addr : `${t('chatConv.sharingLive') || 'Compartilhando'} • ${isUnlimited ? ('∞ ' + (t('snapmap.alwaysOn') || 'sempre ativo')) : formatLiveTimeRemaining(liveUntilTs, t)}`)
                           : (t('chatConv.tapToOpenMap') || 'Toque para abrir no mapa'))}
                   </Text>
                 </View>
@@ -30216,6 +30259,8 @@ function ChatConversationInner() {
               content={msg.content}
               isOwn={isOwn}
               t={t}
+              animate={!!msg._animateIn}
+              onThank={isOwn || selectionMode ? undefined : () => _thankGift(msg)}
               textColor={isOwn ? ownTextColor : colors.text}
               subColor={isOwn ? ownTextColor : (colors.textSecondary || colors.text)}
             />
@@ -32270,7 +32315,7 @@ function ChatConversationInner() {
                       <IconAlertTriangle size={12} color="#EF4444" />
                     </FailShake>
                     <Text style={{ fontSize: 11, color: colors.error || '#EF4444', marginTop: 2 }}>
-                      {t('chatConv.tapToRetry') || 'Tocar para tentar de novo'}
+                      {msg._leafRejected ? (t('chatConv.notSent') || 'Mensagem não enviada') : (t('chatConv.tapToRetry') || 'Tocar para tentar de novo')}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -32832,7 +32877,7 @@ function ChatConversationInner() {
       require('../components/chat/nativeRowCards').runCardAction(target || item, action, {
         conversationId, currentEmail, user, t, router, api, Linking, Share, Haptics, safeAlert,
         setMessages, mapKeep: _mapKeep, cacheOne: _cacheOne, pollVoteLocksRef,
-        setMapModalData, setRoundVideoViewer, setPlaylistEditor, setScheduleToast, startCall,
+        setMapModalData, setRoundVideoViewer, setPlaylistEditor, setScheduleToast, startCall, thankGift: _thankGift,
         liveLocIntervalRef, liveLocTimeoutRef, liveLocMsgIdRef, setLiveLocActive,
         resolve: (u) => { try { return resolveMediaUri(u); } catch { return u; } },
       });
@@ -36968,6 +37013,13 @@ function ChatConversationInner() {
           context="chat"
           targetId={conversationId}
           recipientName={params.name || (params.email ? String(params.email).split('@')[0] : '')}
+          onSent={(d) => { // [gift-premium 2026-10-16] bolha na hora (WS/sync deduplicam pelo id)
+            const _mid = d && Number(d.message_id);
+            if (!_mid || !d.content) return;
+            const _gm = normalizeMessageTypes([{ id: _mid, conversation_id: conversationId, sender_email: currentEmail, content: d.content, type: 'gift', created_at: new Date().toISOString(), client_message_id: 'dmdgift_' + (d.gift_id || _mid), _animateIn: true }])[0];
+            setMessages(prev => prev.some(m => m.id === _gm.id || String(m.id) === String(_gm.id)) ? prev : [...prev, _gm]);
+            setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200);
+          }}
         />
       ) : null}
 
@@ -40924,6 +40976,10 @@ function ChatConversationInner() {
         isUnlimited={mapModalData?.isUnlimited}
         messageId={mapModalData?.messageId}
         conversationId={mapModalData?.conversationId || conversationId}
+        senderEmail={mapModalData?.senderEmail}
+        senderName={mapModalData?.senderName}
+        isOwn={mapModalData?.isOwn}
+        updatedAt={mapModalData?.updatedAt}
       />)}</LazyMount>
 
       {/* Group Invite QR Modal — WhatsApp-style: shows the invite link as a

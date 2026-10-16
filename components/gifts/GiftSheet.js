@@ -13,6 +13,10 @@
  *  • 402 → saldo insuficiente (CTA recarregar); 410 → presentes desligados;
  *    menor de idade (parental) → bloqueado.
  *
+ *  • [gift-premium 2026-10-16] prévia grande do presente tocado (flutua, driver
+ *    nativo), recado opcional (chat), "Faltam N diamantes" + "Comprar
+ *    diamantes" (só abre a loja — nada é cobrado aqui), celebração no envio.
+ *
  * Props: visible, onClose, context ('live'|'post'|'chat'), targetId,
  *        recipientName?, keepOpen? (live: mantém aberto p/ combos),
  *        onSent?(result, gift, quantity)
@@ -20,12 +24,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, TouchableOpacity, Pressable, StyleSheet, Platform, ActivityIndicator,
-  Animated, ScrollView, Easing,
+  Animated, ScrollView, Easing, TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
-import { IconX, IconDiamond } from '../Icons';
+import { IconX, IconGiftBox } from '../Icons';
+import { DiamondMono, celebrateGiftSent } from './giftFx';
+import { isReduceMotionEnabled } from '../reducedMotion';
 import LiveGiftGlyph from '../live/LiveGiftGlyph';
 import { giftLabel, humanizeCount, QUANTITIES, COMBO_WINDOW_MS } from './giftCatalog';
 import {
@@ -62,10 +68,50 @@ const Cell = memo(function Cell({ g, on, onPress, label }) {
       </Animated.View>
       <Text style={styles.cellName} numberOfLines={1}>{label}</Text>
       <View style={styles.price}>
-        <IconDiamond size={10} />
+        <DiamondMono size={10} color="rgba(255,255,255,0.8)" />
         <Text style={styles.priceText}>{humanizeCount(g.diamonds_cost)}</Text>
       </View>
     </TouchableOpacity>
+  );
+});
+
+const ND = Platform.OS !== 'web';
+// Prévia grande do presente escolhido (entrada com mola + flutuar).
+const Hero = memo(function Hero({ g, label, qty, t }) {
+  const pop = useRef(new Animated.Value(0.6)).current;
+  const float = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isReduceMotionEnabled()) { pop.setValue(1); return undefined; }
+    pop.setValue(0.6);
+    Animated.spring(pop, { toValue: 1, friction: 4, tension: 140, useNativeDriver: ND }).start();
+    const lp = Animated.loop(Animated.sequence([
+      Animated.timing(float, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: ND }),
+      Animated.timing(float, { toValue: 0, duration: 1300, easing: Easing.inOut(Easing.sin), useNativeDriver: ND }),
+    ]));
+    lp.start();
+    return () => lp.stop();
+  }, [g && g.sku, pop, float]);
+  if (!g) {
+    return (
+      <View style={styles.hero}>
+        <View style={styles.heroEmptyIcon}><IconGiftBox size={30} color="rgba(255,255,255,0.55)" /></View>
+        <Text style={styles.heroHint}>{tr(t, 'gifts.pickOne', 'Escolha um presente')}</Text>
+      </View>
+    );
+  }
+  const ty = float.interpolate({ inputRange: [0, 1], outputRange: [3, -4] });
+  return (
+    <View style={styles.hero}>
+      <View style={styles.heroHalo} />
+      <Animated.View style={{ transform: [{ translateY: ty }, { scale: pop }] }}>
+        <LiveGiftGlyph icon={g.icon} size={92} />
+      </Animated.View>
+      <Text style={styles.heroName} numberOfLines={1}>{label}{qty > 1 ? <Text style={styles.heroQty}>{`  ×${qty}`}</Text> : null}</Text>
+      <View style={styles.heroPrice}>
+        <DiamondMono size={12} color="#fff" />
+        <Text style={styles.heroPriceText}>{humanizeCount(g.diamonds_cost * qty)}</Text>
+      </View>
+    </View>
   );
 });
 
@@ -81,6 +127,9 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState('');
   const [needTopUp, setNeedTopUp] = useState(false);
+  const [note, setNote] = useState('');
+  const showHero = !keepOpen;
+  const showNote = context === 'chat';
   const comboRef = useRef({ id: '', sku: '', count: 0, timer: null });
   const ring = useRef(new Animated.Value(0)).current;
   const btnScale = useRef(new Animated.Value(1)).current;
@@ -93,7 +142,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
   useEffect(() => {
     if (!visible) return undefined;
     let alive = true;
-    setNotice(''); setNeedTopUp(false); setCombo(0);
+    setNotice(''); setNeedTopUp(false); setCombo(0); setNote('');
     loadGiftCatalog().then((c) => { if (alive) setCatalog(c); });
     refreshWallet();
     return () => { alive = false; };
@@ -120,6 +169,11 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
   const total = selected ? selected.diamonds_cost * qty : 0;
   const canAfford = typeof balance === 'number' ? balance >= total : true;
 
+  const missingText = useCallback((n) => {
+    const k = Math.max(1, Math.ceil(Number(n) || 0));
+    return tr(t, 'gifts.missing', 'Diamantes insuficientes: faltam {n} para este presente.').replace('{n}', humanizeCount(k));
+  }, [t]);
+
   const openShop = useCallback(() => {
     close();
     try { router.push('/diamond-shop'); } catch {}
@@ -127,7 +181,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
 
   const send = useCallback(async () => {
     if (!selected || sendingRef.current || minor || disabled) return;
-    if (!canAfford) { setNeedTopUp(true); setNotice(tr(t, 'gifts.noBalance', 'Diamantes insuficientes.')); haptic('error'); return; }
+    if (!canAfford) { setNeedTopUp(true); setNotice(missingText(total - (Number(balance) || 0))); haptic('error'); return; }
     Animated.sequence([
       Animated.timing(btnScale, { toValue: 0.92, duration: 70, useNativeDriver: true }),
       Animated.spring(btnScale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
@@ -140,13 +194,14 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
     setSending(true);
     setNotice('');
     const res = await sendGift({
-      context, targetId, sku: selected.sku, quantity: qty, comboId: c.id, comboCount,
+      context, targetId, sku: selected.sku, quantity: qty, comboId: c.id, comboCount, note: showNote ? note : '',
     });
     sendingRef.current = false;
     setSending(false);
     if (res.ok) {
-      haptic('success');
+      if (context === 'chat') celebrateGiftSent(); else haptic('success');
       onSent?.(res.data, selected, qty);
+      setNote('');
       if (!keepOpen) { close(); return; }
       setCombo(comboCount);
       if (c.timer) clearTimeout(c.timer);
@@ -158,8 +213,11 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
     c.count -= qty;
     haptic('error');
     switch (res.code) {
-      case 'insufficient_diamonds':
-        setNeedTopUp(true); setNotice(tr(t, 'gifts.noBalance', 'Diamantes insuficientes.')); break;
+      case 'insufficient_diamonds': {
+        const need = Number(res.data && res.data.diamonds_required) || total;
+        const have = Number(res.data && res.data.diamond_balance);
+        setNeedTopUp(true); setNotice(missingText(need - (Number.isFinite(have) ? have : (Number(balance) || 0)))); break;
+      }
       case 'feature_disabled':
         setNotice(tr(t, 'gifts.unavailable', 'Presentes indisponíveis no momento.')); break;
       case 'minor_blocked':
@@ -174,7 +232,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
       default:
         setNotice(tr(t, 'gifts.failed', 'Não foi possível enviar. Nada foi cobrado.'));
     }
-  }, [selected, minor, disabled, canAfford, qty, context, targetId, onSent, keepOpen, close, resetCombo, ring, btnScale, t]);
+  }, [selected, minor, disabled, canAfford, qty, context, targetId, onSent, keepOpen, close, resetCombo, ring, btnScale, t, note, showNote, total, balance, missingText]);
 
   const grid = useMemo(() => catalog, [catalog]);
   if (!visible) return null;
@@ -197,6 +255,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
+      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         <View style={styles.handle} />
@@ -204,7 +263,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
           <TouchableOpacity onPress={openShop} style={styles.balance} accessibilityRole="button"
             accessibilityLabel={`${tr(t, 'gifts.balance', 'Saldo')}: ${balance ?? ''}. ${tr(t, 'gifts.topUp', 'Recarregar')}`}>
-            <IconDiamond size={14} />
+            <DiamondMono size={13} color="#fff" />
             <Text style={[styles.balanceText, negative && styles.balanceNeg]}>{balance == null ? '—' : humanizeCount(balance)}</Text>
             <Text style={styles.topUp}>{tr(t, 'gifts.topUp', 'Recarregar')}</Text>
           </TouchableOpacity>
@@ -213,11 +272,27 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
           </TouchableOpacity>
         </View>
 
-        <ScrollView style={styles.gridScroll} contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
+        {showHero ? <Hero g={selected} label={selected ? giftLabel(t, selected.icon, selected.label) : ''} qty={qty} t={t} /> : null}
+
+        <ScrollView style={[styles.gridScroll, showHero && styles.gridScrollHero]} contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
           {grid.map((g) => (
             <Cell key={g.sku} g={g} on={selected?.sku === g.sku} onPress={() => pick(g)} label={giftLabel(t, g.icon, g.label)} />
           ))}
         </ScrollView>
+
+        {showNote && selected && !blockedText ? (
+          <TextInput
+            value={note}
+            onChangeText={(v) => setNote(v.slice(0, 120))}
+            placeholder={tr(t, 'gifts.notePlaceholder', 'Escreva um recado (opcional)')}
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            style={styles.noteInput}
+            maxLength={120}
+            returnKeyType="done"
+            blurOnSubmit
+            accessibilityLabel={tr(t, 'gifts.notePlaceholder', 'Escreva um recado (opcional)')}
+          />
+        ) : null}
 
         {blockedText ? <Text style={styles.notice}>{blockedText}</Text> : null}
         {!blockedText && notice ? <Text style={styles.notice} accessibilityLiveRegion="polite">{notice}</Text> : null}
@@ -236,7 +311,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
           <View style={{ flex: 1 }} />
           {selected ? (
             <View style={styles.totalPill}>
-              <IconDiamond size={12} />
+              <DiamondMono size={12} color="#fff" />
               <Text style={styles.totalText}>{humanizeCount(total)}</Text>
             </View>
           ) : null}
@@ -245,10 +320,11 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
         <View style={styles.footer}>
           {needTopUp || negative ? (
             <TouchableOpacity onPress={openShop} style={styles.sendBtn} accessibilityRole="button">
-              <Text style={styles.sendText}>{tr(t, 'gifts.topUp', 'Recarregar')}</Text>
+              <DiamondMono size={15} color="#000" />
+              <Text style={styles.sendText}>{tr(t, 'gifts.buyDiamonds', 'Comprar diamantes')}</Text>
             </TouchableOpacity>
           ) : (
-            <Animated.View style={{ transform: [{ scale: btnScale }], flex: 1 }}>
+            <Animated.View style={{ transform: [{ scale: btnScale }], flex: 1, height: 50 }}>
               <TouchableOpacity
                 onPress={send}
                 disabled={!selected || !!blockedText}
@@ -262,13 +338,22 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
                   }]} />
                 ) : null}
                 {sending && !combo ? <ActivityIndicator color="#000" /> : (
-                  <Text style={styles.sendText}>{sendLabel}</Text>
+                  <>
+                    <Text style={styles.sendText}>{sendLabel}</Text>
+                    {selected && !combo ? (
+                      <View style={styles.sendCost}>
+                        <DiamondMono size={13} color="#000" />
+                        <Text style={styles.sendCostText}>{humanizeCount(total)}</Text>
+                      </View>
+                    ) : null}
+                  </>
                 )}
               </TouchableOpacity>
             </Animated.View>
           )}
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -276,8 +361,10 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
 export default memo(GiftSheet);
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  root: { flex: 1, justifyContent: 'flex-end' }, // [gift-premium] folha nunca passa da tela: a grade encolhe
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
+    maxHeight: '94%',
     backgroundColor: '#0b0b0b',
     borderTopLeftRadius: 22, borderTopRightRadius: 22,
     borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
@@ -295,7 +382,25 @@ const styles = StyleSheet.create({
   balanceNeg: { color: '#FF6B6B' },
   topUp: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: '700', marginLeft: 2 },
   close: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  gridScroll: { maxHeight: 330 },
+  gridScroll: { maxHeight: 330, flexGrow: 0, flexShrink: 1 },
+  gridScrollHero: { maxHeight: 212 },
+  hero: { height: 158, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  heroHalo: { position: 'absolute', top: 6, width: 112, height: 112, borderRadius: 56, backgroundColor: 'rgba(255,255,255,0.06)' },
+  heroName: { color: '#fff', fontSize: 17, fontWeight: '800', marginTop: 4, letterSpacing: -0.2 },
+  heroQty: { fontSize: 15, fontWeight: '900' },
+  heroPrice: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  heroPriceText: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '800' },
+  heroEmptyIcon: {
+    width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderStyle: 'dashed',
+  },
+  heroHint: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '600', marginTop: 10 },
+  noteInput: {
+    marginTop: 12, height: 42, borderRadius: 21, paddingHorizontal: 16, color: '#fff', fontSize: 14.5,
+    backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  sendCost: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 10, paddingLeft: 10, borderLeftWidth: 1, borderLeftColor: 'rgba(0,0,0,0.18)' },
+  sendCostText: { color: '#000', fontSize: 15, fontWeight: '900', fontVariant: ['tabular-nums'] },
   grid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 8 },
   cell: {
     width: '23.5%', marginHorizontal: '0.75%', alignItems: 'center', paddingVertical: 10, gap: 4,
@@ -316,9 +421,10 @@ const styles = StyleSheet.create({
   qtyTextOn: { color: '#000' },
   totalPill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   totalText: { color: '#fff', fontSize: 14, fontWeight: '900' },
-  footer: { flexDirection: 'row', marginTop: 12 },
+  footer: { flexDirection: 'row', marginTop: 12, minHeight: 50, flexShrink: 0 }, // nunca achata o botão
   sendBtn: {
     flex: 1, height: 50, borderRadius: 25, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    flexDirection: 'row', gap: 8,
   },
   sendBtnOff: { opacity: 0.35 },
   comboRing: { position: 'absolute', left: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.12)' },

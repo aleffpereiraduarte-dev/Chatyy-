@@ -19,6 +19,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from './NativeMap';
 import { IconLocate, MapFab } from './MapControls';
+import LocationViewerV2 from './LocationViewerV2';
 
 function haversine(aLat, aLng, bLat, bLng) {
   const R = 6371000;
@@ -253,6 +254,12 @@ function NativeLocationViewer({ visible, onClose, lat, lng, label, isLive, liveU
 
 export default function LocationViewerModal({ Fallback, ...props }) {
   if (!props.visible) return null;
+  // [2026-10-16 mapa-chat] viewer repaginado (estilo Buscar, P&B) em TODA
+  // plataforma (nativo ChatyyMapView ou MapLibre web/WebView). Kill switch OTA:
+  // globalThis.__chatyy_loc_viewer_v2 = false → viewer antigo abaixo.
+  let v2 = true;
+  try { v2 = globalThis.__chatyy_loc_viewer_v2 !== false; } catch {}
+  if (v2) return <LocationViewerV2 {...props} />;
   if (!isNativeMapAvailable()) return Fallback ? <Fallback {...props} /> : null;
   return <NativeLocationViewer {...props} />;
 }

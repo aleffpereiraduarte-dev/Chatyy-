@@ -26,10 +26,10 @@
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
 //   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · poll:<i> ·
 //   rsvp:<going|maybe|not_going> · pl_edit · pl_song:<i> · call_back:<v|a> ·
-//   call_join · st_open · vn_open · lp:<url>
+//   call_join · st_open · vn_open · gift_thank · lp:<url>
 import { Platform } from 'react-native';
 import {
-  vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb, spacer,
+  vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb, spacer, iconPaths,
 } from './nativeNodes';
 import { inkAlpha, onInk, pollStats, pollTexts, showPollVotes } from './pollLook'; // [2026-10-16 poll-wa]
 import {
@@ -409,26 +409,27 @@ function buildLocation(m, row, ctx, C, own) {
     try { const s = require('../BoraMap').chatyyStaticMap(L.lat, L.lng, { zoom: 15, dark: isDark, pin: !L.active }); u = s ? s.api : ''; } catch {}
     const kids = [image(u, { w: -1, h: MAP_H, fit: 'cover', bg: ph })];
     if (L.active) {
+      // [2026-10-16 mapa-chat] pino = foto de quem compartilha com anel P&B +
+      // halo (a lista nativa não anima); selo "AO VIVO · 59 min" no canto —
+      // sem a faixa inferior duplicada ("Compartilhando até…").
       const pc = isDark ? '#FFFFFF' : '#111111';
-      kids.push(vstack([], { pos: 'c', w: 16, h: 16, r: 8, bg: pc, bc: '#FFFFFF', bw: 2.5 }));
+      kids.push(vstack([], { pos: 'c', w: 60, h: 60, r: 30, bg: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(17,17,17,0.14)' }));
+      let pinNode = null;
+      try { pinNode = _avatarNode(m.sender_name || '', m.sender_email || '', 32); } catch { pinNode = null; }
+      kids.push(pinNode
+        ? vstack([pinNode], { pos: 'c', w: 38, h: 38, r: 19, bg: pc, al: 'c', jc: 'c' })
+        : vstack([], { pos: 'c', w: 16, h: 16, r: 8, bg: pc, bc: '#FFFFFF', bw: 2.5 }));
+      let chipRest = '';
+      if (L.unlimited) chipRest = '∞';
+      else if (L.until) {
+        const rem = Number(L.until) - Math.floor((Number(C.now) || Date.now()) / 1000);
+        if (rem > 0) { const mm = Math.max(1, Math.floor(rem / 60)); chipRest = mm >= 60 ? `${Math.floor(mm / 60)} h${mm % 60 ? ` ${mm % 60} min` : ''}` : `${mm} min`; }
+      }
       kids.push(hstack([
         vstack([], { w: 6, h: 6, r: 3, bg: '#FFFFFF' }),
         text(_tr(C, 'chatConv.liveBadge', 'AO VIVO'), { fs: 10, fw: 800, c: '#FFFFFF', ls: 0.3 }),
-      ], { pos: 'tl', m: [8, 0, 0, 8], bg: 'rgba(0,0,0,0.78)', r: 12, p: [3, 8, 3, 8], g: 5, al: 'c' }));
-      if (L.until) {
-        const now = Math.floor((Number(C.now) || Date.now()) / 1000);
-        const rem = Number(L.until) - now;
-        if (rem > 0) {
-          let label;
-          if (L.unlimited) label = `∞ ${_tr(C, 'snapmap.alwaysOn', 'sempre ativo')}`;
-          else if (rem < 3600) { const mm = Math.floor(rem / 60); const ss = rem % 60; label = `${_tr(C, 'chatConv.liveEndsIn', 'Acaba em')} ${mm}m${String(ss).padStart(2, '0')}s`; }
-          else {
-            const e = new Date(Number(L.until) * 1000);
-            label = `${_tr(C, 'chatConv.liveSharingUntil', 'Compartilhamento ao vivo até')} ${String(e.getHours()).padStart(2, '0')}:${String(e.getMinutes()).padStart(2, '0')}`;
-          }
-          kids.push(vstack([text(label, { fs: 11, fw: 600, c: '#FFFFFF', ta: 'c', ls: 0.2, ml: 1 })], { pos: 'b', w: -1, bg: 'rgba(0,0,0,0.55)', p: [4, 8, 4, 8] }));
-        }
-      }
+        chipRest ? text(chipRest, { fs: 10, fw: 600, c: 'rgba(255,255,255,0.8)' }) : null,
+      ].filter(Boolean), { pos: 'tl', m: [8, 0, 0, 8], bg: 'rgba(0,0,0,0.78)', r: 12, p: [3, 8, 3, 8], g: 5, al: 'c' }));
     }
     if (L.expired) {
       kids.push(vstack([text(_tr(C, 'chatConv.liveEndedBadge', 'ENCERRADA'), { fs: 10, fw: 800, c: '#FFFFFF', ls: 0.3 })], { pos: 'tl', m: [8, 0, 0, 8], bg: 'rgba(60,60,67,0.85)', r: 12, p: [3, 8, 3, 8] }));
@@ -442,8 +443,13 @@ function buildLocation(m, row, ctx, C, own) {
   let sub;
   if (L.expired) sub = _tr(C, 'chatConv.tapToSeeLastLocation', 'Toque para ver última localização');
   else if (L.active) {
-    const rest = L.unlimited ? ('∞ ' + _tr(C, 'snapmap.alwaysOn', 'sempre ativo')) : (C.formatLiveTimeRemaining ? C.formatLiveTimeRemaining(L.until, C.t) : '');
-    sub = `${_tr(C, 'chatConv.sharingLive', 'Compartilhando')} • ${rest}`;
+    // [2026-10-16 mapa-chat] endereço (quando houver) em vez de "Compartilhando • 59 min rest…" cortado
+    const _addrOk = L.addr && !/^\s*-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\s*$/.test(L.addr);
+    if (_addrOk) sub = L.addr;
+    else {
+      const rest = L.unlimited ? ('∞ ' + _tr(C, 'snapmap.alwaysOn', 'sempre ativo')) : (C.formatLiveTimeRemaining ? C.formatLiveTimeRemaining(L.until, C.t) : '');
+      sub = `${_tr(C, 'chatConv.sharingLive', 'Compartilhando')} • ${rest}`;
+    }
   } else sub = _tr(C, 'chatConv.tapToOpenMap', 'Toque para abrir no mapa');
   const footer = hstack([
     vstack([
@@ -759,8 +765,12 @@ function buildVideoNote(m, row, ctx, C) {
 }
 
 function buildGift(m, row, ctx, C, own) {
-  let gc = null;
+  // [gift-premium 2026-10-16] espelho do GiftBubble JS: palco escuro com a arte
+  // em destaque, "Você enviou ◇N a Fulano" (diamante monocromático), recado e
+  // "Agradecer" (ação gift_thank) para quem recebe. Estático no nativo.
+  let gc = null; let fx = null;
   try { gc = require('../gifts/giftCatalog'); } catch { gc = null; }
+  try { fx = require('../gifts/giftFx'); } catch { fx = null; }
   const col = C.colors || {};
   const j = (gc && gc.parseGiftContent(m.content)) || {};
   const meta = gc ? gc.giftMeta(j.gift_sku || '') : { icon: 'gift', label: 'gift', diamonds: 1 };
@@ -770,17 +780,38 @@ function buildGift(m, row, ctx, C, own) {
   const label = gc ? gc.giftLabel(C.t, ic, j.label || meta.label) : String(j.label || meta.label);
   const textColor = own ? C.ownText : col.text;
   const subColor = own ? C.ownText : (col.textSecondary || col.text);
-  const head = own ? _tr(C, 'gifts.youSent', 'Você enviou um presente') : _tr(C, 'gifts.youReceived', 'Enviou um presente para você');
-  const name = `${label}${qty > 1 ? `  ×${qty}` : ''}`;
-  const sp = qty > 1 ? [[label.length, name.length, 1]] : undefined;
-  const glyph = _giftGlyph(ic, 72);
+  const fbOwn = _tr(C, 'gifts.youSent', 'Você enviou um presente');
+  const fbOther = _tr(C, 'gifts.youReceived', 'Enviou um presente para você');
+  const parts = fx ? fx.giftHeadParts(C.t, own, own ? j.to_name : j.from_name, fbOwn, fbOther) : { before: own ? fbOwn : fbOther, after: '' };
+  const note = typeof j.note === 'string' ? j.note.trim() : '';
+  const big = /^(large|legendary)$/.test(String(j.tier || meta.tier || ''));
+  const glyph = _giftGlyph(ic, big ? 84 : 76);
   const cost = gc ? gc.humanizeCount(diamonds) : String(diamonds);
-  row.bl = [vstack([
-    vstack([glyph], { w: 96, h: 96, r: 48, bg: '#0b0b0b', al: 'c', jc: 'c', m: [0, 0, 8, 0] }),
-    text(head, { fs: 12, fw: 600, c: subColor, ml: 1 }),
-    text(name, { fs: 16, fw: 800, c: textColor, ml: 1, m: [2, 0, 0, 0], sp }),
-    hstack([icon(IconDiamond, { s: 12, c: '#60a5fa' }), text(cost, { fs: 12, fw: 700, c: subColor })], { g: 4, al: 'c', m: [4, 0, 0, 0] }),
-  ], { al: 'c', p: [8, 14, 4, 14], w: _clampW(160, 280, 28 + Math.max(96, _estW(head, 12, true), _estW(name, 16, true))) })];
+  const chipBg = own ? 'rgba(255,255,255,0.14)' : 'rgba(127,127,127,0.14)';
+  const dia = fx ? iconPaths(fx.diamondMonoPaths(textColor), { s: 12 }) : icon(IconDiamond, { s: 12, c: '#60a5fa' });
+  const stage = zstack([
+    vstack([], { w: 220, h: 132, r: 18, bg: '#0b0b0b' }),
+    vstack([], { pos: 'c', w: big ? 128 : 118, h: big ? 128 : 118, r: 64, bg: big ? 'rgba(255,255,255,0.09)' : 'rgba(255,255,255,0.06)' }),
+    glyph ? vstack([glyph], { pos: 'c' }) : null,
+    qty > 1 ? vstack([text(`×${qty}`, { fs: 12, fw: 900, c: '#000000' })], { pos: 'tr', m: [10, 10, 0, 0], h: 22, r: 11, p: [0, 8, 0, 8], bg: '#FFFFFF', al: 'c', jc: 'c' }) : null,
+  ], { m: [0, 0, 10, 0] });
+  const kids = [
+    stage,
+    text(label, { fs: 17, fw: 800, c: textColor, ml: 1, ta: 'c' }),
+    hstack([
+      parts.before ? text(parts.before, { fs: 12.5, fw: 600, c: subColor, ml: 1 }) : null,
+      hstack([dia, text(cost, { fs: 12.5, fw: 800, c: textColor })], { g: 4, al: 'c', h: 20, r: 10, p: [0, 7, 0, 7], bg: chipBg, m: [0, 4, 0, 4] }),
+      parts.after ? text(parts.after, { fs: 12.5, fw: 600, c: subColor, ml: 1 }) : null,
+    ], { al: 'c', m: [4, 0, 0, 0] }),
+  ];
+  if (note) kids.push(vstack([text(note, { fs: 14.5, lh: 19, it: 1, c: textColor })], { w: -1, r: 12, bg: chipBg, p: [8, 10, 8, 10], m: [10, 0, 0, 0] }));
+  if (!own) {
+    const heart = iconPaths([{ d: 'M12 20.5s-7.5-4.6-9.2-9.4C1.6 7.6 3.7 4 7.2 4c2 0 3.6 1.1 4.8 2.8C13.2 5.1 14.8 4 16.8 4c3.5 0 5.6 3.6 4.4 7.1-1.7 4.8-9.2 9.4-9.2 9.4Z', k: textColor, w: 1.9 }], { s: 15 });
+    kids.push(hstack([heart, text(_tr(C, 'gifts.thank', 'Agradecer'), { fs: 14, fw: 700, c: textColor })], {
+      w: -1, h: 36, r: 18, bw: 1.2, bc: textColor, al: 'c', jc: 'c', g: 6, m: [10, 0, 0, 0], a: 'gift_thank',
+    }));
+  }
+  row.bl = [vstack(kids, { al: 'c', p: [6, 6, 2, 6], w: 232 })];
   row.pad = PAD; row.mp = 'below';
 }
 
@@ -1090,12 +1121,15 @@ export function runCardAction(item, action, D) {
       }
       case 'loc': {
         const L = _loc(m);
-        D.setMapModalData({ lat: L.lat, lng: L.lng, label: L.addr, isLive: L.isLive, liveUntil: L.until, isUnlimited: L.unlimited, messageId: m.id, conversationId: D.conversationId });
+        const _lj = _json(m.content) || {};
+        D.setMapModalData({ lat: L.lat, lng: L.lng, label: L.addr, isLive: L.isLive, liveUntil: L.until, isUnlimited: L.unlimited, messageId: m.id, conversationId: D.conversationId,
+          senderEmail: m.sender_email || '', senderName: m.sender_name || '', isOwn: String(m.sender_email || '').toLowerCase() === String(D.currentEmail || '').toLowerCase(), updatedAt: _lj.updated_at || m.created_at || null });
         return;
       }
       case 'jloc': {
         const j = _json(m.content) || {};
-        D.setMapModalData({ lat: j.latitude, lng: j.longitude, label: String(j.label || j.address || 'Localização'), isLive: !!(j.live || m.live), liveUntil: j.live_until || m.live_until || null, messageId: m.id, conversationId: D.conversationId });
+        D.setMapModalData({ lat: j.latitude, lng: j.longitude, label: String(j.label || j.address || ''), isLive: !!(j.live || m.live), liveUntil: j.live_until || m.live_until || null, messageId: m.id, conversationId: D.conversationId,
+          senderEmail: m.sender_email || '', senderName: m.sender_name || '', isOwn: String(m.sender_email || '').toLowerCase() === String(D.currentEmail || '').toLowerCase(), updatedAt: j.updated_at || m.created_at || null });
         return;
       }
       case 'loc_stop': {
@@ -1212,6 +1246,7 @@ export function runCardAction(item, action, D) {
         return;
       }
       case 'st_open': { _openStatus(m, D, tt); return; }
+      case 'gift_thank': { if (typeof D.thankGift === 'function') D.thankGift(m); return; } // [gift-premium 2026-10-16]
       default: return;
     }
   } catch (e) {

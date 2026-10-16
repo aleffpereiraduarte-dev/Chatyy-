@@ -26,9 +26,12 @@ export function celebrate(opts) {
 }
 
 const COLORS = [...MASCOT_COLORS.confetti, '#111111', '#C9B6FF'];
+// [gift-premium 2026-10-16] celebrate({ mono: true }) → confete P&B (presentes, marca P&B).
+const MONO = ['#111111', '#FFFFFF', '#8E8E93', '#3A3A3C', '#D1D1D6', '#5C5C60'];
 const N = 22;
 
-function makePieces(seed) {
+function makePieces(seed, mono) {
+  const pal = mono ? MONO : COLORS;
   let s = seed % 2147483647 || 1;
   const rnd = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
   return Array.from({ length: N }, (_, i) => {
@@ -43,7 +46,8 @@ function makePieces(seed) {
       w: 5 + rnd() * 4,
       h: 8 + rnd() * 6,
       round: rnd() > 0.65,
-      c: COLORS[i % COLORS.length],
+      c: pal[i % pal.length],
+      bd: !!mono && i % 2 === 1, // peça branca precisa de contorno no fundo claro
       delay: Math.floor(rnd() * 90),
     };
   });
@@ -67,6 +71,7 @@ function Piece({ p, ox, oy }) {
         position: 'absolute', left: ox - p.w / 2, top: oy - p.h / 2,
         width: p.w, height: p.round ? p.w : p.h,
         borderRadius: p.round ? p.w / 2 : 1.5, backgroundColor: p.c,
+        ...(p.bd ? { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.35)' } : null),
         opacity: op, transform: [{ translateX: tx }, { translateY: ty }, { rotate: rot }],
       }}
     />
@@ -80,7 +85,7 @@ export default function ConfettiHost() {
   useEffect(() => {
     const fn = (o) => {
       const seed = Date.now();
-      setBurst({ seed, x: o.x == null ? 0.5 : o.x, y: o.y == null ? 0.8 : o.y, pieces: makePieces(seed) });
+      setBurst({ seed, x: o.x == null ? 0.5 : o.x, y: o.y == null ? 0.8 : o.y, pieces: makePieces(seed, !!o.mono) });
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setBurst(null), 1600);
     };

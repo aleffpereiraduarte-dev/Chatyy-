@@ -2040,6 +2040,17 @@ class MailWebSocket {
       try { if (this._evDedup(msg) === true) return; } catch {}
     }
 
+    // [2026-10-16 multi-região fase 4] `delete` do leaf-casa depois do apply:
+    // dup_other → chat_message_remap (troca de id, sem bolha dupla); tombstone
+    // do PRÓPRIO envio → chat_send_rejected ("não enviada", nunca "apagada").
+    if (msg && msg.type === 'delete') {
+      try {
+        const _d = msg.data || msg;
+        if (_d && typeof _d.reason === 'string' && _d.reason.indexOf('leaf_') === 0
+            && require('./leafSeq').interceptDelete(_d, this.email, (ev, data) => this._emit(ev, data))) return;
+      } catch {}
+    }
+
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
@@ -2479,6 +2490,10 @@ class MailWebSocket {
             _enr.thumb_b64 != null || _enr.thumbnail_url != null ||
             _enr.poster != null || _enr.width != null || _enr.height != null;
           if (!_hasEnrichment) {
+            // [fase 4] cópia CANÔNICA (conv_pts, pós-apply) de um id que já veio
+            // pela cópia rápida do leaf: não re-entrega às telas (sem bolha/
+            // contador dobrado) — só avisa quem espera o apply (outbox/RPO).
+            try { if (require('./leafSeq').isCanonicalCopy(_enr)) this._emit('chat_message_canonical', chatMsg); } catch {}
             return; // Duplicate, skip
           }
           // fall through — delivered to listeners as a merge-update

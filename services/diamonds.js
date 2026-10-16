@@ -166,19 +166,29 @@ export async function loadGiftCatalog(force = false) {
  * Envia presente. Sempre com client_id (idempotência no servidor).
  * @returns {Promise<{ok:boolean, code?:string, data?:object, status?:number}>}
  */
-export async function sendGift({ context, targetId, sku, quantity = 1, comboId = '', comboCount = 0, clientId }) {
+export async function sendGift({ context, targetId, sku, quantity = 1, comboId = '', comboCount = 0, clientId, note = '' }) {
   if (isMinorAccount()) return { ok: false, code: 'minor_blocked' };
   const q = Math.max(1, Math.min(99, Number(quantity) || 1));
+  // [gift-premium 2026-10-16] client_id fixo por envio: retry/409 duplicate_in_flight
+  // reenviam o MESMO id → o servidor devolve a resposta idempotente (nunca cobra 2x).
+  const cid = clientId || newClientId();
+  const nt = context === 'chat' ? String(note || '').trim().slice(0, 120) : '';
+  const body = {
+    context,
+    target_id: String(targetId ?? ''),
+    gift_sku: sku,
+    quantity: q,
+    combo_id: comboId || undefined,
+    combo_count: comboCount || undefined,
+    client_id: cid,
+    note: nt || undefined,
+  };
   try {
-    const r = await apiCall('diamond_gift_send', {
-      context,
-      target_id: String(targetId ?? ''),
-      gift_sku: sku,
-      quantity: q,
-      combo_id: comboId || undefined,
-      combo_count: comboCount || undefined,
-      client_id: clientId || newClientId(),
-    }, 'POST');
+    let r = await apiCall('diamond_gift_send', body, 'POST');
+    for (let i = 0; i < 2 && r && !r.success && errorCode(r) === 'duplicate_in_flight'; i++) {
+      await new Promise((ok) => setTimeout(ok, 600 + i * 600));
+      r = await apiCall('diamond_gift_send', body, 'POST');
+    }
     if (r && r.success) {
       const d = r.data || {};
       if (typeof d.diamond_balance === 'number') setDiamondBalance(d.diamond_balance);

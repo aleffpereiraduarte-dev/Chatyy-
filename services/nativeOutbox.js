@@ -241,6 +241,17 @@ function _resultFromEvent(ev) {
     try { row = JSON.parse(ev.server || '{}'); } catch { row = null; }
     if (!row || row.id == null) return null;
     _rememberSent(row.id);
+    // [2026-10-16 multi-região fase 4] ✓ da casa regional antes do apply (linha
+    // sem conv_pts): a fila JS segura a linha ('accepted') até a cópia canônica —
+    // o item nativo pode ser apagado (ack) porque o reenvio, se preciso, sai da
+    // fila JS com o mesmo cmi (regionalAccept). Antes do markSent de quem espera.
+    try {
+      const cmi = ev.cmi != null ? String(ev.cmi) : '';
+      const ls = require('./leafSeq');
+      const ra = require('./regionalAccept');
+      if (cmi && ls.enabled() && ls.isPreApplyRow(row)) ra.noteLocalSeq(cmi, { conversationId: row.conversation_id ?? ev.conv, id: row.id });
+      else if (cmi) ra.noteCanonical(cmi);
+    } catch {}
     return { success: true, data: row, message: 'Message sent', _native_outbox: true, _via: ev.via || '' };
   }
   const err = String(ev.err || 'rejected');

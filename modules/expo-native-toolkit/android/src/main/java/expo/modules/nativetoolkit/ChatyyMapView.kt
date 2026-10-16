@@ -110,6 +110,8 @@ class ChatyyMapMarker : Record {
   @Field val initials: String? = null
   @Field val stale: Boolean = false
   @Field val highlight: Boolean = false
+  // [2026-10-16 mapa-chat] anel pulsando no avatar (localização AO VIVO)
+  @Field val pulse: Boolean = false
 }
 
 // ─── Module ───────────────────────────────────────────────────────────────
@@ -256,6 +258,7 @@ class ChatyyMapView(context: Context, appContext: AppContext) : ExpoView(context
   private val root = FrameLayout(context)
   private val snapshotView = ImageView(context)
   private val markersLayer = FrameLayout(context)
+  private var lastAvatarHalo: View? = null
   private var mapView: MapView? = null
   private var map: MapLibreMap? = null
 
@@ -633,7 +636,7 @@ class ChatyyMapView(context: Context, appContext: AppContext) : ExpoView(context
   private fun dp(v: Float): Int = (v * density + 0.5f).toInt()
 
   private fun signatureOf(r: ChatyyMapMarker): String =
-    "${r.kind}|${r.color}|${r.label}|${r.sublabel}|${r.imageUrl}|${r.initials}|${r.stale}|${r.highlight}"
+    "${r.kind}|${r.color}|${r.label}|${r.sublabel}|${r.imageUrl}|${r.initials}|${r.stale}|${r.highlight}|${r.pulse}"
 
   private fun syncMarkers() {
     val seen = HashSet<String>()
@@ -724,10 +727,14 @@ class ChatyyMapView(context: Context, appContext: AppContext) : ExpoView(context
     val view: View
     val anchor: (View) -> PointF
     var pulseTarget: View? = null
+    var pulseAvatar = false
     when (r.kind) {
       "avatar" -> {
+        lastAvatarHalo = null
         val built = buildAvatar(r)
         view = built.first
+        pulseTarget = lastAvatarHalo
+        pulseAvatar = pulseTarget != null
         val ringCenter = built.second
         anchor = { v -> PointF(v.measuredWidth / 2f, ringCenter) }
       }
@@ -771,9 +778,10 @@ class ChatyyMapView(context: Context, appContext: AppContext) : ExpoView(context
       pa.repeatCount = ValueAnimator.INFINITE
       pa.addUpdateListener { va ->
         val f = va.animatedValue as Float
-        pt.scaleX = 1f + 1.6f * f
-        pt.scaleY = 1f + 1.6f * f
-        pt.alpha = 0.45f * (1f - f)
+        val k = if (pulseAvatar) 0.9f else 1.6f
+        pt.scaleX = 1f + k * f
+        pt.scaleY = 1f + k * f
+        pt.alpha = (if (pulseAvatar) 0.8f else 0.45f) * (1f - f)
       }
       pa.start()
       h.pulse = pa
@@ -858,6 +866,18 @@ class ChatyyMapView(context: Context, appContext: AppContext) : ExpoView(context
           initials.visibility = View.GONE
         }
       }
+    }
+    if (r.pulse) {
+      // [2026-10-16 mapa-chat] halo atrás do anel; animado em createHolder
+      val halo = View(context)
+      halo.background = circle(Color.argb(30, Color.red(ringColor), Color.green(ringColor), Color.blue(ringColor)), ringColor, 2.5f)
+      ring.addView(halo, 0, FrameLayout.LayoutParams(dp(ringSize), dp(ringSize), Gravity.CENTER))
+      ring.clipChildren = false
+      ring.clipToPadding = false
+      col.clipChildren = false
+      col.clipToPadding = false
+      markersLayer.clipChildren = false
+      lastAvatarHalo = halo
     }
     col.addView(ring, LinearLayout.LayoutParams(dp(ringSize), dp(ringSize)))
     val name = r.label
