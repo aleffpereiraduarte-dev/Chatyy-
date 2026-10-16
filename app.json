@@ -115,7 +115,7 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition."
       },
-      "buildNumber": "699"
+      "buildNumber": "700"
     },
     "android": {
       "package": "com.onemundo.mail",
