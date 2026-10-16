@@ -238,7 +238,7 @@ export default function EmailCategory() {
       </SettingsGroup>
 
       <SettingsGroup header={t('settings.emailToolsTitle') || 'Ferramentas de email'}>
-        <SettingsRow title={t('settings.importFromOthers') || 'Importar de outras contas'} subtitle={t('settings.importFromOthersDesc') || 'Gmail, Outlook ou Microsoft 365'} onPress={() => router.push('/email-import')} />
+        <SettingsRow title={t('settings.importFromOthers') || 'Importar de outras contas'} subtitle={t('settings.importFromOthersDesc2')} onPress={() => router.push('/email-import')} />
         <SettingsRow title={t('settings.pgpKeys') || 'Chave PGP'} subtitle={t('settings.pgpKeysDesc') || 'Criptografia ponta-a-ponta de emails'} onPress={() => router.push('/pgp-keys')} />
         <SettingsRow title={t('settings.tasks') || 'Tarefas'} subtitle={t('settings.tasksDesc') || 'Tarefas pessoais e convertidas de emails'} onPress={() => router.push('/tasks')} />
         <SettingsRow title={t('settings.bia') || 'Bia — Assistente de IA'} subtitle={t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'} onPress={() => router.push('/bia-settings')} />

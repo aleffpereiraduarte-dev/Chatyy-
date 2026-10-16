@@ -26,6 +26,7 @@ import AvatarCircle from './AvatarCircle';
 import AttachmentPreviewModal from './AttachmentPreviewModal';
 import AIEmailSummary from './AIEmailSummary';
 import AIPhishingBanner from './AIPhishingBanner';
+import PgpMessageCard from './email/PgpMessageCard'; // [2026-10-16 pgp-v2]
 // [2026-10-15 native-email] Corpo em view nativa dedicada + política de imagens.
 import NativeEmailBody, { isNativeEmailBodyOn, openEmailLink } from './email/NativeEmailBody';
 import { shouldBlockRemoteImages, allowSenderImages } from '../services/emailImagePolicy';
@@ -1230,6 +1231,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       {folder !== 'Sent' && folder !== 'Drafts' && !(user?.email && email?.from?.toLowerCase() === user.email.toLowerCase()) && (
         <AIPhishingBanner email={email} colors={colors} autoCheck={true} />
       )}
+
+      {/* [2026-10-16 pgp-v2] mensagem OpenPGP: decifrar / verificar assinatura */}
+      <PgpMessageCard email={email} colors={colors} />
 
       {/* AI Summary */}
       <AIEmailSummary email={email} colors={colors} t={t} />

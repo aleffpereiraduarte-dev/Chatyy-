@@ -7188,7 +7188,7 @@ export async function statusPublish(content, type = 'text', bgColor = '#A582F7',
   // separated above) so the backend persists them. Skip ones already
   // sent above or that don't belong in status_create.
   if (extraMeta && typeof extraMeta === 'object') {
-    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'is_boomerang', 'mentions']) {
+    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'text_align', 'is_boomerang', 'mentions']) {
       if (extraMeta[k] !== undefined && params[k] === undefined) params[k] = extraMeta[k];
     }
     // cross_post_feed — server creates a feed_posts row with same media when true.
@@ -13038,6 +13038,31 @@ export async function emailOauthImportStep(importId) {
 }
 export async function emailOauthImportList() {
   return apiCall('email_oauth_import_list');
+}
+
+// [2026-10-16 email-import-imap] Importar via IMAP + senha de app (sem OAuth).
+// A senha vai só no corpo do POST; o servidor guarda cifrada enquanto o job roda
+// e apaga no fim. O app nunca persiste a senha.
+export async function emailImportDetect(email) {
+  return apiCall('email_import_detect', { email }, 'POST');
+}
+export async function emailImportTest({ email, password, host, port, days }) {
+  return apiCall('email_import_test', { email, password, host, port, days }, 'POST');
+}
+export async function emailImportStart({ email, password, host, port, days }) {
+  return apiCall('email_import_start', { email, password, host, port, days }, 'POST');
+}
+export async function emailImportStatus(id) {
+  return apiCall('email_import_status', { id }, 'POST');
+}
+export async function emailImportList() {
+  return apiCall('email_import_list', {}, 'POST');
+}
+export async function emailImportCancel(id) {
+  return apiCall('email_import_cancel', { id }, 'POST');
+}
+export async function emailImportForget(id) {
+  return apiCall('email_import_forget', { id }, 'POST');
 }
 
 // ──────────────────────────────────────────────────────────────────

@@ -1351,31 +1351,36 @@ export default function ComposeScreen() {
         const ccStr = contactsToString(sendCc);
         const bccStr = contactsToString(sendBcc);
         let finalBody = sendBody;
-        // PGP encryption (round-6 gap-closer). If toggled, look up the
-        // primary recipient's public key and encrypt body via openpgpjs.
-        // No key on file → offer SMS-passphrase fallback (symmetric).
+        // [2026-10-16 pgp-v2] Cifra p/ TODOS os destinatários (Para/Cc/Cco) + o
+        // próprio remetente (lê no Enviados); assina se a chave estiver
+        // destrancada (services/pgp). Destinatário sem chave pública → NÃO
+        // envia (antes caía numa senha aleatória que ninguém recebia quando não
+        // havia telefone = e-mail ilegível). Senha por SMS só se o telefone do
+        // modo confidencial foi informado.
         if (pgpEncrypt) {
           try {
-            const firstRecipient = (sendTo[0]?.email || toStr.split(/[,;]/)[0] || '').trim();
-            const pgpMod = await import('openpgp/dist/openpgp.min.mjs');
-            const apiPgp = await import('../services/api');
-            const r = await apiPgp.pgpKeyGet(firstRecipient);
-            if (r?.success && r.data?.found && r.data?.public_key_armor) {
-              const pubKey = await pgpMod.readKey({ armoredKey: r.data.public_key_armor });
-              const msg = await pgpMod.createMessage({ text: sendBody.replace(/<[^>]+>/g, ' ') });
-              const armored = await pgpMod.encrypt({ message: msg, encryptionKeys: pubKey });
-              finalBody = `<p style="color:#5f6368;font-size:13px">${t('compose.pgpEncryptedNote') || 'Mensagem criptografada com PGP. Use sua chave privada pra decifrar.'}</p><pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;color:#374151">${armored.replace(/</g, '&lt;')}</pre>`;
-            } else {
-              // No key — generate symmetric passphrase + SMS.
-              const passphrase = Array.from({ length: 8 }, () => Math.floor(Math.random() * 36).toString(36)).join('').toUpperCase();
-              const msg = await pgpMod.createMessage({ text: sendBody.replace(/<[^>]+>/g, ' ') });
+            const P = await import('../services/pgp');
+            const me = String(user?.email || '').toLowerCase();
+            const allRcpt = [...(sendTo || []), ...(sendCc || []), ...(sendBcc || [])].map(c => String((typeof c === 'string' ? c : c?.email) || '').trim()).filter(Boolean);
+            const plain = P.htmlToPlain(sendBody);
+            const r = await P.encryptForRecipients({ me, text: plain, recipients: allRcpt });
+            const esc = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            if (!r.missing.length && r.armored) {
+              finalBody = `<p style="color:#5f6368;font-size:13px">${t('compose.pgpEncryptedNote')}</p><pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;color:#374151">${esc(r.armored)}</pre>`;
+            } else if (confidentialPhone) {
+              const pgpMod = await P.loadOpenPGP();
+              const rnd = new Uint8Array(10); globalThis.crypto.getRandomValues(rnd);
+              const passphrase = Array.from(rnd, b => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 32]).join('');
+              const msg = await pgpMod.createMessage({ text: plain });
               const armored = await pgpMod.encrypt({ message: msg, passwords: [passphrase] });
-              finalBody = `<p style="color:#5f6368;font-size:13px">${t('compose.pgpPassphraseNote') || 'Mensagem criptografada. Senha enviada por SMS.'}</p><pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;color:#374151">${armored.replace(/</g, '&lt;')}</pre>`;
-              // Best-effort SMS — we don't have phone here unless user
-              // typed it in the confidential field; reuse that input.
-              if (confidentialPhone) {
-                try { await apiPgp.pgpSendPassphraseSms(confidentialPhone, passphrase); } catch {}
-              }
+              const sms = await import('../services/api').then(m => m.pgpSendPassphraseSms(confidentialPhone, passphrase)).catch(() => null);
+              if (!sms?.success) throw new Error('pgp_sms_failed');
+              finalBody = `<p style="color:#5f6368;font-size:13px">${t('compose.pgpPassphraseNote')}</p><pre style="white-space:pre-wrap;font-family:monospace;font-size:12px;color:#374151">${esc(armored)}</pre>`;
+            } else {
+              setError(t('compose.pgpMissingKeys', { emails: r.missing.join(', ') }));
+              sendingGuardRef.current = false;
+              setSending(false);
+              return;
             }
           } catch (e) {
             // Fail CLOSED: the user asked for encryption, so a failure here
