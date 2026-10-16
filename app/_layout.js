@@ -87,6 +87,9 @@ import '../services/disableLayoutAnimationIOS';
 // scheduler. Imported this early so its T0 is as close to bundle start as
 // possible (imports evaluate in order).
 import { mark as _bootMark, armSplashFallback, afterFirstPaint, reportBootMarksSampled } from '../services/bootTrace';
+// [2026-10-16 wave10-C boot] Boot em 2º plano (push/VoIP/BG fetch/headless):
+// só push+VoIP+tarefas; a árvore React monta no 1º 'active' (RootLayout).
+import { startBgLiteBootIfNeeded, onUiAllowed as _bgLiteOnUiAllowed, uiAllowed as _bgLiteUiAllowed, noteUiMounted as _bgLiteNoteUiMounted, liteNotifListenersInstalled as _bgLiteNotifInstalled, setupCallKeepOnce as _setupCallKeepOnce, provideSwitchAccountHandler as _bgLiteProvideSwitch } from '../services/bgLiteBoot';
 // Suspende a renderização de telas empilhadas fora de tela → menos trabalho no
 // thread JS e menos memória (react-native-screens já está no bundle nativo).
 import { enableFreeze } from 'react-native-screens';
@@ -435,18 +438,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 // switches it on while mounted. See utils/threadKeyboard.native.js.
 import { ChatyyKeyboardProvider } from '../utils/threadKeyboard';
 import ErrorBoundary from '../components/ErrorBoundary';
-import OfflineNotice from '../components/OfflineNotice';
-import ConfettiHost from '../components/mascot/ConfettiHost'; // [2026-10-16 mascote]
-import NotificationToast from '../components/NotificationToast';
 import { ToastHost } from '../components/ui/Toast'; // [2026-10-12 overlays] snackbar global único
-import RemovedAccountNotice from '../components/RemovedAccountNotice'; // [incidente-sessao 2026-10-14]
 import { hasDialogHost as _hasDialogHost, showDialog as _showDialog } from '../utils/confirm';
 import { CallProvider } from '../context/CallContext';
 import CallStatusBar, { CallBarInsetProvider, callBarScreenLayout } from '../components/CallStatusBar';
-// [2026-10-07 voice-native] global voice-note mini player (leaves the chat → keeps playing)
-import VoiceMiniPlayer from '../components/chat/VoiceMiniPlayer';
-import YouTubeInlineHost from '../components/chat/YouTubeInlinePlayer'; // [2026-10-15 yt-inline]
-import EmailUndoBar from '../components/EmailUndoBar';
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
@@ -477,28 +472,80 @@ const _whatsNew = () => require('../components/WhatsNewSheet');
 const shouldShowWhatsNew = (...a) => _whatsNew().shouldShowWhatsNew(...a);
 // Stage 6 — surface "Phone offline" UI when web's relay reads fall back to
 // IndexedDB cache. Web-only; renders null on native.
-import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 // 2026-05-18 — surface push-token registration failures so the user can
 // tap-to-retry instead of going dark on incoming calls when their token
 // silently drops. Native-only; renders null on web.
-import PushTokenStaleBanner from '../components/PushTokenStaleBanner';
-import PushPermissionPrimer from '../components/PushPermissionPrimer'; // [2026-10-07 native-polish]
-import TermsUpdateGate from '../components/consent/TermsUpdateNotice'; // [2026-10-13 consent-lgpd]
-import AddPhoneGate from '../components/phoneLink/AddPhoneGate'; // [phone-obrigatorio 2026-10-15] "Adicione seu número" p/ contas antigas
 import { registerBackgroundSync } from '../services/backgroundSync';
 // [2026-10-08 receipts-speed] Side-effect: define+registra a task de push em 2º
 // plano que manda o ✓✓ cinza (chat_push_delivered com o d_ack do push) — cobre
 // binários antigos sem device-ack nativo. Precisa ser top-level (headless).
 import '../services/pushDeliveryTask';
-// Side-effect import — patches expo-audio RecordingPresets.HIGH_QUALITY to
+// Side-effect module — patches expo-audio RecordingPresets.HIGH_QUALITY to
 // the WhatsApp Opus profile (32kbps mono 16/22kHz) before any chat screen
 // reads it. Mutates the live preset object so chat-conversation's inline
 // `RecordingPresets.HIGH_QUALITY` reference picks it up on the next record.
-import '../services/voiceRecorderTuning';
+// [2026-10-16 wave10-C boot] Era import no topo (carregava expo-audio antes
+// do 1º frame). Agora logo após a 1ª pintura — gravar exige abrir uma conversa
+// antes, então o preset já está trocado quando o 1º áudio começa.
+afterFirstPaint(() => { try { require('../services/voiceRecorderTuning'); } catch {} }, 0);
 import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
 import { prefetch, warmCache } from '../services/cache';
 import { useTheme } from '../context/ThemeContext';
+
+// [2026-10-16 wave10-C boot] Overlays que NÃO aparecem no 1º frame (mini
+// player de áudio, YouTube, desfazer e-mail, confete, avisos/gates, banners,
+// toast de notificação) eram `import` no topo: todo o código deles (+ deps
+// exclusivas, ~300 KB de fonte) era avaliado antes do 1º render — no Android
+// médio isso pesa no "1ª renderização do layout" (p50 801 ms). Agora o módulo
+// só é carregado depois da 1ª pintura (bootTrace.afterFirstPaint, teto 2,5 s),
+// e cada overlay monta na MESMA posição da árvore (ordem de empilhamento igual).
+// Providers e o que a 1ª tela usa (ToastHost, ConfirmProvider, CallBarInset…)
+// seguem estáticos. Kill switch: globalThis.__chatyy_late_overlays = false.
+const _LATE_OVERLAYS = {
+  OfflineNotice: () => require('../components/OfflineNotice').default,
+  ConfettiHost: () => require('../components/mascot/ConfettiHost').default, // [2026-10-16 mascote]
+  NotificationToast: () => require('../components/NotificationToast').default,
+  RemovedAccountNotice: () => require('../components/RemovedAccountNotice').default, // [incidente-sessao 2026-10-14]
+  VoiceMiniPlayer: () => require('../components/chat/VoiceMiniPlayer').default, // [2026-10-07 voice-native]
+  YouTubeInlineHost: () => require('../components/chat/YouTubeInlinePlayer').default, // [2026-10-15 yt-inline]
+  EmailUndoBar: () => require('../components/EmailUndoBar').default,
+  PhoneOfflineBanner: () => require('../components/PhoneOfflineBanner').default,
+  PushTokenStaleBanner: () => require('../components/PushTokenStaleBanner').default,
+  PushPermissionPrimer: () => require('../components/PushPermissionPrimer').default, // [2026-10-07 native-polish]
+  TermsUpdateGate: () => require('../components/consent/TermsUpdateNotice').default, // [2026-10-13 consent-lgpd]
+  AddPhoneGate: () => require('../components/phoneLink/AddPhoneGate').default, // [phone-obrigatorio 2026-10-15]
+};
+let _lateReady = (() => { try { return globalThis.__chatyy_late_overlays === false; } catch { return false; } })();
+const _lateSubs = new Set();
+if (!_lateReady) {
+  afterFirstPaint(() => {
+    _lateReady = true;
+    for (const fn of Array.from(_lateSubs)) { try { fn(); } catch {} }
+    _lateSubs.clear();
+  }, 0);
+}
+const _lateCache = {};
+function Late({ name, ...props }) {
+  const [ready, setReady] = useState(_lateReady);
+  useEffect(() => {
+    if (ready) return undefined;
+    const fn = () => setReady(true);
+    _lateSubs.add(fn);
+    if (_lateReady) setReady(true);
+    return () => { _lateSubs.delete(fn); };
+  }, [ready]);
+  if (!ready) return null;
+  let C = _lateCache[name];
+  if (C === undefined) {
+    try { C = _LATE_OVERLAYS[name](); } catch (e) {
+      C = null;
+      try { reportStep('late_overlay_fail', name + ':' + String(e?.message || e).slice(0, 120)); } catch {}
+    }
+    _lateCache[name] = C || null;
+  }
+  return C ? <C {...props} /> : null;
+}
 
 function PWAPromptsThemed() {
   const { colors, isDark } = useTheme();
@@ -569,6 +616,10 @@ function ThemedStatusBar() {
 // Keep the native splash screen visible until our AnimatedSplash component is mounted and ready.
 // This prevents any flash of white/icon between the native splash hiding and React rendering.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+// [2026-10-16 wave10-C boot] Processo acordado em 2º plano → liga só push/
+// VoIP/tarefas (services/bgLiteBoot.js) e o RootLayout segura a árvore até o
+// 1º 'active'. No-op em 1º plano, na web e com o kill switch.
+try { startBgLiteBootIfNeeded(); } catch {}
 // [2026-10-09 lighter-app] Começa a ler o idioma salvo (+ pacote em disco) já na
 // avaliação do módulo, em paralelo à hidratação do cache; o gate só aguarda.
 try { if (Platform.OS !== 'web') preloadBootLanguage(900); } catch {}
@@ -816,6 +867,8 @@ function AppInit({ onNotification, setOtaToast }) {
     try {
       require('../services/pushNotifications').setSwitchAccountHandler(_switchAcct ? (e) => _switchAcct(e) : null);
     } catch {}
+    // [2026-10-16 wave10-C boot] toque em push p/ outra conta chegado antes da UI montar
+    try { _bgLiteProvideSwitch(_switchAcct ? (e) => _switchAcct(e) : null); } catch {}
   }, [_switchAcct]);
   useEffect(() => {
     const PUBLIC_ROUTES = ['/login', '/signup', '/signup-phone', '/signup-username', '/forgot', '/verify-phone-required', '/onboarding', '/privacy', '/feed'];
@@ -1509,9 +1562,13 @@ function AppInit({ onNotification, setOtaToast }) {
         // [2026-10-06 android-audit] Compose with any cleanup already stored
         // (the contacts/badge AppState subscription below is registered
         // synchronously, before this await resolves) instead of overwriting it.
-        const _notifCleanup = await setupNotificationListeners();
-        const _prevCleanup = cleanupRef.current;
-        cleanupRef.current = () => { try { _notifCleanup?.(); } catch {} try { _prevCleanup?.(); } catch {} };
+        // [2026-10-16 wave10-C boot] Boot em 2º plano já instalou os listeners
+        // (services/bgLiteBoot) — instalar de novo duplicaria os handlers.
+        if (!_bgLiteNotifInstalled()) {
+          const _notifCleanup = await setupNotificationListeners();
+          const _prevCleanup = cleanupRef.current;
+          cleanupRef.current = () => { try { _notifCleanup?.(); } catch {} try { _prevCleanup?.(); } catch {} };
+        }
 
         // Clear badge when app opens
         clearBadge();
@@ -1531,14 +1588,9 @@ function AppInit({ onNotification, setOtaToast }) {
     // Setup CallKit + VoIP Push (iOS only)
     // SKIP on web to avoid TDZ issues in callkeep module
     if (Platform.OS !== 'web') {
-      (async () => {
-        try {
-          const { setupCallKeep } = await import('../services/callkeep');
-          if (mounted) await setupCallKeep();
-        } catch (e) {
-          console.warn('[CallKeep] Setup failed:', e.message);
-        }
-      })();
+      // [2026-10-16 wave10-C boot] single-flight com o boot em 2º plano
+      // (setupCallKeep só marca _isSetup no fim → 2 chamadas concorrentes = 2 setups).
+      if (mounted) _setupCallKeepOnce();
     }
 
     // IAP init is deferred until the user actually opens the /plans screen.
@@ -2000,7 +2052,19 @@ export default function RootLayout() {
   // [2026-10-09 lighter-app] Web só segura o 1º frame se o idioma salvo não
   // está no bundle (só pt-BR/en estão) — baixa o JSON (HTTP cache) até 1.2 s.
   const [cacheReady, setCacheReady] = useState(() => Platform.OS === 'web' && !bootLanguageNeedsPreload());
-  try { _bootMark('root_layout_render'); } catch {}
+  // [2026-10-16 wave10-C boot] Boot em 2º plano: nada da árvore monta até o
+  // 1º 'active' (services/bgLiteBoot). Sempre true em 1º plano / web.
+  const [uiAllowed, setUiAllowed] = useState(() => _bgLiteUiAllowed());
+  useEffect(() => {
+    if (uiAllowed) return undefined;
+    return _bgLiteOnUiAllowed(() => setUiAllowed(true));
+  }, [uiAllowed]);
+  useEffect(() => {
+    if (!uiAllowed || !cacheReady) return;
+    try { _bootMark('ui_mount'); } catch {}
+    try { _bgLiteNoteUiMounted(); } catch {}
+  }, [uiAllowed, cacheReady]);
+  try { _bootMark(uiAllowed ? 'root_layout_render' : 'root_layout_render_bg'); } catch {}
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -2061,7 +2125,7 @@ export default function RootLayout() {
     setToastNotif(notif);
   }, []);
 
-  if (!cacheReady) return null;
+  if (!cacheReady || !uiAllowed) return null;
 
   return (
     // [2026-10-14 piscada-android] Raiz pintada com a cor do tema do app: qualquer
@@ -2085,18 +2149,18 @@ export default function RootLayout() {
                 <ShareIntentWatcher />
                 <HtmlLangSync />
                 <AccountLanguageSync />
-                <OfflineNotice />
+                <Late name="OfflineNotice" />
                 {otaToast ? <OtaToastView toast={otaToast} /> : null}
                 <ThemedStatusBar />
                 {/* Stage 6 — yellow "phone offline" banner shows when WS relay
                     couldn't reach the phone and we served cached data from
                     IndexedDB. Web-only; renders null on native. Above the
                     Stack so it sits at the top of every web route. */}
-                <PhoneOfflineBanner />
+                <Late name="PhoneOfflineBanner" />
                 {/* 2026-05-18 — native-only; shows when push-token
                     registration has failed 2+ times so the user can
                     tap to retry before incoming calls silently drop. */}
-                <PushTokenStaleBanner />
+                <Late name="PushTokenStaleBanner" />
                 <ChildRestrictionGuard>
                 {/* [2026-10-11 ongoing-call] Pushes the whole stack below the
                     "Toque para voltar à ligação" bar while a call is minimized
@@ -2271,10 +2335,10 @@ export default function RootLayout() {
                   <ActiveCallBar />
                 </Suspense>
                 <CallStatusBar />
-                <VoiceMiniPlayer />
-                <YouTubeInlineHost />
-                <EmailUndoBar />
-                <ConfettiHost />{/* [2026-10-16 mascote] confete leve (1ª msg / grupo criado) */}
+                <Late name="VoiceMiniPlayer" />
+                <Late name="YouTubeInlineHost" />
+                <Late name="EmailUndoBar" />
+                <Late name="ConfettiHost" />{/* [2026-10-16 mascote] confete leve (1ª msg / grupo criado) */}
                 <Suspense fallback={null}>
                   <IncomingCallListener />
                 </Suspense>
@@ -2307,20 +2371,21 @@ export default function RootLayout() {
                 </Suspense>
                 <WhatsNewGate />
                 {/* [2026-10-13 consent-lgpd] aviso único "Atualizamos nossos Termos" p/ contas antigas (não bloqueia) */}
-                <TermsUpdateGate />
+                <Late name="TermsUpdateGate" />
                 {/* [phone-obrigatorio 2026-10-15] conta antiga sem telefone → "Adicione seu número" (Agora não = 7 dias) */}
-                <AddPhoneGate />
+                <Late name="AddPhoneGate" />
                 {/* [2026-10-07 native-polish] push pre-permission sheet (gap P0-6) */}
-                <PushPermissionPrimer />
+                <Late name="PushPermissionPrimer" />
                 <Suspense fallback={null}>
                   <PWAPromptsThemed />
                 </Suspense>
-                <NotificationToast
+                <Late
+                  name="NotificationToast"
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}
                 />
                 <ToastHost />
-                <RemovedAccountNotice />
+                <Late name="RemovedAccountNotice" />
                 </ConfirmProvider>
               </PhotosProvider>
               </MailProvider>

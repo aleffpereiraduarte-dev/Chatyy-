@@ -1,8 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { View, Animated, Image, StyleSheet, Easing } from 'react-native';
+import { View, Animated, Image, StyleSheet, Easing, Platform } from 'react-native';
 // [2026-10-07 coldstart] Splash hide goes through services/bootTrace so the
 // boot trace records who released it (idempotent with the chat-list owner).
-import { hideNativeSplash } from '../services/bootTrace';
+import { hideNativeSplash, isSplashHidden, mark as bootMark } from '../services/bootTrace';
 
 // [#1239 2026-05-20] Restore Chatyy logo on the JS splash so the cold-start
 // hand-off doesn't show a blank white square. The native splash image lives
@@ -34,8 +34,21 @@ export default function AnimatedSplash({ onFinish }) {
   // Eyelid scaleY: 0 = open (lid hidden), 1 = closed (lid fully drawn).
   const eyelid = useRef(new Animated.Value(0)).current;
 
+  // [2026-10-16 wave10-C boot] A marca NÃO esconde mais o splash nativo no
+  // onLayout. Medido no Android: 63/98 boots em 1º plano soltavam o splash na
+  // 'brand' (auth > 600 ms → index.js monta esta marca) e a lista só aparecia
+  // depois da entrada (≥360 ms) + fade (220 ms) + router.replace — p50 1,99 s.
+  // Agora, com o splash nativo ainda na tela, a marca libera o index.js NA HORA
+  // (onFinish imediato): a rota anda assim que a auth resolve e quem esconde o
+  // splash é a 1ª tela útil (lista do cache → bootTrace.markFirstListPaint, login,
+  // etc.). A marca segue tocando por baixo e só aparece se a auth demorar além
+  // do fallback do bootTrace (1,5 s após o gate / teto 4 s) — aí ela é o visual,
+  // como antes. Kill switch: globalThis.__chatyy_brand_hold = false → antigo.
+  // Web não tem splash nativo cobrindo → comportamento antigo (entrada + fade).
+  const legacyRef = useRef((() => { try { return Platform.OS === 'web' || globalThis.__chatyy_brand_hold === false; } catch { return false; } })());
   const onLayoutReady = useCallback(() => {
-    hideNativeSplash('brand');
+    try { bootMark('brand_layout'); } catch {}
+    if (legacyRef.current) hideNativeSplash('brand');
   }, []);
 
   // [COLD-START 2026-09-30] The branded JS splash used to HOLD a hardcoded
@@ -50,6 +63,7 @@ export default function AnimatedSplash({ onFinish }) {
   const finish = useCallback(() => {
     if (finishedRef.current) return;
     finishedRef.current = true;
+    try { bootMark('brand_finish'); } catch {}
     Animated.timing(fadeOut, {
       toValue: 0,
       duration: 220,
@@ -58,6 +72,19 @@ export default function AnimatedSplash({ onFinish }) {
       onFinish?.();
     });
   }, [onFinish, fadeOut]);
+
+  // [2026-10-16 wave10-C boot] Splash nativo ainda cobrindo a tela = ninguém vê
+  // a marca → libera o index.js já (sem fade: não há o que esmaecer). Se o
+  // splash nativo já caiu (marca visível), mantém entrada + fade como antes.
+  useEffect(() => {
+    if (legacyRef.current || finishedRef.current) return;
+    let hidden = false;
+    try { hidden = isSplashHidden(); } catch {}
+    if (hidden) return;
+    finishedRef.current = true;
+    try { bootMark('brand_finish:covered'); } catch {}
+    onFinish?.();
+  }, [onFinish]);
 
   useEffect(() => {
     // Logo entrance: scale + fade up over 280ms with a soft ease-out. Fire the

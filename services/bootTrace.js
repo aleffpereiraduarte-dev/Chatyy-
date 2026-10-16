@@ -28,6 +28,18 @@ const T0 = (() => {
   } catch { return _now(); }
 })();
 
+// [2026-10-16 wave10-C boot] performance.now() no MESMO instante do T0: as
+// marcas nativas do RN (performance.rnStartupTiming: início do host, runtime,
+// execução do bundle) vêm nessa base de tempo, então "T0 - início do RN" sai
+// sem depender de relógio de parede. undefined quando a API não existe.
+const T0_PERF = (() => {
+  try {
+    const p = typeof performance !== 'undefined' ? performance : null;
+    return p && typeof p.now === 'function' ? p.now() : undefined;
+  } catch { return undefined; }
+})();
+export function getBootT0() { return T0; }
+
 const _marks = {};
 export function mark(name) {
   try { if (name && _marks[name] === undefined) _marks[name] = _now() - T0; } catch {}
@@ -46,13 +58,63 @@ const _meta = {};
 export function setBootMeta(key, value) {
   try { if (key && _meta[key] === undefined) _meta[key] = value; } catch {}
 }
+// [2026-10-16 wave10-C boot] 1º vs 2º plano HONESTO. Só 'background' é 2º
+// plano: num cold start em 1º plano o iOS ainda está 'inactive' (vira 'unknown'
+// em binários antigos) até o didBecomeActive — isso é 1º plano e antes caía no
+// mesmo balde `bg` dos boots acordados por push/VoIP/BG fetch.
+//   _m.fg  = 1 (1º plano) | 0 (2º plano)
+//   _m.as  = estado inicial cru abreviado (a/b/i/u)
+//   _m.bg  = mantido p/ compat das consultas antigas (estado ≠ active)
+let _initialAppState = 'active';
 try {
   if (Platform.OS !== 'web') {
     const { AppState } = require('react-native');
     const st = AppState && AppState.currentState;
+    _initialAppState = st ? String(st) : 'unknown';
     if (st && st !== 'active') setBootMeta('bg', String(st));
   }
 } catch {}
+const _startedInBackground = Platform.OS !== 'web' && _initialAppState === 'background';
+setBootMeta('fg', _startedInBackground ? 0 : 1);
+setBootMeta('as', _initialAppState.charAt(0) || 'u');
+export function getInitialAppState() { return _initialAppState; }
+export function startedInBackground() { return _startedInBackground; }
+
+// ─── Boot em 2º plano "leve" (bg-lite) ──────────────────────────────────────
+// [2026-10-16 wave10-C boot] Processo acordado em 2º plano (push, VoIP/PushKit,
+// BG fetch, task headless do Android) NÃO monta a árvore React (app/_layout.js
+// segura a UI até o 1º 'active' — services/bgLiteBoot.js liga só push/VoIP/
+// tarefas). Enquanto segura: os tetos do splash e a fila afterFirstPaint ficam
+// suspensos (esconder o splash em 2º plano = tela vazia ao abrir; rodar a fila
+// = engines/sync/LiveKit sem tela). releaseBootHold() rearma tudo a partir do
+// 'active'. Kill switch (OTA): globalThis.__chatyy_bg_lite_boot = false.
+const BG_LITE_DEFAULT_ON = false; // [2026-10-16] opt-in até testar em aparelho (CallKit/push em 2º plano)
+function _bgLiteEnabled() {
+  try {
+    const o = globalThis.__chatyy_bg_lite_boot;
+    if (o === false) return false;
+    if (o === true) return true;
+  } catch {}
+  return BG_LITE_DEFAULT_ON;
+}
+let _bootHold = _startedInBackground && _bgLiteEnabled();
+const _bgLiteBoot = _bootHold;
+if (_bgLiteBoot) { setBootMeta('lite', 1); }
+export function isBgLiteBoot() { return _bgLiteBoot; }
+export function isBootHeld() { return _bootHold; }
+const _releaseCbs = [];
+let _activeAt = 0;
+// Chamado por services/bgLiteBoot quando o app fica 'active' pela 1ª vez.
+export function releaseBootHold(reason) {
+  if (!_bootHold) return;
+  _bootHold = false;
+  _activeAt = _now();
+  mark('fg_active');
+  if (reason) mark('fg_active:' + String(reason));
+  const cbs = _releaseCbs.splice(0, _releaseCbs.length);
+  for (const fn of cbs) { try { fn(); } catch {} }
+}
+function _onRelease(fn) { if (_bootHold) _releaseCbs.push(fn); else { try { fn(); } catch {} } }
 
 // ─── Native splash ──────────────────────────────────────────────────────────
 let _splashHidden = false;
@@ -71,8 +133,12 @@ export function hideNativeSplash(reason) {
 
 // Absolute cap from JS start — covers a crash before any owner mounts.
 const ABSOLUTE_SPLASH_CAP_MS = 4000;
+// [2026-10-16 wave10-C boot] Em bg-lite o teto conta a partir do 'active'.
+function _armAbsoluteCap() {
+  try { setTimeout(() => hideNativeSplash('absolute_cap'), ABSOLUTE_SPLASH_CAP_MS); } catch {}
+}
 try {
-  if (Platform.OS !== 'web') setTimeout(() => hideNativeSplash('absolute_cap'), ABSOLUTE_SPLASH_CAP_MS);
+  if (Platform.OS !== 'web') _onRelease(_armAbsoluteCap);
 } catch {}
 
 let _fallbackTimer = null;
@@ -81,6 +147,8 @@ let _fallbackTimer = null;
 // change — never worse than today).
 export function armSplashFallback(ms = 1500) {
   if (_splashHidden || _fallbackTimer) return;
+  // [2026-10-16 wave10-C boot] segurado (2º plano): arma no 'active'.
+  if (_bootHold) { _onRelease(() => armSplashFallback(ms)); return; }
   try { _fallbackTimer = setTimeout(() => { _fallbackTimer = null; hideNativeSplash('fallback'); }, ms); } catch {}
 }
 
@@ -129,8 +197,11 @@ const AFTER_PAINT_CAP_MS = 2500;
 // bit longer there because module eval of the web bundle already ate the
 // download/parse time and the chat list mounts only after the route chunk.
 const AFTER_PAINT_CAP_WEB_MS = 3000;
+// [2026-10-16 wave10-C boot] Em bg-lite o teto conta a partir do 'active'.
 try {
-  setTimeout(() => markFirstPaintOther('cap'), Platform.OS === 'web' ? AFTER_PAINT_CAP_WEB_MS : AFTER_PAINT_CAP_MS);
+  _onRelease(() => {
+    try { setTimeout(() => markFirstPaintOther('cap'), Platform.OS === 'web' ? AFTER_PAINT_CAP_WEB_MS : AFTER_PAINT_CAP_MS); } catch {}
+  });
 } catch {}
 
 function _drainAfterPaint() {
@@ -181,33 +252,99 @@ export function afterFirstPaint(fn, delay = 0) {
 }
 
 // ─── Telemetry (sampled) ─────────────────────────────────────────────────────
-// One beacon per launch for ~5% of launches, or always when the list took >1.5s
-// to paint, so we can see real-device numbers in push_diag without load spikes.
+// [2026-10-16 wave10-C boot] Amostragem SEM viés: 10% uniforme, decidida no
+// load do módulo (antes: sempre que >1,5 s + 5% do resto → p50/p90 inflados).
+// `_m.sr` = taxa (%) p/ o servidor ponderar. QA: globalThis.__chatyy_boot_trace_all = true.
+// Época do processo: `_m.ps` = ms do início do PROCESSO (nativo processStartTime:
+// iOS sysctl p_starttime / Android Process.getStart*UptimeMillis) até o T0 do JS
+// → splash real = ps + marks.splash_hide. `_m.rn` = [início do host RN,
+// início do runtime, início da execução do bundle] → T0 (performance.rnStartupTiming),
+// fallback quando o binário ainda não tem o nativo. Lido só na hora do envio (8 s).
+const BOOT_SAMPLE_PCT = 10;
+const _sampled = (() => {
+  try { if (globalThis.__chatyy_boot_trace_all === true) return true; } catch {}
+  try { return Math.random() * 100 < BOOT_SAMPLE_PCT; } catch { return false; }
+})();
+export function isBootSampled() { return _sampled; }
+
+export function getProcessStartEpochMs() {
+  if (Platform.OS === 'web') return 0;
+  try {
+    const core = require('expo-modules-core');
+    const get = core.requireOptionalNativeModule || ((n) => { try { return core.requireNativeModule(n); } catch { return null; } });
+    for (const name of ['ExpoChatyySystem', 'ExpoNativeToolkit']) {
+      let m = null;
+      try { m = get(name); } catch {}
+      if (m && typeof m.processStartTime === 'function') {
+        const v = Number(m.processStartTime());
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+    }
+  } catch {}
+  return 0;
+}
+
+function _collectProcessMeta() {
+  try {
+    const ps = getProcessStartEpochMs();
+    const d = ps ? Math.round(T0 - ps) : -1;
+    // Processo vivo há horas (iOS reaproveitado / pré-aquecido) não é "boot":
+    // registra mesmo assim, mas o servidor separa por faixa.
+    if (d >= 0 && d < 24 * 3600 * 1000) setBootMeta('ps', d);
+  } catch {}
+  try {
+    const p = typeof performance !== 'undefined' ? performance : null;
+    const rt = p && p.rnStartupTiming;
+    if (rt && typeof T0_PERF === 'number') {
+      const f = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(T0_PERF - v) : -1);
+      setBootMeta('rn', [f(rt.startTime), f(rt.initializeRuntimeStart), f(rt.executeJavaScriptBundleEntryPointStart)].join('/'));
+    }
+  } catch {}
+  try { if (_activeAt) setBootMeta('act', _activeAt - T0); } catch {}
+}
+
+function _sendBeacon(tag) {
+  try {
+    const m = getBootMarks();
+    setBootMeta('sr', BOOT_SAMPLE_PCT);
+    _collectProcessMeta();
+    try {
+      const st = require('./mmkv').getHydrateStats?.();
+      if (st) setBootMeta('hyd', [st.bootMs | 0, st.bootKeys | 0, st.lazyKeys | 0].join('/'));
+      // [2026-10-10 storage-boot] backend (a=AsyncStorage, s=SQLite KV,
+      // m=migrating) + smartChatCache hydrate maxMs/parsed blobs/KB parsed.
+      try {
+        const sh = require('./smartChatCache').getSmartHydrateStats?.();
+        const b = String(st?.backend || 'a');
+        setBootMeta('hyd2', [b === 'sqlite' ? 's' : (b.indexOf('migr') >= 0 ? 'm' : 'a'), sh ? sh.maxMs | 0 : -1, sh ? sh.parsed | 0 : -1, sh ? (sh.parsedBytes / 1024) | 0 : -1, st ? st.lazySyncHits | 0 : 0].join('/'));
+      } catch {}
+    } catch {}
+    // Meta first (short) so the 460-char cut only ever trims late marks.
+    const meta = { ..._meta };
+    if (tag) meta.ph = tag;
+    const payload = { _m: meta, ...m };
+    require('./crashReporter').reportStep?.('coldstart_marks', JSON.stringify(payload).slice(0, 460));
+  } catch {}
+}
+
+// Um beacon por boot amostrado, 8 s depois do T0. Boot em 2º plano (bg-lite):
+// beacon 'bg' aos 8 s se ainda estiver em 2º plano e, quando o usuário abrir,
+// um 2º beacon 'fg' 8 s depois do 'active' (marks da UI; `_m.act` = T0→active).
 let _reported = false;
+let _reportedBg = false;
 export function reportBootMarksSampled() {
   if (_reported || Platform.OS === 'web') return;
   _reported = true;
+  if (!_sampled) return;
+  const REPORT_AFTER_MS = 8000;
   try {
+    if (!_bgLiteBoot) {
+      setTimeout(() => _sendBeacon(_startedInBackground ? 'bgfull' : ''), REPORT_AFTER_MS);
+      return;
+    }
     setTimeout(() => {
-      try {
-        const m = getBootMarks();
-        const slow = (m.first_list_paint || 0) > 1500 || (m.splash_hide || 0) > 1500;
-        if (!slow && Math.random() > 0.05) return;
-        try {
-          const st = require('./mmkv').getHydrateStats?.();
-          if (st) setBootMeta('hyd', [st.bootMs | 0, st.bootKeys | 0, st.lazyKeys | 0].join('/'));
-          // [2026-10-10 storage-boot] backend (a=AsyncStorage, s=SQLite KV,
-          // m=migrating) + smartChatCache hydrate maxMs/parsed blobs/KB parsed.
-          try {
-            const sh = require('./smartChatCache').getSmartHydrateStats?.();
-            const b = String(st?.backend || 'a');
-            setBootMeta('hyd2', [b === 'sqlite' ? 's' : (b.indexOf('migr') >= 0 ? 'm' : 'a'), sh ? sh.maxMs | 0 : -1, sh ? sh.parsed | 0 : -1, sh ? (sh.parsedBytes / 1024) | 0 : -1, st ? st.lazySyncHits | 0 : 0].join('/'));
-          } catch {}
-        } catch {}
-        // Meta first (short) so the 460-char cut only ever trims late marks.
-        const payload = Object.keys(_meta).length ? { _m: _meta, ...m } : m;
-        require('./crashReporter').reportStep?.('coldstart_marks', JSON.stringify(payload).slice(0, 460));
-      } catch {}
-    }, 8000);
+      if (_bootHold && !_reportedBg) { _reportedBg = true; _sendBeacon('bg'); }
+    }, REPORT_AFTER_MS);
+    _onRelease(() => { try { setTimeout(() => _sendBeacon('fg'), REPORT_AFTER_MS); } catch {} });
   } catch {}
 }
