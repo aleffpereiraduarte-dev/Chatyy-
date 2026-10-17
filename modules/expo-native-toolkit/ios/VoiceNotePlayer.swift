@@ -1,4 +1,5 @@
 import AVFoundation
+import CallKit
 import UIKit
 
 /// [2026-10-07 voice-native] WhatsApp-grade voice-note player.
@@ -237,9 +238,13 @@ final class VoiceNotePlayer: NSObject {
   // MARK: Session
 
   /// A call (CallKit / expo-audio-session) owns the session → hands off.
+  private let callObserver = CXCallObserver()
   private func callOwnsSession() -> Bool {
     let mode = AVAudioSession.sharedInstance().mode
-    return mode == .voiceChat || mode == .videoChat
+    guard mode == .voiceChat || mode == .videoChat else { return false }
+    // [2026-10-17 voice-speaker] .voiceChat vaza depois da ligação (teardown sem
+    // reset) → sem ligação viva o modo é lixo: não pode mandar a nota p/ o auricular.
+    return callObserver.calls.contains { !$0.hasEnded }
   }
 
   private func headsetConnected() -> Bool {

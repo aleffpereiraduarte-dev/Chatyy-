@@ -277,9 +277,29 @@ function _nativeEngine(m, uri, startMs, rate, token) {
     detach: () => {}, // next voicePlay replaces the player natively
   };
   try { m.voiceSetProximityEnabled(true).catch(() => {}); } catch {}
-  m.voicePlay(String(uri), Math.max(0, startMs || 0), rate, token).catch((err) => {
+  const _go = () => m.voicePlay(String(uri), Math.max(0, startMs || 0), rate, token).catch((err) => {
     if (_engine === eng) _onEngineStatus({ error: err?.message || 'play_failed', playing: false });
   });
+  // [2026-10-17 voice-speaker] iOS: depois de uma ligação o AVAudioSession fica
+  // em modo .voiceChat (vazado) → o player nativo acha que a ligação "é dona"
+  // da sessão, não configura nada e o áudio sai no AURICULAR mesmo longe do
+  // rosto. Sem ligação ativa, zera o modo (.playback/.default) antes de tocar.
+  if (Platform.OS === 'ios' && !(typeof globalThis !== 'undefined' && globalThis.__chatyy_voice_reset_mode === false)) {
+    let inCall = false;
+    try { inCall = require('./ongoingCall').isCallOngoing(); } catch {}
+    if (!inCall) {
+      let p = null;
+      try {
+        p = require('expo-audio').setAudioModeAsync({
+          playsInSilentMode: true, allowsRecording: false, shouldPlayInBackground: true,
+          interruptionMode: 'doNotMix', interruptionModeAndroid: 'doNotMix', shouldDuckAndroid: false,
+        });
+      } catch {}
+      Promise.resolve(p).catch(() => {}).then(() => { if (_engine === eng) _go(); });
+      return eng;
+    }
+  }
+  _go();
   return eng;
 }
 
