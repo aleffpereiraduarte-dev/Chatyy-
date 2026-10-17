@@ -284,7 +284,30 @@ function _sameLm(a, b, meLc) {
       && Math.abs(_tsMs(a.created_at) - _tsMs(b.created_at)) < 120000) return true;
   return false;
 }
+// [2026-10-17 visto-lista-conversa] Mesmo piso AO VIVO que a conversa usa
+// (services/peerReadLive, alimentado pelo transporte, peer-only, TTL 2 min): um
+// snapshot do chat_list vindo da réplica atrasada do edge não rebaixa a prévia
+// "Você: …" de azul p/ cinza, nem quando a linha local ainda não tinha o carimbo.
+function _rcLivePeerFloor(c, meLc, old) {
+  try {
+    if (!c || !meLc || c.id == null || _isGroupishConv(c)) return c;
+    const lm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+    if (!lm || lm.read_at || !_lmIsMine(lm, meLc)) return c;
+    const lmId = Number(lm.id) || 0;
+    if (!(lmId > 0)) return c;
+    const wm = require('../services/peerReadLive').getPeerReadLiveMax(meLc, c.id);
+    if (!(wm >= lmId)) return c;
+    const olm = old && old.last_message && typeof old.last_message === 'object' ? old.last_message : null;
+    const same = !!(olm && olm.read_at && String(olm.id) === String(lm.id)); // estável entre refreshes
+    const nowIso = new Date().toISOString();
+    const rAt = same ? olm.read_at : nowIso;
+    return { ...c, last_message: { ...lm, read_at: rAt, delivered_at: lm.delivered_at || (same && olm.delivered_at) || rAt, _rcLiveAt: (same && olm._rcLiveAt) || Date.now() } };
+  } catch { return c; }
+}
 function _mergeServerConvRow(old, c, meLc) {
+  return _rcLivePeerFloor(_mergeServerConvRowBase(old, c, meLc), meLc, old);
+}
+function _mergeServerConvRowBase(old, c, meLc) {
   if (!c) return c;
   if (!old) {
     if ((c.unread_count || 0) > 0 && _selfReadCovers(c.id, c, meLc)) return { ...c, unread_count: 0, unread_mentions: 0 };

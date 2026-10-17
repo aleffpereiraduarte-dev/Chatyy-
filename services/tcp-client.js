@@ -526,6 +526,7 @@ export class TCPClient extends EventEmitter {
         break;
 
       case MSG_TYPES.CHAT_READ_BROADCAST:
+        try { require('./peerReadLive').ingestReadEvent(require('./api').getActiveAccountEmail(), msg.payload); } catch {} // [2026-10-17 visto-lista-conversa]
         this.emit('chat_read', msg.payload);
         break;
 

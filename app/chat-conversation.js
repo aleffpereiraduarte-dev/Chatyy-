@@ -10691,6 +10691,9 @@ function ChatConversationInner() {
   // [notmember-ryw 2026-10-17] retry automático (máx. 2) quando o servidor responde not_member
   // logo após criar/abrir a conversa (réplica do edge ainda sem a linha de membro).
   const _notMemberRetryRef = useRef(0);
+  // [2026-10-17 visto-lista-conversa] Reconciliação do visto pós-abertura (1x por
+  // abertura/volta ao 1º plano): ver _rrMaybeReconcile em loadMessages.
+  const _rrReconRef = useRef({ n: 0, t: null });
   const typingTimerRef = useRef(null);
   // Throttle + auto-stop state for typing indicators.
   // - `typingLastSentAt`: last time we emitted `chat_typing` over WS. We re-send
@@ -14081,6 +14084,55 @@ function ChatConversationInner() {
   const currentEmailRef = useRef(currentEmail);
   currentEmailRef.current = currentEmail;
 
+  // [2026-10-17 visto-lista-conversa] Founder (conv 952, 13:50Z): lista ✓✓ AZUL,
+  // conversa ✓✓ CINZA. O chat_read do peer chegou com a conversa FECHADA (só a
+  // lista escutava); ao abrir 1 s depois o chat_messages veio da réplica do edge
+  // ainda sem a leitura → cinza, e nenhum evento novo viria. Agora a leitura ao
+  // vivo é GLOBAL (services/peerReadLive, alimentado pelo transporte): ao montar
+  // a conversa semeia o mesmo piso de 2 min que os eventos vistos aqui usam, e
+  // escuta o store (cobre o intervalo entre montar e registrar os listeners WS).
+  // Peer-only (meu próprio recibo nunca entra). Ticks → enrich → lista nativa.
+  useEffect(() => {
+    if (!conversationId) return undefined;
+    const me = String(currentEmail || '').toLowerCase();
+    if (!me) return undefined;
+    let PRL = null;
+    try { PRL = require('../services/peerReadLive'); } catch { return undefined; }
+    const seed = (list) => {
+      if (!mountedRef.current || !Array.isArray(list) || list.length === 0) return;
+      const ups = [];
+      for (const g of list) {
+        const e = String(g?.email || '').toLowerCase(); const id = Number(g?.id) || 0;
+        if (!e || e === me || !(id > 0)) continue;
+        try {
+          const lv = peerReadLiveRef.current.get(e);
+          if (!lv || lv.id < id) peerReadLiveRef.current.set(e, { id, at: Number(g.at) || Date.now() });
+        } catch {}
+        ups.push([e, id]);
+      }
+      if (!ups.length) return;
+      setReadReceipts(prev => {
+        let out = null;
+        const base = Array.isArray(prev) ? prev : [];
+        for (const [e, id] of ups) {
+          const cur = out || base;
+          const i = cur.findIndex(rr => String(rr?.email || '').toLowerCase() === e);
+          if (i >= 0) {
+            if ((Number(cur[i].last_read_id) || 0) >= id) continue;
+            out = cur.slice(); out[i] = { ...cur[i], last_read_id: id };
+          } else {
+            out = [...cur, { email: e, last_read_id: id }];
+          }
+        }
+        return out || prev;
+      });
+    };
+    seed(PRL.getPeerReadLive(me, conversationId));
+    const cidS = String(conversationId);
+    const unsub = PRL.subscribePeerReadLive((cid, peer, id) => { if (cid === cidS) seed([{ email: peer, id, at: Date.now() }]); });
+    return () => { try { unsub(); } catch {} };
+  }, [conversationId, currentEmail]);
+
   // PERF: whether the composer must be replaced by the "only admins" banner.
   // This boolean was recomputed INLINE up to 4 times per render (= per
   // keystroke) via members.find/.some scans down in the JSX — cost scaled with
@@ -15535,6 +15587,13 @@ function ChatConversationInner() {
           // guardar meu recibo — readReceipts é só do(s) peer(s), senão o
           // watermark de leitura promove meus balões a azul falso.
           const _meLc = (currentEmailRef.current || user?.email || '').toLowerCase();
+          // [2026-10-17 visto-lista-conversa] leituras AO VIVO globais (≤ 2 min) do(s) peer(s).
+          const _rrLive = new Map();
+          try {
+            for (const g of require('../services/peerReadLive').getPeerReadLive(_meLc, conversationId)) {
+              if (g && g.email && g.email !== _meLc && g.id > 0) _rrLive.set(g.email, g.id);
+            }
+          } catch {}
           setReadReceipts(prev => {
             const map = new Map((prev || []).map(x => [x.email, x.last_read_id || 0]));
             for (const rr of r.data.read_receipts) {
@@ -15554,8 +15613,22 @@ function ChatConversationInner() {
                 const _lv = peerReadLiveRef.current.get(String(rr.email || '').toLowerCase());
                 if (_lv && _lv.id > _srvWm && (Date.now() - _lv.at) < 120000) _srvWm = _lv.id;
               } catch {}
+              // [2026-10-17 visto-lista-conversa] Piso GLOBAL: o evento ao vivo pode
+              // ter chegado com a conversa FECHADA (lista aberta) — a tela não o viu.
+              try {
+                const _gl = _rrLive.get(String(rr.email || '').toLowerCase());
+                if (_gl && _gl > _srvWm) _srvWm = _gl;
+              } catch {}
               map.set(rr.email, _srvWm);
             }
+            // Peer com leitura ao vivo que o snapshot (réplica atrasada) ainda nem lista.
+            try {
+              for (const [_ge, _gid] of _rrLive) {
+                let _has = false;
+                for (const k of map.keys()) { if (String(k || '').toLowerCase() === _ge) { _has = true; break; } }
+                if (!_has) map.set(_ge, _gid);
+              }
+            } catch {}
             // [2026-10-11 fluidez-2] Mesmo conteúdo → mesmo array (cada refetch
             // criava um array novo = 1 render extra da tela + re-enrich).
             if (Array.isArray(prev) && prev.length === map.size) {
@@ -15565,6 +15638,46 @@ function ChatConversationInner() {
             }
             return Array.from(map, ([email, last_read_id]) => ({ email, last_read_id }));
           });
+        }
+        // [2026-10-17 visto-lista-conversa] REDE DE SEGURANÇA: o snapshot pode ser
+        // da réplica do edge atrasada (medido: leitura do peer aparece 0,15–0,5 s+
+        // depois no edge BR). Se ainda há msg MINHA mais nova que o watermark do
+        // peer, reconsulta UMA vez 2,5 s depois (delta barato; o recuo do since_id
+        // até a minha msg não-lida mais antiga traz read_by/read_receipts frescos).
+        // 1x por abertura e por volta ao 1º plano (AppState zera o contador).
+        if (!beforeId && conversationType !== 'group' && conversationType !== 'channel') {
+          try {
+            const _rc = _rrReconRef.current;
+            if (_rc.n < 1 && !_rc.t) {
+              const _meR = String(currentEmailRef.current || user?.email || '').toLowerCase();
+              let _peerWm = -1;
+              for (const rr of (Array.isArray(r.data?.read_receipts) ? r.data.read_receipts : [])) {
+                const e = String(rr?.email || '').toLowerCase();
+                if (e && e !== _meR) _peerWm = Math.max(_peerWm, Number(rr.last_read_id) || 0);
+              }
+              try { _peerWm = Math.max(_peerWm, require('../services/peerReadLive').getPeerReadLiveMax(_meR, conversationId)); } catch {}
+              let _ownNewest = 0;
+              const _scanOwn = (arr) => {
+                if (!Array.isArray(arr)) return;
+                for (const m of arr) {
+                  if (!m || typeof m.id !== 'number' || !(m.id > 0) || m.deleted_at) continue;
+                  if (String(m.sender_email || '').toLowerCase() !== _meR) continue;
+                  if (m.read_at || (Array.isArray(m.read_by) && m.read_by.length > 0)) { if (m.id > _peerWm) _peerWm = m.id; continue; }
+                  if (m.id > _ownNewest) _ownNewest = m.id;
+                }
+              };
+              _scanOwn(newMsgs);
+              try { _scanOwn(require('../services/chatStore').getMessagesSync(conversationId, 30)); } catch {}
+              if (_meR && _ownNewest > 0 && _ownNewest > _peerWm) {
+                _rc.n++;
+                _rc.t = setTimeout(() => {
+                  _rc.t = null;
+                  if (!mountedRef.current) return;
+                  try { loadMessages(false); } catch {}
+                }, 2500);
+              }
+            }
+          } catch {}
         }
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
         if (r.data?.disappearing_set_at !== undefined) setDisappearingSetAt(r.data.disappearing_set_at || null);
@@ -18853,6 +18966,7 @@ function ChatConversationInner() {
       }
       if (state !== 'active') return;
       if (!mountedRef.current || !conversationId) return;
+      try { if (!_rrReconRef.current.t) _rrReconRef.current.n = 0; } catch {} // [2026-10-17 visto-lista-conversa]
       try { loadMessages(false); } catch {}
     };
     const sub = AppState.addEventListener('change', onChange);
