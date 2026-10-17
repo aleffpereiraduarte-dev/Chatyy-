@@ -81,7 +81,9 @@ export function buildAvatarUrl(email, opts = {}) {
     // Contas Chatyy/OneMundo: o servidor tira as iniciais do usuário — o nome só
     // criava uma 2ª URL (com/sem name) p/ o mesmo PNG (medido no boot: 2 contatos ×2).
     const n = typeof opts.name === 'string' ? opts.name.trim() : '';
-    const own = /@(chatyy|onemundo)\.com\.br$/.test(e);
+    // [2026-10-17 qa-web] noreply@/postmaster@ do próprio domínio não têm conta com
+    // nome → servidor desenhava "NO" na linha "Chatyy" da caixa de entrada.
+    const own = /@(chatyy|onemundo)\.com\.br$/.test(e) && !/^(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifica(coes|tions)?)@/.test(e);
     if (n && !own && n.indexOf('@') === -1) u += `&name=${encodeURIComponent(n.slice(0, 40))}`;
   }
   if (opts.size === 'full') u += `&size=${AVATAR_FULL_SIZE}&fv=${AVATAR_FULL_RENDER_V}`;

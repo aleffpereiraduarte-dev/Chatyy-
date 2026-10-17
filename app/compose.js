@@ -502,6 +502,16 @@ export default function ComposeScreen() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // [2026-10-17 qa-web] Compose aberto direto (deep link / F5 no web / push) não
+  // tem tela atrás: router.back() era no-op → preso em "Email enviado!
+  // Redirecionando..." para sempre. Sem histórico → caixa de entrada.
+  const _leaveAfterSend = () => {
+    try { if (router.canGoBack && !router.canGoBack()) { router.replace('/inbox'); return; } } catch {}
+    router.back();
+    // Web: canGoBack() pode dizer true (pilha âncora do expo-router) e o back
+    // não sair daqui → se ainda montado, vai p/ a caixa de entrada.
+    setTimeout(() => { try { if (mountedRef.current) router.replace('/inbox'); } catch {} }, 900);
+  };
   const [showAI, setShowAI] = useState(false);
   const [improving, setImproving] = useState(false);
   const [aiImprovedHint, setAiImprovedHint] = useState(false);
@@ -1353,7 +1363,7 @@ export default function ComposeScreen() {
       setSuccess(true);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       refresh();
-      setTimeout(() => router.back(), opts.instant ? 0 : 450);
+      setTimeout(_leaveAfterSend, opts.instant ? 0 : 450);
     };
 
     // Fire the send NOW. With undo_delay>0 the backend enqueues for `delay`
@@ -1595,7 +1605,7 @@ export default function ComposeScreen() {
         }
         setSuccess(true);
         refresh();
-        setTimeout(() => router.back(), 1200);
+        setTimeout(_leaveAfterSend, 1200);
       } else {
         setError(r.message || t('compose.errorSchedule'));
       }

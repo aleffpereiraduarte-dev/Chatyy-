@@ -2457,12 +2457,15 @@ function WaHugText({ hugKey, style, children, ...rest }) {
       if (!el || typeof document === 'undefined' || !el.getBoundingClientRect) return;
       const box = el.getBoundingClientRect();
       const lh = parseFloat(window.getComputedStyle(el).lineHeight) || 21;
+      const sx = el.offsetWidth > 0 ? box.width / el.offsetWidth : 1; // [2026-10-17 qa-web] sem a escala da entrada
+      const sy = el.offsetHeight > 0 ? box.height / el.offsetHeight : 1;
+      if (!(sx > 0.05) || !(sy > 0.05)) return;
       const rg = document.createRange(); rg.selectNodeContents(el);
       const rows = [];
       for (const rc of rg.getClientRects()) {
         if (!rc.width) continue;
-        const i = Math.max(0, Math.floor((rc.top + rc.height / 2 - box.top) / lh));
-        rows[i] = Math.max(rows[i] || 0, rc.right - box.left);
+        const i = Math.max(0, Math.floor((rc.top + rc.height / 2 - box.top) / sy / lh));
+        rows[i] = Math.max(rows[i] || 0, (rc.right - box.left) / sx);
       }
       apply(rows.filter(x => x > 0));
     } catch {}
@@ -2657,12 +2660,19 @@ function _waRowsFromDom(el) {
   if (!el || typeof document === 'undefined' || !el.getBoundingClientRect) return null;
   const box = el.getBoundingClientRect();
   const lh = parseFloat(window.getComputedStyle(el).lineHeight) || 21;
+  // [2026-10-17 qa-web] getClientRects vem COM transform: a bolha recém-enviada
+  // entra com scale .9→1 (send-motion) → linhas medidas ~10% menores e cacheadas
+  // (persistidas) → hora por cima do texto. Normaliza pela escala (offsetWidth
+  // ignora transform); escala degenerada = não mede agora.
+  const sx = el.offsetWidth > 0 ? box.width / el.offsetWidth : 1;
+  const sy = el.offsetHeight > 0 ? box.height / el.offsetHeight : 1;
+  if (!(sx > 0.05) || !(sy > 0.05)) return null;
   const rg = document.createRange(); rg.selectNodeContents(el);
   const rows = [];
   for (const rc of rg.getClientRects()) {
     if (!rc.width) continue;
-    const i = Math.max(0, Math.floor((rc.top + rc.height / 2 - box.top) / lh));
-    rows[i] = Math.max(rows[i] || 0, rc.right - box.left);
+    const i = Math.max(0, Math.floor((rc.top + rc.height / 2 - box.top) / sy / lh));
+    rows[i] = Math.max(rows[i] || 0, (rc.right - box.left) / sx);
   }
   const out = []; for (let i = 0; i < rows.length; i++) out.push(rows[i] || 0);
   return out.length ? out : null;
@@ -30422,7 +30432,7 @@ function ChatConversationInner() {
                 <TouchableOpacity onPress={_openCard} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10 }}>
                   <View style={{ width: 40 + (Math.min(3, _csP.count) - 1) * 24, height: 40 }}>
                     {_csP.list.slice(0, 3).map((c, i) => (
-                      <View key={i} style={{ position: 'absolute', left: i * 24, top: 0 }}>
+                      <View key={i} style={{ position: 'absolute', left: i * 24 - 2, top: -2, zIndex: 3 - i, borderRadius: 22, borderWidth: 2, borderColor: (isOwn ? ownBubbleBg : otherBubbleBg) /* [2026-10-17 qa-web] 1º por cima + anel: o 2º cobria as iniciais do 1º ("Q(") */ }}>
                         <AvatarCircle name={c.name} email={c.email || undefined} size={40} />
                       </View>
                     ))}

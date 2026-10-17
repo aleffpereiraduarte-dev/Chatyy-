@@ -75,7 +75,9 @@ function ramp(isDark) {
 
 export function fmtBytes(b) {
   const v = Math.max(0, Number(b) || 0);
-  if (v >= 1024 ** 4) return (v / 1024 ** 4).toFixed(2) + ' TB';
+  // [2026-10-17 qa-web] "58 MB de 1.00 TB" / "Livre 1024 GB": ≥1000 GB vira TB e
+  // sem zeros à toa ("1 TB", "1.5 TB").
+  if (v >= 1000 * 1024 ** 3) return String(Number((v / 1024 ** 4).toFixed(2))) + ' TB';
   if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(v >= 100 * 1024 ** 3 ? 0 : 1) + ' GB';
   if (v >= 1024 ** 2) return Math.round(v / 1024 ** 2) + ' MB';
   if (v >= 1024) return Math.round(v / 1024) + ' KB';

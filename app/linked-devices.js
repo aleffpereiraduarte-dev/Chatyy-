@@ -297,7 +297,7 @@ export default function LinkedDevicesScreen() {
         icon={Icon}
         title={deviceLabel}
         subtitle={sub}
-        subtitleLines={2}
+        subtitleLines={isCurrent ? 3 : 2 /* [2026-10-17 qa-web] o valor "Este dispositivo" estreita a coluna → meta quebra e cortava "Há 21m" */}
         value={isCurrent ? (t('devices.thisDevice') || 'This device') : undefined}
         chevron={false}
         onPress={isCurrent || busy ? undefined : () => revoke(item)}

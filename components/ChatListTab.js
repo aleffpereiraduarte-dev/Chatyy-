@@ -8512,6 +8512,24 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         )}
         {messageHits.map((hit) => {
           let snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
+          // [2026-10-17 qa-web] Payload JSON (contato/localização/enquete) vinha
+          // cru no resultado ('{"v":2,"name":...}') — mesmo rótulo da lista.
+          if (/^\s*\{/.test(String(snippet))) {
+            let _pj = null; try { _pj = JSON.parse(hit.content || snippet); } catch {}
+            const _ht0 = hit.type || hit.message_type || '';
+            if (_pj && typeof _pj === 'object') {
+              if (_ht0 === 'contact' || _pj.type === 'contact' || Array.isArray(_pj.contacts) || Array.isArray(_pj.phones)) {
+                let _cl = ''; try { _cl = require('./chat/contactShare').contactPreviewLabel(_pj, t); } catch {}
+                snippet = _cl || t('chat.contact') || 'Contato';
+              } else if (_ht0 === 'location' || typeof _pj.latitude === 'number') {
+                snippet = _pj.live ? (t('chat.liveLocation') || 'Localização ao vivo') : (t('chat.location') || 'Localização');
+              } else if (typeof _pj.question === 'string') {
+                snippet = _pj.question;
+              } else {
+                snippet = String(_pj.text || _pj.caption || _pj.reply_text || _pj.name || '');
+              }
+            }
+          }
           // [2026-10-10 qa-sweep] Hit de mídia (casou pelo nome do arquivo) vinha
           // com linha vazia; e o título era o local-part cru do REMETENTE
           // ("apitest") em vez do nome da conversa como na lista.
