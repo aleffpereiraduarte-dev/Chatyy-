@@ -537,16 +537,15 @@ function SettingsScreenInner() {
             headerLeft: undefined,
             headerBackVisible: true,
           }),
-          ...(activeCategory !== null ? {
-            headerSearchBarOptions: undefined,
-          } : {
-            search: {
-              placeholder: t('settings.searchPlaceholder') || 'Buscar configuração...',
-              onChangeText: (e) => setSearchQuery(e?.nativeEvent?.text ?? ''),
-              onCancelButtonPress: () => setSearchQuery(''),
-              onClose: () => setSearchQuery(''),
-            },
-          }),
+          // [2026-10-17 settings-search-overlap] SEM busca NATIVA no header.
+          // UISearchController (placement stacked) entrava via setOptions DEPOIS
+          // do 1º frame, com o título grande já montado pelo _layout + lista
+          // nativa (setContentScrollView) → no iOS a barra era desenhada POR
+          // CIMA do título grande e o slot dela virava um vão vazio acima do
+          // avatar. A busca agora é a barra JS (searchBarNode) logo abaixo do
+          // título, 1º item do conteúdo (rola junto, como o Ajustes/WhatsApp).
+          // Explícito (setOptions MESCLA): nunca herdar uma busca anterior.
+          headerSearchBarOptions: undefined,
         })} />
       ) : (
         <View style={[s.header, { backgroundColor: gc.pageBg, borderBottomColor: colors.border }]}>
@@ -585,7 +584,7 @@ function SettingsScreenInner() {
               <NativeSettingsList
                 rows={nativeSections}
                 query={searchQuery}
-                header={searching ? null : heroNode}
+                header={<>{searchBarNode}{searching ? null : heroNode}</>}
                 isDark={isDark}
                 palette={gc}
                 maxWidth={contentMaxWidth}
@@ -613,7 +612,7 @@ function SettingsScreenInner() {
                   >
                     {activeCategory === null && !twoPane ? (
                       <>
-                        {!USE_NATIVE_HEADER && searchBarNode}
+                        {searchBarNode}
                         {searching ? searchResultsNode : homeListNode}
                       </>
                     ) : activeCategory ? (

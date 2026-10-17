@@ -994,3 +994,15 @@ export function IconReels({ size, color, style }) {
 export function IconBroadcast({ size, color, style }) {
   return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="2"/><Path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><Path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><Path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><Path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></I>;
 }
+
+// [2026-10-17 live-setup] Virar câmera (Lucide "switch-camera"): moldura da
+// câmera aberta com duas setas girando — substitui o glifo antigo do pré-live.
+export function IconSwitchCamera({ size, color, style, strokeWidth }) {
+  return <I size={size} color={color} style={style} strokeWidth={strokeWidth}><Path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/><Path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/><Circle cx="12" cy="12" r="3"/><Path d="M18 22l-3-3 3-3"/><Path d="M6 2l3 3-3 3"/></I>;
+}
+
+// [2026-10-17 live-setup] Efeitos/beleza — brilho em CONTORNO (Lucide
+// "sparkles"), mesmo traço dos demais ícones (o IconSparkles é preenchido).
+export function IconSparklesOutline({ size, color, style, strokeWidth }) {
+  return <I size={size} color={color} style={style} strokeWidth={strokeWidth}><Path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96l-6.14 1.58a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/><Path d="M20 3v4"/><Path d="M22 5h-4"/><Path d="M4 17v2"/><Path d="M5 18H3"/></I>;
+}

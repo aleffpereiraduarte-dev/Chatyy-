@@ -24861,14 +24861,27 @@ function ChatConversationInner() {
     setForwardComment('');
     setForwardSelected(new Set());
     afterRNModal(() => setForwardMsg(msg), _fromCtx);
-    setForwardLoading(true);
+    // [2026-10-17 fwd-empty] "Nenhuma conversa disponível" quando o chat_list
+    // falhava (rede/edge): mostra na hora a lista em cache (mesma da aba Conversas)
+    // e só troca pela do servidor se ela vier; 1 nova tentativa antes de desistir.
+    const _sortFwd = (convs) => [...convs].filter(c => c && c.id != null && !c.archived)
+      .sort((a, b) => (String(b.id) === String(conversationId)) - (String(a.id) === String(conversationId)));
+    let _cached = [];
+    try { _cached = SmartCache.getCachedConversationsSync() || []; } catch {}
+    if (_cached.length) setForwardConversations(_sortFwd(_cached));
+    setForwardLoading(_cached.length === 0);
     try {
-      const r = await api.chatConversations();
-      if (r.success) {
-        const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-        setForwardConversations([...convs].sort((a, b) => (String(b.id) === String(conversationId)) - (String(a.id) === String(conversationId))));
+      let convs = null;
+      for (let _try = 0; _try < 2 && !convs; _try++) {
+        try {
+          const r = await api.chatConversations();
+          const list = r?.success ? (Array.isArray(r.data) ? r.data : (r.data?.conversations || [])) : null;
+          if (list && (list.length || !_cached.length)) convs = list;
+        } catch {}
+        if (!convs && _try === 0) await new Promise(res => setTimeout(res, 800));
       }
-    } catch {} finally {
+      if (convs) setForwardConversations(_sortFwd(convs));
+    } finally {
       setForwardLoading(false);
     }
   };

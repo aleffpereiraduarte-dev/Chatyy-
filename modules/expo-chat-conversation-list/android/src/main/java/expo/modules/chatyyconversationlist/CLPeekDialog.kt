@@ -12,6 +12,13 @@ package expo.modules.chatyyconversationlist
 // min(45% da tela, tela − barras − menu) e mostra as ÚLTIMAS mensagens
 // ancoradas embaixo (fade no topo); mídia com miniatura real, hora e recibo
 // ✓/✓✓/azul em todos os balões. Se nem o menu couber, ele rola.
+// [2026-10-17 peek-fixed] (prints do founder: prévia alta numa conversa,
+// baixinha noutra): a altura vinha do CONTEÚDO e o bloco era centralizado
+// (posição variava). Agora igual ao WhatsApp: cartão SEMPRE do mesmo tamanho =
+// fração fixa da tela (padrão 42%, prop JS `peekHeight`), limitada pelo pior
+// caso de menu; mensagens ancoradas EMBAIXO (espaço vazio em cima quando são
+// poucas) e o bloco cartão+menu numa posição fixa (topo calculado com o menu
+// do pior caso) → menu sempre logo abaixo, no mesmo lugar.
 
 import android.app.Activity
 import android.app.Dialog
@@ -45,8 +52,16 @@ internal class CLPeekDialog(
   private val labels: CLLabels,
   private val onOpen: () -> Unit,
   private val onAction: (String) -> Unit,
-  private val onClosed: () -> Unit
+  private val onClosed: () -> Unit,
+  heightFraction: Double = 0.0
 ) {
+  private val fraction: Float =
+    if (heightFraction in 0.2..0.7) heightFraction.toFloat() else DEFAULT_FRACTION
+
+  companion object {
+    const val DEFAULT_FRACTION = 0.42f
+  }
+
   val convId: String = row.id
 
   private class Msg(
@@ -67,6 +82,7 @@ internal class CLPeekDialog(
   private var menuView: View? = null
   private var messages: List<Msg> = emptyList()
   private var cardW = 0
+  private var card: LinearLayout? = null
   private var closed = false
   private val headerH get() = px(56f)
 
@@ -137,6 +153,7 @@ internal class CLPeekDialog(
 
     // Cartão: cabeçalho (avatar + nome) + balões.
     val card = LinearLayout(activity)
+    this.card = card
     card.orientation = LinearLayout.VERTICAL
     card.background = rounded(chatBg, 18f)
     card.clipToOutline = true
@@ -167,6 +184,8 @@ internal class CLPeekDialog(
     card.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, headerH))
 
     msgBox.orientation = LinearLayout.VERTICAL
+    // Poucas mensagens: ancoradas embaixo (minimumHeight = área fixa, ver fitHeights).
+    msgBox.gravity = Gravity.BOTTOM
     msgBox.setPadding(px(10f), px(10f), px(10f), px(12f))
     msgScroll.isVerticalScrollBarEnabled = false
     msgScroll.overScrollMode = View.OVER_SCROLL_NEVER
@@ -235,15 +254,16 @@ internal class CLPeekDialog(
     menuScroll = ms
     menuView = menu
 
-    val clp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+    // Posição FIXA (topo calculado em fitHeights), não centralizada pelo conteúdo.
+    val clp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
     root.addView(column, clp)
     dialog.setContentView(root)
     dialog.setCanceledOnTouchOutside(true)
     fitHeights()
   }
 
-  /** Altura útil da janela (sem barras de status/navegação) em px. */
-  private fun usableHeight(): Int {
+  /** Altura útil da janela (sem barras de status/navegação) em px + inset do topo. */
+  private fun usableHeight(): Pair<Int, Int> {
     val decor = activity.window?.decorView
     val h = if (decor != null && decor.height > 0) decor.height else activity.resources.displayMetrics.heightPixels
     var top = px(24f)
@@ -252,10 +272,14 @@ internal class CLPeekDialog(
       val ins = decor?.let { ViewCompat.getRootWindowInsets(it) }?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
       if (ins != null) { top = max(ins.top, px(12f)); bottom = max(ins.bottom, px(12f)) }
     } catch (_: Throwable) {}
-    return h - top - bottom
+    return Pair(h - top - bottom, top)
   }
 
-  /** Menu inteiro primeiro; a prévia fica com o resto (máx. 45% da tela). */
+  /**
+   * Cartão de altura FIXA (igual em toda conversa) + menu logo abaixo.
+   * Altura = fração da tela, limitada pelo menu do PIOR caso (com Bloquear)
+   * p/ não depender da linha; se nem assim couber, o menu rola.
+   */
   private fun fitHeights() {
     try {
       val mv = menuView ?: return
@@ -263,24 +287,33 @@ internal class CLPeekDialog(
       val menuW = (ms.layoutParams as? LinearLayout.LayoutParams)?.width ?: px(250f)
       mv.measure(View.MeasureSpec.makeMeasureSpec(menuW, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
       val menuH = mv.measuredHeight
-      msgBox.measure(View.MeasureSpec.makeMeasureSpec(cardW, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
-      val contentH = msgBox.measuredHeight
-      val usable = usableHeight() - px(24f)      // respiro nas bordas
+      // Pior caso: linha sem "Bloquear" ganha a altura de 1 item a mais.
+      val menuWorst = menuH + (if (row.blockLabel.isEmpty()) px(46f) + max(1, px(0.5f)) else 0)
+      val (usable0, insetTop) = usableHeight()
+      val usable = usable0 - px(24f)      // respiro nas bordas
       val gap = px(8f)
-      val minMsgs = min(contentH, px(72f))
       val screenH = activity.resources.displayMetrics.heightPixels
-      // Menu: tudo o que precisa, deixando ao menos cabeçalho + 1 balão.
-      val menuMax = max(px(46f) * 3, usable - gap - headerH - minMsgs)
-      val menuFinal = min(menuH, menuMax)
-      val cardMax = min((screenH * 0.45f).toInt(), usable - gap - menuFinal)
-      val msgsH = max(minMsgs, min(contentH, cardMax - headerH))
+      var cardH = (screenH * fraction).toInt()
+      cardH = min(cardH, max(usable - gap - menuWorst, (screenH * 0.28f).toInt()))
+      cardH = max(cardH, headerH + px(120f))
+      cardH = min(cardH, usable - gap - px(46f) * 3)
+      val msgsH = max(px(72f), cardH - headerH)
+      msgBox.minimumHeight = msgsH
       (msgScroll.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
-        lp.height = if (contentH > msgsH) msgsH else ViewGroup.LayoutParams.WRAP_CONTENT
+        lp.height = msgsH
         msgScroll.layoutParams = lp
       }
+      val menuMax = max(px(46f) * 3, usable - gap - headerH - msgsH)
+      val menuFinal = min(menuH, menuMax)
       (ms.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
         lp.height = if (menuH > menuFinal) menuFinal else ViewGroup.LayoutParams.WRAP_CONTENT
         ms.layoutParams = lp
+      }
+      // Topo fixo: bloco do pior caso centralizado na área útil.
+      val blockWorst = headerH + msgsH + gap + min(menuWorst, menuMax)
+      (column.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+        lp.topMargin = insetTop + px(12f) + max(0, (usable - blockWorst) / 2)
+        column.layoutParams = lp
       }
       // Últimas mensagens visíveis (ancoradas embaixo).
       msgScroll.post { msgScroll.scrollTo(0, max(0, msgBox.height - msgScroll.height)) }

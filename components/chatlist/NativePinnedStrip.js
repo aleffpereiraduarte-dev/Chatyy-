@@ -15,9 +15,9 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, View } from 'react-native';
-import { getNativePinnedStripView } from '../../modules/expo-chat-conversation-list';
+import { getNativePinnedStripView, pinnedStripApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, rowEqual } from './nativeAdapter';
-import { buildPeekItems } from './peekItems';
+import { buildPeekItems, peekHeightFraction } from './peekItems';
 
 function _lazy(fn) {
   let v; let done = false;
@@ -263,9 +263,18 @@ function PinnedStripInner({ data, actionsRef, avatarSize, height }) {
   }, [actionsRef]);
 
   if (!Native) return null;
+  // [2026-10-17 peek-fixed] prévia de altura fixa (iOS api >= 2; Android sem peek aqui).
+  let peekHeightProps = null;
+  try {
+    if (Platform.OS === 'ios' && pinnedStripApiVersion() >= 2) {
+      const f = peekHeightFraction();
+      if (f > 0) peekHeightProps = { peekHeight: f };
+    }
+  } catch {}
   return (
     <Native
       style={{ height, alignSelf: 'stretch' }}
+      {...peekHeightProps}
       items={items}
       dark={!!isDark}
       labels={labels}

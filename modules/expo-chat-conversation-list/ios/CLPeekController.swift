@@ -8,6 +8,14 @@ import UIKit
 // fora da tela — sumiam Bloquear/Reportar/Apagar):
 //   • altura MÁXIMA = min(45% da tela, tela − áreas seguras − menu estimado)
 //     → o menu do UIContextMenu sempre cabe inteiro;
+// [2026-10-17 peek-fixed] (prints do founder: uma prévia alta com várias
+// mensagens, outra baixinha com 1 balão): a altura vinha do CONTEÚDO
+// (min(máx, conteúdo)) e o teto dependia do menu DAQUELA linha (fixada /
+// bloquear mudam o nº de itens). Agora é igual ao WhatsApp: cartão SEMPRE do
+// mesmo tamanho = fração fixa da tela (padrão 42%, prop JS `peekHeight`),
+// limitada pelo PIOR caso de menu (não o da linha) → idêntico em toda
+// conversa; mensagens ancoradas embaixo e espaço vazio em cima quando são
+// poucas; o tamanho não muda quando o JS completa a prévia.
 //   • mostra as ÚLTIMAS mensagens ancoradas embaixo, com fade no topo quando
 //     há mais conteúdo acima;
 //   • mídia com miniatura real (foto/vídeo/GIF/figurinha: `u` = arquivo local,
@@ -35,6 +43,8 @@ final class CLPeekController: UIViewController {
   private var row: CLRow
   private let theme: CLTheme
   private let menuHeight: CGFloat
+  /// Fração da altura da tela p/ o cartão (0 = padrão nativo). Prop JS `peekHeight`.
+  private let heightFraction: CGFloat
   private weak var hostWindow: UIWindow?
   private let header = UIView()
   private let avatar = CLAvatarView()
@@ -46,11 +56,14 @@ final class CLPeekController: UIViewController {
   private var messages: [CLPeekMessage] = []
   private static let headerH: CGFloat = 60
 
-  init(row: CLRow, theme: CLTheme, menuHeight: CGFloat = 0, window: UIWindow? = nil) {
+  static let defaultHeightFraction: CGFloat = 0.42
+
+  init(row: CLRow, theme: CLTheme, menuHeight: CGFloat = 0, window: UIWindow? = nil, heightFraction: CGFloat = 0) {
     self.convId = row.id
     self.row = row
     self.theme = theme
     self.menuHeight = menuHeight
+    self.heightFraction = (heightFraction >= 0.2 && heightFraction <= 0.7) ? heightFraction : CLPeekController.defaultHeightFraction
     self.hostWindow = window
     super.init(nibName: nil, bundle: nil)
   }
@@ -113,9 +126,12 @@ final class CLPeekController: UIViewController {
     if isViewLoaded { rebuild() }
   }
 
-  // MARK: - Altura máxima (menu sempre inteiro)
+  // MARK: - Altura FIXA (igual em toda conversa; menu sempre inteiro)
 
-  private func maxHeight() -> CGFloat {
+  /// Altura do cartão: fração fixa da tela, limitada pelo PIOR caso de menu
+  /// (`menuHeight` = estimativa máxima, a mesma p/ toda linha) → o mesmo
+  /// tamanho em qualquer conversa, independente de quantas mensagens há.
+  private func fixedHeight() -> CGFloat {
     var screenH = UIScreen.main.bounds.height
     var insets = UIEdgeInsets(top: 47, left: 0, bottom: 34, right: 0)
     if let w = hostWindow ?? view.window {
@@ -123,12 +139,13 @@ final class CLPeekController: UIViewController {
       insets = w.safeAreaInsets
     }
     let usable = screenH - max(insets.top, 20) - max(insets.bottom, 12)
-    var cap = min(screenH * 0.45, 560)
+    var h = min(screenH * heightFraction, 560)
     if menuHeight > 0 {
-      // 12 pt entre prévia e menu + 12 pt de respiro nas bordas.
-      cap = min(cap, usable - menuHeight - 24)
+      // 12 pt entre prévia e menu + 12 pt de respiro nas bordas; nunca abaixo
+      // de 28% da tela (telas pequenas: o menu do sistema rola).
+      h = min(h, max(usable - menuHeight - 24, screenH * 0.28))
     }
-    return max(CLPeekController.headerH + 64, cap)
+    return floor(max(CLPeekController.headerH + 120, h))
   }
 
   // MARK: - Balões
@@ -341,9 +358,8 @@ final class CLPeekController: UIViewController {
     stack.frame = CGRect(x: 12, y: 0, width: width - 24, height: 10)
     stack.setNeedsLayout()
     stack.layoutIfNeeded()
-    let contentH = max(40, contentFit(width: width - 24))
-    let h = min(maxHeight(), CLPeekController.headerH + 12 + contentH + 12)
-    preferredContentSize = CGSize(width: width, height: h)
+    // Tamanho FIXO: não depende do conteúdo (nem muda quando o JS completa).
+    preferredContentSize = CGSize(width: width, height: fixedHeight())
     view.setNeedsLayout()
   }
 
@@ -360,8 +376,10 @@ final class CLPeekController: UIViewController {
     scroll.frame = clip.bounds
     let sw = w - 24
     let fh = contentFit(width: sw)
-    stack.frame = CGRect(x: 12, y: 12, width: sw, height: fh)
-    scroll.contentSize = CGSize(width: w, height: fh + 24)
+    // Poucas mensagens: ancoradas EMBAIXO, espaço vazio em cima (WhatsApp).
+    let topY = max(12, scroll.bounds.height - fh - 12)
+    stack.frame = CGRect(x: 12, y: topY, width: sw, height: fh)
+    scroll.contentSize = CGSize(width: w, height: max(fh + 24, scroll.bounds.height))
     // Mostra as mais recentes (fim da conversa), ancoradas embaixo (WhatsApp).
     let maxOff = max(0, scroll.contentSize.height - scroll.bounds.height)
     scroll.contentOffset = CGPoint(x: 0, y: maxOff)

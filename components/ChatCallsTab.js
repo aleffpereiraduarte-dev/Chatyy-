@@ -471,11 +471,13 @@ const DTMF_KEYS = [
 // "Perdidas". Chips P&B (ativo = preenchido); contador de perdidas no vermelho
 // padrão das ligações perdidas. "Telefone" só com PSTN ou histórico de telefone.
 // ============================================================
+// [2026-10-17 sem-pstn] Sem PSTN toda ligação é Chatyy → só "Todas / Perdidas"
+// (igual WhatsApp); "Chatyy" e "Telefone" só voltam com o kill switch ligado.
 const CallFilterChips = memo(function CallFilterChips({ activeTab, onTabChange, isDark, t, missedCount, showPhone }) {
   const tabs = [
     { key: 'recent', label: t?.('calls.filterAll') || 'Todas' },
     { key: 'missed', label: t?.('calls.filterMissed') || 'Perdidas', count: missedCount },
-    { key: 'chatyy', label: t?.('calls.chatyy') || 'Chatyy' },
+    showPhone ? { key: 'chatyy', label: t?.('calls.chatyy') || 'Chatyy' } : null,
     showPhone ? { key: 'phone', label: t?.('calls.phone') || 'Telefone' } : null,
   ].filter(Boolean);
   const ink = isDark ? '#F5F5F7' : '#111111';
@@ -3453,6 +3455,11 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     // which makes sort order non-deterministic and can swap "Hoje" rows
     // into "Ontem" buckets on subsequent renders. Treat missing times as 0
     // so they sink to the bottom predictably.
+    // [2026-10-17 sem-pstn] Sem PSTN: histórico de telefone (+55…) não aparece em
+    // lugar nenhum (Todas, Perdidas, contador). Kill switch religa tudo.
+    if (!isPstnEnabled()) {
+      for (let i = merged.length - 1; i >= 0; i--) if (merged[i].source === 'voip') merged.splice(i, 1);
+    }
     merged.sort((a, b) => {
       const ta = a?.timestamp ? new Date(a.timestamp).getTime() : 0;
       const tb = b?.timestamp ? new Date(b.timestamp).getTime() : 0;
@@ -3461,17 +3468,19 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     return merged;
   }, [voipHistory, chatCalls, phoneContactsList]);
 
+  // [2026-10-17 sem-pstn] filtro 'phone'/'chatyy' sem chip visível → volta p/ Todas.
+  const _filterTab = (!isPstnEnabled() && (activeTab === 'phone' || activeTab === 'chatyy')) ? 'recent' : activeTab;
+  useEffect(() => { if (_filterTab !== activeTab) setActiveTab('recent'); }, [_filterTab, activeTab]);
   const filteredHistory = useMemo(() => {
-    switch (activeTab) {
+    switch (_filterTab) {
       case 'missed': return allHistory.filter(h => callDirection(h) === 'missed');
       case 'chatyy': return allHistory.filter(h => h.source === 'chat');
       case 'phone': return allHistory.filter(h => h.source === 'voip');
       default: return allHistory;
     }
-  }, [allHistory, activeTab]);
+  }, [allHistory, _filterTab]);
   // [2026-10-16 wave12-D] contador do chip "Perdidas" + "Telefone" só se fizer sentido.
   const missedCount = useMemo(() => allHistory.reduce((n, h) => n + (callDirection(h) === 'missed' ? 1 : 0), 0), [allHistory]);
-  const hasPhoneRows = useMemo(() => allHistory.some(h => h.source === 'voip'), [allHistory]);
   // [2026-10-17 sem-pstn] recentes da folha "Nova chamada" (só contas Chatyy, 1:1).
   const newCallRecent = useMemo(() => {
     const out = []; const seen = new Set();
@@ -3612,12 +3621,12 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           />
         </Sheet>
         <CallFilterChips
-          activeTab={activeTab}
+          activeTab={_filterTab}
           onTabChange={setActiveTab}
           isDark={isDark}
           t={t}
           missedCount={missedCount}
-          showPhone={isPstnEnabled() || hasPhoneRows || activeTab === 'phone'}
+          showPhone={isPstnEnabled()}
         />
         <MyCallLinksSheet visible={myLinksOpen} onClose={() => setMyLinksOpen(false)} t={t} language={language} />
       </View>

@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, createPatcher } from './nativeAdapter';
-import { buildPeekItems } from './peekItems';
+import { buildPeekItems, peekHeightFraction } from './peekItems';
 
 class NativeListBoundary extends React.Component {
   constructor(props) {
@@ -313,6 +313,15 @@ function NativeConversationListInner(props) {
     // contador iOS/Android). Só vai quando DESLIGADO (binário sem a prop ignora).
     ...(globalThis.__chatyy_motion_list_spring === false ? { springMotion: false } : null),
   } : null;
+  // [2026-10-17 peek-fixed] prévia de altura fixa: fração da tela (binário com
+  // a prop = lista iOS api >= 4 / Android api >= 5; antigo nem recebe).
+  let peekHeightProps = null;
+  try {
+    if (_clApiVersion() >= (Platform.OS === 'android' ? 5 : 4)) {
+      const f = peekHeightFraction();
+      if (f > 0) peekHeightProps = { peekHeight: f };
+    }
+  } catch {}
 
   if (!Native) return null;
   return (
@@ -334,6 +343,7 @@ function NativeConversationListInner(props) {
       scrollToTopSeq={scrollToTopSeq}
       {...(homeStore ? { store: homeStore } : null)}
       {...wave8Props}
+      {...peekHeightProps}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>

@@ -7,8 +7,9 @@ public class ChatyyPinnedStripModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyPinnedStrip")
 
+    // 2 = [2026-10-17 peek-fixed] prévia de altura fixa + prop `peekHeight`.
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(ChatyyPinnedStripView.self) {
@@ -38,6 +39,9 @@ public class ChatyyPinnedStripModule: Module {
       }
       Prop("peek") { (view: ChatyyPinnedStripView, value: [String: Any]?) in
         view.setPeek(value)
+      }
+      Prop("peekHeight") { (view: ChatyyPinnedStripView, value: Double?) in
+        view.peekHeight = CGFloat(value ?? 0)
       }
       Prop("avatarSize") { (view: ChatyyPinnedStripView, value: Double?) in
         view.setAvatarSize(CGFloat(value ?? 72))

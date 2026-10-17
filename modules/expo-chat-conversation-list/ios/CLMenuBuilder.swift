@@ -31,6 +31,13 @@ enum CLMenuBuilder {
     return CGFloat(top + danger) * rowH + rowH * 0.5 + 12 + 16
   }
 
+  /// [2026-10-17 peek-fixed] Pior caso do menu (com Bloquear e "Reorganizar
+  /// fixados"): a prévia usa ESTE valor p/ ter a mesma altura em toda conversa.
+  static func maxEstimatedHeight() -> CGFloat {
+    let rowH = UIFontMetrics.default.scaledValue(for: 46)
+    return CGFloat(8 + 3) * rowH + rowH * 0.5 + 12 + 16
+  }
+
   /// `afterPin`: itens extras logo depois de Fixar/Desafixar (ex.: "Reorganizar
   /// fixados" na fileira de fixados).
   static func rowMenu(id: String, row: CLRow, labels L: CLLabels, folders: [CLFolder],

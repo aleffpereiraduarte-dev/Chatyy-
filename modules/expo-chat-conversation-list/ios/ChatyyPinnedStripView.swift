@@ -350,6 +350,8 @@ public final class ChatyyPinnedStripView: ExpoView, UICollectionViewDataSource, 
 
   private weak var peekController: CLPeekController?
   private var lastPeek: [String: Any]?
+  /// [2026-10-17 peek-fixed] fração da tela p/ o cartão da prévia (0 = padrão).
+  var peekHeight: CGFloat = 0
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -659,7 +661,7 @@ public final class ChatyyPinnedStripView: ExpoView, UICollectionViewDataSource, 
     onPeekRequest(["id": id])
     let theme = self.theme
     return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: { [weak self] in
-      let vc = CLPeekController(row: row, theme: theme, menuHeight: CLMenuBuilder.estimatedHeight(row: row, extraItems: (row.pinned && (self?.ids.count ?? 0) > 1) ? 1 : 0), window: self?.window)
+      let vc = CLPeekController(row: row, theme: theme, menuHeight: CLMenuBuilder.maxEstimatedHeight(), window: self?.window, heightFraction: self?.peekHeight ?? 0)
       if let p = self?.lastPeek, CLVal.str(p["id"]) == id { vc.update(p) }
       self?.peekController = vc
       return vc as UIViewController

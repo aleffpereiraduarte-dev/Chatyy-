@@ -227,6 +227,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private var peekMode = "menu"
   private var peekDialog: CLPeekDialog? = null
   private var lastPeek: Map<String, Any?>? = null
+  /** [2026-10-17 peek-fixed] fração da tela p/ o cartão da prévia (0 = padrão). */
+  var peekHeight: Double = 0.0
 
   // Filhos RN
   private val rnChildren = ArrayList<View>()
@@ -645,7 +647,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     val dlg = CLPeekDialog(act, row, theme, labels,
       onOpen = { onPeekOpen(mapOf("id" to id)) },
       onAction = { action -> onRowAction(mapOf("id" to id, "action" to action, "source" to "peek")) },
-      onClosed = { if (peekDialog?.convId == id) peekDialog = null })
+      onClosed = { if (peekDialog?.convId == id) peekDialog = null },
+      heightFraction = peekHeight)
     peekDialog = dlg
     lastPeek?.let { if (CLVal.str(it["id"]) == id) dlg.update(it) }
     onPeekRequest(mapOf("id" to id))

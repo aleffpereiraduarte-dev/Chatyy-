@@ -19,7 +19,9 @@ class ChatyyConversationListModule : Module() {
     // 4 = [2026-10-16 topbar-hairline] vidro do topo recalculado após o layout
     //     (antes ficava com hairline presa sob o header ao ligar o topInset).
     //     O JS só liga o header sobreposto no Android com api >= 4.
-    Function("apiVersion") { 4 }
+    // 5 = [2026-10-17 peek-fixed] prévia (peekMode "peek") com cartão de altura
+    //     FIXA igual em toda conversa + prop `peekHeight` (fração da tela).
+    Function("apiVersion") { 5 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -55,6 +57,7 @@ class ChatyyConversationListModule : Module() {
       Prop("topInset") { view: ChatyyConversationListView, v: Double? -> view.setTopInset(v ?: 0.0) }
       Prop("snapOffset") { view: ChatyyConversationListView, v: Double? -> view.setSnapOffset(v ?: 0.0) }
       Prop("peekMode") { view: ChatyyConversationListView, v: String? -> view.setPeekModeProp(v) }
+      Prop("peekHeight") { view: ChatyyConversationListView, v: Double? -> view.peekHeight = v ?: 0.0 }
       // [2026-10-16 motion-nav] kill switch das molas da lista (JS só manda quando false).
       Prop("springMotion") { _: ChatyyConversationListView, v: Boolean? -> CLSpring.enabled = v ?: true }
 

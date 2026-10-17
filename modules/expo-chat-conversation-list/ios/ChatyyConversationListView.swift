@@ -137,6 +137,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   // Peek
   private weak var peekController: CLPeekController?
   private var lastPeek: [String: Any]?
+  /// [2026-10-17 peek-fixed] fração da tela p/ o cartão da prévia (0 = padrão).
+  var peekHeight: CGFloat = 0
 
   // [2026-10-15 native-store fase 1.5] Foto da HOME no store nativo. Prop
   // `store` {a: conta, r: rev do formato, n: assinatura da 1ª linha do JS, s:
@@ -684,7 +686,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     onPeekRequest(["id": id])
     let theme = self.theme
     return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: { [weak self] in
-      let vc = CLPeekController(row: row, theme: theme, menuHeight: CLMenuBuilder.estimatedHeight(row: row), window: self?.window)
+      let vc = CLPeekController(row: row, theme: theme, menuHeight: CLMenuBuilder.maxEstimatedHeight(), window: self?.window, heightFraction: self?.peekHeight ?? 0)
       if let p = self?.lastPeek, CLVal.str(p["id"]) == id { vc.update(p) }
       self?.peekController = vc
       return vc as UIViewController

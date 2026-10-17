@@ -84,6 +84,7 @@ export const PINNED_STRIP_VIEW_NAME = 'ChatyyPinnedStrip';
 
 let _pinsChecked = false;
 let _pinsView: any = null;
+let _pinsApi = 0;
 
 function _probePins() {
   if (_pinsChecked) return;
@@ -98,6 +99,7 @@ function _probePins() {
     if (!mod) return;
     let api = 0;
     try { api = typeof mod.apiVersion === 'function' ? Number(mod.apiVersion()) || 0 : 0; } catch { api = 0; }
+    _pinsApi = api;
     if (api < 1) return;
     const req = core.requireNativeViewManager || core.requireNativeView;
     if (typeof req === 'function') _pinsView = req(PINNED_STRIP_VIEW_NAME);
@@ -110,6 +112,12 @@ function _probePins() {
 export function getNativePinnedStripView(): any {
   _probePins();
   return _pinsView;
+}
+
+/** apiVersion da ChatyyPinnedStrip (0 = ausente). iOS 2 = prop `peekHeight`. */
+export function pinnedStripApiVersion(): number {
+  _probePins();
+  return _pinsApi;
 }
 
 export function isPinnedStripAvailable(): boolean {

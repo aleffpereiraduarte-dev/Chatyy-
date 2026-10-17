@@ -202,3 +202,18 @@ export function buildPeekItems(conv, c) {
   }
   return items.slice(-12);
 }
+
+// [2026-10-17 peek-fixed] Altura do cartão da prévia (toque longo) = fração
+// FIXA da tela, a mesma em toda conversa (WhatsApp). O nativo novo já usa 0.42
+// por padrão; esta prop só permite ajustar por OTA (binários com a prop:
+// lista iOS api >= 4 / Android api >= 5, fixados iOS api >= 2 — o chamador
+// checa). Ajuste: globalThis.__chatyy_peek_height = 0.2..0.7; false = não
+// manda a prop (nativo usa o padrão).
+export const PEEK_HEIGHT_DEFAULT = 0.42;
+export function peekHeightFraction() {
+  const g = globalThis.__chatyy_peek_height;
+  if (g === false) return 0;
+  const n = Number(g);
+  if (g != null && Number.isFinite(n) && n >= 0.2 && n <= 0.7) return n;
+  return PEEK_HEIGHT_DEFAULT;
+}

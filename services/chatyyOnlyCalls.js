@@ -8,6 +8,17 @@ import { Platform } from 'react-native';
 
 const _tr = (t, k, fb) => { try { const v = typeof t === 'function' ? t(k) : ''; return v && v !== k ? v : fb; } catch { return fb; } };
 
+// Linha de histórico que é ligação de TELEFONE (PSTN/Twilio/VoIP) — o servidor
+// guarda o número em contact_email ("+5533...") ou marca phone_call. Com PSTN
+// desligado essas linhas somem da aba Ligações (lista, Perdidas, badge).
+export function isPstnHistoryRow(c) {
+  if (!c) return false;
+  if (c.source === 'voip' || c.to_number) return true;
+  if (c.phoneCall || c.phone_call) return true;
+  const ce = String(c.contactEmail || c.contact_email || '').trim();
+  return !!ce && !ce.includes('@') && /^\+?\d{6,}$/.test(ce.replace(/[\s()-]/g, ''));
+}
+
 // Ligação Chatyy 1:1 por e-mail (mesmo caminho do rediscar do histórico).
 export async function startChatyyCall({ email, name, video, conversationId, router } = {}) {
   const calleeEmail = String(email || '').trim();

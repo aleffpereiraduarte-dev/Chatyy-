@@ -584,8 +584,14 @@ function ChatHub() {
             lastSeen = Number(getString?.('calls_last_seen_ts') || 0);
           }
         } catch {}
+        // [2026-10-17 sem-pstn] ligações de telefone (PSTN) não contam no badge.
+        let _skipPstn = null;
+        try {
+          if (!require('../constants/featureFlags').isPstnEnabled()) _skipPstn = require('../services/chatyyOnlyCalls').isPstnHistoryRow;
+        } catch {}
         count = (cached || []).reduce((acc, c) => {
           if (c?.type !== 'missed') return acc;
+          if (_skipPstn && _skipPstn(c)) return acc;
           if (c?.read === true || c?.read === 1) return acc;
           // Normalize timestamp: server may return seconds or ms.
           const raw = c?.timestamp ?? c?.created_at;

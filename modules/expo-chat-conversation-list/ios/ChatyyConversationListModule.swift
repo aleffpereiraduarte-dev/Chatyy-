@@ -28,9 +28,11 @@ public class ChatyyConversationListModule: Module {
     // 3 = [2026-10-16 wave8-list] props `topInset` (header do app por cima da
     //     lista + vidro nativo no topo) e `snapOffset` (snap do título grande);
     //     dígitos rolando, ✓→✓✓ animado, reordenação com mola (sem contrato).
+    // 4 = [2026-10-17 peek-fixed] prévia do toque longo com altura FIXA
+    //     (igual em toda conversa) + prop `peekHeight` (fração da tela).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 3
+      return 4
       #else
       return 1
       #endif
@@ -84,6 +86,9 @@ public class ChatyyConversationListModule: Module {
       }
       Prop("peek") { (view: ChatyyConversationListView, value: [String: Any]?) in
         view.setPeek(value)
+      }
+      Prop("peekHeight") { (view: ChatyyConversationListView, value: Double?) in
+        view.peekHeight = CGFloat(value ?? 0)
       }
       Prop("swipeEnabled") { (view: ChatyyConversationListView, value: Bool?) in
         view.swipeEnabled = value ?? true
