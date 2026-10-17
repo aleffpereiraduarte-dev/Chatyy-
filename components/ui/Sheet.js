@@ -300,7 +300,8 @@ export default function Sheet({
       statusBarTranslucent
       onRequestClose={requestClose}
     >
-      <DragSheetRoot style={StyleSheet.absoluteFill} testID={testID}>
+      {/* [2026-10-17 freeze] saindo (visible=false, animação de saída): nada dentro aceita toque */}
+      <DragSheetRoot style={StyleSheet.absoluteFill} testID={testID} pointerEvents={visible ? 'auto' : 'none'}>
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
           <BlurBackdrop isDark={isDark} dim={Overlay.backdrop} />
           <Pressable

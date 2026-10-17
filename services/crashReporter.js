@@ -732,4 +732,6 @@ export function installCrashReporter() {
   setTimeout(() => _post('boot_alive_1s'), 1000);
   setTimeout(() => _post('boot_alive_5s'), 5000);
   setTimeout(() => _post('boot_alive_30s'), 30000);
+  // [2026-10-17 freeze] js_stall + prev_end (como o processo anterior morreu).
+  try { require('./freezeWatch').startFreezeWatch(); } catch {}
 }

@@ -61,6 +61,21 @@ export function useBlurHeaderInset(enabled = true) {
 // abaixo do header → o inset ajustado no topo é 0 (inofensivo); fica só o de
 // baixo. Android (Toolbar sólida) e web: no-op.
 export const IOS_NATIVE_INSET = USE_NATIVE_HEADER && Platform.OS === 'ios';
+// [2026-10-17 freeze 0x8BADF00D] Título GRANDE nativo + lista NATIVA (UICollectionView
+// registrada via setContentScrollView, contentInsetAdjustmentBehavior=.automatic,
+// cabeçalho RN dentro da lista) = laço infinito na main thread (crash do founder,
+// build 704, iOS 26.7): colapso do large title → safe area da tela muda → RNS
+// SafeAreaView (wrapper iOS 26 do react-native-screens) commita estado → layout →
+// UICollectionView _applyAutomaticAdjustedContentOffset → setContentOffset →
+// UINavigationController _observeScrollViewDidScroll → large title muda → … até o
+// watchdog matar o app ("trava e tenho que fechar"). Telas com lista nativa + autoInset
+// (wallet, notifications-feed, settings raiz) ficam com título PEQUENO até o fix nativo.
+// Religar (OTA): globalThis.__chatyy_native_list_large_title = true.
+export function nativeListLargeTitleOn() {
+  if (Platform.OS !== 'ios') return false;
+  try { if (globalThis.__chatyy_native_list_large_title === true) return true; } catch {}
+  return false;
+}
 export function nativeScrollInsetProps(enabled = true) {
   if (!enabled || !IOS_NATIVE_INSET) return null;
   return {

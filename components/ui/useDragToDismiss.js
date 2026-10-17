@@ -72,14 +72,17 @@ export default function useDragToDismiss({
   onRef.current = on;
   // Painel montado? (RN <Modal visible={false}> desmonta os filhos → fechou de verdade.)
   const panelMountedRef = useRef(false);
+  // [2026-10-17 freeze] Fechando pelo gesto: fundo/painel param de aceitar toque
+  // (painel fora da tela + fundo transparente não podem segurar o dedo).
+  const [closing, setClosing] = useState(false);
   const onPanelMount = useCallback((m) => {
     panelMountedRef.current = m;
-    if (!m) dragY.setValue(0); // próxima abertura nasce no lugar
+    if (!m) { dragY.setValue(0); setClosing(false); } // próxima abertura nasce no lugar
   }, [dragY]);
   // Scroller sob o dedo (DragScroll registra no onBegin/onTouchStart).
   const scrollRef = useRef(null); // { y: number } | null
 
-  useEffect(() => { if (visible) dragY.setValue(0); }, [visible, dragY]);
+  useEffect(() => { if (visible) { dragY.setValue(0); setClosing(false); } }, [visible, dragY]);
 
   const springBack = useCallback((vy = 0) => {
     Animated.spring(dragY, { toValue: 0, ...Springs.sheet, velocity: vy * 1000, useNativeDriver: USE_NATIVE }).start();
@@ -96,12 +99,14 @@ export default function useDragToDismiss({
       return;
     }
     const to = (panelHRef.current || winH) + 40;
+    setClosing(true);
     const done = () => {
+      // Mesmo caminho do X/fundo (onDismiss = onClose do dono).
       try { cbRef.current.onDismiss && cbRef.current.onDismiss(); } catch {}
       // Pai ignorou o fechamento → o painel volta. Sem `visible`: zera depois
       // da animação de saída do <Modal> (~300 ms).
       setTimeout(() => {
-        if (hasVisibleRef.current ? visibleRef.current : panelMountedRef.current) springBack(0);
+        if (hasVisibleRef.current ? visibleRef.current : panelMountedRef.current) { setClosing(false); springBack(0); }
       }, 450);
     };
     if (isReduceMotionEnabled()) {
@@ -198,8 +203,9 @@ export default function useDragToDismiss({
     scrollRef,
     primaryPosRef,
     _scrollClaimed: scrollClaimedRef,
-    reset: () => dragY.setValue(0),
-  }), [on, dragY, backdropOpacity, onPanelLayout, onPanelMount, gestures, pan]);
+    closing,
+    reset: () => { dragY.setValue(0); setClosing(false); },
+  }), [on, dragY, backdropOpacity, onPanelLayout, onPanelMount, gestures, pan, closing]);
 }
 
 // Raiz do gesto dentro do <Modal> RN (outra janela/raiz: RNGH precisa da própria).
@@ -300,7 +306,7 @@ export function DragScroll({ drag, children, disabled = false }) {
 // `inline`: ocupa o espaço ACIMA do painel (flex:1, irmão anterior) em vez de absoluto.
 export function DragBackdrop({ drag, color = 'rgba(0,0,0,0.5)', onPress, style, accessibilityLabel, inline = false }) {
   return (
-    <Animated.View pointerEvents={onPress ? 'auto' : 'none'} style={[inline ? styles.fill : StyleSheet.absoluteFill, { backgroundColor: color }, drag && drag.enabled ? drag.backdropStyle : null, style]}>
+    <Animated.View pointerEvents={onPress && !(drag && drag.closing) ? 'auto' : 'none'} style={[inline ? styles.fill : StyleSheet.absoluteFill, { backgroundColor: color }, drag && drag.enabled ? drag.backdropStyle : null, style]}>
       {onPress ? (
         <Pressable style={StyleSheet.absoluteFill} onPress={onPress} accessibilityRole="button" accessibilityLabel={accessibilityLabel || 'Fechar'} />
       ) : null}

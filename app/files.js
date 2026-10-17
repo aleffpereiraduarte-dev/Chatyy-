@@ -820,7 +820,10 @@ function SmartAlbumChips({ activeAlbum, onSelect, albumCounts, colors, isDark, t
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 8, paddingVertical: 10 }}
+      // [2026-10-17 chips-clip] Sem isto a coluna (flex:1 + linha do tempo) espremia
+      // a faixa de chips e o texto saía cortado (fonte grande no iOS).
+      style={{ flexGrow: 0, flexShrink: 0 }}
+      contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 8, paddingVertical: 10, alignItems: 'center' }}
     >
       {albums.map((a) => {
         const isActive = activeAlbum === a.key;
@@ -879,7 +882,8 @@ function FilterChips({ activeFilter, onSelect, colors, isDark, t }) {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 6, paddingVertical: 8 }}
+      style={{ flexGrow: 0, flexShrink: 0 }}
+      contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 6, paddingVertical: 8, alignItems: 'center' }}
     >
       {filters.map((f) => {
         const isActive = activeFilter === f.key;

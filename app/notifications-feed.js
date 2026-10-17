@@ -4,7 +4,7 @@ import {
   RefreshControl, Platform, Animated, Easing,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView, nativeListLargeTitleOn } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -328,7 +328,7 @@ export default function NotificationsFeedScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {USE_NATIVE_HEADER ? (
-        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('notifications.title'), largeTitle: true })} />
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('notifications.title'), largeTitle: nativeListLargeTitleOn(), headerLargeTitle: nativeListLargeTitleOn() })} /* [2026-10-17 freeze] large title + lista nativa = laço na main thread (nativeListLargeTitleOn) */ />
       ) : (
       <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Voltar'}>

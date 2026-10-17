@@ -21,7 +21,7 @@ import { View, Text, StyleSheet, FlatList, ActivityIndicator, ScrollView, Share,
 import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { useRouter, Redirect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView, IOS_NATIVE_INSET } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView, IOS_NATIVE_INSET, nativeListLargeTitleOn } from '../components/nativeHeader';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -742,7 +742,7 @@ function WalletScreen() {
       {USE_NATIVE_HEADER ? (
         // [2026-10-15 nav-motion] iOS: título grande que colapsa ao rolar (spring
         // do UINavigationBar). A FlatList é o 1º scrollable → o UIKit a acompanha.
-        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title, largeTitle: true, headerLargeStyle: { backgroundColor: s.bgGrouped } })} />
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title, largeTitle: nativeListLargeTitleOn(), headerLargeTitle: nativeListLargeTitleOn(), headerLargeStyle: { backgroundColor: s.bgGrouped } })} /* [2026-10-17 freeze] large title + lista nativa = laço na main thread (nativeListLargeTitleOn) */ />
       ) : (
         <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} maxWidth={Layout.contentMaxWidth} />
       )}

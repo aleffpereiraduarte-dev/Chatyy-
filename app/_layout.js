@@ -83,6 +83,9 @@ try {
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { isNativeTabletSplit } from '../utils/responsive'; // [2026-10-10 tablet-split]
 import '../services/disableLayoutAnimationIOS';
+import '../services/modalGuardIOS'; // [2026-10-17 freeze] serializa present/dismiss dos <Modal> no iOS (Modal órfão = toque bloqueado)
+import { setFreezeRoute as _setFreezeRoute, noteRootTouch as _noteRootTouch } from '../services/freezeWatch';
+import { nativeListLargeTitleOn as _nativeListLargeTitleOn } from '../components/nativeHeader'; // [2026-10-17 freeze 0x8BADF00D]
 // [2026-10-07 coldstart] Boot trace + native-splash owner + after-first-paint
 // scheduler. Imported this early so its T0 is as close to bundle start as
 // possible (imports evaluate in order).
@@ -1249,6 +1252,7 @@ function AppInit({ onNotification, setOtaToast }) {
     if (pathname && pathname !== pathnameRef.current) {
       pathnameRef.current = pathname;
       try { trackPageview(pathname); } catch {}
+      try { _setFreezeRoute(pathname); } catch {}
     }
   }, [pathname]);
 
@@ -2149,7 +2153,7 @@ export default function RootLayout() {
     // [2026-10-14 piscada-android] Raiz pintada com a cor do tema do app: qualquer
     // pixel não coberto por tela durante transição/abertura mostra o tema, não o
     // windowBackground nativo (cinza #303030 do DayNight no escuro em builds antigos).
-    <GestureHandlerRootView style={Platform.OS === 'web' ? { flex: 1 } : { flex: 1, backgroundColor: _navBg }}>
+    <GestureHandlerRootView onTouchStart={_noteRootTouch} style={Platform.OS === 'web' ? { flex: 1 } : { flex: 1, backgroundColor: _navBg }}>
     <ChatyyKeyboardProvider>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -2207,7 +2211,8 @@ export default function RootLayout() {
                   <Stack.Screen name="compose" options={{ ..._FULL_MODAL }} />
                   <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH, fullScreenGestureEnabled: false /* [2026-10-17 swipe-back] arrastar lateral no corpo troca de e-mail (read.js) → voltar pela BORDA */ }} />
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="settings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-15 nav-motion] nasce c/ título grande (o settings.js aplica o mesmo). [2026-10-17 swipe-back] categorias = /settings?section=<cat> empurradas (swipe-back nativo), também c/ título grande que colapsa */}
+                  <Stack.Screen name="settings" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? ((route?.params?.section || _nativeListLargeTitleOn()) ? _LARGE_TITLE_HDR : { headerStyle: { backgroundColor: _GROUPED_BG }, headerShadowVisible: false }) : {}) })} />{/* [2026-10-17 settings-light] raiz SEM título grande no iOS: lista nativa (UICollectionView) como content scroll view do título grande = loop de layout (watchdog 0x8BADF00D build 704). Categorias = rota leve /settings-section (abaixo) */}
+                  <Stack.Screen name="settings-section" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-17 settings-light] UMA categoria (components/settings/SettingsCategoryScreen.js): título grande que colapsa + swipe-back nativo */}{/* [2026-10-15 nav-motion] nasce c/ título grande (o settings.js aplica o mesmo). [2026-10-17 swipe-back] categorias = /settings?section=<cat> empurradas (swipe-back nativo), também c/ título grande que colapsa */}
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
@@ -2291,7 +2296,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
+                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' && _nativeListLargeTitleOn() ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

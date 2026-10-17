@@ -68,7 +68,6 @@ export default function AccountCategory() {
           />
         </SettingsGroup>
         <SettingsGroup>
-          <SettingsRow title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={() => safeNav('/settings-one')} />
           <SettingsRow title={t('linkedPhones.title')} onPress={() => safeNav('/linked-phones')} />
           <SettingsRow title={t('settings.linkedDevices')} onPress={() => safeNav('/linked-devices')} />
         </SettingsGroup>

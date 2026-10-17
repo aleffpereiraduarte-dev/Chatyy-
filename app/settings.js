@@ -25,7 +25,7 @@ import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } f
 import { SettingsHero, SettingsSpecialCards } from '../components/settings/SettingsHero';
 import { isReduceMotionEnabled } from '../components/reducedMotion';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset, nativeListLargeTitleOn } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResponsive } from '../utils/responsive';
 import { useTheme } from '../context/ThemeContext';
@@ -49,6 +49,8 @@ import {
 import { SettingsHostContext, normalizePrivacy, privacyValueLabel, pushLevelOf, emitSettingsRefresh, useSection } from '../components/settings/categories/shared';
 import { buildSearchIndex, filterSearchIndex } from '../components/settings/categories/searchIndex';
 import NativeSettingsList, { isNativeSettingsListAvailable } from '../components/settings/NativeSettingsList';
+import SettingsCategoryScreen from '../components/settings/SettingsCategoryScreen';
+import { pushOnce, useReleaseNavLockOnFocus } from '../services/navOnce';
 
 const CAT_ICONS = {
   user: IconUser, shield: IconShield, message: IconMessageSquare, bell: IconBell, database: IconDatabase,
@@ -121,9 +123,13 @@ function SettingsScreenInner() {
           node.measureLayout(
             scrollNode,
             (_x, y) => {
-              sv?.scrollTo?.({ y: Math.max(0, y - 12 - blurTopRef.current), animated: true });
               // Rola uma vez só (re-renders da categoria não puxam a tela de volta).
               setPendingAnchor((cur) => (cur === key ? null : cur));
+              // [2026-10-17] Já visível no topo → não rola (scrollTo clampa em 0 e,
+              // com inset automático, escondia o topo sob o header).
+              const target = y - 12 - blurTopRef.current;
+              if (target <= 0) return;
+              sv?.scrollTo?.({ y: target, animated: true });
             },
             () => {}
           );
@@ -190,11 +196,12 @@ function SettingsScreenInner() {
   const storageStats = usePeek('storage_stats');
   const settingsData = usePeek('settings');
 
+  // [2026-10-17 nav-once] push NA HORA (sem esperar o próximo frame) e
+  // idempotente: trava em voo + nunca empilha a mesma rota que já está no topo.
+  useReleaseNavLockOnFocus();
   const safeNav = useCallback((path) => {
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    const fire = () => { try { router.push(path); } catch {} };
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire);
-    else setTimeout(fire, 0);
+    try { pushOnce(router, path); } catch {}
   }, [router]);
 
   // [2026-10-17 swipe-back] Founder: "arrastar da esquerda p/ direita deveria
@@ -204,23 +211,18 @@ function SettingsScreenInner() {
   // categoria é uma ROTA empurrada (/settings?section=<cat>): push do
   // UINavigationController, swipe-back nativo (borda + tela inteira), voltar do
   // sistema no Android. Web/2 painéis mantêm a troca no lugar.
+  // [2026-10-17 settings-light] A rota empurrada agora é a tela LEVE
+  // /settings-section (components/settings/SettingsCategoryScreen.js) — antes
+  // era /settings de novo = o hub inteiro remontado só p/ uma categoria
+  // ("demora p/ abrir"). Push NA HORA + pushOnce (toque duplo não abre 2).
   const PUSH_CATEGORIES = Platform.OS !== 'web';
-  const lastCatPushRef = useRef(0);
   const openCategory = useCallback((key, anchor) => {
     if (PUSH_CATEGORIES && !twoPane) {
-      // toque duplo não empilha 2 cópias da categoria
-      const now = Date.now();
-      if (now - lastCatPushRef.current < 650) return;
-      lastCatPushRef.current = now;
-    }
-    try { Haptics.selectionAsync?.(); } catch {}
-    if (PUSH_CATEGORIES && !twoPane) {
-      const fire = () => {
-        try { router.push({ pathname: '/settings', params: anchor && anchor !== key ? { section: key, anchor } : { section: key } }); } catch {}
-      };
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire); else fire();
+      try { Haptics.selectionAsync?.(); } catch {}
+      try { pushOnce(router, { pathname: '/settings-section', params: anchor && anchor !== key ? { section: key, anchor } : { section: key } }); } catch {}
       return;
     }
+    try { Haptics.selectionAsync?.(); } catch {}
     setPendingAnchor(anchor || null);
     setSearchQuery('');
     setSearchFocused(false);
@@ -504,6 +506,20 @@ function SettingsScreenInner() {
   }), [t]);
   const showNativeRoot = useNativeRoot && activeCategory === null;
   const bottomPad = IOS_AUTO_INSET ? 40 : 80 + insets.bottom;
+  // [2026-10-17 settings-freeze] iOS: SEM título grande quando a raiz é a lista
+  // NATIVA. Crash 704 (watchdog 0x8BADF00D, thread principal em loop):
+  // UICollectionView.setContentOffset → UINavigationController acompanha o
+  // scroll do título grande (_observeScrollViewDidScroll) → muda o safe area da
+  // tela → SafeAreaView do react-native-screens (iOS 26 envolve cada tela)
+  // despacha estado → commit/layout do Fabric → o UICollectionView reajusta o
+  // contentOffset automático → … sem fim. Com header normal (não translúcido)
+  // a barra tem altura FIXA (safe area estável) e a lista não é mais o
+  // "content scroll view" do header (autoInset off → .never, sem ajuste
+  // automático de offset). Religar por OTA: globalThis.__chatyy_native_list_large_title = true
+  // (nativeListLargeTitleOn, mesmo gate do _layout → o header não troca após o 1º frame).
+  const rootLargeTitle = Platform.OS === 'ios' && (!showNativeRoot || nativeListLargeTitleOn());
+  const nativeAutoInset = IOS_AUTO_INSET && rootLargeTitle;
+  const nativeBottomPad = nativeAutoInset ? 40 : 40 + insets.bottom;
 
   return (
     <View style={[s.container, { backgroundColor: gc.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
@@ -521,12 +537,12 @@ function SettingsScreenInner() {
           // iOS: título GRANDE que colapsa ao rolar — raiz E categorias (como o
           // Ajustes do iPhone). Explícito (setOptions MESCLA) e igual ao que o
           // _layout aplica antes do 1º frame (sem salto do header).
-          ...(Platform.OS === 'ios' ? {
+          ...(rootLargeTitle ? {
             headerLargeTitle: true,
             headerLargeTitleShadowVisible: false,
             headerLargeStyle: { backgroundColor: gc.pageBg },
             headerLargeTitleStyle: { color: colors.text },
-          } : {}),
+          } : (Platform.OS === 'ios' ? { headerLargeTitle: false, headerShadowVisible: false, headerStyle: { backgroundColor: gc.pageBg } } : {})),
           // Voltar NATIVO quando há histórico (chevron do sistema + menu de
           // toque longo); botão próprio só sem histórico (link frio → /chat)
           // ou na categoria no-lugar do web.
@@ -588,8 +604,8 @@ function SettingsScreenInner() {
                 isDark={isDark}
                 palette={gc}
                 maxWidth={contentMaxWidth}
-                bottomInset={bottomPad}
-                autoInset={IOS_AUTO_INSET}
+                bottomInset={nativeBottomPad}
+                autoInset={nativeAutoInset}
                 labels={nativeLabels}
                 refreshing={pullRefreshing}
                 onRefresh={onPullRefresh}
@@ -655,4 +671,12 @@ const s = StyleSheet.create({
   searchCancel: { paddingLeft: 12, paddingVertical: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
 });
 
-export default function SettingsScreen() { return <ErrorBoundary><SettingsScreenInner /></ErrorBoundary>; }
+// [2026-10-17 settings-light] Nativo: link antigo /settings?section=<cat|bloco>
+// abre direto a tela LEVE da categoria (sem montar o hub). Web mantém a troca
+// no lugar / 2 painéis.
+export default function SettingsScreen() {
+  const params = useLocalSearchParams();
+  const section = typeof params?.section === 'string' ? params.section : '';
+  if (Platform.OS !== 'web' && section && sectionToCategory(section)) return <SettingsCategoryScreen />;
+  return <ErrorBoundary><SettingsScreenInner /></ErrorBoundary>;
+}

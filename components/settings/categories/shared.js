@@ -12,6 +12,7 @@ import { Platform, Alert, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { HapticsCompat as Haptics } from '../../../services/haptics';
 import * as settingsCache from '../../../services/settingsCache';
+import { pushOnce } from '../../../services/navOnce';
 import { useLanguage } from '../../../context/LanguageContext';
 
 // ── Armazenamento local (mesmas chaves de antes) ─────────────────────────
@@ -70,21 +71,19 @@ export const SettingsHostContext = createContext({
 });
 export function useSettingsHost() { return useContext(SettingsHostContext); }
 
-// Navegação defensiva das linhas (haptic + push no PRÓXIMO frame + alerta se
-// o push lançar) — iOS soltava o 2º present em corrida de transição.
+// Navegação defensiva das linhas (haptic + push + alerta se o push lançar).
+// [2026-10-17 nav-once] Push NA HORA (sem esperar o próximo frame) e
+// idempotente (services/navOnce): toque duplo não empilha 2 telas — trava em
+// voo até a tela de destino focar (≤ 1,2 s) + nunca repete a rota do topo.
 export function useSafeNav() {
   const router = useRouter();
   const { t } = useLanguage();
   return useCallback((path) => {
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    const fire = () => {
-      try { router.push(path); }
-      catch (e) {
-        try { Alert.alert(t('uiG.settings.navError'), `${path}\n${String(e?.message || e)}`); } catch {}
-      }
-    };
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire);
-    else setTimeout(fire, 0);
+    try { pushOnce(router, path); }
+    catch (e) {
+      try { Alert.alert(t('uiG.settings.navError'), `${typeof path === 'string' ? path : (path && path.pathname) || ''}\n${String(e?.message || e)}`); } catch {}
+    }
   }, [router, t]);
 }
 

@@ -68,7 +68,6 @@ export default function StorageCategory() {
     <View ref={registerAnchor('mediaAutoDownload')}>
       <SettingsGroup header={t('storageData.cloud')}>
         <SettingsRow title={t('storage.title')} onPress={() => safeNav('/storage')} />
-        <SettingsRow title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={() => safeNav('/settings-one')} />
       </SettingsGroup>
       {!isWeb && (
         <>
