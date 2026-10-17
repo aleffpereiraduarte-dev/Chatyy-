@@ -12963,6 +12963,27 @@ function ChatConversationInner() {
     try { Keyboard.dismiss(); } catch {}
     try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
   };
+  // [2026-10-17 ctxmenu-kb] Menu de contexto (nativo ou JS) com o teclado em cima:
+  // Keyboard.dismiss() sozinho NÃO derruba o composer NATIVO (UITextView fora do
+  // TextInputState do RN) → o teclado ficava por cima das ações (Responder/Copiar…).
+  // WhatsApp: derruba ao abrir e devolve o foco se o menu for fechado sem ação.
+  const _ctxKbRestoreRef = useRef(false); // composer tinha foco quando o menu abriu
+  const _ctxMenuOpenRef = useRef(false);  // menu aberto → nada re-foca o composer
+  const _ctxMenuDropKeyboard = () => {
+    let had = false;
+    try { had = !!inputRef.current?.isFocused?.(); } catch {}
+    _ctxKbRestoreRef.current = had;
+    _ctxMenuOpenRef.current = true;
+    _dismissKbNow();
+  };
+  // Fechou sem ação (toque fora / esc) → teclado volta como estava.
+  const _ctxMenuClosed = (restore) => {
+    _ctxMenuOpenRef.current = false;
+    const had = _ctxKbRestoreRef.current;
+    _ctxKbRestoreRef.current = false;
+    if (!restore || !had || Platform.OS === 'web') return;
+    setTimeout(() => { if (!_ctxMenuOpenRef.current && mountedRef.current) { try { inputRef.current?.focus?.(); } catch {} } }, 60);
+  };
   const openNativeEmojiPanel = useCallback((tab) => {
     if (tab) setNativeEmojiTab(tab);
     setShowStickerPicker(false);
@@ -20095,7 +20116,7 @@ function ChatConversationInner() {
     } finally {
       setSending(false);
       sendingRef.current = false;
-      setTimeout(() => inputRef.current?.focus(), 50);
+      setTimeout(() => { if (!_ctxMenuOpenRef.current) inputRef.current?.focus(); }, 50); // [ctxmenu-kb] não re-foca com o menu aberto
     }
   };
 
@@ -25167,13 +25188,14 @@ function ChatConversationInner() {
     // "lift" feel; the selection tick on mount stays as the second beat.
     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
     const node = LIFT_AVAILABLE ? bubbleNodeRefs.current.get(msg.id) : null;
-    if (!node) { setSelectedMsg(msg); return; }
+    if (!node) { _ctxMenuDropKeyboard(); setSelectedMsg(msg); return; } // [ctxmenu-kb] menu JS sem lift também derruba o teclado
     if (liftPendingRef.current) return; // double long-press while snapshotting
     liftPendingRef.current = true;
     // WhatsApp drops the keyboard on long-press; otherwise (iOS) the keyboard
     // window would sit on top of the action list. The snapshot keeps the
     // pre-dismiss rect, then springs to its final spot anyway.
-    try { Keyboard.dismiss(); } catch {}
+    // [ctxmenu-kb] blur do composer nativo também (Keyboard.dismiss não alcança).
+    _ctxMenuDropKeyboard();
     const isOwnMsg = (msg.sender_email || '').toLowerCase() === (currentEmail || '').toLowerCase();
     captureBubbleAnchor(node).then((a) => {
       liftPendingRef.current = false;
@@ -25369,6 +25391,14 @@ function ChatConversationInner() {
   const ctxAnchorRef = useRef(null);
   const liftPendingRef = useRef(false);
   const { width: _liftWinW, height: _liftWinH } = useWindowDimensions();
+  // [ctxmenu-kb] menu JS (selectedMsg) fechou → libera o re-foco (sem devolver o
+  // teclado: aqui não dá p/ saber se houve ação; Responder/Editar já focam).
+  const _ctxSelWasRef = useRef(false);
+  useEffect(() => {
+    const was = _ctxSelWasRef.current;
+    _ctxSelWasRef.current = !!selectedMsg;
+    if (was && !selectedMsg) { _ctxMenuOpenRef.current = false; _ctxKbRestoreRef.current = false; }
+  }, [selectedMsg]);
   useEffect(() => {
     if (selectedMsg) return;
     // Menu closed (any of the ~40 setSelectedMsg(null) paths) → drop anchor.
@@ -33528,7 +33558,8 @@ function ChatConversationInner() {
     try {
       payload = require('../components/chat/nativeContextMenu').buildNativeCtxMenu(key, target, _nlCtxEnvRef.current(target));
     } catch (e) { if (__DEV__) console.warn('[native-ctxmenu] build', e?.message); return false; }
-    try { Keyboard.dismiss(); } catch {}
+    _ctxMenuDropKeyboard(); // [ctxmenu-kb] composer nativo perde o foco → teclado desce
+
     _nlCtxMsgRef.current = { key, msg: target };
     const p = flashListRef.current?.showContextMenu?.(payload);
     if (!p || typeof p.then !== 'function') { _nlCtxMsgRef.current = null; return false; }
@@ -33559,8 +33590,14 @@ function ChatConversationInner() {
     if (action === 'forward' && ((forwardingDisabled && !isGroupAdmin) || (_advPriv?.enabled && target.file_url))) return;
     try { require('../components/chat/nativeContextMenu').runNativeCtxAction(action, target, _nlCtxHRef.current()); } catch {}
   }, [forwardingDisabled, isGroupAdmin, _advPriv?.enabled]);
-  const _nlOnMenuDismiss = useCallback(({ key }) => {
+  const _ctxMenuClosedRef = useRef(null);
+  _ctxMenuClosedRef.current = _ctxMenuClosed;
+  const _nlOnMenuDismiss = useCallback(({ key, reason }) => {
     if (_nlCtxMsgRef.current && _nlCtxMsgRef.current.key === key) _nlCtxMsgRef.current = null;
+    // [ctxmenu-kb] só devolve o teclado quando fechou SEM ação (toque fora/esc/voltar);
+    // ação/reação/troca de menu cuidam do próprio foco (Responder já foca).
+    const r = String(reason || '');
+    try { _ctxMenuClosedRef.current?.(r === 'outside' || r === 'escape' || r === 'back'); } catch {}
   }, []);
   // Android: voltar fecha o menu nativo (o overlay também trata a tecla).
   useEffect(() => {
@@ -33588,7 +33625,7 @@ function ChatConversationInner() {
     // [fase 2] O nativo já deu o haptic + "lift" e mandou o snapshot do balão →
     // abre o MESMO overlay de lift do caminho FlashList (MessageLiftOverlay).
     if (anchor && anchor.uri && LIFT_AVAILABLE && target.type !== 'system' && !liftPendingRef.current) {
-      try { Keyboard.dismiss(); } catch {}
+      _ctxMenuDropKeyboard(); // [ctxmenu-kb]
       const isOwnMsg = String(target.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase();
       const a = { ...anchor, isOwn: isOwnMsg };
       if (ctxAnchorRef.current) { releaseBubbleAnchor(ctxAnchorRef.current); }
@@ -39685,8 +39722,16 @@ function ChatConversationInner() {
         backgroundColor={colors.background}
       >
         {/* [2026-10-15 native-sheets-v2] Nativo: sheet grande do sistema (fundo escala/escurece, arrastar 1:1); teclado da busca via NativeSheetKeyboardView. */}
-        <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={USE_NATIVE_SHEETS ? { paddingTop: 14 } : [styles.forwardModal, { backgroundColor: colors.background }]}>
-          <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
+        {/* [2026-10-17 fwd-sheet-overlap] iOS formSheet c/ detents numéricos: o rn-screens
+            4.23 posiciona o conteúdo SEM bottom e "caça" um ScrollView entre os filhos
+            DIRETOS do content wrapper. Raiz layout-only era achatada pelo Fabric → a
+            FlatList virava filho direto (índice >1) → fallback legado frame = sheet
+            inteiro em (0,0) → linhas desenhadas por cima do título/busca. Mesmo padrão
+            do seletor de idioma (LanguageCategory): raiz com fundo (não achata → caça
+            não acha a lista) + minHeight = área útil do detent grande (flex:1 da lista
+            volta a valer no Yoga). Cabeçalho/busca opacos + zIndex, lista recortada. */}
+        <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={USE_NATIVE_SHEETS ? { paddingTop: 14, backgroundColor: colors.background, ...(Platform.OS === 'ios' ? { minHeight: Math.max(320, Math.round((_liftWinH || Dimensions.get('window').height || 0) - (insets.top || 0) - 10 - (insets.bottom || 0))) } : null) } : [styles.forwardModal, { backgroundColor: colors.background }]}>
+          <View collapsable={false} style={[styles.forwardHeader, { borderBottomColor: colors.border, backgroundColor: colors.background, zIndex: 2 }]}>
             <TouchableOpacity onPress={() => { setForwardMsg(null); setForwardSelected(new Set()); }} style={{ marginRight: 12 }}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
@@ -39697,7 +39742,7 @@ function ChatConversationInner() {
                 : (t('chatConv.forwardTo') || 'Encaminhar para')}
             </Text>
           </View>
-          <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+          <View collapsable={false} style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, backgroundColor: colors.background, zIndex: 2 }}>
             {/* [2026-10-17 input-align] fundo na caixa, TextInput com altura fixa (texto centrado no iOS). */}
             <View style={{ flexDirection: 'row', alignItems: 'center', height: 38, borderRadius: 10, paddingHorizontal: 10, backgroundColor: isDark ? '#1f1f1f' : '#f2f2f4', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
               <IconSearch size={16} color={colors.textTertiary} />
@@ -39808,8 +39853,10 @@ function ChatConversationInner() {
               );
             };
             return (
-              <View style={{ flex: 1 }}>
+              <View collapsable={false} style={{ flex: 1, overflow: 'hidden', zIndex: 1 }}>
                 <FlatList
+                  style={{ flex: 1 }}
+                  keyboardShouldPersistTaps="handled"
                   data={[]}
                   keyExtractor={(_, i) => String(i)}
                   renderItem={null}
