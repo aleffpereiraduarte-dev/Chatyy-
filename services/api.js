@@ -166,6 +166,37 @@ function _applySelectedServer(server) {
   BASE_URL = base;
   CHAT_BASE_URL = base;
 }
+
+// [2026-10-17 edge-failover] Incidente BR: o php-fpm do api-br ficou parado 4,5 h
+// e o nginx do edge devolvia 502 em todo /api/*. O probe de latência (/health) é
+// estático no nginx do edge → continuava elegendo o BR, e o retry-once do
+// _apiCallImpl repetia no MESMO edge → "Erro ao carregar conversas" e lista vazia.
+// Agora: resposta de gateway do edge (502/503; 504 só em leitura) ou falha de
+// transporte numa leitura → refaz a chamada UMA vez direto no US (master); se o US
+// responder (status 1..499), o edge fica "fora" por _EDGE_DOWN_MS — API/chat vão
+// pro US e o probe ignora a região até o prazo vencer. Se o US também falhar,
+// devolve a resposta original e não troca nada (ex.: US caído + edge em modo limitado).
+const _EDGE_DOWN_MS = 5 * 60 * 1000;
+const _edgeDownUntil = {}; // region → epoch ms
+function _edgeIsDown(region) {
+  return !!region && region !== 'us' && (_edgeDownUntil[region] || 0) > Date.now();
+}
+function _edgeRegionOfUrl(u) {
+  if (typeof u !== 'string') return null;
+  const s = EDGE_SERVERS.find(e => e.region !== 'us' && u.startsWith(e.url + '/'));
+  return s ? s.region : null;
+}
+function _markEdgeDown(region, why) {
+  if (!region || region === 'us') return;
+  _edgeDownUntil[region] = Date.now() + _EDGE_DOWN_MS;
+  const us = EDGE_SERVERS.find(s => s.region === 'us');
+  if (us && (!_bestServer || _bestServer.region === region || API_URL.startsWith(EDGE_SERVERS.find(s => s.region === region).url + '/'))) {
+    // ts "envelhecido" → o tick de 5 min re-proba logo após o prazo (não fica 30 min preso no US).
+    _bestServer = { ...us, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'edge-down' };
+    _applySelectedServer(us);
+  }
+  try { console.warn('[API] edge ' + region + ' fora (' + why + ') → US por ' + Math.round(_EDGE_DOWN_MS / 60000) + ' min'); } catch {}
+}
 // [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
 // that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even
 // `/` 404s). The actual chat/status/sticker/reel files live on the origin disk,
@@ -350,14 +381,17 @@ async function detectFastestServer(opts) {
     const sameNet = _bestServer && (!net || !_bestServer.net || _bestServer.net === net);
     const baseRegion = (sameNet && _bestServer.src === 'probe' && _bestServer.region) || hint || 'us';
     // Sem escolha validada nesta rede → aplica a dica JÁ (o probe leva ~1s).
-    if (hint && !(sameNet && _bestServer.src === 'probe')) {
+    if (hint && !_edgeIsDown(hint) && !(sameNet && _bestServer.src === 'probe')) {
       const hs = EDGE_SERVERS.find(s => s.region === hint);
       if (hs && (!_bestServer || _bestServer.region !== hint)) {
         _bestServer = { ...hs, latency: null, ts: 0, net, src: 'hint' };
         _applySelectedServer(hs);
       }
     }
-    const results = await Promise.all(EDGE_SERVERS.map(_probeEdge));
+    // [2026-10-17 edge-failover] região marcada fora (gateway 5xx do PHP) não entra:
+    // o /health do edge é estático no nginx e responde 200 mesmo com o PHP parado.
+    const results = (await Promise.all(EDGE_SERVERS.map(_probeEdge)))
+      .map(r => (_edgeIsDown(r.region) ? { ...r, latency: 99999 } : r));
     const pick = _pickEdgeRegion(results, baseRegion);
     if (pick) {
       const changed = !_bestServer || _bestServer.region !== pick.region;
@@ -1484,7 +1518,30 @@ function _adoptsBearerFromResponse(action, tok) {
   return !_NON_BEARER_TOKEN_ACTIONS.has(action);
 }
 
+// [2026-10-17 edge-failover] Wrapper: 1 tentativa na região escolhida; gateway do
+// edge fora → refaz no US (ver _markEdgeDown). 502/503 = o nginx do edge não chegou
+// ao PHP (nada executou) → seguro até p/ POST. 504 e falha de transporte (não
+// timeout) só p/ leituras (um POST pode ter executado antes da conexão cair).
 async function _rawApiCall(action, params = {}, method = 'GET') {
+  const r = await _rawApiCallOnce(action, params, method, null);
+  try {
+    const region = _edgeRegionOfUrl(r && r.url);
+    if (!region) return r;
+    const st = r.status;
+    const readable = String(method || 'GET').toUpperCase() === 'GET' || _isReadablePost(action);
+    const gw = st === 502 || st === 503 || (st === 504 && readable);
+    const transport = st === 0 && readable && !r.aborted;
+    if (!gw && !transport) return r;
+    const r2 = await _rawApiCallOnce(action, params, method, US_FALLBACK_BASE);
+    if (r2 && r2.status > 0 && r2.status < 500) {
+      _markEdgeDown(region, st ? 'HTTP ' + st : 'transporte');
+      return r2;
+    }
+  } catch {}
+  return r;
+}
+
+async function _rawApiCallOnce(action, params = {}, method = 'GET', _baseOverride = null) {
   // CRITICAL: On native iOS, authToken is read from SecureStore asynchronously.
   // Without awaiting this, the first few requests (chat_send, check_auth, etc.)
   // fire with empty Authorization header, get 401, and the auto-logout logic
@@ -1555,7 +1612,7 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   if (method === 'POST' && csrfToken) headers['X-CSRF-Token'] = csrfToken;
   if (deviceTrustToken) headers['X-Device-Trust-Token'] = deviceTrustToken;
 
-  let url = `${API_URL}?action=${action}`;
+  let url = `${_baseOverride ? _baseOverride + '/api/email.php' : API_URL}?action=${action}`;
   // [rodada3 2026-10-11] Capacidade: este app desenha a mensagem apagada pelo flag
   // `deleted`/`deleted_at` (texto traduzido no aparelho) → o servidor manda
   // last_message.content '' em vez do rótulo pt-BR fixo. Só ações chat_*.
@@ -1610,22 +1667,22 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
       // Store CSRF token from login/check_auth responses
       const respCsrf = data?.data?.csrf_token;
       if (respCsrf) csrfToken = respCsrf;
-      return { data: _withHttpStatus(data, res.status), status: res.status };
+      return { data: _withHttpStatus(data, res.status), status: res.status, url };
     } catch {
-      return { data: _withHttpStatus({ success: false, message: 'Servidor indisponivel' }, res.status), status: res.status };
+      return { data: _withHttpStatus({ success: false, message: 'Servidor indisponivel' }, res.status), status: res.status, url };
     }
   } catch (err) {
     clearTimeout(timeout);
     _httpNetFailAt = Date.now();
     if (err.name === 'AbortError') {
-      return { data: _withHttpStatus({ success: false, message: 'Tempo limite excedido' }, 0), status: 0 };
+      return { data: _withHttpStatus({ success: false, message: 'Tempo limite excedido' }, 0), status: 0, url, aborted: true };
     }
     // [2026-10-08 web-receipts-i18n] Web: falha de transporte num EDGE (CORS
     // quebrado = rejeição imediata, a request nem sai do preflight) → bloqueia
     // edges, volta pro US e refaz UMA vez (a URL nova já é do US → sem loop).
     // POST só quando falhou rápido (<3s = preflight), p/ não duplicar um POST
     // que possa ter chegado ao servidor antes de a conexão cair.
-    if (Platform.OS === 'web' && typeof url === 'string' && !url.startsWith(US_FALLBACK_BASE + '/')
+    if (!_baseOverride && Platform.OS === 'web' && typeof url === 'string' && !url.startsWith(US_FALLBACK_BASE + '/')
         && (method === 'GET' || (Date.now() - _fetchT0) < 3000)) {
       if (!_webEdgeBlocked) {
         _webEdgeBlocked = true;
@@ -1638,9 +1695,9 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
         _applySelectedServer(us);
         _persistBestServer();
       }
-      if (API_URL.startsWith(US_FALLBACK_BASE + '/')) return _rawApiCall(action, params, method);
+      if (API_URL.startsWith(US_FALLBACK_BASE + '/')) return _rawApiCallOnce(action, params, method, null);
     }
-    return { data: _withHttpStatus({ success: false, message: 'Connection error' }, 0), status: 0 };
+    return { data: _withHttpStatus({ success: false, message: 'Connection error' }, 0), status: 0, url };
   }
 }
 
