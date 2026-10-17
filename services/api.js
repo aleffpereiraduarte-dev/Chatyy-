@@ -3468,7 +3468,25 @@ async function _getInboxImpl(folder = 'INBOX', page = 1, perPage = 20, search = 
   return apiCall('inbox', params);
 }
 
+// [2026-10-17 email-acct-tag] Every message response is tagged with the account
+// that was ACTIVE when the request started (`_acct`). offlineCache.
+// saveMessageToCache drops a tagged body whose account is no longer the active
+// one — an in-flight fetch for account A that lands after a switch to B used to
+// be persisted under B's namespace (folder|uid collide across accounts) and B
+// then opened A's mail from the local cache.
 export async function getMessage(uid, folder = 'INBOX', opts = {}) {
+  let _acct = '';
+  try { _acct = String(getActiveAccountEmail?.() || '').toLowerCase(); } catch {}
+  const r = await _getMessageImpl(uid, folder, opts);
+  try {
+    if (_acct && r && r.success && r.data && typeof r.data === 'object' && !Array.isArray(r.data)) {
+      return { ...r, data: { ...r.data, _acct } };
+    }
+  } catch {}
+  return r;
+}
+
+async function _getMessageImpl(uid, folder = 'INBOX', opts = {}) {
   // Rust email-api first, PHP fallback. Rust returns the exact same shape the app expects
   // plus extras (html/text/attachments) — we wrap into the legacy response shape.
   // [2026-09-24] opts.markSeen:false → prefetch no hover (web) que NÃO marca o email

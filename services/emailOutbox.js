@@ -359,7 +359,7 @@ async function _sendOne(acct, e) {
       return 'next';
     }
     await _update(acct, e.csid, { status: 'failed', lastError: 'attachment_lost', lastErrorDetail: prep.slice(5) });
-    _noticeFailed();
+    _noticeFailed(e.csid);
     return 'next';
   }
   // Account switched while preparing → put it back, never send with another bearer.
@@ -393,6 +393,7 @@ async function _sendOne(acct, e) {
     const attempts = (e.attempts || 0) + 1;
     if (attempts > 6) {
       await _update(acct, e.csid, { status: 'failed', attachments, attempts, lastError: 'attachment_lost' });
+      _noticeFailed(e.csid);
       return 'next';
     }
     await _update(acct, e.csid, { status: 'queued', attachments, attempts, nextAt: 0 });
@@ -400,21 +401,30 @@ async function _sendOne(acct, e) {
   }
   if (k === 'offline') {
     await _update(acct, e.csid, { status: 'queued', nextAt: 0, lastError: 'offline' });
+    if (e.reason === 'send') { try { require('./emailUndo').showEmailNotice('outbox'); } catch {} }
     return 'stop';
   }
   if (k === 'transient') {
     const attempts = (e.attempts || 0) + 1;
     await _update(acct, e.csid, { status: 'queued', attempts, nextAt: Date.now() + _backoff(attempts), lastError: String(r?.message || err?.message || 'network') });
+    // [2026-10-17 email-send-gmail] composer already closed: the first network
+    // failure of a just-tapped Send swaps "Enviando…" for "Não enviada ·
+    // Tentar de novo" (it keeps auto-retrying with backoff in the outbox).
+    if (attempts === 1 && e.reason === 'send') _noticeFailed(e.csid);
     return 'next';
   }
   await _update(acct, e.csid, { status: 'failed', lastError: String(r?.message || 'send_failed') });
-  _noticeFailed();
+  _noticeFailed(e.csid);
   return 'next';
 }
 
-// Swap a lingering "Enviando…" notice for the Outbox one (has a "Ver" button).
-function _noticeFailed() {
-  try { require('./emailUndo').showEmailNotice('outbox'); } catch {}
+// Swap a lingering "Enviando…" notice for "Não enviada · Tentar de novo"
+// (falls back to the Outbox notice with its "Ver" button).
+function _noticeFailed(csid) {
+  try {
+    const u = require('./emailUndo');
+    if (u.showEmailFailed) u.showEmailFailed(csid); else u.showEmailNotice('outbox');
+  } catch {}
 }
 
 // Wire triggers once (called from the globally mounted EmailUndoBar).

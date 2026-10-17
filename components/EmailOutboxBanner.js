@@ -14,8 +14,13 @@ export default function EmailOutboxBanner({ variant = 'banner', onPress }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
-  const [items, setItems] = useState(getEmailOutbox());
-  useEffect(() => subscribeEmailOutbox((list) => setItems([...(list || [])])), []);
+  // [2026-10-17 email-send-gmail] every Send now passes through the outbox for
+  // ~0,1–0,5 s; hide that in-flight first attempt (the global bar already says
+  // "Enviando…") so the banner doesn't flash + shift the list on each send.
+  const _visible = (list) => (list || []).filter((e) => !(e && e.reason === 'send' && !e.attempts
+    && (e.status === 'queued' || e.status === 'sending') && Date.now() - (e.createdAt || 0) < 15000));
+  const [items, setItems] = useState(() => _visible(getEmailOutbox()));
+  useEffect(() => subscribeEmailOutbox((list) => setItems(_visible(list))), []);
   if (!items.length) return null;
   const failed = items.some((e) => e.status === 'failed');
   const go = () => {

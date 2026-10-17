@@ -74,6 +74,10 @@ export function takeEmailUndoRestore() {
 //   'sent'   → "E-mail enviado" (an outbox entry went out later)
 export function showEmailNotice(kind) {
   if (_state && _state.phase === 'pending') return; // never hide a live Undo
+  // [2026-10-17 email-send-gmail] a "Não enviada · Tentar de novo" stays put
+  // until the user acts or it times out — a late 'outbox' notice for another
+  // entry must not wipe it.
+  if (_state && _state.phase === 'failed' && kind === 'outbox') return;
   if (_timer) clearTimeout(_timer);
   const phase = kind === 'outbox' ? 'outbox' : kind === 'sending' ? 'sending' : 'sent';
   _state = { sid: null, until: Date.now(), restore: null, phase };
@@ -86,4 +90,17 @@ export function showEmailNotice(kind) {
 // ?restore_undo=1 (same channel the Undo uses).
 export function setEmailComposeRestore(r) {
   _restore = r || null;
+}
+
+// [2026-10-17 email-send-gmail] "Não enviada · Tentar de novo": the outbox
+// calls this when a send fails (hard error, lost attachment, or the first
+// network failure of a fresh send). The message stays in the outbox (draft
+// preserved); the bar's button retries that entry (`csid`).
+export function showEmailFailed(csid) {
+  if (_state && _state.phase === 'pending') return;
+  if (_timer) clearTimeout(_timer);
+  _state = { sid: null, csid: csid || null, until: Date.now(), restore: null, phase: 'failed' };
+  _emit();
+  const mine = _state;
+  _timer = setTimeout(() => { if (_state === mine) { _state = null; _emit(); } }, 12000);
 }

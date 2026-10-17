@@ -38,16 +38,41 @@ const _NativeCache = (() => {
   if (Platform.OS !== 'ios') return null;
   try { return require('../modules/expo-chat-cache').default; } catch { return null; }
 })();
+// [2026-10-17 email-ios-acct] P0 PRIVACY: the native iOS emails table is keyed
+// by (uid, folder) only — NOT by account. With 2 accounts on the device, B's
+// saveEmails UPSERTED into the same 'INBOX' rows as A (mixed list) and B's
+// frame-1 read could paint A's inbox. The folder key handed to the native
+// module now carries the active account ('acct:<email>|INBOX'); no active
+// account → no read / no write. Legacy unscoped rows are dropped once
+// (clearFolder on the standard names) and are never read again.
+const _nativeFolderKey = (folder) => {
+  let e = '';
+  try { e = String(api.getActiveAccountEmail?.() || '').trim().toLowerCase(); } catch {}
+  return e ? 'acct:' + e + '|' + String(folder || 'INBOX') : null;
+};
+let _nativeLegacyPurged = false;
+const _nativePurgeLegacyOnce = () => {
+  if (_nativeLegacyPurged || !_NativeCache?.clearFolder) return;
+  _nativeLegacyPurged = true;
+  for (const f of ['INBOX', 'Sent', 'Drafts', 'Archive', 'Spam', 'Junk', 'Trash', 'Flagged', 'Starred', 'Snoozed', 'All', 'Important']) {
+    try { const p = _NativeCache.clearFolder(f); if (p && p.catch) p.catch(() => {}); } catch {}
+  }
+};
 const _nativeReadEmailsSync = (folder, limit = 50) => {
   if (!_NativeCache?.getCachedEmailsSync) return null;
+  const key = _nativeFolderKey(folder);
+  if (!key) return null;
   try {
-    const list = _NativeCache.getCachedEmailsSync(folder, limit);
+    const list = _NativeCache.getCachedEmailsSync(key, limit);
     return Array.isArray(list) && list.length > 0 ? list : null;
   } catch { return null; }
 };
 const _nativeSaveEmails = (folder, emails) => {
   if (!_NativeCache?.saveEmails || !Array.isArray(emails)) return;
-  try { _NativeCache.saveEmails(folder, emails); } catch {}
+  const key = _nativeFolderKey(folder);
+  if (!key) return;
+  _nativePurgeLegacyOnce();
+  try { const p = _NativeCache.saveEmails(key, emails); if (p && p.catch) p.catch(() => {}); } catch {}
 };
 
 // Sort key for an email list row (newest = larger). Within a folder the IMAP

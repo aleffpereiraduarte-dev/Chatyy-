@@ -249,6 +249,14 @@ export async function getNotesFromCache() {
 // ─── Email Message Cache (individual read emails) ───
 
 export async function saveMessageToCache(uid, message, folder) {
+  // [2026-10-17 email-acct-tag] api.getMessage tags each body with the account
+  // active when the fetch STARTED. A fetch that lands after an account switch
+  // must not be written into the new account's namespace (uids collide).
+  try {
+    const d = message && typeof message === 'object' ? (message.data && typeof message.data === 'object' ? message.data : message) : null;
+    const tag = d && typeof d._acct === 'string' ? d._acct : '';
+    if (tag && tag !== _acctNS()) return;
+  } catch {}
   const indexKey = _msgIndexKey();
   const id = _msgId(uid, folder);
   const msgKey = _msgKeyFromId(id);

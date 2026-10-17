@@ -13093,4 +13093,8 @@ export default {
   "avatarLightbox.info": "Info",
   "avatarLightbox.viewPhoto": "View photo",
   "avatarLightbox.back": "Back",
+  // [2026-10-17 email-send-gmail]
+  "compose.sentUndoLabel": "Sent",
+  "emailOutbox.notSentToast": "Not sent",
+  "emailOutbox.retryShort": "Try again",
 };

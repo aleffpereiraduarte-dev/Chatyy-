@@ -8,8 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { Overlay, OverlayShadow, overlayColors } from '../constants/theme';
-import { subscribeEmailUndo, getEmailUndo, undoEmailSend, dismissEmailUndo } from '../services/emailUndo';
-import { initEmailOutbox } from '../services/emailOutbox';
+import { subscribeEmailUndo, getEmailUndo, undoEmailSend, dismissEmailUndo, showEmailNotice } from '../services/emailUndo';
+import { initEmailOutbox, retryOutboxEmail } from '../services/emailOutbox';
 
 export default function EmailUndoBar() {
   const [st, setSt] = useState(getEmailUndo());
@@ -40,6 +40,7 @@ export default function EmailUndoBar() {
   if (!st) return null;
   const pending = st.phase === 'pending';
   const outbox = st.phase === 'outbox' || st.phase === 'sending';
+  const failed = st.phase === 'failed';
   const left = Math.max(0, Math.ceil((st.until - Date.now()) / 1000));
 
   const onUndo = async () => {
@@ -53,9 +54,24 @@ export default function EmailUndoBar() {
     <View pointerEvents="box-none" style={[st_.wrap, { bottom: Math.max(insets.bottom, 12) + 64 }]}>
       <View style={[st_.bar, barTheme]} accessibilityLiveRegion="polite">
         <Text style={[st_.text, fg]} numberOfLines={1}>
-          {pending || st.phase === 'sending' ? t('compose.sendingUndo') : outbox ? t('emailOutbox.queuedToast') : t('compose.sentToast')}
+          {failed ? t('emailOutbox.notSentToast')
+            : st.phase === 'sending' ? t('compose.sendingUndo')
+            : pending ? t('compose.sentUndoLabel')
+            : outbox ? t('emailOutbox.queuedToast') : t('compose.sentToast')}
         </Text>
-        {outbox ? (
+        {failed ? (
+          <TouchableOpacity
+            onPress={() => {
+              const csid = st.csid;
+              if (!csid) { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} return; }
+              try { showEmailNotice('sending'); } catch {}
+              retryOutboxEmail(csid).catch(() => {});
+            }}
+            onLongPress={() => { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} }}
+            hitSlop={10} accessibilityRole="button" style={[st_.btn, btnTheme]}>
+            <Text style={[st_.btnText, btnFg]}>{t('emailOutbox.retryShort')}</Text>
+          </TouchableOpacity>
+        ) : st.phase === 'sending' ? null : outbox ? (
           <TouchableOpacity onPress={() => { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} }} hitSlop={10} accessibilityRole="button" style={[st_.btn, btnTheme]}>
             <Text style={[st_.btnText, btnFg]}>{t('emailOutbox.view')}</Text>
           </TouchableOpacity>

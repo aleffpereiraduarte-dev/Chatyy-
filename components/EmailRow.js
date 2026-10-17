@@ -99,22 +99,43 @@ function formatRelativeDate(dateStr, t) {
   return `${date.getDate()}/${date.getMonth() + 1}/${String(date.getFullYear()).slice(2)}`;
 }
 
+// [2026-10-17 email-unaccent] Fold 1:1 por caractere (sem acento, minúsculo)
+// para o realce casar 'joao' com 'João' igual à busca do servidor. Mantém o
+// mesmo comprimento do texto original → os índices servem para fatiar o texto.
+function foldForMatch(str) {
+  let out = '';
+  for (const ch of String(str)) {
+    let f = ch;
+    try { f = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); } catch { f = ch.toLowerCase(); }
+    // Só aceita o fold se não mudar o tamanho (em code units) — senão os
+    // índices desalinham; nesse caso usa o próprio caractere minúsculo.
+    out += (f.length === ch.length) ? f : (ch.toLowerCase().length === ch.length ? ch.toLowerCase() : ch);
+  }
+  return out;
+}
+
 function highlightText(text, query) {
   if (!query || !text) return text;
   const q = query.trim();
   if (!q) return text;
   try {
-    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`(${escaped})`, 'gi');
-    const parts = text.split(regex);
-    if (parts.length <= 1) return text;
-    // Split com grupo de captura → índices ímpares são os matches; testar
-    // de novo com regex global é unreliable por causa de lastIndex.
-    return parts.map((part, i) =>
-      i % 2 === 1
-        ? <Text key={i} style={{ backgroundColor: '#fef08a', color: '#000', borderRadius: 2 }}>{part}</Text>
-        : part
-    );
+    const src = String(text);
+    const hay = foldForMatch(src);
+    const needle = foldForMatch(q);
+    if (!needle || hay.length !== src.length) return text;
+    const parts = [];
+    let from = 0;
+    let idx = hay.indexOf(needle, 0);
+    if (idx < 0) return text;
+    let k = 0;
+    while (idx >= 0) {
+      if (idx > from) parts.push(src.slice(from, idx));
+      parts.push(<Text key={'h' + (k++)} style={{ backgroundColor: '#fef08a', color: '#000', borderRadius: 2 }}>{src.slice(idx, idx + needle.length)}</Text>);
+      from = idx + needle.length;
+      idx = hay.indexOf(needle, from);
+    }
+    if (from < src.length) parts.push(src.slice(from));
+    return parts;
   } catch {
     return text;
   }

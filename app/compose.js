@@ -1325,23 +1325,30 @@ export default function ComposeScreen() {
       // Delete the autosaved draft (if one exists) so the sent message does
       // NOT also linger in Drafts. Best-effort with a single retry; clear the
       // ref either way so nothing later targets a now-sent draft.
-      if (draftUidRef.current) {
-        const sentDraftUid = draftUidRef.current;
-        draftUidRef.current = null;
-        try {
-          const dr = await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST');
-          if (!dr?.success) {
+      // [2026-10-17 email-send-gmail] instant close: draft cleanup + Send &
+      // Archive run in the background — before, both POSTs were awaited
+      // before router.back(), so the composer lingered ~0,3–1 s after Send.
+      const sentDraftUid = draftUidRef.current;
+      draftUidRef.current = null;
+      const cleanup = async () => {
+        if (sentDraftUid) {
+          try {
+            const dr = await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST');
+            if (!dr?.success) {
+              try { await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST'); } catch {}
+            }
+          } catch {
             try { await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST'); } catch {}
           }
-        } catch {
-          try { await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST'); } catch {}
         }
-      }
-      // Send & Archive: when the user has the toggle on for a reply, archive
-      // the original thread. Best-effort, never blocks the success transition.
-      if (sendAndArchive && isReply && params.reply_uid) {
-        try { await archiveEmail(params.reply_uid, params.folder || 'INBOX'); } catch {}
-      }
+        // Send & Archive: when the user has the toggle on for a reply, archive
+        // the original thread. Best-effort, never blocks the success transition.
+        if (sendAndArchive && isReply && params.reply_uid) {
+          try { await archiveEmail(params.reply_uid, params.folder || 'INBOX'); } catch {}
+        }
+      };
+      if (opts.instant) cleanup().catch(() => {});
+      else await cleanup();
       if (draftTimerRef.current) clearInterval(draftTimerRef.current);
       setSuccess(true);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1448,11 +1455,21 @@ export default function ComposeScreen() {
             restore: { to: sendTo, cc: sendCc, bcc: sendBcc, subject: sendSubject, body: sendBody },
           });
           sentRef.current = true;
-          try { require('../services/emailUndo').showEmailNotice(reason === 'uploading' && !isEmailDeviceOffline() ? 'sending' : 'outbox'); } catch {}
+          try { require('../services/emailUndo').showEmailNotice((reason === 'send' || reason === 'uploading') && !isEmailDeviceOffline() ? 'sending' : 'outbox'); } catch {}
           finishSendSuccess({ instant: true });
         };
         if (uploadsPending || isEmailDeviceOffline()) {
           try { await toOutbox(uploadsPending ? 'uploading' : 'offline'); return; } catch {}
+        }
+        // [2026-10-17 email-send-gmail] Gmail model for EVERY send: the
+        // composer closes as soon as the message is in the durable outbox;
+        // the global bar shows "Enviando…" → "Enviada · Desfazer" (server
+        // holds it for the undo window via send_id) or "Não enviada · Tentar
+        // de novo" (entry stays in the outbox). Same csid = server dedupe.
+        // Kill switch: globalThis.__chatyy_email_send_direct = true → old
+        // wait-for-POST path below.
+        if (!(typeof globalThis !== 'undefined' && globalThis.__chatyy_email_send_direct === true)) {
+          try { await toOutbox('send'); return; } catch {}
         }
         let r = null;
         let sendErr = null;

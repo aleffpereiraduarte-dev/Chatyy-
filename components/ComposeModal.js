@@ -123,7 +123,8 @@ export default function ComposeModal({ params, onClose }) {
     if (Platform.OS === 'web') {
       try {
         const d = typeof localStorage !== 'undefined' && localStorage.getItem('undo_send_delay');
-        if (d) undoDelayRef.current = parseInt(d, 10) || 5;
+        // [2026-10-17 email-send-gmail] '0' = undo disabled (was coerced to 5).
+        if (d != null && d !== '' && !isNaN(parseInt(d, 10))) undoDelayRef.current = Math.max(0, parseInt(d, 10));
       } catch {}
     }
   }, []);
@@ -309,6 +310,50 @@ export default function ComposeModal({ params, onClose }) {
     const delay = undoDelayRef.current;
     setError('');
     setSending(true);
+
+    // [2026-10-17 email-send-gmail] Gmail model: hand the message to the
+    // durable outbox (server holds it for the undo window via send_id), close
+    // the window NOW, and let the global EmailUndoBar show "Enviando…" →
+    // "Enviada · Desfazer" / "Não enviada · Tentar de novo". Kill switch
+    // globalThis.__chatyy_email_send_direct = true → legacy local timer below.
+    if (!(typeof globalThis !== 'undefined' && globalThis.__chatyy_email_send_direct === true)) {
+      const qTo = toValueRef.current;
+      const qCc = [...cc];
+      const qBcc = [...bcc];
+      let qBody = body;
+      if (quotedHtml) {
+        const qh = quotedHeader
+          ? `<p style="color:#5f6368;font-size:13px">${quotedHeader.replace(/\n/g, '<br/>')}</p>`
+          : '';
+        qBody = body + `<br/><br/>${qh}<blockquote style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote>`;
+      }
+      (async () => {
+        try {
+          const ob = require('../services/emailOutbox');
+          await ob.enqueueEmail({
+            reason: 'send',
+            to: contactsToString(qTo), cc: contactsToString(qCc), bcc: contactsToString(qBcc),
+            subject, body: qBody,
+            replyUid: params?.reply_uid || null, folder: params?.folder || 'INBOX',
+            undoDelay: delay, attachments: [...attachments],
+            restore: { to: qTo, cc: qCc, bcc: qBcc, subject, body: qBody },
+          });
+          try { require('../services/emailUndo').showEmailNotice(ob.isEmailDeviceOffline() ? 'outbox' : 'sending'); } catch {}
+          contentChangedRef.current = false;
+          if (draftTimerRef.current) clearInterval(draftTimerRef.current);
+          const staleDraft = draftUidRef.current;
+          draftUidRef.current = null;
+          if (staleDraft) { try { api.apiCall('draft_delete', { uid: staleDraft }, 'POST').catch(() => {}); } catch {} }
+          try { refresh(); } catch {}
+          onClose();
+        } catch {
+          setError(t('compose.errorConnection'));
+          setSending(false);
+        }
+      })();
+      return;
+    }
+
     setUndoCountdown(delay);
 
     const countRef = { value: delay };
