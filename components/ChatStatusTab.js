@@ -815,9 +815,12 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
   const _ink = isDark ? '#F5F5F7' : '#111111';
   const count = items?.length || 1;
   const ringSize = size + 10;
-  const radius = (ringSize / 2) - 3;
+  // [2026-10-17 polish-status-wa] r = borda-1.5 / traço 2.5 (igual ao anel sólido):
+  // antes r=borda-3 / traço 3 encostava no avatar (folga 0,5 px; WhatsApp ~2,5 px).
+  const _sw = 2.5;
+  const radius = (ringSize / 2) - 1.5;
   const circumference = 2 * Math.PI * radius;
-  const gapDeg = count > 1 ? 6 : 0;
+  const gapDeg = count > 1 ? (count > 12 ? 4 : 6) : 0;
   const totalGapDeg = gapDeg * count;
   const segmentDeg = (360 - totalGapDeg) / count;
   const segmentLen = (segmentDeg / 360) * circumference;
@@ -841,17 +844,21 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
           const isViewed = viewed || items?.[i]?.viewed;
-          const offset = -((segmentLen + gapLen) * i) + (circumference * 0.25);
+          // [2026-10-17 polish-status-wa] ponta redonda soma traço/2 em cada lado e
+          // FECHAVA o vão de 6° (segmentos colados). Desconta o traço do arco desenhado.
+          const _cap = count > 1 ? _sw : 0;
+          const _drawLen = Math.max(0.5, segmentLen - _cap);
+          const offset = -((segmentLen + gapLen) * i) + (circumference * 0.25) - (_cap / 2);
           return (
             <SvgCircle
               key={i}
               cx={ringSize / 2}
               cy={ringSize / 2}
               r={radius}
-              stroke={isViewed ? 'rgba(150,150,150,0.35)' : `url(#${gradId})`}
-              strokeWidth={3}
+              stroke={isViewed ? (isDark ? 'rgba(255,255,255,0.26)' : 'rgba(0,0,0,0.18)') : `url(#${gradId})`}
+              strokeWidth={_sw}
               fill="none"
-              strokeDasharray={`${segmentLen} ${circumference - segmentLen}`}
+              strokeDasharray={`${_drawLen} ${circumference - _drawLen}`}
               strokeDashoffset={offset}
               strokeLinecap="round"
             />
@@ -3775,7 +3782,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               </Text>
               <Text style={[styles.myStatusSub, { color: colors.textSecondary }]} numberOfLines={1}>
                 {hasMyStatus
-                  ? `${myStatuses.length} ${myStatuses.length > 1 ? 'atualizações' : 'atualização'} • ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
+                  // [2026-10-17 polish-status-wa] era PT fixo ("atualizações") em qualquer idioma.
+                  ? `${myStatuses.length} ${myStatuses.length > 1 ? (t?.('status.updatesMany') || 'atualizações') : (t?.('status.updatesOne') || 'atualização')} · ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
                   : addStatusLabel
                 }
               </Text>
@@ -3857,7 +3865,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               </TouchableOpacity>
               {hasMyStatus && (
                 <TouchableOpacity
-                  style={[styles.actionCircle, { backgroundColor: isDark ? '#3a1c1e' : '#fce4ec' }]}
+                  // [2026-10-17 polish-status-wa] P&B: disco neutro igual aos vizinhos (era rosa/vinho); só o ícone é vermelho.
+                  style={[styles.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}
                   onPress={() => {
                     const last = myStatuses[myStatuses.length - 1];
                     if (!last) return;
@@ -3877,7 +3886,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   }}
                   accessibilityLabel={t?.('common.delete') || 'Excluir'}
                 >
-                  <IconTrash size={18} color="#D63031" />
+                  <IconTrash size={18} color={isDark ? '#FF6B6B' : '#D63031'} />
                 </TouchableOpacity>
               )}
               <TouchableOpacity

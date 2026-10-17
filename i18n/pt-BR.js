@@ -13111,4 +13111,7 @@ export default {
   "liveHost.invite": "Convidar amigos",
   "liveHost.settings": "Configurações",
   "liveHost.comment": "Comentar…",
+  // [2026-10-17 polish-status-wa]
+  "status.updatesOne": "atualização",
+  "status.updatesMany": "atualizações",
 };

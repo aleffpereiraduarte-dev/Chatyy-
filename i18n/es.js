@@ -13032,4 +13032,7 @@ export default {
   "liveHost.invite": "Invitar amigos",
   "liveHost.settings": "Ajustes",
   "liveHost.comment": "Comentar…",
+  // [2026-10-17 polish-status-wa]
+  "status.updatesOne": "actualización",
+  "status.updatesMany": "actualizaciones",
 };

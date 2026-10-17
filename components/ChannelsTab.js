@@ -33,6 +33,10 @@ function IconPaperclip({ size = 22, color = '#666' }) {
 
 const ACCENT = '#111111';
 const ACCENT_DARK = '#111111';
+// [2026-10-17 polish-channels-wa] ACCENT #111 sumia no preto do dark mode (chip ativo,
+// categoria, Seguir, Publicar, Criar). Tinta do tema: preto no claro / branco no escuro.
+const inkOf = (isDark) => (isDark ? '#F5F5F7' : ACCENT);
+const onInkOf = (isDark) => (isDark ? '#000000' : '#FFFFFF');
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 // Filter chips on Discover (top-level filters: subscribed/discover/suggested/recent)
@@ -179,7 +183,7 @@ function nativePalette(colors, isDark) {
     text: _hex(colors?.text, isDark ? '#F5F5F7' : '#111111'),
     sub: _hex(colors?.textSecondary, isDark ? '#8E8E93' : '#737373'),
     card: isDark ? '#1C1C1E' : '#FFFFFF',
-    pill: isDark ? '#1A1A24' : '#F0F0F5',
+    pill: isDark ? '#1C1C1E' : '#F0F0F5',
     line: isDark ? '#FFFFFF0F' : '#0000000F',
   };
 }
@@ -224,7 +228,7 @@ function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate 
       accessibilityRole="button"
       accessibilityLabel={item.name}
     >
-      <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]}>
+      <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1c1c1e' : '#f0f0f5' }]}>
         {(item.photo_url || item.avatar) ? (
           <AvatarCircle name={item.name} uri={item.photo_url || item.avatar} size={50} />
         ) : (
@@ -431,12 +435,12 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
     <View style={{ flex: 1 }}>
       {/* Search */}
       <View style={[styles.searchBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6' }]}>
-        <IconSearch size={16} color={isDark ? '#666' : '#999'} />
+        <IconSearch size={16} color="#8e8e93" />
         <TextInput
           value={search}
           onChangeText={onSearchChange}
           placeholder={t('channel.searchPlaceholder') || 'Buscar canais...'}
-          placeholderTextColor={isDark ? '#555' : '#9ca3af'}
+          placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
           style={[styles.searchInput, { color: colors.text }]}
           autoCorrect={false}
         />
@@ -461,14 +465,14 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
               style={[
                 styles.filterChip,
                 active
-                  ? { backgroundColor: ACCENT, borderColor: ACCENT }
+                  ? { backgroundColor: inkOf(isDark), borderColor: inkOf(isDark) }
                   : { backgroundColor: 'transparent', borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)' },
               ]}
             >
               <Text style={{
                 fontSize: 13,
                 fontWeight: '700',
-                color: active ? '#fff' : colors.text,
+                color: active ? onInkOf(isDark) : colors.text,
                 letterSpacing: 0.1,
               }}>
                 {t(`channel.filter.${f.key}`) || f.label}
@@ -488,13 +492,13 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
             accessibilityRole="button"
             accessibilityState={{ selected: category === cat.key }}
             style={[styles.categoryPill, {
-              backgroundColor: category === cat.key ? ACCENT : (isDark ? '#1a1a24' : '#f0f0f5'),
+              backgroundColor: category === cat.key ? inkOf(isDark) : (isDark ? '#1c1c1e' : '#f0f0f5'),
             }]}
           >
             {/* [2026-10-08 apps-native] emoji removido (regra: UI sem emoji) */}
             <Text style={{
               fontSize: 12, fontWeight: '600',
-              color: category === cat.key ? '#fff' : colors.text,
+              color: category === cat.key ? onInkOf(isDark) : colors.text,
             }}>
               {t(`channel.cat.${cat.key}`) || cat.key.charAt(0).toUpperCase() + cat.key.slice(1)}
             </Text>
@@ -527,7 +531,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
         <FlatList
           data={displayed}
           keyExtractor={(item) => String(item.id)}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20, gap: 12 }}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
@@ -845,7 +849,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     return (
       <View style={[styles.postCard, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         {isImage ? (
-          <FastImage source={{ uri: media }} style={[styles.postMedia, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]} resizeMode="cover" recyclingKey={media} />
+          <FastImage source={{ uri: media }} style={[styles.postMedia, { backgroundColor: isDark ? '#1c1c1e' : '#f0f0f5' }]} resizeMode="cover" recyclingKey={media} />
         ) : isVideo ? (
           <PressableScale
             onPress={() => { require('../services/openLink').openLink(media); }}
@@ -870,7 +874,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
                 onPress={() => handleReact(item.id, r.emoji)}
                 haptic={false}
                 style={[styles.reactionChip, {
-                  backgroundColor: mine === r.emoji ? (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17,17,17,0.08)') : (isDark ? '#1a1a24' : '#f0f0f5'),
+                  backgroundColor: mine === r.emoji ? (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17,17,17,0.08)') : (isDark ? '#1c1c1e' : '#f0f0f5'),
                   borderColor: mine === r.emoji ? colors.text : 'transparent',
                 }]}
               >
@@ -900,13 +904,13 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={[styles.channelHeader, {
-        backgroundColor: isDark ? '#0a0a0f' : '#fff',
+        backgroundColor: isDark ? '#000000' : '#fff',
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       }]}>
         <PressableScale onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </PressableScale>
-        <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5', marginLeft: 12, width: 36, height: 36 }]}>
+        <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1c1c1e' : '#f0f0f5', marginLeft: 12, width: 36, height: 36 }]}>
           {(channel.photo_url || channel.avatar || info?.avatar) ? (
             <AvatarCircle name={channel.name} uri={channel.photo_url || channel.avatar || info?.avatar} size={36} />
           ) : (
@@ -924,11 +928,11 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
             onPress={handleJoin}
             haptic={false}
             disabled={joining}
-            style={[styles.followBtn, { backgroundColor: ACCENT }]}
+            style={[styles.followBtn, { backgroundColor: inkOf(isDark) }]}
             accessibilityRole="button"
           >
-            {joining ? <ActivityIndicator size="small" color="#fff" /> : (
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('channel.join') || 'Join'}</Text>
+            {joining ? <ActivityIndicator size="small" color={onInkOf(isDark)} /> : (
+              <Text style={{ color: onInkOf(isDark), fontSize: 13, fontWeight: '600' }}>{t('channel.join') || 'Join'}</Text>
             )}
           </PressableScale>
         ) : null}
@@ -981,7 +985,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
       {/* Admin post input */}
       {isAdmin && (
         <View style={[styles.postInput, {
-          backgroundColor: isDark ? '#0a0a0f' : '#fff',
+          backgroundColor: isDark ? '#000000' : '#fff',
           borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }]}>
           <PressableScale
@@ -1001,8 +1005,8 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
             value={newPost}
             onChangeText={setNewPost}
             placeholder={t('channel.writeSomething') || 'Write something...'}
-            placeholderTextColor={isDark ? '#555' : '#9ca3af'}
-            style={[styles.postTextInput, { color: colors.text, backgroundColor: isDark ? '#1a1a24' : '#f3f4f6' }]}
+            placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
+            style={[styles.postTextInput, { color: colors.text, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6' }]}
             multiline
             maxLength={5000}
           />
@@ -1010,11 +1014,11 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
             onPress={handlePost}
             disabled={!newPost.trim() || posting}
             haptic={false}
-            style={[styles.sendBtn, { opacity: newPost.trim() && !posting ? 1 : 0.4 }]}
+            style={[styles.sendBtn, { backgroundColor: inkOf(isDark), opacity: newPost.trim() && !posting ? 1 : 0.4 }]}
             accessibilityRole="button"
           >
-            {posting ? <ActivityIndicator size="small" color="#fff" /> : (
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('channel.post') || 'Post'}</Text>
+            {posting ? <ActivityIndicator size="small" color={onInkOf(isDark)} /> : (
+              <Text style={{ color: onInkOf(isDark), fontWeight: '700', fontSize: 14 }}>{t('channel.post') || 'Post'}</Text>
             )}
           </PressableScale>
         </View>
@@ -1077,8 +1081,8 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
             value={name}
             onChangeText={setName}
             placeholder={t('channel.namePlaceholder') || 'e.g. Tech News'}
-            placeholderTextColor={isDark ? '#555' : '#9ca3af'}
-            style={[styles.modalInput, { color: colors.text, backgroundColor: isDark ? '#1a1a24' : '#f3f4f6' }]}
+            placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
+            style={[styles.modalInput, { color: colors.text, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6' }]}
             maxLength={100}
           />
 
@@ -1087,8 +1091,8 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
             value={description}
             onChangeText={setDescription}
             placeholder={t('channel.descPlaceholder') || 'What is this channel about?'}
-            placeholderTextColor={isDark ? '#555' : '#9ca3af'}
-            style={[styles.modalInput, { color: colors.text, backgroundColor: isDark ? '#1a1a24' : '#f3f4f6', height: 80 }]}
+            placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
+            style={[styles.modalInput, { color: colors.text, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6', height: 80 }]}
             multiline
             maxLength={1000}
           />
@@ -1101,12 +1105,12 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
                 onPress={() => setCategory(cat.key)}
                 haptic="select"
                 style={[styles.categoryPill, {
-                  backgroundColor: category === cat.key ? ACCENT : (isDark ? '#1a1a24' : '#f0f0f5'),
+                  backgroundColor: category === cat.key ? inkOf(isDark) : (isDark ? '#1c1c1e' : '#f0f0f5'),
                 }]}
               >
                 <Text style={{
                   fontSize: 12, fontWeight: '600',
-                  color: category === cat.key ? '#fff' : colors.text,
+                  color: category === cat.key ? onInkOf(isDark) : colors.text,
                 }}>
                   {t(`channel.cat.${cat.key}`) || cat.key.charAt(0).toUpperCase() + cat.key.slice(1)}
                 </Text>
@@ -1118,11 +1122,11 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
             onPress={handleCreate}
             disabled={!name.trim() || creating}
             haptic="medium"
-            style={[styles.createBtn, { opacity: name.trim() && !creating ? 1 : 0.5 }]}
+            style={[styles.createBtn, { backgroundColor: inkOf(isDark), opacity: name.trim() && !creating ? 1 : 0.5 }]}
             accessibilityRole="button"
           >
-            {creating ? <ActivityIndicator color="#fff" /> : (
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{t('channel.createBtn') || 'Create'}</Text>
+            {creating ? <ActivityIndicator color={onInkOf(isDark)} /> : (
+              <Text style={{ color: onInkOf(isDark), fontWeight: '700', fontSize: 16 }}>{t('channel.createBtn') || 'Create'}</Text>
             )}
           </PressableScale>
         </DragPanel>
@@ -1287,7 +1291,7 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: 18,
     overflow: 'hidden',
-    backgroundColor: '#1a1a24',
+    backgroundColor: '#1c1c1e',
     position: 'relative',
     ...Platform.select({
       ios: {

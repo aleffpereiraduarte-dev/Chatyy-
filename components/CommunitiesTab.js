@@ -252,13 +252,13 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
           </View>
           <View style={styles.communityInfo}>
             <Text style={[styles.communityName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-            <Text style={[styles.communityMeta, { color: isDark ? '#8b8fa3' : '#6b7280' }]}>
+            <Text style={[styles.communityMeta, { color: isDark ? '#8e8e93' : '#6b7280' }]}>
               {item.group_count} {t('community.groups') || 'Grupos'} · {item.member_count} {t('community.members') || 'Membros'}
               {isAdmin ? (' · ' + (t('community.admin') || 'Admin')) : ''}
             </Text>
           </View>
           <View style={[styles.expandArrow, isExpanded && styles.expandArrowUp]}>
-            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={isDark ? '#666' : '#999'} strokeWidth={2}>
+            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={isDark ? '#8e8e93' : '#999'} strokeWidth={2}>
               <Path d="M6 9l6 6 6-6" />
             </Svg>
           </View>
@@ -267,14 +267,14 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         {isExpanded && (
           <View style={[styles.expandedSection, { borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
             {item.description ? (
-              <Text style={[styles.description, { color: isDark ? '#8b8fa3' : '#6b7280' }]}>{item.description}</Text>
+              <Text style={[styles.description, { color: isDark ? '#8e8e93' : '#6b7280' }]}>{item.description}</Text>
             ) : null}
 
             {loadingInfo ? (
-              <ActivityIndicator size="small" color={ACCENT} style={{ marginVertical: 12 }} />
+              <ActivityIndicator size="small" color={colors.text} style={{ marginVertical: 12 }} />
             ) : expandedData?.groups?.length > 0 ? (
               <View style={styles.groupsList}>
-                <Text style={[styles.sectionLabel, { color: isDark ? '#8b8fa3' : '#6b7280' }]}>{t('community.groups') || 'Groups'}</Text>
+                <Text style={[styles.sectionLabel, { color: isDark ? '#8e8e93' : '#6b7280' }]}>{t('community.groups') || 'Groups'}</Text>
                 {expandedData.groups.map(g => (
                   <PressableRow
                     key={g.conversation_id}
@@ -284,7 +284,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                     <View style={[styles.groupDot, { backgroundColor: colors.text }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={1}>{g.name || 'Group'}</Text>
-                      <Text style={[styles.groupMembers, { color: isDark ? '#666' : '#999' }]}>{g.member_count} {t('community.members') || 'members'}</Text>
+                      <Text style={[styles.groupMembers, { color: isDark ? '#8e8e93' : '#6c6c70' }]}>{g.member_count} {t('community.members') || 'members'}</Text>
                     </View>
                     {isAdmin && (
                       <TouchableOpacity
@@ -310,7 +310,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                 ))}
               </View>
             ) : (
-              <Text style={[styles.emptyText, { color: isDark ? '#555' : '#999' }]}>{t('community.noGroups') || 'No groups'}</Text>
+              <Text style={[styles.emptyText, { color: isDark ? '#8e8e93' : '#6c6c70' }]}>{t('community.noGroups') || 'No groups'}</Text>
             )}
 
             {/* Action buttons */}
@@ -464,7 +464,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
             <TextInput
               style={[styles.input, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
               placeholder={t('community.name') || 'Community name'}
-              placeholderTextColor={isDark ? '#555' : '#aaa'}
+              placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
               value={createName}
               onChangeText={setCreateName}
               maxLength={100}
@@ -473,7 +473,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
             <TextInput
               style={[styles.input, styles.inputMulti, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
               placeholder={t('community.description') || 'Description (optional)'}
-              placeholderTextColor={isDark ? '#555' : '#aaa'}
+              placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
               value={createDesc}
               onChangeText={setCreateDesc}
               maxLength={500}
@@ -481,14 +481,14 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               numberOfLines={3}
             />
             <PressableScale
-              style={[styles.createBtn, !createName.trim() && styles.createBtnDisabled]}
+              style={[styles.createBtn, !createName.trim() && styles.createBtnDisabled, isDark && styles.createBtnDark]}
               onPress={handleCreate}
               disabled={creating || !createName.trim()}
               haptic="medium"
               accessibilityRole="button"
             >
-              {creating ? <ActivityIndicator size="small" color="#fff" /> : (
-                <Text style={styles.createBtnText}>{t('community.create') || 'Create'}</Text>
+              {creating ? <ActivityIndicator size="small" color={isDark ? '#000' : '#fff'} /> : (
+                <Text style={[styles.createBtnText, isDark && styles.createBtnTextDark]}>{t('community.create') || 'Create'}</Text>
               )}
             </PressableScale>
           </View>
@@ -505,14 +505,14 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               <TouchableOpacity onPress={() => setAnnounceCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
             </View>
             {announceCommunity && (
-              <Text style={[styles.announceTo, { color: isDark ? '#8b8fa3' : '#6b7280' }]}>
+              <Text style={[styles.announceTo, { color: isDark ? '#8e8e93' : '#6b7280' }]}>
                 {announceCommunity.name} ({announceCommunity.group_count} {t('community.groups') || 'groups'})
               </Text>
             )}
             <TextInput
               style={[styles.input, styles.inputMulti, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
               placeholder={t('community.announcementPlaceholder') || 'Write an announcement...'}
-              placeholderTextColor={isDark ? '#555' : '#aaa'}
+              placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
               value={announceText}
               onChangeText={setAnnounceText}
               maxLength={4000}
@@ -521,14 +521,14 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               autoFocus
             />
             <PressableScale
-              style={[styles.createBtn, !announceText.trim() && styles.createBtnDisabled]}
+              style={[styles.createBtn, !announceText.trim() && styles.createBtnDisabled, isDark && styles.createBtnDark]}
               onPress={handleAnnounce}
               disabled={announcing || !announceText.trim()}
               haptic="medium"
               accessibilityRole="button"
             >
-              {announcing ? <ActivityIndicator size="small" color="#fff" /> : (
-                <Text style={styles.createBtnText}>{t('community.sendAnnouncement') || 'Enviar'}</Text>
+              {announcing ? <ActivityIndicator size="small" color={isDark ? '#000' : '#fff'} /> : (
+                <Text style={[styles.createBtnText, isDark && styles.createBtnTextDark]}>{t('community.sendAnnouncement') || 'Enviar'}</Text>
               )}
             </PressableScale>
           </View>
@@ -544,9 +544,9 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               <TouchableOpacity onPress={() => setAddGroupCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
             </View>
             {loadingGroups ? (
-              <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 20 }} />
+              <ActivityIndicator size="large" color={colors.text} style={{ marginVertical: 20 }} />
             ) : userGroups.length === 0 ? (
-              <Text style={[styles.emptyText, { color: isDark ? '#555' : '#999', textAlign: 'center', marginVertical: 20 }]}>
+              <Text style={[styles.emptyText, { color: isDark ? '#8e8e93' : '#6c6c70', textAlign: 'center', marginVertical: 20 }]}>
                 {t('community.noGroups') || 'No groups found'}
               </Text>
             ) : (
@@ -562,7 +562,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                     <View style={[styles.groupDot, { backgroundColor: colors.text }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={1}>{group.name || group.display_name || 'Group'}</Text>
-                      <Text style={[styles.groupMembers, { color: isDark ? '#666' : '#999' }]}>{group.member_count || 0} {t('community.members') || 'members'}</Text>
+                      <Text style={[styles.groupMembers, { color: isDark ? '#8e8e93' : '#6c6c70' }]}>{group.member_count || 0} {t('community.members') || 'members'}</Text>
                     </View>
                     <IconPlus size={18} color={colors.text} />
                   </PressableRow>
@@ -758,6 +758,9 @@ const styles = StyleSheet.create({
   createBtnDisabled: {
     opacity: 0.5,
   },
+  // [2026-10-17 polish-communities-wa] botão #111 sumia na folha escura (#161616).
+  createBtnDark: { backgroundColor: '#F5F5F7' },
+  createBtnTextDark: { color: '#000000' },
   createBtnText: {
     color: '#fff',
     fontSize: 15,

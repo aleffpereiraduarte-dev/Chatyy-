@@ -214,9 +214,12 @@ function StoryRingAvatar({
     // Renders one arc per story item with a 6° gap between segments.
     const count = Math.max(1, segments);
     const ringSize = size + 10;
-    const radius = (ringSize / 2) - 3;
+    // [2026-10-17 polish-status-wa] mesma geometria do anel sólido (r=borda-1.5, traço
+    // 2.5): o segmentado encostava no avatar e trocava de espessura ao ver tudo.
+    const _sw = 2.5;
+    const radius = (ringSize / 2) - 1.5;
     const circumference = 2 * Math.PI * radius;
-    const gapDeg = count > 1 ? 6 : 0;
+    const gapDeg = count > 1 ? (count > 12 ? 4 : 6) : 0;
     const totalGapDeg = gapDeg * count;
     const segmentDeg = (360 - totalGapDeg) / count;
     const segmentLen = (segmentDeg / 360) * circumference;
@@ -246,7 +249,10 @@ function StoryRingAvatar({
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
               const segViewed = allViewed || (itemsViewed && itemsViewed[i]);
-              const offset = -((segmentLen + gapLen) * i) + (circumference * 0.25);
+              // [2026-10-17 polish-status-wa] ponta redonda fechava o vão → desconta o traço.
+              const _cap = count > 1 ? _sw : 0;
+              const _drawLen = Math.max(0.5, segmentLen - _cap);
+              const offset = -((segmentLen + gapLen) * i) + (circumference * 0.25) - (_cap / 2);
               return (
                 <SvgCircle
                   key={i}
@@ -256,9 +262,9 @@ function StoryRingAvatar({
                   stroke={segViewed
                     ? _dim
                     : `url(#${segGid})`}
-                  strokeWidth={3}
+                  strokeWidth={_sw}
                   fill="none"
-                  strokeDasharray={`${segmentLen} ${circumference - segmentLen}`}
+                  strokeDasharray={`${_drawLen} ${circumference - _drawLen}`}
                   strokeDashoffset={offset}
                   strokeLinecap="round"
                 />

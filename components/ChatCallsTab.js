@@ -599,6 +599,17 @@ function SilenceToggle({ isDark }) {
   );
 }
 
+// [2026-10-17 polish-calls-wa] Subtítulo estilo WhatsApp: "Recebida" / "Efetuada" /
+// "Perdida" (+ ícone de vídeo/duração ao lado). Antes toda linha Chatyy dizia só
+// "Chatyy" — sem PSTN isso não informa nada. Linha de telefone antiga segue com o número.
+function _callSubLabel(item, direction, t) {
+  if (item && item.to_number && item.source !== 'chat') return formatPhoneDisplay(item.to_number);
+  return getCallLabel(direction, t);
+}
+function _rowCount(item) {
+  return Number(item?.count || item?.call_count || 0) || 0;
+}
+
 const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language, onPress, onInfoPress, onCallBack, onLongPress }) {
   // [2026-05-28] Server-sourced rows carry the kind in `item.type`
   // (audio|video|group) and the outcome in `item.status` (missed|answered|
@@ -663,6 +674,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={[s.historyName, { color: nameColor }]} numberOfLines={1}>
             {displayName}
+            {/* [2026-10-17 polish-calls-wa] "(3)" agrupado igual ao WhatsApp (a célula nativa já mostrava). */}
+            {_rowCount(item) > 1 ? <Text style={{ fontWeight: '400' }}>{` (${_rowCount(item)})`}</Text> : null}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
@@ -676,7 +689,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
             <ArrowIncoming size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           )}
           <Text style={[s.historyType, { color: subColor }]}>
-            {isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : label)}
+            {_callSubLabel(item, direction, t)}
           </Text>
           {isVideoCall && ( // [2026-10-06 UX2] media kind, not direction
             <IconVideo size={12} color={subColor} />
@@ -706,16 +719,17 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
         {/* [2026-10-17 sem-pstn] linha de telefone (PSTN) antiga: sem botão de rediscar. */}
         {(!item.to_number || isPstnEnabled()) && (
         <TouchableOpacity
-          style={[
-            s.callBackBtn,
-            { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' },
-          ]}
+          style={s.callBackBtn}
           onPress={() => { haptic.medium(); onCallBack?.(item); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={t?.('calls.callBack') || 'Call back'}
           accessibilityRole="button"
         >
-          <IconPhone size={18} color={blueInk(isDark)} />
+          {/* [2026-10-17 polish-calls-wa] glifo limpo (sem disco cinza) e do MESMO tipo da
+              ligação — vídeo rediscar com câmera, igual WhatsApp. */}
+          {isVideoCall
+            ? <IconVideo size={21} color={blueInk(isDark)} />
+            : <IconPhone size={19} color={blueInk(isDark)} />}
         </TouchableOpacity>
         )}
         <TouchableOpacity
@@ -735,6 +749,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   // Without this the row re-renders every time the parent re-creates onPress/onInfoPress.
   if (prev.isDark !== next.isDark) return false;
   if (prev.t !== next.t) return false;
+  if (prev.language !== next.language) return false;
   const a = prev.item, b = next.item;
   if (a === b) return true;
   if (!a || !b) return false;
@@ -747,6 +762,11 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   if ((a.to_number || '') !== (b.to_number || '')) return false;
   if ((a.video || false) !== (b.video || false)) return false;
   if ((a.source || '') !== (b.source || '')) return false;
+  // [2026-10-17 polish-calls-wa] ringing→missed / contagem / correio de voz mudam a linha.
+  if ((a.status || '') !== (b.status || '')) return false;
+  if ((a.direction || '') !== (b.direction || '')) return false;
+  if (_rowCount(a) !== _rowCount(b)) return false;
+  if (!!(a.has_voicemail || a.voicemail_id) !== !!(b.has_voicemail || b.voicemail_id)) return false;
   return true;
 });
 
@@ -765,7 +785,7 @@ function _describeCallRow(item, t, language) {
   const _isRawHandle = (n) => typeof n === 'string' && /^[a-z0-9]+([._-][a-z0-9]+)*$/.test(String(n).trim()) && !/^\d+$/.test(String(n).trim());
   const title = lookedUp
     || ((hasSavedName && !_isRawHandle(rawName)) ? rawName : prettifyHandle(rawName));
-  const sub = isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : getCallLabel(direction, t));
+  const sub = _callSubLabel(item, direction, t);
   const dur = formatDuration(item.duration);
   const time = formatCallTime(item.timestamp || item.created_at, t, language);
   const label = getCallLabel(direction, t);
@@ -777,7 +797,7 @@ function _describeCallRow(item, t, language) {
     dur,
     vm: !!(item.has_voicemail || item.voicemail_id),
     time,
-    count: Number(item.count || item.call_count || 0) || 0,
+    count: _rowCount(item),
     isChatyy: isChatyy && !!(item.contactName || item.contactEmail),
     avatarName: item.contactName || item.contactEmail || '?',
     avatarEmail: item.contactEmail || '',
@@ -3201,7 +3221,10 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     const email = item.contactEmail || item.contact_email || '';
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
-    const isVideo = item.video ? '1' : '0';
+    // [2026-10-17 polish-calls-wa] linha do servidor traz type='video' (não item.video):
+    // rediscar uma chamada de vídeo saía como voz.
+    const _vid = callIsVideo(item);
+    const isVideo = _vid ? '1' : '0';
     // [2026-05-20 restore foreground gate] voipNative now short-circuits to
     // the JS /call.js screen when the app is foreground (the common case
     // for redial — user tapped a row inside the app). When backgrounded
@@ -3222,7 +3245,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             console.log('[CALL-TRACE][1b/12] ChatCallsTab redial tap', {
               email,
               name,
-              video: !!item.video,
+              video: _vid,
               conversationId,
               itemKeys: Object.keys(item || {}),
               ts: Date.now(),
@@ -3246,7 +3269,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           const { callId, native } = await voipNative.startOutgoingCall({
             calleeEmail: email,
             calleeName: name,
-            isVideo: !!item.video,
+            isVideo: _vid,
             conversationId,
             onWebFallback: _jsRoute,
             // [WAVE 141] WhatsApp arch: native owns call UI, no JS route foreground.
@@ -4029,17 +4052,12 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     minHeight: 66,
   },
+  // [2026-10-17 polish-calls-wa] sem anel vermelho no avatar da perdida (no WhatsApp
+  // só o NOME fica vermelho; anel em volta do avatar lê como "tem status").
   historyLeft: {
     marginEnd: 13,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    borderRadius: 26,
-    padding: 1.5,
   },
-  // Subtle red ring for missed calls — premium "attention pull" without shouting.
-  historyLeftMissed: {
-    borderColor: RED,
-  },
+  historyLeftMissed: {},
   historyAvatar: {
     width: 44,
     height: 44,
@@ -4083,15 +4101,15 @@ const s = StyleSheet.create({
   // Round call-back affordance — sized to a comfortable 40pt tap target.
   callBackBtn: {
     borderRadius: 20,
-    width: 40,
+    width: 36,
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // 16 pad + 51 avatar ring + 13 gap = 80 -> separator starts under the name
+  // 16 pad + 44 avatar + 13 gap = 73 -> separator starts under the name
   separator: {
     height: StyleSheet.hairlineWidth,
-    marginStart: 80,
+    marginStart: 73,
   },
 
   // Empty state
