@@ -294,8 +294,8 @@ final class CLPillView: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func size(height: CGFloat) -> CGSize {
-    let w = ceil(label.intrinsicContentSize.width) + 14
+  func size(height: CGFloat, padding: CGFloat = 14) -> CGSize {
+    let w = ceil(label.intrinsicContentSize.width) + padding
     return CGSize(width: max(height, w), height: height)
   }
 

@@ -351,9 +351,10 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
         }
         TYPE_SECTION -> {
           val tv = TextView(parent.context)
-          tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-          tv.typeface = CLType.weight(600)
-          tv.letterSpacing = 0.7f / 12f
+          // [2026-10-17 wa-cells] cabeçalho de seção 13 (WhatsApp)
+          tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+          tv.typeface = CLType.weight(500)
+          tv.letterSpacing = 0.3f / 13f
           tv.maxLines = 1
           tv.ellipsize = TextUtils.TruncateAt.END
           tv.includeFontPadding = false

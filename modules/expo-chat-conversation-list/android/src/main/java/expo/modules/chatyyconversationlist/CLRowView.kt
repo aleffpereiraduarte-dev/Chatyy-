@@ -3,8 +3,8 @@ package expo.modules.chatyyconversationlist
 // [2026-10-14 native-home] Linha da conversa (Android). ViewGroup com layout
 // manual (sem ConstraintLayout/medições aninhadas): altura fixa por escala de
 // fonte, então o RecyclerView não remede nada no scroll. Visual = ConversationRow
-// do ChatListTab.js (avatar 54, gutter 16, gap 14, nome 16, prévia 14, hora 12
-// tabular, pílula 22, ícones 15; linha inset entre linhas desenhada pela lista — wave13).
+// do ChatListTab.js (avatar 54, gutter 16, gap 14, nome 17, prévia 15, hora 14
+// tabular, contador 13 em círculo 20, ícones 15; linha inset entre linhas desenhada pela lista — wave13).
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
@@ -49,17 +49,18 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
 
   val avatar = CLAvatarView(ctx)
   private val check = CLCheckView(ctx)
-  private val nameTv = label(16f, 1.35f, 600)
-  private val activityTv = label(12f, 1.3f, 500)
-  private val timeTv = label(12f, 1.3f, 400)
-  private val previewTv = label(14f, 1.3f, 400)
+  // [2026-10-17 wa-cells] WhatsApp: nome 17/600, prévia 15, hora 14, contador 13 (círculo 20).
+  private val nameTv = label(17f, 1.35f, 600)
+  private val activityTv = label(13f, 1.3f, 500)
+  private val timeTv = label(14f, 1.3f, 400)
+  private val previewTv = label(15f, 1.3f, 400)
   private val lockIv = ImageView(ctx)
   private val clockIv = ImageView(ctx)
   private val muteIv = ImageView(ctx)
   private val pinIv = ImageView(ctx)
   private val receipt = CLReceiptView(ctx)
   private val typing = CLTypingDots(ctx)
-  private val mentionTv = label(13f, 1.15f, 800)
+  private val mentionTv = label(13f, 1.15f, 700)
   // [2026-10-16 wave8-list] contador desenhado (dígitos rolando)
   private val unreadTv = CLCounterView(ctx)
   private val mentionBg = GradientDrawable()
@@ -75,9 +76,9 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   }
 
   private val tfName = CLType.weight(600)
-  private val tfNameBold = CLType.weight(700)
+  private val tfNameBold = CLType.weight(600)
   private val tfTime = CLType.weight(400)
-  private val tfTimeBold = CLType.weight(700)
+  private val tfTimeBold = CLType.weight(600)
   private val tfMedium = CLType.weight(500)
   private val tfSemibold = CLType.weight(600)
 
@@ -108,19 +109,19 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     addView(receipt)
     addView(typing)
     timeTv.fontFeatureSettings = "tnum"
-    unreadTv.setTextSizePx(sp(12f, 1.15f))
-    unreadTv.setTypeface(CLType.weight(700))
+    unreadTv.setTextSizePx(sp(13f, 1.15f))
+    unreadTv.setTypeface(CLType.weight(600))
     timeTv.gravity = Gravity.END
     mentionTv.gravity = Gravity.CENTER
     mentionTv.text = "@"
-    mentionBg.cornerRadius = px(11f).toFloat()
+    mentionBg.cornerRadius = px(10f).toFloat()
     mentionTv.background = mentionBg
     for (i in 0 until childCount) {
       getChildAt(i).importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     }
     val nameLine = nameTv.lineHeight
     val prevLine = previewTv.lineHeight
-    rowHeight = max(px(74f), px(20f) + nameLine + px(4f) + prevLine + px(2f))
+    rowHeight = max(px(76f), px(22f) + nameLine + px(3f) + prevLine + px(2f))
 
     setOnClickListener { listener?.onPress(row.id) }
     setOnLongClickListener {
@@ -165,7 +166,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     // Fundo + ripple (cinza discreto)
     val base = when {
       selection && r.selected -> t.selectedBg
-      r.pinned -> t.pinnedBg
+      // [2026-10-17 wa-cells] fixada = fundo liso (WhatsApp); só o alfinete marca.
       else -> t.bg
     }
     baseBg = base
@@ -429,7 +430,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     cActW = aw
 
     var bx = right
-    val pillH = px(22f)
+    val pillH = px(20f)
     if (unreadTv.visibility == VISIBLE) {
       unreadTv.measure(unspec, exactly(pillH))
       val pw = max(pillH, unreadTv.measuredWidth)
@@ -488,7 +489,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
 
     val nameH = nameTv.measuredHeight
     val prevH = previewTv.measuredHeight + px(2f)
-    val total = nameH + px(4f) + prevH
+    val total = nameH + px(3f) + prevH
     val top = (h - total) / 2
 
     // Linha de cima (alinhamento por baseline com o nome)
@@ -511,10 +512,10 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
 
     // Linha de baixo
-    val by = top + nameH + px(4f)
+    val by = top + nameH + px(3f)
     val cy = by + prevH / 2
     var bx = right
-    val pillH = px(22f)
+    val pillH = px(20f)
     if (unreadTv.visibility == VISIBLE) {
       val pw = unreadTv.measuredWidth
       unreadTv.layout(bx - pw, cy - pillH / 2, bx, cy - pillH / 2 + pillH)

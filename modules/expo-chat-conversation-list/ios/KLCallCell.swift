@@ -261,8 +261,10 @@ final class KLCallCell: UICollectionViewListCell {
     timeLabel.font = timeFont
     timeLabel.textColor = t.sub
     timeLabel.text = r.time
-    callButton.backgroundColor = t.btnBg
-    callButton.setImage(symbol(r.video ? "video" : "phone", 16, t.ink, weight: .medium), for: .normal)
+    // [2026-10-17 wa-cells] Ligar de volta = glifo solto (sem disco), como o WhatsApp:
+    // câmera p/ vídeo, fone p/ voz.
+    callButton.backgroundColor = .clear
+    callButton.setImage(symbol(r.video ? "video" : "phone", 20, t.ink, weight: .regular), for: .normal)
     callButton.tintColor = t.ink
     callButton.accessibilityLabel = labels.get("callBack", "Ligar de volta")
     infoButton.setImage(symbol("info.circle", 19, t.ink, weight: .regular), for: .normal)

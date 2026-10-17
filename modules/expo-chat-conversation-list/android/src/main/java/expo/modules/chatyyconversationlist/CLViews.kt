@@ -674,7 +674,7 @@ internal class CLCounterView(ctx: Context) : View(ctx) {
   }
   private val rect = RectF()
   private val clip = Path()
-  private val padH = ctx.dp(7f)
+  private val padH = ctx.dp(6f)
   var text: String = ""
     private set
   private var oldText = ""

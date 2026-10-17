@@ -64,7 +64,7 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
   init {
     setWillNotDraw(false)
     isFocusable = true
-    chipBg.cornerRadius = 10f * d
+    chipBg.cornerRadius = 7f * d // [2026-10-17 wa-cells] tile 30 dp, canto 7
     chip.background = chipBg
     addView(chip)
     glyph.scaleType = ImageView.ScaleType.FIT_CENTER
@@ -168,9 +168,9 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
     val w = MeasureSpec.getSize(widthMeasureSpec)
     val unspec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
-    val icon = px(32f)
+    val icon = px(30f)
     chip.measure(MeasureSpec.makeMeasureSpec(icon, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(icon, MeasureSpec.EXACTLY))
-    val g = px(18f)
+    val g = px(17f)
     glyph.measure(MeasureSpec.makeMeasureSpec(g, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(g, MeasureSpec.EXACTLY))
     val cv = px(17f)
     chevron.measure(MeasureSpec.makeMeasureSpec(cv, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(cv, MeasureSpec.EXACTLY))
@@ -185,7 +185,7 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
     setMeasuredDimension(w, h)
   }
 
-  private fun textLeft(): Int = if (hasIcon) px(16f + 32f + 14f) else px(16f)
+  private fun textLeft(): Int = if (hasIcon) px(16f + 30f + 14f) else px(16f)
 
   private fun textRight(w: Int): Int {
     var r = w - px(16f)
@@ -227,7 +227,7 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     if (showSeparator) {
-      val inset = if (hasIcon && row.kind == "c") px(62f) else px(16f)
+      val inset = if (hasIcon && row.kind == "c") px(60f) else px(16f)
       val y = height - hairPaint.strokeWidth / 2f
       canvas.drawLine(inset.toFloat(), y, width.toFloat(), y, hairPaint)
     }

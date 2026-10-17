@@ -59,14 +59,15 @@ final class STRowCell: UICollectionViewCell {
     if #available(iOS 13.0, *) { layer.cornerCurve = .continuous }
 
     chip.translatesAutoresizingMaskIntoConstraints = false
-    chip.layer.cornerRadius = 10
+    // [2026-10-17 wa-cells] tile 30 pt, canto contínuo 7 (Ajustes/WhatsApp iOS).
+    chip.layer.cornerRadius = 7
     if #available(iOS 13.0, *) { chip.layer.cornerCurve = .continuous }
     glyph.translatesAutoresizingMaskIntoConstraints = false
     glyph.contentMode = .center
     chip.addSubview(glyph)
     contentView.addSubview(chip)
 
-    titleLabel.font = UIFont.systemFont(ofSize: 16, weight: .regular)
+    titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .regular)
     titleLabel.numberOfLines = 1
     titleLabel.adjustsFontForContentSizeCategory = false
     subLabel.font = UIFont.systemFont(ofSize: 13, weight: .regular)
@@ -92,7 +93,7 @@ final class STRowCell: UICollectionViewCell {
     contentView.addSubview(separator)
 
     let px = 1 / max(1, UIScreen.main.scale)
-    chipW = chip.widthAnchor.constraint(equalToConstant: 32)
+    chipW = chip.widthAnchor.constraint(equalToConstant: 30)
     textLeadingToChip = textStack.leadingAnchor.constraint(equalTo: chip.trailingAnchor, constant: 14)
     textLeadingToEdge = textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
     textCenterX = textStack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
@@ -100,7 +101,7 @@ final class STRowCell: UICollectionViewCell {
     textTrailingToChevron = textStack.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -6)
     textTrailingToSwitch = textStack.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -10)
     textTrailingToEdge = textStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16)
-    sepLeading = separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 62)
+    sepLeading = separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 60)
     let minH = contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 52)
     minH.priority = .required
     let topC = textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 11)
@@ -110,7 +111,7 @@ final class STRowCell: UICollectionViewCell {
       chip.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
       chip.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
       chipW,
-      chip.heightAnchor.constraint(equalToConstant: 32),
+      chip.heightAnchor.constraint(equalToConstant: 30),
       glyph.centerXAnchor.constraint(equalTo: chip.centerXAnchor),
       glyph.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
       textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
@@ -155,7 +156,7 @@ final class STRowCell: UICollectionViewCell {
     // Ícone (chip suave) — linhas sem ícone/centradas (Sair) não têm chip.
     var hasIcon = false
     if !row.center, let sym = STText.symbol(row.icon) {
-      let cfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+      let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
       glyph.image = UIImage(systemName: sym, withConfiguration: cfg)?.withTintColor(p.chipFg, renderingMode: .alwaysOriginal)
       chip.backgroundColor = p.chipBg
       hasIcon = glyph.image != nil
@@ -166,9 +167,9 @@ final class STRowCell: UICollectionViewCell {
     para.alignment = row.center ? .center : .natural
     para.lineBreakMode = .byTruncatingTail
     titleLabel.attributedText = NSAttributedString(string: row.title, attributes: [
-      .font: UIFont.systemFont(ofSize: 16, weight: .regular),
+      .font: UIFont.systemFont(ofSize: 17, weight: .regular),
       .foregroundColor: row.destructive ? p.destructive : p.text,
-      .kern: -0.25,
+      .kern: -0.2,
       .paragraphStyle: para,
     ])
     subLabel.text = row.sub
@@ -200,8 +201,8 @@ final class STRowCell: UICollectionViewCell {
     NSLayoutConstraint.activate(active)
     separator.backgroundColor = p.separator
     separator.isHidden = !showSeparator
-    // Categorias: recuo 62 (alinha com o texto); resultados/ações: 16 (como o JS).
-    sepLeading.constant = (hasIcon && row.kind == "c") ? 62 : 16
+    // Categorias: recuo 60 (16 + tile 30 + 14 = alinha com o texto); resultados/ações: 16.
+    sepLeading.constant = (hasIcon && row.kind == "c") ? 60 : 16
 
     // Toggle: o UISwitch é o elemento acessível (VoiceOver alterna direto).
     isAccessibilityElement = !isToggle
@@ -246,9 +247,9 @@ final class STHeaderCell: UICollectionViewCell {
   func configure(_ text: String, palette p: STPalette) {
     let up = text.uppercased()
     label.attributedText = NSAttributedString(string: up, attributes: [
-      .font: UIFont.systemFont(ofSize: 12, weight: .semibold),
+      .font: UIFont.systemFont(ofSize: 13, weight: .regular),
       .foregroundColor: p.header,
-      .kern: 0.7,
+      .kern: 0.3,
     ])
     accessibilityLabel = text
   }

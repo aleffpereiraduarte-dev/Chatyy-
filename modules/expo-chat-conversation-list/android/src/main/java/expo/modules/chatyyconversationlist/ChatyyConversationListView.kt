@@ -868,7 +868,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       // Deixa à mostra pelo menos o avatar da linha (como o iOS).
       val avail = max(pillMin * n + margin + gap * n, w - 76f * density)
       labelPaint.typeface = CLType.weight(500)
-      var size = 13f * density * fs
+      var size = 11.5f * density * fs // [2026-10-17 wa-cells] rótulo 11,5 medium (WhatsApp)
       val minSize = 10.5f * density * fs
       val tw = FloatArray(n)
       fun measure() {

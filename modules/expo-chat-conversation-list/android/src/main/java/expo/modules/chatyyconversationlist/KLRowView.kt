@@ -108,6 +108,7 @@ internal class KLRowView(ctx: Context) : ViewGroup(ctx) {
   private val timeTv = label(12f, 1.3f, 500)
   private val callBtn = ImageView(ctx)
   private val callBg = GradientDrawable()
+  private val callRipple = RippleDrawable(ColorStateList.valueOf(Color.argb(26, 0, 0, 0)), null, null)
   private val infoBtn = ImageView(ctx)
   private val cardBg = GradientDrawable()
   private val maskBg = GradientDrawable()
@@ -149,9 +150,11 @@ internal class KLRowView(ctx: Context) : ViewGroup(ctx) {
     timeTv.gravity = Gravity.END
     timeTv.letterSpacing = 0.2f / 12f
     callBg.shape = GradientDrawable.OVAL
-    callBtn.background = callBg
+    // [2026-10-17 wa-cells] Ligar de volta = glifo solto (sem disco cinza), como o
+    // WhatsApp; só um ripple sem borda no toque. Câmera p/ vídeo, fone p/ voz.
+    callBtn.background = callRipple
     callBtn.scaleType = ImageView.ScaleType.CENTER_INSIDE
-    callBtn.setPadding(px(11f), px(11f), px(11f), px(11f))
+    callBtn.setPadding(px(9f), px(9f), px(9f), px(9f))
     callBtn.isClickable = true
     callBtn.setOnClickListener {
       it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
@@ -265,7 +268,7 @@ internal class KLRowView(ctx: Context) : ViewGroup(ctx) {
     subTv.setTextColor(t.sub)
     timeTv.setTextColor(t.sub)
     timeTv.text = r.time
-    callBg.setColor(t.btnBg)
+    callRipple.setColor(ColorStateList.valueOf(t.press))
     callBtn.setImageDrawable(tintedIcon(context, if (r.video) R.drawable.ccl_ic_video else R.drawable.ccl_ic_phone, t.ink))
     callBtn.contentDescription = l.get("callBack", "Ligar de volta")
     infoBtn.setImageDrawable(tintedIcon(context, R.drawable.ckl_ic_info, t.ink))

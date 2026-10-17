@@ -3,8 +3,8 @@ import UIKit
 // [2026-10-14 native-home] Célula da conversa — layout manual (frames), sem
 // Auto Layout: a altura é fixa por categoria de fonte, então a lista não mede
 // nada durante o scroll. Visual = ConversationRow do ChatListTab.js
-// (avatar 54, gutter 16, gap 14, nome 16/600→700, prévia 14, hora 12 tabular,
-// pílula 22, ícones 15 em cinza).
+// (avatar 54, gutter 16, gap 14, nome 17/600, prévia 15, hora 14 tabular,
+// contador 13 em círculo 20, ícones 15 em cinza) — WhatsApp iOS.
 final class CLConversationCell: UICollectionViewListCell {
   let avatar = CLAvatarView()
   private let check = CLCheckView()
@@ -28,15 +28,17 @@ final class CLConversationCell: UICollectionViewListCell {
   private var selectionMode = false
   private var fontsCategory: UIContentSizeCategory?
 
-  private var nameFont = UIFont.systemFont(ofSize: 16, weight: .semibold)
-  private var nameBoldFont = UIFont.systemFont(ofSize: 16, weight: .bold)
-  private var activityFont = UIFont.systemFont(ofSize: 12, weight: .medium)
-  private var timeFont = UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-  private var timeBoldFont = UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
-  private var previewFont = UIFont.systemFont(ofSize: 14, weight: .regular)
-  private var previewSemibold = UIFont.systemFont(ofSize: 14, weight: .semibold)
-  private var previewMedium = UIFont.systemFont(ofSize: 14, weight: .medium)
-  private var pillFont = UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
+  // [2026-10-17 wa-cells] Tamanhos do WhatsApp iOS: nome 17 semibold (sem
+  // engrossar quando não lida), prévia 15, hora 14, contador 13 em círculo 20.
+  private var nameFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+  private var nameBoldFont = UIFont.systemFont(ofSize: 17, weight: .semibold)
+  private var activityFont = UIFont.systemFont(ofSize: 13, weight: .medium)
+  private var timeFont = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .regular)
+  private var timeBoldFont = UIFont.monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
+  private var previewFont = UIFont.systemFont(ofSize: 15, weight: .regular)
+  private var previewSemibold = UIFont.systemFont(ofSize: 15, weight: .semibold)
+  private var previewMedium = UIFont.systemFont(ofSize: 15, weight: .medium)
+  private var pillFont = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
 
   var onAvatarTap: ((String) -> Void)?
   var onA11yAction: ((String, String) -> Void)?
@@ -73,10 +75,10 @@ final class CLConversationCell: UICollectionViewListCell {
   // MARK: - Altura
 
   static func height(for traits: UITraitCollection) -> CGFloat {
-    let name = CLFonts.scaled(16, .semibold, cap: 1.35, traits: traits)
-    let prev = CLFonts.scaled(14, .regular, cap: 1.3, traits: traits)
-    let content = ceil(name.lineHeight) + 4 + ceil(prev.lineHeight) + 2
-    return max(74, ceil(content + 20))
+    let name = CLFonts.scaled(17, .semibold, cap: 1.35, traits: traits)
+    let prev = CLFonts.scaled(15, .regular, cap: 1.3, traits: traits)
+    let content = ceil(name.lineHeight) + 3 + ceil(prev.lineHeight) + 2
+    return max(76, ceil(content + 22))
   }
 
   override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
@@ -90,15 +92,15 @@ final class CLConversationCell: UICollectionViewListCell {
     if !force, cat == fontsCategory { return }
     fontsCategory = cat
     let tc = traitCollection
-    nameFont = CLFonts.scaled(16, .semibold, cap: 1.35, traits: tc)
-    nameBoldFont = CLFonts.scaled(16, .bold, cap: 1.35, traits: tc)
-    activityFont = CLFonts.scaled(12, .medium, cap: 1.3, traits: tc)
-    timeFont = CLFonts.scaled(12, .regular, cap: 1.3, traits: tc, mono: true)
-    timeBoldFont = CLFonts.scaled(12, .bold, cap: 1.3, traits: tc, mono: true)
-    previewFont = CLFonts.scaled(14, .regular, cap: 1.3, traits: tc)
-    previewSemibold = CLFonts.scaled(14, .semibold, cap: 1.3, traits: tc)
-    previewMedium = CLFonts.scaled(14, .medium, cap: 1.3, traits: tc)
-    pillFont = CLFonts.scaled(12, .bold, cap: 1.15, traits: tc, mono: true)
+    nameFont = CLFonts.scaled(17, .semibold, cap: 1.35, traits: tc)
+    nameBoldFont = CLFonts.scaled(17, .semibold, cap: 1.35, traits: tc)
+    activityFont = CLFonts.scaled(13, .medium, cap: 1.3, traits: tc)
+    timeFont = CLFonts.scaled(14, .regular, cap: 1.3, traits: tc, mono: true)
+    timeBoldFont = CLFonts.scaled(14, .semibold, cap: 1.3, traits: tc, mono: true)
+    previewFont = CLFonts.scaled(15, .regular, cap: 1.3, traits: tc)
+    previewSemibold = CLFonts.scaled(15, .semibold, cap: 1.3, traits: tc)
+    previewMedium = CLFonts.scaled(15, .medium, cap: 1.3, traits: tc)
+    pillFont = CLFonts.scaled(13, .semibold, cap: 1.15, traits: tc, mono: true)
   }
 
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -124,8 +126,8 @@ final class CLConversationCell: UICollectionViewListCell {
   }
 
   private var rowBackground: UIColor {
-    if row.selected { return theme.bg }
-    return row.pinned ? theme.pinnedBg : theme.bg
+    // [2026-10-17 wa-cells] Fixada = fundo liso (como o WhatsApp); só o alfinete marca.
+    return theme.bg
   }
 
   private func apply(animated: Bool, previous: CLRow?) {
@@ -205,7 +207,7 @@ final class CLConversationCell: UICollectionViewListCell {
     mentionPill.isHidden = !r.mention
     mentionPill.backgroundColor = theme.pillBg
     mentionPill.label.text = "@"
-    mentionPill.label.font = CLFonts.scaled(13, .heavy, cap: 1.15, traits: traitCollection)
+    mentionPill.label.font = CLFonts.scaled(13, .bold, cap: 1.15, traits: traitCollection)
     mentionPill.label.textColor = theme.pillTxt
 
     unreadPill.isHidden = !unread
@@ -321,7 +323,7 @@ final class CLConversationCell: UICollectionViewListCell {
 
   override func updateConfiguration(using state: UICellConfigurationState) {
     var bg = UIBackgroundConfiguration.listPlainCell()
-    let base: UIColor = row.selected && selectionMode ? theme.selectedBg : (row.pinned ? theme.pinnedBg : theme.bg)
+    let base: UIColor = row.selected && selectionMode ? theme.selectedBg : theme.bg
     if state.isHighlighted || state.isSelected || state.isSwiped {
       bg.backgroundColor = theme.dark ? UIColor(clHex: 0x1A1A1A) : UIColor(clHex: 0xF0F0F0)
     } else if row.selected && selectionMode {
@@ -336,7 +338,7 @@ final class CLConversationCell: UICollectionViewListCell {
       bg.backgroundColor = base
     }
     backgroundConfiguration = bg
-    avatar.updateRowBackground(row.pinned ? theme.pinnedBg : theme.bg)
+    avatar.updateRowBackground(theme.bg)
   }
 
   override func prepareForReuse() {
@@ -368,7 +370,7 @@ final class CLConversationCell: UICollectionViewListCell {
     let nf = nameLabel.font ?? nameFont
     let nameH = ceil(nf.lineHeight)
     let prevH = ceil(previewFont.lineHeight) + 2
-    let total = nameH + 4 + prevH
+    let total = nameH + 3 + prevH
     let top = floor((H - total) / 2)
 
     // ── linha de cima: nome · online ………… cadeado · hora
@@ -397,12 +399,12 @@ final class CLConversationCell: UICollectionViewListCell {
     }
 
     // ── linha de baixo: [⏰][✓✓] prévia ………… 🔕 📌 @ (3)
-    let by = top + nameH + 4
+    let by = top + nameH + 3
     let cy = by + prevH / 2
     var bx = right
-    let pillH: CGFloat = 22
+    let pillH: CGFloat = 20
     if !unreadPill.isHidden {
-      let sz = unreadPill.size(height: pillH)
+      let sz = unreadPill.size(height: pillH, padding: 12)
       unreadPill.frame = CGRect(x: bx - sz.width, y: cy - pillH / 2, width: sz.width, height: pillH)
       bx -= sz.width + 6
     }
