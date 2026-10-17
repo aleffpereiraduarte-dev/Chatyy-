@@ -10,8 +10,7 @@
  *
  * Props mantidas: visible, onClose, toEmail, toName, toAvatarUrl, onSent.
  */
-import React, { useEffect, useState } from 'react';
-import { Modal, View, ActivityIndicator, Text, StyleSheet, Pressable } from 'react-native';
+import { useEffect, useState } from 'react';
 import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 import GiftSheet from './gifts/GiftSheet';
@@ -39,36 +38,29 @@ export default function SendDiamondSheet({ visible, onClose, toEmail, toName, on
       }
     })();
     return () => { alive = false; };
-  }, [visible, toEmail, t]);
+    // [2026-10-17] sem `t` nas deps: troca de idioma/identidade de t não refaz chat_create.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, toEmail]);
 
   useEffect(() => { if (!visible) { setConvId(null); setError(''); } }, [visible]);
 
   if (!visible) return null;
-  if (convId) {
-    return (
-      <GiftSheet
-        visible
-        onClose={onClose}
-        context="chat"
-        targetId={convId}
-        recipientName={toName || String(toEmail || '').split('@')[0]}
-        onSent={(data, gift, qty) => { try { onSent?.({ gift, quantity: qty, data }); } catch {} }}
-      />
-    );
-  }
+  // [2026-10-17 gift-freeze] UM ÚNICO <Modal> do início ao fim. Antes: Modal de
+  // carregando (fade) → ao chegar o chat_create (~100-250 ms, ainda no meio da
+  // animação de apresentação) era DESMONTADO e outro Modal (GiftSheet) montado
+  // no mesmo commit. No iOS, dismiss durante a apresentação é ignorado pelo
+  // UIKit e o novo present falha ("already presenting") → véu transparente
+  // preso por cima de tudo, sem resposta a toques = "app trava". Agora o
+  // GiftSheet abre na hora; enquanto a conversa resolve o envio fica bloqueado.
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <View style={styles.box}>
-          {error ? <Text style={styles.err}>{error}</Text> : <ActivityIndicator color="#fff" />}
-        </View>
-      </Pressable>
-    </Modal>
+    <GiftSheet
+      visible
+      onClose={onClose}
+      context="chat"
+      targetId={convId}
+      targetError={error}
+      recipientName={toName || String(toEmail || '').split('@')[0]}
+      onSent={(data, gift, qty) => { try { onSent?.({ gift, quantity: qty, data }); } catch {} }}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
-  box: { minWidth: 120, minHeight: 80, borderRadius: 18, backgroundColor: '#0b0b0b', alignItems: 'center', justifyContent: 'center', padding: 20, maxWidth: 300 },
-  err: { color: '#fff', fontSize: 14, textAlign: 'center' },
-});

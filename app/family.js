@@ -47,6 +47,7 @@ import { FontSize, BorderRadius, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../constants/featureFlags';
+import useDragToDismiss, { DragSheetRoot, DragPanel } from '../components/ui/useDragToDismiss';
 
 // Theme-aware accent + helpers. `colors.primary` is a neutral near-black in
 // BOTH themes, so using it raw as an accent went invisible in dark mode. We
@@ -521,6 +522,8 @@ function FamilySkeleton({ colors }) {
 }
 
 function FamilyScreenInner() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag929 = useDragToDismiss({ onDismiss: () => { const f = () => setInviteOpen(false); f(); } });
   const router = useRouter();
   const { colors, accent, onAccent, heroBg, roles } = useFamilyPalette();
   const { isDark } = useTheme();
@@ -927,6 +930,7 @@ function FamilyScreenInner() {
 
       {/* Invite sheet */}
       <Modal visible={inviteOpen} transparent animationType="slide" onRequestClose={() => setInviteOpen(false)}>
+        <DragSheetRoot>
         <View style={s.sheetOverlay}>
           <View style={[s.sheet, { backgroundColor: colors.surface }]}>
             <View style={[s.grabber, { backgroundColor: colors.border }]} />
@@ -957,16 +961,17 @@ function FamilyScreenInner() {
               })}
             </View>
 
-            <View style={{ flexDirection: 'row', gap: 10 }}>
+            <DragPanel drag={_drag929} style={{ flexDirection: 'row', gap: 10 }}>
               <TouchableOpacity onPress={() => setInviteOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]} accessibilityRole="button">
                 <Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={handleInvite} disabled={inviteSending} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: inviteSending ? 0.6 : 1 }]} accessibilityRole="button">
                 {inviteSending ? <ActivityIndicator color={onAccent} /> : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}><IconShare size={16} color={onAccent} /><Text style={[s.btnText, { color: onAccent }]}>{t('family.invite.generate')}</Text></View>}
               </TouchableOpacity>
-            </View>
+            </DragPanel>
           </View>
         </View>
+        </DragSheetRoot>
       </Modal>
 
       {/* Rename */}

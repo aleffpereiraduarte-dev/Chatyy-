@@ -105,9 +105,22 @@ export function CallBarInsetProvider({ children }) {
 // the shifted container) → they need the real status-bar inset back.
 const IOS_WINDOW_MODALS = new Set(['modal', 'fullScreenModal', 'transparentModal', 'formSheet', 'pageSheet']);
 
+// [2026-10-17 drag-dismiss] pageSheet ('modal'/'pageSheet') no iPhone desce do
+// topo SEM cobrir a status bar → inset de cima = 0 dentro da folha (antes a tela
+// recebia o inset da RAIZ = faixa vazia no topo, por isso tudo era fullScreenModal
+// e não descia arrastando). Lados/baixo seguem os reais.
+const IOS_SHEET_MODALS = new Set(['modal', 'pageSheet']);
 function ModalInsetRestore({ presentation, children }) {
   const real = React.useContext(RealInsetsContext);
+  const ctx = React.useContext(SafeAreaInsetsContext);
   const barH = useCallBarHeight() + useVoiceBarInset();
+  const sheet = IOS_SHEET_MODALS.has(presentation);
+  const base = (barH && real) ? real : ctx;
+  const sheetInsets = React.useMemo(
+    () => (sheet && base ? { top: 0, bottom: base.bottom, left: base.left, right: base.right } : null),
+    [sheet, base]
+  );
+  if (sheetInsets) return <SafeAreaInsetsContext.Provider value={sheetInsets}>{children}</SafeAreaInsetsContext.Provider>;
   if (!barH || !real || !IOS_WINDOW_MODALS.has(presentation)) return children;
   return <SafeAreaInsetsContext.Provider value={real}>{children}</SafeAreaInsetsContext.Provider>;
 }

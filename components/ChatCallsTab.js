@@ -5,7 +5,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animate
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
-import { PSTN_ENABLED } from '../constants/featureFlags';
+import { isPstnEnabled } from '../constants/featureFlags';
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink, IconMoreHorizontal, IconFlag, IconCopy, IconShield, IconChevronRight } from './Icons';
 import Sheet from './ui/Sheet'; import ActionList from './ui/ActionList'; // [2026-10-14 vis-audit] menu "…" do histórico
@@ -31,6 +31,7 @@ const _NOFLEX = { flex: 0 };
 // JS abaixo (idêntico ao antigo). Desligar por OTA: globalThis.__chatyy_native_calls = false.
 import NativeCallList from './calls/NativeCallList';
 import MyCallLinksSheet from './calls/MyCallLinksSheet'; // [2026-10-16 wave12-D]
+import NewCallSheet from './calls/NewCallSheet'; // [2026-10-17 sem-pstn] "Nova chamada" (só Chatyy) no lugar do discador
 import { addMyCallLink, useMyCallLinks, callLinkState } from './calls/myCallLinks';
 import { useSilenceUnknownCallers } from './calls/silenceUnknownCallers';
 import { isCallListAvailable as _nativeCallsAvailable } from '../modules/expo-chat-conversation-list';
@@ -700,6 +701,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
         <Text style={[s.historyTime, { color: subColor }]}>
           {formatCallTime(item.timestamp || item.created_at, t, language)}
         </Text>
+        {/* [2026-10-17 sem-pstn] linha de telefone (PSTN) antiga: sem botão de rediscar. */}
+        {(!item.to_number || isPstnEnabled()) && (
         <TouchableOpacity
           style={[
             s.callBackBtn,
@@ -712,6 +715,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
         >
           <IconPhone size={18} color={blueInk(isDark)} />
         </TouchableOpacity>
+        )}
         <TouchableOpacity
           style={s.infoBtn}
           onPress={() => onInfoPress(item)}
@@ -997,7 +1001,10 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
             activeOpacity={0.7}
           >
             <IconPhone size={18} color="#fff" />
-            <Text style={s.callAgainText}>{t?.('calls.callAgain') || 'Ligar novamente'}</Text>
+            {/* [2026-10-17 sem-pstn] número comum: liga pelo Chatyy (ou convida) — nunca rediscar PSTN */}
+            <Text style={s.callAgainText}>{item.to_number && !isPstnEnabled()
+              ? (t?.('calls.callViaChatyy') || 'Ligar pelo Chatyy')
+              : (t?.('calls.callAgain') || 'Ligar novamente')}</Text>
           </TouchableOpacity>
   </>
   );
@@ -1883,7 +1890,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   textAlign: 'center', marginBottom: 16,
                   borderWidth: 2, borderColor: ink,
                   fontSize: 36, fontWeight: '900', color: ink,
-                  letterSpacing: 8, fontVariant: ['tabular-nums'],
+                  letterSpacing: 8, fontVariant: ['tabular-nums'], height: 93, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                 }}
               />
 
@@ -2912,6 +2919,8 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     if (!minutesInfo) setLoadingMinutes(true);
     getCached('voip_minutes').then(cached => {
       if (cached) setMinutesInfo(cached);
+      // [2026-10-17 sem-pstn] histórico PSTN antigo continua visível (só leitura).
+      if (cached && Array.isArray(cached.history) && cached.history.length) setVoipHistory(prev => (prev.length ? prev : cached.history));
       setLoadingMinutes(false);
     }).catch(() => { setLoadingMinutes(false); });
 
@@ -2940,7 +2949,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     }, 2500);
 
     // Fetch fresh in background — does NOT toggle loading.
-    if (PSTN_ENABLED) voipMinutesRemaining().then(r => {
+    if (isPstnEnabled()) voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
         setCache('voip_minutes', r.data, 2592000000).catch(() => {});
@@ -2969,7 +2978,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   useEffect(() => {
     // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
     const interval = setActiveInterval(() => {
-      if (PSTN_ENABLED) voipMinutesRemaining().then(r => {
+      if (isPstnEnabled()) voipMinutesRemaining().then(r => {
         if (r?.success && r.data) {
           setMinutesInfo(r.data);
           if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
@@ -2992,7 +3001,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   }, []);
 
   const refreshData = useCallback(() => {
-    if (PSTN_ENABLED) voipMinutesRemaining().then(r => {
+    if (isPstnEnabled()) voipMinutesRemaining().then(r => {
       if (r?.success && r.data) {
         setMinutesInfo(r.data);
         if (Array.isArray(r.data.history)) setVoipHistory(r.data.history);
@@ -3014,7 +3023,17 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
 
   const handleHistoryPress = useCallback(async (item) => {
     if (item.to_number) {
-      if (!PSTN_ENABLED) return; // [2026-10-10 sem-telnyx-vonage] sem discagem PSTN
+      // [2026-10-10 sem-telnyx-vonage] sem discagem PSTN.
+      // [2026-10-17 sem-pstn] Linha de telefone antiga: se o número é de alguém no
+      // Chatyy → ligação Chatyy; senão "Convidar para o Chatyy". Nunca rediscar PSTN.
+      if (!isPstnEnabled()) {
+        try {
+          require('../services/chatyyOnlyCalls').callPhoneViaChatyy({
+            phone: item.to_number, name: item.contactName || item.contact_name || '', video: false, router, t,
+          });
+        } catch {}
+        return;
+      }
       // 2026-05-09: WhatsApp parity — tap em phone history disca direto
       // (antes só abria o teclado vazio, user tinha que retiar o numero).
       // Preenche o number state + abre o dialer com auto-dial flag.
@@ -3248,6 +3267,20 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
   }, [router, handleHistoryPress]);
 
+  // [2026-10-17 sem-pstn] "Nova chamada" (só Chatyy) — substitui o discador.
+  // Recentes = pessoas Chatyy do histórico (sem linhas de telefone).
+  const [newCallOpen, setNewCallOpen] = useState(false);
+  const handleNewCallStart = useCallback(({ email, name, video }) => {
+    if (!email) return;
+    handleHistoryCallBack({ contactEmail: email, contactName: name || '', video: !!video });
+  }, [handleHistoryCallBack]);
+  // O botão de telefone do topo da aba (app/chat.js) abre esta folha.
+  useEffect(() => {
+    const open = () => { setNewCallOpen(true); return true; };
+    try { globalThis.__chatyyOpenNewCall = open; } catch {}
+    return () => { try { if (globalThis.__chatyyOpenNewCall === open) globalThis.__chatyyOpenNewCall = undefined; } catch {} };
+  }, []);
+
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const handleClearAll = useCallback(() => {
     const doIt = async () => {
@@ -3439,6 +3472,19 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   // [2026-10-16 wave12-D] contador do chip "Perdidas" + "Telefone" só se fizer sentido.
   const missedCount = useMemo(() => allHistory.reduce((n, h) => n + (callDirection(h) === 'missed' ? 1 : 0), 0), [allHistory]);
   const hasPhoneRows = useMemo(() => allHistory.some(h => h.source === 'voip'), [allHistory]);
+  // [2026-10-17 sem-pstn] recentes da folha "Nova chamada" (só contas Chatyy, 1:1).
+  const newCallRecent = useMemo(() => {
+    const out = []; const seen = new Set();
+    for (const h of allHistory) {
+      if (h.source !== 'chat' || h.isGroup) continue;
+      const em = String(h.contactEmail || '').trim();
+      if (!em || !em.includes('@') || seen.has(em.toLowerCase())) continue;
+      seen.add(em.toLowerCase());
+      out.push({ email: em, name: h.contactName || '' });
+      if (out.length >= 30) break;
+    }
+    return out;
+  }, [allHistory]);
 
   // Group calls by date
   const groupedCalls = useMemo(() => {
@@ -3571,13 +3617,13 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           isDark={isDark}
           t={t}
           missedCount={missedCount}
-          showPhone={PSTN_ENABLED || hasPhoneRows || activeTab === 'phone'}
+          showPhone={isPstnEnabled() || hasPhoneRows || activeTab === 'phone'}
         />
         <MyCallLinksSheet visible={myLinksOpen} onClose={() => setMyLinksOpen(false)} t={t} language={language} />
       </View>
 
       {/* Plan status */}
-      {PSTN_ENABLED && !loadingMinutes && (
+      {isPstnEnabled() && !loadingMinutes && (
         <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
       )}
     </>
@@ -3733,10 +3779,26 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             <Text style={[s.emptySubtitle, { color: subColor }]}>
               {activeTab === 'missed'
                 ? (t?.('calls.noMissedSubtitle') || 'Ligações que você não atender aparecem aqui')
-                : (t?.('calls.noCallsSubtitle') || 'Seu histórico de ligações aparecerá aqui')}
+                : (isPstnEnabled()
+                  ? (t?.('calls.noCallsSubtitle') || 'Seu histórico de ligações aparecerá aqui')
+                  : (t?.('calls.freeViaChatyy') || 'Ligações grátis pelo Chatyy, voz e vídeo'))}
             </Text>
+            {/* [2026-10-17 sem-pstn] CTA "Nova chamada" (contatos do Chatyy) no lugar de "Abrir teclado". */}
+            {!isPstnEnabled() && activeTab !== 'missed' && (
+            <PressableScale
+              style={[s.emptyCtaBtn, colors?.primary ? { backgroundColor: colors.primary, ...(Platform.OS === 'web' ? { backgroundImage: 'none', boxShadow: isDark ? 'none' : '0 6px 18px rgba(17, 17, 17,0.35)' } : null) } : null]}
+              onPress={() => setNewCallOpen(true)}
+              activeOpacity={0.85}
+              accessibilityLabel={t?.('calls.newCall') || 'Nova chamada'}
+              accessibilityRole="button"
+            >
+              <Text style={[s.emptyCtaText, colors?.onPrimary ? { color: colors.onPrimary } : null]}>
+                {t?.('calls.newCall') || 'Nova chamada'}
+              </Text>
+            </PressableScale>
+            )}
             {/* CTA — primes the user to make a call instead of staring at nothing. */}
-            {PSTN_ENABLED && (
+            {isPstnEnabled() && (
             <PressableScale
               style={[s.emptyCtaBtn, colors?.primary ? { backgroundColor: colors.primary, ...(Platform.OS === 'web' ? { backgroundImage: 'none', boxShadow: isDark ? 'none' : '0 6px 18px rgba(17, 17, 17,0.35)' } : null) } : null]}
               onPress={() => setDialerVisible(true)}
@@ -3802,7 +3864,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       )}
 
       {/* FAB - Dialer button (Telegram-grade glass orb, green tint) */}
-      {PSTN_ENABLED && (
+      {isPstnEnabled() && (
       <BrandFab
         style={{ position: 'absolute', right: 20, bottom: 24 }}
         size={56}
@@ -3816,8 +3878,30 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       </BrandFab>
       )}
 
+      {/* [2026-10-17 sem-pstn] FAB "Nova chamada" (só Chatyy) — no lugar do teclado. */}
+      {!isPstnEnabled() && (
+      <BrandFab
+        style={{ position: 'absolute', right: 20, bottom: 24 }}
+        size={56}
+        color={colors?.primary || ACCENT}
+        onPress={() => setNewCallOpen(true)}
+        accessibilityLabel={t?.('calls.newCall') || 'Nova chamada'}
+      >
+        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke={colors?.onPrimary || '#ffffff'} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+          <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
+          <Path d="M15 3v6M12 6h6" />
+        </Svg>
+      </BrandFab>
+      )}
+      <NewCallSheet
+        visible={newCallOpen}
+        onClose={() => setNewCallOpen(false)}
+        recent={newCallRecent}
+        onStartCall={handleNewCallStart}
+      />
+
       {/* Dialer modal */}
-      {PSTN_ENABLED && (
+      {isPstnEnabled() && (
       <DialerModal
         visible={dialerVisible}
         onClose={() => { setDialerVisible(false); setDialerAutoDial(false); setDialerPrefill(''); }}

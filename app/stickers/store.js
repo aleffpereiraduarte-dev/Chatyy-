@@ -27,6 +27,7 @@ import {
   IconImage, IconShare, IconLink, IconInfo,
 } from '../../components/Icons';
 import CachedImage from '../../components/CachedImage';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../../components/ui/useDragToDismiss';
 
 // Figurinha é transparente: sem o fundo pastel (LQIP) do CachedImage atrás dela.
 const CLEAR_PLACEHOLDER = { uri: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' };
@@ -145,6 +146,8 @@ function PackRow({ pack, installed, onToggle, onPress, colors, t }) {
 }
 
 function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag190 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -188,9 +191,10 @@ function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, 
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <DragSheetRoot>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
-        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} />
-        <View style={{
+        <DragFade drag={_drag190}><TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={onClose} /></DragFade>
+        <DragPanel drag={_drag190} style={{
           backgroundColor: colors.background, borderTopLeftRadius: 22, borderTopRightRadius: 22,
           maxHeight: '88%', minHeight: '55%',
         }}>
@@ -231,7 +235,7 @@ function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, 
                 </Text>
               </View>
             ) : (
-              <FlatList
+              <DragScroll drag={_drag190}><FlatList
                 data={items}
                 keyExtractor={(it, i) => String(it.id ?? i)}
                 numColumns={4}
@@ -242,7 +246,7 @@ function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, 
                     <Sticker uri={item.url || item.image_url} size={72} colors={colors} />
                   </View>
                 )}
-              />
+              /></DragScroll>
             )}
           </View>
 
@@ -262,8 +266,9 @@ function PackDetailModal({ pack, visible, onClose, installed, onToggle, colors, 
               <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{t('stickerStore.share')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </DragPanel>
       </View>
+      </DragSheetRoot>
     </Modal>
   );
 }

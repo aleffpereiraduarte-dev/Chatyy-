@@ -3061,7 +3061,7 @@ export default function LoginScreen() {
             </View>
             <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
               <TextInput
-                style={{ backgroundColor: colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text }}
+                style={{ backgroundColor: colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text, height: 39, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }}
                 placeholder={t('login.searchCountry') || 'Buscar país...'}
                 placeholderTextColor={colors.textTertiary}
                 value={countrySearch}

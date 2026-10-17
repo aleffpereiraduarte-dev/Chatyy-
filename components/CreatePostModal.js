@@ -18,6 +18,7 @@ import AvatarCircle from './AvatarCircle';
 // we can post `location_lat / _lon / _name` alongside the free-text.
 import LocationPickerSheet from './LocationPickerSheet';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 // Generate video thumbnail on native
 async function getVideoThumbnail(uri) {
@@ -316,6 +317,8 @@ function CaptionInput({ value, onChangeText, placeholder, colors, isDark, t, onM
 
 // ---- Audience Selector Modal ----
 function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag326 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const options = [
     { key: AUDIENCE_EVERYONE, icon: IconGlobe, label: t('post.everyone') || 'Everyone', desc: t('post.everyoneDesc') || 'Anyone can see this post' },
     { key: AUDIENCE_FOLLOWERS, icon: IconUsers, label: t('post.followersOnly') || 'Followers only', desc: t('post.followersDesc') || 'Only your followers can see' },
@@ -323,8 +326,10 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
   ];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={gs.overlay} onPress={onClose}>
-        <View style={[gs.audienceSheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+      <DragSheetRoot>
+      <Pressable style={[gs.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag326} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={_drag326} onStartShouldSetResponder={() => true} style={[gs.audienceSheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
           <Text style={[gs.audienceTitle, { color: colors.text }]}>
             {t('post.audience') || 'Audience'}
           </Text>
@@ -348,8 +353,9 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
               </TouchableOpacity>
             );
           })}
-        </View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -506,6 +512,8 @@ export default function CreatePostModal({
   //   posted from "Use this sound" already has the right audio attached.
   duetOf, stitchOf, presetSoundId, presetSoundLabel,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1723 = useDragToDismiss({ onDismiss: () => { const f = () => setShowSoundPicker(false); f(); } });
   const [step, setStep] = useState(1); // 1 = select media, 2 = caption/options
   const [mediaFiles, setMediaFiles] = useState([]); // { uri, file, type, id, duration?, thumbnail? }
 
@@ -1726,11 +1734,13 @@ export default function CreatePostModal({
         animationType="slide"
         onRequestClose={() => setShowSoundPicker(false)}
       >
+        <DragSheetRoot>
         <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
           onPress={() => setShowSoundPicker(false)}
         >
-          <Pressable
+          <DragBackdrop drag={_drag1723} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag1723} onStartShouldSetResponder={() => true}
             style={{
               backgroundColor: isDark ? '#0b0b0b' : '#fff',
               borderTopLeftRadius: 18,
@@ -1738,7 +1748,7 @@ export default function CreatePostModal({
               paddingBottom: 28,
               maxHeight: SCREEN_HEIGHT * 0.78,
             }}
-            onPress={(e) => e.stopPropagation && e.stopPropagation()}
+            
           >
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)', alignSelf: 'center', marginVertical: 10 }} />
             <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 8 }}>
@@ -1805,7 +1815,7 @@ export default function CreatePostModal({
                     </Text>
                   </View>
                 ) : (
-                  <FlatList
+                  <DragScroll drag={_drag1723}><FlatList
                     data={catalogSounds}
                     keyExtractor={(it) => String(it.id)}
                     renderItem={({ item: trk }) => {
@@ -1840,7 +1850,7 @@ export default function CreatePostModal({
                         </TouchableOpacity>
                       );
                     }}
-                  />
+                  /></DragScroll>
                 )}
               </>
             )}
@@ -1858,7 +1868,7 @@ export default function CreatePostModal({
                   </Text>
                 </View>
               ) : (
-                <FlatList
+                <DragScroll drag={_drag1723}><FlatList
                   data={savedSounds}
                   keyExtractor={(it) => String(it.id || it.sound_id || it.track_id)}
                   renderItem={({ item: trk }) => {
@@ -1894,7 +1904,7 @@ export default function CreatePostModal({
                       </TouchableOpacity>
                     );
                   }}
-                />
+                /></DragScroll>
               )
             )}
 
@@ -1920,8 +1930,9 @@ export default function CreatePostModal({
                 {!selectedSound ? <IconCheck size={20} color={colors.primary} /> : null}
               </TouchableOpacity>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
     </Modal>
   );

@@ -14,6 +14,7 @@ import ModalHeader from './ModalHeader';
 import NativeVideoModal, { nativeVideoAvailable } from './NativeVideoModal';
 import { openInApp } from '../utils/inAppBrowser';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 const ACCENT = '#111111';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -425,6 +426,10 @@ const MicRecordButton = memo(function MicRecordButton({ recording, sending, onPr
 });
 
 export default function FeedComments({ visible, post, colors, isDark, t, user, onClose, onCommentCountChange }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1399 = useDragToDismiss({ onDismiss: () => { const f = closeOptions; if (typeof f === 'function') f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1448 = useDragToDismiss({ startZone: 64 /* GifPicker tem grade própria → só a faixa do topo arrasta */, onDismiss: () => { const f = () => setShowStickerPicker(false); f(); } });
   const insets = useSafeAreaInsets();
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1394,9 +1399,11 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
 
       {/* [anon-comment 2026-10-14] Opções do comentário (P&B, sem emoji). */}
       <Modal visible={!!optionsFor} transparent animationType="fade" onRequestClose={closeOptions}>
-        <Pressable style={styles.optOverlay} onPress={closeOptions} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
-          <Pressable
-            onPress={(e) => e?.stopPropagation?.()}
+        <DragSheetRoot>
+        <Pressable style={[styles.optOverlay, { backgroundColor: 'transparent' }]} onPress={closeOptions} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+          <DragBackdrop drag={_drag1399} color="rgba(0,0,0,0.45)" />
+          <DragPanel drag={_drag1399} onStartShouldSetResponder={() => true}
+            
             style={[styles.optSheet, { backgroundColor: isDark ? '#151515' : '#ffffff', paddingBottom: Math.max(14, insets.bottom), ...(isWeb ? { maxWidth: 640, width: '100%', alignSelf: 'center' } : {}) }]}
           >
             <Text style={[styles.optTitle, { color: colors.textSecondary }]}>
@@ -1437,8 +1444,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             <TouchableOpacity style={[styles.optItem, styles.optCancel]} onPress={closeOptions} accessibilityRole="button">
               <Text style={[styles.optItemText, { color: colors.textSecondary, textAlign: 'center', flex: 1 }]}>{t('common.cancel') || 'Cancelar'}</Text>
             </TouchableOpacity>
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Sticker / GIF picker — Reels P1 comment reply. Mounted as a
@@ -1451,11 +1459,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         animationType="slide"
         onRequestClose={() => setShowStickerPicker(false)}
       >
+        <DragSheetRoot>
         <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
           onPress={() => setShowStickerPicker(false)}
         >
-          <Pressable onPress={(e) => e.stopPropagation && e.stopPropagation()}>
+          <DragBackdrop drag={_drag1448} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag1448} onStartShouldSetResponder={() => true} >
             {(() => {
               try {
                 const GifPicker = require('./GifPicker').default;
@@ -1475,8 +1485,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 );
               }
             })()}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Tiny inline indicator while a video reply is uploading. */}

@@ -3246,7 +3246,9 @@ const sty = StyleSheet.create({
     paddingHorizontal: 14, height: 44,
     borderRadius: 16, gap: 10,
   },
-  searchInput: { flex: 1, fontSize: 15, padding: 0 },
+  // [2026-10-17 input-align] altura FIXA + padding 0 (sem altura o UITextField do iOS
+  // desenhava o placeholder ~8pt abaixo e cortava a metade de baixo).
+  searchInput: { flex: 1, fontSize: 15, padding: 0, paddingVertical: 0, height: 40, ...(Platform.OS === 'android' ? { textAlignVertical: 'center', includeFontPadding: false } : null) },
   searchClearBtn: { padding: 4 },
   searchClearCircle: {
     width: 20, height: 20, borderRadius: 10,

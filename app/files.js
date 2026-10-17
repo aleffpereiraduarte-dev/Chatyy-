@@ -15,6 +15,7 @@ import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/th
 import * as api from '../services/api';
 import { formatBytes } from '../services/format'; // [2026-10-16 polish-r2]
 import { getCached, getCachedSync, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
+import { usePreventRemove } from '@react-navigation/native'; // [2026-10-17 swipe-back]
 
 // [2026-10-14 offline-first] Cópia salva da pasta, SÍNCRONA (máx. 7 dias, por
 // conta, ignora o expiry curto do prefetch do boot). Aceita os 2 formatos que
@@ -61,6 +62,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriveList';
 import { driveRow } from '../components/native/driveListAdapter';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
 
@@ -1137,6 +1139,7 @@ function FilesScreenInner() {
   const [searchResults, setSearchResults] = useState(null);
   const [showFab, setShowFab] = useState(false);
   const [actionMenu, setActionMenu] = useState(null);
+  const _actionDrag = useDragToDismiss({ visible: !!actionMenu, onDismiss: () => setActionMenu(null) }); // [2026-10-17 drag-dismiss]
   // Spring entrance for the action sheet (long-press menu). Native Modal slide
   // animation handles the off-screen translate; this layer adds the iOS-style
   // overshoot scale so the sheet feels "popped" instead of just sliding flat.
@@ -2326,6 +2329,11 @@ function FilesScreenInner() {
   // dentro da tela (pasta/busca/seleção); senão fica o back do sistema
   // (chevron com menu de long-press + swipe-back sincronizado).
   const needsContextBack = multiSelect || searchMode || (tab === 'all' && breadcrumb.length > 0);
+  // [2026-10-17 swipe-back] iOS: o gesto de voltar (borda E tela inteira) dentro de
+  // subpasta/busca/seleção = "voltar contextual" (sobe uma pasta), em vez de ficar
+  // desligado. react-native-screens cancela o pop nativo (preventNativeDismiss) e
+  // avisa aqui. Android: BackHandler acima.
+  usePreventRemove(Platform.OS === 'ios' && needsContextBack, () => { try { handleContextBack(); } catch {} });
 
   // ---- RENDER LIST DATA ----
   const displayFolders = searchResults ? (searchResults.folders || []) : folders;
@@ -2694,8 +2702,8 @@ function FilesScreenInner() {
             },
           });
           if (!needsContextBack) { o.headerLeft = undefined; o.headerBackVisible = true; }
-          // iOS: swipe-back dentro de subpasta fecharia o Drive inteiro.
-          o.gestureEnabled = !needsContextBack;
+          // iOS: swipe-back dentro de subpasta sobe uma pasta (usePreventRemove acima).
+          o.gestureEnabled = true;
           return o;
         })()} />
       ) : (
@@ -3209,8 +3217,10 @@ function FilesScreenInner() {
 
       {/* ============ ACTION MENU MODAL ============ */}
       <Modal visible={!!actionMenu} transparent animationType="slide" onRequestClose={() => setActionMenu(null)}>
-        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setActionMenu(null)}>
-          <Animated.View style={[
+        <DragSheetRoot>
+        <TouchableOpacity style={[styles.modalBackdrop, { backgroundColor: 'transparent' }]} activeOpacity={1} onPress={() => setActionMenu(null)}>
+          <DragBackdrop drag={_actionDrag} color="rgba(0,0,0,0.45)" />
+          <DragPanel drag={_actionDrag} onStartShouldSetResponder={() => true} style={[
             styles.actionSheet,
             {
               backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.97)',
@@ -3439,8 +3449,9 @@ function FilesScreenInner() {
               </View>
               <Text style={[styles.actionItemText, { color: colors.textTertiary }]}>{t('common.cancel')}</Text>
             </TouchableOpacity>
-          </Animated.View>
+          </DragPanel>
         </TouchableOpacity>
+        </DragSheetRoot>
       </Modal>
 
       {/* ============ RENAME MODAL ============ */}
@@ -3991,6 +4002,7 @@ function FilesScreenInner() {
         initialIndex={viewerIndex}
         onClose={() => setViewerFile(null)}
         getUrl={(f) => f.cdn_url || api.fileDownloadUrl(f.id)}
+        onArchiveExtracted={() => { try { loadAllFiles(false); } catch {} }}
       />
     </View>
   );

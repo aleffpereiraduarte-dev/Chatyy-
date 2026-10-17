@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconChevronLeft, IconX } from '../Icons';
 import * as api from '../../services/api';
 import { useLanguage } from '../../context/LanguageContext';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 
 const pad2 = (n) => (n < 10 ? '0' + n : String(n));
 export const dayKeyOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -32,6 +33,8 @@ function firstWeekday(locale) {
 const tr = (t, k, fb) => { try { const v = t && t(k); return v && v !== k ? v : fb; } catch { return fb; } };
 
 export default function JumpToDateSheet({ visible, onClose, onPick, conversationId, colors, isDark, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag109 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const insets = useSafeAreaInsets();
   const { language } = useLanguage() || {};
   const locale = language || undefined;
@@ -107,9 +110,11 @@ export default function JumpToDateSheet({ visible, onClose, onPick, conversation
   if (!visible) return null;
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={st.overlay} onPress={onClose} accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
-        <Pressable
-          onPress={() => {}}
+      <DragSheetRoot>
+      <Pressable style={[st.overlay, { backgroundColor: 'transparent' }]} onPress={onClose} accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
+        <DragBackdrop drag={_drag109} color="rgba(0,0,0,0.4)" />
+        <DragPanel drag={_drag109} onStartShouldSetResponder={() => true}
+          
           style={[st.sheet, { backgroundColor: colors?.surface || (isDark ? '#1c1c1e' : '#fff'), paddingBottom: 16 + (insets?.bottom || 0) }]}
           testID="jump-date-sheet"
         >
@@ -172,8 +177,9 @@ export default function JumpToDateSheet({ visible, onClose, onPick, conversation
               </TouchableOpacity>
             </View>
           )}
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

@@ -35,6 +35,7 @@ import {
 } from 'react-native';
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import { useLanguage } from '../context/LanguageContext';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 const BRAND_PURPLE = '#111111';
 const DANGER = '#EF4444';
@@ -111,6 +112,8 @@ export default function HostControlsSheet({
   onToggleRecording, // (next: bool) => Promise<void>
   onShareLink,       // () => Promise<{url, copied}>
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag196 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { t } = useLanguage();
   const translateY = useRef(new Animated.Value(80)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -194,8 +197,10 @@ export default function HostControlsSheet({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Animated.View style={[styles.sheet, { opacity, transform: [{ translateY }] }]}>
+      <DragSheetRoot>
+      <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag196} color="rgba(0,0,0,0.55)" />
+        <DragPanel drag={_drag196} onStartShouldSetResponder={() => true} style={[styles.sheet, { opacity, transform: [{ translateY }] }]}>
           <Pressable onPress={(e) => e.stopPropagation?.()}>
             <View style={styles.handle} />
             <View style={styles.header}>
@@ -251,8 +256,9 @@ export default function HostControlsSheet({
             )}
             <View style={{ height: 8 }} />
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

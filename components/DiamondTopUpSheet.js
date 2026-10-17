@@ -6,7 +6,7 @@
  * [2026-10-13 diamantes-religados] — antes era no-op (return null).
  */
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, Pressable, StyleSheet, ScrollView, Platform } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -14,6 +14,7 @@ import { IconX } from './Icons';
 import DiamondStorePanel from './diamonds/DiamondStorePanel';
 import useSurface from './ui/useSurface';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 function tr(t, k, fb) { const v = t ? t(k) : ''; return v && v !== k ? v : fb; }
 
@@ -22,11 +23,13 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const s = useSurface();
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   if (!visible || !DIAMONDS_ENABLED) return null;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
-      <View style={[styles.sheet, { backgroundColor: s.isDark ? s.surfaceRaised : s.bgGrouped, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+      <DragSheetRoot>
+      <DragBackdrop inline drag={drag} color="rgba(0,0,0,0.4)" onPress={onClose} accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
+      <DragPanel drag={drag} style={[styles.sheet, { backgroundColor: s.isDark ? s.surfaceRaised : s.bgGrouped, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         <View style={[styles.handle, { backgroundColor: s.separator }]} />
         <View style={styles.head}>
           <Text style={[styles.title, { color: colors.text }]}>{tr(t, 'wallet.topup', 'Comprar diamantes')}</Text>
@@ -34,10 +37,11 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
             <IconX size={20} color={colors.text} />
           </TouchableOpacity>
         </View>
-        <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
+        <DragScroll drag={drag}><ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ paddingBottom: 8 }} showsVerticalScrollIndicator={false}>
           <DiamondStorePanel compact onBalanceChange={onBalanceChange} />
-        </ScrollView>
-      </View>
+        </ScrollView></DragScroll>
+      </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 }

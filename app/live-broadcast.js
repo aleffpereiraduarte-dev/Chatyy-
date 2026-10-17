@@ -29,6 +29,7 @@ import LivePollOverlay from '../components/live/LivePollOverlay';
 import LiveEngageLayer, { LiveHostEngageBar } from '../components/live/LiveEngageLayer';
 import { useLiveEngageController } from '../components/live/liveEngageStore';
 import { giftMeta as _lgMeta, giftLabel as _lgLabel } from '../components/live/liveEngageConfig';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragFade } from '../components/ui/useDragToDismiss';
 // [2026-10-13 diamantes-religados] LiveTopGifters/LiveGiftAnimation antigos
 // desligados — LiveEngageLayer (banners/tela cheia/top fãs) é a única camada.
 const LEGACY_LIVE_GIFT_UI = false;
@@ -238,6 +239,12 @@ const MAX_HEARTS = 20;
 const HEART_COLORS = ['#ffffff', '#f5f5f5', '#e5e5e5', '#d4d4d4', '#bdbdbd'];
 
 function LiveBroadcastScreen() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5738 = useDragToDismiss({ onDismiss: () => { const f = () => setSlowModeOpenAndroid(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5693 = useDragToDismiss({ onDismiss: () => { const f = () => setWordFilterOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5626 = useDragToDismiss({ onDismiss: () => { const f = () => setPollDraftOpen(false); f(); } });
   // Round 67 #1158 (2026-05-18) — keep the display on for the entire
   // host session. Tag scopes the lock so multi-screen mounts don't
   // collide. Unmount auto-releases via expo-keep-awake's effect.
@@ -5624,9 +5631,10 @@ function LiveBroadcastScreen() {
 
       {/* Poll create modal — minimal: question + 2-4 options. */}
       <Modal visible={pollDraftOpen} transparent animationType="slide" onRequestClose={() => setPollDraftOpen(false)}>
+        <DragSheetRoot>
         <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPollDraftOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <DragFade drag={_drag5626}><TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPollDraftOpen(false)} /></DragFade>
+          <DragPanel drag={_drag5626} style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={liveSheetStyles.grabber} />
             <Text style={liveSheetStyles.title}>{t('live.pollCreate') || 'Criar enquete'}</Text>
 
@@ -5680,15 +5688,17 @@ function LiveBroadcastScreen() {
             <TouchableOpacity onPress={submitPollDraft} style={liveSheetStyles.closeBtn} activeOpacity={0.85}>
               <Text style={liveSheetStyles.closeText}>{t('live.pollStart') || 'Iniciar enquete'}</Text>
             </TouchableOpacity>
-          </View>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>
 
       {/* [lives 2026-10-10] Filtro de palavras do dono */}
       <Modal visible={wordFilterOpen} transparent animationType="slide" onRequestClose={() => setWordFilterOpen(false)}>
+        <DragSheetRoot>
         <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setWordFilterOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <DragFade drag={_drag5693}><TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setWordFilterOpen(false)} /></DragFade>
+          <DragPanel drag={_drag5693} style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={liveSheetStyles.grabber} />
             <Text style={liveSheetStyles.title}>{t('live.wordFilterTitle')}</Text>
             <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 10 }}>{t('live.wordFilterHint')}</Text>
@@ -5720,16 +5730,18 @@ function LiveBroadcastScreen() {
             >
               <Text style={[liveSheetStyles.closeText, { color: '#000' }]}>{t('common.save') || 'Salvar'}</Text>
             </TouchableOpacity>
-          </View>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>
 
       {/* Android slow-mode picker — ActionSheetIOS is iOS-only so we render
           a custom Modal on Android for parity. iOS path skips this entirely. */}
       <Modal visible={slowModeOpenAndroid} transparent animationType="slide" onRequestClose={() => setSlowModeOpenAndroid(false)}>
+        <DragSheetRoot>
         <View style={liveSheetStyles.backdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSlowModeOpenAndroid(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+          <DragFade drag={_drag5738}><TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSlowModeOpenAndroid(false)} /></DragFade>
+          <DragPanel drag={_drag5738} style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
             <View style={liveSheetStyles.grabber} />
             <Text style={liveSheetStyles.title}>{t('live.slowModeTitle') || 'Modo lento'}</Text>
             {[
@@ -5749,8 +5761,9 @@ function LiveBroadcastScreen() {
                 {slowModeSeconds === o.sec ? <IconCheck size={12} color="#fff" /> : null}
               </TouchableOpacity>
             ))}
-          </View>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>
     </View>
   );

@@ -1433,7 +1433,7 @@ if (Platform.OS === 'web') {
 let _reloginPromise = null;
 
 // [send-reliability 2026-10-06] Per-action fetch timeout overrides (ms).
-const _ACTION_TIMEOUT_MS = { chat_send: 10000, chat_ai_digest: 45000, ai_generate_image: 90000 }; // [2026-10-13 bia-summary] IA lê até 300 msgs · [2026-10-14 wallpaper-ai] gpt-image-1 leva 15-40 s (25 s abortava)
+const _ACTION_TIMEOUT_MS = { chat_send: 10000, chat_ai_digest: 45000, ai_generate_image: 90000, drive_archive_list: 60000, drive_archive_extract: 110000, drive_archive_chat_list: 60000, drive_archive_chat_extract: 110000 }; // [2026-10-13 bia-summary] IA lê até 300 msgs · [2026-10-14 wallpaper-ai] gpt-image-1 leva 15-40 s (25 s abortava)
 // [2026-10-09 net-resilience] HTTP respondeu = a rede VOLTOU. Se o WS está
 // parado no backoff (até 10s entre tentativas depois de uma queda "muda" —
 // túnel, elevador, 2G que some sem o SO avisar), antecipa a reconexão agora em
@@ -9256,6 +9256,49 @@ export async function fileDownloadUrlGranted(fileId, opts = {}) {
     }
   } catch {}
   return allowBearerFallback ? fileDownloadUrl(fileId) : null;
+}
+
+// [2026-10-17 drive-archive] Conteúdo de ZIP/TAR do Cloud (servidor lista,
+// pré-visualiza 1 item e extrai para uma pasta). A URL do item usa a permissão
+// curta `dl` do drive_dl_token — nunca o bearer perpétuo.
+export async function driveDlGrant(fileId) {
+  try {
+    const r = await apiCall('drive_dl_token', { file_id: fileId }, 'POST');
+    const tk = r?.data?.token || r?.token || null;
+    const exp = Number(r?.data?.expires || r?.expires) || 0;
+    return tk ? { token: tk, expires: exp } : null;
+  } catch { return null; }
+}
+
+export async function driveArchiveList(fileId) {
+  return apiCall('drive_archive_list', { id: fileId }, 'POST');
+}
+
+export async function driveArchiveExtract(fileId, parentId) {
+  const p = { id: fileId };
+  if (parentId !== undefined) p.parent_id = parentId;
+  return apiCall('drive_archive_extract', p, 'POST');
+}
+
+export function driveArchiveEntryUrl(fileId, path, dl) {
+  return `${API_URL}?action=drive_archive_entry&id=${fileId}&path=${encodeURIComponent(path)}&dl=${encodeURIComponent(dl || '')}`;
+}
+
+// [abridores 2026-10-17] Compactado recebido como ANEXO do chat: o servidor
+// confere que o usuário é membro da conversa; a lista já devolve a permissão
+// curta `dl` (1 h) usada na URL do item.
+export async function driveArchiveChatList(messageId) {
+  return apiCall('drive_archive_chat_list', { message_id: String(messageId) }, 'POST');
+}
+
+export async function driveArchiveChatExtract(messageId, parentId) {
+  const p = { message_id: String(messageId) };
+  if (parentId !== undefined) p.parent_id = parentId;
+  return apiCall('drive_archive_chat_extract', p, 'POST');
+}
+
+export function driveArchiveChatEntryUrl(messageId, path, dl) {
+  return `${API_URL}?action=drive_archive_chat_entry&m=${encodeURIComponent(String(messageId))}&path=${encodeURIComponent(path)}&dl=${encodeURIComponent(dl || '')}`;
 }
 
 export async function fileDelete(fileId) {

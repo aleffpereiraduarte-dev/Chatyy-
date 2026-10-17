@@ -9,6 +9,7 @@ import { formatBytes } from '../services/format';
 import { fileListAll, BASE_URL } from '../services/api';
 import { subscribeAttachUploads, getAttachUpload, retryAttachUpload } from '../services/emailAttachUploads';
 import LocalAttachmentPreview from './LocalAttachmentPreview';
+import useDragToDismiss, { DragSheetRoot, DragPanel } from './ui/useDragToDismiss';
 
 const DEFAULT_MAX_FILES = 10;
 const DEFAULT_MAX_SIZE = 55 * 1024 * 1024; // 55 MB
@@ -60,6 +61,8 @@ export default function AttachmentPicker({
   uploadProgress,   // optional: { [index]: 0-100 }  (for future use)
   disabled = false,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag426 = useDragToDismiss({ onDismiss: () => { const f = () => setShowDrive(false); f(); } });
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [error, setError] = useState(null);
@@ -424,6 +427,7 @@ export default function AttachmentPicker({
 
       {/* Drive picker modal — slide-up sheet listing the user's Drive files. */}
       <Modal visible={showDrive} animationType="slide" transparent onRequestClose={() => setShowDrive(false)}>
+        <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
           <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 24, maxHeight: '80%' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }}>
@@ -479,7 +483,7 @@ export default function AttachmentPicker({
                 }}
               />
             )}
-            <View style={{ flexDirection: 'row', padding: 12, gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight }}>
+            <DragPanel drag={_drag426} style={{ flexDirection: 'row', padding: 12, gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight }}>
               <TouchableOpacity
                 onPress={() => setShowDrive(false)}
                 style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: colors.surfaceVariant }}
@@ -497,9 +501,10 @@ export default function AttachmentPicker({
                   {t('attachment.attachSelected') || 'Anexar selecionados'} ({Object.values(driveSelection).filter(Boolean).length})
                 </Text>
               </TouchableOpacity>
-            </View>
+            </DragPanel>
           </View>
         </View>
+        </DragSheetRoot>
       </Modal>
     </View>
   );

@@ -2198,7 +2198,7 @@ function SignupPhoneLegacy() {
                 fontSize: 15, color: colors.text,
                 paddingVertical: 10, paddingHorizontal: 14,
                 borderRadius: 10,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', height: 39, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
               }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
               placeholder={t('signup.stepPhone.searchCountry') || 'Buscar'}
               placeholderTextColor={colors.textTertiary}

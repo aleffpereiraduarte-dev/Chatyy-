@@ -51,7 +51,8 @@ import { Shimmer } from './SkeletonLoader'; // [2026-10-16 polish-perfil] grade-
 import SendDiamondSheet from './SendDiamondSheet';
 import { haptic } from '../constants/theme';
 // [2026-10-16 motion] Molas/limiares canônicos (constants/motion).
-import { Springs, motionEnabled, springTo } from '../constants/motion';
+import { Springs, motionEnabled, springTo } from '../constants/motion'; // [2026-10-17 drag-dismiss]
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 // Press-in pula com movimento reduzido (= PressableScale); soltar sempre volta a 1.
 function _pressSpring(v, to) {
   if (to !== 1 && !motionEnabled('press')) return;
@@ -1183,6 +1184,12 @@ export default function Profile({
   autoOpenSettings = false, // when true and is_self, auto-open the settings bottom sheet (Apps drawer "Configurações" entry)
   colors, isDark, t, router,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag4163 = useDragToDismiss({ onDismiss: () => { const f = () => setAvatarActionOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag3819 = useDragToDismiss({ onDismiss: () => { const f = () => setMenuOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag3698 = useDragToDismiss({ onDismiss: () => { const f = () => setHighlightSheet({ open: false, highlight: null }); f(); } });
   // Current session's user — needed so the embedded FeedComments sheet
   // knows whose avatar to stamp on new comments. Kept internal so callers
   // don't have to pass user through every layer.
@@ -3700,12 +3707,14 @@ export default function Profile({
       animationType="fade"
       onRequestClose={() => setHighlightSheet({ open: false, highlight: null })}
     >
+      <DragSheetRoot>
       <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+        style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
         onPress={() => setHighlightSheet({ open: false, highlight: null })}
       >
-        <Pressable
-          onPress={e => e.stopPropagation?.()}
+        <DragBackdrop drag={_drag3698} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag3698} onStartShouldSetResponder={() => true}
+          
           style={{
             backgroundColor: colors?.background || (isDark ? '#1a1a1a' : '#fff'),
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
@@ -3775,8 +3784,9 @@ export default function Profile({
               </Text>
             </TouchableOpacity>
           ) : null}
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 
@@ -3811,9 +3821,11 @@ export default function Profile({
 
   const menuNode = !actions.is_self && identity ? (
     <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }} onPress={() => setMenuOpen(false)}>
-        <Pressable
-          onPress={e => e.stopPropagation?.()}
+      <DragSheetRoot>
+      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setMenuOpen(false)}>
+        <DragBackdrop drag={_drag3819} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag3819} onStartShouldSetResponder={() => true}
+          
           style={{
             backgroundColor: colors?.background || '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
@@ -3937,8 +3949,9 @@ export default function Profile({
           <TouchableOpacity onPress={() => setMenuOpen(false)} style={{ alignItems: 'center', paddingVertical: 14, marginTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors?.border }}>
             <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
           </TouchableOpacity>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   ) : null;
 
@@ -3971,7 +3984,7 @@ export default function Profile({
               fontSize: 16, color: colors?.text,
               borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.12)',
               borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
-              backgroundColor: colors?.background,
+              backgroundColor: colors?.background, height: 42, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
             }}
           />
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
@@ -4150,12 +4163,14 @@ export default function Profile({
 
   const avatarActionNode = actions?.is_self ? (
     <Modal visible={avatarActionOpen} transparent animationType="fade" onRequestClose={() => setAvatarActionOpen(false)}>
+      <DragSheetRoot>
       <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+        style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
         onPress={() => setAvatarActionOpen(false)}
       >
-        <Pressable
-          onPress={(e) => e.stopPropagation?.()}
+        <DragBackdrop drag={_drag4163} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag4163} onStartShouldSetResponder={() => true}
+          
           style={{
             backgroundColor: colors?.background || '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
@@ -4221,8 +4236,9 @@ export default function Profile({
           >
             <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
           </TouchableOpacity>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   ) : null;
 
@@ -4560,6 +4576,10 @@ export default function Profile({
 // (>110px or velocity >0.6) commits to dismiss; below that snaps back.
 function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
   const SH = Dimensions.get('window').height;
+  // [2026-10-17 drag-dismiss] folha INTEIRA arrasta (RNGH): corpo rola e, no topo,
+  // puxar p/ baixo desce o perfil. Sem RNGH/kill switch: só a alça (PanResponder abaixo).
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose });
+  const richDrag = !!(drag.enabled && drag.gesture);
   const translateY = useRef(new Animated.Value(0)).current;
   const backdropOpacity = useRef(new Animated.Value(1)).current;
   // Drives the inverse fade (closer to bottom = more transparent backdrop)
@@ -4607,9 +4627,12 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdropOpacity }}>
+      <DragSheetRoot>
+      <View style={{ flex: 1 }}>
+        <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', opacity: richDrag ? Animated.multiply(backdropOpacity, drag.backdropOpacity) : backdropOpacity }]} />
         <Pressable style={{ flex: 1 }} onPress={() => _commitClose()} />
-        <Animated.View
+        <DragPanel
+          drag={drag}
           style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
             backgroundColor: colors?.background || '#fff',
@@ -4621,7 +4644,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
           {/* Drag-handle row owns the pan-responder. Swipe down to dismiss.
               Body ScrollView underneath stays scrollable independently. */}
           <View
-            {...panResponder.panHandlers}
+            {...(richDrag ? null : panResponder.panHandlers)}
             style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 8 }}
           >
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
@@ -4630,9 +4653,10 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
           <TouchableOpacity onPress={() => _commitClose()} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
             <IconX size={20} color={colors?.textSecondary || '#888'} />
           </TouchableOpacity>
-          <ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView>
-        </Animated.View>
-      </Animated.View>
+          <DragScroll drag={drag}><ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView></DragScroll>
+        </DragPanel>
+      </View>
+      </DragSheetRoot>
       {extras}
     </Modal>
   );

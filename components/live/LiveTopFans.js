@@ -17,6 +17,7 @@ import { humanizeCount } from './liveEngageConfig';
 import {
   useEngageSelector, selTopFans, selSheet, selFans, selFansLoading, selGifters,
 } from './liveEngageStore';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 
 export const LiveTopFansStack = memo(function LiveTopFansStack({ engage, size = 26 }) {
   const { t } = useLanguage();
@@ -92,12 +93,14 @@ export const LiveTopFansSheet = memo(function LiveTopFansSheet({ engage }) {
     return Array.from(map.values()).sort((a, b) => (b.diamonds - a.diamonds) || (b.likes - a.likes));
   }, [fans, gifters]);
 
-  if (!visible) return null;
   const close = () => engage?.closeSheet();
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: close }); // [2026-10-17 drag-dismiss]
+  if (!visible) return null;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={t('common.close')} />
-      <View style={styles.sheet}>
+      <DragSheetRoot>
+      <DragFade drag={drag}><Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={t('common.close')} /></DragFade>
+      <DragPanel drag={drag} style={styles.sheet}>
         <View style={styles.handle} />
         <View style={styles.header}>
           <Text style={styles.title}>{t('liveEng.topFans')}</Text>
@@ -111,16 +114,17 @@ export const LiveTopFansSheet = memo(function LiveTopFansSheet({ engage }) {
         ) : !data.length ? (
           <Text style={styles.empty}>{t('liveEng.topFansEmpty')}</Text>
         ) : (
-          <FlatList
+          <DragScroll drag={drag}><FlatList
             data={data}
             keyExtractor={(it) => it.email}
             renderItem={({ item, index }) => <Row item={item} index={index} t={t} />}
             style={{ maxHeight: 420 }}
             initialNumToRender={12}
             windowSize={5}
-          />
+          /></DragScroll>
         )}
-      </View>
+      </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 });

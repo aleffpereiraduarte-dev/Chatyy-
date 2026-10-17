@@ -36,6 +36,9 @@ import AnimatedStatusText from './AnimatedStatusText'; // [status-texto 2026-10-
 import { textStatusDurationMs, itemTextAlign } from './textStatus';
 import { cachedVideoSource } from '../../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 import { tryOpenNativeStories, nativeStoriesAvailable, isNativeStoryGroup, closeNativeStories, setNativeStoryHasMore } from './nativeStories'; // [2026-10-15 native-story]
+import { STORY_LIKE, storyQuickReactions, storyReactionsEnabled } from './storyReactions'; // [2026-10-17 status-reacoes]
+import StoryReactionPop from './StoryReactionPop';
+import StoryEmojiPicker from './StoryEmojiPicker';
 
 // [2026-10-16 polish-status] véu de legibilidade (SVG = gradiente real em iOS/Android/web).
 function StoryScrim({ edge }) {
@@ -958,6 +961,10 @@ function StoryViewerJS({
   const [replyFocused, setReplyFocused] = useState(false);
   const [reactPop, setReactPop] = useState(null);
   const [emojiPulse, setEmojiPulse] = useState(null); // emoji currently scaling (UI feedback)
+  // [2026-10-17 status-reacoes] "+" (grade completa) + estouro grande com mola.
+  const [reactPickerOpen, setReactPickerOpen] = useState(false);
+  const reactPickerOpenRef = useRef(false);
+  const [bigPop, setBigPop] = useState(null); // { emoji, k }
   // Realtime reaction toast — shown on the OWNER side when a viewer reacts.
   // Backed by the WS `status_react` event (chat.php fires it via /notify).
   // Auto-dismisses after 2.6s. Shape: { name, emoji } or null.
@@ -1463,6 +1470,20 @@ function StoryViewerJS({
       _Haptics.impactAsync(map[style] || map.light);
     } catch {}
   }, []);
+
+  // [2026-10-17 status-reacoes] fileira livre + "+" (kill switch __chatyy_story_reactions = false)
+  const _rxOn = storyReactionsEnabled();
+  const _openReactPicker = () => {
+    reactPickerOpenRef.current = true;
+    setReactPickerOpen(true);
+    setPaused(true);
+    try { Keyboard.dismiss(); } catch {}
+  };
+  const _closeReactPicker = () => {
+    reactPickerOpenRef.current = false;
+    setReactPickerOpen(false);
+    setPaused(false);
+  };
 
   // Mount debounce — the tap that OPENS the viewer can leak through to the
   // freshly-mounted tap-zones (Modal mounts synchronously on Android + the
@@ -2877,6 +2898,25 @@ function StoryViewerJS({
           />
         ) : null}
 
+        {/* [2026-10-17 status-reacoes] estouro grande (mola bouncy; Reduzir Movimento = fade) */}
+        {bigPop ? (
+          <StoryReactionPop emoji={bigPop.emoji} popKey={bigPop.k} onDone={() => setBigPop(null)} />
+        ) : null}
+        <StoryEmojiPicker
+          visible={reactPickerOpen && !!visible}
+          quick={_rxOn ? storyQuickReactions() : []}
+          mine={(() => { const _k = String(cur?.id ?? ''); return myReactRef.current[_k] ?? cur?.my_reaction ?? ''; })()}
+          t={t}
+          onClose={_closeReactPicker}
+          onPick={(emoji) => {
+            const _k = String(cur?.id ?? '');
+            const _was = (myReactRef.current[_k] ?? cur?.my_reaction ?? '') === emoji;
+            _closeReactPicker();
+            if (!_was) setBigPop({ emoji, k: Date.now() });
+            try { _reactSent(cur, emoji); onReact?.(cur, emoji); } catch {}
+          }}
+        />
+
         {/* Flying emoji animation */}
         {reactPop && (
           <View pointerEvents="none" style={{
@@ -3086,7 +3126,7 @@ function StoryViewerJS({
                 borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
                 shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
               }}>
-                {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => {
+                {(_rxOn ? [STORY_LIKE, ...storyQuickReactions()] : ['❤️','🔥','😂','😮','😢','👏','👍']).map(emoji => {
                   const pulsing = emojiPulse === emoji;
                   const isHeart = emoji === '❤️';
                   return (
@@ -3098,6 +3138,8 @@ function StoryViewerJS({
                       // Other emojis keep the single-pop behavior (long-press
                       // == tap on them) so the gesture stays predictable.
                       onLongPress={isHeart ? () => {
+                        // [2026-10-17 status-reacoes] segurar o coração = mais reações
+                        if (_rxOn) { _haptic('medium'); _openReactPicker(); return; }
                         _haptic('medium');
                         try { _reactSent(cur, emoji); onReact?.(cur, emoji); } catch {}
                         const now = Date.now();
@@ -3127,13 +3169,20 @@ function StoryViewerJS({
                         _haptic('medium');
                         setEmojiPulse(emoji);
                         setTimeout(() => setEmojiPulse(null), 260);
-                        setReactPop(emoji);
-                        setTimeout(() => setReactPop(null), 900);
+                        if (_rxOn) {
+                          // estouro só ao reagir (mesmo emoji de novo desfaz no servidor)
+                          const _k = String(cur?.id ?? '');
+                          const _was = (myReactRef.current[_k] ?? cur?.my_reaction ?? '') === emoji;
+                          if (!_was) setBigPop({ emoji, k: Date.now() });
+                        } else {
+                          setReactPop(emoji);
+                          setTimeout(() => setReactPop(null), 900);
+                        }
                         try { _reactSent(cur, emoji); onReact?.(cur, emoji); } catch {}
                       }}
                       hitSlop={8}
                       style={{
-                        paddingHorizontal: 6,
+                        paddingHorizontal: _rxOn ? 3 : 6,
                         transform: [{ scale: pulsing ? 1.6 : 1 }],
                         // Soft glow only while pulsing — adds visual oomph
                         // without bloating the resting state.
@@ -3142,10 +3191,21 @@ function StoryViewerJS({
                         } : null),
                       }}
                     >
-                      <Text style={{ fontSize: 26 }}>{emoji}</Text>
+                      <Text style={{ fontSize: _rxOn ? 24 : 26 }}>{emoji}</Text>
                     </TouchableOpacity>
                   );
                 })}
+                {_rxOn ? (
+                  <TouchableOpacity
+                    onPress={() => { _haptic('light'); _openReactPicker(); }}
+                    hitSlop={8}
+                    style={{ width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.16)' }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t?.('chatConv.moreReactions') || 'Mais reações'}
+                  >
+                    <IconPlus size={18} color="#fff" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
               {/* Reply input */}
               {replySent ? (
@@ -3209,7 +3269,8 @@ function StoryViewerJS({
                         replyGraceRef.current = false;
                         replyGraceTimerRef.current = null;
                       }, 4000);
-                      setPaused(false);
+                      // [2026-10-17 status-reacoes] "+" abriu a grade: segue pausado
+                      if (!reactPickerOpenRef.current) setPaused(false);
                     }}
                     placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
                     placeholderTextColor="rgba(255,255,255,0.7)"

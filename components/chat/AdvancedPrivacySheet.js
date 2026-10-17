@@ -7,6 +7,7 @@ import { View, Text, Modal, Pressable, Switch, ScrollView, Platform, ActivityInd
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet';
 import { IconShield, IconLock, IconEye, IconDownload, IconForward, IconSparkles, IconX } from '../Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 
 function _tt(t, key, fb) {
   try {
@@ -27,6 +28,8 @@ function Bullet({ Icon, text, color, sub }) {
 export default function AdvancedPrivacySheet({
   visible, onClose, enabled, screenshotNotice, canEdit, busy, onToggle, onToggleScreenshot, colors, isDark, t,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag108 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const insets = useSafeAreaInsets();
   const c = colors || {};
   const fg = c.text || (isDark ? '#F1F3F5' : '#111111');
@@ -48,14 +51,14 @@ export default function AdvancedPrivacySheet({
             <IconX size={20} color={sub} />
           </Pressable>
         </View>
-        <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 4 }}>
+        <DragScroll drag={_drag108} disabled={USE_NATIVE_SHEETS}><ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ paddingBottom: 4 }}>
           <Text style={[s.intro, { color: sub }]}>{_tt(t, 'advPriv.sheetIntro', 'Quando ativada, vale para todos nesta conversa:')}</Text>
           <Bullet Icon={IconLock} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletCapture', 'Bloqueia prints e gravação de tela no Android. No iPhone, a tela fica oculta durante gravação ou espelhamento.')} />
           <Bullet Icon={IconEye} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletNotice', 'Avisa a conversa quando alguém tira um print.')} />
           <Bullet Icon={IconForward} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletExport', 'Ninguém pode exportar a conversa nem encaminhar as mídias dela.')} />
           <Bullet Icon={IconDownload} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletGallery', 'As mídias não são salvas automaticamente na galeria.')} />
           <Bullet Icon={IconSparkles} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletAi', 'A Bia não lê as mensagens desta conversa.')} />
-        </ScrollView>
+        </ScrollView></DragScroll>
 
         <View style={[s.row, { borderTopColor: line }]}>
           <Text style={[s.rowLabel, { color: fg }]}>{_tt(t, 'advPriv.toggle', 'Ativar privacidade avançada')}</Text>
@@ -106,10 +109,12 @@ export default function AdvancedPrivacySheet({
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={s.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={_tt(t, 'common.close', 'Fechar')} />
-      <View style={[s.panel, { backgroundColor: bg, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+      <DragSheetRoot>
+      <DragFade drag={_drag108}><Pressable style={s.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={_tt(t, 'common.close', 'Fechar')} /></DragFade>
+      <DragPanel drag={_drag108} style={[s.panel, { backgroundColor: bg, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         {content}
-      </View>
+      </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 }

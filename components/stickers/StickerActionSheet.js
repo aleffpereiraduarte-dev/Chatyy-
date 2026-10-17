@@ -21,6 +21,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
 import { IconX, IconStar, IconStarFilled, IconDownload, IconPackage, IconPlus, IconCheck, IconSend, IconImage, IconChevronRight } from '../Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 
 export function stickerAbsUrl(u) {
   if (!u || typeof u !== 'string') return '';
@@ -60,6 +61,7 @@ function Row({ icon: Icon, label, sub, onPress, disabled, busy, colors, right })
 
 function SheetFrame({ visible, onClose, children, colors, t }) {
   const insets = useSafeAreaInsets();
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   // [2026-10-15 native-sheets-v2] Sheet do SISTEMA (grabber/arrastar/fundo nativos);
   // web (arrastar/colar .webp) e kill-switch → Modal JS abaixo.
   if (USE_NATIVE_SHEETS) {
@@ -76,15 +78,18 @@ function SheetFrame({ visible, onClose, children, colors, t }) {
   }
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} onPress={onClose} style={st.backdrop} accessibilityLabel={t('common.close')}>
-        <TouchableOpacity activeOpacity={1} onPress={() => {}} style={[st.sheet, { backgroundColor: colors.background, paddingBottom: Math.max(16, insets.bottom + 8) }]}>
+      <DragSheetRoot>
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[st.backdrop, { backgroundColor: 'transparent' }]} accessibilityLabel={t('common.close')}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={drag} onStartShouldSetResponder={() => true} style={[st.sheet, { backgroundColor: colors.background, paddingBottom: Math.max(16, insets.bottom + 8) }]}>
           <View style={[st.grabber, { backgroundColor: colors.border }]} />
           <TouchableOpacity onPress={onClose} hitSlop={10} style={st.close} accessibilityRole="button" accessibilityLabel={t('common.close')}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
           {children}
-        </TouchableOpacity>
+        </DragPanel>
       </TouchableOpacity>
+      </DragSheetRoot>
     </Modal>
   );
 }

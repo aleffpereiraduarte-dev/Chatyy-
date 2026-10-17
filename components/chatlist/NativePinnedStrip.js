@@ -16,7 +16,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, View } from 'react-native';
 import { getNativePinnedStripView } from '../../modules/expo-chat-conversation-list';
-import { buildRow, buildLabels, rowEqual, splitPreviewIcon } from './nativeAdapter';
+import { buildRow, buildLabels, rowEqual } from './nativeAdapter';
+import { buildPeekItems } from './peekItems';
 
 function _lazy(fn) {
   let v; let done = false;
@@ -197,31 +198,8 @@ function PinnedStripInner({ data, actionsRef, avatarSize, height }) {
     const buildPeek = (m) => {
       try {
         const c = ctxRef.current;
-        const { getCachedMessagesSync } = require('../../services/smartChatCache');
-        const msgs = getCachedMessagesSync(m.conv.id, 16) || [];
-        const isGroup = m.conv.type === 'group' || m.conv.type === 'channel';
-        const out = [];
-        for (const msg of msgs) {
-          if (!msg || msg.deleted_at || msg.type === 'system') continue;
-          const mine = String(msg.sender_email || '').toLowerCase() === c.me;
-          let txt = '';
-          let st = null;
-          try {
-            const r = c.computePreview(msg, isGroup, m.conv.type === 'channel', c.me, m.conv.members) || {};
-            txt = splitPreviewIcon(r.preview || '').text;
-            st = r.statusType || null;
-          } catch {}
-          if (!txt) continue;
-          let h = '';
-          try {
-            const raw = String(msg.created_at || '');
-            const d = new Date(raw.replace(' ', 'T') + (/Z|[+-]\d\d:?\d\d$/.test(raw) ? '' : 'Z'));
-            if (!isNaN(d.getTime())) h = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-          } catch {}
-          const s = (!mine && isGroup) ? (c.emailToDisplayName ? c.emailToDisplayName(msg.sender_name || msg.sender_email || '') : '') : '';
-          const r = !mine ? 0 : (st === 'read' ? 3 : st === 'delivered' ? 2 : 1);
-          out.push({ m: mine, t: txt.slice(0, 280), h, s, r });
-        }
+        // [2026-10-17 peek-fit] miniaturas reais, hora em todas e recibo igual à conversa.
+        const out = buildPeekItems(m.conv, c);
         const id = String(m.conv.id);
         setPeek(prev => {
           const next = { id, items: out.slice(-12) };

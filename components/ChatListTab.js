@@ -1077,9 +1077,9 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
           content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
         }
         // Poll payload {question, options}: WhatsApp previews the question.
-        else if ((lastMsg.type === 'poll' || parsed.type === 'poll') && typeof parsed.question === 'string') {
+        else if ((lastMsg.type === 'poll' || parsed.type === 'poll' || Array.isArray(parsed.options)) && typeof parsed.question === 'string') {
           if (!caption && parsed.question.trim()) caption = parsed.question.trim();
-          content = '';
+          content = '\uD83D\uDCCA ' + (caption || t('chat.poll') || 'Enquete');
         }
         else if (typeof parsed.text === 'string') content = parsed.text;
         else if (typeof parsed.body === 'string') content = parsed.body;
@@ -1142,6 +1142,10 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
     else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (caption || t('chat.poll') || 'Enquete');
     else if (lastMsg.type === 'playlist') content = '\uD83C\uDFB5 ' + (caption || t('chatConv.playlist') || 'Playlist');
     else if (lastMsg.type === 'meetup') content = '\uD83D\uDCC5 ' + (caption || t('chatConv.meetup') || 'Encontro');
+    // [2026-10-17 fwd-preview] URL crua de figurinha (sticker-files/…, /stickers/*.json) sem type → rótulo.
+    else if (typeof content === 'string' && /^https?:\/\/\S+\/(sticker-files|stickers)\/\S+$/i.test(content.trim())) {
+      content = '\uD83D\uDCAB ' + (t('chat.sticker') || 'Figurinha');
+    }
     // Fallback: if content is a raw tenor/giphy URL (legacy gif sent as text), show "GIF"
     else if (typeof content === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(content.trim())) {
       content = '\uD83C\uDFAC GIF';
@@ -9099,7 +9103,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   color: colors.text, fontSize: 15,
                   backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
                   borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}), height: 43, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                 }}
               />
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
@@ -9194,7 +9198,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 borderWidth: 1.5, borderColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)',
                 borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10,
                 fontSize: 15, color: colors.text, textAlign: 'center',
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)', height: 42, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
               }}
               autoFocus
             />
@@ -10635,3 +10639,6 @@ const s = StyleSheet.create({
 // chat.js now passes a memoized tabProps, so a shallow prop compare skips the
 // re-render unless something the list actually consumes changed.
 export default React.memo(ChatListTab);
+
+// [2026-10-17 fwd-preview] Mesmo formatador de prévia p/ outras listas (folha Encaminhar).
+export { _computeRowPreview as computeRowPreview, withPreviewIcon };

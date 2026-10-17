@@ -38,8 +38,9 @@ import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
 } from '../components/Icons';
-import * as api from '../services/api';
 import * as settingsCache from '../services/settingsCache';
+import { useWallet, refreshWallet } from '../services/diamonds';
+import { WALLET_ENABLED } from '../constants/featureFlags';
 import Constants from 'expo-constants';
 import {
   CATEGORY_GROUPS, GROUP_HEADER_KEYS, CATEGORY_META, categoryTitle, sectionToCategory,
@@ -103,7 +104,9 @@ function SettingsScreenInner() {
 
   // ── Âncoras: ?section=X (ou resultado de busca) rola até o bloco certo ──
   const scrollRef = useRef(null);
-  const [pendingAnchor, setPendingAnchor] = useState(requestedSection);
+  // [2026-10-17 swipe-back] ?anchor= (busca → categoria empurrada) rola até o bloco.
+  const requestedAnchor = typeof params?.anchor === 'string' && params.anchor ? params.anchor : null;
+  const [pendingAnchor, setPendingAnchor] = useState(requestedAnchor || requestedSection);
   const pendingAnchorRef = useRef(pendingAnchor);
   pendingAnchorRef.current = pendingAnchor;
   const registerAnchor = useCallback((key) => {
@@ -147,18 +150,21 @@ function SettingsScreenInner() {
   const onHeroScroll = useRef(Animated.event([{ nativeEvent: { contentOffset: { y: heroScrollY } } }], { useNativeDriver: true })).current;
 
   // ── Saldo de diamantes p/ o cartão da Carteira (some se desativado) ─────
-  const [walletDiamonds, setWalletDiamonds] = useState(null);
+  // [2026-10-17 carteira-sem-piscar] Antes: estado local null + fetch 500 ms
+  // depois → o cartão "Carteira" BROTAVA ao lado do Chatyy One (que encolhia de
+  // largura inteira p/ meia) a cada abertura = a piscada. Agora lê o store da
+  // carteira (services/diamonds: saldo em cache POR CONTA, síncrono no 1º
+  // quadro) e só revalida em segundo plano. Sem cache ainda: o cartão já ocupa
+  // o lugar (subtítulo "Diamantes") — só some se o servidor disser desligado.
+  const _wallet = useWallet();
+  const walletDiamonds = !WALLET_ENABLED || (_wallet.loaded && _wallet.enabled === false)
+    ? null
+    : (typeof _wallet.diamonds === 'number' ? _wallet.diamonds : '');
   useEffect(() => {
-    let alive = true;
-    const tm = setTimeout(() => {
-      api.walletBalance?.().then((r) => {
-        if (!alive) return;
-        const d = r?.data;
-        if (r?.success && d && d.enabled !== false && typeof d.diamond_balance === 'number') setWalletDiamonds(d.diamond_balance);
-      }).catch(() => {});
-    }, 500);
-    return () => { alive = false; clearTimeout(tm); };
-  }, [user?.email]);
+    if (requestedSection || !WALLET_ENABLED) return undefined;
+    const tm = setTimeout(() => { try { refreshWallet(); } catch {} }, 500);
+    return () => clearTimeout(tm);
+  }, [user?.email, requestedSection]);
 
   // ── Perfil do hero (recarrega ao voltar do /edit-profile) ───────────────
   const [myProfile, setMyProfile] = useState(() => settingsCache.peek('profile'));
@@ -191,14 +197,37 @@ function SettingsScreenInner() {
     else setTimeout(fire, 0);
   }, [router]);
 
+  // [2026-10-17 swipe-back] Founder: "arrastar da esquerda p/ direita deveria
+  // voltar". As categorias abriam DENTRO desta tela (estado activeCategory) com
+  // gestureEnabled:false → nem a borda nem a tela inteira voltavam (e no Android
+  // o voltar era um BackHandler JS, sem predictive back). Agora, no nativo, cada
+  // categoria é uma ROTA empurrada (/settings?section=<cat>): push do
+  // UINavigationController, swipe-back nativo (borda + tela inteira), voltar do
+  // sistema no Android. Web/2 painéis mantêm a troca no lugar.
+  const PUSH_CATEGORIES = Platform.OS !== 'web';
+  const lastCatPushRef = useRef(0);
   const openCategory = useCallback((key, anchor) => {
+    if (PUSH_CATEGORIES && !twoPane) {
+      // toque duplo não empilha 2 cópias da categoria
+      const now = Date.now();
+      if (now - lastCatPushRef.current < 650) return;
+      lastCatPushRef.current = now;
+    }
     try { Haptics.selectionAsync?.(); } catch {}
+    if (PUSH_CATEGORIES && !twoPane) {
+      const fire = () => {
+        try { router.push({ pathname: '/settings', params: anchor && anchor !== key ? { section: key, anchor } : { section: key } }); } catch {}
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire); else fire();
+      return;
+    }
     setPendingAnchor(anchor || null);
     setSearchQuery('');
     setSearchFocused(false);
     setActiveCategory(key);
     if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
-  }, [IOS_AUTO_INSET]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [IOS_AUTO_INSET, twoPane, router]);
   const openAccountSwitcher = useCallback(() => { try { Haptics.selectionAsync?.(); } catch {} setAccountSwitcherOpen(true); }, []);
   const hostValue = useMemo(() => ({ registerAnchor, openCategory, openAccountSwitcher, twoPane }), [registerAnchor, openCategory, openAccountSwitcher, twoPane]);
 
@@ -219,6 +248,8 @@ function SettingsScreenInner() {
   // Voltar: dentro de uma categoria aberta pela lista → volta à lista; com
   // ?section= (link) → sai da tela; sem histórico → conversas.
   const inCategorySubpage = activeCategory !== null && !twoPane && !requestedSection;
+  let canGoBackNow = true;
+  try { canGoBackNow = !!router.canGoBack?.(); } catch {}
   const exitSettings = () => {
     try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
     try { router.replace('/chat'); } catch {}
@@ -482,19 +513,30 @@ function SettingsScreenInner() {
           isDark,
           blur: false,
           title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
-          // Swipe-back desligado só DENTRO de uma categoria aberta pela lista.
+          // [2026-10-17 swipe-back] Sempre ligado: no nativo a categoria é rota
+          // própria (inCategorySubpage só existe no web estreito).
           gestureEnabled: !inCategorySubpage,
+          fullScreenGestureEnabled: !inCategorySubpage,
           contentStyle: { backgroundColor: gc.pageBg },
-          // iOS: título GRANDE na raiz; compacto nas categorias (explícito nos
-          // dois sentidos — setOptions MESCLA).
+          // iOS: título GRANDE que colapsa ao rolar — raiz E categorias (como o
+          // Ajustes do iPhone). Explícito (setOptions MESCLA) e igual ao que o
+          // _layout aplica antes do 1º frame (sem salto do header).
           ...(Platform.OS === 'ios' ? {
-            headerLargeTitle: activeCategory === null,
+            headerLargeTitle: true,
             headerLargeTitleShadowVisible: false,
             headerLargeStyle: { backgroundColor: gc.pageBg },
             headerLargeTitleStyle: { color: colors.text },
           } : {}),
-          headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
-          headerBackVisible: false,
+          // Voltar NATIVO quando há histórico (chevron do sistema + menu de
+          // toque longo); botão próprio só sem histórico (link frio → /chat)
+          // ou na categoria no-lugar do web.
+          ...((inCategorySubpage || !canGoBackNow) ? {
+            headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
+            headerBackVisible: false,
+          } : {
+            headerLeft: undefined,
+            headerBackVisible: true,
+          }),
           ...(activeCategory !== null ? {
             headerSearchBarOptions: undefined,
           } : {

@@ -20,6 +20,7 @@ import Sidebar from '../components/Sidebar';
 import EmailOutboxBanner from '../components/EmailOutboxBanner';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-16 motion-telegram]
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 // Cold-start: these overlays (search, notifications hub, shortcut refs,
 // snooze/context/quick-settings panels) are never visible on the first paint
 // of /inbox — they all start closed (`visible={false}`) and only render UI
@@ -110,6 +111,8 @@ export default function InboxScreen(props) {
 }
 
 function InboxScreenInner() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1925 = useDragToDismiss({ onDismiss: () => { const f = () => setShowSavedSearches(false); f(); } });
   const { user, loading: authLoading, logout, login, accounts, switchAccount, removeAccount, switching } = useAuth();
   // Kids accounts go straight to chat — never show inbox
   const _kidsRouter = useRouter();
@@ -1923,9 +1926,11 @@ function InboxScreenInner() {
               to re-run the search, X to delete. */}
           {showSavedSearches && (
             <Modal visible transparent animationType="fade" onRequestClose={() => setShowSavedSearches(false)}>
+              <DragSheetRoot>
               <TouchableOpacity activeOpacity={1} onPress={() => setShowSavedSearches(false)}
-                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-                <View style={{ backgroundColor: colors.surfaceElevated || colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 + insets.bottom, maxHeight: '60%' }}>
+                style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}>
+                <DragBackdrop drag={_drag1925} color="rgba(0,0,0,0.5)" />
+                <DragPanel drag={_drag1925} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surfaceElevated || colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 + insets.bottom, maxHeight: '60%' }}>
                   <View style={{ alignSelf: 'center', width: 36, height: 5, borderRadius: 3, backgroundColor: colors.border, marginBottom: 14 }} />
                   <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 8, letterSpacing: -0.3 }}>
                     {t('search.savedSearches') || 'Buscas salvas'}
@@ -1955,8 +1960,9 @@ function InboxScreenInner() {
                       </TouchableOpacity>
                     ))
                   )}
-                </View>
+                </DragPanel>
               </TouchableOpacity>
+              </DragSheetRoot>
             </Modal>
           )}
           {isOffline && (
@@ -2321,7 +2327,7 @@ function InboxScreenInner() {
                   fontSize: 15,
                   color: colors.text,
                   marginBottom: 12,
-                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}), height: 43, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                 }}
                 placeholder={t('login.password') || 'Password'}
                 placeholderTextColor={colors.textTertiary}

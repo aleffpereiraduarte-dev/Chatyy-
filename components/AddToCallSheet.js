@@ -52,6 +52,7 @@ import {
   addToCallErrorText,
   normalizeForSearch,
 } from '../services/callAddParticipants';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll } from './ui/useDragToDismiss';
 
 let Haptics = null;
 try { Haptics = require('../services/haptics').HapticsCompat; } catch {}
@@ -136,6 +137,8 @@ export default function AddToCallSheet({
   topSlot = null,
   loading: loadingProp = false, // compat: convite em andamento controlado pela tela
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag382 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const tr = useCallback((k, fb, vars) => {
     let s = '';
     try { s = typeof t === 'function' ? t(k, vars) : ''; } catch { s = ''; }
@@ -361,7 +364,7 @@ export default function AddToCallSheet({
     );
   } else {
     body = (
-      <SectionList
+      <DragScroll drag={_drag382}><SectionList
         sections={sections}
         keyExtractor={(item) => item.email}
         renderItem={renderRow}
@@ -374,14 +377,15 @@ export default function AddToCallSheet({
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         initialNumToRender={14}
-      />
+      /></DragScroll>
     );
   }
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <DragSheetRoot>
       <Pressable style={styles.overlay} onPress={onClose}>
-        <Animated.View
+        <DragPanel drag={_drag382}
           style={[styles.sheet, { opacity, transform: [{ translateY }] }]}
           onStartShouldSetResponder={() => true}
         >
@@ -454,8 +458,9 @@ export default function AddToCallSheet({
               </TouchableOpacity>
             </View>
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

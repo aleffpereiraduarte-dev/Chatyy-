@@ -29,6 +29,7 @@ import {
   BiaHistoryDrawer, BiaVoiceScreen, BiaAttachSheet, GlyphWave,
 } from '../components/bia/BiaUI';
 import { createStreamLevelMeter, dbToLevel } from '../components/bia/biaAudioLevel';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 // Strip the trailing `<followups>q1|q2|q3</followups>` marker the server-side
 // prompt appends to every One reply. Lets us hide it from rendered markdown
@@ -536,11 +537,14 @@ function ModelPickerPill({ isDark, onPress, modelLabel }) {
 }
 
 function ModelPickerSheet({ visible, onClose, isDark, t, currentModelId, onPick }) {
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   if (!visible) return null;
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} style={st.sheetDim} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={[st.sheet, { backgroundColor: isDark ? '#1F1F22' : '#fff' }]}>
+      <DragSheetRoot>
+      <TouchableOpacity activeOpacity={1} style={[st.sheetDim, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={drag} onStartShouldSetResponder={() => true} style={[st.sheet, { backgroundColor: isDark ? '#1F1F22' : '#fff' }]}>
           <View style={st.sheetGrabber} />
           <Text style={[st.sheetTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>
             {t('one.pickModel') || 'Choose model'}
@@ -564,19 +568,23 @@ function ModelPickerSheet({ visible, onClose, isDark, t, currentModelId, onPick 
               </TouchableOpacity>
             );
           })}
-        </TouchableOpacity>
+        </DragPanel>
       </TouchableOpacity>
+      </DragSheetRoot>
     </Modal>
   );
 }
 
 // Long-press sheet for AI message: Copy / Regenerate / Bad response.
 function MessageContextSheet({ visible, onClose, isDark, t, onCopy, onRegenerate, onBadResponse, canRegenerate }) {
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   if (!visible) return null;
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} style={st.sheetDim} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={[st.sheet, { backgroundColor: isDark ? '#1F1F22' : '#fff' }]}>
+      <DragSheetRoot>
+      <TouchableOpacity activeOpacity={1} style={[st.sheetDim, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={drag} onStartShouldSetResponder={() => true} style={[st.sheet, { backgroundColor: isDark ? '#1F1F22' : '#fff' }]}>
           <View style={st.sheetGrabber} />
           <TouchableOpacity onPress={() => { onCopy?.(); onClose(); }} activeOpacity={0.7} style={st.sheetItem}>
             <IconCopy size={18} color={isDark ? '#ECECEC' : '#0D0D0D'} />
@@ -598,8 +606,9 @@ function MessageContextSheet({ visible, onClose, isDark, t, onCopy, onRegenerate
               {t('one.badResponse') || 'Bad response'}
             </Text>
           </TouchableOpacity>
-        </TouchableOpacity>
+        </DragPanel>
       </TouchableOpacity>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -1177,10 +1186,12 @@ export default function OneScreen() {
             router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
           }
         } else if (params.phone) {
-          // [2026-10-10 sem-telnyx-vonage] PSTN off → discador do aparelho (tel:).
-          const _pstnOn = (() => { try { return require('../constants/featureFlags').PSTN_ENABLED === true; } catch { return false; } })();
+          // [2026-10-10 sem-telnyx-vonage] PSTN off.
+          // [2026-10-17 sem-pstn] Só ligações Chatyy: número de alguém no Chatyy →
+          // ligação Chatyy; senão "Convidar para o Chatyy" (nunca tel:/discador).
+          const _pstnOn = (() => { try { return require('../constants/featureFlags').isPstnEnabled() === true; } catch { return false; } })();
           if (!_pstnOn) {
-            try { const { Linking } = require('react-native'); Linking.openURL(`tel:${params.phone}`).catch(() => {}); } catch {}
+            try { require('../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: params.phone, video: !!params.video, router, t }); } catch {}
           } else if (Platform.OS === 'web') {
             router.push(`/chat?tab=calls&dial=${encodeURIComponent(params.phone)}`);
           } else {

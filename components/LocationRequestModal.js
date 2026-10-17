@@ -40,6 +40,7 @@ import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from './AvatarCircle';
 import { IconMapPin, IconX } from './Icons';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 // Global trigger — called from pushNotifications.js (foreground push)
 // or snap-map.js (background-tap routing). `data` should match the FCM
@@ -59,6 +60,8 @@ export function onLocationRequestResolved(cb) {
 }
 
 export default function LocationRequestModal() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag132 = useDragToDismiss({ onDismiss: () => { const f = dismiss; if (typeof f === 'function') f(); } });
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [visible, setVisible] = useState(false);
@@ -130,8 +133,10 @@ export default function LocationRequestModal() {
 
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={dismiss}>
-      <Pressable style={lrm.overlay} onPress={dismiss}>
-        <Pressable onPress={(e) => e.stopPropagation?.()} style={{ width: '100%' }}>
+      <DragSheetRoot>
+      <Pressable style={[lrm.overlay, { backgroundColor: 'transparent' }]} onPress={dismiss}>
+        <DragBackdrop drag={_drag132} color="rgba(0,0,0,0.55)" />
+        <DragPanel drag={_drag132} onStartShouldSetResponder={() => true}  style={{ width: '100%' }}>
           <Animated.View style={[
             lrm.sheet,
             {
@@ -212,8 +217,9 @@ export default function LocationRequestModal() {
               </TouchableOpacity>
             </View>
           </Animated.View>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

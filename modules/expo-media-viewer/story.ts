@@ -93,12 +93,19 @@ export type StoryGroup = {
 
 export type StoryReaction = { emoji: string; kind: 'heart' | 'flame' | 'laugh' | 'wow' | 'sad' | 'clap' | 'thumbs' };
 
+/** [2026-10-17 status-reacoes] Grade completa do "+" (components/chat/nativeEmojiData.js). */
+export type StoryEmojiPicker = { cats: { t: string; e: string[]; k: string[] }[] };
+
 export type StoryOpenOptions = {
   groups: StoryGroup[];
   startGroup?: number;
   startItem?: number;
   labels?: Record<string, string>;
   reactions?: StoryReaction[];
+  /** apiVersion >= 4: segurar o coração abre a bolha de reações (deslizar + soltar). */
+  reactionHold?: boolean;
+  /** apiVersion >= 4: "+" na fileira/bolha abre esta grade (busca por palavras). */
+  reactionPicker?: StoryEmojiPicker;
   transition?: 'cube' | 'slide';
   /** Há mais pessoas depois/antes das enviadas → onNeedMore. */
   hasMoreNext?: boolean;
@@ -110,7 +117,8 @@ export type StoryOpenOptions = {
   originRect?: { x: number; y: number; width: number; height: number } | null;
 };
 
-export type StoryViewerRow = { email: string; name?: string; avatar?: string; time?: string; reaction?: string };
+/** reaction = kind (ícone vetorial, binários antigos); emoji = emoji real (apiVersion >= 4). */
+export type StoryViewerRow = { email: string; name?: string; avatar?: string; time?: string; reaction?: string; emoji?: string };
 
 type Base = { session: number };
 export type StoryEvents = {
@@ -181,7 +189,8 @@ export function isAvailable(): boolean {
   return !!m && typeof m.open === 'function';
 }
 
-/** 1 = build 2026-10-15 (foto/vídeo/texto); 2 = blocos/voz/enquete/boomerang/duplo toque/menu por item. */
+/** 1 = build 2026-10-15 (foto/vídeo/texto); 2 = blocos/voz/enquete/boomerang/duplo toque/menu por item;
+ *  3 = originRect; 4 = reações livres (bolha ao segurar o coração, "+" com grade de emojis, emoji real na lista). */
 export function apiVersion(): number {
   const m = mod();
   if (!m || typeof m.apiVersion !== 'function') return 0;

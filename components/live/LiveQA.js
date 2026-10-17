@@ -20,6 +20,7 @@ import { IconX, IconSend, IconThumbsUp, IconHelpCircle, IconTrash, IconPin } fro
 import {
   useEngageSelector, selSheet, selQuestions, selHighlighted,
 } from './liveEngageStore';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 
 const QRow = memo(function QRow({ q, isHost, onUpvote, onHighlight, onDismiss, t }) {
   const hl = q.status === 'highlighted';
@@ -105,13 +106,15 @@ export const LiveQASheet = memo(function LiveQASheet({ engage, isHost }) {
     if (!r?.success) setNotice(t('liveEng.qaFailed'));
   }, [engage, t]);
 
-  if (!visible) return null;
   const close = () => engage?.closeSheet();
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: close }); // [2026-10-17 drag-dismiss]
+  if (!visible) return null;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close}>
-      <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={t('common.close')} />
+      <DragSheetRoot>
+      <DragFade drag={drag}><Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={t('common.close')} /></DragFade>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.sheet}>
+        <DragPanel drag={drag} style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.header}>
             <IconHelpCircle size={18} color="#fff" />
@@ -124,7 +127,7 @@ export const LiveQASheet = memo(function LiveQASheet({ engage, isHost }) {
           <Text style={styles.hint}>{isHost ? t('liveEng.qaHostHint') : t('liveEng.qaViewerHint')}</Text>
 
           {ordered.length ? (
-            <FlatList
+            <DragScroll drag={drag}><FlatList
               data={ordered}
               keyExtractor={(q) => String(q.id)}
               renderItem={({ item }) => (
@@ -134,7 +137,7 @@ export const LiveQASheet = memo(function LiveQASheet({ engage, isHost }) {
               keyboardShouldPersistTaps="handled"
               initialNumToRender={10}
               windowSize={5}
-            />
+            /></DragScroll>
           ) : (
             <Text style={styles.empty}>{t('liveEng.qaEmpty')}</Text>
           )}
@@ -165,8 +168,9 @@ export const LiveQASheet = memo(function LiveQASheet({ engage, isHost }) {
               </TouchableOpacity>
             </View>
           ) : null}
-        </View>
+        </DragPanel>
       </KeyboardAvoidingView>
+      </DragSheetRoot>
     </Modal>
   );
 });

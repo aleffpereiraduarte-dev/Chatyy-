@@ -26,6 +26,7 @@ import NativeSwitch from '../NativeSwitch';
 import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../nativeHeader';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-09 native-sheets]
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
@@ -223,6 +224,8 @@ export function SettingsSwitchRow({ title, subtitle, value, onValueChange, disab
 // Bottom sheet with a checkmark list. Used by SettingsPickerRow; exported so
 // screens can open it from any row.
 export function OptionSheet({ visible, title, message, options = [], value, onSelect, onClose, cancelLabel: cancelLabelProp }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag270 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const _lang = useLanguageOptional();
   const cancelLabel = cancelLabelProp || (_lang?.t?.('common.cancel')) || 'Cancelar';
   const g = useGroupedColors();
@@ -268,8 +271,9 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
   }
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} />
-      <View style={[st.sheetWrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
+      <DragSheetRoot>
+      <DragFade drag={_drag270}><Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} /></DragFade>
+      <DragPanel drag={_drag270} style={[st.sheetWrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
         <View style={[st.sheet, { backgroundColor: g.cardBg }]}>
           {(!!title || !!message) && (
             <View style={[st.sheetHead, { borderBottomColor: g.separator }]}>
@@ -277,7 +281,7 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
               {!!message && <Text style={[st.sheetMsg, { color: g.secondary }]}>{message}</Text>}
             </View>
           )}
-          <ScrollView style={{ maxHeight: 420 }} bounces={false}>
+          <DragScroll drag={_drag270}><ScrollView style={{ maxHeight: 420 }} bounces={false}>
             {options.map((o, i) => {
               const sel = o.value === value;
               return (
@@ -294,7 +298,7 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
                 </React.Fragment>
               );
             })}
-          </ScrollView>
+          </ScrollView></DragScroll>
         </View>
         <PressableRow
           onPress={onClose}
@@ -304,7 +308,8 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
         >
           <Text style={[st.sheetCancelText, { color: g.text }]}>{cancelLabel}</Text>
         </PressableRow>
-      </View>
+      </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -373,6 +378,8 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
           isDark,
           title,
           blur: true,
+          // [2026-10-17 settings-polish] título grande que colapsa (igual à rota no _layout).
+          largeTitle: true,
           contentStyle: { backgroundColor: g.pageBg },
           ...(headerRight ? { headerRight } : {}),
           // [2026-10-12 settings-back] Aberta sem histórico (link/push/replace)
@@ -433,9 +440,10 @@ const st = StyleSheet.create({
   card: { borderRadius: 18, overflow: 'hidden' },
   sep: { height: StyleSheet.hairlineWidth },
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingHorizontal: 16, paddingVertical: 11 },
-  title: { fontSize: 16, fontWeight: '400', letterSpacing: -0.25 },
+  // [2026-10-17 settings-polish] iOS: corpo 17 pt (tracking do SF) como o Ajustes do iPhone; Android/web 16.
+  title: Platform.OS === 'ios' ? { fontSize: 17, fontWeight: '400', letterSpacing: -0.41 } : { fontSize: 16, fontWeight: '400', letterSpacing: -0.25 },
   subtitle: { fontSize: 13, lineHeight: 17, marginTop: 2, letterSpacing: -0.05 },
-  value: { fontSize: 16, marginLeft: 10, maxWidth: 170, textAlign: 'right' },
+  value: { fontSize: Platform.OS === 'ios' ? 17 : 16, letterSpacing: Platform.OS === 'ios' ? -0.41 : 0, marginLeft: 10, maxWidth: 170, textAlign: 'right' },
   sheetWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 10, maxWidth: 560, width: '100%', alignSelf: 'center' },
   sheet: { borderRadius: 14, overflow: 'hidden' },
   sheetHead: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, alignItems: 'center' },

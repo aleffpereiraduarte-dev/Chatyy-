@@ -26,6 +26,7 @@ import { IconX, IconArrowLeft, IconSearch, IconSend } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 import * as api from '../../services/api';
 import { formatInt } from '../../utils/dateFormat';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../ui/useDragToDismiss';
 
 const PURPLE = '#111111';
 
@@ -46,6 +47,8 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
   return null;
   // eslint-disable-next-line no-unreachable
   const insets = useSafeAreaInsets();
+  // [2026-10-17 drag-dismiss] arrastar de qualquer ponto p/ baixo fecha (não durante o envio).
+  const drag = useDragToDismiss({ visible, onDismiss: onClose, shouldConfirm: () => sending });
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
 
@@ -170,10 +173,12 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
   const chipBg  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)';
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (step === 'amount') { setStep('pick'); return; } onClose?.(); }}>
+      <DragSheetRoot>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={styles.scrim}>
-          <View style={[styles.sheet, { backgroundColor: surface, paddingBottom: Math.max(insets.bottom, 18) }]}>
+        <View style={[styles.scrim, { backgroundColor: 'transparent' }]}>
+          <DragBackdrop drag={drag} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={drag} style={[styles.sheet, { backgroundColor: surface, paddingBottom: Math.max(insets.bottom, 18) }]}>
             <View style={styles.handleRow}>
               <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.18)' }]} />
             </View>
@@ -226,7 +231,7 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
                     </Text>
                   </View>
                 ) : (
-                  <FlatList
+                  <DragScroll drag={drag}><FlatList
                     data={filtered}
                     keyExtractor={(item, idx) => String(item.id || item.peer_email || idx)}
                     keyboardShouldPersistTaps="handled"
@@ -251,7 +256,7 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
                         </TouchableOpacity>
                       );
                     }}
-                  />
+                  /></DragScroll>
                 )}
               </>
             ) : (
@@ -354,9 +359,10 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
                 </TouchableOpacity>
               </>
             )}
-          </View>
+          </DragPanel>
         </View>
       </KeyboardAvoidingView>
+      </DragSheetRoot>
     </Modal>
   );
 }

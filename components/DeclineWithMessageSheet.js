@@ -22,12 +22,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Modal, View, Text, TextInput, TouchableOpacity, Pressable, Platform, StyleSheet, KeyboardAvoidingView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 // Window during which we still show the sheet — if the user dismissed CallKit
 // over 6s ago they probably moved on and surfacing the sheet would be jarring.
 const SHEET_WINDOW_MS = 6000;
 
 export default function DeclineWithMessageSheet() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag108 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [visible, setVisible] = useState(false);
@@ -106,9 +109,11 @@ export default function DeclineWithMessageSheet() {
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
+      <DragSheetRoot>
+      <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag108} color="rgba(0,0,0,0.5)" />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
-          <Pressable onPress={(e) => e.stopPropagation?.()} style={[styles.sheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+          <DragPanel drag={_drag108} onStartShouldSetResponder={() => true}  style={[styles.sheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
             <View style={styles.handle} />
             <Text style={[styles.title, { color: colors.text }]}>
               {t('call.declineWithMessageTitle') || 'Responder com mensagem'}
@@ -147,9 +152,10 @@ export default function DeclineWithMessageSheet() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </DragPanel>
         </KeyboardAvoidingView>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

@@ -16,6 +16,7 @@ import AvatarCircle from '../AvatarCircle';
 import { IconX } from '../Icons';
 import { formatDateTime } from '../../utils/dateFormat';
 import { pollStats, votesLabel } from './pollLook';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 
 const _hosts = new Set();
 
@@ -55,6 +56,8 @@ export default function PollVotesHost() {
 }
 
 function PollVotesSheet({ req, onClose }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag86 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const g = useGroupedColors();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
@@ -84,9 +87,10 @@ function PollVotesSheet({ req, onClose }) {
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <DragSheetRoot>
       <View style={s.root}>
-        <Pressable style={s.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={_tr(t, 'common.close', 'Fechar')} />
-        <View style={[s.panel, { backgroundColor: g.pageBg, paddingBottom: 12 + insets.bottom }]} testID="poll-votes-sheet">
+        <DragFade drag={_drag86}><Pressable style={s.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel={_tr(t, 'common.close', 'Fechar')} /></DragFade>
+        <DragPanel drag={_drag86} style={[s.panel, { backgroundColor: g.pageBg, paddingBottom: 12 + insets.bottom }]} testID="poll-votes-sheet">
           <View style={[s.grabber, { backgroundColor: g.tertiary }]} />
           <View style={s.header}>
             <View style={s.hBtn} />
@@ -95,7 +99,7 @@ function PollVotesSheet({ req, onClose }) {
               <IconX size={22} color={g.ink} />
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}>
+          <DragScroll drag={_drag86}><ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16 }}>
             <View style={[s.card, { backgroundColor: g.cardBg }]}>
               <Text style={[s.question, { color: g.text }]}>{question}</Text>
               <Text style={[s.meta, { color: g.secondary }]}>{votesLabel(totalVoters, t ? (k) => t(k) : null)}</Text>
@@ -129,9 +133,10 @@ function PollVotesSheet({ req, onClose }) {
                 </View>
               );
             })}
-          </ScrollView>
-        </View>
+          </ScrollView></DragScroll>
+        </DragPanel>
       </View>
+      </DragSheetRoot>
     </Modal>
   );
 }

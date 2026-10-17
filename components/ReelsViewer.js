@@ -45,6 +45,7 @@ import ReelsInterestPicker from './ReelsInterestPicker';
 import NativeReelsFeed, { isNativeReelsAvailable, disableNativeReelsForSession } from './reels/NativeReelsFeed';
 import { buildAvatarUrl, avatarAuthHeaders } from '../services/avatar';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
 // degrade gracefully when these are null.
@@ -537,6 +538,8 @@ function timeAgo(dateStr, t) {
 
 // ── Likers Bottom Sheet ──
 function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag576 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [likers, setLikers] = useState([]);
   const [loading, setLoading] = useState(false);
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -574,8 +577,10 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
 
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Animated.View
+      <DragSheetRoot>
+      <Pressable style={[styles.sheetBackdrop, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag576} color="rgba(0,0,0,0.6)" />
+        <DragPanel drag={_drag576} onStartShouldSetResponder={() => true}
           style={[styles.sheetContainer, {
             transform: [{ translateY: slideAnim }],
           }]}
@@ -607,7 +612,7 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
               /* [PERF] A viral reel can have thousands of likers. A ScrollView
                  + .map mounted every row (each an AvatarCircle) at once — a
                  stutter on open and heavy memory. Virtualize with FlatList. */
-              <FlatList
+              <DragScroll drag={_drag576}><FlatList
                 style={styles.sheetList}
                 data={likers}
                 showsVerticalScrollIndicator={false}
@@ -629,11 +634,12 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
                   </View>
                 )}
                 ListFooterComponent={<View style={{ height: 20 }} />}
-              />
+              /></DragScroll>
             )}
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -1083,6 +1089,8 @@ const HeartParticleBurst = memo(function HeartParticleBurst({ origin = null, sma
 // previous one-shot navigator.share() call so users can pick a destination
 // (cross-post into the feed, stash the URL, or hand off to the OS sheet).
 function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExternal, onSendChat }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1108 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   useEffect(() => {
     if (visible) {
@@ -1100,8 +1108,10 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
   );
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Animated.View style={[styles.sheetContainer, { transform: [{ translateY: slideAnim }], minHeight: 220, paddingBottom: 24 }]}>
+      <DragSheetRoot>
+      <Pressable style={[styles.sheetBackdrop, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag1108} color="rgba(0,0,0,0.6)" />
+        <DragPanel drag={_drag1108} onStartShouldSetResponder={() => true} style={[styles.sheetContainer, { transform: [{ translateY: slideAnim }], minHeight: 220, paddingBottom: 24 }]}>
           <Pressable onPress={() => {}}>
             <View style={styles.sheetHandle}><View style={styles.sheetHandleBar} /></View>
             <View style={[styles.sheetHeader, { borderBottomWidth: 0, paddingBottom: 4 }]}>
@@ -1115,8 +1125,9 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
             <Row icon={IconLink}   label={t?.('feed.copyLink') || t?.('common.copy') || 'Copiar link'} onPress={onCopyLink} />
             <Row icon={IconShare}  label={t?.('feed.shareOutside') || t?.('feed.shareExternal') || 'Compartilhar fora'} onPress={onExternal} />
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -1136,6 +1147,8 @@ const REELS_MUTED_KEY = '@chatyy:reels_muted_v1';
 const REELS_HIDDEN_KEY = '@chatyy:reels_hidden_ids_v1';
 
 function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1162 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   useEffect(() => {
     Animated.timing(slideAnim, {
@@ -1149,8 +1162,10 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
   const SPEEDS = [0.5, 0.75, 1, 1.5, 2];
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Animated.View style={[styles.sheetContainer, { transform: [{ translateY: slideAnim }], minHeight: 240, paddingBottom: 24 }]}>
+      <DragSheetRoot>
+      <Pressable style={[styles.sheetBackdrop, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag1162} color="rgba(0,0,0,0.6)" />
+        <DragPanel drag={_drag1162} onStartShouldSetResponder={() => true} style={[styles.sheetContainer, { transform: [{ translateY: slideAnim }], minHeight: 240, paddingBottom: 24 }]}>
           <Pressable onPress={() => {}}>
             <View style={styles.sheetHandle}><View style={styles.sheetHandleBar} /></View>
             <View style={[styles.sheetHeader, { borderBottomWidth: 0, paddingBottom: 4 }]}>
@@ -1186,8 +1201,9 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
               })}
             </View>
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -1405,6 +1421,8 @@ const BoostToast = memo(function BoostToast({ visible }) {
 
 // ── Single Reel Item ──
 const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDark, t, user, containerHeight, containerWidth, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag2516 = useDragToDismiss({ onDismiss: () => { const f = () => setMoreSheetOpen(false); f(); } });
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -2503,11 +2521,13 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         animationType="fade"
         onRequestClose={() => setMoreSheetOpen(false)}
       >
+        <DragSheetRoot>
         <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
           onPress={() => setMoreSheetOpen(false)}
         >
-          <Pressable
+          <DragBackdrop drag={_drag2516} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag2516} onStartShouldSetResponder={() => true}
             style={{
               backgroundColor: '#1a1a1a',
               borderTopLeftRadius: 18,
@@ -2515,7 +2535,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               paddingTop: 10,
               paddingBottom: 28,
             }}
-            onPress={(e) => e.stopPropagation && e.stopPropagation()}
+            
           >
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', alignSelf: 'center', marginBottom: 12 }} />
 
@@ -2643,8 +2663,9 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
                 {t?.('profile.report') || 'Denunciar'}
               </Text>
             </TouchableOpacity>
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Speed picker (TikTok parity: 0.5 / 0.75 / 1 / 1.5 / 2). Persists to AsyncStorage. */}
@@ -2697,6 +2718,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 // [2026-10-15 native-reels] Menu "…" do feed nativo — mesmas opções do ReelItem
 // (por que estou vendo, não tenho interesse, salvar som, visualizações, velocidade, denunciar).
 function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpeed, onToggleSound, onUseSound }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag2729 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [whyOpen, setWhyOpen] = useState(false);
   const rid = reel ? reel.id : null;
   useEffect(() => { setWhyOpen(false); }, [rid]);
@@ -2706,10 +2729,12 @@ function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpee
   const views = Number(reel.view_count) || 0;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={onClose}>
-        <Pressable
+      <DragSheetRoot>
+      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag2729} color="rgba(0,0,0,0.55)" />
+        <DragPanel drag={_drag2729} onStartShouldSetResponder={() => true}
           style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 10, paddingBottom: 28 }}
-          onPress={(e) => e.stopPropagation && e.stopPropagation()}
+          
         >
           <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', alignSelf: 'center', marginBottom: 12 }} />
           {REELS_BACKEND_ACTIONS_READY && !!reel.sound_id && (
@@ -2753,8 +2778,9 @@ function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpee
             <IconFlag size={22} color="#FF3B30" />
             <Text style={[txt, { color: '#FF3B30' }]}>{t?.('profile.report') || 'Denunciar'}</Text>
           </TouchableOpacity>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

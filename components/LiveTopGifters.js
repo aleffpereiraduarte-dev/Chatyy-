@@ -26,6 +26,7 @@ import Svg, { Path } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { IconX } from './Icons';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 const GOLD = '#fbbf24';
 const GOLD_DEEP = '#d97706';
@@ -64,6 +65,7 @@ export default function LiveTopGifters({
   const [gifters, setGifters] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const drag = useDragToDismiss({ visible: showModal, onDismiss: () => setShowModal(false) }); // [2026-10-17 drag-dismiss]
 
   const load = useCallback(async () => {
     if (!sessionId) return;
@@ -137,8 +139,10 @@ export default function LiveTopGifters({
         transparent
         onRequestClose={() => setShowModal(false)}
       >
-        <Pressable style={styles.backdrop} onPress={() => setShowModal(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation?.()}>
+        <DragSheetRoot>
+        <Pressable style={[styles.backdrop, { backgroundColor: 'transparent' }]} onPress={() => setShowModal(false)}>
+          <DragBackdrop drag={drag} color="rgba(0,0,0,0.6)" />
+          <DragPanel drag={drag} onStartShouldSetResponder={() => true} style={styles.sheet}>
             <View style={styles.handle} />
             <View style={styles.headerRow}>
               <View style={styles.headerTitleRow}>
@@ -164,7 +168,7 @@ export default function LiveTopGifters({
                 </Text>
               </View>
             ) : (
-              <FlatList
+              <DragScroll drag={drag}><FlatList
                 data={gifters}
                 keyExtractor={(item, i) => (item.email || '') + i}
                 contentContainerStyle={styles.listContent}
@@ -193,10 +197,11 @@ export default function LiveTopGifters({
                     </View>
                   </View>
                 )}
-              />
+              /></DragScroll>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
     </>
   );

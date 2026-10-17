@@ -33,6 +33,7 @@ import SheetKeyboardAvoider from '../chat/SheetKeyboardAvoider';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet';
 import { isReduceMotionEnabled } from '../reducedMotion';
 import { Springs, Durations, Easings, Gestures, motionEnabled } from '../../constants/motion';
+import useDragToDismiss, { DragSheetRoot, DragScroll } from './useDragToDismiss';
 
 export function useOverlayColors() {
   const { colors, isDark } = useTheme() || {};
@@ -222,14 +223,22 @@ export default function Sheet({
   // Painel inteiro arrastável só quando o corpo não rola (ScrollView nativo
   // disputaria o gesto) e no celular (web largo = cartão central).
   const panelDrag = richDrag && dragAnywhere && !scroll && !wide;
+  // [2026-10-17 drag-dismiss] Com `scroll`: folha inteira arrasta também (RNGH,
+  // useDragToDismiss) — a lista rola e, no topo, puxar p/ baixo desce a folha.
+  const sdrag = useDragToDismiss({
+    visible: !!visible,
+    onDismiss: requestClose,
+    enabled: !useSystemSheet && richDrag && dragAnywhere && scroll && !wide && dismissable,
+  });
+  const scrollDrag = !!(sdrag.enabled && sdrag.gesture);
   const header = (
-    <View {...(panelDrag ? null : pan.panHandlers)}>
+    <View {...(panelDrag || scrollDrag ? null : pan.panHandlers)}>
       {showHandle && !wide ? <SheetHandle /> : <View style={{ height: wide ? 12 : 8 }} />}
       <SheetHeader title={title} subtitle={subtitle} left={headerLeft} right={headerRight} align={headerAlign} />
     </View>
   );
 
-  const body = scroll ? (
+  const scrollEl = scroll ? (
     <ScrollView
       style={{ flexGrow: 0 }}
       contentContainerStyle={contentStyle}
@@ -238,6 +247,9 @@ export default function Sheet({
     >
       {children}
     </ScrollView>
+  ) : null;
+  const body = scroll ? (
+    scrollDrag ? <DragScroll drag={sdrag}>{scrollEl}</DragScroll> : scrollEl
   ) : (
     <View style={contentStyle}>{children}</View>
   );
@@ -259,14 +271,14 @@ export default function Sheet({
   const offscreen = wide ? 24 : winH;
   // Fundo: fade de entrada/saída × (1 − arrasto/altura do painel).
   const backdropOpacity = richDrag && !wide
-    ? Animated.multiply(fade, drag.interpolate({
+    ? Animated.multiply(Animated.multiply(fade, drag.interpolate({
       inputRange: [0, Math.max(1, panelH || Math.round(winH * 0.5))], outputRange: [1, 0], extrapolate: 'clamp',
-    }))
+    })), sdrag.backdropOpacity)
     : fade;
-  const translateY = Animated.add(
+  const translateY = Animated.add(Animated.add(
     slide.interpolate({ inputRange: [0, 1], outputRange: [0, offscreen] }),
     drag,
-  );
+  ), sdrag.translateY);
   const panelBase = wide
     ? {
       width: '100%', maxWidth: Overlay.sheetMaxWidth, alignSelf: 'center',
@@ -288,7 +300,7 @@ export default function Sheet({
       statusBarTranslucent
       onRequestClose={requestClose}
     >
-      <View style={StyleSheet.absoluteFill} testID={testID}>
+      <DragSheetRoot style={StyleSheet.absoluteFill} testID={testID}>
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
           <BlurBackdrop isDark={isDark} dim={Overlay.backdrop} />
           <Pressable
@@ -303,6 +315,7 @@ export default function Sheet({
           pointerEvents="box-none"
           style={{ flex: 1, justifyContent: wide ? 'center' : 'flex-end', paddingHorizontal: wide ? 24 : 0 }}
         >
+          <PanelGesture gesture={scrollDrag ? sdrag.gesture : null}>
           <Animated.View
             style={[
               panelBase,
@@ -313,15 +326,23 @@ export default function Sheet({
               panelStyle,
             ]}
             accessibilityViewIsModal
-            onLayout={richDrag ? (e) => { const h = e.nativeEvent.layout.height; if (Math.abs(h - panelH) > 1) setPanelH(h); } : undefined}
+            onLayout={richDrag ? (e) => { const h = e.nativeEvent.layout.height; if (Math.abs(h - panelH) > 1) setPanelH(h); if (scrollDrag) sdrag.onPanelLayout(e); } : undefined}
             {...(panelDrag ? pan.panHandlers : null)}
           >
             {header}
             {body}
             {footer || null}
           </Animated.View>
+          </PanelGesture>
         </SheetKeyboardAvoider>
-      </View>
+      </DragSheetRoot>
     </Modal>
   );
+}
+
+let _SGH = null;
+if (Platform.OS !== 'web') { try { _SGH = require('react-native-gesture-handler'); } catch { _SGH = null; } } // eslint-disable-line global-require
+function PanelGesture({ gesture, children }) {
+  if (!gesture || !_SGH || !_SGH.GestureDetector) return children;
+  return <_SGH.GestureDetector gesture={gesture}>{children}</_SGH.GestureDetector>;
 }

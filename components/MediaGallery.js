@@ -496,12 +496,14 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const activeTheme = TAB_THEME[activeTab] || TAB_THEME.image;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+    // [2026-10-17 drag-dismiss] iOS pageSheet = arrasto NATIVO p/ baixo de qualquer
+    // ponto (lista no topo) → onRequestClose. Folha começa abaixo da status bar.
+    <Modal visible={visible} animationType="slide" transparent={false} presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined} allowSwipeDismissal={!sel.active} /* RN 0.83: sem isso o pageSheet NÃO desce interativo; em seleção o arrasto só sai da seleção */ onRequestClose={sel.active ? exitSelection : onClose}>
       <View style={{ flex: 1, backgroundColor: colors.background }}>
         {/* Header */}
         <View style={{
           flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16,
-          paddingTop: Platform.OS === 'web' ? 18 : 56, paddingBottom: 14,
+          paddingTop: Platform.OS === 'web' ? 18 : Platform.OS === 'ios' ? 16 : 56, paddingBottom: 14,
           backgroundColor: colors.surface,
         }}>
           <TouchableOpacity

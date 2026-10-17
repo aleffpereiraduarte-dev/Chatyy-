@@ -659,7 +659,7 @@ public final class ChatyyPinnedStripView: ExpoView, UICollectionViewDataSource, 
     onPeekRequest(["id": id])
     let theme = self.theme
     return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: { [weak self] in
-      let vc = CLPeekController(row: row, theme: theme)
+      let vc = CLPeekController(row: row, theme: theme, menuHeight: CLMenuBuilder.estimatedHeight(row: row, extraItems: (row.pinned && (self?.ids.count ?? 0) > 1) ? 1 : 0), window: self?.window)
       if let p = self?.lastPeek, CLVal.str(p["id"]) == id { vc.update(p) }
       self?.peekController = vc
       return vc as UIViewController

@@ -130,6 +130,8 @@ protocol SVGroupViewDelegate: AnyObject {
   func groupViewTapMenu(_ gv: SVGroupView, sender: UIView)
   func groupViewTapReply(_ gv: SVGroupView)
   func groupViewTapLike(_ gv: SVGroupView)
+  /// [2026-10-17 status-reacoes] Segurar o coração (bolha de reações).
+  func groupViewHoldLike(_ gv: SVGroupView, gesture: UILongPressGestureRecognizer)
   func groupViewTapViewers(_ gv: SVGroupView)
   func groupViewTapLink(_ gv: SVGroupView, url: String)
   func groupViewTapMute(_ gv: SVGroupView)
@@ -191,6 +193,13 @@ final class SVGroupView: UIView {
   let replyPill = UIControl()
   private let replyPillLabel = UILabel()
   private let likeButton = UIButton(type: .system)
+  /// [2026-10-17 status-reacoes] Segurar o coração abre a bolha (apiVersion 4; o controller liga).
+  private let likeHold = UILongPressGestureRecognizer()
+  var likeHoldEnabled = false {
+    didSet { likeHold.isEnabled = likeHoldEnabled }
+  }
+  /// Frame do coração em coordenadas de `v` (âncora da bolha).
+  func likeFrame(in v: UIView) -> CGRect { return likeButton.convert(likeButton.bounds, to: v) }
 
   // Estado de reprodução
   private(set) var index: Int = 0
@@ -370,6 +379,11 @@ final class SVGroupView: UIView {
     likeButton.addTarget(self, action: #selector(tapLike), for: .touchUpInside)
     likeButton.accessibilityLabel = labels.get("like", "Curtir")
     chrome.addSubview(likeButton)
+    likeHold.minimumPressDuration = 0.32
+    likeHold.allowableMovement = 14
+    likeHold.addTarget(self, action: #selector(holdLike(_:)))
+    likeHold.isEnabled = false
+    likeButton.addGestureRecognizer(likeHold)
 
     shade.backgroundColor = .black
     shade.alpha = 0
@@ -667,8 +681,15 @@ final class SVGroupView: UIView {
       viewersPill.label.text = labels.views(item.viewsCount)
     } else {
       let liked = !item.myReaction.isEmpty
-      likeButton.setImage(symbol(liked ? "heart.fill" : "heart", 24, .regular), for: .normal)
-      likeButton.tintColor = liked ? SVIcons.reactionColor("heart") : .white
+      // [2026-10-17 status-reacoes] reagiu com outro emoji → o botão mostra o emoji (WhatsApp).
+      if liked && item.myReaction.unicodeScalars.first?.value != 0x2764, let em = SVIcons.emoji(item.myReaction, size: 30) {
+        likeButton.setImage(em.withRenderingMode(.alwaysOriginal), for: .normal)
+        likeButton.accessibilityValue = item.myReaction
+      } else {
+        likeButton.setImage(symbol(liked ? "heart.fill" : "heart", 24, .regular), for: .normal)
+        likeButton.tintColor = liked ? SVIcons.reactionColor("heart") : .white
+        likeButton.accessibilityValue = nil
+      }
     }
     setNeedsLayout()
   }
@@ -1029,6 +1050,9 @@ final class SVGroupView: UIView {
       UIView.animate(withDuration: 0.18) { self.likeButton.transform = .identity }
     })
     delegate?.groupViewTapLike(self)
+  }
+  @objc private func holdLike(_ g: UILongPressGestureRecognizer) {
+    delegate?.groupViewHoldLike(self, gesture: g)
   }
   @objc private func tapLinkPill() {
     guard let item = currentItem, !item.linkUrl.isEmpty else { return }

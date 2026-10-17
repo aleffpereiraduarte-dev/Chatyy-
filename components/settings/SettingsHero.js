@@ -184,7 +184,9 @@ export function SettingsSpecialCards({ user, accounts, walletDiamonds, onOne, on
       <View style={st.tilesRow}>
         <FeatureTile icon={IconSparkles} title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={onOne} testID="settings-tile-one" />
         {walletDiamonds !== null && walletDiamonds !== undefined ? (
-          <FeatureTile icon={DiamondLine} title={t('wallet.title') || 'Carteira'} subtitle={`${fmt(walletDiamonds)} ${t('wallet.diamondsLabel') || ''}`.trim()} onPress={onWallet} testID="settings-tile-wallet" />
+          // [2026-10-17] '' = carteira ligada mas saldo ainda desconhecido → o
+          // cartão já ocupa o lugar (sem o Chatyy One encolher depois).
+          <FeatureTile icon={DiamondLine} title={t('wallet.title') || 'Carteira'} subtitle={`${walletDiamonds === '' ? '—' : fmt(walletDiamonds)} ${t('wallet.diamondsLabel') || ''}`.trim()} onPress={onWallet} testID="settings-tile-wallet" />
         ) : null}
       </View>
       <SettingsGroup inset={62}>

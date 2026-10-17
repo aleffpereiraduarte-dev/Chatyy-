@@ -33,8 +33,11 @@ import PressableScale from './PressableScale';
 import * as api from '../services/api';
 import { confirmWithBiometric } from '../services/biometricGate';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 export default function ChatLockSheet({ visible, conversation, locked, onClose, onChanged }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag166 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
@@ -164,14 +167,17 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity activeOpacity={1} style={styles.backdrop} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={{ width: '100%' }} onPress={() => {}}>
+      <DragSheetRoot>
+      <TouchableOpacity activeOpacity={1} style={[styles.backdrop, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag166} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag166} onStartShouldSetResponder={() => true}  style={{ width: '100%' }} >
           <View style={[styles.panel, { backgroundColor: panelBg, paddingBottom: (insets.bottom || 12) + 12 }]}>
             <View style={styles.grabber} />
             {body}
           </View>
-        </TouchableOpacity>
+        </DragPanel>
       </TouchableOpacity>
+      </DragSheetRoot>
     </Modal>
   );
 }

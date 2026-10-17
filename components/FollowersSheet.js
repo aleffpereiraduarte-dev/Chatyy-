@@ -16,6 +16,7 @@ import {
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 const ACCENT = '#111111';
 
@@ -159,6 +160,7 @@ export default function FollowersSheet({
     </TouchableOpacity>
   ), [colors, isDark, t, openUser, handleToggleFollow]);
 
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   if (!visible) return null;
 
   const activeLoading = loading[tab];
@@ -166,9 +168,10 @@ export default function FollowersSheet({
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable
-          onPress={e => e.stopPropagation?.()}
+      <DragSheetRoot>
+      <Pressable style={{ flex: 1 }} onPress={onClose}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={drag} onStartShouldSetResponder={() => true}
           style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
             backgroundColor: colors?.background || '#fff',
@@ -252,7 +255,7 @@ export default function FollowersSheet({
               </Text>
             </View>
           )}
-          <FlatList
+          <DragScroll drag={drag}><FlatList
             data={filtered}
             keyExtractor={(u, i) => u.email || String(i)}
             renderItem={renderItem}
@@ -265,9 +268,10 @@ export default function FollowersSheet({
                 <ActivityIndicator size="small" color={ACCENT} />
               </View>
             ) : null}
-          />
-        </Pressable>
+          /></DragScroll>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

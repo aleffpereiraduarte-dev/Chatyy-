@@ -14,6 +14,7 @@ import EmptyStateCard from '../components/EmptyStateCard';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 // Stagger entrance for bot rows. Each row drifts in 60ms after the previous,
 // translateY 16px → 0 + opacity 0 → 1. Native driver (transform + opacity).
@@ -133,6 +134,8 @@ const safeAlert = (title, msg, buttons) => {
 };
 
 export default function BotsScreen() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag396 = useDragToDismiss({ onDismiss: () => { const f = () => setCreateOpen(false); f(); } });
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
@@ -394,29 +397,31 @@ export default function BotsScreen() {
 
       {/* Create modal */}
       <Modal visible={createOpen} transparent animationType="slide" onRequestClose={() => setCreateOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setCreateOpen(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setCreateOpen(false)}>
+          <DragBackdrop drag={_drag396} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag396} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} >
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 14 }}>
               {t?.('bots.create') || 'Criar bot'}
             </Text>
-            <ScrollView>
+            <DragScroll drag={_drag396}><ScrollView>
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>{t?.('bots.name') || 'Nome'}</Text>
               <TextInput value={newName} onChangeText={setNewName} placeholder={t('bots.namePh')} placeholderTextColor={colors.textSecondary}
-                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12 }} />
+                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12, height: 44, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }} />
 
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>
                 {t?.('bots.username') || 'Username'} ({t?.('bots.mustEndBot') || 'deve terminar com "_bot"'})
               </Text>
               <TextInput value={newUsername} onChangeText={setNewUsername} placeholder="mycool_bot" placeholderTextColor={colors.textSecondary}
                 autoCapitalize="none"
-                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12 }} />
+                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12, height: 44, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }} />
 
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>
                 {t?.('bots.webhook') || 'Webhook URL (HTTPS)'}
               </Text>
               <TextInput value={newWebhook} onChangeText={setNewWebhook} placeholder="https://example.com/webhook" placeholderTextColor={colors.textSecondary}
                 autoCapitalize="none" keyboardType="url"
-                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12 }} />
+                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, color: colors.text, marginBottom: 12, height: 44, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }} />
 
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 6 }}>
                 {t?.('bots.description') || 'Descrição'}
@@ -433,9 +438,10 @@ export default function BotsScreen() {
                   {busy ? (t?.('common.loading') || 'Carregando...') : (t?.('bots.create') || 'Criar bot')}
                 </Text>
               </TouchableOpacity>
-            </ScrollView>
-          </Pressable>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Token reveal modal */}

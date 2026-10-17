@@ -415,7 +415,9 @@ class MLCtxOverlay(
         col.addView(sep, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, if (group) dpi(8f) else max(1, dpi(0.5f))))
       }
       val row = buildRow(a, th)
-      col.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpi(if (a.sub.isEmpty()) 48f else 58f)))
+      // [2026-10-17 ctx-fit] altura mínima fixa; título longo quebra em 2 linhas (sem "…").
+      row.minimumHeight = dpi(if (a.sub.isEmpty()) 48f else 58f)
+      col.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
       menuRows.add(row)
     }
     sv.addView(col, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -429,14 +431,14 @@ class MLCtxOverlay(
     val row = LinearLayout(context)
     row.orientation = LinearLayout.HORIZONTAL
     row.gravity = Gravity.CENTER_VERTICAL
-    row.setPadding(dpi(16f), 0, dpi(14f), 0)
+    row.setPadding(dpi(16f), dpi(6f), dpi(14f), dpi(6f))
     val texts = LinearLayout(context)
     texts.orientation = LinearLayout.VERTICAL
     val title = TextView(context)
     title.text = a.title
     title.setTextColor(color)
     title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-    title.maxLines = 1
+    title.maxLines = 2
     title.ellipsize = TextUtils.TruncateAt.END
     texts.addView(title)
     if (a.sub.isNotEmpty()) {
@@ -491,12 +493,16 @@ class MLCtxOverlay(
     var menuH = 0f
     menu?.let { m ->
       m.measure(View.MeasureSpec.makeMeasureSpec(menuW.toInt(), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
-      menuH = min(m.measuredHeight.toFloat(), max(dp(96f), (bottom - top) * 0.52f))
+      // [2026-10-17 ctx-fit] menu inteiro primeiro (só um mínimo p/ o balão);
+      // o balão encolhe no que sobrar; só rola se nem assim couber.
+      val minBubble = min(max(src.height(), 1f), dp(64f))
+      val menuRoom = (bottom - top) - reactH - gapR - gapM - minBubble
+      menuH = min(m.measuredHeight.toFloat(), max(dp(96f), menuRoom))
       m.layoutParams = (m.layoutParams as LayoutParams).apply { width = menuW.toInt(); height = menuH.toInt() }
     }
-    val availB = (bottom - top) - reactH - gapR - menuH - gapM
+    val availB = max(min(max(src.height(), 1f), dp(64f)), (bottom - top) - reactH - gapR - menuH - gapM)
     var scale = 1f
-    if (src.height() > availB && src.height() > 0f) scale = max(0.3f, availB / src.height())
+    if (src.height() > availB && src.height() > 0f) scale = max(0.12f, availB / src.height())
     val bw = src.width() * scale
     val bh = src.height() * scale
     var by = src.top

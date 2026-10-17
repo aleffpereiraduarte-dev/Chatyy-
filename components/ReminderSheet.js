@@ -13,6 +13,7 @@ import { IconClock, IconX } from './Icons';
 import { DateTimePickerModal } from './ScheduleModals';
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 import { formatReminderWhen, reminderErrorKey, REMINDER_DEFAULTS as _RD } from '../services/reminders';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 // [2026-10-06 HOTFIX P0] fallback defensivo: nunca deixar um import quebrado
 // derrubar a tela da conversa (o sheet é montado sempre, mesmo fechado).
 const REMINDER_DEFAULTS = _RD || { morning: 8, lunch: 12, afternoon: 14, evening: 20, endOfDay: 18, none: 9 };
@@ -30,6 +31,8 @@ export default function ReminderSheet({ visible, onClose, text, initialWhen, col
 }
 
 function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag174 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const now = useMemo(() => new Date(), []);
   const safeInitial = initialWhen instanceof Date && !isNaN(initialWhen) && initialWhen.getTime() > now.getTime() + 60000
     ? initialWhen
@@ -172,12 +175,15 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={st.overlay} onPress={busy ? undefined : onClose}>
-        <Pressable style={[st.sheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={() => {}}>
+      <DragSheetRoot>
+      <Pressable style={[st.overlay, { backgroundColor: 'transparent' }]} onPress={busy ? undefined : onClose}>
+        <DragBackdrop drag={_drag174} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag174} onStartShouldSetResponder={() => true} style={[st.sheet, { backgroundColor: colors.surface }, Shadow.lg]} >
           {body}
-        </Pressable>
+        </DragPanel>
       </Pressable>
       {picker}
+      </DragSheetRoot>
     </Modal>
   );
 }

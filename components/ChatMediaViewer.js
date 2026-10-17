@@ -10,6 +10,8 @@ import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShar
 import { shareMediaFile, canRecognizeImageText, recognizeImageText } from '../utils/mediaNativeActions';
 import { useLanguage } from '../context/LanguageContext';
 import NativeDocPreview, { hasNativePdfView } from './NativeDocPreview'; // [2026-10-09 native-docs]
+import ArchiveBrowser, { isArchiveName } from './ArchiveBrowser'; // [abridores 2026-10-17]
+import { renderArchiveEntry } from './FileViewer';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit]
 // [2026-10-14 adv-privacy] Conversa com privacidade avançada → visualizador protegido.
 import { useAdvancedPrivacy, acquireCaptureProtection } from '../services/chatPrivacy';
@@ -1223,7 +1225,11 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
         // when the user leaves the app (home / app switch) and keeps playing;
         // only the ACTIVE slide opts in (neighbors are preloaded + paused).
         // View-once media never PiPs (it would outlive the "seen once" view).
-        startsPictureInPictureAutomatically={allowPip && isActive}
+        // [2026-10-17 pip-tab] NÃO entrar em PiP sozinho ao sair do app: o PiP
+        // automático, quando o usuário o empurrava p/ a borda, virava a "aba
+        // cinza <" do iOS grudada na direita em TODAS as telas (founder achou
+        // que era bug). PiP continua disponível pelo botão do player.
+        startsPictureInPictureAutomatically={false}
         nativeControls
         contentFit="contain"
       />
@@ -2026,6 +2032,18 @@ function _nvItems(list, ctx) {
 // re-renderiza as 2 páginas cujo isActive mudou (antes o extraData re-renderizava
 // TODAS as páginas montadas + recalculava a URL — que virava file:// depois do
 // cache e recarregava a foto vizinha no meio do swipe). URL congelada por item.
+// [abridores 2026-10-17] Compactado (ZIP/RAR/7z/TAR/ISO/…) recebido no chat:
+// conteúdo navegável pelo servidor (membro da conversa) em vez do card genérico.
+// Espaço livre em cima/embaixo = barras do visualizador (absolutas).
+function ChatArchivePage({ messageId }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1, paddingTop: insets.top + 56, paddingBottom: Math.max(insets.bottom, 12) + 66 }}>
+      <ArchiveBrowser chatMessageId={messageId} renderEntry={renderArchiveEntry} />
+    </View>
+  );
+}
+
 const _AlbumPage = memo(function _AlbumPage({ item, isActive, pageW, webH, conversationId, viewOnce, t, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange, onEdgeSwipe, onDoubleTap, onPageableChange }) {
   const fileUrl = item?.fileUrl;
   const u = useMemo(() => getFullUrl(fileUrl), [fileUrl]);
@@ -2041,6 +2059,7 @@ const _AlbumPage = memo(function _AlbumPage({ item, isActive, pageW, webH, conve
       {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} conversationId={conversationId} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={onDismissMove} onDismissEnd={onDismissEnd} dismissSV={dismissSV} onDismissStart={onDismissStart} onZoomChange={onZoomChange} isActive={isActive} onEdgeSwipe={onEdgeSwipe} onDoubleTap={onDoubleTap} onPageableChange={onPageableChange} /> :
        isVid ? <VideoPlayer url={u} isActive={isActive} allowPip={!viewOnce} noCache={!!viewOnce} /> :
        isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
+       (!viewOnce && isArchiveName(item?.fileName) && /^\d+$/.test(String(item?.messageId || item?.id || ''))) ? <ChatArchivePage messageId={String(item?.messageId || item?.id)} /> :
        <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
     </View>
   );

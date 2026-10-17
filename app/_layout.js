@@ -2002,6 +2002,12 @@ export default function RootLayout() {
     focus: () => { try { require('../components/FadeSlideIn').noteRouteSeen(route?.key); } catch {} },
   }), []);
   const _FULL_MODAL = Platform.OS === 'ios' ? { presentation: 'fullScreenModal' } : { presentation: 'modal', animation: _navAnim('slide_from_bottom') };
+  // [2026-10-17 drag-dismiss] Regra do founder: modal desce arrastando de onde for.
+  // iOS pageSheet ('modal') = arrasto NATIVO p/ baixo (qualquer ponto; com lista
+  // rolável só no topo; segue o dedo). Inset de cima = 0 dentro da folha
+  // (components/CallStatusBar ModalInsetRestore). Rascunho → usePreventRemove na
+  // tela (folha volta + "Descartar?"). Só p/ telas que não empurram card por cima.
+  const _SHEET_MODAL = Platform.OS === 'ios' ? { presentation: 'modal' } : _FULL_MODAL;
   // [2026-10-16 motion-telegram] Telas imersivas (ligação, live, câmera, reels)
   // pintam #000: o container da rota nascia na cor do tema (branco no claro) →
   // flash branco no fade/slide de entrada e no swipe de saída. Mesmo preto da tela.
@@ -2031,6 +2037,11 @@ export default function RootLayout() {
     headerTransparent: true,
     headerBlurEffect: _navIsDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight',
     headerStyle: { backgroundColor: 'transparent' },
+    // [2026-10-17 settings-polish] Sub-telas de Ajustes com título GRANDE que
+    // colapsa ao rolar (Ajustes do iPhone). O SettingsScreen aplica o mesmo.
+    headerLargeTitle: true,
+    headerLargeTitleShadowVisible: false,
+    headerLargeStyle: { backgroundColor: 'transparent' },
   };
   // [2026-10-15 nav-motion] Telas com título GRANDE nativo (UINavigationBar
   // large title, colapsa ao rolar). Na rota desde o 1º frame — a tela repete as
@@ -2194,9 +2205,9 @@ export default function RootLayout() {
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: _PUSH, fullScreenGestureEnabled: false /* linhas do e-mail têm swipe (EmailRow) → voltar só pela borda */ }} />{/* [2026-10-14 nav-nativa] era fade 100ms + replace (desmontava /chat → lista re-montava ao voltar = piscada); agora push nativo a partir da aba Email */}
                   <Stack.Screen name="compose" options={{ ..._FULL_MODAL }} />
-                  <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH, fullScreenGestureEnabled: false /* [2026-10-17 swipe-back] arrastar lateral no corpo troca de e-mail (read.js) → voltar pela BORDA */ }} />
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="settings" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' && !(typeof route?.params?.section === 'string' && route.params.section) ? _LARGE_TITLE_HDR : {}) })} />{/* [2026-10-15 nav-motion] raiz nasce c/ título grande (o settings.js aplica o mesmo) — ?section= abre direto na categoria, compacto */}
+                  <Stack.Screen name="settings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-15 nav-motion] nasce c/ título grande (o settings.js aplica o mesmo). [2026-10-17 swipe-back] categorias = /settings?section=<cat> empurradas (swipe-back nativo), também c/ título grande que colapsa */}
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
@@ -2210,7 +2221,7 @@ export default function RootLayout() {
                   <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="call-recap" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="files" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
-                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
+                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: _PUSH, fullScreenGestureEnabled: false /* [2026-10-17 swipe-back] grade do mês troca com arrasto lateral → voltar só pela BORDA (antes gestureEnabled:false = nem a borda) */, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="chat-conversation" options={({ route }) => ({
@@ -2254,7 +2265,7 @@ export default function RootLayout() {
                   <Stack.Screen name="settings-blocked" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
                   <Stack.Screen name="settings-export" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
                   <Stack.Screen name="settings-one" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
-                  <Stack.Screen name="edit-profile" options={{ headerShown: false, ..._FULL_MODAL, contentStyle: { backgroundColor: _navBg } }} />{/* [2026-10-15 edit-profile-x] modal NATIVO: X = router.back() desce c/ animação do sistema (antes: card + <Modal> RN por cima = flash de rota vazia ao fechar) */}
+                  <Stack.Screen name="edit-profile" options={{ headerShown: false, ..._SHEET_MODAL, contentStyle: { backgroundColor: _navBg } }} />{/* [2026-10-15 edit-profile-x] modal NATIVO: X = router.back() desce c/ animação do sistema (antes: card + <Modal> RN por cima = flash de rota vazia ao fechar) */}
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="email-outbox" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />

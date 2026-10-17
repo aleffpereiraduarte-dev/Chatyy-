@@ -14,6 +14,7 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import * as api from '../services/api';
 import { IconUsers, IconSmartphone, IconMessageCircle, IconAlertTriangle, IconCheckCircle, IconClock as IconClockSvg } from './Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll } from './ui/useDragToDismiss';
 
 function IconX({ size = 22, color = '#fff' }) {
   return (
@@ -56,6 +57,8 @@ const REQUEST_TYPES = [
 ];
 
 export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag119 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [type, setType] = useState(null);
   const [message, setMessage] = useState('');
   const [extraMinutes, setExtraMinutes] = useState(30);
@@ -117,8 +120,9 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <DragSheetRoot>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-        <Animated.View style={{
+        <DragPanel drag={_drag119} style={{
           opacity: fade,
           backgroundColor: isDark ? '#0f0720' : '#fff',
           borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '92%',
@@ -180,7 +184,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               </Text>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+            <DragScroll drag={_drag119}><ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
               {historyLoading ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
                   <ActivityIndicator color={isDark ? '#fff' : '#111111'} />
@@ -266,10 +270,10 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                   );
                 })
               )}
-            </ScrollView>
+            </ScrollView></DragScroll>
           </View>
           ) : (
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 28 }}>
+          <DragScroll drag={_drag119}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 28 }}>
             {/* Type picker */}
             <View style={{ padding: 16 }}>
               <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280' }]}>
@@ -438,10 +442,11 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 </TouchableOpacity>
               </View>
             )}
-          </ScrollView>
+          </ScrollView></DragScroll>
           )}
-        </Animated.View>
+        </DragPanel>
       </View>
+      </DragSheetRoot>
     </Modal>
   );
 }

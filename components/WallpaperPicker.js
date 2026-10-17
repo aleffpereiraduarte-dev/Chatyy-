@@ -44,6 +44,7 @@ import * as api from '../services/api';
 import ChatWallpaper from './wallpaper/ChatWallpaper';
 import WallpaperPreview from './wallpaper/WallpaperPreview';
 import { THEMES, buildValue, bubbleFor, specFor, composeValue, isV2 } from './wallpaper/wallpaperSpec';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from './ui/useDragToDismiss';
 let _WpExpoImage = null; // [2026-10-08 chat-open-flicker] see WallpaperBackground
 try { _WpExpoImage = require('expo-image').Image; } catch {}
 
@@ -255,6 +256,8 @@ export default function WallpaperPicker({
   defaultScope = 'conversation', // 'conversation' | 'all'
   onApply, // (value, scope) => void
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag444 = useDragToDismiss({ onDismiss: () => { const f = () => (preview ? setPreview(null) : onClose?.()); f(); } });
   const canConversation = !!conversationId;
   const [scope, setScope] = useState(canConversation ? defaultScope : 'all');
   const [selected, setSelected] = useState(currentValue || 'none');
@@ -442,12 +445,13 @@ export default function WallpaperPicker({
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={() => (preview ? setPreview(null) : onClose?.())}>
+      <DragSheetRoot>
       {/* [2026-10-14 wallpaper-ai] KAV: o teclado cobria o campo e o botão Gerar
           (sheet ancorada embaixo) — no iPhone não dava pra ver/tocar em Gerar. */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={onClose} />
-        <View style={{ backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
+        <DragFade drag={_drag444}><TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={onClose} /></DragFade>
+        <DragPanel drag={_drag444} style={{ backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
             <TouchableOpacity onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -458,7 +462,7 @@ export default function WallpaperPicker({
             </Text>
           </View>
 
-          <ScrollView ref={scrollRef} contentContainerStyle={{ padding: GRID_PAD, paddingBottom: 40 }} showsVerticalScrollIndicator={false}
+          <DragScroll drag={_drag444}><ScrollView ref={scrollRef} contentContainerStyle={{ padding: GRID_PAD, paddingBottom: 40 }} showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
             {/* Scope segmented control */}
             <View style={{ flexDirection: 'row', backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)', borderRadius: 11, padding: 3, marginBottom: 18 }}>
@@ -522,7 +526,7 @@ export default function WallpaperPicker({
                     editable={!aiBusy}
                     autoFocus
                     maxLength={500}
-                    style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 11, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14.5, color: C.text || (isDark ? '#fff' : '#111') }}
+                    style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 11, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14.5, color: C.text || (isDark ? '#fff' : '#111'), height: 40, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }}
                     returnKeyType="go"
                     onSubmitEditing={generateAi}
                   />
@@ -575,7 +579,7 @@ export default function WallpaperPicker({
                 );
               })}
             </View>
-          </ScrollView>
+          </ScrollView></DragScroll>
 
           {/* Done bar */}
           <View style={{ padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rowBorder, backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7') }}>
@@ -583,13 +587,14 @@ export default function WallpaperPicker({
               <Text style={{ color: inkInv, fontWeight: '700', fontSize: 16 }}>{t?.('common.done') || 'Concluído'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </DragPanel>
       </View>
       </KeyboardAvoidingView>
       {preview ? (
         <WallpaperPreview spec={preview.spec} appDark={isDark} t={t}
           onCancel={() => setPreview(null)} onApply={applyPreview} />
       ) : null}
+      </DragSheetRoot>
     </Modal>
   );
 }

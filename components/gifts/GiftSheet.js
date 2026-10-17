@@ -23,7 +23,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal, View, Text, TouchableOpacity, Pressable, StyleSheet, Platform, ActivityIndicator,
+  Modal, View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
   Animated, ScrollView, Easing, TextInput, KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -37,6 +37,7 @@ import { giftLabel, humanizeCount, QUANTITIES, COMBO_WINDOW_MS } from './giftCat
 import {
   getCachedGiftCatalog, loadGiftCatalog, refreshWallet, sendGift, useWallet, isMinorAccount, newClientId,
 } from '../../services/diamonds';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../ui/useDragToDismiss';
 
 function haptic(kind) {
   try {
@@ -115,7 +116,7 @@ const Hero = memo(function Hero({ g, label, qty, t }) {
   );
 });
 
-function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpen = false, onSent }) {
+function GiftSheet({ visible, onClose, context, targetId, targetError = '', recipientName, keepOpen = false, onSent }) {
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -180,7 +181,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
   }, [close, router]);
 
   const send = useCallback(async () => {
-    if (!selected || sendingRef.current || minor || disabled) return;
+    if (!selected || !targetId || sendingRef.current || minor || disabled) return; // [2026-10-17] alvo ainda resolvendo (perfil → chat_create)
     if (!canAfford) { setNeedTopUp(true); setNotice(missingText(total - (Number(balance) || 0))); haptic('error'); return; }
     Animated.sequence([
       Animated.timing(btnScale, { toValue: 0.92, duration: 70, useNativeDriver: true }),
@@ -235,13 +236,15 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
   }, [selected, minor, disabled, canAfford, qty, context, targetId, onSent, keepOpen, close, resetCombo, ring, btnScale, t, note, showNote, total, balance, missingText]);
 
   const grid = useMemo(() => catalog, [catalog]);
+  // [2026-10-17 drag-dismiss] arrastar de qualquer ponto p/ baixo fecha (mesmo <Modal>, sem aninhar).
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: close, shouldConfirm: () => sending });
   if (!visible) return null;
 
   const title = recipientName
     ? tr(t, 'gifts.titleTo', 'Presente para {name}').replace('{name}', recipientName)
     : tr(t, 'gifts.title', 'Presentes');
   const negative = typeof balance === 'number' && balance < 0;
-  const blockedText = minor
+  const blockedText = targetError ? String(targetError) : minor
     ? tr(t, 'gifts.minorBlocked', 'Presentes não estão disponíveis para contas supervisionadas.')
     : disabled
       ? tr(t, 'gifts.unavailable', 'Presentes indisponíveis no momento.')
@@ -255,9 +258,10 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
+      <DragSheetRoot>
       <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined) /* [2026-10-16 polish] Android edge-to-edge: recado não fica sob o teclado */}>
-      <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
-      <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+      <DragBackdrop drag={drag} color="rgba(0,0,0,0.4)" onPress={close} accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
+      <DragPanel drag={drag} style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         <View style={styles.handle} />
         <View style={styles.header}>
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
@@ -274,11 +278,11 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
 
         {showHero ? <Hero g={selected} label={selected ? giftLabel(t, selected.icon, selected.label) : ''} qty={qty} t={t} /> : null}
 
-        <ScrollView style={[styles.gridScroll, showHero && styles.gridScrollHero]} contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
+        <DragScroll drag={drag}><ScrollView style={[styles.gridScroll, showHero && styles.gridScrollHero]} contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
           {grid.map((g) => (
             <Cell key={g.sku} g={g} on={selected?.sku === g.sku} onPress={() => pick(g)} label={giftLabel(t, g.icon, g.label)} />
           ))}
-        </ScrollView>
+        </ScrollView></DragScroll>
 
         {showNote && selected && !blockedText ? (
           <TextInput
@@ -327,8 +331,8 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
             <Animated.View style={{ transform: [{ scale: btnScale }], flex: 1, height: 50 }}>
               <TouchableOpacity
                 onPress={send}
-                disabled={!selected || !!blockedText}
-                style={[styles.sendBtn, (!selected || !!blockedText) && styles.sendBtnOff]}
+                disabled={!selected || !!blockedText || !targetId}
+                style={[styles.sendBtn, (!selected || !!blockedText || !targetId) && styles.sendBtnOff]}
                 accessibilityRole="button"
                 accessibilityLabel={sendLabel}
               >
@@ -352,8 +356,9 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
             </Animated.View>
           )}
         </View>
-      </View>
+      </DragPanel>
       </KeyboardAvoidingView>
+      </DragSheetRoot>
     </Modal>
   );
 }

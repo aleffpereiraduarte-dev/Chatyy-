@@ -17,6 +17,7 @@ import {
   dismissCallRating,
   installCalleeHooks,
 } from '../services/callQualityPrompt';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 let _useTheme = null;
 try { _useTheme = require('../context/ThemeContext').useTheme; } catch {}
@@ -30,6 +31,8 @@ const ISSUES = [
 ];
 
 export default function CallQualityPrompt() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag88 = useDragToDismiss({ onDismiss: () => { const f = onDismiss; if (typeof f === 'function') f(); } });
   const { t } = useLanguage();
   const theme = _useTheme ? _useTheme() : null;
   const c = theme?.colors || {};
@@ -86,8 +89,10 @@ export default function CallQualityPrompt() {
 
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onDismiss} statusBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onDismiss} accessibilityRole="button" accessibilityLabel={tr('callRating.notNow', 'Agora não')}>
-        <Pressable style={[styles.card, { backgroundColor: bg, borderColor: line }]} onPress={() => {}}>
+      <DragSheetRoot>
+      <Pressable style={[styles.backdrop, { backgroundColor: 'transparent' }]} onPress={onDismiss} accessibilityRole="button" accessibilityLabel={tr('callRating.notNow', 'Agora não')}>
+        <DragBackdrop drag={_drag88} color="rgba(0,0,0,0.35)" />
+        <DragPanel drag={_drag88} onStartShouldSetResponder={() => true} style={[styles.card, { backgroundColor: bg, borderColor: line }]} >
           <Text style={[styles.title, { color: ink }]} accessibilityRole="header">
             {tr('callRating.title', 'Como foi a qualidade da ligação?')}
           </Text>
@@ -137,8 +142,9 @@ export default function CallQualityPrompt() {
           <Pressable onPress={onDismiss} style={styles.later} accessibilityRole="button" hitSlop={8}>
             <Text style={[styles.laterText, { color: muted }]}>{tr('callRating.notNow', 'Agora não')}</Text>
           </Pressable>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

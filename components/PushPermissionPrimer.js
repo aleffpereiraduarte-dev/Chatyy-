@@ -11,6 +11,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconBell } from './Icons';
 import { subscribePushPrimer, pushPrimerClosed } from '../services/pushPrimer';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 function tr(t, key, fallback) {
   try {
@@ -21,6 +22,8 @@ function tr(t, key, fallback) {
 }
 
 export default function PushPermissionPrimer() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag83 = useDragToDismiss({ onDismiss: () => { const f = onLater; if (typeof f === 'function') f(); } });
   const { isDark } = useTheme();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
@@ -81,8 +84,10 @@ export default function PushPermissionPrimer() {
 
   return (
     <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onLater}>
-      <Pressable style={s.backdrop} onPress={onLater} accessibilityLabel={tr(t, 'pushPrimer.later', 'Agora não')}>
-        <Animated.View
+      <DragSheetRoot>
+      <Pressable style={[s.backdrop, { backgroundColor: 'transparent' }]} onPress={onLater} accessibilityLabel={tr(t, 'pushPrimer.later', 'Agora não')}>
+        <DragBackdrop drag={_drag83} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag83}
           style={[s.sheet, { backgroundColor: bg, paddingBottom: 20 + (insets?.bottom || 0), transform: [{ translateY }] }]}
           onStartShouldSetResponder={() => true}
         >
@@ -115,8 +120,9 @@ export default function PushPermissionPrimer() {
               {tr(t, 'pushPrimer.later', 'Agora não')}
             </Text>
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

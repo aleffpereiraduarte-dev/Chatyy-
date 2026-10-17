@@ -24,6 +24,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { IconX, IconCopy, IconShare, IconCheck } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 
 const PURPLE = '#111111';
 const GREEN  = '#10B981';
@@ -37,6 +38,7 @@ function tap(kind = 'light') {
 
 export default function WalletReceiveSheet({ visible, onClose }) {
   const insets = useSafeAreaInsets();
+  const drag = useDragToDismiss({ visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -74,8 +76,10 @@ export default function WalletReceiveSheet({ visible, onClose }) {
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.scrim}>
-        <View style={[styles.sheet, { backgroundColor: surface, paddingBottom: Math.max(insets.bottom, 18) }]}>
+      <DragSheetRoot>
+      <View style={[styles.scrim, { backgroundColor: 'transparent' }]}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.55)" onPress={onClose} />
+        <DragPanel drag={drag} style={[styles.sheet, { backgroundColor: surface, paddingBottom: Math.max(insets.bottom, 18) }]}>
           <View style={styles.handleRow}>
             <View style={[styles.handle, { backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.18)' }]} />
           </View>
@@ -145,8 +149,9 @@ export default function WalletReceiveSheet({ visible, onClose }) {
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </DragPanel>
       </View>
+      </DragSheetRoot>
     </Modal>
   );
 }

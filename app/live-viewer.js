@@ -50,6 +50,7 @@ import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 // [2026-10-13 diamantes-religados] UI antiga de presente (LiveTopGifters/
 // LiveGiftAnimation/LiveGiftPicker/DiamondTopUpSheet) fica desligada: a camada
 // nova (LiveEngageLayer: banners com combo, tela cheia por tier, GiftSheet,
@@ -226,6 +227,10 @@ const SheetCommentRow = memo(function SheetCommentRow({ item }) {
 const sheetCommentKey = (item, idx) => String(item?.id ?? `m-${idx}`);
 
 export default function LiveViewerScreen() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag4580 = useDragToDismiss({ startZone: 64 /* FlashList do chat não é envolvível → só a faixa do topo */, onDismiss: () => { const f = () => setChatSheetOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag4513 = useDragToDismiss({ onDismiss: () => { const f = () => setShowViewersList(false); f(); } });
   // Round 67 #1158 (2026-05-18) — keep the screen awake while the viewer
   // is engaged in the live. Tagged so simultaneous mounts (e.g. PiP
   // race during navigation) don't race the lock. Auto-released on
@@ -4516,12 +4521,14 @@ export default function LiveViewerScreen() {
         transparent
         onRequestClose={() => setShowViewersList(false)}
       >
+        <DragSheetRoot>
         {/* Bug #978-1 — viewer list shouldn't fully block the broadcast.
             Override the default dark backdrop with a lighter alpha so the
             live stream stays visible behind the bottom sheet. The sheet
             itself stays opaque for readability. */}
-        <Pressable style={[styles.viewersListBackdrop, { backgroundColor: 'rgba(0,0,0,0.18)' }]} onPress={() => setShowViewersList(false)}>
-          <Pressable style={[styles.viewersListSheet, { maxHeight: '55%' }]} onPress={(e) => e.stopPropagation()}>
+        <Pressable style={[[styles.viewersListBackdrop, { backgroundColor: 'rgba(0,0,0,0.18)' }], { backgroundColor: 'transparent' }]} onPress={() => setShowViewersList(false)}>
+          <DragBackdrop drag={_drag4513} color="rgba(0,0,0,0.18)" />
+          <DragPanel drag={_drag4513} onStartShouldSetResponder={() => true} style={[styles.viewersListSheet, { maxHeight: '55%' }]} >
             <View style={styles.viewersListHandle} />
             <View style={styles.viewersListHeader}>
               <Text style={styles.viewersListTitle}>
@@ -4540,7 +4547,7 @@ export default function LiveViewerScreen() {
                 </Text>
               </View>
             ) : (
-              <ScrollView style={styles.viewersListScroll} keyboardShouldPersistTaps="handled">
+              <DragScroll drag={_drag4513}><ScrollView style={styles.viewersListScroll} keyboardShouldPersistTaps="handled">
                 {viewers.map((v) => (
                   <TouchableOpacity
                     key={v.email}
@@ -4561,10 +4568,11 @@ export default function LiveViewerScreen() {
                     </View>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
+              </ScrollView></DragScroll>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Expanded chat sheet — full scrollable chat history (Instagram/TikTok
@@ -4572,8 +4580,10 @@ export default function LiveViewerScreen() {
           the overlay (or the "Ver todos os comentários" pill) to open this
           sheet with the whole history. */}
       <Modal visible={chatSheetOpen} animationType="slide" transparent onRequestClose={() => setChatSheetOpen(false)}>
-        <Pressable style={styles.viewersListBackdrop} onPress={() => setChatSheetOpen(false)}>
-          <Pressable style={[styles.viewersListSheet, { maxHeight: '75%' }]} onPress={(e) => e.stopPropagation()}>
+        <DragSheetRoot>
+        <Pressable style={[styles.viewersListBackdrop, { backgroundColor: 'transparent' }]} onPress={() => setChatSheetOpen(false)}>
+          <DragBackdrop drag={_drag4580} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag4580} onStartShouldSetResponder={() => true} style={[styles.viewersListSheet, { maxHeight: '75%' }]} >
             <View style={styles.viewersListHeader}>
               <Text style={styles.viewersListTitle}>{t('live.chat') || 'Chat ao vivo'} · {chatMessages.length}</Text>
               <TouchableOpacity onPress={() => setChatSheetOpen(false)} style={{ padding: 6 }}>
@@ -4621,8 +4631,9 @@ export default function LiveViewerScreen() {
                 />
               </View>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Host quick-peek (Instagram long-press preview). Compact card with

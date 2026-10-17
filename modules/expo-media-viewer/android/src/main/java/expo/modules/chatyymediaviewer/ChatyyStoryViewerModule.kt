@@ -32,7 +32,10 @@ class ChatyyStoryViewerModule : Module() {
 
     // 2 = blocos/voz/boomerang/animação de texto/duplo toque/menu por item.
     // 3 = `originRect` (abre do anel do avatar e volta para ele) [2026-10-16 motion]
-    Function("apiVersion") { 3 }
+    // 4 = reações livres [2026-10-17 status-reacoes]: `reactionHold` (segurar o
+    //     coração abre a bolha), `reactionPicker` ("+" com a grade de emojis),
+    //     setViewers rows[].emoji (emoji real na lista).
+    Function("apiVersion") { 4 }
 
     AsyncFunction("open") { options: Map<String, Any?> ->
       val activity = appContext.currentActivity ?: return@AsyncFunction 0
@@ -97,6 +100,9 @@ class ChatyyStoryViewerModule : Module() {
         },
       )
       dlgRef = dlg
+      // [2026-10-17 status-reacoes] JS controla (kill switch __chatyy_story_reactions)
+      options["reactionPicker"]?.let { SVEmojiStore.update(it) }
+      dlg.reactionHold = (options["reactionHold"] as? Boolean) ?: false
       // [2026-10-16 motion] frame do anel tocado (dp do RN, coordenadas de janela)
       if (MVMotion.storyOrigin && !MVMotion.reduceMotion) {
         (options["originRect"] as? Map<*, *>)?.let { m ->

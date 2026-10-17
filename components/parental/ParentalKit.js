@@ -19,6 +19,7 @@ import PressableScale from '../PressableScale';
 import PressableRow from '../PressableRow';
 import { useGroupedColors, SettingsRow } from '../settings/SettingsKit';
 import { selection as hapticSelection } from '../../services/haptics';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragFade } from '../ui/useDragToDismiss';
 
 // Ink (botão primário) — preto no claro, branco no escuro (colors.primary/onPrimary).
 export function useInk() {
@@ -176,12 +177,15 @@ export function CompactEmpty({ Icon, title, subtitle, style }) {
 
 // ─── Action sheet (lista de ações + Cancelar) ───
 export function ActionSheet({ visible, title, subtitle, items = [], onSelect, onClose, cancelLabel = 'Cancelar' }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag182 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const g = useGroupedColors();
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} />
-      <View style={[sh.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
+      <DragSheetRoot>
+      <DragFade drag={_drag182}><Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} /></DragFade>
+      <DragPanel drag={_drag182} style={[sh.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
         <View style={[sh.sheet, { backgroundColor: g.cardBg }]}>
           {(!!title || !!subtitle) && (
             <View style={[sh.head, { borderBottomColor: g.separator }]}>
@@ -207,7 +211,8 @@ export function ActionSheet({ visible, title, subtitle, items = [], onSelect, on
         <PressableRow onPress={onClose} style={[sh.cancel, { backgroundColor: g.cardBg }]} accessibilityRole="button" accessibilityLabel={cancelLabel}>
           <Text style={[sh.cancelText, { color: g.text }]}>{cancelLabel}</Text>
         </PressableRow>
-      </View>
+      </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -296,6 +301,8 @@ export function parseBirthDate(v) {
 }
 
 export function BirthDateSheet({ visible, value, onConfirm, onClose, title, doneLabel = 'OK', cancelLabel = 'Cancelar', monthNames, defaultAge = 9, minYearsBack = 3, maxYearsBack = 18 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag330 = useDragToDismiss({ startZone: 60 /* rodas de data rolam na vertical → só o cabeçalho arrasta */, onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const g = useGroupedColors();
   const { ink } = useInk();
   const insets = useSafeAreaInsets();
@@ -323,8 +330,9 @@ export function BirthDateSheet({ visible, value, onConfirm, onClose, title, done
   const yi = Math.max(0, years.indexOf(y));
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} />
-      <View style={[sh.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
+      <DragSheetRoot>
+      <DragFade drag={_drag330}><Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.38)' }]} onPress={onClose} accessibilityLabel={cancelLabel} /></DragFade>
+      <DragPanel drag={_drag330} style={[sh.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]} pointerEvents="box-none">
         <View style={[sh.sheet, { backgroundColor: g.cardBg }]}>
           <View style={[dp.bar, { borderBottomColor: g.separator }]}>
             <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" style={dp.barBtn}>
@@ -350,7 +358,8 @@ export function BirthDateSheet({ visible, value, onConfirm, onClose, title, done
             </View>
           )}
         </View>
-      </View>
+      </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 }

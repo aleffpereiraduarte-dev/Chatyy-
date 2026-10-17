@@ -28,8 +28,9 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
-import { IconX, IconBell, IconCheck } from './Icons';
+import { IconX, IconBell, IconCheck, IconChevronLeft, IconChevronRight } from './Icons';
 import { CHAT_CUSTOM_NOTIF_TONE } from '../constants/featureFlags';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 // Built-in vibration patterns matched to the picker labels. Mirrors the
 // values the native push handler reads when emitting vibration so the
@@ -169,12 +170,37 @@ const SYSTEM_RINGTONES = [
 export default function ChatNotificationSettingsSheet({
   visible, onClose, conversationId, conversationType, colors, isDark, t,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag545 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   // Android: real device notification sounds for the "Tom de notificação"
   // picker. Loaded lazily from the native module; empty on other platforms.
   const [deviceSounds, setDeviceSounds] = useState([]);
+  // [2026-10-17 ringtone-picker] Lista de toques vira uma tela própria dentro da
+  // folha (linha "Toque personalizado: X ›"), com prévia do som ao tocar.
+  const [showRingtones, setShowRingtones] = useState(false);
+  const previewRef = useRef(null);
+  const stopPreview = useCallback(() => {
+    const pl = previewRef.current; previewRef.current = null;
+    if (pl) { try { pl.pause(); } catch {} try { pl.remove(); } catch {} }
+  }, []);
+  const playPreview = useCallback((value) => {
+    stopPreview();
+    // Só o toque padrão tem áudio empacotado no app (assets/ringtone.m4a); os
+    // nomes de sistema são resolvidos pelo push nativo → sem prévia, só haptic.
+    if (value !== 'default' || Platform.OS === 'web') { try { require('../constants/motion').feedback.selection(); } catch {} return; }
+    try {
+      const A = require('expo-audio');
+      const pl = A.createAudioPlayer(require('../assets/ringtone.m4a'));
+      previewRef.current = pl;
+      pl.play();
+      setTimeout(() => { if (previewRef.current === pl) stopPreview(); }, 3500);
+    } catch {}
+  }, [stopPreview]);
+  useEffect(() => { if (!visible) { setShowRingtones(false); stopPreview(); } return undefined; }, [visible, stopPreview]);
+  useEffect(() => () => stopPreview(), [stopPreview]);
 
   useEffect(() => {
     if (!visible || Platform.OS !== 'android' || !CHAT_CUSTOM_NOTIF_TONE) return;
@@ -269,24 +295,39 @@ export default function ChatNotificationSettingsSheet({
   // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
   const body = (
         <>
-          {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 10 }}>
-            <IconBell size={20} color={ACCENT} />
-            <Text style={{ flex: 1, marginLeft: 10, fontSize: 17, fontWeight: '700', color: colors?.text }}>
-              {t?.('notifications.title') || 'Notificações'}
-            </Text>
-            {saving ? <ActivityIndicator size="small" color={ACCENT} style={{ marginRight: 8 }} /> : null}
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}>
-              <IconX size={22} color={colors?.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
+          {/* [2026-10-17 sheet-header] O cabeçalho é o 1º filho STICKY do ScrollView (fundo
+              sólido). No formSheet nativo o react-native-screens estica o ScrollView p/ a
+              folha inteira em (0,0) → um header IRMÃO ficava por baixo da 1ª linha
+              ("mensagens" sobre "Notificações"). Dentro do ScrollView isso não acontece. */}
+          <DragScroll drag={_drag545} disabled={USE_NATIVE_SHEETS}><ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingBottom: Platform.OS === 'android' ? 64 : 48 }}
+            stickyHeaderIndices={[0]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: 12, paddingBottom: 10, backgroundColor: panelBg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border }}>
+            {showRingtones ? (
+              <TouchableOpacity onPress={() => { stopPreview(); setShowRingtones(false); }} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }} accessibilityRole="button" accessibilityLabel={t?.('common.back') || 'Voltar'} style={{ marginRight: 6 }}>
+                <IconChevronLeft size={22} color={colors?.text} />
+              </TouchableOpacity>
+            ) : <IconBell size={20} color={ACCENT} />}
+            <Text style={{ flex: 1, marginLeft: 10, fontSize: 17, fontWeight: '700', color: colors?.text }} numberOfLines={1}>
+              {showRingtones ? (t?.('chatConv.ringtone') || 'Toque personalizado') : (t?.('notifications.title') || 'Notificações')}
+            </Text>
+            {saving ? <ActivityIndicator size="small" color={ACCENT} style={{ marginRight: 8 }} /> : null}
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }} accessibilityRole="button" accessibilityLabel={t?.('common.close') || 'Fechar'}>
+              <IconX size={22} color={colors?.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          {showRingtones ? (
+            <PickerRow
+              options={SYSTEM_RINGTONES.map(r => ({ value: r.value, label: r.value === 'default' ? (t?.('chatNotif.default') || r.label) : r.label }))}
+              value={settings.ringtone || 'default'}
+              onChange={(v) => { playPreview(v); saveField({ ringtone: v }); }}
+              colors={colors}
+            />
+          ) : (<>
             {loading && !settings ? (
               <View style={{ padding: 32, alignItems: 'center' }}>
                 <ActivityIndicator color={ACCENT} />
@@ -350,13 +391,18 @@ export default function ChatNotificationSettingsSheet({
                 filename is written to chat_user_conv_settings.ringtone
                 and propagated through the push payload as `ringtone`
                 (gap_notifications #4). */}
-            <SectionHeader text={t?.('chatConv.ringtone') || 'Toque personalizado'} colors={colors} />
-            <PickerRow
-              options={SYSTEM_RINGTONES.map(r => ({ value: r.value, label: r.label }))}
-              value={settings.ringtone || 'default'}
-              onChange={(v) => saveField({ ringtone: v })}
-              colors={colors}
-            />
+            <TouchableOpacity
+              onPress={() => setShowRingtones(true)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 14, marginTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors?.border }}
+            >
+              <Text style={{ flex: 1, fontSize: 15, color: colors?.text }}>{t?.('chatConv.ringtone') || 'Toque personalizado'}</Text>
+              <Text style={{ fontSize: 15, color: colors?.textSecondary, marginRight: 4 }} numberOfLines={1}>
+                {(() => { const r = SYSTEM_RINGTONES.find(x => x.value === (settings.ringtone || 'default')); return !r || r.value === 'default' ? (t?.('chatNotif.default') || 'Padrão') : r.label; })()}
+              </Text>
+              <IconChevronRight size={16} color={colors?.textTertiary || colors?.textSecondary} />
+            </TouchableOpacity>
 
             {/* Vibração picker — tapping each option fires a haptic preview
                 so the user can FEEL the difference before saving. The
@@ -459,7 +505,8 @@ export default function ChatNotificationSettingsSheet({
               onChange={(v) => handleMuteFor(v)}
               colors={colors}
             />
-          </ScrollView>
+          </>)}
+          </ScrollView></DragScroll>
         </>
   );
   // Recorder = <Modal> renderizado DENTRO do conteúdo do sheet → apresenta a partir do sheet.
@@ -499,9 +546,11 @@ export default function ChatNotificationSettingsSheet({
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable
-          onPress={e => e.stopPropagation?.()}
+      <DragSheetRoot>
+      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag545} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={_drag545} onStartShouldSetResponder={() => true}
+          
           style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
             backgroundColor: panelBg,
@@ -515,9 +564,10 @@ export default function ChatNotificationSettingsSheet({
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
           </View>
           {body}
-        </Pressable>
+        </DragPanel>
       </Pressable>
       {recorder}
+      </DragSheetRoot>
     </Modal>
   );
 }

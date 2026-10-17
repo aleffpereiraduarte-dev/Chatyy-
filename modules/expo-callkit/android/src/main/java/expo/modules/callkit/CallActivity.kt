@@ -176,6 +176,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
+// [2026-10-17 sem-pstn] Teclado DTMF ("Teclado" em Mais opções) só fazia sentido
+// para PSTN/IVR. Desligado; true volta o botão.
+private const val SHOW_DTMF_KEYPAD = false
+
 /**
  * CallActivity — full-native 1:1 in-call screen rebuilt with Jetpack Compose
  * (Stage #994, 2026-05-17). Mirrors the iOS SwiftUI CallView line-for-line
@@ -6542,8 +6546,10 @@ private fun MoreOptionsSheet(
           onToggleDataSaver,
         )
       }
-      // Android extra (DTMF for PSTN/IVR bridges) — kept, last row.
-      MoreRow(Icons.Filled.Dialpad, CallStrings.s("keypad"), onKeypad)
+      // Android extra (DTMF for PSTN/IVR bridges) — last row.
+      // [2026-10-17 sem-pstn] Ligações só pelo Chatyy (app-a-app): teclado DTMF
+      // escondido. Religar = SHOW_DTMF_KEYPAD true (build nativo).
+      if (SHOW_DTMF_KEYPAD) MoreRow(Icons.Filled.Dialpad, CallStrings.s("keypad"), onKeypad)
     }
   }
 }

@@ -659,7 +659,7 @@ export default function ChangePhone() {
                   {
                     fontSize: 15, paddingVertical: 12, paddingHorizontal: 14,
                     borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6',
-                    color: colors.text,
+                    color: colors.text, height: 43, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                   },
                   Platform.OS === 'web' && { outlineStyle: 'none' },
                 ]}

@@ -175,7 +175,7 @@ function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, o
       visible={!!visible}
       onRequestClose={close}
       animationType="slide"
-      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined}
+      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined} allowSwipeDismissal /* [2026-10-17 drag-dismiss] RN 0.83: sem isso o pageSheet NÃO desce interativo (modalInPresentation=YES) */
       transparent={Platform.OS === 'web'}
     >
       <View style={[st.webWrap, Platform.OS === 'web' && st.webBackdrop]}>

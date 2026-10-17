@@ -148,6 +148,16 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   private let toast = UILabel()
   private var toastWork: DispatchWorkItem?
 
+  // [2026-10-17 status-reacoes] apiVersion 4 — bolha ao segurar o coração +
+  // "+" com a grade completa (SVEmojiStore). O módulo liga antes do present.
+  var reactionHold = false
+  private var reactBubble: SVReactBubble?
+  private var bubbleStartedOnHeart = true
+  private var bubbleTapMode = false
+  private var bubbleCatcher: UIControl?
+  private var emojiSheet: SVEmojiSheet?
+  private var pickerEnabled: Bool { reactionHold && !SVEmojiStore.cats.isEmpty }
+
   private let haptic = UIImpactFeedbackGenerator(style: .light)
   private let selection = UISelectionFeedbackGenerator()
 
@@ -410,6 +420,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   private func makePage(_ i: Int) -> SVGroupView {
     let p = SVGroupView(group: groups[i], labels: labels)
     p.delegate = self
+    p.likeHoldEnabled = reactionHold
     p.setMuted(muted)
     pager.addSubview(p)
     place(p, i)
@@ -958,15 +969,29 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     reactionsRow.axis = .horizontal
     reactionsRow.distribution = .equalSpacing
     reactionsRow.alignment = .center
+    // [2026-10-17 status-reacoes] 7 emojis + "+" cabem em 375pt: botão 42
+    let bs: CGFloat = reactions.count + (pickerEnabled ? 1 : 0) > 7 ? 42 : 48
     for (i, r) in reactions.enumerated() {
       let b = UIButton(type: .custom)
-      b.setImage(SVIcons.emoji(r.emoji, size: 38) ?? SVIcons.reaction(r.kind, size: 34), for: .normal)
+      b.setImage(SVIcons.emoji(r.emoji, size: bs - 8) ?? SVIcons.reaction(r.kind, size: 34), for: .normal)
       b.tag = i
       b.accessibilityLabel = r.emoji
       b.addTarget(self, action: #selector(tapReaction(_:)), for: .touchUpInside)
-      b.frame = CGRect(x: 0, y: 0, width: 48, height: 48)
-      b.widthAnchor.constraint(equalToConstant: 48).isActive = true
-      b.heightAnchor.constraint(equalToConstant: 48).isActive = true
+      b.frame = CGRect(x: 0, y: 0, width: bs, height: bs)
+      b.widthAnchor.constraint(equalToConstant: bs).isActive = true
+      b.heightAnchor.constraint(equalToConstant: bs).isActive = true
+      reactionsRow.addArrangedSubview(b)
+    }
+    if pickerEnabled {
+      // [2026-10-17 status-reacoes] "+" → grade completa de emojis
+      let b = UIButton(type: .custom)
+      b.setImage(SVPlusIcon.image(size: 26), for: .normal)
+      b.backgroundColor = UIColor(white: 1, alpha: 0.16)
+      b.layer.cornerRadius = 20
+      b.accessibilityLabel = labels.get("moreReactions", "Mais reações")
+      b.addTarget(self, action: #selector(tapMoreReactions), for: .touchUpInside)
+      b.widthAnchor.constraint(equalToConstant: 40).isActive = true
+      b.heightAnchor.constraint(equalToConstant: 40).isActive = true
       reactionsRow.addArrangedSubview(b)
     }
     composer.addSubview(reactionsRow)
@@ -1002,8 +1027,9 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     sendButton.frame = CGRect(x: inputBar.bounds.width - 46, y: 0, width: 46, height: barH)
     fieldBox.frame = CGRect(x: 0, y: 0, width: inputBar.bounds.width - 52, height: barH)
     field.frame = fieldBox.bounds.insetBy(dx: 18, dy: 0)
-    let rw = min(b.width - 32, CGFloat(max(1, reactions.count)) * 58)
-    reactionsRow.frame = CGRect(x: (b.width - rw) / 2, y: inputBar.frame.minY - 76, width: rw, height: 56)
+    let n = CGFloat(max(1, reactionsRow.arrangedSubviews.count))
+    let rw = min(b.width - 20, n * 50)
+    reactionsRow.frame = CGRect(x: (b.width - rw) / 2, y: inputBar.frame.minY - 70, width: rw, height: 56)
   }
 
   private func keyboardChanged(_ n: Notification, hiding: Bool = false) {
@@ -1077,11 +1103,168 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     guard sender.tag >= 0, sender.tag < reactions.count, let gv = currentPage, let item = gv.currentItem else { return }
     let r = reactions[sender.tag]
     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    if reactionHold {
+      let from = sender.convert(CGPoint(x: sender.bounds.midX, y: sender.bounds.midY), to: view)
+      closeComposer()
+      applyReaction(r.emoji, gv: gv, item: item, from: from)
+      return
+    }
     item.myReaction = item.myReaction == r.emoji ? "" : r.emoji
     gv.refreshCounters()
     emit?("onReact", ["id": item.id, "ownerEmail": gv.group.ownerEmail, "emoji": r.emoji, "active": !item.myReaction.isEmpty])
     closeComposer()
     if !item.myReaction.isEmpty { burst(r.kind, glyph: r.emoji) }
+  }
+
+  // MARK: - [2026-10-17 status-reacoes] Reações livres (apiVersion 4)
+
+  /// Mesmo caminho do coração (onReact → status_react). Mesmo emoji de novo
+  /// desfaz (o servidor alterna); outro emoji troca.
+  private func applyReaction(_ emoji: String, gv: SVGroupView, item: SVItem, from: CGPoint?) {
+    guard !emoji.isEmpty, !gv.group.isSelf else { return }
+    item.myReaction = item.myReaction == emoji ? "" : emoji
+    gv.refreshCounters()
+    emit?("onReact", ["id": item.id, "ownerEmail": gv.group.ownerEmail, "emoji": emoji, "active": !item.myReaction.isEmpty])
+    if !item.myReaction.isEmpty {
+      UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+      SVReactionBurst.play(in: view, image: SVIcons.emoji(emoji, size: 180), from: from, reduce: MVMotion.reduceMotion)
+    }
+  }
+
+  @objc private func tapMoreReactions() {
+    // pausa contínua: "picker" entra antes do composer sair
+    addPause("picker")
+    closeComposer()
+    openEmojiSheet()
+  }
+
+  private func openEmojiSheet() {
+    guard emojiSheet == nil, !closed, let gv = currentPage, let item = gv.currentItem, !gv.group.isSelf else {
+      removePause("picker")
+      return
+    }
+    addPause("picker")
+    let sh = SVEmojiSheet(quick: reactions.map { $0.emoji }, mine: item.myReaction, labels: labels)
+    sh.frame = view.bounds
+    sh.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    sh.onPick = { [weak self, weak sh] emoji, p in
+      guard let self = self else { return }
+      let from = sh.map { $0.convert(p, to: self.view) }
+      self.closeEmojiSheet()
+      if let gv = self.currentPage, let it = gv.currentItem { self.applyReaction(emoji, gv: gv, item: it, from: from) }
+    }
+    sh.onClose = { [weak self] in self?.closeEmojiSheet() }
+    view.addSubview(sh)
+    emojiSheet = sh
+    sh.present(reduce: MVMotion.reduceMotion)
+  }
+
+  private func closeEmojiSheet() {
+    guard let sh = emojiSheet else { return }
+    emojiSheet = nil
+    sh.dismiss(reduce: MVMotion.reduceMotion)
+    removePause("picker")
+  }
+
+  /// Itens da bolha: coração + fileira rápida (+ "+").
+  private func bubbleItems() -> [String] {
+    let heart = reactions.first(where: { $0.kind == "heart" })?.emoji ?? "\u{2764}\u{FE0F}"
+    var out = [heart]
+    for r in reactions where !out.contains(r.emoji) { out.append(r.emoji) }
+    if pickerEnabled { out.append(SVReactBubble.more) }
+    return out
+  }
+
+  func groupViewHoldLike(_ gv: SVGroupView, gesture g: UILongPressGestureRecognizer) {
+    guard reactionHold, gv === currentPage, !closed else { return }
+    let p = g.location(in: view)
+    switch g.state {
+    case .began:
+      guard let item = gv.currentItem, !gv.group.isSelf, reactBubble == nil else { return }
+      UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+      addPause("react")
+      pager.isScrollEnabled = false
+      let bb = SVReactBubble(items: bubbleItems(), mine: item.myReaction)
+      let sz = bb.preferredSize
+      let w = view.bounds.width
+      let anchor = gv.likeFrame(in: view)
+      let bw = min(sz.width, w - 16)
+      var x = anchor.maxX - bw
+      x = max(8, min(w - bw - 8, x))
+      let y = max(view.safeAreaInsets.top + 8, anchor.minY - sz.height - 14)
+      bb.frame = CGRect(x: x, y: y, width: bw, height: sz.height)
+      // toque fora fecha (modo "tocar" quando o dedo saiu sem escolher)
+      let catcher = UIControl(frame: view.bounds)
+      catcher.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      catcher.addTarget(self, action: #selector(bubbleCatcherTap(_:event:)), for: .touchUpInside)
+      view.addSubview(catcher)
+      bubbleCatcher = catcher
+      bb.isUserInteractionEnabled = false // toques vão p/ o catcher (modo tocar)
+      view.addSubview(bb)
+      reactBubble = bb
+      bubbleStartedOnHeart = true
+      bubbleTapMode = false
+      bb.present(reduce: MVMotion.reduceMotion)
+    case .changed:
+      guard let bb = reactBubble, !bubbleTapMode else { return }
+      let lp = view.convert(p, to: bb)
+      let idx = bb.index(at: lp)
+      if idx != nil { bubbleStartedOnHeart = false }
+      bb.setHighlighted(idx, reduce: MVMotion.reduceMotion)
+    case .ended:
+      guard let bb = reactBubble, !bubbleTapMode else { return }
+      if let i = bb.highlighted {
+        pickFromBubble(i)
+      } else if bubbleStartedOnHeart {
+        // soltou sem deslizar: a bolha fica aberta p/ escolher com toque
+        bubbleTapMode = true
+      } else {
+        closeBubble()
+      }
+    case .cancelled, .failed:
+      if !bubbleTapMode { closeBubble() }
+    default:
+      break
+    }
+  }
+
+  @objc private func bubbleCatcherTap(_ sender: UIControl, event: UIEvent) {
+    guard let bb = reactBubble else { closeBubble(); return }
+    if let t = event.allTouches?.first {
+      let lp = t.location(in: bb)
+      if bb.bounds.insetBy(dx: 0, dy: -12).contains(lp), let i = bb.index(at: lp) {
+        bb.setHighlighted(i, reduce: true)
+        pickFromBubble(i)
+        return
+      }
+    }
+    closeBubble()
+  }
+
+  private func pickFromBubble(_ i: Int) {
+    guard let bb = reactBubble, i >= 0, i < bb.items.count else { closeBubble(); return }
+    let emoji = bb.items[i]
+    let from = bb.centerOf(i, in: view)
+    if emoji == SVReactBubble.more {
+      addPause("picker")
+      closeBubble()
+      openEmojiSheet()
+      return
+    }
+    closeBubble()
+    if let gv = currentPage, let item = gv.currentItem { applyReaction(emoji, gv: gv, item: item, from: from) }
+  }
+
+  private func closeBubble() {
+    bubbleCatcher?.removeFromSuperview()
+    bubbleCatcher = nil
+    bubbleTapMode = false
+    pager.isScrollEnabled = true
+    if let bb = reactBubble {
+      reactBubble = nil
+      bb.dismiss(reduce: MVMotion.reduceMotion)
+    }
+    removePause("react")
   }
 
   private func burst(_ kind: String, at point: CGPoint? = nil, glyph: String? = nil) {
@@ -1254,7 +1437,13 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     cell.time.text = (row["time"] as? String) ?? ""
     cell.initial.text = name.first.map { String($0).uppercased() } ?? ""
     let kind = (row["reaction"] as? String) ?? ""
-    cell.reaction.image = kind.isEmpty ? nil : SVIcons.reaction(kind, size: 22)
+    // [2026-10-17 status-reacoes] emoji real (qualquer um); kind = reserva vetorial
+    let rem = (row["emoji"] as? String) ?? ""
+    if !rem.isEmpty, let em = SVIcons.emoji(rem, size: 26) {
+      cell.reaction.image = em
+    } else {
+      cell.reaction.image = kind.isEmpty ? nil : SVIcons.reaction(kind, size: 22)
+    }
     let av = (row["avatar"] as? String) ?? ""
     cell.avatarUri = av
     cell.avatar.image = nil

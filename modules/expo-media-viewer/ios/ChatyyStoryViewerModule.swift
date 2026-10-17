@@ -23,8 +23,11 @@ public class ChatyyStoryViewerModule: Module {
     // 2 = blocos (figurinhas/texto/GIF/enquete/pergunta…), voz, boomerang,
     // animação de texto, duplo toque, menu por item, updateItem caption/overlay.
     // 3 = `originRect` (abre do anel do avatar e volta para ele) [2026-10-16 motion]
+    // 4 = reações livres [2026-10-17 status-reacoes]: `reactionHold` (segurar o
+    //     coração abre a bolha), `reactionPicker` ("+" com a grade de emojis),
+    //     setViewers rows[].emoji (emoji real na lista).
     Function("apiVersion") { () -> Int in
-      return 3
+      return 4
     }
 
     AsyncFunction("open") { (options: [String: Any]) -> Int in
@@ -65,6 +68,9 @@ public class ChatyyStoryViewerModule: Module {
       if MVMotion.storyOrigin && !MVMotion.reduceMotion, let r = MVItem.rectValue(options["originRect"]) {
         vc.setOrigin(r)
       }
+      // [2026-10-17 status-reacoes] JS controla (kill switch __chatyy_story_reactions)
+      if let pk = options["reactionPicker"] { SVEmojiStore.update(pk) }
+      vc.reactionHold = (options["reactionHold"] as? Bool) ?? false
       vc.emit = { [weak self] name, body in
         var b = body
         b["session"] = sid
@@ -128,7 +134,7 @@ public class ChatyyStoryViewerModule: Module {
       return true
     }.runOnQueue(.main)
 
-    // rows: [{ email, name, avatar, time, reaction(kind) }]
+    // rows: [{ email, name, avatar, time, reaction(kind), emoji (v4) }]
     AsyncFunction("setViewers") { (id: String, rows: [[String: Any]], loading: Bool) -> Bool in
       guard let vc = self.current else { return false }
       vc.setViewers(id: id, rows: rows, loading: loading)

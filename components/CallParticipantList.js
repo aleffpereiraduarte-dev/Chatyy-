@@ -43,6 +43,7 @@ import {
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { useLanguage } from '../context/LanguageContext';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 const BRAND_PURPLE = '#111111';
 const DANGER = '#EF4444';
@@ -125,6 +126,8 @@ export default function CallParticipantList({
   onPin,            // (email, pinned: bool) => void
   onAddPerson,      // () => void  — opens add-participant flow
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag213 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { t } = useLanguage();
   const [query, setQuery] = useState('');
   // Per-row action sheet — small popover anchored to the "..." button.
@@ -211,8 +214,10 @@ export default function CallParticipantList({
 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Animated.View
+      <DragSheetRoot>
+      <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag213} color="rgba(0,0,0,0.55)" />
+        <DragPanel drag={_drag213}
           style={[
             styles.sheet,
             { opacity, transform: [{ translateY }] },
@@ -256,7 +261,7 @@ export default function CallParticipantList({
               )}
             </View>
 
-            <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
+            <DragScroll drag={_drag213}><ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
               {ordered.map((p) => {
                 const isMe = (p.email || '').toLowerCase() === (myEmail || '').toLowerCase();
                 const isPinned = (pinnedEmail || '').toLowerCase() === (p.email || '').toLowerCase();
@@ -382,10 +387,11 @@ export default function CallParticipantList({
                 </Text>
               )}
               <View style={{ height: 32 }} />
-            </ScrollView>
+            </ScrollView></DragScroll>
           </Pressable>
-        </Animated.View>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

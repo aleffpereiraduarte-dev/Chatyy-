@@ -43,6 +43,7 @@ import { shareInvite as shareInviteLink, prefetchInviteRef } from '../services/i
 // A–Z com haptic). Binário sem a view / web / kill switch → SectionList abaixo.
 import NativeContactList, { nativeContactsEnabled } from '../components/contacts/NativeContactList';
 import { buildFlatRows, contactTile } from '../components/contacts/contactListAdapter';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -344,6 +345,9 @@ function ContactsScreenInner() {
   myEmailRef.current = String(_authUser?.email || '');
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // [2026-10-17 drag-dismiss] cartões "Novo/editar contato" e "Enviar contato para" descem arrastando.
+  const _addDrag = useDragToDismiss({ onDismiss: () => setShowAdd(false) });
+  const _shareDrag = useDragToDismiss({ onDismiss: () => setShareContactCard(null) });
 
   const [activeTab, setActiveTab] = useState('my');
   // [cache-first] Seed synchronously from MMKV so the address book paints on
@@ -1973,14 +1977,16 @@ function ContactsScreenInner() {
       </NativeHeaderSafeArea>
 
       {/* Add/Edit Modal */}
-      <Modal visible={showAdd} animationType="slide" transparent>
+      <Modal visible={showAdd} animationType="slide" transparent onRequestClose={() => setShowAdd(false)}>
+        <DragSheetRoot>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
         >
-        <TouchableOpacity style={s.overlay} onPress={() => setShowAdd(false)} activeOpacity={1}>
-          <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
+        <TouchableOpacity style={[s.overlay, { backgroundColor: 'transparent' }]} onPress={() => setShowAdd(false)} activeOpacity={1}>
+          <DragBackdrop drag={_addDrag} color="rgba(0,0,0,0.45)" />
+          <DragPanel drag={_addDrag} onStartShouldSetResponder={() => true} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.borderLight }]}>
               <Text style={[s.modalTitle, { color: colors.text }]}>
                 {editContact ? t('contacts.editContact') : t('contacts.newContact')}
@@ -1989,7 +1995,7 @@ function ContactsScreenInner() {
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            <ScrollView style={s.formBody} contentContainerStyle={{ paddingBottom: 20 }}>
+            <DragScroll drag={_addDrag}><ScrollView style={s.formBody} contentContainerStyle={{ paddingBottom: 20 }}>
               <Text style={[s.formFieldLabel, { color: colors.textSecondary }]}>{t('contacts.nameLabel')}</Text>
               <View style={s.formRow}>
                 <IconUser size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
@@ -2116,10 +2122,11 @@ function ContactsScreenInner() {
               >
                 {saving ? <ActivityIndicator size="small" color={colors.onPrimary} /> : <Text style={[s.saveBtnText, { color: colors.onPrimary }]}>{t('contacts.save')}</Text>}
               </TouchableOpacity>
-            </ScrollView>
-          </TouchableOpacity>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </TouchableOpacity>
         </KeyboardAvoidingView>
+        </DragSheetRoot>
       </Modal>
 
       {/* [WA-parity 2026-05-31] Share-contact: pick a conversation to send the
@@ -2136,8 +2143,10 @@ function ContactsScreenInner() {
         onSave={inviteTarget?._dc && !(inviteTarget.email && isContactSaved(inviteTarget.email)) ? () => addDeviceContact(inviteTarget._dc) : undefined}
       />
       <Modal visible={!!shareContactCard} animationType="slide" transparent onRequestClose={() => setShareContactCard(null)}>
-        <TouchableOpacity style={s.overlay} onPress={() => setShareContactCard(null)} activeOpacity={1}>
-          <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface, maxHeight: '80%' }]}>
+        <DragSheetRoot>
+        <TouchableOpacity style={[s.overlay, { backgroundColor: 'transparent' }]} onPress={() => setShareContactCard(null)} activeOpacity={1}>
+          <DragBackdrop drag={_shareDrag} color="rgba(0,0,0,0.45)" />
+          <DragPanel drag={_shareDrag} onStartShouldSetResponder={() => true} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface, maxHeight: '80%' }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.borderLight }]}>
               <Text style={[s.modalTitle, { color: colors.text }]}>
                 {t('contacts.shareContactTo') || 'Enviar contato para'}
@@ -2171,7 +2180,7 @@ function ContactsScreenInner() {
                 <ActivityIndicator size="small" color={colors.primary} />
               </View>
             ) : (
-              <FlatList
+              <DragScroll drag={_shareDrag}><FlatList
                 data={(shareConvSearch.trim()
                   ? shareConvList.filter(cv => (cv.name || cv.display_name || cv.other_email || '').toLowerCase().includes(shareConvSearch.trim().toLowerCase()))
                   : shareConvList)}
@@ -2202,10 +2211,11 @@ function ContactsScreenInner() {
                     </PressableRow>
                   );
                 }}
-              />
+              /></DragScroll>
             )}
-          </TouchableOpacity>
+          </DragPanel>
         </TouchableOpacity>
+        </DragSheetRoot>
       </Modal>
     </View>
   );

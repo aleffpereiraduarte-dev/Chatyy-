@@ -18,6 +18,7 @@ import {
   StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { IconX, IconLink, IconShare, IconCopy, IconCheck } from './Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 let _Clipboard = null;
 try { _Clipboard = require('expo-clipboard'); } catch (e) {}
@@ -27,6 +28,8 @@ const PUBLIC_BASE = 'https://chatyy.com.br/h/';
 export default function HighlightShareSheet({
   visible, onClose, highlight, colors, isDark, t,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag96 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const T = t || ((k, d) => d || k);
   const c = colors || {};
   const sheetBg = c.surface || (isDark ? '#1a1a1a' : '#fff');
@@ -94,8 +97,10 @@ export default function HighlightShareSheet({
 
   return (
     <Modal visible={!!visible} animationType="fade" transparent onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable onPress={(e) => e.stopPropagation?.()} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: sheetBg, borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden', paddingBottom: 30 }}>
+      <DragSheetRoot>
+      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag96} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={_drag96} onStartShouldSetResponder={() => true}  style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: sheetBg, borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden', paddingBottom: 30 }}>
           <View style={{ alignItems: 'center', paddingTop: 8 }}>
             <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }} />
           </View>
@@ -127,8 +132,9 @@ export default function HighlightShareSheet({
             hint={T('profile.shareHighlightSystem', 'Abre o menu do sistema')}
             onPress={nativeShare}
           />
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

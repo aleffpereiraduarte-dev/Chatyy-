@@ -15,11 +15,14 @@ import { useLanguage } from '../../../context/LanguageContext';
 import { Spacing } from '../../../constants/theme';
 import { IconCheck } from '../../Icons';
 import * as api from '../../../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../../ui/useDragToDismiss';
 
 const webShadow = Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {};
 
 // ── Alterar senha ──────────────────────────────────────────────────────────
 export function ChangePasswordModal({ visible, onClose }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag46 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [cpCurrent, setCpCurrent] = useState('');
@@ -44,10 +47,12 @@ export function ChangePasswordModal({ visible, onClose }) {
   const reset = () => { setCpCurrent(''); setCpNew(''); setCpConfirm(''); setCpError(''); setCpSuccess(false); };
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <DragSheetRoot>
       <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }} onPress={onClose}>
-          <Pressable
-            onPress={e => e.stopPropagation?.()}
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
+          <DragBackdrop drag={_drag46} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag46} onStartShouldSetResponder={() => true}
+            
             style={{ margin: 20, backgroundColor: colors.surface, borderRadius: 20, padding: 24, ...webShadow }}
           >
             <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 4 }}>
@@ -137,9 +142,10 @@ export function ChangePasswordModal({ visible, onClose }) {
                   : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('settings.save') || t('common.save') || 'Salvar'}</Text>}
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </DragPanel>
         </Pressable>
       </SheetKeyboardAvoider>
+      </DragSheetRoot>
     </Modal>
   );
 }
@@ -152,6 +158,8 @@ export function ChangePasswordModal({ visible, onClose }) {
 // A frase nunca sai do aparelho: chave derivada localmente, só o
 // ciphertext + hash vão ao servidor (e2eeBackupEscrowPut).
 export function BackupPassphraseModal({ visible, onClose, rotate }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag215 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [pass, setPass] = useState('');
@@ -207,9 +215,11 @@ export function BackupPassphraseModal({ visible, onClose, rotate }) {
   });
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
+      <DragSheetRoot>
       <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }} onPress={close}>
-          <Pressable onPress={(e) => e.stopPropagation?.()} style={{ backgroundColor: colors.surface, borderRadius: 18, padding: rotate ? 22 : 20 }}>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }, { backgroundColor: 'transparent' }]} onPress={close}>
+          <DragBackdrop drag={_drag215} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag215} onStartShouldSetResponder={() => true}  style={{ backgroundColor: colors.surface, borderRadius: 18, padding: rotate ? 22 : 20 }}>
             <Text style={{ color: colors.text, fontWeight: rotate ? '800' : '700', fontSize: rotate ? 18 : 17, marginBottom: 6 }}>
               {rotate ? (t('settings.backupKey.rotate') || 'Redefinir senha do backup') : (t('settings.e2eBackup') || 'Backup com criptografia')}
             </Text>
@@ -250,9 +260,10 @@ export function BackupPassphraseModal({ visible, onClose, rotate }) {
                   : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </DragPanel>
         </Pressable>
       </SheetKeyboardAvoider>
+      </DragSheetRoot>
     </Modal>
   );
 }

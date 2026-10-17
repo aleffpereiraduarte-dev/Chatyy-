@@ -15,6 +15,7 @@ import TaskCheck from './TaskCheck';
 import { parseCalDate, startOfDay, addDays, hhmm } from '../../utils/calDate';
 import { parseTaskInput, dueLabel, toIso, dueToServer, dueDate } from '../../utils/taskUtils';
 import { haptic } from '../../constants/theme';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 
 function Chip({ label, active, onPress, g, icon }) {
   return (
@@ -46,6 +47,8 @@ export default function TaskDetailSheet({
   visible, task, subtasks = [], lists = [], v2, g, t, locale,
   onClose, onSave, onDelete, onToggleSub, onAddSub, onDeleteSub, onOpenEmail,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag155 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const insets = useSafeAreaInsets();
   const tt = (k, fb) => (t && t(k)) || fb;
   const [title, setTitle] = useState('');
@@ -153,10 +156,11 @@ export default function TaskDetailSheet({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <DragSheetRoot>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={s.overlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={tt('common.close', 'Fechar')} />
-          <View style={[s.sheet, { backgroundColor: g.pageBg, paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <DragFade drag={_drag155}><Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={tt('common.close', 'Fechar')} /></DragFade>
+          <DragPanel drag={_drag155} style={[s.sheet, { backgroundColor: g.pageBg, paddingBottom: Math.max(insets.bottom, 12) }]}>
             <View style={s.grabber}><View style={[s.grabberBar, { backgroundColor: g.tertiary }]} /></View>
             <View style={s.header}>
               <TouchableOpacity onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel={tt('common.cancel', 'Cancelar')}>
@@ -167,7 +171,7 @@ export default function TaskDetailSheet({
                 <Text style={[s.headerBtn, { color: g.ink, fontWeight: '700' }]}>{tt('common.done', 'OK')}</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+            <DragScroll drag={_drag155}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
               <View style={[s.card, { backgroundColor: g.cardBg, marginHorizontal: 16 }]}>
                 <TextInput
                   value={title}
@@ -322,10 +326,11 @@ export default function TaskDetailSheet({
                 <IconTrash size={17} color={g.destructive} />
                 <Text style={[s.actionText, { color: g.destructive }]}>{tt('tasks.delete', 'Apagar tarefa')}</Text>
               </TouchableOpacity>
-            </ScrollView>
-          </View>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </View>
       </KeyboardAvoidingView>
+      </DragSheetRoot>
     </Modal>
   );
 }

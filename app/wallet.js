@@ -422,6 +422,11 @@ function WalletScreen() {
   }, [filtered, t, language]);
 
   const title = tr(t, 'wallet.title', 'Carteira');
+  // [2026-10-17 carteira-sem-piscar] Skeleton SÓ quando não há nada local (nem
+  // histórico nem saldo em cache). Com o saldo do cache por conta, a tela já
+  // nasce no layout final (herói + blocos) e só a lista espera a rede — antes o
+  // 1º open sem histórico salvo trocava skeleton → conteúdo de uma vez (flash).
+  const showSkeleton = loading && !wallet.loaded;
   const minor = isMinorAccount();
   const negative = typeof wallet.diamonds === 'number' && wallet.diamonds < 0;
   const off = wallet.loaded && !wallet.enabled;
@@ -651,8 +656,11 @@ function WalletScreen() {
     const caps = tr(t, 'wallet.diamondBalance', 'Saldo de diamantes');
     const buttons = [{ id: 'buy', label: tr(t, 'wallet.topup', 'Comprar diamantes'), primary: true, disabled: !canPurchase }];
     buttons.push({ id: 'gift', label: tr(t, 'walletV3.sendGift', 'Enviar presente') });
+    // [2026-10-17 carteira-sem-piscar] `value` = null + `text` pronto: o herói
+    // nativo rolava a contagem 0 → saldo A CADA abertura (o "pisca" do número).
+    // Saldo vem do cache por conta (services/diamonds) → 1º quadro já certo.
     return {
-      caps, brand: 'CHATYY', value: bal, fmt: 'int', loc: language || '',
+      caps, brand: 'CHATYY', value: null, fmt: 'int', loc: language || '',
       text: bal == null ? '—' : formatInt(bal, language), dia: true, danger: !!negative, numSize: 46,
       sub: heroSub,
       note: negative ? tr(t, 'gifts.negativeBalance', 'Seu saldo está negativo por causa de um reembolso. Recarregue para voltar a enviar.') : '',
@@ -685,6 +693,12 @@ function WalletScreen() {
         a11y,
       });
     }
+    if (!filtered.length && loading) {
+      // [2026-10-17 carteira-sem-piscar] histórico ainda vindo (sem cache) →
+      // spinner discreto NO LUGAR da lista; herói/blocos já no layout final.
+      out.push({ id: 'loading', k: 'l' });
+      return out;
+    }
     if (!filtered.length && !more && !loadingMore) {
       const msg = {
         all: ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'],
@@ -703,7 +717,7 @@ function WalletScreen() {
     if (loadingMore) out.push({ id: 'loading', k: 'l' });
     else if (!more && filtered.length > 8) out.push({ id: 'end', k: 'n', t: tr(t, 'walletV3.endOfList', 'Isso é tudo por aqui') });
     return out;
-  }, [nativeOn, rows, filtered.length, more, loadingMore, filter, canPurchase, t, language]);
+  }, [nativeOn, rows, filtered.length, more, loadingMore, loading, filter, canPurchase, t, language]);
 
   const txById = useMemo(() => {
     const m = new Map();
@@ -732,7 +746,7 @@ function WalletScreen() {
       ) : (
         <TopBar title={title} onBack={() => { try { router.back(); } catch {} }} maxWidth={Layout.contentMaxWidth} />
       )}
-      {loading ? (
+      {showSkeleton ? (
         <NativeInsetView><WalletSkeleton /></NativeInsetView>
       ) : nativeOn ? (
         <NativeWalletList
@@ -761,7 +775,7 @@ function WalletScreen() {
           renderItem={renderItem}
           ListHeaderComponent={header}
           ListFooterComponent={footer}
-          ListEmptyComponent={more || loadingMore ? null : <View style={{ marginTop: Space.md }}><EmptyActivity s={s} t={t} filter={filter} onBuy={canPurchase ? openTopup : null} /></View>}
+          ListEmptyComponent={loading ? <View style={styles.more}><ActivityIndicator color={s.textSecondary} /></View> : more || loadingMore ? null : <View style={{ marginTop: Space.md }}><EmptyActivity s={s} t={t} filter={filter} onBuy={canPurchase ? openTopup : null} /></View>}
           onEndReached={loadMore}
           onEndReachedThreshold={0.6}
           {...nativeScrollInsetProps()}

@@ -91,7 +91,7 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
     <Modal
       visible={!!visible}
       animationType="slide"
-      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined}
+      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined} allowSwipeDismissal /* [2026-10-17 drag-dismiss] RN 0.83: sem isso o pageSheet NÃO desce interativo (modalInPresentation=YES) */
       transparent={false}
       onRequestClose={onClose}
       statusBarTranslucent={Platform.OS === 'android'}

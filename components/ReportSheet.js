@@ -13,6 +13,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconCheckCircle, IconAlertTriangle } from './Icons';
 import * as api from '../services/api';
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad, afterRNModal } from './NativeSheet';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 // ordem = gravidade (o servidor prioriza a fila pelo motivo)
 export const REPORT_REASONS = ['csam', 'threat', 'self_harm', 'non_consensual', 'hate', 'doxxing', 'harassment', 'violence', 'sexual', 'scam', 'impersonation', 'spam', 'misinformation', 'ip', 'other'];
@@ -23,6 +24,8 @@ export const REPORT_REASONS = ['csam', 'threat', 'self_harm', 'non_consensual', 
 // `fromModal` (padrão true): os chamadores abrem a partir de um menu <Modal> RN que está
 // descendo → no iOS a apresentação espera a saída dele (afterRNModal).
 export default function ReportSheet({ visible, onClose, target, title, native = true, fromModal = true }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag134 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { colors } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
@@ -84,7 +87,7 @@ export default function ReportSheet({ visible, onClose, target, title, native = 
             <>
               <Text style={[st.title, { color: colors.text }]}>{title || t('mod.reportTitle')}</Text>
               <Text style={[st.sub, { color: colors.textSecondary }]}>{t('mod.reportSub')}</Text>
-              <ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
+              <DragScroll drag={_drag134} disabled={useNative}><ScrollView style={{ maxHeight: 360 }} keyboardShouldPersistTaps="handled">
                 {REPORT_REASONS.map((code) => {
                   const on = reason === code;
                   return (
@@ -97,7 +100,7 @@ export default function ReportSheet({ visible, onClose, target, title, native = 
                     </TouchableOpacity>
                   );
                 })}
-              </ScrollView>
+              </ScrollView></DragScroll>
               {reason === 'self_harm' ? <Text style={[st.help, { color: colors.text, borderColor: colors.border }]}>{t('mod.selfHarmHelp')}</Text> : null}
               {reason === 'csam' ? <Text style={[st.help, { color: colors.text, borderColor: colors.border }]}>{t('mod.csamNote')}</Text> : null}
               <TextInput value={details} onChangeText={setDetails} placeholder={t('mod.detailsPlaceholder')} placeholderTextColor={colors.textTertiary}
@@ -132,12 +135,15 @@ export default function ReportSheet({ visible, onClose, target, title, native = 
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={st.backdrop} onPress={onClose}>
-        <Pressable style={[st.sheet, { backgroundColor: colors.surface || colors.background, paddingBottom: 16 + insets.bottom }]} onPress={() => {}}>
+      <DragSheetRoot>
+      <Pressable style={[st.backdrop, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag134} color="rgba(0,0,0,0.45)" />
+        <DragPanel drag={_drag134} onStartShouldSetResponder={() => true} style={[st.sheet, { backgroundColor: colors.surface || colors.background, paddingBottom: 16 + insets.bottom }]} >
           <View style={[st.grab, { backgroundColor: colors.border }]} />
           {content}
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

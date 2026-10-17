@@ -6,8 +6,11 @@ import { IconCheck } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import ModalHeader from './ModalHeader';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 export default function BroadcastModal({ visible, onClose, onCreated, colors, t, editBroadcast }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag73 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [name, setName] = useState('');
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -71,11 +74,13 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable style={{
+      <DragSheetRoot>
+      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag73} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={_drag73} onStartShouldSetResponder={() => true} style={{
           marginTop: 'auto', maxHeight: '80%', backgroundColor: colors.surface,
           borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden',
-        }} onPress={() => {}}>
+        }} >
           {/* Header */}
           <ModalHeader
             title={editBroadcast
@@ -96,7 +101,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
               placeholderTextColor={colors.textTertiary}
               style={{
                 backgroundColor: colors.background, borderRadius: 10, paddingHorizontal: 16,
-                paddingVertical: 10, color: colors.text, fontSize: 15,
+                paddingVertical: 10, color: colors.text, fontSize: 15, height: 39, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
               }}
             />
           </View>
@@ -117,7 +122,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
               placeholderTextColor={colors.textTertiary}
               style={{
                 backgroundColor: colors.background, borderRadius: 20, paddingHorizontal: 16,
-                paddingVertical: 8, color: colors.text, fontSize: 14,
+                paddingVertical: 8, color: colors.text, fontSize: 14, height: 34, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
               }}
             />
           </View>
@@ -126,7 +131,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
           {loading ? (
             <ActivityIndicator color={colors.primary} style={{ padding: 20 }} />
           ) : (
-            <FlatList
+            <DragScroll drag={_drag73}><FlatList
               data={filtered}
               extraData={selected}
               keyExtractor={item => item.email}
@@ -161,10 +166,11 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
                   </TouchableOpacity>
                 );
               }}
-            />
+            /></DragScroll>
           )}
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

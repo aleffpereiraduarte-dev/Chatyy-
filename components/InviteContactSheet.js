@@ -18,6 +18,7 @@ import {
   prefetchInviteRef, shareInvite, inviteBySms, inviteByWhatsApp, inviteByEmail,
   callNumber, smsNumber, copyText,
 } from '../services/inviteContact';
+import { isPstnEnabled } from '../constants/featureFlags'; // [2026-10-17 sem-pstn]
 
 function Row({ icon: Icon, label, onPress, colors, strong }) {
   return (
@@ -88,7 +89,8 @@ export default function InviteContactSheet({ visible, contact, onClose, onEdit, 
       )}
 
       {!!phone && <View style={[st.sep, { backgroundColor: colors.borderLight || colors.border }]} />}
-      {!!phone && native && (
+      {/* [2026-10-17 sem-pstn] Ligações só pelo Chatyy: sem "Ligar" (tel:) p/ quem não tem Chatyy. */}
+      {!!phone && native && isPstnEnabled() && (
         <Row icon={IconPhone} colors={colors} label={tr('invite.call', 'Ligar')} onPress={run(() => callNumber(phone))} />
       )}
       {!!phone && native && (

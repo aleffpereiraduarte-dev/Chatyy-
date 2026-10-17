@@ -44,7 +44,10 @@ export default function ContactMessage({ content, isOwn, colors = {}, t }) {
 
   const handleCall = () => {
     if (contact.phone) {
-      Linking.openURL(`tel:${contact.phone}`).catch(() => {});
+      // [2026-10-17 sem-pstn] Só ligações Chatyy (kill switch isPstnEnabled).
+      if (require('../constants/featureFlags').isPstnEnabled()) { Linking.openURL(`tel:${contact.phone}`).catch(() => {}); return; }
+      let router = null; try { router = require('expo-router').router; } catch {}
+      require('../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: contact.phone, email: contact.email, name: contact.name, router, t });
     }
   };
 

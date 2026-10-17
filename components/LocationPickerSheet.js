@@ -1163,7 +1163,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   paddingVertical: 12,
                   fontSize: 14.5,
                   color: colors.text,
-                  marginBottom: 14,
+                  marginBottom: 14, height: 44, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                 }}
               />
 

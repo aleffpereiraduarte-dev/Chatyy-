@@ -288,7 +288,16 @@ export function isNativeGroupCallEnabled(email) {
 //     promo "Chamadas ilimitadas", saldo de minutos, ligações SIP/PSTN.
 // Backend também recusa (410). Só religar com um provedor novo.
 export const VOICE_OTP_ENABLED = false;
-export const PSTN_ENABLED = false;
+// [2026-10-17 sem-pstn] Founder: "tirar a opção de ligar com número de telefone
+// normal, só pelo Chatyy". KILL SWITCH ÚNICO de toda ligação para número comum
+// (discador/teclado, "Ligar" via tel:, rediscar PSTN do histórico, saldo de
+// minutos, fallback PSTN da chamada, teclado DTMF). Padrão DESLIGADO.
+// Religar: globalThis.__chatyy_pstn = true ANTES do import (ex. remote config no
+// boot). O código de serviço (services/pstnCall.js, sipCall.js) fica intacto.
+export function isPstnEnabled() {
+  try { return globalThis.__chatyy_pstn === true; } catch { return false; }
+}
+export const PSTN_ENABLED = isPstnEnabled();
 
 // ────────────────────────────────────────────────────────────────────────
 // [2026-10-10 storage-boot] Armazenamento local / abertura rápida.

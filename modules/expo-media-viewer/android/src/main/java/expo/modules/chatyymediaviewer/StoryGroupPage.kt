@@ -108,6 +108,11 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     fun onPageTapAt(page: SVGroupPage, x: Float, y: Float) { onPageTap(page, x) }
     /** [v2] true = o player de áudio do dialog controla o progresso/fim da voz. */
     fun voiceDriven(page: SVGroupPage, item: SVItem): Boolean = false
+    /**
+     * [2026-10-17 status-reacoes] Segurar o coração: phase 0 = começou,
+     * 1 = dedo moveu, 2 = soltou, 3 = cancelado. rawX/rawY = tela.
+     */
+    fun onHoldLike(page: SVGroupPage, phase: Int, rawX: Float, rawY: Float) {}
   }
 
   var host: Host? = null
@@ -154,6 +159,18 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
   private val replyRow = LinearLayout(context)
   private val replyPill = TextView(context)
   private val likeBtn = ImageButton(context)
+  /** [2026-10-17 status-reacoes] segurar o coração abre a bolha (apiVersion 4; o dialog liga). */
+  var likeHoldEnabled = false
+  private var likeHoldActive = false
+  private var likeDownX = 0f
+  private var likeDownY = 0f
+  private val likeHoldRunnable = Runnable {
+    if (!likeHoldEnabled) return@Runnable
+    likeHoldActive = true
+    likeBtn.isPressed = false
+    likeBtn.parent?.requestDisallowInterceptTouchEvent(true)
+    host?.onHoldLike(this, 0, likeDownX, likeDownY)
+  }
 
   var index = 0
     private set
@@ -371,6 +388,7 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
       }.start()
       host?.onTapLike(this)
     }
+    likeBtn.setOnTouchListener { _, ev -> likeTouch(ev) }
     replyRow.addView(likeBtn, LinearLayout.LayoutParams(dp(48f), dp(48f)).apply { leftMargin = dp(6f) })
     bottom.addView(replyRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48f)).apply {
       leftMargin = dp(12f); rightMargin = dp(8f); bottomMargin = dp(4f)
@@ -597,6 +615,53 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     voiceView.setProgress(f)
   }
 
+  /** Frame do coração na tela (âncora da bolha). */
+  fun likeScreenRect(): android.graphics.Rect {
+    val loc = IntArray(2)
+    likeBtn.getLocationOnScreen(loc)
+    return android.graphics.Rect(loc[0], loc[1], loc[0] + likeBtn.width, loc[1] + likeBtn.height)
+  }
+
+  // false = o botão segue com o clique normal; true = a bolha está com o dedo.
+  private fun likeTouch(ev: MotionEvent): Boolean {
+    if (!likeHoldEnabled) return false
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        likeHoldActive = false
+        likeDownX = ev.rawX
+        likeDownY = ev.rawY
+        likeBtn.removeCallbacks(likeHoldRunnable)
+        likeBtn.postDelayed(likeHoldRunnable, 320)
+        return false
+      }
+      MotionEvent.ACTION_MOVE -> {
+        if (likeHoldActive) { host?.onHoldLike(this, 1, ev.rawX, ev.rawY); return true }
+        val slop = ViewConfiguration.get(context).scaledTouchSlop
+        if (abs(ev.rawX - likeDownX) > slop || abs(ev.rawY - likeDownY) > slop) likeBtn.removeCallbacks(likeHoldRunnable)
+        return false
+      }
+      MotionEvent.ACTION_UP -> {
+        likeBtn.removeCallbacks(likeHoldRunnable)
+        if (likeHoldActive) {
+          likeHoldActive = false
+          host?.onHoldLike(this, 2, ev.rawX, ev.rawY)
+          return true // não vira clique
+        }
+        return false
+      }
+      MotionEvent.ACTION_CANCEL -> {
+        likeBtn.removeCallbacks(likeHoldRunnable)
+        if (likeHoldActive) {
+          likeHoldActive = false
+          host?.onHoldLike(this, 3, ev.rawX, ev.rawY)
+          return true
+        }
+        return false
+      }
+    }
+    return likeHoldActive
+  }
+
   fun refreshCounters() {
     val g = group ?: return
     val it = currentItem ?: return
@@ -604,7 +669,11 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
       viewersText.text = labels.views(it.viewsCount)
     } else {
       val liked = it.myReaction.isNotEmpty()
-      if (liked) {
+      if (liked && !it.myReaction.startsWith("\u2764")) {
+        // [2026-10-17 status-reacoes] reagiu com outro emoji → o botão mostra o emoji
+        likeBtn.setImageBitmap(svEmojiBitmap(it.myReaction, dp(30f)))
+        likeBtn.clearColorFilter()
+      } else if (liked) {
         likeBtn.setImageResource(R.drawable.sv_rx_heart)
         likeBtn.clearColorFilter()
       } else {

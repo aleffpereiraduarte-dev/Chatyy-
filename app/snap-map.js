@@ -77,6 +77,7 @@ import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
   IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter, IconUserPlus, IconSettings,
 } from '../components/Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop, DragFade } from '../components/ui/useDragToDismiss';
 
 // 2026-06-24 DE-GOOGLE: arrancamos o Google Maps (Maps JS API + billing pago)
 // e passamos a usar o tile server self-hosted do BoraUm (OpenStreetMap data,
@@ -1051,6 +1052,12 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
 }
 
 export default function SnapMapScreen() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag3012 = useDragToDismiss({ onDismiss: () => { const f = () => setPickerOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag2841 = useDragToDismiss({ onDismiss: () => { const f = () => setGrantsOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag2705 = useDragToDismiss({ onDismiss: () => { const f = () => setSelected(null); f(); } });
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
   _agoT = t;
@@ -2703,8 +2710,10 @@ export default function SnapMapScreen() {
 
       {/* Pin bottom-sheet — "what can I do with this friend" */}
       <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setSelected(null)}>
-          <View style={{ flex: 1 }} />
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }, { backgroundColor: 'transparent' }]} onPress={() => setSelected(null)}>
+          <DragBackdrop drag={_drag2705} color="rgba(0,0,0,0.45)" />
+          <DragPanel drag={_drag2705} onStartShouldSetResponder={() => true} style={{ flex: 1 }} />
           <Pressable onPress={(e) => e.stopPropagation?.()} style={{ backgroundColor: colors.surface, padding: 22, paddingBottom: 22 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
             {selected && (() => {
               // [2026-10-12 find-my] `selected` é um retrato — o updated_at vivo
@@ -2827,15 +2836,17 @@ export default function SnapMapScreen() {
             })()}
           </Pressable>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Privacy / grants modal — [2026-10-12 mapa-amigos] quem vê minha
           localização (parar por pessoa / todos), modo fantasma, pedidos
           recebidos/enviados e de quem recebo (com "atualizado há X"). */}
       <Modal visible={grantsOpen} transparent animationType="slide" onRequestClose={() => setGrantsOpen(false)}>
+        <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setGrantsOpen(false)} />
-          <View style={{ backgroundColor: colors.surface, padding: 22, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: SH * 0.82 }}>
+          <DragFade drag={_drag2841}><Pressable style={{ flex: 1 }} onPress={() => setGrantsOpen(false)} /></DragFade>
+          <DragPanel drag={_drag2841} style={{ backgroundColor: colors.surface, padding: 22, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: SH * 0.82 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
               <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text }}>
                 {t?.('snapmap.privacyTitle') || 'Privacidade de localização'}
@@ -2844,7 +2855,7 @@ export default function SnapMapScreen() {
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            <ScrollView>
+            <DragScroll drag={_drag2841}><ScrollView>
               {/* Modo fantasma */}
               <TouchableOpacity
                 onPress={toggleGhostMode}
@@ -2993,16 +3004,18 @@ export default function SnapMapScreen() {
                 <IconUserPlus size={16} color={inkFg} />
                 <Text style={{ color: inkFg, fontSize: 13, fontWeight: '700' }}>{t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}</Text>
               </TouchableOpacity>
-            </ScrollView>
-          </View>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>
 
       {/* [2026-10-12 mapa-amigos] Escolher contato → pedido de localização */}
       <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
+        <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setPickerOpen(false)} />
-          <View style={{ backgroundColor: colors.surface, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, height: SH * 0.72 }}>
+          <DragFade drag={_drag3012}><Pressable style={{ flex: 1 }} onPress={() => setPickerOpen(false)} /></DragFade>
+          <DragPanel drag={_drag3012} style={{ backgroundColor: colors.surface, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, height: SH * 0.72 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
               <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text }}>
                 {t?.('fmap.addFriend') || 'Adicionar amigo ao mapa'}
@@ -3034,7 +3047,7 @@ export default function SnapMapScreen() {
                 return <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 16, textAlign: 'center' }}>{t?.('fmap.noContacts') || 'Nenhum contato encontrado'}</Text>;
               }
               return (
-                <ScrollView keyboardShouldPersistTaps="handled">
+                <DragScroll drag={_drag3012}><ScrollView keyboardShouldPersistTaps="handled">
                   {list.map((c) => {
                     const already = receiving.has(c.email);
                     const pending = pendingOut.has(c.email);
@@ -3063,11 +3076,12 @@ export default function SnapMapScreen() {
                       </TouchableOpacity>
                     );
                   })}
-                </ScrollView>
+                </ScrollView></DragScroll>
               );
             })()}
-          </View>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>
     </View>
   );

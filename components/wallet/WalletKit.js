@@ -117,13 +117,18 @@ export function HeroButton({ label, onPress, primary = false, icon, disabled, ac
 // Número com contagem animada. `format(n)` devolve a string exibida.
 export function AnimatedNumber({ value, format, style, duration = 650, numberOfLines = 1, ...rest }) {
   const fmt = format || ((n) => String(Math.round(n)));
-  const [shown, setShown] = useState(typeof value === 'number' ? 0 : value);
-  const fromRef = useRef(0);
+  // [2026-10-17 carteira-sem-piscar] Nasce no valor (o saldo vem do cache) — antes
+  // contava 0 → saldo a cada abertura da tela. Só anima quando MUDA com a tela aberta.
+  const [shown, setShown] = useState(value);
+  const fromRef = useRef(typeof value === 'number' ? value : null);
   const rafRef = useRef(0);
   useEffect(() => {
     if (typeof value !== 'number' || !isFinite(value)) { setShown(value); return undefined; }
-    const from = typeof fromRef.current === 'number' ? fromRef.current : 0;
+    const prev = fromRef.current;
     fromRef.current = value;
+    // Sem valor anterior conhecido (— → número): aparece direto, sem contar do 0.
+    if (typeof prev !== 'number') { setShown(value); return undefined; }
+    const from = prev;
     if (from === value || isReduceMotionEnabled() || typeof requestAnimationFrame !== 'function') { setShown(value); return undefined; }
     const t0 = Date.now();
     const step = () => {

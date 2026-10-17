@@ -66,19 +66,38 @@ function nativePdfView() {
   } catch { return null; }
 }
 
-function NativePdfPreview({ PdfView, url, headers, bg, fg, dark, openLabel, errorLabel }) {
+function NativePdfPreview({ PdfView, url, headers, bg, fg, dark, openLabel, errorLabel, onOpenWith, unavailableLabel, retryLabel, onRetry }) {
   const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(null); // null | código do erro nativo (http_404, invalid_pdf…)
   const [page, setPage] = useState({ page: 0, count: 0 });
   const abs = absoluteFileUrl(url);
 
   if (failed) {
+    // [2026-10-17 viewer-pb] P&B (era botão roxo "Abrir" → navegador com a URL).
+    // 404/410 = arquivo não existe mais no armazenamento → texto claro, sem
+    // botão inútil. Demais erros: Tentar novamente + Abrir com… (sistema).
+    const gone = /http_(404|410)/.test(String(failed));
+    const btnBg = dark ? '#ffffff' : '#111111';
+    const btnFg = dark ? '#111111' : '#ffffff';
+    const ghostBorder = dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)';
+    const ghostFg = dark ? '#ffffff' : '#111111';
     return (
       <View style={[st.center, { backgroundColor: bg }]}>
-        <Text style={[st.err, { color: fg }]}>{errorLabel}</Text>
-        <TouchableOpacity style={st.btn} onPress={() => openInApp(abs)} accessibilityRole="button">
-          <Text style={st.btnText}>{openLabel}</Text>
-        </TouchableOpacity>
+        <Text style={[st.err, { color: fg }]}>{gone && unavailableLabel ? unavailableLabel : errorLabel}</Text>
+        {!gone && onRetry ? (
+          <TouchableOpacity style={[st.btnMono, { backgroundColor: btnBg }]} onPress={onRetry} accessibilityRole="button">
+            <Text style={[st.btnMonoText, { color: btnFg }]}>{retryLabel || 'Tentar novamente'}</Text>
+          </TouchableOpacity>
+        ) : null}
+        {!gone ? (
+          <TouchableOpacity
+            style={[st.btnGhost, { borderColor: ghostBorder }]}
+            onPress={() => (onOpenWith ? onOpenWith() : openInApp(abs))}
+            accessibilityRole="button"
+          >
+            <Text style={[st.btnMonoText, { color: ghostFg }]}>{openLabel}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   }
@@ -94,7 +113,7 @@ function NativePdfPreview({ PdfView, url, headers, bg, fg, dark, openLabel, erro
           const n = e?.nativeEvent?.pageCount || 0;
           setPage((p) => ({ page: p.page, count: n }));
         }}
-        onError={() => { setLoading(false); setFailed(true); }}
+        onError={(e) => { setLoading(false); setFailed(String(e?.nativeEvent?.message || 'error')); }}
         onPageChange={(e) => {
           const ne = e?.nativeEvent || {};
           setPage({ page: ne.page || 0, count: ne.pageCount || 0 });
@@ -119,13 +138,14 @@ export function hasNativePdfView() {
   return !!nativePdfView();
 }
 
-export default function NativeDocPreview({ url, filename, kind, headers, dark = true, openLabel = 'Abrir', errorLabel = 'Não foi possível abrir a pré-visualização' }) {
+export default function NativeDocPreview({ url, filename, kind, headers, dark = true, openLabel = 'Abrir', errorLabel = 'Não foi possível abrir a pré-visualização', onOpenWith, unavailableLabel, retryLabel }) {
   const isPdf = isPdfDoc(url, filename, kind);
   const PdfView = useMemo(() => (isPdf ? nativePdfView() : null), [isPdf]);
+  const [retry, setRetry] = useState(0);
   const bg0 = dark ? '#1a1a1a' : '#ffffff';
   const fg0 = dark ? 'rgba(255,255,255,0.75)' : '#444';
   if (PdfView && url) {
-    return <NativePdfPreview key={String(url)} PdfView={PdfView} url={url} headers={headers} bg={bg0} fg={fg0} dark={dark} openLabel={openLabel} errorLabel={errorLabel} />;
+    return <NativePdfPreview key={String(url) + '#' + retry} PdfView={PdfView} url={url} headers={headers} bg={bg0} fg={fg0} dark={dark} openLabel={openLabel} errorLabel={errorLabel} onOpenWith={onOpenWith} unavailableLabel={unavailableLabel} retryLabel={retryLabel} onRetry={() => setRetry((n) => n + 1)} />;
   }
   if (Platform.OS === 'web' && isPdf) {
     return <WebDocPreview url={url} filename={filename} kind={kind} dark={dark} openLabel={openLabel} errorLabel={errorLabel} />;
@@ -248,8 +268,8 @@ function WebDocPreview({ url, filename, kind, dark, openLabel, errorLabel }) {
     return (
       <View style={[st.center, { backgroundColor: bg }]}>
         <Text style={[st.err, { color: fg }]}>{errorLabel}</Text>
-        <TouchableOpacity style={st.btn} onPress={() => openInApp(absoluteFileUrl(url))} accessibilityRole="button">
-          <Text style={st.btnText}>{openLabel}</Text>
+        <TouchableOpacity style={[st.btnMono, { backgroundColor: dark ? '#ffffff' : '#111111' }]} onPress={() => openInApp(absoluteFileUrl(url))} accessibilityRole="button">
+          <Text style={[st.btnMonoText, { color: dark ? '#111111' : '#ffffff' }]}>{openLabel}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -297,16 +317,15 @@ function WebDocPreview({ url, filename, kind, dark, openLabel, errorLabel }) {
 const st = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   err: { fontSize: 15, textAlign: 'center', marginBottom: 16 },
-  btn: { paddingHorizontal: 22, paddingVertical: 10, borderRadius: 10, backgroundColor: '#7c3aed' },
   btnMono: { paddingHorizontal: 22, paddingVertical: 11, borderRadius: 10, minWidth: 140, alignItems: 'center' },
   btnMonoText: { fontWeight: '600', fontSize: 15 },
+  btnGhost: { paddingHorizontal: 22, paddingVertical: 10, borderRadius: 10, minWidth: 140, alignItems: 'center', borderWidth: 1, marginTop: 10 },
   extBadge: { width: 72, height: 88, borderRadius: 10, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   extBadgeText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
   docName: { fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 18, maxWidth: 300 },
   hint: { fontSize: 13, marginTop: 10, textAlign: 'center' },
   openWithPill: { position: 'absolute', right: 16, bottom: 24, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.75)', minWidth: 96, alignItems: 'center' },
   openWithPillText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  btnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   pageBadge: { position: 'absolute', top: 12, alignSelf: 'center', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.55)' },
   pageBadgeText: { color: '#fff', fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
 });

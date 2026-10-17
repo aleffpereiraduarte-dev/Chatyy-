@@ -107,6 +107,7 @@ function _lpFor(url, C) {
   return null;
 }
 
+function _pstnEnabled() { try { return require('../../constants/featureFlags').isPstnEnabled() === true; } catch { return false; } }
 const _ctMap = new Map(); // email|phone → { loading, has, email }
 function _ctFor(email, phone, C) {
   const key = String(email || '') + '|' + String(phone || '');
@@ -531,7 +532,9 @@ function buildContact(m, row, ctx, C, own) {
       ? btn([icon(IconUser, { s: 14, c: accent }), text(_tr(C, 'chatConv.sendMessage', 'Mensagem'), { fs: 13, fw: 600, c: accent })], 'ct_msg')
       : btn([icon(IconUserPlus, { s: 14, c: accent }), text(_tr(C, 'chat.invite', 'Convidar'), { fs: 13, fw: 600, c: accent })], 'ct_inv'));
   const actions = [first, vdiv(), btn([icon(IconPlus, { s: 14, c: accent }), text(_tr(C, 'chatConv.addContact', 'Adicionar'), { fs: 13, fw: 600, c: accent })], 'ct_save')];
-  if (ct.phone) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
+  // [2026-10-17 sem-pstn] "Ligar" só p/ quem tem Chatyy (ligação app-a-app); tel: só c/ kill switch.
+  const _pstnOn = _pstnEnabled();
+  if (_pstnOn ? !!ct.phone : (!chk.loading && chk.has && !!(chk.email || ct.email))) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
   const w = _clampW(250, 300, 12 + 56 + 12 + 12 + Math.max(Math.min(_estW(ct.name, 16, true), 180), _estW(pretty, 13.5) + (flag ? 24 : 0), _estW(ct.email, 12.5)));
   row.bl = [vstack([
     hstack([_avatarNode(ct.name, ct.email, 56), vstack(info, { fl: 1 })], { g: 12, p: [12, 12, 10, 12], al: 'c' }),
@@ -1189,7 +1192,16 @@ export function runCardAction(item, action, D) {
       }
       case 'ct_msg': case 'ct_inv': case 'ct_save': case 'ct_call': {
         const ct = _contact(m, { t });
-        if (kind === 'ct_call') { D.Linking.openURL(`tel:${ct.phone.replace(/[^+\d]/g, '')}`).catch?.(() => {}); return; }
+        if (kind === 'ct_call') {
+          if (_pstnEnabled()) { if (ct.phone) D.Linking.openURL(`tel:${ct.phone.replace(/[^+\d]/g, '')}`).catch?.(() => {}); return; }
+          const chk = _ctMap.get(String(ct.email || '') + '|' + String(ct.phone || ''));
+          const target = chk && chk.has ? (chk.email || ct.email) : '';
+          try {
+            if (target) require('../../services/chatyyOnlyCalls').startChatyyCall({ email: target, name: ct.name, router: D.router });
+            else if (ct.phone || ct.email) require('../../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: ct.phone, email: ct.email, name: ct.name, router: D.router, t });
+          } catch {}
+          return;
+        }
         if (kind === 'ct_msg') {
           const chk = _ctMap.get(String(ct.email || '') + '|' + String(ct.phone || ''));
           const target = (chk && chk.email) || ct.email;

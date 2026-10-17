@@ -12,6 +12,8 @@ import {
   Alert, Animated, Easing, Linking, BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { usePreventRemove, useNavigation } from '@react-navigation/native';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll } from './ui/useDragToDismiss';
 import * as api from '../services/api';
 
 // Request media-library permission with a clear, actionable prompt.
@@ -462,7 +464,7 @@ export default function ProfileEditSheet({
       t?.('profile.discardMessage') || 'Suas mudanças serão perdidas.',
       [
         { text: t?.('profile.keepEditing') || 'Continuar editando', style: 'cancel' },
-        { text: t?.('common.discard') || 'Descartar', style: 'destructive', onPress: () => onClose?.() },
+        { text: t?.('common.discard') || 'Descartar', style: 'destructive', onPress: () => { try { _leaveOkRef.current = true; } catch {} onClose?.(); } },
       ]
     );
   };
@@ -512,6 +514,7 @@ export default function ProfileEditSheet({
           links: cleanedLinks,
           account_type: accountType,
         });
+        try { _leaveOkRef.current = true; } catch {}
         onClose?.();
       } else {
         setErr(r?.message || t?.('profile.saveFailed') || 'Não foi possível salvar');
@@ -538,10 +541,48 @@ export default function ProfileEditSheet({
     return () => { try { sub?.remove?.(); } catch {} };
   }, [asScreen]);
 
+  // [2026-10-17 drag-dismiss] Modo rota (iOS = pageSheet nativo, desce
+  // arrastando): sujo → arrasto/voltar/X pedem "Descartar alterações?" em vez
+  // de fechar (equivalente ao isModalInPresentation + presentationControllerDidAttemptToDismiss).
+  const _navigation = useNavigation();
+  const _leaveOkRef = useRef(false);
+  usePreventRemove(!!asScreen && dirty && !saving, ({ data }) => {
+    if (_leaveOkRef.current) { try { _navigation.dispatch(data.action); } catch {} return; }
+    Alert.alert(
+      t?.('profile.discardTitle') || 'Descartar alterações?',
+      t?.('profile.discardMessage') || 'Suas mudanças serão perdidas.',
+      [
+        { text: t?.('profile.keepEditing') || 'Continuar editando', style: 'cancel' },
+        { text: t?.('common.discard') || 'Descartar', style: 'destructive', onPress: () => { _leaveOkRef.current = true; try { _navigation.dispatch(data.action); } catch {} } },
+      ]
+    );
+  });
+  // pageSheet: o teclado é medido em coordenadas da TELA, o KAV no espaço da
+  // folha (que começa ~status bar + 10 abaixo) → compensa o topo da folha.
+  const _rootRef = useRef(null);
+  const [_kbOffset, _setKbOffset] = useState(0);
+  useEffect(() => {
+    if (!asScreen || Platform.OS !== 'ios') return undefined;
+    const measure = () => { try { _rootRef.current?.measureInWindow?.((x, y) => { if (typeof y === 'number' && y >= 0 && y < 200) _setKbOffset(Math.round(y)); }); } catch {} };
+    const tm = setTimeout(measure, 650);
+    let un = null;
+    try { un = _navigation?.addListener?.('transitionEnd', measure); } catch {}
+    return () => { clearTimeout(tm); try { un && un(); } catch {} };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asScreen]);
+  // Modo folha (RN Modal, perfil): arrastar de qualquer ponto fecha; sujo → pergunta.
+  const _drag = useDragToDismiss({
+    visible: !!visible && !asScreen,
+    enabled: !asScreen,
+    onDismiss: () => onClose?.(),
+    shouldConfirm: () => saving || isDirty(),
+    onDismissAttempt: () => requestClose(),
+  });
+
   const _screenBg = colors?.background || (isDark ? '#000' : '#fff');
   const Wrap = asScreen ? View : Modal;
   const wrapProps = asScreen
-    ? { style: { flex: 1, backgroundColor: _screenBg } }
+    ? { style: { flex: 1, backgroundColor: _screenBg }, ref: _rootRef, collapsable: false }
     : { visible: !!visible, transparent: true, animationType: 'slide', onRequestClose: requestClose };
   const Backdrop = asScreen ? View : Pressable;
   const backdropProps = asScreen
@@ -554,18 +595,21 @@ export default function ProfileEditSheet({
         style: {
           backgroundColor: colors?.background || '#fff',
           borderTopLeftRadius: 20, borderTopRightRadius: 20,
-          maxHeight: '92%',
+          flexShrink: 1,
         },
         onPress: e => e.stopPropagation?.(),
       };
 
   return (
     <Wrap {...wrapProps}>
+      <SheetRootMaybe on={!asScreen}>
       <Backdrop {...backdropProps}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={asScreen ? _kbOffset : 0}
           style={asScreen ? { flex: 1 } : { flex: 1, justifyContent: 'flex-end' }}
         >
+          <PanelMaybe on={!asScreen} drag={_drag}>
           <Sheet {...sheetProps}>
             {/* Drag handle (só no modo folha) */}
             {!asScreen && (
@@ -621,6 +665,7 @@ export default function ProfileEditSheet({
               </TouchableOpacity>
             </View>
 
+            <ScrollMaybe on={!asScreen} drag={_drag}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {/* Cover photo banner — 150px Instagram/X-style 3:1 strip
                   sitting above the avatar. Tap or use the "Alterar capa"
@@ -1077,7 +1122,9 @@ export default function ProfileEditSheet({
 
               <View style={{ height: Platform.OS === 'ios' ? 40 : 20 }} />
             </ScrollView>
+            </ScrollMaybe>
           </Sheet>
+          </PanelMaybe>
         </KeyboardAvoidingView>
 
         {/* Avatar preview modal — shown after the user picks an image and
@@ -1159,6 +1206,12 @@ export default function ProfileEditSheet({
           </Pressable>
         </Modal>
       </Backdrop>
+      </SheetRootMaybe>
     </Wrap>
   );
 }
+
+// [2026-10-17 drag-dismiss] Só no modo folha (RN Modal); no modo rota a folha é a nativa.
+function SheetRootMaybe({ on, children }) { return on ? <DragSheetRoot>{children}</DragSheetRoot> : children; }
+function PanelMaybe({ on, drag, children }) { return on ? <DragPanel drag={drag} style={{ maxHeight: '92%' }}>{children}</DragPanel> : children; }
+function ScrollMaybe({ on, drag, children }) { return on ? <DragScroll drag={drag}>{children}</DragScroll> : children; }

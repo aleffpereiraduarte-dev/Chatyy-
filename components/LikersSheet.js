@@ -17,6 +17,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconX } from './Icons';
 import * as api from '../services/api';
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 const ACCENT = '#111111';
 
@@ -132,6 +133,7 @@ export default function LikersSheet({
     );
   }, [colors, isDark, t, openUser, handleToggleFollow]);
 
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   if (!visible) return null;
 
   // [2026-10-09 native-sheets] Corpo compartilhado: sheet do sistema (iOS/Android) ou Modal (web).
@@ -155,12 +157,12 @@ export default function LikersSheet({
               </Text>
             </View>
           )}
-          <FlatList
+          <DragScroll drag={drag} disabled={!!(USE_NATIVE_SHEETS && native)}><FlatList
             data={users}
             keyExtractor={(u) => u.email}
             renderItem={renderItem}
             showsVerticalScrollIndicator={false}
-          />
+          /></DragScroll>
         </>
   );
 
@@ -177,9 +179,10 @@ export default function LikersSheet({
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable
-          onPress={e => e.stopPropagation?.()}
+      <DragSheetRoot>
+      <Pressable style={{ flex: 1 }} onPress={onClose}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={drag} onStartShouldSetResponder={() => true}
           style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
             backgroundColor: colors?.background || '#fff',
@@ -193,8 +196,9 @@ export default function LikersSheet({
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
           </View>
           {body}
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

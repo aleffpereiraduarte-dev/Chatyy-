@@ -229,6 +229,48 @@ export function openConversation(href, opts = {}) {
   return 'push';
 }
 
+// [notmember-ryw 2026-10-17] "Fala oi" (contato entrou), seguir de volta, etc.: abre a conversa
+// DIRETA com `email` garantindo o get-or-create ANTES de navegar. Antes a tela
+// abria só com ?email=, criava a conversa lá dentro e disparava as leituras
+// (chat_info/chat_messages) no edge ~150 ms depois — a réplica ainda sem a
+// linha de membro respondia 403 "Not a member" e a tela ficava no erro.
+// 1) conversa já no cache local → abre na hora com o id;
+// 2) senão chat_create (devolve a existente ou cria) com teto de 2,5 s;
+// 3) falhou/estourou → cai no caminho antigo (?email=), que resolve na tela.
+const _directInflight = new Map();
+export async function openDirectConversation(email, extraParams = {}, opts = {}) {
+  const em = _lc(email);
+  if (!em) return 'noop';
+  const base = { email: em, type: 'direct', ...(extraParams || {}) };
+  let id = 0;
+  try {
+    const { getCachedConversations } = require('./chatCache');
+    const cached = await getCachedConversations();
+    if (Array.isArray(cached)) {
+      const hit = cached.find(c => c && (c.type === 'direct' || !c.type)
+        && _lc(c.other_email || c.contact_email) === em);
+      if (hit && hit.id) id = parseInt(hit.id, 10) || 0;
+    }
+  } catch {}
+  if (!id) {
+    try {
+      let p = _directInflight.get(em);
+      if (!p) {
+        const api = require('./api');
+        p = Promise.race([
+          api.chatCreate([em], '', 'direct'),
+          new Promise(res => setTimeout(() => res(null), 2500)),
+        ]).finally(() => { _directInflight.delete(em); });
+        _directInflight.set(em, p);
+      }
+      const r = await p;
+      id = parseInt(r?.data?.id || r?.data?.conversation_id, 10) || 0;
+    } catch {}
+  }
+  const params = id ? { ...base, id: String(id) } : base;
+  return openConversation({ pathname: CONV_PATH, params }, opts);
+}
+
 export default openConversation;
 // QA hook (web Playwright + debugging): drive the guard without UI.
 try { if (typeof globalThis !== 'undefined') globalThis.__chatyyOpenConv = openConversation; } catch {}

@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Redirect } from 'expo-router';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
-import { PLANS_ENABLED, PSTN_ENABLED } from '../constants/featureFlags';
+import { PLANS_ENABLED, isPstnEnabled } from '../constants/featureFlags';
 import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -2113,7 +2113,7 @@ export default function PlansScreen() {
             {/* Feature list with icons — full set, transparente sobre o que
                 desbloqueia (user reportou que pagava sem saber o que ganhava). */}
             <View>
-              {PSTN_ENABLED && <FeatureItem text={t('plans.unlimitedCalls')} highlight />}
+              {isPstnEnabled() && <FeatureItem text={t('plans.unlimitedCalls')} highlight />}
               <FeatureItem text={t('plans.aiPriority')} highlight />
               <FeatureItem text={t('plans.hdVideo')} />
               <FeatureItem text={t('plans.aiSummary')} />

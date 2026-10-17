@@ -1229,8 +1229,8 @@ function ChatHub() {
     }
     if (activeTab === 'calls') {
       return (
-        <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityRole="button" accessibilityLabel={t('a11y.newCall')}>
+        <TouchableOpacity onPress={() => { try { if (globalThis.__chatyyOpenNewCall?.()) return; } catch {} router.push('/chat-new'); }} activeOpacity={0.6}
+          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityRole="button" accessibilityLabel={t('a11y.newCall')}>{/* [2026-10-17 sem-pstn] abre "Nova chamada" (só Chatyy) da aba Ligações */}
           <IconPhone size={17} color={headerIconColor} />
         </TouchableOpacity>
       );

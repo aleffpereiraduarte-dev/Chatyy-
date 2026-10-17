@@ -51,6 +51,7 @@ import { driveRow } from '../components/native/driveListAdapter';
 // [2026-10-16 drive-native] fila durável de envio + abrir/enviar/salvar no aparelho (sem URL pública)
 import * as driveQueue from '../services/driveUploadQueue';
 import { openOnDevice, sendCopy, saveToDevice } from '../services/driveFileActions';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 // ============================================================
 // Web-only drag/drop wrapper — RN Web's View strips drag props,
@@ -262,6 +263,7 @@ function DriveScreenInner() {
   const [previewFile, setPreviewFile] = useState(null);
   const [previewPanelFile, setPreviewPanelFile] = useState(null); // desktop side panel
   const [detailsFile, setDetailsFile] = useState(null); // file details bottom sheet
+  const _detailsDrag = useDragToDismiss({ visible: !!detailsFile, onDismiss: () => setDetailsFile(null) }); // [2026-10-17 drag-dismiss]
   const [dragOver, setDragOver] = useState(false);
   const [dragHasFolders, setDragHasFolders] = useState(false);
   const [dragOverFolder, setDragOverFolder] = useState(null); // folder id being dragged over
@@ -2130,8 +2132,10 @@ function DriveScreenInner() {
 
     return (
       <Modal transparent visible animationType="slide" onRequestClose={() => setDetailsFile(null)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setDetailsFile(null)}>
-          <Pressable style={[styles.detailsSheet, { backgroundColor: colors.surface }]} onPress={(e) => e.stopPropagation()}>
+        <DragSheetRoot>
+        <Pressable style={[styles.modalOverlay, { backgroundColor: 'transparent' }]} onPress={() => setDetailsFile(null)}>
+          <DragBackdrop drag={_detailsDrag} color="rgba(0,0,0,0.4)" />
+          <DragPanel drag={_detailsDrag} onStartShouldSetResponder={() => true} style={[styles.detailsSheet, { backgroundColor: colors.surface }]}>
             {/* Drag handle */}
             <View style={styles.detailsHandle}>
               <View style={[styles.detailsHandleBar, { backgroundColor: colors.textTertiary }]} />
@@ -2213,8 +2217,9 @@ function DriveScreenInner() {
                 <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('drive.share')}</Text>
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
     );
   };
@@ -2451,6 +2456,7 @@ function DriveScreenInner() {
         initialIndex={idx >= 0 ? idx : 0}
         onClose={() => setPreviewFile(null)}
         getUrl={(f) => api.fileDownloadUrl(f.id)}
+        onArchiveExtracted={() => { try { loadFiles(currentFolderId); } catch {} }}
       />
     );
   };

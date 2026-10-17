@@ -34,6 +34,7 @@ import {
   IconMessageSquare,
   IconFilm,
 } from './Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from './ui/useDragToDismiss';
 
 // ─── Hook: useOutboxCount ───
 // Polls services/offlineCache.getOfflineQueue() every 2s, returning the
@@ -176,6 +177,8 @@ function _resolveConvName(conversationId, convCache) {
 // ─── Component ───
 
 export default function OutboxBanner() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag233 = useDragToDismiss({ onDismiss: () => { const f = () => setExpanded(false); f(); } });
   const { colors } = useTheme();
   const { t } = useLanguage();
   const { count, items, isReplaying, retryNow, cancelItem } = useOutboxCount();
@@ -236,13 +239,14 @@ export default function OutboxBanner() {
         transparent
         onRequestClose={() => setExpanded(false)}
       >
+        <DragSheetRoot>
         <View style={s.modalRoot}>
-          <TouchableOpacity
+          <DragFade drag={_drag233}><TouchableOpacity
             style={s.modalBackdrop}
             activeOpacity={1}
             onPress={() => setExpanded(false)}
-          />
-          <View style={[s.sheet, { backgroundColor: colors.card || colors.bg || '#fff' }]}>
+          /></DragFade>
+          <DragPanel drag={_drag233} style={[s.sheet, { backgroundColor: colors.card || colors.bg || '#fff' }]}>
             <View style={[s.sheetHeader, { borderBottomColor: colors.border || '#e5e7eb' }]}>
               <Text style={[s.sheetTitle, { color: colors.text || '#111' }]}>
                 {t('outbox.expand') || 'Pending messages'}
@@ -264,7 +268,7 @@ export default function OutboxBanner() {
                 </Text>
               </View>
             ) : (
-              <FlatList
+              <DragScroll drag={_drag233}><FlatList
                 data={items}
                 keyExtractor={(it, idx) => String(it.id || idx)}
                 contentContainerStyle={{ paddingBottom: Spacing.lg }}
@@ -309,7 +313,7 @@ export default function OutboxBanner() {
                     </View>
                   );
                 }}
-              />
+              /></DragScroll>
             )}
 
             <View style={[s.footer, { borderTopColor: colors.border || '#eee' }]}>
@@ -330,8 +334,9 @@ export default function OutboxBanner() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>
     </>
   );

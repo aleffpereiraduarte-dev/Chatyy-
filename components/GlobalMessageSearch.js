@@ -20,6 +20,7 @@ import * as api from '../services/api';
 // paginação por onEndReached. Kill switch: globalThis.__chatyy_native_search = false.
 import NativeResultList, { useNativeResults } from './native/NativeResultList';
 import { snippetAround } from './native/resultListAdapter';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 const KINDS = [
   { key: 'photo', labelKey: 'gsearch.photos', fallback: 'Fotos', Icon: IconImage },
@@ -54,6 +55,8 @@ function fmtDuration(sec) {
 }
 
 export default function GlobalMessageSearch({ query, colors, isDark, t, router, pillStyle }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag419 = useDragToDismiss({ onDismiss: () => { const f = () => setDateSheet(false); f(); } });
   const { user } = useAuth();
   const me = String(user?.email || '').toLowerCase();
   const loc = (t && t('_locale')) || undefined;
@@ -417,8 +420,10 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
       )}
 
       <Modal visible={dateSheet} transparent animationType="fade" onRequestClose={() => setDateSheet(false)}>
-        <Pressable style={styles.overlay} onPress={() => setDateSheet(false)}>
-          <Pressable style={[styles.sheet, { backgroundColor: colors.surface }]} onPress={() => {}}>
+        <DragSheetRoot>
+        <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={() => setDateSheet(false)}>
+          <DragBackdrop drag={_drag419} color="rgba(0,0,0,0.45)" />
+          <DragPanel drag={_drag419} onStartShouldSetResponder={() => true} style={[styles.sheet, { backgroundColor: colors.surface }]} >
             <Text style={[styles.sheetTitle, { color: colors.text }]}>{tt('gsearch.date', 'Data')}</Text>
             {[{ key: 'any', labelKey: 'gsearch.anyDate', fallback: 'Qualquer data' }, ...DATE_PRESETS, { key: 'custom', labelKey: 'gsearch.custom', fallback: 'Personalizado' }].map((p) => {
               const on = p.key === 'any' ? !range : (range && (range.key === p.key || (p.key === 'custom' && !DATE_PRESETS.some((x) => x.key === range.key))));
@@ -439,8 +444,9 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
                 </TouchableOpacity>
               );
             })}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Personalizado: "De" (até 2 anos atrás) e depois "Até" (a partir do "De" até hoje). */}

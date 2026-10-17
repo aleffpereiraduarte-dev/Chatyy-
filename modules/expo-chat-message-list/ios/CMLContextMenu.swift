@@ -338,6 +338,16 @@ final class CMLActionRow: UIControl {
   private let pathIcon = CMLCtxIconView()
   private let pressBg = UIView()
   private let theme: CMLCtxTheme
+  private var twoLine = false
+
+  /// Largura útil do título (menu 250 − margens − ícone).
+  static let titleWidth: CGFloat = CMLActionMenu.width - 16 - 26 - 16 - 10
+
+  static func needsTwoLines(_ t: String, hasSub: Bool) -> Bool {
+    if hasSub || t.isEmpty { return false }
+    let w = (t as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 17)]).width
+    return w * 0.8 > titleWidth
+  }
 
   init(_ a: CMLCtxAction, theme: CMLCtxTheme) {
     action = a
@@ -351,8 +361,14 @@ final class CMLActionRow: UIControl {
     title.text = a.title
     title.font = UIFont.systemFont(ofSize: 17)
     title.textColor = color
-    title.numberOfLines = 1
-    title.lineBreakMode = .byTruncatingTail
+    // [2026-10-17 ctx-fit] Sem "…": encolhe até 80% numa linha; se ainda não
+    // couber, quebra em 2 linhas (a linha cresce — ver rowHeight).
+    twoLine = CMLActionRow.needsTwoLines(a.title, hasSub: !a.sub.isEmpty)
+    title.numberOfLines = twoLine ? 2 : 1
+    title.lineBreakMode = twoLine ? .byWordWrapping : .byTruncatingTail
+    title.adjustsFontSizeToFitWidth = true
+    title.minimumScaleFactor = twoLine ? 0.85 : 0.8
+    if twoLine { title.font = UIFont.systemFont(ofSize: 16) }
     addSubview(title)
     if !a.sub.isEmpty {
       subLabel.text = a.sub
@@ -383,7 +399,7 @@ final class CMLActionRow: UIControl {
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  var rowHeight: CGFloat { return action.sub.isEmpty ? CMLActionRow.rowH : CMLActionRow.rowHSub }
+  var rowHeight: CGFloat { return twoLine ? 60 : (action.sub.isEmpty ? CMLActionRow.rowH : CMLActionRow.rowHSub) }
 
   override func layoutSubviews() {
     super.layoutSubviews()
@@ -869,11 +885,16 @@ final class CMLContextMenuOverlay: UIView {
     let gapR: CGFloat = reactBar == nil ? 0 : 10
     let gapM: CGFloat = menu == nil ? 0 : 10
     let menuW = min(CMLActionMenu.width, bounds.width - margin * 2)
-    let menuH = menu?.preferredHeight(max: (bottom - top) * 0.52) ?? 0
     let src = sourceRect
-    let availB = (bottom - top) - reactH - gapR - menuH - gapM
+    // [2026-10-17 ctx-fit] O MENU tem prioridade (nunca cortado): ele pega
+    // tudo o que precisa, deixando só um mínimo p/ o balão; a prévia (balão)
+    // encolhe para caber no resto. Só se nem assim couber o menu rola.
+    let minBubble: CGFloat = min(max(src.height, 1), 64)
+    let menuRoom = (bottom - top) - reactH - gapR - gapM - minBubble
+    let menuH = menu?.preferredHeight(max: menuRoom) ?? 0
+    let availB = max(minBubble, (bottom - top) - reactH - gapR - menuH - gapM)
     var scale: CGFloat = 1
-    if src.height > availB && src.height > 0 { scale = max(0.3, availB / src.height) }
+    if src.height > availB && src.height > 0 { scale = max(0.12, availB / src.height) }
     let bw = src.width * scale, bh = src.height * scale
     var by = src.minY
     if by - gapR - reactH < top { by = top + reactH + gapR }

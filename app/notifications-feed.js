@@ -262,7 +262,7 @@ export default function NotificationsFeedScreen() {
       // /feed-comments is not a registered route — open the public post page
       // instead, which renders the full post with likes + inline comments
       // and works for both logged-in and logged-out viewers.
-      router.push(`/feed/${data.post_id}`);
+      router.push(`/feed/${data.post_id}${item.type === 'feed_comment' ? '?comments=1' : ''}`); // [notif-audit 2026-10-17]
     } else if (item.type === 'one_alert') {
       // One flagged an urgent email — open inbox
       router.push('/inbox');

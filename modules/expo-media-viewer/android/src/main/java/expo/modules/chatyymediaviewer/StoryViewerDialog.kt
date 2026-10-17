@@ -134,6 +134,16 @@ class StoryViewerDialog(
   private val viewersCache = HashMap<String, List<Map<String, Any?>>>()
 
   private lateinit var toast: TextView
+
+  // [2026-10-17 status-reacoes] apiVersion 4 — bolha ao segurar o coração +
+  // "+" com a grade completa (SVEmojiStore). O módulo liga antes do show().
+  var reactionHold = false
+  private var reactBubble: SVReactBubble? = null
+  private var bubbleCatcher: View? = null
+  private var bubbleStartedOnHeart = true
+  private var bubbleTapMode = false
+  private var emojiSheet: SVEmojiSheet? = null
+  private val pickerEnabled: Boolean get() = reactionHold && SVEmojiStore.cats.isNotEmpty()
   private val toastHide = Runnable { if (::toast.isInitialized) toast.animate().alpha(0f).setDuration(220).start() }
 
   private var topInset = 0
@@ -409,6 +419,8 @@ class StoryViewerDialog(
   @Deprecated("Deprecated in Java")
   override fun onBackPressed() {
     when {
+      emojiSheet != null -> closeEmojiSheet()
+      reactBubble != null -> closeBubble()
       composerOpen -> closeComposer()
       sheetOpen -> closeSheet()
       else -> finish("back", true)
@@ -559,6 +571,7 @@ class StoryViewerDialog(
       forEachPage { it.applyInsets(topInset, bottomInset) }
       layoutComposer()
       layoutSheet()
+      emojiSheet?.applyLayout(root.height, imeBottom, bottomInset)
       insets
     }
   }
@@ -586,6 +599,7 @@ class StoryViewerDialog(
       val p = SVGroupPage(context, labels)
       p.layoutParams = RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.MATCH_PARENT)
       p.host = this@StoryViewerDialog
+      p.likeHoldEnabled = reactionHold
       return PageVH(p)
     }
 
@@ -620,7 +634,7 @@ class StoryViewerDialog(
     private var vDrag = false
     private var tracker: VelocityTracker? = null
 
-    private fun canVertical(): Boolean = !composerOpen && !sheetOpen && !closed && pendingMore == null
+    private fun canVertical(): Boolean = !composerOpen && !sheetOpen && !closed && pendingMore == null && emojiSheet == null && reactBubble == null
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
       when (ev.actionMasked) {
@@ -1199,15 +1213,27 @@ class StoryViewerDialog(
     composerReactions = LinearLayout(context)
     composerReactions.orientation = LinearLayout.HORIZONTAL
     composerReactions.gravity = Gravity.CENTER
+    // [2026-10-17 status-reacoes] 7 emojis + "+" cabem em 360dp: botão 44
+    val bs = if (reactions.size + (if (pickerEnabled) 1 else 0) > 6) 44f else 54f
     reactions.forEachIndexed { i, r ->
       val b = ImageButton(context)
-      b.setImageBitmap(emojiBitmap(r.emoji, dp(38f))) // [2026-10-15] emoji real (como Instagram)
+      b.setImageBitmap(emojiBitmap(r.emoji, dp(bs - 14f))) // [2026-10-15] emoji real (como Instagram)
       b.scaleType = ImageView.ScaleType.FIT_CENTER
-      b.setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+      b.setPadding(dp(5f), dp(5f), dp(5f), dp(5f))
       b.contentDescription = r.emoji
       borderless(b)
-      b.setOnClickListener { tapReaction(i) }
-      composerReactions.addView(b, LinearLayout.LayoutParams(dp(54f), dp(54f)))
+      b.setOnClickListener { v -> tapReaction(i, v) }
+      composerReactions.addView(b, LinearLayout.LayoutParams(dp(bs), dp(bs)))
+    }
+    if (pickerEnabled) {
+      val b = ImageButton(context)
+      b.setImageResource(R.drawable.sv_ic_plus)
+      b.setColorFilter(Color.WHITE)
+      b.scaleType = ImageView.ScaleType.CENTER
+      b.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.argb(42, 255, 255, 255)) }
+      b.contentDescription = labels.get("moreReactions", "Mais reações")
+      b.setOnClickListener { tapMoreReactions() }
+      composerReactions.addView(b, LinearLayout.LayoutParams(dp(38f), dp(38f)).apply { leftMargin = dp(4f) })
     }
     composer.addView(composerReactions, FrameLayout.LayoutParams(wc, wc, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
 
@@ -1316,16 +1342,170 @@ class StoryViewerDialog(
     showToast(if (q != null) labels.get("answerSent", "Resposta enviada") else labels.get("replySent", "Resposta enviada"))
   }
 
-  private fun tapReaction(i: Int) {
+  private fun tapReaction(i: Int, v: View? = null) {
     val r = reactions.getOrNull(i) ?: return
     val pg = currentPage() ?: return
     val item = pg.currentItem ?: return
     root.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    if (reactionHold) {
+      val c = v?.let { centerInRoot(it) }
+      closeComposer()
+      applyReaction(r.emoji, pg, item, c?.first, c?.second)
+      return
+    }
     item.myReaction = if (item.myReaction == r.emoji) "" else r.emoji
     pg.refreshCounters()
     listener.emit("onReact", mapOf("id" to item.id, "ownerEmail" to (pg.group?.ownerEmail ?: ""), "emoji" to r.emoji, "active" to item.myReaction.isNotEmpty()))
     closeComposer()
     if (item.myReaction.isNotEmpty()) burst(r.kind, glyph = r.emoji)
+  }
+
+  // ─── [2026-10-17 status-reacoes] Reações livres (apiVersion 4) ────────────
+
+  private fun centerInRoot(v: View): Pair<Float, Float> {
+    val a = IntArray(2); val b = IntArray(2)
+    v.getLocationOnScreen(a); root.getLocationOnScreen(b)
+    return Pair(a[0] - b[0] + v.width / 2f, a[1] - b[1] + v.height / 2f)
+  }
+
+  /** Mesmo caminho do coração (onReact → status_react). Mesmo emoji de novo desfaz. */
+  private fun applyReaction(emoji: String, pg: SVGroupPage, item: SVItem, fromX: Float?, fromY: Float?) {
+    if (emoji.isEmpty() || pg.group?.isSelf != false) return
+    item.myReaction = if (item.myReaction == emoji) "" else emoji
+    pg.refreshCounters()
+    listener.emit("onReact", mapOf("id" to item.id, "ownerEmail" to (pg.group?.ownerEmail ?: ""), "emoji" to emoji, "active" to item.myReaction.isNotEmpty()))
+    if (item.myReaction.isNotEmpty()) {
+      root.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+      SVReactionBurst.play(root, emoji, fromX, fromY, MVMotion.reduceMotion)
+    }
+  }
+
+  private fun tapMoreReactions() {
+    addPause("picker") // pausa contínua: entra antes do composer sair
+    closeComposer()
+    openEmojiSheet()
+  }
+
+  private fun openEmojiSheet() {
+    val pg = currentPage()
+    val item = pg?.currentItem
+    if (emojiSheet != null || closed || pg == null || item == null || pg.group?.isSelf != false) { removePause("picker"); return }
+    addPause("picker")
+    val sh = SVEmojiSheet(context, reactions.map { it.emoji }, item.myReaction, labels)
+    sh.onPick = { emoji, sx, sy ->
+      val b = IntArray(2); root.getLocationOnScreen(b)
+      closeEmojiSheet()
+      val p2 = currentPage(); val it2 = p2?.currentItem
+      if (p2 != null && it2 != null) applyReaction(emoji, p2, it2, sx - b[0], sy - b[1])
+    }
+    sh.onClose = { closeEmojiSheet() }
+    root.addView(sh, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    sh.applyLayout(root.height, imeBottom, bottomInset)
+    emojiSheet = sh
+    sh.present(MVMotion.reduceMotion)
+  }
+
+  private fun closeEmojiSheet() {
+    val sh = emojiSheet ?: return
+    emojiSheet = null
+    sh.dismiss(MVMotion.reduceMotion)
+    removePause("picker")
+  }
+
+  private fun bubbleItems(): List<String> {
+    val heart = reactions.firstOrNull { it.kind == "heart" }?.emoji ?: "❤️"
+    val out = arrayListOf(heart)
+    for (r in reactions) if (!out.contains(r.emoji)) out.add(r.emoji)
+    if (pickerEnabled) out.add(SVReactBubble.MORE)
+    return out
+  }
+
+  override fun onHoldLike(page: SVGroupPage, phase: Int, rawX: Float, rawY: Float) {
+    if (!reactionHold || closed || page !== currentPage()) return
+    val b = IntArray(2); root.getLocationOnScreen(b)
+    val x = rawX - b[0]; val y = rawY - b[1]
+    when (phase) {
+      0 -> {
+        val item = page.currentItem ?: return
+        if (page.group?.isSelf != false || reactBubble != null) return
+        page.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        addPause("react")
+        pager.isUserInputEnabled = false
+        val bb = SVReactBubble(context, bubbleItems(), item.myReaction)
+        val w = root.width
+        val bw = min(bb.preferredW, w - dp(16f))
+        val anchor = page.likeScreenRect()
+        anchor.offset(-b[0], -b[1])
+        val bx = (anchor.right - bw).coerceIn(dp(8f), max(dp(8f), w - bw - dp(8f)))
+        val by = max(topInset + dp(8f), anchor.top - bb.preferredH - dp(14f))
+        // toque fora fecha; no "modo tocar" (soltou sem deslizar) escolhe pelo ponto
+        val catcher = View(context)
+        catcher.setOnTouchListener { _, ev ->
+          if (ev.actionMasked == MotionEvent.ACTION_UP) {
+            val cur = reactBubble
+            if (cur != null && bubbleTapMode) {
+              val lx = ev.x - cur.left; val ly = ev.y - cur.top
+              val idx = if (ly >= -dp(12f) && ly <= cur.height + dp(12f)) cur.indexAt(lx, ly) else null
+              if (idx != null) { cur.setHighlighted(idx, true); pickFromBubble(idx) } else closeBubble()
+            } else closeBubble()
+          }
+          true
+        }
+        root.addView(catcher, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        bubbleCatcher = catcher
+        // posição por margem (translationY fica livre p/ a animação de entrada)
+        root.addView(bb, FrameLayout.LayoutParams(bw, bb.preferredH, Gravity.TOP or Gravity.START).apply { leftMargin = bx; topMargin = by })
+        reactBubble = bb
+        bubbleStartedOnHeart = true
+        bubbleTapMode = false
+        bb.present(MVMotion.reduceMotion)
+      }
+      1 -> {
+        val bb = reactBubble ?: return
+        if (bubbleTapMode) return
+        val idx = bb.indexAt(x - bb.left, y - bb.top)
+        if (idx != null) bubbleStartedOnHeart = false
+        bb.setHighlighted(idx, MVMotion.reduceMotion)
+      }
+      2 -> {
+        val bb = reactBubble ?: return
+        if (bubbleTapMode) return
+        val h = bb.highlighted
+        when {
+          h != null -> pickFromBubble(h)
+          bubbleStartedOnHeart -> bubbleTapMode = true // fica aberta p/ escolher com toque
+          else -> closeBubble()
+        }
+      }
+      else -> if (!bubbleTapMode) closeBubble()
+    }
+  }
+
+  private fun pickFromBubble(i: Int) {
+    val bb = reactBubble ?: return
+    val emoji = bb.items.getOrNull(i) ?: run { closeBubble(); return }
+    val c = bb.centerOf(i)
+    if (emoji == SVReactBubble.MORE) {
+      addPause("picker")
+      closeBubble()
+      openEmojiSheet()
+      return
+    }
+    closeBubble()
+    val pg = currentPage(); val item = pg?.currentItem
+    if (pg != null && item != null) applyReaction(emoji, pg, item, c.first, c.second)
+  }
+
+  private fun closeBubble() {
+    bubbleCatcher?.let { root.removeView(it) }
+    bubbleCatcher = null
+    bubbleTapMode = false
+    if (::pager.isInitialized) pager.isUserInputEnabled = true
+    reactBubble?.let { bb ->
+      reactBubble = null
+      bb.dismiss(MVMotion.reduceMotion) {}
+    }
+    removePause("react")
   }
 
   private fun emojiBitmap(glyph: String, px: Int): android.graphics.Bitmap {
@@ -1542,7 +1722,12 @@ class StoryViewerDialog(
       }
       r.addView(texts, LinearLayout.LayoutParams(0, wc, 1f).apply { leftMargin = dp(12f) })
       val kind = (row["reaction"] as? String) ?: ""
-      if (kind.isNotEmpty()) {
+      val rem = (row["emoji"] as? String) ?: "" // [2026-10-17 status-reacoes] emoji real
+      if (rem.isNotEmpty()) {
+        val rv = ImageView(context)
+        rv.setImageBitmap(emojiBitmap(rem, dp(26f)))
+        r.addView(rv, LinearLayout.LayoutParams(dp(26f), dp(26f)).apply { leftMargin = dp(8f) })
+      } else if (kind.isNotEmpty()) {
         val rv = ImageView(context)
         rv.setImageResource(SVReaction.drawableFor(kind))
         r.addView(rv, LinearLayout.LayoutParams(dp(24f), dp(24f)).apply { leftMargin = dp(8f) })

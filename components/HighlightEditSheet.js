@@ -29,6 +29,7 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { IconX, IconCheck, IconCamera, IconTrash, IconEdit } from './Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch (e) {}
@@ -52,6 +53,8 @@ export default function HighlightEditSheet({
   visible, onClose, highlight, colors, isDark, t,
   onUpdated, onDeleted,
 }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag291 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [title, setTitle] = useState('');
   const [items, setItems] = useState([]);
   const [stories, setStories] = useState([]);
@@ -289,8 +292,10 @@ export default function HighlightEditSheet({
 
   return (
     <Modal visible={!!visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
-        <Pressable onPress={(e) => e.stopPropagation?.()} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: '15%', backgroundColor: sheetBg, borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' }}>
+      <DragSheetRoot>
+      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag291} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={_drag291} onStartShouldSetResponder={() => true}  style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: '15%', backgroundColor: sheetBg, borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' }}>
           {/* Handle */}
           <View style={{ alignItems: 'center', paddingTop: 8 }}>
             <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }} />
@@ -354,7 +359,7 @@ export default function HighlightEditSheet({
             ))}
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }}>
+          <DragScroll drag={_drag291}><ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }}>
             {loading ? (
               <SkeletonGrid />
             ) : tab === 'cover' ? (
@@ -428,9 +433,10 @@ export default function HighlightEditSheet({
                 {T('profile.deleteHighlightCta', 'Apagar destaque')}
               </Text>
             </TouchableOpacity>
-          </ScrollView>
-        </Pressable>
+          </ScrollView></DragScroll>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

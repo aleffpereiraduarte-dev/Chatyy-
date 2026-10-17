@@ -13,7 +13,7 @@
 //     Web = keyframes CSS + FLIP via Web Animations API (sem loop JS).
 // Rotas/ações idênticas ao drawer anterior (chat.js 2026-10-07 apps-menu).
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, PanResponder } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, PanResponder, Keyboard, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import {
@@ -25,7 +25,7 @@ import {
 import PressableScale from '../PressableScale';
 import { WALLET_ENABLED } from '../../constants/featureFlags';
 import { haptic } from '../../constants/theme';
-import { Springs, Durations, Easings, motionEnabled } from '../../constants/motion'; // [2026-10-16 motion]
+import { Springs, Durations, Easings, Gestures, motionEnabled } from '../../constants/motion'; // [2026-10-16 motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad, nativeSheetBoundedOn } from '../NativeSheet';
 import BiaOrb from '../bia/BiaOrb';
 import { GlyphWave } from '../bia/BiaUI';
@@ -70,6 +70,18 @@ const _norm = (s) => {
 const TILE = 60;
 const STRIP_MAX = 8;
 const COLS = 4;
+const SIDE = 16; // inset horizontal das seções (faixa Recentes alinha com a grade)
+
+// [2026-10-17 apps-drag] Arrastar-p/-fechar em QUALQUER ponto da folha (iOS/Android):
+// RNGH Gesture.Pan simultâneo com o ScrollView (Gesture.Native) — a lista rola até o
+// topo e, no MESMO gesto, a folha passa a descer 1:1. RNGH já está no binário (import
+// estático em NotificationToast); callbacks no JS (runOnJS) movendo Animated nativo.
+// Web: alça/cabeçalho via PanResponder (como antes). Kill: __chatyy_motion_sheet_drag=false.
+let _GH = null;
+if (Platform.OS !== 'web') {
+  try { _GH = require('react-native-gesture-handler'); } catch { _GH = null; } // eslint-disable-line global-require
+}
+const GH_OK = !!(_GH && _GH.Gesture && _GH.Gesture.Pan && _GH.Gesture.Native && _GH.GestureDetector && _GH.GestureHandlerRootView);
 
 function biaSuggestion(t, emailUnread) {
   const h = new Date().getHours();
@@ -115,7 +127,7 @@ const AppIcon = React.memo(function AppIcon({ Comp, isDark, size = TILE }) {
 
 // Um app (faixa Recentes ou grade). Badge com pop; modo editar = tremor + marcador.
 const _tileOuter = { alignSelf: 'stretch' };
-const AppTile = React.memo(function AppTile({ item, badge, onPress, onLongPress, isDark, t, textColor, editing, pinned, seed, width }) {
+const AppTile = React.memo(function AppTile({ item, badge, onPress, onLongPress, isDark, t, textColor, editing, pinned, seed, width, singleLine }) {
   const shown = badge > 99 ? '99+' : String(badge || '');
   const a11y = item.label + (badge ? ', ' + t('apps.badgeNew', { count: shown }) : '')
     + (editing ? ', ' + (pinned ? t('apps.unpin') : t('apps.pin')) : '');
@@ -155,7 +167,7 @@ const AppTile = React.memo(function AppTile({ item, badge, onPress, onLongPress,
             )}
           </View>
         </Jiggle>
-        <Text style={[st.label, { color: textColor }]} numberOfLines={2}>{item.label}</Text>
+        <Text style={[st.label, { color: textColor }]} numberOfLines={singleLine ? 1 : 2} ellipsizeMode="tail">{item.label}</Text>
       </TilePress>
     </View>
   );
@@ -366,28 +378,91 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
     ]).start();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, openTick]);
+  // Solta o arrasto: passou do limiar (distância/velocidade) → fecha com mola seguindo o
+  // dedo; senão volta com mola. dy em px, vy em px/ms (mesma unidade do PanResponder).
+  const settleDrag = useCallback((dy, vy) => {
+    const useNative = Platform.OS !== 'web';
+    if (dy > Gestures.sheetDismissDistance || vy > Gestures.sheetDismissVelocity) {
+      closingByDragRef.current = true;
+      try { haptic.light?.(); } catch {}
+      // [2026-10-16 motion] continua com a velocidade do dedo (mola sem overshoot).
+      Animated.parallel([
+        Animated.spring(dragY, { toValue: sheetHRef.current, velocity: Math.max(0, vy) * 1000, ...Springs.sheet, overshootClamping: true, restDisplacementThreshold: 2, restSpeedThreshold: 40, useNativeDriver: useNative }),
+        Animated.timing(backdropA, { toValue: 0, duration: 200, easing: Easings.fadeOut, useNativeDriver: useNative }),
+      ]).start(() => { try { onCloseRef.current?.(); } catch {} });
+    } else {
+      Animated.spring(dragY, { toValue: 0, ...Springs.sheet, velocity: vy * 1000, useNativeDriver: useNative }).start();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Fallback (web / sem RNGH / kill switch): só alça + cabeçalho arrastam.
   const dragResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_e, g) => g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.2,
+    onPanResponderGrant: () => { dragY.stopAnimation(); },
     onPanResponderMove: (_e, g) => { dragY.setValue(Math.max(0, g.dy)); },
-    onPanResponderRelease: (_e, g) => {
-      if (g.dy > 110 || g.vy > 0.9) {
-        closingByDragRef.current = true;
-        try { haptic.light?.(); } catch {}
-        // [2026-10-16 motion] continua com a velocidade do dedo (mola sem overshoot).
-        Animated.parallel([
-          Animated.spring(dragY, { toValue: sheetHRef.current, velocity: Math.max(0, g.vy) * 1000, ...Springs.sheet, overshootClamping: true, restDisplacementThreshold: 2, restSpeedThreshold: 40, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(backdropA, { toValue: 0, duration: 200, easing: Easings.fadeOut, useNativeDriver: Platform.OS !== 'web' }),
-        ]).start(() => { try { onCloseRef.current?.(); } catch {} });
-      } else {
-        Animated.spring(dragY, { toValue: 0, ...Springs.sheet, velocity: g.vy * 1000, useNativeDriver: Platform.OS !== 'web' }).start();
-      }
-    },
+    onPanResponderRelease: (_e, g) => { settleDrag(Math.max(0, g.dy), g.vy); },
     onPanResponderTerminate: () => {
       Animated.spring(dragY, { toValue: 0, ...Springs.sheet, useNativeDriver: Platform.OS !== 'web' }).start();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
-  const backdropOpacity = Animated.multiply(backdropA, dragY.interpolate({ inputRange: [0, 400], outputRange: [1, 0.35], extrapolate: 'clamp' }));
+  // Folha inteira arrastável (nativo). Toque começado na alça/cabeçalho/busca arrasta
+  // sempre; dentro da lista, só quando ela está no topo (scrollY<=0) e o dedo desce —
+  // se a lista estava rolada, ela sobe até o topo e a folha assume no mesmo gesto.
+  const scrollYRef = useRef(0);
+  const topBlockHRef = useRef(0);
+  const panStateRef = useRef({ active: false, base: 0, prev: 0, header: false });
+  const sheetGesture = useMemo(() => {
+    if (!GH_OK || !motionEnabled('sheet_drag')) return null;
+    try {
+      const native = _GH.Gesture.Native();
+      const springBack = () => Animated.spring(dragY, { toValue: 0, ...Springs.sheet, useNativeDriver: true }).start();
+      const pan = _GH.Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetY([-8, 8])
+        .failOffsetX([-14, 14])
+        .simultaneousWithExternalGesture(native)
+        .onBegin((e) => {
+          const g = panStateRef.current;
+          g.active = false; g.base = 0; g.prev = 0;
+          g.header = (e?.y ?? 0) < 8 + topBlockHRef.current; // paddingTop 8 + alça/cabeçalho/busca
+        })
+        .onUpdate((e) => {
+          const g = panStateRef.current;
+          const ty = e?.translationY || 0;
+          if (!g.active && ty > g.prev && (g.header || scrollYRef.current <= 0.5)) {
+            g.active = true;
+            g.base = g.prev;
+            dragY.stopAnimation();
+            try { Keyboard.dismiss(); } catch {}
+          }
+          if (g.active) dragY.setValue(Math.max(0, ty - g.base));
+          g.prev = ty;
+        })
+        .onEnd((e) => {
+          const g = panStateRef.current;
+          if (!g.active) return;
+          g.active = false;
+          settleDrag(Math.max(0, (e?.translationY || 0) - g.base), (e?.velocityY || 0) / 1000);
+        })
+        .onFinalize(() => {
+          const g = panStateRef.current;
+          if (g.active) { g.active = false; springBack(); } // cancelado (ex.: interrompido pelo sistema)
+        });
+      return { pan, native };
+    } catch { return null; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Fundo esmaece proporcional à translação (0 → altura da folha = 1 → 0).
+  const [sheetH, setSheetH] = useState(() => Math.round(_winH * 0.9));
+  const backdropOpacity = Animated.multiply(backdropA, dragY.interpolate({ inputRange: [0, Math.max(200, sheetH)], outputRange: [1, 0], extrapolate: 'clamp' }));
+  // Altura útil: a lista recebe maxHeight explícito (Yoga não encolhe filho só com
+  // maxHeight no pai → a última fileira vazava abaixo da tela, sem rótulo).
+  const [containerH, setContainerH] = useState(_winH);
+  const [topBlockH, setTopBlockH] = useState(0);
+  const listMaxH = Math.max(160, Math.floor(containerH * 0.9) - 8 - topBlockH);
+  const { width: _winW } = useWindowDimensions();
+  const stripCellW = Math.floor((Math.min(_winW || 375, 640) - SIDE * 2) / COLS);
 
   // Preto verdadeiro no escuro.
   const sheetBg = isDark ? '#000000' : '#FFFFFF';
@@ -510,16 +585,24 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
     let row = 0; // cursor de linha da cascata
     const rowDelay = () => 70 + (row++) * 55;
     const stripBase = showStrip ? rowDelay() : 0;
-    return (
+    const dragAll = !nativeMode && !!sheetGesture;
+    const list = (
       <ScrollView
         key={'apps-list-' + openSeq}
-        style={nativeMode ? { flex: 1 } : { flexGrow: 0, flexShrink: 1 }}
+        style={nativeMode ? { flex: 1 } : { flexGrow: 0, flexShrink: 1, maxHeight: listMaxH }}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: nativeMode ? nativeSheetBottomPad(insets, 16) : Math.max(insets.bottom, 12) + 16 }}
+        // [2026-10-17] paddingHorizontal AQUI (não no pai): a lista vai de borda a borda e a faixa
+        // Recentes pode sangrar até a borda sem ser recortada; respiro inferior p/ a última fileira.
+        contentContainerStyle={{ paddingHorizontal: SIDE, paddingBottom: nativeMode ? nativeSheetBottomPad(insets, 28) : Math.max(insets.bottom, 12) + 32 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         contentInsetAdjustmentBehavior="never"
         automaticallyAdjustContentInsets={false}
+        onScroll={(e) => { scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0; }}
+        scrollEventThrottle={16}
+        // No topo, puxar p/ baixo arrasta a FOLHA (não estica a lista).
+        bounces={dragAll ? false : undefined}
+        overScrollMode={dragAll ? 'never' : undefined}
       >
         {/* [2026-10-15 hotfix-2] No formSheet nativo, cabeçalho + busca ficam DENTRO da rolagem (uma coluna só):
             irmãos fora do ScrollView eram sobrepostos pela lista no iPhone (título sumia, busca por cima de Recentes). */}
@@ -529,11 +612,13 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
         {showStrip && (
           <AppsItem key="strip" enterDelay={delayFor(stripBase - 20)} style={{ marginBottom: 14 }}>
             <SectionTitle isDark={isDark}>{t('apps.recent')}</SectionTitle>
+            {/* Borda a borda (o pai rolável tem paddingHorizontal SIDE e não recorta além da folha);
+                1º item alinha com a 1ª coluna da grade. Antes: margem -16 fora do recorte da lista → "lapa de amigos". */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              style={{ marginHorizontal: -16 }}
-              contentContainerStyle={{ paddingHorizontal: 10 }}
+              style={{ marginHorizontal: -SIDE }}
+              contentContainerStyle={{ paddingHorizontal: SIDE }}
             >
               {stripItems.map((it, i) => (
                 <AppsItem key={it.key} enterDelay={delayFor(stripBase + i * 28)}>
@@ -548,7 +633,8 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
                     editing={editing}
                     pinned={pinnedSet.has(it.key)}
                     seed={i}
-                    width={88}
+                    width={stripCellW}
+                    singleLine
                   />
                 </AppsItem>
               ))}
@@ -594,6 +680,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
         })}
       </ScrollView>
     );
+    return dragAll ? <_GH.GestureDetector gesture={sheetGesture.native}>{list}</_GH.GestureDetector> : list;
   };
 
   // [2026-10-15 hotfix-3] formSheet nativo: lista sumia (painel branco) / sobrepunha no iPhone →
@@ -601,7 +688,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   if (_NATIVE_SHEET) {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents={[0.62, 1]} backgroundColor={sheetBg}>
-        <NativeSheetKeyboardView style={{ flex: 1, paddingTop: 22, paddingHorizontal: 16, backgroundColor: sheetBg }}>
+        <NativeSheetKeyboardView style={{ flex: 1, paddingTop: 22, backgroundColor: sheetBg }}>
           {renderList(true)}
         </NativeSheetKeyboardView>
       </NativeSheet>
@@ -610,50 +697,71 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
 
   if (!mounted) return null;
 
+  const sheetEl = (
+    <Animated.View
+      onLayout={(e) => {
+        const h = e?.nativeEvent?.layout?.height;
+        if (h > 0) { sheetHRef.current = h + 40; if (Math.abs(h - sheetH) > 1) setSheetH(h); }
+      }}
+      style={{
+        transform: [{ translateY: Animated.add(sheetY, dragY) }],
+        backgroundColor: sheetBg,
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        paddingTop: 8,
+        maxHeight: '90%',
+        width: '100%', maxWidth: 640, alignSelf: 'center',
+        ...(isDark ? { borderTopWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)' } : null),
+        ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.18)' } : {}),
+      }}
+      accessibilityViewIsModal
+    >
+      {/* Alça + cabeçalho + busca (inset SIDE). Sem RNGH: alça/cabeçalho = PanResponder;
+          com RNGH a folha INTEIRA arrasta (GestureDetector abaixo). */}
+      <View
+        style={{ paddingHorizontal: SIDE }}
+        onLayout={(e) => {
+          const h = e?.nativeEvent?.layout?.height;
+          if (h > 0) { topBlockHRef.current = h; if (Math.abs(h - topBlockH) > 1) setTopBlockH(h); }
+        }}
+      >
+        <View {...(sheetGesture ? null : dragResponder.panHandlers)}>
+          <View style={{ alignItems: 'center', marginBottom: 10, paddingTop: 2, paddingBottom: 2 }}>
+            <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.14)' }} />
+          </View>
+          {headerEl}
+        </View>
+        {searchEl}
+      </View>
+      {renderList(false)}
+    </Animated.View>
+  );
+  const Root = GH_OK ? _GH.GestureHandlerRootView : View;
+
   return (
     <Modal visible={mounted} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-          <Animated.View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: backdropOpacity }}>
-            <Pressable
-              onPress={onClose}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.close')}
-              style={{
-                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                backgroundColor: isDark ? 'rgba(0,0,0,0.66)' : 'rgba(10,10,18,0.38)',
-                ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px) saturate(120%)', WebkitBackdropFilter: 'blur(8px) saturate(120%)', cursor: 'default' } : {}),
-              }}
-            />
-          </Animated.View>
-          <Animated.View
-            onLayout={(e) => { const h = e?.nativeEvent?.layout?.height; if (h > 0) sheetHRef.current = h + 40; }}
-            style={{
-              transform: [{ translateY: Animated.add(sheetY, dragY) }],
-              backgroundColor: sheetBg,
-              borderTopLeftRadius: 30,
-              borderTopRightRadius: 30,
-              paddingTop: 8,
-              paddingHorizontal: 16,
-              maxHeight: '90%',
-              width: '100%', maxWidth: 640, alignSelf: 'center',
-              ...(isDark ? { borderTopWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)' } : null),
-              ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.18)' } : {}),
-            }}
-            accessibilityViewIsModal
+      <Root style={{ flex: 1 }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <View
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+            onLayout={(e) => { const h = e?.nativeEvent?.layout?.height; if (h > 0 && Math.abs(h - containerH) > 1) setContainerH(h); }}
           >
-            {/* Grabber + cabeçalho = alça de arrasto (a lista fica livre p/ rolar). */}
-            <View {...dragResponder.panHandlers}>
-              <View style={{ alignItems: 'center', marginBottom: 10, paddingTop: 2, paddingBottom: 2 }}>
-                <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.14)' }} />
-              </View>
-              {headerEl}
-            </View>
-            {searchEl}
-            {renderList(false)}
-          </Animated.View>
-        </View>
-      </KeyboardAvoidingView>
+            <Animated.View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: backdropOpacity }}>
+              <Pressable
+                onPress={onClose}
+                accessibilityRole="button"
+                accessibilityLabel={t('common.close')}
+                style={{
+                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                  backgroundColor: isDark ? 'rgba(0,0,0,0.66)' : 'rgba(10,10,18,0.38)',
+                  ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px) saturate(120%)', WebkitBackdropFilter: 'blur(8px) saturate(120%)', cursor: 'default' } : {}),
+                }}
+              />
+            </Animated.View>
+            {sheetGesture ? <_GH.GestureDetector gesture={sheetGesture.pan}>{sheetEl}</_GH.GestureDetector> : sheetEl}
+          </View>
+        </KeyboardAvoidingView>
+      </Root>
     </Modal>
   );
 }

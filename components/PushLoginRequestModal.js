@@ -28,6 +28,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconShield, IconX } from './Icons';
 import * as api from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 // Global trigger — called by pushNotifications.js (foreground push handler).
 let _showModal = null;
@@ -36,6 +37,8 @@ export function triggerPushLoginModal(data) {
 }
 
 export default function PushLoginRequestModal() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag114 = useDragToDismiss({ onDismiss: () => { const f = dismiss; if (typeof f === 'function') f(); } });
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [visible, setVisible] = useState(false);
@@ -112,8 +115,10 @@ export default function PushLoginRequestModal() {
 
   return (
     <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={dismiss}>
-      <Pressable style={pls.overlay} onPress={busy ? undefined : dismiss}>
-        <Pressable onPress={(e) => e.stopPropagation?.()} style={{ width: '100%' }}>
+      <DragSheetRoot>
+      <Pressable style={[pls.overlay, { backgroundColor: 'transparent' }]} onPress={busy ? undefined : dismiss}>
+        <DragBackdrop drag={_drag114} color="rgba(0,0,0,0.55)" />
+        <DragPanel drag={_drag114} onStartShouldSetResponder={() => true}  style={{ width: '100%' }}>
           <Animated.View style={[
             pls.sheet,
             {
@@ -211,8 +216,9 @@ export default function PushLoginRequestModal() {
               </TouchableOpacity>
             </View>
           </Animated.View>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

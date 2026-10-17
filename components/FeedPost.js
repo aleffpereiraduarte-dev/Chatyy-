@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 // expo-image (SDK 55+) renders with the same JSX surface as react-native Image
 // but adds memory+disk caching and a smooth transition. Falls back to RN
 // Image if the module isn't bundled (older binaries / web in some cases).
@@ -563,6 +564,14 @@ const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
 });
 
 function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost, isActive = true, headless = false, command = null }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1291 = useDragToDismiss({ onDismiss: () => { const f = () => setAnalyticsOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1242 = useDragToDismiss({ onDismiss: () => { const f = () => setShareMenuOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1173 = useDragToDismiss({ onDismiss: () => { const f = () => setCollectionsOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1099 = useDragToDismiss({ onDismiss: () => { const f = () => setLikersOpen(false); f(); } });
   const [liked, setLiked] = useState(!!post.user_liked);
   // [2026-10-08 apps-native] tolerate likes_count/likes (WS feed_new_post + older shapes) — was like_count only → 0.
   const [likeCount, setLikeCount] = useState(Number(post.like_count ?? post.likes_count ?? post.likes) || 0);
@@ -1097,8 +1106,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     <>
       {/* Likers modal — Instagram-style sheet with avatar+name+follow button */}
       <Modal visible={likersOpen} transparent animationType="slide" onRequestClose={() => setLikersOpen(false)}>
-        <Pressable style={styles.likersBackdrop} onPress={() => setLikersOpen(false)}>
-          <Pressable style={[styles.likersSheet, { backgroundColor: colors.background, borderColor: colors.border }]} onPress={() => {}}>
+        <DragSheetRoot>
+        <Pressable style={[styles.likersBackdrop, { backgroundColor: 'transparent' }]} onPress={() => setLikersOpen(false)}>
+          <DragBackdrop drag={_drag1099} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag1099} onStartShouldSetResponder={() => true} style={[styles.likersSheet, { backgroundColor: colors.background, borderColor: colors.border }]} >
             <View style={[styles.likersHandle, { backgroundColor: colors.border }]} />
             <Text style={[styles.likersTitle, { color: colors.text }]}>{t('feed.likesTitle') || 'Curtidas'}</Text>
             {likersList === null ? (
@@ -1110,7 +1121,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             ) : (
               // [2026-10-08 apps-native] FlatList (virtualized) — a viral post's
               // likers list mounted every row up front inside a ScrollView.
-              <FlatList
+              <DragScroll drag={_drag1099}><FlatList
                 style={styles.likersScroll}
                 data={likersList}
                 extraData={likersBusy}
@@ -1157,17 +1168,20 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     </TouchableOpacity>
                   );
                 }}
-              />
+              /></DragScroll>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Save-to-collection bottom sheet (long-press bookmark) */}
       <Modal visible={collectionsOpen} transparent animationType="slide" onRequestClose={() => setCollectionsOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setCollectionsOpen(false)}>
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setCollectionsOpen(false)}>
+          <DragBackdrop drag={_drag1173} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag1173} onStartShouldSetResponder={() => true}
+            
             style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 16, paddingBottom: 32, maxHeight: '70%' }}
           >
             <View style={{ alignItems: 'center', marginBottom: 8 }}>
@@ -1200,7 +1214,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 {t('feed.collections') || 'Coleções'}
               </Text>
             ) : (
-              <ScrollView style={{ maxHeight: 320 }}>
+              <DragScroll drag={_drag1173}><ScrollView style={{ maxHeight: 320 }}>
                 {collections.map(c => (
                   <TouchableOpacity
                     key={c.id}
@@ -1212,10 +1226,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     <Text style={{ fontSize: 12, color: colors.textTertiary }}>{c.post_count}</Text>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
+              </ScrollView></DragScroll>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* [2026-10-11 social-qa] toast "Link copiado" */}
@@ -1229,9 +1244,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
 
       {/* Share menu — bottom sheet with Repostar / Compartilhar fora / Copiar link */}
       <Modal visible={shareMenuOpen} transparent animationType="slide" onRequestClose={() => setShareMenuOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShareMenuOpen(false)}>
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShareMenuOpen(false)}>
+          <DragBackdrop drag={_drag1242} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag1242} onStartShouldSetResponder={() => true}
+            
             style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 12, paddingBottom: 36, ...(isWeb ? { width: '100%', maxWidth: 640, alignSelf: 'center' } : {}) }}
           >
             <View style={{ alignItems: 'center', marginBottom: 6 }}>
@@ -1266,16 +1283,19 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 {t('feed.copyLink') || 'Copiar link'}
               </Text>
             </TouchableOpacity>
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Analytics modal — owner-only post insights. Lazy-loaded on tap so
           the network only fires for posts the user actually inspects. */}
       <Modal visible={analyticsOpen} animationType="slide" transparent onRequestClose={() => setAnalyticsOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setAnalyticsOpen(false)}>
-          <Pressable
-            onPress={(e) => e.stopPropagation?.()}
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setAnalyticsOpen(false)}>
+          <DragBackdrop drag={_drag1291} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag1291} onStartShouldSetResponder={() => true}
+            
             style={{ backgroundColor: isDark ? '#0b0b0b' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
           >
             <View style={{ alignItems: 'center', marginBottom: 10 }}>
@@ -1287,7 +1307,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             {analyticsLoading ? (
               <ActivityIndicator color={colors.primary} style={{ marginVertical: 30 }} />
             ) : analyticsData ? (
-              <ScrollView style={{ paddingHorizontal: 20 }}>
+              <DragScroll drag={_drag1291}><ScrollView style={{ paddingHorizontal: 20 }}>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 18 }}>
                   {[
                     { k: 'views',       label: t('feed.views') || 'Views' },
@@ -1343,14 +1363,15 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     ))}
                   </View>
                 ) : null}
-              </ScrollView>
+              </ScrollView></DragScroll>
             ) : (
               <Text style={{ textAlign: 'center', color: colors.textSecondary, padding: 30 }}>
                 {t('feed.analyticsEmpty') || 'Sem dados'}
               </Text>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Reels P2 — Promote modal (budget tiers + duration).
@@ -2165,6 +2186,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
 // LivePaidGiftSheet's existing buy-pack UI — but threading that here would
 // add too much surface; for v1 we just show the shortfall.
 function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, t, submitting, setSubmitting }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag2235 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [tier, setTier] = useState(1000); // cents
   const [days, setDays] = useState(7);
   const [balance, setBalance] = useState(0);
@@ -2212,12 +2235,14 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <DragSheetRoot>
       <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+        style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
         onPress={onClose}
       >
-        <Pressable
-          onPress={(e) => e.stopPropagation && e.stopPropagation()}
+        <DragBackdrop drag={_drag2235} color="rgba(0,0,0,0.55)" />
+        <DragPanel drag={_drag2235} onStartShouldSetResponder={() => true}
+          
           style={{
             backgroundColor: isDark ? '#0b0b0b' : '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
@@ -2311,8 +2336,9 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
               </Text>
             )}
           </TouchableOpacity>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

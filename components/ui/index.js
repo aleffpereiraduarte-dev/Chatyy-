@@ -95,3 +95,4 @@ export { Skeleton, SkeletonRow, SkeletonRows, SkeletonBubble, SkeletonFadeIn } f
 export {
   Type, Space, Radius, Duration, Easing2026, Layout, SurfaceTokens, surfaceColors,
 } from '../../constants/theme';
+export { singleLineInputStyle, fieldBoxStyle } from './inputStyle';

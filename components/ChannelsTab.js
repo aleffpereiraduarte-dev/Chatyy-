@@ -20,6 +20,7 @@ import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14
 // [2026-10-15 native-social] Lista / posts em nativo (fallback = JS abaixo).
 import NativeChannelList, { nativeChannelsEnabled, markNativeChannelsFailed, channelTile, absMedia } from './channels/NativeChannelList';
 import NativeChannelFeed, { encodeReactions } from './channels/NativeChannelFeed';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
 function IconPaperclip({ size = 22, color = '#666' }) {
   return (
@@ -1024,6 +1025,8 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
 
 // ── Create Channel Modal ──
 function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag1052 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('general');
@@ -1050,10 +1053,12 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <DragSheetRoot>
       {/* [2026-10-08 apps-native] KeyboardAvoidingView: o teclado cobria o sheet */}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <TouchableOpacity activeOpacity={1} onPress={onClose} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
+      <TouchableOpacity activeOpacity={1} onPress={onClose} style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}>
+        <DragBackdrop drag={_drag1052} color="rgba(0,0,0,0.5)" />
+        <DragPanel drag={_drag1052} onStartShouldSetResponder={() => true}   style={{
           backgroundColor: isDark ? '#0f0f14' : '#fff',
           borderTopLeftRadius: 24, borderTopRightRadius: 24,
           padding: 20, paddingBottom: 40,
@@ -1120,9 +1125,10 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{t('channel.createBtn') || 'Create'}</Text>
             )}
           </PressableScale>
-        </TouchableOpacity>
+        </DragPanel>
       </TouchableOpacity>
       </KeyboardAvoidingView>
+      </DragSheetRoot>
     </Modal>
   );
 }

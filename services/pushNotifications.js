@@ -2931,31 +2931,31 @@ function _navigateForNotification(data) {
       // type strings — the backend uses either, and 'email' used to fall
       // through to the generic Inbox route, losing the specific message.
       const folder = data.folder || 'INBOX';
-      router.push(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}`);
+      _pushOverHome(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}`);
       return;
     }
     // [2026-10-13 calendario] lembrete local de tarefa → Tarefas; lembrete de
     // evento (cron cal-reminders manda kind=calendar_reminder) → o evento.
     if (data.type === 'task_reminder') {
-      router.push(data.task_id ? `/tasks?focus=${encodeURIComponent(String(data.task_id))}` : '/tasks');
+      _pushOverHome(data.task_id ? `/tasks?focus=${encodeURIComponent(String(data.task_id))}` : '/tasks');
       return;
     }
     if ((data.type === 'calendar_reminder' || data.kind === 'calendar_reminder') && data.event_id) {
-      router.push(`/event-detail?id=${encodeURIComponent(String(data.event_id))}`);
+      _pushOverHome(`/event-detail?id=${encodeURIComponent(String(data.event_id))}`);
       return;
     }
     if (data.type === 'meeting_reminder' && data.room_id) {
-      router.push(`/meeting-detail?room_id=${data.room_id}`);
+      _pushOverHome(`/meeting-detail?room_id=${data.room_id}`);
       return;
     }
     // [paridade-wa 2026-10-14] lembrete de chamada agendada (cron-scheduled-calls) → Agendadas
     if (data.type === 'call_schedule_reminder' || data.kind === 'call_schedule_reminder') {
-      router.push('/call-schedule');
+      _pushOverHome('/call-schedule');
       return;
     }
     // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor ou local offline) → abre a nota
     if (data.type === 'note_reminder' && data.note_id) {
-      router.push(`/notes?open=${encodeURIComponent(String(data.note_id))}`);
+      _pushOverHome(`/notes?open=${encodeURIComponent(String(data.note_id))}`);
       return;
     }
     // 'chat_reminder' = local reminder scheduled from the chat smart action
@@ -3017,7 +3017,10 @@ function _navigateForNotification(data) {
       return;
     }
     if (data.type === 'status_update') {
-      router.push('/chat?tab=status');
+      // [2026-10-17 notif-audit] ?tab=status is retired (falls back to chats):
+      // open the author's stories when known, else the home with the strip.
+      const _sw = data.author_email || data.from || data.sender_email;
+      _pushOverHome(_sw ? `/u/${encodeURIComponent(_sw)}?openStatus=1` : '/chat');
       return;
     }
     // Find My Friends — peer requested to see this user's location. Route
@@ -3026,7 +3029,7 @@ function _navigateForNotification(data) {
     if (data.type === 'location_request' && data.requester_email) {
       const nameParam = data.requester_name ? `&requester_name=${encodeURIComponent(data.requester_name)}` : '';
       const msgParam = data.message ? `&message=${encodeURIComponent(data.message)}` : '';
-      router.push(`/snap-map?incoming_request=${encodeURIComponent(data.requester_email)}${nameParam}${msgParam}`);
+      _pushOverHome(`/snap-map?incoming_request=${encodeURIComponent(data.requester_email)}${nameParam}${msgParam}`);
       return;
     }
     // SuperBora cross-app sign-in (background tap). The notification payload
@@ -3039,13 +3042,18 @@ function _navigateForNotification(data) {
       } catch {}
       return;
     }
-    // Feed/social notifications → open the relevant post
-    if ((data.type === 'like' || data.type === 'feed_like' || data.type === 'comment' || data.type === 'feed_comment') && data.post_id) {
-      router.push(`/chat?tab=feed&post_id=${data.post_id}`);
-      return;
+    // Feed/social notifications → open the relevant post.
+    // [2026-10-17 notif-audit] Was /chat?tab=feed&post_id=X — chat.js never
+    // reads post_id, so the tap landed on the top of the feed. /feed/:id is the
+    // canonical post screen (same as the in-app notification list); comment
+    // pushes open the comment sheet. Covers feed_tagged / feed_post_new /
+    // post_gift_received (ref_id = post id), which used to fall to /inbox.
+    {
+      const _fp = _feedPostTarget(data);
+      if (_fp) { _pushOverHome(_fp); return; }
     }
-    if ((data.type === 'follow' || data.type === 'feed_follow') && data.follower_email) {
-      openConversation(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+    if ((data.type === 'follow' || data.type === 'feed_follow') && (data.follower_email || data.actor_email || data.author_email)) {
+      _pushOverHome(`/u/${encodeURIComponent(data.follower_email || data.actor_email || data.author_email)}`);
       return;
     }
     // "X entrou no Chatyy" — someone whose number you had saved just joined.
@@ -3054,23 +3062,33 @@ function _navigateForNotification(data) {
     // [2026-10-08 contact-joined-push] Tap → abre direto a conversa nova com a
     // pessoa (chat-conversation cria o direct via params.email), não o perfil.
     if (data.type === 'contact_joined' && data.email) {
-      const nm = data.name ? `&name=${encodeURIComponent(data.name)}` : '';
-      openConversation(`/chat-conversation?email=${encodeURIComponent(data.email)}&type=direct${nm}`);
+      // [notmember-ryw 2026-10-17] get-or-create da conversa direta ANTES de navegar
+      // (abria só com ?email= → 1ª leitura caía na réplica sem a membership → "Not a member").
+      try {
+        require('./openConversation').openDirectConversation(data.email, data.name ? { name: String(data.name) } : {})
+          .catch(() => {
+            const nm = data.name ? `&name=${encodeURIComponent(data.name)}` : '';
+            openConversation(`/chat-conversation?email=${encodeURIComponent(data.email)}&type=direct${nm}`);
+          });
+      } catch {
+        const nm = data.name ? `&name=${encodeURIComponent(data.name)}` : '';
+        openConversation(`/chat-conversation?email=${encodeURIComponent(data.email)}&type=direct${nm}`);
+      }
       return;
     }
     if ((data.type === 'live' || data.type === 'live_start') && data.session_id) {
-      router.push(`/live-viewer?session_id=${data.session_id}`);
+      _pushOverHome(`/live-viewer?session_id=${data.session_id}`);
       return;
     }
     // Ongoing broadcast pill (host's own session) — tap returns to studio.
     if (data.type === 'live_broadcast_self' && data.session_id) {
-      router.push(`/live-broadcast?session_id=${data.session_id}`);
+      _pushOverHome(`/live-broadcast?session_id=${data.session_id}`);
       return;
     }
     // Upload progress notification: tap surfaces the photos backup screen
     // so the user can pause / inspect status without digging through Settings.
     if (data.type === 'upload_progress' || data.type === 'upload_complete' || data.type === 'upload_error') {
-      router.push('/photos');
+      _pushOverHome('/photos');
       return;
     }
     // [2026-10-15 chamadas-dnd] Toque em "Ligação de X — toque para atender":
@@ -3102,10 +3120,156 @@ function _navigateForNotification(data) {
       }
       return;
     }
-    router.push('/inbox');
+    // [2026-10-17 notif-audit] Types that used to fall through to the e-mail
+    // Inbox (reaction, missed call, status, wallet, security, group requests…).
+    const _extra = _extraNotificationTarget(data);
+    if (_extra === false) return;
+    if (_extra) {
+      if (_extra.conv) openConversation(_extra.conv, _extra.cid);
+      else _pushOverHome(_extra.href);
+      return;
+    }
+    // Unknown type: the server's own route/url (internal paths only), else the
+    // app home — never the e-mail Inbox for a non-e-mail notification.
+    const _r = _safeInternalRoute(data.route || data.url);
+    if (_r) { _pushOverHome(_r); return; }
+    _pushOverHome(_isEmailNotif(data) ? '/inbox' : '/chat');
   } catch (err) {
     console.warn('[Push] Nav error:', err.message);
   }
+}
+
+// ─── [2026-10-17 notif-audit] tap → destination helpers ─────────────────────
+function _str(v) { return v == null ? '' : String(v); }
+function _isEmailNotif(data) {
+  const t = _str(data?.type);
+  return t === 'new_email' || t === 'email' || t === 'one_alert' || !!data?.uid;
+}
+// Only app-internal paths ("/x…"), never "//host" or a scheme.
+function _safeInternalRoute(r) {
+  const s = _str(r).trim();
+  if (!s || s[0] !== '/' || s[1] === '/' || s.length > 600) return '';
+  if (/^\/(api|data|p|i18n|\.well-known)\//.test(s)) return '';
+  // notifications_feed used `highlight=`; chat-conversation reads highlightMessageId.
+  return s.replace(/([?&])highlight=/, '$1highlightMessageId=');
+}
+const _FEED_POST_TYPES = ['like', 'feed_like', 'comment', 'feed_comment', 'feed_tagged', 'feed_post_new', 'feed_mention', 'post_gift_received', 'comment_reply', 'comment_like'];
+function _feedPostTarget(data) {
+  const t = _str(data?.type);
+  if (!_FEED_POST_TYPES.includes(t)) return '';
+  const pid = _str(data.post_id || data.reel_id || (t === 'post_gift_received' ? data.ref_id : '')).trim();
+  if (!/^\d+$/.test(pid)) return '';
+  const isComment = t === 'comment' || t === 'feed_comment' || t === 'comment_reply' || t === 'comment_like';
+  return `/feed/${pid}${isComment ? '?comments=1' : ''}`;
+}
+function _convHref(cid, extra) {
+  return `/chat-conversation?id=${encodeURIComponent(_str(cid))}${extra || ''}`;
+}
+// Returns {conv, cid} | {href} | false (handled, no navigation) | null (unknown).
+function _extraNotificationTarget(data) {
+  const t = _str(data?.type);
+  const cid = _str(data.conversation_id).trim();
+  const mid = _str(data.message_id).trim();
+  const hl = /^\d+$/.test(mid) ? `&highlightMessageId=${mid}` : '';
+  switch (t) {
+    case 'chat_reaction': {
+      if (!cid) return null;
+      const ct = _str(data.conversation_type) || ((data.is_group === '1' || data.is_group === true) ? 'group' : '');
+      const nm = ct === 'group' || ct === 'channel' ? _str(data.conversation_name) : _str(data.sender_name);
+      return { conv: _convHref(cid, `${hl}${ct ? `&type=${ct}` : ''}${nm ? `&name=${encodeURIComponent(nm)}` : ''}`), cid };
+    }
+    case 'status_reply':
+    case 'status_reaction':
+      if (cid) return { conv: _convHref(cid, `${hl}&type=direct`), cid };
+      if (data.sender_email || data.reactor_email) return { href: `/u/${encodeURIComponent(data.sender_email || data.reactor_email)}` };
+      return { href: '/chat' };
+    case 'status_mention':
+    case 'status_posted':
+    case 'status_new': {
+      const who = _str(data.from || data.author_email || data.sender_email);
+      return { href: who ? `/u/${encodeURIComponent(who)}?openStatus=1` : '/chat' };
+    }
+    case 'missed_call':
+    case 'call_missed':
+      if (cid) {
+        const nm = _str(data.caller_name);
+        return { conv: _convHref(cid, `&type=direct${nm ? `&name=${encodeURIComponent(nm)}` : ''}${data.caller_email ? `&email=${encodeURIComponent(data.caller_email)}` : ''}`), cid };
+      }
+      return { href: '/chat?tab=calls' };
+    case 'incoming_group_call':
+    case 'call_cancel':
+    case 'call_end':
+    case 'answered_elsewhere':
+      return false;
+    case 'group_join_request':
+    case 'group_join_approved':
+      return cid ? { conv: _convHref(cid, '&type=group'), cid } : { href: '/chat' };
+    case 'group_join_denied':
+      return { href: '/chat' };
+    case 'live_scheduled':
+      return { href: data.host_email ? `/u/${encodeURIComponent(data.host_email)}` : '/live-discover' };
+    case 'live_replay_ready':
+      return data.session_id ? { href: `/live-replay?id=${encodeURIComponent(_str(data.session_id))}` } : { href: '/lives-saved' };
+    case 'live_gift_received':
+      return { href: '/creator-earnings' };
+    case 'diamond_received':
+    case 'cashout_status':
+      return { href: '/wallet' };
+    case 'login_alert':
+    case 'new_login':
+    case 'security_alert':
+      return { href: '/linked-devices' };
+    case 'plan_expiry':
+      return { href: '/plans' };
+    case 'moderation':
+      return { href: '/my-reports' };
+    case 'one_proactive':
+      return { href: '/one' };
+    case 'reels_render_done':
+    case 'reels_render_failed':
+      return data.post_id && /^\d+$/.test(_str(data.post_id)) ? { href: `/feed/${data.post_id}` } : { href: '/reels-drafts' };
+    case 'parental_unlock_request':
+    case 'parental_sos':
+    case 'parental_unlock_response':
+      return { href: '/parental' };
+    default:
+      break;
+  }
+  if (data.action === 'payment_failed') return { href: '/plans' };
+  if (data.kind === 'kids_ask') return { href: '/parental' };
+  if (data.kind === 'meet_schedule_reminder' && data.room_id) return { href: `/meeting-detail?room_id=${encodeURIComponent(_str(data.room_id))}` };
+  return null;
+}
+
+// Push a notification target so that "back" lands on the app home. On a cold
+// start the stack is just "/" (index) until it router.replace()s to /chat; a
+// push before that is replaced away (or leaves index — a blank screen — as the
+// only thing under the target). Wait for the home route first.
+function _topRouteName() {
+  try {
+    const { store } = require('expo-router/build/global-state/router-store');
+    const nav = store?.navigationRef?.current;
+    if (!nav || (typeof nav.isReady === 'function' && !nav.isReady())) return null;
+    const st = nav.getRootState?.();
+    const r = st && Array.isArray(st.routes) ? st.routes[typeof st.index === 'number' ? st.index : st.routes.length - 1] : null;
+    return r ? String(r.name || '') : null;
+  } catch { return ''; }
+}
+function _pushOverHome(href) {
+  // /chat (home) is navigate()d — reuses the mounted home instead of stacking a 2nd one.
+  const isHome = /^\/chat(\?|$)/.test(href);
+  const go = () => { try { if (isHome) router.navigate(href); else router.push(href); } catch (e) { console.warn('[Push] nav failed:', e?.message || e); } };
+  const top = _topRouteName();
+  if (href === '/chat' && top === 'chat') return; // already home
+  if (top && top !== 'index') { go(); return; }
+  const t0 = Date.now();
+  const tick = () => {
+    const tp = _topRouteName();
+    if (tp && tp !== 'index') { setTimeout(go, 250); return; }
+    if (tp === '' || Date.now() - t0 > 4000) { go(); return; }
+    setTimeout(tick, 100);
+  };
+  tick();
 }
 
 // Notification action handlers — these run when the user taps Archive /
@@ -3392,10 +3556,12 @@ export function triggerBackgroundSync(data = {}) {
  */
 function handleViewFromNotification(data) {
   try {
-    if (data?.post_id) {
-      router.push(`/chat?tab=feed&post_id=${data.post_id}`);
+    // [2026-10-17 notif-audit] /feed/:id (chat.js ignores post_id); follow → profile.
+    const _fp = _feedPostTarget(data) || (data?.post_id && /^\d+$/.test(String(data.post_id)) ? `/feed/${data.post_id}` : '');
+    if (_fp) {
+      _pushOverHome(_fp);
     } else if (data?.follower_email) {
-      openConversation(`/chat-conversation?email=${encodeURIComponent(data.follower_email)}&type=direct`);
+      _pushOverHome(`/u/${encodeURIComponent(data.follower_email)}`);
     } else {
       router.push('/chat?tab=feed');
     }

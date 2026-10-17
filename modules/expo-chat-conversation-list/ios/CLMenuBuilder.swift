@@ -20,6 +20,17 @@ enum CLMenuBuilder {
     return a
   }
 
+  /// [2026-10-17 peek-fit] Altura estimada do menu do toque longo (rowMenu)
+  /// p/ a prévia (CLPeekController) se limitar e o menu INTEIRO caber na tela.
+  /// Conta os itens de topo + grupo destrutivo; escala com o Dynamic Type.
+  static func estimatedHeight(row: CLRow, extraItems: Int = 0) -> CGFloat {
+    let top = 7 + max(0, extraItems)        // lida, fixar, silenciar, arquivar, trancar, lista, mais
+    let danger = row.blockLabel.isEmpty ? 2 : 3 // (bloquear), denunciar, apagar
+    let rowH = UIFontMetrics.default.scaledValue(for: 46)
+    // + 1 linha a mais ("Marcar como não lida" quebra), divisor do grupo e respiro
+    return CGFloat(top + danger) * rowH + rowH * 0.5 + 12 + 16
+  }
+
   /// `afterPin`: itens extras logo depois de Fixar/Desafixar (ex.: "Reorganizar
   /// fixados" na fileira de fixados).
   static func rowMenu(id: String, row: CLRow, labels L: CLLabels, folders: [CLFolder],

@@ -4,11 +4,14 @@ import { View, Text, TouchableOpacity, StyleSheet, Modal, Animated, Dimensions, 
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 const API = require('../services/api');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function GiftPicker({ visible, onClose, receiverEmail, sessionId, onGiftSent }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag87 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [gifts, setGifts] = useState([]);
@@ -85,8 +88,10 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
 
   return (
     <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-        <Animated.View
+      <DragSheetRoot>
+      <TouchableOpacity style={[styles.overlay, { backgroundColor: 'transparent' }]} activeOpacity={1} onPress={onClose}>
+        <DragBackdrop drag={_drag87} color="rgba(0,0,0,0.4)" />
+        <DragPanel drag={_drag87} onStartShouldSetResponder={() => true}
           style={[styles.sheet, {
             backgroundColor: isDark ? '#1c1c1e' : '#fff',
             transform: [{ translateY: slideAnim }],
@@ -109,14 +114,14 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
             </View>
 
             {/* Gift grid */}
-            <FlatList
+            <DragScroll drag={_drag87}><FlatList
               data={gifts}
               renderItem={renderGift}
               keyExtractor={(item) => String(item.id)}
               numColumns={4}
               contentContainerStyle={styles.grid}
               scrollEnabled={false}
-            />
+            /></DragScroll>
 
             {/* Recharge button */}
             <TouchableOpacity style={[styles.rechargeBtn, { backgroundColor: colors.primary }]}>
@@ -125,7 +130,7 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
               </Text>
             </TouchableOpacity>
           </TouchableOpacity>
-        </Animated.View>
+        </DragPanel>
       </TouchableOpacity>
 
       {/* Floating gift animation */}
@@ -141,6 +146,7 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
           <Text style={{ fontSize: 60 }}>{showAnimation.emoji}</Text>
         </Animated.View>
       )}
+      </DragSheetRoot>
     </Modal>
   );
 }

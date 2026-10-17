@@ -37,8 +37,13 @@ import {
 } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 export default function LinkedPhones() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag389 = useDragToDismiss({ onDismiss: () => { const f = () => setShowCountryPicker(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag292 = useDragToDismiss({ onDismiss: () => { const f = closeAdd; if (typeof f === 'function') f(); } });
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -290,10 +295,12 @@ export default function LinkedPhones() {
 
       {/* Add modal */}
       <Modal visible={addOpen} animationType="slide" transparent onRequestClose={closeAdd}>
-        <Pressable style={s.modalOverlay} onPress={closeAdd}>
-          <Pressable
+        <DragSheetRoot>
+        <Pressable style={[s.modalOverlay, { backgroundColor: 'transparent' }]} onPress={closeAdd}>
+          <DragBackdrop drag={_drag292} color="rgba(0,0,0,0.4)" />
+          <DragPanel drag={_drag292} onStartShouldSetResponder={() => true}
             style={[s.modalSheet, { backgroundColor: colors.surface }]}
-            onPress={(e) => e.stopPropagation?.()}
+            
           >
             <KeyboardAvoidingView
               behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -375,16 +382,19 @@ export default function LinkedPhones() {
                 </View>
               )}
             </KeyboardAvoidingView>
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* Country picker (nested modal) */}
       <Modal visible={showCountryPicker} animationType="slide" transparent onRequestClose={() => setShowCountryPicker(false)}>
-        <Pressable style={s.modalOverlay} onPress={() => setShowCountryPicker(false)}>
-          <Pressable
+        <DragSheetRoot>
+        <Pressable style={[s.modalOverlay, { backgroundColor: 'transparent' }]} onPress={() => setShowCountryPicker(false)}>
+          <DragBackdrop drag={_drag389} color="rgba(0,0,0,0.4)" />
+          <DragPanel drag={_drag389} onStartShouldSetResponder={() => true}
             style={[s.modalSheet, { backgroundColor: colors.surface, maxHeight: '80%' }]}
-            onPress={(e) => e.stopPropagation?.()}
+            
           >
             <View style={[s.modalHeader, { borderBottomColor: colors.borderLight }]}>
               <Text style={[s.modalTitle, { color: colors.text }]}>
@@ -401,7 +411,7 @@ export default function LinkedPhones() {
               placeholderTextColor={colors.textTertiary}
               style={[s.input, { color: colors.text, borderColor: colors.borderLight, backgroundColor: colors.background, margin: 12 }]}
             />
-            <ScrollView>
+            <DragScroll drag={_drag389}><ScrollView>
               {filteredCountries.map((c) => (
                 <TouchableOpacity
                   key={c.code}
@@ -412,9 +422,10 @@ export default function LinkedPhones() {
                   <Text style={{ color: colors.textTertiary }}>{c.dial}</Text>
                 </TouchableOpacity>
               ))}
-            </ScrollView>
-          </Pressable>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
     </View>
   );

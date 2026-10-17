@@ -33,6 +33,7 @@ import useStatuses, { isAllowedGifUrl } from '../hooks/useStatuses';
 // just hand it an onSelect that creates a new sticker with type='gif'.
 import GifPickerPanel from './GifPicker';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 // (cache helpers moved into useStatuses hook)
 // Lazy import to avoid circular dependency / initialization errors on web
 let mailWs = null;
@@ -988,6 +989,18 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 let _consumedNewStatusNonce = 0;
 
 function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, embedded = false, onViewerVisibleChange, largeTitle, onLargeTitleCollapsedChange }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag6359 = useDragToDismiss({ onDismiss: () => { const f = () => setExceptPickerVisible(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5376 = useDragToDismiss({ onDismiss: () => { const f = () => { setForwardModalVisible(false); setIsPaused(false); }; f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5238 = useDragToDismiss({ onDismiss: () => { const f = () => setArchiveSheetOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5148 = useDragToDismiss({ onDismiss: () => { const f = () => setAnalyticsModalOpen(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag5059 = useDragToDismiss({ onDismiss: () => { const f = () => setHighlightSheet(null); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag4399 = useDragToDismiss({ startZone: 64 /* GifPickerPanel tem grade própria */, onDismiss: () => { const f = () => setGifPickerVisible(false); f(); } });
   // [2026-10-15 nav-motion] Título grande "Status" que rola com a lista e
   // colapsa no header compacto do /chat (padrão da aba Conversas).
   const _lt = useLargeTitleCollapse(onLargeTitleCollapsedChange, { enabled: !!largeTitle });
@@ -4403,11 +4416,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         statusBarTranslucent
         onRequestClose={() => setGifPickerVisible(false)}
       >
+        <DragSheetRoot>
         <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
           onPress={() => setGifPickerVisible(false)}
         >
-          <Pressable onPress={(e) => e.stopPropagation && e.stopPropagation()}>
+          <DragBackdrop drag={_drag4399} color="rgba(0,0,0,0.6)" />
+          <DragPanel drag={_drag4399} onStartShouldSetResponder={() => true} >
             <GifPickerPanel
               colors={colors}
               t={t}
@@ -4440,8 +4455,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 setGifPickerVisible(false);
               }}
             />
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* ─── Full-Screen Status Viewer Modal ─── */}
@@ -5051,15 +5067,17 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
       {/* ─── Highlight picker — Stories permanentes (B) ─── */}
       <Modal visible={!!highlightSheet} transparent animationType="slide" onRequestClose={() => setHighlightSheet(null)}>
+        <DragSheetRoot>
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => setHighlightSheet(null)}>
-          <Pressable style={{
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setHighlightSheet(null)}>
+          <DragBackdrop drag={_drag5059} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag5059} onStartShouldSetResponder={() => true} style={{
             backgroundColor: isDark ? '#111' : '#fff',
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
             paddingTop: 18, paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(22),
             paddingHorizontal: 20,
-          }} onPress={(e) => e.stopPropagation?.()}>
+          }} >
             <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#fff' : '#111', marginBottom: 14 }}>
               {t?.('status.saveToHighlight') || 'Salvar em destaques'}
             </Text>
@@ -5100,7 +5118,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   flex: 1, paddingHorizontal: 14, paddingVertical: 10,
                   borderRadius: 12, fontSize: 14,
                   backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
-                  color: isDark ? '#fff' : '#111',
+                  color: isDark ? '#fff' : '#111', height: 38, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                 }}
                 editable={!highlightSaving}
                 maxLength={60}
@@ -5119,9 +5137,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   : <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('status.newHighlight') || 'Novo'}</Text>}
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </DragPanel>
         </Pressable>
         </SheetKeyboardAvoider>
+        </DragSheetRoot>
       </Modal>
 
       {/* ─── Viewers List Modal — WhatsApp-style ─── */}
@@ -5140,11 +5159,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         animationType="slide"
         onRequestClose={() => setAnalyticsModalOpen(false)}
       >
+        <DragSheetRoot>
         <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
           onPress={() => setAnalyticsModalOpen(false)}
         >
-          <Pressable style={{
+          <DragBackdrop drag={_drag5148} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag5148} onStartShouldSetResponder={() => true} style={{
             backgroundColor: isDark ? '#1c1c1e' : '#fff',
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
             paddingHorizontal: 20, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(16) : 36, // [2026-10-11 android-e2e]
@@ -5214,8 +5235,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 </Text>
               </View>
             ) : null}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* ─── Archive Sheet (own old statuses, long-press to repost) ─── */}
@@ -5225,11 +5247,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         animationType="slide"
         onRequestClose={() => setArchiveSheetOpen(false)}
       >
+        <DragSheetRoot>
         <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
           onPress={() => setArchiveSheetOpen(false)}
         >
-          <Pressable style={{
+          <DragBackdrop drag={_drag5238} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag5238} onStartShouldSetResponder={() => true} style={{
             backgroundColor: isDark ? '#1c1c1e' : '#fff',
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
             paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
@@ -5252,7 +5276,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 {t?.('status.archiveEmpty') || 'Nenhum status arquivado'}
               </Text>
             ) : (
-              <ScrollView>
+              <DragScroll drag={_drag5238}><ScrollView>
                 {/* Grid of archived rows — 3 cols on phone, more on
                     tablet. Each tile shows the media thumb (or bg color
                     for text statuses) + a tiny date. Long-press fires
@@ -5345,16 +5369,19 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     );
                   })}
                 </View>
-              </ScrollView>
+              </ScrollView></DragScroll>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* ─── Forward to Chat Modal ─── */}
       <Modal visible={forwardModalVisible} transparent animationType="slide" onRequestClose={() => { setForwardModalVisible(false); setIsPaused(false); }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => { setForwardModalVisible(false); setIsPaused(false); }}>
-          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 34 }}>
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => { setForwardModalVisible(false); setIsPaused(false); }}>
+          <DragBackdrop drag={_drag5376} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag5376} onStartShouldSetResponder={() => true} style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 34 }}>
             <View style={{ alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 12 }} />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -5371,7 +5398,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 {t?.('status.noConversations') || 'Nenhuma conversa'}
               </Text>
             ) : (
-              <ScrollView>
+              <DragScroll drag={_drag5376}><ScrollView>
                 {forwardConversations.map((conv) => (
                   <TouchableOpacity
                     key={conv.id}
@@ -5396,10 +5423,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     </View>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
+              </ScrollView></DragScroll>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>
 
       {/* ─── Status Creator Modal ─── */}
@@ -6104,7 +6132,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                             color: '#fff', fontSize: 13,
                             backgroundColor: 'rgba(0,0,0,0.35)',
                             borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8,
-                            ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                            ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}), height: 32, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                           }}
                         />
                         <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '700', marginTop: 10, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
@@ -6120,7 +6148,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                             color: '#fff', fontSize: 13,
                             backgroundColor: 'rgba(0,0,0,0.35)',
                             borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8,
-                            ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                            ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}), height: 32, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                           }}
                         />
                         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
@@ -6176,7 +6204,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                           placeholderTextColor="rgba(255,255,255,0.35)"
                           autoCapitalize="none"
                           autoCorrect={false}
-                          style={{ color: '#fff', fontSize: 13, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                          style={{ color: '#fff', fontSize: 13, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}), height: 32, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }}
                         />
                         <View style={{ maxHeight: 180, marginTop: 8 }}>
                           {mentionLoading ? (
@@ -6336,6 +6364,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         animationType="slide"
         onRequestClose={() => setExceptPickerVisible(false)}
       >
+        <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
           <View style={{
             backgroundColor: isDark ? '#161618' : '#fff',
@@ -6398,7 +6427,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 );
               }}
             />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <DragPanel drag={_drag6359} style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
               <TouchableOpacity
                 onPress={() => { setExceptEmails([]); }}
                 style={{
@@ -6423,9 +6452,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   {t?.('common.done') || 'Pronto'}
                 </Text>
               </TouchableOpacity>
-            </View>
+            </DragPanel>
           </View>
         </View>
+        </DragSheetRoot>
       </Modal>
     </View>
   );

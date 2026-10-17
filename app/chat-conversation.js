@@ -11,6 +11,7 @@ import {
 // Reads messages directly from SQLite via expo-chat-cache, on the same thread
 // that lays out the cells. No JS bridge in the scroll path = no flicker.
 import { NativeModules } from 'react-native';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop, DragFade } from '../components/ui/useDragToDismiss';
 // [2026-09-24 nível-WhatsApp] Motor de lista NATIVO na lista de MENSAGENS.
 // FlashList v2 (New-Arch) reciclando as células no lado nativo — o mesmo motor
 // já provado no ChatListTab/email/feed. Suporta `inverted` +
@@ -416,6 +417,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { heroRef as _heroRef } from '../services/mediaHero'; // [2026-10-15 hero] miniatura → viewer nativo
 // Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
 import { boraStyleUrl } from '../components/BoraMap';
+import { singleLineInputStyle } from '../components/ui/inputStyle'; // [2026-10-17 input-align] campo 1 linha centrado no iOS
 // [2026-10-13 web-focus] Web com mouse+teclado (desktop). Web mobile/touch = false.
 const _IS_DESKTOP_WEB = (() => {
   if (Platform.OS !== 'web') return false;
@@ -5532,7 +5534,7 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
 // the contact is registered on Chatyy and swaps "Mensagem" for "Convidar"
 // when they aren't. WhatsApp-style: contact-card primary action depends on
 // account status, not a static button.
-function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, hasPhone }) {
+function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, onChatyyCall, hasPhone }) {
   const [check, setCheck] = React.useState({ loading: true, has_chatyy: false });
   React.useEffect(() => {
     let alive = true;
@@ -5550,6 +5552,12 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
   }, [email, phone]);
 
   const showMessage = check.has_chatyy;
+  // [2026-10-17 sem-pstn] "Ligar" só pelo Chatyy: aparece se o contato TEM Chatyy
+  // (ligação app-a-app); quem não tem fica com "Convidar". tel: só com o kill
+  // switch isPstnEnabled() ligado.
+  const _pstnOn = (() => { try { return require('../constants/featureFlags').isPstnEnabled(); } catch { return false; } })();
+  const showCall = _pstnOn ? hasPhone : (!check.loading && check.has_chatyy && !!(check.resolvedEmail || email) && typeof onChatyyCall === 'function');
+  const _onCallPress = _pstnOn ? onCall : () => onChatyyCall?.(check.resolvedEmail || email);
   const inviteAccent = accent; // [2026-10-10 conv-polish] P&B: era verde, destoava das outras ações do cartão
   return (
     <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: dividerColor }}>
@@ -5587,12 +5595,12 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
           {t('chatConv.addContact') || 'Adicionar'}
         </Text>
       </TouchableOpacity>
-      {hasPhone ? (
+      {showCall ? (
         <>
           <View style={{ width: StyleSheet.hairlineWidth, backgroundColor: dividerColor }} />
           <TouchableOpacity
             style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
-            onPress={onCall}
+            onPress={_onCallPress}
             activeOpacity={0.6}
             accessibilityRole="button"
             accessibilityLabel={t('chatConv.callContact') || 'Ligar'}
@@ -10054,6 +10062,18 @@ function _useStateTraced(init) {
 const _useStateT = _PERF_WHY_ON ? _useStateTraced : useState;
 
 function ChatConversationInner() {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag41492 = useDragToDismiss({ onDismiss: () => { const f = () => setShowStatsModal(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag41050 = useDragToDismiss({ onDismiss: () => { const f = () => setRoleEditTarget(null); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag40939 = useDragToDismiss({ onDismiss: () => { const f = () => setShowTopicCreate(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag40809 = useDragToDismiss({ onDismiss: () => { const f = () => setShowTopicsModal(false); f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag38258 = useDragToDismiss({ onDismiss: () => { const f = () => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }; f(); } });
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag38192 = useDragToDismiss({ onDismiss: () => { const f = () => setMessageInfo(null); f(); } });
   _perfTick('screen');
   _whyStart();
   const { colors, isDark } = useTheme();
@@ -10632,6 +10652,9 @@ function ChatConversationInner() {
   // [2026-10-05 push→abrir→msg não aparece] contador de retries do fetch delta
   // no open. Zera no sucesso; máx. 2 retries (2.5s, 5s) por falha.
   const _loadRetryRef = useRef(0);
+  // [notmember-ryw 2026-10-17] retry automático (máx. 2) quando o servidor responde not_member
+  // logo após criar/abrir a conversa (réplica do edge ainda sem a linha de membro).
+  const _notMemberRetryRef = useRef(0);
   const typingTimerRef = useRef(null);
   // Throttle + auto-stop state for typing indicators.
   // - `typingLastSentAt`: last time we emitted `chat_typing` over WS. We re-send
@@ -10849,12 +10872,12 @@ function ChatConversationInner() {
           // [2026-10-06 UX] No id back → the main load effect never runs
           // (gated on conversationId) and the skeleton stayed forever.
           setLoading(false);
-          setLoadError(r?.message || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.');
+          setLoadError(require('../services/chatErrorText').chatErrorText(t, r, t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
         }
       } catch (e) {
         if (cancelled) return;
         setLoading(false);
-        setLoadError(e?.message || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.');
+        setLoadError(require('../services/chatErrorText').chatErrorText(t, e, t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
       }
     })();
     return () => { cancelled = true; };
@@ -14999,6 +15022,37 @@ function ChatConversationInner() {
       // are zero rows on screen so the empty-state component can offer
       // retry. With cached rows, we keep the stale render (better than
       // wiping content) but log so the next pass can pick it up.
+      // [notmember-ryw 2026-10-17] Conversa recém-criada ("Fala oi", Nova conversa, perfil, QR):
+      // a 1ª leitura pode chegar antes de a membership existir na réplica → not_member. Em vez
+      // de mostrar erro + "Tentar novamente", resolve a conversa direta de novo (get-or-create)
+      // e re-tenta sozinho (até 2x); só então cai no erro (traduzido).
+      if (!r.success && mountedRef.current && !beforeId && _notMemberRetryRef.current < 2
+          && require('../services/chatErrorText').isNotMemberError(r)) {
+        _notMemberRetryRef.current++;
+        const _nmN = _notMemberRetryRef.current;
+        const _nmCid = conversationId;
+        (async () => {
+          try {
+            const _pe = String(params.email || '').toLowerCase();
+            if (_pe && (params.type || 'direct') === 'direct') {
+              const cr = await api.chatCreate([_pe], '', 'direct');
+              const nid = parseInt(cr?.data?.id || cr?.data?.conversation_id, 10) || 0;
+              if (nid && nid !== _nmCid && mountedRef.current) {
+                setResolvedConvId(nid);
+                try { router.setParams?.({ id: String(nid) }); } catch {}
+                return; // id novo → effects de abertura recarregam tudo
+              }
+            }
+          } catch {}
+          await new Promise(res => setTimeout(res, 600 * _nmN));
+          if (!mountedRef.current) return;
+          try { loadMessages(false); } catch {}
+          api.chatMembers(_nmCid).then(mr => {
+            if (mr?.success && mountedRef.current && Array.isArray(mr.data?.members)) setMembers(mr.data.members);
+          }).catch(() => {});
+        })();
+        return;
+      }
       if (!r.success && mountedRef.current && !beforeId) {
         if (_messagesCountRef.current === 0) {
           // OFFLINE-FIRST (#1098): before declaring failure, fall back to the
@@ -15025,7 +15079,7 @@ function ChatConversationInner() {
           } catch (cacheErr) {
             console.warn('[loadMessages] sqlite fallback fail:', cacheErr?.message);
           }
-          setLoadError(r.message || (t('chatConv.offlineEmpty.subtitle') || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
+          setLoadError(require('../services/chatErrorText').chatErrorText(t, r, t('chatConv.offlineEmpty.subtitle') || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
         } else {
           console.warn('[loadMessages] non-success with cached rows', r.message);
           // [2026-10-05] Mesmo caso acima com linhas já na tela: o delta falhou
@@ -15041,6 +15095,7 @@ function ChatConversationInner() {
         // Clear any previous load error since fresh data arrived.
         setLoadError(null);
         _loadRetryRef.current = 0; // [2026-10-05] fetch ok → libera retries futuros
+        _notMemberRetryRef.current = 0; // [notmember-ryw 2026-10-17]
       }
       if (r.success && mountedRef.current) {
         // Surface block state from the response so the composer banner reacts.
@@ -15598,7 +15653,7 @@ function ChatConversationInner() {
         } catch (cacheErr) {
           console.warn('[loadMessages] sqlite fallback (catch) fail:', cacheErr?.message);
         }
-        setLoadError(e?.message || (t('chatConv.offlineEmpty.subtitle') || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
+        setLoadError(require('../services/chatErrorText').chatErrorText(t, e, t('chatConv.offlineEmpty.subtitle') || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
       }
     } finally {
       if (!mountedRef.current) return;
@@ -26171,6 +26226,12 @@ function ChatConversationInner() {
     }
     return max;
   }, [readReceipts, currentEmail]);
+  // [2026-10-17 peek-fit] guarda o visto do peer (1:1) p/ a prévia do toque longo na lista.
+  useEffect(() => {
+    if (maxReadId > 0 && conversationType !== 'group' && conversationType !== 'channel') {
+      try { require('../services/peekReceipts').notePeerRead(currentEmail, conversationId, maxReadId); } catch {}
+    }
+  }, [maxReadId, conversationId, conversationType, currentEmail]);
   const _enrichedMessagesBase = useMemo(() => {
     const cache = _enrichCacheRef.current;
     const out = new Array(reversedMessages.length);
@@ -27582,7 +27643,8 @@ function ChatConversationInner() {
   // [2026-10-15 native-list fase 2] chip de smart action (lembrete/reunião/PIX/telefone) — extraído do JSX.
   const _onSmartAction = (msg, a) => {
                   if (a.type === 'pix') { try { const { Clipboard } = require('react-native'); Clipboard.setString(a.payload); safeAlert(t('common.copied') || 'Copiado', a.payload); } catch {} return; }
-                  if (a.type === 'phone') { try { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } catch {} return; }
+                  // [2026-10-17 sem-pstn] número no texto → ligação Chatyy (se a pessoa tem conta) ou convite; tel: só c/ kill switch.
+                  if (a.type === 'phone') { try { if (require('../constants/featureFlags').isPstnEnabled()) { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } else { require('../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: a.payload, router, t }); } } catch {} return; }
                   // [2026-10-06] ROOT CAUSE "Criar lembrete não funciona": this used to
                   // router.push('/event-detail', { create:'1', title, start }) but that
                   // screen only reads params.id → loadEvent() bailed, spinner forever,
@@ -30224,6 +30286,7 @@ function ChatConversationInner() {
                 }}
                 onSave={handleSaveContact}
                 onCall={() => { try { Linking.openURL(`tel:${ctPhone.replace(/[^+\d]/g, '')}`); } catch {} }}
+                onChatyyCall={(em) => { try { require('../services/chatyyOnlyCalls').startChatyyCall({ email: em, name: ctName, router }); } catch {} }}
               />
               {/* [WAVE 43D] Multi-select sticky — overlay intercepts the
                   Mensagem/Convidar/Salvar/Ligar action buttons when the row
@@ -34079,29 +34142,16 @@ function ChatConversationInner() {
               }}
               placeholder={t('chatConv.searchPlaceholder') || 'Pesquisar mensagens...'}
               placeholderTextColor={colors.textTertiary}
-              style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}
+              style={[singleLineInputStyle(34, 15), { flex: 1, color: colors.text, paddingHorizontal: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 17 }]}
               autoFocus
               returnKeyType="search"
             />
-            {/* [busca-conversa 2026-10-16] Ir para data (calendário) */}
-            <TouchableOpacity onPress={() => { try { searchInputRef.current?.blur?.(); } catch {} setShowJumpDate(true); }} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chatConv.jumpToDate', 'Ir para data')} testID="chat-search-jump-date">
-              <IconCalendar size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
+            {/* [2026-10-17 busca-telegram] calendário + contagem + setas foram p/ a barra de
+                resultados que SUBSTITUI o compositor enquanto a busca está aberta. */}
             {/* ★ Filter button */}
             <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.searchFilters', 'Filtros da busca')}>
               <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type || searchFilters.senderEmail || searchFilters.starredOnly ? colors.primary : colors.textSecondary} />
             </TouchableOpacity>
-            {searchResults.length > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Text style={{ fontSize: 12, color: colors.textSecondary }}>{searchIdx + 1}/{searchResults.length}</Text>
-                <TouchableOpacity onPress={() => handleSearchNav('up')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.prevResult', 'Resultado anterior')}>
-                  <IconChevronDown size={16} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleSearchNav('down')} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.nextResult', 'Próximo resultado')}>
-                  <IconChevronDown size={16} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-            )}
             <TouchableOpacity onPress={() => { setShowSearchBar(false); setSearchQuery(''); setSearchResults([]); }} style={{ padding: 4 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.closeSearch', 'Fechar busca')}>
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -35868,7 +35918,27 @@ function ChatConversationInner() {
           </ErrorBoundary>
         </View>
       ) : null}
-      {(!isRecording || voiceHoldMode === 'hold') ? (
+      {/* [2026-10-17 busca-telegram] Busca aberta → o compositor dá lugar à barra de
+          resultados (calendário · "3 de 12" · ↑↓), presa ao teclado como o compositor. */}
+      {showSearchBar ? (
+        <View testID="chat-search-results-bar" style={{ flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 8, paddingTop: 4, paddingBottom: composerBottomPad, backgroundColor: isDark ? '#0b0b0b' : '#ffffff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)' }}>
+          <TouchableOpacity onPress={() => { try { searchInputRef.current?.blur?.(); } catch {} setShowJumpDate(true); }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chatConv.jumpToDate', 'Ir para data')} testID="chat-search-jump-date">
+            <IconCalendar size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: '500', color: searchResults.length ? colors.text : colors.textSecondary }} numberOfLines={1}>
+            {searchResults.length > 0
+              ? _a11yT(t, 'chatConv.searchResultOf', '{current} de {total}', { current: searchIdx + 1, total: searchResults.length })
+              : (String(searchQuery || '').trim() ? (t('common.noResults') || 'Nenhum resultado encontrado') : '')}
+          </Text>
+          <TouchableOpacity disabled={searchResults.length < 2} onPress={() => handleSearchNav('up')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: searchResults.length < 2 ? 0.35 : 1 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.prevResult', 'Resultado anterior')}>
+            <IconChevronDown size={22} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
+          </TouchableOpacity>
+          <TouchableOpacity disabled={searchResults.length < 2} onPress={() => handleSearchNav('down')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: searchResults.length < 2 ? 0.35 : 1 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.nextResult', 'Próximo resultado')}>
+            <IconChevronDown size={22} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {!showSearchBar && (!isRecording || voiceHoldMode === 'hold') ? (
         /* Input Bar with Mention Autocomplete */
         <View style={{ position: 'relative' }}>
         {conversationType === 'group' && showMentionPopup && (
@@ -38133,13 +38203,15 @@ function ChatConversationInner() {
       </Modal>)}</LazyMount>
       {/* Message Info Modal (delivered to / read by) */}
       <LazyMount when={!!messageInfo}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setMessageInfo(null)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setMessageInfo(null)}>
-          <Pressable style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
+        <DragSheetRoot>
+        <Pressable style={[styles.modalOverlay, { backgroundColor: 'transparent' }]} onPress={() => setMessageInfo(null)}>
+          <DragBackdrop drag={_drag38192} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag38192} onStartShouldSetResponder={() => true} style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, width: '100%', position: 'absolute', bottom: 0, maxHeight: '75%' }}>
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(128,128,128,0.3)', alignSelf: 'center', marginBottom: 12 }} />
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 16 }}>
               {t('chatConv.messageInfo') || 'Informações da mensagem'}
             </Text>
-            <ScrollView style={{ maxHeight: 400 }}>
+            <DragScroll drag={_drag38192}><ScrollView style={{ maxHeight: 400 }}>
               {/* Read by */}
               <View style={{ marginBottom: 16 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -38186,9 +38258,10 @@ function ChatConversationInner() {
                   ))
                 )}
               </View>
-            </ScrollView>
-          </Pressable>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>)}</LazyMount>
 
       {/* Full Emoji Picker Modal */}
@@ -38198,8 +38271,10 @@ function ChatConversationInner() {
         animationType="slide"
         onRequestClose={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}>
-          <Pressable style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} onPress={e => e.stopPropagation()}>
+        <DragSheetRoot>
+        <Pressable style={[styles.modalOverlay, { backgroundColor: 'transparent' }]} onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}>
+          <DragBackdrop drag={_drag38258} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag38258} onStartShouldSetResponder={() => true} style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} >
             <View style={styles.emojiPickerHeader}>
               <Text style={[styles.emojiPickerTitle, { color: colors.text }]}>{t('chatConv.reactions') || 'Reactions'}</Text>
               <TouchableOpacity onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }} style={{ padding: 4 }}>
@@ -38237,7 +38312,7 @@ function ChatConversationInner() {
                 </View>
               </TouchableOpacity>
             </View>
-            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+            <DragScroll drag={_drag38258}><ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
             {reactionPickerTab === 'mine' ? (
               // "Meus emojis" — user's custom animated WebPs (custom_animated_emoji).
               // Same reaction wire format as stickers: encoded server-side as
@@ -38380,9 +38455,10 @@ function ChatConversationInner() {
               </View>
               </>
             )}
-            </ScrollView>
-          </Pressable>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>)}</LazyMount>
       {/* Message Info Modal (delivery/read timestamps) */}
       <LazyMount when={!!messageInfoModal}>{(_lmV) => (<NativeSheetDialog
@@ -39535,23 +39611,21 @@ function ChatConversationInner() {
                 : (t('chatConv.forwardTo') || 'Encaminhar para')}
             </Text>
           </View>
-          <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-            <TextInput
-              value={forwardSearch}
-              onChangeText={setForwardSearch}
-              placeholder={t('chat.searchContact') || 'Buscar contato...'}
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                backgroundColor: isDark ? '#1f1f1f' : '#f2f2f4',
-                color: colors.text,
-                borderRadius: 10,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                fontSize: 14,
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+          <View style={{ paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+            {/* [2026-10-17 input-align] fundo na caixa, TextInput com altura fixa (texto centrado no iOS). */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', height: 38, borderRadius: 10, paddingHorizontal: 10, backgroundColor: isDark ? '#1f1f1f' : '#f2f2f4', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
+              <IconSearch size={16} color={colors.textTertiary} />
+              <TextInput
+                value={forwardSearch}
+                onChangeText={setForwardSearch}
+                placeholder={t('chat.searchContact') || 'Buscar contato...'}
+                placeholderTextColor={colors.textTertiary}
+                style={[singleLineInputStyle(38, 15), { flex: 1, marginLeft: 6, color: colors.text }]}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+              />
+            </View>
           </View>
           {forwardLoading ? (
             // [2026-10-17 polish-chat] skeleton de linhas (mesma geometria da lista) no lugar do spinner grande.
@@ -39613,11 +39687,26 @@ function ChatConversationInner() {
                     <Text style={{ fontSize: 15, fontWeight: '500', color: colors.text }} numberOfLines={1}>
                       {fwdName}
                     </Text>
-                    <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 2 }} numberOfLines={1}>
-                      {item.type === 'group'
-                        ? `${item.member_count || item.members?.length || 0} ${t('chat.members') || 'membros'}`
-                        : (item.last_message?.content || peerEmail || t('chat.direct'))}
-                    </Text>
+                    {(() => {
+                      // [2026-10-17 fwd-preview] Mesma prévia da lista de conversas
+                      // ("Figurinha", "Chamada de voz", "Enquete: …", ícone SVG) —
+                      // nunca URL/JSON cru nem e-mail como subtítulo.
+                      let _pv = '';
+                      let _ps = null;
+                      let _ic = null;
+                      try {
+                        const _CL = require('../components/ChatListTab');
+                        const _r = item.last_message ? _CL.computeRowPreview(item.last_message, item.type === 'group', item.type === 'channel', String(currentEmail || '').toLowerCase(), t, item.members) : null;
+                        if (_r && _r.preview) { _pv = _r.preview; _ps = _r.previewSender; _ic = _CL.withPreviewIcon; }
+                      } catch {}
+                      if (!_pv && item.type === 'group') _pv = `${item.member_count || item.members?.length || 0} ${t('chat.members') || 'membros'}`;
+                      if (!_pv) return null;
+                      return (
+                        <Text style={{ fontSize: 13, color: colors.textTertiary, marginTop: 2 }} numberOfLines={1}>
+                          {_ps ? `${_ps}: ` : null}{_ic ? _ic(_pv, colors.textTertiary) : _pv}
+                        </Text>
+                      );
+                    })()}
                   </View>
                   {/* Selection indicator: filled circle when selected, ring when not. */}
                   <View style={{
@@ -40726,10 +40815,12 @@ function ChatConversationInner() {
 
       {/* Topics Modal */}
       <LazyMount when={showTopicsModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
+        <DragSheetRoot>
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicsModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShowTopicsModal(false)}>
+          <DragBackdrop drag={_drag40809} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag40809} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <IconHash size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -40752,7 +40843,7 @@ function ChatConversationInner() {
               {!activeTopic && <IconCheck size={16} color={colors.primary} />}
             </TouchableOpacity>
 
-            <ScrollView style={{ maxHeight: 280 }}>
+            <DragScroll drag={_drag40809}><ScrollView style={{ maxHeight: 280 }}>
               {topics.map(topic => (
                 <View key={topic.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
                   <TouchableOpacity
@@ -40791,7 +40882,7 @@ function ChatConversationInner() {
                   {t('chat.topicsEmpty') || 'Nenhum tópico ainda'}
                 </Text>
               )}
-            </ScrollView>
+            </ScrollView></DragScroll>
 
             {isGroupAdmin && (
               <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: isDark ? '#1a1a1a' : '#f9fafb' }}>
@@ -40831,9 +40922,10 @@ function ChatConversationInner() {
                 </View>
               </View>
             )}
-          </Pressable>
+          </DragPanel>
         </Pressable>
         </SheetKeyboardAvoider>
+        </DragSheetRoot>
       </Modal>)}</LazyMount>
 
       {/* Per-conversation notification settings sheet (Notificações entry in header menu) */}
@@ -40851,10 +40943,12 @@ function ChatConversationInner() {
           on the topics row. Color picker + emoji + name input. Optimistic
           append so the new topic shows up instantly. */}
       <LazyMount when={showTopicCreate}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
+        <DragSheetRoot>
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicCreate(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShowTopicCreate(false)}>
+          <DragBackdrop drag={_drag40939} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag40939} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconHash size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -40945,9 +41039,10 @@ function ChatConversationInner() {
                 {t('common.save') || 'Salvar'}
               </Text>
             </TouchableOpacity>
-          </Pressable>
+          </DragPanel>
         </Pressable>
         </SheetKeyboardAvoider>
+        </DragSheetRoot>
       </Modal>)}</LazyMount>
 
       {/* Custom roles / permissions sheet — opened from the "Editar
@@ -40957,8 +41052,10 @@ function ChatConversationInner() {
           writes the JSONB column chat_conversation_members.permissions
           (see chat.php L2657-2680). chatHasPermission() reads it. */}
       <LazyMount when={!!roleEditTarget}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setRoleEditTarget(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setRoleEditTarget(null)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
+        <DragSheetRoot>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setRoleEditTarget(null)}>
+          <DragBackdrop drag={_drag41050} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag41050} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '85%' }} >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <IconShield size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -41046,8 +41143,9 @@ function ChatConversationInner() {
                 <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </DragPanel>
         </Pressable>
+        </DragSheetRoot>
       </Modal>)}</LazyMount>
 
       {/* Mute Chat Modal — quick-snooze chips (Telegram parity).
@@ -41110,39 +41208,47 @@ function ChatConversationInner() {
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ backgroundColor: colors.background, borderRadius: 16, padding: 24, width: 300, alignItems: 'center' }}>
-            <IconLock size={32} color={colors.primary} />
-            <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600', marginTop: 12, marginBottom: 6 }}>
+          {/* [2026-10-17 lock-ui] Cartão no padrão do app (P&B, raio de folha, campo com
+              caixa própria + TextInput de altura fixa = texto centrado no iOS). Mesmo fluxo. */}
+          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#ffffff', borderRadius: 20, paddingTop: 24, paddingHorizontal: 20, paddingBottom: 20, width: 320, maxWidth: '88%', alignItems: 'center', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
+            <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
+              <IconLock size={24} color={colors.text} />
+            </View>
+            <Text style={{ color: colors.text, fontSize: 19, lineHeight: 24, fontWeight: '700', letterSpacing: -0.3, marginTop: 14, marginBottom: 6, textAlign: 'center' }}>
               {t('chatConv.setLockTitle') || 'Set Chat Lock'}
             </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 16 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 19, textAlign: 'center', marginBottom: 18 }}>
               {t('chatConv.setLockDesc') || 'Set a password to protect this chat'}
             </Text>
-            <TextInput
-              style={{
-                width: '100%', height: 44, borderRadius: 10,
-                backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-                paddingHorizontal: 14, color: colors.text, fontSize: 16,
-              }}
-              placeholder={t('chatConv.passwordPlaceholder') || 'Password (min 4 chars)'}
-              placeholderTextColor={colors.textTertiary}
-              secureTextEntry
-              value={lockPassInput}
-              onChangeText={setLockPassInput}
-              autoFocus
-            />
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+            <View style={{ width: '100%', height: 48, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f2f2f7', paddingHorizontal: 14, justifyContent: 'center', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
+              <TextInput
+                style={[singleLineInputStyle(48, 16), { color: colors.text }]}
+                placeholder={t('chatConv.passwordPlaceholder') || 'Password (min 4 chars)'}
+                placeholderTextColor={colors.textTertiary}
+                secureTextEntry
+                value={lockPassInput}
+                onChangeText={setLockPassInput}
+                autoFocus
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18, width: '100%' }}>
               <TouchableOpacity
-                style={{ flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: colors.surface, alignItems: 'center' }}
+                style={{ flex: 1, height: 48, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f2f2f7', alignItems: 'center', justifyContent: 'center' }}
                 onPress={() => { setShowLockSetup(false); setLockPassInput(''); }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
               >
-                <Text style={{ color: colors.text, fontWeight: '500' }}>{t('common.cancel')}</Text>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={{ flex: 1, paddingVertical: 11, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
+                style={{ flex: 1, height: 48, borderRadius: 12, backgroundColor: isDark ? '#ffffff' : '#111111', alignItems: 'center', justifyContent: 'center'}}
                 onPress={() => handleSetChatLock(lockPassInput)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
               >
-                <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('chatConv.setLock') || 'Set Lock'}</Text>
+                <Text style={{ color: isDark ? '#000000' : '#ffffff', fontSize: 16, fontWeight: '600' }}>{t('chatConv.setLock') || 'Set Lock'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -41386,11 +41492,12 @@ function ChatConversationInner() {
 
       {/* Chat Stats Modal — redesigned with hero cards, colorful bars */}
       <LazyMount when={showStatsModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
+        <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-          <Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} />
-          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '85%', overflow: 'hidden' }}>
+          <DragFade drag={_drag41492}><Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} /></DragFade>
+          <DragPanel drag={_drag41492} style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '85%', overflow: 'hidden' }}>
             {/* [beauty 2026-10-02] Header neutralized (was green wash + green circle) */}
-            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17,17,17,0.03)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: colors.background, zIndex: 2, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <IconBarChart size={20} color={colors.onPrimary || '#fff'} />
@@ -41404,7 +41511,9 @@ function ChatConversationInner() {
               </View>
             </View>
 
-            <ScrollView contentContainerStyle={{ padding: 18 }} showsVerticalScrollIndicator={false}>
+            {/* [2026-10-17 stats-header] flexShrink: a lista cabe ABAIXO do cabeçalho (antes podia
+                exceder o maxHeight da folha e o topo dos cartões sumia sob o header). */}
+            <DragScroll drag={_drag41492}><ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 }} showsVerticalScrollIndicator={false}>
               {_statsMemo(() => {
                 const msgs = (messages || []).filter(m => !m._pending && m.type !== 'system');
                 const total = msgs.length;
@@ -41553,9 +41662,10 @@ function ChatConversationInner() {
                   </>
                 );
               }, [messages, colors, isDark, t, currentEmail])}
-            </ScrollView>
-          </View>
+            </ScrollView></DragScroll>
+          </DragPanel>
         </View>
+        </DragSheetRoot>
       </Modal>)}</LazyMount>
 
       {/* [2026-10-13 bia-summary] "Resumir com a Bia" — folha extraída p/

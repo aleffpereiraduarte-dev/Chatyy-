@@ -24,6 +24,7 @@ import {
 import { useReducedMotion, isReduceMotionEnabled } from '../reducedMotion';
 import { getNativeBlurView } from '../NativeBlur';
 import BiaOrb from './BiaOrb';
+import useDragToDismiss, { DragSheetRoot, DragPanel } from '../ui/useDragToDismiss';
 
 const ND = Platform.OS !== 'web';
 
@@ -833,16 +834,17 @@ export function BiaAttachSheet({ visible, onClose, isDark, t, insets, items }) {
       if (isReduceMotionEnabled()) { v.setValue(0); setMounted(false); } else Animated.timing(v, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: ND }).start(() => setMounted(false));
     }
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   if (!mounted) return null;
   const ty = v.interpolate({ inputRange: [0, 1], outputRange: [360, 0] });
   const pick = (it) => { onClose(); setTimeout(() => it.onPress?.(), Platform.OS === 'ios' ? 280 : 60); };
   return (
     <Modal transparent visible animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <View style={StyleSheet.absoluteFill}>
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(10,10,14,0.3)', opacity: v }]}>
+      <DragSheetRoot style={StyleSheet.absoluteFill}>
+        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(10,10,14,0.3)', opacity: drag.enabled ? Animated.multiply(v, drag.backdropOpacity) : v }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} />
         </Animated.View>
-        <Animated.View style={[ss.sheet, { backgroundColor: isDark ? '#111113' : '#FFFFFF', borderColor: P.hair, paddingBottom: (insets?.bottom || 0) + 14, transform: [{ translateY: ty }] }, softShadow(isDark, 3)]}>
+        <DragPanel drag={drag} style={[ss.sheet, { backgroundColor: isDark ? '#111113' : '#FFFFFF', borderColor: P.hair, paddingBottom: (insets?.bottom || 0) + 14, transform: [{ translateY: ty }] }, softShadow(isDark, 3)]}>
           <View style={[ss.grabber, { backgroundColor: P.hair }]} />
           <View style={ss.grid}>
             {items.filter(Boolean).map((it, i) => {
@@ -859,8 +861,8 @@ export function BiaAttachSheet({ visible, onClose, isDark, t, insets, items }) {
               );
             })}
           </View>
-        </Animated.View>
-      </View>
+        </DragPanel>
+      </DragSheetRoot>
     </Modal>
   );
 }

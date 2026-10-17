@@ -22,6 +22,8 @@ import * as api from '../../services/api';
 import { firstLink, itemBg, itemFontStyle, normalizeTextFont, textStatusDurationMs, textStatusSolid, itemTextAlign } from './textStatus';
 import { resolveTextGradient } from './textGradients';
 import { takeStoryOrigin } from '../../services/storyOrigin'; // [2026-10-16 motion]
+import { storyReactionDefs, storyReactionKind, storyReactionsEnabled, isStoryReactionEmoji } from './storyReactions'; // [2026-10-17 status-reacoes]
+import { nativeEmojiPayload } from '../chat/nativeEmojiData';
 
 let _NS; // undefined = não resolvido; null = indisponível
 function _mod() {
@@ -53,24 +55,10 @@ function _api() {
 
 // ─── Normalização ──────────────────────────────────────────────────────────
 
-const LIKE = '❤️';
-export const NATIVE_STORY_REACTIONS = [
-  { emoji: '\u{1F602}', kind: 'laugh' },
-  { emoji: '\u{1F62E}', kind: 'wow' },
-  { emoji: '\u{1F60D}', kind: 'love' },
-  { emoji: '\u{1F622}', kind: 'sad' },
-  { emoji: '\u{1F44F}', kind: 'clap' },
-  { emoji: '\u{1F525}', kind: 'flame' },
-];
-const _KIND = {
-  [LIKE]: 'heart', '❤': 'heart', '\u{1F60D}': 'heart',
-  '\u{1F525}': 'flame', '\u{1F602}': 'laugh', '\u{1F62E}': 'wow',
-  '\u{1F622}': 'sad', '\u{1F44F}': 'clap', '\u{1F44D}': 'thumbs',
-};
-function _reactionKind(emoji) {
-  if (!emoji) return '';
-  return _KIND[emoji] || 'heart';
-}
+// [2026-10-17 status-reacoes] fileira rápida/kinds vêm de ./storyReactions
+// (kill switch globalThis.__chatyy_story_reactions). Getter: vale no próximo open().
+export function nativeStoryReactions() { return storyReactionDefs(); }
+const _reactionKind = storyReactionKind;
 
 function _resolveUrl(raw) {
   if (!raw) return '';
@@ -464,6 +452,10 @@ function _labels(t) {
     send: tt('common.send', 'Enviar'),
     like: tt('status.like', 'Curtir'),
     replyTo: tt('nativeStory.replyTo', 'Responder para {name}', { name: '{name}' }),
+    // [2026-10-17 status-reacoes] "+" / grade de emojis (apiVersion >= 4)
+    moreReactions: tt('chatConv.moreReactions', 'Mais reações'),
+    emojiSearch: tt('chatConv.emojiSearch', 'Buscar emoji'),
+    emojiNoResults: tt('chatConv.emojiNoResults', 'Nenhum emoji encontrado'),
     replySent: tt('status.replySent', 'Resposta enviada'),
     seenBy: tt('status.seenBy', 'Visualizações'),
     noViews: tt('status.noViewsYet', 'Ninguém viu ainda'),
@@ -603,12 +595,18 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
       groups: list.map(g => _toNativeGroup(g, cb, t)),
       startGroup: sg,
       labels: _labels(t),
-      reactions: NATIVE_STORY_REACTIONS,
+      reactions: storyReactionDefs(),
       transition: 'cube',
       hasMoreNext: !!hasMoreNext,
       hasMorePrev: !!hasMorePrev,
     };
     if (typeof startItem === 'number' && startItem >= 0) payload.startItem = startItem;
+    // [2026-10-17 status-reacoes] apiVersion >= 4: "+" com a grade completa de
+    // emojis do app + segurar o coração abre a bolha de reações.
+    if (_api() >= 4 && storyReactionsEnabled()) {
+      payload.reactionHold = true;
+      try { payload.reactionPicker = nativeEmojiPayload(t); } catch {}
+    }
   } catch {
     return false;
   }
@@ -655,6 +653,7 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
           avatar: _avatarFor(email, v.avatar_url || v.avatar),
           time: _viewedAt(v.viewed_at),
           reaction: _reactionKind(v.reaction_emoji),
+          emoji: String(v.reaction_emoji || ''), // [2026-10-17 status-reacoes] apiVersion >= 4 desenha o emoji real
         };
       });
       viewersLoaded.add(id);
@@ -693,6 +692,7 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
     if (!ok) m.showToast(t?.('status.replyFailed') || 'Não foi possível enviar. Tente de novo.');
   });
   on('onReact', async (e) => {
+    if (!isStoryReactionEmoji(e && e.emoji)) return;
     const it = raw.get(String(e.id));
     const prev = it ? String(it.my_reaction || '') : '';
     if (it) it.my_reaction = e.active ? e.emoji : '';
@@ -702,7 +702,14 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
     }
     try {
       const r = await api.apiCall('status_react', { status_id: e.id, emoji: e.emoji }, 'POST');
-      if (!r?.success) throw new Error(r?.message || 'react_failed');
+      if (!r?.success) {
+        // offline/timeout → fila (replay idempotente); erro duro → desfaz
+        if (r && r.success === false && /Connection error|Tempo limite excedido|Servidor indisponivel/i.test(String(r.message || ''))) {
+          _queue('status_react', { status_id: e.id, emoji: e.emoji });
+          return;
+        }
+        throw new Error(r?.message || 'react_failed');
+      }
     } catch {
       if (it) it.my_reaction = prev;
       m.updateItem(String(e.id), { myReaction: prev });

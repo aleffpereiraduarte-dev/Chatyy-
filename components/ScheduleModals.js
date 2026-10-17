@@ -7,6 +7,7 @@ import { Shadow, Overlay, OverlayShadow, overlayColors } from '../constants/them
 import { IconClock, IconX, IconTrash } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
 /**
  * Scrollable wheel picker for date/time — replaces manual "YYYY-MM-DD HH:MM"
@@ -291,6 +292,8 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
  * Scheduled Messages List Modal - view/cancel pending scheduled messages
  */
 export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, colors, t }) {
+  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
+  const _drag367 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const insets = useSafeAreaInsets();
   const content = (
     <>
@@ -305,7 +308,7 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
               <IconX size={20} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
-          <ScrollView style={{ padding: 16 }}>
+          <DragScroll drag={_drag367} disabled={USE_NATIVE_SHEETS}><ScrollView style={{ padding: 16 }}>
             {messages.length === 0 ? (
               /* [beauty 2026-10-02] Proper empty state (was a bare line of gray
                  text floating in a huge white modal) — centered icon + title +
@@ -350,7 +353,7 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
                 </View>
               </View>
             ))}
-          </ScrollView>
+          </ScrollView></DragScroll>
     </>
   );
   // [2026-10-15 native-sheets-v2] iOS/Android: sheet do SISTEMA, meio/inteiro.
@@ -365,12 +368,15 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
   }
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={modalStyles.overlay} onPress={onClose}>
+      <DragSheetRoot>
+      <Pressable style={[modalStyles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
+        <DragBackdrop drag={_drag367} color="rgba(0,0,0,0.4)" />
         {/* [2026-06-04] Pressable no-op (era View) — mesmo fix do CustomScheduleModal */}
-        <Pressable onPress={() => {}} style={[modalStyles.sheet, { backgroundColor: colors.surface, maxHeight: '70%', minWidth: 320, padding: 0 }, Shadow.lg]}>
+        <DragPanel drag={_drag367} onStartShouldSetResponder={() => true}  style={[modalStyles.sheet, { backgroundColor: colors.surface, maxHeight: '70%', minWidth: 320, padding: 0 }, Shadow.lg]}>
           {content}
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

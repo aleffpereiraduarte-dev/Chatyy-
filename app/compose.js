@@ -77,6 +77,7 @@ import {
   IconChevronDown, IconChevronUp, IconArrowLeft, IconArchive,
   IconLock, IconAlertTriangle, IconCheck, IconLink,
 } from '../components/Icons';
+import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 const DRAFT_SAVE_INTERVAL = 5000;
 
@@ -357,11 +358,15 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
     { d: 30,  label: t?.('compose.confidential1m') || '1 mês' },
     { d: 180, label: t?.('compose.confidential6m') || '6 meses' },
   ];
+  const drag = useDragToDismiss({ visible: !!visible, onDismiss: onClose }); // [2026-10-17 drag-dismiss]
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={onClose}>
-        <Pressable
-          onPress={(e) => e.stopPropagation()}
+      <DragSheetRoot>
+      <Pressable style={{ flex: 1, justifyContent: 'flex-end' }} onPress={onClose}>
+        <DragBackdrop drag={drag} color="rgba(0,0,0,0.5)" />
+        <DragPanel
+          drag={drag}
+          onStartShouldSetResponder={() => true}
           style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 14, paddingBottom: insetsBottom + 36, paddingHorizontal: 18 }}
         >
           <View style={{ alignItems: 'center', marginBottom: 10 }}>
@@ -406,7 +411,7 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
                 placeholderTextColor={colors.textTertiary}
                 secureTextEntry
                 autoCapitalize="none"
-                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text }}
+                style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text, height: 40, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }}
               />
               {!!passcode && (
                 <>
@@ -419,7 +424,7 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
                     placeholder="+55..."
                     placeholderTextColor={colors.textTertiary}
                     keyboardType="phone-pad"
-                    style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text }}
+                    style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text, height: 40, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */ }}
                   />
                 </>
               )}
@@ -431,8 +436,9 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
               {t?.('common.done') || 'Pronto'}
             </Text>
           </TouchableOpacity>
-        </Pressable>
+        </DragPanel>
       </Pressable>
+      </DragSheetRoot>
     </Modal>
   );
 }

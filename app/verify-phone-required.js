@@ -117,7 +117,7 @@ export default function VerifyPhoneRequiredScreen() {
                 borderRadius: 12,
                 borderWidth: 1,
                 borderColor: colors.border,
-                marginBottom: 12,
+                marginBottom: 12, height: 57, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
               }}
             />
             {error ? <Text style={{ color: '#ef4444', marginBottom: 12 }}>{error}</Text> : null}
@@ -160,7 +160,7 @@ export default function VerifyPhoneRequiredScreen() {
                 borderWidth: 1,
                 borderColor: colors.border,
                 marginBottom: 12,
-                textAlign: 'center',
+                textAlign: 'center', height: 64, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
               }}
             />
             {error ? <Text style={{ color: '#ef4444', marginBottom: 12 }}>{error}</Text> : null}

@@ -14,12 +14,40 @@ import {
   ActivityIndicator, Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext'; // [2026-10-10 feed-polish] i18n
 import * as api from '../../services/api';
 import AvatarCircle from '../../components/AvatarCircle';
-import { IconHeart, IconMessageSquare, IconShare, IconX, IconMapPin, IconDownload } from '../../components/Icons';
+import { IconHeart, IconMessageSquare, IconShare, IconX, IconMapPin, IconDownload, IconChevronLeft, IconArrowLeft } from '../../components/Icons';
+import { cachedVideoSource } from '../../services/videoCacheSource';
+
+// [2026-10-17 notif-audit] Lazy: FeedComments pulls the comment stack — only
+// logged-in viewers (notification taps) need it.
+let _FeedComments = null;
+function _loadFeedComments() {
+  if (_FeedComments === null) { try { _FeedComments = require('../../components/FeedComments').default || false; } catch { _FeedComments = false; } }
+  return _FeedComments;
+}
+
+// Native in-app video (was a "Vídeo — abra no app" placeholder even INSIDE the app).
+let _ExpoVideo = null;
+function _loadExpoVideo() {
+  if (_ExpoVideo !== null) return _ExpoVideo;
+  if (Platform.OS === 'web') { _ExpoVideo = false; return false; }
+  try { _ExpoVideo = require('expo-video'); } catch { _ExpoVideo = false; }
+  return _ExpoVideo;
+}
+function NativePostVideo({ uri }) {
+  const mod = _loadExpoVideo();
+  if (!mod || !mod.useVideoPlayer || !mod.VideoView) return null;
+  const { useVideoPlayer, VideoView } = mod;
+  const player = useVideoPlayer(cachedVideoSource(uri), (p) => {
+    try { p.loop = true; p.muted = false; p.play(); } catch {}
+  });
+  return <VideoView player={player} style={{ width: '100%', height: '100%' }} contentFit="contain" nativeControls allowsFullscreen />;
+}
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -31,36 +59,62 @@ function resolveMediaUrl(u) {
 }
 
 export default function FeedPostPublic() {
-  const { id } = useLocalSearchParams();
+  const { id, comments } = useLocalSearchParams();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
+  // [2026-10-17 notif-audit] error is a KIND ('removed' | 'network'), never the
+  // raw server string (the screen showed "Post not found" in English).
   const [error, setError] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [showComments, setShowComments] = useState(false);
+  const autoCommentsRef = useRef(false);
   const videoRef = useRef(null);
+  const postId = String(Array.isArray(id) ? id[0] : (id || '')).replace(/[^0-9]/g, '');
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
+    setError(null);
     (async () => {
-      try {
-        // Public endpoint — auth header optional. apiCall will still attach
-        // a Bearer if available so logged-in viewers get viewer-specific
-        // flags (already_liked etc.) when the backend adds them.
-        const r = await api.apiCall('feed_get_post', { id }, 'POST');
+      if (!postId) { if (alive) { setError('removed'); setLoading(false); } return; }
+      // Public endpoint — auth header optional. apiCall will still attach
+      // a Bearer if available so logged-in viewers get viewer-specific
+      // flags (already_liked etc.) when the backend adds them.
+      // A 404 right after the post was created (push "X publicou") can be a
+      // replica that has not caught up yet → one quiet retry before "removed".
+      let kind = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const r = await api.apiCall('feed_get_post', { id: postId }, 'POST');
+          if (!alive) return;
+          if (r?.success && r.data?.post) { setPost(r.data.post); kind = null; break; }
+          const msg = String(r?.message || r?.error || '');
+          kind = /not.?found|n[aã]o encontrad|required/i.test(msg) ? 'removed'
+            : (!r || /tempo limite|timeout|connection|offline|network|load failed/i.test(msg)) ? 'network'
+            : (r.success === false ? 'removed' : 'network');
+        } catch (e) {
+          if (!alive) return;
+          const st = Number(e?.status || e?.response?.status || 0);
+          kind = st === 404 ? 'removed' : 'network';
+        }
+        if (attempt === 0) await new Promise((res) => setTimeout(res, 1200));
         if (!alive) return;
-        if (r?.success && r.data?.post) setPost(r.data.post);
-        else setError(r?.message || t('feedPublic.notFound'));
-      } catch (e) {
-        if (alive) setError(e?.message || t('feedPublic.loadError'));
-      } finally {
-        if (alive) setLoading(false);
       }
+      if (alive) { if (kind) setError(kind); setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [id]);
+  }, [postId, reloadKey]);
 
+  // Comment notification → open the comment sheet once the post is loaded.
+  useEffect(() => {
+    if (!post || autoCommentsRef.current || !user?.email) return;
+    if (comments === '1' || comments === 'true') { autoCommentsRef.current = true; setShowComments(true); }
+  }, [post, comments, user?.email]);
   // Meta tags for social previews (web only). Without these, WhatsApp/
   // Twitter/Facebook show the generic Chatyy card instead of the post's
   // thumbnail. The Expo Router lets us mutate document.title; OG meta is
@@ -97,28 +151,64 @@ export default function FeedPostPublic() {
     } catch {}
   }, [post]);
 
-  const goLogin = () => router.push({ pathname: '/login', params: { next: `/feed/${id}` } });
+  const goLogin = () => router.push({ pathname: '/login', params: { next: `/feed/${postId}` } });
   const goApp = () => {
-    if (user?.email) router.replace('/inbox');
+    if (user?.email) router.replace('/chat');
     else goLogin();
   };
+  // [2026-10-17 notif-audit] Opened from a notification / deep link the stack
+  // can be just this screen → "back" must still lead somewhere (home).
+  const goBack = () => {
+    try {
+      if (typeof router.canGoBack === 'function' && router.canGoBack()) { router.back(); return; }
+    } catch {}
+    goApp();
+  };
+  const showBack = !!user?.email || (typeof router.canGoBack === 'function' && router.canGoBack());
+  const BackBtn = showBack ? (
+    <TouchableOpacity
+      onPress={goBack}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      accessibilityRole="button"
+      accessibilityLabel={t('feedPublic.back')}
+      style={styles.backBtn}
+    >
+      {Platform.OS === 'ios' ? <IconChevronLeft size={28} color={colors.text} /> : <IconArrowLeft size={24} color={colors.text} />}
+    </TouchableOpacity>
+  ) : null;
 
   if (loading) {
     return (
-      <View style={[styles.wrap, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
+      <View style={[styles.wrap, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        {BackBtn ? <View style={styles.bareHeader}>{BackBtn}</View> : null}
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
       </View>
     );
   }
 
   if (error || !post) {
+    const isNet = error === 'network';
     return (
-      <View style={[styles.wrap, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('feedPublic.unavailable')}</Text>
-        <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>{error || t('feedPublic.removed')}</Text>
-        <TouchableOpacity onPress={goApp} style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: colors.primary, borderRadius: 10 }}>
-          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{t('feedPublic.goApp')}</Text>
-        </TouchableOpacity>
+      <View style={[styles.wrap, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        {BackBtn ? <View style={styles.bareHeader}>{BackBtn}</View> : null}
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, textAlign: 'center' }}>
+            {isNet ? t('feedPublic.loadErrorTitle') : t('feedPublic.removedTitle')}
+          </Text>
+          <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+            {isNet ? t('feedPublic.loadErrorBody') : t('feedPublic.removedBody')}
+          </Text>
+          {isNet ? (
+            <TouchableOpacity onPress={() => setReloadKey((k) => k + 1)} style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: colors.primary, borderRadius: 10 }}>
+              <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{t('feedPublic.retry')}</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity onPress={showBack ? goBack : goApp} style={{ marginTop: isNet ? 12 : 24, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, ...(isNet ? { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border } : { backgroundColor: colors.primary }) }}>
+            <Text style={{ color: isNet ? colors.text : colors.onPrimary, fontWeight: '700' }}>{showBack ? t('feedPublic.back') : t('feedPublic.goApp')}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -128,10 +218,12 @@ export default function FeedPostPublic() {
   const thumb = resolveMediaUrl(post.thumbnail_url) || media;
 
   return (
-    <ScrollView style={[styles.wrap, { backgroundColor: colors.background }]} contentContainerStyle={{ paddingBottom: 48 }}>
+    <View style={[styles.wrap, { backgroundColor: colors.background }]}>
+    <ScrollView style={[styles.wrap, { backgroundColor: colors.background }]} contentContainerStyle={{ paddingBottom: 48, paddingTop: Platform.OS === 'web' ? 0 : insets.top }}>
       {/* Top bar */}
       <View style={[styles.topbar, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={goApp} style={styles.brandRow} activeOpacity={0.8}>
+        {BackBtn}
+        <TouchableOpacity onPress={goApp} style={[styles.brandRow, { flex: 1 }]} activeOpacity={0.8}>
           <Text style={[styles.brand, { color: colors.primary }]}>Chatyy</Text>
           <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>{t('feedPublic.tagline')}</Text>
         </TouchableOpacity>
@@ -171,9 +263,11 @@ export default function FeedPostPublic() {
                 style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }}
               />
             ) : (
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#fff' }}>{t('feedPublic.videoOpenApp')}</Text>
-              </View>
+              _loadExpoVideo() ? <NativePostVideo uri={media} /> : (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#fff' }}>{t('feedPublic.videoOpenApp')}</Text>
+                </View>
+              )
             )
           ) : (
             <Image source={{ uri: media }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
@@ -191,10 +285,15 @@ export default function FeedPostPublic() {
             <IconHeart size={18} color="#e11d48" />
             <Text style={{ color: colors.text, fontWeight: '600' }}>{post.likes_count || 0}</Text>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            disabled={!user?.email}
+            onPress={() => setShowComments(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
             <IconMessageSquare size={18} color={colors.textSecondary} />
             <Text style={{ color: colors.text, fontWeight: '600' }}>{post.comments_count || 0}</Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -237,6 +336,22 @@ export default function FeedPostPublic() {
         </View>
       )}
     </ScrollView>
+    {user?.email && showComments && _loadFeedComments() ? (() => {
+      const FeedComments = _loadFeedComments();
+      return (
+        <FeedComments
+          visible={showComments}
+          post={post}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          user={user}
+          onClose={() => setShowComments(false)}
+          onCommentCountChange={(n) => { if (typeof n === 'number') setPost((p) => (p ? { ...p, comments_count: n } : p)); }}
+        />
+      );
+    })() : null}
+    </View>
   );
 }
 
@@ -247,6 +362,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   brandRow: { flexDirection: 'row', alignItems: 'baseline' },
+  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', marginLeft: -8, marginRight: 4 },
+  bareHeader: { height: 52, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center' },
   brand: { fontSize: 20, fontWeight: '800', letterSpacing: 0.3 },
   loginBtn: { paddingHorizontal: 18, paddingVertical: 8, backgroundColor: '#111111', borderRadius: 8 },
   loginBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },

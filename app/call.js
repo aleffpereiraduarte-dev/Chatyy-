@@ -292,7 +292,7 @@ import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _c
 // [CALL-E2EE 2026-06-28] Master kill-switch for end-to-end encrypted calls.
 // DEFAULT false → none of the call-key path below executes; the call behaves
 // exactly like today. See constants/featureFlags.js + services/callE2ee.js.
-import { CALL_E2EE_ENABLED, PSTN_ENABLED } from '../constants/featureFlags';
+import { CALL_E2EE_ENABLED, isPstnEnabled } from '../constants/featureFlags';
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
@@ -3997,7 +3997,7 @@ function CallScreenInner() {
   // Lazily fetch the peer's verified phone when LK gives up. We don't preload
   // on mount — most calls connect fine and this is a slow API path.
   useEffect(() => {
-    if (!PSTN_ENABLED || !connectionFailed || isGroupCall || peerPhoneLoadedRef.current) return;
+    if (!isPstnEnabled() || !connectionFailed || isGroupCall || peerPhoneLoadedRef.current) return;
     if (!_safePeerEmail || !_safePeerEmail.includes('@')) return;
     peerPhoneLoadedRef.current = true;
     (async () => {
@@ -4025,7 +4025,7 @@ function CallScreenInner() {
   // The PSTN call replaces the LK session — once it's connected the user is
   // talking to peerPhone via Telnyx, not via LiveKit.
   const handlePstnFallback = useCallback(async () => {
-    if (pstnFallbackBusy || !peerPhone) return;
+    if (!isPstnEnabled() || pstnFallbackBusy || !peerPhone) return; // [2026-10-17 sem-pstn]
     setPstnFallbackBusy(true);
     setErrorMsg(null);
     try {
@@ -6295,7 +6295,7 @@ function CallScreenInner() {
                   {/* #1183 — PSTN fallback button. Only when peer has a verified
                        phone, this is a 1-on-1 (group calls can't bridge to
                        phone), and we aren't already dialing. */}
-                  {PSTN_ENABLED && peerPhone && !isGroupCall && !pstnFallbackActive && (
+                  {isPstnEnabled() && peerPhone && !isGroupCall && !pstnFallbackActive && (
                     <TouchableOpacity
                       style={styles.reconnectBtn}
                       onPress={handlePstnFallback}

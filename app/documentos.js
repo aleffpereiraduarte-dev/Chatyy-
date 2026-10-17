@@ -25,6 +25,7 @@ import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate, docsGet, ge
 import { getCached, setCache } from '../services/cache';
 import SwipeableRow from '../components/SwipeableRow';
 import BrandFab from '../components/BrandFab';
+import { usePreventRemove } from '@react-navigation/native'; // [2026-10-17 swipe-back]
 
 // Docs subpath is served by the same origin as the API (chatyy.com.br primary).
 // mail.onemundo.com.br was the legacy hostname — new hostname is chatyy.com.br
@@ -513,6 +514,9 @@ function DocumentosScreenInner() {
     const sub = BackHandler.addEventListener('hardwareBackPress', handleContextBack);
     return () => { try { sub?.remove?.(); } catch {} };
   }, [handleContextBack]);
+  // [2026-10-17 swipe-back] iOS: gesto de voltar (borda/tela inteira) dentro de pasta
+  // sobe uma pasta (pop nativo cancelado → aqui) em vez de ficar desligado.
+  usePreventRemove(Platform.OS === 'ios' && !!currentFolder, () => { try { handleContextBack(); } catch {} });
   const headerTitleText = currentFolder
     ? (folderStack[folderStack.length - 1]?.name || t('sidebar.documents'))
     : t('sidebar.documents');
@@ -539,7 +543,7 @@ function DocumentosScreenInner() {
             },
           });
           if (!currentFolder) { o.headerLeft = undefined; o.headerBackVisible = true; }
-          o.gestureEnabled = !currentFolder;
+          o.gestureEnabled = true; // [2026-10-17 swipe-back] dentro de pasta: usePreventRemove sobe uma pasta
           return o;
         })()} />
       ) : (

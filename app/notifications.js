@@ -674,7 +674,8 @@ function NotificationsScreenInner() {
       let d = notif.data || {};
       if (typeof d === 'string') { try { d = JSON.parse(d || '{}'); } catch { d = {}; } }
       if (kind === 'say_hi' && !notif.read) { api.notificationsMarkRead(notif.id).catch(() => {}); }
-      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email: notif.author_email, type: 'direct', ...(d.name ? { name: d.name } : {}) } });
+      // [notmember-ryw 2026-10-17] "Dizer oi": get-or-create ANTES de navegar (ver services/openConversation).
+      require('../services/openConversation').openDirectConversation(notif.author_email, d.name ? { name: d.name } : {}).catch(() => {});
     }
   }, [router, showToast, t]);
 
@@ -708,7 +709,11 @@ function NotificationsScreenInner() {
       case 'comment':
       case 'feed_like':
       case 'feed_comment':
-        if (data.post_id) router.push(`/feed/${data.post_id}`);
+      case 'feed_tagged':
+      case 'feed_post_new':
+        // [2026-10-17 notif-audit] comentário → abre já com os comentários; post
+        // apagado → a tela /feed/:id mostra "Este post foi removido" (com voltar).
+        if (data.post_id) router.push(`/feed/${data.post_id}${(notif.type === 'comment' || notif.type === 'feed_comment') ? '?comments=1' : ''}`);
         else router.push('/chat');
         break;
       case 'follow':
@@ -724,8 +729,13 @@ function NotificationsScreenInner() {
           hostName: data.host_name || notif.author_name || '',
         } });
         break;
-      default:
+      default: {
+        // [2026-10-17 notif-audit] tipos sem case (moderação, carteira, …): usa a
+        // rota interna que o servidor gravou, se houver.
+        const r = typeof data.route === 'string' ? data.route : (typeof data.url === 'string' ? data.url : '');
+        if (r && r[0] === '/' && r[1] !== '/' && !/^\/(api|data)\//.test(r)) router.push(r);
         break;
+      }
     }
   }, [router]);
 
