@@ -1951,7 +1951,7 @@ function _isDarkHex(hex) {
   if (![r, g, b].every(Number.isFinite)) return false;
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128;
 }
-function TypingBubble({ name, colors, recording, t, active = true, entries = null }) {
+function TypingBubble({ name, colors, recording, t, active = true, entries = null, hideLabel = false }) {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -1983,7 +1983,7 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(dot, { toValue: -6, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(dot, { toValue: -4, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }), // [2026-10-17 conv-wa-polish] -6→-4: onda discreta
           Animated.timing(dot, { toValue: 0, duration: 280, easing: Easing.in(Easing.quad), useNativeDriver: true }),
           Animated.delay(520 - delay),
         ])
@@ -2043,8 +2043,11 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
   const _typingDark = _isDarkHex(colors.background);
   return (
     <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
-      {!!composedLabel && (
-        <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 8, marginLeft: stackList ? 0 : 10, fontWeight: '700', letterSpacing: 0 }} numberOfLines={1}>
+      {/* [2026-10-17 conv-wa-polish] 1:1 sem rótulo (o header já diz
+          "digitando..."; WhatsApp mostra só a bolha). Grupo: rótulo 12/500
+          mais leve e colado na bolha (era 11.5/700 com 8pt de vão). */}
+      {!!composedLabel && !hideLabel && (
+        <Text style={{ fontSize: 12, color: colors.textTertiary, marginBottom: 4, marginLeft: stackList ? 0 : 10, fontWeight: '500', letterSpacing: 0 }} numberOfLines={1}>
           {composedLabel}
         </Text>
       )}
@@ -2066,7 +2069,10 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
         // [2026-10-13 conv-pb] mesma forma da 1ª bolha recebida do grupo:
         // canto sup. esquerdo reto + rabicho (era canto inf. 5 — outra forma).
         borderRadius: 18, borderTopLeftRadius: stackList ? 18 : 0,
-        paddingHorizontal: 14, paddingVertical: 12,
+        // [2026-10-17 conv-wa-polish] 14/14 → 35pt = altura de uma bolha de 1
+        // linha (7+21+7): a bolha "digitando" e a mensagem que a substitui têm
+        // o mesmo tamanho (sem salto).
+        paddingHorizontal: 14, paddingVertical: 14,
         flexDirection: 'row', gap: 5, alignItems: 'center', minWidth: 56,
       }}>
         {!stackList && <BubbleTail own={false} color={_typingDark ? '#1C1C1E' : '#EEEEF0'} />}
@@ -2108,7 +2114,7 @@ function ReplyPreviewBar({ children, style }) {
 // Wrapper that keeps the TypingBubble mounted ~280ms after the peer stops
 // typing so the exit animation has time to play before unmount. Without this,
 // the bubble would pop out instantly the moment `typingUser` flips to null.
-function TypingBubbleHost({ user, recording, colors, t, entries = null }) {
+function TypingBubbleHost({ user, recording, colors, t, entries = null, hideLabel = false }) {
   const [renderUser, setRenderUser] = useState(user);
   const [renderEntries, setRenderEntries] = useState(entries);
   useEffect(() => {
@@ -2122,7 +2128,7 @@ function TypingBubbleHost({ user, recording, colors, t, entries = null }) {
     return () => clearTimeout(id);
   }, [user, entries]);
   if (!renderUser) return null;
-  return <TypingBubble name={renderUser} colors={colors} recording={recording} t={t} active={!!user} entries={renderEntries} />;
+  return <TypingBubble name={renderUser} colors={colors} recording={recording} t={t} active={!!user} entries={renderEntries} hideLabel={hideLabel} />;
 }
 
 
@@ -3446,7 +3452,7 @@ function _lpHashColor(seed) {
   return `hsl(0, 0%, ${28 + (Math.abs(h) % 20)}%)`;
 }
 
-function LinkPreview({ url, colors }) {
+function LinkPreview({ url, colors, ink = null, sub = null }) {
   // Skip our own domains — cards linking back to the app are pure noise.
   if (_lpShouldSkip(url)) return null;
 
@@ -3488,14 +3494,22 @@ function LinkPreview({ url, colors }) {
     try { domain = (url.match(/^https?:\/\/([^/]+)/i) || [])[1] || ''; } catch {}
   }
   domain = String(domain || '').replace(/^www\./i, '');
-  const firstLetter = (domain || preview.title || '?').trim().charAt(0).toUpperCase() || '?';
-  const fallbackBg = _lpHashColor(domain || url);
+  // [2026-10-17 conv-wa-polish] Cartão EMBUTIDO na bolha (WhatsApp): fundo =
+  // tinta translúcida da própria bolha, sem hairline, texto na tinta da bolha.
+  // Antes era colors.surface (branco no claro / #0b0b0b no escuro) → cartão
+  // branco colado na bolha preta e "buraco" preto na bolha escura.
+  // Sem imagem: só o texto (o bloco cinza de 80px com a inicial pesava).
+  const _lpInk = ink || colors.text;
+  const _lpSub = sub || colors.textSecondary;
+  const _lpMuted = sub || colors.textTertiary;
+  let _lpBg = 'rgba(128,128,128,0.10)';
+  try { _lpBg = require('../components/chat/pollLook').inkAlpha(_lpInk, 0.08); } catch {}
 
   return (
     <TouchableOpacity
       onPress={() => { try { if (require('../components/chat/YouTubeInlinePlayer').openYouTubeInline(url)) return; } catch {} try { require('../services/openLink').openLink(url, { colors }); } catch {} }} /* [2026-10-15 native-browser + yt-inline] */
       activeOpacity={0.85}
-      style={[linkPreviewStyles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      style={[linkPreviewStyles.container, { backgroundColor: _lpBg }]}
     >
       {preview.image ? (
         <View>
@@ -3514,11 +3528,7 @@ function LinkPreview({ url, colors }) {
             </View>
           ) : null}
         </View>
-      ) : (
-        <View style={[linkPreviewStyles.imageFallback, { backgroundColor: fallbackBg }]}>
-          <Text style={linkPreviewStyles.imageFallbackLetter}>{firstLetter}</Text>
-        </View>
-      )}
+      ) : null}
       <View style={linkPreviewStyles.textContainer}>
         {domain ? (
           // Favicon + domain row — Telegram/iMessage parity. Backend may
@@ -3543,20 +3553,20 @@ function LinkPreview({ url, colors }) {
                   />
                 );
               }
-              return <IconGlobe size={12} color={colors.textTertiary} />;
+              return <IconGlobe size={12} color={_lpMuted} />;
             })()}
-            <Text style={[linkPreviewStyles.domain, { color: colors.textTertiary }]} numberOfLines={1}>
+            <Text style={[linkPreviewStyles.domain, { color: _lpMuted }]} numberOfLines={1}>
               {domain}
             </Text>
           </View>
         ) : null}
         {preview.title ? (
-          <Text style={[linkPreviewStyles.title, { color: colors.text }]} numberOfLines={2}>
+          <Text style={[linkPreviewStyles.title, { color: _lpInk }]} numberOfLines={2}>
             {preview.title}
           </Text>
         ) : null}
         {preview.description ? (
-          <Text style={[linkPreviewStyles.desc, { color: colors.textSecondary }]} numberOfLines={2}>
+          <Text style={[linkPreviewStyles.desc, { color: _lpSub }]} numberOfLines={2}>
             {preview.description}
           </Text>
         ) : null}
@@ -3566,10 +3576,9 @@ function LinkPreview({ url, colors }) {
 }
 const linkPreviewStyles = StyleSheet.create({
   container: {
-    borderRadius: 12, overflow: 'hidden', marginTop: 6, maxWidth: 280,
-    // [2026-10-08 chat-beauty-bubbles] cartão neutro com hairline (a barra
-    // #111 sumia na bolha preta e no tema escuro).
-    borderWidth: StyleSheet.hairlineWidth,
+    // [2026-10-17 conv-wa-polish] raio 10 (aninhado no raio 18 da bolha com
+    // padding ~8) e sem hairline — a tinta da bolha dá o recorte (WhatsApp).
+    borderRadius: 10, overflow: 'hidden', marginTop: 6, maxWidth: 280,
   },
   image: { width: '100%', height: 140, backgroundColor: '#00000010' },
   imageFallback: {
@@ -3582,9 +3591,11 @@ const linkPreviewStyles = StyleSheet.create({
   textContainer: { paddingHorizontal: 12, paddingVertical: 8 },
   domainRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
   favicon: { width: 14, height: 14, borderRadius: 3, backgroundColor: 'transparent' },
-  domain: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600', flex: 1 },
-  title: { fontSize: 13, fontWeight: '600', marginBottom: 2, lineHeight: 18 },
-  desc: { fontSize: 12, lineHeight: 16, opacity: 0.85 },
+  // [2026-10-17 conv-wa-polish] domínio em caixa normal 12/500 (caixa-alta 10
+  // gritava), título 14/600, descrição 13 — hierarquia do cartão do WhatsApp.
+  domain: { fontSize: 12, fontWeight: '500', flex: 1 },
+  title: { fontSize: 14, fontWeight: '600', marginBottom: 2, lineHeight: 19 },
+  desc: { fontSize: 13, lineHeight: 17 },
 });
 
 // ============================================================
@@ -3598,15 +3609,23 @@ function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
       overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
       panelStyle={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '50%', paddingBottom: 34 }}
       nativePanelStyle={{ paddingTop: 10 }}>
-          <View style={{ alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border }}>
-            <Text style={{ fontSize: 32 }}>{emoji}</Text>
-            <Text style={{ color: colors.textSecondary, marginTop: 4, fontSize: 14 }}>{reactors.length}</Text>
+          {/* [2026-10-17 conv-wa-polish] cabeçalho = chip "emoji + N" (WhatsApp)
+              com hairline; linhas 40pt de avatar, nome 16/500, emoji à direita
+              e separador recuado até o texto (lista do iOS). */}
+          <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 18, backgroundColor: 'rgba(128,128,128,0.14)' }}>
+              <Text style={{ fontSize: 22 }}>{emoji}</Text>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{reactors.length}</Text>
+            </View>
           </View>
           <ScrollView style={USE_NATIVE_SHEETS ? { maxHeight: Math.round(Dimensions.get('window').height * 0.6) } : undefined}>
             {reactors.map((r, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, gap: 12 }}>
-                <AvatarCircle name={r.name || r.email} email={r.email} size={36} />
-                <Text style={{ color: colors.text, fontSize: 15 }}>{r.name || r.email}</Text>
+              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 16, gap: 12 }}>
+                <AvatarCircle name={r.name || r.email} email={r.email} size={40} />
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingRight: 16, borderBottomWidth: i < reactors.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors.border }}>
+                  <Text style={{ color: colors.text, fontSize: 16, fontWeight: '500', flex: 1 }} numberOfLines={1}>{r.name || r.email}</Text>
+                  <Text style={{ fontSize: 20 }}>{emoji}</Text>
+                </View>
               </View>
             ))}
           </ScrollView>
@@ -9949,9 +9968,9 @@ function useTypingInfo(store, t) {
   }, [typingUsers]);
   return { typingUsers, typingEntries, typingUser, typingIsRecording };
 }
-function ConvTypingBubble({ store, colors, t }) {
+function ConvTypingBubble({ store, colors, t, hideLabel = false }) {
   const { typingUser, typingIsRecording, typingEntries } = useTypingInfo(store, t);
-  return <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} />;
+  return <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} hideLabel={hideLabel} />;
 }
 // Nome + subtítulo (digitando / online / visto por último / membros) do header.
 // Mesmo JSX e mesma regra de antes (presenceText), só que com estado próprio.
@@ -10049,7 +10068,12 @@ const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
                     flexShrink: 1,
                   }]}
                 />
-                <TypingDotsFade visible={isTyping} color={colors.textSecondary} />
+                {/* [2026-10-17 conv-wa-polish] pontinhos pulando (-7pt) ao lado de
+                    "digitando..." = reticências em dobro e linha do subtítulo
+                    tremendo. WhatsApp: só o texto. Kill switch OTA:
+                    globalThis.__chatyy_header_typing_dots = true volta os pontos. */}
+                {(() => { try { return globalThis.__chatyy_header_typing_dots === true; } catch { return false; } })()
+                  ? <TypingDotsFade visible={isTyping} color={colors.textSecondary} /> : null}
               </View>
             )}
           </HeaderStackReveal>
@@ -13808,6 +13832,9 @@ function ChatConversationInner() {
   // Pinned messages
   const [pinnedMessages, setPinnedMessages] = _useStateT([]);
   const [showPinnedBanner, setShowPinnedBanner] = _useStateT(true);
+  // [2026-10-17 conv-wa-polish] barra de fixadas compacta (WhatsApp): 1 linha,
+  // toque pula p/ a fixada mostrada e avança p/ a próxima.
+  const [pinCycleIdx, setPinCycleIdx] = useState(0);
 
   // Per-account scoping: same device can host multiple Chatyy logins; without
   // userScopedKey the chat lock password leaks between accounts.
@@ -27109,9 +27136,9 @@ function ChatConversationInner() {
       {aiTyping ? (
         <TypingBubbleHost user="Chatyy AI" recording={false} colors={colors} t={t} />
       ) : null}
-      <ConvTypingBubble store={typingStore} colors={colors} t={t} />
+      <ConvTypingBubble store={typingStore} colors={colors} t={t} hideLabel={conversationType === 'direct'} />
     </>
-  ), [aiTyping, typingStore, colors, t]);
+  ), [aiTyping, typingStore, colors, t, conversationType]);
 
   // PERF: ListFooterComponent — same story as listHeader. The "load more"
   // spinner only ever has 2 states (visible/hidden) but the inline form
@@ -32295,7 +32322,7 @@ function ChatConversationInner() {
                   )}
                 </View>
               )}
-              {firstUrl && <LinkPreview url={firstUrl} colors={colors} />}
+              {firstUrl && <LinkPreview url={firstUrl} colors={colors} ink={isOwn ? ownTextColor : otherInk} sub={isOwn ? ownMetaColor : otherMetaColor} />}
               <SmartActions
                 actions={detectSmartActions(msg.content)}
                 colors={colors}
@@ -32585,16 +32612,16 @@ function ChatConversationInner() {
             return (
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
                 {heavyWarn ? (
-                  <IconAlertTriangle size={11} color={labelColor} style={{ marginRight: 3 }} />
+                  <IconAlertTriangle size={12} color={labelColor} style={{ marginRight: 4 }} />
                 ) : fc >= 5 ? (
-                  <View style={{ flexDirection: 'row', marginRight: 3 }}>
-                    <IconForward size={11} color={labelColor} style={{ marginRight: -4 }} />
-                    <IconForward size={11} color={labelColor} />
+                  <View style={{ flexDirection: 'row', marginRight: 4 }}>
+                    <IconForward size={12} color={labelColor} style={{ marginRight: -5 }} />
+                    <IconForward size={12} color={labelColor} />
                   </View>
                 ) : (
-                  <IconForward size={11} color={labelColor} style={{ marginRight: 3 }} />
+                  <IconForward size={12} color={labelColor} style={{ marginRight: 4 }} />
                 )}
-                <Text numberOfLines={1} style={{ fontSize: 11, color: labelColor, fontStyle: 'italic', fontWeight: heavyWarn ? '600' : 'normal', flexShrink: 1 }}>
+                <Text numberOfLines={1} style={{ fontSize: 12, lineHeight: 16, color: labelColor, fontStyle: 'italic', fontWeight: heavyWarn ? '600' : 'normal', flexShrink: 1 }}>{/* [2026-10-17 conv-wa-polish] 11→12 (WhatsApp ~12–13) */}
                   {fullLabel}
                 </Text>
               </View>
@@ -34678,7 +34705,16 @@ function ChatConversationInner() {
           onBlock={() => handleBlockUser(params.email || '')}
         />
       ) : null}
-      {visiblePinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
+      {visiblePinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (() => {
+        // [2026-10-17 conv-wa-polish] UMA linha (WhatsApp): barra segmentada
+        // (qual fixada de N), remetente + prévia, tempo restante, X. Antes:
+        // cabeçalho "N mensagens fixadas" + até 3 linhas (~130pt de faixa por
+        // cima da conversa). Toque = pula p/ ela e avança p/ a próxima; toque
+        // longo = desafixar (igual antes). Kill switch OTA (layout antigo):
+        // globalThis.__chatyy_pin_banner_compact = false.
+        let _compactPins = true;
+        try { if (globalThis.__chatyy_pin_banner_compact === false) _compactPins = false; } catch {}
+        if (!_compactPins) return (
         <View style={{
           // [2026-10-08 chat-beauty-chrome] barra fixada monocromática (era
           // âmbar): superfície do header + hairline, pin e barra lateral na cor
@@ -34741,7 +34777,58 @@ function ChatConversationInner() {
             );
           })}
         </View>
-      )}
+        );
+        const _pins = visiblePinnedMessages;
+        const _pi = ((pinCycleIdx % _pins.length) + _pins.length) % _pins.length;
+        const pinned = _pins[_pi];
+        const remaining = formatPinRemaining(pinned.pinned_until);
+        const _segN = Math.min(_pins.length, 4);
+        const _segOn = _pins.length <= 4 ? _pi : Math.min(3, Math.floor((_pi * 4) / _pins.length));
+        return (
+          <View style={{
+            backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+            flexDirection: 'row', alignItems: 'center', paddingLeft: 14, paddingRight: 6, minHeight: 48,
+          }}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => { safeScrollToMsg(pinned); if (_pins.length > 1) setPinCycleIdx(_pi + 1); }}
+              onLongPress={() => handlePinMessage(pinned)}
+              delayLongPress={400}
+              style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={(t('chatConv.pinnedMessage') || 'Mensagem fixada') + (_pins.length > 1 ? ` ${_pi + 1}/${_pins.length}` : '')}
+            >
+              <View style={{ width: 2.5, height: 34, gap: 2 }}>
+                {Array.from({ length: _segN }).map((_, i) => (
+                  <View key={i} style={{ flex: 1, borderRadius: 1.25, backgroundColor: colors.text, opacity: i === _segOn ? 0.9 : 0.22 }} />
+                ))}
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <IconPin size={11} color={colors.textSecondary} />
+                  <Text style={{ fontSize: 12.5, color: colors.text, fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+                    {_pins.length > 1
+                      ? `${t('chatConv.pinnedMessage') || 'Mensagem fixada'} ${_pi + 1}/${_pins.length}`
+                      : _friendlySenderName(pinned.sender_email, pinned.sender_name, currentEmail, t)}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 13.5, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
+                  {pinned.content || (pinned.type === 'image' ? (t('chat.photo') || 'Foto') : pinned.type === 'video' ? (t('chat.video') || 'Vídeo') : (pinned.type === 'voice' || pinned.type === 'audio') ? (t('chat.audio') || 'Áudio') : (t('chat.message') || 'Mensagem'))}
+                </Text>
+              </View>
+              {!!remaining && (
+                <Text style={{ fontSize: 11, color: colors.textTertiary || colors.textSecondary, fontWeight: '500', fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+                  {remaining}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }} hitSlop={4} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+              <IconX size={16} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        );
+      })()}
 
       {/* Messages */}
       {loading && messages.length === 0 ? (
@@ -35785,7 +35872,7 @@ function ChatConversationInner() {
         return (
         <ReplyPreviewBar style={[styles.replyBar, {
           backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.10)',
+          borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.14)', // hairline → um tom acima
         }]}>
           <View style={[styles.replyBarLine, { backgroundColor: _composerReplyColor }]} />
           <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
@@ -35805,13 +35892,13 @@ function ChatConversationInner() {
                 };
                 const _txtStyle = [styles.replyBarText, { color: colors.textSecondary }];
                 const _plain = (label) => (
-                  <Text style={_txtStyle} numberOfLines={3} ellipsizeMode="tail">{label}</Text>
-                );
+                  <Text style={_txtStyle} numberOfLines={2} ellipsizeMode="tail">{label}</Text>
+                ); // [2026-10-17 conv-wa-polish] 3→2 linhas: cartão compacto (WhatsApp)
                 // SVG icon + label row (replaces the old emoji glyph prefixes).
                 const _iconLabel = (IconCmp, label) => (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <IconCmp size={13} color={colors.textSecondary} />
-                    <Text style={[...(_txtStyle), { flex: 1 }]} numberOfLines={3} ellipsizeMode="tail">{label}</Text>
+                    <Text style={[...(_txtStyle), { flex: 1 }]} numberOfLines={2} ellipsizeMode="tail">{label}</Text>
                   </View>
                 );
                 if (editingMsg) return _plain(_trim(editingMsg.content));
@@ -42555,8 +42642,8 @@ const styles = StyleSheet.create({
   // 1px hairline, soft lift; left bar + label in text color, round X chip.
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingLeft: 12, paddingRight: 4, paddingVertical: 10,
-    borderWidth: 1, borderRadius: 16, marginHorizontal: 8, marginBottom: 6,
+    paddingLeft: 12, paddingRight: 4, paddingVertical: 8, // [2026-10-17 conv-wa-polish] 10→8 + fio fino
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, marginHorizontal: 8, marginBottom: 6,
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
       android: { elevation: 1 },

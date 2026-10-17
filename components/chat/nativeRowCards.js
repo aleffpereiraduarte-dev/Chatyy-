@@ -1047,7 +1047,7 @@ export function buildFallbackCard(item, row, ctx, reason) {
   return !!(row.bl[0]);
 }
 
-function linkCard(url, C) {
+function linkCard(url, C, own) {
   const pv = _lpFor(url, C);
   if (!pv) return null;
   const col = C.colors || {};
@@ -1061,6 +1061,16 @@ function linkCard(url, C) {
   // [2026-10-15 yt-inline] YouTube → ícone de play sobre a miniatura (toque abre o player embutido).
   let isYt = false;
   try { isYt = !!require('./YouTubeInlinePlayer').youTubeInlineInfo(url); } catch {}
+  // [2026-10-17 conv-wa-polish] cartão EMBUTIDO na bolha (WhatsApp): fundo =
+  // tinta da bolha a 8%, sem hairline, textos na tinta da bolha. Antes: surface
+  // (branco no claro / #0b0b0b no escuro) → cartão branco colado na bolha preta.
+  // Sem imagem = só texto (sai o bloco de 80px com a inicial). Domínio em caixa
+  // normal 12/500, título 14/600, descrição 13 (= LinkPreview JS).
+  const ink = own ? (C.ownText || '#FFFFFF') : (C.otherInk || col.text || '#111111');
+  const sub = own ? (C.ownMeta || 'rgba(255,255,255,0.62)') : (C.otherMeta || col.textSecondary || '#666666');
+  let cardBg = 'rgba(128,128,128,0.10)';
+  try { cardBg = inkAlpha(ink, 0.08); } catch {}
+  void letter; void fbBg;
   const kids = [
     pv.image ? (isYt
       ? zstack([
@@ -1068,19 +1078,20 @@ function linkCard(url, C) {
         vstack([icon(IconPlay, { s: 22, c: '#FFFFFF' })], { pos: 'c', w: 52, h: 52, r: 26, bg: 'rgba(0,0,0,0.62)', al: 'c', jc: 'c' }),
       ], { w: -1, h: 140 })
       : image(pv.image, { w: -1, h: 140, bg: '#00000010', fit: 'cover' }))
-      : vstack([text(letter, { fs: 32, fw: 700, c: '#FFFFFF', ls: 1 })], { w: -1, h: 80, bg: fbBg, al: 'c', jc: 'c' }),
-  ];
+      : null,
+  ].filter(Boolean);
   const tc = [];
   if (domain) {
     tc.push(hstack([
-      fav ? image(fav, { w: 14, h: 14, r: 3 }) : icon(IconGlobe, { s: 12, c: col.textTertiary }),
-      text(domain.toUpperCase(), { fs: 10, ls: 0.5, fw: 600, c: col.textTertiary, fl: 1, ml: 1 }),
+      fav ? image(fav, { w: 14, h: 14, r: 3 }) : icon(IconGlobe, { s: 12, c: sub }),
+      text(domain, { fs: 12, fw: 500, c: sub, fl: 1, ml: 1 }),
     ], { g: 6, m: [0, 0, 3, 0], al: 'c', w: -1 }));
   }
-  if (pv.title) tc.push(text(String(pv.title), { fs: 13, fw: 600, m: [0, 0, 2, 0], lh: 18, ml: 2, c: col.text }));
-  if (pv.description) tc.push(text(String(pv.description), { fs: 12, lh: 16, op: 0.85, ml: 2, c: col.textSecondary }));
+  if (pv.title) tc.push(text(String(pv.title), { fs: 14, fw: 600, m: [0, 0, 2, 0], lh: 19, ml: 2, c: ink }));
+  if (pv.description) tc.push(text(String(pv.description), { fs: 13, lh: 17, ml: 2, c: sub }));
+  if (!tc.length && !kids.length) return null;
   kids.push(vstack(tc, { p: [8, 12, 8, 12], w: -1 }));
-  return vstack(kids, { id: 'lp', w: 280, r: 12, m: [6, 0, 0, 0], bg: col.surface, bc: col.border, bw: 0.5, a: 'lp:' + url });
+  return vstack(kids, { id: 'lp', w: 280, r: 10, m: [6, 0, 0, 0], bg: cardBg, a: 'lp:' + url });
 }
 
 // ─── buildCard ──────────────────────────────────────────────────────────────
@@ -1096,7 +1107,7 @@ export function buildCard(item, row, ctx) {
     if ((item.type || 'text') === 'text' && !item._type && !item.deleted_at && typeof item.content === 'string') {
       const mm = item.content.match(URL_RE);
       if (mm) {
-        const card = linkCard(mm[0], C);
+        const card = linkCard(mm[0], C, own);
         if (card) row.post = (row.post || []).concat([card]);
       }
     }
