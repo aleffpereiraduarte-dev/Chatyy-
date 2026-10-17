@@ -252,7 +252,7 @@ export default function EmailCategory() {
         <SettingsRow title={t('settings.manageFilters')} subtitle={t('settings.manageFiltersDesc')} onPress={() => { setFiltersMounted(true); setShowFilters(true); }} />
       </SettingsGroup>
 
-      <SettingsGroup header={t('settings.ai')} footer={t('settings.aiDesc')} inset={52}>
+      <SettingsGroup header={t('settings.ai')} footer={t('settings.aiDesc')}>
         <SettingsSwitchRow icon={IconMessageSquare} iconTile={false} title={t('settings.smartReply')} subtitle={t('settings.smartReplyDesc')} value={ai.ai_smart_reply} onValueChange={(v) => setAiFlag('ai_smart_reply', v)} />
         <SettingsRow icon={IconPenTool} iconTile={false} title={t('settings.aiDrafts')} />
         <SettingsSwitchRow icon={IconDraft} iconTile={false} title={t('settings.aiSummary')} subtitle={t('settings.aiSummaryDesc')} value={ai.ai_summary} onValueChange={(v) => setAiFlag('ai_summary', v)} />

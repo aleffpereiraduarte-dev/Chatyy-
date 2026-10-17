@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform, Modal } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform, Modal } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,8 +11,8 @@ import * as api from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
 import FadeSlideIn from '../components/FadeSlideIn';
-import PressableScale from '../components/PressableScale';
-import { useGroupedColors } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish]
+import UIRefreshControl from '../components/ui/RefreshControl';
+import { useGroupedColors, SettingsGroup, SettingsRow, SettingsIconTile, SettingsValueText } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish] [2026-10-17 settings-wa] listas agrupadas
 
 // Lazy-load expo-camera so web doesn't crash if it's not bundled. Same
 // pattern as profile-qr.js / chat-new.js.
@@ -269,147 +269,119 @@ export default function LinkedDevicesScreen() {
     });
   };
 
-  const renderSession = ({ item }) => {
+  // [2026-10-17 settings-wa] Lista agrupada (cartões inset) como o "Aparelhos
+  // conectados" do WhatsApp: ações num cartão, sessões noutro (ícone em chip,
+  // aparelho + app/SO/IP + última atividade), "Este dispositivo" como valor à
+  // direita, tocar numa sessão = sair dela; "Sair de todos" = linha destrutiva
+  // centralizada. Antes: linhas soltas de borda a borda, selo verde e botão
+  // vermelho claro fixo (#FEF2F2) que brilhava no escuro.
+  const [pulling, setPulling] = useState(false);
+  const onPull = () => { setPulling(true); Promise.resolve(load()).finally(() => setPulling(false)); };
+  const sessionRow = (item, idx) => {
     const parsed = parseUserAgent(item.user_agent || '');
     const isCurrent = !!item.is_current;
     const Icon = /iPhone|Android|Mobile/i.test(parsed.device) ? IconSmartphone : IconMonitor;
-    // Each row surfaces: device label, browser/app, IP, last active relative.
     // Falls back to em-dash when the field isn't on the response (don't mint
     // backend fields — the audit only allows display polish).
     const deviceLabel = parsed.device || item.device_name || (t('devices.unknownDevice') || 'Dispositivo desconhecido');
     const browserLabel = parsed.browser || item.app_name || '—';
     const ipLabel = item.ip || parsed.ip || '—';
-    const lastActiveLabel = relativeTime(item.last_active || item.last_seen || item.created_at, t) || '—';
-
+    const lastActiveLabel = relativeTime(item.last_active || item.last_seen || item.created_at, t) || '';
+    const meta = [browserLabel !== '—' ? browserLabel : null, parsed.os || null, ipLabel !== '—' ? `IP ${ipLabel}` : null].filter(Boolean).join(' · ');
+    const sub = [meta, lastActiveLabel].filter(Boolean).join('\n') || undefined;
+    const sid = item.id || item.token_hash;
+    const busy = revoking === sid;
     return (
-      <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <View style={[styles.iconBox, { backgroundColor: g.fill }]}>
-          <Icon size={22} color={colors.primary} />
-        </View>
-        <View style={styles.rowBody}>
-          <View style={styles.rowHead}>
-            <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
-              {deviceLabel}
-            </Text>
-            {isCurrent && (
-              <View style={[styles.currentBadge, { backgroundColor: g.fill }]}>
-                <Text style={[styles.currentBadgeText, { color: colors.text }]}>
-                  {t('devices.thisDevice') || 'This device'}
-                </Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={1}>
-            {[browserLabel !== '—' ? browserLabel : null, parsed.os || null, ipLabel !== '—' ? `IP ${ipLabel}` : null].filter(Boolean).join(' · ') || '—'}
-          </Text>
-          <Text style={[styles.rowTime, { color: colors.textSecondary }]}>
-            {lastActiveLabel}
-          </Text>
-        </View>
-        {!isCurrent && (
-          <TouchableOpacity onPress={() => revoke(item)} disabled={revoking === (item.id || item.token_hash)} style={styles.signOutBtn}>
-            {revoking === (item.id || item.token_hash)
-              ? <ActivityIndicator color={colors.error} size="small" />
-              : <Text style={[styles.signOutText, { color: colors.error }]}>{t('devices.signOut') || 'Sign out'}</Text>}
-          </TouchableOpacity>
-        )}
-      </View>
+      <SettingsRow
+        key={String(sid || idx)}
+        icon={Icon}
+        title={deviceLabel}
+        subtitle={sub}
+        subtitleLines={2}
+        value={isCurrent ? (t('devices.thisDevice') || 'This device') : undefined}
+        chevron={false}
+        onPress={isCurrent || busy ? undefined : () => revoke(item)}
+        accessibilityLabel={isCurrent ? `${deviceLabel}, ${t('devices.thisDevice') || 'This device'}` : `${deviceLabel}, ${t('devices.signOut') || 'Sign out'}`}
+        right={isCurrent ? undefined : (busy
+          ? <ActivityIndicator color={g.secondary} size="small" />
+          : <SettingsValueText color={g.destructive}>{t('devices.signOut') || 'Sign out'}</SettingsValueText>)}
+      />
     );
   };
 
   const hasOther = sessions.some(s => !s.is_current);
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+    <View style={[styles.container, { backgroundColor: g.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {USE_NATIVE_HEADER ? (
-        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('devices.title') })} />
+        <Stack.Screen options={nativeHeaderOptions({
+          colors, isDark, title: t('devices.title'),
+          headerStyle: { backgroundColor: g.pageBg },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: g.pageBg },
+        })} />
       ) : (
-      <View style={[styles.header, { backgroundColor: colors.background, paddingTop: 10, borderBottomColor: g.separator }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+      <View style={[styles.header, { backgroundColor: g.pageBg, paddingTop: 10, borderBottomColor: g.separator }]}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>{t('devices.title') || 'Linked devices'}</Text>
       </View>
       )}
 
+      <ScrollView
+        style={styles.flex1}
+        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={[styles.scroll, { paddingBottom: 32 + insets.bottom }]}
+        refreshControl={Platform.OS === 'web' ? undefined : <UIRefreshControl refreshing={pulling} onRefresh={onPull} tintColor={g.secondary} />}
+      >
       <FadeSlideIn>
       <View style={styles.hero}>
-        <IconShield size={40} color={colors.primary} />
-        <Text style={[styles.heroTitle, { color: colors.text }]}>
+        <SettingsIconTile Icon={IconShield} size={64} />
+        <Text style={[styles.heroTitle, { color: g.text }]}>
           {t('devices.heroTitle') || 'Keep your account secure'}
         </Text>
-        <Text style={[styles.heroSub, { color: colors.textSecondary }]}>
+        <Text style={[styles.heroSub, { color: g.secondary }]}>
           {t('devices.heroSub') || 'Check devices where you are signed in and sign out the ones you don\'t recognize.'}
         </Text>
       </View>
 
       {/* Companion-mode CTAs. Two paths into the same /chat_qr_login_*
-          flow: (a) "Mostrar QR" — this primary becomes the show-side and the
-          OTHER phone scans, then THIS device approves via the URL handler;
-          (b) "Escanear QR de outro celular" — opens the camera to consume a
-          chatyy://companion?token=... payload from a sibling phone and
-          confirms the link from here. WhatsApp/Telegram offer both
-          directions; we mirror that. */}
-      <View style={styles.ctaRow}>
-        {/* flex do botão no wrapper: o style do PressableScale vai pro Animated.View
-            interno, então o Touchable externo não esticava e o rótulo cortava. */}
-        <View style={{ alignSelf: 'stretch' }}>
-        <PressableScale
-          style={[styles.ctaBtn, { flex: 0, alignSelf: 'stretch', backgroundColor: colors.primary }]}
-          onPress={() => router.push('/companion-qr')}
-        >
-          <IconUserPlus size={18} color={colors.onPrimary} />
-          <Text style={[styles.ctaBtnText, { color: colors.onPrimary }]} numberOfLines={1}>
-            {t('devices.linkAnotherPhone') || 'Vincular outro celular'}
-          </Text>
-        </PressableScale>
-        </View>
-        <PressableScale
-          style={[styles.ctaBtn, styles.ctaBtnSecondary, { flex: 0, alignSelf: 'stretch', borderColor: colors.border }]}
-          onPress={openScanner}
-        >
-          <IconCamera size={18} color={colors.primary} />
-          <Text style={[styles.ctaBtnText, { color: colors.primary }]} numberOfLines={1}>
-            {t('devices.scanCompanion') || 'Escanear QR'}
-          </Text>
-        </PressableScale>
-      </View>
+          flow: (a) "Vincular outro celular" — this primary becomes the
+          show-side and the OTHER phone scans; (b) "Escanear QR" — opens the
+          camera to consume a chatyy://companion?token=... payload from a
+          sibling phone and confirms the link from here. */}
+      <SettingsGroup>
+        <SettingsRow icon={IconUserPlus} title={t('devices.linkAnotherPhone') || 'Vincular outro celular'} onPress={() => router.push('/companion-qr')} testID="devices-link-phone" />
+        <SettingsRow icon={IconCamera} title={t('devices.scanCompanion') || 'Escanear QR'} onPress={openScanner} testID="devices-scan" />
+      </SettingsGroup>
 
       {loading ? (
-        <View style={styles.loading}><ActivityIndicator color={colors.primary} size="large" /></View>
+        <SettingsGroup header={t('profile.activeSessions') || 'Sessões ativas'}>
+          <SettingsRow title=" " chevron={false} right={<ActivityIndicator size="small" color={g.secondary} />} />
+        </SettingsGroup>
+      ) : sessions.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <SettingsIconTile Icon={IconMonitor} size={56} muted />
+          <Text style={[styles.emptyTitle, { color: g.text }]}>
+            {t('devices.emptyTitle') || 'Apenas este dispositivo'}
+          </Text>
+          <Text style={[styles.emptyText, { color: g.secondary }]}>
+            {t('devices.empty') || 'Only this device is signed in.'}
+          </Text>
+        </View>
       ) : (
-        <>
-          <FlatList
-            data={sessions}
-            keyExtractor={(s, i) => String(s.id || s.token_hash || i)}
-            renderItem={renderSession}
-            style={styles.list}
-            contentContainerStyle={styles.listContent}
-            ListEmptyComponent={
-              <View style={styles.emptyWrap}>
-                <View style={[styles.emptyIconBox, { backgroundColor: g.fill }]}>
-                  <IconMonitor size={34} color={colors.primary} />
-                </View>
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                  {t('devices.emptyTitle') || 'Apenas este dispositivo'}
-                </Text>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  {t('devices.empty') || 'Only this device is signed in.'}
-                </Text>
-              </View>
-            }
-          />
-          {hasOther && (
-            <TouchableOpacity onPress={revokeAll} style={[styles.revokeAllBtn, { marginBottom: 16 + insets.bottom }, isDark && { backgroundColor: 'rgba(248,113,113,0.10)', borderColor: 'rgba(248,113,113,0.22)' }]}>
-              <Text style={[styles.revokeAllText, { color: colors.error }]}>
-                {t('devices.signOutAll') || 'Sign out all other devices'}
-              </Text>
-            </TouchableOpacity>
-          )}
-        </>
+        <SettingsGroup header={t('profile.activeSessions') || 'Sessões ativas'}>
+          {sessions.map(sessionRow)}
+        </SettingsGroup>
+      )}
+      {!loading && hasOther && (
+        <SettingsGroup>
+          <SettingsRow title={t('devices.signOutAll') || 'Sign out all other devices'} destructive center onPress={revokeAll} testID="devices-signout-all" />
+        </SettingsGroup>
       )}
       </FadeSlideIn>
-
+      </ScrollView>
       {/* Camera-scan modal for the "I want to scan another phone" flow. We
           keep this inline (rather than a separate route) so the busy state +
           confirmation alert stays attached to this screen — the user lands
@@ -458,43 +430,17 @@ export default function LinkedDevicesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  flex1: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  title: { flex: 1, color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 8 },
-  hero: { alignItems: 'center', padding: 20, gap: 8 },
-  heroTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
-  heroSub: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
-  loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  // flex:1 bounds the list to the space between the CTA row and the sticky
-  // "Sign out all" footer so it scrolls internally — without it the list
-  // rendered at full content height and its tail drew UNDER the footer
-  // button (last row clipped). paddingBottom keeps the final row clear of
-  // the footer even mid-scroll.
-  list: { flex: 1 },
-  listContent: { paddingBottom: 8 },
-  row: { flexDirection: 'row', padding: 16, gap: 12, alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth },
-  iconBox: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  rowBody: { flex: 1, minWidth: 0 },
-  rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowName: { flexShrink: 1, fontSize: 15, fontWeight: '600' },
-  currentBadge: { flexShrink: 0, backgroundColor: '#10B981', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  currentBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
-  rowMeta: { fontSize: 13, marginTop: 2 },
-  rowTime: { fontSize: 12, marginTop: 4 },
-  signOutBtn: { flexShrink: 0, marginLeft: 4, paddingHorizontal: 12, paddingVertical: 8 },
-  signOutText: { color: '#EF4444', fontSize: 13, fontWeight: '600' },
-  emptyWrap: { alignItems: 'center', paddingTop: 40, paddingHorizontal: 32, gap: 10 },
-  emptyIconBox: { width: 64, height: 64, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  emptyTitle: { fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 6 },
-  emptyText: { textAlign: 'center', fontSize: 13, paddingHorizontal: 16 },
-  revokeAllBtn: { margin: 16, padding: 14, borderRadius: 12, backgroundColor: '#FEF2F2', alignItems: 'center', borderWidth: 1, borderColor: '#FEE2E2' },
-  revokeAllText: { color: '#EF4444', fontSize: 14, fontWeight: '700' },
-  // [2026-10-11 polish-secondary] CTAs empilhados em largura total (lado a lado
-  // o rótulo "Vincular outro celular" truncava e as alturas não batiam).
-  ctaRow: { flexDirection: 'column', gap: 8, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8 },
-  ctaBtn: { flex: 1, minWidth: 0, minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12 },
-  ctaBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
-  ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 15, flexShrink: 1 },
+  title: { flex: 1, fontSize: 20, fontWeight: '700', marginLeft: 8 },
+  scroll: { paddingHorizontal: 16, paddingTop: 8, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  hero: { alignItems: 'center', paddingTop: 12, paddingBottom: 24, paddingHorizontal: 12 },
+  heroTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3, textAlign: 'center', marginTop: 14 },
+  heroSub: { fontSize: 14, lineHeight: 19, textAlign: 'center', marginTop: 6, maxWidth: 340 },
+  emptyWrap: { alignItems: 'center', paddingTop: 16, paddingBottom: 28, paddingHorizontal: 32 },
+  emptyTitle: { fontSize: 16, fontWeight: '600', textAlign: 'center', marginTop: 12 },
+  emptyText: { textAlign: 'center', fontSize: 14, lineHeight: 19, marginTop: 4 },
   scanRoot: { flex: 1, backgroundColor: '#000' },
   scanHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 50, paddingBottom: 14 },
   scanTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 },

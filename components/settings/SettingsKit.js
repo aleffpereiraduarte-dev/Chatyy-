@@ -37,8 +37,11 @@ export function useGroupedColors() {
     // [2026-10-15 settings-2026] claro mais limpo (cinza quase branco) e escuro
     // PRETO verdadeiro com cartões só um degrau acima; separadores mais leves.
     pageBg: isDark ? (colors.background || '#000000') : '#F3F3F6',
-    cardBg: isDark ? '#141416' : '#FFFFFF',
-    separator: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(60,60,67,0.11)',
+    // [2026-10-17 settings-wa] escuro: cartão #1C1C1E (secondarySystemGrouped
+    // do iOS / WhatsApp) — #141416 quase sumia no preto e os separadores 0.07
+    // ficavam invisíveis; claro: hairline um pouco mais legível.
+    cardBg: isDark ? '#1C1C1E' : '#FFFFFF',
+    separator: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(60,60,67,0.16)',
     header: isDark ? '#7C7C82' : '#77777D',
     text: colors.text || (isDark ? '#F5F5F7' : '#111111'),
     secondary: isDark ? '#8E8E93' : '#8A8A8E',
@@ -147,6 +150,14 @@ export function SettingsGroup({ header, footer, children, inset, style, cardStyl
   );
 }
 
+// [2026-10-17 settings-wa] Texto de VALOR à direita (mesma fonte/cor do
+// `value` da SettingsRow) p/ quem monta o lado direito à mão (`right`):
+// spinner + valor, valor + ícone, ação em texto ("Desbloquear", "Limpar").
+export function SettingsValueText({ children, color, style, numberOfLines = 1 }) {
+  const g = useGroupedColors();
+  return <Text style={[st.value, { marginLeft: 0, color: color || g.secondary }, style]} numberOfLines={numberOfLines}>{children}</Text>;
+}
+
 // Generic row. Right side priority: `right` node > `checked` > value + chevron.
 // [2026-10-09 geo-qa] RTL (árabe/hebraico/persa/urdu no web: <html dir="rtl">):
 // margem entre ícone/texto/seta do lado certo — o ícone colava no texto —
@@ -244,7 +255,7 @@ export function OptionSheet({ visible, title, message, options = [], value, onSe
         <View style={{ backgroundColor: g.cardBg, paddingTop: 20, paddingBottom: nativeSheetBottomPad(insets, 12) }}>
           {(!!title || !!message) && (
             <View style={[st.sheetHead, { borderBottomColor: g.separator }]}>
-              {!!title && <Text style={[st.sheetTitle, { color: g.text }]} numberOfLines={2} accessibilityRole="header">{title}</Text>}
+              {!!title && <Text style={[st.sheetTitle, st.sheetTitleNative, { color: g.text }]} numberOfLines={2} accessibilityRole="header">{title}</Text>}
               {!!message && <Text style={[st.sheetMsg, { color: g.secondary }]}>{message}</Text>}
             </View>
           )}
@@ -448,6 +459,8 @@ const st = StyleSheet.create({
   sheet: { borderRadius: 14, overflow: 'hidden' },
   sheetHead: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, alignItems: 'center' },
   sheetTitle: { fontSize: 14, fontWeight: '600', textAlign: 'center' },
+  // [2026-10-17 settings-wa] sheet do sistema (com grabber): título 17 semibold como o WhatsApp.
+  sheetTitleNative: { fontSize: 17, fontWeight: '600', letterSpacing: -0.41 },
   sheetMsg: { fontSize: 13, marginTop: 4, textAlign: 'center', lineHeight: 17 },
   sheetCancel: { marginTop: 8, borderRadius: 14, minHeight: 54, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
   sheetCancelText: { fontSize: 17, fontWeight: '600' },

@@ -34,7 +34,7 @@ export default function BiaCategory() {
         <SettingsSwitchRow title={t('settings.oneEnabled')} value={enabled} onValueChange={(v) => { setEnabled(v); setStorage('one_enabled', String(v)); }} />
       </SettingsGroup>
       {enabled && (
-        <SettingsGroup header={t('settings.oneNotifPrefs')} footer={t('settings.oneNotifUrgentDesc')} inset={52}>
+        <SettingsGroup header={t('settings.oneNotifPrefs')} footer={t('settings.oneNotifUrgentDesc')}>
           {[
             { val: 'email', label: t('settings.oneNotifEmail'), Icon: IconMail },
             { val: 'push', label: t('settings.oneNotifPush'), Icon: IconBell },

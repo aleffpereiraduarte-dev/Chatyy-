@@ -12,7 +12,7 @@ import { useConfirm } from '../../ConfirmModal';
 import * as settingsCache from '../../../services/settingsCache';
 import { Shimmer } from '../../SkeletonLoader';
 import { IconRefresh } from '../../Icons';
-import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, useGroupedColors } from '../SettingsKit';
+import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsValueText, useGroupedColors } from '../SettingsKit';
 import HistoryDownloadGroup from './HistoryDownloadGroup';
 import { useSafeNav, useSettingsHost, useChatDefaults, useLocalKeys, setStorage, useSettingsRefresh } from './shared';
 
@@ -249,7 +249,7 @@ function DeviceStorage() {
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               {stats == null
                 ? <Shimmer style={{ width: 64, height: 14, borderRadius: 7, marginRight: 8 }} />
-                : <Text style={{ fontSize: 16, color: gc.secondary, marginRight: 8 }}>{fmtBytes(mediaTotal)}</Text>}
+                : <SettingsValueText style={{ marginRight: 8 }}>{fmtBytes(mediaTotal)}</SettingsValueText>}
               {busy ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={16} color={gc.tertiary} />}
             </View>
           )}
@@ -276,7 +276,7 @@ function DeviceStorage() {
                 onPress={rowBusy ? undefined : () => onClearConv(row.conversationId, label)}
                 right={rowBusy
                   ? <ActivityIndicator size="small" color={colors.text} />
-                  : <Text style={{ fontSize: 15, color: gc.destructive || '#FF3B30' }}>{t('settings.storage.clearChatMedia') || 'Limpar mídia'}</Text>}
+                  : <SettingsValueText color={gc.destructive}>{t('settings.storage.clearChatMedia') || 'Limpar mídia'}</SettingsValueText>}
               />
             );
           })}

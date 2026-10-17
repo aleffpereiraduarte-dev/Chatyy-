@@ -76,7 +76,7 @@ function Inner(props) {
       const n = processColor(v);
       if (typeof n === 'number') out[k] = n;
     }
-    out.press = processColor(isDark ? '#26292C' : '#EBEBED');
+    out.press = processColor(isDark ? '#2C2C2E' : '#E5E5EA'); // [2026-10-17 settings-wa] destaque do toque um degrau acima do cartão #1C1C1E
     out.ripple = processColor(isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps

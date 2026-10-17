@@ -275,9 +275,10 @@ const st = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', flex: 1 },
   search: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 16, borderRadius: 10, paddingHorizontal: 10, height: 38 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 16, paddingVertical: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
-  card: { marginHorizontal: 16, marginBottom: 20, borderRadius: 12, overflow: 'hidden' },
-  cardTop: { borderTopLeftRadius: 12, borderTopRightRadius: 12, overflow: 'hidden' },
-  cardBottom: { borderBottomLeftRadius: 12, borderBottomRightRadius: 12, overflow: 'hidden' },
+  // [2026-10-17 settings-wa] raio 18 = mesmo cartão do SettingsGroup (era 12 só aqui).
+  card: { marginHorizontal: 16, marginBottom: 20, borderRadius: 18, overflow: 'hidden' },
+  cardTop: { borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' },
+  cardBottom: { borderBottomLeftRadius: 18, borderBottomRightRadius: 18, overflow: 'hidden' },
   sep: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
   empty: { textAlign: 'center', paddingVertical: 32, fontSize: 15 },
   webWrap: { flex: 1 },

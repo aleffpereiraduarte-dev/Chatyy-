@@ -19,7 +19,7 @@ import * as api from '../../services/api';
 import * as settingsCache from '../../services/settingsCache'; // [2026-10-13 settings-instant]
 import { useTheme, ACCENT_PRESETS } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsCardContent, useGroupedColors } from './SettingsKit';
+import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsCardContent, SettingsValueText, useGroupedColors } from './SettingsKit';
 import AvatarCircle from '../AvatarCircle';
 import PressableRow from '../PressableRow';
 import Svg, { Rect as SvgRect, Path as SvgPath } from 'react-native-svg';
@@ -346,7 +346,7 @@ export function BlockedContactsPanel() {
           subtitle={(b.blocked_name || b.name) ? b.blocked_email : undefined}
           onPress={() => unblock(b.blocked_email)}
           chevron={false}
-          right={<Text style={{ color: g.destructive, fontSize: 15 }}>{t('config.unblock')}</Text>}
+          right={<SettingsValueText color={g.destructive}>{t('config.unblock')}</SettingsValueText>}
         />
       ))}
     </SettingsGroup>

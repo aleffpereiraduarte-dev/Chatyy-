@@ -12,7 +12,7 @@ import { useBiometric } from '../../../context/BiometricContext';
 import { useConfirm } from '../../ConfirmModal';
 import { PASSKEYS_ENABLED } from '../../../constants/featureFlags';
 import { BorderRadius, FontSize, Spacing } from '../../../constants/theme';
-import { IconAlertTriangle, IconCheck, IconShield } from '../../Icons';
+import { IconAlertTriangle, IconCheck } from '../../Icons'; // [2026-10-17 settings-wa] sem ícone solto só em Denúncias (resto da página é texto puro)
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow } from '../SettingsKit';
 import { useSafeNav, useSettingsHost } from './shared';
 import { ChangePasswordModal, BackupPassphraseModal, LoginHistorySheet } from './SecurityModals';
@@ -135,12 +135,11 @@ export default function AccountCategory() {
         )}
 
         <SettingsGroup header={t('mod.reportsHeader')}>
-          <SettingsRow title={t('mod.myReports')} subtitle={t('mod.myReportsDesc')} icon={IconShield} onPress={() => safeNav('/my-reports')} />
+          <SettingsRow title={t('mod.myReports')} subtitle={t('mod.myReportsDesc')} onPress={() => safeNav('/my-reports')} />
           {String(user?.email || '').toLowerCase() === ADMIN_EMAIL ? (
             <SettingsRow
               title={t('mod.adminTitle')}
               subtitle={t('mod.adminDesc')}
-              icon={IconShield}
               onPress={async () => {
                 const url = 'https://chatyy.com.br/api/moderacao.php';
                 try {

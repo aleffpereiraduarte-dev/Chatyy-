@@ -1,11 +1,11 @@
 // [2026-10-15 settings-split] Histórico/mídia no aparelho (Armazenamento e
 // dados) — movido do app/settings.js sem mudanças de comportamento.
 import { memo, useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import { IconCheck, IconDownload, IconRefresh } from '../../Icons';
-import { SettingsGroup, SettingsRow } from '../SettingsKit';
+import { SettingsGroup, SettingsRow, SettingsValueText } from '../SettingsKit';
 
 // History download / missing-media UI used inside the Storage section of
 // SettingsScreenInner. Hooks pull theme + i18n; SQLite counters come from
@@ -147,15 +147,16 @@ export default memo(function HistoryDownloadGroup() {
         right={autoSyncing ? (
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <ActivityIndicator size="small" color={colors.text} style={{ marginRight: 6 }} />
-            <Text style={{ fontSize: 16, color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>{syncValue}</Text>
+            <SettingsValueText style={{ fontVariant: ['tabular-nums'] }}>{syncValue}</SettingsValueText>
           </View>
         ) : allSynced ? (
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <IconCheck size={16} color={colors.success || '#10b981'} style={{ marginRight: 4 }} />
-            <Text style={{ fontSize: 16, color: colors.textSecondary }}>{syncValue}</Text>
+            {/* [2026-10-17 settings-wa] P&B: check na cor do valor (era verde) e mesma fonte do `value` das linhas. */}
+            <IconCheck size={16} color={colors.textSecondary} style={{ marginRight: 4 }} />
+            <SettingsValueText>{syncValue}</SettingsValueText>
           </View>
         ) : (
-          <Text style={{ fontSize: 16, color: colors.textSecondary, fontVariant: ['tabular-nums'] }}>{syncValue}</Text>
+          <SettingsValueText style={{ fontVariant: ['tabular-nums'] }}>{syncValue}</SettingsValueText>
         )}
       />
       <SettingsRow

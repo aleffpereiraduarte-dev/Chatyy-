@@ -1,7 +1,7 @@
 // [2026-10-15 settings-split] Categoria "Ajuda e sobre": suporte, sobre
 // (versão + atualizar agora), diagnóstico (dev) e legal.
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, Linking, Platform, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Linking, Platform, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 import { useTheme } from '../../../context/ThemeContext';
@@ -100,7 +100,8 @@ export default function HelpCategory() {
         <SettingsRow
           title={t('settings.update.title')}
           subtitle={updSubtitle}
-          value={(upd === 'checking' || upd === 'downloading') ? '…' : undefined}
+          // [2026-10-17 settings-wa] spinner do sistema no lugar do "…" solto + seta.
+          right={(upd === 'checking' || upd === 'downloading') ? <ActivityIndicator size="small" color={colors.textSecondary} /> : undefined}
           onPress={checkUpdate}
         />
         {(__DEV__ || blob?.developer_mode) && (
