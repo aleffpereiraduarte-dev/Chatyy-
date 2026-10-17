@@ -714,6 +714,15 @@ final class CMLAudioView: UIView {
     }
   }
   var durText: CMLTextLayout? { didSet { setNeedsDisplay() } }
+  /// [2026-10-17 voz-wa, apiVersion 8] pílula de velocidade à direita da onda
+  var rateText: CMLTextLayout? { didSet { setNeedsDisplay() } }
+  /// retângulo da pílula (coordenadas desta view); nil = sem pílula
+  var ratePillRect: CGRect? {
+    guard let t = rateText else { return nil }
+    let w = max(34, ceil(t.size.width) + 16)
+    let h: CGFloat = 22
+    return CGRect(x: bounds.width - w - 2, y: 15 - h / 2, width: w, height: h)
+  }
   var tint: UIColor = .white { didSet { setNeedsDisplay() } }
   var dim: UIColor = .gray
   var unplayedDot: UIColor? = nil
@@ -810,7 +819,14 @@ final class CMLAudioView: UIView {
     }
     // ondas
     let x0 = b + 10
-    let avail = bounds.width - x0 - 4
+    let pill = ratePillRect
+    let avail = (pill.map { $0.minX - 8 } ?? (bounds.width - 4)) - x0
+    if let pr = pill, let t = rateText {
+      ctx.setFillColor(tint.withAlphaComponent(0.16).cgColor)
+      ctx.addPath(UIBezierPath(roundedRect: pr, cornerRadius: pr.height / 2).cgPath)
+      ctx.fillPath()
+      CMLTextView.drawText(t, in: ctx, origin: CGPoint(x: pr.midX - t.size.width / 2, y: pr.midY - t.size.height / 2), height: bounds.height)
+    }
     let bars = wave.isEmpty ? CMLAudioView.fallbackWave : wave
     let n = bars.count
     if n > 0 && avail > 20 {

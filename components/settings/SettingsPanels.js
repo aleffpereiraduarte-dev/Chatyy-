@@ -24,7 +24,8 @@ import AvatarCircle from '../AvatarCircle';
 import PressableRow from '../PressableRow';
 import Svg, { Rect as SvgRect, Path as SvgPath } from 'react-native-svg';
 import { IconCheck, IconCloud, IconZap, IconTrash, IconCreditCard } from '../Icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import StorageMeter, { StorageNudgeCard, meterFromPlan } from '../storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { normalizePlanState, planDisplayName, formatQuotaBytes } from '../../services/planState';
 import { openStripePortal, isStripeCardAvailable } from '../../services/stripeCheckout';
 import { MONETIZATION_ENABLED } from '../../constants/featureFlags';
@@ -380,6 +381,18 @@ export function ChatyyOnePanel() {
   const loading = !planSnap && revalidating;
   const [busy, setBusy] = useState(false);
   const [shop, setShop] = useState(false);
+  // [2026-10-17 smart-storage] /settings-one?offer=<tier> (avisos de espaço de
+  // outras telas) → abre a loja já no plano recomendado. 1× por chegada.
+  const routeParams = useLocalSearchParams();
+  const offerParam = typeof routeParams?.offer === 'string' ? routeParams.offer : '';
+  const [shopTier, setShopTier] = useState(null);
+  const offerDone = React.useRef('');
+  useEffect(() => {
+    if (!offerParam || offerDone.current === offerParam || !MONETIZATION_ENABLED) return undefined;
+    offerDone.current = offerParam;
+    const tm = setTimeout(() => { setShopTier(offerParam); setShop(true); }, 350); // depois da transição de entrada
+    return () => clearTimeout(tm);
+  }, [offerParam]);
   if (loading) return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={g.secondary} /></View>;
 
   const planNorm = normalizePlanState(plan, usage);
@@ -427,32 +440,9 @@ export function ChatyyOnePanel() {
               {isPaid ? t('chatyyOne.statusActive') : t('chatyyOne.statusFree')}
             </Text>
           </View>
-          <View style={{ marginTop: 16 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: g.text }}>
-                {hasUsage ? fmtBytes(used) : '—'}
-                <Text style={{ fontWeight: '400', color: g.secondary }}>{` ${t('chatyyOne.of')} ${gbTxt}`}</Text>
-              </Text>
-              {hasUsage ? <Text style={{ fontSize: 12.5, color: g.secondary }}>{Math.round(pct)}%</Text> : null}
-            </View>
-            <View style={{ height: 8, borderRadius: 4, backgroundColor: g.fill, overflow: 'hidden' }}>
-              <View style={{ width: pct + '%', height: '100%', borderRadius: 4, backgroundColor: pct >= 95 ? '#ef4444' : pct >= 80 ? '#f59e0b' : g.ink }} />
-            </View>
-            {pct >= 80 ? <Text style={{ fontSize: 12.5, color: pct >= 95 ? '#ef4444' : '#b45309', marginTop: 8 }}>{t('chatyyOne.nearFull')}</Text> : null}
-          </View>
-          {breakdown ? (
-            <View style={{ marginTop: 12 }}>
-              {BREAKDOWN_KEYS.map((k, i) => (
-                <View
-                  key={k}
-                  style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 40, borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: g.separator }}
-                >
-                  <Text style={{ fontSize: 15, color: g.secondary }}>{t(BREAKDOWN_LABEL[k][0]) || BREAKDOWN_LABEL[k][1]}</Text>
-                  <Text style={{ fontSize: 15, fontWeight: '500', color: g.text, fontVariant: ['tabular-nums'] }}>{fmtBytesFine(breakdown[k])}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
+          {/* [2026-10-17 smart-storage] medidor único segmentado por tipo (Fotos/Vídeos/Arquivos quando medido, E-mail, Conversas, Feed, Backup) */}
+          <StorageMeter meter={meterFromPlan(planNorm)} legend={breakdown ? 'rows' : 'none'} style={{ marginTop: 16 }} testID="one-storage-meter" />
+          {pct >= 80 && !MONETIZATION_ENABLED ? <Text style={{ fontSize: 12.5, color: pct >= 95 ? '#ef4444' : g.secondary, marginTop: 8 }}>{t('chatyyOne.nearFull')}</Text> : null}
           {planNorm.expiryNotice ? (
             <Text style={{ fontSize: 13, lineHeight: 18, color: g.secondary, marginTop: 10 }}>
               {planNorm.expiryNotice.kind === 'grace' ? t('planExpiry.grace', { date: planNorm.expiryNotice.date }) : t('planExpiry.expired')}
@@ -468,16 +458,25 @@ export function ChatyyOnePanel() {
           <SettingsRow
             icon={IconZap}
             title={isPaid ? t('chatyyOne.changePlan') : t('chatyyOne.upgrade')}
-            onPress={() => setShop(true)}
+            onPress={() => { try { const r = require('../../services/storageOffers').recommendTier(planNorm); setShopTier(r?.tier?.id || null); } catch {} setShop(true); }}
           />
         ) : null}
         <SettingsRow
           icon={IconTrash}
-          title={t('storage.freeSpace') || 'Liberar espaço'}
-          onPress={() => { try { router.push('/files'); } catch {} }}
+          title={t('manageStorage.title') || 'Gerenciar armazenamento'}
+          subtitle={t('manageStorage.rowSub')}
+          onPress={() => { try { router.push('/manage-storage'); } catch {} }}
           testID="one-free-space"
         />
       </SettingsGroup>
+      {/* [2026-10-17 smart-storage] 80/95%: plano que cabe + preço (servidor/loja). Aqui sem teto (é a tela do plano). */}
+      <StorageNudgeCard
+        plan={planNorm}
+        always
+        onUpgrade={(tierId) => { setShopTier(tierId); setShop(true); }}
+        style={{ marginHorizontal: 16, marginBottom: 24 }}
+        testID="one-storage-nudge"
+      />
       {isPaid ? (
         <SettingsGroup header={t('chatyyOne.subscription')} footer={MONETIZATION_ENABLED ? (t('storage.cancelAnytime') || undefined) : undefined}>
           <SettingsRow title={t('chatyyOne.status')} value={t('chatyyOne.statusActive')} />
@@ -513,7 +512,8 @@ export function ChatyyOnePanel() {
       {MONETIZATION_ENABLED && ShopSheet ? (
         <ShopSheet
           visible={shop}
-          onClose={() => { setShop(false); load(); }}
+          onClose={() => { setShop(false); setShopTier(null); load(); }}
+          initialTier={shopTier}
           currentTier={String(usage?.tier || 'free')}
           usedBytes={hasUsage ? used : undefined}
           limitBytes={limit}

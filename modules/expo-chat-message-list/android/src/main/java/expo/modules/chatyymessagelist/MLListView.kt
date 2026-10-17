@@ -919,7 +919,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   fun setAudioState(d: Map<String, Any?>) {
     val id = MLRow.str(d["id"])
     val prev = audioState?.id
-    audioState = if (id.isEmpty()) null else MLAudioState(id, MLRow.bool(d["playing"]), MLRow.bool(d["loading"]), MLRow.num(d["pos"]), MLRow.num(d["dur"]))
+    audioState = if (id.isEmpty()) null else MLAudioState(id, MLRow.bool(d["playing"]), MLRow.bool(d["loading"]), MLRow.num(d["pos"]), MLRow.num(d["dur"]), MLRow.str(d["rl"]))
     for (i in 0 until rv.childCount) {
       val c = rv.getChildAt(i) as? MLCellView ?: continue
       val r = c.row ?: continue

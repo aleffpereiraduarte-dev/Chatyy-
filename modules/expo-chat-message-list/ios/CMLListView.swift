@@ -989,7 +989,8 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
         playing: CMLRow.bool(d["playing"]),
         loading: CMLRow.bool(d["loading"]),
         posMs: CMLRow.num(d["pos"]),
-        durMs: CMLRow.num(d["dur"])
+        durMs: CMLRow.num(d["dur"]),
+        rateLabel: CMLRow.str(d["rl"])
       )
     }
     guard let s = style else { return }
@@ -1184,6 +1185,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     case .reply: body["part"] = "reply"
     case .link(let u, _): body["part"] = "link"; body["url"] = u
     case .audio: body["part"] = "audio"
+    case .audioRate: body["part"] = "action"; body["url"] = "au:rate" // [voz-wa] 1× → 1,5× → 2×
     case .file: body["part"] = "file"
     case .reaction(let i):
       body["part"] = "reaction"; body["index"] = i

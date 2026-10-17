@@ -50,6 +50,8 @@ import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriv
 import { driveRow } from '../components/native/driveListAdapter';
 // [2026-10-16 drive-native] fila durável de envio + abrir/enviar/salvar no aparelho (sem URL pública)
 import * as driveQueue from '../services/driveUploadQueue';
+import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
+import { afterRNModal } from '../components/NativeSheet';
 import { openOnDevice, sendCopy, saveToDevice } from '../services/driveFileActions';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 
@@ -608,6 +610,9 @@ function DriveScreenInner() {
     });
     const offQuota = driveQueue.onQuotaExceeded(() => {
       if (!isMountedRef.current) return;
+      // [2026-10-17 smart-storage] sheet com o plano que cabe (1×/dia); senão o aviso de antes.
+      const cancelQuota = () => { driveQueue.getItems().filter((i) => i.state === 'quota').forEach((i) => driveQueue.cancel(i.id)); };
+      try { if (require('../services/storageOffers').reportQuotaBlocked({ source: 'drive', onCancelUploads: cancelQuota })) return; } catch {}
       safeAlert(
         tt(t, 'drive.quotaFullTitle', 'Armazenamento cheio'),
         tt(t, 'drive.quotaFullBody', 'Não há espaço para este envio. Seus arquivos continuam guardados — libere espaço ou aumente o armazenamento.'),
@@ -1290,65 +1295,21 @@ function DriveScreenInner() {
   // ============================================================
 
   // --- Storage Bar ---
-  const renderStorageBar = () => {
-    const driveBytes = storageInfo?.drive_used || storageUsedBytes;
-    const emailBytes = storageInfo?.email_used || 0;
-    const chatBytes = storageInfo?.chat_used || 0;
-    const feedBytes = storageInfo?.feed_used || 0;
-    const segments = [
-      // [2026-10-10 P&B] rampa de cinzas por tema (antes verde/âmbar e
-      // Cloud/Feed #111 iguais + invisíveis no escuro).
-      { label: 'Cloud', bytes: driveBytes, color: isDark ? '#F5F5F7' : '#111111' },
-      { label: 'Email', bytes: emailBytes, color: isDark ? '#AEAEB2' : '#48484A' },
-      { label: 'Chat', bytes: chatBytes, color: isDark ? '#7C7C80' : '#8E8E93' },
-      { label: 'Feed', bytes: feedBytes, color: isDark ? '#545458' : '#C7C7CC' },
-    ].filter(s => s.bytes > 0);
-
-    return (
+  const renderStorageBar = () => (
+    // [2026-10-17 smart-storage] medidor único (por tipo, P&B) + aviso 80/95% com o plano certo.
+    <>
       <TouchableOpacity
         style={[styles.storageBar, { backgroundColor: colors.surface, borderColor: colors.border }]}
         onPress={() => setStorageModal(true)}
         activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={t('drive.storageDetails')}
       >
-        <View style={styles.storageInfo}>
-          <Text style={[styles.storageText, { color: colors.text }]}>
-            {formatBytes(storageUsedBytes)} {t('drive.ofStorage', { total: formatBytes(storageTotalBytes) })}
-          </Text>
-          <Text style={[styles.storagePercent, { color: colors.textSecondary }]}>
-            {storagePercent.toFixed(0)}%
-          </Text>
-        </View>
-        {storagePercent >= 80 && (
-          // [2026-10-16 storage-billing] quase cheio → atalho para a loja de armazenamento
-          <TouchableOpacity onPress={() => router.push('/storage')} accessibilityRole="button" style={{ alignSelf: 'flex-start', paddingVertical: 4 }}>
-            <Text style={{ color: storageColor, fontSize: 13, fontWeight: '700' }}>{tt(t, 'drive.buyStorage', 'Comprar armazenamento')}</Text>
-          </TouchableOpacity>
-        )}
-        <View style={[styles.storageTrack, { backgroundColor: isDark ? colors.surfaceVariant : '#e5e7eb' }]}>
-          {segments.length > 0 ? (
-            <View style={{ flexDirection: 'row', height: '100%' }}>
-              {segments.map((seg, i) => {
-                const pct = (seg.bytes / storageTotalBytes) * 100;
-                return <View key={i} style={{ width: `${Math.max(pct, 0.5)}%`, height: '100%', backgroundColor: seg.color, borderTopLeftRadius: i === 0 ? 3 : 0, borderBottomLeftRadius: i === 0 ? 3 : 0 }} />;
-              })}
-            </View>
-          ) : (
-            <View style={[styles.storageFill, { width: `${Math.max(storagePercent, 1)}%`, backgroundColor: storageColor }]} />
-          )}
-        </View>
-        {segments.length > 1 && (
-          <View style={{ flexDirection: 'row', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
-            {segments.map((seg, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: seg.color }} />
-                <Text style={{ fontSize: 10, color: colors.textTertiary }}>{seg.label} {formatBytes(seg.bytes)}</Text>
-              </View>
-            ))}
-          </View>
-        )}
+        <StorageMeter meter={storageInfo ? meterFromDriveInfo(storageInfo) : { usedBytes: storageUsedBytes, limitBytes: storageTotalBytes, parts: {} }} legend="dots" />
       </TouchableOpacity>
-    );
-  };
+      <StorageNudgeCard style={{ marginHorizontal: 16, marginBottom: 8 }} testID="drive-storage-nudge" />
+    </>
+  );
 
   // --- Breadcrumbs (with drop targets for drag-to-parent) ---
   const handleBreadcrumbDrop = useCallback(async (crumbIndex, e) => {
@@ -2075,7 +2036,16 @@ function DriveScreenInner() {
               {formatBytes(storageUsedBytes)} {t('drive.ofStorage', { total: formatBytes(storageTotalBytes) })}
             </Text>
 
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary, marginTop: 16, alignSelf: 'center' }]} onPress={() => setStorageModal(false)}>
+            {/* [2026-10-17 smart-storage] Gerenciar armazenamento (itens/vídeos grandes, liberar espaço) */}
+            <TouchableOpacity
+              style={[styles.modalBtn, { borderWidth: 1, borderColor: colors.border, marginTop: 16, alignSelf: 'center' }]}
+              onPress={() => { setStorageModal(false); afterRNModal(() => { try { router.push('/manage-storage'); } catch {} }); }}
+              accessibilityRole="button"
+              testID="drive-manage-storage"
+            >
+              <Text style={[styles.modalBtnText, { color: colors.text }]}>{t('manageStorage.title')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary, marginTop: 10, alignSelf: 'center' }]} onPress={() => setStorageModal(false)}>
               <Text style={[styles.modalBtnText, { color: colors.onPrimary || '#fff' }]}>{t('drive.close')}</Text>
             </TouchableOpacity>
           </View>

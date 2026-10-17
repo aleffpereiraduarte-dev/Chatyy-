@@ -3,6 +3,7 @@ import { Platform, NativeModules, AppState, I18nManager, Alert } from 'react-nat
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported, preloadLocale, fallbackChain, isRTLLanguage, lookupKey, preloadFallbacks, allowDeferredFallback } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage, chatUpdateSettings as apiChatUpdateSettings } from '../services/api';
+import { withPlanName as _withPlanName } from '../services/brandPlan'; // [2026-10-17 brand-plan]
 
 // [2026-10-08 web-receipts-i18n] Idioma da CONTA. Antes o web usava SÓ o
 // navigator.language (Chrome en-US → UI em inglês, "Mark as read", AM/PM) mesmo
@@ -406,6 +407,8 @@ export function LanguageProvider({ children }) {
         str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), () => String(params[k]));
       });
     }
+    // [2026-10-17 brand-plan] {plan} = nome comercial do plano (services/brandPlan).
+    if (typeof str === 'string' && str.indexOf('{plan}') !== -1) str = _withPlanName(str);
     return str;
   }, [language, loadedTick]);
 

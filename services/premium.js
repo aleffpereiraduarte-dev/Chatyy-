@@ -22,6 +22,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { PLAN_NAME } from './brandPlan'; // [2026-10-17 brand-plan]
 
 let _isPremium = false;
 let _planName = 'free';
@@ -101,16 +102,16 @@ export async function trackFeatureUsage(featureKey) {
 // Get premium upsell message for a feature
 export function getUpsellMessage(featureKey, t) {
   const messages = {
-    ai_translate: t?.('premium.translateLimit') || 'Traduza ilimitado com Chatyy Plus',
-    ai_summarize: t?.('premium.summarizeLimit') || 'Resuma ilimitado com Chatyy Plus',
-    ai_text_to_sticker: t?.('premium.stickerLimit') || 'Crie stickers ilimitados com Chatyy Plus',
-    ai_transcribe: t?.('premium.transcribeLimit') || 'Transcreva ilimitado com Chatyy Plus',
-    ai_quick_replies: t?.('premium.quickReplyLimit') || 'Respostas IA ilimitadas com Chatyy Plus',
-    file_size: t?.('premium.fileSizeLimit') || 'Envie arquivos de até 2GB com Chatyy Plus',
-    themes: t?.('premium.themesLocked') || 'Temas exclusivos — Chatyy Plus',
-    badge: t?.('premium.badge') || 'Ganhe o badge verificado com Chatyy Plus',
+    ai_translate: t?.('premium.translateLimit') || `Traduza ilimitado com ${PLAN_NAME}`,
+    ai_summarize: t?.('premium.summarizeLimit') || `Resuma ilimitado com ${PLAN_NAME}`,
+    ai_text_to_sticker: t?.('premium.stickerLimit') || `Crie stickers ilimitados com ${PLAN_NAME}`,
+    ai_transcribe: t?.('premium.transcribeLimit') || `Transcreva ilimitado com ${PLAN_NAME}`,
+    ai_quick_replies: t?.('premium.quickReplyLimit') || `Respostas IA ilimitadas com ${PLAN_NAME}`,
+    file_size: t?.('premium.fileSizeLimit') || `Envie arquivos de até 2GB com ${PLAN_NAME}`,
+    themes: t?.('premium.themesLocked') || `Temas exclusivos — ${PLAN_NAME}`,
+    badge: t?.('premium.badge') || `Ganhe o badge verificado com ${PLAN_NAME}`,
   };
-  return messages[featureKey] || (t?.('premium.upgrade') || 'Upgrade para Chatyy Plus');
+  return messages[featureKey] || (t?.('premium.upgrade') || `Upgrade para ${PLAN_NAME}`);
 }
 
 /**
@@ -159,7 +160,7 @@ export function getContextualUpsell(contextKey, t) {
     default:
       return { ...base, recommendedTier: 'plus', highlightFeature: null,
         title: tx('plans.title', 'Faça upgrade'),
-        body:  tx('premium.upgrade', 'Desbloqueie tudo com Chatyy Plus') };
+        body:  tx('premium.upgrade', `Desbloqueie tudo com ${PLAN_NAME}`) };
   }
 }
 

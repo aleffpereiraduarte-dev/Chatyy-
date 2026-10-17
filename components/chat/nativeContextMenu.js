@@ -18,7 +18,7 @@ import { nativeEmojiPayload } from './nativeEmojiData';
 import {
   IconReply, IconCopy, IconStar, IconStarFilled, IconDownload, IconForward, IconMessageSquare,
   IconMail, IconCheck, IconTrash, IconPin, IconStickyNote, IconGlobe, IconSparkles, IconInfo,
-  IconEdit, IconAlertTriangle, IconBookmark,
+  IconEdit, IconAlertTriangle, IconBookmark, IconFileText, IconEyeOff,
 } from '../Icons';
 
 export function nativeCtxMenuEnabled() {
@@ -95,6 +95,13 @@ export function buildNativeCtxMenu(key, msg, env) {
     const isVoice = msg.type === 'voice' || msg.type === 'audio';
     if ((msg.content && (msg.type === 'text' || (msg.type === 'image' && msg.content !== msg.file_name))) || (isVoice && msg.file_url)) {
       add('translate', env.translated ? _tf(t, 'chatConv.hideTranslation', 'Ocultar tradução') : _tf(t, 'chatConv.translate', 'Traduzir'), 'globe', IconGlobe);
+    }
+    // [2026-10-17 voz-wa] transcrição simples (Whisper do servidor, cache por mensagem) = WhatsApp
+    if (isVoice && msg.file_url && typeof msg.id === 'number' && !msg._uploading) {
+      const hasTx = !!String(msg.transcript || msg.transcription || '').trim();
+      if (!hasTx) add('voiceTx', _tf(t, 'chatConv.voiceTranscribe', 'Transcrever'), 'text.quote', IconFileText);
+      else if (msg._txHidden) add('voiceTx', _tf(t, 'chatConv.voiceShowTranscript', 'Ver transcrição'), 'text.quote', IconFileText);
+      else add('voiceTx', _tf(t, 'chatConv.voiceHideTranscript', 'Ocultar transcrição'), 'eye.slash', IconEyeOff);
     }
     if (isVoice && msg.file_url) add('transcribe', _tf(t, 'chatConv.transcribeSummarize', 'Transcrever + resumir'), 'sparkles', IconSparkles);
     if (ownStrict && typeof msg.id === 'number') add('info', _tf(t, 'chatConv.messageInfo', 'Informações'), 'info.circle', IconInfo);
@@ -213,6 +220,7 @@ export function runNativeCtxAction(action, msg, H) {
     case 'replyPrivately': _replyPrivately(msg, H); return;
     case 'translate': H.handleTranslate(msg); return;
     case 'transcribe': _transcribe(msg, H); return;
+    case 'voiceTx': if (H.transcribeVoice) H.transcribeVoice(msg); return; // [voz-wa]
     case 'info': H.handleMessageInfo(msg); return;
     case 'star': H.handleStarMessage(msg); return;
     case 'keep': {
@@ -321,7 +329,7 @@ async function _transcribe(targetMsg, H) {
   try {
     const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../../services/premium');
     const check = await canUseFeature('ai_transcribe');
-    if (!check.allowed) { safeAlert('Chatyy One', getUpsellMessage('ai_transcribe', t)); return; }
+    if (!check.allowed) { safeAlert(require('../../services/brandPlan').PLAN_NAME, getUpsellMessage('ai_transcribe', t)); return; }
     trackFeatureUsage('ai_transcribe');
   } catch {}
   if (!targetMsg?.file_url) return;

@@ -24,6 +24,7 @@ import {
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 import { normalizePlanState, planDisplayName, formatQuotaBytes, formatGb, catalogEntry } from '../services/planState';
+import StorageMeter, { StorageNudgeCard } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 // Backup engine config / progress hooks. Quality toggle reads/writes the
 // shared settings store the engine consults at runtime, so flipping it here
 // affects the very next photo the engine compresses (or skips, for original).
@@ -523,13 +524,10 @@ export default function BackupScreen() {
                   {planDisplayName(planNorm?.planId || currentPlan, t)}
                 </Text>
               </View>
+              {/* [2026-10-17 smart-storage] medidor único (plan_info + chat_storage_usage) + aviso 80/95% */}
               <View style={{ marginTop: 4 }}>
-                <View style={[s.storageBarBg, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
-                  <View style={[s.storageBarFill, { width: `${storageTotal > 0 ? Math.min((storageUsed / storageTotal) * 100, 100) : 0}%`, backgroundColor: ACCENT }]} />
-                </View>
-                <Text style={{ color: colors.textSecondary, fontSize: FontSize.xs, marginTop: 4 }}>
-                  {storageUsed.toFixed(1)} GB / {storageTotalLabel}
-                </Text>
+                <StorageMeter legend="dots" />
+                <StorageNudgeCard style={{ marginTop: 10 }} testID="backup-storage-nudge" />
               </View>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>

@@ -4,12 +4,13 @@
 // categoria certa (rolando até a âncora). Usado pela lista JS e enviado à
 // lista nativa (que filtra do lado nativo).
 import { Platform } from 'react-native';
+import { PLAN_NAME } from '../../../services/brandPlan'; // [2026-10-17 brand-plan]
 
 // [cat, chave i18n do título, fallback, âncora?, palavras extras, plataforma?]
 const ENTRIES = [
   ['account', 'settings.editProfile', 'Editar perfil', 'account', 'perfil profile foto photo nome name'],
   ['account', 'account.switch', 'Trocar conta', 'account', 'contas accounts'],
-  ['account', null, 'Chatyy One', 'account', 'plano plan assinatura premium'],
+  ['account', null, PLAN_NAME, 'account', 'plano plan assinatura premium one plus armazenamento storage'],
   ['account', 'linkedPhones.title', 'Números', 'account', 'telefone phone'],
   ['account', 'settings.linkedDevices', 'Dispositivos conectados', 'account', 'aparelhos devices'],
   ['account', 'settings.exportData', 'Exportar dados', 'account', 'lgpd export'],

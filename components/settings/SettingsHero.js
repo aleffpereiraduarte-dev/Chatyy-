@@ -16,6 +16,7 @@ import { useReducedMotion } from '../reducedMotion';
 import { useGroupedColors, SettingsGroup, SettingsRow } from './SettingsKit';
 import Svg, { Path } from 'react-native-svg';
 import { IconEdit, IconRepeat, IconSparkles, IconMonitor, IconUsers, IconChevronRight } from '../Icons';
+import { PLAN_NAME } from '../../services/brandPlan'; // [2026-10-17 brand-plan]
 
 function QrGlyph({ size = 18, color }) {
   // Mesmo desenho do botão QR antigo (4 quadrados), em traço fino.
@@ -182,7 +183,7 @@ export function SettingsSpecialCards({ user, accounts, walletDiamonds, onOne, on
   return (
     <View>
       <View style={st.tilesRow}>
-        <FeatureTile icon={IconSparkles} title="Chatyy One" subtitle={t('chatyyOne.rowDesc')} onPress={onOne} testID="settings-tile-one" />
+        <FeatureTile icon={IconSparkles} title={PLAN_NAME} subtitle={t('chatyyOne.rowDesc')} onPress={onOne} testID="settings-tile-one" />
         {walletDiamonds !== null && walletDiamonds !== undefined ? (
           // [2026-10-17] '' = carteira ligada mas saldo ainda desconhecido → o
           // cartão já ocupa o lugar (sem o Chatyy One encolher depois).

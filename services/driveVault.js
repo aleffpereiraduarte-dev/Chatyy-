@@ -31,7 +31,11 @@ export const PART_BYTES = 4 * 1024 * 1024 - 64;          // texto em claro por p
 export const MAX_FILE_BYTES = 150 * 1024 * 1024;          // decifra em memória no aparelho
 const UPLOAD_CONCURRENCY = 2;
 
-function _err(code, msg, extra) { const e = new Error(msg || code); e.code = code; if (extra) Object.assign(e, extra); return e; }
+function _err(code, msg, extra) { const e = new Error(msg || code); e.code = code; if (extra) Object.assign(e, extra); if (code === 'ERR_QUOTA') _quotaOffer(); return e; }
+// [2026-10-17 smart-storage] sem espaço (507) → sheet com o plano que cabe (1×/dia, services/storageOffers).
+function _quotaOffer() {
+  setTimeout(() => { try { require('./storageOffers').reportQuotaBlocked({ source: 'vault' }); } catch {} }, 0);
+}
 function _cat(parts) {
   let n = 0; for (const p of parts) n += p.length;
   const out = new Uint8Array(n); let o = 0;

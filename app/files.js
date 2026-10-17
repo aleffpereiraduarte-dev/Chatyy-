@@ -63,6 +63,7 @@ import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriv
 import { driveRow } from '../components/native/driveListAdapter';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
+import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
 
@@ -504,50 +505,9 @@ function getStorageFillColor(percent, isDark) {
 }
 
 function StorageBar({ storageInfo, colors, t, isDark }) {
-  // [2026-06-04] HOOKS PRIMEIRO, early-return DEPOIS. O `if (!storageInfo)
-  // return null` ficava ANTES do useRef/useEffect: 1º render (storageInfo
-  // null) = 0 hooks; quando o backend respondia, mesmo fiber re-renderizava
-  // com 2 hooks → "Rendered more hooks than during the previous render" e a
-  // tela Arquivos inteira caía no ErrorBoundary (caçada R2, mesmo padrão dos
-  // crashes do Feed #1105 e do grupo #1343).
-  const percent = Math.min(storageInfo?.percentage || 0, 100);
-  const driveUsed = storageInfo?.drive_used || 0;
-  const emailUsed = storageInfo?.email_used || 0;
-  const quota = storageInfo?.quota || storageInfo?.plan_quota || 15 * 1024 * 1024 * 1024;
-
-  // Animated fill
-  const fillAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!storageInfo) return; // ainda carregando — anima só quando houver dado
-    Animated.timing(fillAnim, {
-      toValue: 1,
-      duration: 800,
-      delay: 300,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [percent, storageInfo ? 1 : 0]);
-
+  // [2026-10-17 smart-storage] medidor único (segmentado por tipo, P&B) + aviso
+  // 80/95% com o plano que cabe. Sem hooks próprios (o antigo animava a barra).
   if (!storageInfo) return null;
-
-  // Clamp tiny non-zero usage to a visible minimum so the bar still shows
-  // a sliver when the user has only a few KB. Without this, 86 KB / 20 GB
-  // computes to ~0.0004% and renders as a pixel-less stripe (caught QA
-  // 2026-05-07: bar looked empty despite "86.4 KB" subtitle).
-  const _rawDrive = quota > 0 ? Math.min((driveUsed / quota) * 100, 100) : 0;
-  const _rawEmail = quota > 0 ? Math.min((emailUsed / quota) * 100, 100) : 0;
-  const drivePct = driveUsed > 0 && _rawDrive < 1 ? 1 : _rawDrive;
-  const emailPct = emailUsed > 0 && _rawEmail < 1 ? Math.min(1, 100 - drivePct) : Math.min(_rawEmail, 100 - drivePct);
-
-  const driveWidth = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', `${drivePct}%`] });
-  const emailWidth = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', `${emailPct}%`] });
-
-  const isHigh = percent > 80;
-  const isMedium = percent > 60;
-  // Threshold color drives the drive fill + percentage badge so the bar
-  // reads as "green / yellow / orange / red" at a glance.
-  const fillColor = getStorageFillColor(percent, isDark);
-
   return (
     <View style={[
       styles.storageBar,
@@ -557,84 +517,11 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
       },
       glassStyle(isDark),
     ]}>
-      {/* Percentage display — Cloud glyph anchors the hero so the bar reads as
-          "Drive storage" instantly. Badge wraps icon + % in a single pill so it
-          carries the threshold color (green / amber / orange / red) coherently. */}
-      <View style={styles.storageHeader}>
-        <View style={[
-          styles.storageCloudIcon,
-          { backgroundColor: fillColor + '18', borderColor: fillColor + '30' },
-        ]}>
-          <IconCloud size={16} color={fillColor} />
-        </View>
-        <View style={{ flex: 1 }}>
-          {/* [2026-10-16 polish-r2] Era "0% usado de" (frase cortada: a chave
-              tem {used}/{quota} e ia vazia) + "57.3 MB / 1024 GB" embaixo. */}
-          <Text style={[styles.storageMainText, { color: colors.text }]} numberOfLines={1}>
-            {t('files.storageUsed', {
-              used: storageInfo.total_used != null ? formatBytes(storageInfo.total_used) : (storageInfo.used_formatted || '0 B'),
-              quota: quota ? formatBytes(quota) : (storageInfo.total_formatted || ''),
-            })}
-          </Text>
-        </View>
-        <View style={[
-          styles.storagePercentBadge,
-          { backgroundColor: fillColor + '15' },
-        ]}>
-          <Text style={[
-            styles.storagePercentText,
-            { color: fillColor },
-          ]}>
-            {Math.round(percent)}%
-          </Text>
-        </View>
-      </View>
-
-      {/* Gradient progress bar — brand purple A78BFA→7C3AED when usage is
-          comfortable, fall back to threshold color (yellow/orange/red) once
-          we hit the warning bands so the bar still communicates pressure. */}
-      <View style={[styles.storageTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <View style={{ flexDirection: 'row', height: '100%' }}>
-          {drivePct > 0 && (
-            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: percent < 80 ? colors.primary : fillColor }]}>
-              <View style={[
-                styles.storageFillGradient,
-                isWeb
-                  ? { background: percent < 80
-                      ? `linear-gradient(90deg, ${colors.brandSecondary} 0%, ${colors.primary} 100%)`
-                      : `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)` }
-                  : { backgroundColor: percent < 80 ? colors.primary : fillColor },
-              ]} />
-            </Animated.View>
-          )}
-          {emailPct > 0 && (
-            <Animated.View style={[
-              styles.storageFillEmail,
-              { width: emailWidth, backgroundColor: isDark ? '#7C7C80' : '#8E8E93' },
-              drivePct > 0 && { borderTopLeftRadius: 0, borderBottomLeftRadius: 0 },
-            ]} />
-          )}
-        </View>
-      </View>
-
-      {/* Legend */}
-      <View style={styles.storageLegend}>
-        <View style={styles.storageLegendItem}>
-          <View style={[styles.storageLegendDot, { backgroundColor: colors.primary }]} />
-          <Text style={[styles.storageLegendText, { color: colors.textTertiary }]}>
-            Drive {storageInfo.drive_formatted || formatStorageBytes(driveUsed)}
-          </Text>
-        </View>
-        <View style={styles.storageLegendItem}>
-          <View style={[styles.storageLegendDot, { backgroundColor: isDark ? '#7C7C80' : '#8E8E93' }]} />
-          <Text style={[styles.storageLegendText, { color: colors.textTertiary }]}>
-            Email {storageInfo.email_formatted || formatStorageBytes(emailUsed)}
-          </Text>
-        </View>
-        <Text style={[styles.storageLegendText, { color: colors.textTertiary }]}>
-          {t('files.fileCount', { count: storageInfo.file_count || 0 })}
-        </Text>
-      </View>
+      <StorageMeter meter={meterFromDriveInfo(storageInfo)} legend="dots" />
+      <Text style={[styles.storageLegendText, { color: colors.textTertiary, marginTop: 6 }]}>
+        {t('files.fileCount', { count: storageInfo.file_count || 0 })}
+      </Text>
+      <StorageNudgeCard style={{ marginTop: 10 }} testID="files-storage-nudge" />
     </View>
   );
 }

@@ -7,6 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Typeface
+import android.text.TextPaint
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.net.Uri
@@ -34,7 +36,8 @@ import kotlin.math.sin
 // (balão, textos StaticLayout, hora/✓✓, citação, mídia, áudio, arquivo,
 // reações). Zero hierarquia de views → bind/rolagem baratos.
 
-data class MLAudioState(val id: String, val playing: Boolean, val loading: Boolean, val posMs: Double?, val durMs: Double?)
+// [2026-10-17 voz-wa, apiVersion 8] rateLabel = "1×"/"1,5×"/"2×" (vazio = sem pílula)
+data class MLAudioState(val id: String, val playing: Boolean, val loading: Boolean, val posMs: Double?, val durMs: Double?, val rateLabel: String = "")
 
 /** Slot de imagem carregado via Glide (mesmas versões que o expo-image já traz). */
 class MLImageSlot(private val owner: View) {
@@ -747,6 +750,9 @@ class MLCellView(context: Context) : ViewGroup(context) {
     for ((i, f) in L.albumFrames.withIndex()) if (f.contains(bx, by)) return Part.Media(i)
     if (!L.mediaFrame.isEmpty && L.mediaFrame.contains(bx, by)) return Part.Media(0)
     if (!L.replyFrame.isEmpty && L.replyFrame.contains(bx, by)) return Part.Reply
+    ratePillRect(L, r, s)?.let { pr ->
+      if (bx >= pr.left - slop * 2 && bx <= pr.right + slop * 2 && by >= pr.top - slop * 2 && by <= pr.bottom + slop * 2) return Part.Action("au:rate", -1)
+    }
     if (!L.audioFrame.isEmpty && bx >= L.audioFrame.left - slop && bx <= L.audioFrame.right + slop && by >= L.audioFrame.top - slop && by <= L.audioFrame.bottom + slop) return Part.Audio
     if (!L.fileFrame.isEmpty && L.fileFrame.contains(bx, by)) return Part.File
     val t = L.text
@@ -1296,6 +1302,25 @@ class MLCellView(context: Context) : ViewGroup(context) {
     else c.drawArc(tmpRect, -90f, 360f * pct.coerceIn(2, 100) / 100f, false, stroke)
   }
 
+  // [voz-wa] pílula de velocidade à direita da onda (nota tocando/pausada)
+  private val ratePaint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
+  private fun rateLabelFor(r: MLRow): String {
+    val st = audio ?: return ""
+    return if (st.id == r.id) st.rateLabel else ""
+  }
+  /** retângulo da pílula (coordenadas do balão); null = sem pílula */
+  private fun ratePillRect(L: MLRowLayout, r: MLRow, s: MLStyle): RectF? {
+    if (r.audio == null || L.audioFrame.isEmpty) return null
+    val lbl = rateLabelFor(r)
+    if (lbl.isEmpty()) return null
+    ratePaint.textSize = s.sp(12f)
+    val w = max(s.dp(34f), ratePaint.measureText(lbl) + s.dp(16f))
+    val h = s.dp(22f)
+    val f = L.audioFrame
+    val cy = f.top + s.dp(15f)
+    return RectF(f.right - s.dp(2f) - w, cy - h / 2, f.right - s.dp(2f), cy + h / 2)
+  }
+
   private fun drawAudio(c: Canvas, L: MLRowLayout, r: MLRow, s: MLStyle) {
     val au = r.audio ?: return
     val f = L.audioFrame
@@ -1350,7 +1375,16 @@ class MLCellView(context: Context) : ViewGroup(context) {
     audioShownId = r.id
     val bars = if (au.wave.isNotEmpty()) au.wave else FALLBACK_WAVE
     val x0 = f.left + b + s.dp(10f)
-    val avail = f.right - x0 - s.dp(4f)
+    val pill = ratePillRect(L, r, s)
+    val avail = (pill?.let { it.left - s.dp(8f) } ?: (f.right - s.dp(4f))) - x0
+    if (pill != null) {
+      fill.color = (tint and 0x00FFFFFF) or (0x29 shl 24)
+      c.drawRoundRect(pill, pill.height() / 2, pill.height() / 2, fill)
+      ratePaint.color = tint
+      val lbl = rateLabelFor(r)
+      val fm = ratePaint.fontMetrics
+      c.drawText(lbl, pill.centerX() - ratePaint.measureText(lbl) / 2, pill.centerY() - (fm.ascent + fm.descent) / 2, ratePaint)
+    }
     if (avail > s.dp(20f)) {
       val n = bars.size
       val step = avail / n

@@ -29,9 +29,11 @@ public class ChatyyMessageListModule: Module {
     //     entrada com mola enviada/recebida, apagar/colapsar/altura com mola,
     //     ✓→✓✓→lida animado, pop+faíscas de reação alheia, pílula de data com
     //     mola, onda do áudio contínua.
+    // 8 = [voz-wa] setAudioState {rl: "1,5×"} → pílula de velocidade à direita da
+    //     onda (nota tocando/pausada); toque → onRowPress part 'action' url 'au:rate'.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 7
+      return 8
       #else
       return 3
       #endif

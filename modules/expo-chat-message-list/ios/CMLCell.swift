@@ -159,6 +159,7 @@ final class CMLCell: UICollectionViewCell {
     reacts.alpha = 1
     meta.cancelStatusAnim()
     audio.resetPlayback()
+    audio.rateText = nil // [voz-wa]
     replyIcon.alpha = 0
     highlight.layer.removeAllAnimations()
     highlight.alpha = 0
@@ -571,6 +572,13 @@ final class CMLCell: UICollectionViewCell {
     let sec = max(0, Int(shown.rounded()))
     let txt = String(format: "%d:%02d", sec / 60, sec % 60)
     audio.durText = CMLLayoutBuilder.line(txt, font: s.meta, color: row.own ? s.theme.ownMeta : s.theme.otherMeta, maxWidth: 80)
+    // [voz-wa] pílula 1×/1,5×/2× (só na nota tocando/pausada, como o WhatsApp)
+    let rl = active ? (st?.rateLabel ?? "") : ""
+    if rl.isEmpty {
+      if audio.rateText != nil { audio.rateText = nil }
+    } else {
+      audio.rateText = CMLLayoutBuilder.line(rl, font: UIFont.systemFont(ofSize: 12 * s.scale, weight: .bold), color: row.own ? s.theme.ownText : s.theme.otherText, maxWidth: 64)
+    }
   }
 
   private func setImage(_ iv: UIImageView, slot: Int, uri: String, thumb: String, maxPixel: CGFloat, animated: Bool) {
@@ -608,7 +616,7 @@ final class CMLCell: UICollectionViewCell {
 
   // MARK: hit test (ponto em coordenadas do contentView)
 
-  enum Part { case bubble, media(Int), reply, link(String, Int), audio, file, reaction(Int), action(String, CGRect, CGFloat), retry, vnote(Int), spoiler, xfer(Int), none }
+  enum Part { case bubble, media(Int), reply, link(String, Int), audio, audioRate, file, reaction(Int), action(String, CGRect, CGFloat), retry, vnote(Int), spoiler, xfer(Int), none }
 
   /// [native-media-dl] slots de transferência: -1 mídia única, 0..3 álbum
   static let xferAudio = 100
@@ -641,6 +649,7 @@ final class CMLCell: UICollectionViewCell {
     }
     if !L.mediaFrame.isEmpty && L.mediaFrame.contains(bp) { return .media(0) }
     if !L.replyFrame.isEmpty && L.replyFrame.contains(bp) { return .reply }
+    if !L.audioFrame.isEmpty && !audio.isHidden, let pr = audio.ratePillRect, pr.offsetBy(dx: L.audioFrame.minX, dy: L.audioFrame.minY).insetBy(dx: -8, dy: -8).contains(bp) { return .audioRate }
     if !L.audioFrame.isEmpty && L.audioFrame.insetBy(dx: -4, dy: -6).contains(bp) { return .audio }
     if !L.fileFrame.isEmpty && L.fileFrame.contains(bp) { return .file }
     if let t = L.text, !L.textFrame.isEmpty {
@@ -849,6 +858,8 @@ struct CMLAudioState {
   var loading: Bool
   var posMs: Double?
   var durMs: Double?
+  /// [2026-10-17 voz-wa, apiVersion 8] rótulo da velocidade ("1×", "1,5×"); vazio = sem pílula
+  var rateLabel: String = ""
 }
 
 

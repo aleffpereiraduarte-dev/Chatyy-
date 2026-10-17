@@ -1489,6 +1489,8 @@ export class BackupEngine {
     // fileUpload fadado a falhar + retries — tempestade de 624×507 em prod.
     if (presigned?.success === false && presigned?.data?.grace_expired) {
       this._aborted = true;
+      // [2026-10-17 smart-storage] sheet "sem espaço" com o plano que cabe (1×/dia).
+      try { require('./storageOffers').reportQuotaBlocked({ source: 'backup' }); } catch {}
       const qe = new Error('storage_quota_full');
       qe.quotaFull = true;
       throw qe;

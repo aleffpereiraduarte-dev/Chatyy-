@@ -6,7 +6,8 @@ import {
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
   Share, Linking, AppState, BackHandler,
 } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
+import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -435,7 +436,9 @@ function PhotosScreenInner() {
   }, [nativeBackupOwns, language]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // State
-  const [activeTab, setActiveTab] = useState('photos');
+  // [2026-10-17 smart-storage] /photos?tab=backup (Gerenciar armazenamento → "Já no backup").
+  const _routeParams = useLocalSearchParams();
+  const [activeTab, setActiveTab] = useState(() => { const tb = String(_routeParams?.tab || ''); return TABS.includes(tb) ? tb : 'photos'; });
   const [gridColumns, setGridColumns] = useState(isDesktop ? 5 : 3);
   const [searchText, setSearchText] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -2657,10 +2660,16 @@ function PhotosScreenInner() {
         storage.clearBackedUpMap?.().catch(() => {});
       } catch {}
       startBackup();
+      // [2026-10-17 smart-storage] biblioteca maior que o espaço livre → sugere o
+      // plano que cabe ("Seu backup precisa de ~X GB"), no máximo 1× a cada 14 dias.
+      if (Platform.OS !== 'web') {
+        const done = backedUpTotal || 0;
+        setTimeout(() => { try { require('../services/storageOffers').maybeOfferForBackup({ backedUpCount: done }).catch(() => {}); } catch {} }, 1500);
+      }
     } else {
       setBackupStatus('idle');
     }
-  }, [startBackup]);
+  }, [startBackup, backedUpTotal]);
 
   // ============================================================
   // VIEWER
@@ -4294,51 +4303,13 @@ function PhotosScreenInner() {
                 </View>
               </View>
 
-              {/* Storage bar */}
-              {storageInfo && (() => {
-                const quota = storageInfo.quota || storageInfo.plan_quota || 15 * 1024 * 1024 * 1024;
-                const driveUsed = storageInfo.drive_used || 0;
-                const emailUsed = storageInfo.email_used || 0;
-                const totalUsed = storageInfo.total_used || driveUsed + emailUsed;
-                const drivePct = quota > 0 ? Math.min((driveUsed / quota) * 100, 100) : 0;
-                const emailPct = quota > 0 ? Math.min((emailUsed / quota) * 100, 100 - drivePct) : 0;
-                // Threshold-based color so the bar visually surfaces
-                // pressure: green / amber / orange / red.
-                const usedPct = quota > 0 ? Math.min((totalUsed / quota) * 100, 100) : 0;
-                const driveColor = usedPct < 50
-                  ? '#22c55e'
-                  : usedPct < 80 ? '#f59e0b'
-                  : usedPct < 95 ? '#ef6c00'
-                  : '#ef4444';
-                return (
-                  <View style={{ marginTop: Spacing.md }}>
-                    <View style={[s.storageBar, { backgroundColor: colors.border }]}>
-                      <View style={{ flexDirection: 'row', height: '100%' }}>
-                        {drivePct > 0 && <View style={[s.storageFill, { width: `${drivePct}%`, backgroundColor: driveColor }]} />}
-                        {emailPct > 0 && <View style={[s.storageFill, { width: `${emailPct}%`, backgroundColor: '#f59e0b', borderTopLeftRadius: drivePct > 0 ? 0 : 3, borderBottomLeftRadius: drivePct > 0 ? 0 : 3 }]} />}
-                      </View>
-                    </View>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: driveColor }} />
-                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Drive: {storageInfo.drive_formatted || formatBytes(driveUsed)}</Text>
-                        </View>
-                        {emailUsed > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
-                          <Text style={[s.storageText, { color: colors.textSecondary }]}>Email: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
-                        </View>}
-                      </View>
-                      <Text style={[s.storageText, { color: driveColor, fontWeight: '700' }]}>
-                        {Math.round(usedPct)}%
-                      </Text>
-                    </View>
-                    <Text style={[s.storageText, { color: colors.textSecondary, marginTop: 2 }]}>
-                      {formatGB(totalUsed)} GB {t('photos.of')} {formatGB(quota)} GB
-                    </Text>
-                  </View>
-                );
-              })()}
+              {/* Storage bar — [2026-10-17 smart-storage] medidor único segmentado por tipo + aviso 80/95% */}
+              {storageInfo ? (
+                <View style={{ marginTop: Spacing.md }}>
+                  <StorageMeter meter={meterFromDriveInfo(storageInfo)} legend="dots" />
+                  <StorageNudgeCard style={{ marginTop: Spacing.md }} testID="photos-storage-nudge" />
+                </View>
+              ) : null}
             </View>
 
             {/* Settings card */}

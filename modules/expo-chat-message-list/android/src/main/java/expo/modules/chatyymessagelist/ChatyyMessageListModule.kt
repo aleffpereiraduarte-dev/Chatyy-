@@ -21,7 +21,7 @@ class ChatyyMessageListModule : Module() {
     //     (a11y: id); copiar/encaminhar → onRowPress part 'a11y' url id; clique do
     //     TalkBack → toque na parte principal.
     // 7 = [motion-conv] prop `motion` {i,e,t,r,s,a} (molas de entrada/edição, ✓✓ animado, pop+faíscas de reação, pílula, onda do áudio)
-    Function("apiVersion") { 7 }
+    Function("apiVersion") { 8 } // 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.

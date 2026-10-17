@@ -6,12 +6,13 @@ import { useResponsive } from '../utils/responsive';
 import { useLanguage } from '../context/LanguageContext';
 import { SettingsScreen } from '../components/settings/SettingsKit';
 import { ChatyyOnePanel } from '../components/settings/SettingsPanels';
+import { PLAN_NAME } from '../services/brandPlan';
 
 export default function SettingsOneScreen() {
   const { t } = useLanguage();
   const { contentMaxWidth } = useResponsive();
   return (
-    <SettingsScreen title={t('chatyyOne.title') || 'Chatyy One'} contentStyle={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
+    <SettingsScreen title={t('chatyyOne.title') || PLAN_NAME} contentStyle={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
       <ChatyyOnePanel />
     </SettingsScreen>
   );

@@ -18,6 +18,7 @@ import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext'; // [2026-10-08 polish-leftovers]
+import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-17 brand-plan]
 import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 import { CallListSkeleton } from './SkeletonLoader';
 import { haptic } from '../constants/theme';
@@ -912,7 +913,7 @@ function PlanBadge({ minutesInfo, isDark, t }) {
   return (
     <View style={[s.planBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
       <Text style={[s.planBadgeText, { color: isDark ? '#8e8e93' : '#6c6c70', fontSize: 12 }]}>
-        {t?.('calls.needsPlan') || 'Assine o plano One para chamadas ilimitadas'}
+        {t?.('calls.needsPlan') || ('Assine o ' + PLAN_NAME + ' para chamadas ilimitadas')}
       </Text>
     </View>
   );

@@ -56,7 +56,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
-import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list]
+import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
@@ -24782,7 +24782,7 @@ function ChatConversationInner() {
     try {
       const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
       const check = await canUseFeature('ai_summarize');
-      if (!check.allowed) { safeAlert('Chatyy One', getUpsellMessage('ai_summarize', t)); return; }
+      if (!check.allowed) { safeAlert(require('../services/brandPlan').PLAN_NAME, getUpsellMessage('ai_summarize', t)); return; }
       trackFeatureUsage('ai_summarize');
     } catch {}
     if (USE_NATIVE_SHEETS && Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 380)); // [2026-10-09 native-sheets] menu (Modal RN) descendo
@@ -25672,7 +25672,7 @@ function ChatConversationInner() {
       const { canUseFeature, trackFeatureUsage, getUpsellMessage } = require('../services/premium');
       const check = await canUseFeature('ai_translate');
       if (!check.allowed) {
-        safeAlert('Chatyy One', getUpsellMessage('ai_translate', t) + ` (${check.limit}/${check.limit} ${t('premium.usedToday') || 'usados hoje'})`);
+        safeAlert(require('../services/brandPlan').PLAN_NAME, getUpsellMessage('ai_translate', t) + ` (${check.limit}/${check.limit} ${t('premium.usedToday') || 'usados hoje'})`);
         
         return;
       }
@@ -33165,6 +33165,8 @@ function ChatConversationInner() {
   // nativeRowCards.js): cores/estado p/ montar row.bl + relógio da localização
   // ao vivo. Dados assíncronos (prévia de link, "tem Chatyy?") → bump → rev.
   const [_nlCardsRev, _setNlCardsRev] = _useStateT(0);
+  // [2026-10-17 voz-wa] binário sem pílula nativa (apiVersion < 8): 'id|1,5×' da nota ativa → pílula no rodapé do balão
+  const [_nlVoicePill, _setNlVoicePill] = _useStateT('');
   const _nlCardsBumpTm = useRef(null);
   const _nlCardsBump = useCallback(() => {
     if (_nlCardsBumpTm.current) return;
@@ -33343,6 +33345,7 @@ function ChatConversationInner() {
         resolveMention: _resolveMention,
         smartActions: (c) => detectSmartActions(c),
         translation: (m) => (m && translatedMessages ? (translatedMessages[m.id] || null) : null),
+        voice: _nlVoicePill ? { id: _nlVoicePill.slice(0, _nlVoicePill.indexOf('|')), label: _nlVoicePill.slice(_nlVoicePill.indexOf('|') + 1) } : null, // [voz-wa]
         mentionsMe: (m) => {
           try {
             const mm = m.mentions;
@@ -33367,7 +33370,7 @@ function ChatConversationInner() {
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId, conversationName, params.email]);
+  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId, conversationName, params.email, _nlVoicePill]);
   const _nlTheme = useMemo(() => ({
     ownBubble: ownBubbleBg, otherBubble: otherBubbleBg, ownText: ownTextColor, otherText: otherInk,
     ownMeta: ownMetaColor, otherMeta: otherMetaColor, link: otherInk, read: '#53BDEB', wall: chatWallBg,
@@ -33447,6 +33450,14 @@ function ChatConversationInner() {
       try { acts = detectSmartActions(target.content) || []; } catch {}
       const a = acts[Number(u.slice(6)) || 0];
       if (a) A.smartAction(target, a);
+      return true;
+    }
+    // [2026-10-17 voz-wa] balão de voz nativo: transcrever / ver-ocultar / velocidade
+    if (u === 'au:tx') { handleTranscribeAudio(target); return true; }
+    if (u === 'au:txt') { toggleTxCollapsed(target.id); return true; }
+    if (u === 'au:rate') {
+      try { Haptics.selectionAsync(); } catch {}
+      VoiceNote.cycleVoiceRate();
       return true;
     }
     if (u === 'tr:toggle') {
@@ -33670,6 +33681,8 @@ function ChatConversationInner() {
     setMessages, mapKeep: _mapKeep, Haptics, setSelectionMode, toggleSelection, setStickerSheet,
     setStickerMakerSrc, router, api, t, mt: _mt, safeAlert, emailToDisplayName, mountedRef, setAudioTranscription,
     conversationId, // [responder-privado 2026-10-15]
+    // [2026-10-17 voz-wa] "Transcrever" / "Ver|Ocultar transcrição" do menu nativo
+    transcribeVoice: (msg) => { if (!msg) return; if (msg.transcript || msg.transcription) toggleTxCollapsed(msg.id); else handleTranscribeAudio(msg); },
     // [reply-v2] "Citar trecho" no seletor nativo (false = usar o modal JS)
     nativeQuote: (msg) => {
       if (!_replyV2On() || !msg) return false;
@@ -33813,19 +33826,27 @@ function ChatConversationInner() {
   useEffect(() => {
     if (!_nl.on) return undefined;
     let posUnsub = null; let posId = null; let surfUnsub = null;
+    let rlRef = '';
+    const _oldBin = nativeListApi() < 8;
+    let _rateDec = '.';
+    try { _rateDec = (1.5).toLocaleString(language || undefined).charAt(1) === ',' ? ',' : '.'; } catch {}
     const push = () => {
       try {
         const st = VoiceNote.getVoiceState();
         const id = st.item ? String(st.item.messageId) : '';
         const { positionMs, durationMs } = VoiceNote.getVoicePosition();
-        flashListRef.current?.setAudioState?.({ id, playing: !!st.playing, loading: !!st.loading, pos: positionMs || 0, dur: durationMs || 0 });
+        // [2026-10-17 voz-wa] rl = pílula 1×/1,5×/2× (nativo apiVersion >= 8; antigo ignora a chave)
+        const rl = id ? voiceRateLabel(st.rate, _rateDec) : '';
+        rlRef = rl;
+        flashListRef.current?.setAudioState?.({ id, playing: !!st.playing, loading: !!st.loading, pos: positionMs || 0, dur: durationMs || 0, rl });
+        if (_oldBin) _setNlVoicePill(id && rl ? `${id}|${rl}` : '');
         if (id !== posId) {
           try { posUnsub && posUnsub(); } catch {}
           try { surfUnsub && surfUnsub(); } catch {}
           posUnsub = null; surfUnsub = null; posId = id;
           if (id) {
             posUnsub = VoiceNote.subscribeVoicePosition(id, (p) => {
-              try { flashListRef.current?.setAudioState?.({ id, playing: !!p.playing, loading: false, pos: p.positionMs || 0, dur: p.durationMs || 0 }); } catch {}
+              try { flashListRef.current?.setAudioState?.({ id, playing: !!p.playing, loading: false, pos: p.positionMs || 0, dur: p.durationMs || 0, rl: rlRef }); } catch {}
             });
             if ((threadDataRef.current || []).some(m => m && String(m.id ?? '') === id)) surfUnsub = VoiceNote.mountVoiceSurface(id);
           }
@@ -33835,7 +33856,7 @@ function ChatConversationInner() {
     const unsub = VoiceNote.subscribeVoice(push);
     push();
     return () => { try { unsub(); } catch {} try { posUnsub && posUnsub(); } catch {} try { surfUnsub && surfUnsub(); } catch {} };
-  }, [_nl.on]);
+  }, [_nl.on, language]);
 
   // ── Drag-and-drop on web: arrastar foto/vídeo/arquivo pro chat envia ───
   // Native (iOS/Android) doesn't expose HTML drag events; the existing
@@ -38373,6 +38394,26 @@ function ChatConversationInner() {
                 </PressableRow>
               )}
 
+              {/* [2026-10-17 voz-wa] Transcrever / Ver-Ocultar transcrição (WhatsApp) */}
+              {!selectedMsg?.deleted_at && (selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url && typeof selectedMsg?.id === 'number' && !selectedMsg?._uploading && (
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
+                  style={ctxS.ctxSecondaryItem}
+                  onPress={() => {
+                    const m = selectedMsg;
+                    setSelectedMsg(null);
+                    if (!m) return;
+                    if (m.transcript || m.transcription) toggleTxCollapsed(m.id); else handleTranscribeAudio(m);
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <View style={{ marginLeft: 0, marginRight: 4 }}><IconFileText size={18} color={colors.text} /></View>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
+                    {(selectedMsg?.transcript || selectedMsg?.transcription)
+                      ? (selectedMsg?._txHidden ? _mt('chatConv.voiceShowTranscript', 'Ver transcrição') : _mt('chatConv.voiceHideTranscript', 'Ocultar transcrição'))
+                      : _mt('chatConv.voiceTranscribe', 'Transcrever')}
+                  </Text>
+                </PressableRow>
+              )}
               {/* AI: Transcribe + Summarize voice / audio */}
               {!selectedMsg?.deleted_at && (selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
@@ -38384,7 +38425,7 @@ function ChatConversationInner() {
                       const check = await canUseFeature('ai_transcribe');
                       if (!check.allowed) {
                         setSelectedMsg(null);
-                        safeAlert('Chatyy One', getUpsellMessage('ai_transcribe', t));
+                        safeAlert(require('../services/brandPlan').PLAN_NAME, getUpsellMessage('ai_transcribe', t));
                         
                         return;
                       }

@@ -47,7 +47,7 @@ function fmtBytes(b) {
 
 // [2026-10-09 native-sheets] native=false quando o dono é um <Modal> RN (ProfileSettingsSheet):
 // apresentar o formSheet por cima faria o react-native-screens fechar o Modal.
-export default function StorageShopSheet({ visible, onClose, currentTier = 'free', usedBytes, limitBytes, native = true }) {
+export default function StorageShopSheet({ visible, onClose, currentTier = 'free', usedBytes, limitBytes, native = true, initialTier = null }) {
   const { colors, isDark } = useTheme();
   const s = useSurface();
   // [2026-10-14 dark-contrast] muted NÃO existe no tema → subtítulos,
@@ -61,6 +61,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
   const [pendingTier, setPendingTier] = useState(null);
   const [selectedId, setSelectedId] = useState(currentTier === RECOMMENDED_TIER ? '5tb' : RECOMMENDED_TIER);
   const [usage, setUsage] = useState(null);
+  // [2026-10-17 smart-storage] aberto por um aviso de espaço → já seleciona o
+  // plano recomendado (menor que cabe uso + crescimento; services/storageOffers).
+  useEffect(() => {
+    if (visible && initialTier && STORAGE_TIERS.some((x) => x.id === initialTier) && initialTier !== currentTier) setSelectedId(initialTier);
+  }, [visible, initialTier, currentTier]);
 
   // Barra de uso: usa props se vierem; senao busca (mesmo endpoint de /storage).
   useEffect(() => {
@@ -320,7 +325,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
             {tiers.map((tier) => {
               const isCurrent = currentTier === tier.id;
               const isSel = selectedId === tier.id;
-              const isRec = tier.id === RECOMMENDED_TIER;
+              const isRec = tier.id === ((initialTier && initialTier !== currentTier && STORAGE_TIERS.some((x) => x.id === initialTier)) ? initialTier : RECOMMENDED_TIER); // [2026-10-17 smart-storage]
               const sku = Platform.OS === 'ios'
                 ? (cycle === 'annual' ? tier.skuAnnualApple : tier.skuMonthlyApple)
                 : (cycle === 'annual' ? tier.skuAnnualGoogle : tier.skuMonthlyGoogle);

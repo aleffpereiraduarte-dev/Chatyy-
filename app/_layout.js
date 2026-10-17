@@ -516,6 +516,7 @@ const _LATE_OVERLAYS = {
   YouTubeInlineHost: () => require('../components/chat/YouTubeInlinePlayer').default, // [2026-10-15 yt-inline]
   PollVotesHost: () => require('../components/chat/PollVotesSheet').default, // [wave13e 2026-10-16] Ver votos
   EmailUndoBar: () => require('../components/EmailUndoBar').default,
+  StorageOfferHost: () => require('../components/storage/StorageOfferHost').default, // [2026-10-17 smart-storage] sheet global "sem espaço" / backup não cabe
   PhoneOfflineBanner: () => require('../components/PhoneOfflineBanner').default,
   PushTokenStaleBanner: () => require('../components/PushTokenStaleBanner').default,
   PushPermissionPrimer: () => require('../components/PushPermissionPrimer').default, // [2026-10-07 native-polish]
@@ -2299,6 +2300,7 @@ export default function RootLayout() {
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' && _nativeListLargeTitleOn() ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-17 one-merge] = /settings-one (mesma tela) */ }} />
+                  <Stack.Screen name="manage-storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-17 smart-storage] Gerenciar armazenamento */ }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
@@ -2363,6 +2365,7 @@ export default function RootLayout() {
                 <Late name="YouTubeInlineHost" />
                 <Late name="PollVotesHost" />
                 <Late name="EmailUndoBar" />
+                <Late name="StorageOfferHost" />
                 <Late name="ConfettiHost" />{/* [2026-10-16 mascote] confete leve (1ª msg / grupo criado) */}
                 <Suspense fallback={null}>
                   <IncomingCallListener />

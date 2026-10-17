@@ -12,7 +12,9 @@ import { useConfirm } from '../../ConfirmModal';
 import * as settingsCache from '../../../services/settingsCache';
 import { Shimmer } from '../../SkeletonLoader';
 import { IconRefresh } from '../../Icons';
-import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsValueText, useGroupedColors } from '../SettingsKit';
+import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsValueText, SettingsCardContent, useGroupedColors } from '../SettingsKit';
+import StorageMeter, { StorageNudgeCard } from '../../storage/StorageMeter'; // [2026-10-17 smart-storage]
+import { PLAN_NAME } from '../../../services/brandPlan';
 import HistoryDownloadGroup from './HistoryDownloadGroup';
 import { useSafeNav, useSettingsHost, useChatDefaults, useLocalKeys, setStorage, useSettingsRefresh } from './shared';
 
@@ -68,8 +70,14 @@ export default function StorageCategory() {
     <View ref={registerAnchor('mediaAutoDownload')}>
       <SettingsGroup header={t('storageData.cloud')}>
         {/* [2026-10-17 one-merge] Armazenamento = mesma tela do cartão Chatyy One (/settings-one) */}
-        <SettingsRow title={t('storage.title')} subtitle="Chatyy One" onPress={() => safeNav('/settings-one')} />
+        <SettingsRow title={t('storage.title')} subtitle={PLAN_NAME} onPress={() => safeNav('/settings-one')} />
+        {/* [2026-10-17 smart-storage] medidor de uso da nuvem (por tipo) + Gerenciar armazenamento */}
+        <SettingsCardContent style={{ paddingTop: 4, paddingBottom: 14 }}>
+          <StorageMeter legend="dots" onPress={() => safeNav('/settings-one')} testID="storage-cat-meter" />
+        </SettingsCardContent>
+        <SettingsRow title={t('manageStorage.title')} subtitle={t('manageStorage.rowSub')} onPress={() => safeNav('/manage-storage')} testID="storage-cat-manage" />
       </SettingsGroup>
+      <StorageNudgeCard style={{ marginHorizontal: 16, marginBottom: 24 }} testID="storage-cat-nudge" />
       {!isWeb && (
         <>
           <SettingsGroup header={t('settings.mediaAutoDownload')} footer={t('settings.mediaAutoDownloadDesc')}>

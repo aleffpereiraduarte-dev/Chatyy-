@@ -812,6 +812,78 @@ function _appendAfter(row, node) {
   if (row.mp !== 'none') row.mp = 'below';
 }
 
+// ─── [2026-10-17 voz-wa] transcrição + velocidade no balão de voz ──────────
+// Nós existentes (api >= 2) → sai por OTA. Ações → onRowPress part 'action':
+//   'au:tx'   transcrever (handleTranscribeAudio; erro → tentar de novo)
+//   'au:txt'  mostrar/ocultar a transcrição (toggleTxCollapsed, persiste)
+//   'au:rate' 1× → 1,5× → 2× (VoiceNote.cycleVoiceRate, global + persistida)
+// Pílula de velocidade: binário apiVersion >= 8 desenha DENTRO da onda (lado
+// direito, como o WhatsApp) a partir do setAudioState {rl}; binário antigo →
+// pílula aqui no rodapé, só na nota que está tocando/pausada (p2.voice).
+// Kill switches: globalThis.__chatyy_native_voice_tx = false (transcrição),
+// __chatyy_native_voice_rate = false (pílula de fallback).
+function _voiceTxOn() { try { return globalThis.__chatyy_native_voice_tx !== false; } catch { return true; } }
+function _voiceRateFbOn() { try { return globalThis.__chatyy_native_voice_rate !== false; } catch { return true; } }
+/** Rótulo da velocidade (1×, 1,5×, 2×) — separador decimal do idioma. */
+export function voiceRateLabel(rate, dec) {
+  const r = Number(rate) || 1;
+  const s = Number.isInteger(r) ? String(r) : String(r).replace('.', dec === ',' ? ',' : '.');
+  return s + '\u00D7';
+}
+function _voiceExtras(item, row, ctx, own) {
+  const N = _N(); const I = _icons();
+  if (!N) return;
+  const p2 = ctx.p2 || {};
+  const L = (k, fb) => { try { return p2.label ? p2.label(k, fb) : fb; } catch { return fb; } };
+  const ink = own ? (p2.ownText || '#FFFFFF') : (p2.otherText || p2.otherInk || '#111111');
+  const soft = own ? (p2.ownMeta || 'rgba(255,255,255,0.75)') : (p2.otherInk || p2.otherMeta || '#555555');
+  const chipBg = own ? 'rgba(255,255,255,0.16)' : (p2.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const post = [];
+  // tradução da voz (Traduzir no menu = transcrever → traduzir)
+  try {
+    const tr = p2.translation ? p2.translation(item) : null;
+    if (tr && (tr.loading || tr.text)) post.push(_translationNodes(tr, ctx, item, own));
+  } catch {}
+  const tx = String(item.transcript || item.transcription || '').trim();
+  const chips = [];
+  if (_voiceTxOn()) {
+    const canTx = !tx && !item._uploading && !item._pending && typeof item.id === 'number' && !!item.file_url;
+    if (tx) {
+      if (!item._txHidden) post.unshift(N.text(tx, { fs: 14, lh: 19, c: ink, m: [6, 2, 0, 2] }));
+      const lab = item._txHidden ? L('chatConv.voiceShowTranscript', 'Ver transcrição') : L('chatConv.voiceHideTranscript', 'Ocultar transcrição');
+      chips.push(N.hstack([
+        N.icon(item._txHidden ? I.IconFileText : I.IconEyeOff, { s: 12, c: soft }),
+        N.text(lab, { fs: 12, fw: 600, c: soft }),
+      ], { g: 5, al: 'c', p: [4, 9, 4, 9], r: -1, bg: chipBg, a: 'au:txt' }));
+    } else if (canTx) {
+      if (item._transcribing) {
+        chips.push(N.hstack([
+          N.loader({ s: 12, c: soft }),
+          N.text(L('chatConv.voiceTranscribing', 'Transcrevendo…'), { fs: 12, fw: 600, c: soft }),
+        ], { g: 6, al: 'c', p: [4, 9, 4, 9], r: -1, bg: chipBg }));
+      } else if (item._transcribeError === 'unavailable') {
+        chips.push(N.text(L('chatConv.voiceTranscribeUnavailable', 'Transcrição indisponível'), { fs: 12, it: 1, c: soft, p: [4, 2, 4, 2] }));
+      } else {
+        const failed = !!item._transcribeError;
+        chips.push(N.hstack([
+          N.icon(failed ? I.IconAlertTriangle : I.IconFileText, { s: 12, c: failed ? (p2.errorColor || '#EF4444') : soft }),
+          N.text(failed ? L('chatConv.voiceTranscribeFailed', 'Não deu para transcrever. Tentar de novo') : L('chatConv.voiceTranscribe', 'Transcrever'), { fs: 12, fw: 600, c: soft }),
+        ], { g: 5, al: 'c', p: [4, 9, 4, 9], r: -1, bg: chipBg, a: 'au:tx' }));
+      }
+    }
+  }
+  // pílula de velocidade (binário sem a pílula nativa)
+  const v = p2.voice;
+  if (_api < 8 && _voiceRateFbOn() && v && v.id && v.id === String(item.id ?? '') && v.label) {
+    // 1º da fileira: spacer flexível alargaria o balão até o máximo (mede com a largura toda)
+    chips.unshift(N.text(v.label, { fs: 12, fw: 700, c: ink, p: [4, 10, 4, 10], r: -1, bg: chipBg, a: 'au:rate' }));
+  }
+  if (chips.length) post.push(N.hstack(chips, { g: 6, al: 'c', m: [6, 0, 0, 0] }));
+  if (!post.length) return;
+  row.post = (Array.isArray(row.post) ? row.post : []).concat(post);
+  row.mp = 'below';
+}
+
 // ─── normalização ───────────────────────────────────────────────────────────
 const MEDIA_TYPES = new Set(['image', 'video', 'gif']);
 const TEXTISH = new Set(['text', '', undefined, null]);
@@ -1369,6 +1441,7 @@ function _buildRowInner(item, key, ctx) {
     if (!own && ctx.isAudioPlayed && ctx.isAudioPlayed(item)) row.au.p = 1;
     const adl = _dlFor(item, ctx, null, false); // [native-media-dl]
     if (adl) row.au.dl = adl;
+    if (_api >= 2) { try { _voiceExtras(item, row, ctx, own); } catch (e) { if (__DEV__) console.warn('[native-list] voice extras', e?.message); } }
     return row;
   }
   if (type === 'file') {

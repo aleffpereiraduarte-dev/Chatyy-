@@ -87,7 +87,11 @@ export function subscribe(fn) { _listeners.add(fn); return () => _listeners.dele
 export function getProgress() { return _progress; }
 export function isRunning() { return !!_running; }
 
-function _err(code, msg, extra) { const e = new Error(msg || code); e.code = code; if (extra) Object.assign(e, extra); return e; }
+function _err(code, msg, extra) { const e = new Error(msg || code); e.code = code; if (extra) Object.assign(e, extra); if (code === 'ERR_QUOTA') _quotaOffer(); return e; }
+// [2026-10-17 smart-storage] sem espaço (507) → sheet com o plano que cabe (1×/dia, services/storageOffers).
+function _quotaOffer() {
+  setTimeout(() => { try { require('./storageOffers').reportQuotaBlocked({ source: 'chat_backup' }); } catch {} }, 0);
+}
 
 // ─── bytes ───────────────────────────────────────────────────────────────
 function _cat(parts) {
