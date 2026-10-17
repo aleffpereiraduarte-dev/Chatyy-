@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Image, ScrollView,
   ActivityIndicator, Platform, Dimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import CachedImage from './CachedImage';
 import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPackage, IconChevronLeft, IconChevronRight, IconUpload, IconCloudOff } from './Icons';
@@ -407,7 +407,16 @@ export function renderArchiveEntry({ url, name, size }) { // [abridores] também
 
 export default function FileViewer({ visible, file, files, initialIndex, onClose, getUrl, onArchiveExtracted }) {
   const { t } = useLanguage();
-  const insets = useSafeAreaInsets();
+  // [2026-10-17 viewer-top] Dentro do Modal o provider às vezes devolve 0 → header
+  // ia pra baixo da Dynamic Island. Nunca menos que as margens da janela.
+  const _rawInsets = useSafeAreaInsets();
+  const _wm = (initialWindowMetrics && initialWindowMetrics.insets) || {};
+  const insets = {
+    top: Math.max(_rawInsets.top || 0, _wm.top || 0),
+    bottom: Math.max(_rawInsets.bottom || 0, _wm.bottom || 0),
+    left: _rawInsets.left || 0,
+    right: _rawInsets.right || 0,
+  };
   const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
   const [op, setOp] = useState(null); // { kind: 'open'|'share'|'download', pct }
   const [note, setNote] = useState(null);
