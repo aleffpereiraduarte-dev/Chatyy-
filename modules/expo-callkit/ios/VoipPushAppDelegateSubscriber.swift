@@ -95,6 +95,89 @@ func voipIsThrowawayUUID(_ uuid: UUID) -> Bool {
   return kThrowawayUUIDs.contains(uuid)
 }
 
+// [2026-10-17 ring-dedupe] Dedupe POR call_id de pushes VoIP de toque repetidos.
+// O servidor agora pode reenviar o toque (ring retry, só p/ builds >= este) e o
+// APNs também duplica. Regra: um 2º push de toque para um call_id que este
+// aparelho JÁ reportou / está tocando / atendeu / encerrou NUNCA cria outra
+// ligação no CallKit. PushKit ainda exige um report por push: se há uma ligação
+// Chatyy viva no CallKit isso já satisfaz o contrato (no-op); senão
+// report-then-end de um throwaway (mesmo padrão do cancel). call_ids encerrados
+// ficam lembrados 2 min (App Group, sobrevive ao processo ser morto) p/ um
+// push atrasado nunca tocar.
+private let kRingDedupeTTL: TimeInterval = 120
+private let kEndedCallIdsKey = "voipEndedCallIds"
+private var kEndedCallIds: [String: Double] = [:]
+private var kEndedCallIdsLoaded = false
+private var kSeenInvitePushAt: [String: Double] = [:]
+private var kInviteReportInFlight: Set<String> = []
+private let kRingDedupeLock = NSLock()
+
+private func _ringDedupeLoadLocked() {
+    guard !kEndedCallIdsLoaded else { return }
+    kEndedCallIdsLoaded = true
+    if let d = UserDefaults(suiteName: kAppGroupId)?.dictionary(forKey: kEndedCallIdsKey) {
+        for (k, v) in d {
+            if let n = v as? NSNumber { kEndedCallIds[k] = n.doubleValue }
+            else if let n = v as? Double { kEndedCallIds[k] = n }
+        }
+    }
+}
+
+private func _ringDedupePruneLocked(_ now: Double) {
+    kEndedCallIds = kEndedCallIds.filter { now - $0.value <= kRingDedupeTTL }
+    kSeenInvitePushAt = kSeenInvitePushAt.filter { now - $0.value <= kRingDedupeTTL }
+}
+
+/// Marks `callId` as finished on THIS device (decline, hangup, cancel, timeout,
+/// remote end). A later invite push / WS invite for it is stale.
+func voipNoteCallIdEnded(_ callId: String, reason: String) {
+    guard !callId.isEmpty else { return }
+    let now = Date().timeIntervalSince1970
+    kRingDedupeLock.lock()
+    _ringDedupeLoadLocked()
+    kEndedCallIds[callId] = now
+    _ringDedupePruneLocked(now)
+    let snap = kEndedCallIds
+    kRingDedupeLock.unlock()
+    UserDefaults(suiteName: kAppGroupId)?.set(snap, forKey: kEndedCallIdsKey)
+}
+
+/// True when `callId` ended on this device within the last 2 min.
+func voipCallIdRecentlyEnded(_ callId: String) -> Bool {
+    guard !callId.isEmpty else { return false }
+    let now = Date().timeIntervalSince1970
+    kRingDedupeLock.lock()
+    defer { kRingDedupeLock.unlock() }
+    _ringDedupeLoadLocked()
+    guard let at = kEndedCallIds[callId] else { return false }
+    return now - at <= kRingDedupeTTL
+}
+
+/// Records an invite push for `callId`; returns true when one was ALREADY
+/// processed within the TTL (i.e. this push is a duplicate / server retry).
+private func voipMarkInvitePushSeen(_ callId: String) -> Bool {
+    guard !callId.isEmpty else { return false }
+    let now = Date().timeIntervalSince1970
+    kRingDedupeLock.lock()
+    defer { kRingDedupeLock.unlock() }
+    _ringDedupePruneLocked(now)
+    let seen = kSeenInvitePushAt[callId] != nil
+    if !seen { kSeenInvitePushAt[callId] = now }
+    return seen
+}
+
+private func voipSetInviteReportInFlight(_ callId: String, _ on: Bool) {
+    kRingDedupeLock.lock()
+    if on { kInviteReportInFlight.insert(callId) } else { kInviteReportInFlight.remove(callId) }
+    kRingDedupeLock.unlock()
+}
+
+private func voipInviteReportInFlight(_ callId: String) -> Bool {
+    kRingDedupeLock.lock()
+    defer { kRingDedupeLock.unlock() }
+    return kInviteReportInFlight.contains(callId)
+}
+
 // [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
 // Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource
 // timer survives module/bridge teardown when user swipe-kills the app while
@@ -338,6 +421,7 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                     : (cancelReason == "declined_elsewhere" ? .declinedElsewhere : .remoteEnded)
                 print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — reporting \(endReason.rawValue) on \(endUUID.uuidString)")
                 provider.reportCall(with: endUUID, endedAt: Date(), reason: endReason)
+                voipNoteCallIdEnded(callId, reason: "cancel_push_\(pushType)") // [2026-10-17 ring-dedupe]
             } else if let acc = Self.acceptedUUID(forCallId: callId),
                       CXCallObserver().calls.contains(where: { $0.uuid == acc && !$0.hasEnded }) {
                 // [2026-10-17 phantom-unknown] THIS device answered the call (the
@@ -370,6 +454,7 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 upd.localizedCallerName = tName
                 upd.hasVideo = false
                 print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — no live UUID; report-then-end throwaway")
+                voipNoteCallIdEnded(callId, reason: "cancel_push_\(pushType)") // [2026-10-17 ring-dedupe]
                 nativeCallDiag("voip_cancel_throwaway", callId, "type=\(pushType) uuid=\(throwaway.uuidString)")
                 provider.reportNewIncomingCall(with: throwaway, update: upd) { err in
                     provider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
@@ -393,6 +478,82 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "cancel_push_\(pushType)")
             }
             IncomingCallFilter.clear(callId: callId, reason: "cancel_push_\(pushType)")
+            completion()
+            return
+        }
+
+
+        // [2026-10-17 ring-dedupe] Repeated invite push (server ring retry /
+        // APNs duplicate / late delivery) for a call_id this device already
+        // handled → never a 2nd CallKit call. Live-first: a call of THIS
+        // call_id still ringing/connected wins over the ended mark.
+        let ringRetry: String = {
+            if let s = dict["ring_retry"] as? String { return s }
+            if let n = dict["ring_retry"] as? NSNumber { return n.stringValue }
+            return "0"
+        }()
+        let invitePushSeenBefore = voipMarkInvitePushSeen(callId)
+        let inviteEndedHere = voipCallIdRecentlyEnded(callId)
+        if invitePushSeenBefore || inviteEndedHere {
+            kCallIdToUUIDLock.lock()
+            let mappedUUID = kCallIdToUUID[callId]
+            kCallIdToUUIDLock.unlock()
+            let candidates: [UUID] = [mappedUUID,
+                                      Self.acceptedUUID(forCallId: callId),
+                                      ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)].compactMap { $0 }
+            let liveCalls = CXCallObserver().calls.filter { !$0.hasEnded }
+            let why = inviteEndedHere ? "ended" : "seen"
+            if let mine = liveCalls.first(where: { candidates.contains($0.uuid) }) {
+                // Still ringing / connected here — the live call satisfies the
+                // PushKit contract. Nothing to report, nothing to ring.
+                nativeCallDiag("voip_dup_push_live", callId,
+                               "why=\(why) state=\(mine.hasConnected ? "connected" : "ringing") retry=\(ringRetry)")
+                completion()
+                return
+            }
+            if !liveCalls.isEmpty {
+                // Another Chatyy call is live → contract satisfied; a throwaway
+                // here would show as call-waiting "Unknown".
+                nativeCallDiag("voip_dup_push_skip_other_live", callId, "why=\(why) retry=\(ringRetry)")
+                completion()
+                return
+            }
+            if voipInviteReportInFlight(callId) {
+                // The first push's reportNewIncomingCall hasn't completed yet
+                // (CXCallObserver lags it) — never race a 2nd report against it.
+                nativeCallDiag("voip_dup_push_inflight", callId, "why=\(why) retry=\(ringRetry)")
+                completion()
+                return
+            }
+            // Nothing live (answered/declined/ended/missed already, or the first
+            // report was refused by Focus). Report-then-end a throwaway so iOS
+            // sees a valid PushKit response; it ends in the report completion,
+            // before CallKit can ring (same pattern as the cancel throwaway).
+            let throwaway = UUID()
+            kThrowawayUUIDsLock.lock()
+            kThrowawayUUIDs.insert(throwaway)
+            kThrowawayUUIDsLock.unlock()
+            let upd = CXCallUpdate()
+            let rawName = ((dict["caller_name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let tName = rawName.isEmpty ? "Chatyy" : rawName
+            upd.remoteHandle = CXHandle(type: .generic, value: tName)
+            upd.localizedCallerName = tName
+            upd.hasVideo = false
+            nativeCallDiag("voip_dup_push_throwaway", callId,
+                           "why=\(why) retry=\(ringRetry) mapped=\(mappedUUID != nil) uuid=\(throwaway.uuidString)")
+            let tProvider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
+            tProvider.reportNewIncomingCall(with: throwaway, update: upd) { err in
+                tProvider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                if let err = err {
+                    nativeCallDiag("voip_dup_push_throwaway_report_err", callId, err.localizedDescription)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if CXCallObserver().calls.contains(where: { $0.uuid == throwaway && !$0.hasEnded }) {
+                        nativeCallDiag("voip_dup_push_throwaway_reend", callId, "")
+                        tProvider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                    }
+                }
+            }
             completion()
             return
         }
@@ -544,7 +705,9 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         }
 
         let provider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
+        voipSetInviteReportInFlight(callId, true) // [2026-10-17 ring-dedupe]
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+            voipSetInviteReportInFlight(callId, false) // [2026-10-17 ring-dedupe]
             if let error = error {
                 print("[VoipSubscriber] reportNewIncomingCall failed: \(error.localizedDescription)")
                 // [2026-10-12 ring-first-try] e.g. code 3 = filteredByDoNotDisturb
@@ -892,6 +1055,7 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             kCallIdToUUIDLock.lock()
             kCallIdToUUID.removeValue(forKey: callId)
             kCallIdToUUIDLock.unlock()
+            voipNoteCallIdEnded(callId, reason: "ring_timeout") // [2026-10-17 ring-dedupe]
             // [missed-call recording fix 2026-05-26 P1] Record the missed call
             // server-side so chat history flips to "Chamada perdida" AND the
             // caller gets the missed push. Same REST contract the JS
@@ -1547,6 +1711,9 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
             }
             return ""
         }()
+        // [2026-10-17 ring-dedupe] Declined / hung up here → a late or retried
+        // invite push for this call_id must never ring again.
+        voipNoteCallIdEnded(endingRoomCallId, reason: stubWasAccepted ? "stub_hangup" : "stub_decline")
         // Do NOT manually setActive(false) here. CallKit fires didDeactivate
         // automatically after fulfill(); calling setActive ourselves competes
         // with the WebRTC audio engine and races with the module's path.

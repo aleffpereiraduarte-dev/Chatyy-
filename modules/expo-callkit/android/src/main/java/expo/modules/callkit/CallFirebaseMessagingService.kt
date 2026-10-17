@@ -253,18 +253,27 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // startTelecomIncomingCall.
             // NOTE: read isRinging BEFORE markInviteSeen (which itself marks
             // the call as seen → isRinging would always be true afterwards).
-            CallDiag.log("push_received", callId, "src=fcm type=$type prio=${message.priority}/${message.originalPriority} sent=${message.sentTime} video=${if (hasVideo) 1 else 0} lk=${if (preLkToken != null) 1 else 0}", applicationContext)
+            // [2026-10-17 ring-dedupe] retry = nº do re-envio do servidor (0 = convite original).
+            val ringRetry = data["ring_retry"]?.takeIf { it.isNotBlank() } ?: "0"
+            CallDiag.log("push_received", callId, "src=fcm type=$type prio=${message.priority}/${message.originalPriority} sent=${message.sentTime} video=${if (hasVideo) 1 else 0} lk=${if (preLkToken != null) 1 else 0} retry=$ringRetry", applicationContext)
             // [2026-10-11 double-banner] Call already declined / cancelled /
             // missed on this device → a late duplicate push must not re-ring.
             if (IncomingCallRegistry.isEnded(applicationContext, callId)) {
                 Log.i(TAG, "incoming_call callId=$callId: already ended on this device — skipping")
-                CallDiag.log("dedupe_skip", callId, "src=fcm reason=ended", applicationContext)
+                CallDiag.log("dedupe_skip", callId, "src=fcm reason=ended retry=$ringRetry", applicationContext)
+                return
+            }
+            // [2026-10-17 ring-dedupe] Already answered here (accept in flight /
+            // call screen up) → a ring retry must not restart the ring service.
+            if (IncomingCallRegistry.isAcceptedHere(applicationContext, callId)) {
+                Log.i(TAG, "incoming_call callId=$callId: already accepted on this device — skipping")
+                CallDiag.log("dedupe_skip", callId, "src=fcm reason=accepted retry=$ringRetry", applicationContext)
                 return
             }
             val alreadyRinging = IncomingCallRegistry.isRinging(callId)
             if (!IncomingCallRegistry.markInviteSeen(callId, "fcm")) {
                 Log.i(TAG, "incoming_call callId=$callId: duplicate FCM — skipping")
-                CallDiag.log("dedupe_skip", callId, "src=fcm reason=dup_fcm", applicationContext)
+                CallDiag.log("dedupe_skip", callId, "src=fcm reason=dup_fcm retry=$ringRetry", applicationContext)
                 return
             }
 

@@ -205,6 +205,22 @@ object IncomingCallRegistry {
         CallDiag.log("ring_stop", callId, "src=$src reason=$reason was_ringing=${if (wasRinging) 1 else 0}", app)
     }
 
+    /**
+     * [2026-10-17 ring-dedupe] True when THIS device already accepted [callId]
+     * (accept in flight / persisted accept / its call screen is up). A ring
+     * retry or duplicate invite for it must not start a second ring.
+     */
+    fun isAcceptedHere(ctx: Context?, callId: String): Boolean {
+        if (callId.isEmpty()) return false
+        try { if (ExpoCallKitModule.isCallAccepting(callId)) return true } catch (_: Throwable) {}
+        try {
+            val app = ctx?.applicationContext
+            if (app != null && ExpoCallKitModule.isCallAcceptingPersisted(app, callId)) return true
+        } catch (_: Throwable) {}
+        try { if ((CallActivity.ongoingSnapshot()?.get("callId") as? String) == callId) return true } catch (_: Throwable) {}
+        return false
+    }
+
     /** True when any source surfaced this call within the TTL. */
     fun hasSeen(callId: String): Boolean {
         if (callId.isEmpty()) return false
@@ -229,6 +245,12 @@ object IncomingCallRegistry {
      */
     fun forget(callId: String) {
         if (callId.isEmpty()) return
+        // [2026-10-17 ring-dedupe] Every forget() caller is an END path (decline
+        // button/notification, cancel, timeout, hangup, call screen finish).
+        // call_ids are unique per call, so tombstone it (memory; dismissIncoming
+        // also persists) — a server ring RETRY or late duplicate FCM/WS for it
+        // must never ring again (2 min, isEnded).
+        endedAt[callId] = System.currentTimeMillis()
         seenAt.remove(callId)
         seenSources.remove(callId)
         telecomRequestedAt.remove(callId)

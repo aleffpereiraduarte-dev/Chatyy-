@@ -775,6 +775,12 @@ object CallSignalWs {
             CallDiag.log("dedupe_skip", callId, "src=ws reason=ended", ctx)
             return
         }
+        // [2026-10-17 ring-dedupe] Already answered on this device → never re-ring.
+        if (IncomingCallRegistry.isAcceptedHere(ctx, callId)) {
+            Log.d(TAG, "call_invite $callId: already accepted on this device, skipping")
+            CallDiag.log("dedupe_skip", callId, "src=ws reason=accepted", ctx)
+            return
+        }
         val alreadyRinging = IncomingCallRegistry.isRinging(callId)
         if (!IncomingCallRegistry.markInviteSeen(callId, "ws")) {
             Log.d(TAG, "call_invite $callId: already surfaced (ws dup), skipping")

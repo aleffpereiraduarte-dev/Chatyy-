@@ -156,12 +156,17 @@ public class ExpoCallKitModule: Module {
   }
   private static func _shared_setUUID(_ uuid: UUID?, forCallId callId: String) {
     sharedUUIDLock.lock()
-    defer { sharedUUIDLock.unlock() }
+    var removed = false
     if let uuid = uuid {
       sharedUUIDByCallId[callId] = uuid
     } else {
-      sharedUUIDByCallId.removeValue(forKey: callId)
+      removed = sharedUUIDByCallId.removeValue(forKey: callId) != nil
     }
+    sharedUUIDLock.unlock()
+    // [2026-10-17 ring-dedupe] Every nil-write is an end path (callEnded,
+    // endCall*, remote-end observer, start failure) → remember the call_id so a
+    // retried/late VoIP or WS invite for it never rings again (2 min).
+    if removed { voipNoteCallIdEnded(callId, reason: "module_end") }
   }
 
   /// [cross-path dedup 2026-10-04 P1.2] Eagerly record the CallKit UUID a VoIP
@@ -2362,6 +2367,15 @@ public class ExpoCallKitModule: Module {
   func reportIncomingCall(callId: String, callerName: String, hasVideo: Bool) async throws {
     guard let provider = self.provider else {
       throw NSError(domain: "ExpoCallKit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Provider not setup"])
+    }
+
+    // [2026-10-17 ring-dedupe] JS-driven report (displayIncomingCall) for a
+    // call_id that already ENDED on this device (late WS replay / ring retry)
+    // → never ring it again. Not a PushKit path, so no report is required.
+    let alreadyTracked: Bool = safeStateSync { activeCalls[callId] != nil }
+    if !alreadyTracked && voipCallIdRecentlyEnded(callId) {
+      nativeCallDiag("module_report_skip_ended", callId)
+      return
     }
 
     // Deduplicate: reuse existing UUID if callId already tracked

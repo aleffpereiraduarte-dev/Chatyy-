@@ -797,6 +797,7 @@ final class CallSignalWs: NSObject {
         // active set so reconnect retries wind down (covers inbound call_cancel
         // too, which routes through this handler). Runs on `queue`.
         activeCallIds.remove(callId)
+        voipNoteCallIdEnded(callId, reason: "ws_\(reason)") // [2026-10-17 ring-dedupe]
         if !endedCallIds.contains(callId) {
             endedCallIds.append(callId)
             while endedCallIds.count > kSeenInvitesMax { endedCallIds.removeFirst() }
@@ -923,6 +924,14 @@ final class CallSignalWs: NSObject {
         seenIncomingInvites.append(callId)
         while seenIncomingInvites.count > kSeenInvitesMax {
             seenIncomingInvites.removeFirst()
+        }
+        // [2026-10-17 ring-dedupe] Call already ended on this device (decline /
+        // hangup / cancel / timeout, any path, last 2 min) → a WS re-deliver
+        // must not ring. Shared with the VoIP push path (App Group).
+        if voipCallIdRecentlyEnded(callId) {
+            NSLog("[CallSignalWs] call_invite \(callId): already ended on this device — skipping")
+            nativeCallDiag("ws_invite_skip_ended", callId)
+            return
         }
 
         let callerEmail = (obj["caller_email"] as? String) ?? ""
