@@ -483,6 +483,13 @@ function NotificationsScreenInner() {
   });
   const [loading, setLoading] = useState(() => !(_readLive() || _readDisk()));
   const [refreshing, setRefreshing] = useState(false);
+  // [2026-10-17 cj-name] "Fulano entrou no Chatyy" com o nome da AGENDA do usuário.
+  const [agendaNames, setAgendaNames] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    try { require('../services/contactSync').getAgendaNamesByEmail().then((m) => { if (alive && m && m.size) setAgendaNames(m); }).catch(() => {}); } catch {}
+    return () => { alive = false; };
+  }, []);
   // [follow-back-fix 2026-05-21] Lightweight inline toast: confirms the
   // server actually persisted the follow (or surfaces a failure) so the
   // user doesn't see the button vanish with zero feedback and assume "não
@@ -772,10 +779,17 @@ function NotificationsScreenInner() {
         id: `section-${k}`,
         label: t(BUCKET_LABELS[k].key) || BUCKET_LABELS[k].fallback,
       });
-      for (const n of buckets[k]) out.push(n);
+      for (const n of buckets[k]) {
+        const an = (n.type === 'contact_joined' && agendaNames && n.author_email) ? agendaNames.get(String(n.author_email).toLowerCase()) : null;
+        if (an) {
+          let d = n.data || {};
+          if (typeof d === 'string') { try { d = JSON.parse(d || '{}'); } catch { d = {}; } }
+          out.push({ ...n, author_name: an, data: { ...d, name: an } });
+        } else out.push(n);
+      }
     }
     return out;
-  }, [notifications, t]);
+  }, [notifications, t, agendaNames]);
 
   const nativeMetaRef = useRef(new Map());
   const nativeRows = useMemo(() => {

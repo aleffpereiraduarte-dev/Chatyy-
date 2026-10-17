@@ -20,7 +20,35 @@ import NativeResultList, { useNativeResults } from '../components/native/NativeR
 import { contactTile } from '../components/native/resultListAdapter';
 import { setCache } from '../services/cache';
 
-const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', one_alert: 'bell' };
+const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', one_alert: 'bell', contact_joined: 'userPlus' };
+
+// [2026-10-17 cj-feed] "Fulano entrou no Chatyy!" · "Dizer oi". Antes esta tela
+// mostrava só "joao  Say hi and start chatting." (sem dizer que ele entrou), sem
+// botão e o toque não fazia nada. Nome: agenda do usuário > data.name > e-mail.
+function _cjData(item) {
+  let d = item && item.data;
+  if (typeof d === 'string') { try { d = JSON.parse(d || '{}'); } catch { d = {}; } }
+  return d || {};
+}
+function _cjName(item, agendaNames) {
+  const em = String(item?.author_email || _cjData(item).email || '').toLowerCase();
+  const an = agendaNames && em ? agendaNames.get(em) : null;
+  if (an) return an;
+  const dn = String(_cjData(item).name || '').trim();
+  if (dn) return dn;
+  const local = em.split('@')[0] || '';
+  return local ? local.charAt(0).toUpperCase() + local.slice(1) : '';
+}
+function _cjTitle(t, name) {
+  let v = '';
+  try { v = t?.('notifications.contactJoined', { name }); } catch {}
+  if (typeof v === 'string' && v && v !== 'notifications.contactJoined') return v.split('{name}').join(name);
+  return `${name} entrou no Chatyy!`;
+}
+function _cjSayHi(t) {
+  const v = t?.('notifications.sayHi');
+  return (typeof v === 'string' && v && v !== 'notifications.sayHi') ? v : 'Dizer oi';
+}
 function _feedBucket(iso) {
   if (!iso) return 'older';
   const d = new Date(String(iso).endsWith('Z') || String(iso).includes('+') ? iso : iso + 'Z');
@@ -82,6 +110,7 @@ function NotificationIcon({ type, colors }) {
   if (type === 'feed_comment') return <IconMessageCircle size={22} color={colors.text} />;
   if (type === 'follow') return <IconUser size={22} color={colors.text} />;
   if (type === 'one_alert') return <IconSparkles size={20} color={colors.text} />;
+  if (type === 'contact_joined') return <IconUser size={22} color={colors.text} />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
 }
 
@@ -98,6 +127,24 @@ export default function NotificationsFeedScreen() {
   });
   const [loading, setLoading] = useState(() => !(_readLive() || _readDisk()));
   const [refreshing, setRefreshing] = useState(false);
+  // [2026-10-17 cj-feed] nomes da agenda (cache do último sync de contatos).
+  const [agendaNames, setAgendaNames] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    try { require('../services/contactSync').getAgendaNamesByEmail().then((m) => { if (alive && m && m.size) setAgendaNames(m); }).catch(() => {}); } catch {}
+    return () => { alive = false; };
+  }, []);
+  const openSayHi = useCallback((item) => {
+    const email = item?.author_email || _cjData(item).email;
+    if (!email) return;
+    const name = _cjName(item, agendaNames);
+    try { api.notificationsMarkRead?.(item.id).catch(() => {}); } catch {}
+    try {
+      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { email, type: 'direct', ...(name ? { name } : {}) } });
+    } catch {
+      router.push({ pathname: '/chat-conversation', params: { email, type: 'direct', ...(name ? { name } : {}) } });
+    }
+  }, [agendaNames, router]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   // [follow-back-fix 2026-05-21] Inline toast — confirms the follow back
@@ -220,16 +267,20 @@ export default function NotificationsFeedScreen() {
         let id = `f:${item.id}`;
         if (seen.has(id)) id = `${id}#${i}`;
         seen.add(id);
-        const who = item.author_email?.split('@')[0] || '';
+        const isCJ = item.type === 'contact_joined';
+        const who = isCJ ? _cjName(item, agendaNames) : (item.author_email?.split('@')[0] || '');
         const countSuffix = item.count > 1 ? ` +${item.count - 1}` : '';
         const body = (item.body || '').replace(item.author_email + ' ', '');
-        const row = { id, k: 'r', t: `${who}${countSuffix}${body ? `  ${body}` : ''}`.trim(), tl: 2 };
+        const row = isCJ
+          ? { id, k: 'r', t: _cjTitle(t, who), tl: 2 }
+          : { id, k: 'r', t: `${who}${countSuffix}${body ? `  ${body}` : ''}`.trim(), tl: 2 };
         const when = timeAgo(item.created_at, t);
         if (when) row.tm = when;
         if (item.author_email) { row.tiles = contactTile(item.author_email, who); row.bd = FEED_GLYPH[item.type] || 'bell'; }
         else row.gl = FEED_GLYPH[item.type] || 'bell';
         if (!item.read) row.un = 1;
         if (item.type === 'follow' && !item.action_taken) row.b1 = tx('notifications.followBack', 'Seguir de volta');
+        else if (isCJ && item.author_email) row.b1 = _cjSayHi(t);
         if (item.id != null) row.sw = del;
         rows.push(row);
         meta.set(id, item);
@@ -239,14 +290,14 @@ export default function NotificationsFeedScreen() {
     nativeMetaRef.current = meta;
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nativeOn, items, loading, page, t]);
+  }, [nativeOn, items, loading, page, t, agendaNames]);
   const onNativePress = useCallback((id) => { const it = nativeMetaRef.current.get(id); if (it) handlePress(it); });
   const onNativeAction = useCallback((id, action) => {
     const it = nativeMetaRef.current.get(id);
     if (!it) return;
     if (action === 'delete') handleDelete(it);
-    else if (action === 'b1') handleFollowBack(it);
-  }, [handleDelete, handleFollowBack]);
+    else if (action === 'b1') { if (it.type === 'contact_joined') openSayHi(it); else handleFollowBack(it); }
+  }, [handleDelete, handleFollowBack, openSayHi]);
   const onEndReached = () => {
     if (!hasMore || loading) return;
     const next = page + 1;
@@ -256,7 +307,9 @@ export default function NotificationsFeedScreen() {
 
   const handlePress = (item) => {
     const data = item.data || {};
-    if (item.type === 'follow' && item.author_email) {
+    if (item.type === 'contact_joined') {
+      openSayHi(item);
+    } else if (item.type === 'follow' && item.author_email) {
       router.push(`/u/${encodeURIComponent(item.author_email)}`);
     } else if ((item.type === 'feed_like' || item.type === 'feed_comment') && data.post_id) {
       // /feed-comments is not a registered route — open the public post page
@@ -275,6 +328,8 @@ export default function NotificationsFeedScreen() {
     // notifications and only when the user hasn't already pressed it in
     // this session (action_taken survives until the next refresh).
     const showFollowBack = item.type === 'follow' && !item.action_taken;
+    const isCJ = item.type === 'contact_joined';
+    const cjName = isCJ ? _cjName(item, agendaNames) : '';
     return (
       <TouchableOpacity
         onPress={() => handlePress(item)}
@@ -282,21 +337,38 @@ export default function NotificationsFeedScreen() {
         style={[styles.row, { backgroundColor: item.read ? 'transparent' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.05)') }]}
       >
         <View style={{ position: 'relative' }}>
-          <AvatarCircle email={item.author_email} name={item.author_email} size={44} />
+          <AvatarCircle email={item.author_email} name={isCJ ? (cjName || item.author_email) : item.author_email} size={44} />
           <View style={[styles.iconBadge, { backgroundColor: colors.background }]}>
             <NotificationIcon type={item.type} colors={colors} />
           </View>
         </View>
         <View style={{ flex: 1, marginLeft: 12 }}>
+          {isCJ ? (
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={2}>{_cjTitle(t, cjName)}</Text>
+          ) : (
           <Text style={{ color: colors.text, fontSize: 14 }} numberOfLines={2}>
             <Text style={{ fontWeight: '700' }}>{item.author_email?.split('@')[0] || ''}</Text>
             {countSuffix ? <Text style={{ color: colors.textSecondary }}>{countSuffix}</Text> : null}
             {'  '}
             <Text style={{ color: colors.textSecondary }}>{(item.body || '').replace(item.author_email + ' ', '')}</Text>
           </Text>
+          )}
           <Text style={{ color: colors.textTertiary, fontSize: 11.5, marginTop: 3 }}>
             {timeAgo(item.created_at, t)}
           </Text>
+          {isCJ && !!item.author_email && (
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={(e) => { e?.stopPropagation?.(); openSayHi(item); }}
+                activeOpacity={0.85}
+                style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8, backgroundColor: isDark ? '#ffffff' : ACCENT }}
+                accessibilityRole="button"
+                accessibilityLabel={_cjSayHi(t)}
+              >
+                <Text style={{ color: isDark ? '#000' : '#fff', fontSize: 13, fontWeight: '700' }}>{_cjSayHi(t)}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
           {showFollowBack && (
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
               <TouchableOpacity

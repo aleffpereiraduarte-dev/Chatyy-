@@ -875,6 +875,26 @@ export async function presentNewContactForm(phone = '', name = '') {
  *
  * @returns {{ chatyContacts: Array, otherContacts: Array, timestamp: number } | null}
  */
+// [2026-10-17 cj-name] e-mail → nome que o usuário salvou na AGENDA (como o
+// WhatsApp/Telegram mostram "Fulano entrou"). Lê o cache do último sync de
+// contatos SEM o TTL de 1 h (nome da agenda não "vence"); nunca pede permissão
+// nem dispara sync. Map vazio se não houver cache/consentimento.
+export async function getAgendaNamesByEmail() {
+  const out = new Map();
+  try {
+    const raw = await AsyncStorage.getItem(cacheKey());
+    if (!raw) return out;
+    const cached = JSON.parse(raw);
+    for (const c of (cached && cached.chatyContacts) || []) {
+      const em = String(c?.email || '').trim().toLowerCase();
+      const nm = String(c?.name || '').trim();
+      if (!em || !nm || nm === 'Unknown' || nm.toLowerCase() === em.split('@')[0]) continue;
+      if (!out.has(em)) out.set(em, nm);
+    }
+  } catch {}
+  return out;
+}
+
 export async function getCachedContacts() {
   try {
     const raw = await AsyncStorage.getItem(cacheKey());
