@@ -105,7 +105,8 @@ let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_registered = false;
 function loadLiveKit() {
   if (_LK_Room) return { Room: _LK_Room, RoomEvent: _LK_RoomEvent, VideoView: _LK_VideoView };
   try {
-    const lkc = require('livekit-client');
+    // [2026-10-17] via lkLoader: installs the DOMException polyfill first (see lkLoader.native.js)
+    const lkc = Platform.OS === 'web' ? require('livekit-client') : require('../services/lkLoader').lkSync();
     _LK_Room = lkc.Room;
     _LK_RoomEvent = lkc.RoomEvent;
   } catch (e) {
