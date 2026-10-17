@@ -75,6 +75,7 @@ class RNNoiseProcessor private constructor() : AudioProcessorInterface {
         }
         val ctl = room.audioProcessingController
         if (ctl.capturePostProcessor !== p) ctl.capturePostProcessor = p
+        p.firstFrameAt = 0L // [mic-first-frame 2026-10-17] new Room → re-arm the capture probe
         Log.i(TAG, "attachTo: capture post-processor installed (enabled=${p.enabled})")
       } catch (t: Throwable) {
         Log.w(TAG, "attachTo failed (pass-through): ${t.message}")
@@ -140,7 +141,15 @@ class RNNoiseProcessor private constructor() : AudioProcessorInterface {
     if (h != 0L) try { nativeReset(h) } catch (_: Throwable) {}
   }
 
+  /** [mic-first-frame 2026-10-17] Wall-clock ms of the first capture frame
+   *  since attachTo() (0 = mic not delivering yet). Lets CallActivity tell
+   *  "AudioRecord slow to start" apart from "publisher negotiation slow"
+   *  (callee mic took 7.7 s to reach the SFU on call zkca2agc0). */
+  @Volatile
+  var firstFrameAt: Long = 0L
+
   override fun processAudio(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
+    if (firstFrameAt == 0L) firstFrameAt = System.currentTimeMillis()
     val h = handle
     if (h == 0L || numFrames != FRAME_SIZE) return
     try {

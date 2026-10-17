@@ -2257,7 +2257,12 @@ class CallActivity : ComponentActivity() {
     // but no voice flows. onRequestPermissionsResult re-publishes the
     // mic if the user grants the perm after this point.
     if (state.micPermissionGranted) {
+      val micT0 = System.currentTimeMillis()
       r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+      // [mic-first-frame 2026-10-17] Timing probe: publish RPC duration + when
+      // the first capture frame reaches the APM. SFU first-RTP comes from the
+      // LiveKit server log; the gap tells capture vs negotiation apart.
+      try { traceMicFirstFrame(micT0) } catch (_: Throwable) {}
       // [Wave 15 gap B2] Attach HW audio effects (AEC/NS/AGC) post-publish.
       // WhatsApp parity — kills speakerphone echo no Android low-end.
       try { installHwAudioEffects() } catch (t: Throwable) { Log.w(TAG, "installHwAudioEffects: ${t.message}") }
@@ -2295,6 +2300,26 @@ class CallActivity : ComponentActivity() {
           bindLocalCameraIfReady(r)
           verifyCameraPublished(r, "connect")
         }
+      }
+    }
+  }
+
+  /** [mic-first-frame 2026-10-17] Diag: mic_publish (setMicrophoneEnabled ms)
+   *  + mic_first_frame (first capture frame relative to the publish start;
+   *  negative = capture already running, e.g. Telecom adoptForCall published
+   *  first). Gives up after 15 s with mic_first_frame_timeout. Never throws. */
+  private fun traceMicFirstFrame(micT0: Long) {
+    val pubMs = System.currentTimeMillis() - micT0
+    CallDiag.log("mic_publish", callId, "ms=$pubMs muted=${state.isMuted}", applicationContext)
+    val proc = try { expo.modules.callkit.audio.RNNoiseProcessor.shared() } catch (_: Throwable) { null } ?: return
+    lifecycleScope.launch {
+      var waited = 0L
+      while (proc.firstFrameAt == 0L && waited < 15_000L && !isFinishing) { delay(50); waited += 50 }
+      val ff = proc.firstFrameAt
+      if (ff == 0L) {
+        CallDiag.log("mic_first_frame_timeout", callId, "waited=$waited ns=${proc.available}", applicationContext)
+      } else {
+        CallDiag.log("mic_first_frame", callId, "since_publish_ms=${ff - micT0} pub_ms=$pubMs ns=${proc.available}", applicationContext)
       }
     }
   }
