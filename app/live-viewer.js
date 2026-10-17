@@ -19,6 +19,7 @@ import {
   IconX, IconHeart, IconShare, IconStar,
   IconUserPlus, IconCheck, IconRotateCcw,
 } from '../components/Icons';
+import LiveGiftGlyph from '../components/live/LiveGiftGlyph'; // [2026-10-16 polish-lives]
 // Live UI primitives (round 62 redesign — extracted from inline JSX into a
 // dedicated component family so the screen stays readable and each piece can
 // be polished independently. WebRTC/HLS/WS logic stays in this file).
@@ -188,7 +189,10 @@ const HLS_RETRY_DELAYS_MS = [800, 1200, 2000, 3000, 5000, 8000];
 // Brand palette — hot pinks + magentas + danger red. Mirrors the host-side
 // live-broadcast palette so remote reactions render in the same color the
 // viewer chose at tap-time (no drift across screens).
-const HEART_COLORS = ['#ff4d6d', '#ff7eb9', '#ff006e', '#c70039', '#ef4444'];
+// [2026-10-16 polish-lives] P&B igual ao live-broadcast (era paleta rosa/magenta).
+const HEART_COLORS = ['#ffffff', '#f5f5f5', '#e5e5e5', '#d4d4d4', '#bdbdbd'];
+// [2026-10-16 polish-lives] emoji de reação (WS legado) → arte SVG de LiveGiftGlyph.
+const REACTION_GLYPH = { '💎': 'diamond', '🌹': 'rose', '🔥': 'fire', '⭐': 'star', '👑': 'crown', '🚀': 'rocket', '✨': 'sparkle', '❤️': 'heart' };
 
 // Memoized row for the expanded chat sheet (FlashList renderItem). Pulled to
 // module scope so React.memo can short-circuit on prop equality — without
@@ -1916,7 +1920,7 @@ export default function LiveViewerScreen() {
             const isDiamondReact = !!msg.isDiamond || msg.emoji === '💎';
             spawnHeart({
               x: xPx,
-              color: isDiamondReact ? '#FFD700' : ((typeof msg.color === 'string') ? msg.color : null),
+              color: isDiamondReact ? '#ffffff' : ((typeof msg.color === 'string') ? msg.color : null),
               emoji: isDiamondReact ? '💎' : null,
             });
           }
@@ -2764,7 +2768,7 @@ export default function LiveViewerScreen() {
       const r = await api.liveDiamondReaction(paramSessionId);
       if (r?.success) {
         // Local immediate spawn (gold), other viewers see via WS broadcast.
-        spawnHeart({ color: '#FFD700' });
+        spawnHeart({ color: '#ffffff' }); // [2026-10-16 polish-lives] P&B (era dourado)
         popHeartButton();
       } else if (r?.message === 'insufficient_diamonds') {
         // Round 66 — open the IAP top-up sheet inline instead of a dead-end
@@ -4325,8 +4329,10 @@ export default function LiveViewerScreen() {
             ]}
             pointerEvents="none"
           >
-            {h.emoji
-              ? <Text style={{ fontSize: h.size + 4 }}>{h.emoji}</Text>
+            {/* [2026-10-16 polish-lives] nada de emoji na UI: reações legadas (💎/🌹/🔥…)
+                viram a arte SVG dos presentes; o resto vira coração. */}
+            {h.emoji && REACTION_GLYPH[h.emoji]
+              ? <LiveGiftGlyph icon={REACTION_GLYPH[h.emoji]} size={h.size + 4} />
               : <IconHeart size={h.size} color={h.color} />}
           </Animated.View>
         );
@@ -5113,16 +5119,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -4,
     right: -4,
-    backgroundColor: '#22c55e',
+    // [2026-10-16 polish-lives] P&B (era verde #22c55e).
+    backgroundColor: '#fff',
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 9,
     borderWidth: 1.5,
-    borderColor: '#fff',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(34,197,94,0.55)' } : {}),
+    borderColor: '#000',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(0,0,0,0.45)' } : {}),
   },
   viewerPlusOneText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.3,
@@ -5275,6 +5282,9 @@ const styles = StyleSheet.create({
   heart: {
     position: 'absolute',
     zIndex: 20,
+    // [2026-10-16 polish-lives] corações brancos somiam sobre vídeo claro → sombra suave.
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 1 },
+    ...(Platform.OS === 'web' ? { filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.45))' } : {}),
   },
   // Central burst hearts (double-tap love bomb).
   burstHeart: {

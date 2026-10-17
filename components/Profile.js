@@ -47,6 +47,7 @@ import ProfileEditSheet from './ProfileEditSheet';
 import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
 import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-14] vazio P&B (era mosaico cinza)
+import { Shimmer } from './SkeletonLoader'; // [2026-10-16 polish-perfil] grade-skeleton das Lives
 import SendDiamondSheet from './SendDiamondSheet';
 import { haptic } from '../constants/theme';
 import { useWallet, refreshWallet } from '../services/diamonds';
@@ -3266,9 +3267,13 @@ export default function Profile({
         // of jumping straight to the empty state (would feel like the user's
         // lives "disappeared" between tab presses).
         if (livesLoading && lives.length === 0) {
+          // [2026-10-16 polish-perfil] skeleton de grade (mesmo desenho da
+          // grade real) no lugar do spinner solto.
           return (
-            <View style={{ paddingVertical: 60, alignItems: 'center' }}>
-              <ActivityIndicator color={colors.primary} />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 2, paddingTop: 2 }}>
+              {[0, 1, 2, 3, 4, 5].map(i => (
+                <Shimmer key={i} delay={i * 40} style={{ width: '33%', aspectRatio: 0.8, borderRadius: 2 }} />
+              ))}
             </View>
           );
         }

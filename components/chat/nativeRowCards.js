@@ -916,8 +916,10 @@ function buildViewOnce(m, row, ctx, C, own) {
   const title = V.isAudio ? _tr(C, 'chatConv.viewOnceVoiceLabel', 'Áudio único') : V.isVideo ? _tr(C, 'chatConv.viewOnceVideo', 'Vídeo único') : _tr(C, 'chatConv.viewOncePhoto', 'Foto única');
   let accent; let subtle; let circleBg; let Ic; let sub;
   if (own) {
-    accent = col.text || '#111111'; subtle = col.textSecondary || 'rgba(0,0,0,0.5)';
-    circleBg = /^#[0-9a-f]{6}$/i.test(accent) ? accent + '1f' : 'rgba(17,17,17,0.12)';
+    // [2026-10-17 polish-chat] enviada = tinta da PRÓPRIA bolha (col.text #111
+    // sumia na bolha preta do claro); círculo = tinta a 14% (contraste nos 2 temas).
+    accent = C.ownText || col.text || '#111111'; subtle = C.ownMeta || col.textSecondary || 'rgba(0,0,0,0.5)';
+    circleBg = inkAlpha(accent, 0.14);
     Ic = V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye;
     sub = V.anyViewed ? _tr(C, 'chatConv.viewOnceOpened', 'Visualizada') : _tr(C, 'chatConv.viewOnceSent', 'Visualização única');
   } else if (!V.locked) {
@@ -925,14 +927,14 @@ function buildViewOnce(m, row, ctx, C, own) {
     accent = col.primary || '#111111'; subtle = col.textSecondary || '#666666';
     const w0 = _clampW(180, 260, 36 + 10 + Math.max(_estW(title, 14, true), _estW(_tr(C, 'chatConv.tapToView', 'Toque para ver'), 12)) + 8);
     row.bl = [hstack([
-      vstack([icon(V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye, { s: 18, c: accent })], { w: 36, h: 36, r: 18, bg: C.isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17,17,17,0.14)', al: 'c', jc: 'c' }),
+      vstack([icon(V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye, { s: 18, c: accent })], { w: 36, h: 36, r: 18, bg: inkAlpha(accent, 0.14), al: 'c', jc: 'c' }),
       vstack([text(title, { fs: 14, fw: 700, c: accent, ml: 1 }), text(_tr(C, 'chatConv.tapToView', 'Toque para ver'), { fs: 12, c: subtle, ml: 1, m: [1, 0, 0, 0] })], { fl: 1 }),
     ], { g: 10, al: 'c', p: [6, 4, 6, 0], w: w0, a: 'vo_open' })];
     row.cw = w0; row.pad = PAD; row.mp = 'below';
     return;
   } else {
     accent = col.primary || '#111111'; subtle = col.textSecondary || '#666666';
-    circleBg = 'rgba(17, 17, 17,0.12)';
+    circleBg = inkAlpha(accent, 0.12); // [2026-10-17 polish-chat] era #111 12% (sumia no escuro)
     Ic = V.isAudio ? IconMic : IconCheck;
     sub = V.isAudio ? _tr(C, 'chatConv.viewOnceVoiceExpired', 'Áudio expirado') : _tr(C, 'chatConv.viewOnceOpened', 'Aberta');
   }
@@ -1031,7 +1033,8 @@ export function buildFallbackCard(item, row, ctx, reason) {
   const dark = !!(C && C.isDark);
   const w = _clampW(200, 280, 36 + 10 + Math.max(_estW(title, 14, true), Math.min(_estW(sub, 12), 190)) + 10 + 14 + 8);
   row.bl = [hstack([
-    vstack([icon(Ic, { s: 18, c: ink })], { w: 36, h: 36, r: 18, bg: dark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.08)', al: 'c', jc: 'c' }),
+    // [2026-10-17 polish-chat] círculo na tinta da bolha (antes #111 8% = invisível na enviada preta).
+    vstack([icon(Ic, { s: 18, c: ink })], { w: 36, h: 36, r: 18, bg: inkAlpha(ink, dark && !own ? 0.12 : 0.14), al: 'c', jc: 'c' }),
     vstack([text(title, { fs: 14, fw: 600, c: ink, ml: 1 }), text(sub, { fs: 12, c: subtle, ml: 2, m: [1, 0, 0, 0] })], { fl: 1 }),
     icon(IconChevronRight, { s: 14, c: subtle }),
   ], { g: 10, al: 'c', p: [6, 2, 6, 0], w, a: 'jsrow' })];

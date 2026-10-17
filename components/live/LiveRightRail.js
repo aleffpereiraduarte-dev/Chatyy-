@@ -220,11 +220,15 @@ const styles = StyleSheet.create({
   },
   countText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
     minWidth: 24,
     textAlign: 'center',
-    ...(Platform.OS === 'web' ? { textShadow: '0 1px 3px rgba(0,0,0,0.7)' } : {}),
+    // [2026-10-16 polish-lives] sombra também no nativo (só existia no web →
+    // contagem sumia sobre vídeo claro no iOS/Android).
+    ...(Platform.OS === 'web' ? { textShadow: '0 1px 3px rgba(0,0,0,0.7)' } : {
+      textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
+    }),
   },
 });

@@ -1479,13 +1479,13 @@ const ConversationRow = React.memo(function ConversationRow({
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isMuted ? (t('chat.unmute') || 'Reativar') : (t('chat.mute') || 'Silenciar')}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.pin }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.pin }]} onPress={() => { try { haptic.select(); } catch {} swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <IconPin size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar')}</Text>
           </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.email }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: SWIPE_C.email }]} onPress={() => { try { haptic.select(); } catch {} swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <IconMail size={20} color="#fff" />
             <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{t('chat.email') || 'E-mail'}</Text>
@@ -1947,11 +1947,11 @@ const ConversationRow = React.memo(function ConversationRow({
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: SWIPE_C.mute }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: SWIPE_C.mute }]} onPress={() => { try { haptic.select(); } catch {} resetSwipe(); propsRef.current.onMute?.(conversation); }}>
           {isMuted ? <IconBell size={22} color="#fff" /> : <IconVolume2 size={22} color="#fff" />}
           <Text style={s.swipeActionLabel}>{isMuted ? (t('chat.unmute') || 'Unmute') : (t('chat.mute') || 'Mute')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: SWIPE_C.pin }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: SWIPE_C.pin }]} onPress={() => { try { haptic.select(); } catch {} resetSwipe(); propsRef.current.onPin?.(conversation); }}>
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
@@ -3849,6 +3849,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // same chat onto the stack twice (user complaint: "tenho que clicar 2 vez
   // para voltar").
   const _navLockRef = useRef(null);
+  // [2026-10-16 pisca] LayoutAnimation é GLOBAL (próximo commit do Fabric, em
+  // QUALQUER tela). O WS de mensagem nova configurava a mola mesmo com a lista
+  // nativa (que anima as próprias linhas) ou com a lista atrás da conversa/outra
+  // aba → bolhas, header e composer da tela aberta "pulavam" no Android.
+  // Só anima quando a lista JS é a que está na tela.
+  const _laListRef = useRef({ focused: true, nativeHome: false });
+  useFocusEffect(useCallback(() => {
+    _laListRef.current.focused = true;
+    return () => { _laListRef.current.focused = false; };
+  }, []));
   const _lastOpenedConvRef = useRef(null); // [2026-10-15 unread-mono] conversa aberta pela lista (volta = tudo lido até a última msg local)
   // Skip the loading spinner if we already painted from cache
   const [loading, setLoading] = useState(_initialConvs.length === 0);
@@ -5203,7 +5213,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             } catch {}
           }
           // Spring LayoutAnimation when conversation moves to top
-          try {
+          // [2026-10-16 pisca] só com a lista JS visível (ver _laListRef).
+          if (Platform.OS === 'android' && _laListRef.current.focused && !_laListRef.current.nativeHome) try {
             LayoutAnimation.configureNext({
               duration: 300,
               update: { type: LayoutAnimation.Types.spring, springDamping: 0.7 },
@@ -5632,6 +5643,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // conversations + updated last-message previews land immediately.
       let wasConnected = true;
       let bannerTimer = null;
+      // [2026-10-16 pisca] socketUp=false apagava NA HORA a bolinha "online" de
+      // todas as linhas (lista nativa + fixadas) a cada queda curta do WS
+      // (troca Wi-Fi↔4G, volta do 2º plano — ws_close é o beacon nº 1) e ela
+      // voltava ~1 s depois = piscada. Só apaga se a queda durar a carência.
+      let socketDownTimer = null;
+      const SOCKET_DOWN_GRACE_MS = 8000;
       // WhatsApp parity (founder 2026-09-29 "toda vez que abro fica
       // conectando"): the reconnect banner must NEVER paint before the very
       // first successful auth of this session. Cold start / return-from-kill
@@ -5654,6 +5671,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       unsubs.push(() => { try { fgGraceAppStateSub.remove(); } catch {} });
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
+          if (socketDownTimer) { clearTimeout(socketDownTimer); socketDownTimer = null; }
           setSocketUp(true);
           hasAuthedThisSession = true;
           if (!wasConnected) {
@@ -5715,7 +5733,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           }
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
-          setSocketUp(false);
+          if (!socketDownTimer) {
+            socketDownTimer = setTimeout(() => {
+              socketDownTimer = null;
+              if (!mailWs.isConnected) setSocketUp(false);
+            }, SOCKET_DOWN_GRACE_MS);
+          }
           if (!bannerTimer && hasAuthedThisSession) {
             // Base suppress = 12s (most reconnects on flaky cellular heal
             // under 10s). If we JUST returned from background (<3s ago),
@@ -5738,7 +5761,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           }
         }
       }));
-      unsubs.push(() => { if (bannerTimer) clearTimeout(bannerTimer); });
+      unsubs.push(() => { if (bannerTimer) clearTimeout(bannerTimer); if (socketDownTimer) clearTimeout(socketDownTimer); });
 
       // Watchdog: poll the live socket while the banner is visible. Covers
       // the iOS race where the 'authenticated' event gets dropped after the
@@ -5760,6 +5783,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         try {
           if (mailWs?.isConnected) {
             if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+            if (socketDownTimer) { clearTimeout(socketDownTimer); socketDownTimer = null; }
+            if (!wasConnected) setSocketUp(true); // [2026-10-16 pisca] 'authenticated' perdido não deixa as bolinhas apagadas
             wasConnected = true;
             setWsDownBanner(false);
           } else if (!wasConnected && mailWs?.ensureHealthy) {
@@ -7658,7 +7683,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               the dismiss/Pronto control. Both states render the strip ABOVE
               the horizontal pin scroll, so nothing overlaps a pin card.
               Long-press tambem continua funcionando. */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: pinnedEditMode ? 10 : 6, minHeight: pinnedEditMode ? 32 : 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
               {/* IconPin removido (bug print 3 — 2026-05-08): mesmo em size 14
                   o SVG continuava parecendo bullet/blob esfumado antes do
@@ -7701,7 +7726,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   {t?.('common.done') || 'Concluir'}
                 </Text>
               </TouchableOpacity>
-            ) : <View style={{ height: 32 }} />}
+            ) : null /* [2026-10-17 polish-chat] sem o vão fixo de 32pt entre "FIXADAS" e os avatares (print iOS) */}
           </View>
           {_useNativePins ? (
             <View style={{ marginLeft: -14 }}>
@@ -8242,11 +8267,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           search and during selection mode to avoid clutter. */}
       {Platform.OS !== 'web' && contactBanner && !selectionMode && !((searchQuery || '').trim()) && (
         <View style={{
-          flexDirection: 'row', alignItems: 'center', gap: 12,
-          paddingHorizontal: 14, paddingVertical: 10,
+          // [2026-10-17 polish-chat] cartão recuado (raio 16) em vez da faixa
+          // cinza de ponta a ponta — mesmo idioma dos cartões do app (prints Android).
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+          paddingLeft: 12, paddingRight: 2, paddingVertical: 10,
+          marginHorizontal: 12, marginTop: 4, marginBottom: 8, borderRadius: 16,
           backgroundColor: isDark ? '#1c1c1e' : '#F2F2F4', // [2026-10-08] neutral (was green)
-          borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }}>
           <TouchableOpacity
             onPress={handleContactBannerPress}
@@ -8297,7 +8323,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           </TouchableOpacity>
           <TouchableOpacity
             onPress={dismissContactBanner}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }} // [2026-10-17 polish-chat] alvo 44pt (era 18+slop)
+            accessibilityRole="button"
             accessibilityLabel={t?.('common.dismiss') || 'Dispensar'}
           >
             <IconX size={18} color={colors.textTertiary || '#999'} />
@@ -8639,6 +8666,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const [_nativeHomeFailed, _setNativeHomeFailed] = useState(() => !!globalThis.__chatyy_native_home_failed);
   const _useNativeHome = Platform.OS !== 'web' && !RESP_IS_TABLET && !_nativeHomeFailed
     && globalThis.__chatyy_native_home !== false && _nativeHomeAvailable();
+  _laListRef.current.nativeHome = _useNativeHome; // [2026-10-16 pisca]
   // [2026-10-16 wave8-list] Header do app POR CIMA da lista nativa (vidro
   // nativo no topo, linhas rolam por baixo — Telegram/UINavigationBar). Só com
   // a lista nativa api 3 na tela, título grande e fora do modo seleção; o
@@ -9048,9 +9076,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 <TouchableOpacity
                   disabled={!secretCodeInput.trim()}
                   onPress={async () => { const c = secretCodeInput.trim(); if (!c) return; await persistSecretCode(c); setSecretCodeModalVisible(false); }}
-                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: secretCodeInput.trim() ? '#111111' : 'rgba(17, 17, 17,0.4)' }}
+                  // [2026-10-17 polish-chat] escuro: botão claro (preto sobre a folha escura sumia)
+                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: isDark ? '#F5F5F7' : '#111111', opacity: secretCodeInput.trim() ? 1 : 0.4 }}
                 >
-                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('common.save') || 'Salvar'}</Text>
+                  <Text style={{ color: isDark ? '#000' : '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('common.save') || 'Salvar'}</Text>
                 </TouchableOpacity>
               </View>
             </View>

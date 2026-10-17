@@ -170,13 +170,13 @@ export default function LiveTopBar({
       {/* RIGHT cluster — circular blur backdrop buttons */}
       <View style={styles.rightCluster}>
         {engage ? <LiveTopFansStack engage={engage} size={26} /> : null}
-        <TouchableOpacity onPress={onPressMore} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.more') || 'Mais'}>
+        <TouchableOpacity onPress={onPressMore} style={styles.iconBtn} hitSlop={4} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.more') || 'Mais'}>
           <IconMoreVert size={18} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={onPressShare} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.share') || 'Compartilhar'}>
+        <TouchableOpacity onPress={onPressShare} style={styles.iconBtn} hitSlop={4} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.share') || 'Compartilhar'}>
           <IconShare size={17} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity onPress={onClose} style={styles.iconBtn} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+        <TouchableOpacity onPress={onClose} style={styles.iconBtn} hitSlop={4} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
           <IconX size={19} color="#fff" />
         </TouchableOpacity>
       </View>

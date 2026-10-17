@@ -647,6 +647,7 @@ export default {
   "search.peopleHint": "പേര് അല്ലെങ്കിൽ @ഉപയോക്തൃനാമം ഉപയോഗിച്ച് ആളുകളെ തിരയുക",
   "chatConv.groupMembersCount": "{n} അംഗങ്ങൾ",
   "calls.scheduledList": "ഷെഡ്യൂൾ ചെയ്തവ",
+  "calls.scheduledTitle": "ഷെഡ്യൂൾ ചെയ്ത കോളുകൾ",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

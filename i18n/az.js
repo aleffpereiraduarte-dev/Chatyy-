@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "İnsanları ad və ya @istifadəçi adı ilə axtarın",
   "chatConv.groupMembersCount": "{n} üzv",
   "calls.scheduledList": "Planlaşdırılmış",
+  "calls.scheduledTitle": "Planlaşdırılmış zənglər",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

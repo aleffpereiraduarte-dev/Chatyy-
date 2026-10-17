@@ -34,6 +34,15 @@
     },
     "ios": {
       "supportsTablet": true,
+      "splash": {
+        "image": "./assets/splash-blank.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff",
+        "dark": {
+          "image": "./assets/splash-blank-dark.png",
+          "backgroundColor": "#000000"
+        }
+      },
       "icon": {
         "light": "./assets/icon.png",
         "dark": "./assets/ios-icon-dark.png",

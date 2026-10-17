@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "အမည် သို့မဟုတ် @အသုံးပြုသူအမည်ဖြင့် လူများကို ရှာပါ",
   "chatConv.groupMembersCount": "အဖွဲ့ဝင် {n} ဦး",
   "calls.scheduledList": "အချိန်ဇယားဆွဲထားသော",
+  "calls.scheduledTitle": "အချိန်ဇယားဆွဲထားသော ခေါ်ဆိုမှုများ",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

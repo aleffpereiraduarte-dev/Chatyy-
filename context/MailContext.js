@@ -257,6 +257,13 @@ export function MailProvider({ children }) {
   const emailPollingWasEnabledRef = useRef(false);
   const emailPollingEnabledRef = useRef(emailPollingEnabled);
   emailPollingEnabledRef.current = emailPollingEnabled;
+  // [2026-10-16 pisca] LayoutAnimation é GLOBAL (próximo commit do Fabric em
+  // QUALQUER tela). Eventos de WS (e-mail novo/apagado/movido) chegam com o
+  // usuário no chat/conversa e animavam (fade de opacidade 280 ms) o que a tela
+  // aberta montasse em seguida → "piscada" aleatória no Android. Só anima com a
+  // lista do inbox na tela.
+  const inboxListVisibleRef = useRef(false);
+  inboxListVisibleRef.current = (() => { const p = pathname || ''; return p === '/inbox' || p.startsWith('/inbox/'); })();
 
   // Use the native SQLite cache as the initial state so the inbox is rendered
   // with real emails on the very first frame (no empty list flash).
@@ -1524,7 +1531,7 @@ export function MailProvider({ children }) {
       }
 
       if (folderRef.current === 'INBOX' || folderRef.current === data?.folder) {
-        animateListChange();
+        if (data?.email && inboxListVisibleRef.current) animateListChange(); // [2026-10-16 pisca]
         // Prepend new email to list
         if (data?.email) {
           // Decide síncrono (o flag dentro do updater chegava tarde).
@@ -1582,7 +1589,7 @@ export function MailProvider({ children }) {
     // Handle email deleted elsewhere
     const offDel = mailWs.on('email_deleted', (data) => {
       if (data?.uid) {
-        animateListChange();
+        if (inboxListVisibleRef.current) animateListChange(); // [2026-10-16 pisca]
         const gone = emailsRef.current.find(e => String(e.uid) === String(data.uid));
         setEmails(prev => prev.filter(e => String(e.uid) !== String(data.uid)));
         if (gone) {
@@ -1595,7 +1602,7 @@ export function MailProvider({ children }) {
     // Handle email moved
     const offMove = mailWs.on('email_moved', (data) => {
       if (data?.uid && data?.from_folder === folderRef.current) {
-        animateListChange();
+        if (inboxListVisibleRef.current) animateListChange(); // [2026-10-16 pisca]
         const gone = emailsRef.current.find(e => String(e.uid) === String(data.uid));
         setEmails(prev => prev.filter(e => String(e.uid) !== String(data.uid)));
         if (gone) {

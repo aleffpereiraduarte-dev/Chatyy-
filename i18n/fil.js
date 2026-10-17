@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Maghanap ng tao ayon sa pangalan o @username",
   "chatConv.groupMembersCount": "{n} miyembro",
   "calls.scheduledList": "Naka-iskedyul",
+  "calls.scheduledTitle": "Mga naka-iskedyul na tawag",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

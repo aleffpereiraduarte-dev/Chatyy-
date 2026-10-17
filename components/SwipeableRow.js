@@ -159,7 +159,8 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
         </Animated.View>
       )}
       <Animated.View
-        style={{ transform: [{ translateX: tx }], backgroundColor: 'inherit', zIndex: 2 }}
+        // [2026-10-16 polish] 'inherit' só existe no web — no nativo é cor inválida.
+        style={{ transform: [{ translateX: tx }], zIndex: 2, ...(Platform.OS === 'web' ? { backgroundColor: 'inherit' } : null) }}
         {...panResponder.panHandlers}
       >
         {children}
@@ -170,15 +171,18 @@ export default function SwipeableRow({ children, onDelete, onArchive, onSnooze, 
 
 const s = StyleSheet.create({
   container: { overflow: 'hidden', position: 'relative' },
+  // [2026-10-16 polish] Fundo de largura total (antes 110px): no flick a linha
+  // sai até 500px e abria um vão branco atrás. Cada lado só aparece na sua
+  // direção (opacidade 0 na outra), então podem se sobrepor. Ícone colado à
+  // borda de onde a linha sai, como no Mail/lista de chat.
   bg: {
-    position: 'absolute', top: 0, bottom: 0,
-    justifyContent: 'center', alignItems: 'center',
-    width: 110, zIndex: 1,
+    position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
+    justifyContent: 'center', zIndex: 1,
   },
-  // Why: tuned to iOS 18 Mail palette — slightly deeper green and warmer red
-  // so they look saturated on real OLED instead of neon-ish.
-  bgLeft: { left: 0, backgroundColor: '#2DA84E' },
-  bgRight: { right: 0, backgroundColor: '#E5392E' },
+  // Mesmas cores da lista de chat (SWIPE_C em ChatListTab / CLTheme nativo):
+  // escala de cinzas + vermelho só no destrutivo (P&B premium).
+  bgLeft: { alignItems: 'flex-start', paddingLeft: 28, backgroundColor: '#3A3A3C' },
+  bgRight: { alignItems: 'flex-end', paddingRight: 28, backgroundColor: '#FF3B30' },
   bgLabel: {
     color: '#fff',
     fontSize: 11,

@@ -647,6 +647,7 @@ export default {
   "search.peopleHint": "لوگوں کو نام یا @یوزر نیم سے تلاش کریں",
   "chatConv.groupMembersCount": "{n} اراکین",
   "calls.scheduledList": "شیڈول شدہ",
+  "calls.scheduledTitle": "شیڈول شدہ کالز",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

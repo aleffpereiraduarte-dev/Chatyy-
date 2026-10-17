@@ -437,7 +437,7 @@ class ChatyyEmailListView(context: Context, appContext: AppContext) : ExpoView(c
     }
   }
 
-  // ─── Swipe (→ arquivar verde, ← excluir vermelho; como o SwipeableRow JS) ──
+  // ─── Swipe (→ arquivar grafite, ← excluir vermelho; = lista de chat/SwipeableRow JS) ──
 
   private val swipePaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val swipeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -540,7 +540,7 @@ class ChatyyEmailListView(context: Context, appContext: AppContext) : ExpoView(c
     private const val TYPE_SECTION = 3
     private const val TYPE_FOOTER = 2
     private val PAYLOAD_BIND = Any()
-    private val SWIPE_ARCHIVE = 0xFF2DA84E.toInt()
-    private val SWIPE_DELETE = 0xFFE5392E.toInt()
+    private val SWIPE_ARCHIVE = 0xFF3A3A3C.toInt() // [2026-10-16 polish] = CLTheme.SWIPE_ARCHIVE (chat)
+    private val SWIPE_DELETE = 0xFFFF3B30.toInt() // = CLTheme.SWIPE_DELETE
   }
 }

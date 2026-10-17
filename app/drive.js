@@ -43,6 +43,7 @@ import { IconLock as IconVaultLock } from '../components/Icons'; // [2026-10-09 
 import * as driveVault from '../services/driveVault';
 import FileViewer from '../components/FileViewer';
 import BrandFab from '../components/BrandFab';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import CachedImage from '../components/CachedImage';
 // [2026-10-15 native-drive] Lista/grade nativa (kill switch __chatyy_native_drive).
 import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriveList';
@@ -1488,7 +1489,7 @@ function DriveScreenInner() {
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#F1F3F5') : 'transparent', borderBottomColor: colors.border },
           isDragTarget && { backgroundColor: isDark ? '#2C2C2E' : '#F1F3F5', borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, borderRadius: 8 },
-          isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
+          isFocused && !isSelected && { backgroundColor: colors.surfaceVariant },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
         onLongPress={(e) => handleItemLongPress(item, e)}
@@ -1597,7 +1598,7 @@ function DriveScreenInner() {
             },
             Platform.OS === 'web' && isHovered && !isSelected && {
               borderColor: colors.primary + '50',
-              ...(isDark ? { backgroundColor: colors.surfaceVariant } : { backgroundColor: '#f8fafc' }),
+              backgroundColor: colors.surfaceVariant,
               transform: [{ translateY: -1 }],
             },
             isDragTarget && { borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, backgroundColor: isDark ? '#2C2C2E' : '#F1F3F5' },
@@ -1688,15 +1689,12 @@ function DriveScreenInner() {
     const media = allPhotos.length > 0 ? allPhotos : [...files].filter(f => isMedia(f));
     if (media.length === 0) {
       return (
-        <View style={styles.emptyState}>
-          <IconImage size={56} color={colors.textTertiary} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('drive.emptyPhotos')}</Text>
-          <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>{t('drive.emptyPhotosDesc')}</Text>
-          <TouchableOpacity style={[styles.emptyBtn, { backgroundColor: colors.primary }]} onPress={handleUploadPhotos}>
-            <IconCamera size={18} color={colors.onPrimary || '#fff'} />
-            <Text style={[styles.emptyBtnText, { color: colors.onPrimary }]}>{t('drive.backupPhotos')}</Text>
-          </TouchableOpacity>
-        </View>
+        <ScreenEmptyState
+          kind="photos"
+          title={t('drive.emptyPhotos')}
+          subtitle={t('drive.emptyPhotosDesc')}
+          cta={{ label: t('drive.backupPhotos'), icon: 'upload', onPress: handleUploadPhotos }}
+        />
       );
     }
 
@@ -1748,28 +1746,24 @@ function DriveScreenInner() {
   };
 
   // --- Empty States ---
+  // [2026-10-16 polish] Estado vazio canônico (ScreenEmptyState) — antes era
+  // um bespoke com círculo slate '#f1f5f9' e botão próprio, destoando de
+  // Arquivos/Fotos/Notas. Mesmos textos e mesma ação de enviar.
   const renderEmptyState = () => {
     const configs = {
-      files: { icon: <IconFolder size={64} color={colors.textTertiary} />, title: t('drive.noFiles'), desc: t('drive.uploadHint') },
-      photos: { icon: <IconImage size={64} color={colors.textTertiary} />, title: t('drive.emptyPhotos'), desc: t('drive.emptyPhotosDesc') },
-      shared: { icon: <IconUsers size={64} color={colors.textTertiary} />, title: t('drive.emptyShared'), desc: t('drive.emptySharedDesc') },
-      trash: { icon: <IconTrash size={64} color={colors.textTertiary} />, title: t('drive.emptyTrash'), desc: t('drive.emptyTrashDesc') },
+      files: { kind: 'files', title: t('drive.noFiles'), desc: t('drive.uploadHint') },
+      photos: { kind: 'photos', title: t('drive.emptyPhotos'), desc: t('drive.emptyPhotosDesc') },
+      shared: { kind: 'contacts', title: t('drive.emptyShared'), desc: t('drive.emptySharedDesc') },
+      trash: { kind: 'files', title: t('drive.emptyTrash'), desc: t('drive.emptyTrashDesc') },
     };
-    const cfg = configs[activeTab];
+    const cfg = configs[activeTab] || configs.files;
     return (
-      <View style={styles.emptyState}>
-        <View style={[styles.emptyIconCircle, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}>
-          {cfg.icon}
-        </View>
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>{cfg.title}</Text>
-        <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>{cfg.desc}</Text>
-        {activeTab === 'files' && (
-          <TouchableOpacity style={[styles.emptyBtn, { backgroundColor: colors.primary }]} onPress={handleUploadFile}>
-            <IconUpload size={18} color={colors.onPrimary || '#fff'} />
-            <Text style={[styles.emptyBtnText, { color: colors.onPrimary }]}>{t('drive.uploadFile')}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      <ScreenEmptyState
+        kind={cfg.kind}
+        title={cfg.title}
+        subtitle={cfg.desc}
+        cta={activeTab === 'files' ? { label: t('drive.uploadFile'), icon: 'upload', onPress: handleUploadFile } : undefined}
+      />
     );
   };
 
@@ -1889,7 +1883,7 @@ function DriveScreenInner() {
         <View style={[styles.modalCard, { backgroundColor: colors.surface, ...Shadow.xl }]}>
           <Text style={[styles.modalTitle, { color: colors.text }]}>{t('drive.newFolder')}</Text>
           <TextInput
-            style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: isDark ? colors.surfaceVariant : '#f8fafc' }]}
+            style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
             value={newFolderName}
             onChangeText={setNewFolderName}
             placeholder={t('drive.folderNamePlaceholder')}
@@ -1899,7 +1893,7 @@ function DriveScreenInner() {
             accessibilityLabel={t('drive.newFolder')}
           />
           <View style={styles.modalBtns}>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => setNewFolderModal(false)}>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => setNewFolderModal(false)}>
               <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary }]} onPress={handleCreateFolder}>
@@ -1918,7 +1912,7 @@ function DriveScreenInner() {
         <View style={[styles.modalCard, { backgroundColor: colors.surface, ...Shadow.xl }]}>
           <Text style={[styles.modalTitle, { color: colors.text }]}>{t('drive.rename')}</Text>
           <TextInput
-            style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: isDark ? colors.surfaceVariant : '#f8fafc' }]}
+            style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
             value={renameText}
             onChangeText={setRenameText}
             autoFocus
@@ -1926,7 +1920,7 @@ function DriveScreenInner() {
             accessibilityLabel={t('drive.rename')}
           />
           <View style={styles.modalBtns}>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => setRenameModal(null)}>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => setRenameModal(null)}>
               <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary }]} onPress={handleRename}>
@@ -1948,7 +1942,7 @@ function DriveScreenInner() {
             <Text style={[styles.shareFileName, { color: colors.textSecondary }]} numberOfLines={1}>{shareModal.name}</Text>
           )}
           <TextInput
-            style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: isDark ? colors.surfaceVariant : '#f8fafc' }]}
+            style={[styles.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
             value={shareEmail}
             onChangeText={setShareEmail}
             placeholder={t('drive.emailPlaceholder')}
@@ -1986,7 +1980,7 @@ function DriveScreenInner() {
             <Text style={[styles.copyLinkText, { color: colors.primary }]}>{t('drive.copyLink')}</Text>
           </TouchableOpacity>
           <View style={styles.modalBtns}>
-            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => setShareModal(null)}>
+            <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => setShareModal(null)}>
               <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.primary }]} onPress={handleShare}>
@@ -2019,7 +2013,7 @@ function DriveScreenInner() {
             )}
             style={{ maxHeight: 250 }}
           />
-          <TouchableOpacity style={[styles.modalBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9', marginTop: 12 }]} onPress={() => setMoveModal(null)}>
+          <TouchableOpacity style={[styles.modalBtn, { backgroundColor: colors.surfaceVariant, marginTop: 12 }]} onPress={() => setMoveModal(null)}>
             <Text style={[styles.modalBtnText, { color: colors.textSecondary }]}>{t('drive.cancel')}</Text>
           </TouchableOpacity>
         </View>
@@ -2067,7 +2061,7 @@ function DriveScreenInner() {
                   <Text style={[styles.storageSegValue, { color: colors.textSecondary }]}>{formatBytes(seg.bytes)}</Text>
                 </View>
               ))}
-              <View style={styles.storageDivider} />
+              <View style={[styles.storageDivider, { backgroundColor: colors.borderLight || colors.border }]} />
               <View style={styles.storageSegmentRow}>
                 <View style={[styles.storageColorDot, { backgroundColor: isDark ? '#2c2c2e' : '#d1d5db' }]} />
                 <Text style={[styles.storageSegLabel, { color: colors.text }]}>{t('drive.free')}</Text>
@@ -2205,14 +2199,14 @@ function DriveScreenInner() {
                 <Text style={{ color: colors.onPrimary || '#fff', fontSize: 13, fontWeight: '600' }}>{t('drive.open')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.detailsActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
+                style={[styles.detailsActionBtn, { backgroundColor: colors.surfaceVariant }]}
                 onPress={() => { setDetailsFile(null); handleDownload(item); }}
               >
                 <IconDownload size={16} color={colors.text} />
                 <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('drive.download')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.detailsActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
+                style={[styles.detailsActionBtn, { backgroundColor: colors.surfaceVariant }]}
                 onPress={() => { setDetailsFile(null); setShareModal(item); }}
               >
                 <IconShare size={16} color={colors.text} />
@@ -2426,10 +2420,10 @@ function DriveScreenInner() {
             <IconFileText size={16} color={colors.onPrimary || '#fff'} />
             <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>{t('drive.open')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => handleDownload(item)}>
+          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => handleDownload(item)}>
             <IconDownload size={16} color={colors.text} />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]} onPress={() => { setPreviewPanelFile(null); setShareModal(item); }}>
+          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => { setPreviewPanelFile(null); setShareModal(item); }}>
             <IconShare size={16} color={colors.text} />
             <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{t('drive.share')}</Text>
           </TouchableOpacity>
@@ -2650,7 +2644,7 @@ function DriveScreenInner() {
         </View>
 
         {/* Search */}
-        <View style={[styles.searchContainer, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9', borderColor: colors.border }]}>
+        <View style={[styles.searchContainer, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
           <IconSearch size={18} color={colors.textTertiary} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
@@ -2767,7 +2761,7 @@ function DriveScreenInner() {
               data={displayItems}
               keyExtractor={item => `${item.is_folder ? 'f' : 'i'}_${item.id}`}
               renderItem={renderListItem}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />}
               contentContainerStyle={{ paddingBottom: 100 }}
             />
           ) : (
@@ -2778,7 +2772,7 @@ function DriveScreenInner() {
               numColumns={gridCols}
               key={gridKey}
               columnWrapperStyle={styles.gridRow}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />}
               contentContainerStyle={{ padding: isDesktop ? 24 : 12, paddingBottom: 100 }}
             />
           )}

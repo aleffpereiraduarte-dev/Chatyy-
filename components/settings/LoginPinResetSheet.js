@@ -124,7 +124,8 @@ export default function LoginPinResetSheet({ visible, challenge, hasEmail, onClo
 
   return (
     <Modal visible={!!visible} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} onRequestClose={close}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* [2026-10-16 polish] Android: Modal tela-cheia edge-to-edge não redimensiona com o teclado → 'height' encolhe a área e o botão fica acima do teclado. */}
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined)}>
         <View style={[s.header, { paddingTop: (Platform.OS === 'ios' ? 12 : insets.top + 8) }]}>
           <Pressable onPress={close} hitSlop={12} accessibilityRole="button" testID="login-pin-reset-close"
             accessibilityLabel={t('common.close') || 'Fechar'} style={({ pressed }) => [s.hBtn, { opacity: pressed ? 0.5 : 1 }]}>
@@ -134,7 +135,8 @@ export default function LoginPinResetSheet({ visible, challenge, hasEmail, onClo
           <View style={s.hBtn} />
         </View>
         <ScrollView contentContainerStyle={{ paddingBottom: 32 + insets.bottom, maxWidth: 560, width: '100%', alignSelf: 'center' }}
-          keyboardShouldPersistTaps="handled" testID="login-pin-reset-sheet">
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} testID="login-pin-reset-sheet">
           {content}
         </ScrollView>
       </KeyboardAvoidingView>

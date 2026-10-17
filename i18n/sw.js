@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Tafuta watu kwa jina au @jina la mtumiaji",
   "chatConv.groupMembersCount": "Wanachama {n}",
   "calls.scheduledList": "Zilizopangwa",
+  "calls.scheduledTitle": "Simu zilizopangwa",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

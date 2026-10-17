@@ -255,13 +255,13 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
-      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined) /* [2026-10-16 polish] Android edge-to-edge: recado não fica sob o teclado */}>
       <Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         <View style={styles.handle} />
         <View style={styles.header}>
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
-          <TouchableOpacity onPress={openShop} style={styles.balance} accessibilityRole="button"
+          <TouchableOpacity onPress={openShop} style={styles.balance} hitSlop={6} accessibilityRole="button"
             accessibilityLabel={`${tr(t, 'gifts.balance', 'Saldo')}: ${balance ?? ''}. ${tr(t, 'gifts.topUp', 'Recarregar')}`}>
             <DiamondMono size={13} color="#fff" />
             <Text style={[styles.balanceText, negative && styles.balanceNeg]}>{balance == null ? '—' : humanizeCount(balance)}</Text>
@@ -302,7 +302,7 @@ function GiftSheet({ visible, onClose, context, targetId, recipientName, keepOpe
             const on = qty === q;
             return (
               <TouchableOpacity key={q} onPress={() => { haptic('select'); setQty(q); resetCombo(); }}
-                style={[styles.qtyChip, on && styles.qtyChipOn]} accessibilityRole="button" accessibilityState={{ selected: on }}
+                style={[styles.qtyChip, on && styles.qtyChipOn]} hitSlop={6} accessibilityRole="button" accessibilityState={{ selected: on }}
                 accessibilityLabel={`x${q}`}>
                 <Text style={[styles.qtyText, on && styles.qtyTextOn]}>{`x${q}`}</Text>
               </TouchableOpacity>

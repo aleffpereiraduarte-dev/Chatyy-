@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Keress embereket név vagy @felhasználónév alapján",
   "chatConv.groupMembersCount": "{n} tag",
   "calls.scheduledList": "Ütemezett",
+  "calls.scheduledTitle": "Ütemezett hívások",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

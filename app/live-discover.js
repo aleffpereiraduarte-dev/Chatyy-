@@ -36,6 +36,8 @@ import {
   IconMessageCircle, IconMapPin, IconSearch,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import ScreenEmptyState from '../components/ScreenEmptyState'; // [2026-10-16 polish-lives]
+import { Shimmer } from '../components/SkeletonLoader'; // [2026-10-16 polish-lives]
 import ReportSheet from '../components/ReportSheet'; // [central-moderacao 2026-10-14]
 import { formatCount as formatViewers } from '../components/AnimatedViewerCount';
 
@@ -505,11 +507,25 @@ export default function LiveDiscoverScreen() {
 
       {/* List */}
       {loading ? (
-        <View style={styles.center}><ActivityIndicator color={colors.primary} /></View>
-      ) : error && !sessions.length ? (
-        <View style={styles.center}>
-          <Text style={{ color: colors.textSecondary }}>{error}</Text>
+        // [2026-10-16 polish-lives] skeleton na grade (mesmas dimensões dos cards 9:16)
+        // em vez do spinner solto no meio da tela — zero salto quando os dados chegam.
+        <View style={[styles.listPad, styles.skelGrid]}>
+          {Array.from({ length: numCols * 2 }).map((_, i) => (
+            <View key={i} style={[styles.cardOuter, { flexGrow: 0, flexShrink: 0, flexBasis: cardW, width: cardW, marginBottom: 12 }]}>
+              <Shimmer delay={i * 40} style={{ width: '100%', aspectRatio: 9 / 16, borderRadius: 16 }} />
+            </View>
+          ))}
         </View>
+      ) : error && !sessions.length ? (
+        // [2026-10-16 polish-lives] erro = estado vazio canônico com "Tentar novamente"
+        // (antes: texto cinza solto sem ação).
+        <ScreenEmptyState
+          kind="lives"
+          compact
+          title={t('common.errorLoading') || 'Não foi possível carregar.'}
+          subtitle={error}
+          cta={{ label: t('common.retry') || 'Tentar novamente', onPress: onRefresh }}
+        />
       ) : !sessions.length ? (
         <EmptyLiveDiscover
           colors={colors}
@@ -1300,6 +1316,7 @@ const styles = StyleSheet.create({
   // outer wrapper's breathing room, so total horizontal spacing = 14px.
   // Bumped gap+marginBottom for breathing room in the 2-col grid (TikTok parity).
   colWrap: { gap: 8, marginBottom: 12 },
+  skelGrid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8 },
 
   // Outer wrapper holds the entrance Animated.View. flex:1 so 2 columns split
   // evenly. We separate this from the inner pressable so transform animations

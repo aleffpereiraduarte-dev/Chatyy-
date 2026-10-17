@@ -1633,7 +1633,7 @@ function InboxScreenInner() {
             <View style={{ flex: 1, minWidth: 0 }}>
               {/* [2026-10-13 redesign P&B] Título = pasta atual (Apple Mail), não
                   mais a saudação "Bom dia, Fulano" (founder pediu fora). */}
-              <Text style={[s.greetingText, { color: colors.text }]} numberOfLines={1}>
+              <Text style={[s.greetingText, { color: colors.text }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82}>
                 {activeLabel
                   ? (activeLabel.charAt(0).toUpperCase() + activeLabel.slice(1))
                   : (HEADER_FOLDER_KEYS[currentFolder]
@@ -1685,7 +1685,7 @@ function InboxScreenInner() {
           >
             <IconBell size={22} color={colors.textSecondary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setShowMenu(!showMenu); if (!showMenu) setShowSidebar(false); }} style={s.avatarBtn}>
+          <TouchableOpacity onPress={() => { setShowMenu(!showMenu); if (!showMenu) setShowSidebar(false); }} style={s.avatarBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel={user?.name || user?.email || ''}>
             <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={32} />
           </TouchableOpacity>
         </View>

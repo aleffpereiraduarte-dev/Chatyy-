@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Animated, StyleSheet, Platform, Easing } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import { AnimTiming } from '../constants/theme';
+import { AnimTiming, Spacing } from '../constants/theme';
 import { isReduceMotionEnabled } from './reducedMotion'; // [2026-10-16 motion-telegram]
 
 // ── Shared shimmer clock ──
@@ -116,11 +116,14 @@ export function Shimmer({ style, delay = 0 }) {
 }
 
 export function EmailSkeleton({ count = 6 }) {
+  // [2026-10-16 polish] Mesma geometria do EmailRow (densidade confortável:
+  // avatar 38, margem lateral Spacing.lg+2, gap Spacing.md+2) — antes 44/20/12
+  // e a lista "pulava" para a esquerda quando os e-mails chegavam.
   return (
-    <View style={s.container}>
+    <View>
       {Array.from({ length: count }).map((_, i) => (
-        <Animated.View key={i} style={s.row}>
-          <Shimmer style={s.avatar} delay={i * AnimTiming.staggerFast} />
+        <Animated.View key={i} style={[s.row, s.emailRow]}>
+          <Shimmer style={s.emailAvatar} delay={i * AnimTiming.staggerFast} />
           <View style={s.lines}>
             <Shimmer style={[s.line1, { width: `${60 + _jit(i, 1) * 20}%` }]} delay={i * AnimTiming.staggerFast + 30} />
             <Shimmer style={[s.line2, { width: `${75 + _jit(i, 2) * 15}%` }]} delay={i * AnimTiming.staggerFast + 60} />
@@ -424,6 +427,8 @@ const s = StyleSheet.create({
     gap: 12,
   },
   avatar: { width: 44, height: 44, borderRadius: 22 },
+  emailRow: { paddingHorizontal: Spacing.lg + 2, gap: Spacing.md + 2, paddingVertical: 13 },
+  emailAvatar: { width: 38, height: 38, borderRadius: 19 },
   lines: { flex: 1, gap: 8 },
   line1: { height: 13, width: '70%', borderRadius: 6 },
   line2: { height: 11, width: '90%', borderRadius: 5 },

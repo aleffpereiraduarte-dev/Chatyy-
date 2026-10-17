@@ -2147,7 +2147,7 @@ export default function ComposeScreen() {
         <View style={[s.container, { paddingTop: insets.top }]}>
           {/* Header — clean WHITE bar, dark iconography (2026 light) */}
           <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
-            <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.close')}>
               <IconArrowLeft size={20} color={colors.text} />
             </TouchableOpacity>
             <View style={s.headerTitleCol}>
@@ -2330,18 +2330,18 @@ export default function ComposeScreen() {
       <View style={[s.container, { paddingTop: insets.top }]}>
         {/* ── Modern Header — clean WHITE bar, dark iconography (2026 light) ── */}
         <View style={[s.header, { flex: undefined, marginLeft: 0, backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
-          <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.close')}>
             <IconX size={20} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[s.headerTitle, { color: colors.text, flex: 1, marginLeft: Spacing.sm }]} numberOfLines={1}>
+          <Text style={[s.headerTitle, { color: colors.text, flex: 1, marginLeft: Spacing.sm }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
             {isForward ? t('compose.forward') : t('compose.title')}
           </Text>
           <View style={s.headerRight}>
             {renderDraftStatusIndicator()}
-            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('compose.scheduleSend')}>
               <IconClock size={16} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('compose.templates')}>
               <IconFileText size={16} color={colors.text} />
             </TouchableOpacity>
             {renderSendButton()}

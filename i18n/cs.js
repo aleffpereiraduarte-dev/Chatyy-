@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Hledejte lidi podle jména nebo @uživatelského jména",
   "chatConv.groupMembersCount": "Členové: {n}",
   "calls.scheduledList": "Naplánované",
+  "calls.scheduledTitle": "Naplánované hovory",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

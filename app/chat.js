@@ -830,6 +830,19 @@ function ChatHub() {
     };
   }, []);
 
+  const _tabSettleDirRef = useRef(null); // [2026-10-16 pisca] direção pendente do assentamento da aba
+  React.useLayoutEffect(() => {
+    const dir = _tabSettleDirRef.current;
+    if (dir == null) return;
+    _tabSettleDirRef.current = null;
+    contentOpacity.setValue(0.6);
+    contentTranslateX.setValue(dir * 16);
+    Animated.parallel([
+      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }),
+      Animated.spring(contentTranslateX, { toValue: 0, useNativeDriver: true, tension: 100, friction: 18 }),
+    ]).start();
+  }, [activeTab, contentOpacity, contentTranslateX]);
+
   const handleTabPress = useCallback((tab) => {
     // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
     // chats tab active underneath and just open the modal.
@@ -879,12 +892,12 @@ function ChatHub() {
     // nudge for off-bar tabs like Feed/Status that aren't in TAB_KEYS).
     const prevIdx = TAB_KEYS.indexOf(activeTab);
     const dir = (idx >= 0 && prevIdx >= 0 && idx !== prevIdx) ? (idx > prevIdx ? 1 : -1) : 1;
-    contentOpacity.setValue(0.6);
-    contentTranslateX.setValue(dir * 16);
-    Animated.parallel([
-      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }),
-      Animated.spring(contentTranslateX, { toValue: 0, useNativeDriver: true, tension: 100, friction: 18 }),
-    ]).start();
+    // [2026-10-16 pisca] O setValue(0.6) rodava AQUI, antes do commit da aba
+    // nova: a aba ANTIGA ficava esmaecida/deslocada enquanto a nova renderizava
+    // (1ª visita a Ligações = ~2,6k nós montando → 100-300 ms no Android) =
+    // "piscada" na troca de aba. Agora o assentamento começa no layout effect do
+    // commit da aba nova (useLayoutEffect abaixo): a antiga nunca esmaece.
+    _tabSettleDirRef.current = dir;
 
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });

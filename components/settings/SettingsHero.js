@@ -42,6 +42,8 @@ function DiamondLine({ size = 18, color }) {
   );
 }
 
+// [2026-10-16 polish] pílulas de 36 → alvo de toque ≥44 sem mudar o desenho.
+const PILL_SLOP = { top: 4, bottom: 4, left: 4, right: 4 };
 function Pill({ icon: Icon, label, onPress, primary, testID, a11y, square }) {
   const g = useGroupedColors();
   const fg = primary ? g.onInk : g.text;
@@ -50,6 +52,7 @@ function Pill({ icon: Icon, label, onPress, primary, testID, a11y, square }) {
       onPress={onPress}
       haptic="light"
       scaleTo={0.95}
+      hitSlop={PILL_SLOP}
       accessibilityRole="button"
       accessibilityLabel={a11y || label}
       testID={testID}
@@ -116,6 +119,7 @@ export function SettingsHero({ user, profile, avatarKey, scrollY, onEdit, onQr, 
               onPress={onQr}
               haptic="light"
               scaleTo={0.92}
+              hitSlop={PILL_SLOP}
               accessibilityRole="button"
               accessibilityLabel={t('profile.qrCode')}
               testID="settings-profile-qr"

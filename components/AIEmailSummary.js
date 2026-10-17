@@ -98,6 +98,7 @@ const s = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     borderRadius: BorderRadius.md,
     marginBottom: Spacing.md,
+    minHeight: 44, // [2026-10-16 polish] alvo de toque (era ~30pt)
   },
   btnText: {
     fontSize: FontSize.sm,

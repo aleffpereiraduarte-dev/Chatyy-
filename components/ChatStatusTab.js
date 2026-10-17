@@ -17,6 +17,7 @@ import BrandFab from './BrandFab';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles, IconMoreHorizontal, IconMessageCircle } from './Icons';
 import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-13 status-viewers]
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
+import { Shimmer } from './SkeletonLoader'; // [2026-10-16 polish-status]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
@@ -3356,20 +3357,18 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // when data lands. Matches Instagram/Telegram pattern.
     const SkeletonRow = ({ rowKey }) => (
       <View key={rowKey} style={[styles.statusRow, { backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff' }]}>
-        <View style={[styles.avatarWrapper, {
-          width: 52, height: 52, borderRadius: 26,
-          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-        }]} />
+        {/* [2026-10-16 polish-status] skeleton estático → Shimmer compartilhado (mesmo brilho do app) */}
+        <Shimmer style={[styles.avatarWrapper, { width: 52, height: 52, borderRadius: 26 }]} />
         <View style={[styles.statusInfo, { gap: 6 }]}>
-          <View style={{ height: 13, width: '55%', borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
-          <View style={{ height: 11, width: '35%', borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }} />
+          <Shimmer style={{ height: 13, width: '55%', borderRadius: 6 }} />
+          <Shimmer style={{ height: 11, width: '35%', borderRadius: 6 }} />
         </View>
       </View>
     );
     return (
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
         <View style={[styles.sectionHeader, { backgroundColor: isDark ? colors.background : '#f2f2f7' }]}>
-          <View style={{ height: 14, width: 140, borderRadius: 6, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+          <Shimmer style={{ height: 14, width: 140, borderRadius: 6 }} />
         </View>
         {[0,1,2,3,4,5].map(i => <SkeletonRow key={`sk-${i}`} rowKey={`sk-${i}`} />)}
       </View>
@@ -5135,7 +5134,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             </View>
             {analyticsLoading ? (
               <View style={{ paddingVertical: 32, alignItems: 'center' }}>
-                <ActivityIndicator size="large" color={ACCENT} />
+                <ActivityIndicator size="large" color={isDark ? "#fff" : ACCENT} />
                 <Text style={{ marginTop: 12, color: isDark ? '#A1A1A6' : '#6b7280', fontSize: 13 }}>
                   {t?.('status.analyticsLoading') || 'Carregando...'}
                 </Text>
@@ -5222,7 +5221,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               {t?.('status.archiveHint') || 'Toque longo em um status para repostar.'}
             </Text>
             {archiveLoading ? (
-              <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
+              <ActivityIndicator size="large" color={isDark ? "#fff" : ACCENT} style={{ marginVertical: 32 }} />
             ) : archiveItems.length === 0 ? (
               <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 32, fontSize: 14 }}>
                 {t?.('status.archiveEmpty') || 'Nenhum status arquivado'}
@@ -5341,7 +5340,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               </View>
             </View>
             {forwardLoading ? (
-              <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
+              <ActivityIndicator size="large" color={isDark ? "#fff" : ACCENT} style={{ marginVertical: 32 }} />
             ) : forwardConversations.length === 0 ? (
               <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 32, fontSize: 15 }}>
                 {t?.('status.noConversations') || 'Nenhuma conversa'}
@@ -5435,14 +5434,14 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   autoFocus
                 />
                 {musicQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }}>
+                  <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }} hitSlop={12}>
                     <IconX size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
                   </TouchableOpacity>
                 )}
               </View>
 
               {/* Results */}
-              {musicSearching && <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 24 }} />}
+              {musicSearching && <ActivityIndicator size="large" color={isDark ? "#fff" : ACCENT} style={{ marginVertical: 24 }} />}
 
               <ScrollView style={{ flex: 1 }}>
                 {!musicSearching && musicResults.length === 0 && musicQuery.length >= 2 && (

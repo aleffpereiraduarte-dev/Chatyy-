@@ -62,9 +62,9 @@ function CoverThumb({ edl }) {
   );
 }
 
-function Row({ Icon, label, value, onValueChange, sub }) {
+function Row({ Icon, label, value, onValueChange, sub, last }) {
   return (
-    <View style={styles.row}>
+    <View style={[styles.row, last && { borderBottomWidth: 0 }]}>
       <Icon size={20} color="#fff" />
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTxt}>{label}</Text>
@@ -271,8 +271,8 @@ export default function VideoStudioPublish() {
               textAlignVertical="top"
             />
             <View style={styles.quick}>
-              <TouchableOpacity onPress={() => insertChar('#')} style={styles.quickBtn} accessibilityRole="button"><IconHash size={14} color="#fff" /><Text style={styles.quickTxt}>{t('studio.publish.hashtags')}</Text></TouchableOpacity>
-              <TouchableOpacity onPress={() => insertChar('@')} style={styles.quickBtn} accessibilityRole="button"><IconAtSign size={14} color="#fff" /><Text style={styles.quickTxt}>{t('studio.publish.mention')}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => insertChar('#')} style={styles.quickBtn} hitSlop={{ top: 7, bottom: 7, left: 4, right: 4 }} accessibilityRole="button"><IconHash size={14} color="#fff" /><Text style={styles.quickTxt}>{t('studio.publish.hashtags')}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => insertChar('@')} style={styles.quickBtn} hitSlop={{ top: 7, bottom: 7, left: 4, right: 4 }} accessibilityRole="button"><IconAtSign size={14} color="#fff" /><Text style={styles.quickTxt}>{t('studio.publish.mention')}</Text></TouchableOpacity>
               <Text style={styles.count}>{`${caption.length}/${CAPTION_MAX}`}</Text>
             </View>
           </View>
@@ -308,9 +308,9 @@ export default function VideoStudioPublish() {
 
         <View style={styles.card}>
           <Row Icon={IconMessageCircle} label={t('studio.publish.allowComments')} value={allowComments} onValueChange={setAllowComments} />
-          <Row Icon={IconRepeat} label={t('studio.publish.allowDuet')} value={allowDuet} onValueChange={setAllowDuet} />
+          <Row Icon={IconRepeat} label={t('studio.publish.allowDuet')} value={allowDuet} onValueChange={setAllowDuet} last={Platform.OS === 'web'} />
           {Platform.OS !== 'web' && (
-            <Row Icon={IconDownload} label={t('studio.publish.saveToDevice')} sub={t('studio.publish.saveToDeviceSub')} value={saveToDevice} onValueChange={setSaveToDevice} />
+            <Row Icon={IconDownload} label={t('studio.publish.saveToDevice')} sub={t('studio.publish.saveToDeviceSub')} value={saveToDevice} onValueChange={setSaveToDevice} last />
           )}
         </View>
         <Text style={styles.note}>{t('studio.publish.backgroundNote')}</Text>

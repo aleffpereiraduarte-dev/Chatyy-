@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "Zoek mensen op naam of @gebruikersnaam",
   "chatConv.groupMembersCount": "{n} leden",
   "calls.scheduledList": "Gepland",
+  "calls.scheduledTitle": "Geplande gesprekken",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "Je krijgt een melding op al je apparaten.",

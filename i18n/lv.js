@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Meklējiet cilvēkus pēc vārda vai @lietotājvārda",
   "chatConv.groupMembersCount": "Dalībnieki: {n}",
   "calls.scheduledList": "Ieplānotie",
+  "calls.scheduledTitle": "Ieplānotie zvani",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

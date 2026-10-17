@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Тражите људе по имену или @корисничком имену",
   "chatConv.groupMembersCount": "Чланови: {n}",
   "calls.scheduledList": "Заказани",
+  "calls.scheduledTitle": "Заказани позиви",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

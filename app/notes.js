@@ -2171,7 +2171,7 @@ export default function NotesScreen() {
         <ScrollView
           style={s.scrollContent}
           contentContainerStyle={s.notebooksContainer}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} colors={[colors.primary]} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />}
         >
           <TouchableOpacity
             onPress={() => {
@@ -2361,7 +2361,7 @@ export default function NotesScreen() {
           initialNumToRender={10}
           windowSize={9}
           keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} colors={[colors.primary]} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />}
           ListHeaderComponent={(
             <>
               {pinnedNotes.length > 0 && activeFilter !== 'pinned' && (
@@ -2621,7 +2621,7 @@ export default function NotesScreen() {
             <TextInput
               style={[s.notebookInput, {
                 color: colors.text,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.surfaceVariant,
                 borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
               }]}
               placeholder={t('notes.notebookName')}
@@ -2681,7 +2681,7 @@ export default function NotesScreen() {
             <TextInput
               style={[s.notebookInput, {
                 color: colors.text,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.surfaceVariant,
                 borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
               }]}
               placeholder={t('notes.emailPlaceholder')}

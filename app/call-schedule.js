@@ -131,11 +131,13 @@ export default function CallScheduleScreen() {
   }, [t]);
 
   const meLc = (user?.email || '').toLowerCase();
+  // [2026-10-16 polish-calls] título de LISTA no plural (era "Chamada agendada")
+  const _listTitle = (() => { const v = t('calls.scheduledTitle'); return v && v !== 'calls.scheduledTitle' ? v : (t('calls.scheduledList') && t('calls.scheduledList') !== 'calls.scheduledList' ? t('calls.scheduledList') : 'Chamadas agendadas'); })();
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {USE_NATIVE_HEADER ? (
-        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('calls.scheduled') })} />
+        <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: _listTitle })} />
       ) : (
       // [2026-10-13 visual] web header follows the theme (was a solid black bar /
       // purple #110a1f in dark) like every other screen header.
@@ -149,7 +151,7 @@ export default function CallScheduleScreen() {
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('calls.scheduled') || 'Chamadas agendadas'}</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{_listTitle}</Text>
         </View>
       </View>
       )}
@@ -232,13 +234,13 @@ export default function CallScheduleScreen() {
                     disabled={!canJoin}
                     style={[
                       styles.startBtn,
-                      // [2026-10-13 visual] green only = 'join now' state (#16a34a = same success green as Calls)
-                      { backgroundColor: canJoin ? '#16a34a' : colors.surfaceVariant },
+                      // [2026-10-16 polish-calls] P&B: 'entrar agora' = tinta do tema (era verde)
+                      { backgroundColor: canJoin ? colors.primary : colors.surfaceVariant },
                     ]}
                   >
-                    <IconPhone size={14} color={canJoin ? '#fff' : colors.textTertiary} />
+                    <IconPhone size={14} color={canJoin ? colors.onPrimary : colors.textTertiary} />
                     <Text style={{
-                      color: canJoin ? '#fff' : colors.textTertiary,
+                      color: canJoin ? colors.onPrimary : colors.textTertiary,
                       fontSize: FontSize.sm, fontWeight: '600', marginLeft: 6,
                     }}>
                       {canJoin ? (t('calls.start') || 'Iniciar') : (t('calls.notYet') || formatRelative(call.scheduled_at, t))}
@@ -270,6 +272,6 @@ const styles = StyleSheet.create({
   title: { fontSize: FontSize.md, fontWeight: '600' },
   startBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, minHeight: 36, borderRadius: 18,
+    paddingHorizontal: 14, minHeight: 40, borderRadius: 20,
   },
 });

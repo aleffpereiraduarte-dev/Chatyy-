@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "按姓名或 @用户名 搜索用户",
   "chatConv.groupMembersCount": "{n} 位成员",
   "calls.scheduledList": "已预约",
+  "calls.scheduledTitle": "已安排的通话",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "你将在所有设备上收到通知。",

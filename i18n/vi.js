@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "Tìm người theo tên hoặc @tên người dùng",
   "chatConv.groupMembersCount": "{n} thành viên",
   "calls.scheduledList": "Đã lên lịch",
+  "calls.scheduledTitle": "Cuộc gọi đã lên lịch",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "Bạn sẽ nhận thông báo trên tất cả thiết bị của mình.",

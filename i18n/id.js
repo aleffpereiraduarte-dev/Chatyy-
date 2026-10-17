@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "Cari orang berdasarkan nama atau @nama pengguna",
   "chatConv.groupMembersCount": "{n} anggota",
   "calls.scheduledList": "Terjadwal",
+  "calls.scheduledTitle": "Panggilan terjadwal",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

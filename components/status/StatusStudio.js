@@ -921,11 +921,11 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
         <View style={st.panel}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 10 }}>
             {BRUSH.map(w => (
-              <TouchableOpacity key={w} onPress={() => setBrush(b => ({ ...b, w }))} style={[st.brushBtn, brush.w === w && { borderColor: '#fff' }]}>
+              <TouchableOpacity key={w} onPress={() => setBrush(b => ({ ...b, w }))} hitSlop={4} style={[st.brushBtn, brush.w === w && { borderColor: '#fff' }]}>
                 <View style={{ width: w + 4, height: w + 4, borderRadius: (w + 4) / 2, backgroundColor: '#fff' }} />
               </TouchableOpacity>
             ))}
-            <TouchableOpacity onPress={() => setOv(o => ({ ...o, paths: o.paths.slice(0, -1) }))} style={st.brushBtn} accessibilityLabel={t('status.studio.undo')}>
+            <TouchableOpacity onPress={() => setOv(o => ({ ...o, paths: o.paths.slice(0, -1) }))} hitSlop={4} style={st.brushBtn} accessibilityLabel={t('status.studio.undo')}>
               <IconUndo size={18} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -1021,7 +1021,7 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
             {TEXT_STATUS_BACKGROUNDS.map((b, i) => {
               const on = i === txt.color;
               return (
-                <TouchableOpacity key={b.value} onPress={() => pickTextBg(i)} activeOpacity={0.8}
+                <TouchableOpacity key={b.value} onPress={() => pickTextBg(i)} activeOpacity={0.8} hitSlop={{ top: 7, bottom: 7, left: 4, right: 4 }}
                   style={[st.swatch, on && st.swatchOn]} accessibilityRole="button" accessibilityState={{ selected: on }}
                   accessibilityLabel={`${t('status.studio.textBackground')} ${i + 1}`}>
                   <BgFill colors={b.colors} id={`sw${i}`} radius={15} />
@@ -1227,7 +1227,7 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
                 </TouchableOpacity>
               ))}
               {['left', 'center', 'right'].map(a => (
-                <TouchableOpacity key={a} onPress={() => setTextDraft(d => ({ ...d, align: a }))} style={[st.alignBtn, textDraft.align === a && st.chipOn]}
+                <TouchableOpacity key={a} onPress={() => setTextDraft(d => ({ ...d, align: a }))} hitSlop={6} style={[st.alignBtn, textDraft.align === a && st.chipOn]}
                   accessibilityLabel={t(`status.studio.align_${a}`)}>
                   <AlignGlyph align={a} color={textDraft.align === a ? '#000' : '#fff'} />
                 </TouchableOpacity>
@@ -1413,7 +1413,7 @@ function ColorRow({ value, onPick }) {
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" contentContainerStyle={{ paddingHorizontal: 14, gap: 10, alignItems: 'center' }}>
       {PALETTE.map(c => (
-        <TouchableOpacity key={c} onPress={() => onPick(c)} accessibilityLabel={c}
+        <TouchableOpacity key={c} onPress={() => onPick(c)} accessibilityLabel={c} hitSlop={{ top: 8, bottom: 8, left: 5, right: 5 }}
           style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: c, borderWidth: value === c ? 3 : 1.5, borderColor: value === c ? '#FFFFFF' : 'rgba(255,255,255,0.5)' }} />
       ))}
     </ScrollView>

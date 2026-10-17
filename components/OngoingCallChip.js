@@ -162,7 +162,9 @@ export default function OngoingCallChip({ conversationId, refreshKey }) {
   };
 
   const isVideo = !!state?.video;
-  const greenBg = isDark ? '#0E6B3A' : '#10b981';
+  // [2026-10-16 polish-calls] P&B igual à pílula global de chamada (CallStatusBar); era verde.
+  const greenBg = isDark ? '#F2F2F2' : '#111111';
+  const chipFg = isDark ? '#111111' : '#FFFFFF';
   const otherCount = participants.length;
   // WhatsApp-style combined label ("Chamada em andamento · Toque para
   // entrar"); falls back to the older join-chip strings if the new key
@@ -180,13 +182,13 @@ export default function OngoingCallChip({ conversationId, refreshKey }) {
       style={[styles.chip, { backgroundColor: greenBg }]}
     >
       {joining ? (
-        <ActivityIndicator size="small" color="#fff" />
+        <ActivityIndicator size="small" color={chipFg} />
       ) : isVideo ? (
-        <IconVideo size={14} color="#fff" />
+        <IconVideo size={14} color={chipFg} />
       ) : (
-        <IconPhone size={14} color="#fff" />
+        <IconPhone size={14} color={chipFg} />
       )}
-      <Text style={styles.chipText} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.chipText, { color: chipFg }]} numberOfLines={1}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -201,7 +203,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 10,
+    minHeight: 40,
+    borderRadius: 20,
     gap: 6,
     alignSelf: 'stretch',
   },

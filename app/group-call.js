@@ -59,7 +59,7 @@ try { Clipboard = require('expo-clipboard'); } catch {}
 const BRAND_PURPLE = '#111111';
 // Active-speaker ring — calm emerald green (Meet/WhatsApp style). Clear
 // active indication without the gaudy amber flash.
-const SPEAKER_RING = '#34d399';
+const SPEAKER_RING = '#FFFFFF'; // [2026-10-16 polish-calls] P&B (era verde #34d399)
 // Recording red badge color — matches CallKit native recording chip.
 const REC_RED = '#DC2626';
 // 6 emoji presets — order is intentional (👍 first because positive ack
@@ -998,7 +998,7 @@ export default function GroupCallScreen() {
       onPress={() => setShowParticipants(true)}
     >
       <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-        <SvgPath d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6.5-2.9L1 15a2.83 2.83 0 0 1 4-4l3 3" stroke="#fbbf24" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <SvgPath d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6.5-2.9L1 15a2.83 2.83 0 0 1 4-4l3 3" stroke="#FFFFFF" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
       </Svg>
       <Text style={styles.handsBannerText} numberOfLines={1}>
         {raisedHands.length === 1
@@ -1274,7 +1274,7 @@ export default function GroupCallScreen() {
         ) : null}
         {lk.state === 'reconnecting' ? (
           <View pointerEvents="none" style={[styles.nativeReconnecting, { top: (insets.top || 0) + 56 }]}>
-            <ActivityIndicator size="small" color="#fbbf24" />
+            <ActivityIndicator size="small" color="#FFFFFF" />
             <Text style={styles.nativeReconnectingText}>{t('call.reconnecting') || 'Reconectando...'}</Text>
           </View>
         ) : null}
@@ -1419,8 +1419,9 @@ const styles = StyleSheet.create({
   },
   // Pinned tile gets a purple ring — communicates "manually held in
   // foreground" vs the green "currently speaking".
+  // [2026-10-16 polish-calls] #111 sumia no tile escuro → branco suave (falando = branco cheio)
   avatarShellPinned: {
-    borderColor: BRAND_PURPLE,
+    borderColor: 'rgba(255,255,255,0.55)',
   },
   // Speaker pulse halo — a thin green ring just outside the avatar that
   // breathes with the shared animation driver.
@@ -1712,5 +1713,5 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
     zIndex: 58,
   },
-  nativeReconnectingText: { color: '#fbbf24', fontSize: 12, fontWeight: '600' },
+  nativeReconnectingText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
 });

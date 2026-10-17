@@ -377,11 +377,11 @@ public final class ChatyyEmailListView: ExpoView, UICollectionViewDelegate {
     let L = labels
     var actions: [UIContextualAction] = []
     if leading {
-      // Mesmas cores do SwipeableRow JS: arquivar verde (→), excluir vermelho (←).
-      actions.append(contextual(id, "archive", title: L.get("archive", "Arquivar"), symbol: "archivebox", color: 0x2DA84E))
+      // [2026-10-16 polish] Mesmas cores da lista de chat (SWIPE_C): cinzas + vermelho só no destrutivo.
+      actions.append(contextual(id, "archive", title: L.get("archive", "Arquivar"), symbol: "archivebox", color: 0x3A3A3C))
       actions.append(contextual(id, "snooze", title: L.get("snooze", "Adiar"), symbol: "clock", color: 0x636366))
     } else {
-      actions.append(contextual(id, "delete", title: L.get("delete", "Excluir"), symbol: "trash", color: 0xE5392E))
+      actions.append(contextual(id, "delete", title: L.get("delete", "Excluir"), symbol: "trash", color: 0xFF3B30))
     }
     let cfg = UISwipeActionsConfiguration(actions: actions)
     cfg.performsFirstActionWithFullSwipe = true

@@ -492,11 +492,13 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
       presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
       onRequestClose={back}
     >
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* [2026-10-16 polish] Android: Modal tela-cheia edge-to-edge não redimensiona com o teclado → 'height' encolhe a área e o botão fica acima do teclado. */}
+      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined)}>
         {header}
         <ScrollView
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom, maxWidth: 560, width: '100%', alignSelf: 'center' }}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           testID="twostep-sheet"
         >
           {content}

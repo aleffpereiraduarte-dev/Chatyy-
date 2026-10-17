@@ -243,6 +243,7 @@ function CreatorEarnings() {
           <View style={{ flexDirection: 'row', gap: Space.sm, marginTop: Space.lg }}>
             <HeroButton
               primary
+              weight={canCashout ? undefined : 1 /* [2026-10-16 polish] desabilitado não ocupa 1.45 → "Como funciona" não trunca */}
               haptic="medium"
               label={tr(t, 'creatorDash.withdraw', 'Sacar')}
               disabled={!canCashout}

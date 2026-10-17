@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "ស្វែងរកមនុស្សតាមឈ្មោះ ឬ @ឈ្មោះអ្នកប្រើ",
   "chatConv.groupMembersCount": "សមាជិក {n} នាក់",
   "calls.scheduledList": "បានកំណត់ពេល",
+  "calls.scheduledTitle": "ការហៅដែលបានកំណត់ពេល",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

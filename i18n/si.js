@@ -647,6 +647,7 @@ export default {
   "search.peopleHint": "නම හෝ @පරිශීලක නාමයෙන් පුද්ගලයන් සොයන්න",
   "chatConv.groupMembersCount": "සාමාජිකයින් {n}",
   "calls.scheduledList": "කාලසටහන්ගත",
+  "calls.scheduledTitle": "කාලසටහන්ගත ඇමතුම්",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

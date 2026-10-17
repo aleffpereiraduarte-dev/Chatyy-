@@ -6237,6 +6237,9 @@ const styles = StyleSheet.create({
   heart: {
     position: 'absolute',
     zIndex: 20,
+    // [2026-10-16 polish-lives] corações brancos somiam sobre vídeo claro → sombra suave.
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 1 },
+    ...(Platform.OS === 'web' ? { filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.45))' } : {}),
   },
   heartAvatarChip: {
     position: 'absolute',

@@ -108,7 +108,16 @@ function useCascadeDelay() {
   return ref.current;
 }
 
-export function SettingsGroup({ header, footer, children, inset = 16, style, cardStyle, testID }) {
+// [2026-10-16 polish-config] Separador recuado como UITableView inset-grouped:
+// sem `inset` explícito, a linha alinha com o TEXTO da linha de cima (passa
+// por baixo do ícone em quadradinho: 16 + 32 + 14 = 62; ícone solto: 54).
+function _autoInset(child) {
+  const p = child && child.props;
+  if (!p || !p.icon) return 16;
+  return p.iconTile === false ? 54 : 62;
+}
+
+export function SettingsGroup({ header, footer, children, inset, style, cardStyle, testID }) {
   const g = useGroupedColors();
   const delay = useCascadeDelay();
   const items = React.Children.toArray(children).filter(Boolean);
@@ -125,7 +134,7 @@ export function SettingsGroup({ header, footer, children, inset = 16, style, car
         <View style={[st.card, { backgroundColor: g.cardBg }, cardStyle]}>
           {items.map((child, i) => (
             <React.Fragment key={child.key ?? i}>
-              {i > 0 && <View style={[st.sep, { marginLeft: inset, backgroundColor: g.separator }]} />}
+              {i > 0 && <View style={[st.sep, { marginLeft: inset ?? _autoInset(items[i - 1]), backgroundColor: g.separator }]} />}
               {child}
             </React.Fragment>
           ))}

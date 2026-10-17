@@ -725,6 +725,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
     );
   };
 
+  // [2026-10-16 polish] Corpo HTML legado (HtmlView/WebView) é SEMPRE cartão
+  // branco: no tema escuro colors.primary é quase branco (#F5F5F7) → links
+  // sumiam no branco. No cartão o link usa a tinta clara do tema.
+  const cardLink = isDark ? '#111111' : colors.primary;
   const renderBody = () => {
     if (email.body_html && Platform.OS === 'web') {
       const { main, quoted } = splitQuotedHtml(email.body_html);
@@ -819,7 +823,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           const toolkit = require('../modules/expo-native-toolkit');
           const HtmlView = toolkit.HtmlView;
           if (HtmlView) {
-            const css = `html,body{-webkit-text-size-adjust:100%;overscroll-behavior:none}*{-webkit-tap-highlight-color:transparent}body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
+            const css = `html,body{-webkit-text-size-adjust:100%;overscroll-behavior:none}*{-webkit-tap-highlight-color:transparent}body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${cardLink}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
             // [2026-10-07 native-docs-mail] New binaries: links come back as
             // onLinkPress (WKWebView cancels the navigation) and open in the
             // in-app browser sheet (SFSafariViewController) instead of kicking
@@ -910,7 +914,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       // stays readable in the app's dark theme. The email's own CSS (incl. its
       // @media dark rules) still overrides this base. The 12px body margin shows the
       // app background around it, giving a clean white "card" look.
-      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body{-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none}*{-webkit-tap-highlight-color:transparent}a,img{-webkit-touch-callout:default}body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
+      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body{-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none}*{-webkit-tap-highlight-color:transparent}a,img{-webkit-touch-callout:default}body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${cardLink}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
       return (
         <WebView
           originWhitelist={['*']}
@@ -1502,7 +1506,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               {!hasActionBar && <View style={{ flexDirection: 'row', gap: 6 }}>
                 <TouchableOpacity
                   onPress={() => { haptic.light(); onReply?.(email); }}
-                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '18', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '12', alignItems: 'center', justifyContent: 'center' }}
+                  hitSlop={{ top: 4, bottom: 4, left: 3, right: 3 }}
+                  accessibilityRole="button"
                   accessibilityLabel={t('reader.reply')}
                 >
                   <IconReply size={17} color={colors.primary} />
@@ -1511,6 +1517,8 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   <TouchableOpacity
                     onPress={() => { haptic.light(); onReplyAll?.(email); }}
                     style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '12', alignItems: 'center', justifyContent: 'center' }}
+                    hitSlop={{ top: 4, bottom: 4, left: 3, right: 3 }}
+                    accessibilityRole="button"
                     accessibilityLabel={t('reader.replyAll')}
                   >
                     <IconReplyAll size={17} color={colors.primary} />
@@ -1519,9 +1527,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                 <TouchableOpacity
                   onPress={() => { haptic.light(); onForward?.(); }}
                   style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '12', alignItems: 'center', justifyContent: 'center' }}
+                  hitSlop={{ top: 4, bottom: 4, left: 3, right: 3 }}
+                  accessibilityRole="button"
                   accessibilityLabel={t('reader.forward')}
                 >
-                  <IconForward size={17} color={colors.textSecondary} />
+                  {/* [2026-10-16 polish] mesmo fundo/cor dos outros 2 (eram 3 estilos) */}
+                  <IconForward size={17} color={colors.primary} />
                 </TouchableOpacity>
               </View>}
             </View>
@@ -2025,7 +2036,8 @@ const s = StyleSheet.create({
   recipientLabel: { fontSize: 13 },
   recipientText: { fontSize: 13, flex: 1 },
   // Labels
-  labelsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginLeft: 56, marginTop: Spacing.sm, alignItems: 'center' },
+  // [2026-10-16 polish] +margem de baixo: o botão "Resumir com IA" colava no chip Marcador.
+  labelsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginLeft: 56, marginTop: Spacing.sm, marginBottom: Spacing.md, alignItems: 'center' },
   addLabelBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingHorizontal: 10, height: 28, borderRadius: 14,

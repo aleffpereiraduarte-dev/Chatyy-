@@ -9917,7 +9917,7 @@ export function getOneScreenContext() { return _oneScreenContext; }
  * Returns an AbortController so the caller can cancel the stream.
  * Falls back to null if ReadableStream is not available (very old environments).
  */
-export function oneChatStream(message, conversationId = null, callbacks = {}, imageBase64 = null, imageMimeType = null, driveFileId = null) {
+export function oneChatStream(message, conversationId = null, callbacks = {}, imageBase64 = null, imageMimeType = null, driveFileId = null, extraImages = null) {
   const { onDelta, onToolCall, onToolResult, onMeta, onDone, onError } = callbacks;
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
@@ -9939,6 +9939,8 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
   };
   if (imageBase64) { body.image_data = imageBase64; body.image_mime_type = imageMimeType || 'image/jpeg'; }
   if (driveFileId) { body.drive_file_id = driveFileId; }
+  // [bia-visao 2026-10-17] imagens adicionais (servidor normaliza HEIC/resize e manda tudo ao modelo de visão)
+  if (Array.isArray(extraImages) && extraImages.length) body.images = extraImages.filter(x => x && x.base64).slice(0, 4).map(x => ({ data: x.base64, mime_type: x.mimeType || 'image/jpeg' }));
 
   const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream', ...getAuthHeaders() };
 
@@ -10109,7 +10111,7 @@ async function _probeRustOne() {
   return false;
 }
 
-export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null) {
+export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null, extraImages = null) {
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
 
@@ -10158,6 +10160,7 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
     if (driveFileId) {
       body.drive_file_id = driveFileId;
     }
+    if (Array.isArray(extraImages) && extraImages.length) body.images = extraImages.filter(x => x && x.base64).slice(0, 4).map(x => ({ data: x.base64, mime_type: x.mimeType || 'image/jpeg' })); // [bia-visao 2026-10-17]
     const res = await fetch(`${API_URL}?action=one_chat`, {
       method: 'POST',
       headers,

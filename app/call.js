@@ -5904,10 +5904,10 @@ function CallScreenInner() {
             <View style={styles.topInfo}>
               <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
               {!peerConnected && (
-                <Text style={[styles.topStatus, showReconnectBanner && { color: '#f59e0b' }]}>{statusText}</Text>
+                <Text style={[styles.topStatus, showReconnectBanner && { color: 'rgba(255,255,255,0.72)' }]}>{statusText}</Text>
               )}
               {peerConnected && (onHold || screenSharing || peerScreenSharing) && (
-                <Text style={[styles.topStatus, showReconnectBanner && { color: '#f59e0b' }]}>
+                <Text style={[styles.topStatus, showReconnectBanner && { color: 'rgba(255,255,255,0.72)' }]}>
                   {onHold ? (t('call.onHold') || 'Em espera')
                     : screenSharing ? (t('call.screenSharing') || 'Compartilhando tela')
                     : (t('call.peerSharing') || 'Tela compartilhada')}
@@ -5919,7 +5919,7 @@ function CallScreenInner() {
                 <View style={styles.e2eeLockChip} accessibilityRole="text"
                   accessibilityLabel={t('call.e2eeEncrypted') || 'Criptografada de ponta a ponta'}>
                   <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
-                    <SvgPath d="M7 11V8a5 5 0 0110 0v3M5 11h14v9H5z" stroke="#34d399" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                    <SvgPath d="M7 11V8a5 5 0 0110 0v3M5 11h14v9H5z" stroke="rgba(255,255,255,0.72)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
                   </Svg>
                   <Text style={styles.e2eeLockChipText}>{t('call.e2eeEncrypted') || 'Criptografada'}</Text>
                 </View>
@@ -6232,15 +6232,15 @@ function CallScreenInner() {
                   return (
                     <View style={styles.handRaiseOverlay}>
                       <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                        <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                        <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#111111" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
                       </Svg>
                     </View>
                   );
                 })()}
                 {isGroupCall && handRaised && (
-                  <View style={[styles.handRaiseOverlay, { right: -8, top: -8, backgroundColor: '#fbbf24' }]}>
+                  <View style={[styles.handRaiseOverlay, { right: -8, top: -8, backgroundColor: '#FFFFFF' }]}>
                     <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                      <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                      <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#111111" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
                     </Svg>
                   </View>
                 )}
@@ -6972,10 +6972,10 @@ function CallScreenInner() {
                         hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
                         style={styles.ratingStarBtn}
                       >
-                        <Svg width={32} height={32} viewBox="0 0 24 24" fill={active ? '#fbbf24' : 'none'}>
+                        <Svg width={32} height={32} viewBox="0 0 24 24" fill={active ? '#FFFFFF' : 'none'}>
                           <SvgPath
                             d="M12 2.5l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.6l-5.9 3.08 1.13-6.58L2.45 9.44l6.6-.96L12 2.5z"
-                            stroke={active ? '#fbbf24' : 'rgba(255,255,255,0.55)'}
+                            stroke={active ? '#FFFFFF' : 'rgba(255,255,255,0.55)'}
                             strokeWidth={1.6}
                             strokeLinejoin="round"
                           />
@@ -7115,11 +7115,12 @@ const styles = StyleSheet.create({
   e2eeLockChip: {
     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
     marginTop: 4, gap: 4,
-    backgroundColor: 'rgba(52,211,153,0.12)',
+    // [2026-10-16 polish-calls] P&B (era verde-esmeralda)
+    backgroundColor: 'rgba(255,255,255,0.10)',
     borderRadius: 10, paddingHorizontal: 7, paddingVertical: 3,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(52,211,153,0.25)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)',
   },
-  e2eeLockChipText: { color: '#34d399', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
+  e2eeLockChipText: { color: 'rgba(255,255,255,0.78)', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
   avatarStack: { alignItems: 'center', justifyContent: 'center' },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
@@ -7136,14 +7137,14 @@ const styles = StyleSheet.create({
   speakingRing: {
     position: 'absolute',
     borderWidth: 3,
-    borderColor: '#34d399',
+    borderColor: '#FFFFFF', // [2026-10-16 polish-calls] P&B (era verde)
   },
   // "Falando" tag — WhatsApp-style pill next to the peer name. Pairs with
   // the green halo ring so users get both a visual + textual cue.
   speakingTag: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     borderRadius: 999,
     paddingVertical: 3,
     paddingHorizontal: 8,
@@ -7154,10 +7155,10 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 3.5,
-    backgroundColor: '#10b981',
+    backgroundColor: '#FFFFFF',
   },
   speakingTagText: {
-    color: '#a7f3d0',
+    color: 'rgba(255,255,255,0.86)',
     fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.3,
@@ -7328,7 +7329,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'transparent',
   },
-  groupTileSpeaking: { borderColor: '#34d399' },
+  groupTileSpeaking: { borderColor: '#FFFFFF' },
   groupTilePinned: { borderColor: 'rgba(255,255,255,0.55)' },
   groupTileAvatar: {
     ...StyleSheet.absoluteFillObject,
@@ -7353,7 +7354,7 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 3.5,
-    backgroundColor: '#10b981',
+    backgroundColor: '#FFFFFF',
   },
   groupTileName: {
     color: '#fff',
@@ -7417,7 +7418,7 @@ const styles = StyleSheet.create({
   handRaiseOverlay: {
     position: 'absolute', top: -4, right: -4,
     width: 36, height: 36, borderRadius: 18,
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: '#000',
     shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, zIndex: 8,

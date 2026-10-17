@@ -25,6 +25,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import AvatarCircle from '../../components/AvatarCircle';
 import { IconPhone, IconVideo } from '../../components/Icons';
+import PressableScale from '../../components/PressableScale';
 import * as api from '../../services/api';
 
 export default function CallLinkLobbyScreen() {
@@ -141,6 +142,8 @@ export default function CallLinkLobbyScreen() {
   const text = colors?.text || '#fff';
   const sub = colors?.textSecondary || '#8e8e93';
   const isVideo = !!info?.is_video;
+  const ink = colors?.primary || '#111111';
+  const onInk = colors?.onPrimary || '#ffffff';
 
   const Center = ({ children }) => (
     <SafeAreaView style={{ flex: 1, backgroundColor: bg }}>
@@ -153,7 +156,7 @@ export default function CallLinkLobbyScreen() {
   if (status === 'loading' || status === 'joining') {
     return (
       <Center>
-        <ActivityIndicator size="large" color={colors?.primary || '#111111'} />
+        <ActivityIndicator size="large" color={ink} />
         <Text style={{ color: sub, marginTop: 16, fontSize: 14 }}>
           {status === 'joining'
             ? (t?.('calls.callLinkJoining') || 'Entrando na chamada…')
@@ -169,12 +172,15 @@ export default function CallLinkLobbyScreen() {
         <Text style={{ color: text, fontSize: 16, marginBottom: 16, textAlign: 'center' }}>
           {t?.('calls.callLinkLoginFirst') || 'Faça login pra entrar na chamada'}
         </Text>
-        <TouchableOpacity
+        {/* [2026-10-16 polish-calls] tinta do tema (era #111 fixo → sumia no escuro) */}
+        <PressableScale
           onPress={() => router.replace({ pathname: '/login', params: { redirect: `/call/${linkId}` } })}
-          style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#111111' }}
+          scaleTo={0.96}
+          accessibilityRole="button"
+          style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 12, borderRadius: 24, backgroundColor: ink }}
         >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.login') || 'Entrar'}</Text>
-        </TouchableOpacity>
+          <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>{t?.('common.login') || 'Entrar'}</Text>
+        </PressableScale>
       </Center>
     );
   }
@@ -200,12 +206,14 @@ export default function CallLinkLobbyScreen() {
         {status === 'error' && !!err && (
           <Text style={{ color: sub, fontSize: 13, marginBottom: 16, textAlign: 'center' }}>{err}</Text>
         )}
-        <TouchableOpacity
+        <PressableScale
           onPress={() => router.replace('/chat')}
-          style={{ marginTop: 12, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: colors?.card || '#1c1c1e' }}
+          scaleTo={0.96}
+          accessibilityRole="button"
+          style={{ marginTop: 12, minHeight: 48, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 12, borderRadius: 24, backgroundColor: colors?.surfaceVariant || colors?.card || '#1c1c1e' }}
         >
-          <Text style={{ color: text, fontWeight: '600' }}>{t?.('common.close') || 'Fechar'}</Text>
-        </TouchableOpacity>
+          <Text style={{ color: text, fontWeight: '600', fontSize: 15 }}>{t?.('common.close') || 'Fechar'}</Text>
+        </PressableScale>
       </Center>
     );
   }
@@ -232,20 +240,23 @@ export default function CallLinkLobbyScreen() {
           {(t?.('calls.callLinkInCall') || 'na chamada agora') + `: ${info.participant_count}`}
         </Text>
       )}
-      <TouchableOpacity
+      <PressableScale
         onPress={handleJoin}
-        activeOpacity={0.85}
+        haptic="medium"
+        scaleTo={0.96}
+        accessibilityRole="button"
+        accessibilityLabel={t?.('calls.callLinkJoin') || 'Entrar na chamada'}
         style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
-          marginTop: 32, paddingHorizontal: 32, paddingVertical: 14,
-          borderRadius: 28, backgroundColor: '#111111',
+          marginTop: 32, paddingHorizontal: 32, paddingVertical: 14, minHeight: 52,
+          borderRadius: 28, backgroundColor: ink,
         }}
       >
-        {isVideo ? <IconVideo size={20} color="#fff" /> : <IconPhone size={20} color="#fff" />}
-        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+        {isVideo ? <IconVideo size={20} color={onInk} /> : <IconPhone size={20} color={onInk} />}
+        <Text style={{ color: onInk, fontSize: 16, fontWeight: '700' }}>
           {t?.('calls.callLinkJoin') || 'Entrar na chamada'}
         </Text>
-      </TouchableOpacity>
+      </PressableScale>
     </Center>
   );
 }

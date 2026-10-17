@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "افراد را با نام یا @نام کاربری جستجو کنید",
   "chatConv.groupMembersCount": "{n} عضو",
   "calls.scheduledList": "زمان‌بندی‌شده",
+  "calls.scheduledTitle": "تماس‌های زمان‌بندی‌شده",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

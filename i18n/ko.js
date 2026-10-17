@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "이름 또는 @사용자 이름으로 사람 검색",
   "chatConv.groupMembersCount": "멤버 {n}명",
   "calls.scheduledList": "예약됨",
+  "calls.scheduledTitle": "예약된 통화",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "모든 기기에서 알림을 받게 됩니다.",

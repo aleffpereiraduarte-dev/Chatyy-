@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "ሰዎችን በስም ወይም በ@የተጠቃሚ ስም ይፈልጉ",
   "chatConv.groupMembersCount": "{n} አባላት",
   "calls.scheduledList": "የታቀዱ",
+  "calls.scheduledTitle": "የታቀዱ ጥሪዎች",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

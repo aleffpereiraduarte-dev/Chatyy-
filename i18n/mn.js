@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Хүмүүсийг нэр эсвэл @хэрэглэгчийн нэрээр хайх",
   "chatConv.groupMembersCount": "{n} гишүүн",
   "calls.scheduledList": "Товлосон",
+  "calls.scheduledTitle": "Товлосон дуудлагууд",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

@@ -168,6 +168,7 @@ function TipIcon({ name, color }) {
       {name === 'users' && <><Circle cx={9} cy={8} r={3.5} {...s} /><Path d="M3 19 C3 14 6 12 9 12 C12 12 15 14 15 19" {...s} /><Path d="M16 5 A3.2 3.2 0 0 1 16 11" {...s} /><Path d="M17 12 C20 12 21.5 14.5 21.5 18" {...s} /></>}
       {name === 'search' && <><Circle cx={11} cy={11} r={6} {...s} /><Line x1={16} y1={16} x2={21} y2={21} {...s} /></>}
       {name === 'sparkles' && <><Path d="M12 4 L13.2 9 L18 10.2 L13.2 11.4 L12 16 L10.8 11.4 L6 10.2 L10.8 9 Z" {...s} /><Path d="M18 15 L18.6 17.4 L21 18 L18.6 18.6 L18 21 L17.4 18.6 L15 18 L17.4 17.4 Z" {...s} /></>}
+      {name === 'refresh' && <><Path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" {...s} /><Path d="M21 3v5h-5" {...s} /></>}
       {(name === 'play' || !name) && <Path d="M8 5 L19 12 L8 19 Z" {...s} />}
     </Svg>
   );
@@ -263,7 +264,7 @@ export default function ScreenEmptyState({
                 <View style={[styles.tipIcon, { backgroundColor: A + '14' }]}>
                   <TipIcon name={tip.icon} color={A} />
                 </View>
-                <Text style={[styles.tipLabel, { color: colors.text }]} numberOfLines={2}>{tip.label}</Text>
+                <Text style={[styles.tipLabel, { color: colors.text }]} numberOfLines={3}>{tip.label}</Text>
                 {!!tip.onPress && <Chevron color={colors.textTertiary} />}
               </Row>
             );

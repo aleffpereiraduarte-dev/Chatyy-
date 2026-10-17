@@ -37,6 +37,7 @@ import { createStreamLevelMeter, dbToLevel } from '../components/bia/biaAudioLev
 const FOLLOWUPS_RE = /\s*<followups>([\s\S]*?)<\/followups>\s*$/i;
 const FOLLOWUPS_OPEN_RE = /\s*<followups>[\s\S]*$/i;
 const FOLLOWUPS_TAG = '<followups>';
+const BIA_FAIL_RE = /^\s*(desculp|ops\b)|n[aã]o consigo (visualizar|ver|abrir|acessar|processar|ler)|n[aã]o consegui (processar|visualizar|ver|abrir|acessar|ler|entender)|n[aã]o foi poss[ií]vel|i (can'?t|cannot|couldn'?t|am unable to) (see|view|open|access|process)/i;
 function extractFollowups(text) {
   if (!text || typeof text !== 'string') return { text: text || '', followups: [] };
   if (text.indexOf('<followups>') === -1) {
@@ -54,7 +55,9 @@ function extractFollowups(text) {
       .filter(Boolean)
       .map(s => s.length > 60 ? s.slice(0, 60) : s)
       .slice(0, 3);
-    return { text: text.replace(FOLLOWUPS_RE, ''), followups: parts };
+    const clean = text.replace(FOLLOWUPS_RE, '');
+    // [bia-visao 2026-10-17] resposta de falha ("não consigo ver…") → sem sugestões sem sentido
+    return { text: clean, followups: BIA_FAIL_RE.test(clean.slice(0, 400)) ? [] : parts };
   }
   // Marker started but not closed (mid-stream) — hide the open fragment.
   return { text: text.replace(FOLLOWUPS_OPEN_RE, ''), followups: [] };
@@ -982,11 +985,13 @@ export default function OneScreen() {
         quality: 0.8,
         base64: true,
         allowsEditing: false,
+        allowsMultipleSelection: true, // [bia-visao 2026-10-17] até 5 fotos
+        selectionLimit: 5,
       });
       if (!result.canceled && result.assets?.[0]) {
-        const asset = result.assets[0];
-        const mimeType = asset.mimeType || (asset.uri?.endsWith('.png') ? 'image/png' : 'image/jpeg');
-        setAttachedImage({ uri: asset.uri, base64: asset.base64, mimeType });
+        const toImg = (a) => ({ uri: a.uri, base64: a.base64, mimeType: a.mimeType || (a.uri?.endsWith('.png') ? 'image/png' : 'image/jpeg') });
+        const [first, ...rest] = result.assets.filter(a => a && a.base64).map(toImg);
+        if (first) setAttachedImage({ ...first, extra: rest.length ? rest : undefined });
       }
     } catch (e) {
       console.warn('Image library error:', e);
@@ -1254,6 +1259,7 @@ export default function OneScreen() {
         currentImage ? currentImage.base64 : null,
         currentImage ? currentImage.mimeType : null,
         currentImage ? currentImage.driveFileId : null,
+        currentImage ? currentImage.extra : null,
       );
       if (result?.success && result.data) {
         if (result.data.conversation_id) setConversationId(result.data.conversation_id);
@@ -1526,6 +1532,7 @@ export default function OneScreen() {
         currentImage ? currentImage.base64 : null,
         currentImage ? currentImage.mimeType : null,
         currentImage ? currentImage.driveFileId : null,
+        currentImage ? currentImage.extra : null,
       );
 
       // Store abort controller so the cancel button works

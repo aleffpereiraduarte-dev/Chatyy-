@@ -20,6 +20,7 @@ import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconShare, IconDownload, IconTrash } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg'; // [2026-10-16 polish-lives]
 
 function _loadExpoVideo() {
   try { return require('expo-video'); } catch { return null; }
@@ -205,7 +206,20 @@ export default function LiveReplayScreen() {
           notch so the row clears the status bar without nudging the video. */}
       {rec && (
         <View style={[styles.header, { paddingTop: (insets.top || 0) + 6 }]} pointerEvents="box-none">
-          <TouchableOpacity onPress={() => router.back()} style={styles.headBtn}
+          {/* [2026-10-16 polish-lives] degradê suave (antes: faixa preta chapada 35%
+              cortando o vídeo) — mesma linguagem do scrim dos reels. */}
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <Svg width="100%" height="100%" preserveAspectRatio="none">
+              <Defs>
+                <SvgLinearGradient id="replayHdrScrim" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0" stopColor="#000" stopOpacity={0.6} />
+                  <Stop offset="1" stopColor="#000" stopOpacity={0} />
+                </SvgLinearGradient>
+              </Defs>
+              <SvgRect x="0" y="0" width="100%" height="100%" fill="url(#replayHdrScrim)" />
+            </Svg>
+          </View>
+          <TouchableOpacity onPress={() => router.back()} style={styles.headBtn} hitSlop={HEAD_SLOP}
                             accessibilityLabel={t('common.back') || 'Voltar'}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
@@ -246,15 +260,15 @@ export default function LiveReplayScreen() {
           </View>
 
           <View style={styles.headActions}>
-            <TouchableOpacity onPress={onShare} style={styles.headBtn}
+            <TouchableOpacity onPress={onShare} style={styles.headBtn} hitSlop={HEAD_SLOP}
                               accessibilityLabel={t('liveReplay.shareLink') || 'Share'}>
               <IconShare size={20} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={onDownload} style={styles.headBtn}
+            <TouchableOpacity onPress={onDownload} style={styles.headBtn} hitSlop={HEAD_SLOP}
                               accessibilityLabel={t('liveReplay.download') || 'Baixar'}>
               <IconDownload size={20} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={onDelete} style={styles.headBtn}
+            <TouchableOpacity onPress={onDelete} style={styles.headBtn} hitSlop={HEAD_SLOP}
                               accessibilityLabel={rec.is_host
                                 ? (t('liveReplay.delete') || 'Excluir')
                                 : (t('liveReplay.unsave') || 'Remover')}>
@@ -267,6 +281,9 @@ export default function LiveReplayScreen() {
   );
 }
 
+// [2026-10-16 polish-lives] botões 38px → alvo de toque >= 44.
+const HEAD_SLOP = { top: 4, bottom: 4, left: 3, right: 3 };
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
@@ -278,8 +295,7 @@ const styles = StyleSheet.create({
   errBackTxt: { color: '#fff', fontSize: 14, fontWeight: '600' },
   header: {
     position: 'absolute', top: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingBottom: 10,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingBottom: 22,
   },
   headBtn: {
     width: 38, height: 38, borderRadius: 19,

@@ -22,8 +22,8 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconPlus, IconVolume2, IconVolumeX, IconEye,
-  IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders, IconGiftBox,
-  IconCheck,
+  IconRepeat, IconWifiOff, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders, IconGiftBox,
+  IconCheck, IconInfo, IconFlag, IconZap,
 } from './Icons';
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
 // as Live gifts. The gift panel is components/gifts/GiftSheet (context 'post' →
@@ -2266,9 +2266,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           onLayout={(ev) => { likeYRef.current = ev.nativeEvent.layout.y; }}
         >
           <TouchableOpacity
-            style={styles.sidebarBtn}
+            style={[styles.sidebarBtn, styles.sidebarBtnIconOnly]}
             onPress={toggleLike}
             activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 6, left: 0, right: 0 }}
             accessibilityLabel={liked ? (t('feed.unlike') || 'Unlike') : (t('feed.like') || 'Like')}
             accessibilityRole="button"
           >
@@ -2281,11 +2282,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             </View>
           </TouchableOpacity>
           {likeCount > 0 ? (
-            <TouchableOpacity onPress={() => onOpenLikers?.(reel)} activeOpacity={0.7} hitSlop={{ top: 4, bottom: 6, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={() => onOpenLikers?.(reel)} activeOpacity={0.7} hitSlop={{ top: 4, bottom: 6, left: 10, right: 10 }} style={styles.sidebarCountGap}>
               <Text style={styles.sidebarCount}>{formatRailCount(likeCount, t)}</Text>
             </TouchableOpacity>
           ) : (
-            <Text style={styles.sidebarCount}>0</Text>
+            <Text style={[styles.sidebarCount, styles.sidebarCountGap]}>0</Text>
           )}
         </Animated.View>
 
@@ -2301,7 +2302,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
             accessibilityLabel={t?.('gifts.sendGift') || 'Enviar presente'}
             accessibilityRole="button"
           >
-            <IconGiftBox size={27} color="#fff" />
+            <View style={styles.sidebarIcon}><IconGiftBox size={27} color="#fff" /></View>
           </PressableScale>
         )}
 
@@ -2569,7 +2570,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
                 accessibilityRole="button"
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <IconEye size={22} color="#fff" />
+                  <IconInfo size={22} color="#fff" />
                   <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
                     {t?.('reels.why.title') || 'Por que estou vendo isto?'}
                   </Text>
@@ -2624,7 +2625,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               onPress={() => { setMoreSheetOpen(false); setSpeedPickerOpen(true); }}
               activeOpacity={0.7}
             >
-              <IconPlay size={22} color="#fff" />
+              <IconZap size={22} color="#fff" />
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', flex: 1 }}>
                 {t?.('feed.speed') || 'Velocidade'}
               </Text>
@@ -2637,9 +2638,9 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               onPress={() => { setMoreSheetOpen(false); onHidePost && onHidePost(reel, 'reported'); }}
               activeOpacity={0.7}
             >
-              <IconX size={22} color="#FF3B30" />
+              <IconFlag size={22} color="#FF3B30" />
               <Text style={{ color: '#FF3B30', fontSize: 16, fontWeight: '600' }}>
-                {t?.('feed.report') || 'Denunciar'}
+                {t?.('profile.report') || 'Denunciar'}
               </Text>
             </TouchableOpacity>
           </Pressable>
@@ -2720,7 +2721,7 @@ function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpee
           {!!reel.rec?.why && (
             <TouchableOpacity style={{ paddingHorizontal: 20, paddingVertical: 14 }} onPress={() => setWhyOpen((v) => !v)} activeOpacity={0.7} accessibilityRole="button">
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                <IconEye size={22} color="#fff" />
+                <IconInfo size={22} color="#fff" />
                 <Text style={txt}>{t?.('reels.why.title') || 'Por que estou vendo isto?'}</Text>
               </View>
               {whyOpen ? (
@@ -2744,13 +2745,13 @@ function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpee
             </View>
           )}
           <TouchableOpacity style={rowStyle} onPress={onSpeed} activeOpacity={0.7} accessibilityRole="button">
-            <IconPlay size={22} color="#fff" />
+            <IconZap size={22} color="#fff" />
             <Text style={[txt, { flex: 1 }]}>{t?.('feed.speed') || 'Velocidade'}</Text>
             <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{speed}×</Text>
           </TouchableOpacity>
           <TouchableOpacity style={rowStyle} onPress={() => onReport(reel)} activeOpacity={0.7} accessibilityRole="button">
-            <IconX size={22} color="#FF3B30" />
-            <Text style={[txt, { color: '#FF3B30' }]}>{t?.('feed.report') || 'Denunciar'}</Text>
+            <IconFlag size={22} color="#FF3B30" />
+            <Text style={[txt, { color: '#FF3B30' }]}>{t?.('profile.report') || 'Denunciar'}</Text>
           </TouchableOpacity>
         </Pressable>
       </Pressable>
@@ -2809,7 +2810,7 @@ function EmptyReels({ colors, isDark, t, error = false, following = false, onRet
     <View style={[styles.emptyContainer, height ? { height } : null]}>
       <View style={styles.emptyIcon}>
         {error
-          ? <IconRepeat size={32} color="rgba(255,255,255,0.75)" />
+          ? <IconWifiOff size={32} color="rgba(255,255,255,0.75)" />
           : <IconPlay size={32} color="rgba(255,255,255,0.75)" />}
       </View>
       <Text style={styles.emptyTitle}>{title}</Text>
@@ -4425,6 +4426,10 @@ const styles = StyleSheet.create({
     minHeight: 44,
     gap: 3,
   },
+  // [2026-10-16 polish] curtir: o contador fica FORA do botão (abre quem curtiu) — sem
+  // isso o minHeight 44 empurrava o número ~7 px mais longe do ícone que nos outros.
+  sidebarBtnIconOnly: { minHeight: 30 },
+  sidebarCountGap: { marginTop: 3 },
   // Bumped from 12/600 → 11/700 with stronger shadow so the count reads as
   // a label glued to the icon (TikTok pattern) instead of floating text.
   sidebarCount: {

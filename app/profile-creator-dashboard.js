@@ -243,6 +243,8 @@ function CreatorDashboard() {
           title={tr(t, 'creatorDash.withdraw', 'Sacar')}
           size="lg"
           fullWidth
+          // [2026-10-16 polish] desabilitado = cinza suave (como em Meus ganhos), não um bloco preto a 40%
+          variant={canCashout && WALLET_ENABLED ? 'primary' : 'secondary'}
           disabled={!canCashout || !WALLET_ENABLED}
           onPress={go('/wallet-cashout')}
           style={{ marginTop: Space.lg }}

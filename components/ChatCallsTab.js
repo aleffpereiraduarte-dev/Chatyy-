@@ -649,11 +649,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           />
         ) : (
           <View style={[s.historyAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }]}>
-            {country ? (
-              <Text style={{ fontSize: 20 }}>{country.flag}</Text>
-            ) : (
-              <IconPhone size={20} color={subColor} />
-            )}
+            {/* [2026-10-16 polish-calls] sem emoji de bandeira na UI → glifo de linha */}
+            <IconPhone size={20} color={subColor} />
           </View>
         )}
       </View>
@@ -777,7 +774,7 @@ function _describeCallRow(item, t, language) {
     isChatyy: isChatyy && !!(item.contactName || item.contactEmail),
     avatarName: item.contactName || item.contactEmail || '?',
     avatarEmail: item.contactEmail || '',
-    flag: country?.flag || '',
+    flag: '', // [2026-10-16 polish-calls] sem emoji de bandeira (célula nativa cai no ícone de telefone)
     a11y: [title, label, isVideoCall ? (t?.('calls.video') || 'Vídeo') : '', dur, time].filter(Boolean).join(', '),
   };
 }
@@ -931,11 +928,7 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
               <AvatarCircle name={displayName} email={item.contactEmail} size={64} />
             ) : (
               <View style={[s.modalAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }]}>
-                {country ? (
-                  <Text style={{ fontSize: 28 }}>{country.flag}</Text>
-                ) : (
-                  <IconPhone size={28} color={subColor} />
-                )}
+                <IconPhone size={28} color={subColor} />
               </View>
             )}
             <Text style={[s.modalContactName, { color: textColor }]}>{displayName}</Text>
@@ -952,8 +945,8 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
               <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.type') || 'Tipo'}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {isChatyy ? (
-                  <View style={[s.chatyyBadge, { backgroundColor: isDark ? 'rgba(52,199,89,0.15)' : 'rgba(52,199,89,0.1)' }]}>
-                    <Text style={{ color: GREEN, fontSize: 12, fontWeight: '600' }}>Chatyy</Text>
+                  <View style={[s.chatyyBadge, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }]}>
+                    <Text style={{ color: textColor, fontSize: 12, fontWeight: '600' }}>Chatyy</Text>
                   </View>
                 ) : (
                   <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.phoneCall') || 'Telefone'}</Text>
@@ -2356,21 +2349,23 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             activeOpacity={0.85}
             onPress={() => setActiveCall(prev => prev ? { ...prev, minimized: false } : prev)}
             style={{
-              backgroundColor: '#16a34a',
+              // [2026-10-16 polish-calls] P&B igual à pílula global (CallStatusBar); era verde
+              backgroundColor: isDark ? '#F2F2F2' : '#111111',
               flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              marginHorizontal: 8, marginTop: 4, borderRadius: 22, minHeight: 44,
               paddingHorizontal: 16, paddingVertical: 10,
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }} />
-              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isDark ? '#111111' : '#fff' }} />
+              <Text style={{ color: isDark ? '#111111' : '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
                 {activeCall?.contactName || activeCall?.number || t?.('call.inProgress') || 'Em ligação'}
               </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] }}>
+              <Text style={{ color: isDark ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] }}>
                 {`${Math.floor((activeCall?.duration || 0) / 60).toString().padStart(2, '0')}:${((activeCall?.duration || 0) % 60).toString().padStart(2, '0')}`}
               </Text>
             </View>
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' }}>{t?.('call.tapToReturn') || 'Toque para voltar'}</Text>
+            <Text style={{ color: isDark ? '#111111' : '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('call.tapToReturn') || 'Toque para voltar'}</Text>
           </TouchableOpacity>
         )}
         {/* Close button - top left, iOS style */}
@@ -2398,11 +2393,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 6,
               paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
-              backgroundColor: callerIdVerified ? 'rgba(52,199,89,0.14)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,122,255,0.12)'),
+              backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)', // [2026-10-16 polish-calls] P&B (era azul/verde)
             }}
           >
-            {callerIdVerified ? <IconVerifiedBadge size={13} color="#16a34a" /> : null}
-            <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#16a34a' : blueInk(isDark) }}>
+            {callerIdVerified ? <IconVerifiedBadge size={13} color={blueInk(isDark)} /> : null}
+            <Text style={{ fontSize: 13, fontWeight: '700', color: blueInk(isDark) }}>
               {callerIdVerified ? (t?.('profile.verified') || 'Verificado') : (t?.('callerIdVerify.verifyShort') || 'Verificar nº')}
             </Text>
           </TouchableOpacity>
@@ -2429,15 +2424,12 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
                   </Text>
                 </View>
                 <Text style={[s.dialerCountry, { color: subColor }]}>
-                  {country ? country.flag + ' ' : ''}{formatPhoneDisplay(number)}
+                  {formatPhoneDisplay(number)}
                 </Text>
               </>
             ) : (
               <>
                 <View style={s.dialerNumberContainer}>
-                  {country && number.length > 0 && (
-                    <Text style={s.dialerFlag}>{country.flag}</Text>
-                  )}
                   <Text
                     style={[s.dialerNumber, {
                       color: number ? textColor : (isDark ? '#636366' : '#c7c7cc'),
@@ -3511,8 +3503,12 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 5,
               paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
-              backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)',
+              // [2026-10-16 polish-calls] AÇÕES em contorno → não se confundem com os FILTROS
+              // (Todas/Perdidas/Chatyy, preenchidos) logo abaixo — antes eram 2 fileiras iguais.
+              backgroundColor: 'transparent', borderWidth: 1,
+              borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17,17,17,0.16)',
             }}
+            accessibilityRole="button"
             accessibilityLabel={t?.('calls.schedule') || 'Agendar'}
           >
             <IconCalendar size={13} color={isDark ? '#F5F5F7' : '#111111'} />
@@ -3527,8 +3523,10 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 5,
                 paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
-                backgroundColor: isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)',
+                backgroundColor: 'transparent', borderWidth: 1,
+                borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17,17,17,0.16)',
               }}
+              accessibilityRole="button"
               accessibilityLabel={t?.('calls.scheduledList') || 'Agendadas'}
             >
               {/* [2026-10-14 vis3] chip abre a LISTA → "Agendadas" (era "Chamada agendada", singular) */}
@@ -3738,7 +3736,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
             </Text>
             {/* CTA — primes the user to make a call instead of staring at nothing. */}
             {PSTN_ENABLED && (
-            <TouchableOpacity
+            <PressableScale
               style={[s.emptyCtaBtn, colors?.primary ? { backgroundColor: colors.primary, ...(Platform.OS === 'web' ? { backgroundImage: 'none', boxShadow: isDark ? 'none' : '0 6px 18px rgba(17, 17, 17,0.35)' } : null) } : null]}
               onPress={() => setDialerVisible(true)}
               activeOpacity={0.85}
@@ -3748,7 +3746,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
               <Text style={[s.emptyCtaText, colors?.onPrimary ? { color: colors.onPrimary } : null]}>
                 {t?.('calls.openDialer') || 'Abrir teclado'}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
             )}
           </View>
         ) : (
@@ -3773,7 +3771,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
                         <View style={{
                           width: 80,
                           height: '100%',
-                          backgroundColor: '#ef4444',
+                          backgroundColor: RED,
                           alignItems: 'center',
                           justifyContent: 'center',
                         }}>
@@ -4033,6 +4031,7 @@ const s = StyleSheet.create({
   // Brand purple gradient CTA — opens dialer to make first call.
   emptyCtaBtn: {
     marginTop: 22,
+    minHeight: 46, justifyContent: 'center', // [2026-10-16 polish-calls] toque >= 44
     paddingVertical: 12,
     paddingHorizontal: 28,
     borderRadius: 999,

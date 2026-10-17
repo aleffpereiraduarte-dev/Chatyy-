@@ -106,7 +106,7 @@ export function buildEmailDocument(body, { mode = 'light', colors = {}, blockRem
   let bodyColor = '#111111';
   if (mode === 'theme') {
     bodyColor = text;
-    colorCss = `a{color:${link}}blockquote{color:${text};opacity:.8}`;
+    colorCss = `a{color:${link}}blockquote{color:${text};opacity:.8;border-left-color:#3a3a3c}`; // [2026-10-16 polish] borda da citação discreta no preto
   } else if (mode === 'dark') {
     bodyColor = text;
     colorCss = `:root{color-scheme:light dark}`;

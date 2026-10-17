@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Hae ihmisiä nimellä tai @käyttäjänimellä",
   "chatConv.groupMembersCount": "{n} jäsentä",
   "calls.scheduledList": "Ajastetut",
+  "calls.scheduledTitle": "Ajastetut puhelut",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

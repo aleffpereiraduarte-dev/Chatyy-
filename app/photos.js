@@ -2984,7 +2984,7 @@ function PhotosScreenInner() {
 
     if (!backupEnabled) {
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f8fafc', borderColor: colors.border }]}>
+        <View style={[s.backupBanner, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudOff size={20} color={colors.textSecondary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3607,7 +3607,7 @@ function PhotosScreenInner() {
           initialNumToRender={4}
           updateCellsBatchingPeriod={50}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
           }
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
@@ -3760,7 +3760,7 @@ function PhotosScreenInner() {
         windowSize={10}
         initialNumToRender={12}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
         renderItem={({ item: album }) => {
           if (album.isCreateButton) {
@@ -3954,7 +3954,7 @@ function PhotosScreenInner() {
                       {cluster.sample_url ? (
                         <ExpoImage
                           source={{ uri: cluster.sample_url }}
-                          style={[s.clusterAvatar, { borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}
+                          style={[s.clusterAvatar, { backgroundColor: colors.surfaceVariant, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}
                           contentFit="cover"
                           cachePolicy="memory-disk"
                           recyclingKey={cluster.sample_url}
@@ -4192,7 +4192,7 @@ function PhotosScreenInner() {
         data={[1]} // single item to enable pull-to-refresh
         keyExtractor={() => 'backup-content'}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
         }
         contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
         renderItem={() => (

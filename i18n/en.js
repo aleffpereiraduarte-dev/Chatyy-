@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "Search people by name or @username",
   "chatConv.groupMembersCount": "{n} members",
   "calls.scheduledList": "Scheduled",
+  "calls.scheduledTitle": "Scheduled calls",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

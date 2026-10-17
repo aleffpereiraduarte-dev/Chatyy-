@@ -328,7 +328,7 @@ export default function LivesSavedScreen() {
           subtitle={t('liveReplay.empty') || 'Lives que você apresentou e replays que salvar vão aparecer aqui.'}
           cta={{
             label: t('liveReplay.refresh') || 'Atualizar',
-            icon: 'bell',
+            icon: 'refresh', // [2026-10-16 polish-lives] era sino (não significa atualizar)
             onPress: () => load(true),
           }}
           tips={[

@@ -108,7 +108,7 @@ export function HeroButton({ label, onPress, primary = false, icon, disabled, ac
       ]}
     >
       {icon || null}
-      <Text style={[styles.heroBtnText, { color: disabled ? HERO.faint : (primary ? '#000000' : HERO.text) }]} numberOfLines={1}>{label}</Text>
+      <Text style={[styles.heroBtnText, { color: disabled ? HERO.faint : (primary ? '#000000' : HERO.text) }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>{label}</Text>
     </PressableScale>
     </View>
   );

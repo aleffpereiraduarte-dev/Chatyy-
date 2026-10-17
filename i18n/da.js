@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Søg efter personer med navn eller @brugernavn",
   "chatConv.groupMembersCount": "{n} medlemmer",
   "calls.scheduledList": "Planlagte",
+  "calls.scheduledTitle": "Planlagte opkald",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

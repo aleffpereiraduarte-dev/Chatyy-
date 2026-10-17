@@ -33,7 +33,7 @@ import {
   IconRepeat, IconCalendar, IconCamera, IconSettings,
 } from '../Icons';
 
-const LIVE_RED = '#FF3B30';
+const LIVE_RED = '#dc2626'; // [2026-10-16 polish-lives] mesmo vermelho de AO VIVO do resto (era #FF3B30)
 const TITLE_MAX = 100;
 
 // Degradê vertical preto (react-native-svg funciona em nativo e web; o app não

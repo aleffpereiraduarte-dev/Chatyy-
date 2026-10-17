@@ -26,6 +26,7 @@ import AvatarCircle from './../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
 import { parseContactQr } from '../utils/contactQr';
 import QrScanTools from '../components/QrScanTools';
+import PressableScale from '../components/PressableScale'; // [2026-10-16 polish] toque com mola nos CTAs
 
 // Lazy-load react-native-qrcode-svg so an environment without it (or web
 // SSR without react-native-svg) doesn't crash. Real QRs are preferred but
@@ -205,19 +206,20 @@ export default function ProfileQRScreen() {
               {t('profile.qrHint') || 'Outros usuários podem escanear pra te adicionar'}
             </Text>
 
-            <TouchableOpacity onPress={handleShare} style={[s.cta, { backgroundColor: colors.primary }]}>
+            <PressableScale onPress={handleShare} accessibilityRole="button" style={[s.cta, { backgroundColor: colors.primary }]}>
               <IconShare size={18} color={colors.onPrimary} />
               <Text style={[s.ctaText, { color: colors.onPrimary }]}>{t('profile.shareQr') || 'Compartilhar QR'}</Text>
-            </TouchableOpacity>
+            </PressableScale>
 
             {/* [WA-parity 2026-05-31] Share a public https profile link */}
-            <TouchableOpacity
+            <PressableScale
               onPress={handleShareLink}
+              accessibilityRole="button"
               style={[s.cta, { backgroundColor: colors.surfaceVariant || colors.borderLight, marginTop: 10 }]}
             >
               <IconShare size={18} color={colors.text} />
               <Text style={[s.ctaText, { color: colors.text }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </>
         ) : (
           <View style={{ flex: 1, alignItems: 'center', paddingTop: 12 }}>

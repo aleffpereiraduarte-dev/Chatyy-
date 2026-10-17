@@ -9,8 +9,9 @@ import Svg, { Path } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { getLiveKitVideoView } from '../../hooks/useLiveKitRoom';
 
-const SPEAKER_RING = '#34d399';
-const PIN_RING = '#60A5FA';
+// [2026-10-16 polish-calls] P&B: falando = branco cheio, fixado = branco suave (eram verde/azul)
+const SPEAKER_RING = '#FFFFFF';
+const PIN_RING = 'rgba(255,255,255,0.55)';
 
 function MicOffIcon() {
   return (
@@ -23,7 +24,7 @@ function MicOffIcon() {
 function HandIcon() {
   return (
     <Svg width={12} height={12} viewBox="0 0 24 24" fill="none">
-      <Path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6.5-2.9L1 15a2.83 2.83 0 0 1 4-4l3 3" stroke="#fbbf24" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-6.5-2.9L1 15a2.83 2.83 0 0 1 4-4l3 3" stroke="#FFFFFF" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }

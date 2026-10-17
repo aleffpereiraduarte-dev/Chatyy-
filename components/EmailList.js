@@ -237,7 +237,7 @@ export default function EmailList({
       {/* Bulk action toolbar */}
       {selectMode && selectedCount > 0 ? (
         <View style={[s.bulkBar, { backgroundColor: colors.bulkToolbarBg, borderBottomColor: colors.borderLight }]}>
-          <TouchableOpacity onPress={allSelected ? onClearSelection : onSelectAll} style={s.bulkCheckWrap}>
+          <TouchableOpacity onPress={allSelected ? onClearSelection : onSelectAll} style={s.bulkCheckWrap} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={allSelected ? t('a11y.deselect') : t('a11y.select')}>
             {allSelected ? (
               <IconCheckboxChecked size={20} color={colors.primary} />
             ) : (
@@ -261,7 +261,7 @@ export default function EmailList({
               <IconMarkUnread size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={onClearSelection} style={s.bulkClose} accessibilityRole="button" accessibilityLabel={t('common.close')}>
+          <TouchableOpacity onPress={onClearSelection} style={s.bulkClose} hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }} accessibilityRole="button" accessibilityLabel={t('common.close')}>
             <IconX size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -271,7 +271,9 @@ export default function EmailList({
           <TouchableOpacity
             onPress={onSelectAll}
             style={s.headerCheckWrap}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('a11y.select')}
           >
             <IconCheckbox size={18} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -284,6 +286,8 @@ export default function EmailList({
               onPress={onEmptyTrash}
               style={[s.folderActionBtn, { borderColor: colors.error }]}
               activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 4, right: 4 }}
+              accessibilityRole="button"
             >
               <IconTrash size={13} color={colors.error} />
               <Text style={{ color: colors.error, fontSize: 12, fontWeight: '600' }}>{t('sidebar.emptyTrash')}</Text>
@@ -295,6 +299,8 @@ export default function EmailList({
               onPress={onClearSpam}
               style={[s.folderActionBtn, { borderColor: colors.error }]}
               activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 4, right: 4 }}
+              accessibilityRole="button"
             >
               <IconTrash size={13} color={colors.error} />
               <Text style={{ color: colors.error, fontSize: 12, fontWeight: '600' }}>{t('inbox.clearSpam')}</Text>
@@ -357,6 +363,7 @@ export default function EmailList({
               onRefresh={onRefresh}
               colors={[colors.primary]}
               tintColor={colors.primary}
+              progressBackgroundColor={colors.surface}
             />
           }
           // Feature F — pull-to-load-more

@@ -188,7 +188,9 @@ function EmailRow({
       duration: 250,
       delay,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
+      // [2026-10-16 polish] só opacity+translateY → thread de UI (antes JS:
+      // a entrada escalonada de 20 linhas brigava com o scroll/primeiro toque).
+      useNativeDriver: nativeDriver,
     }).start();
   }, []);
 
@@ -199,7 +201,7 @@ function EmailRow({
   const handlePressIn = useCallback(() => {
     Animated.spring(pressScale, {
       toValue: 0.985,
-      useNativeDriver: false,
+      useNativeDriver: nativeDriver, // [2026-10-16 polish] só transform → nativo
       friction: 10,
       tension: 400,
     }).start();
@@ -213,7 +215,7 @@ function EmailRow({
   const handlePressOut = useCallback(() => {
     Animated.spring(pressScale, {
       toValue: 1,
-      useNativeDriver: false,
+      useNativeDriver: nativeDriver,
       friction: 8,
       tension: 200,
     }).start();
@@ -695,8 +697,9 @@ const s = StyleSheet.create({
   // [2026-10-13] Ponto de não lida (8px) centrado na altura do remetente,
   // estilo Apple Mail — no lugar da barra vertical de 3px.
   unreadDotLeft: {
-    position: 'absolute', left: 5, top: '50%', marginTop: -4,
-    width: 8, height: 8, borderRadius: 4,
+    // [2026-10-16 polish] left 5→3: o ponto encostava no avatar (0pt de folga).
+    position: 'absolute', left: 3, top: '50%', marginTop: -3.5,
+    width: 7, height: 7, borderRadius: 3.5,
     // [beauty 2026-10-01] Dropped the blue glow (off-palette rgba(37,99,235))
     // — the accent bar itself carries the unread cue, no glow needed.
   },

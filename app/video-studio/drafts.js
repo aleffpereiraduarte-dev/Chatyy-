@@ -72,7 +72,7 @@ export default function VideoStudioDrafts() {
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
         <Text style={styles.title}>{t('studio.drafts.title')}</Text>
-        <TouchableOpacity onPress={() => router.push('/video-studio/camera')} style={styles.newBtn} accessibilityRole="button">
+        <TouchableOpacity onPress={() => router.push('/video-studio/camera')} style={styles.newBtn} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }} accessibilityRole="button">
           <IconCamera size={16} color="#000" />
           <Text style={styles.newTxt}>{t('studio.drafts.new')}</Text>
         </TouchableOpacity>

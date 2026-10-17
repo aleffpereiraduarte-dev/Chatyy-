@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Caută persoane după nume sau @utilizator",
   "chatConv.groupMembersCount": "{n} membri",
   "calls.scheduledList": "Programate",
+  "calls.scheduledTitle": "Apeluri programate",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

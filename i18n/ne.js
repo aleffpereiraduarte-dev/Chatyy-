@@ -647,6 +647,7 @@ export default {
   "search.peopleHint": "नाम वा @प्रयोगकर्ता नामबाट मानिसहरू खोज्नुहोस्",
   "chatConv.groupMembersCount": "{n} सदस्य",
   "calls.scheduledList": "तालिकाबद्ध",
+  "calls.scheduledTitle": "तालिकाबद्ध कलहरू",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

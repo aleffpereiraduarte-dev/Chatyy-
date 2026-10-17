@@ -105,8 +105,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   btnInverted: { backgroundColor: '#fff' },
-  btnActive: { backgroundColor: 'rgba(96,165,250,0.45)' },
-  btnDanger: { backgroundColor: '#DC2626', width: 54, height: 54, borderRadius: 27 },
+  // [2026-10-16 polish-calls] P&B: ativo = vidro claro (era azul); vermelho = mesmo do resto (#E53935)
+  btnActive: { backgroundColor: 'rgba(255,255,255,0.34)' },
+  btnDanger: { backgroundColor: '#E53935', width: 54, height: 54, borderRadius: 27 },
 });
 
 export default memo(GroupCallControls);

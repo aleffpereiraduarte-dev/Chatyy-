@@ -7,7 +7,7 @@
 // returns zero, and this screen still renders without errors.
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Platform, StyleSheet } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import Svg, { Path, Circle } from 'react-native-svg';
@@ -16,6 +16,8 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
+import { Shimmer } from '../components/SkeletonLoader';
+import { useGroupedColors } from '../components/settings/SettingsKit';
 
 // Compact 7-point sparkline. Pure SVG — works on web + native, no native
 // chart lib needed. Falls back to a dashed baseline when all values are 0
@@ -88,59 +90,70 @@ export default function ProfileInsightsScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const cardBg = isDark ? '#1a1625' : '#ffffff';
-  const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-  const accent = '#111111';
+  // [2026-10-16 polish-perfil] P&B: cartões no padrão agrupado (preto real no
+  // escuro, sem o roxo #1a1625), sparklines monocromáticas e skeleton no lugar
+  // do spinner (o spinner #111 sumia no escuro).
+  const g = useGroupedColors();
+  const cardBg = g.cardBg;
+  const cardBorder = g.separator;
+  const accent = g.ink;
 
   const Card = ({ title, value, spark, color = accent }) => (
-    <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-      <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>{title}</Text>
-      <Text style={[styles.cardValue, { color: colors.text }]}>{value.toLocaleString()}</Text>
+    <View style={[styles.card, { backgroundColor: cardBg }]}>
+      <Text style={[styles.cardTitle, { color: g.secondary }]}>{title}</Text>
+      <Text style={[styles.cardValue, { color: g.text }]}>{value.toLocaleString()}</Text>
       <View style={styles.sparkWrap}>
         <Sparkline data={spark} color={color} />
       </View>
     </View>
   );
+  const SkelCard = ({ i }) => (
+    <View style={[styles.card, { backgroundColor: cardBg }]}>
+      <Shimmer delay={i * 60} style={{ width: 150, height: 11, borderRadius: 6 }} />
+      <Shimmer delay={i * 60 + 30} style={{ width: 90, height: 30, borderRadius: 8, marginTop: 10, marginBottom: 10 }} />
+      <Shimmer delay={i * 60 + 60} style={{ width: 220, height: 52, borderRadius: 10 }} />
+    </View>
+  );
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
-      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.insights') })} />}
+    <View style={{ flex: 1, backgroundColor: g.pageBg }}>
+      {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('profile.insights'), contentStyle: { backgroundColor: g.pageBg } })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: cardBorder }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t?.('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {t?.('profile.insights') || 'Estatísticas'}
         </Text>
-        <View style={{ width: 22 }} />
+        <View style={{ width: 44 }} />
       </View>
       )}
 
       {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator color={accent} />
+        <View style={styles.scrollBody}>
+          {[0, 1, 2].map(i => <SkelCard key={i} i={i} />)}
         </View>
       ) : (
-        <FadeSlideIn>
-        <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
+        <FadeSlideIn style={{ flex: 1 }}>
+        <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
           <Card
             title={t?.('profile.viewsLast7d') || 'Visualizações do perfil (7d)'}
             value={data.profile_views_count}
             spark={data.spark_views}
-            color={colors.primary}
+            color={accent}
           />
           <Card
             title={t?.('profile.reachLast7d') || 'Alcance dos posts (7d)'}
             value={data.posts_reach}
             spark={data.spark_reach}
-            color="#22C55E"
+            color={accent}
           />
           <Card
             title={t?.('profile.engagementTotal') || 'Curtidas + comentários (7d)'}
             value={data.engagement_total}
             spark={data.spark_engagement}
-            color="#F59E0B"
+            color={accent}
           />
         </ScrollView>
         </FadeSlideIn>
@@ -158,17 +171,15 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { padding: 6, marginRight: 6 },
+  backBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -6, marginRight: 2 },
   headerTitle: { flex: 1, fontSize: 17, fontWeight: '700' },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   scrollBody: { padding: 16, gap: 14 },
   card: {
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 18,
+    padding: 18,
   },
-  cardTitle: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 },
-  cardValue: { fontSize: 32, fontWeight: '800', marginTop: 6, marginBottom: 8 },
+  cardTitle: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.7 },
+  cardValue: { fontSize: 34, fontWeight: '700', letterSpacing: -0.8, marginTop: 6, marginBottom: 10, fontVariant: ['tabular-nums'] },
   sparkWrap: { alignItems: 'flex-start' },
 });

@@ -644,6 +644,7 @@ export default {
   "search.peopleHint": "பெயர் அல்லது @பயனர்பெயர் மூலம் நபர்களைத் தேடுங்கள்",
   "chatConv.groupMembersCount": "{n} உறுப்பினர்கள்",
   "calls.scheduledList": "திட்டமிடப்பட்டவை",
+  "calls.scheduledTitle": "திட்டமிடப்பட்ட அழைப்புகள்",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

@@ -474,6 +474,7 @@ let _shortVideoConfig = null;
 try { _shortVideoConfig = require('../services/shortVideoConfig'); } catch {}
 // LocationMessage and ContactMessage removed — inline rendering used instead
 let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
+let ChatListSkeleton = null; try { ChatListSkeleton = require('../components/SkeletonLoader').ChatListSkeleton; } catch {} // [2026-10-17 polish-chat] folha Encaminhar
 
 // ============================================================
 // MARKDOWN-LITE RENDERER (group description, etc.)
@@ -7558,7 +7559,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               </TouchableOpacity>
               {edits[activeIdx] && (
                 <TouchableOpacity onPress={() => setEdits(prev => { const n = { ...prev }; delete n[activeIdx]; return n; })} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.resetEdits') || 'Desfazer'}>
-                  <IconUndo size={20} color="#111111" />
+                  <IconUndo size={20} color="#fff" />{/* [2026-10-17 polish-chat] era #111 no cabeçalho preto da prévia */}
                 </TouchableOpacity>
               )}
               <TouchableOpacity onPress={() => { editorAutoOpenedRef.current = false; setCropOpen(true); }} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.crop') || 'Recortar'}>
@@ -7709,7 +7710,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               accessibilityState={{ checked: !!viewOnce }}
               accessibilityLabel={t('a11y.viewOnce') || 'Visualização única'}
             >
-              <Text style={[previewStyles.viewOnceBtnText, viewOnce && { color: '#fff' }]}>1</Text>
+              <Text style={[previewStyles.viewOnceBtnText, viewOnce && { color: '#000' }]}>1</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={previewStyles.sendBtn}
@@ -7718,7 +7719,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               accessibilityLabel={t('chatConv.send') || 'Enviar'}
               accessibilityRole="button"
             >
-              {preparingSend ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={22} color="#fff" />}
+              {preparingSend ? <ActivityIndicator size="small" color="#000" /> : <IconSend size={22} color="#000" />}
               {files.length > 1 && (
                 <View style={previewStyles.sendBadge}>
                   <Text style={previewStyles.sendBadgeText}>{files.length}</Text>
@@ -7880,7 +7881,7 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
               accessibilityLabel={_t('chatConv.send', 'Enviar')}
               accessibilityRole="button"
             >
-              <IconSend size={22} color="#fff" />
+              <IconSend size={22} color="#000" />
             </TouchableOpacity>
           </View>
         </View>
@@ -7939,17 +7940,18 @@ const previewStyles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18, borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)', alignItems: 'center', justifyContent: 'center',
   },
-  viewOnceBtnActive: { backgroundColor: '#111111', borderColor: '#111111' },
+  // [2026-10-17 polish-chat] Prévia = fundo PRETO → ativo/hint/enviar em BRANCO
+  // (o #111 da troca roxo→preto sumia: "1" ativo, aviso e botão invisíveis).
+  viewOnceBtnActive: { backgroundColor: '#ffffff', borderColor: '#ffffff' },
   viewOnceBtnText: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.5)' },
-  viewOnceHint: { color: '#111111', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
+  viewOnceHint: { color: 'rgba(255,255,255,0.78)', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
   sendBtn: {
     // [MEDIA-POLISH 2026-09-30] Clear circular accent send button — a hair
     // larger with a faint white ring so it reads as the primary action against
     // the dark scrim.
     width: 50, height: 50, borderRadius: 25,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#111111',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: '#ffffff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.4, shadowRadius: 7,
@@ -7958,10 +7960,10 @@ const previewStyles = StyleSheet.create({
   sendBadge: {
     position: 'absolute', top: -4, right: -4,
     minWidth: 22, height: 22, borderRadius: 11,
-    paddingHorizontal: 5, backgroundColor: '#fff',
+    paddingHorizontal: 5, backgroundColor: '#111111', borderWidth: 1.5, borderColor: '#ffffff',
     alignItems: 'center', justifyContent: 'center',
   },
-  sendBadgeText: { color: '#111111', fontSize: 11, fontWeight: '800' },
+  sendBadgeText: { color: '#ffffff', fontSize: 11, fontWeight: '800', fontVariant: ['tabular-nums'] },
 });
 
 // ============================================================
@@ -30308,8 +30310,8 @@ function ChatConversationInner() {
           if (Platform.OS === 'web' || !lottieUrl) {
             return (
               <View>
-                <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: 'rgba(17, 17, 17,0.10)', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconFilm size={48} color="#111111" />
+                <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.10)', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconFilm size={48} color={isDark ? '#F5F5F7' : '#111111'} />{/* [2026-10-17 polish-chat] legível no escuro */}
                 </View>
                 <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
               </View>
@@ -32319,9 +32321,13 @@ function ChatConversationInner() {
             const resolvedEmail = (msg.reply_to?.sender_email || localRef?.sender_email || '').trim();
             const resolvedName  = (msg.reply_to?.sender_name?.trim() || localRef?.sender_name?.trim() || '');
             const _youLbl = String(t('chat.you') || 'Você');
+            // [2026-10-17 polish-chat] 1:1 → citação do contato usa o MESMO nome do
+            // cabeçalho (antes: sender_name cru "higorlima" × "Higorlima" no topo).
+            const _rpPeer = conversationType !== 'group' && conversationName && resolvedEmail
+              && resolvedEmail.toLowerCase() === String(params.email || '').toLowerCase();
             const replyDisplayName = resolvedEmail === currentEmail
               ? (_youLbl.charAt(0).toUpperCase() + _youLbl.slice(1)) // [2026-10-10 chat-bubbles-polish] "você" → "Você" no título da citação
-              : (resolvedName || (resolvedEmail ? emailToDisplayName(resolvedEmail) : (t('chat.unknown') || 'Desconhecido')));
+              : (_rpPeer ? conversationName : (resolvedName || (resolvedEmail ? emailToDisplayName(resolvedEmail) : (t('chat.unknown') || 'Desconhecido'))));
             // [VISUAL-G8, 2026-05-19] Reply quote bar color = quoted sender's color (same djb2 palette).
             const replySenderColor = senderColorFromEmail(resolvedEmail || resolvedName || '');
             // [2026-10-08 chat-beauty-bubbles] P&B: em 1:1 a barra/nome da citação
@@ -32874,6 +32880,8 @@ function ChatConversationInner() {
     const sel = selectedIds;
     const tt = (k, fb) => { try { const v = t(k); return (v && v !== k) ? v : fb; } catch { return fb; } };
     const resolve = (u) => { try { return _nlResolveRef.current ? _nlResolveRef.current(u) : u; } catch { return u; } };
+    const _nlPeerName = String(conversationName || '').trim();
+    const _nlPeerLc = String(params.email || '').toLowerCase();
     const localOf = (m) => {
       try {
         if (m._uploading) return _rebaseContainerUri(m._localUri) || null;
@@ -32923,9 +32931,11 @@ function ChatConversationInner() {
         const em = String(rt.sender_email || localRef?.sender_email || '').trim();
         const nm = String(rt.sender_name || localRef?.sender_name || '').trim();
         const you = String(tt('chat.you', 'Você'));
+        // [2026-10-17 polish-chat] 1:1 → nome do contato = o do cabeçalho.
+        const _rpPeer = conversationType !== 'group' && _nlPeerName && em && em.toLowerCase() === _nlPeerLc;
         const name = em && em.toLowerCase() === meLc
           ? (you.charAt(0).toUpperCase() + you.slice(1))
-          : (nm || (em ? emailToDisplayName(em) : tt('chat.unknown', 'Desconhecido')));
+          : (_rpPeer ? _nlPeerName : (nm || (em ? emailToDisplayName(em) : tt('chat.unknown', 'Desconhecido'))));
         const own = String(m.sender_email || '').toLowerCase() === meLc;
         const color = conversationType === 'group' && !own ? senderColorFromEmail(em || nm || '') : (own ? ownTextColor : otherInk);
         let rd = null;
@@ -33036,11 +33046,13 @@ function ChatConversationInner() {
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId]);
+  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId, conversationName, params.email]);
   const _nlTheme = useMemo(() => ({
     ownBubble: ownBubbleBg, otherBubble: otherBubbleBg, ownText: ownTextColor, otherText: otherInk,
     ownMeta: ownMetaColor, otherMeta: otherMetaColor, link: otherInk, read: '#53BDEB', wall: chatWallBg,
-    pillBg: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)', pillText: isDark ? '#D1D1D6' : '#3C3C43',
+    // [2026-10-17 polish-chat] pílula de data = a do JS/web (styles.dateTextLight/Dark):
+    // quase opaca, lê sobre papel de parede (6% preto sumia no fundo branco).
+    pillBg: isDark ? 'rgba(44,44,46,0.88)' : 'rgba(236,236,240,0.92)', pillText: isDark ? 'rgba(235,235,245,0.78)' : 'rgba(60,60,67,0.86)',
     systemText: colors.textTertiary || (isDark ? '#8E8E93' : '#6B6B70'), accent: isDark ? '#F5F5F7' : '#111111',
     ownQuote: 'rgba(255,255,255,0.12)', otherQuote: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
     unreadBg: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', unreadText: isDark ? '#D1D1D6' : '#3C3C43',
@@ -33048,7 +33060,7 @@ function ChatConversationInner() {
     selection: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)', highlight: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)',
     failed: '#E5484D',
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema
+  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, otherBubbleBg, otherInk, otherMetaColor, chatWallBg]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
   // [2026-10-15 native-store] foto da conversa no store NATIVO (services/nativeChatStore):
   // a lista nativa pinta a última janela sem esperar o 1º applyRows. n = chave mais
   // nova que o JS tem (foto mais velha que isso não é pintada). _nlStoreHas: cache JS
@@ -39541,7 +39553,9 @@ function ChatConversationInner() {
             />
           </View>
           {forwardLoading ? (
-            <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+            // [2026-10-17 polish-chat] skeleton de linhas (mesma geometria da lista) no lugar do spinner grande.
+            ChatListSkeleton ? <View style={{ marginTop: 4 }}><ChatListSkeleton count={7} /></View>
+              : <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
           ) : (() => {
             const q = (forwardSearch || '').trim().toLowerCase();
             const filtered = forwardConversations.filter(c => {
@@ -42167,9 +42181,11 @@ const styles = StyleSheet.create({
   },
   reactionEmoji: { fontSize: 14 },
   reactionCount: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
+  // [2026-10-17 polish-chat] Sem borda: borderWidth 1 sem cor = anel PRETO em
+  // volta do spinner (claro) — só o indicador, centralizado, como WhatsApp.
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
-    borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
+    marginBottom: Spacing.sm,
   },
   emptyMessages: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
   // Why: reply preview chip is now a proper "glass" pill — bumped radius

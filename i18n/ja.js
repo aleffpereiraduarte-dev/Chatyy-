@@ -635,6 +635,7 @@ export default {
   "search.peopleHint": "名前または@ユーザー名で人を検索",
   "chatConv.groupMembersCount": "メンバー{n}人",
   "calls.scheduledList": "予定済み",
+  "calls.scheduledTitle": "予定された通話",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",

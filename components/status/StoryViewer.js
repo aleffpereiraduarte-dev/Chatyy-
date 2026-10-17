@@ -37,6 +37,23 @@ import { textStatusDurationMs, itemTextAlign } from './textStatus';
 import { cachedVideoSource } from '../../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 import { tryOpenNativeStories, nativeStoriesAvailable, isNativeStoryGroup, closeNativeStories, setNativeStoryHasMore } from './nativeStories'; // [2026-10-15 native-story]
 
+// [2026-10-16 polish-status] véu de legibilidade (SVG = gradiente real em iOS/Android/web).
+function StoryScrim({ edge }) {
+  const top = edge === 'top';
+  const id = top ? 'storyScrimTop' : 'storyScrimBottom';
+  return (
+    <Svg width="100%" height="100%" preserveAspectRatio="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+      <Defs>
+        <SvgLinearGradient id={id} x1="0" y1={top ? '0' : '1'} x2="0" y2={top ? '1' : '0'}>
+          <Stop offset="0" stopColor="#000" stopOpacity={top ? 0.42 : 0.6} />
+          <Stop offset="1" stopColor="#000" stopOpacity={0} />
+        </SvgLinearGradient>
+      </Defs>
+      <SvgRect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+    </Svg>
+  );
+}
+
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
 
@@ -272,7 +289,7 @@ function SliderStickerView({ sticker, statusId, ownStatus, alreadyVoted, onVoted
         <View style={{
           position: 'absolute', left: 0, top: 0, bottom: 0,
           width: `${value}%`,
-          borderRadius: 4, backgroundColor: '#111111',
+          borderRadius: 4, backgroundColor: '#fff', // [2026-10-16 polish-status] #111 sumia na trilha escura
         }} />
         <View
           {...pan.panHandlers}
@@ -576,7 +593,7 @@ const StoryMedia = React.memo(function StoryMedia({
       // the URL (404, codec mismatch, signed URL expired).
       if (videoError) {
         return (
-          <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          <View style={{ flex: 1, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
             <View style={{ marginBottom: 14 }}><IconAlertTriangle size={38} color="rgba(255,255,255,0.55)" /></View>
             <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
               {t?.('status.videoUnavailable') || 'Vídeo indisponível'}
@@ -2025,6 +2042,8 @@ function StoryViewerJS({
   // Hold-to-pause dims the whole row to 40% so the freeze is visible without
   // hiding the segments entirely (uiOpacity → 0 already hides chrome but the
   // user still wants positional context — "I'm on segment 3 of 5, paused").
+  // [2026-10-16 polish-status] preenchimento era #111 (codemod navy→ink) → invisível sobre
+  // mídia escura; volta ao branco (Instagram/WhatsApp) com sombra leve.
   const renderProgressBars = () => (
     <Animated.View style={{
       // Android edge-to-edge: static top:20 sat under the system clock on
@@ -2054,9 +2073,9 @@ function StoryViewerJS({
             // so finished + in-progress segments read as one consistent brand
             // surface (vs the prior solid white that looked disconnected).
             <View style={{ width: '100%', height: '100%', flexDirection: 'row' }}>
-              <View style={{ flex: 1, backgroundColor: '#111111' }} />
-              <View style={{ flex: 1, backgroundColor: '#111111' }} />
-              <View style={{ flex: 1, backgroundColor: '#111111' }} />
+              <View style={{ flex: 1, backgroundColor: '#fff' }} />
+              <View style={{ flex: 1, backgroundColor: '#fff' }} />
+              <View style={{ flex: 1, backgroundColor: '#fff' }} />
             </View>
           )}
           {i === safeIdx && (
@@ -2068,15 +2087,15 @@ function StoryViewerJS({
                 width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
                 backgroundColor: 'transparent',
                 flexDirection: 'row',
-                shadowColor: '#111111', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
+                shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 2, shadowOffset: { width: 0, height: 0 },
               }}
             >
               {/* Brand gradient (purple → pink) — three stacked color steps
                   approximate a linear-gradient cheaply. Pink trailing edge
                   carries a soft glow via shadowColor on the parent. */}
-              <View style={{ flex: 1, backgroundColor: '#111111' }} />
-              <View style={{ flex: 1, backgroundColor: '#111111' }} />
-              <View style={{ flex: 1, backgroundColor: '#111111' }} />
+              <View style={{ flex: 1, backgroundColor: '#fff' }} />
+              <View style={{ flex: 1, backgroundColor: '#fff' }} />
+              <View style={{ flex: 1, backgroundColor: '#fff' }} />
             </Animated.View>
           )}
         </View>
@@ -2242,6 +2261,7 @@ function StoryViewerJS({
                     );
                   }
                 }}
+                hitSlop={6}
                 style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
                 accessibilityLabel={t?.('common.delete') || 'Excluir'}
               >
@@ -2250,7 +2270,8 @@ function StoryViewerJS({
               {onAddMore ? (
                 <TouchableOpacity
                   onPress={() => { onClose?.(); setTimeout(() => onAddMore?.(), 150); }}
-                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
+                  hitSlop={6}
+                style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
                   accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
                 >
                   <IconPlus size={18} color="#fff" />
@@ -2267,7 +2288,8 @@ function StoryViewerJS({
                     onClose?.();
                     setTimeout(() => { try { onRepost?.(item); } catch {} }, 150);
                   }}
-                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(17, 17, 17,0.55)', alignItems: 'center', justifyContent: 'center' }}
+                  hitSlop={6}
+                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
                   accessibilityLabel={t?.('status.repostAction') || 'Repostar'}
                 >
                   <IconArrowRight size={18} color="#fff" />
@@ -2283,6 +2305,7 @@ function StoryViewerJS({
             <TouchableOpacity
               onPress={() => handleSaveToGallery(cur)}
               disabled={saving}
+              hitSlop={6}
               style={{
                 width: 34, height: 34, borderRadius: 17,
                 backgroundColor: saving ? 'rgba(17, 17, 17,0.55)' : 'rgba(0,0,0,0.4)',
@@ -2396,19 +2419,19 @@ function StoryViewerJS({
             and pointerEvents:none so it doesn't intercept taps. Only shown
             when there's caption + media (text statuses already have a solid
             background). */}
+        {/* [2026-10-16 polish-status] degradê SVG contínuo (sem faixas) embaixo + véu sutil
+            no topo p/ barras de progresso/cabeçalho legíveis sobre foto clara. */}
+        {(isImage || isVideo) ? (
+          <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 150, zIndex: 3, opacity: uiOpacity }}>
+            <StoryScrim edge="top" />
+          </Animated.View>
+        ) : null}
         {caption && (isImage || isVideo) ? (
           <View
             pointerEvents="none"
             style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 240, zIndex: 3 }}
           >
-            {/* [beauty2 2026-05-31] Five-stop ramp (vs four) for an even smoother,
-                deeper fade — keeps captions + bottom chrome legible over
-                bright/busy media without a visible banding seam. */}
-            <View style={{ flex: 1.4, backgroundColor: 'rgba(0,0,0,0.0)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.08)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.20)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.36)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.56)' }} />
+            <StoryScrim edge="bottom" />
           </View>
         ) : null}
 
@@ -2844,7 +2867,7 @@ function StoryViewerJS({
               left: rippleAt.x - 60, top: rippleAt.y - 60,
               width: 120, height: 120, borderRadius: 60,
               backgroundColor: 'rgba(255,255,255,0.3)',
-              borderWidth: 2, borderColor: 'rgba(17, 17, 17,0.55)',
+              borderWidth: 2, borderColor: 'rgba(255,255,255,0.5)',
               zIndex: 15,
               opacity: rippleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
               transform: [{
@@ -2888,7 +2911,7 @@ function StoryViewerJS({
               flexDirection: 'row', alignItems: 'center', gap: 8,
               backgroundColor: 'rgba(20,20,28,0.92)',
               borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
-              borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.55)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
               shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8,
               shadowOffset: { width: 0, height: 4 }, elevation: 6,
               maxWidth: '85%',
@@ -3223,17 +3246,17 @@ function StoryViewerJS({
                       }}
                       style={{
                         width: 34, height: 34, borderRadius: 17,
-                        backgroundColor: '#111111',
+                        // [2026-10-16 polish-status] botão branco/ícone preto: o #111 sumia sobre o campo escuro
+                        backgroundColor: '#fff',
                         alignItems: 'center', justifyContent: 'center',
                         opacity: replying ? 0.6 : 1,
-                        // Soft brand glow so the send affordance pops against
-                        // the translucent reply field (WhatsApp/IG parity).
-                        shadowColor: '#111111', shadowOpacity: 0.55, shadowRadius: 8,
-                        shadowOffset: { width: 0, height: 2 }, elevation: 5,
+                        shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 4,
+                        shadowOffset: { width: 0, height: 1 }, elevation: 3,
                       }}
+                      hitSlop={6}
                       accessibilityLabel={t?.('common.send') || 'Enviar'}
                     >
-                      <IconSend size={15} color="#fff" />
+                      <IconSend size={15} color="#000" />
                     </TouchableOpacity>
                   ) : null}
                 </Animated.View>
@@ -3257,8 +3280,8 @@ function StoryViewerJS({
           >
             <Animated.View style={{
               width: 88, height: 88, borderRadius: 44,
-              backgroundColor: 'rgba(17, 17, 17,0.18)',
-              borderWidth: 2, borderColor: '#111111',
+              backgroundColor: 'rgba(255,255,255,0.12)',
+              borderWidth: 2, borderColor: 'rgba(255,255,255,0.9)', // [2026-10-16 polish-status] anel #111 invisível no overlay preto
               alignItems: 'center', justifyContent: 'center', marginBottom: 18,
               transform: [{ scale: caughtUpAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
             }}>
@@ -3307,7 +3330,7 @@ function StoryViewerJS({
               </View>
               {viewersLoading ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#111111" />
+                  <ActivityIndicator size="small" color={isDark ? '#fff' : '#111111'} />
                 </View>
               ) : viewersList.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
@@ -3342,8 +3365,8 @@ function StoryViewerJS({
                         {emoji ? (
                           <View style={{
                             width: 34, height: 34, borderRadius: 17,
-                            backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)',
-                            borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.32)',
+                            backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
+                            borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17, 17, 17,0.12)',
                             alignItems: 'center', justifyContent: 'center',
                           }}>
                             <Text style={{ fontSize: 18 }}>{emoji}</Text>

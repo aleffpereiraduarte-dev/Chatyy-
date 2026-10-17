@@ -636,6 +636,7 @@ export default {
   "search.peopleHint": "Odamlarni ism yoki @foydalanuvchi nomi bo'yicha qidiring",
   "chatConv.groupMembersCount": "{n} a'zo",
   "calls.scheduledList": "Rejalashtirilgan",
+  "calls.scheduledTitle": "Rejalashtirilgan qo'ng'iroqlar",
   // [notas-lembrete 2026-10-14] lembrete de nota (push do servidor)
   "noteReminder.title": "Remind me",
   "noteReminder.subtitle": "You'll get a notification on all your devices.",
