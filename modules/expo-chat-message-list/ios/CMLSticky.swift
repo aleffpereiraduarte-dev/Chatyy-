@@ -31,20 +31,22 @@ final class CMLStickyView: UIView {
   }
 
   func setText(_ t: String, scale: CGFloat) {
-    let f = UIFont.systemFont(ofSize: 12 * scale, weight: .bold)
+    // [2026-10-17 wa-pills] = pílula de data da lista: 12,5 medium, pad 12/5, raio 8
+    let f = UIFont.systemFont(ofSize: 12.5 * scale, weight: .medium)
     let l = CMLLayoutBuilder.line(t, font: f, color: fg, maxWidth: 260)
     label.layout = l
-    let w = ceil(l.size.width) + 28
-    let h = ceil(l.size.height) + 12
+    let w = ceil(l.size.width) + 24
+    let h = ceil(l.size.height) + 10
     intrinsic = CGSize(width: w, height: h)
-    layer.cornerRadius = min(14, h / 2)
+    layer.cornerRadius = min(8, h / 2)
+    if #available(iOS 13.0, *) { layer.cornerCurve = .continuous }
     setNeedsLayout()
   }
 
   override func layoutSubviews() {
     super.layoutSubviews()
     guard let l = label.layout else { return }
-    label.frame = CGRect(x: 14, y: floor((bounds.height - l.size.height) / 2), width: l.size.width + 1, height: l.size.height)
+    label.frame = CGRect(x: 12, y: floor((bounds.height - l.size.height) / 2), width: l.size.width + 1, height: l.size.height)
     layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius).cgPath
   }
 }

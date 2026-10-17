@@ -577,7 +577,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     plusSpinner.visibility = View.GONE
     addView(plusSpinner)
 
-    pillBgDrawable.cornerRadius = dp(22f).toFloat()
+    pillBgDrawable.cornerRadius = dp(18f).toFloat() // [2026-10-17 wa-composer] pílula 36dp, raio 18
     pill.background = pillBgDrawable
     addView(pill)
 
@@ -605,8 +605,8 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   private fun setupEdit() {
     edit.background = null
     edit.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-    edit.setPadding(dp(4f), dp(10f), dp(4f), dp(10f))
-    edit.minHeight = dp(42f)
+    edit.setPadding(dp(4f), dp(6f), dp(4f), dp(6f))
+    edit.minHeight = dp(34f)
     edit.gravity = Gravity.TOP or Gravity.START
     edit.maxLines = maxLinesProp
     edit.isVerticalScrollBarEnabled = true
@@ -1065,8 +1065,9 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     val rightPad = if (f.camera) dp(44f) else dp(4f)
     f.textW = max(dp(40f), f.pillW - f.textX - rightPad)
     edit.measure(MeasureSpec.makeMeasureSpec(f.textW, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
-    f.textH = max(dp(42f), edit.measuredHeight)
-    f.rowH = if (voice.isActive) dp(44f) else max(dp(44f), f.textH + dp(2f))
+    f.textH = max(dp(34f), edit.measuredHeight)
+    // [2026-10-17 wa-composer] linha de 44 (alvo dos botões) com a pílula 4dp para dentro em cima/embaixo
+    f.rowH = if (voice.isActive) dp(44f) else max(dp(44f), f.textH + dp(2f) + dp(8f))
     f.barH = dp(6f) + f.rowH + max(dp(8f), bottomInsetPx)
     if (replyVisible) {
       f.cardH = replyCard.preferredHeight(W - dp(16f))
@@ -1089,10 +1090,10 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     hairline.measure(ex(w), ex(max(1, (density * 0.5f).toInt())))
     plusButton.measure(ex(dp(40f)), ex(dp(44f)))
     plusSpinner.measure(ex(dp(20f)), ex(dp(20f)))
-    pill.measure(ex(f.pillW), ex(f.rowH))
-    emojiButton.measure(ex(dp(36f)), ex(dp(42f)))
+    pill.measure(ex(f.pillW), ex(max(dp(36f), f.rowH - dp(8f))))
+    emojiButton.measure(ex(dp(36f)), ex(dp(36f)))
     edit.measure(ex(f.textW), ex(f.textH))
-    cameraButton.measure(ex(dp(40f)), ex(dp(42f)))
+    cameraButton.measure(ex(dp(40f)), ex(dp(36f)))
     videoNoteButton.measure(ex(dp(40f)), ex(dp(44f)))
     actionButton.measure(ex(dp(44f)), ex(dp(44f)))
     voice.panel.measure(ex(max(0, f.actionX - dp(4f) - dp(4f))), ex(dp(44f)))
@@ -1123,12 +1124,13 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     videoNoteButton.layout(vnX, rowBottom - dp(44f), vnX + dp(40f), rowBottom)
     val recording = voice.isActive
     videoNoteButton.visibility = if (f.videoNote && !recording) View.VISIBLE else View.GONE
-    pill.layout(f.pillX, rowTop + dRow, f.pillX + f.pillW, rowTop + f.rowH)
-    val inBottom = rowBottom - dp(1f)
+    val pillBottom = rowBottom - dp(4f)
+    pill.layout(f.pillX, min(pillBottom - dp(36f), rowTop + dp(4f) + dRow), f.pillX + f.pillW, pillBottom)
+    val inBottom = pillBottom - dp(1f)
     emojiButton.visibility = if (showEmoji) View.VISIBLE else View.GONE
-    emojiButton.layout(f.pillX + dp(4f), inBottom - dp(42f), f.pillX + dp(40f), inBottom)
+    emojiButton.layout(f.pillX + dp(4f), pillBottom - dp(36f), f.pillX + dp(40f), pillBottom)
     val camX = f.pillX + f.pillW - dp(4f) - dp(40f)
-    cameraButton.layout(camX, inBottom - dp(42f), camX + dp(40f), inBottom)
+    cameraButton.layout(camX, pillBottom - dp(36f), camX + dp(40f), pillBottom)
     if (cameraVisible != f.camera) {
       cameraVisible = f.camera
       cameraButton.animate().cancel()

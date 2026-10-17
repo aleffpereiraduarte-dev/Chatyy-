@@ -110,8 +110,9 @@ final class CMLStyle {
     quoteName = UIFont.systemFont(ofSize: 13 * scale, weight: .semibold)
     quoteText = UIFont.systemFont(ofSize: 13 * scale)
     quoteItalic = UIFont.italicSystemFont(ofSize: 13 * scale)
-    pill = UIFont.systemFont(ofSize: 12.5 * scale, weight: .semibold)
-    system = UIFont.systemFont(ofSize: 13 * scale)
+    // [2026-10-17 wa-pills] data e sistema = 12,5 medium (WhatsApp iOS)
+    pill = UIFont.systemFont(ofSize: 12.5 * scale, weight: .medium)
+    system = UIFont.systemFont(ofSize: 12.5 * scale, weight: .medium)
     unread = UIFont.systemFont(ofSize: 13 * scale, weight: .semibold)
     react = UIFont.systemFont(ofSize: 13 * scale)
     fileName = UIFont.systemFont(ofSize: 14 * scale, weight: .medium)
@@ -322,7 +323,7 @@ enum CMLLayoutBuilder {
   static let side: CGFloat = 8
   static let tail: CGFloat = 6
   static let padH: CGFloat = 12
-  static let padV: CGFloat = 6
+  static let padV: CGFloat = 7   // [2026-10-17 wa-bubble] 7/12 (WhatsApp iOS)
   static let mediaInset: CGFloat = 3
   static let metaGap: CGFloat = 6
   static let selGutter: CGFloat = 38
@@ -420,11 +421,12 @@ enum CMLLayoutBuilder {
     let L = CMLRowLayout()
     L.kind = row.kind
     let maxW = floor(s.width * 0.8) - 24
-    let lh = ceil(font.lineHeight + 3)
+    // [2026-10-17 wa-pills] padding ~5 vertical / 12 horizontal
+    let lh = ceil(font.lineHeight + 1)
     let t = CMLTextLayout.make(plain(row.text, font: font, color: color), maxWidth: maxW, lineHeight: lh, font: font, maxLines: row.kind == .date ? 1 : 6)
     L.pillText = t
     let pw = min(s.width - 32, t.size.width + 24)
-    let ph = max(24, t.size.height + 8)
+    let ph = max(24, t.size.height + 10)
     let top: CGFloat = row.kind == .date ? 8 : 6
     L.pillFrame = CGRect(x: floor((s.width - pw) / 2), y: top, width: pw, height: ph)
     L.pillTextFrame = CGRect(x: L.pillFrame.minX + floor((pw - t.size.width) / 2), y: L.pillFrame.minY + floor((ph - t.size.height) / 2), width: t.size.width + 1, height: t.size.height)
@@ -471,7 +473,7 @@ enum CMLLayoutBuilder {
   // MARK: mensagem
 
   /// [2026-10-17 fwd-label] largura reservada p/ a seta do "Encaminhada" (dupla se ≥ 5).
-  static func fwdIconW(_ row: CMLRow) -> CGFloat { row.forwardedMany ? 19 : 14 }
+  static func fwdIconW(_ row: CMLRow) -> CGFloat { row.forwardedMany ? 21 : 16 } // ícone 12 + ~4 de respiro
 
   static func buildMessage(_ row: CMLRow, _ s: CMLStyle) -> CMLRowLayout {
     let L = CMLRowLayout()

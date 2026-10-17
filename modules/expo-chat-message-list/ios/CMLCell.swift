@@ -254,7 +254,8 @@ final class CMLCell: UICollectionViewCell {
         pillBg.layer.cornerRadius = 0
       default:
         pillBg.backgroundColor = th.pillBg
-        pillBg.layer.cornerRadius = min(12, L.pillFrame.height / 2)
+        pillBg.layer.cornerRadius = min(8, L.pillFrame.height / 2) // [2026-10-17 wa-pills]
+        if #available(iOS 13.0, *) { pillBg.layer.cornerCurve = .continuous }
       }
       if blocks.info != nil { blocks.apply(nil, key: key, placeholder: nil) }
       return
@@ -299,8 +300,8 @@ final class CMLCell: UICollectionViewCell {
       let iw = CMLLayoutBuilder.fwdIconW(row)
       fwdIcon.kind = row.forwardedMany ? .forwardMany : .forward
       fwdIcon.color = row.own ? th.ownMeta : th.otherMeta
-      let h: CGFloat = 13
-      place(fwdIcon, CGRect(x: L.fwdFrame.minX - iw, y: L.fwdFrame.midY - h / 2, width: iw - 1, height: h), true)
+      let h: CGFloat = 12
+      place(fwdIcon, CGRect(x: L.fwdFrame.minX - iw, y: L.fwdFrame.midY - h / 2, width: iw - 4, height: h), true)
     } else {
       fwdIcon.isHidden = true
     }

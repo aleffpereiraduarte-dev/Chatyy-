@@ -479,6 +479,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private let padTop: CGFloat = 6
   private let gap: CGFloat = 4
   private let rowMin: CGFloat = 44
+  // [2026-10-17 wa-composer] pílula 36pt (1 linha), raio 18, centrada na linha de 44 dos botões
+  private let pillInsetV: CGFloat = 4
+  private let pillMinH: CGFloat = 36
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -500,7 +503,8 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     plusSpinner.isUserInteractionEnabled = false
     plusButton.addSubview(plusSpinner)
 
-    pillView.layer.cornerRadius = 22
+    pillView.layer.cornerRadius = 18
+    if #available(iOS 13.0, *) { pillView.layer.cornerCurve = .continuous }
     pillView.layer.borderWidth = 1
     barView.addSubview(pillView)
 
@@ -512,7 +516,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     textView.font = font
     textView.adjustsFontForContentSizeCategory = true
     textView.backgroundColor = .clear
-    textView.textContainerInset = UIEdgeInsets(top: 11, left: 4, bottom: 11, right: 4)
+    textView.textContainerInset = UIEdgeInsets(top: 7, left: 4, bottom: 7, right: 4)
     textView.textContainer.lineFragmentPadding = 0
     textView.isScrollEnabled = false
     textView.scrollsToTop = false
@@ -1018,11 +1022,11 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let rightPad: CGFloat = f.camera ? 40 + 4 : 4
     f.textW = max(40, f.pillW - f.textX - rightPad)
     let lineH = textView.font?.lineHeight ?? 19
-    let maxH = ceil(lineH * CGFloat(maxLines)) + 22
+    let maxH = ceil(lineH * CGFloat(maxLines)) + 14
     let fit = ceil(textView.sizeThatFits(CGSize(width: f.textW, height: .greatestFiniteMagnitude)).height)
     f.scroll = fit > maxH
-    f.textH = max(42, min(fit, maxH))
-    f.rowH = recording ? rowMin : max(rowMin, f.textH + 2)
+    f.textH = max(pillMinH - 2, min(fit, maxH))
+    f.rowH = recording ? rowMin : max(rowMin, f.textH + 2 + pillInsetV * 2)
     f.barH = padTop + f.rowH + max(8, bottomInset)
     if replyVisible {
       f.cardH = replyCard.preferredHeight(width: W - 16)
@@ -1090,9 +1094,10 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     videoNoteButton.isHidden = !f.videoNote
     videoNoteButton.alpha = f.videoNote ? 1 : 0
     videoNoteButton.frame = CGRect(x: actionX - 2 - 40, y: rowBottom - 44, width: 40, height: 44)
-    pillView.frame = CGRect(x: f.pillX, y: padTop, width: f.pillW, height: f.rowH)
+    let pillH = max(pillMinH, f.rowH - pillInsetV * 2)
+    pillView.frame = CGRect(x: f.pillX, y: padTop + pillInsetV, width: f.pillW, height: pillH)
     emojiButton.isHidden = !showEmoji
-    emojiButton.frame = CGRect(x: 4, y: f.rowH - 1 - 42, width: 36, height: 42)
+    emojiButton.frame = CGRect(x: 4, y: pillH - pillMinH, width: 36, height: pillMinH)
     if cameraVisible != f.camera {
       cameraVisible = f.camera
       cameraButton.isHidden = false
@@ -1103,12 +1108,12 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     } else {
       cameraButton.isHidden = !f.camera
     }
-    cameraButton.frame = CGRect(x: f.pillW - 4 - 40, y: f.rowH - 1 - 42, width: 40, height: 42)
+    cameraButton.frame = CGRect(x: f.pillW - 4 - 40, y: pillH - pillMinH, width: 40, height: pillMinH)
     let wasScroll = textView.isScrollEnabled
     if wasScroll != f.scroll {
       textView.isScrollEnabled = f.scroll
     }
-    textView.frame = CGRect(x: f.textX, y: f.rowH - 1 - f.textH, width: f.textW, height: f.textH)
+    textView.frame = CGRect(x: f.textX, y: pillH - 1 - f.textH, width: f.textW, height: f.textH)
     if f.scroll && !wasScroll {
       let sel = textView.selectedRange
       DispatchQueue.main.async { [weak self] in self?.textView.scrollRangeToVisible(sel) }

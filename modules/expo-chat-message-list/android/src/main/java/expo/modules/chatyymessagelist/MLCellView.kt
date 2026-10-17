@@ -785,7 +785,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
         c.drawRect(L.pillFrame, fill)
       } else if (r.text.isNotEmpty()) {
         fill.color = th.pillBg
-        val rad = min(s.dp(12f), L.pillFrame.height() / 2)
+        val rad = min(s.dp(8f), L.pillFrame.height() / 2) // [2026-10-17 wa-pills]
         c.drawRoundRect(L.pillFrame, rad, rad, fill)
       }
       drawText(c, L.pillText, L.pillTextFrame.left, L.pillTextFrame.top)
@@ -828,7 +828,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     L.name?.let { drawText(c, it, L.nameFrame.left, L.nameFrame.top) }
     L.fwd?.let {
       drawText(c, it, L.fwdFrame.left, L.fwdFrame.top)
-      drawFwdArrows(c, L.fwdFrame.left - MLLayoutBuilder.fwdIconW(r, s), L.fwdFrame.centerY(), s.dp(13f), if (r.own) th.ownMeta else th.otherMeta, r.forwardedMany) // [2026-10-17 fwd-label]
+      drawFwdArrows(c, L.fwdFrame.left - MLLayoutBuilder.fwdIconW(r, s), L.fwdFrame.centerY(), s.dp(12f), if (r.own) th.ownMeta else th.otherMeta, r.forwardedMany) // [2026-10-17 fwd-label]
     }
     if (L.replyName != null) drawReply(c, L, r, s)
     // mídia

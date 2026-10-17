@@ -58,8 +58,9 @@ class MLStyle(
   val fwd = paint(sp(12f), Typeface.create(Typeface.DEFAULT, Typeface.ITALIC))
   val quoteName = paint(sp(13f), Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
   val quoteText = paint(sp(13f))
-  val pill = paint(sp(12.5f), Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
-  val system = paint(sp(13f))
+  // [2026-10-17 wa-pills] data e sistema = 12,5 medium (WhatsApp)
+  val pill = paint(sp(12.5f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
+  val system = paint(sp(12.5f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
   val unread = paint(sp(13f), Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
   val react = paint(sp(13f))
   val fileName = paint(sp(14f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
@@ -263,7 +264,7 @@ object MLLayoutBuilder {
     val t = MLText.make(colored(row.text, color), p, maxW, 0f, if (row.kind == MLKind.DATE) 1 else 6)
     L.pillText = t
     val pw = min(s.width - s.dp(32f), t.width + s.dp(24f))
-    val ph = max(s.dp(24f), t.height + s.dp(8f))
+    val ph = max(s.dp(24f), t.height + s.dp(10f)) // [2026-10-17 wa-pills] ~5 vertical / 12 horizontal
     val top = s.dp(if (row.kind == MLKind.DATE) 8f else 6f)
     L.pillFrame.set(floor((s.width - pw) / 2), top, floor((s.width - pw) / 2) + pw, top + ph)
     val tx = L.pillFrame.left + floor((pw - t.width) / 2)
@@ -308,7 +309,7 @@ object MLLayoutBuilder {
   }
 
   /** [2026-10-17 fwd-label] largura reservada p/ a seta do "Encaminhada" (dupla se ≥ 5). */
-  fun fwdIconW(row: MLRow, s: MLStyle): Float = s.dp(if (row.forwardedMany) 19f else 14f)
+  fun fwdIconW(row: MLRow, s: MLStyle): Float = s.dp(if (row.forwardedMany) 21f else 16f) // ícone 12 + ~4 de respiro
 
   private fun buildMessage(row: MLRow, s: MLStyle): MLRowLayout {
     val L = MLRowLayout()
@@ -320,7 +321,7 @@ object MLLayoutBuilder {
     val side = s.dp(8f)
     val tail = s.dp(6f)
     val padH = s.dp(12f)
-    val padV = s.dp(6f)
+    val padV = s.dp(7f) // [2026-10-17 wa-bubble] 7/12 (WhatsApp)
     val inset = s.dp(3f)
     val gap = s.dp(6f)
     val gutter = if (row.sel > 0) s.dp(38f) else 0f

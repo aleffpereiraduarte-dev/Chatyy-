@@ -201,10 +201,11 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     rv.addRecyclerListener { h -> (h.itemView as? MLCellView)?.let { vnPlayer.stopIf(it) } }
     MLEmojiCache.appContext = context.applicationContext
     // pílula de data flutuante (estilo do JS: pad 14/6, raio 14, 12sp 700, sombra)
-    sticky.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12f)
-    sticky.typeface = MLFonts.of(700, false, false)
+    // [2026-10-17 wa-pills] = pílula de data da lista: 12,5 medium, pad 12/5, raio 8
+    sticky.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12.5f)
+    sticky.typeface = MLFonts.of(500, false, false)
     sticky.includeFontPadding = false
-    sticky.setPadding(dp(14f).toInt(), dp(6f).toInt(), dp(14f).toInt(), dp(6f).toInt())
+    sticky.setPadding(dp(12f).toInt(), dp(5f).toInt(), dp(12f).toInt(), dp(5f).toInt())
     sticky.gravity = Gravity.CENTER
     sticky.elevation = dp(4f)
     sticky.alpha = 0f
@@ -254,7 +255,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     val bg = MLRow.color(m["bg"]) ?: 0xF2FFFFFF.toInt()
     val fg = MLRow.color(m["fg"]) ?: 0xB3000000.toInt()
     val d = GradientDrawable()
-    d.cornerRadius = dp(14f)
+    d.cornerRadius = dp(8f)
     d.setColor(bg)
     sticky.background = d
     sticky.setTextColor(fg)
