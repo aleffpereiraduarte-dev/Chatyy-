@@ -17,6 +17,9 @@ import LiveSetupScreen from '../components/live/LiveSetupScreen';
 import AvatarCircle from '../components/AvatarCircle';
 import { cleanParticipantName, prettifyHandle } from '../services/displayName';
 import formatLiveChatContent from '../utils/formatLiveChatContent';
+import { IconSwitchCamera, IconSparklesOutline, IconZap, IconMoreHorizontal, IconMessageCircle } from '../components/Icons';
+import { LiveGlass, LiveGlassCircle, LiveHostTopBar, LiveHostRail, LiveRailButton, LiveHostMoreSheet, trLive } from '../components/live/LiveHostControls';
+import { isReduceMotionEnabled } from '../constants/motion';
 import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay, IconFlashlight } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
@@ -384,6 +387,8 @@ function LiveBroadcastScreen() {
   // only the heart counter + a single chevron; tap chevron to expand the
   // full action stack (settings/effects/filter/AR/replay/pin/poll/flip).
   const [rightStackOpen, setRightStackOpen] = useState(false);
+  // [2026-10-17 live-host-redesign] grade "Mais" do trilho direito.
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // ─── AR / Beauty / Greenscreen filter carousel (wave 16, 2026-05-17) ───
   // The native LiveHostViewController (iOS) and LiveHostActivity (Android)
@@ -626,6 +631,8 @@ function LiveBroadcastScreen() {
   // any "we're live" surface in the app reads as one rhythm.
   const livePulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
+    // [2026-10-17] Reduzir Movimento → sem pulsação (ponto fica parado).
+    if (isReduceMotionEnabled()) { livePulse.setValue(1); return undefined; }
     const loop = Animated.loop(Animated.sequence([
       Animated.timing(livePulse, { toValue: 1.5, duration: 700, useNativeDriver: true }),
       Animated.timing(livePulse, { toValue: 1, duration: 700, useNativeDriver: true }),
@@ -2608,7 +2615,9 @@ function LiveBroadcastScreen() {
     // Guard against double-taps + missing stream (pre-live or after end).
     if (flipInFlightRef.current) return;
     const stream = localStreamRef.current;
-    if (!stream) return;
+    // [2026-10-17 live-host-redesign] Ao vivo (LiveKit) a câmera publicada é
+    // a faixa do LK — não exige o stream do getUserMedia da prévia.
+    if (!stream && !(lkRoomRef.current && lkRoomRef.current.localParticipant)) return;
     flipInFlightRef.current = true;
 
     const prevFacing = facingRef.current;
@@ -2662,6 +2671,7 @@ function LiveBroadcastScreen() {
         // host preview still flips even if the LK restart path failed.
       }
     }
+    if (!stream) { flipInFlightRef.current = false; return; }
 
     try {
       // Native fast-path: `_switchCamera` toggles the existing track's
@@ -4290,6 +4300,29 @@ function LiveBroadcastScreen() {
     );
   }
 
+  // [2026-10-17 live-host-redesign] helpers do chrome ao vivo.
+  const liveMultistreamCount = multistreamDests.filter(d => d.status === 'live').length;
+  // Bug #978-6 — confirmação clara ao alternar o replay (mesma lógica do
+  // antigo botão do trilho; agora bloco do "Mais").
+  const onToggleSaveReplay = () => {
+    setSaveReplay(v => {
+      const next = !v;
+      // [lives 2026-10-10] Live já no ar → liga/desliga o egress agora.
+      try {
+        const _sid = sessionIdRef.current;
+        if (_sid && lkModeRef.current && typeof api.liveRecordSet === 'function') {
+          if (next) recordedRef.current = true;
+          api.liveRecordSet(_sid, next).catch(() => {});
+        }
+      } catch {}
+      hostToast(next
+        ? trLive(t, 'live.saveReplayOn', 'Replay será salvo por 7 dias')
+        : trLive(t, 'live.saveReplayOff', 'Replay não será salvo'));
+      return next;
+    });
+  };
+
+
   // Live broadcasting screen
   return (
     <View style={styles.fullScreen}>
@@ -4325,7 +4358,7 @@ function LiveBroadcastScreen() {
         <View style={{
           position: 'absolute',
           top: (insets?.top || 0) + 110,
-          right: 14,
+          right: 80, // [2026-10-17] à esquerda do trilho direito (LiveHostRail)
           width: 110,
           height: 150,
           borderRadius: 14,
@@ -4390,120 +4423,41 @@ function LiveBroadcastScreen() {
         </View>
       )}
 
-      {/* Top bar — TikTok-grade: avatar + LIVE pulsing badge + viewer pill +
-          duration timer + connection-quality bars + close. Glass background. */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
-        <View style={styles.topLeft} pointerEvents="box-none">
-          {/* Host avatar with a red pulse ring — same red as the LIVE pill so
-              the "we are live" rhythm reads as one beat. The ring sits behind
-              the avatar (Animated.View at -3 inset) so the image itself stays
-              crisp; only the halo scales. */}
-          <View style={styles.hostAvatarWrap}>
-            <Animated.View
-              pointerEvents="none"
-              style={[styles.hostAvatarPulseRing, {
-                transform: [{ scale: livePulse }],
-                opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.7, 0] }),
-              }]}
-            />
-            <View style={styles.hostAvatarRing} pointerEvents="none" />
-            <AvatarCircle name={user?.name || user?.email} email={user?.email} size={48} />
+      {/* [2026-10-17 live-host-redesign] Top bar em flex (components/live/
+          LiveHostControls): cápsula avatar+nome+título · encerrar; abaixo,
+          AO VIVO+tempo · olho/coração/sinal · top fãs/Q&A. O título não é
+          mais desenhado por cima da pílula de espectadores. */}
+      <LiveHostTopBar
+        t={t}
+        paddingTop={insets.top}
+        hostName={cleanParticipantName({ name: user?.name || '', identity: user?.email || '' })}
+        hostEmail={user?.email}
+        title={titleInput}
+        durationText={formatDuration(liveDuration)}
+        viewerCount={viewerCount}
+        totalLikes={totalLikes}
+        quality={connQuality}
+        livePulse={livePulse}
+        engage={likeEngage}
+        onPressStats={() => setInsightsOpen(true)}
+        onEnd={handleEndLive}
+      >
+        {liveMultistreamCount > 0 ? (
+          <View style={[styles.multistreamPill, styles.multistreamPillInline]} pointerEvents="none">
+            <View style={styles.multistreamPillDot} />
+            <Text style={styles.multistreamPillText} numberOfLines={1}>
+              {(t('live.multistreamingTo') || 'Transmitindo para').replace('{n}', String(liveMultistreamCount))}
+              {' '}
+              {liveMultistreamCount}
+              {' '}
+              {(t('live.destinations') || 'destinos')}
+            </Text>
           </View>
-          <View style={styles.hostMeta}>
-            <View style={styles.liveBadge}>
-              {/* Two expanding halo rings — pulse rhythm matches livePulse.
-                  Halo 1 starts at scale 1, halo 2 lags via livePulse2 so the
-                  outward expansion reads as a continuous wave (TikTok parity). */}
-              <Animated.View
-                pointerEvents="none"
-                style={[styles.liveBadgeHalo, {
-                  transform: [{ scale: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1, 1.8] }) }],
-                  opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.5, 0] }),
-                }]}
-              />
-              <Animated.View
-                pointerEvents="none"
-                style={[styles.liveBadgeHalo, {
-                  transform: [{ scale: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1.2, 2.2] }) }],
-                  opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.35, 0] }),
-                }]}
-              />
-              <Animated.View style={[styles.liveBadgeDot, {
-                transform: [{ scale: livePulse }],
-                opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1, 0.6] }),
-              }]} />
-              <Text style={styles.liveBadgeText}>{t('live.live') || 'AO VIVO'}</Text>
-            </View>
-            {/* Round 66 (2026-05-18) issue #5 — tap the "N assistindo" pill
-                to open the Insights/viewers BottomSheet. Before this, the pill
-                was a plain <View> (no tap surface) and the only way to see who
-                joined was the bottom-left insights pill. Now both surfaces open
-                the same sheet — TikTok/Instagram parity. */}
-            <TouchableOpacity
-              onPress={() => setInsightsOpen(true)}
-              activeOpacity={0.7}
-              style={styles.viewerPill}
-              accessibilityRole="button"
-              accessibilityLabel={t('live.openViewersList') || 'Abrir lista de espectadores'}
-            >
-              <View style={styles.viewerDot} />
-              {/* AnimatedViewerCount drives the smooth 0→N tween + small
-                  pulse on increase. Replaces the static Animated.Text that
-                  was only bouncing via viewerBounce; formatCount inside
-                  the component handles the "k"/"M" formatting. */}
-              <AnimatedViewerCount count={viewerCount} style={styles.viewerCountText} />
-              <Text style={styles.viewerWatchText} numberOfLines={1}>{t('live.watching') || 'assistindo'}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        {/* Bug 7169 fix — explicit flexible spacer between left cluster and
-            right cluster so chips don't collide on narrow phones. Without
-            this, hostMeta (LIVE + viewer pill) and topRight (signal bars +
-            duration + close) were squeezing together and clipping at the
-            375pt iPhone width. */}
-        <View style={styles.topSpacer} pointerEvents="none" />
-        <View style={styles.topRight}>
-          <ConnectionBars quality={connQuality} t={t} />
-          <View style={styles.durationPill}>
-            <View style={styles.durationDotWrap}>
-              <Animated.View style={[styles.durationDotRing, {
-                transform: [{ scale: livePulse }],
-                opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.55, 0] }),
-              }]} />
-              <View style={styles.durationDot} />
-            </View>
-            <Text style={styles.durationText} numberOfLines={1}>{formatDuration(liveDuration)}</Text>
-          </View>
-          {/* Red end-live button — destaque visual (vs the cinza closeBtn2)
-              so the host immediately knows where to tap to end. Uses IconStop
-              (the stop square SVG) to communicate intent better than IconX. */}
-          <TouchableOpacity
-            onPress={handleEndLive}
-            style={styles.endLiveBtn}
-            accessibilityLabel={t('live.endLive') || 'Encerrar live'}
-            accessibilityRole="button"
-            activeOpacity={0.85}
-          >
-            <View style={styles.endLiveBtnInner} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* [lives-engage] curtidas totais + top fãs + Q&A (badge) logo abaixo da
-          top bar; camada com pergunta destacada, banners/tela cheia de
-          presentes e sheets. */}
-      <LiveHostEngageBar engage={likeEngage} top={insets.top + 80} />
+        ) : null}
+      </LiveHostTopBar>
       <LiveEngageLayer engage={likeEngage} isHost topInset={insets.top} cardTop={insets.top + 170} />
 
-      {/* [live-pk 2026-10-10] Botão "Batalha" (abaixo de "Convidados") + convites/resultado. */}
-      {sessionId ? (
-        <BattleHostButton
-          battle={battle}
-          t={t}
-          guard={() => { if (mgGuests.length > 0 && !battleSplit) { hostToast(t('liveBattle.guestsActive')); return true; } return false; }}
-          style={{ position: 'absolute', top: insets.top + 148, right: 16, zIndex: 30 }}
-        />
-      ) : null}
+      {/* [live-pk 2026-10-10] Batalha: botão no trilho (LiveHostRail); aqui só convites/resultado. */}
       <LiveBattleLayer battle={battle} t={t} isHost topInset={insets.top} bottomInset={insets.bottom} />
 
       {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
@@ -4556,19 +4510,10 @@ function LiveBroadcastScreen() {
         />
       ) : null}
 
-      {/* Title */}
-      {titleInput ? (
-        <View style={styles.titleBar}>
-          <Text style={styles.liveTitle} numberOfLines={1}>
-            {titleInput}
-          </Text>
-        </View>
-      ) : null}
-
       {/* Pinned comment — brand-purple accent + IconPin SVG (no emoji per
           design rule: components/Icons.js only for UI affordances). */}
       {pinnedComment ? (
-        <View style={[styles.pinnedWrap, { top: titleInput ? 130 : 100 }]}>
+        <View style={[styles.pinnedWrap, { top: insets.top + (liveMultistreamCount > 0 ? 134 : 104), right: 84 }]}>
           <View style={styles.pinnedCard}>
             <View style={styles.pinnedIconWrap}>
               <IconPin size={14} color="#fff" />
@@ -4606,209 +4551,154 @@ function LiveBroadcastScreen() {
         </View>
       ) : null}
 
-      {/* Right-side vertical action stack — TikTok pattern: settings, effects,
-          filter, timer, pin. Stacked above the bottom controls so they don't
-          collide with the chat overlay.
-          Round 2026-05-18 polish — collapsed by default (single chevron pill).
-          Host taps chevron to expand; tap again to collapse. Keeps the stage
-          clean so the camera reads as the hero. The cumulative heart counter
-          + chevron stay visible at all times. */}
-      <View style={[styles.rightStack, { bottom: insets.bottom + 200 }]} pointerEvents="box-none">
-        {/* Cumulative heart counter — TikTok pattern: tiny heart + formatted
-            total ("❤️ 4.2K") sits above the action buttons so the host sees
-            love accumulate in real time. Reads from totalLikes (kept in sync
-            via WS live_heart events). */}
-        <View style={styles.heartCounterPill} pointerEvents="none">
-          <IconHeart size={12} color={LIVE_RED} />
-          <Text style={styles.heartCounterTextV2} numberOfLines={1}>
-            {formatViewerCount(totalLikes)}
-          </Text>
-        </View>
-        <TouchableOpacity
+      {/* [2026-10-17 live-host-redesign] Trilho direito: no máx. 5 ações com
+          rótulo (Virar câmera em 1º). O resto foi p/ o "Mais" (grade). O
+          trilho antigo vivia recolhido atrás de um chevron que ficava
+          ESCONDIDO sob as pílulas absolutas "Convidados"/"Batalha". */}
+      <LiveHostRail top={insets.top + 112}>
+        <LiveRailButton
+          label={trLive(t, 'liveHost.flip', 'Virar')}
+          a11yLabel={trLive(t, 'live.flipCamera', 'Virar câmera')}
+          icon={(c) => <IconSwitchCamera size={22} color={c} />}
           onPress={() => {
             try { Haptics.selectionAsync().catch(() => {}); } catch {}
-            setRightStackOpen(v => !v);
+            handleFlipCamera();
           }}
-          style={[styles.rightBtn, styles.rightStackToggle]}
-          activeOpacity={0.7}
-          accessibilityLabel={rightStackOpen
-            ? (t('live.collapseActions') || 'Recolher ações')
-            : (t('live.expandActions') || 'Expandir ações')}
-          accessibilityRole="button"
-          accessibilityState={{ expanded: rightStackOpen }}
-        >
-          {rightStackOpen
-            ? <IconChevronRight size={18} color="#fff" />
-            : <IconChevronDown size={18} color="#fff" />}
-        </TouchableOpacity>
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={() => setSettingsOpen(true)}
-          style={styles.rightBtn}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.settings') || 'Configurações'}
-          accessibilityRole="button"
-        >
-          <IconSettings size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={() => { setEffectsOn(v => !v); setEffectsOpen(true); }}
-          style={[styles.rightBtn, effectsOn && styles.rightBtnActiveEffects]}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.effects') || 'Effects'}
-          accessibilityRole="button"
-        >
-          <IconSparkles size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={() => setFilterOpen(true)}
-          style={[styles.rightBtn, activeFilter !== 'none' && styles.rightBtnActiveFilter]}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.filter') || 'Filter'}
-          accessibilityRole="button"
-        >
-          <IconFilter size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-        {/* AR/Beauty/Greenscreen carousel — wave 16 (2026-05-17). 8 presets
-            (dog ears, sunglasses, hearts, beauty smooth, slim face, blur bg,
-            greenscreen 6 wallpapers). Native MediaPipe pipeline owns the
-            actual effect; this button just toggles the carousel sheet.
-            Round 2026-05-18 — switched the raw "AR" text label for IconBrush
-            so the button stays consistent with the rest of the SVG iconography
-            (design rule: no raw text in icon buttons). */}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={() => setArCarouselOpen(v => !v)}
-          style={[styles.rightBtn, activeARFilter !== 'none' && styles.rightBtnActiveAr]}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.arFilters') || 'AR Filters'}
-          accessibilityRole="button"
-        >
-          <IconBrush size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          // Bug #978-6 — surface a clear confirmation when toggling. Before
-          // the only feedback was the icon swap (Star ↔ StarFilled) which the
-          // host often missed if they were watching the video. Now we fire a
-          // ToastAndroid / Alert with the new state so the choice registers,
-          // and we note the 7-day TTL so the host knows what to expect.
+        />
+        <LiveRailButton
+          label={trLive(t, 'liveHost.effects', 'Efeitos')}
+          icon={(c) => <IconSparklesOutline size={21} color={c} />}
+          active={arCarouselOpen || activeARFilter !== 'none'}
           onPress={() => {
-            setSaveReplay(v => {
-              const next = !v;
-              // [lives 2026-10-10] Live já no ar → liga/desliga o egress agora.
-              try {
-                const _sid = sessionIdRef.current;
-                if (_sid && lkModeRef.current && typeof api.liveRecordSet === 'function') {
-                  if (next) recordedRef.current = true;
-                  api.liveRecordSet(_sid, next).catch(() => {});
-                }
-              } catch {}
-              try {
-                const { ToastAndroid, Alert } = require('react-native');
-                const msg = next
-                  ? (t('live.saveReplayOn') || 'Replay será salvo por 7 dias')
-                  : (t('live.saveReplayOff') || 'Replay não será salvo');
-                if (Platform.OS === 'android' && ToastAndroid?.show) {
-                  ToastAndroid.show(msg, ToastAndroid.SHORT);
-                } else if (Platform.OS === 'ios' && Alert?.alert) {
-                  // iOS gets a tiny non-blocking note via the existing system
-                  // chip stack? Fall back to Alert for now — at least it's
-                  // unambiguous.
-                  Alert.alert(t('live.saveReplay') || 'Salvar replay', msg);
-                }
-              } catch {}
-              return next;
-            });
+            try { Haptics.selectionAsync().catch(() => {}); } catch {}
+            setArCarouselOpen(v => !v);
           }}
-          style={[styles.rightBtn, saveReplay && styles.rightBtnActiveSave]}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.saveReplay') || 'Salvar replay'}
-          accessibilityRole="button"
-          accessibilityState={{ checked: saveReplay }}
-        >
-          {saveReplay
-            ? <IconBookmarkFilled size={20} color="#fff" />
-            : <IconBookmark size={20} color="#fff" />}
-        </TouchableOpacity>
+        />
+        {(joinRequests.length > 0 || !!sessionId) ? (
+          <LiveRailButton
+            label={trLive(t, 'liveGuests.guestsButton', 'Convidados')}
+            a11yLabel={joinRequests.length > 0 ? t('liveGuests.requestsBadgeA11y', { count: joinRequests.length }) : trLive(t, 'liveGuests.guestsButton', 'Convidados')}
+            icon={(c) => <IconUsers size={21} color={c} />}
+            active={mgGuests.length > 0}
+            badge={joinRequests.length > 0 ? (joinRequests.length > 99 ? '99+' : String(joinRequests.length)) : null}
+            onPress={() => setRequestsOpen(true)}
+          />
         ) : null}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={pinLatestComment}
-          style={styles.rightBtn}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.pinComment') || 'Fixar o último'}
-          accessibilityRole="button"
-        >
-          <IconPin size={18} color="#fff" />
-        </TouchableOpacity>
+        {/* [live-pk 2026-10-10] Batalha PK — mesma lógica (sonda/fases/guard),
+            desenhada como item do trilho via renderButton. */}
+        {sessionId ? (
+          <BattleHostButton
+            battle={battle}
+            t={t}
+            guard={() => { if (mgGuests.length > 0 && !battleSplit) { hostToast(t('liveBattle.guestsActive')); return true; } return false; }}
+            renderButton={({ onPress, disabled, active, label }) => (
+              <LiveRailButton
+                label={active ? label : trLive(t, 'liveBattle.button', 'Batalha')}
+                a11yLabel={label}
+                icon={(c) => <IconZap size={21} color={c} />}
+                active={active}
+                disabled={disabled}
+                onPress={onPress}
+              />
+            )}
+          />
         ) : null}
-        {/* Poll button — opens the create-poll modal. Highlighted when an
-            active poll is on-screen (host can tap to jump to its overlay /
-            close it from there). Round 2026-05-18 — swapped the raw
-            "POLL"/"FIM" text for IconBarChart so the rail stays consistent
-            with the rest of the SVG iconography. The closed/active state
-            is now signaled via background tint instead of label swap. */}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={() => { if (activePoll && !activePoll.closed) { closeActivePoll(); } else { openPollDraft(); } }}
-          style={[styles.rightBtn, activePoll && !activePoll.closed && styles.rightBtnActivePoll]}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.poll') || 'Enquete'}
-          accessibilityRole="button"
-        >
-          <IconBarChart size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-        {rightStackOpen ? (
-        <TouchableOpacity
-          onPress={handleFlipCamera}
-          style={styles.rightBtn}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.flipCamera') || 'Virar câmera'}
-          accessibilityRole="button"
-        >
-          <IconCameraFlip size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-        {/* [2026-10-10 lives-2] Lanterna — só na câmera traseira e quando o
-            aparelho/binário suporta (web: torch da faixa; nativo: próximo build). */}
-        {rightStackOpen && torchAvail && !mirrorOn ? (
-        <TouchableOpacity
-          onPress={handleToggleTorch}
-          style={[styles.rightBtn, torchOn && styles.rightBtnActiveEffects]}
-          activeOpacity={0.7}
-          accessibilityLabel={torchOn ? (t('live.torchOff') || 'Desligar lanterna') : (t('live.torchOn') || 'Ligar lanterna')}
-          accessibilityRole="button"
-          accessibilityState={{ checked: torchOn }}
-        >
-          <IconFlashlight size={18} color="#fff" />
-        </TouchableOpacity>
-        ) : null}
-      </View>
+        <LiveRailButton
+          label={trLive(t, 'liveHost.more', 'Mais')}
+          a11yLabel={trLive(t, 'liveHost.moreTitle', 'Mais opções')}
+          icon={(c) => <IconMoreHorizontal size={22} color={c} />}
+          badge={(activePoll && !activePoll.closed) || torchOn ? true : null}
+          onPress={() => {
+            try { Haptics.selectionAsync().catch(() => {}); } catch {}
+            setArCarouselOpen(false);
+            setMoreOpen(true);
+          }}
+        />
+      </LiveHostRail>
 
-      {/* Live insights pill — bottom-left chip with viewer+reaction snapshot.
-          Tap opens the insights modal with the join feed. Backdrop blur on
-          web; soft dark fill on native (no native blur lib loaded here). */}
-      <TouchableOpacity
-        onPress={() => setInsightsOpen(true)}
-        activeOpacity={0.85}
-        style={[styles.insightsPill, { bottom: insets.bottom + 270, left: 14 }]}
-        accessibilityRole="button"
-        accessibilityLabel={t('live.insights') || 'Insights'}
-      >
-        <IconEye size={14} color="#fff" />
-        <Text style={styles.insightsPillText}>{formatViewerCount(viewerCount)}</Text>
-        <View style={styles.insightsPillDot} />
-        <IconHeart size={12} color="#fff" />
-        <Text style={styles.insightsPillText}>{formatViewerCount(totalLikes)}</Text>
-      </TouchableOpacity>
+      {/* "Mais" — grade de blocos rotulados. View sobreposta (não Modal):
+          blocos que abrem Modal (enquete) fecham a grade antes. */}
+      <LiveHostMoreSheet
+        visible={moreOpen}
+        onClose={() => setMoreOpen(false)}
+        title={trLive(t, 'liveHost.moreTitle', 'Mais opções')}
+        closeLabel={trLive(t, 'liveHost.close', 'Fechar')}
+        bottomInset={insets.bottom}
+        items={[
+          {
+            key: 'filter', label: trLive(t, 'liveHost.filter', 'Filtro'),
+            icon: (c) => <IconFilter size={22} color={c} />,
+            active: activeFilter !== 'none',
+            onPress: () => setFilterOpen(true),
+          },
+          {
+            key: 'beauty', label: trLive(t, 'liveHost.beauty', 'Beleza e AR'),
+            icon: (c) => <IconBrush size={22} color={c} />,
+            active: activeARFilter !== 'none',
+            onPress: () => setArCarouselOpen(true),
+          },
+          {
+            key: 'sparkle', label: trLive(t, 'liveHost.sparkle', 'Brilho'),
+            icon: (c) => <IconStar size={22} color={c} />,
+            active: effectsOn,
+            onPress: () => setEffectsOpen(true),
+          },
+          {
+            key: 'torch', label: trLive(t, 'liveHost.torch', 'Lanterna'),
+            hidden: !(torchAvail && !mirrorOn),
+            icon: (c) => <IconFlashlight size={22} color={c} />,
+            active: torchOn,
+            keepOpen: true,
+            onPress: handleToggleTorch,
+          },
+          {
+            key: 'replay', label: trLive(t, 'liveHost.saveReplay', 'Salvar replay'),
+            icon: (c) => (saveReplay ? <IconBookmarkFilled size={22} color={c} /> : <IconBookmark size={22} color={c} />),
+            active: saveReplay,
+            keepOpen: true,
+            onPress: onToggleSaveReplay,
+          },
+          {
+            key: 'pin', label: trLive(t, 'liveHost.pin', 'Fixar comentário'),
+            icon: (c) => <IconPin size={22} color={c} />,
+            onPress: pinLatestComment,
+          },
+          {
+            key: 'poll',
+            label: activePoll && !activePoll.closed ? trLive(t, 'liveHost.endPoll', 'Encerrar enquete') : trLive(t, 'liveHost.poll', 'Enquete'),
+            icon: (c) => <IconBarChart size={22} color={c} />,
+            active: !!(activePoll && !activePoll.closed),
+            onPress: () => {
+              if (activePoll && !activePoll.closed) { closeActivePoll(); return; }
+              // Enquete abre um <Modal>: espera a grade sair (iOS: nunca
+              // apresentar Modal enquanto outra camada anima).
+              setTimeout(openPollDraft, Platform.OS === 'ios' ? 220 : 0);
+            },
+          },
+          {
+            key: 'chat', label: hideChat ? trLive(t, 'liveHost.showChat', 'Mostrar chat') : trLive(t, 'liveHost.hideChat', 'Ocultar chat'),
+            icon: (c) => <IconMessageCircle size={22} color={c} />,
+            active: hideChat,
+            keepOpen: true,
+            onPress: () => setHideChat(v => !v),
+          },
+          {
+            key: 'stats', label: trLive(t, 'liveHost.stats', 'Espectadores'),
+            icon: (c) => <IconEye size={22} color={c} />,
+            onPress: () => setInsightsOpen(true),
+          },
+          {
+            key: 'invite', label: trLive(t, 'liveHost.invite', 'Convidar amigos'),
+            icon: (c) => <IconUserPlus size={22} color={c} />,
+            onPress: handleShare,
+          },
+          {
+            key: 'settings', label: trLive(t, 'liveHost.settings', 'Configurações'),
+            icon: (c) => <IconSettings size={22} color={c} />,
+            onPress: () => setSettingsOpen(true),
+          },
+        ]}
+      />
 
       {/* Floating hearts — Instagram-Live style: heart pop + tiny reactor
           avatar (when known) drifts up with it so the host instantly sees
@@ -4850,7 +4740,7 @@ function LiveBroadcastScreen() {
           effect onto the LK publish track. Greenscreen has 6 sub-wallpapers
           which appear as a 2nd row when greenscreen is the active preset. */}
       {arCarouselOpen ? (
-        <View style={[styles.arCarouselWrap, { bottom: insets.bottom + 280 }]} pointerEvents="box-none">
+        <View style={[styles.arCarouselWrap, { bottom: insets.bottom + 280, right: 76 }]} pointerEvents="box-none">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -4930,21 +4820,6 @@ function LiveBroadcastScreen() {
         </View>
       ) : null}
 
-      {/* Multistream "Transmitindo para N" pill — bottom-left of top bar.
-          Only renders when at least one destination is in `live` status. */}
-      {multistreamDests.filter(d => d.status === 'live').length > 0 ? (
-        <View style={[styles.multistreamPill, { top: insets.top + 64 }]} pointerEvents="none">
-          <View style={styles.multistreamPillDot} />
-          <Text style={styles.multistreamPillText}>
-            {(t('live.multistreamingTo') || 'Transmitindo para').replace('{n}', String(multistreamDests.filter(d => d.status === 'live').length))}
-            {' '}
-            {multistreamDests.filter(d => d.status === 'live').length}
-            {' '}
-            {(t('live.destinations') || 'destinos')}
-          </Text>
-        </View>
-      ) : null}
-
       {/* Bottom: scrolling chat overlay (bottom→up, fades at top), composer
           row with invite pill + text input + heart + share + flip. */}
       <View style={styles.bottomArea} pointerEvents="box-none">
@@ -4954,7 +4829,7 @@ function LiveBroadcastScreen() {
             an opaque black band ~50% of screen height across the host's
             face when broadcasting solo. THIS was the recurring "barra
             preta" bug — not the camera surface, not cohost grid. */}
-        <View style={[styles.chatScrollWrap, chatMessages.length === 0 && { height: 0 }]} pointerEvents="box-none">
+        <View style={[styles.chatScrollWrap, { marginRight: 72 }, chatMessages.length === 0 && { height: 0 }]} pointerEvents="box-none">
           {/* TikTok-grade comments overlay (round 921). Same component the
               viewer uses, with host-side long-press → pin/remove and the
               colored-chip tier system (host=purple, gift=gold, guest=cyan).
@@ -4981,34 +4856,22 @@ function LiveBroadcastScreen() {
           <View style={styles.chatTopFade} pointerEvents="none" />
         </View>
 
-        <View style={[styles.composerRow, { paddingBottom: (kbHeight > 0 ? kbHeight + 8 : insets.bottom + 12) }]}>
-          {/* Primary purple "Convidar amigos" pill — TikTok places this at the
-              bottom-left to drive viewer growth. */}
-          <TouchableOpacity
-            onPress={handleShare}
-            style={styles.invitePill}
-            activeOpacity={0.85}
-            accessibilityLabel={t('live.inviteFriends') || 'Convidar amigos'}
-            accessibilityRole="button"
-          >
-            <IconUserPlus size={14} color="#fff" />
-            <Text style={styles.invitePillText} numberOfLines={1}>
-              {t('live.inviteFriends') || 'Convidar amigos'}
-            </Text>
-          </TouchableOpacity>
-
-          <View style={styles.composerInputWrap}>
+        <View style={[styles.composerRow, { paddingBottom: (kbHeight > 0 ? kbHeight + 8 : insets.bottom + 10) }]}>
+          {/* [2026-10-17 live-host-redesign] "Convidar amigos" saiu daqui (vai
+              p/ o "Mais" + botão compartilhar) → o campo ocupa a largura toda
+              (antes truncava em "Adi…"). Botões = círculos de vidro 44pt. */}
+          <LiveGlass style={styles.composerGlass}>
             <TextInput
               ref={composerInputRef}
               style={styles.composerInput}
               value={commentDraft}
               onChangeText={setCommentDraft}
-              placeholder={t('live.commentHint') || 'Adicionar comentário…'}
-              placeholderTextColor="rgba(255,255,255,0.55)"
+              placeholder={trLive(t, 'liveHost.comment', 'Comentar…')}
+              placeholderTextColor="rgba(255,255,255,0.6)"
               onSubmitEditing={submitComposer}
               returnKeyType="send"
               blurOnSubmit={false}
-              accessibilityLabel={t('live.commentHint') || 'Add comment'}
+              accessibilityLabel={trLive(t, 'liveHost.comment', 'Comentar…')}
               maxLength={300}
             />
             {commentDraft.trim().length > 0 ? (
@@ -5016,56 +4879,48 @@ function LiveBroadcastScreen() {
                 onPress={submitComposer}
                 style={styles.composerSendBtn}
                 activeOpacity={0.7}
-                accessibilityLabel={t('live.send') || 'Enviar'}
+                accessibilityLabel={trLive(t, 'live.send', 'Enviar')}
                 accessibilityRole="button"
               >
-                <IconSend size={16} color="#fff" />
+                <IconSend size={16} color="#000" />
               </TouchableOpacity>
             ) : null}
-          </View>
+          </LiveGlass>
 
-          <TouchableOpacity
+          <LiveGlassCircle
             onPress={() => {
               try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); } catch {}
               handleSelfHeart();
             }}
-            style={[styles.composerIconBtn, styles.heartBtn]}
-            activeOpacity={0.7}
-            accessibilityLabel={t('live.like') || 'Like'}
-            accessibilityRole="button"
+            label={trLive(t, 'live.like', 'Curtir')}
           >
-            <IconHeart size={18} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleShare}
-            style={styles.composerIconBtn}
-            activeOpacity={0.7}
-            accessibilityLabel={t('live.share') || 'Compartilhar'}
-            accessibilityRole="button"
-          >
-            <IconShare size={18} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity
+            <IconHeart size={20} color="#fff" />
+          </LiveGlassCircle>
+          <LiveGlassCircle onPress={handleShare} label={trLive(t, 'live.share', 'Compartilhar')}>
+            <IconShare size={19} color="#fff" />
+          </LiveGlassCircle>
+          <LiveGlassCircle
             onPress={() => {
               try { Haptics.selectionAsync().catch(() => {}); } catch {}
               handleToggleMute();
             }}
-            style={[styles.composerIconBtn, audioMuted && styles.composerIconBtnActive, !audioMuted && styles.composerIconBtnMicLive]}
-            activeOpacity={0.7}
-            accessibilityLabel={audioMuted ? (t('live.unmute') || 'Ativar som') : (t('live.mute') || 'Silenciar')}
-            accessibilityRole="button"
+            active={audioMuted}
+            selected={audioMuted}
+            label={audioMuted ? trLive(t, 'live.unmute', 'Ativar microfone') : trLive(t, 'live.mute', 'Silenciar microfone')}
           >
-            {audioMuted ? <IconMicOff size={18} color="#fff" /> : <IconMic size={18} color="#fff" />}
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={handleToggleVideo}
-            style={[styles.composerIconBtn, videoOff && styles.composerIconBtnActive]}
-            activeOpacity={0.7}
-            accessibilityLabel={videoOff ? (t('call.videoOn') || 'Ligar vídeo') : (t('call.videoOff') || 'Desligar vídeo')}
-            accessibilityRole="button"
+            {audioMuted ? <IconMicOff size={19} color="#000" /> : <IconMic size={19} color="#fff" />}
+          </LiveGlassCircle>
+          <LiveGlassCircle
+            onPress={() => {
+              try { Haptics.selectionAsync().catch(() => {}); } catch {}
+              handleToggleVideo();
+            }}
+            active={videoOff}
+            selected={videoOff}
+            label={videoOff ? trLive(t, 'call.videoOn', 'Ligar vídeo') : trLive(t, 'call.videoOff', 'Desligar vídeo')}
           >
-            {videoOff ? <IconVideoOff size={18} color="#fff" /> : <IconVideo size={18} color="#fff" />}
-          </TouchableOpacity>
+            {videoOff ? <IconVideoOff size={19} color="#000" /> : <IconVideo size={19} color="#fff" />}
+          </LiveGlassCircle>
         </View>
       </View>
 
@@ -5242,62 +5097,7 @@ function LiveBroadcastScreen() {
       {/* Filter sheet — 5 looks. Tap applies live; tap "Nenhum" clears. */}
       {renderFilterSheet()}
 
-      {/* Join requests pill — Instagram-style "Pedidos" chip pinned at right:16
-          top:100 (relative to insets) with a small red badge bubble showing
-          the pending count. Brand-purple body keeps it as the dominant CTA
-          without screaming red — the count badge handles urgency. */}
-      {/* [multi-guest 2026-10-10] Sempre visível ao vivo ("Convidados"): abre o
-          painel (pedidos / no palco / convidar). Badge só com pedidos. */}
-      {(joinRequests.length > 0 || !!sessionId) ? (
-        <TouchableOpacity
-          onPress={() => setRequestsOpen(true)}
-          activeOpacity={0.85}
-          accessibilityRole="button"
-          accessibilityLabel={joinRequests.length > 0 ? t('liveGuests.requestsBadgeA11y', { count: joinRequests.length }) : t('liveGuests.guestsButton')}
-          style={{
-            position: 'absolute', top: insets.top + 100, right: 16,
-            backgroundColor: '#111111', borderRadius: 16,
-            paddingHorizontal: 12, paddingVertical: 8,
-            flexDirection: 'row', alignItems: 'center', gap: 6,
-            zIndex: 30,
-            ...(Platform.OS === 'web' ? {
-              boxShadow: '0 4px 14px rgba(17, 17, 17,0.5)',
-            } : {}),
-          }}
-        >
-          {joinRequests.length > 0 ? (
-            <Animated.View
-              style={{
-                width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff',
-                transform: [{ scale: livePulse }],
-                shadowColor: '#fff', shadowOpacity: 0.8, shadowRadius: 6,
-              }}
-            />
-          ) : <IconUsers size={14} color="#fff" />}
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
-            {mgGuests.length > 0 ? `${t('liveGuests.guestsButton')} ${mgGuests.length}/4` : t('liveGuests.guestsButton')}
-          </Text>
-          {/* Red count badge — TikTok pattern: small bubble in the top-right
-              corner of the chip so the host immediately sees "how many waiting". */}
-          {joinRequests.length > 0 ? <View style={{
-            position: 'absolute',
-            top: -4, right: -4,
-            minWidth: 18, height: 18,
-            paddingHorizontal: 5,
-            borderRadius: 9,
-            backgroundColor: LIVE_RED,
-            alignItems: 'center', justifyContent: 'center',
-            borderWidth: 1.5, borderColor: '#000',
-          }}>
-            <Text style={{
-              color: '#000', fontWeight: '900', fontSize: 10,
-              fontVariant: ['tabular-nums'],
-            }}>
-              {joinRequests.length > 99 ? '99+' : joinRequests.length}
-            </Text>
-          </View> : null}
-        </TouchableOpacity>
-      ) : null}
+      {/* [2026-10-17 live-host-redesign] "Convidados" agora vive no trilho direito (LiveHostRail). */}
 
       {/* Stage 3 of #929 — cohost PiP grid. Up to 4 approved cohosts publishing
           into the LK room render as a 2×2 grid (TikTok parity for multi-guest
@@ -5324,7 +5124,7 @@ function LiveBroadcastScreen() {
           pointerEvents="none"
           style={{
             position: 'absolute',
-            right: 8,
+            right: 80, // [2026-10-17] à esquerda do trilho direito (LiveHostRail)
             top: insets.top + 110,
             width: 200, // 2 × 96 + gap 8 → wraps after 2 cards
             zIndex: 25,
@@ -6558,7 +6358,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingTop: 10,
   },
   invitePill: {
@@ -6596,9 +6396,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
+  // [2026-10-17 live-host-redesign] campo de comentário em vidro, largura toda.
+  composerGlass: {
+    flex: 1,
+    minWidth: 0,
+    height: 44,
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 16,
+    paddingRight: 4,
+  },
+  multistreamPillInline: {
+    position: 'relative',
+    left: 0, top: 0,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+  },
   composerSendBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#111111',
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: '#ffffff',
     alignItems: 'center', justifyContent: 'center',
   },
   composerIconBtn: {

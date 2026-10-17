@@ -249,13 +249,22 @@ function probeBattleBackend() {
   return _battleProbe;
 }
 
-export const BattleHostButton = memo(function BattleHostButton({ battle, t, style, disabled, guard }) {
+// [2026-10-17 live-host-redesign] `renderButton({ onPress, disabled, active, label })`
+// deixa o host desenhar o botão no próprio trilho (círculo de vidro + rótulo)
+// mantendo sonda do backend / fases / guard aqui dentro.
+export const BattleHostButton = memo(function BattleHostButton({ battle, t, style, disabled, guard, renderButton }) {
   const [backendOk, setBackendOk] = useState(_battleBackendOk);
   useEffect(() => { let on = true; probeBattleBackend().then((v) => { if (on) setBackendOk(v); }); return () => { on = false; }; }, []);
   const phase = useBattleSelector(battle, selPhase);
   const inBattle = phase === PHASE.ACTIVE;
   const label = inBattle ? t('liveBattle.endBattle') : t('liveBattle.button');
   if (backendOk !== true && !inBattle) return null;
+  const isDisabled = !!(disabled || phase === PHASE.OUTGOING || phase === PHASE.INCOMING || phase === PHASE.ENDED);
+  const onPress = () => {
+    if (!inBattle && typeof guard === 'function' && guard()) return;
+    if (inBattle) battle.askEnd(); else battle.openPicker();
+  };
+  if (typeof renderButton === 'function') return renderButton({ onPress, disabled: isDisabled, active: inBattle, label });
   return (
     <Pressable
       onPress={() => {
