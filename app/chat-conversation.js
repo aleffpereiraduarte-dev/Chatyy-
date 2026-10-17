@@ -3432,7 +3432,7 @@ function _lpCacheSet(url, val) {
 
 // Domains we never preview — our own (cards would just be noise: chat
 // list items linking back to the app).
-const LP_SKIP_HOSTS = ['chatyy.com.br', 'www.chatyy.com.br', 'media.chatyy.com.br', 'api-br.chatyy.com.br', 'api-us.chatyy.com.br'];
+const LP_SKIP_HOSTS = ['chatyy.com.br', 'www.chatyy.com.br', 'media.chatyy.com.br', 'api-br.chatyy.com.br', 'api-br2.chatyy.com.br', 'api-us.chatyy.com.br'];
 function _lpShouldSkip(url) {
   try {
     const m = url.match(/^https?:\/\/([^/]+)/i);

@@ -11,6 +11,13 @@ const EDGE_SERVERS = [
   // bearer works on every region and we can always fall back to US.
   { url: 'https://chatyy.com.br', region: 'us', base: 'https://chatyy.com.br' },
   { url: 'https://api-br.chatyy.com.br', region: 'br', base: 'https://api-br.chatyy.com.br' },
+  // [2026-10-17 br2-pool] 2ª ORIGEM da região 'br' (chatyy-br2, SP, WG 10.8.0.7): mesmo PHP/env
+  // do api-br, réplica PG própria (lag <1,5 s), escritas → master US. NÃO é região lógica nova:
+  // getEdgeInfo().region segue 'br' (WS/leaf, TURN, recibos, dicas continuam iguais). Cada
+  // instalação fica fixa numa das origens BR (sorteio 50/50 persistido, _edgePoolSlot); falha
+  // de gateway/transporte → irmã BR primeiro, depois US. Primeiro de cada região = primário
+  // (EDGE_SERVERS.find(region) continua devolvendo o api-br). Kill switch: _edgeOriginOff().
+  { url: 'https://api-br2.chatyy.com.br', region: 'br', base: 'https://api-br2.chatyy.com.br', origin: 'br2', alt: true },
   { url: 'https://api-eu.chatyy.com.br', region: 'eu', base: 'https://api-eu.chatyy.com.br' },
   // [2026-10-14 nivel-whatsapp] US-West (Seattle): edge RELAY — TLS termina perto do usuário e TODO
   // /api + /ws segue pelo WireGuard (pool aquecido) até o MESMO PHP/hub do US (sem réplica local →
@@ -39,8 +46,64 @@ export function getOriginBase() { return ORIGIN_BASE; }
 // v12 [2026-10-08 region-pick] = escolha com dica do servidor + probe aquecido
 // + histerese. Sobe a versão para descartar as escolhas v11 (1 probe frio) —
 // ~20% dos clientes nos EUA estavam presos em EU/BR (+150-300ms por escrita).
-const EDGE_CACHE_VERSION = 14; // v13 [2026-10-15] + edge Índia · v14 + edge Ásia (sg)
+const EDGE_CACHE_VERSION = 15; // v13 [2026-10-15] + edge Índia · v14 + edge Ásia (sg) · v15 + origem br2
+// [2026-10-17 br2-pool] v14 continua aceito (sem `origin` → primário da região): a troca
+// de versão NÃO derruba as escolhas em cache (sem tempestade de re-probe no update).
+const EDGE_CACHE_COMPAT = [14, 15];
 const VALID_REGIONS = ['us', 'br', 'eu', 'usw', 'in', 'sg'];
+
+// ─── [2026-10-17 br2-pool] Origens por região ───
+function _originOf(s) { return (s && (s.origin || s.region)) || null; }
+// Kill switch das origens ALTERNATIVAS (nunca desliga o primário de uma região):
+//  • globalThis.__chatyy_edge_split_off === true → todas as alternativas fora;
+//  • globalThis.__chatyy_edge_off = ['br2'] (ou __chatyy_br2_off === true);
+//  • remoto: region_hint pode trazer `edge_off: ['br2']` (persistido junto da dica);
+//  • drenar SEM OTA e sem tocar o US: nginx do api-br2 devolvendo 503 em /health
+//    (probe recusa 5xx → ninguém novo escolhe) e em /api (gateway → irmã BR na hora).
+function _edgeOriginOff(origin) {
+  const s = EDGE_SERVERS.find(e => e.origin === origin);
+  if (!s || !s.alt) return false;
+  try {
+    const g = (typeof globalThis !== 'undefined') ? globalThis : {};
+    if (g.__chatyy_edge_split_off === true) return true;
+    if (Array.isArray(g.__chatyy_edge_off) && g.__chatyy_edge_off.includes(origin)) return true;
+    if (origin === 'br2' && g.__chatyy_br2_off === true) return true;
+  } catch {}
+  try {
+    // Web: sem divisão (CORS/cookies por host e o bloqueio de edge do web já são frágeis).
+    if (Platform.OS === 'web') return true;
+  } catch {}
+  try {
+    const off = _regionHint && _regionHint.edge_off;
+    if (Array.isArray(off) && off.includes(origin)) return true;
+  } catch {}
+  return false;
+}
+// Sorteio estável por instalação (0|1) p/ dividir a região entre as origens. Antes do
+// MMKV hidratar (nativo) devolve 0 SEM persistir → primário até o cache ficar pronto.
+let _edgePoolSlotVal = null;
+function _edgePoolSlot() {
+  if (_edgePoolSlotVal != null) return _edgePoolSlotVal;
+  try {
+    const mm = require('./mmkv');
+    if (!mm || typeof mm.getString !== 'function') return 0;
+    if (typeof mm.isCacheReady === 'function' && !mm.isCacheReady()) return 0;
+    let v = mm.getString('edge_pool_slot');
+    if (v !== '0' && v !== '1') {
+      v = Math.random() < 0.5 ? '0' : '1';
+      try { mm.setString('edge_pool_slot', v); } catch {}
+    }
+    _edgePoolSlotVal = v === '1' ? 1 : 0;
+    return _edgePoolSlotVal;
+  } catch { return 0; }
+}
+// Origens utilizáveis da região, na ordem de preferência desta instalação.
+function _regionOrigins(region) {
+  const all = EDGE_SERVERS.filter(s => s.region === region && !_edgeOriginOff(_originOf(s)));
+  if (all.length < 2) return all;
+  const i = _edgePoolSlot() % all.length;
+  return [all[i], ...all.filter((_, j) => j !== i)];
+}
 
 let _bestServer = null;
 let _detecting = false;
@@ -60,7 +123,7 @@ try {
         // Only keep cache if it points to a known region (us/br/eu) AND has the
         // latest version. Any other cached value (old dead edges, old version)
         // is purged, which forces re-detection and defaults to US meanwhile.
-        if (VALID_REGIONS.includes(parsed.region) && parsed.v === EDGE_CACHE_VERSION) shouldClear = false;
+        if (VALID_REGIONS.includes(parsed.region) && EDGE_CACHE_COMPAT.includes(parsed.v)) shouldClear = false;
       } catch {}
       if (shouldClear && typeof _mig.setString === 'function') {
         _mig.setString('edge_best_server', '');
@@ -74,7 +137,7 @@ try {
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        if (!(VALID_REGIONS.includes(parsed.region) && parsed.v === EDGE_CACHE_VERSION)) {
+        if (!(VALID_REGIONS.includes(parsed.region) && EDGE_CACHE_COMPAT.includes(parsed.v))) {
           localStorage.removeItem('edge_best_server');
         }
       } catch { localStorage.removeItem('edge_best_server'); }
@@ -176,26 +239,36 @@ function _applySelectedServer(server) {
 // responder (status 1..499), o edge fica "fora" por _EDGE_DOWN_MS — API/chat vão
 // pro US e o probe ignora a região até o prazo vencer. Se o US também falhar,
 // devolve a resposta original e não troca nada (ex.: US caído + edge em modo limitado).
+// [2026-10-17 br2-pool] "Fora" agora é por ORIGEM (br, br2, eu…): a região só está fora
+// quando TODAS as suas origens estão; a falha de uma origem BR vai p/ a irmã antes do US.
 const _EDGE_DOWN_MS = 5 * 60 * 1000;
-const _edgeDownUntil = {}; // region → epoch ms
+const _edgeDownUntil = {}; // origin → epoch ms
+function _originIsDown(origin) {
+  return !!origin && origin !== 'us' && (_edgeDownUntil[origin] || 0) > Date.now();
+}
+// 1ª origem utilizável (ordem desta instalação) que não está fora; `except` = origem a pular.
+function _serverForRegion(region, except) {
+  return _regionOrigins(region).find(s => _originOf(s) !== except && !_originIsDown(_originOf(s))) || null;
+}
 function _edgeIsDown(region) {
-  return !!region && region !== 'us' && (_edgeDownUntil[region] || 0) > Date.now();
+  return !!region && region !== 'us' && !_serverForRegion(region);
 }
-function _edgeRegionOfUrl(u) {
+function _edgeServerOfUrl(u) {
   if (typeof u !== 'string') return null;
-  const s = EDGE_SERVERS.find(e => e.region !== 'us' && u.startsWith(e.url + '/'));
-  return s ? s.region : null;
+  return EDGE_SERVERS.find(e => e.region !== 'us' && u.startsWith(e.url + '/')) || null;
 }
-function _markEdgeDown(region, why) {
-  if (!region || region === 'us') return;
-  _edgeDownUntil[region] = Date.now() + _EDGE_DOWN_MS;
-  const us = EDGE_SERVERS.find(s => s.region === 'us');
-  if (us && (!_bestServer || _bestServer.region === region || API_URL.startsWith(EDGE_SERVERS.find(s => s.region === region).url + '/'))) {
-    // ts "envelhecido" → o tick de 5 min re-proba logo após o prazo (não fica 30 min preso no US).
-    _bestServer = { ...us, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'edge-down' };
-    _applySelectedServer(us);
+function _markEdgeDown(srv, why) {
+  const origin = _originOf(srv);
+  if (!origin || origin === 'us') return;
+  _edgeDownUntil[origin] = Date.now() + _EDGE_DOWN_MS;
+  const onIt = !_bestServer || _originOf(_bestServer) === origin || API_URL.startsWith(srv.url + '/');
+  const next = _serverForRegion(srv.region, origin) || EDGE_SERVERS.find(s => s.region === 'us');
+  if (next && onIt) {
+    // ts "envelhecido" → o tick de 5 min re-proba logo após o prazo (não fica 30 min preso fora).
+    _bestServer = { ...next, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'edge-down' };
+    _applySelectedServer(next);
   }
-  try { console.warn('[API] edge ' + region + ' fora (' + why + ') → US por ' + Math.round(_EDGE_DOWN_MS / 60000) + ' min'); } catch {}
+  try { console.warn('[API] edge ' + origin + ' fora (' + why + ') → ' + _originOf(next) + ' por ' + Math.round(_EDGE_DOWN_MS / 60000) + ' min'); } catch {}
 }
 // [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
 // that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even
@@ -256,7 +329,7 @@ function _persistBestServer() {
   try {
     const mm = _edgeMmkv();
     mm && mm.setString('edge_best_server', JSON.stringify({
-      region: _bestServer.region, latency: _bestServer.latency, v: EDGE_CACHE_VERSION,
+      region: _bestServer.region, origin: _originOf(_bestServer), latency: _bestServer.latency, v: EDGE_CACHE_VERSION,
       ts: _bestServer.ts || 0, net: _bestServer.net || null, src: _bestServer.src || 'probe',
     }));
   } catch {}
@@ -270,8 +343,10 @@ function _restoreCachedServer() {
     if (cached) {
       const parsed = JSON.parse(cached);
       // Invalidate cache if edge list / selection logic changed.
-      if (parsed.v !== EDGE_CACHE_VERSION) { try { (mmkv.remove || mmkv.delete)?.('edge_best_server'); } catch {} return; }
-      const match = EDGE_SERVERS.find(s => s.region === parsed.region);
+      if (!EDGE_CACHE_COMPAT.includes(parsed.v)) { try { (mmkv.remove || mmkv.delete)?.('edge_best_server'); } catch {} return; }
+      // [2026-10-17 br2-pool] origem persistida (v15) se ainda utilizável; v14/sem origem → primário.
+      const match = (parsed.origin && EDGE_SERVERS.find(s => _originOf(s) === parsed.origin && s.region === parsed.region && !_edgeOriginOff(parsed.origin)))
+        || EDGE_SERVERS.find(s => s.region === parsed.region);
       if (match) {
         _bestServer = { ...match, latency: parsed.latency, ts: Number(parsed.ts) || 0, net: parsed.net || null, src: parsed.src || 'probe' };
         _applySelectedServer(match);
@@ -320,6 +395,8 @@ async function _getRegionHint(net, force) {
     const j = await res.json();
     if (j && j.success && VALID_REGIONS.includes(j.region) && j.source && j.source !== 'none') {
       _regionHint = { region: j.region, country: j.country || null, ts: Date.now(), net: net || null };
+      // [2026-10-17 br2-pool] kill switch remoto opcional das origens alternativas.
+      if (Array.isArray(j.edge_off)) _regionHint.edge_off = j.edge_off.filter(x => typeof x === 'string').slice(0, 8);
       try { const mm = _edgeMmkv(); mm && mm.setString('edge_region_hint', JSON.stringify(_regionHint)); } catch {}
       return j.region;
     }
@@ -331,7 +408,8 @@ async function _getRegionHint(net, force) {
 async function _probeEdge(s) {
   const once = async (ms) => {
     const t0 = Date.now();
-    try { await _fetchWithTimeout(s.url + '/health', ms || EDGE_PROBE_TIMEOUT_MS); return Date.now() - t0; } catch { return null; }
+    // [2026-10-17 br2-pool] 5xx no /health = origem drenada/doente (kill switch via nginx).
+    try { const res = await _fetchWithTimeout(s.url + '/health', ms || EDGE_PROBE_TIMEOUT_MS); if (res && res.status >= 500) return null; return Date.now() - t0; } catch { return null; }
   };
   // [2026-10-09 net-resilience] warm-up = DNS+TCP+TLS+req ≈ 4 RTT: com RTT
   // 1200ms (2G/satélite/Ásia) os 2.5s estouravam SEMPRE → todos 99999, sem
@@ -382,7 +460,7 @@ async function detectFastestServer(opts) {
     const baseRegion = (sameNet && _bestServer.src === 'probe' && _bestServer.region) || hint || 'us';
     // Sem escolha validada nesta rede → aplica a dica JÁ (o probe leva ~1s).
     if (hint && !_edgeIsDown(hint) && !(sameNet && _bestServer.src === 'probe')) {
-      const hs = EDGE_SERVERS.find(s => s.region === hint);
+      const hs = _serverForRegion(hint);
       if (hs && (!_bestServer || _bestServer.region !== hint)) {
         _bestServer = { ...hs, latency: null, ts: 0, net, src: 'hint' };
         _applySelectedServer(hs);
@@ -390,11 +468,21 @@ async function detectFastestServer(opts) {
     }
     // [2026-10-17 edge-failover] região marcada fora (gateway 5xx do PHP) não entra:
     // o /health do edge é estático no nginx e responde 200 mesmo com o PHP parado.
-    const results = (await Promise.all(EDGE_SERVERS.map(_probeEdge)))
-      .map(r => (_edgeIsDown(r.region) ? { ...r, latency: 99999 } : r));
+    // [2026-10-17 br2-pool] proba todas as origens utilizáveis e reduz a 1 por região:
+    // a 1ª na ordem desta instalação que respondeu (sem escolher por latência entre
+    // irmãs → divisão 50/50 estável); a histerese entre regiões segue igual.
+    const probeList = EDGE_SERVERS.filter(s => !_edgeOriginOff(_originOf(s)));
+    const raw = (await Promise.all(probeList.map(_probeEdge)))
+      .map(r => (_originIsDown(_originOf(r)) ? { ...r, latency: 99999 } : r));
+    const results = [];
+    for (const region of VALID_REGIONS) {
+      const cands = _regionOrigins(region).map(s => raw.find(r => r.url === s.url)).filter(Boolean);
+      if (!cands.length) continue;
+      results.push(cands.find(r => r.latency < EDGE_PROBE_TIMEOUT_MS) || cands[0]);
+    }
     const pick = _pickEdgeRegion(results, baseRegion);
     if (pick) {
-      const changed = !_bestServer || _bestServer.region !== pick.region;
+      const changed = !_bestServer || _bestServer.url !== pick.url;
       _bestServer = { ...pick, ts: Date.now(), net, src: 'probe' };
       if (changed) _applySelectedServer(_bestServer);
       if (__DEV__) console.log('[API] Edge pick: ' + pick.region + ' (base ' + baseRegion + ', hint ' + (hint || '-') + ') ' + results.map(r => r.region + '=' + r.latency).join(' '));
@@ -437,6 +525,8 @@ try {
 // troca de rede e o próximo tick em 1º plano reavaliam normalmente.
 function _edgeDetectTick() {
   try { if (require('react-native').AppState.currentState === 'background') return; } catch {}
+  // [2026-10-17 br2-pool] origem alternativa desligada pelo kill switch → sai dela já.
+  try { if (_bestServer && _bestServer.alt && _edgeOriginOff(_originOf(_bestServer))) { detectFastestServer({ force: true }); return; } } catch {}
   detectFastestServer();
 }
 let _edgeDetectInterval = setInterval(_edgeDetectTick, 300000);
@@ -449,7 +539,7 @@ export function startEdgeDetection() {
 
 // Export for components that need to know the current edge
 export function getEdgeInfo() {
-  return _bestServer ? { region: _bestServer.region, latency: _bestServer.latency, url: _bestServer.url } : null;
+  return _bestServer ? { region: _bestServer.region, origin: _originOf(_bestServer), latency: _bestServer.latency, url: _bestServer.url } : null;
 }
 
 // Always returns the current BASE_URL (not a stale captured value from import time)
@@ -1522,19 +1612,35 @@ function _adoptsBearerFromResponse(action, tok) {
 // edge fora → refaz no US (ver _markEdgeDown). 502/503 = o nginx do edge não chegou
 // ao PHP (nada executou) → seguro até p/ POST. 504 e falha de transporte (não
 // timeout) só p/ leituras (um POST pode ter executado antes da conexão cair).
+// [2026-10-17 br2-pool] Região com 2 origens (br/br2): 1º a irmã (mesma região, ~5 ms
+// de SP, sem trocar WS/recibos), depois o US. Cada origem que falhou igual fica "fora".
+function _edgeFailed(r, readable) {
+  if (!r) return false;
+  const st = r.status;
+  return st === 502 || st === 503 || (st === 504 && readable) || (st === 0 && readable && !r.aborted);
+}
 async function _rawApiCall(action, params = {}, method = 'GET') {
   const r = await _rawApiCallOnce(action, params, method, null);
   try {
-    const region = _edgeRegionOfUrl(r && r.url);
-    if (!region) return r;
+    const srv = _edgeServerOfUrl(r && r.url);
+    if (!srv) return r;
     const st = r.status;
     const readable = String(method || 'GET').toUpperCase() === 'GET' || _isReadablePost(action);
-    const gw = st === 502 || st === 503 || (st === 504 && readable);
-    const transport = st === 0 && readable && !r.aborted;
-    if (!gw && !transport) return r;
+    if (!_edgeFailed(r, readable)) return r;
+    const why = st ? 'HTTP ' + st : 'transporte';
+    const sib = _serverForRegion(srv.region, _originOf(srv));
+    if (sib) {
+      const rs = await _rawApiCallOnce(action, params, method, sib.url);
+      if (rs && rs.status > 0 && rs.status < 500) {
+        _markEdgeDown(srv, why);
+        return rs;
+      }
+      if (_edgeFailed(rs, readable)) _markEdgeDown(sib, 'irmã: ' + (rs.status ? 'HTTP ' + rs.status : 'transporte'));
+      else return r; // irmã devolveu outra coisa (ex.: 500 do PHP) → não insiste no US
+    }
     const r2 = await _rawApiCallOnce(action, params, method, US_FALLBACK_BASE);
     if (r2 && r2.status > 0 && r2.status < 500) {
-      _markEdgeDown(region, st ? 'HTTP ' + st : 'transporte');
+      _markEdgeDown(srv, why);
       return r2;
     }
   } catch {}

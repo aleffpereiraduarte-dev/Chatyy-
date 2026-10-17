@@ -209,6 +209,9 @@ function _uplinkBusy() {
 // entrada regional fica bloqueada por REGIONAL_WS_BLOCK_MS. Se o US também
 // falhar (= rede), volta a tentar a regional normalmente.
 const US_WS_URL = 'wss://ws.chatyy.com.br/ws';
+// [2026-10-17 br2-pool] A 2ª origem BR (api-br2) é só p/ HTTP: o WS da região 'br' fica
+// SEMPRE no leaf do api-br (sequenciador/recibos locais). O leaf do br2 é PROXY-ONLY (→ hub
+// US) e o nativo mapeia 'br' → api-br por conta própria; getEdgeInfo().region segue 'br'.
 const REGIONAL_WS_URLS = {
   br: 'wss://api-br.chatyy.com.br/ws',
   eu: 'wss://api-eu.chatyy.com.br/ws',
