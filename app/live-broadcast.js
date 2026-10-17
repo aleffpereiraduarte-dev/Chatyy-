@@ -2650,10 +2650,21 @@ function LiveBroadcastScreen() {
           try { await _hostSetTorch(lkRoomRef.current, false); } catch {}
           setTorchOn(false);
         }
-        if (Platform.OS !== 'web' && camMst && typeof camMst._switchCamera === 'function') {
+        // [2026-10-17 live-flip-2] iOS: _switchCamera → applyConstraints, e o
+        // VideoCaptureController.m só aplica width/height/frameRate (ignora
+        // facingMode) → câmera nunca mudava, só o espelho. restartTrack
+        // recaptura com o facingMode novo e troca no sender (sem republicar).
+        if (camTrack && typeof camTrack.restartTrack === 'function') {
+          try {
+            await camTrack.restartTrack({ facingMode: newFacing, resolution: { width: 720, height: 1280, frameRate: 30 } });
+          } catch (eRestart) {
+            // Volta p/ a câmera anterior p/ não deixar a live sem vídeo.
+            try { await camTrack.restartTrack({ facingMode: prevFacing, resolution: { width: 720, height: 1280, frameRate: 30 } }); } catch {}
+            throw eRestart;
+          }
+          try { setLkLocalVideoTrack(camTrack); } catch {}
+        } else if (Platform.OS === 'android' && camMst && typeof camMst._switchCamera === 'function') {
           camMst._switchCamera();
-        } else if (camTrack && typeof camTrack.restartTrack === 'function') {
-          await camTrack.restartTrack({ facingMode: newFacing });
         } else if (Platform.OS !== 'web') {
           throw new Error('no_camera_track');
         } else {
@@ -2684,7 +2695,9 @@ function LiveBroadcastScreen() {
       // hardware source without dropping/replacing the MediaStreamTrack.
       // Peer senders + local preview keep their reference, so there's no
       // tear-down race. Skip this path on web (function doesn't exist).
-      if (Platform.OS !== 'web') {
+      // [2026-10-17 live-flip-2] Só Android: no iOS o _switchCamera não troca
+      // a câmera (applyConstraints ignora facingMode) → usa getUserMedia.
+      if (Platform.OS === 'android') {
         let oldVideoTrack = null;
         try { oldVideoTrack = stream.getVideoTracks?.()[0] || null; } catch {}
         if (oldVideoTrack && typeof oldVideoTrack._switchCamera === 'function') {
