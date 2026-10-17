@@ -1095,7 +1095,10 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
         else if (lastMsg.type === 'location' || parsed.type === 'location' || (typeof parsed.latitude === 'number' && typeof parsed.longitude === 'number')) {
           content = '\uD83D\uDCCD ' + (parsed.live ? (t('chat.liveLocation') || 'Localização ao vivo') : (t('chat.location') || 'Localização'));
         }
-        else if (parsed.type === 'contact' || lastMsg.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
+        else if (parsed.type === 'contact' || lastMsg.type === 'contact') { // [2026-10-17 share-contact] "Contato: Sara" / "Contatos: Sara e mais 2"
+          let _ctl = ''; try { _ctl = require('./chat/contactShare').contactPreviewLabel(parsed, t); } catch {}
+          content = '\uD83D\uDC64 ' + (_ctl || t('chat.contact') || 'Contato');
+        }
         // [status-resposta 2026-10-15] resposta/rea\u00E7\u00E3o a status: nunca o JSON cru na lista.
         else if (parsed.status && typeof parsed.status === 'object' && parsed.reply_text !== undefined) {
           const _srOwn = (lastMsg.sender_email || '').toLowerCase() === _me;
@@ -10136,7 +10139,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                       body = '📞 ' + (t?.('chat.voiceCall') || 'Chamada de voz');
                     }
                   } else if (parsed.type === 'location') body = '📍 ' + (t?.('chat.location') || 'Localização');
-                  else if (parsed.type === 'contact') body = '👤 ' + (t?.('chat.contact') || 'Contato');
+                  else if (parsed.type === 'contact') { let _ctl = ''; try { _ctl = require('./chat/contactShare').contactPreviewLabel(parsed, t); } catch {} body = '👤 ' + (_ctl || t?.('chat.contact') || 'Contato'); }
                   else body = '📎 ' + (t?.('chat.attachment') || 'Anexo');
                 } catch {}
               }
@@ -10175,7 +10178,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
               else if (m.type === 'file') body = '\uD83D\uDCC4 ' + (m.file_name || t?.('chat.file') || 'Arquivo');
               else if (m.type === 'poll') body = '📊 ' + (t?.('chat.poll') || 'Enquete');
               else if (m.type === 'location') body = '📍 ' + (t?.('chat.location') || 'Localização');
-              else if (m.type === 'contact') body = '👤 ' + (t?.('chat.contact') || 'Contato');
+              else if (m.type === 'contact') { let _ctl = ''; try { _ctl = require('./chat/contactShare').contactPreviewLabel(m.content, t); } catch {} body = '👤 ' + (_ctl || t?.('chat.contact') || 'Contato'); }
               else if (typeof body === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(body.trim())) {
                 body = '🎬 GIF';
                 if (!thumbUri) thumbUri = body.trim();

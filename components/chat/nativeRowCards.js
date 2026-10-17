@@ -24,7 +24,7 @@
 // as linhas são renormalizadas e só as que mudaram vão ao nativo.
 //
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
-//   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · poll:<i> ·
+//   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · ct_open · poll:<i> ·
 //   rsvp:<going|maybe|not_going> · pl_edit · pl_song:<i> · call_back:<v|a> ·
 //   call_join · st_open · vn_open · gift_thank · lp:<url>
 import { Platform } from 'react-native';
@@ -36,8 +36,9 @@ import {
   IconMapPin, IconUser, IconUserPlus, IconPlus, IconPhone, IconVideo, IconCalendar, IconClock,
   IconCheckCircle, IconHelpCircle, IconPlay, IconPencil, IconMusic, IconEye, IconLock,
   IconCheck, IconMic, IconImage, IconVideoNote, IconGlobe, IconDiamond, IconX,
-  IconFile, IconFilm, IconMessageCircle, IconChevronRight, IconSmile,
+  IconFile, IconFilm, IconMessageCircle, IconChevronRight, IconSmile, IconUsers,
 } from '../Icons';
+import { parseContactPayload, contactTitle } from './contactShare'; // [2026-10-17 share-contact]
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
 const URL_RE = /(https?:\/\/[^\s<]+)/;
@@ -109,11 +110,13 @@ function _lpFor(url, C) {
 
 function _pstnEnabled() { try { return require('../../constants/featureFlags').isPstnEnabled() === true; } catch { return false; } }
 const _ctMap = new Map(); // email|phone → { loading, has, email }
-function _ctFor(email, phone, C) {
+function _ctFor(email, phone, C, chatyy) {
   const key = String(email || '') + '|' + String(phone || '');
   if (!email && !phone) return { loading: false, has: false };
   const hit = _ctMap.get(key);
   if (hit) return hit;
+  // [2026-10-17 share-contact] cartão novo já diz que a pessoa tem Chatyy (e-mail) → "Mensagem" na hora, sem rede.
+  if (chatyy && email) { const e0 = { loading: false, has: true, email }; _ctMap.set(key, e0); return e0; }
   const ent = { loading: true, has: false, email };
   _ctMap.set(key, ent);
   if (_ctMap.size > 400) { const k0 = _ctMap.keys().next().value; if (k0 !== key) _ctMap.delete(k0); }
@@ -318,8 +321,16 @@ function _contact(m, C) {
     } else if (raw && typeof raw === 'object') ct = raw;
   }
   if (!ct || typeof ct !== 'object') ct = {};
-  const name = String(ct.name || ct.phone || ct.email || _tr(C, 'chatConv.contact', 'Contato'));
-  return { name, phone: ct.phone ? String(ct.phone) : '', email: ct.email ? String(ct.email) : '' };
+  // [2026-10-17 share-contact] formato v2 (phones[], chatyy, contacts[] p/ vários) — retrocompatível.
+  let P = null;
+  try { P = parseContactPayload(ct); } catch { P = null; }
+  const f = (P && P.first) || {};
+  const name = String(f.name || ct.name || ct.phone || ct.email || _tr(C, 'chatConv.contact', 'Contato'));
+  return {
+    name, phone: f.phone || (ct.phone ? String(ct.phone) : ''), email: f.email || (ct.email ? String(ct.email) : ''),
+    phones: (f.phones && f.phones.length) ? f.phones : (ct.phone ? [String(ct.phone)] : []),
+    chatyy: !!f.chatyy, count: (P && P.count) || 1, parsed: P,
+  };
 }
 
 const FLAGS = { '1':'🇺🇸','7':'🇷🇺','20':'🇪🇬','27':'🇿🇦','30':'🇬🇷','31':'🇳🇱','32':'🇧🇪','33':'🇫🇷','34':'🇪🇸','36':'🇭🇺','39':'🇮🇹','40':'🇷🇴','41':'🇨🇭','43':'🇦🇹','44':'🇬🇧','45':'🇩🇰','46':'🇸🇪','47':'🇳🇴','48':'🇵🇱','49':'🇩🇪','51':'🇵🇪','52':'🇲🇽','53':'🇨🇺','54':'🇦🇷','55':'🇧🇷','56':'🇨🇱','57':'🇨🇴','58':'🇻🇪','60':'🇲🇾','61':'🇦🇺','62':'🇮🇩','63':'🇵🇭','64':'🇳🇿','65':'🇸🇬','66':'🇹🇭','81':'🇯🇵','82':'🇰🇷','84':'🇻🇳','86':'🇨🇳','90':'🇹🇷','91':'🇮🇳','92':'🇵🇰','94':'🇱🇰','98':'🇮🇷','212':'🇲🇦','234':'🇳🇬','351':'🇵🇹','353':'🇮🇪','358':'🇫🇮','380':'🇺🇦','420':'🇨🇿','852':'🇭🇰','886':'🇹🇼','971':'🇦🇪','972':'🇮🇱' };
@@ -508,6 +519,7 @@ function buildJsonLocation(j, row, C) {
 
 function buildContact(m, row, ctx, C, own) {
   const ct = _contact(m, C);
+  if (ct.count > 1 && ct.parsed) { buildContactMulti(ct, row, C, own); return; }
   const P = _palette(own, C);
   const col = P.col; const isDark = P.dark;
   const flag = _flag(ct.phone);
@@ -523,7 +535,7 @@ function buildContact(m, row, ctx, C, own) {
     ], { g: 6, m: [4, 0, 0, 0], al: 'c' }));
   }
   if (ct.email) info.push(text(ct.email, { fs: 12.5, c: own ? C.ownMeta : C.otherMeta, ml: 1, m: [pretty ? 2 : 4, 0, 0, 0] }));
-  const chk = _ctFor(ct.email, ct.phone, C);
+  const chk = _ctFor(ct.email, ct.phone, C, ct.chatyy);
   const btn = (kids, a) => hstack(kids, { fl: 1, jc: 'c', al: 'c', g: 6, p: [11, 0, 11, 0], a });
   const vdiv = () => vstack([], { w: 0.5, h: 40, bg: dividerColor });
   const first = chk.loading
@@ -537,9 +549,39 @@ function buildContact(m, row, ctx, C, own) {
   if (_pstnOn ? !!ct.phone : (!chk.loading && chk.has && !!(chk.email || ct.email))) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
   const w = _clampW(250, 300, 12 + 56 + 12 + 12 + Math.max(Math.min(_estW(ct.name, 16, true), 180), _estW(pretty, 13.5) + (flag ? 24 : 0), _estW(ct.email, 12.5)));
   row.bl = [vstack([
-    hstack([_avatarNode(ct.name, ct.email, 56), vstack(info, { fl: 1 })], { g: 12, p: [12, 12, 10, 12], al: 'c' }),
+    hstack([_avatarNode(ct.name, ct.email, 56), vstack(info, { fl: 1 })], { g: 12, p: [12, 12, 10, 12], al: 'c', a: 'ct_open' }),
     vstack([], { w: -1, h: 0.5, bg: dividerColor }),
     hstack(actions, { w: -1, al: 'c' }),
+  ], { w, r: 14, bg: cardBg })];
+  row.cw = w; row.pad = PAD; row.mp = 'below';
+}
+
+// [2026-10-17 share-contact] Vários contatos numa mensagem (WhatsApp): avatares
+// sobrepostos + "Sara e mais 2" + "N contatos"; botão "Ver todos" → folha.
+function buildContactMulti(ct, row, C, own) {
+  const P = _palette(own, C);
+  const isDark = P.dark;
+  const col = P.col;
+  const cardBg = own ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)') : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
+  const dividerColor = own ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
+  const accent = own ? C.ownText : C.otherInk;
+  const list = ct.parsed.list.slice(0, 3);
+  const AV = 40; const STEP = 24;
+  const stackW = AV + (list.length - 1) * STEP;
+  const avatars = zstack([
+    vstack([], { w: stackW, h: AV }),
+    ...list.map((c, i) => hstack([i ? spacer({ w: i * STEP }) : null, _avatarNode(c.name, c.email, AV)], { pos: 'tl' })),
+  ], {});
+  const title = contactTitle(ct.parsed, C.t);
+  const subT = _tr(C, 'shareContact.nContacts', '{n} contatos').split('{n}').join(String(ct.parsed.count));
+  const w = _clampW(250, 300, 12 + stackW + 12 + 12 + Math.min(_estW(title, 16, true), 190));
+  row.bl = [vstack([
+    hstack([avatars, vstack([
+      text(title, { fs: 16, fw: 700, c: own ? C.ownText : col.text, lh: 20, ml: 2 }),
+      text(subT, { fs: 13, c: own ? C.ownMeta : col.textSecondary, m: [3, 0, 0, 0] }),
+    ], { fl: 1 })], { g: 12, p: [12, 12, 10, 12], al: 'c', a: 'ct_open' }),
+    vstack([], { w: -1, h: 0.5, bg: dividerColor }),
+    hstack([hstack([icon(IconUsers, { s: 15, c: accent }), text(_tr(C, 'shareContact.viewAll', 'Ver todos'), { fs: 13, fw: 600, c: accent })], { fl: 1, jc: 'c', al: 'c', g: 6, p: [11, 0, 11, 0], a: 'ct_open' })], { w: -1, al: 'c' }),
   ], { w, r: 14, bg: cardBg })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
@@ -1201,6 +1243,10 @@ export function runCardAction(item, action, D) {
         }));
         return;
       }
+      case 'ct_open': { // [2026-10-17 share-contact] toque no cartão → folha de detalhes
+        try { if (require('./ContactCardSheet').openContactCard(m.contact && typeof m.contact === 'object' ? m.contact : m.content)) return; } catch {}
+        return;
+      }
       case 'ct_msg': case 'ct_inv': case 'ct_save': case 'ct_call': {
         const ct = _contact(m, { t });
         if (kind === 'ct_call') {
@@ -1232,6 +1278,8 @@ export function runCardAction(item, action, D) {
           })();
           return;
         }
+        // [2026-10-17 share-contact] ct_save → todos os números do cartão (contactShare.saveToPhonebook)
+        try { const cs = require('./contactShare'); if (ct.parsed && ct.parsed.first) { cs.saveToPhonebook(ct.parsed.first, t); return; } } catch {}
         // ct_save — mesmo fluxo do cartão JS (formulário do sistema → fallback addContactAsync)
         (async () => {
           try {

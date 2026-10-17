@@ -1224,7 +1224,7 @@ function _axBody(m, L) {
     }
     case 'file': return withCap(`${L('chat.file', 'Arquivo')}${m.file_name ? ' ' + m.file_name : ''}`);
     case 'location': return L('chat.location', 'Localização');
-    case 'contact': return L('chat.contact', 'Contato');
+    case 'contact': { try { return require('./contactShare').contactPreviewLabel(m.contact && typeof m.contact === 'object' ? m.contact : raw, (k) => L(k, k)); } catch { return L('chat.contact', 'Contato'); } } // [2026-10-17 share-contact]
     case 'poll': {
       let q = '';
       try { const p = raw && raw[0] === '{' ? JSON.parse(raw) : null; q = (p && (p.question || p.title)) || ''; } catch {}

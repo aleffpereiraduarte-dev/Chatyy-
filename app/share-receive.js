@@ -31,7 +31,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import {
   IconX, IconSearch, IconSend, IconImage, IconCamera, IconMessageSquare,
   IconPaperclip, IconFilm, IconCheck, IconRefresh, IconPlay, IconFileText,
-  IconPlus, IconWifiOff, IconSmile,
+  IconPlus, IconWifiOff, IconSmile, IconUser,
 } from '../components/Icons';
 
 const NET_TIMEOUT_MS = 10000;
@@ -134,7 +134,19 @@ export default function ShareReceiveScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [params.files, params.uri, params.file, params.name, params.mime, params.type]);
   const sharedText = params.text ? String(params.text) : '';
-  const hasMedia = files.length > 0;
+  // [2026-10-17 share-contact] "Compartilhar contato" (Dados do contato): params.contact = content JSON
+  // de uma mensagem type 'contact' (components/chat/contactShare). Envia como cartão de contato.
+  const sharedContact = useMemo(() => {
+    if (!params.contact) return null;
+    try {
+      const cs = require('../components/chat/contactShare');
+      const raw = String(params.contact);
+      const P = cs.parseContactPayload(raw);
+      return P.count ? { raw, label: cs.contactPreviewLabel(raw, t) } : null;
+    } catch { return null; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.contact]);
+  const hasMedia = !sharedContact && files.length > 0;
   const [caption, setCaption] = useState('');
   const [text, setText] = useState(sharedText);
   useEffect(() => { setText(sharedText); }, [sharedText]);
@@ -423,10 +435,27 @@ export default function ShareReceiveScreen() {
   const handleSend = useCallback(async () => {
     if (sending || !selected.length) return;
     const textBody = (text || '').trim();
-    if (!hasMedia && !textBody) return;
+    if (!hasMedia && !textBody && !sharedContact) return;
     setSending(true);
     setSendError(false);
     let failed = 0;
+    if (sharedContact) {
+      // [2026-10-17 share-contact] mesmo envio do seletor da conversa (chat_send type 'contact').
+      for (const conv of selected) {
+        let ok = false;
+        try { ok = api.apiOk(await api.chatSend(conv.id, sharedContact.raw, 'contact', null, null, null, null, 'msg_' + Date.now() + '_' + _rand())); } catch { ok = false; }
+        if (!ok) failed++;
+      }
+      if (!mountedRef.current) return;
+      if (failed) { setSending(false); setSendError(true); return; }
+      if (selected.length === 1) {
+        const conv = selected[0];
+        require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '', ...(conv.type ? { type: conv.type } : {}) } }, { replace: true });
+      } else {
+        try { router.back(); } catch { router.replace('/chat'); }
+      }
+      return;
+    }
     for (const conv of selected) {
       const batchId = files.length > 1 ? `batch_${Date.now()}_${_rand()}` : null;
       const items = hasMedia ? files : [null];
@@ -462,7 +491,7 @@ export default function ShareReceiveScreen() {
       router.replace('/chat');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, selected, files, hasMedia, caption, text, router, displayNameOf, first, userEmail]);
+  }, [sending, selected, files, hasMedia, caption, text, router, displayNameOf, first, userEmail, sharedContact]);
 
   // ── Auth gates ───────────────────────────────────────────────────────────
   const [authTimedOut, setAuthTimedOut] = useState(false);
@@ -495,6 +524,7 @@ export default function ShareReceiveScreen() {
 
   // ── Pieces ───────────────────────────────────────────────────────────────
   const kindLabel = (() => {
+    if (sharedContact) return sharedContact.label;
     if (!hasMedia) return t('share.kindText');
     if (files.length > 1) return t('share.kindItems', { count: files.length });
     if (first.kind === 'image') return t('share.kindImage');
@@ -563,6 +593,11 @@ export default function ShareReceiveScreen() {
             />
           </View>
         </View>
+      ) : sharedContact ? (
+        <View style={[s.inputRow, { backgroundColor: fill, marginHorizontal: 16, marginTop: 12, alignItems: 'center' }]}>
+          <IconUser size={16} color={colors.textSecondary} />
+          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', marginLeft: 8, flex: 1, paddingVertical: 10 }} numberOfLines={2}>{sharedContact.label}</Text>
+        </View>
       ) : (
         <View style={[s.inputRow, { backgroundColor: fill, marginHorizontal: 16, marginTop: 12, alignItems: 'flex-start' }]}>
           <IconMessageSquare size={16} color={colors.textSecondary} style={{ marginTop: Platform.OS === 'ios' ? 2 : 10 }} />
@@ -581,8 +616,8 @@ export default function ShareReceiveScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 14, gap: 8 }} keyboardShouldPersistTaps="handled">
         {isStickerShare ? <QuickAction icon={IconSmile} label={t('waImport.shareStickers')} onPress={handleShareToStickers} /> : null}
         {hasMedia && first.kind !== 'file' ? <QuickAction icon={IconCamera} label={t('share.statusShort')} onPress={handleShareToStatus} /> : null}
-        <QuickAction icon={IconImage} label={t('share.feedShort')} onPress={handleShareToFeed} />
-        <QuickAction icon={IconPlus} label={t('share.toNewChat')} onPress={handleShareToNewChat} />
+        {!sharedContact ? <QuickAction icon={IconImage} label={t('share.feedShort')} onPress={handleShareToFeed} /> : null}
+        {!sharedContact ? <QuickAction icon={IconPlus} label={t('share.toNewChat')} onPress={handleShareToNewChat} /> : null}
       </ScrollView>
 
       {/* Search */}
@@ -746,9 +781,9 @@ export default function ShareReceiveScreen() {
           </View>
           <TouchableOpacity
             onPress={handleSend}
-            disabled={sending || (!hasMedia && !(text || '').trim())}
+            disabled={sending || (!hasMedia && !sharedContact && !(text || '').trim())}
             activeOpacity={0.8}
-            style={[s.sendBtn, { backgroundColor: colors.primary, opacity: (!hasMedia && !(text || '').trim()) ? 0.4 : 1 }]}
+            style={[s.sendBtn, { backgroundColor: colors.primary, opacity: (!hasMedia && !sharedContact && !(text || '').trim()) ? 0.4 : 1 }]}
             accessibilityRole="button"
             accessibilityLabel={t('common.send')}
           >

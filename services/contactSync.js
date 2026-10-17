@@ -927,3 +927,15 @@ export async function clearContactsCache() {
     console.warn('[contactSync] clearContactsCache error:', err);
   }
 }
+
+// [2026-10-17 share-contact] Contatos da agenda que têm Chatyy, do ÚLTIMO sync
+// (sem o TTL de 1 h; nunca pede permissão nem dispara sync) → seletor de
+// "Enviar contato". [] sem cache/consentimento.
+export async function getCachedChatyyContactsAnyAge() {
+  try {
+    const raw = await AsyncStorage.getItem(cacheKey());
+    if (!raw) return [];
+    const cached = JSON.parse(raw);
+    return Array.isArray(cached && cached.chatyContacts) ? cached.chatyContacts : [];
+  } catch { return []; }
+}

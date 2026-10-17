@@ -155,6 +155,7 @@ import NowTicker from '../components/chat/NowTicker'; // [2026-10-15 conv-lite] 
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetModal, NativeSheetKeyboardView, afterRNModal, runAfterNativeSheet, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2] +Modal drop-in/teclado
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
+import ShareContactPicker from '../components/chat/ShareContactPicker'; // [2026-10-17 share-contact] seletor Chatyy + agenda, até 5
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
 import { useTheme } from '../context/ThemeContext';
 import { useConfirm } from '../components/ConfirmModal';
@@ -5589,22 +5590,29 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
 // the contact is registered on Chatyy and swaps "Mensagem" for "Convidar"
 // when they aren't. WhatsApp-style: contact-card primary action depends on
 // account status, not a static button.
-function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, onChatyyCall, hasPhone }) {
-  const [check, setCheck] = React.useState({ loading: true, has_chatyy: false });
+function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, onChatyyCall, hasPhone, knownChatyy }) {
+  // [2026-10-17 share-contact] cartão v2 com chatyy:true → "Mensagem" na hora; senão cache compartilhado (contactShare.resolveChatyy).
+  const [check, setCheck] = React.useState(() => {
+    try {
+      const s0 = require('../components/chat/contactShare').chatyyStateSync({ email, phone, chatyy: !!knownChatyy });
+      if (s0) return { loading: false, has_chatyy: !!s0.has, resolvedEmail: s0.email || email };
+    } catch {}
+    return { loading: true, has_chatyy: false };
+  });
   React.useEffect(() => {
     let alive = true;
     (async () => {
       if (!email && !phone) { if (alive) setCheck({ loading: false, has_chatyy: false }); return; }
       try {
-        const r = await require('../services/api').chatCheckChatyy({ email, phone });
+        const r = await require('../components/chat/contactShare').resolveChatyy({ email, phone, chatyy: !!knownChatyy });
         if (!alive) return;
-        setCheck({ loading: false, has_chatyy: !!r?.data?.has_chatyy, resolvedEmail: r?.data?.email || email });
+        setCheck({ loading: false, has_chatyy: !!r?.has, resolvedEmail: r?.email || email });
       } catch {
         if (alive) setCheck({ loading: false, has_chatyy: false });
       }
     })();
     return () => { alive = false; };
-  }, [email, phone]);
+  }, [email, phone, knownChatyy]);
 
   const showMessage = check.has_chatyy;
   // [2026-10-17 sem-pstn] "Ligar" só pelo Chatyy: aparece se o contato TEM Chatyy
@@ -22929,7 +22937,32 @@ function ChatConversationInner() {
   const [contactPickerList, setContactPickerList] = _useStateT([]);
   const [contactPickerSearch, setContactPickerSearch] = _useStateT('');
 
+  // [2026-10-17 share-contact] Seletor próprio (Chatyy + agenda, multi até 5,
+  // revisar → enviar) dentro do MESMO NativeSheetModal de antes. Kill switch:
+  // globalThis.__chatyy_share_contact_v2 = false → fluxo antigo (_legacyShareContact).
+  const _shareContactV2 = () => { try { return globalThis.__chatyy_share_contact_v2 !== false; } catch { return true; } };
   const handleShareContact = async () => {
+    if (_shareContactV2()) { setContactPickerSearch(''); setShowContactPicker(true); return; }
+    return _legacyShareContact();
+  };
+  // Sem permissão da agenda: fecha o sheet e abre o seletor do SISTEMA (1 contato).
+  const _shareContactSystemPick = () => {
+    setShowContactPicker(false);
+    runAfterNativeSheet(async () => {
+      try {
+        const Contacts = require('expo-contacts');
+        if (typeof Contacts.presentContactPickerAsync !== 'function') return;
+        const picked = await Contacts.presentContactPickerAsync();
+        if (!picked) return;
+        const pName = (picked.name || [picked.firstName, picked.lastName].filter(Boolean).join(' ') || '').trim();
+        const _cs = require('../components/chat/contactShare');
+        const phones = (picked.phoneNumbers || []).map(p => _cs.toE164Smart(String(p?.number || ''))).filter(Boolean);
+        const email = String(picked.emails?.[0]?.email || '').trim();
+        sendContactCards([{ name: pName || phones[0] || email, phone: phones[0] || '', phones, email }]);
+      } catch (e) { console.warn('share contact system picker:', e?.message || e); }
+    });
+  };
+  const _legacyShareContact = async () => {
     if (Platform.OS === 'web') {
       // [2026-10-11 qa] Web: lista de contatos do Chatyy (api.chatContacts)
       // no MESMO seletor in-app do nativo. window.prompt só como último
@@ -23051,11 +23084,17 @@ function ChatConversationInner() {
       safeAlert(t('common.error') || 'Erro', t('chatConv.contactNeedsField') || 'Contato vazio');
       return;
     }
-    const content = JSON.stringify({
-      name: name || phone || email,
-      phone,
-      email,
-    });
+    const phones = (contact?.phoneNumbers || []).map(p => String(p?.number || '').trim()).filter(Boolean);
+    return sendContactCards([{ name: name || phone || email, phone, phones, email }]);
+  };
+  // [2026-10-17 share-contact] 1 mensagem 'contact' com 1..5 contatos (contactShare.buildContactPayload;
+  // topo = 1º contato p/ clientes antigos). true = enviado.
+  const sendContactCards = async (cards) => {
+    const content = require('../components/chat/contactShare').buildContactPayload(cards);
+    if (!content) {
+      safeAlert(t('common.error') || 'Erro', t('chatConv.contactNeedsField') || 'Contato vazio');
+      return false;
+    }
     // [2026-10-12 reply-media] Contato respondendo.
     const { replyId: ctReplyId } = await _takeReplyForAsync();
     try {
@@ -23072,6 +23111,7 @@ function ChatConversationInner() {
         setMessages(prev => prev.some(m => m.id === normalizedMsg.id) ? prev : [...prev, normalizedMsg]);
         removePendingMessage(conversationId, contactTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+        return true;
       } else {
         safeAlert(t('common.error') || 'Erro', t('chatConv.contactSendError') || 'Não foi possível enviar o contato');
       }
@@ -23079,6 +23119,7 @@ function ChatConversationInner() {
       console.warn('sendContact error:', e);
       safeAlert(t('common.error') || 'Erro', t('chatConv.contactSendError') || 'Não foi possível enviar o contato');
     }
+    return false;
   };
 
   // ============================================================
@@ -30366,6 +30407,43 @@ function ChatConversationInner() {
             }
           }
           if (!ct || typeof ct !== 'object') ct = {};
+          // [2026-10-17 share-contact] v2: phones[], chatyy, contacts[] (vários) — mesmo leitor do cartão nativo.
+          const _csMod = require('../components/chat/contactShare');
+          const _csP = _csMod.parseContactPayload(ct);
+          const _openCard = () => { try { require('../components/chat/ContactCardSheet').openContactCard(ct); } catch {} };
+          if (_csP.count > 1) {
+            const _cardBgM = isOwn ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)') : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
+            const _divM = isOwn ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
+            const _accM = isOwn ? ownTextColor : otherInk;
+            const _nT = (t('shareContact.nContacts') && t('shareContact.nContacts') !== 'shareContact.nContacts' ? t('shareContact.nContacts') : '{n} contatos').split('{n}').join(String(_csP.count));
+            const _vaT = (t('shareContact.viewAll') && t('shareContact.viewAll') !== 'shareContact.viewAll') ? t('shareContact.viewAll') : 'Ver todos';
+            return (
+              <View style={{ minWidth: 250, maxWidth: 300, borderRadius: 14, backgroundColor: _cardBgM, overflow: 'hidden', position: 'relative' }}>
+                <TouchableOpacity onPress={_openCard} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10 }}>
+                  <View style={{ width: 40 + (Math.min(3, _csP.count) - 1) * 24, height: 40 }}>
+                    {_csP.list.slice(0, 3).map((c, i) => (
+                      <View key={i} style={{ position: 'absolute', left: i * 24, top: 0 }}>
+                        <AvatarCircle name={c.name} email={c.email || undefined} size={40} />
+                      </View>
+                    ))}
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text numberOfLines={2} style={{ fontSize: 16, fontWeight: '700', color: isOwn ? ownTextColor : colors.text, lineHeight: 20 }}>{_csMod.contactTitle(_csP, t)}</Text>
+                    <Text style={{ fontSize: 13, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 3 }}>{_nT}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={_openCard} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={_vaT}
+                  style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: _divM, paddingVertical: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <IconUsers size={15} color={_accM} />
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: _accM }}>{_vaT}</Text>
+                </TouchableOpacity>
+                {selectionMode && (
+                  <TouchableOpacity activeOpacity={1} onPress={() => toggleSelection(msg.id)} onLongPress={() => toggleSelection(msg.id)} delayLongPress={350}
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent', zIndex: 99 }} />
+                )}
+              </View>
+            );
+          }
           const ctName = String(ct.name || ct.phone || ct.email || (t('chatConv.contact') || 'Contato'));
           const ctPhone = ct.phone ? String(ct.phone) : '';
           const ctEmail = ct.email ? String(ct.email) : '';
@@ -30475,8 +30553,8 @@ function ChatConversationInner() {
           };
           return (
             <View style={{ minWidth: 250, maxWidth: 300, borderRadius: 14, backgroundColor: cardBg, overflow: 'hidden', position: 'relative' }}>
-              {/* Header: avatar + name + phone (with flag) + email */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10 }}>
+              {/* Header: avatar + name + phone (with flag) + email — toque abre os detalhes [2026-10-17 share-contact] */}
+              <TouchableOpacity onPress={_openCard} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10 }}>
                 <AvatarCircle name={ctName} email={ctEmail} size={56} />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text
@@ -30505,7 +30583,7 @@ function ChatConversationInner() {
                     </Text>
                   ) : null}
                 </View>
-              </View>
+              </TouchableOpacity>
               {/* Action bar — Mensagem (se tem Chatyy) ou Convidar (senão) */}
               <ContactCardActions
                 email={ctEmail}
@@ -30514,6 +30592,7 @@ function ChatConversationInner() {
                 accent={accent}
                 dividerColor={dividerColor}
                 hasPhone={!!ctPhone}
+                knownChatyy={!!(_csP.first && _csP.first.chatyy)}
                 onStartChat={(resolvedEmail) => {
                   const targetEmail = resolvedEmail || ctEmail;
                   if (targetEmail) {
@@ -30540,7 +30619,7 @@ function ChatConversationInner() {
                     }
                   }
                 }}
-                onSave={handleSaveContact}
+                onSave={_csP.first && _csP.first.phones && _csP.first.phones.length > 1 ? (() => _csMod.saveToPhonebook(_csP.first, t)) : handleSaveContact}
                 onCall={() => { try { Linking.openURL(`tel:${ctPhone.replace(/[^+\d]/g, '')}`); } catch {} }}
                 onChatyyCall={(em) => { try { require('../services/chatyyOnlyCalls').startChatyyCall({ email: em, name: ctName, router }); } catch {} }}
               />
@@ -35555,6 +35634,15 @@ function ChatConversationInner() {
       {/* [2026-10-15 native-sheets-v2] Nativo: sheet grande do sistema (arrastar p/ fechar, fundo escala); web = Modal tela cheia de sempre. */}
       <LazyMount when={showContactPicker}>{(_lmV) => (<NativeSheetModal visible={_lmV} animationType="slide" onRequestClose={() => setShowContactPicker(false)} detents={[1]} backgroundColor={isDark ? '#0b0b0b' : '#ffffff'}>
         <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={{ flex: 1, backgroundColor: colors.background, paddingTop: USE_NATIVE_SHEETS ? 12 : insets.top }}>
+          {_shareContactV2() ? (
+            <ShareContactPicker
+              t={t} colors={colors} isDark={isDark} currentEmail={currentEmail}
+              onClose={() => setShowContactPicker(false)}
+              onSend={(cards) => { sendContactCards(cards); return true; } /* fecha na hora; envio segue em segundo plano (pendente salvo) */}
+              onSystemPicker={Platform.OS !== 'web' ? _shareContactSystemPick : undefined}
+              bottomPad={USE_NATIVE_SHEETS ? nativeSheetBottomPad(insets, 14) : Math.max(14, insets.bottom + 8)}
+            />
+          ) : (<>
           {/* Header */}
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -35662,6 +35750,7 @@ function ChatConversationInner() {
               </View>
             }
           />
+          </>)}
         </NativeSheetKeyboardView>
       </NativeSheetModal>)}</LazyMount>
 
@@ -39715,6 +39804,20 @@ function ChatConversationInner() {
                       <GroupRow colors={colors} Icon={IconUser}
                         title={t('chatConv.viewFullProfile') || 'Ver perfil'} right="chevron"
                         onPress={() => contactInfoGo(() => setProfileViewer({ name: conversationName, email: peer }))} />
+                      {/* [2026-10-17 share-contact] Compartilhar este contato em outra(s) conversa(s) (tela de compartilhar). */}
+                      {!!peer && (
+                        <>
+                          <GroupDivider colors={colors} />
+                          <GroupRow colors={colors} Icon={IconUserPlus}
+                            title={t('shareContact.shareThis') || 'Compartilhar contato'} right="chevron"
+                            onPress={() => contactInfoGo(() => {
+                              const _id = contactIdentity && String(contactIdentity.email || '').toLowerCase() === String(peer).toLowerCase() ? contactIdentity : null;
+                              const _ph = _id && _id.phone ? String(_id.phone) : '';
+                              const payload = require('../components/chat/contactShare').buildContactPayload([{ name: conversationName || String(peer).split('@')[0], email: String(peer), chatyy: true, phone: _ph, phones: _ph ? [_ph] : [] }]);
+                              if (payload) { try { router.push({ pathname: '/share-receive', params: { contact: payload } }); } catch {} }
+                            })} />
+                        </>
+                      )}
                     </GroupCard>
 
                     <GroupCard colors={colors} isDark={isDark}>
@@ -39869,6 +39972,8 @@ function ChatConversationInner() {
                   { Icon: IconChevronLeft, label: t('chatConv.moreOptions') || 'Mais opções', back: true, keepOpen: true, onPress: () => setHeaderMenuMore(false) },
                 ]},
                 { divider: true, items: [
+                  // [2026-10-17 share-contact] "Enviar contato" (mesmo seletor do "+"); menu é <Modal> RN → abre depois que ele desce.
+                  ...(conversationType !== 'channel' ? [{ Icon: IconUser, label: t('shareContact.menuSend') || 'Enviar contato', onPress: () => { closeMenu(); afterRNModal(() => handleShareContact(), true); }}] : []),
                   { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); (_advPriv.guard('export') || setShowExportModal(true)); }},
                   { Icon: IconSparkles, label: t('chatSum.menuLabel') || 'Resumir com a Bia', onPress: () => { closeMenu(); runAiSummary(); }},
                   // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
