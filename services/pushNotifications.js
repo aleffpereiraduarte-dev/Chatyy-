@@ -380,6 +380,8 @@ export function setIncomingCallHandler(handler) {
 // Internal state for native device FCM/APNs token. Declared up here (not
 // further down) so that registerForPushNotifications() can safely mutate
 // it without any TDZ / declaration-order risk.
+// [2026-10-17 fcm-race] último token FCM nativo obtido nesta instalação (sobrevive ao reset do registro concorrente).
+let _lastGoodAndroidDeviceToken = null;
 const pushNotificationsState = {
   deviceToken: null,
   apnsToken: null,     // [2026-10-09] iOS APNs hex token (token_type apns | apns_sandbox)
@@ -1554,6 +1556,7 @@ export async function registerForPushNotifications(opts = {}) {
 
       if (deviceToken?.data) {
         pushNotificationsState.deviceToken = deviceToken.data;
+        _lastGoodAndroidDeviceToken = deviceToken.data; // [2026-10-17 fcm-race]
         _diagPush('fcm_device_ok', 'type=' + (deviceToken.type || '?'));
       } else {
         _diagPush('fcm_device_missing', 'no fcm token after retry');
@@ -2099,8 +2102,26 @@ async function _sendTokenToBackendInner(pushToken) {
     // Expo depois, só como fallback (e só se for mesmo um ExponentPushToken —
     // quando o Expo falhou, pushToken é o próprio token nativo).
     if (Platform.OS === 'android') {
-      if (pushNotificationsState.deviceToken) {
-        await _one({ token: pushNotificationsState.deviceToken, platform: 'android', token_type: 'fcm_device' }, 'send_fcm');
+      // [2026-10-17 fcm-race] Corrida real (conta nova Android 678): o token_rotated
+      // do 1º getDevicePushTokenAsync dispara um 2º registerForPushNotifications que
+      // ZERA pushNotificationsState.deviceToken (linha "Reset any stale value")
+      // enquanto este envio ainda está rodando → send_fcm_skip, e o 2º envio morre
+      // no guard de 30 s do sendTokenToBackend → conta SEM fcm_device → push só
+      // pelo Expo (notification message: sem ✓✓ de entrega com app fechado).
+      // Usa o último token bom desta instalação; senão pede de novo ao SO.
+      let _fcmTok = pushNotificationsState.deviceToken || _lastGoodAndroidDeviceToken;
+      if (!_fcmTok) {
+        try {
+          const dt = await Notifications?.getDevicePushTokenAsync?.();
+          if (dt?.data && typeof dt.data === 'string') {
+            _fcmTok = dt.data;
+            _lastGoodAndroidDeviceToken = dt.data;
+            if (!pushNotificationsState.deviceToken) pushNotificationsState.deviceToken = dt.data;
+          }
+        } catch {}
+      }
+      if (_fcmTok) {
+        await _one({ token: _fcmTok, platform: 'android', token_type: 'fcm_device' }, 'send_fcm');
       } else {
         _diagPush('send_fcm_skip', 'no deviceToken in state');
       }
