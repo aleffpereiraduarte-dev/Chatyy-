@@ -3478,7 +3478,14 @@ export async function getMessage(uid, folder = 'INBOX', opts = {}) {
   if (!authToken || _isRustDead()) return _markSeen ? apiCall('message', { uid, folder }) : null;
   try {
     const url = `${ORIGIN_BASE}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=${_markSeen}`;
-    const r = await _rustFetchWithRefresh(url);
+    // [2026-10-17 thread-carregando] Rust pendurado (sem timeout) segurava o
+    // "Carregando…" pra sempre; 12s e cai no PHP `message` abaixo.
+    let _ac = null; let _acT = null;
+    try { _ac = typeof AbortController !== 'undefined' ? new AbortController() : null; } catch { _ac = null; }
+    if (_ac) _acT = setTimeout(() => { try { _ac.abort(); } catch {} }, 12000);
+    let r;
+    try { r = await _rustFetchWithRefresh(url, _ac ? { signal: _ac.signal } : {}); }
+    finally { if (_acT) clearTimeout(_acT); }
     if (r.status === 401) _markRustDead();
     if (r.ok) {
       const j = await r.json();

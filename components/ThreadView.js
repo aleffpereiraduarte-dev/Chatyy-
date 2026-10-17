@@ -1,6 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator } from 'react-native';
-import { getMessage } from '../services/api';
+import { getMessage, prefetchMessage } from '../services/api';
+import { getMessageFromCache, getMessageFromCacheSync, saveMessageToCache } from '../services/offlineCache';
+
+function _withTimeout(p, ms) {
+  let tm;
+  return Promise.race([
+    Promise.resolve(p),
+    new Promise((_, rej) => { tm = setTimeout(() => rej(new Error('timeout')), ms); }),
+  ]).finally(() => clearTimeout(tm));
+}
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -189,24 +198,57 @@ function formatDate(dateStr) {
 
 function MessageItem({ message, initiallyExpanded, colors, t, onReply, onReplyAll, onForward, selfEmails, showActions }) {
   const [expanded, setExpanded] = useState(!!initiallyExpanded);
-  const [fetched, setFetched] = useState(null);
+  // [2026-10-17 thread-carregando] Corpo do cache local no 1º frame (prefetch da
+  // ThreadView / aberturas anteriores) → expandir é instantâneo.
+  const [fetched, setFetched] = useState(() => {
+    if (message.body_html || message.body_text || message.body || !message.uid) return null;
+    return getMessageFromCacheSync(message.uid, message.folder || 'INBOX');
+  });
   const [loadingBody, setLoadingBody] = useState(false);
+  const [bodyFailed, setBodyFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // [2026-06-15] O backend `get_thread` monta cada mensagem da thread SÓ com
   // imap_fetch_overview (cabeçalhos: from/to/subject/date) — NUNCA traz o corpo.
   // Fix estilo Gmail: ao expandir a mensagem pela 1ª vez, busca o corpo
   // completo via getMessage(uid, folder) e mescla. Lazy = não pesa o servidor.
+  // [2026-10-17 thread-carregando] BUG: `loadingBody` estava nas deps → o
+  // setLoadingBody(true) re-rodava o efeito, o cleanup marcava cancelled=true e
+  // a resposta (200 em ~50 ms) era DESCARTADA → "Carregando…" eterno em toda
+  // mensagem que não fosse a aberta. Agora: deps sem loadingBody, cancelamento
+  // só no unmount/troca de uid, cache-first, timeout + 1 retry + botão.
   const hasBody = !!(message.body_html || message.body_text || message.body);
   useEffect(() => {
-    if (!expanded || hasBody || fetched || loadingBody || !message.uid) return;
+    if (!expanded || hasBody || fetched || !message.uid) return;
     let cancelled = false;
+    const uid = message.uid;
+    const folder = message.folder || 'INBOX';
     setLoadingBody(true);
-    Promise.resolve(getMessage(message.uid, message.folder || 'INBOX'))
-      .then((r) => { if (!cancelled && r && r.success && r.data) setFetched(r.data); })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setLoadingBody(false); });
-    return () => { cancelled = true; };
-  }, [expanded, hasBody, fetched, loadingBody, message.uid, message.folder]);
+    setBodyFailed(false);
+    (async () => {
+      let data = null;
+      try {
+        const cached = await getMessageFromCache(uid, folder);
+        if (cached) data = cached;
+      } catch {}
+      for (let i = 0; !data && i < 2 && !cancelled; i++) {
+        try {
+          const r = await _withTimeout(getMessage(uid, folder), 20000);
+          const d = r && r.success && r.data;
+          if (d && (d.body_html || d.body_text || d.body || (d.attachments && d.attachments.length))) {
+            data = d;
+            saveMessageToCache(uid, d, folder).catch(() => {});
+          }
+        } catch {}
+      }
+      if (cancelled || !mountedRef.current) return;
+      if (data) setFetched(data); else setBodyFailed(true);
+      setLoadingBody(false);
+    })();
+    return () => { cancelled = true; if (mountedRef.current) setLoadingBody(false); };
+  }, [expanded, hasBody, fetched, message.uid, message.folder, attempt]);
 
   const m = fetched ? { ...message, ...fetched } : message;
   const mHasBody = !!(m.body_html || m.body_text || m.body);
@@ -251,6 +293,19 @@ function MessageItem({ message, initiallyExpanded, colors, t, onReply, onReplyAl
             {t('common.loading')}
           </Text>
         </View>
+      );
+    }
+    if (!mHasBody && bodyFailed) {
+      return (
+        <TouchableOpacity
+          onPress={() => setAttempt((a) => a + 1)}
+          accessibilityRole="button"
+          style={{ paddingVertical: 6, minHeight: 32, justifyContent: 'center' }}
+        >
+          <Text style={[s.bodyText, { color: colors.primary }]}>
+            {t('common.tryAgain') || 'Tentar novamente'}
+          </Text>
+        </TouchableOpacity>
       );
     }
     return (
@@ -341,6 +396,20 @@ export default function ThreadView({ thread, onReply, onReplyAll, onForward, onC
   const [showAll, setShowAll] = useState(false);
   const threadKey = (thread || []).map(m => m?.uid || m?.id || '').join(',');
   useEffect(() => { setShowAll(false); }, [threadKey]);
+  // [2026-10-17 thread-carregando] Aquece em 2º plano (sem marcar lido, 1 por
+  // vez) o corpo das mensagens recolhidas → tocar pra expandir abre do cache.
+  useEffect(() => {
+    let cancelled = false;
+    const todo = (thread || []).filter((m) => m && m.uid && !(m.body_html || m.body_text || m.body)).slice(-6).reverse();
+    if (!todo.length) return undefined;
+    const tm = setTimeout(async () => {
+      for (const m of todo) {
+        if (cancelled) break;
+        try { await prefetchMessage(m.uid, m.folder || 'INBOX'); } catch {}
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(tm); };
+  }, [threadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selfEmails = useMemo(() => {
     const set = new Set();
