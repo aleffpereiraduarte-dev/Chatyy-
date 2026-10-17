@@ -1009,7 +1009,8 @@ export function buildFallbackCard(item, row, ctx, reason) {
   const m = isAlbum ? ((item._items || [])[0] || item) : item;
   const type = (m && m.type) || 'text';
   let Ic = IconMessageCircle; let title = _tr(C, 'chatConv.nlMessage', 'Mensagem');
-  if (type === 'image' || type === 'gif') { Ic = IconImage; title = _tr(C, 'chat.photo', 'Foto'); }
+  if (type === 'gif') { Ic = IconFilm; title = _tr(C, 'chat.gif', 'GIF'); } // [2026-10-16 gif] nunca "Foto"
+  else if (type === 'image') { Ic = IconImage; title = _tr(C, 'chat.photo', 'Foto'); }
   else if (type === 'video' || type === 'short_video' || type === 'video_note' || type === 'video_message') { Ic = IconVideo; title = _tr(C, 'chat.video', 'Vídeo'); }
   else if (type === 'audio' || type === 'voice' || type === 'voicemail') { Ic = IconMic; title = _tr(C, 'chat.audio', 'Áudio'); }
   else if (type === 'file' || type === 'document') { Ic = IconFile; title = String(m.file_name || '').trim() || _tr(C, 'chat.file', 'Arquivo'); }

@@ -33130,7 +33130,9 @@ function ChatConversationInner() {
     const isAlbum = item && item._type === 'album';
     const its = isAlbum ? (item._items || []) : null;
     const m = isAlbum ? its[Math.max(0, Math.min(its.length - 1, index || 0))] : item;
-    if (!m || m.deleted_at || !m.file_url) return;
+    // [2026-10-16 gif] GIF do seletor sem legenda: URL vem em content (file_url vazio)
+    const _gifSrc = (m && m.type === 'gif' && !m.file_url && typeof m.content === 'string' && /^https?:\/\//i.test(m.content.trim())) ? m.content.trim() : '';
+    if (!m || m.deleted_at || (!m.file_url && !_gifSrc)) return;
     if (m.type === 'sticker') {
       const sid = Number(m.id);
       setStickerSheet({ messageId: Number.isFinite(sid) && sid > 0 ? sid : null, url: m.file_url || m.content });
@@ -33141,7 +33143,7 @@ function ChatConversationInner() {
     const b64 = m.thumb_b64 || getThumbB64Sync(m.id);
     setMediaViewer({
       visible: true,
-      fileUrl: m.file_url,
+      fileUrl: m.file_url || _gifSrc,
       fileName: m.file_name || m.type,
       fileSize: m.file_size || 0,
       type: m.type === 'gif' ? 'image' : m.type,

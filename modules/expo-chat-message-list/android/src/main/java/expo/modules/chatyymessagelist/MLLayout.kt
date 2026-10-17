@@ -533,7 +533,7 @@ object MLLayoutBuilder {
         val pw = meta.width + s.dp(12f)
         L.metaFrame.set(L.mediaFrame.right - pw - s.dp(5f), L.mediaFrame.bottom - s.dp(23f), L.mediaFrame.right - s.dp(5f), L.mediaFrame.bottom - s.dp(5f))
       }
-      if (md != null && md.kind == "video" && md.dur.isNotEmpty()) L.durText = line(md.dur, s.meta, 0xFFFFFFFF.toInt(), s.dp(80f))
+      if (md != null && (md.kind == "video" || md.kind == "gif") && md.dur.isNotEmpty()) L.durText = line(md.dur, s.meta, 0xFFFFFFFF.toInt(), s.dp(80f))
       if (row.more > 0) L.moreText = line("+${row.more}", s.more, 0xFFFFFFFF.toInt(), s.dp(120f))
     } else if (row.audio != null) {
       meta = makeMeta(row, s, onMedia = false)

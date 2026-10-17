@@ -323,7 +323,7 @@ final class CMLCell: UICollectionViewCell {
         let s: CGFloat = 46
         playBadge.frame = CGRect(x: L.mediaFrame.midX - s / 2, y: L.mediaFrame.midY - s / 2, width: s, height: s).offsetBy(dx: o.x, dy: o.y)
       }
-      if isVideo && !md.dur.isEmpty {
+      if (isVideo || md.kind == "gif") && !md.dur.isEmpty { // [2026-10-16 gif] pílula "GIF"
         durLabel.isHidden = false
         let dl = CMLLayoutBuilder.line(md.dur, font: s.meta, color: .white, maxWidth: 80)
         durLabel.layout = dl

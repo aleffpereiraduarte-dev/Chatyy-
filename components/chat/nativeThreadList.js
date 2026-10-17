@@ -789,6 +789,14 @@ function _appendAfter(row, node) {
 const MEDIA_TYPES = new Set(['image', 'video', 'gif']);
 const TEXTISH = new Set(['text', '', undefined, null]);
 const SUPPORTED_TYPES = new Set(['text', 'image', 'video', 'gif', 'sticker', 'audio', 'voice', 'file', 'system']);
+// [2026-10-16 gif] GIF do seletor (Giphy/Tenor) SEM legenda vem com a URL em
+// `content` e file_url vazio (o JS sempre tratou assim). Antes caía em
+// 'media-nourl' → cartão-resumo "Foto · Toque para abrir" (o "foi como foto").
+function _gifContentUrl(m) {
+  if (!m || m.type !== 'gif' || m.file_url || typeof m.content !== 'string') return '';
+  const u = m.content.trim().replace(/,/g, '.').replace(/\s+/g, '');
+  return /^https?:\/\//i.test(u) ? u : '';
+}
 
 function _isViewOnce(m) { return !!(m && (m.is_view_once || m.isViewOnce || m.view_once)); }
 function _fmtDur(sec) {
@@ -924,6 +932,7 @@ function _mdlMedia(m, out, ctx) {
     return;
   }
   if (m.type !== 'image' && m.type !== 'gif') return;
+  if (m.type === 'gif' && !m.file_url) return; // GIF externo (Giphy/Tenor): loader nativo busca a URL direto
   if (!out.uri || !/^https?:\/\//i.test(out.uri)) return; // já local (file://) ou sem URL
   let fileRemote = '';
   try { fileRemote = m.file_url ? require('../../services/api').getMediaUrl(m.file_url) : ''; } catch {}
@@ -1002,7 +1011,7 @@ export function unsupportedReason(item, ctx) {
     return '';
   }
   if (MEDIA_TYPES.has(type)) {
-    if (!item.file_url && !item._localUri && !item.local_path) return 'media-nourl';
+    if (!item.file_url && !item._localUri && !item.local_path && !_gifContentUrl(item)) return 'media-nourl';
     if (_api < 2 && c && _hasRich(c) && !_richAllowed() && !/^(https?:\/\/|\/?data\/)/i.test(c.trim())) return 'caption-rich';
     return '';
   }
@@ -1056,8 +1065,11 @@ function _mediaFor(m, ctx) {
   const r = (ctx.resolveMedia && ctx.resolveMedia(m)) || {};
   let w = Number(m.width) || 0; let h = Number(m.height) || 0;
   if (!(w > 0 && h > 0) && r.w > 0 && r.h > 0) { w = r.w; h = r.h; }
-  const out = { t: m.type === 'gif' ? 'gif' : m.type, uri: r.uri || '', w: w || 0, h: h || 0 };
+  const gifUrl = m.type === 'gif' && !r.uri ? _gifContentUrl(m) : '';
+  if (gifUrl && !(w > 0 && h > 0)) { w = 220; h = 180; } // mesmo quadro do render JS
+  const out = { t: m.type === 'gif' ? 'gif' : m.type, uri: r.uri || gifUrl || '', w: w || 0, h: h || 0 };
   if (r.thumb) out.th = r.thumb;
+  if (m.type === 'gif') out.dur = 'GIF'; // pílula "GIF" (nativo desenha no canto, como a duração do vídeo)
   if (m.type === 'video') {
     const d = Number(m.duration) || 0;
     if (d > 0) out.dur = _fmtDur(d);
