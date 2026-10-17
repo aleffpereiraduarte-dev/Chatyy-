@@ -13198,4 +13198,11 @@ export default {
   "shareContact.viewAll": "Ver todos",
   "shareContact.menuSend": "Enviar contato",
   "shareContact.shareThis": "Compartilhar contato",
+  "androidReady.fsiTitle": "Ligações em tela cheia",
+  "androidReady.fsiBody": "Para ver quem está ligando com o celular bloqueado, como no WhatsApp, permita que o Chatyy mostre notificações em tela cheia.",
+  "androidReady.allow": "Permitir",
+  "androidReady.later": "Agora não",
+  "androidReady.batteryTitle": "Receba ligações e mensagens na hora",
+  "androidReady.batteryBody": "O Android está limitando o Chatyy em segundo plano, então ligações e mensagens podem atrasar. Em Bateria, escolha \"Sem restrições\".",
+  "androidReady.openSettings": "Abrir configurações",
 };

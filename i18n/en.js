@@ -13120,4 +13120,11 @@ export default {
   "shareContact.viewAll": "View all",
   "shareContact.menuSend": "Send contact",
   "shareContact.shareThis": "Share contact",
+  "androidReady.fsiTitle": "Full-screen calls",
+  "androidReady.fsiBody": "To see who's calling while your phone is locked, allow Chatyy to show full-screen notifications.",
+  "androidReady.allow": "Allow",
+  "androidReady.later": "Not now",
+  "androidReady.batteryTitle": "Get calls and messages instantly",
+  "androidReady.batteryBody": "Android is limiting Chatyy in the background, so calls and messages may arrive late. Under Battery, choose \"Unrestricted\".",
+  "androidReady.openSettings": "Open settings",
 };

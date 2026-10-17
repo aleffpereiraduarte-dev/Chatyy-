@@ -125,8 +125,11 @@ class RelayWakeService : Service() {
             }
         } catch (t: Throwable) {
             Log.w(TAG, "startForeground failed: ${t.message}")
-            // Even if FGS promotion fails, try to do the work — the OS will
-            // kill us after the BG window expires but we may still complete.
+            // [2026-10-17 android-wa] A startForegroundService() that never
+            // reaches startForeground() CRASHES the app ~5 s later
+            // (ForegroundServiceDidNotStartInTimeException) → stop cleanly.
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
 
         // Reject duplicate starts — if a second wake push arrives while

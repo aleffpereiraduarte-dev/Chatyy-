@@ -287,6 +287,30 @@ class GroupCallActivity : ComponentActivity() {
     if (finished) return@Listener
     speakerOn = r == expo.modules.callkit.audio.AudioRouter.Route.SPEAKER
     try { refreshControlStates() } catch (_: Throwable) {}
+    updateGroupProximity(r)
+  }
+
+  // [2026-10-17 android-wa] Screen off at the ear in VOICE group calls on the
+  // earpiece (CallActivity / WhatsApp parity). Speaker / BT / wired / camera on
+  // / PiP → screen stays on.
+  private var groupProximityLock: android.os.PowerManager.WakeLock? = null
+  private fun updateGroupProximity(r: expo.modules.callkit.audio.AudioRouter.Route?) {
+    val want = !finished && !camEnabled && r == expo.modules.callkit.audio.AudioRouter.Route.EARPIECE &&
+      !isInPictureInPictureMode
+    try {
+      if (want) {
+        if (groupProximityLock == null) {
+          val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+          if (!pm.isWakeLockLevelSupported(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
+          groupProximityLock = pm.newWakeLock(android.os.PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "chatyy:groupcall:proximity")
+        }
+        if (groupProximityLock?.isHeld != true) groupProximityLock?.acquire(60 * 60 * 1000L)
+      } else if (groupProximityLock?.isHeld == true) {
+        groupProximityLock?.release()
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "group proximity failed: ${t.message}")
+    }
   }
 
   // Views.
@@ -1853,6 +1877,36 @@ class GroupCallActivity : ComponentActivity() {
     }
     addCtl(hangupBtn, 60)
 
+    // [2026-10-17 android-wa] Android 15+ edge-to-edge (targetSdk 36): header
+    // below the status bar / cutout, controls (hang up!) above the 3-button
+    // nav bar. Pre-15 the decor already insets us → zero insets → defaults.
+    root.setOnApplyWindowInsetsListener { _, insets ->
+      var top = 0
+      var bottom = 0
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          val b = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+          top = b.top
+          bottom = b.bottom
+        } else {
+          @Suppress("DEPRECATION")
+          val t0 = insets.systemWindowInsetTop
+          @Suppress("DEPRECATION")
+          val b0 = insets.systemWindowInsetBottom
+          top = t0
+          bottom = b0
+        }
+      } catch (_: Throwable) {}
+      header.setPadding(dp(12), maxOf(dp(36), top + dp(8)), dp(12), dp(8))
+      controls.setPadding(dp(8), dp(14), dp(8), maxOf(dp(34), bottom + dp(14)))
+      (gridScroll.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+        lp.topMargin = maxOf(dp(92), top + dp(64))
+        lp.bottomMargin = maxOf(dp(124), bottom + dp(104))
+        gridScroll.layoutParams = lp
+      }
+      insets
+    }
+
     return root
   }
 
@@ -2177,6 +2231,7 @@ class GroupCallActivity : ComponentActivity() {
       try { ExpoCallKitModule.emitCallEnded(roomName) } catch (_: Throwable) {}
     }
     try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).removeListener(audioRouteListener) } catch (_: Throwable) {}
+    try { if (groupProximityLock?.isHeld == true) groupProximityLock?.release() } catch (_: Throwable) {}
     try { expo.modules.callkit.audio.AudioRouter.get(applicationContext).teardown() } catch (_: Throwable) {}
     closeScreenFullscreen() // [2026-10-14 group-ui]
     tilesByIdentity.values.forEach { tile ->

@@ -31,6 +31,22 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         private const val TAG = "CallFCMService"
         // Cache the resolved delegate to avoid repeated reflection
         private var cachedDelegate: Any? = null
+
+        /**
+         * [2026-10-17 android-wa] Background delivery was degraded (FCM high
+         * priority downgraded to normal by app-standby / battery restriction,
+         * or a ring FGS start was refused). JS (services/androidCallReadiness.js
+         * via ExpoCallKit.getBackgroundHealth) then shows the WhatsApp-style
+         * "allow background" explanation — ONLY when this happened.
+         */
+        fun markDeliveryDegraded(ctx: Context, reason: String) {
+            try {
+                ctx.getSharedPreferences("chatyy_bg_health", Context.MODE_PRIVATE).edit()
+                    .putLong("degraded_at", System.currentTimeMillis())
+                    .putString("degraded_reason", reason)
+                    .apply()
+            } catch (_: Throwable) {}
+        }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
@@ -54,6 +70,17 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             } catch (_: Throwable) {}
         }
         val type = data["type"] ?: ""
+
+        // [2026-10-17 android-wa] A token refresh that failed offline is retried
+        // on the next push (cheap no-op when nothing is pending; 5 min throttle).
+        try { PushTokenRegistrar.flushPending(applicationContext) } catch (_: Throwable) {}
+        // Sent high, delivered normal = OS throttled us (standby bucket /
+        // battery restriction) → remember for the "only when needed" prompt.
+        try {
+            if (message.originalPriority == RemoteMessage.PRIORITY_HIGH && message.priority != RemoteMessage.PRIORITY_HIGH) {
+                markDeliveryDegraded(applicationContext, "fcm_downgraded:$type")
+            }
+        } catch (_: Throwable) {}
 
         Log.d(TAG, "FCM message received: type=$type, dataKeys=${data.keys}")
 
@@ -448,6 +475,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 when {
                     Build.VERSION.SDK_INT >= 31 && cls == "ForegroundServiceStartNotAllowedException" -> {
                         Log.w(TAG, "FGS not allowed (background start blocked), falling back to direct notification", e)
+                        markDeliveryDegraded(applicationContext, "fgs_not_allowed")
                     }
                     e is SecurityException -> {
                         Log.w(TAG, "SecurityException starting FGS — likely USE_FULL_SCREEN_INTENT denied or FGS type policy", e)

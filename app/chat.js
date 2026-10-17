@@ -322,6 +322,15 @@ function ChatHub() {
     }, 6000);
     return () => clearTimeout(id);
   }, [user?.email]);
+  // [2026-10-17 android-wa] Tela cheia p/ ligações (Android 14+) e bateria
+  // restrita: explica e pede SÓ quando faz falta (services/androidCallReadiness).
+  useEffect(() => {
+    if (!user?.email || Platform.OS !== 'android') return undefined;
+    const id = setTimeout(() => {
+      try { require('../services/androidCallReadiness').maybePromptAndroidCallReadiness(t).catch(() => {}); } catch {}
+    }, 9000);
+    return () => clearTimeout(id);
+  }, [user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
   // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.
   // [2026-10-01 STATUS CONSOLIDATION] 'status' is NO LONGER a navigable full-screen
   // tab. The separate (ugly, redundant) Status screen is retired: status now lives

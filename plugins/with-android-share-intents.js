@@ -46,6 +46,10 @@ const SHARE_FILTERS = [
   { action: 'android.intent.action.SEND', mimeType: 'application/zip' },
   { action: 'android.intent.action.SEND', mimeType: 'application/x-zip-compressed' },
   { action: 'android.intent.action.SEND', mimeType: 'application/octet-stream' },
+  // [2026-10-17 android-wa] 1 documento/áudio (PDF, DOCX, XLSX, m4a…) do
+  // Arquivos/Gmail/Drive — antes só SEND_MULTIPLE aceitava (WhatsApp aceita).
+  { action: 'android.intent.action.SEND', mimeType: 'application/*' },
+  { action: 'android.intent.action.SEND', mimeType: 'audio/*' },
   { action: 'android.intent.action.SEND_MULTIPLE', mimeType: 'text/*' },
   { action: 'android.intent.action.SEND_MULTIPLE', mimeType: 'application/*' },
   { action: 'android.intent.action.SEND_MULTIPLE', mimeType: '*/*' },

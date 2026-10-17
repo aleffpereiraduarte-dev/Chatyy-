@@ -13119,4 +13119,11 @@ export default {
   "shareContact.viewAll": "Ver todos",
   "shareContact.menuSend": "Enviar contacto",
   "shareContact.shareThis": "Compartir contacto",
+  "androidReady.fsiTitle": "Llamadas en pantalla completa",
+  "androidReady.fsiBody": "Para ver quién te llama con el teléfono bloqueado, permite que Chatyy muestre notificaciones en pantalla completa.",
+  "androidReady.allow": "Permitir",
+  "androidReady.later": "Ahora no",
+  "androidReady.batteryTitle": "Recibe llamadas y mensajes al instante",
+  "androidReady.batteryBody": "Android está limitando Chatyy en segundo plano, así que las llamadas y los mensajes pueden llegar tarde. En Batería, elige \"Sin restricciones\".",
+  "androidReady.openSettings": "Abrir ajustes",
 };

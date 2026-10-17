@@ -1560,6 +1560,16 @@ function ContactsScreenInner() {
           <IconSmartphone size={48} color={colors.textTertiary} style={{ opacity: 0.4, marginBottom: Spacing.md }} />
           <Text style={[s.emptyTitle, { color: colors.text }]}>{t('contacts.permissionRequired')}</Text>
           <Text style={[s.emptyHint, { color: colors.textTertiary }]}>{t('contacts.permissionMessage')}</Text>
+          {/* [2026-10-17 android-wa] negado de vez → só os Ajustes destravam (WhatsApp) */}
+          <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.lg }}>
+            <TouchableOpacity
+              onPress={() => { try { require('react-native').Linking.openSettings().catch(() => {}); } catch {} }}
+              style={[s.bigActionBtn, { backgroundColor: colors.primary }]}
+              accessibilityRole="button"
+            >
+              <Text style={[s.bigActionBtnText, { color: colors.onPrimary }]}>{t('common.openSettings')}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       );
     }

@@ -100,6 +100,7 @@ class VoiceNotePlayer(
     rate = newRate.toFloat().coerceIn(0.5f, 3f)
     durationMs = 0
     attrsDirty = false
+    if (!earpiece) resetLeakedCallMode()
     // A new note keeps the current route: if the user is already at the ear
     // (auto-advance), it continues on the earpiece.
     buildPlayer(startMs.coerceAtLeast(0), true)
@@ -412,8 +413,52 @@ class VoiceNotePlayer(
   /** True when a call (not us) owns the communication mode. */
   private fun callOwnsAudio(): Boolean {
     if (weSetMode) return false
-    val mode = audioManager?.mode ?: return false
-    return mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+    val am = audioManager ?: return false
+    val mode = am.mode
+    if (mode == AudioManager.MODE_IN_CALL) return true
+    if (mode != AudioManager.MODE_IN_COMMUNICATION) return false
+    // [2026-10-17 voice-speaker] MODE_IN_COMMUNICATION LEAKS after a call
+    // (IncomingCallActivity / CallActionReceiver / FCM auto-accept pre-warm it,
+    // and a killed/swiped call never runs AudioRouter.teardown). A stale mode is
+    // not a call: without live call audio it must not disable raise-to-ear nor
+    // keep the note on the earpiece (iOS twin: VoiceNotePlayer.swift).
+    return liveCallAudio(am)
+  }
+
+  /** A real call (ours or another VoIP app) has the mic open / voice-call playback. */
+  private fun liveCallAudio(am: AudioManager): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+    try {
+      if (am.activeRecordingConfigurations.isNotEmpty()) return true
+    } catch (_: Throwable) {
+    }
+    try {
+      for (c in am.activePlaybackConfigurations) {
+        if (c.audioAttributes.usage == AudioAttributes.USAGE_VOICE_COMMUNICATION) return true
+      }
+    } catch (_: Throwable) {
+    }
+    return false
+  }
+
+  /** [2026-10-17 voice-speaker] Undo a leaked call mode/route before a note plays. */
+  private fun resetLeakedCallMode() {
+    if (weSetMode) return
+    val am = audioManager ?: return
+    try {
+      if (am.mode != AudioManager.MODE_IN_COMMUNICATION) return
+      if (liveCallAudio(am)) return
+      Log.d(TAG, "leaked MODE_IN_COMMUNICATION without a call -> MODE_NORMAL")
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        am.clearCommunicationDevice()
+      } else {
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = false
+      }
+      am.mode = AudioManager.MODE_NORMAL
+    } catch (t: Throwable) {
+      Log.w(TAG, "reset leaked mode failed: ${t.message}")
+    }
   }
 
   private fun headsetConnected(): Boolean {

@@ -42,7 +42,16 @@ internal class PFGallery(
   private val onClosed: () -> Unit,
 ) {
   private val ctx: Context = activity
-  private val dialog = Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar)
+  // [2026-10-17 android-wa] Android 14+ with enableOnBackInvokedCallback never
+  // delivers KEYCODE_BACK to the key listener — the Dialog's own back callback
+  // calls onBackPressed() → cancel() (no close animation, onClosed() never ran).
+  // Route it to our animated dismiss().
+  private val dialog = object : Dialog(activity, android.R.style.Theme_Translucent_NoTitleBar) {
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+      this@PFGallery.dismiss()
+    }
+  }
   private val root = DragRoot(ctx)
   private val bg = View(ctx)
   private val pager = ViewPager2(ctx)
@@ -106,6 +115,13 @@ internal class PFGallery(
     }
     dialog.setOnKeyListener { _, keyCode, event ->
       if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { dismiss(); true } else keyCode == KeyEvent.KEYCODE_BACK
+    }
+    // Any other cancel path (system) still tells JS the gallery closed.
+    dialog.setOnCancelListener {
+      if (!closing) {
+        closing = true
+        onClosed()
+      }
     }
     try { dialog.show() } catch (_: Throwable) { onClosed(); return }
     root.post { heroIn() }

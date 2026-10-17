@@ -2666,6 +2666,13 @@ function LiveBroadcastScreen() {
           try { setLkLocalVideoTrack(camTrack); } catch {}
         } else if (Platform.OS === 'android' && camMst && typeof camMst._switchCamera === 'function') {
           camMst._switchCamera();
+          // [2026-10-17 android-wa] LK guarda o facingMode antigo nas constraints
+          // → um restartTrack() sem opções (reconexão) voltaria p/ a câmera velha.
+          try {
+            if (camTrack && camTrack._constraints && typeof camTrack._constraints === 'object') {
+              camTrack._constraints = { ...camTrack._constraints, facingMode: newFacing };
+            }
+          } catch {}
         } else if (Platform.OS !== 'web') {
           throw new Error('no_camera_track');
         } else {

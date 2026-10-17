@@ -874,20 +874,114 @@ class ExpoCallKitModule : Module() {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (!nm.canUseFullScreenIntent()) {
           try {
+            // [2026-10-17 android-wa] package: URI opens OUR toggle directly
+            // (without it most OEMs show the global app list).
             val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+              data = android.net.Uri.parse("package:" + context.packageName)
               addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
             true
           } catch (e: Exception) {
             Log.e(TAG, "Could not open full-screen intent settings", e)
-            false
+            // Fallback: the app's notification settings page.
+            try {
+              val fb = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+              }
+              context.startActivity(fb)
+              true
+            } catch (_: Exception) {
+              false
+            }
           }
         } else {
           true // Already granted
         }
       } else {
         true // Not needed on older versions
+      }
+    }
+
+    /**
+     * [2026-10-17 android-wa] Background-delivery health for the WhatsApp-style
+     * "only when needed" prompts (services/androidCallReadiness.js):
+     * full-screen-intent grant, battery exemption, "Restricted" battery mode,
+     * standby bucket, and the last time FCM/FGS delivery was degraded
+     * (CallFirebaseMessagingService.markDeliveryDegraded). Never throws.
+     */
+    AsyncFunction("getBackgroundHealth") {
+      val out = HashMap<String, Any?>()
+      out["sdk"] = Build.VERSION.SDK_INT
+      try {
+        out["canUseFullScreenIntent"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+          (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).canUseFullScreenIntent()
+        } else {
+          true
+        }
+      } catch (_: Throwable) {
+        out["canUseFullScreenIntent"] = true
+      }
+      try {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        out["ignoringBatteryOptimizations"] = pm.isIgnoringBatteryOptimizations(context.packageName)
+      } catch (_: Throwable) {
+        out["ignoringBatteryOptimizations"] = null
+      }
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+          val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+          out["backgroundRestricted"] = am.isBackgroundRestricted
+          val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+          out["standbyBucket"] = usm.appStandbyBucket
+        }
+      } catch (_: Throwable) {}
+      try {
+        val sp = context.getSharedPreferences("chatyy_bg_health", Context.MODE_PRIVATE)
+        out["degradedAt"] = sp.getLong("degraded_at", 0L).toDouble()
+        out["degradedReason"] = sp.getString("degraded_reason", "") ?: ""
+      } catch (_: Throwable) {}
+      out
+    }
+
+    /** [2026-10-17 android-wa] Forget the degraded flag (after the user acted). */
+    Function("clearDeliveryDegraded") {
+      try {
+        context.getSharedPreferences("chatyy_bg_health", Context.MODE_PRIVATE).edit()
+          .remove("degraded_at").remove("degraded_reason").apply()
+      } catch (_: Throwable) {}
+      true
+    }
+
+    /**
+     * [2026-10-17 android-wa] Opens where the user sets Battery → "Unrestricted"
+     * (app details on Android 12+, the battery-optimization list before).
+     * No REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission (Play-restricted).
+     */
+    AsyncFunction("openBatterySettings") {
+      val primary = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+          data = android.net.Uri.parse("package:" + context.packageName)
+        }
+      } else {
+        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+      }
+      primary.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      try {
+        context.startActivity(primary)
+        true
+      } catch (e: Exception) {
+        try {
+          val fb = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.parse("package:" + context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          }
+          context.startActivity(fb)
+          true
+        } catch (_: Exception) {
+          false
+        }
       }
     }
 

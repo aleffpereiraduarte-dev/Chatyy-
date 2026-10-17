@@ -49,6 +49,12 @@ class ExpoAudioSessionModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoAudioSession")
 
+    // [2026-10-17 android-wa] JS reload / module teardown without deactivate()
+    // must not leave the proximity screen-off lock held.
+    OnDestroy {
+      releaseProximityLock()
+    }
+
     AsyncFunction("activateForCall") { useSpeaker: Boolean ->
       synchronized(this@ExpoAudioSessionModule) {
         try {
