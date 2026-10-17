@@ -34,8 +34,26 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val data = message.data
-        val type = data["type"] ?: ""
+        // [2026-10-17 expo-call-unpack] Push de chamada roteado pelo Expo chega
+        // como data-only com tudo em JSON dentro de data["body"] → achata p/ os
+        // ramos de chamada (incoming_call/…/call_end) acharem o "type".
+        var data: Map<String, String> = message.data
+        if ((data["type"] ?: "").isEmpty()) {
+            try {
+                val raw = data["body"]
+                if (raw != null && raw.trimStart().startsWith("{")) {
+                    val j = org.json.JSONObject(raw)
+                    val t = j.optString("type", "")
+                    if (t == "incoming_call" || t == "incoming_group_call" || t == "call_cancel" || t == "call_end") {
+                        val flat = HashMap<String, String>(data)
+                        val it = j.keys()
+                        while (it.hasNext()) { val k = it.next(); val v = j.opt(k); if (v != null && v != org.json.JSONObject.NULL) flat[k] = v.toString() }
+                        data = flat
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+        val type = data["type"] ?: "
 
         Log.d(TAG, "FCM message received: type=$type, dataKeys=${data.keys}")
 

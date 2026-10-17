@@ -2074,7 +2074,7 @@ async function _sendTokenToBackendInner(pushToken) {
       try {
         const ck = _nativeChat();
         if (ck && typeof ck.supportsNativePushRegistrar === 'function' && ck.supportsNativePushRegistrar()) {
-          _meta.caps = 'fcm_native_v1';
+          _meta.caps = (typeof ck.supportsExpoCallUnpack === 'function' && ck.supportsExpoCallUnpack()) ? 'fcm_native_v1,fcm_native_call' : 'fcm_native_v1';
           ck.setPushRegistrationInfo(_devId, _ver);
         }
       } catch {}

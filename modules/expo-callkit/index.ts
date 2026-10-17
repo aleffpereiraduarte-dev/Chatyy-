@@ -671,6 +671,11 @@ export function supportsNativePushRegistrar(): boolean {
   return !!(m && typeof m.setPushRegistrationInfo === 'function');
 }
 
+export function supportsExpoCallUnpack(): boolean {
+  const m: any = getModule();
+  try { return !!(m && typeof m.supportsExpoCallUnpack === 'function' && m.supportsExpoCallUnpack()); } catch { return false; }
+}
+
 export function setPushRegistrationInfo(deviceId: string, appVersion: string): void {
   const m: any = getModule();
   if (!m || typeof m.setPushRegistrationInfo !== 'function') return;

@@ -664,6 +664,9 @@ class ExpoCallKitModule : Module() {
     // [2026-10-13 push-token-always] JS → native: device_id estável + versão do
     // app, usados pelo PushTokenRegistrar quando o FCM renova o token com o
     // app fechado (CallFirebaseMessagingService.onNewToken).
+    // [2026-10-17 expo-call-unpack] binário que entende push de chamada via Expo (data["body"]).
+    Function("supportsExpoCallUnpack") { true }
+
     Function("setPushRegistrationInfo") { deviceId: String, appVersion: String ->
       try {
         PushTokenRegistrar.setInfo(context, deviceId, appVersion)
