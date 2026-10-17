@@ -26,6 +26,11 @@ import { getAvatarVersion, emailFromAvatarUrl, normAvatarVersion } from './avata
 export const AVATAR_INITIALS_RENDER_V = 3;
 // Lado da versão "grande" (servidor: size=96|256|1024; sem size = 256).
 export const AVATAR_FULL_SIZE = 1024;
+// [avatar-ai 2026-10-17] Versão da "foto grande" (size=1024). Entre 14/10 e 17/10 o servidor
+// respondia a 256 antiga como `immutable` p/ size=1024; agora fotos antigas ganham versão
+// grande melhorada por IA (Real-ESRGAN no NOSSO servidor) SEM mudar o `v=` da lista.
+// `fv=` muda só a URL grande → aparelhos que guardaram a 256 imutável buscam a nova.
+export const AVATAR_FULL_RENDER_V = 2;
 
 const FALLBACK_API = 'https://chatyy.com.br/api/email.php';
 let _apiMod = null;
@@ -79,7 +84,7 @@ export function buildAvatarUrl(email, opts = {}) {
     const own = /@(chatyy|onemundo)\.com\.br$/.test(e);
     if (n && !own && n.indexOf('@') === -1) u += `&name=${encodeURIComponent(n.slice(0, 40))}`;
   }
-  if (opts.size === 'full') u += `&size=${AVATAR_FULL_SIZE}`;
+  if (opts.size === 'full') u += `&size=${AVATAR_FULL_SIZE}&fv=${AVATAR_FULL_RENDER_V}`;
   if (opts.nofallback) u += '&nofallback=1';
   if (viewer) u += `&viewer=${encodeURIComponent(viewer)}`;
   return u;
