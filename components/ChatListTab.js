@@ -218,14 +218,21 @@ function _rowLmId(row) {
   const n = Number((lm && lm.id) || (row && row.last_message_id) || 0);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
-function _noteSelfRead(convId, row) {
+// [2026-10-17 lida-lista] upToId = id REAL lido (chat_read.last_read_id do
+// markReadUpTo / outro aparelho). Antes só a última msg da LINHA contava: msg que
+// chegou com a conversa aberta pelo relay otimista do peer (id tmp_…, a linha real
+// era descartada pelo dedup por client id) deixava a guarda no id antigo → o
+// chat_list da réplica (unread velho, última msg = id real) repunha o contador
+// na volta. Kill: globalThis.__chatyy_selfread_upto_off = true.
+function _noteSelfRead(convId, row, upToId) {
   if (convId == null) return;
   try {
     const k = String(convId);
     const prev = _selfReadMarks.get(k);
     // [2026-10-15 unread-mono] monotônico: nunca recua o que já foi lido.
     const ms = Math.max(row ? _convActivityMs(row) : 0, Date.now(), (prev && prev.ms) || 0);
-    const lmId = Math.max(_rowLmId(row), (prev && prev.lmId) || 0);
+    const _up = (globalThis.__chatyy_selfread_upto_off === true) ? 0 : (Number(upToId) || 0);
+    const lmId = Math.max(_rowLmId(row), (prev && prev.lmId) || 0, _up > 0 && Number.isFinite(_up) ? _up : 0);
     _selfReadMarks.delete(k);
     _selfReadMarks.set(k, { at: Date.now(), ms, lmId });
     if (_selfReadMarks.size > 300) _selfReadMarks.delete(_selfReadMarks.keys().next().value);
@@ -3855,8 +3862,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           if (!ups.length) return;
           const active = ups.filter((c) => !c.archived);
           const archived = ups.filter((c) => !!c.archived);
-          if (active.length) setConversations((prev) => bj.applyConvUpdates(prev || [], active));
-          if (archived.length) setArchivedConversations((prev) => bj.applyConvUpdates(prev || [], archived));
+          // [2026-10-17 lida-lista] journal de 2º plano (unread do push) não repõe o
+          // contador de conversa já lida aqui (mesma guarda do chat_list).
+          const _g = (arr) => { try { return _guardReadRows(arr, _meLcRef.current); } catch { return arr; } };
+          if (active.length) setConversations((prev) => bj.applyConvUpdates(prev || [], _g(active)));
+          if (archived.length) setArchivedConversations((prev) => bj.applyConvUpdates(prev || [], _g(archived)));
         } catch {}
       });
     } catch {}
@@ -5138,7 +5148,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         const _recvCmi = data && (data.client_message_id || data._client_id);
         if (_recvCmi) {
           const _ck = 'c:' + String(_recvCmi);
-          if (_listRecvIds.has(_ck)) { if (_recvId != null) _listRecvIds.add(String(_recvId)); return; }
+          if (_listRecvIds.has(_ck)) {
+            if (_recvId != null) _listRecvIds.add(String(_recvId));
+            // [2026-10-17 lida-lista] linha REAL da msg cujo relay otimista (tmp_…) já
+            // entrou com a conversa ABERTA → a guarda de leitura sobe até o id real.
+            try {
+              const _a = activeConvId();
+              if (_a != null && data.conversation_id != null && String(_a) === String(data.conversation_id) && Number(_recvId) > 0) {
+                _noteSelfRead(data.conversation_id, null, Number(_recvId));
+              }
+            } catch {}
+            return;
+          }
           _listRecvIds.add(_ck);
         }
         if (_recvId != null) {
@@ -5542,6 +5563,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // (read my outbound). In the peer case we bump last_message.read_at
         // so the purple ✓✓ appears in the list without waiting for a fresh
         // chat_list fetch.
+        // [2026-10-17 lida-lista] guarda armada já (mesmo sem a linha na lista / antes do updater).
+        if (readerLower && readerLower === meLower && data?.conversation_id != null) {
+          try { _noteSelfRead(data.conversation_id, null, data?.last_read_id ?? data?.message_id); } catch {}
+        }
         setConversations(prev => {
           const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
           if (idx === -1) return prev;
@@ -5556,7 +5581,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             if (readerLower && readerLower === meLower) {
               next.unread_count = 0;
               if (next.unread_mentions) next.unread_mentions = 0; // [2026-10-15 unread-instant] "@" some junto
-              _noteSelfRead(c.id, c); // [2026-10-14 lista-eco-envio] snapshot atrasado não repõe o contador
+              _noteSelfRead(c.id, c, data?.last_read_id ?? data?.message_id); // [2026-10-14 lista-eco-envio] snapshot atrasado não repõe o contador; [2026-10-17 lida-lista] até o id lido
             } else if (c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower
                        && !c.last_message.read_at
