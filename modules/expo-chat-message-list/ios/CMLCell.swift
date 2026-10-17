@@ -14,6 +14,7 @@ final class CMLCell: UICollectionViewCell {
   let highlight = UIView()
   let nameView = CMLTextView()
   let fwdView = CMLTextView()
+  let fwdIcon = CMLIconView()   // [2026-10-17 fwd-label]
   let reply = CMLReplyView()
   let media = UIImageView()
   let playBadge = CMLIconView()
@@ -89,6 +90,8 @@ final class CMLCell: UICollectionViewCell {
     slide.layer.addSublayer(bubble)
     slide.addSubview(nameView)
     slide.addSubview(fwdView)
+    fwdIcon.kind = .forward
+    slide.addSubview(fwdIcon)
     slide.addSubview(reply)
     media.contentMode = .scaleAspectFill
     media.clipsToBounds = true
@@ -291,6 +294,16 @@ final class CMLCell: UICollectionViewCell {
     place(nameView, L.nameFrame, L.name != nil)
     fwdView.layout = L.fwd
     place(fwdView, L.fwdFrame, L.fwd != nil)
+    // [2026-10-17 fwd-label] seta à esquerda do rótulo (espaço reservado no layout)
+    if L.fwd != nil {
+      let iw = CMLLayoutBuilder.fwdIconW(row)
+      fwdIcon.kind = row.forwardedMany ? .forwardMany : .forward
+      fwdIcon.color = row.own ? th.ownMeta : th.otherMeta
+      let h: CGFloat = 13
+      place(fwdIcon, CGRect(x: L.fwdFrame.minX - iw, y: L.fwdFrame.midY - h / 2, width: iw - 1, height: h), true)
+    } else {
+      fwdIcon.isHidden = true
+    }
 
     // citação
     if let rp = row.reply, L.replyName != nil {

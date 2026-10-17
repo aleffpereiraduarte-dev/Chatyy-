@@ -826,7 +826,10 @@ class MLCellView(context: Context) : ViewGroup(context) {
     c.save()
     c.translate(L.bubble.left, L.bubble.top)
     L.name?.let { drawText(c, it, L.nameFrame.left, L.nameFrame.top) }
-    L.fwd?.let { drawText(c, it, L.fwdFrame.left, L.fwdFrame.top) }
+    L.fwd?.let {
+      drawText(c, it, L.fwdFrame.left, L.fwdFrame.top)
+      drawFwdArrows(c, L.fwdFrame.left - MLLayoutBuilder.fwdIconW(r, s), L.fwdFrame.centerY(), s.dp(13f), if (r.own) th.ownMeta else th.otherMeta, r.forwardedMany) // [2026-10-17 fwd-label]
+    }
     if (L.replyName != null) drawReply(c, L, r, s)
     // mídia
     val md = r.media
@@ -1243,6 +1246,19 @@ class MLCellView(context: Context) : ViewGroup(context) {
     c.drawPath(tmpPath, stroke)
     stroke.alpha = 255
   }
+
+  /** [2026-10-17 fwd-label] seta "encaminhar" = a de responder espelhada (dupla p/ "com frequência"). */
+  private fun drawFwdArrows(c: Canvas, left: Float, cy: Float, h: Float, color: Int, many: Boolean) {
+    val n = if (many) 2 else 1
+    for (i in 0 until n) {
+      val cx = left + (if (many) s5(h) else 0f) + h / 2 - i * s5(h)
+      c.save()
+      c.scale(-1f, 1f, cx, cy)
+      drawReplyArrow(c, cx, cy, h / 1.1f, color, 1f)
+      c.restore()
+    }
+  }
+  private fun s5(h: Float): Float = h * 0.38f
 
   private fun drawDeleted(c: Canvas, x: Float, y: Float, sz: Float, color: Int) {
     stroke.color = color; stroke.strokeWidth = sz * 0.09f

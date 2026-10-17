@@ -470,6 +470,9 @@ enum CMLLayoutBuilder {
 
   // MARK: mensagem
 
+  /// [2026-10-17 fwd-label] largura reservada p/ a seta do "Encaminhada" (dupla se ≥ 5).
+  static func fwdIconW(_ row: CMLRow) -> CGFloat { row.forwardedMany ? 19 : 14 }
+
   static func buildMessage(_ row: CMLRow, _ s: CMLStyle) -> CMLRowLayout {
     let L = CMLRowLayout()
     L.kind = .msg
@@ -494,7 +497,8 @@ enum CMLLayoutBuilder {
       nameL = line(row.name, font: s.name, color: CMLTheme.uiColor(row.nameColor), maxWidth: contentMax)
     }
     if !row.forwarded.isEmpty && !row.deleted {
-      fwdL = line(row.forwarded, font: s.fwd, color: row.own ? th.ownMeta : th.otherMeta, maxWidth: contentMax)
+      // [2026-10-17 fwd-label] seta (desenhada, sem emoji) à esquerda do rótulo
+      fwdL = line(row.forwarded, font: s.fwd, color: row.own ? th.ownMeta : th.otherMeta, maxWidth: max(40, contentMax - CMLLayoutBuilder.fwdIconW(row)))
     }
     if let rp = row.reply, !row.deleted {
       let qMax = contentMax + padH * 2 - 8 - 3 - 16 - (hasThumb ? 48 : 0)
@@ -503,7 +507,7 @@ enum CMLLayoutBuilder {
     }
     var topMinW: CGFloat = 0
     if let n = nameL { topMinW = max(topMinW, n.size.width) }
-    if let f = fwdL { topMinW = max(topMinW, f.size.width) }
+    if let f = fwdL { topMinW = max(topMinW, f.size.width + CMLLayoutBuilder.fwdIconW(row)) }
     if let a = rName, let b = rText {
       topMinW = max(topMinW, max(a.size.width, b.size.width) + 3 + 16 + (hasThumb ? 48 : 0) - 8)
       topMinW = max(topMinW, 140)
@@ -829,7 +833,7 @@ enum CMLLayoutBuilder {
     if hasTop && showBubble {
       let inner = bubbleW - padH * 2
       if let n = nameL { L.name = n; L.nameFrame = CGRect(x: padH, y: nameY, width: min(inner, n.size.width + 1), height: n.size.height) }
-      if let f = fwdL { L.fwd = f; L.fwdFrame = CGRect(x: padH, y: fwdY, width: min(inner, f.size.width + 1), height: f.size.height) }
+      if let f = fwdL { let iw = CMLLayoutBuilder.fwdIconW(row); L.fwd = f; L.fwdFrame = CGRect(x: padH + iw, y: fwdY, width: max(0, min(inner - iw, f.size.width + 1)), height: f.size.height) }
       if rName != nil {
         L.replyName = rName
         L.replyText = rText

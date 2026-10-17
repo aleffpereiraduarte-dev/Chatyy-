@@ -64,6 +64,7 @@ class MLRow(d: Map<String, Any?>) {
   val spans: List<MLSpan> = parseSpans(d["sp"])
   val deleted: Boolean = bool(d["del"])
   val forwarded: String = str(d["fwd"])
+  val forwardedMany: Boolean = bool(d["fwdm"]) // [2026-10-17 fwd-label] forward_count >= 5 → seta dupla
   val reply: MLReply? = (d["rp"] as? Map<*, *>)?.let {
     MLReply(str(it["id"]), str(it["name"]), str(it["text"]), color(it["c"]) ?: 0xFF888888.toInt(), str(it["th"]), bool(it["it"]))
   }

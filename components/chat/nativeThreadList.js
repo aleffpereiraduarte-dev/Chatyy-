@@ -1221,6 +1221,14 @@ function _a11yInto(row, item, ctx) {
   }
   row.aa = aa;
 }
+// [2026-10-17 fwd-label] mesmo critério do _isForwardedMsg (chat-conversation.js).
+function _isFwd(m, me) {
+  if (!m) return false;
+  if ((Number(m.forward_count) || 0) > 0 || m.is_forwarded) return true;
+  const cmi = String(m.client_message_id || '');
+  if (cmi.startsWith('fwd_') || cmi.startsWith('fwd:')) return true;
+  return !!m.forwarded_from && (!me || String(m.forwarded_from).toLowerCase() !== String(me).toLowerCase());
+}
 function _buildRowInner(item, key, ctx) {
   const tt = item && item._type;
   if (tt === 'separator') {
@@ -1273,8 +1281,11 @@ function _buildRowInner(item, key, ctx) {
     row.text = ctx.deletedLabel ? ctx.deletedLabel(own) : '';
     return row;
   }
-  if (item.forwarded_from && String(item.forwarded_from).toLowerCase() !== String(ctx.myEmail || '').toLowerCase()) {
+  // [2026-10-17 fwd-label] "Encaminhada" p/ quem recebe: forward_count > 0 vale mesmo
+  // com "ocultar origem" (forwarded_from NULL) e quando a origem é o próprio leitor.
+  if (_isFwd(item, ctx.myEmail)) {
     row.fwd = ctx.forwardedLabel ? ctx.forwardedLabel(item) : '';
+    if ((Number(item.forward_count) || 0) >= 5) row.fwdm = 1; // binário novo: seta dupla
   }
   if (item.reply_to && ctx.describeReply) {
     const rp = ctx.describeReply(item);

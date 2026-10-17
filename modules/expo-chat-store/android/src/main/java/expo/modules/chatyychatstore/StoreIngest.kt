@@ -245,7 +245,7 @@ object StoreIngest {
     if (str(m.opt("type")).ifEmpty { "text" } != "text") return "type"
     val ct = str(m.opt("conversation_type"))
     if (ct.isNotEmpty() && ct != "direct") return "convtype"
-    for (f in arrayOf("deleted_at", "edited_at", "reply_to_id", "reply_to", "forwarded_from", "mentions", "link_preview",
+    for (f in arrayOf("deleted_at", "edited_at", "reply_to_id", "reply_to", "forwarded_from", "forward_count", "mentions", "link_preview",
       "expires_at", "effect", "topic_id", "starred", "sealed", "is_view_once", "is_poll", "file_url", "pinned", "_failed", "translation")) {
       if (truthy(m.opt(f))) return "field:$f"
     }

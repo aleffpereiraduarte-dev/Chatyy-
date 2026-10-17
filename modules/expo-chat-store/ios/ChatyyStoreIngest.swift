@@ -254,7 +254,7 @@ public enum ChatyyStoreIngest {
     if type != "text" { return "type" }
     let ct = str(m["conversation_type"])
     if !ct.isEmpty && ct != "direct" { return "convtype" }
-    for f in ["deleted_at", "edited_at", "reply_to_id", "reply_to", "forwarded_from", "mentions", "link_preview",
+    for f in ["deleted_at", "edited_at", "reply_to_id", "reply_to", "forwarded_from", "forward_count", "mentions", "link_preview",
               "expires_at", "effect", "topic_id", "starred", "sealed", "is_view_once", "is_poll", "file_url", "pinned", "_failed", "translation"] {
       if truthy(m[f]) { return "field:\(f)" }
     }

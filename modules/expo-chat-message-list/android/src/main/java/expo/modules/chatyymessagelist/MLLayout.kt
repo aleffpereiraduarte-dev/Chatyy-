@@ -307,6 +307,9 @@ object MLLayoutBuilder {
     return MLMeta(t, row.star, status, ceil(w), max(s.dp(14f), t.height), color, onMedia, row.pinned, row.timer)
   }
 
+  /** [2026-10-17 fwd-label] largura reservada p/ a seta do "Encaminhada" (dupla se ≥ 5). */
+  fun fwdIconW(row: MLRow, s: MLStyle): Float = s.dp(if (row.forwardedMany) 19f else 14f)
+
   private fun buildMessage(row: MLRow, s: MLStyle): MLRowLayout {
     val L = MLRowLayout()
     L.kind = MLKind.MSG
@@ -330,7 +333,8 @@ object MLLayoutBuilder {
     var showBubble = !row.bare
 
     val nameL = if (row.name.isNotEmpty()) line(row.name, s.name, row.nameColor, contentMax) else null
-    val fwdL = if (row.forwarded.isNotEmpty() && !row.deleted) line(row.forwarded, s.fwd, metaColor, contentMax) else null
+    val fwdIw = fwdIconW(row, s)
+    val fwdL = if (row.forwarded.isNotEmpty() && !row.deleted) line(row.forwarded, s.fwd, metaColor, max(s.dp(40f), contentMax - fwdIw)) else null
     val rp = if (row.deleted) null else row.reply
     val hasThumb = rp != null && rp.thumb.isNotEmpty()
     var rName: MLText? = null
@@ -343,7 +347,7 @@ object MLLayoutBuilder {
     }
     var topMinW = 0f
     nameL?.let { topMinW = max(topMinW, it.width) }
-    fwdL?.let { topMinW = max(topMinW, it.width) }
+    fwdL?.let { topMinW = max(topMinW, it.width + fwdIw) }
     if (rName != null && rText != null) {
       topMinW = max(topMinW, max(rName.width, rText.width) + s.dp(11f) + (if (hasThumb) s.dp(48f) else 0f))
       topMinW = max(topMinW, s.dp(140f))
@@ -645,7 +649,7 @@ object MLLayoutBuilder {
     if (hasTop && showBubble) {
       val inner = bubbleW - padH * 2
       if (nameL != null) { L.name = nameL; L.nameFrame.set(padH, nameY, padH + min(inner, nameL.width + 1), nameY + nameL.height) }
-      if (fwdL != null) { L.fwd = fwdL; L.fwdFrame.set(padH, fwdY, padH + min(inner, fwdL.width + 1), fwdY + fwdL.height) }
+      if (fwdL != null) { L.fwd = fwdL; L.fwdFrame.set(padH + fwdIw, fwdY, padH + fwdIw + max(0f, min(inner - fwdIw, fwdL.width + 1)), fwdY + fwdL.height) }
       if (rName != null) {
         L.replyName = rName; L.replyText = rText; L.replyThumb = hasThumb
         L.replyFrame.set(s.dp(4f), replyY, bubbleW - s.dp(4f), replyY + replyH)

@@ -1658,6 +1658,38 @@ function AnimatedCheckStatus({ status, color, pending = false, size = 15, readCo
 // (`/data/chat-files/<conv>/<time>_<hex>_video_note_<ts>.mp4`). So a `video`
 // row whose name/url carries the `video_note` marker is a round note.
 // Regular landscape videos never match this pattern, so they stay rectangular.
+// [2026-10-17 fwd-label] "Encaminhada" (WhatsApp) para QUEM RECEBE. A verdade é
+// forward_count > 0: com "ocultar origem" o servidor grava forwarded_from = NULL mas
+// o contador fica. forwarded_from sozinho cobre linhas antigas / clone p/ Salvas;
+// cmi fwd_/fwd: cobre linha vinda sem os campos (prévia do push, cache antigo).
+function _isForwardedMsg(m, me) {
+  if (!m) return false;
+  if ((Number(m.forward_count) || 0) > 0 || m.is_forwarded || m.forwarded === true || m.forwarded === 1) return true;
+  const cmi = String(m.client_message_id || '');
+  if (cmi.startsWith('fwd_') || cmi.startsWith('fwd:')) return true;
+  // Só forwarded_from (sem contador) = linha antiga ou cópia p/ "Mensagens salvas":
+  // mantém a regra antiga (cópia da PRÓPRIA mensagem não ganha rótulo).
+  return !!m.forwarded_from && (!me || String(m.forwarded_from).toLowerCase() !== String(me).toLowerCase());
+}
+// Nome da origem só quando acrescenta algo: nunca "de mim" nem "de quem mandou a bolha"
+// (reencaminhar a própria mensagem = só "Encaminhada", igual ao WhatsApp).
+function _fwdOriginName(m, me) {
+  const ff = String((m && m.forwarded_from) || '').trim();
+  if (!ff) return '';
+  const fl = ff.toLowerCase();
+  if (fl === String(me || '').toLowerCase() || fl === String(m.sender_email || '').toLowerCase()) return '';
+  return (m.forwarded_from_name && String(m.forwarded_from_name).trim()) || emailToDisplayName(ff) || ff.split('@')[0];
+}
+// Mesma mensagem (mesmo id) chegando de novo pelo WS/TCP: mantém a linha atual, exceto
+// quando a nova é encaminhada e a atual não sabe disso → copia só os campos de encaminhamento.
+function _fwdUpgradeRow(prev, i, msg) {
+  const ex = prev[i];
+  if (!ex || !msg || !_isForwardedMsg(msg)) return prev;
+  if ((Number(ex.forward_count) || 0) === (Number(msg.forward_count) || 0) && (ex.forwarded_from || null) === (msg.forwarded_from || null)) return prev;
+  const next = prev.slice();
+  next[i] = { ...ex, forwarded_from: msg.forwarded_from ?? ex.forwarded_from ?? null, forward_count: Number(msg.forward_count) || 0, ...(msg.forwarded_from_name ? { forwarded_from_name: msg.forwarded_from_name } : null), ...(msg.client_message_id && !ex.client_message_id ? { client_message_id: msg.client_message_id } : null) };
+  return next;
+}
 // [2026-10-12 srv-audit] O que pode ser EDITADO (WhatsApp; espelha chat_edit do
 // servidor novo, que responde code 'not_editable' fora disso): texto, ou
 // legenda REAL de foto/vídeo/arquivo/GIF — sem legenda o upload grava o NOME
@@ -3212,7 +3244,7 @@ function _a11yMsgLabelRaw(msg, { t, isOwn, isGroup, isDeleted, readStatus, react
   if (isDeleted) {
     parts.push(isOwn ? _a11yT(t, 'chatConv.deletedMessageOwn', 'Você apagou esta mensagem') : _a11yT(t, 'chatConv.deletedMessage', 'Esta mensagem foi apagada'));
   } else {
-    if (msg.forwarded_from) parts.push(_a11yT(t, 'a11y.forwarded', 'Encaminhada'));
+    if (_isForwardedMsg(msg, me)) parts.push(_a11yT(t, 'a11y.forwarded', 'Encaminhada'));
     const rt = msg.reply_to && typeof msg.reply_to === 'object' ? msg.reply_to : null;
     if (rt || msg.reply_to_id) {
       const who = rt ? _friendlySenderName(rt.sender_email, rt.sender_name, me, t) : ''; // [2026-10-11 qa] "Você"/nome, não "apitest"
@@ -4330,6 +4362,10 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     // [voz-reproduzido 2026-10-14] microfone azul/"ouvido" — sem isto o
     // `voice_played` ao vivo atualizava a msg mas a bolha não repintava.
     a.played_at === b.played_at &&
+    // [2026-10-17 fwd-label] linha pintada antes pelo push/cache (sem os campos de
+    // encaminhamento) e depois trocada pela do servidor: sem isto o "Encaminhada" não aparecia.
+    a.forwarded_from === b.forwarded_from &&
+    (Number(a.forward_count) || 0) === (Number(b.forward_count) || 0) &&
     a._voice_played === b._voice_played &&
     a.played_by_me === b.played_by_me &&
     a._played_by_me === b._played_by_me &&
@@ -15203,7 +15239,18 @@ function ChatConversationInner() {
             };
             const prevIds = prev.filter(m => typeof m.id === 'number').map(m => m.id).join(',');
             const newIds = newMsgs.map(m => m.id).join(',');
-            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs) && !(_tm && _resetWin)) return prev; // Same messages AND same receipts — skip setState (no flicker)
+            // [2026-10-17 fwd-label] + encaminhamento: a linha do push/cache (sem
+            // forward_count/forwarded_from) tem os MESMOS ids da do servidor — sem isto
+            // o atalho jogava fora a linha do servidor e o "Encaminhada" nunca aparecia.
+            const _fwdSig = (arr) => {
+              let s = '';
+              for (let i = 0; i < arr.length; i++) {
+                const m = arr[i];
+                if (m && typeof m.id === 'number' && ((Number(m.forward_count) || 0) > 0 || m.forwarded_from)) s += m.id + ':' + (Number(m.forward_count) || 0) + (m.forwarded_from ? 'f' : '') + ',';
+              }
+              return s;
+            };
+            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs) && _fwdSig(prev) === _fwdSig(newMsgs) && !(_tm && _resetWin)) return prev; // Same messages AND same receipts — skip setState (no flicker)
             // Merge: keep pending/tmp messages, replace server ones. If we
             // already have a decrypted plaintext locally (sent-by-us or
             // previously-decrypted), prefer it over the server's encrypted
@@ -16716,7 +16763,10 @@ function ChatConversationInner() {
             // mismatch between chat_sync/WS paths doesn't slip through and
             // produce a duplicate bubble.
             const incomingIdStr = String(msg.id);
-            if (prev.some(m => String(m.id) === incomingIdStr)) return prev;
+            // [2026-10-17 fwd-label] Já existe (ex.: linha montada da prévia do push, sem os
+            // campos de encaminhamento) → só atualiza quando a nova traz o "Encaminhada".
+            const _exI = prev.findIndex(m => String(m.id) === incomingIdStr);
+            if (_exI !== -1) return _fwdUpgradeRow(prev, _exI, msg);
             // Dedup por client_message_id: a gente pode já ter uma linha
             // representando essa mensagem (via optimistic relay do sender
             // OU via HTTP ack local). Se a linha existente tem id "tmp_xxx"
@@ -18179,7 +18229,7 @@ function ChatConversationInner() {
         setMessages(prev => {
           const incomingIdStr = String(msg.id);
           // [2026-10-06 thread-tech] scan from the tail (new/echoed rows live there)
-          for (let _i = prev.length - 1; _i >= 0; _i--) { const _r = prev[_i]; if (_r && (_r.id === msg.id || String(_r.id) === incomingIdStr)) return prev; }
+          for (let _i = prev.length - 1; _i >= 0; _i--) { const _r = prev[_i]; if (_r && (_r.id === msg.id || String(_r.id) === incomingIdStr)) return _fwdUpgradeRow(prev, _i, msg); } // [2026-10-17 fwd-label]
           // Mirror WS path dedup: if ANY existing row shares the
           // client_message_id, REPLACE it instead of appending. Previously
           // this branch required !startsWith('tmp_') on the existing id —
@@ -22943,17 +22993,25 @@ function ChatConversationInner() {
     handleClearSelection();
   }, [selectedIds, messages, currentEmail]);
 
+  const _handleForwardRef = useRef(null);
   const handleForwardSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    const selectedMsgs = messages.filter(m => selectedIds.has(m.id));
-    try {
-      router.push({
-        pathname: '/chat-new',
-        params: { forwardMessages: JSON.stringify(selectedMsgs) },
-      });
-    } catch (err) {
-      console.warn('Forward error:', err);
+    // [2026-10-17 fwd-label] Mesma folha/servidor do encaminhar de 1 mensagem
+    // (chat_forward_multi grava forward_count → quem recebe vê "Encaminhada").
+    // Antes: router.push('/chat-new', {forwardMessages}) — o chat-new ignorava o parâmetro.
+    const sel = messages
+      .filter(m => selectedIds.has(m.id) && typeof m.id === 'number' && m.id > 0
+        && !m.deleted_at && !m.is_deleted && !m.is_view_once && !m.isViewOnce && m.type !== 'system')
+      .sort((a, b) => a.id - b.id);
+    if (!sel.length) {
+      safeAlert(
+        t('chatConv.forwardError') || 'Não foi possível encaminhar',
+        t('chatConv.forwardWaitSend') || 'Aguarde a mensagem ser enviada antes de encaminhar.'
+      );
+      return;
     }
+    handleClearSelection();
+    try { _handleForwardRef.current?.(sel[0], sel.slice(0, 30)); } catch (err) { console.warn('Forward error:', err); }
   }, [selectedIds, messages]);
 
   const handleCopySelected = useCallback(async () => {
@@ -24852,7 +24910,11 @@ function ChatConversationInner() {
     }
   };
 
-  const handleForward = async (msg) => {
+  // [2026-10-17 fwd-label] Seleção múltipla → "Encaminhar": a folha recebe o lote
+  // (antes ia p/ /chat-new, que ignorava as mensagens — nada era encaminhado).
+  const forwardBatchRef = useRef(null);
+  const handleForward = async (msg, batch = null) => {
+    forwardBatchRef.current = (Array.isArray(batch) && batch.length > 1) ? batch : null;
     // [2026-10-15 native-sheets-v2] Vindo do menu de contexto (<Modal> RN): o sheet
     // nativo só pode subir depois que o Modal desceu (iOS) — afterRNModal.
     const _fromCtx = !!selectedMsg;
@@ -24927,8 +24989,11 @@ function ChatConversationInner() {
   // per-conv "às cegas" (duplicava quando a 1ª chamada tinha chegado): vai p/
   // a fila com os MESMOS ids. Fan-out per-conv só quando o servidor RESPONDEU
   // que não conhece o lote (backend muito antigo), e também com os mesmos ids.
+  _handleForwardRef.current = handleForward;
   const handleForwardSendMulti = async () => {
     if (!forwardMsg || forwardSelected.size === 0 || forwardSending) return;
+    const _batch = (forwardBatchRef.current && forwardBatchRef.current[0] && forwardBatchRef.current[0].id === forwardMsg.id)
+      ? forwardBatchRef.current : [forwardMsg];
     const msgId = forwardMsg.id;
     if (typeof msgId !== 'number' || !(msgId > 0)) {
       safeAlert(
@@ -24940,66 +25005,73 @@ function ChatConversationInner() {
     setForwardSending(true);
     const _fwdNote = String(forwardComment || '').trim().slice(0, 4000); // [w12e]
     // Defensive cap re-enforced here in case state was mutated externally.
-    const cap = (Number(forwardMsg?.forward_count) || 0) >= 5 ? 1 : FORWARD_MAX_TARGETS;
+    const cap = _batch.some(m => (Number(m?.forward_count) || 0) >= 5) ? 1 : FORWARD_MAX_TARGETS;
     const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0).slice(0, cap);
-    const caids = {};
-    for (const id of targets) caids[String(id)] = api.chatNewActionId ? api.chatNewActionId() : ('a_' + Date.now().toString(36) + '_' + id);
+    const _newCaid = (id) => (api.chatNewActionId ? api.chatNewActionId() : ('a_' + Date.now().toString(36) + '_' + id));
     const isNet = (r) => (api.chatIsTransportFailure ? api.chatIsTransportFailure(r) : (!r || r.success === false));
     let ok = 0;
     let limitHit = false;
     const queuedTargets = [];
     const failedTargets = [];
-    const queueTargets = (ids) => {
-      if (!ids.length) return;
-      queuedTargets.push(...ids);
+    // [2026-10-17 fwd-label] 1 mensagem ou o lote da seleção, EM ORDEM (uma de cada vez).
+    for (const _fm of _batch) {
+      const msgId = _fm.id;
+      if (typeof msgId !== 'number' || !(msgId > 0)) continue;
+      const caids = {};
+      for (const id of targets) caids[String(id)] = _newCaid(id);
+      const queueTargets = (ids) => {
+        if (!ids.length) return;
+        queuedTargets.push(...ids);
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          const ids2 = {};
+          for (const id of ids) ids2[String(id)] = caids[String(id)];
+          queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: ids, client_action_ids: ids2, hide_origin: false }).catch(() => {});
+        } catch {}
+      };
+      const perConv = async () => {
+        const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id, { clientActionId: caids[String(id)] })));
+        const netIds = [];
+        results.forEach((x, i) => {
+          const id = targets[i];
+          if (x.status === 'fulfilled' && x.value?.success) { ok++; return; }
+          const v = x.status === 'fulfilled' ? x.value : null;
+          if (x.status === 'rejected' || isNet(v)) { netIds.push(id); return; }
+          if (api.chatErrorCode && api.chatErrorCode(v) === 'forward_limit') limitHit = true;
+          failedTargets.push(id);
+        });
+        queueTargets(netIds);
+      };
       try {
-        const { queueOfflineAction } = require('../services/offlineCache');
-        const ids2 = {};
-        for (const id of ids) ids2[String(id)] = caids[String(id)];
-        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: ids, client_action_ids: ids2, hide_origin: false }).catch(() => {});
-      } catch {}
-    };
-    const perConv = async () => {
-      const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id, { clientActionId: caids[String(id)] })));
-      const netIds = [];
-      results.forEach((x, i) => {
-        const id = targets[i];
-        if (x.status === 'fulfilled' && x.value?.success) { ok++; return; }
-        const v = x.status === 'fulfilled' ? x.value : null;
-        if (x.status === 'rejected' || isNet(v)) { netIds.push(id); return; }
-        if (api.chatErrorCode && api.chatErrorCode(v) === 'forward_limit') limitHit = true;
-        failedTargets.push(id);
-      });
-      queueTargets(netIds);
-    };
-    try {
-      const r = await api.chatForwardMulti(msgId, targets, { clientActionIds: caids });
-      if (r?.success && r?.data?.results) {
-        const res = Array.isArray(r.data.results) ? r.data.results : [];
-        for (const id of targets) {
-          const e = res.find(x => String(x?.conversation_id) === String(id));
-          if (e?.success) ok++;
-          else {
-            if (e?.error === 'forward_limit') limitHit = true;
-            failedTargets.push(id);
+        const r = await api.chatForwardMulti(msgId, targets, { clientActionIds: caids });
+        if (r?.success && r?.data?.results) {
+          const res = Array.isArray(r.data.results) ? r.data.results : [];
+          for (const id of targets) {
+            const e = res.find(x => String(x?.conversation_id) === String(id));
+            if (e?.success) ok++;
+            else {
+              if (e?.error === 'forward_limit') limitHit = true;
+              failedTargets.push(id);
+            }
           }
+          if (!res.length) ok += Number(r.data.success) || 0;
+        } else if (isNet(r)) {
+          queueTargets(targets);
+        } else if (api.chatErrorCode && api.chatErrorCode(r) === 'forward_limit') {
+          limitHit = true;
+          failedTargets.push(...targets);
+        } else if (/unknown|not supported|invalid action|no such action/i.test(String(r?.message || ''))) {
+          // Backend sem chat_forward_multi — fan out per-conv (mesmos ids).
+          await perConv();
+        } else {
+          failedTargets.push(...targets);
         }
-        if (!res.length) ok = Number(r.data.success) || 0;
-      } else if (isNet(r)) {
+      } catch (_e) {
+        // Sem rede / timeout: NÃO refaz às cegas — fila com os mesmos ids.
         queueTargets(targets);
-      } else if (api.chatErrorCode && api.chatErrorCode(r) === 'forward_limit') {
-        limitHit = true;
-        failedTargets.push(...targets);
-      } else if (/unknown|not supported|invalid action|no such action/i.test(String(r?.message || ''))) {
-        // Backend sem chat_forward_multi — fan out per-conv (mesmos ids).
-        await perConv();
-      } else {
-        failedTargets.push(...targets);
       }
-    } catch (_e) {
-      // Sem rede / timeout: NÃO refaz às cegas — fila com os mesmos ids.
-      queueTargets(targets);
     }
+    forwardBatchRef.current = null;
     setForwardSending(false);
     setForwardMsg(null);
     setForwardSearch('');
@@ -25027,7 +25099,7 @@ function ChatConversationInner() {
       const sent = ok + queuedTargets.length;
       safeAlert(
         t('chatConv.forwardError') || 'Erro',
-        `${sent}/${targets.length} ${t('chatConv.forwardedPartial') || 'enviadas — algumas falharam'}.`
+        `${sent}/${targets.length * _batch.length} ${t('chatConv.forwardedPartial') || 'enviadas — algumas falharam'}.`
       );
     }
   };
@@ -28346,7 +28418,7 @@ function ChatConversationInner() {
     // Mesmas condições do ramo jumbo do renderContent (sem resposta/encaminhada/
     // tradução/apagada) — senão a bolha vazia ficaria transparente.
     const _jumboNoBubble = (msg.type === 'text' || !msg.type) && !isDeleted
-      && !msg.reply_to_id && !msg.reply_to && !msg.forwarded_from
+      && !msg.reply_to_id && !msg.reply_to && !_isForwardedMsg(msg, currentEmail)
       && !(__ov && __ov.tr) && !(msg._filtered && msg._hidden)
       && typeof msg.content === 'string' && jumboEmojiSize(msg.content) > 0;
     const renderContent = () => {
@@ -31969,7 +32041,7 @@ function ChatConversationInner() {
                   return (
                     // [2026-10-14 meta-inline] decisão inline/quebra por medida (WaMetaText).
                     // hugKey = só o que muda a QUEBRA do texto (meta é medida à parte).
-                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={_MSG_SELECTABLE} minW={(msg.reply_to || msg.reply_to_id || msg.forwarded || msg.is_forwarded) ? _WA_TEXT_AVAIL : 0}
+                    <WaMetaText hugKey={`${_c}|${msgFontSize}|${msgLineHeight}`} metaKey={_waTextMetaKey} own={isOwn} style={_txtStyle} selectable={_MSG_SELECTABLE} minW={(msg.reply_to || msg.reply_to_id || _isForwardedMsg(msg, currentEmail)) ? _WA_TEXT_AVAIL : 0}
                       ghost={(
                         <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
                           {_waMetaGhost({
@@ -32341,7 +32413,9 @@ function ChatConversationInner() {
               "↪ Encaminhada de [Nome]" when origin sender is known and not
               the current user. Hide entirely if forwarded_from === currentEmail
               (re-forwarding our own message reads weird in the UI). */}
-          {msg.forwarded_from && !isDeleted && (msg.forwarded_from || '').toLowerCase() !== (currentEmail || '').toLowerCase() && (() => {
+          {/* [2026-10-17 fwd-label] sinal = _isForwardedMsg (forward_count > 0 vale mesmo
+              com "ocultar origem"); aparece também quando a origem é o próprio leitor. */}
+          {!isDeleted && _isForwardedMsg(msg, currentEmail) && (() => {
             const fc = Number(msg.forward_count) || 0;
             // Heavy-forward warn: >=10 paints red/orange + AlertTriangle to flag
             // potential misinformation chains, mirroring WhatsApp's escalation.
@@ -32354,9 +32428,7 @@ function ChatConversationInner() {
             // Resolve display name: forwarded_from_name (server-supplied via
             // metadata) > emailToDisplayName(forwarded_from) > raw email local
             // part. Falls through gracefully if any are missing.
-            const fromName = (msg.forwarded_from_name && String(msg.forwarded_from_name).trim())
-              || (msg.forwarded_from ? emailToDisplayName(msg.forwarded_from) : '')
-              || (msg.forwarded_from ? String(msg.forwarded_from).split('@')[0] : '');
+            const fromName = _fwdOriginName(msg, currentEmail);
             // [2026-10-12 wa-parity] WhatsApp só tem 2 rótulos: "Encaminhada"
             // (1–4 saltos) e "Encaminhada com frequência" (5+). O degrau
             // intermediário "várias vezes" não existe lá.
@@ -32364,7 +32436,8 @@ function ChatConversationInner() {
               ? (t('chatConv.forwardedManyTimes') || 'Encaminhada com frequência')
               : (t('chatConv.forwarded') || 'Encaminhada');
             // [2026-10-10 conv-polish] "de" estava fixo em PT ("Forwarded de X" no en).
-            const fullLabel = fromName ? t('chatConv.forwardedFromFmt').replace('{label}', baseLabel).replace('{name}', fromName) : baseLabel;
+            const _ffFmt = t('chatConv.forwardedFromFmt');
+            const fullLabel = (fromName && typeof _ffFmt === 'string' && _ffFmt.includes('{label}')) ? _ffFmt.replace('{label}', baseLabel).replace('{name}', fromName) : baseLabel;
             return (
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 3 }}>
                 {heavyWarn ? (
@@ -32996,7 +33069,7 @@ function ChatConversationInner() {
       forwardedLabel: (m) => {
         const fc = Number(m.forward_count) || 0;
         const base = fc >= 5 ? tt('chatConv.forwardedManyTimes', 'Encaminhada com frequência') : tt('chatConv.forwarded', 'Encaminhada');
-        const from = (m.forwarded_from_name && String(m.forwarded_from_name).trim()) || (m.forwarded_from ? emailToDisplayName(m.forwarded_from) : '') || '';
+        const from = _fwdOriginName(m, me);
         const fmt = tt('chatConv.forwardedFromFmt', '');
         return from && fmt ? fmt.replace('{label}', base).replace('{name}', from) : base;
       },

@@ -96,6 +96,7 @@ final class CMLRow {
   let spans: [CMLSpan]
   let deleted: Bool
   let forwarded: String
+  let forwardedMany: Bool   // [2026-10-17 fwd-label] "fwdm" (forward_count >= 5) → seta dupla
   let reply: CMLReply?
   let edited: String
   let reacts: [CMLReact]
@@ -149,6 +150,7 @@ final class CMLRow {
     spans = CMLSpan.parseList(d["sp"])
     deleted = CMLRow.bool(d["del"])
     forwarded = CMLRow.str(d["fwd"])
+    forwardedMany = CMLRow.bool(d["fwdm"])
     if let r = d["rp"] as? [String: Any] {
       var rp = CMLReply()
       rp.id = CMLRow.str(r["id"])

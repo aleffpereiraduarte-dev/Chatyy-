@@ -544,7 +544,7 @@ enum CMLIcons {
 
 /// Ícone genérico desenhado (seta de responder, círculo de seleção, play).
 final class CMLIconView: UIView {
-  enum Kind { case reply, select, selectOn, play, deleted, failed }
+  enum Kind { case reply, select, selectOn, play, deleted, failed, forward, forwardMany }
   var kind: Kind = .reply { didSet { setNeedsDisplay() } }
   var color: UIColor = .gray { didSet { setNeedsDisplay() } }
   var ring: UIColor = .gray
@@ -572,6 +572,17 @@ final class CMLIconView: UIView {
     case .selectOn: CMLIcons.checkCircle(ctx, rect: bounds, on: true, color: color, ring: ring)
     case .play: CMLIcons.play(ctx, rect: bounds.insetBy(dx: bounds.width * 0.18, dy: bounds.height * 0.18), color: color)
     case .deleted: CMLIcons.deleted(ctx, rect: bounds, color: color)
+    case .forward, .forwardMany:
+      // [2026-10-17 fwd-label] seta "encaminhar" = a de responder espelhada; dupla p/ "com frequência"
+      let n = kind == .forwardMany ? 2 : 1
+      let side = bounds.height
+      for i in 0..<n {
+        let r = CGRect(x: bounds.maxX - side - CGFloat(i) * 5, y: bounds.minY, width: side, height: side)
+        ctx.saveGState()
+        ctx.translateBy(x: r.midX, y: 0); ctx.scaleBy(x: -1, y: 1); ctx.translateBy(x: -r.midX, y: 0)
+        CMLIcons.reply(ctx, rect: r, color: color)
+        ctx.restoreGState()
+      }
     case .failed:
       // círculo cheio (cor de falha) com "!" branco — toque = reenviar
       ctx.setFillColor(color.cgColor)
