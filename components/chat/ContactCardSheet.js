@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
 import { useGroupedColors } from '../settings/SettingsKit';
 import AvatarCircle from '../AvatarCircle';
-import { IconX, IconMessageCircle, IconPhone, IconUserPlus, IconShare } from '../Icons';
+import { IconX, IconMessageCircle, IconPhone, IconUserPlus, IconShare, IconSend } from '../Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 import {
   parseContactPayload, chatyyStateSync, resolveChatyy, openChatWith, callContact,
@@ -130,6 +130,8 @@ function ContactCardSheet({ req, onClose }) {
                       {st.has ? <Action icon={IconMessageCircle} label={_tr(t, 'chatConv.sendMessage', 'Mensagem')} onPress={() => go(() => openChatWith(c, router, em))} testID={`contact-card-msg-${i}`} /> : null}
                       {canCall ? <Action icon={IconPhone} label={_tr(t, 'chatConv.callContact', 'Ligar')} onPress={() => go(() => callContact(c, router, t, st.has ? em : ''))} testID={`contact-card-call-${i}`} /> : null}
                       <Action icon={IconUserPlus} label={_tr(t, 'shareContact.save', 'Salvar contato')} onPress={() => go(() => saveToPhonebook(c, t))} testID={`contact-card-save-${i}`} />
+                      {/* [2026-10-17 share-contact] Encaminhar este contato para outra(s) conversa(s), como no WhatsApp. */}
+                      <Action icon={IconSend} label={_tr(t, 'shareContact.shareThis', 'Compartilhar contato')} onPress={() => go(() => { try { const p = require('./contactShare').buildContactPayload([c]); if (p && router) router.push({ pathname: '/share-receive', params: { contact: p } }); } catch {} })} testID={`contact-card-share-${i}`} />
                       {!st.loading && !st.has ? <Action icon={IconShare} label={_tr(t, 'chat.invite', 'Convidar')} onPress={() => go(() => inviteContact(c, t))} testID={`contact-card-invite-${i}`} /> : null}
                     </View>
                   </View>
