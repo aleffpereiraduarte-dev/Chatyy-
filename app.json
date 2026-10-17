@@ -124,11 +124,11 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition."
       },
-      "buildNumber": "701"
+      "buildNumber": "702"
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 670,
+      "versionCode": 672,
       "googleServicesFile": "./google-services.json",
       "splash": {
         "image": "./assets/splash-blank.png",
