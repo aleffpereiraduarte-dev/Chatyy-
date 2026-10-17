@@ -13037,4 +13037,6 @@ export default {
   "status.updatesOne": "update",
   "status.updatesMany": "updates",
   "common.remove": "Remove",
+  // [2026-10-17 header-wa]
+  "chatConv.menuSearch": "Search",
 };

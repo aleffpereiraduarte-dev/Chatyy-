@@ -902,38 +902,7 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
       contentContainerStyle={styles.storyScroller}
       style={styles.storyScrollerContainer}
     >
-      {/* My status always first */}
-      <TouchableOpacity
-        style={styles.storyItem}
-        onPress={() => { if (hasMyStatus) { markStoryOrigin('bar', currentEmail); onOpenViewer(myStatusGroup); } else onOpenCreator(); }}
-        activeOpacity={0.7}
-      >
-        <View style={styles.storyAvatarWrap} ref={storyOriginRef('bar', currentEmail)} collapsable={false}>
-          <StoryRingAvatar
-            name={currentName}
-            email={currentEmail}
-            size={62}
-            ringStyle={hasMyStatus ? 'segmented' : 'none'}
-            segments={hasMyStatus ? myStatuses.length : 1}
-            itemsViewed={hasMyStatus ? myStatuses.map(it => !!it.viewed) : null}
-            badge={!hasMyStatus ? 'plus' : null}
-            // Mirror the close-friends green ring on the owner's own row
-            // so it's a consistent visual signal. We're the author, so we
-            // always pass the privacy through.
-            closeFriends={
-              hasMyStatus && myStatuses.some(
-                (it) => (it?.meta?.privacy || it?.privacy) === 'close_friends'
-              )
-            }
-            isDark={isDark}
-            colors={colors}
-          />
-        </View>
-        <Text style={[styles.storyName, { color: colors.text }]} numberOfLines={1}>
-          {t?.('status.myStatus') || 'My status'}
-        </Text>
-      </TouchableOpacity>
-
+      {/* [2026-10-17 status-once] item "Meu status" saiu do strip (fica só na linha do topo). */}
       {/* Contact statuses */}
       {statuses.map((group) => {
         const allViewed = group.items.every((item) => item.viewed);
@@ -3281,6 +3250,41 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     : null;
 
   const myStatusLabel = t?.('status.myStatus') || 'Meu status';
+  // [2026-10-17 status-once] Ações do antigo card grande (arquivar/apagar último,
+  // quem viu, abrir arquivo) — agora no segurar da linha "Meu status".
+  const _openMyStatusMenu = () => {
+    try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    const last = hasMyStatus ? myStatuses[myStatuses.length - 1] : null;
+    if (Platform.OS === 'web') { openArchiveSheet(); return; }
+    const buttons = [];
+    if (last?.id && myViewCount > 0) {
+      buttons.push({ text: _viewCountLabel(t, myViewCount), onPress: async () => {
+        viewersModalStatusIdRef.current = last.id;
+        try {
+          const r = await statusViewers(last.id);
+          setViewersList(r?.data?.viewers || r?.viewers || []);
+          setViewersModal(true);
+        } catch {}
+      } });
+    }
+    buttons.push({ text: t?.('status.openArchive') || 'Abrir arquivo', onPress: openArchiveSheet });
+    if (last?.id) {
+      buttons.push({ text: t?.('status.archive') || 'Arquivar', onPress: () => archiveMyStatus(last.id) });
+      buttons.push({ text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: () => {
+        Alert.alert(
+          t?.('status.deleteTitle') || 'Apagar status',
+          t?.('status.deleteConfirm') || 'Apagar este status?',
+          [
+            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+            { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: () => deleteMyStatus(last.id) },
+          ]
+        );
+      } });
+    }
+    buttons.push({ text: t?.('common.cancel') || 'Cancelar', style: 'cancel' });
+    Alert.alert(t?.('status.myStatus') || 'Meu status', undefined, buttons);
+  };
+
   const addStatusLabel = t?.('status.tapToAdd') || 'Toque para adicionar status';
   const disappearsLabel = t?.('status.disappears') || 'Desaparece em 24 horas';
   const recentLabel = t?.('status.recentUpdates') || 'Atualizacoes recentes';
@@ -3717,7 +3721,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         {!!largeTitle && <LargeTitle title={largeTitle} color={colors.text} />}
         {!!largeTitle && _searchToggleRow}
         {/* Horizontal story scroller */}
-        {(filteredStatuses.length > 0 || hasMyStatus) && (
+        {filteredStatuses.length > 0 && (
           <StoryScroller
             statuses={filteredStatuses}
             myStatuses={myStatuses}
@@ -3731,185 +3735,67 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           />
         )}
 
-        {/* My Status Hero Tile — 96px circular avatar with dashed purple
-            ring (empty) or solid gradient ring (active). "Quem viu" view
-            count pill surfaces below when there's an active story.
-            Replaces the old rectangular row card for an Instagram-grade
-            hero feel. */}
-        <View style={[styles.myStatusCard, {
-          backgroundColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
-        }]}>
-          <View style={styles.myStatusRow}>
-            <TouchableOpacity
-              onPress={() => { if (hasMyStatus) { markStoryOrigin('me', myStatusGroup?.ownerEmail); openViewer(myStatusGroup); } else openCreator(); }}
-              activeOpacity={0.7}
-              style={{ alignItems: 'center', justifyContent: 'center', marginRight: 16 }}
-            >
-              <View style={styles.myAvatarWrapperHero} ref={storyOriginRef('me', myStatusGroup?.ownerEmail)} collapsable={false}>
-                {hasMyStatus ? (
-                  // Solid gradient ring when there's an active story.
-                  <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
-                    <Defs>
-                      <LinearGradient id="heroRing" x1="0" y1="0" x2="1" y2="1">
-                        {/* [2026-10-10 visual] ink follows theme (#111 vanished on dark) */}
-                        <Stop offset="0" stopColor={isDark ? '#F5F5F7' : '#111111'} />
-                        <Stop offset="0.5" stopColor={isDark ? '#F5F5F7' : '#111111'} />
-                        <Stop offset="1" stopColor={isDark ? '#F5F5F7' : '#111111'} />
-                      </LinearGradient>
-                    </Defs>
-                    <SvgCircle cx="54" cy="54" r="51" stroke="url(#heroRing)" strokeWidth={3.5} fill="none" />
-                  </Svg>
-                ) : (
-                  // Dashed purple "tap to add" ring when empty.
-                  <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
-                    <SvgCircle cx="54" cy="54" r="51" stroke={isDark ? '#F5F5F7' : ACCENT} strokeWidth={2.5} strokeDasharray="6 5" fill="none" opacity={0.65} />
-                  </Svg>
-                )}
-                {(hasMyStatus && textThumbFor(myStatuses[myStatuses.length - 1], 96)) || <AvatarCircle name={currentName} email={currentEmail} size={96} />}
-                {!hasMyStatus && (
-                  <View style={[styles.plusBadgeHero, {
-                    borderColor: isDark ? (colors.card || '#1c1c1e') : '#fff',
-                    ...(isDark ? { backgroundColor: '#F5F5F7', shadowOpacity: 0 } : null),
-                  }]}>
-                    <IconPlus size={16} color={isDark ? '#000' : '#fff'} />
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.myStatusName, { color: colors.text }]}>
-                {myStatusLabel}
-              </Text>
-              <Text style={[styles.myStatusSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                {hasMyStatus
-                  // [2026-10-17 polish-status-wa] era PT fixo ("atualizações") em qualquer idioma.
-                  ? `${myStatuses.length} ${myStatuses.length > 1 ? (t?.('status.updatesMany') || 'atualizações') : (t?.('status.updatesOne') || 'atualização')} · ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
-                  : addStatusLabel
-                }
-              </Text>
-              {/* "Quem viu" badge — only when own status is active and has
-                  any views. Tapping opens the viewers sheet for the latest
-                  item (same flow as the in-viewer eye icon). */}
-              {hasMyStatus && myViewCount > 0 && (
-                <TouchableOpacity
-                  style={[styles.viewCountPill, {
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.10)',
-                    borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(17, 17, 17,0.22)',
-                  }]}
-                  activeOpacity={0.7}
-                  onPress={async () => {
-                    const last = myStatuses[myStatuses.length - 1];
-                    if (!last?.id) return;
-                    try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                    // [P2 2026-05-26] Track the open status so the live
-                    // status_view WS refresh updates THIS sheet's count.
-                    viewersModalStatusIdRef.current = last.id;
-                    try {
-                      const r = await statusViewers(last.id);
-                      const list = (r?.data?.viewers || r?.viewers || []);
-                      setViewersList(list);
-                      setViewersModal(true);
-                    } catch {}
-                  }}
-                  accessibilityLabel={_viewCountLabel(t, myViewCount)}
-                >
-                  <IconEye size={12} color={isDark ? '#F5F5F7' : ACCENT} />
-                  <Text style={[styles.viewCountPillText, isDark && { color: '#F5F5F7' }]}>
-                    {_viewCountLabel(t, myViewCount)}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            <View style={styles.myStatusActions}>
-              {hasMyStatus && (
-                <TouchableOpacity
-                  // "Arquivar status" — long-press on the trash also surfaces
-                  // it via Alert/confirm (so users discover it without a new
-                  // icon cluttering the row), but keep this dedicated button
-                  // visible so the action is always one tap away. Uses
-                  // archiveMyStatus which hides the latest item immediately
-                  // and TODOs the backend wire-up.
-                  style={[styles.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)', marginRight: 10 }]}
-                  onPress={() => {
-                    const last = myStatuses[myStatuses.length - 1];
-                    if (!last) return;
-                    const doArchive = () => archiveMyStatus(last.id);
-                    if (Platform.OS === 'web') {
-                      if (typeof window !== 'undefined' && window.confirm(t?.('status.archiveConfirm') || 'Arquivar este status?')) doArchive();
-                    } else {
-                      Alert.alert(
-                        t?.('status.archiveTitle') || 'Arquivar status',
-                        t?.('status.archiveConfirm') || 'Arquivar este status? Você poderá vê-lo no arquivo depois.',
-                        [
-                          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                          { text: t?.('status.archive') || 'Arquivar', onPress: doArchive },
-                        ]
-                      );
-                    }
-                  }}
-                  accessibilityLabel={t?.('status.archive') || 'Arquivar status'}
-                >
-                  <IconArchive size={18} color={isDark ? '#fff' : '#111111'} />
-                </TouchableOpacity>
-              )}
-              {/* "Ver arquivo" — opens the archive sheet so users can browse
-                  past archived stories and repost any of them as a fresh
-                  24h story. Lives next to the archive trash so the two
-                  archive actions are co-located. */}
-              <TouchableOpacity
-                style={[styles.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)', marginRight: 10 }]}
-                onPress={openArchiveSheet}
-                accessibilityLabel={t?.('status.openArchive') || 'Abrir arquivo'}
-              >
-                <IconBookmark size={18} color={isDark ? '#fff' : '#111111'} />
-              </TouchableOpacity>
-              {hasMyStatus && (
-                <TouchableOpacity
-                  // [2026-10-17 polish-status-wa] P&B: disco neutro igual aos vizinhos (era rosa/vinho); só o ícone é vermelho.
-                  style={[styles.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}
-                  onPress={() => {
-                    const last = myStatuses[myStatuses.length - 1];
-                    if (!last) return;
-                    const doDelete = () => deleteMyStatus(last.id);
-                    if (Platform.OS === 'web') {
-                      if (typeof window !== 'undefined' && window.confirm(t?.('status.deleteConfirm') || 'Apagar este status?')) doDelete();
-                    } else {
-                      Alert.alert(
-                        t?.('status.deleteTitle') || 'Apagar status',
-                        t?.('status.deleteConfirm') || 'Apagar este status?',
-                        [
-                          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                          { text: t?.('common.delete') || 'Excluir', style: 'destructive', onPress: doDelete },
-                        ]
-                      );
-                    }
-                  }}
-                  accessibilityLabel={t?.('common.delete') || 'Excluir'}
-                >
-                  <IconTrash size={18} color={isDark ? '#FF6B6B' : '#D63031'} />
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[styles.actionCircle, {
-                  // [2026-10-10 visual] P&B neutral (was green-tinted #e8f5e9/#1a332a)
-                  backgroundColor: isDark ? '#2c2c2e' : '#f0f2f5',
-                  marginLeft: hasMyStatus ? 10 : 0,
-                }]}
-                onPress={() => openCreator(Platform.OS !== 'web' ? 'camera' : 'photo')}
-                // Long-press → multi-photo carousel publish.
-                // Keeps the single-shot flow on tap so existing users aren't
-                // disrupted, while still exposing the carousel without a
-                // new icon cluttering the layout.
-                onLongPress={publishCarousel}
-                delayLongPress={350}
-                accessibilityLabel={t?.('status.addMore') || 'Adicionar outro'}
-                accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
-              >
-                <IconPlus size={20} color={isDark ? '#F5F5F7' : ACCENT} />
-              </TouchableOpacity>
-            </View>
+        {/* [2026-10-17 status-once] "Meu status" aparece UMA vez (WhatsApp iOS):
+            linha compacta — avatar com anel (tem status) ou badge "+", título,
+            subtítulo (hora do último / "Toque para adicionar"), câmera e lápis
+            à direita. Tocar: ver meus status se houver, senão criar. Segurar:
+            arquivar/apagar o último, quem viu, abrir arquivo (ações que antes
+            ficavam no card grande). Strip e lista nativa NÃO repetem o "eu". */}
+        <TouchableOpacity
+          style={[styles.myStatusCompact, { backgroundColor: isDark ? (colors.card || '#1c1c1e') : (colors.card || '#fff') }]}
+          activeOpacity={0.7}
+          onPress={() => { if (hasMyStatus) { markStoryOrigin('me', myStatusGroup?.ownerEmail); openViewer(myStatusGroup); } else openCreator(); }}
+          onLongPress={_openMyStatusMenu}
+          delayLongPress={400}
+          accessibilityRole="button"
+          accessibilityLabel={myStatusLabel}
+        >
+          <View ref={storyOriginRef('me', myStatusGroup?.ownerEmail)} collapsable={false} style={{ marginRight: 12 }}>
+            <StoryRingAvatar
+              name={currentName}
+              email={currentEmail}
+              size={52}
+              ringStyle={hasMyStatus ? 'segmented' : 'none'}
+              segments={hasMyStatus ? myStatuses.length : 1}
+              itemsViewed={hasMyStatus ? myStatuses.map(it => !!it.viewed) : null}
+              badge={!hasMyStatus ? 'plus' : null}
+              closeFriends={hasMyStatus && myStatuses.some((it) => (it?.meta?.privacy || it?.privacy) === 'close_friends')}
+              isDark={isDark}
+              colors={colors}
+            />
           </View>
-        </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={[styles.myStatusName, { color: colors.text }]} numberOfLines={1}>
+              {myStatusLabel}
+            </Text>
+            <Text style={[styles.myStatusSub, { color: colors.textSecondary }]} numberOfLines={1}>
+              {hasMyStatus
+                ? `${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}${myViewCount > 0 ? ' · ' + _viewCountLabel(t, myViewCount) : ''}`
+                : addStatusLabel}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.myStatusCompactBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}
+            onPress={() => openCreator(Platform.OS !== 'web' ? 'camera' : 'photo')}
+            onLongPress={publishCarousel}
+            delayLongPress={350}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('status.camera') || 'Câmera'}
+            accessibilityHint={t?.('status.longPressCarousel') || 'Segure para publicar várias fotos'}
+          >
+            <IconCamera size={18} color={colors.text} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.myStatusCompactBtn, { marginLeft: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}
+            onPress={() => openCreator('text')}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('statusTab.newTextStatus') || 'Novo status de texto'}
+          >
+            <IconEdit size={18} color={colors.text} />
+          </TouchableOpacity>
+        </TouchableOpacity>
     </>
   );
 
@@ -3967,7 +3853,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
       {_useNativeStatus ? (
         <NativeStatusList
-          myGroup={myStatusGroup}
+          // [2026-10-17 status-once] "eu" só na linha compacta do topo (header).
+          myGroup={null}
           recent={recentStatuses}
           viewed={viewedStatuses}
           muted={mutedStatuses}
@@ -4008,22 +3895,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       >
         {_statusTop}
 
-        {/* "Meus" — surfaces the user's own status as a row only when they
-            have one. Sits between the hero tile and the Recentes section,
-            mirrors Instagram's layout where your own story shows up in the
-            highlights row before others' stories. */}
-        {hasMyStatus && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionAccent} />
-              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-                {t?.('status.mine') || 'Meus'}
-              </Text>
-              <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{myStatuses.length}</Text>
-            </View>
-            {renderStatusRow(myStatusGroup)}
-          </View>
-        )}
+        {/* [2026-10-17 status-once] seção "Meus" removida — "Meu status" só na linha do topo. */}
 
         {/* Recent Updates */}
         {recentStatuses.length > 0 && (
@@ -6586,6 +6458,24 @@ const styles = StyleSheet.create({
 
   scrollView: { flex: 1 },
 
+  // [2026-10-17 status-once] linha compacta "Meu status" (WhatsApp iOS).
+  myStatusCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  myStatusCompactBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // My Status Card
   myStatusCard: {
     marginHorizontal: 16,

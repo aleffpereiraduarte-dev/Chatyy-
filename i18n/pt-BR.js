@@ -13115,4 +13115,6 @@ export default {
   "status.updatesOne": "atualização",
   "status.updatesMany": "atualizações",
   "common.remove": "Remover",
+  // [2026-10-17 header-wa]
+  "chatConv.menuSearch": "Pesquisar",
 };

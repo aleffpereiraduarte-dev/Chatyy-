@@ -34194,26 +34194,32 @@ function ChatConversationInner() {
             </Text>
           </TouchableOpacity>
         )}
-        {/* Busca direta no header — antes ficava enterrada no menu 3-pontos.
-            Um tap abre a barra de busca com auto-focus. */}
+        {/* [2026-10-17 header-wa] WhatsApp iOS: à direita só vídeo + voz (nome
+            ganha espaço). A busca foi p/ o menu ⋯ ("Pesquisar") e segue em
+            Dados do contato/grupo. O ⋯ fica: é a ÚNICA entrada do menu (mídia,
+            silenciar, temporárias, papel de parede, exportar, limpar…).
+            Canal (sem chamadas) → busca no lugar das chamadas. */}
+        {conversationType === 'channel' ? (
         <TouchableOpacity
           onPress={() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus?.(), 200); }}
           style={styles.headerBtn}
           accessibilityLabel={t('chatConv.searchInConversation') || 'Buscar na conversa'}
           accessibilityRole="button"
         >
-          {/* [2026-10-08 chat-beauty-chrome] ícones de ação numa grade só:
-              glifo 22 (viewBox 24, traço 1.9) em alvo 40×44 — antes 17/17/18/20. */}
           <IconSearch size={22} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.voiceCall') || 'Audio call'} accessibilityRole="button">{/* [2026-10-09 geo-qa] era call.callingAudio = "Chamando..." (leitor de tela) */}
-          <IconPhone size={22} color={colors.text} />
-        </TouchableOpacity>
+        ) : (
+        <>
         <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.videoCall') || 'Video call'} accessibilityRole="button">
           {startingCall
             ? <ActivityIndicator size="small" color={colors.text} />
             : <IconVideo size={24} color={colors.text} />}
         </TouchableOpacity>
+        <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.voiceCall') || 'Audio call'} accessibilityRole="button">{/* [2026-10-09 geo-qa] era call.callingAudio = "Chamando..." (leitor de tela) */}
+          <IconPhone size={22} color={colors.text} />
+        </TouchableOpacity>
+        </>
+        )}
         <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={[styles.headerBtn, { width: 36 }]} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
           <IconMoreVert size={22} color={colors.text} />
         </TouchableOpacity>
@@ -39807,7 +39813,8 @@ function ChatConversationInner() {
                   }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconSearch, label: t('chatConv.search') || 'Buscar', onPress: () => { closeMenu(); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
+                  // [2026-10-17 header-wa] busca saiu do header → "Pesquisar" aqui (mesma ação).
+                  { Icon: IconSearch, label: t('chatConv.menuSearch') || 'Pesquisar', onPress: () => { closeMenu(); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus?.(), 200); }},
                   { Icon: IconImage, label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { closeMenu(); setShowMediaGallery(true); }},
                   { Icon: IconBell, label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { closeMenu(); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
                   { Icon: IconClock, label: t('chat.disappearing') || 'Mensagens temporárias', subtitle: disappearingSummary, badge: disappearingTimer > 0 || !!vanishMode, onPress: () => { closeMenu(); setShowDisappearingModal(true); }},
@@ -42941,9 +42948,15 @@ function ConvLightShell({ rec, params, acct, colors, isDark, t, insets, onBack }
           />
         </View>
         <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={styles.headerBtn}><IconSearch size={22} color={colors.text} /></View>
-          <View style={styles.headerBtn}><IconPhone size={22} color={colors.text} /></View>
-          <View style={styles.headerBtn}><IconVideo size={24} color={colors.text} /></View>
+          {/* [2026-10-17 header-wa] mesmo layout do header real: vídeo + voz (+ ⋯); canal = busca */}
+          {type === 'channel' ? (
+            <View style={styles.headerBtn}><IconSearch size={22} color={colors.text} /></View>
+          ) : (
+            <>
+              <View style={styles.headerBtn}><IconVideo size={24} color={colors.text} /></View>
+              <View style={styles.headerBtn}><IconPhone size={22} color={colors.text} /></View>
+            </>
+          )}
           <View style={[styles.headerBtn, { width: 36 }]}><IconMoreVert size={22} color={colors.text} /></View>
         </View>
       </View>
