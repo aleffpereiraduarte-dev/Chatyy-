@@ -123,7 +123,7 @@ export function studioLabels(t) {
     audContacts: tt(t, 'status.audience.contacts', 'Meus contatos'),
     audContactsSub: tt(t, 'status.audience.contactsSub', 'Só quem está na sua agenda'),
     audClose: tt(t, 'status.audience.closeFriends', 'Melhores amigos'),
-    audCloseSub: tt(t, 'status.audience.closeFriendsSub', 'Anel verde, só a sua lista'),
+    audCloseSub: tt(t, 'status.audience.closeFriendsSub', 'Anel com estrela, só a sua lista'),
     audExcept: tt(t, 'status.audience.except', 'Ocultar de…'),
     audExceptSub: tt(t, 'status.audience.exceptSub', 'Todos, menos quem você escolher'),
     audEdit: tt(t, 'status.audience.edit', 'Editar'),

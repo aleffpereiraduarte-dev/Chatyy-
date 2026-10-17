@@ -1408,6 +1408,7 @@ export default {
   'meetScreen.groupCall': 'ಗುಂಪು ಕರೆ',
   'splash.tagline': 'ಸುರಕ್ಷಿತ ಮತ್ತು ಬುದ್ಧಿವಂತ ಇಮೇಲ್',
   'folder.inbox': 'ಇನ್‌ಬಾಕ್ಸ್',
+  'folder.inboxShort': 'ಇನ್‌ಬಾಕ್ಸ್',
   'folder.allMail': 'ಎಲ್ಲಾ ಇಮೇಲ್‌ಗಳು',
   'folder.sent': 'ಕಳುಹಿಸಲಾಗಿದೆ',
   'folder.drafts': 'ಡ್ರಾಫ್ಟ್‌ಗಳು',

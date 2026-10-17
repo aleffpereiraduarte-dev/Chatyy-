@@ -1605,6 +1605,7 @@ export default {
 
   // Folders
   'folder.inbox': 'इनबॉक्स',
+  'folder.inboxShort': 'इनबॉक्स',
   'folder.allMail': 'सभी ईमेल',
   'folder.sent': 'भेजे गए',
   'folder.drafts': 'ड्राफ्ट',
@@ -10450,7 +10451,7 @@ export default {
   "status.audience.contacts": "मेरे संपर्क",
   "status.audience.contactsSub": "सिर्फ आपके एड्रेस बुक में लोग",
   "status.audience.closeFriends": "करीबी दोस्त",
-  "status.audience.closeFriendsSub": "हरा रिंग, सिर्फ आपकी सूची",
+  "status.audience.closeFriendsSub": "स्टार वाला रिंग, सिर्फ आपकी सूची",
   "status.audience.except": "...से छुपाएं",
   "status.audience.exceptSub": "सभी, सिवाय उनके जिन्हें आप चुनें",
   "status.audience.edit": "संपादित करें",

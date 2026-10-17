@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Skupinski klic',
   'splash.tagline': 'Varno in pametno e-poštno sporočilo',
   'folder.inbox': 'Prejeto',
+  'folder.inboxShort': 'Prejeto',
   'folder.allMail': 'Vsi emaili',
   'folder.sent': 'Poslano',
   'folder.drafts': 'Osnutki',

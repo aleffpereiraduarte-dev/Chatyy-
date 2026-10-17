@@ -248,12 +248,15 @@ let _postWindowStart = 0;
 let _postWindowCount = 0;
 const _postLastByStep = Object.create(null);
 
-function _buildBody(step, info, anon) {
+function _buildBody(step, info, anon, tsMs) {
   return JSON.stringify({
     step: String(step || 'unknown').slice(0, 60).replace(/[^a-zA-Z0-9_]/g, '_'),
     platform: _platform,
     info: String(info || '').replace(/[\r\n]+/g, ' ').slice(0, 480),
-    ts: new Date().toISOString(),
+    // [2026-10-16 bootgap] hora do EVENTO, não de quando o corpo foi montado:
+    // num boot em 2º plano o JS congela no await do anon id e o boot_start
+    // saía com a hora do 1º plano (falso "2 boots em 1,3 s").
+    ts: new Date(tsMs || Date.now()).toISOString(),
     anon_id: anon,
   });
 }
@@ -293,7 +296,7 @@ async function _post(step, info, urgent = false) {
     // we have one (pre-warmed at install), fall back to "boot" otherwise so
     // the beacon still goes out and is grouped by the server.
     const anon = _anonId || (urgent ? 'boot-' + _bootAt.toString(36) : await _ensureAnonId());
-    await _send(_buildBody(step, info, anon), urgent);
+    await _send(_buildBody(step, info, anon, _now), urgent);
   } catch {}
 }
 
@@ -559,12 +562,81 @@ export function reportError(error, { fatal = false, source = 'global', extra = '
   } catch { return Promise.resolve(); }
 }
 
+// ─── [2026-10-16 bootgap] Reinícios do JS: QUEM pediu ─────────────────────
+// Telemetria mostrava 2 boot_start seguidos (1–8 s, OTA velho→novo) sem
+// beacon de crash; sem isto não dá para separar "usuário tocou em Nova versão"
+// de ErrorRecovery do expo-updates (erro fatal nativo antes da 1ª pintura).
+// Todo reloadAsync do app passa por reloadWithReason(), que grava o motivo;
+// o boot seguinte publica `boot_reload why=<motivo> from=<ota> age=<ms>`.
+const RELOAD_KEY = '@chatyy/reload_reason_v1';
+const UPDLOG_KEY = '@chatyy/upd_log_last_v1';
+
+export async function reloadWithReason(reason) {
+  const U = _lazyUpdates();
+  if (!U || typeof U.reloadAsync !== 'function') throw new Error('expo-updates indisponível');
+  try {
+    const AS = _lazyAsyncStorage();
+    const from = U.updateId ? String(U.updateId).slice(0, 8) : (U.isEmbeddedLaunch ? 'embedded' : '?');
+    if (AS) {
+      await Promise.race([
+        AS.setItem(RELOAD_KEY, JSON.stringify({ r: String(reason || '?').slice(0, 24), t: Date.now(), from })),
+        new Promise((res) => setTimeout(res, 400)),
+      ]);
+    }
+  } catch {}
+  return U.reloadAsync();
+}
+
+async function _reportReloadReason() {
+  try {
+    const AS = _lazyAsyncStorage();
+    if (!AS) return;
+    const raw = await AS.getItem(RELOAD_KEY);
+    if (!raw) return;
+    await AS.removeItem(RELOAD_KEY);
+    let o = null;
+    try { o = JSON.parse(raw); } catch { return; }
+    if (!o || !o.t) return;
+    const age = Date.now() - Number(o.t);
+    if (!(age >= 0 && age < 5 * 60 * 1000)) return; // motivo velho = não foi este boot
+    await _post('boot_reload', `why=${o.r} from=${o.from} age=${age}`, true);
+  } catch {}
+}
+
+async function _reportUpdatesLog() {
+  const U = _lazyUpdates();
+  if (!U || typeof U.readLogEntriesAsync !== 'function') return;
+  const AS = _lazyAsyncStorage();
+  let last = 0;
+  try { last = Number(AS ? await AS.getItem(UPDLOG_KEY) : 0) || 0; } catch {}
+  let entries = [];
+  try { entries = await U.readLogEntriesAsync(30 * 60 * 1000); } catch { return; }
+  if (!Array.isArray(entries) || !entries.length) return;
+  const RX = /ErrorRecovery|crash|fail|roll ?back|relaunch|emergency|corrupt/i;
+  const hits = entries.filter((e) => e && Number(e.timestamp) > last && (
+    RX.test(String(e.message || '')) || e.level === 'error' || e.level === 'fatal'
+  ));
+  let maxTs = last;
+  for (const e of entries) { const ts = Number(e && e.timestamp) || 0; if (ts > maxTs) maxTs = ts; }
+  try { if (AS && maxTs > last) await AS.setItem(UPDLOG_KEY, String(maxTs)); } catch {}
+  if (!hits.length) return;
+  const lines = hits.slice(-6).map((e) => {
+    const ago = Math.round((Date.now() - Number(e.timestamp)) / 1000);
+    const uid = e.updateId ? String(e.updateId).slice(0, 8) : '-';
+    return `${ago}s ${e.level || '?'} ${e.code || '?'} u=${uid} ${String(e.message || '').slice(0, 160)}`;
+  });
+  await _chunked('upd_log', `n=${hits.length} | ${lines.join(' || ')}`, true);
+}
+
 export function installCrashReporter() {
   if (_installed) return;
   _installed = true;
   // Pre-warm the anon id so the fatal path never has to await AsyncStorage,
   // then flush anything a previous (killed) process left behind.
-  _ensureAnonId().then(() => _flushPersistedCrashes()).catch(() => {});
+  _ensureAnonId().then(() => _flushPersistedCrashes()).then(() => _reportReloadReason()).catch(() => {});
+  // [2026-10-16 bootgap] o que o expo-updates fez neste launch (ErrorRecovery,
+  // falha de launch, rollback) — erros NATIVOS que o handler JS não vê.
+  if (_platform !== 'web') { try { setTimeout(() => { _reportUpdatesLog().catch(() => {}); }, 8000); } catch {} }
   addBreadcrumb('boot_start');
   // [2026-10-15 confiab] `ver` vem do app.json do OTA (e no iOS usava o
   // versionCode do ANDROID) → não dava para separar builds 686/688/690 em
@@ -581,6 +653,13 @@ export function installCrashReporter() {
       _bootExtra += ` emerg=1 why=${String(U.emergencyLaunchReason || '').replace(/\s+/g, '_').slice(0, 120)}`;
     }
     if (U && U.isEmbeddedLaunch === true) _bootExtra += ' embedded=1';
+  } catch {}
+  // [2026-10-16 bootgap] estado do app no boot (a/b/i/u): boot acordado em 2º
+  // plano (push/VoIP/BG fetch) ≠ abertura pelo usuário.
+  try {
+    const bt = require('./bootTrace');
+    const st = bt && typeof bt.getInitialAppState === 'function' ? String(bt.getInitialAppState() || '') : '';
+    if (st) _bootExtra += ` as=${st.charAt(0)}`;
   } catch {}
   _post('boot_start', `ver=${_appVersion()} plat=${_platform}${_bootExtra}`);
 

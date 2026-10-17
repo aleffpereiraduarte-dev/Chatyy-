@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'ការហៅជាក្រុម',
   'splash.tagline': 'អ៊ីមែលសុវត្ថិភាព និងឆ្លាតវៃ',
   'folder.inbox': 'ប្រអប់ទទួល',
+  'folder.inboxShort': 'ប្រអប់ទទួល',
   'folder.allMail': 'អ៊ីមែលទាំងអស់',
   'folder.sent': 'បានផ្ញើ',
   'folder.drafts': 'រូបមន្ត',

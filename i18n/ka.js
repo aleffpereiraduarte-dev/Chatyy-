@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'ჯგუფური ზარი',
   'splash.tagline': 'უსაფრთხო და ჭკვიანი ელფოსტა',
   'folder.inbox': 'შემოსული',
+  'folder.inboxShort': 'შემოსული',
   'folder.allMail': 'ყველა ელ.ფოსტა',
   'folder.sent': 'გაგზავნილი',
   'folder.drafts': 'წარწერები',

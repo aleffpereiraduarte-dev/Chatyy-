@@ -1417,6 +1417,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Postvak IN',
+  'folder.inboxShort': 'Postvak IN',
   'folder.allMail': 'Alle e-mail',
   'folder.sent': 'Verzonden',
   'folder.drafts': 'Concepten',
@@ -11700,7 +11701,7 @@ export default {
   "status.audience.contacts": "Mijn contacten",
   "status.audience.contactsSub": "Alleen mensen in je adresboek",
   "status.audience.closeFriends": "Goede vrienden",
-  "status.audience.closeFriendsSub": "Groene ring, alleen je lijst",
+  "status.audience.closeFriendsSub": "Ring met ster, alleen je lijst",
   "status.audience.except": "Verbergen voor…",
   "status.audience.exceptSub": "Iedereen behalve wie je kiest",
   "status.audience.edit": "Bewerken",

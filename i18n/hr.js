@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Grupni poziv',
   'splash.tagline': 'Siguran i pametan email',
   'folder.inbox': 'Primljeno',
+  'folder.inboxShort': 'Primljeno',
   'folder.allMail': 'Svi emailovi',
   'folder.sent': 'Poslano',
   'folder.drafts': 'Skice',

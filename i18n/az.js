@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'Qrup zəngi',
   'splash.tagline': 'Təhlükəsiz və ağıllı e-poçt',
   'folder.inbox': 'Gələnlər',
+  'folder.inboxShort': 'Gələnlər',
   'folder.allMail': 'Bütün emaillər',
   'folder.sent': 'Göndərilənlər',
   'folder.drafts': 'Taslaklar',

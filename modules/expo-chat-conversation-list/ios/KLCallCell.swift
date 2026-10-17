@@ -239,7 +239,7 @@ final class KLCallCell: UICollectionViewListCell {
     nameLabel.text = r.count > 1 ? "\(r.title) (\(r.count))" : r.title
     // Linha 2: seta + origem + vídeo + duração + recado
     let s = NSMutableAttributedString()
-    let arrowColor: UIColor = r.missed ? t.red : (r.dir == "out" ? t.sub : t.green)
+    let arrowColor: UIColor = r.missed ? t.red : t.sub // [2026-10-16 P&B] recebida = cinza (verde só no botão)
     if let a = attachment(r.dir == "out" ? "arrow.up.right" : "arrow.down.left", color: arrowColor) {
       s.append(a)
       s.append(NSAttributedString(string: " "))

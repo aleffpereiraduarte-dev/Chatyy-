@@ -1418,6 +1418,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Innboks',
+  'folder.inboxShort': 'Innboks',
   'folder.allMail': 'Alle e-poster',
   'folder.sent': 'Sendt',
   'folder.drafts': 'Kladder',

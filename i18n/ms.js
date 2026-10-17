@@ -1399,6 +1399,7 @@ export default {
   'meetScreen.groupCall': 'Panggilan kumpulan',
   'splash.tagline': 'Emel selamat dan pintar',
   'folder.inbox': 'Peti Masuk',
+  'folder.inboxShort': 'Masuk',
   'folder.allMail': 'Semua email',
   'folder.sent': 'Dihantar',
   'folder.drafts': 'Draf',

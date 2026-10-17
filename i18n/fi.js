@@ -1418,6 +1418,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Saapuneet',
+  'folder.inboxShort': 'Saapuneet',
   'folder.allMail': 'Kaikki sähköpostit',
   'folder.sent': 'Lähetetyt',
   'folder.drafts': 'Luonnokset',

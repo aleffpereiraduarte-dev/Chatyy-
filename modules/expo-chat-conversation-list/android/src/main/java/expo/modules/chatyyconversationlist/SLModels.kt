@@ -69,6 +69,7 @@ internal class SLPalette(val dark: Boolean, m: Map<String, Any?>? = null) {
   val press: Int
   val ink: Int
   val ringViewed: Int = Color.argb(89, 150, 150, 150)
+  // [2026-10-16 P&B] não é mais usado no anel (era verde); mantido p/ compat.
   val closeFriends: Int = Color.parseColor("#10B981")
 
   init {

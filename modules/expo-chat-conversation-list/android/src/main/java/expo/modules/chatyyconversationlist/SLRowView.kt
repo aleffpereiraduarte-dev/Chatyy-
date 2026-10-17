@@ -67,6 +67,7 @@ internal class SLRowView(ctx: Context) : View(ctx) {
   private val cardRect = RectF()
   private val tmp = RectF()
   private val circle = Path()
+  private val starPath = Path() // [2026-10-16 P&B] selo de estrela dos Melhores amigos
   private val shaderMatrix = Matrix()
 
   private var bitmap: Bitmap? = null
@@ -265,8 +266,33 @@ internal class SLRowView(ctx: Context) : View(ctx) {
     ringPaint.strokeCap = if (n > 1) Paint.Cap.ROUND else Paint.Cap.BUTT
     for (i in 0 until n) {
       val v = viewed.getOrElse(i) { true }
-      ringPaint.color = if (v) p.ringViewed else if (row.closeFriends) p.closeFriends else p.ink
+      ringPaint.color = if (v) p.ringViewed else p.ink // [2026-10-16 P&B] sem verde nos Melhores amigos
       canvas.drawArc(tmp, -90f + i * (seg + gapDeg), if (n > 1) seg else 360f, false, ringPaint)
+    }
+    // [2026-10-16 P&B] Melhores amigos: selinho (tinta P&B) com estrela no canto
+    // inferior direito do anel — só enquanto houver parte não vista (igual ao JS).
+    if (row.closeFriends && viewed.any { !it }) {
+      val bx = cx + rr * 0.7071f
+      val by = cy + rr * 0.7071f
+      val br = dp(9f)
+      fill.shader = null
+      fill.color = p.card
+      canvas.drawCircle(bx, by, br + dp(2f), fill)
+      fill.color = p.ink
+      canvas.drawCircle(bx, by, br, fill)
+      val outer = br * 0.62f
+      val inner = outer * 0.45f
+      starPath.reset()
+      for (k in 0 until 10) {
+        val rad = if (k % 2 == 0) outer else inner
+        val a = Math.toRadians((-90.0 + k * 36.0))
+        val sx = bx + (rad * Math.cos(a)).toFloat()
+        val sy = by + (rad * Math.sin(a)).toFloat()
+        if (k == 0) starPath.moveTo(sx, sy) else starPath.lineTo(sx, sy)
+      }
+      starPath.close()
+      fill.color = p.card
+      canvas.drawPath(starPath, fill)
     }
 
     // Textos

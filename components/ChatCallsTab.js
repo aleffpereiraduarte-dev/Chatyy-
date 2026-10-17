@@ -273,7 +273,7 @@ function formatPhoneDisplay(number) {
 }
 
 // --- SVG Icons ---
-function ArrowOutgoing({ size = 14, color = GREEN }) {
+function ArrowOutgoing({ size = 14, color = '#6c6c70' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M7 17L17 7" />
@@ -282,7 +282,7 @@ function ArrowOutgoing({ size = 14, color = GREEN }) {
   );
 }
 
-function ArrowIncoming({ size = 14, color = GREEN }) {
+function ArrowIncoming({ size = 14, color = '#6c6c70' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M17 7L7 17" />
@@ -663,13 +663,14 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-          {/* Semantic colors: missed=red, incoming=green, outgoing=gray. */}
+          {/* Semantic colors: missed=red; incoming/outgoing = cinza (P&B 2026-10-16 —
+              verde fica só no botão de ligar/atender). */}
           {isMissed ? (
             <ArrowIncoming size={12} color={RED} />
           ) : direction === 'outgoing' ? ( // [2026-10-06 UX2]
             <ArrowOutgoing size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           ) : (
-            <ArrowIncoming size={12} color={GREEN} />
+            <ArrowIncoming size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           )}
           <Text style={[s.historyType, { color: subColor }]}>
             {isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : label)}
@@ -976,9 +977,9 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
                 {callDirection(item) === 'missed' ? (
                   <IconMissedCall size={14} color={RED} />
                 ) : callDirection(item) === 'outgoing' ? (
-                  <ArrowOutgoing size={14} color={GREEN} />
+                  <ArrowOutgoing size={14} color={subColor} />
                 ) : (
-                  <ArrowIncoming size={14} color={GREEN} />
+                  <ArrowIncoming size={14} color={subColor} />
                 )}
               </View>
             </View>

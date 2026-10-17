@@ -1606,6 +1606,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Posta in arrivo',
+  'folder.inboxShort': 'In arrivo',
   'folder.allMail': 'Tutte le email',
   'folder.sent': 'Inviati',
   'folder.drafts': 'Bozze',
@@ -10450,7 +10451,7 @@ export default {
   "status.audience.contacts": "I miei contatti",
   "status.audience.contactsSub": "Solo chi è nella tua rubrica",
   "status.audience.closeFriends": "Amici stretti",
-  "status.audience.closeFriendsSub": "Anello verde, solo la tua lista",
+  "status.audience.closeFriendsSub": "Anello con stella, solo la tua lista",
   "status.audience.except": "Nascondi a…",
   "status.audience.exceptSub": "Tutti, tranne chi scegli tu",
   "status.audience.edit": "Modifica",

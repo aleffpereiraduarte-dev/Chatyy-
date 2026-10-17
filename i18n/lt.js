@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Grupinis skambutis',
   'splash.tagline': 'Saugus ir protingas el. paštas',
   'folder.inbox': 'Gauta',
+  'folder.inboxShort': 'Gauta',
   'folder.allMail': 'Visi el. laiškai',
   'folder.sent': 'Išsiųsti',
   'folder.drafts': 'Juodraščiai',

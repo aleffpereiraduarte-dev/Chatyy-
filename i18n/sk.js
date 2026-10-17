@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Skupinový hovor',
   'splash.tagline': 'Bezpečný a inteligentný e-mail',
   'folder.inbox': 'Doručená pošta',
+  'folder.inboxShort': 'Doručené',
   'folder.allMail': 'Všetky emaily',
   'folder.sent': 'Odoslané',
   'folder.drafts': 'Návrhy',

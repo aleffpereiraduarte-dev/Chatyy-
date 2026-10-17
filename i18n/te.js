@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'గ్రూప్ కాల్',
   'splash.tagline': 'సురక్షితమైన మరియు తెలివైన ఇమెయిల్',
   'folder.inbox': 'ఇన్‌బాక్స్',
+  'folder.inboxShort': 'ఇన్‌బాక్స్',
   'folder.allMail': 'అన్ని ఇమెయిల్స్',
   'folder.sent': 'కంపై పంపబడిన',
   'folder.drafts': 'రాసిన',

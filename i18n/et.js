@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Rühmakõne',
   'splash.tagline': 'Turvaline ja nutikas e-post',
   'folder.inbox': 'Postkast',
+  'folder.inboxShort': 'Postkast',
   'folder.allMail': 'Kõik e-kirjad',
   'folder.sent': 'Saadetud',
   'folder.drafts': 'Mustandid',

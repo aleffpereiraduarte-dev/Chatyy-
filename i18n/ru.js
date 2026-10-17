@@ -1416,6 +1416,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Входящие',
+  'folder.inboxShort': 'Входящие',
   'folder.allMail': 'Все письма',
   'folder.sent': 'Отправленные',
   'folder.drafts': 'Черновики',
@@ -11700,7 +11701,7 @@ export default {
   "status.audience.contacts": "Мои контакты",
   "status.audience.contactsSub": "Только люди из твоей адресной книги",
   "status.audience.closeFriends": "Близкие друзья",
-  "status.audience.closeFriendsSub": "Зеленое кольцо, только твой список",
+  "status.audience.closeFriendsSub": "Кольцо со звездой, только твой список",
   "status.audience.except": "Скрыть от…",
   "status.audience.exceptSub": "Все, кроме выбранных",
   "status.audience.edit": "Изменить",

@@ -1212,6 +1212,7 @@ export default {
   '_locale': 'ur-PK',
   'splash.tagline': 'محفوظ اور سمارٹ ای میل',
   'folder.inbox': 'ان باکس',
+  'folder.inboxShort': 'ان باکس',
   'folder.sent': 'بھیجے گئے',
   'folder.drafts': 'مسودے',
   'sidebar.compose': 'لکھیں',

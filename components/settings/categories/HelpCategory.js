@@ -57,7 +57,12 @@ export default function HelpCategory() {
       setUpd('downloading');
       await U.fetchUpdateAsync();
       setUpd('ready');
-      setTimeout(() => { U.reloadAsync().catch(() => setUpd('error')); }, 900);
+      setTimeout(() => {
+        // [2026-10-16 bootgap] reload com motivo (boot_reload why=help)
+        let p = null;
+        try { p = require('../../../services/crashReporter').reloadWithReason('help'); } catch { p = null; }
+        (p || U.reloadAsync()).catch(() => setUpd('error'));
+      }, 900);
     } catch { setUpd('error'); }
   };
   const updSubtitle = (() => {

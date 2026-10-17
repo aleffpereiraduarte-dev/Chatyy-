@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Simu ya kikundi',
   'splash.tagline': 'Barua pepe salama na mahiri',
   'folder.inbox': 'Kikasha',
+  'folder.inboxShort': 'Kikasha',
   'folder.allMail': 'Mails zote',
   'folder.sent': 'Zilizotumwa',
   'folder.drafts': 'Rasimu',

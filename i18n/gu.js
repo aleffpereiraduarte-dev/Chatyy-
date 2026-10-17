@@ -1398,6 +1398,7 @@ export default {
   'meetScreen.groupCall': 'ગ્રુપ કૉલ',
   'splash.tagline': 'સુરક્ષિત અને સ્માર્ટ ઈમેલ',
   'folder.inbox': 'ઇનબૉક્સ',
+  'folder.inboxShort': 'ઇનબૉક્સ',
   'folder.allMail': 'બધા ઇમેઇલ',
   'folder.sent': 'મોકલવામાં આવેલ',
   'folder.drafts': 'ડ્રાફ્ટ',

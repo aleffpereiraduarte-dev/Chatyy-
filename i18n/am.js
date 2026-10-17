@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'ቡድን ጥሪ',
   'splash.tagline': 'ደህንነቱ የተጠበቀ እና ብልጥ ኢሜይል',
   'folder.inbox': 'ገቢ',
+  'folder.inboxShort': 'ገቢ',
   'folder.allMail': 'ሁሉም ኢሜይሎች',
   'folder.sent': 'ተላክቷል',
   'folder.drafts': 'ድርጅቶች',

@@ -1875,6 +1875,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Bandeja de entrada',
+  'folder.inboxShort': 'Recibidos',
   'folder.allMail': 'Todos los correos',
   'folder.sent': 'Enviados',
   'folder.drafts': 'Borradores',
@@ -10989,7 +10990,7 @@ export default {
   "status.audience.contacts": "Mis contactos",
   "status.audience.contactsSub": "Solo quien está en tu agenda",
   "status.audience.closeFriends": "Mejores amigos",
-  "status.audience.closeFriendsSub": "Anillo verde, solo tu lista",
+  "status.audience.closeFriendsSub": "Anillo con estrella, solo tu lista",
   "status.audience.except": "Ocultar de…",
   "status.audience.exceptSub": "Todos menos quien elijas",
   "status.audience.edit": "Editar",

@@ -1208,6 +1208,7 @@ export default {
   '_locale': 'ml-IN',
   'splash.tagline': 'സുരക്ഷിതവും സ്മാർട്ടുമായ ഇമെയിൽ',
   'folder.inbox': 'ഇൻബോക്സ്',
+  'folder.inboxShort': 'ഇൻബോക്സ്',
   'login.title': 'ലോഗിൻ',
   'login.email': 'ഇമെയിൽ',
   'compose.send': 'അയയ്ക്കുക',

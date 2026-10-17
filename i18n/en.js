@@ -1875,6 +1875,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Inbox',
+  'folder.inboxShort': 'Inbox',
   'folder.allMail': 'All emails',
   'folder.sent': 'Sent',
   'folder.drafts': 'Drafts',
@@ -10993,7 +10994,7 @@ export default {
   "status.audience.contacts": "My contacts",
   "status.audience.contactsSub": "Only people in your address book",
   "status.audience.closeFriends": "Close friends",
-  "status.audience.closeFriendsSub": "Green ring, only your list",
+  "status.audience.closeFriendsSub": "Ring with a star, only your list",
   "status.audience.except": "Hide from…",
   "status.audience.exceptSub": "Everyone except who you pick",
   "status.audience.edit": "Edit",

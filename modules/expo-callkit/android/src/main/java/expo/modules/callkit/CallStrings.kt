@@ -65,13 +65,29 @@ object CallStrings {
     "hi" to "परेशान न करें चालू है",
   )
 
+  /** [2026-10-16 P&B] Banners de reconectar / login (eram pt-BR fixo no CallActivity). */
+  private val BANNERS: Map<String, Map<String, String>> = mapOf(
+    "pt-BR" to mapOf("tryReconnect" to "Tente reconectar", "needsLogin" to "Faça login novamente para receber chamadas"),
+    "pt-PT" to mapOf("tryReconnect" to "Tente restabelecer a ligação", "needsLogin" to "Inicie sessão novamente para receber chamadas"),
+    "en" to mapOf("tryReconnect" to "Try reconnecting", "needsLogin" to "Sign in again to receive calls"),
+    "es" to mapOf("tryReconnect" to "Intenta reconectar", "needsLogin" to "Inicia sesión de nuevo para recibir llamadas"),
+    "fr" to mapOf("tryReconnect" to "Essayez de vous reconnecter", "needsLogin" to "Reconnectez-vous pour recevoir des appels"),
+    "de" to mapOf("tryReconnect" to "Erneut verbinden", "needsLogin" to "Melde dich erneut an, um Anrufe zu empfangen"),
+    "it" to mapOf("tryReconnect" to "Prova a riconnetterti", "needsLogin" to "Accedi di nuovo per ricevere chiamate"),
+    "ja" to mapOf("tryReconnect" to "再接続してください", "needsLogin" to "通話を受けるには再度ログインしてください"),
+    "ar" to mapOf("tryReconnect" to "حاول إعادة الاتصال", "needsLogin" to "سجّل الدخول مرة أخرى لتلقي المكالمات"),
+    "id" to mapOf("tryReconnect" to "Coba hubungkan ulang", "needsLogin" to "Masuk lagi untuk menerima panggilan"),
+    "hi" to mapOf("tryReconnect" to "फिर से कनेक्ट करने की कोशिश करें", "needsLogin" to "कॉल पाने के लिए फिर से लॉग इन करें"),
+  )
+
   /** Texto da chave no idioma atual; {name} etc. substituídos por [args]. */
   fun s(key: String, vararg args: Pair<String, String>): String {
     val l = GroupCallStrings.lang()
     var out = T[l]?.get(key) ?: T["en"]?.get(key)
       ?: (if (key == "camDenied") CAM_DENIED[l] ?: CAM_DENIED["en"] else null)
       ?: (if (key == "peerDnd") PEER_DND[l] ?: PEER_DND["en"] else null)
-      ?: VIDEO_REQ[l]?.get(key) ?: VIDEO_REQ["en"]?.get(key) ?: key
+      ?: VIDEO_REQ[l]?.get(key) ?: VIDEO_REQ["en"]?.get(key)
+      ?: BANNERS[l]?.get(key) ?: BANNERS["en"]?.get(key) ?: key
     for ((k, v) in args) out = out.replace("{" + k + "}", v)
     return out
   }

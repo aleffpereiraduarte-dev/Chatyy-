@@ -1019,7 +1019,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     override func viewDidLoad() {
         super.viewDidLoad()
         CallViewController.liveInstance = self // [2026-10-11 ongoing-call]
-        view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0)
+        view.backgroundColor = UIColor.black // [2026-10-16 P&B premium] era #0B141A
         // [2026-10-09 p2p-ios] Tipo da ligação p/ o P2PCallBridge + estado P2P → UI.
         P2PCallBridge.noteCall(callId: callId, hasVideo: hasVideo)
         installP2PObserver()
@@ -1127,9 +1127,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // black at the bottom so the buttons and avatar pop more dramatically.
         let gradient = CAGradientLayer()
         gradient.colors = [
-            UIColor(red: 0x2D/255.0, green: 0x12/255.0, blue: 0x5C/255.0, alpha: 1.0).cgColor,  // royal purple
-            UIColor(red: 0x1A/255.0, green: 0x0A/255.0, blue: 0x33/255.0, alpha: 1.0).cgColor,  // deep violet
-            UIColor(red: 0x07/255.0, green: 0x05/255.0, blue: 0x14/255.0, alpha: 1.0).cgColor   // near-black
+            // [2026-10-16 P&B premium] roxo → grafite/preto
+            UIColor(red: 0x1C/255.0, green: 0x1C/255.0, blue: 0x1E/255.0, alpha: 1.0).cgColor,  // grafite
+            UIColor(red: 0x0A/255.0, green: 0x0A/255.0, blue: 0x0A/255.0, alpha: 1.0).cgColor,  // quase preto
+            UIColor(red: 0x00/255.0, green: 0x00/255.0, blue: 0x00/255.0, alpha: 1.0).cgColor   // preto
         ]
         gradient.locations = [0.0, 0.55, 1.0]
         gradient.startPoint = CGPoint(x: 0.5, y: 0.0)
@@ -1164,7 +1165,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         for i in 0..<3 {
             let bar = UIView()
             bar.tag = 9011 + i
-            bar.backgroundColor = UIColor(red: 0x2E/255.0, green: 0xCC/255.0, blue: 0x71/255.0, alpha: 1.0)
+            bar.backgroundColor = UIColor.white // [2026-10-16 P&B] era verde
             bar.layer.cornerRadius = 2
             let h: CGFloat = CGFloat(8 + i * 4)
             bar.frame = CGRect(x: CGFloat(i) * 6, y: 16 - h, width: 4, height: h)
@@ -1258,8 +1259,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         let avatarGradient = CAGradientLayer()
         avatarGradient.colors = [
-            UIColor(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0, alpha: 1.0).cgColor,
-            UIColor(red: 0x5B/255.0, green: 0x21/255.0, blue: 0xB6/255.0, alpha: 1.0).cgColor
+            // [2026-10-16 P&B premium] roxo → cinza
+            UIColor(red: 0x48/255.0, green: 0x48/255.0, blue: 0x4A/255.0, alpha: 1.0).cgColor,
+            UIColor(red: 0x1C/255.0, green: 0x1C/255.0, blue: 0x1E/255.0, alpha: 1.0).cgColor
         ]
         avatarGradient.frame = CGRect(x: 0, y: 0, width: avatarSize, height: avatarSize)
         avatarGradient.cornerRadius = avatarSize / 2
@@ -3133,7 +3135,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         guard screenShareChip == nil else { return }
         let chip = UIView()
         chip.translatesAutoresizingMaskIntoConstraints = false
-        chip.backgroundColor = UIColor(red: 0x1E/255.0, green: 0x8E/255.0, blue: 0x5A/255.0, alpha: 0.96)
+        chip.backgroundColor = UIColor(red: 0x1C/255.0, green: 0x1C/255.0, blue: 0x1E/255.0, alpha: 0.96) // [2026-10-16 P&B] era verde
         chip.layer.cornerRadius = 18
         chip.clipsToBounds = true
         chip.alpha = 0
@@ -5542,7 +5544,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             overlay?.backgroundColor = active
                 ? UIColor.white.withAlphaComponent(0.92)
                 : UIColor.white.withAlphaComponent(0.16)
-            btn.tintColor = active ? UIColor(red: 0x14/255.0, green: 0x10/255.0, blue: 0x22/255.0, alpha: 1.0) : .white
+            btn.tintColor = active ? UIColor.black : .white // [2026-10-16 P&B] era #141022
         }
     }
 
@@ -5843,7 +5845,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // Dark rounded card, floating above the bottom safe area.
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = UIColor(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0, alpha: 1.0)
+        card.backgroundColor = UIColor(red: 0x1C/255.0, green: 0x1C/255.0, blue: 0x1E/255.0, alpha: 1.0) // [2026-10-16 P&B] era #141F27
         card.layer.cornerRadius = 24
         card.clipsToBounds = false
         card.layer.borderWidth = 0.5
@@ -6675,7 +6677,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             p.alpha = 0
             let icon = UIImageView(image: UIImage(systemName: "wifi.exclamationmark"))
             icon.translatesAutoresizingMaskIntoConstraints = false
-            icon.tintColor = UIColor(red: 0xF1 / 255.0, green: 0xC4 / 255.0, blue: 0x0F / 255.0, alpha: 1)
+            icon.tintColor = .white // [2026-10-16 P&B] era amarelo
             icon.contentMode = .scaleAspectFit
             let lbl = UILabel()
             lbl.translatesAutoresizingMaskIntoConstraints = false
@@ -6773,7 +6775,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // local camera publishes AND camEnabled is true.
         let pip = UIView()
         pip.translatesAutoresizingMaskIntoConstraints = false
-        pip.backgroundColor = UIColor(red: 0x10/255.0, green: 0x10/255.0, blue: 0x18/255.0, alpha: 1.0)
+        pip.backgroundColor = UIColor(red: 0x11/255.0, green: 0x11/255.0, blue: 0x11/255.0, alpha: 1.0) // [2026-10-16 P&B]
         pip.layer.cornerRadius = 18
         pip.clipsToBounds = true
         pip.layer.borderWidth = 1.5

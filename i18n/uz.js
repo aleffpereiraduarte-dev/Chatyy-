@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'Guruh qo\'ng\'irog\'i',
   'splash.tagline': 'Xavfsiz va aqlli email',
   'folder.inbox': 'Kirish',
+  'folder.inboxShort': 'Kirish',
   'folder.allMail': 'Barcha email',
   'folder.sent': 'Yuborilgan',
   'folder.drafts': 'Qoralama',

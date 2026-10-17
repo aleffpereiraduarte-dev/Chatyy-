@@ -1355,7 +1355,7 @@ struct LocalScreenSharePill: View {
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .frame(height: 36)
-        .background(Capsule().fill(Color(red: 0x1E / 255.0, green: 0x8E / 255.0, blue: 0x5A / 255.0).opacity(0.96)))
+        .background(Capsule().fill(Color(red: 0x1C / 255.0, green: 0x1C / 255.0, blue: 0x1E / 255.0).opacity(0.96)))
         .padding(.horizontal, 16)
     }
 }

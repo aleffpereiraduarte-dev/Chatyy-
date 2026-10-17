@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Csoporthívás',
   'splash.tagline': 'Biztonságos és okos e-mail',
   'folder.inbox': 'Beérkezett',
+  'folder.inboxShort': 'Beérkezett',
   'folder.allMail': 'Minden email',
   'folder.sent': 'Elküldött',
   'folder.drafts': 'Piszkozatok',

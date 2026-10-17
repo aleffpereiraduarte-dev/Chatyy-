@@ -235,7 +235,7 @@ internal class KLRowView(ctx: Context) : ViewGroup(ctx) {
     nameTv.text = if (r.count > 1) "${r.title} (${r.count})" else r.title
     // Linha 2
     val sb = SpannableStringBuilder()
-    val arrowColor = if (r.missed) t.red else if (r.dir == "out") t.sub else t.green
+    val arrowColor = if (r.missed) t.red else t.sub // [2026-10-16 P&B] recebida = cinza como a feita (verde só no botão)
     val iconSize = px(12f)
     tintedIcon(context, if (r.dir == "out") R.drawable.ckl_ic_arrow_out else R.drawable.ckl_ic_arrow_in, arrowColor)?.let {
       sb.append("​")

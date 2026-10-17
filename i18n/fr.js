@@ -1613,6 +1613,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Boîte de réception',
+  'folder.inboxShort': 'Réception',
   'folder.allMail': 'Tous les emails',
   'folder.sent': 'Envoyés',
   'folder.drafts': 'Brouillons',
@@ -10451,7 +10452,7 @@ export default {
   "status.audience.contacts": "Mes contacts",
   "status.audience.contactsSub": "Seulement ceux dans ton répertoire",
   "status.audience.closeFriends": "Meilleurs amis",
-  "status.audience.closeFriendsSub": "Anneau vert, seulement ta liste",
+  "status.audience.closeFriendsSub": "Anneau avec étoile, seulement ta liste",
   "status.audience.except": "Masquer à…",
   "status.audience.exceptSub": "Tous, sauf ceux que tu choisis",
   "status.audience.edit": "Modifier",

@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'ສົນທະນາໃນກຸ່ມ',
   'splash.tagline': 'ອີເມວທີ່ປອດໄພ ແລະ ສະຫຼາດ',
   'folder.inbox': 'ກ່ອງຈົດໝາຍ',
+  'folder.inboxShort': 'ກ່ອງຈົດໝາຍ',
   'folder.allMail': 'ອີເມວທັງໝົດ',
   'folder.sent': 'ສົ່ງແລ້ວ',
   'folder.drafts': 'ລົດສົມບັດ',

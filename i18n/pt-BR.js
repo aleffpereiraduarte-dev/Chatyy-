@@ -1875,6 +1875,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Caixa de entrada',
+  'folder.inboxShort': 'Entrada',
   'folder.allMail': 'Todos os emails',
   'folder.sent': 'Enviados',
   'folder.drafts': 'Rascunhos',
@@ -11071,7 +11072,7 @@ export default {
   "status.audience.contacts": "Meus contatos",
   "status.audience.contactsSub": "Só quem está na sua agenda",
   "status.audience.closeFriends": "Melhores amigos",
-  "status.audience.closeFriendsSub": "Anel verde, só a sua lista",
+  "status.audience.closeFriendsSub": "Anel com estrela, só a sua lista",
   "status.audience.except": "Ocultar de…",
   "status.audience.exceptSub": "Todos, menos quem você escolher",
   "status.audience.edit": "Editar",

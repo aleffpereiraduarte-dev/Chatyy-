@@ -1419,6 +1419,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Indbakke',
+  'folder.inboxShort': 'Indbakke',
   'folder.allMail': 'Alle emails',
   'folder.sent': 'Sendt',
   'folder.drafts': 'Kladder',

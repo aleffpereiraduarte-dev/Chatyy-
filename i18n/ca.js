@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Trucada en grup',
   'splash.tagline': 'Correu segur i intel·ligent',
   'folder.inbox': 'Safata d\'entrada',
+  'folder.inboxShort': 'Entrada',
   'folder.allMail': 'Tots els emails',
   'folder.sent': 'Enviats',
   'folder.drafts': 'Esborranys',

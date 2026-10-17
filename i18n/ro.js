@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Apel de grup',
   'splash.tagline': 'Email sigur și inteligent',
   'folder.inbox': 'Primite',
+  'folder.inboxShort': 'Primite',
   'folder.allMail': 'Toate emailurile',
   'folder.sent': 'Trimise',
   'folder.drafts': 'Ciorne',

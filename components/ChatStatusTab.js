@@ -14,7 +14,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles, IconMoreHorizontal, IconMessageCircle } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles, IconMoreHorizontal, IconMessageCircle, IconStarFilled } from './Icons';
 import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-13 status-viewers]
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { Shimmer } from './SkeletonLoader'; // [2026-10-16 polish-status]
@@ -823,16 +823,18 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
   // Close-friends ring: bright IG-style green gradient. Default is the
   // brand purple. ID is parameterized so multiple rings on the same
   // screen with different palettes don't collide on the Defs registry.
-  const gradId = closeFriends ? 'ringGradCF' : (isDark ? 'ringGradD' : 'ringGrad');
+  const gradId = closeFriends ? (isDark ? 'ringGradCFD' : 'ringGradCF') : (isDark ? 'ringGradD' : 'ringGrad');
 
   return (
     <View style={{ position: 'absolute', top: -5, left: -5 }}>
       <Svg width={ringSize} height={ringSize}>
         <Defs>
           <LinearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={closeFriends ? '#34D399' : _ink} />
-            <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : _ink} />
-            <Stop offset="1" stopColor={closeFriends ? '#047857' : _ink} />
+            {/* [2026-10-16 P&B] Melhores amigos = mesma tinta P&B (sem verde);
+                a distinção é o selo de estrela (CloseFriendsStar). */}
+            <Stop offset="0" stopColor={_ink} />
+            <Stop offset="0.5" stopColor={_ink} />
+            <Stop offset="1" stopColor={_ink} />
           </LinearGradient>
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
@@ -854,6 +856,25 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
           );
         })}
       </Svg>
+    </View>
+  );
+});
+
+// [2026-10-16 P&B] Selinho de estrela dos Melhores amigos (substitui o anel verde).
+const CloseFriendsStar = React.memo(function CloseFriendsStar({ size = 18, isDark = false, borderColor }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute', right: -4, bottom: -4,
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: isDark ? '#F5F5F7' : '#111111',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: borderColor || (isDark ? '#1c1c1e' : '#fff'),
+        zIndex: 3,
+      }}
+    >
+      <IconStarFilled size={Math.round(size * 0.5)} color={isDark ? '#111111' : '#FFFFFF'} />
     </View>
   );
 });
@@ -3333,6 +3354,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             isDark={isDark}
           />
           {textThumbFor(latestItem, 52) || <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />}
+          {rowCloseFriends && !allViewed ? (
+            <CloseFriendsStar size={18} isDark={isDark} borderColor={isDark ? (colors.card || '#1c1c1e') : '#fff'} />
+          ) : null}
         </Animated.View>
         <View style={styles.statusInfo}>
           <Text style={[styles.statusName, { color: colors.text }]} numberOfLines={1}>
@@ -4476,7 +4500,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 <Text style={styles.viewerName} numberOfLines={1}>
                   {isOwnStatus ? (t?.('status.myStatus') || 'Meu status') : emailToDisplayName(viewerOwnerName || viewerOwnerEmail || '')}
                   {((currentViewerItem?.meta?.privacy || currentViewerItem?.privacy) === 'close_friends') ? (
-                    <Text style={{ color: '#22C55E', fontSize: 12, fontWeight: '700' }}>{`  ${t?.('status.closeFriends') || 'Melhores amigos'}`}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '700' }}>{`  ${t?.('status.closeFriends') || 'Melhores amigos'}`}</Text>
                   ) : null}
                 </Text>
                 <Text style={styles.viewerTime} numberOfLines={1}>
@@ -5651,7 +5675,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 ) : statusPrivacy === 'contacts' ? (
                   <IconEye size={18} color={ACCENT} />
                 ) : statusPrivacy === 'close_friends' ? (
-                  <IconEye size={18} color="#22C55E" />
+                  <IconStarFilled size={16} color="#fff" />
                 ) : (
                   <IconEye size={18} color="#FF6B6B" />
                 )}

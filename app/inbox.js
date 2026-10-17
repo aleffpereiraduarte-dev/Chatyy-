@@ -1633,12 +1633,26 @@ function InboxScreenInner() {
             <View style={{ flex: 1, minWidth: 0 }}>
               {/* [2026-10-13 redesign P&B] Título = pasta atual (Apple Mail), não
                   mais a saudação "Bom dia, Fulano" (founder pediu fora). */}
-              <Text style={[s.greetingText, { color: colors.text }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82}>
-                {activeLabel
+              {/* [2026-10-16 faz-todos] Celular: 7 ícones no header cortavam
+                  "Caixa d…" → título curto (folder.inboxShort, ex. "Entrada");
+                  leitor de tela continua lendo o nome completo. */}
+              <Text
+                style={[s.greetingText, { color: colors.text }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.82}
+                accessibilityRole="header"
+                accessibilityLabel={activeLabel
                   ? (activeLabel.charAt(0).toUpperCase() + activeLabel.slice(1))
                   : (HEADER_FOLDER_KEYS[currentFolder]
                     ? t(HEADER_FOLDER_KEYS[currentFolder])
                     : (currentFolder || t('folder.inbox')))}
+              >
+                {activeLabel
+                  ? (activeLabel.charAt(0).toUpperCase() + activeLabel.slice(1))
+                  : (HEADER_FOLDER_KEYS[currentFolder]
+                    ? t(HEADER_FOLDER_KEYS[currentFolder] === 'folder.inbox' ? 'folder.inboxShort' : HEADER_FOLDER_KEYS[currentFolder])
+                    : (currentFolder || t('folder.inboxShort')))}
               </Text>
               {unreadCount > 0 && (
                 <Text style={[s.unreadHint, { color: colors.textSecondary }]}>

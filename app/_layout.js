@@ -926,7 +926,11 @@ function AppInit({ onNotification, setOtaToast }) {
           textKey: 'uiG.layout.newVersion',
           text: 'Nova versão disponível',
           kind: 'update',
-          onPress: () => { try { Updates.reloadAsync(); } catch {} },
+          onPress: () => {
+            // [2026-10-16 bootgap] motivo gravado → próximo boot publica boot_reload why=banner
+            try { require('../services/crashReporter').reloadWithReason('banner').catch(() => { try { Updates.reloadAsync(); } catch {} }); }
+            catch { try { Updates.reloadAsync(); } catch {} }
+          },
         });
       } catch (e) {}
     })();

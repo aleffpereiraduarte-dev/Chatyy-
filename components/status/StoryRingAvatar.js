@@ -33,7 +33,7 @@ import { cssPulseScale, IS_WEB } from '../../utils/webCssLoop';
 import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { TextStatusThumb } from './textStatus'; // [status-texto 2026-10-14]
-import { IconPlus, IconReply } from '../Icons';
+import { IconPlus, IconReply, IconStarFilled } from '../Icons';
 
 function StoryRingAvatar({
   name,
@@ -88,6 +88,11 @@ function StoryRingAvatar({
   const _avatarText = colors?.text || (isDark ? '#fff' : '#0f172a');
   const _notePillBg = isDark ? '#2c2c2e' : '#fff';
   const _notePillBorder = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
+  // [2026-10-16 P&B] Melhores amigos: anel deixou de ser VERDE — vira anel
+  // preto/branco (tinta do tema) + selinho de estrela SVG pra distinguir.
+  const _cfInk = closeFriends ? (isDark ? '#F5F5F7' : '#111111') : null;
+  const _cfOnInk = isDark ? '#111111' : '#FFFFFF';
+  const _showCfStar = closeFriends && !isLive && ringStyle !== 'none' && !allViewed;
 
   // Scale-based "live" pulse for unviewed rings. Native-driven (transform
   // scale is one of the few props that runs off-thread), so it costs nothing
@@ -177,9 +182,9 @@ function StoryRingAvatar({
                     knows at a glance the post is restricted. Default is the
                     brand purple gradient. */}
                 <LinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor={closeFriends ? '#34D399' : (_inkDefault ? _ink : '#111111')} />
-                  <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : _ink} />
-                  <Stop offset="1" stopColor={closeFriends ? '#047857' : (_inkDefault ? _ink : '#111111')} />
+                  <Stop offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
+                  <Stop offset="0.5" stopColor={_cfInk || _ink} />
+                  <Stop offset="1" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
                 </LinearGradient>
               </Defs>
               <SvgCircle
@@ -234,9 +239,9 @@ function StoryRingAvatar({
                   audience scope is visible at a glance — same per-segment
                   dimming as the purple variant once that item is viewed. */}
               <LinearGradient id={segGid} x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={closeFriends ? '#34D399' : (_inkDefault ? _ink : '#111111')} />
-                <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : _ink} />
-                <Stop offset="1" stopColor={closeFriends ? '#047857' : (_inkDefault ? _ink : '#111111')} />
+                <Stop offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
+                <Stop offset="0.5" stopColor={_cfInk || _ink} />
+                <Stop offset="1" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
               </LinearGradient>
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
@@ -249,7 +254,7 @@ function StoryRingAvatar({
                   cy={ringSize / 2}
                   r={radius}
                   stroke={segViewed
-                    ? (closeFriends ? 'rgba(16,185,129,0.22)' : _dim)
+                    ? _dim
                     : `url(#${segGid})`}
                   strokeWidth={3}
                   fill="none"
@@ -356,6 +361,27 @@ function StoryRingAvatar({
               {liveLabel}
             </Text>
           </View>
+        </View>
+      ) : null}
+      {/* [2026-10-16 P&B] Selo de estrela dos Melhores amigos — embaixo à
+          direita; se já houver o selo +/↩ ali, sobe pro canto de cima. */}
+      {_showCfStar ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            ...(badge ? { top: -1 } : { bottom: -1 }),
+            right: -1,
+            width: Math.max(16, Math.round(size * 0.32)),
+            height: Math.max(16, Math.round(size * 0.32)),
+            borderRadius: 999,
+            backgroundColor: _cfInk,
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 2, borderColor: _badgeBorder,
+            zIndex: 3,
+          }}
+        >
+          <IconStarFilled size={Math.max(8, Math.round(size * 0.17))} color={_cfOnInk} />
         </View>
       ) : null}
       {/* Badge (+ or ↩). Bottom-right anchored, brand purple, white border

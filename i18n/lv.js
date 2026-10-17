@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Grupas zvans',
   'splash.tagline': 'Drošs un gudrs e-pasts',
   'folder.inbox': 'Iesūtne',
+  'folder.inboxShort': 'Iesūtne',
   'folder.allMail': 'Visi e-pasti',
   'folder.sent': 'Nosūtīti',
   'folder.drafts': 'Melnraksti',

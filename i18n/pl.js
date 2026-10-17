@@ -1417,6 +1417,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Odebrane',
+  'folder.inboxShort': 'Odebrane',
   'folder.allMail': 'Wszystkie',
   'folder.sent': 'Wysłane',
   'folder.drafts': 'Szkice',
@@ -11700,7 +11701,7 @@ export default {
   "status.audience.contacts": "Moje kontakty",
   "status.audience.contactsSub": "Tylko osoby z Twojej książki adresowej",
   "status.audience.closeFriends": "Bliscy znajomi",
-  "status.audience.closeFriendsSub": "Zielony pierścień, tylko Twoja lista",
+  "status.audience.closeFriendsSub": "Pierścień z gwiazdką, tylko Twoja lista",
   "status.audience.except": "Ukryj przed…",
   "status.audience.exceptSub": "Wszyscy oprócz wybranych osób",
   "status.audience.edit": "Edytuj",

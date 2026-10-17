@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'Бүлгийн дуудлага',
   'splash.tagline': 'Аюулгүй ба ухаалаг имэйл',
   'folder.inbox': 'Ирсэн',
+  'folder.inboxShort': 'Ирсэн',
   'folder.allMail': 'Бүх и-мэйл',
   'folder.sent': 'Илгээсэн',
   'folder.drafts': 'Төслийн',

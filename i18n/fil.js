@@ -1399,6 +1399,7 @@ export default {
   'meetScreen.groupCall': 'Group call',
   'splash.tagline': 'Ligtas at matalinong email',
   'folder.inbox': 'Inbox',
+  'folder.inboxShort': 'Inbox',
   'folder.allMail': 'Lahat ng email',
   'folder.sent': 'Naipadala',
   'folder.drafts': 'Mga Draft',

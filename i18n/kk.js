@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'Топтық қоңырау',
   'splash.tagline': 'Қауіпсіз және ақылды электрондық пошта',
   'folder.inbox': 'Кіріс',
+  'folder.inboxShort': 'Кіріс',
   'folder.allMail': 'Барлық электрондық хаттар',
   'folder.sent': 'Жіберілген',
   'folder.drafts': 'Жобалар',

@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Ομαδική κλήση',
   'splash.tagline': 'Ασφαλές και έξυπνο email',
   'folder.inbox': 'Εισερχόμενα',
+  'folder.inboxShort': 'Εισερχόμενα',
   'folder.allMail': 'Όλα τα emails',
   'folder.sent': 'Απεσταλμένα',
   'folder.drafts': 'Πρόχειρα',

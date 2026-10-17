@@ -5155,24 +5155,30 @@ data class GroupParticipantAndroid(
 // Palette — kept in sync with iOS CallView and the JS /call.js fallback
 // ══════════════════════════════════════════════════════════════════════════
 
-private val BgTop = Color(0xFF14_20_28)
-private val BgBottom = Color(0xFF07_0E_14)
-private val ChipColor = Color(0xFF1F_2C_34)
+// [2026-10-16 P&B premium] Paleta preto/branco: fundo preto, superfícies
+// #1C1C1E, controles em vidro cinza, anel de "falando" BRANCO. Verde só no
+// ATENDER/ACEITAR (AcceptColor) e vermelho só no ENCERRAR (HangupColor).
+private val BgTop = Color(0xFF0A_0A_0A)
+private val BgBottom = Color(0xFF00_00_00)
+private val ChipColor = Color(0xCC2C_2C_2E) // vidro cinza (80%)
+private val SurfaceColor = Color(0xFF1C_1C_1E)
 private val HangupColor = Color(0xFFE5_39_35)
-private val SecondaryText = Color(0xFF86_96_A0)
-private val SpeakerRing = Color(0xFF2E_CC_71)
-private val ReconnectBanner = Color(0xFFF1_C4_0F)
+private val AcceptColor = Color(0xFF2E_CC_71) // só aceitar (convenção)
+private val SecondaryText = Color(0xFF8E_8E_93)
+private val SpeakerRing = Color.White
+private val ReconnectBanner = SurfaceColor
 
 // [WAVE 142 GPT-5.5-pro] Snippet #3 — Deterministic gradient palette for the
 // per-caller avatar. FNV-1a hash on the caller identity (email | name) makes
 // the same person always pick the same gradient across calls; mirrors the
 // iOS AvatarPalette helper used by CallView.swift line-for-line.
+// [2026-10-16 P&B] Gradientes em tons de cinza (mesma quantidade → mesmo índice).
 private val AvatarPalettes = listOf(
-  listOf(Color(0xFF0EA5E9), Color(0xFF8B5CF6)),
-  listOf(Color(0xFF22C55E), Color(0xFF14B8A6)),
-  listOf(Color(0xFFF97316), Color(0xFFEC4899)),
-  listOf(Color(0xFF6366F1), Color(0xFF06B6D4)),
-  listOf(Color(0xFF25D366), Color(0xFF128C7E)),
+  listOf(Color(0xFF3A3A3C), Color(0xFF1C1C1E)),
+  listOf(Color(0xFF48484A), Color(0xFF1C1C1E)),
+  listOf(Color(0xFF2C2C2E), Color(0xFF0A0A0A)),
+  listOf(Color(0xFF545456), Color(0xFF2C2C2E)),
+  listOf(Color(0xFF363638), Color(0xFF111111)),
 )
 
 private fun stableIndex(key: String): Int {
@@ -5596,7 +5602,7 @@ private fun CallScreen(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
           .clip(RoundedCornerShape(20.dp))
-          .background(Color(0xFF1E8E3E))
+          .background(SurfaceColor)
           .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
       ) {
         Icon(imageVector = Icons.Filled.ScreenShare, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
@@ -5605,7 +5611,7 @@ private fun CallScreen(
         Spacer(Modifier.width(10.dp))
         Text(
           text = CallStrings.s("stop"),
-          color = Color(0xFF1E8E3E),
+          color = Color.Black,
           fontSize = 13.sp,
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier
@@ -5754,7 +5760,7 @@ private fun VideoUpgradePrompt(
       Column(horizontalAlignment = Alignment.CenterHorizontally) {
         CircleControlButton(
           size = 56.dp,
-          background = SpeakerRing,
+          background = AcceptColor, // [2026-10-16] era SpeakerRing (agora branco → ícone sumiria)
           foreground = Color.White,
           icon = Icons.Filled.Videocam,
           contentDescription = CallStrings.s("videoReqAccept"),
@@ -5852,7 +5858,7 @@ private fun WeakConnectionPill(state: CallSessionStateAndroid) {
         Icon(
           imageVector = Icons.Filled.SignalCellularAlt1Bar,
           contentDescription = null,
-          tint = Color(0xFFF1C40F),
+          tint = Color.White,
           modifier = Modifier.size(14.dp),
         )
         Spacer(Modifier.width(6.dp))
@@ -5896,8 +5902,8 @@ private fun IconChip(
 @Composable
 private fun ConnectionQualityBars(quality: Int) {
   val barColor = when (quality) {
-    3 -> Color(0xFF2E_CC_71)
-    2 -> Color(0xFFF1_C4_0F)
+    3 -> Color.White
+    2 -> Color(0xFFAE_AE_B2)
     else -> Color(0xFFE7_4C_3C)
   }
   Row(
@@ -6001,7 +6007,7 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
         text = if (state.peerOnHold && !state.isOnHold)
           CallStrings.s("peerOnHold", "name" to state.callerName.ifEmpty { state.callerEmail })
         else CallStrings.s("onHold"),
-        color = Color(0xFFF1C40F),
+        color = Color.White,
         fontSize = 16.sp,
         fontWeight = FontWeight.Medium,
       )
@@ -6180,7 +6186,7 @@ private fun ParticipantTile(participant: GroupParticipantAndroid) {
     modifier = Modifier
       .aspectRatio(9f / 16f)
       .clip(RoundedCornerShape(8.dp))
-      .background(ChipColor),
+      .background(SurfaceColor),
   ) {
     if (participant.renderer != null) {
       // Live video — fill the tile.
@@ -6199,7 +6205,7 @@ private fun ParticipantTile(participant: GroupParticipantAndroid) {
           modifier = Modifier
             .size(56.dp)
             .clip(CircleShape)
-            .background(Color(0xFF2C3E50)),
+            .background(Color(0xFF2C2C2E)),
           contentAlignment = Alignment.Center,
         ) {
           Text(
@@ -6352,7 +6358,7 @@ private fun LocalPreviewTile(
           val a = (0.30f + speakerLevel.coerceIn(0f, 1f) * 0.55f) * breath
           repeat(3) { i ->
             drawRoundRect(
-              color = Color(0xFF25D366).copy(alpha = a / (i + 1)),
+              color = Color.White.copy(alpha = a / (i + 1)),
               style = Stroke((2 + i * 4).dp.toPx()),
               cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
             )
@@ -6497,7 +6503,7 @@ private fun MoreOptionsSheet(
         .padding(10.dp)
         .fillMaxWidth()
         .clip(RoundedCornerShape(24.dp))
-        .background(Color(0xFF141F27))
+        .background(Color(0xFF1C1C1E))
         .clickable(enabled = true, onClick = {}) // swallow taps on the card
         .padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 12.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
@@ -6755,14 +6761,14 @@ private fun ReconnectBannerComposable(onRetry: () -> Unit) {
   ) {
     Icon(
       imageVector = Icons.Filled.Refresh,
-      contentDescription = "Retry",
-      tint = Color.Black,
+      contentDescription = CallStrings.s("tryReconnect"),
+      tint = Color.White,
       modifier = Modifier.size(18.dp),
     )
     Spacer(Modifier.width(10.dp))
     Text(
-      text = "Tente reconectar",
-      color = Color.Black,
+      text = CallStrings.s("tryReconnect"),
+      color = Color.White,
       fontSize = 14.sp,
       fontWeight = FontWeight.Medium,
     )
@@ -6791,14 +6797,14 @@ private fun NeedsLoginBanner(onTap: () -> Unit, message: String) {
   ) {
     Icon(
       imageVector = Icons.Filled.CallEnd,
-      contentDescription = "Encerrar",
-      tint = Color.Black,
+      contentDescription = CallStrings.s("end"),
+      tint = Color.White,
       modifier = Modifier.size(18.dp),
     )
     Spacer(Modifier.width(10.dp))
     Text(
-      text = message.ifBlank { "Faca login novamente para receber chamadas" },
-      color = Color.Black,
+      text = message.ifBlank { CallStrings.s("needsLogin") },
+      color = Color.White,
       fontSize = 14.sp,
       fontWeight = FontWeight.Medium,
     )
@@ -6839,7 +6845,7 @@ private fun KeypadOverlay(
         .fillMaxWidth()
         .padding(horizontal = 8.dp, vertical = 24.dp)
         .clip(RoundedCornerShape(24.dp))
-        .background(Color(0xFF14_1F_27))
+        .background(Color(0xFF1C_1C_1E))
         .clickable(
           indication = null,
           interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
@@ -7002,7 +7008,7 @@ private fun AudioOutputSheet(
         .fillMaxWidth()
         .padding(horizontal = 8.dp, vertical = 24.dp)
         .clip(RoundedCornerShape(24.dp))
-        .background(Color(0xFF14_1F_27))
+        .background(Color(0xFF1C_1C_1E))
         .clickable(
           indication = null,
           interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }

@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'تماس گروهی',
   'splash.tagline': 'ایمیل امن و هوشمند',
   'folder.inbox': 'صندوق ورودی',
+  'folder.inboxShort': 'ورودی',
   'folder.allMail': 'همه ایمیل‌ها',
   'folder.sent': 'ارسال شده',
   'folder.drafts': 'پیش‌نویس',

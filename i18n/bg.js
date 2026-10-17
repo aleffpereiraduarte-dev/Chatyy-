@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'Групово обаждане',
   'splash.tagline': 'Сигурен и умен имейл',
   'folder.inbox': 'Входящи',
+  'folder.inboxShort': 'Входящи',
   'folder.allMail': 'Всички имейли',
   'folder.sent': 'Изпратени',
   'folder.drafts': 'Чернови',

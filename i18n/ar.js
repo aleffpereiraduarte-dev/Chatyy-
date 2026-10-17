@@ -1605,6 +1605,7 @@ export default {
 
   // Folders
   'folder.inbox': 'صندوق الوارد',
+  'folder.inboxShort': 'الوارد',
   'folder.allMail': 'جميع الرسائل',
   'folder.sent': 'مرسلة',
   'folder.drafts': 'مسودات',
@@ -10400,7 +10401,7 @@ export default {
   "apps.badgeNew": "{count} جديد",
   "status.audience.contactsSub": "فقط من في دفتر العناوين",
   "status.audience.closeFriends": "الأصدقاء المقربون",
-  "status.audience.closeFriendsSub": "حلقة خضراء، فقط قائمتك",
+  "status.audience.closeFriendsSub": "نجمة على الحلقة، فقط قائمتك",
   "status.audience.except": "إخفاء عن…",
   "status.audience.exceptSub": "الجميع باستثناء من تختار",
   "status.audience.edit": "تعديل",

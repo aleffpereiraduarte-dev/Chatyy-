@@ -1418,6 +1418,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Inkorg',
+  'folder.inboxShort': 'Inkorg',
   'folder.allMail': 'Alla e-postmeddelanden',
   'folder.sent': 'Skickat',
   'folder.drafts': 'Utkast',

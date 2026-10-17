@@ -14,6 +14,9 @@ final class SLAvatarView: UIView {
   private let clip = UIView()
   private let tileView = CLTileView()
   private let thumbLabel = UILabel()
+  // [2026-10-16 P&B] Melhores amigos: selinho de estrela (anel não é mais verde).
+  private let cfBadge = UIView()
+  private let cfStar = UIImageView(image: UIImage(systemName: "star.fill"))
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -31,6 +34,12 @@ final class SLAvatarView: UIView {
     thumbLabel.minimumScaleFactor = 0.7
     thumbLabel.isHidden = true
     clip.addSubview(thumbLabel)
+    cfBadge.isHidden = true
+    cfBadge.layer.cornerRadius = 9
+    cfBadge.layer.borderWidth = 2
+    cfStar.contentMode = .scaleAspectFit
+    cfBadge.addSubview(cfStar)
+    addSubview(cfBadge)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -38,10 +47,14 @@ final class SLAvatarView: UIView {
   override var intrinsicContentSize: CGSize { CGSize(width: SLAvatarView.side, height: SLAvatarView.side) }
 
   func configure(_ row: SLRow, palette: SLPalette) {
-    ring.hot = row.closeFriends ? palette.closeFriends : palette.ink
+    ring.hot = palette.ink // [2026-10-16 P&B] sem verde nos Melhores amigos
     ring.cold = palette.ringViewed
     let viewed = row.ring.isEmpty ? [true] : row.ring.map { $0 == "1" }
     ring.viewed = viewed
+    cfBadge.isHidden = !(row.closeFriends && viewed.contains(false))
+    cfBadge.backgroundColor = palette.ink
+    cfBadge.layer.borderColor = palette.card.cgColor
+    cfStar.tintColor = palette.card
     if !row.thumbText.isEmpty {
       tileView.isHidden = true
       tileView.reset()
@@ -66,6 +79,9 @@ final class SLAvatarView: UIView {
     clip.frame = CGRect(x: off, y: off, width: i, height: i)
     tileView.frame = clip.bounds
     thumbLabel.frame = clip.bounds.insetBy(dx: i * 0.1, dy: i * 0.1)
+    let bc = s / 2 + (s / 2 - 3) * 0.7071
+    cfBadge.frame = CGRect(x: bc - 9, y: bc - 9, width: 18, height: 18)
+    cfStar.frame = cfBadge.bounds.insetBy(dx: 4.5, dy: 4.5)
   }
 }
 

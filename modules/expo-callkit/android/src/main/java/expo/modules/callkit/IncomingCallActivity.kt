@@ -185,8 +185,10 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun buildUI() {
+    // [2026-10-16 P&B premium] Fundo preto, avatar #1C1C1E, rótulos brancos; só os
+    // botões ATENDER (verde) e RECUSAR (vermelho) mantêm cor (convenção).
     val root = FrameLayout(this).apply {
-      setBackgroundColor(Color.parseColor("#1a1a2e"))
+      setBackgroundColor(Color.parseColor("#000000"))
       layoutParams = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT
@@ -209,8 +211,8 @@ class IncomingCallActivity : AppCompatActivity() {
     avatarSizePx = avatarSize
     val avatarBg = GradientDrawable().apply {
       shape = GradientDrawable.OVAL
-      setColor(Color.parseColor("#16213e"))
-      setStroke(dpToPx(3), Color.parseColor("#0f3460"))
+      setColor(Color.parseColor("#1C1C1E"))
+      setStroke(dpToPx(3), Color.parseColor("#3A3A3C"))
     }
     val avatarText = TextView(this).apply {
       val initial = callerName?.firstOrNull()?.uppercase() ?: "?"
@@ -249,8 +251,8 @@ class IncomingCallActivity : AppCompatActivity() {
 
     // Call type label
     val typeText = TextView(this).apply {
-      text = if (hasVideo) "Chamada de video" else "Chamada de voz"
-      setTextColor(Color.parseColor("#aaaaaa"))
+      text = if (hasVideo) "Chamada de vídeo" else "Chamada de voz"
+      setTextColor(Color.parseColor("#8E8E93"))
       textSize = 16f
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(
@@ -304,7 +306,7 @@ class IncomingCallActivity : AppCompatActivity() {
 
     val declineLabel = TextView(this).apply {
       text = "Recusar"
-      setTextColor(Color.parseColor("#e74c3c"))
+      setTextColor(Color.parseColor("#FFFFFF"))
       textSize = 14f
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(
@@ -346,7 +348,7 @@ class IncomingCallActivity : AppCompatActivity() {
 
     val acceptLabel = TextView(this).apply {
       text = "Atender"
-      setTextColor(Color.parseColor("#2ecc71"))
+      setTextColor(Color.parseColor("#FFFFFF"))
       textSize = 14f
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(
@@ -378,14 +380,14 @@ class IncomingCallActivity : AppCompatActivity() {
     }
     val quickReplyBtn = TextView(this).apply {
       text = "Recusar com mensagem"
-      setTextColor(Color.parseColor("#90a4ae"))
+      setTextColor(Color.parseColor("#AEAEB2"))
       textSize = 14f
       gravity = Gravity.CENTER
       setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dpToPx(24).toFloat()
-        setStroke(dpToPx(1), Color.parseColor("#4a5662"))
+        setStroke(dpToPx(1), Color.parseColor("#3A3A3C"))
       }
       background = bg
       isClickable = true
@@ -428,7 +430,7 @@ class IncomingCallActivity : AppCompatActivity() {
       val row = TextView(this).apply {
         text = p
         textSize = 15f
-        setTextColor(Color.parseColor("#1976d2"))
+        setTextColor(Color.parseColor("#111111"))
         setPadding(dpToPx(8), dpToPx(14), dpToPx(8), dpToPx(14))
         isClickable = true
         isFocusable = true
@@ -456,7 +458,7 @@ class IncomingCallActivity : AppCompatActivity() {
     }
     val sendBtn = TextView(this).apply {
       text = "Enviar"
-      setTextColor(Color.parseColor("#1976d2"))
+      setTextColor(Color.parseColor("#111111"))
       textSize = 15f
       setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
       isClickable = true
@@ -981,7 +983,7 @@ class IncomingCallActivity : AppCompatActivity() {
    */
   private fun buildConnectingOverlay() {
     val root = FrameLayout(this).apply {
-      setBackgroundColor(Color.parseColor("#1a1a2e"))
+      setBackgroundColor(Color.parseColor("#000000"))
       layoutParams = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT
@@ -1000,8 +1002,8 @@ class IncomingCallActivity : AppCompatActivity() {
     avatarSizePx = avatarSize
     val avatarBg = GradientDrawable().apply {
       shape = GradientDrawable.OVAL
-      setColor(Color.parseColor("#16213e"))
-      setStroke(dpToPx(3), Color.parseColor("#2ecc71"))
+      setColor(Color.parseColor("#1C1C1E"))
+      setStroke(dpToPx(3), Color.parseColor("#FFFFFF"))
     }
     val avatarText = TextView(this).apply {
       val initial = callerName?.firstOrNull()?.uppercase() ?: "?"
@@ -1033,7 +1035,7 @@ class IncomingCallActivity : AppCompatActivity() {
 
     val statusText = TextView(this).apply {
       text = "Conectando..."
-      setTextColor(Color.parseColor("#2ecc71"))
+      setTextColor(Color.parseColor("#FFFFFF"))
       textSize = 16f
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(

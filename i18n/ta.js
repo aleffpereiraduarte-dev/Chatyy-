@@ -1406,6 +1406,7 @@ export default {
   'meetScreen.groupCall': 'குழு அழைப்பு',
   'splash.tagline': 'பாதுகாப்பான மற்றும் புத்திசாலி மின்னஞ்சல்',
   'folder.inbox': 'இன்பாக்ஸ்',
+  'folder.inboxShort': 'இன்பாக்ஸ்',
   'folder.allMail': 'எல்லா மின்னஞ்சல்கள்',
   'folder.sent': 'அனுப்பப்பட்டது',
   'folder.drafts': 'மசுதுகள்',

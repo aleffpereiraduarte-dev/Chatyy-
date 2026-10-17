@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'שיחת קבוצתית',
   'splash.tagline': 'דוא"ל מאובטח וחכם',
   'folder.inbox': 'דואר נכנס',
+  'folder.inboxShort': 'דואר נכנס',
   'folder.allMail': 'כל האימיילים',
   'folder.sent': 'נשלח',
   'folder.drafts': 'טיוטות',

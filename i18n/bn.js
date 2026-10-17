@@ -1400,6 +1400,7 @@ export default {
   'meetScreen.groupCall': 'গ্রুপ কল',
   'splash.tagline': 'নিরাপদ ও স্মার্ট ইমেইল',
   'folder.inbox': 'ইনবক্স',
+  'folder.inboxShort': 'ইনবক্স',
   'folder.allMail': 'সব ইমেইল',
   'folder.sent': 'প্রেরিত',
   'folder.drafts': 'খসড়া',

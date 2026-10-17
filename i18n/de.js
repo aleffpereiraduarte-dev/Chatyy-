@@ -1606,6 +1606,7 @@ export default {
 
   // Folders
   'folder.inbox': 'Posteingang',
+  'folder.inboxShort': 'Eingang',
   'folder.allMail': 'Alle E-Mails',
   'folder.sent': 'Gesendet',
   'folder.drafts': 'Entwürfe',
@@ -10400,7 +10401,7 @@ export default {
   "apps.badgeNew": "{count} neue",
   "status.audience.contactsSub": "Nur Personen in deinem Adressbuch",
   "status.audience.closeFriends": "Beste Freunde",
-  "status.audience.closeFriendsSub": "Grüner Ring, nur deine Liste",
+  "status.audience.closeFriendsSub": "Ring mit Stern, nur deine Liste",
   "status.audience.except": "Verbergen vor…",
   "status.audience.exceptSub": "Alle außer den von dir gewählten",
   "status.audience.edit": "Bearbeiten",

@@ -1396,6 +1396,7 @@ export default {
   'meetScreen.groupCall': 'အုပ်စုခေါ်ဆိုမှု',
   'splash.tagline': 'လုံခြုံပြီး ဉာဏ်ရည်မြင့် အီးမေးလ်',
   'folder.inbox': 'ဝင်စာ',
+  'folder.inboxShort': 'ဝင်စာ',
   'folder.allMail': 'အီးမေးလ်အားလုံး',
   'folder.sent': 'ပို့ပြီး',
   'folder.drafts': 'ရေးဆွဲထားသော',

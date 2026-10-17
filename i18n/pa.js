@@ -1208,6 +1208,7 @@ export default {
   '_locale': 'pa-IN',
   'splash.tagline': 'ਸੁਰੱਖਿਅਤ ਅਤੇ ਸਮਾਰਟ ਈਮੇਲ',
   'folder.inbox': 'ਇਨਬਾਕਸ',
+  'folder.inboxShort': 'ਇਨਬਾਕਸ',
   'login.title': 'ਲੌਗਿਨ',
   'login.email': 'ਈਮੇਲ',
   'compose.send': 'ਭੇਜੋ',

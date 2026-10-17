@@ -443,7 +443,9 @@ export function LanguageProvider({ children }) {
           {
             text: t('settings.language.restartNow'),
             onPress: () => {
-              try { require('expo-updates').reloadAsync().catch(() => {}); } catch {}
+              // [2026-10-16 bootgap] reload com motivo (boot_reload why=rtl)
+              try { require('../services/crashReporter').reloadWithReason('rtl').catch(() => { try { require('expo-updates').reloadAsync().catch(() => {}); } catch {} }); }
+              catch { try { require('expo-updates').reloadAsync().catch(() => {}); } catch {} }
             },
           },
         ],
