@@ -116,7 +116,7 @@ function _ctFor(email, phone, C, chatyy) {
   const hit = _ctMap.get(key);
   if (hit) return hit;
   // [2026-10-17 share-contact] cartão novo já diz que a pessoa tem Chatyy (e-mail) → "Mensagem" na hora, sem rede.
-  if (chatyy && email) { const e0 = { loading: false, has: true, email }; _ctMap.set(key, e0); return e0; }
+  // [privacidade] não confia no chatyy:true do remetente (quem desligou 'ser encontrado'); sempre checa no servidor.
   const ent = { loading: true, has: false, email };
   _ctMap.set(key, ent);
   if (_ctMap.size > 400) { const k0 = _ctMap.keys().next().value; if (k0 !== key) _ctMap.delete(k0); }

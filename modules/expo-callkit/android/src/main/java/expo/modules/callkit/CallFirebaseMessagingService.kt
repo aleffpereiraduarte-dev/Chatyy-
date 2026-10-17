@@ -53,7 +53,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 }
             } catch (_: Throwable) {}
         }
-        val type = data["type"] ?: "
+        val type = data["type"] ?: ""
 
         Log.d(TAG, "FCM message received: type=$type, dataKeys=${data.keys}")
 

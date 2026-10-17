@@ -48,6 +48,8 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
   const [limitHit, setLimitHit] = useState(false);
   const [review, setReview] = useState([]);       // [{key, name, email, chatyy, avatar, phones:[{n, on}], resolving}]
   const [sending, setSending] = useState(false);
+  const reviewRef = useRef([]); // espelho p/ doSend ver a resolução que chega durante a espera
+  useEffect(() => { reviewRef.current = review; }, [review]);
   const aliveRef = useRef(true);
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
   const [syncedByPhone, setSyncedByPhone] = useState(() => new Map()); // E.164 → {email, name}
@@ -198,7 +200,7 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
           const md = _digits(m.phone);
           for (const x of pending) if (!found.has(x.key) && x.phones.some((p) => _digits(p.n) === md)) found.set(x.key, String(m.email).toLowerCase());
         }
-        if (!matches.length && r && r.error === 'consent_required') {
+        if (!matches.length && (!r || r.error)) { // consent_required, sync_failed ou timeout → checa 1 a 1
           const api = require('../../services/api');
           await Promise.all(pending.map(async (x) => {
             const rr = await _withTimeout(api.chatCheckChatyy({ email: x.email || '', phone: (x.phones[0] && x.phones[0].n) || '' }), 5000);
@@ -227,8 +229,8 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
     if (sending || !review.length) return;
     setSending(true);
     // espera curta pela resolução (no máx. ~3 s) — "Mensagem" já aparece pra quem recebe
-    for (let i = 0; i < 15 && review.some((x) => x.resolving); i++) await new Promise((r) => setTimeout(r, 200));
-    const cards = review.map((x) => {
+    for (let i = 0; i < 15 && (reviewRef.current || []).some((x) => x.resolving); i++) await new Promise((r) => setTimeout(r, 200));
+    const cards = (reviewRef.current || review).map((x) => {
       const phones = x.phones.filter((p) => p.on).map((p) => p.n);
       return { name: x.name, phone: phones[0] || '', phones, email: x.email || '', chatyy: !!(x.chatyy && x.email), avatar: x.avatar || '' };
     }).filter((c) => c.name || c.phone || c.email);

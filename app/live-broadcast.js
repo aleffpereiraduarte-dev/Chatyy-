@@ -2654,7 +2654,8 @@ function LiveBroadcastScreen() {
         // VideoCaptureController.m só aplica width/height/frameRate (ignora
         // facingMode) → câmera nunca mudava, só o espelho. restartTrack
         // recaptura com o facingMode novo e troca no sender (sem republicar).
-        if (camTrack && typeof camTrack.restartTrack === 'function') {
+        const _andSwitch = Platform.OS === 'android' && camMst && typeof camMst._switchCamera === 'function'; // Android: troca no lugar (sem frame preto)
+        if (!_andSwitch && camTrack && typeof camTrack.restartTrack === 'function') {
           try {
             await camTrack.restartTrack({ facingMode: newFacing, resolution: { width: 720, height: 1280, frameRate: 30 } });
           } catch (eRestart) {
