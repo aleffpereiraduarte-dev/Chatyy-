@@ -20,6 +20,7 @@
 // Desligar (OTA/console): globalThis.__chatyy_native_wallet = false
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from './nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { Platform, StyleSheet, View, processColor } from 'react-native';
 import { getNativeWalletListView } from '../../modules/expo-chat-conversation-list';
 import { createPatcher } from '../chatlist/nativeAdapter';
@@ -109,6 +110,7 @@ function Inner(props) {
   if (!token) { try { const a = require('../../services/api'); token = (a.getAuthToken && a.getAuthToken()) || ''; } catch {} }
 
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
   const safeRows = Array.isArray(rows) ? rows : [];
@@ -178,7 +180,7 @@ function Inner(props) {
       authToken={token}
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header ? <View style={[styles.headerPad, maxWidth ? { maxWidth, width: '100%', alignSelf: 'center' } : null]}>{header}</View> : null}
       </View>
     </Native>

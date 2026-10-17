@@ -14,6 +14,7 @@
 // ScrollView JS na hora. Desligar por OTA: globalThis.__chatyy_native_status_list = false.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { StyleSheet, View } from 'react-native';
 import { getNativeStatusListView } from '../../modules/expo-chat-conversation-list';
 import { createPatcher, initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
@@ -207,6 +208,8 @@ function NativeStatusListInner(props) {
   const Native = getNativeStatusListView();
 
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
+  const footerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
 
@@ -335,10 +338,10 @@ function NativeStatusListInner(props) {
       refreshTint={isDark ? '#F5F5F7' : '#111111'}
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header}
       </View>
-      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout} {...footerTouchGuard}>
         {footer}
       </View>
     </Native>

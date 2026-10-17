@@ -11,6 +11,7 @@
 // para o FlashList JS na hora.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, createPatcher } from './nativeAdapter';
@@ -112,6 +113,8 @@ function NativeConversationListInner(props) {
 
   // Resync pedido pelo nativo (perdeu um patch) → próximo patch é reset.
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
+  const footerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
 
@@ -346,11 +349,11 @@ function NativeConversationListInner(props) {
       {...peekHeightProps}
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header}
         {built.rows.length === 0 && !built.deferred ? empty : null}
       </View>
-      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout} {...footerTouchGuard}>
         {footer}
       </View>
     </Native>

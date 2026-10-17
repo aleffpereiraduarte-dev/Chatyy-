@@ -14,7 +14,7 @@
 //   - bloqueados → chat_blocked_list / chat_unblock_user.
 //   - exportação → account_data_export. Plano → plan_info + chat_storage_usage.
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, Alert, Linking, Platform, Pressable } from 'react-native';
+import { View, Text, ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet } from 'react-native';
 import * as api from '../../services/api';
 import * as settingsCache from '../../services/settingsCache'; // [2026-10-13 settings-instant]
 import { useTheme, ACCENT_PRESETS } from '../../context/ThemeContext';
@@ -23,7 +23,8 @@ import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsCardContent, use
 import AvatarCircle from '../AvatarCircle';
 import PressableRow from '../PressableRow';
 import Svg, { Rect as SvgRect, Path as SvgPath } from 'react-native-svg';
-import { IconCheck, IconCloud, IconZap } from '../Icons';
+import { IconCheck, IconCloud, IconZap, IconTrash, IconCreditCard } from '../Icons';
+import { useRouter } from 'expo-router';
 import { normalizePlanState, planDisplayName, formatQuotaBytes } from '../../services/planState';
 import { openStripePortal, isStripeCardAvailable } from '../../services/stripeCheckout';
 import { MONETIZATION_ENABLED } from '../../constants/featureFlags';
@@ -353,9 +354,24 @@ export function BlockedContactsPanel() {
 }
 
 // ─── Conta › Chatyy One (plano, uso e pagamento) ───────────────────────────
+// [2026-10-17 one-merge] Chatyy One + Armazenamento = UMA tela (/settings-one;
+// /storage reexporta). Plano + barra de uso + divisão (Arquivos/Email/Chat/
+// Feed) + Mudar de plano + Liberar espaço + Assinatura + Pagamento.
+const BREAKDOWN_KEYS = ['drive', 'email', 'chat', 'feed'];
+const BREAKDOWN_LABEL = { drive: ['storage.breakdown.files', 'Arquivos'], email: ['storage.breakdown.email', 'Email'], chat: ['storage.breakdown.chat', 'Chat'], feed: ['storage.breakdown.feed', 'Feed'] };
+function fmtBytesFine(b) {
+  const v = Number(b) || 0;
+  if (v >= 1024 ** 4) return (v / 1024 ** 4).toFixed(2) + ' TB';
+  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(2) + ' GB';
+  if (v >= 1024 ** 2) return (v / 1024 ** 2).toFixed(1) + ' MB';
+  if (v >= 1024) return (v / 1024).toFixed(1) + ' KB';
+  return v + ' B';
+}
+
 export function ChatyyOnePanel() {
   const { t, language } = useLanguage();
   const g = useGroupedColors();
+  const router = useRouter();
   // [2026-10-13 settings-instant] plano + uso salvos no aparelho (seção
   // 'plan' = plan_info ‖ chat_storage_usage em paralelo) → abre na hora.
   const { data: planSnap, revalidating, refresh: load } = settingsCache.useSettingsSection('plan');
@@ -375,6 +391,7 @@ export function ChatyyOnePanel() {
   const isIOS = Platform.OS === 'ios';
   const stripeOk = isStripeCardAvailable();
   const gbTxt = formatQuotaBytes(limit);
+  const breakdown = usage?.breakdown && typeof usage.breakdown === 'object' ? usage.breakdown : null;
   const fmtDate = (iso) => {
     if (!iso) return null;
     const d = new Date(String(iso).replace(' ', 'T'));
@@ -423,6 +440,29 @@ export function ChatyyOnePanel() {
             </View>
             {pct >= 80 ? <Text style={{ fontSize: 12.5, color: pct >= 95 ? '#ef4444' : '#b45309', marginTop: 8 }}>{t('chatyyOne.nearFull')}</Text> : null}
           </View>
+          {breakdown ? (
+            <View style={{ marginTop: 12 }}>
+              {BREAKDOWN_KEYS.map((k, i) => (
+                <View
+                  key={k}
+                  style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 40, borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: g.separator }}
+                >
+                  <Text style={{ fontSize: 15, color: g.secondary }}>{t(BREAKDOWN_LABEL[k][0]) || BREAKDOWN_LABEL[k][1]}</Text>
+                  <Text style={{ fontSize: 15, fontWeight: '500', color: g.text, fontVariant: ['tabular-nums'] }}>{fmtBytesFine(breakdown[k])}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {planNorm.expiryNotice ? (
+            <Text style={{ fontSize: 13, lineHeight: 18, color: g.secondary, marginTop: 10 }}>
+              {planNorm.expiryNotice.kind === 'grace' ? t('planExpiry.grace', { date: planNorm.expiryNotice.date }) : t('planExpiry.expired')}
+            </Text>
+          ) : null}
+          {planNorm.graceActive ? (
+            <Text style={{ fontSize: 13, lineHeight: 18, color: g.secondary, marginTop: 10 }}>
+              {t('storage.graceBodyAmount', { n: gbTxt })}
+            </Text>
+          ) : null}
         </SettingsCardContent>
         {MONETIZATION_ENABLED && ShopSheet ? (
           <SettingsRow
@@ -431,12 +471,27 @@ export function ChatyyOnePanel() {
             onPress={() => setShop(true)}
           />
         ) : null}
+        <SettingsRow
+          icon={IconTrash}
+          title={t('storage.freeSpace') || 'Liberar espaço'}
+          onPress={() => { try { router.push('/files'); } catch {} }}
+          testID="one-free-space"
+        />
       </SettingsGroup>
       {isPaid ? (
-        <SettingsGroup header={t('chatyyOne.subscription')}>
+        <SettingsGroup header={t('chatyyOne.subscription')} footer={MONETIZATION_ENABLED ? (t('storage.cancelAnytime') || undefined) : undefined}>
           <SettingsRow title={t('chatyyOne.status')} value={t('chatyyOne.statusActive')} />
           <SettingsRow title={t('chatyyOne.billing')} value={period} />
           {renews ? <SettingsRow title={t('chatyyOne.renewal')} value={renews} /> : null}
+          {isIOS ? (
+            // Assinatura feita no iPhone (IAP) = gerenciada na conta Apple (permitido pela Apple).
+            <SettingsRow
+              icon={IconCreditCard}
+              title={t('storage.manage') || 'Gerenciar assinatura'}
+              onPress={() => { Linking.openURL('https://apps.apple.com/account/subscriptions').catch(() => {}); }}
+              testID="one-manage-apple"
+            />
+          ) : null}
         </SettingsGroup>
       ) : null}
       <SettingsGroup header={t('chatyyOne.payment')} footer={isIOS ? t('chatyyOne.iosFootnote') : t('chatyyOne.footnote')}>

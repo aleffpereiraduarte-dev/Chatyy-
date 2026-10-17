@@ -2298,7 +2298,7 @@ export default function RootLayout() {
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' && _nativeListLargeTitleOn() ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
-                  <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-17 one-merge] = /settings-one (mesma tela) */ }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />

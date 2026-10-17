@@ -14,6 +14,7 @@
 // Desligar (OTA): globalThis.__chatyy_native_contacts = false
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { StyleSheet, View } from 'react-native';
 import { getNativeContactListView } from '../../modules/expo-chat-conversation-list';
 import { createPatcher } from '../chatlist/nativeAdapter';
@@ -57,6 +58,8 @@ function NativeContactListInner(props) {
   const Native = getNativeContactListView();
 
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
+  const footerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
 
@@ -147,11 +150,11 @@ function NativeContactListInner(props) {
       scrollToTopSeq={scrollToTopSeq}
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header}
         {safeRows.length === 0 ? empty : null}
       </View>
-      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout} {...footerTouchGuard}>
         {footer}
       </View>
     </Native>

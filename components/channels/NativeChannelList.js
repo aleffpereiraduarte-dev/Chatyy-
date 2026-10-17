@@ -12,6 +12,7 @@
 // FlatList JS na hora. Desligar por OTA: globalThis.__chatyy_native_channels = false.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeChannelListView, getNativeChannelFeedView } from '../../modules/expo-chat-conversation-list';
 import { createPatcher, initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
@@ -88,6 +89,8 @@ function Inner(props) {
   const Native = kind === 'feed' ? getNativeChannelFeedView() : getNativeChannelListView();
 
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
+  const footerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
 
@@ -154,10 +157,10 @@ function Inner(props) {
       {...(kind === 'feed' ? { quickReactions: quickReactions || [] } : null)}
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header || null}
       </View>
-      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onFooterLayout} {...footerTouchGuard}>
         {footer || null}
       </View>
     </Native>

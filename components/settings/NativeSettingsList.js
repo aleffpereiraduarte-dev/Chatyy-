@@ -19,6 +19,7 @@
 // Desligar (OTA): globalThis.__chatyy_native_settings = false. Erro de
 // render/nativo → onFailure() e a raiz volta para a lista JS.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { StyleSheet, View, processColor } from 'react-native';
 import { getNativeSettingsListView } from '../../modules/expo-chat-conversation-list';
 import { createPatcher } from '../chatlist/nativeAdapter';
@@ -52,6 +53,7 @@ function Inner(props) {
   const { rows, query, header, isDark, palette, labels, maxWidth, bottomInset = 0, autoInset, refreshing } = props;
   const Native = getNativeSettingsListView();
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
 
@@ -126,7 +128,7 @@ function Inner(props) {
       refreshing={!!refreshing}
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header ? <View style={[styles.headerPad, maxWidth ? { maxWidth, width: '100%', alignSelf: 'center' } : null]}>{header}</View> : null}
       </View>
     </Native>

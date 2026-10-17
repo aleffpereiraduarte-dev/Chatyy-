@@ -288,6 +288,7 @@ export function NativeSheetModal({
 // teclado; o espaçador fica DENTRO do container, então não muda a medida.
 // Use como raiz do conteúdo (flex:1) em sheets com TextInput.
 const _LARGE_TOP_MAX = 110; // topo do sheet acima disso ⇒ está no detent grande
+const _SHEET_HUNT_STOP = { height: 0, width: 0 };
 // `absorb`: padding inferior que o conteúdo JÁ tem (ex.: home indicator) e que o
 // teclado pode cobrir sem esconder nada → descontado do espaçador.
 export function NativeSheetKeyboardView({ style, children, enabled = true, extraPad = 0, absorb = 0 }) {
@@ -341,6 +342,14 @@ export function NativeSheetKeyboardView({ style, children, enabled = true, extra
   }, [enabled, extraPad, absorb]);
   return (
     <View ref={ref} style={[{ flex: 1 }, style]}>
+      {/* [2026-10-17 sheet-blank] 1º filho vazio: desarma a "caça ao ScrollView" do
+          react-native-screens 4.23 (formSheet c/ detents numéricos procura um
+          ScrollView pela cadeia de 1º filhos e força o frame dele = frame do
+          SHEET, origem incluída → lista jogada p/ fora da área visível = sheet
+          em branco só com a alça: "Idioma do app", painel Apps). Com a lista
+          como 2º filho ela fica no layout Yoga normal (flex:1) — o mesmo
+          caminho que já funciona nos sheets com cabeçalho antes da lista. */}
+      <View collapsable={false} pointerEvents="none" style={_SHEET_HUNT_STOP} />
       {children}
       {pad > 0 ? <View style={{ height: pad }} /> : null}
     </View>

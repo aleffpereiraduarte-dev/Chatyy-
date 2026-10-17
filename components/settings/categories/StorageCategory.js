@@ -67,7 +67,8 @@ export default function StorageCategory() {
   return (
     <View ref={registerAnchor('mediaAutoDownload')}>
       <SettingsGroup header={t('storageData.cloud')}>
-        <SettingsRow title={t('storage.title')} onPress={() => safeNav('/storage')} />
+        {/* [2026-10-17 one-merge] Armazenamento = mesma tela do cartão Chatyy One (/settings-one) */}
+        <SettingsRow title={t('storage.title')} subtitle="Chatyy One" onPress={() => safeNav('/settings-one')} />
       </SettingsGroup>
       {!isWeb && (
         <>

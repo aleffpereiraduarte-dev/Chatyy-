@@ -7,7 +7,7 @@
 // atual, e a 1ª linha "Seguir idioma do sistema" (antes era um switch à parte
 // que só valia no próximo início — agora aplica na hora o idioma do aparelho).
 import { useMemo, useState } from 'react';
-import { View, Text, TextInput, FlatList, Modal, Pressable, Platform, NativeModules, StyleSheet } from 'react-native';
+import { View, Text, TextInput, FlatList, Modal, Pressable, Platform, NativeModules, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../../context/LanguageContext';
 import { useCurrency } from '../../../context/CurrencyContext';
@@ -65,6 +65,7 @@ const _norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').to
 function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, onPick, t }) {
   const g = useGroupedColors();
   const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
   const [q, setQ] = useState('');
   const sysCode = useMemo(() => deviceLanguage(), [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -164,7 +165,10 @@ function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, o
   if (USE_NATIVE_SHEETS) {
     return (
       <NativeSheet visible={!!visible} onClose={close} detents={[1]} backgroundColor={g.pageBg}>
-        <NativeSheetKeyboardView style={{ flex: 1, paddingTop: 18, backgroundColor: g.pageBg }}>
+        {/* [2026-10-17 sheet-blank] minHeight = rede de segurança: se o contêiner do
+            formSheet vier com altura do conteúdo (sem bottom), flex:1 daria 0 e o
+            sheet ficaria vazio. Sheet [1] = detent grande (topo ~10 pt abaixo da safe area). */}
+        <NativeSheetKeyboardView style={{ flex: 1, minHeight: Math.max(320, Math.round((win.height || 0) - (insets.top || 0) - 10 - (insets.bottom || 0))), paddingTop: 18, backgroundColor: g.pageBg }}>
           {list}
         </NativeSheetKeyboardView>
       </NativeSheet>

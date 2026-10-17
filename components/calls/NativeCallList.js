@@ -10,6 +10,7 @@
 // Erro de render/nativo → onFailure() e o ChatCallsTab volta para o ScrollView JS.
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { StyleSheet, View } from 'react-native';
 import { getNativeCallListView } from '../../modules/expo-chat-conversation-list';
 import { createPatcher, initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
@@ -86,6 +87,7 @@ function NativeCallListInner(props) {
   const Native = getNativeCallListView();
 
   const patcherRef = useRef(null);
+  const headerTouchGuard = useNativeHeaderTouchGuard();
   if (!patcherRef.current) patcherRef.current = createPatcher();
   const [resyncToken, setResyncToken] = useState(0);
   const metaRef = useRef(new Map());
@@ -206,7 +208,7 @@ function NativeCallListInner(props) {
       menuEnabled
       {...handlers}
     >
-      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout}>
+      <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
         {header}
       </View>
     </Native>

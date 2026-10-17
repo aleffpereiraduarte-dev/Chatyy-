@@ -442,6 +442,25 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
     }
   }
 
+  // MARK: - Toques RN no header
+  // [2026-10-17 settings-scroll-tap] O header (hero/cartões) é RN montado
+  // DENTRO desta UICollectionView. O RCTSurfaceTouchHandler (Fabric) NÃO é
+  // cancelado por pans de scroll views descendentes (canBePreventedBy… = NO
+  // p/ descendentes) → o Pressable sob o dedo continuava "pressionado" e
+  // disparava onPress ao soltar (rolar abria "Aparelhos conectados"). Igual ao
+  // _cancelTouches do próprio handler: desliga/religa → JS recebe touchCancel.
+  // (JS também tem guarda: components/native/nativeHeaderTouchGuard.js.)
+  public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+    var v: UIView? = self.superview
+    while let cur = v {
+      for gr in cur.gestureRecognizers ?? [] where NSStringFromClass(type(of: gr)).contains("TouchHandler") {
+        gr.isEnabled = false
+        gr.isEnabled = true
+      }
+      v = cur.superview
+    }
+  }
+
   // MARK: - UICollectionViewDelegate
 
   private func isPressable(_ id: String) -> Bool {
