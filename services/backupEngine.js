@@ -78,22 +78,113 @@ import {
 // [2026-10-15 confiab] context do upload Rust/edge = md5(email minúsculo) para a
 // chave R2 nascer dentro do namespace que drive_register_uploaded exige
 // (`md5(email)/…`). Ver comentário no caminho PRIMARY PATH de _uploadItem.
-// Falha (web sem MD5, e-mail vazio) → 'photo_backup' (comportamento antigo:
-// o register falha e o item segue pelo caminho legado, como antes).
+// [2026-10-17 backup-ns] Android 642/OTA 676: 9.778 na fila, 0 enviados — todo
+// upload saía como `photo_backup/…` → 403 "key outside namespace". Causas:
+//   1. e-mail vazio: autoBackup chama runFullBackup SEM userEmail e
+//      api.getSavedEmail() só existe após login() com senha NESTE processo
+//      (cold start / OTA reload / login por telefone → '') — o beacon
+//      native.pass.loop.enter mostrava userEmail:"" em 100% das passadas;
+//   2. expo-crypto não é dependência direta (só transitiva) → MD5 pode não
+//      existir no binário e o catch{} engolia o erro.
+// Agora: e-mail de várias fontes (+ espera auth, + check_auth do servidor),
+// MD5 com fallback JS puro, e NUNCA sobe com o context genérico: sem
+// namespace → null (o _uploadItem pausa a rodada e loga o motivo).
 let _rustCtxCache = { email: '', ctx: '' };
-async function _backupRustContext(email) {
-  const e = String(email || '').trim().toLowerCase();
-  if (!e || Platform.OS === 'web') return 'photo_backup';
-  if (_rustCtxCache.email === e && _rustCtxCache.ctx) return _rustCtxCache.ctx;
+let _serverEmailCache = { email: '', at: 0, inflight: null };
+let _nsLogged = {};
+function _nsLogOnce(key, msg, data) {
+  if (_nsLogged[key]) return;
+  _nsLogged[key] = Date.now();
+  _bdbg(msg, data);
+  try { api.apiCall('drive_backup_debug', { msg, data: JSON.stringify(data || {}).slice(0, 300) }, 'POST').catch(() => {}); } catch {}
+}
+function _canonEmail(e) {
+  const v = String(e || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+$/.test(v) ? v : '';
+}
+function _localBackupEmail(hint) {
+  const tries = [
+    ['hint', () => hint],
+    ['saved', () => api.getSavedEmail?.()],
+    ['active', () => api.getAvatarViewerEmail?.()],
+    ['tokenMeta', () => api.getTokenMeta?.()?.email],
+  ];
+  for (const [src, fn] of tries) {
+    let v = '';
+    try { v = _canonEmail(fn()); } catch {}
+    if (v) return { email: v, source: src };
+  }
+  return { email: '', source: '' };
+}
+async function _serverBackupEmail() {
+  if (_serverEmailCache.email && Date.now() - _serverEmailCache.at < 30 * 60 * 1000) return _serverEmailCache.email;
+  if (_serverEmailCache.inflight) return _serverEmailCache.inflight;
+  _serverEmailCache.inflight = (async () => {
+    try {
+      const r = await api.checkAuth();
+      const e = _canonEmail(r?.data?.email || r?.email);
+      if (e) _serverEmailCache = { email: e, at: Date.now(), inflight: null };
+      return e;
+    } catch { return ''; }
+    finally { _serverEmailCache.inflight = null; }
+  })();
+  return _serverEmailCache.inflight;
+}
+async function _resolveBackupEmail(hint) {
+  let r = _localBackupEmail(hint);
+  if (r.email) return r;
+  // Boot/OTA reload: o bearer e a conta ativa ainda podem estar hidratando.
+  try {
+    await Promise.race([
+      api.waitForTokenReady?.(),
+      new Promise((res) => setTimeout(res, 5000)),
+    ]);
+  } catch {}
+  r = _localBackupEmail(hint);
+  if (r.email) return { ...r, source: r.source + '_afterwait' };
+  const se = await _serverBackupEmail();
+  if (se) return { email: se, source: 'check_auth' };
+  return { email: '', source: '' };
+}
+async function _md5Namespace(e) {
+  let expoErr = '';
   try {
     const Crypto = require('expo-crypto');
-    const h = String(await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.MD5, e) || '').toLowerCase();
+    if (Crypto && typeof Crypto.digestStringAsync === 'function' && Crypto.CryptoDigestAlgorithm?.MD5) {
+      const h = String(await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.MD5, e) || '').toLowerCase();
+      if (/^[0-9a-f]{32}$/.test(h)) return h;
+      expoErr = 'bad_digest';
+    } else {
+      expoErr = 'unavailable';
+    }
+  } catch (err) {
+    expoErr = String(err?.message || err || 'throw').slice(0, 120);
+  }
+  try {
+    const h = require('../utils/md5').md5Hex(e);
     if (/^[0-9a-f]{32}$/.test(h)) {
-      _rustCtxCache = { email: e, ctx: h };
+      _nsLogOnce('md5js', 'backup_ns_md5_js_fallback', { expoErr, platform: Platform.OS });
       return h;
     }
   } catch {}
-  return 'photo_backup';
+  _nsLogOnce('md5fail', 'backup_ns_md5_failed', { expoErr, platform: Platform.OS });
+  return '';
+}
+/** → { ctx, email, reason }. ctx === '' ⇒ NÃO subir (sem namespace). */
+async function _backupRustContext(hint) {
+  const { email: e, source } = await _resolveBackupEmail(hint);
+  if (!e) {
+    _nsLogOnce('noemail', 'backup_ns_no_email', { platform: Platform.OS });
+    return { ctx: '', email: '', reason: 'no_email' };
+  }
+  if (_rustCtxCache.email === e && _rustCtxCache.ctx) return { ctx: _rustCtxCache.ctx, email: e, reason: '' };
+  const h = await _md5Namespace(e);
+  if (!h) return { ctx: '', email: e, reason: 'md5_failed' };
+  _rustCtxCache = { email: e, ctx: h };
+  if (source !== 'hint' && source !== 'saved') {
+    _nsLogOnce('src:' + source, 'backup_ns_email_source', { source, platform: Platform.OS });
+  }
+  return { ctx: h, email: e, reason: '' };
 }
 
 // ─── Constants ───────────────────────────────────────────────
@@ -822,6 +913,9 @@ export class BackupEngine {
           if (item.asset?.id) this.backedUpIds[item.asset.id] = Date.now();
           if (this.onFileComplete) this.onFileComplete(item);
         } catch (err) {
+          // [2026-10-17 backup-ns] Sem namespace: rodada pausada; item volta a
+          // pendente (não conta como falha nem ganha retry).
+          if (err?.nsUnavailable) { item.status = 'pending'; return; }
           _bdbg('upload.item.err', { id: item.asset?.id, file: item.filename, msg: String(err?.message || err).slice(0, 200), netErr: isNetErr(err) });
           if (isNetErr(err)) batchNetFails++;
           // 1 quick retry — but skip retry on network error (network is dead, don't waste time)
@@ -1039,7 +1133,7 @@ export class BackupEngine {
         // [2026-10-11 call-preempt] Upload aborted because a call is starting:
         // NOT a failure — put the item back, no retry/circuit-breaker penalty
         // (the governor keeps the engine paused until the call is over).
-        if (err?.callPreempted) {
+        if (err?.callPreempted || err?.nsUnavailable) {
           item.status = 'pending';
           continue;
         }
@@ -1329,11 +1423,25 @@ export class BackupEngine {
         // WhatsApp (content:// já apagado) entravam em loop. 72 h: 1.093×403,
         // 1.014 rust_upload_throw. context = md5(email) (32 hex, válido nos
         // dois servidores) ⇒ chave `md5/…` passa no guard.
-        const rustCtx = await _backupRustContext(userEmail);
+        // [2026-10-17 backup-ns] Sem namespace (e-mail/MD5) → NÃO sobe com
+        // 'photo_backup' (403 garantido + item marcado falho): pausa a rodada,
+        // item volta a pendente e a próxima rodada reconstrói a chave.
+        const ns = await _backupRustContext(userEmail);
+        if (!ns.ctx) {
+          if (_ctrl) this._inflightCtrls.delete(_ctrl);
+          this._aborted = true;
+          this._nsPausedReason = ns.reason;
+          _nsLogOnce('pause:' + ns.reason, 'backup_ns_paused', { reason: ns.reason, file: uploadFilename, platform: Platform.OS });
+          const ne = new Error('backup_namespace_unavailable|' + ns.reason);
+          ne.nsUnavailable = true;
+          throw ne;
+        }
+        const rustCtx = ns.ctx;
+        const rustEmail = ns.email || userEmail;
         try {
           r = useChunked
-            ? await api.rustChunkedUpload(fileForRust, userEmail, rustCtx, null, _ctrl ? _ctrl.signal : null)
-            : await api.rustUpload(fileForRust, userEmail, rustCtx, _ctrl ? _ctrl.signal : null);
+            ? await api.rustChunkedUpload(fileForRust, rustEmail, rustCtx, null, _ctrl ? _ctrl.signal : null)
+            : await api.rustUpload(fileForRust, rustEmail, rustCtx, _ctrl ? _ctrl.signal : null);
         } finally {
           if (_ctrl) this._inflightCtrls.delete(_ctrl);
         }
@@ -1426,6 +1534,7 @@ export class BackupEngine {
         // Rust returned null/failure → fall through to legacy S3 presigned path
         api.apiCall('drive_backup_debug', { msg: 'rust_upload_null', data: `${uploadFilename}|${JSON.stringify(r).slice(0,200)}` }, 'POST').catch(() => {});
       } catch (err) {
+        if (err?.nsUnavailable) throw err;
         api.apiCall('drive_backup_debug', { msg: 'rust_upload_throw', data: `${err?.message || 'unknown'}|${uploadFilename}` }, 'POST').catch(() => {});
         // Network errors will fail at legacy too — re-throw so we skip the wasted ~30s
         // legacy attempt and let the worker mark this item failed quickly.
@@ -1565,7 +1674,7 @@ export class BackupEngine {
           api.apiCall('drive_backup_debug', { msg: 'upload_http_err', data: `${r?.status || 0}|native|${item.filename}` }, 'POST').catch(() => {});
         }
       } catch (err) {
-        api.apiCall('drive_backup_debug', { msg: 'upload_throw', data: `${err?.message || 'unknown'}|native|${item.filename}` }, 'POST').catch(() => {});
+        api.apiCall('drive_backup_debug', { msg: 'upload_throw', data: `${err?.message || 'unknown'}|code=${err?.code || ''}|native|${item.filename}` }, 'POST').catch(() => {});
         // [2026-10-15 confiab] Arquivo não existe mais → pulo definitivo
         // (sem quick-retry, sem os 4 retries exponenciais, sem nova passada).
         if (/upload_file_missing|file_missing|ENOENT|No such file|FileNotFound/i.test(String(err?.message || ''))) {
