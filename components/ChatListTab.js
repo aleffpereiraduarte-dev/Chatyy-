@@ -1652,6 +1652,9 @@ const ConversationRow = React.memo(function ConversationRow({
   const rowContent = (
         <PressableRow
           haptic={false}
+          // [2026-10-17 wa-polish] iOS cell highlight from the B&W palette
+          // (default #26292C had the old navy cast in dark). Android keeps its ripple.
+          highlightColor={Platform.OS === 'ios' ? (isDark ? '#1c1c1e' : '#ececee') : undefined}
           // Web: sem role/label agregados — o avatar é um botão aninhado (axe
           // nested-interactive) e as ações customizadas não existem no DOM.
           {...(!isWeb ? {
@@ -1788,7 +1791,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   return (
                     // [2026-10-10 polish-list] P&B list: the avatar pip already carries
                     // the one green "online" signal — the label stays monochrome.
-                    <Text style={{ fontSize: 12, fontWeight: '500', color: P.sub, marginLeft: 6, flexShrink: 0 }} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                    <Text style={{ fontSize: 13, fontWeight: '500', color: P.sub, marginLeft: 6, flexShrink: 0 }} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                       {activity.text}
                     </Text>
                   );
@@ -8027,7 +8030,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         accessibilityRole="button"
       >
         <View style={s.archivedHeaderIcon}>
-          <IconLock size={20} color={P.text} />
+          <IconLock size={20} color={P.sub} />
         </View>
         <View style={{ flex: 1 }}>
           <Text maxFontSizeMultiplier={1.35} style={[s.archivedHeaderText, { color: P.text }]}>
@@ -8054,7 +8057,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         accessibilityRole="button"
       >
         <View style={s.archivedHeaderIcon}>
-          <IconArchive size={20} color={P.text} />
+          <IconArchive size={20} color={P.sub} />
         </View>
         <View style={{ flex: 1 }}>
           <Text maxFontSizeMultiplier={1.35} style={[s.archivedHeaderText, { color: P.text }]}>
@@ -8437,10 +8440,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 accessibilityRole="button"
                 style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, gap: 12 }}
               >
-                <AvatarCircle name={ch.name || ch.email} email={ch.email} size={40} />
+                <AvatarCircle name={ch.name || ch.email} email={ch.email} size={44} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{_highlightQuery(ch.name, sq, colors.text)}</Text>
-                  <Text style={{ fontSize: 13, color: P.sub }} numberOfLines={1}>{ch.email}</Text>
+                  <Text maxFontSizeMultiplier={1.35} style={{ fontSize: 16, fontWeight: '600', letterSpacing: -0.3, color: P.text }} numberOfLines={1}>{_highlightQuery(ch.name, sq, colors.text)}</Text>
+                  <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 14, color: P.sub, marginTop: 1 }} numberOfLines={1}>{ch.email}</Text>
                 </View>
               </TouchableOpacity>
             ))}
@@ -8458,7 +8461,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         {searchingMessages && messageHits.length === 0 && (
           <View>
             {[0, 1, 2].map(i => (
-              <SkeletonRowPrimitive key={`msk-${i}`} delay={i * 40} avatarSize={40} />
+              <SkeletonRowPrimitive key={`msk-${i}`} delay={i * 40} avatarSize={44} />
             ))}
           </View>
         )}
@@ -8529,27 +8532,34 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               style={{
                 flexDirection: 'row', alignItems: 'center',
                 paddingHorizontal: 16, paddingVertical: 10, gap: 12,
-                borderBottomWidth: 0.5,
-                borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
               }}
             >
-              <View style={{
-                width: 40, height: 40, borderRadius: 20,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
-                alignItems: 'center', justifyContent: 'center',
-              }}>
-                <IconSearch size={18} color={colors.textSecondary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text, flexShrink: 1, marginRight: 8 }} numberOfLines={1}>
+              {/* [2026-10-17 wa-polish] WhatsApp: message hits show the CHAT's
+                  avatar (who it's with), not a generic magnifier. Saved/unknown
+                  keep the neutral glyph. */}
+              {(_hitConv && (_hitConv.type === 'group' || _hitConv.type === 'channel') && !_hitSaved) ? (
+                <GroupAvatarStack conversation={_hitConv} size={44} isDark={isDark} />
+              ) : (!_hitSaved && convName && (!hitType || hitType === 'direct')) ? (
+                <AvatarCircle name={convName} email={(hitType === 'direct' || hit.peer_email || hit.other_email || hit.contact_email) ? (peerEmail || undefined) : undefined} size={44} />
+              ) : (
+                <View style={{
+                  width: 44, height: 44, borderRadius: 22,
+                  backgroundColor: P.card,
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <IconSearch size={18} color={P.sub} />
+                </View>
+              )}
+              <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: 'center' }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <Text maxFontSizeMultiplier={1.35} style={{ fontSize: 16, fontWeight: '600', letterSpacing: -0.3, color: P.text, flexShrink: 1, marginRight: 8 }} numberOfLines={1}>
                     {convName}
                   </Text>
-                  <Text style={{ fontSize: 12, color: P.sub }}>
+                  <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 13, color: P.sub, fontVariant: ['tabular-nums'] }}>
                     {date}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 13, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', marginTop: 2 }} numberOfLines={2}>
+                <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 14, lineHeight: 19, color: P.sub, marginTop: 2 }} numberOfLines={2}>
                   {_highlightQuery(_snippetAround(snippet, sq), sq, colors.text)}
                 </Text>
               </View>
@@ -10304,9 +10314,10 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
+  // [2026-10-17 wa-polish] 14→15 (WhatsApp iOS filter chips).
   chipText: {
-    fontSize: 14,
-    letterSpacing: -0.15,
+    fontSize: 15,
+    letterSpacing: -0.2,
   },
   chipBadge: {
     minWidth: 18,
@@ -10403,26 +10414,27 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'baseline',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   // [beauty 2026-05-31] Name reads crisper at 16 with a slightly tighter
   // tracking; read rows sit at semibold so the unread→bold step is a real,
   // legible contrast jump (iMessage-style) rather than a subtle weight nudge.
+  // [2026-10-17 wa-polish] WhatsApp iOS metrics: name 17 semibold (SF -0.4).
   rowName: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
     flex: 1,
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   // [beauty 2026-05-31] Unread jumps to 800 so the read(500)→unread(800) step is
   // an unmistakable iMessage/WhatsApp-style contrast — a glance reads which rows
   // are waiting on you, no squinting.
-  rowNameUnread: { fontWeight: '700', letterSpacing: -0.3 },
+  rowNameUnread: { fontWeight: '700', letterSpacing: -0.4 },
   // Timestamp sits flush-right, tabular-ish so the right column stays aligned
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
   // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays
   // pixel-aligned across "agora" / "14:32" / "Ontem".
-  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '400', fontVariant: ['tabular-nums'] },
+  rowTime: { fontSize: 14, letterSpacing: -0.15, fontWeight: '400', fontVariant: ['tabular-nums'] }, // [2026-10-17 wa-polish] 12→14 (WhatsApp)
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -10432,12 +10444,13 @@ const s = StyleSheet.create({
   // [beauty 2026-05-31] Preview kept discreet at 14 with a calm 19 line-height
   // so it reads as the quiet secondary line under the name — never competing
   // with it for weight.
+  // [2026-10-17 wa-polish] 14→15 / lh 20 (WhatsApp iOS secondary line).
   rowPreview: {
-    fontSize: 14,
+    fontSize: 15,
     flex: 1,
     marginRight: 10,
-    lineHeight: 19,
-    letterSpacing: -0.1,
+    lineHeight: 20,
+    letterSpacing: -0.2,
   },
   // Unread badge — brand-purple pill (was WhatsApp green). Crisp squircle pill
   // with a soft brand glow so a fresh count reads as the colored attention dot.
@@ -10452,13 +10465,13 @@ const s = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 7,
+    paddingHorizontal: 6,
     // [2026-10-08 chat-beauty-list] fill comes from the B&W palette per theme.
     backgroundColor: LP_LIGHT.pillBg,
   },
   unreadText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 13, // [2026-10-17 wa-polish] 12→13: count reads at a glance
     fontWeight: '700',
     letterSpacing: 0.1,
     fontVariant: ['tabular-nums'],
@@ -10534,9 +10547,9 @@ const s = StyleSheet.create({
     marginRight: 14,
   },
   archivedHeaderText: {
-    fontSize: 16,
+    fontSize: 17, // [2026-10-17 wa-polish] same size as the conversation names
     fontWeight: '600',
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   archivedCountBadge: {
     minWidth: 22,
@@ -10545,7 +10558,7 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   archivedCountText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
   },

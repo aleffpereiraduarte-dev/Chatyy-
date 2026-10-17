@@ -1214,11 +1214,11 @@ function ChatHub() {
           <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch (e) { console.warn("[chat] router.push failed:", e); } }} activeOpacity={0.6}
             onLongPress={() => { try { haptic.select(); } catch {} requestNewStatus(); }} delayLongPress={350}
             hitSlop={6} style={btnStyle} accessibilityLabel={t('a11y.camera')} accessibilityHint={t('status.ring.newStatus')}>
-            <IconCamera size={19} color={headerIconColor} />
+            <IconCamera size={22} color={headerIconColor} />{/* [2026-10-17 wa-polish] 19/18/20 → one optical size */}
           </TouchableOpacity>
           <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
             hitSlop={6} style={btnStyle} accessibilityLabel={t('a11y.search')}>
-            <IconSearch size={18} color={headerIconColor} />
+            <IconSearch size={21} color={headerIconColor} />
           </TouchableOpacity>
           {/* WhatsApp-parity: "new chat" is a filled GREEN circle (the one
               pop of color in the otherwise clean header). */}
@@ -1228,7 +1228,7 @@ function ChatHub() {
                 chamava atenção demais; WhatsApp usa ícones neutros no header.
                 Agora igual aos outros botões do topo: fundo cinza + ícone na cor
                 do texto. (headerPlusGreen fica no stylesheet p/ eventual uso.) */}
-            <IconPlus size={20} color={headerIconColor} />
+            <IconPlus size={23} color={headerIconColor} />
           </TouchableOpacity>
         </>
       );
@@ -1538,7 +1538,7 @@ function ChatHub() {
             </Animated.View>
             <Animated.View
               pointerEvents="none"
-              style={[styles.headerHairline, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)', opacity: _ltTab === 'calls' ? callsTitleAnim : statusTitleAnim }]}
+              style={[styles.headerHairline, { backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)', opacity: _ltTab === 'calls' ? callsTitleAnim : statusTitleAnim }]}
             />
           </>
         )}
@@ -1555,7 +1555,7 @@ function ChatHub() {
             {!homeOverlay && (
             <Animated.View
               pointerEvents="none"
-              style={[styles.headerHairline, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)', opacity: chatTitleAnim }]}
+              style={[styles.headerHairline, { backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)', opacity: chatTitleAnim }]}
             />
             )}
           </>
@@ -2067,7 +2067,8 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
       </Animated.View>
       <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, {
         color: active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT),
-        fontWeight: active ? '700' : '500',
+        // [2026-10-17 wa-polish] 700↔500 made labels jump width on switch; UITabBar keeps one weight.
+        fontWeight: active ? '600' : '500',
         ...(isWeb ? { transition: 'color 0.15s ease' } : {}),
       }]}>
         {label}
@@ -2122,7 +2123,7 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: 6, // [2026-10-17 wa-polish] 2→6: icons were crammed (WhatsApp ~20pt between glyphs)
   },
   headerIconBtn: {
     width: 36,
@@ -2173,17 +2174,18 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     zIndex: 9,
   },
+  // [2026-10-17 wa-polish] UISearchBar metrics: 36pt field, radius 10, 16pt text.
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 40,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    gap: 8,
+    height: 36,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    gap: 7,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '400',
     letterSpacing: -0.1,
     paddingVertical: 0,
@@ -2272,9 +2274,11 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     color: '#fff',
-    fontSize: 10,
-    fontWeight: '800',
-    lineHeight: 12,
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 13,
+    fontVariant: ['tabular-nums'],
+    includeFontPadding: false,
   },
 
   // ── Desktop layout styles ──
