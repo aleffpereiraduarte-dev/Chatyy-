@@ -1831,6 +1831,59 @@ export function requestPushReregister(reason) {
   ensurePushTokenFresh({ force: true }).catch(() => {});
 }
 
+// ─── [2026-10-17 push-durable] "Saúde do push" ───────────────────────────────
+// O app pergunta ao servidor (push_token_health) se ELE tem um token válido
+// deste aparelho no arquivo que o envio lê. Não tem (sumiu / revogado / visto há
+// muito / pedido do servidor) → esquece o cache de "já enviado" desta conta e
+// re-registra na hora — sem esperar o cache de 24h. No máximo 1×/3h por conta
+// (cold start, volta ao app, login); falha de rede = tenta na próxima.
+const PUSH_HEALTH_KEY = 'push_health_v1';
+const PUSH_HEALTH_EVERY_MS = 3 * 60 * 60 * 1000;
+let _pushHealthInFlight = false;
+export async function checkPushHealth(opts = {}) {
+  if (Platform.OS === 'web' || _pushHealthInFlight) return { skipped: true };
+  const email = String((await _getActiveEmailSafe()) || '').toLowerCase();
+  if (!email) return { skipped: true };
+  const now = Date.now();
+  let st = {};
+  try { st = getJSON(PUSH_HEALTH_KEY) || {}; } catch {}
+  if (!opts.force && st && st[email] && now - Number(st[email]) < PUSH_HEALTH_EVERY_MS) return { throttled: true };
+  const tokens = [];
+  const add = (t) => { if (typeof t === 'string' && t && !tokens.includes(t)) tokens.push(t); };
+  add(pushNotificationsState.expoToken || _cachedPushToken);
+  if (Platform.OS === 'android') add(pushNotificationsState.deviceToken);
+  if (Platform.OS === 'ios') add(pushNotificationsState.apnsToken);
+  if (!tokens.length) return { skipped: true };
+  _pushHealthInFlight = true;
+  try {
+    const { apiCall } = require('./api');
+    const r = await apiCall('push_token_health', {
+      device_id: _pushDeviceId(_isExpoToken(tokens[0]) ? tokens[0] : null),
+      tokens,
+    }, 'POST');
+    if (!r?.success) return { ok: false };
+    try {
+      const next = { ...(st && typeof st === 'object' ? st : {}), [email]: now };
+      const ks = Object.keys(next);
+      if (ks.length > 12) { ks.sort((a, b) => Number(next[a]) - Number(next[b])); for (const k of ks.slice(0, ks.length - 12)) delete next[k]; }
+      setJSON(PUSH_HEALTH_KEY, next);
+    } catch {}
+    const d = r.data || {};
+    if (d.reregister) {
+      _diagPush('health_rereg', `missing=${Number(d.missing) || 0} live=${(d.entries || []).filter((e) => e && e.live).length}`);
+      forgetSentPushTokens(email);
+      _pushForceUntil = Date.now() + 2 * 60 * 1000;
+      ensurePushTokenFresh({ force: true, _fromHealth: true }).catch(() => {});
+      return { ok: true, reregistered: true };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false };
+  } finally {
+    _pushHealthInFlight = false;
+  }
+}
+
 // Relata ao servidor o estado da permissão deste aparelho (granted/denied/…),
 // p/ o painel separar "usuário negou" de "token sumiu". Só quando muda ou 1×/24h.
 let _lastPermStatus = '';
@@ -2326,6 +2379,9 @@ export async function ensurePushTokenFresh(opts = {}) {
   // Reset failure counter on any successful round-trip.
   await _writeJsonKey(PUSH_REFRESH_FAIL_KEY, 0);
   try { globalThis.__chatyy_push_token_stale = false; } catch {}
+  // [2026-10-17 push-durable] confere com o servidor se o token deste aparelho
+  // está mesmo lá (1×/3h); se não, re-registra ignorando o cache de 24h.
+  if (!opts._fromHealth) checkPushHealth().catch(() => {});
   return { ok: true, token };
 }
 
