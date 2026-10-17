@@ -76,6 +76,16 @@ private let kCallIdToUUIDLock = NSLock()
 private var kAcceptedUUIDByCallId: [String: UUID] = [:]
 private let kAcceptedUUIDByCallIdLock = NSLock()
 
+// [2026-10-17 phantom-unknown] UUIDs minted only to satisfy the PushKit
+// contract for a cancel push (report-then-end). Founder prod 2026-10-17: the
+// server's answered_elsewhere cancel reached the SAME iPhone that answered
+// (the CXAnswer clears callId→UUID), the throwaway was reported with an EMPTY
+// caller_name → CallKit showed "Desconhecido/Unknown" over the live call, and
+// a throwaway that was still on screen got answered (voipstub_no_payload →
+// nothing connects). A throwaway must never be answerable.
+private var kThrowawayUUIDs: Set<UUID> = []
+private let kThrowawayUUIDsLock = NSLock()
+
 // [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
 // Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource
 // timer survives module/bridge teardown when user swipe-kills the app while
@@ -319,6 +329,19 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                     : (cancelReason == "declined_elsewhere" ? .declinedElsewhere : .remoteEnded)
                 print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — reporting \(endReason.rawValue) on \(endUUID.uuidString)")
                 provider.reportCall(with: endUUID, endedAt: Date(), reason: endReason)
+            } else if let acc = Self.acceptedUUID(forCallId: callId),
+                      CXCallObserver().calls.contains(where: { $0.uuid == acc && !$0.hasEnded }) {
+                // [2026-10-17 phantom-unknown] THIS device answered the call (the
+                // CXAnswer cleared kCallIdToUUID, so `existing` is nil) — the
+                // answered_elsewhere/cancel is our own echo. The live answered
+                // call satisfies the PushKit contract; never ring a throwaway
+                // over it.
+                nativeCallDiag("voip_cancel_ignored_answered_here", callId, "type=\(pushType)")
+            } else if CXCallObserver().calls.contains(where: { !$0.hasEnded }) {
+                // [2026-10-17 phantom-unknown] Some other Chatyy call is live on
+                // CallKit — that already satisfies the PushKit contract, and a
+                // throwaway here shows up as a call-waiting "Unknown" ring over it.
+                nativeCallDiag("voip_cancel_skip_throwaway_live_call", callId, "type=\(pushType)")
             } else {
                 // No live UUID for this callId (cancel arrived before/without an
                 // incoming push, or already torn down). Apple still requires a
@@ -326,12 +349,32 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 // UUID so iOS sees a valid PushKit response and doesn't flag the
                 // app as misbehaving (which throttles future VoIP delivery).
                 let throwaway = UUID()
+                kThrowawayUUIDsLock.lock()
+                kThrowawayUUIDs.insert(throwaway)
+                kThrowawayUUIDsLock.unlock()
                 let upd = CXCallUpdate()
-                upd.remoteHandle = CXHandle(type: .generic, value: (dict["caller_name"] as? String) ?? "Chatyy")
+                // [2026-10-17 phantom-unknown] Cancel payloads carry caller_name
+                // = "" → empty handle = CallKit "Desconhecido". Never empty.
+                let rawName = ((dict["caller_name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let tName = rawName.isEmpty ? "Chatyy" : rawName
+                upd.remoteHandle = CXHandle(type: .generic, value: tName)
+                upd.localizedCallerName = tName
                 upd.hasVideo = false
                 print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — no live UUID; report-then-end throwaway")
-                provider.reportNewIncomingCall(with: throwaway, update: upd) { _ in
+                nativeCallDiag("voip_cancel_throwaway", callId, "type=\(pushType) uuid=\(throwaway.uuidString)")
+                provider.reportNewIncomingCall(with: throwaway, update: upd) { err in
                     provider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                    if let err = err {
+                        nativeCallDiag("voip_cancel_throwaway_report_err", callId, err.localizedDescription)
+                    }
+                    // Belt and braces: a second end shortly after (no-op when
+                    // the first one took) so the ring can't stay answerable.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        if CXCallObserver().calls.contains(where: { $0.uuid == throwaway && !$0.hasEnded }) {
+                            nativeCallDiag("voip_cancel_throwaway_reend", callId, "")
+                            provider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                        }
+                    }
                 }
             }
             // [2026-10-08 call-video-fix] Also drop the ring-window preconnect
@@ -1113,6 +1156,18 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // to us is anything else, or the module's delegate is already wired,
         // immediately fulfill and bail to avoid double-presenting the
         // CallViewController.
+        // [2026-10-17 phantom-unknown] A cancel-push throwaway must never be
+        // answered: fail the action and end it (was: "voipstub_no_payload" →
+        // fulfilled → CallKit "connected" to nothing).
+        kThrowawayUUIDsLock.lock()
+        let isThrowaway = kThrowawayUUIDs.contains(action.callUUID)
+        kThrowawayUUIDsLock.unlock()
+        if isThrowaway {
+            nativeCallDiag("voipstub_cxanswer_throwaway_rejected", action.callUUID.uuidString)
+            action.fail()
+            provider.reportCall(with: action.callUUID, endedAt: Date(), reason: .remoteEnded)
+            return
+        }
         guard provider === Self.earlyProvider else {
             print("[VoipSubscriber] STAGE-A: CXAnswer on non-early provider — module owns it; stub fulfilling and bailing")
             nativeCallDiag("voipstub_bail_nonearly", action.callUUID.uuidString)
