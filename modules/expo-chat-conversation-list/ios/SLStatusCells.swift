@@ -157,6 +157,15 @@ final class SLStatusCell: UICollectionViewListCell {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  // [2026-10-16 motion] Frame do avatar/anel em coordenadas de JANELA (pt) →
+  // originRect do onRowPress (story cresce do anel). nil fora da janela.
+  func avatarWindowRect() -> [String: Double]? {
+    guard avatar.window != nil else { return nil }
+    let r = avatar.convert(avatar.bounds, to: nil)
+    guard r.width >= 2, r.height >= 2, r.origin.x.isFinite, r.origin.y.isFinite else { return nil }
+    return ["x": Double(r.origin.x), "y": Double(r.origin.y), "width": Double(r.width), "height": Double(r.height)]
+  }
+
   func configure(_ row: SLRow, palette p: SLPalette) {
     palette = p
     card.backgroundColor = isHighlighted ? blend(p.card, p.press) : p.card

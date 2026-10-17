@@ -400,7 +400,11 @@ public final class ChatyyStatusListView: ExpoView, UICollectionViewDelegate {
       }
       return
     }
-    onRowPress(["id": id])
+    var payload: [String: Any] = ["id": id]
+    if let cell = collectionView.cellForItem(at: indexPath) as? SLStatusCell, let rect = cell.avatarWindowRect() {
+      payload["originRect"] = rect
+    }
+    onRowPress(payload)
   }
 
   public func collectionView(_ collectionView: UICollectionView, didHighlightItemAt indexPath: IndexPath) {

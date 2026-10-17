@@ -335,8 +335,21 @@ class ChatyyStatusListView(context: Context, appContext: AppContext) : ExpoView(
   private class RowHolder(val rowView: SLRowView) : RecyclerView.ViewHolder(rowView)
   private class SectionHolder(val sectionView: SLSectionView) : RecyclerView.ViewHolder(sectionView)
 
+  // [2026-10-16 motion] + originRect (frame do anel, dp/janela) p/ o story crescer dele.
+  private fun pressPayload(id: String): Map<String, Any> {
+    val rect = try {
+      var found: Map<String, Double>? = null
+      for (i in 0 until recycler.childCount) {
+        val v = recycler.getChildAt(i)
+        if (v is SLRowView && v.row.id == id) { found = v.avatarWindowRect(); break }
+      }
+      found
+    } catch (_: Throwable) { null }
+    return if (rect != null) mapOf("id" to id, "originRect" to rect) else mapOf("id" to id)
+  }
+
   private val rowListener = object : SLRowView.Listener {
-    override fun onPress(id: String) { onRowPress(mapOf("id" to id)) }
+    override fun onPress(id: String) { onRowPress(pressPayload(id)) }
     override fun onPressIn(id: String) { onRowPressIn(mapOf("id" to id)) }
     override fun onLongPress(id: String, anchor: View) { showMenu(id, anchor) }
   }

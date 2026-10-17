@@ -93,6 +93,30 @@ internal class SLRowView(ctx: Context) : View(ctx) {
     }
   }
 
+  /**
+   * [2026-10-16 motion] Frame do avatar/anel em dp, coordenadas de janela no
+   * padrão do measureInWindow do RN (tela − getWindowVisibleDisplayFrame) —
+   * o StoryViewerDialog.rnToLocal desfaz exatamente isso. null se não anexado.
+   */
+  fun avatarWindowRect(): Map<String, Double>? {
+    if (!isAttachedToWindow || width <= 0) return null
+    return try {
+      val loc = IntArray(2)
+      getLocationOnScreen(loc)
+      val vis = android.graphics.Rect()
+      getWindowVisibleDisplayFrame(vis)
+      // mesma geometria do onDraw: cartão a 16 dp, avatar a +18 dp, centrado em cardH
+      val left = loc[0] - vis.left + dp(16f) + dp(18f)
+      val top = loc[1] - vis.top + (cardH - avatarBox) / 2f
+      mapOf(
+        "x" to (left / d).toDouble(),
+        "y" to (top / d).toDouble(),
+        "width" to (avatarBox / d).toDouble(),
+        "height" to (avatarBox / d).toDouble(),
+      )
+    } catch (_: Throwable) { null }
+  }
+
   fun bind(r: SLRow, p: SLPalette) {
     row = r
     palette = p

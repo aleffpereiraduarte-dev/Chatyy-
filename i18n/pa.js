@@ -2001,4 +2001,10 @@ export default {
   "walletHow.rowSub": "ਡਾਇਮੰਡ ਤੋਹਫ਼ੇ ਦੇਣ ਲਈ ਹਨ। ਮਿਲੇ ਤੋਹਫ਼ੇ ਕਢਵਾਉਣਯੋਗ ਕਮਾਈ ਬਣਦੇ ਹਨ।",
   "walletHow.buyNotCashable": "ਖਰੀਦੇ ਡਾਇਮੰਡ ਸਿਰਫ਼ ਤੋਹਫ਼ਿਆਂ ਲਈ ਹਨ ਅਤੇ ਕਢਵਾਏ ਨਹੀਂ ਜਾ ਸਕਦੇ।",
   "walletHow.onHoldAmount": "{amount} ਰੋਕਿਆ ਗਿਆ",
+  // [2026-10-16 motion] Movimento e toque
+  "settings.motionHeader": "ਹਿਲਜੁਲ ਅਤੇ ਛੋਹ",
+  "settings.reduceMotion": "ਹਿਲਜੁਲ ਘਟਾਓ",
+  "settings.reduceMotionDesc": "ਸਪਰਿੰਗ ਅਤੇ ਸਲਾਈਡ ਐਨੀਮੇਸ਼ਨਾਂ ਦੀ ਥਾਂ ਹਲਕੇ ਟ੍ਰਾਂਜ਼ਿਸ਼ਨ ਦਿਖਾਉਂਦਾ ਹੈ। ਛੋਹਣ 'ਤੇ ਵਾਈਬ੍ਰੇਸ਼ਨ ਬਟਨਾਂ ਅਤੇ ਕੰਟਰੋਲਾਂ 'ਤੇ ਹਲਕਾ ਜਵਾਬ ਦਿੰਦੀ ਹੈ।",
+  "settings.reduceMotionSystemOn": "ਸਿਸਟਮ ਦਾ \"ਹਿਲਜੁਲ ਘਟਾਓ\" ਚਾਲੂ ਹੈ, ਇਸ ਲਈ ਐਨੀਮੇਸ਼ਨ ਪਹਿਲਾਂ ਹੀ ਘਟੀਆਂ ਹੋਈਆਂ ਹਨ।",
+  "settings.hapticsTouch": "ਛੋਹਣ 'ਤੇ ਵਾਈਬ੍ਰੇਸ਼ਨ",
 };

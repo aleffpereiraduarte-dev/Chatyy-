@@ -2000,4 +2000,10 @@ export default {
   "walletHow.rowSub": "දියමන්ති තෑගි දීමටයි. ඔබට ලැබෙන තෑගි ආපසු ගත හැකි ඉපැයීම් වේ.",
   "walletHow.buyNotCashable": "මිලදී ගත් දියමන්ති තෑගි සඳහා පමණි; ආපසු ගත නොහැක.",
   "walletHow.onHoldAmount": "{amount} රඳවා ඇත",
+  // [2026-10-16 motion] Movimento e toque
+  "settings.motionHeader": "චලනය සහ ස්පර්ශය",
+  "settings.reduceMotion": "චලනය අඩු කරන්න",
+  "settings.reduceMotionDesc": "ස්ප්‍රින්ග් සහ ලිස්සන සජීවිකරණ වෙනුවට සරල සංක්‍රාන්ති පෙන්වයි. ස්පර්ශයේදී කම්පනය බොත්තම් සහ පාලන මත මෘදු ප්‍රතිචාරයක් දෙයි.",
+  "settings.reduceMotionSystemOn": "පද්ධතියේ \"චලනය අඩු කරන්න\" සක්‍රියයි, එබැවින් සජීවිකරණ දැනටමත් අඩු කර ඇත.",
+  "settings.hapticsTouch": "ස්පර්ශයේදී කම්පනය",
 };

@@ -2000,4 +2000,10 @@ export default {
   "walletHow.rowSub": "हीरा उपहार दिनका लागि हुन्। प्राप्त उपहार निकाल्न मिल्ने कमाइ बन्छन्।",
   "walletHow.buyNotCashable": "किनेका हीरा उपहारका लागि मात्र हुन् र निकाल्न मिल्दैन।",
   "walletHow.onHoldAmount": "{amount} रोकिएको",
+  // [2026-10-16 motion] Movimento e toque
+  "settings.motionHeader": "गति र स्पर्श",
+  "settings.reduceMotion": "गति घटाउनुहोस्",
+  "settings.reduceMotionDesc": "स्प्रिङ र स्लाइड एनिमेसनको सट्टा हल्का ट्रान्जिसन देखाउँछ। छुँदा भाइब्रेसनले बटन र नियन्त्रणहरूमा हल्का प्रतिक्रिया दिन्छ।",
+  "settings.reduceMotionSystemOn": "प्रणालीको \"गति घटाउनुहोस्\" सक्रिय छ, त्यसैले एनिमेसन पहिल्यै घटाइएको छ।",
+  "settings.hapticsTouch": "छुँदा भाइब्रेसन",
 };

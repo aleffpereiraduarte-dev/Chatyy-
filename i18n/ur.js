@@ -2013,4 +2013,10 @@ export default {
   "walletHow.rowSub": "ہیرے تحفے دینے کے لیے ہیں۔ موصول تحفے قابلِ نکاسی کمائی بن جاتے ہیں۔",
   "walletHow.buyNotCashable": "خریدے گئے ہیرے صرف تحفوں کے لیے ہیں اور نکالے نہیں جا سکتے۔",
   "walletHow.onHoldAmount": "{amount} روکے گئے",
+  // [2026-10-16 motion] Movimento e toque
+  "settings.motionHeader": "حرکت اور لمس",
+  "settings.reduceMotion": "حرکت کم کریں",
+  "settings.reduceMotionDesc": "اسپرنگ اور سلائیڈ اینیمیشنز کی جگہ ہلکی تبدیلیاں دکھاتا ہے۔ چھونے پر وائبریشن بٹنوں اور کنٹرولز پر ہلکا ردعمل دیتی ہے۔",
+  "settings.reduceMotionSystemOn": "سسٹم کا \"حرکت کم کریں\" آن ہے، اس لیے اینیمیشنز پہلے ہی کم ہیں۔",
+  "settings.hapticsTouch": "چھونے پر وائبریشن",
 };
