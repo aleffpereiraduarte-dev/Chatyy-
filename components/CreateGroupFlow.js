@@ -15,8 +15,8 @@ import AvatarCircle from './AvatarCircle';
 import { Image as ExpoImage } from 'expo-image';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 import { safeAlert as _sharedSafeAlert } from '../services/alerts';
+import { useGroupedColors } from './settings/SettingsKit'; // [2026-10-17 wa-polish] tokens P&B do tema
 
-const ACCENT = '#111111';
 const isWeb = Platform.OS === 'web';
 
 function IconCamera({ size = 24, color = '#666' }) {
@@ -33,6 +33,7 @@ function safeAlert(title, message, buttons) { _sharedSafeAlert(title, message, b
 
 export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'group' }) {
   const { colors, isDark } = useTheme();
+  const g = useGroupedColors();
   const { user } = useAuth();
   const { t } = useLanguage();
   // Safe-area top — modal header had `paddingTop: 12` on Android which
@@ -230,28 +231,38 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
 
   const displayList = searchText.trim() ? searchResults : allUsers;
 
+  // [2026-10-17 wa-polish] Tinta do tema (era ACCENT #111111 fixo → no escuro
+  // checkbox/chips/indicador/toggle ficavam preto-no-preto, invisíveis).
+  const ink = g.ink;
+  const onInk = g.onInk;
+  const pageBg = step === 2 ? g.pageBg : colors.background;
+
   const renderContactItem = ({ item }) => {
     const selected = isSelected(item.email);
     return (
       <TouchableOpacity
-        style={[sty.contactRow, { borderBottomColor: isDark ? '#222' : '#f0f0f0' }]}
+        style={sty.contactRow}
         onPress={() => toggleMember(item)}
-        activeOpacity={0.7}
+        activeOpacity={0.6}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: selected }}
+        accessibilityLabel={item.name || item.email}
       >
-        <AvatarCircle email={item.email} name={item.name || item.email} size={44} />
-        <View style={sty.contactInfo}>
+        {/* WhatsApp iOS: círculo de seleção à esquerda, separador começa no texto. */}
+        <View style={[sty.checkbox, {
+          backgroundColor: selected ? ink : 'transparent',
+          borderColor: selected ? ink : g.tertiary,
+        }]}>
+          {selected && <IconCheck size={14} color={onInk} />}
+        </View>
+        <AvatarCircle email={item.email} name={item.name || item.email} size={40} />
+        <View style={[sty.contactInfo, { borderBottomColor: g.separator }]}>
           <Text style={[sty.contactName, { color: colors.text }]} numberOfLines={1}>
             {item.name || item.email?.split('@')[0]}
           </Text>
-          <Text style={[sty.contactEmail, { color: colors.textTertiary }]} numberOfLines={1}>
+          <Text style={[sty.contactEmail, { color: g.secondary }]} numberOfLines={1}>
             {item.email}
           </Text>
-        </View>
-        <View style={[sty.checkbox, {
-          backgroundColor: selected ? ACCENT : 'transparent',
-          borderColor: selected ? ACCENT : (isDark ? '#555' : '#ccc'),
-        }]}>
-          {selected && <IconCheck size={14} color="#fff" />}
         </View>
       </TouchableOpacity>
     );
@@ -259,102 +270,125 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
 
   if (!visible) return null;
 
+  const canNext = selectedMembers.length > 0;
+  const canCreate = !!groupName.trim() && !creating;
+  const showCancel = step === 1 || isChannel;
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleBack} transparent={false}>
       <KeyboardAvoidingView
-        style={[sty.container, { backgroundColor: colors.background }]}
+        style={[sty.container, { backgroundColor: pageBg }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: headerPadTop }]}>
-          <TouchableOpacity onPress={handleBack} style={sty.headerBtn}>
-            <IconArrowLeft size={22} color="#fff" />
+        {/* Header — [2026-10-17 wa-polish] barra do sistema estilo WhatsApp:
+            fundo da página, título centralizado + contagem, ações em texto
+            (era placa preta com botões translúcidos + barra de passos). */}
+        <View style={[sty.header, { backgroundColor: pageBg, paddingTop: headerPadTop, borderBottomColor: g.separator }]}>
+          <TouchableOpacity
+            onPress={handleBack}
+            style={sty.headerSide}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={showCancel ? (t('common.cancel') || 'Cancelar') : (t('common.back') || 'Voltar')}
+          >
+            {showCancel ? (
+              <Text style={[sty.headerActionText, { color: ink, fontWeight: '400' }]} numberOfLines={1}>
+                {t('common.cancel') || 'Cancelar'}
+              </Text>
+            ) : (
+              <IconArrowLeft size={22} color={ink} />
+            )}
           </TouchableOpacity>
           <View style={sty.headerCenter}>
-            <Text style={sty.headerTitle}>
+            <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {isChannel ? t('channel.create') : t('group.create')}
             </Text>
             {step === 1 && (
-              <Text style={sty.headerSubtitle}>
-                {t('group.step1')} - {t('group.membersSelected').replace('{count}', String(selectedMembers.length))}
+              <Text style={[sty.headerSubtitle, { color: g.secondary }]} numberOfLines={1}>
+                {t('group.membersSelected').replace('{count}', String(selectedMembers.length))}
               </Text>
             )}
-            {step === 2 && !isChannel && (
-              <Text style={sty.headerSubtitle}>{t('group.step2')}</Text>
+          </View>
+          <View style={[sty.headerSide, sty.headerSideRight]}>
+            {step === 1 && (
+              <TouchableOpacity
+                onPress={handleNext}
+                disabled={!canNext}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canNext }}
+              >
+                <Text style={[sty.headerActionText, { color: ink, opacity: canNext ? 1 : 0.35 }]}>{t('group.next')}</Text>
+              </TouchableOpacity>
+            )}
+            {step === 2 && (
+              <TouchableOpacity
+                onPress={handleCreate}
+                disabled={!canCreate}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canCreate }}
+              >
+                {creating ? (
+                  <ActivityIndicator size="small" color={ink} />
+                ) : (
+                  <Text style={[sty.headerActionText, { color: ink, opacity: groupName.trim() ? 1 : 0.35 }]}>{t('group.done')}</Text>
+                )}
+              </TouchableOpacity>
             )}
           </View>
-          {step === 1 && (
-            <TouchableOpacity
-              onPress={handleNext}
-              style={[sty.nextBtn, { opacity: selectedMembers.length > 0 ? 1 : 0.5 }]}
-              disabled={selectedMembers.length === 0}
-            >
-              <Text style={sty.nextBtnText}>{t('group.next')}</Text>
-            </TouchableOpacity>
-          )}
-          {step === 2 && (
-            <TouchableOpacity
-              onPress={handleCreate}
-              style={[sty.nextBtn, { opacity: groupName.trim() ? 1 : 0.5 }]}
-              disabled={!groupName.trim() || creating}
-            >
-              {creating ? (
-                <ActivityIndicator size={16} color="#fff" />
-              ) : (
-                <Text style={sty.nextBtnText}>{t('group.done')}</Text>
-              )}
-            </TouchableOpacity>
-          )}
         </View>
-
-        {/* Step indicators — line scales horizontally as we transition step
-            1 → 2, dots scale up when reached. Driven by stepProgress so the
-            whole bar moves as one piece, not three independent flips. */}
-        {!isChannel && (
-          <StepBar step={step} isDark={isDark} />
-        )}
 
         {/* STEP 1: Member selection */}
         {step === 1 && (
           <View style={{ flex: 1 }}>
-            {/* Selected members chips */}
+            {/* Selecionados — faixa de avatares com "x" (WhatsApp), era pílulas. */}
             {selectedMembers.length > 0 && (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                style={[sty.chipsRow, { borderBottomColor: isDark ? '#222' : '#eee' }]}
+                style={[sty.chipsRow, { borderBottomColor: g.separator }]}
                 contentContainerStyle={sty.chipsContent}
               >
                 {selectedMembers.map(m => (
                   <TouchableOpacity
                     key={m.email}
-                    style={[sty.chip, { backgroundColor: ACCENT + '18', borderColor: ACCENT + '40' }]}
+                    style={sty.chip}
                     onPress={() => toggleMember(m)}
+                    activeOpacity={0.6}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('common.remove') || 'Remover'} ${m.name || m.email}`}
                   >
-                    <AvatarCircle email={m.email} name={m.name} size={24} />
-                    <Text style={[sty.chipText, { color: ACCENT }]} numberOfLines={1}>
+                    <View>
+                      <AvatarCircle email={m.email} name={m.name} size={52} />
+                      <View style={[sty.chipX, { backgroundColor: g.secondary, borderColor: pageBg }]}>
+                        <IconX size={10} color="#FFFFFF" />
+                      </View>
+                    </View>
+                    <Text style={[sty.chipText, { color: g.secondary }]} numberOfLines={1}>
                       {(m.name || m.email).split('@')[0].split(' ')[0]}
                     </Text>
-                    <IconX size={14} color={ACCENT} />
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
 
             {/* Search */}
-            <View style={[sty.searchWrap, { backgroundColor: isDark ? '#1a1a1a' : '#f2f2f7' }]}>
-              <IconSearch size={18} color={colors.textTertiary} />
+            <View style={[sty.searchWrap, { backgroundColor: g.fill }]}>
+              <IconSearch size={17} color={g.secondary} />
               <TextInput
                 style={[sty.searchInput, { color: colors.text }]}
                 placeholder={t('group.searchMembers')}
-                placeholderTextColor={colors.textTertiary}
+                placeholderTextColor={g.secondary}
                 value={searchText}
                 onChangeText={handleSearch}
                 autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
               />
               {searchText ? (
-                <TouchableOpacity onPress={() => { setSearchText(''); setSearchResults([]); }}>
-                  <IconX size={16} color={colors.textTertiary} />
+                <TouchableOpacity onPress={() => { setSearchText(''); setSearchResults([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <IconX size={16} color={g.secondary} />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -362,7 +396,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
             {/* Contacts list */}
             {loading ? (
               <View style={sty.loader}>
-                <ActivityIndicator size="large" color={ACCENT} />
+                <ActivityIndicator size="small" color={g.secondary} />
               </View>
             ) : (
               <FlatList
@@ -370,10 +404,12 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
                 extraData={selectedMembers}
                 keyExtractor={(item) => item.email}
                 renderItem={renderContactItem}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
                 contentContainerStyle={{ paddingBottom: 20 }}
                 ListEmptyComponent={
                   <View style={sty.empty}>
-                    <Text style={[sty.emptyText, { color: colors.textTertiary }]}>
+                    <Text style={[sty.emptyText, { color: g.secondary }]}>
                       {searchText ? t('chat.noContactsFound') : ''}
                     </Text>
                   </View>
@@ -383,133 +419,128 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
           </View>
         )}
 
-        {/* STEP 2: Group/Channel details */}
+        {/* STEP 2: Group/Channel details — cartões agrupados (inset grouped). */}
         {step === 2 && (
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={sty.step2Content}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={sty.step2Content} keyboardShouldPersistTaps="handled">
             {/* Photo circle — tap to pick + crop a 1:1 image. Shows a preview
                 once picked; a small camera badge keeps the "edit" affordance. */}
             <TouchableOpacity
-              style={[sty.photoCircle, { backgroundColor: isDark ? '#222' : '#e8e8e8' }]}
+              style={[sty.photoCircle, { backgroundColor: g.fill }]}
               onPress={handlePickGroupPhoto}
               activeOpacity={0.8}
               accessibilityRole="button"
               accessibilityLabel={t('group.photo') || 'Foto do grupo'}
             >
               {groupPhotoPreview ? (
-                <>
-                  <ExpoImage
-                    source={{ uri: groupPhotoPreview }}
-                    style={{ width: 100, height: 100, borderRadius: 50 }}
-                    contentFit="cover"
-                  />
-                  <View style={sty.photoBadge}>
-                    <IconCamera size={15} color="#fff" />
-                  </View>
-                </>
+                <ExpoImage
+                  source={{ uri: groupPhotoPreview }}
+                  style={{ width: 104, height: 104, borderRadius: 52 }}
+                  contentFit="cover"
+                />
               ) : (
-                <>
-                  <IconCamera size={32} color={isDark ? '#888' : '#999'} />
-                  <Text style={[sty.photoLabel, { color: isDark ? '#888' : '#999' }]}>
-                    {t('group.photo') || 'Foto'}
-                  </Text>
-                </>
+                <IconCamera size={30} color={g.secondary} />
               )}
+              <View style={[sty.photoBadge, { backgroundColor: ink, borderColor: pageBg }]} pointerEvents="none">
+                <IconCamera size={13} color={onInk} />
+              </View>
             </TouchableOpacity>
 
-            {/* Name input */}
-            <View style={sty.inputGroup}>
-              <Text style={[sty.inputLabel, { color: colors.textSecondary }]}>
-                {isChannel ? t('channel.name') : t('group.name')}
-              </Text>
+            {/* Nome + descrição num cartão só (WhatsApp/Ajustes do iOS). */}
+            <View style={[sty.card, { backgroundColor: g.cardBg }]}>
+              <View style={sty.nameRow}>
+                <TextInput
+                  style={[sty.nameInput, { color: colors.text }]}
+                  placeholder={isChannel ? t('channel.name') : t('group.namePlaceholder')}
+                  placeholderTextColor={g.secondary}
+                  value={groupName}
+                  onChangeText={setGroupName}
+                  maxLength={100}
+                  autoFocus
+                  returnKeyType="next"
+                  accessibilityLabel={isChannel ? t('channel.name') : t('group.name')}
+                />
+                <Text style={[sty.counter, { color: groupName.length >= 100 ? g.destructive : g.secondary }]}>
+                  {100 - groupName.length}
+                </Text>
+              </View>
+              <View style={[sty.cardSep, { backgroundColor: g.separator }]} />
               <TextInput
-                style={[sty.textInput, {
-                  color: colors.text,
-                  backgroundColor: isDark ? '#1a1a1a' : '#f5f5f7',
-                  borderColor: isDark ? '#333' : '#e0e0e0',
-                }]}
-                placeholder={isChannel ? t('channel.name') : t('group.namePlaceholder')}
-                placeholderTextColor={colors.textTertiary}
-                value={groupName}
-                onChangeText={setGroupName}
-                maxLength={100}
-                autoFocus
-              />
-            </View>
-
-            {/* Description input */}
-            <View style={sty.inputGroup}>
-              <Text style={[sty.inputLabel, { color: colors.textSecondary }]}>
-                {isChannel ? t('channel.description') : t('group.description')}
-              </Text>
-              <TextInput
-                style={[sty.textInput, sty.textArea, {
-                  color: colors.text,
-                  backgroundColor: isDark ? '#1a1a1a' : '#f5f5f7',
-                  borderColor: isDark ? '#333' : '#e0e0e0',
-                }]}
+                style={[sty.descInput, { color: colors.text }]}
                 placeholder={t('group.descriptionPlaceholder')}
-                placeholderTextColor={colors.textTertiary}
+                placeholderTextColor={g.secondary}
                 value={groupDescription}
                 onChangeText={setGroupDescription}
                 multiline
-                numberOfLines={3}
                 maxLength={1000}
+                accessibilityLabel={isChannel ? t('channel.description') : t('group.description')}
               />
             </View>
 
-            {/* Channel: Public/Private toggle */}
+            {/* Channel: Public/Private — linhas de rádio num cartão. */}
             {isChannel && (
-              <View style={sty.inputGroup}>
-                <Text style={[sty.inputLabel, { color: colors.textSecondary }]}>
+              <>
+                <Text style={[sty.sectionHd, { color: g.header }]}>
                   {t('channel.public')} / {t('channel.private')}
                 </Text>
-                <View style={sty.toggleRow}>
-                  <TouchableOpacity
-                    style={[sty.toggleOption, isPublic && { backgroundColor: ACCENT }]}
-                    onPress={() => setIsPublic(true)}
-                  >
-                    <Text style={[sty.toggleOptionText, isPublic && { color: '#fff' }]}>
-                      {t('channel.public')}
-                    </Text>
-                    <Text style={[sty.toggleOptionDesc, { color: isPublic ? 'rgba(255,255,255,0.7)' : colors.textTertiary }]} numberOfLines={1}>
-                      {t('channel.publicDesc')}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[sty.toggleOption, !isPublic && { backgroundColor: ACCENT }]}
-                    onPress={() => setIsPublic(false)}
-                  >
-                    <Text style={[sty.toggleOptionText, !isPublic && { color: '#fff' }]}>
-                      {t('channel.private')}
-                    </Text>
-                    <Text style={[sty.toggleOptionDesc, { color: !isPublic ? 'rgba(255,255,255,0.7)' : colors.textTertiary }]} numberOfLines={1}>
-                      {t('channel.privateDesc')}
-                    </Text>
-                  </TouchableOpacity>
+                <View style={[sty.card, { backgroundColor: g.cardBg }]}>
+                  {[true, false].map((pub, i) => {
+                    const on = isPublic === pub;
+                    return (
+                      <React.Fragment key={pub ? 'pub' : 'priv'}>
+                        {i > 0 ? <View style={[sty.cardSep, { backgroundColor: g.separator }]} /> : null}
+                        <TouchableOpacity
+                          style={sty.radioRow}
+                          onPress={() => setIsPublic(pub)}
+                          activeOpacity={0.6}
+                          accessibilityRole="radio"
+                          accessibilityState={{ checked: on }}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Text style={[sty.radioTitle, { color: colors.text }]}>
+                              {pub ? t('channel.public') : t('channel.private')}
+                            </Text>
+                            <Text style={[sty.radioDesc, { color: g.secondary }]} numberOfLines={2}>
+                              {pub ? t('channel.publicDesc') : t('channel.privateDesc')}
+                            </Text>
+                          </View>
+                          <View style={[sty.radio, { borderColor: on ? ink : g.tertiary }]}>
+                            {on ? <View style={[sty.radioDot, { backgroundColor: ink }]} /> : null}
+                          </View>
+                        </TouchableOpacity>
+                      </React.Fragment>
+                    );
+                  })}
                 </View>
-              </View>
+              </>
             )}
 
             {/* Selected members summary (group only) */}
             {!isChannel && selectedMembers.length > 0 && (
-              <View style={sty.inputGroup}>
-                <Text style={[sty.inputLabel, { color: colors.textSecondary }]}>
+              <>
+                <Text style={[sty.sectionHd, { color: g.header }]}>
                   {t('group.addMembers')} ({selectedMembers.length})
                 </Text>
-                <View style={sty.membersList}>
-                  {selectedMembers.map(m => (
-                    <View key={m.email} style={[sty.memberRow, { borderBottomColor: isDark ? '#222' : '#f0f0f0' }]}>
+                <View style={[sty.card, { backgroundColor: g.cardBg }]}>
+                  {selectedMembers.map((m, i) => (
+                    <View key={m.email} style={sty.memberRow}>
                       <AvatarCircle email={m.email} name={m.name} size={36} />
-                      <Text style={[sty.memberName, { color: colors.text }]} numberOfLines={1}>
-                        {m.name || m.email.split('@')[0]}
-                      </Text>
-                      <TouchableOpacity onPress={() => toggleMember(m)}>
-                        <IconX size={18} color={colors.textTertiary} />
-                      </TouchableOpacity>
+                      <View style={[sty.memberBody, i < selectedMembers.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: g.separator }]}>
+                        <Text style={[sty.memberName, { color: colors.text }]} numberOfLines={1}>
+                          {m.name || m.email.split('@')[0]}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => toggleMember(m)}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${t('common.remove') || 'Remover'} ${m.name || m.email}`}
+                        >
+                          <IconX size={16} color={g.secondary} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   ))}
                 </View>
-              </View>
+              </>
             )}
           </ScrollView>
         )}
@@ -518,163 +549,117 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
   );
 }
 
-// Animated step indicator: dots scale up when their step is reached, the
-// connecting line fills horizontally as we transition step1 → step2.
-function StepBar({ step, isDark }) {
-  const progress = useRef(new Animated.Value(step >= 2 ? 1 : 0)).current;
-  const dot1 = useRef(new Animated.Value(step >= 1 ? 1 : 0.7)).current;
-  const dot2 = useRef(new Animated.Value(step >= 2 ? 1 : 0.7)).current;
-  useEffect(() => {
-    Animated.parallel([
-      Animated.spring(progress, { toValue: step >= 2 ? 1 : 0, tension: 220, friction: 18, useNativeDriver: false }),
-      Animated.spring(dot1, { toValue: step >= 1 ? 1 : 0.7, tension: 220, friction: 14, useNativeDriver: true }),
-      Animated.spring(dot2, { toValue: step >= 2 ? 1 : 0.7, tension: 220, friction: 14, useNativeDriver: true }),
-    ]).start();
-  }, [step]);
-  const lineWidth = progress.interpolate({ inputRange: [0, 1], outputRange: [0, 40] });
-  return (
-    <View style={[sty.stepIndicator, { backgroundColor: isDark ? '#111' : '#f5f5f5' }]}>
-      <Animated.View style={[sty.stepDot, sty.stepDotActive, { transform: [{ scale: dot1 }] }]} />
-      <View style={sty.stepLine}>
-        <Animated.View style={[sty.stepLineActive, { width: lineWidth, height: '100%' }]} />
-      </View>
-      <Animated.View style={[
-        sty.stepDot,
-        step >= 2 && sty.stepDotActive,
-        { transform: [{ scale: dot2 }] },
-      ]} />
-    </View>
-  );
-}
-
 const sty = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
     paddingTop: Platform.OS === 'ios' ? 54 : androidTopInset(12),
-    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerBtn: { padding: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' },
-  headerCenter: { flex: 1 },
-  headerTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  headerSubtitle: { color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 2 },
-  nextBtn: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  nextBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  stepIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    gap: 0,
-  },
-  stepDot: {
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: 'rgba(120,120,128,0.22)',
-  },
-  stepDotActive: { backgroundColor: ACCENT },
-  stepLine: {
-    width: 40, height: 2,
-    backgroundColor: 'rgba(120,120,128,0.22)',
-    overflow: 'hidden',
-  },
-  stepLineActive: { backgroundColor: ACCENT },
+  headerSide: { minWidth: 76, justifyContent: 'center', alignItems: 'flex-start' },
+  headerSideRight: { alignItems: 'flex-end' },
+  headerCenter: { flex: 1, alignItems: 'center' },
+  headerTitle: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
+  headerSubtitle: { fontSize: 12, marginTop: 1, fontVariant: ['tabular-nums'] },
+  headerActionText: { fontSize: 17, fontWeight: '600' },
   chipsRow: {
-    maxHeight: 56,
-    borderBottomWidth: 1,
+    flexGrow: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   chipsContent: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
+    paddingTop: 12,
+    paddingBottom: 10,
+    gap: 14,
     flexDirection: 'row',
   },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 20,
-    paddingRight: 10,
-    paddingLeft: 4,
-    paddingVertical: 4,
-    gap: 6,
-    borderWidth: 1,
+  chip: { alignItems: 'center', width: 60 },
+  chipX: {
+    position: 'absolute', right: -2, top: -2,
+    width: 20, height: 20, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2,
   },
-  chipText: { fontSize: 13, fontWeight: '600', maxWidth: 80 },
+  chipText: { fontSize: 12, marginTop: 5, maxWidth: 60, textAlign: 'center' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     marginHorizontal: 16,
-    marginVertical: 10,
+    marginVertical: 8,
     borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 40,
-    gap: 8,
+    paddingHorizontal: 10,
+    height: 36,
+    gap: 6,
   },
   searchInput: {
-    flex: 1, fontSize: 15, padding: 0,
+    flex: 1, fontSize: 16, padding: 0,
     ...(isWeb ? { outlineStyle: 'none' } : {}),
   },
   contactRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 0.5,
+    paddingLeft: 16,
+    minHeight: 62,
     gap: 12,
   },
-  contactInfo: { flex: 1 },
-  contactName: { fontSize: 16, fontWeight: '500' },
-  contactEmail: { fontSize: 13, marginTop: 1 },
+  contactInfo: {
+    flex: 1,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingRight: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  contactName: { fontSize: 16, fontWeight: '600', letterSpacing: -0.2 },
+  contactEmail: { fontSize: 13, marginTop: 2 },
   checkbox: {
-    width: 24, height: 24, borderRadius: 12,
-    borderWidth: 2, alignItems: 'center', justifyContent: 'center',
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, alignItems: 'center', justifyContent: 'center',
   },
   loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 40 },
   emptyText: { fontSize: 15 },
-  step2Content: { padding: 20, paddingBottom: 40 },
+  step2Content: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 40 },
   photoCircle: {
-    width: 100, height: 100, borderRadius: 50,
+    width: 104, height: 104, borderRadius: 52,
     alignSelf: 'center',
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 24,
   },
-  photoLabel: { fontSize: 11, marginTop: 4, fontWeight: '600' },
   photoBadge: {
-    position: 'absolute', right: 2, bottom: 2,
-    width: 30, height: 30, borderRadius: 15,
-    backgroundColor: ACCENT,
+    position: 'absolute', right: 0, bottom: 2,
+    width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: '#fff',
+    borderWidth: 2.5,
+    zIndex: 2, elevation: 4,
   },
-  inputGroup: { marginBottom: 20 },
-  inputLabel: { fontSize: 13, fontWeight: '600', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  textInput: {
-    borderWidth: 1, borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 16,
+  card: { borderRadius: 14, overflow: 'hidden' },
+  cardSep: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, minHeight: 52 },
+  nameInput: {
+    flex: 1, fontSize: 17, paddingVertical: Platform.OS === 'ios' ? 14 : 10,
     ...(isWeb ? { outlineStyle: 'none' } : {}),
   },
-  textArea: { height: 80, textAlignVertical: 'top' },
-  toggleRow: { flexDirection: 'row', gap: 10 },
-  toggleOption: {
-    flex: 1, borderRadius: 12, padding: 14,
-    backgroundColor: 'rgba(0,0,0,0.04)',
-    borderWidth: 1, borderColor: 'transparent',
+  counter: { fontSize: 13, marginLeft: 8, fontVariant: ['tabular-nums'] },
+  descInput: {
+    fontSize: 16, minHeight: 52, maxHeight: 140,
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14,
+    textAlignVertical: 'top',
+    ...(isWeb ? { outlineStyle: 'none' } : {}),
   },
-  toggleOptionText: { fontSize: 15, fontWeight: '700' },
-  toggleOptionDesc: { fontSize: 12, marginTop: 4 },
-  membersList: { marginTop: 8 },
-  memberRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 8, borderBottomWidth: 0.5, gap: 10,
+  sectionHd: {
+    fontSize: 13, fontWeight: '500', textTransform: 'uppercase', letterSpacing: 0.3,
+    marginTop: 28, marginBottom: 7, marginLeft: 16,
   },
-  memberName: { flex: 1, fontSize: 15 },
+  radioRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 12 },
+  radioTitle: { fontSize: 16, fontWeight: '500' },
+  radioDesc: { fontSize: 13, marginTop: 2 },
+  radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  radioDot: { width: 11, height: 11, borderRadius: 6 },
+  memberRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 16, gap: 12 },
+  memberBody: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingRight: 16, gap: 10 },
+  memberName: { flex: 1, fontSize: 16 },
 });

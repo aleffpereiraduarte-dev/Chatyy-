@@ -462,15 +462,21 @@ function FallbackBody({ header, rows, g, onRowPress, onToggle }) {
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       {header}
-      {rows.map(r => {
+      {rows.map((r, i) => {
         const showHd = r.sid !== lastSid && r.hd;
+        // [2026-10-17 wa-polish] cartão agrupado de verdade: só a 1ª/última linha
+        // da seção arredondam e as do meio ganham separador recuado (antes cada
+        // linha era uma pílula solta com 1 px de vão).
+        const first = r.sid !== lastSid;
+        const last = !rows[i + 1] || rows[i + 1].sid !== r.sid;
         lastSid = r.sid;
         return (
           <View key={r.id}>
             {showHd ? <Text style={[styles.fbHd, { color: g.header }]}>{r.hd}</Text> : null}
+            {!first ? <View style={{ backgroundColor: g.cardBg }}><View style={[styles.fbSep, { backgroundColor: g.separator }]} /></View> : null}
             <Pressable
               onPress={() => (r.k === 't' ? onToggle(r.id, !r.on) : onRowPress(r.id))}
-              style={[styles.fbRow, { backgroundColor: g.cardBg }]}
+              style={[styles.fbRow, { backgroundColor: g.cardBg }, first && styles.fbFirst, last && styles.fbLast, first && !showHd && { marginTop: 20 }]}
             >
               <View style={{ flex: 1 }}>
                 <Text style={{ color: g.text, fontSize: 16 }} numberOfLines={1}>{r.title}</Text>
@@ -516,5 +522,8 @@ const styles = StyleSheet.create({
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   radioDot: { width: 11, height: 11, borderRadius: 6 },
   fbHd: { fontSize: 13, fontWeight: '600', marginTop: 20, marginBottom: 6, marginLeft: 16 },
-  fbRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14, marginBottom: 1 },
+  fbRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, minHeight: 50 },
+  fbFirst: { borderTopLeftRadius: 14, borderTopRightRadius: 14 },
+  fbLast: { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
+  fbSep: { height: StyleSheet.hairlineWidth, marginLeft: 16 },
 });

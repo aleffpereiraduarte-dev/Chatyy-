@@ -13114,4 +13114,5 @@ export default {
   // [2026-10-17 polish-status-wa]
   "status.updatesOne": "atualização",
   "status.updatesMany": "atualizações",
+  "common.remove": "Remover",
 };

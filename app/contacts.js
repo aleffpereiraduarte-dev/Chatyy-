@@ -197,8 +197,9 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text numberOfLines={1} ellipsizeMode="tail" style={[s.contactName, { color: colors.text, flexShrink: 1 }]}>{name}</Text>
           {isRegistered && (
-            <View style={[s.groupChip, { backgroundColor: colors.successBg, marginTop: 0 }]}>
-              <Text style={[s.groupChipText, { color: colors.success }]}>Chatyy</Text>
+            // [2026-10-17 wa-polish] selo P&B (era verde successBg — fora da paleta).
+            <View style={[s.groupChip, { backgroundColor: colors.primaryLight, marginTop: 0 }]}>
+              <Text style={[s.groupChipText, { color: colors.primary }]}>Chatyy</Text>
             </View>
           )}
         </View>
@@ -301,9 +302,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
       <TouchableOpacity onPress={() => onToggleFav(c)} style={s.starBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
         <IconStar size={18} color={c.favorite ? colors.warning : colors.textTertiary} style={c.favorite ? { opacity: 1 } : { opacity: 0.4 }} />
       </TouchableOpacity>
-      <TouchableOpacity onPress={() => onDelete(c.email)} style={s.deleteBtn}>
-        <IconTrash size={16} color={colors.textTertiary} />
-      </TouchableOpacity>
+      {/* [2026-10-17 wa-polish] lixeira fixa removida — deslizar / segurar → Excluir. */}
     </PressableRow>
     </SwipeAction>
   );
@@ -917,6 +916,13 @@ function ContactsScreenInner() {
   // Long-press shows an action sheet — the WhatsApp "row hold" affordance.
   // Avoids forcing the user into the profile screen just to send a message.
   const [quickMenu, setQuickMenu] = useState(null);
+  // [2026-10-17 wa-polish] refs p/ a folha de ações (handleDelete é declarado depois).
+  const _deleteContactRef = useRef(null);
+  const _isSavedContactRef = useRef(() => false);
+  _isSavedContactRef.current = (em) => {
+    const k = String(em || '').toLowerCase();
+    return !!k && Array.isArray(contacts) && contacts.some(x => String(x?.email || '').toLowerCase() === k);
+  };
   const handleQuickActions = useCallback((c) => {
     const email = c?.email;
     if (!email) { handleEditContact(c); return; }
@@ -952,6 +958,11 @@ function ContactsScreenInner() {
         // [WA-parity 2026-05-31] "Compartilhar contato" — sends a contact card.
         { key: 'share', label: t('contacts.shareContact') || 'Compartilhar contato', icon: IconSend, onPress: goShare },
         { key: 'edit', label: t('contacts.editContact') || 'Editar', icon: IconEdit, onPress: goEdit },
+        // [2026-10-17 wa-polish] "Excluir" (vermelho, por último) só p/ contato salvo —
+        // substitui a lixeira fixa que poluía cada linha.
+        ...(_isSavedContactRef.current(email) && _deleteContactRef.current ? [
+          { key: 'delete', label: t('contacts.delete') || t('common.delete') || 'Excluir', icon: IconTrash, destructive: true, onPress: () => setTimeout(() => { try { _deleteContactRef.current && _deleteContactRef.current(email); } catch {} }, Platform.OS === 'ios' ? 420 : 0) },
+        ] : []),
       ],
     });
   }, [router, handleEditContact, t]);
@@ -1082,6 +1093,7 @@ function ContactsScreenInner() {
       ]);
     }
   }, [t]);
+  _deleteContactRef.current = handleDelete;
 
   const groups = [...new Set(contacts.map(c => c.group).filter(Boolean))];
   const contactEmailSet = useMemo(() => new Set(contacts.map(c => (c.email || '').toLowerCase())), [contacts]);
@@ -1501,7 +1513,9 @@ function ContactsScreenInner() {
             av: 40,
             pl: notOn ? inviteLabel : '',
             st: c.favorite ? 2 : 1,
-            tr: true,
+            // [2026-10-17 wa-polish] sem lixeira fixa na linha (WhatsApp): apagar =
+            // deslizar ("sw") ou segurar → "Excluir" na folha de ações.
+            tr: false,
             sw: delLabel,
             lp: true,
             a11y: [c.name || email, email].filter(Boolean).join(', '),

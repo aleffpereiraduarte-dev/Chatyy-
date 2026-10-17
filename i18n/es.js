@@ -13035,4 +13035,5 @@ export default {
   // [2026-10-17 polish-status-wa]
   "status.updatesOne": "actualización",
   "status.updatesMany": "actualizaciones",
+  "common.remove": "Quitar",
 };

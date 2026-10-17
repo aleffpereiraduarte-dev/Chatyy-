@@ -358,20 +358,19 @@ const ContactRow = React.memo(function ContactRow({
             {item.email || item.phone || ''}
           </Text>
         </View>
+        {/* [2026-10-17 wa-polish] pílula CONTORNADA (como em Contatos): dezenas de
+            pílulas pretas sólidas pesavam a lista; a sólida fica só p/ número digitado. */}
         <InvitePill
-          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: colors.primary }]}
+          style={[sty.inviteBtn, sty.inviteBtnOutline, { borderColor: colors.text }]}
           onPress={onTap}
           onLongPress={onHold}
           disabled={invitingEmail === item.email}
           accessibilityLabel={t('chat.invite')}
         >
           {invitingEmail === item.email ? (
-            <ActivityIndicator size={14} color={colors.onPrimary || '#fff'} />
+            <ActivityIndicator size={14} color={colors.text} />
           ) : (
-            <>
-              <IconUserPlus size={13} color={colors.onPrimary || '#fff'} />
-              <Text style={[sty.inviteBtnText, { color: colors.onPrimary || '#fff' }]}>{t('chat.invite')}</Text>
-            </>
+            <Text style={[sty.inviteBtnOutlineText, { color: colors.text }]}>{t('chat.invite')}</Text>
           )}
         </InvitePill>
       </View>
@@ -1977,7 +1976,8 @@ export default function ChatNewScreen() {
             t: item.name || item.phone || '?', tw: 500,
             sb: item.email || item.phone || '', sbt: 1,
             tiles: contactTile(item.email || '', item.name || item.phone || '?'), av: 46,
-            pl: inviteLabel, pf: true, pi: true, pb: invitingEmail != null && invitingEmail === item.email,
+            // [2026-10-17 wa-polish] contornada, sem ícone (igual a Contatos).
+            pl: inviteLabel, pf: false, pi: false, pb: invitingEmail != null && invitingEmail === item.email,
             tap: false,
           } };
         }
@@ -2135,25 +2135,28 @@ export default function ChatNewScreen() {
               setOnlyChatyy(v => !v);
               try { sectionListRef.current?.getScrollResponder?.()?.scrollTo?.({ y: 0, animated: false }); } catch {}
             }}
+            // [2026-10-17 wa-polish] cápsula cinza discreta (era pílula preta sólida
+            // gritando no topo); ativa (filtro ligado) = tinta do tema.
             style={{
-              backgroundColor: colors.primary,
+              backgroundColor: onlyChatyy ? colors.text : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(118,118,128,0.12)'),
               paddingHorizontal: 14,
-              paddingVertical: 8,
+              paddingVertical: 7,
               borderRadius: 999,
               flexDirection: 'row',
               alignItems: 'center',
               gap: 6,
             }}
+            accessibilityState={{ selected: !!onlyChatyy }}
           >
-            <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '600' }}>
+            <Text style={{ color: onlyChatyy ? colors.background : colors.text, fontSize: 13, fontWeight: '500' }}>
               {(t('chat.contactsOnChatyyCount') ||
                 `${phoneContacts.length} dos seus ${(phoneContacts.length + otherContacts.length) || phoneContacts.length} contatos estão no Chatyy`)
                 .replace('{count}', String(phoneContacts.length))
                 .replace('{total}', String((phoneContacts.length + otherContacts.length) || phoneContacts.length))}
             </Text>
             {onlyChatyy
-              ? <IconX size={14} color={colors.onPrimary || '#fff'} />
-              : <IconChevronDown size={14} color={colors.onPrimary || '#fff'} />}
+              ? <IconX size={14} color={colors.background} />
+              : <IconChevronDown size={14} color={colors.textSecondary || colors.text} />}
           </TouchableOpacity>
         </View>
       )}
@@ -3358,6 +3361,8 @@ const sty = StyleSheet.create({
     width: 24, height: 24, borderRadius: 12,
     borderWidth: 2, alignItems: 'center', justifyContent: 'center',
   },
+  inviteBtnOutline: { backgroundColor: 'transparent', borderWidth: 1, height: 30, paddingHorizontal: 12 },
+  inviteBtnOutlineText: { fontSize: 13, fontWeight: '600', letterSpacing: 0.1 },
   inviteBtn: {
     paddingHorizontal: 14, height: 32, justifyContent: 'center', alignItems: 'center',
     borderRadius: 14,
