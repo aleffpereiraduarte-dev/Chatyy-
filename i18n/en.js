@@ -13086,4 +13086,11 @@ export default {
   "manageStorage.bigItems": "Large items",
   "manageStorage.nothingBig": "No large items in your cloud.",
   "manageStorage.openFiles": "Open Files",
+  // [2026-10-17 avatar-card]
+  "avatarLightbox.message": "Message",
+  "avatarLightbox.call": "Call",
+  "avatarLightbox.video": "Video",
+  "avatarLightbox.info": "Info",
+  "avatarLightbox.viewPhoto": "View photo",
+  "avatarLightbox.back": "Back",
 };

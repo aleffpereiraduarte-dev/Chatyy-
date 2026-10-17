@@ -13085,4 +13085,11 @@ export default {
   "manageStorage.bigItems": "Elementos grandes",
   "manageStorage.nothingBig": "No hay elementos grandes en tu nube.",
   "manageStorage.openFiles": "Abrir Archivos",
+  // [2026-10-17 avatar-card]
+  "avatarLightbox.message": "Mensaje",
+  "avatarLightbox.call": "Llamar",
+  "avatarLightbox.video": "Video",
+  "avatarLightbox.info": "Info",
+  "avatarLightbox.viewPhoto": "Ver foto",
+  "avatarLightbox.back": "Volver",
 };

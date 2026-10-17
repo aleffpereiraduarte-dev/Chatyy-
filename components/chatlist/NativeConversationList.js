@@ -254,7 +254,7 @@ function NativeConversationListInner(props) {
           if (m.hasRing && m.avatarEmail) {
             try { opened = !!_ringStore()?.openStatusFor?.(m.avatarEmail); } catch {}
           }
-          if (!opened) p.onAvatarPress?.({ name: m.title, email: m.avatarEmail });
+          if (!opened) p.onAvatarPress?.({ name: m.title, email: m.avatarEmail, conv: m.conv });
         } catch {}
       },
       onRowAction: (e) => {
@@ -264,7 +264,7 @@ function NativeConversationListInner(props) {
         try {
           if (action === 'more') p.onMore?.(m.conv);
           else if (action === 'select') p.onEnterSelection?.(m.conv);
-          else if (action === 'photo') p.onAvatarPress?.({ name: m.title, email: m.avatarEmail });
+          else if (action === 'photo') p.onAvatarPress?.({ name: m.title, email: m.avatarEmail, conv: m.conv });
           else p.onAction?.(action, m.conv, e?.nativeEvent ?? e);
         } catch {}
       },

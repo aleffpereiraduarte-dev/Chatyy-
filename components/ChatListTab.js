@@ -1652,7 +1652,7 @@ const ConversationRow = React.memo(function ConversationRow({
       else if (n === 'mute') onMute?.(conversation);
       else if (n === 'archive') onArchive?.(conversation);
       else if (n === 'delete') onDelete?.(conversation);
-      else if (n === 'photo') onAvatarPress?.({ name: displayName, email: otherEmail });
+      else if (n === 'photo') onAvatarPress?.({ name: displayName, email: otherEmail, conv: conversation });
       else if (n === 'more') onLongPress?.(conversation);
     } catch {}
   };
@@ -1760,8 +1760,8 @@ const ConversationRow = React.memo(function ConversationRow({
                   // Disabled in selection mode so multi-select gestures still
                   // work without ambiguity.
                   onPress={selectionMode ? undefined : (_statusRing
-                    ? () => { if (!openStatusFor(otherEmail) && onAvatarPress) onAvatarPress({ name: displayName, email: otherEmail }); }
-                    : (onAvatarPress ? () => onAvatarPress({ name: displayName, email: otherEmail }) : undefined))}
+                    ? () => { if (!openStatusFor(otherEmail) && onAvatarPress) onAvatarPress({ name: displayName, email: otherEmail, conv: conversation }); }
+                    : (onAvatarPress ? () => onAvatarPress({ name: displayName, email: otherEmail, conv: conversation }) : undefined))}
                   accessibilityLabel={_statusRing ? (t?.('status.ring.viewStatus') || 'Ver status') : undefined}
                 />
               </View>
@@ -8839,6 +8839,42 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       if (f) A.onToggleList?.(conv, f);
     }
   }, [handleMarkUnreadConversation, handlePinConversation, handleMuteConversation, handleArchiveConversation, handleDeleteConversation, handleEmailConversation, chatFolders]);
+  // ── [2026-10-17 avatar-card] Ações do cartão de foto (lista) ─────────────
+  // Mensagem = mesmo caminho do toque na linha (trava biométrica incluída);
+  // Ligar/Vídeo = voipNative.startOutgoingCall (UI nativa; /call no web), igual
+  // ao redial da aba Ligações; Info = perfil /u/<email>.
+  const _lbConv = avatarLightbox?.conv || null;
+  const _lbIsGroup = !!(_lbConv && (_lbConv.type === 'group' || _lbConv.type === 'channel' || _lbConv.type === 'community'));
+  const _lbPeer = String(avatarLightbox?.email || '').trim();
+  const _lbIsSelf = !!(
+    (_lbConv && _lbConv.type === 'saved')
+    || (_lbPeer && String(user?.email || '').toLowerCase() === _lbPeer.toLowerCase())
+  );
+  const _lbOnMessage = useCallback(() => {
+    if (_lbConv) handleConversationPress(_lbConv);
+  }, [_lbConv, handleConversationPress]);
+  const _lbStartCall = useCallback((isVideo) => {
+    const email = _lbPeer;
+    if (!email) return;
+    const name = String(avatarLightbox?.name || '').trim() || email.split('@')[0];
+    const conversationId = _lbConv?.id ? String(_lbConv.id) : '';
+    const jsRoute = (cid) => router.push(`/call?${cid ? `callId=${cid}&` : ''}contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo ? '1' : '0'}${conversationId ? `&conversationId=${conversationId}` : ''}&isCaller=1`);
+    if (Platform.OS === 'web') { jsRoute(null); return; }
+    (async () => {
+      try {
+        const voipNative = require('../services/voipNative');
+        await voipNative.startOutgoingCall({ calleeEmail: email, calleeName: name, isVideo: !!isVideo, conversationId, onWebFallback: jsRoute });
+      } catch (e) {
+        console.warn('[avatar-card] startOutgoingCall failed:', e?.message || e);
+        safeAlert(t('common.error') || 'Erro', t('chat.callError') || 'Não foi possível iniciar a chamada');
+      }
+    })();
+  }, [_lbPeer, _lbConv, avatarLightbox?.name, router, t]);
+  const _lbOnCall = useCallback(() => _lbStartCall(false), [_lbStartCall]);
+  const _lbOnVideo = useCallback(() => _lbStartCall(true), [_lbStartCall]);
+  const _lbOnInfo = useCallback(() => {
+    if (_lbPeer) { try { router.push(`/u/${encodeURIComponent(_lbPeer)}`); } catch {} }
+  }, [_lbPeer, router]);
   const _nativeHomeEnterSelection = useCallback((conv) => { enterSelectionMode(conv.id); }, [enterSelectionMode]);
   const _nativeHomeCollapsed = useCallback((c) => {
     if (c !== _ltCollapsedRef.current) {
@@ -9220,10 +9256,20 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {/* WAVE 95 — Avatar lightbox (tap on a row avatar → fullscreen photo).
           Row tap (anywhere else) still opens the conversation; only the small
           avatar circle on the left triggers this. */}
+      {/* [2026-10-17 avatar-card] Cartão de visualização rápida nível WhatsApp
+          (foto + Mensagem/Ligar/Vídeo/Info); tocar na foto → tela cheia no
+          MESMO Modal. Cada ação só aparece com handler; própria foto = sem ações. */}
       <AvatarLightbox
         visible={!!avatarLightbox}
+        variant="card"
         email={avatarLightbox?.email}
         name={avatarLightbox?.name}
+        isGroup={_lbIsGroup}
+        isSelf={_lbIsSelf}
+        onMessage={_lbConv ? _lbOnMessage : undefined}
+        onCall={(!_lbIsGroup && _lbPeer) ? _lbOnCall : undefined}
+        onVideoCall={(!_lbIsGroup && _lbPeer) ? _lbOnVideo : undefined}
+        onInfo={(!_lbIsGroup && _lbPeer) ? _lbOnInfo : undefined}
         onClose={() => setAvatarLightbox(null)}
       />
 
