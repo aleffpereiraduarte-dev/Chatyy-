@@ -2045,6 +2045,7 @@ function LiveBroadcastScreen() {
               // self-preview can render via _LK_VideoView (same source the
               // viewers see). Fixes "eu nao consigo me ver" on the host UI.
               try { setLkLocalVideoTrack(vTrack); } catch {}
+              lkVideoTrackRef.current = vTrack; // [2026-10-17 live-flip] p/ virar câmera sem depender da publicação
               // [2026-10-10 lives-2] Qualidade automática pela rede + lanterna.
               try {
                 if (hostAutoQualityStopRef.current) hostAutoQualityStopRef.current();
@@ -2611,6 +2612,7 @@ function LiveBroadcastScreen() {
   // (4) surface a toast so user knows the flip failed instead of staring
   // at the same view.
   const flipInFlightRef = useRef(false);
+  const lkVideoTrackRef = useRef(null);
   const handleFlipCamera = useCallback(async () => {
     // Guard against double-taps + missing stream (pre-live or after end).
     if (flipInFlightRef.current) return;
@@ -2636,7 +2638,9 @@ function LiveBroadcastScreen() {
         const camPub = (_LK_Track && typeof lp.getTrackPublication === 'function')
           ? lp.getTrackPublication(_LK_Track.Source.Camera)
           : null;
-        const camTrack = camPub?.videoTrack || null;
+        // [2026-10-17 live-flip] Sem publicação achada caía no ciclo
+        // setCameraEnabled (reabre a FRONTAL) → só espelhava. Usa a faixa publicada.
+        const camTrack = camPub?.videoTrack || lkVideoTrackRef.current || null;
         const camMst = camTrack?.mediaStreamTrack || null;
         // [2026-10-10 lives-2] Nativo: troca a câmera NO MESMO track
         // (applyConstraints do WebRTC) — sem parar/recriar a captura, sem
@@ -2650,6 +2654,8 @@ function LiveBroadcastScreen() {
           camMst._switchCamera();
         } else if (camTrack && typeof camTrack.restartTrack === 'function') {
           await camTrack.restartTrack({ facingMode: newFacing });
+        } else if (Platform.OS !== 'web') {
+          throw new Error('no_camera_track');
         } else {
           // Fallback: cycle the camera off/on. setCameraEnabled re-acquires
           // the device; combined with facingRef the next publish picks the
