@@ -16,7 +16,7 @@ import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import EmailRow from './EmailRow';
 import EmptyState from './EmptyState';
 import { EmailSkeleton } from './SkeletonLoader';
-import { prefetchMessage } from '../services/api';
+import { prefetchMessage, prefetchTopUnread } from '../services/api';
 // [2026-10-15 native-inbox] Linhas NATIVAS (UICollectionView / RecyclerView) —
 // só no binário que tem a view ChatyyEmailList; senão (build antigo, web) a
 // FlashList abaixo fica idêntica. Kill switch OTA: __chatyy_native_inbox=false.
@@ -137,6 +137,24 @@ export default function EmailList({
   // minimumViewTime 250ms: só conta como "visível" o item onde a rolagem PAROU
   // — rolagem rápida não dispara prefetch (protege o IMAP/Dovecot).
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60, minimumViewTime: 250 });
+
+  // [2026-10-17 email-gmail-parity] Caixa visível + Wi-Fi → aquece os 8 primeiros
+  // NÃO LIDOS (estilo Gmail), 1,2 s depois da lista assentar (não compete com a
+  // 1ª pintura nem com o refresh). Só re-dispara quando o conjunto de não lidos do
+  // topo muda; o dedupe/cap/fila/cache-local ficam no prefetchTopUnread.
+  const _unreadSig = useMemo(() => {
+    if (currentFolder !== 'INBOX' || search || searchQuery || !Array.isArray(emails)) return '';
+    const out = [];
+    for (const e of emails) { if (out.length >= 8) break; if (e && !e.seen && !e.read && e.uid) out.push(e.uid); }
+    return out.join(',');
+  }, [emails, currentFolder, search, searchQuery]);
+  const _emailsRef = useRef(emails);
+  _emailsRef.current = emails;
+  useEffect(() => {
+    if (!_unreadSig) return undefined;
+    const tm = setTimeout(() => { try { prefetchTopUnread(_emailsRef.current, 'INBOX', 8); } catch {} }, 1200);
+    return () => clearTimeout(tm);
+  }, [_unreadSig]);
 
   // Drag-to-select: global mouseup listener
   useEffect(() => {

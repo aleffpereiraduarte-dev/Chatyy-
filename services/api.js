@@ -3573,30 +3573,79 @@ export async function prefetchMessageWeb(uid, folder = 'INBOX') {
 // dezenas de fetches IMAP ao mesmo tempo (protege o Dovecot).
 let _prefetchActive = 0;
 const _PREFETCH_MAX = 3;
+// [2026-10-17 email-gmail-parity] Antes, com 3 em voo, os demais visíveis eram
+// DESCARTADOS (a 1ª pintura da caixa tem ~8-10 linhas → só 3 aqueciam e o resto
+// abria pela rede). Agora vão p/ uma fila curta (LIFO = o que o usuário vê agora
+// primeiro) drenada conforme os slots liberam. E corpo que JÁ está no cache local
+// (MMKV/IDB, sobrevive ao restart) não vai mais à rede a cada cold start.
+const _PREFETCH_QUEUE_MAX = 24;
+const _prefetchQueue = []; // [{ uid, folder, key }]
+function _drainPrefetchQueue() {
+  while (_prefetchActive < _PREFETCH_MAX && _prefetchQueue.length) {
+    const it = _prefetchQueue.pop();
+    if (it) prefetchMessage(it.uid, it.folder);
+  }
+}
 export async function prefetchMessage(uid, folder = 'INBOX') {
   try {
     if (!uid || !authToken || _isRustDead()) return;
-    if (_prefetchActive >= _PREFETCH_MAX) return; // cheio — deixa o próximo hover/scroll pegar
     const key = `${folder}:${uid}`;
     if (_msgPrefetchInflight.has(key)) return;
     const last = _msgPrefetchDone.get(key);
     if (last && (Date.now() - last) < 120000) return; // aquecido há <2min
+    if (_prefetchActive >= _PREFETCH_MAX) {
+      // cheio — enfileira (dedupe; estoura → descarta o mais antigo)
+      if (!_prefetchQueue.some(q => q.key === key)) {
+        _prefetchQueue.push({ uid, folder, key });
+        if (_prefetchQueue.length > _PREFETCH_QUEUE_MAX) _prefetchQueue.shift();
+      }
+      return;
+    }
     _msgPrefetchInflight.add(key);
     _prefetchActive++;
     try {
+      const oc = await import('./offlineCache');
+      let hit = null;
+      try { hit = await oc.getMessageFromCache(uid, folder); } catch { hit = null; }
+      if (hit) { _msgPrefetchDone.set(key, Date.now()); return; } // já local: 0 rede
       const r = await getMessage(uid, folder, { markSeen: false });
       if (r && r.success && r.data) {
-        const { saveMessageToCache } = await import('./offlineCache');
-        await saveMessageToCache(uid, r.data, folder).catch(() => {});
+        await oc.saveMessageToCache(uid, r.data, folder).catch(() => {});
         _msgPrefetchDone.set(key, Date.now());
       }
     } finally {
       _prefetchActive--;
       _msgPrefetchInflight.delete(key);
+      _drainPrefetchQueue();
     }
   } catch (_) {
     /* best-effort */
   }
+}
+
+// [2026-10-17 email-gmail-parity] Estilo Gmail: com a caixa VISÍVEL e em Wi-Fi
+// (sem enlace lento), aquece os N primeiros NÃO LIDOS da INBOX — o toque abre do
+// cache local sem rede, mesmo antes de o usuário rolar. Nunca marca lido
+// (markSeen:false), só INBOX, reaproveita dedupe/cap/fila do prefetchMessage.
+// Kill switch OTA: globalThis.__chatyy_email_prefetch_unread = false.
+export function prefetchTopUnread(emails, folder = 'INBOX', n = 8) {
+  try {
+    if (globalThis.__chatyy_email_prefetch_unread === false) return 0;
+    if (folder !== 'INBOX' || !Array.isArray(emails) || !emails.length) return 0;
+    if (!authToken || _isRustDead()) return 0;
+    const ni = require('./networkInfo');
+    if (ni.getNetworkType() !== 'wifi' || ni.isSlowLink()) return 0;
+    const pick = [];
+    for (const e of emails) {
+      if (pick.length >= n) break;
+      if (!e || e._sectionHeader || e.seen || e.read) continue;
+      if (!/^\d+$/.test(String(e.uid || ''))) continue; // linhas otimistas/locais
+      pick.push(e.uid);
+    }
+    // Fila é LIFO: empurra do mais velho p/ o mais novo → o topo da caixa sai 1º.
+    for (let i = pick.length - 1; i >= 0; i--) prefetchMessage(pick[i], folder);
+    return pick.length;
+  } catch { return 0; }
 }
 
 export function getFolders() {

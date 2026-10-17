@@ -997,8 +997,15 @@ export function MailProvider({ children }) {
     if (remembered && remembered.length > 0) {
       setEmails(mergePendingSent(folder, remembered));
     } else {
+      // [2026-10-17 email-gmail-parity] Pasta não vista NESTA sessão mas salva no
+      // disco (sessão anterior) → pinta síncrono do cache local em vez do skeleton;
+      // o loadEmails abaixo revalida em silêncio (estilo Gmail: nunca spinner com cache).
+      let disk = null;
+      // Só o cache MMKV/localStorage (namespaced por conta) — o SQLite nativo do
+      // iOS não separa por conta e aqui pode ser logo após uma troca de conta.
+      try { disk = getEmailsFromCacheSync(folder); } catch { disk = null; }
       // Enviados nunca visitado mas com envio otimista → já pinta a linha.
-      const pend = mergePendingSent(folder, []);
+      const pend = mergePendingSent(folder, Array.isArray(disk) ? disk : []);
       setEmails(pend);
       if (!pend.length) setLoadingList(true);
     }
