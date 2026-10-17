@@ -86,6 +86,15 @@ private let kAcceptedUUIDByCallIdLock = NSLock()
 private var kThrowawayUUIDs: Set<UUID> = []
 private let kThrowawayUUIDsLock = NSLock()
 
+// [2026-10-17 joao-busy] Module ProviderDelegate (RN booted) also receives
+// CXAnswer for throwaways — prod João answered 3 of them; each sent
+// call_answered with a UUID call_id and the hub marked him "busy" for 60 min.
+func voipIsThrowawayUUID(_ uuid: UUID) -> Bool {
+  kThrowawayUUIDsLock.lock()
+  defer { kThrowawayUUIDsLock.unlock() }
+  return kThrowawayUUIDs.contains(uuid)
+}
+
 // [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
 // Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource
 // timer survives module/bridge teardown when user swipe-kills the app while

@@ -2829,6 +2829,15 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+    // [2026-10-17 joao-busy] A cancel-push throwaway (no callId mapping) must
+    // never be answered: answering it signalled call_answered(UUID) to the hub
+    // (false "busy") and ended the real ringing call ("End & Accept" → decline).
+    if module?.callIdForUUID(action.callUUID) == nil && voipIsThrowawayUUID(action.callUUID) {
+      nativeCallDiag("cxanswer_throwaway_rejected", action.callUUID.uuidString)
+      action.fail()
+      provider.reportCall(with: action.callUUID, endedAt: Date(), reason: .remoteEnded)
+      return
+    }
     // Apple guidance (WhatsApp/Telegram pattern): in CXAnswerCallAction we
     // ONLY configure the audio category and call fulfill(). DO NOT call
     // setActive(true) here — during cold-start from a VoIP push, the audio
@@ -3314,7 +3323,15 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // event so JS analytics can disambiguate CallKit-originated hangups
     // from JS-driven ones (the latter go through endCall → endCallAction).
     CallSessionObserver.shared.markEnded(uuid: action.callUUID)
-    let callIdForEnd = module?.callIdForUUID(action.callUUID) ?? action.callUUID.uuidString
+    // [2026-10-17 joao-busy] Resolve BEFORE callEnded() drops the map: the
+    // dismiss below must only close the surface of THIS call. Prod
+    // call_1792263397495 (João): ending a phantom CallKit call (throwaway UUID,
+    // no callId) ran the old global dismiss and killed the outgoing
+    // CallViewController he had opened 0.1 s earlier → deinit → LK leave → peer
+    // answered to silence.
+    let endedMappedCallId: String? = module?.callIdForUUID(action.callUUID)
+    let endedUUID = action.callUUID
+    let callIdForEnd = endedMappedCallId ?? action.callUUID.uuidString
     module?.safeSendEvent("onCallEnded", [
       "uuid": action.callUUID.uuidString,
       "callId": callIdForEnd,
@@ -3347,7 +3364,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       }
     }
     DispatchQueue.main.async {
-      ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_end_call_action")
+      // [2026-10-17 joao-busy] Scoped dismiss. Known callId → only its surface.
+      // Unknown UUID (phantom/throwaway/stale) → global sweep ONLY when no
+      // other CallKit call is live; otherwise leave the live call's UI alone.
+      if let cid = endedMappedCallId, !cid.isEmpty {
+        ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_end_call_action", forCallId: cid)
+      } else if CXCallObserver().calls.contains(where: { $0.uuid != endedUUID && !$0.hasEnded }) {
+        nativeCallDiag("cx_end_unknown_uuid_keep_surfaces", endedUUID.uuidString)
+      } else {
+        ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_end_call_action")
+      }
     }
     // [bug 2026-05-15 #12] Do NOT manually setActive(false) here.
     // CallKit fires didDeactivate automatically after action.fulfill();
