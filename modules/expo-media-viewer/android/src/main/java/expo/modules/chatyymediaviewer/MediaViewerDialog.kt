@@ -45,6 +45,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.CompositePageTransformer
 import androidx.viewpager2.widget.MarginPageTransformer
 import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
@@ -282,7 +283,19 @@ class MediaViewerDialog(
 
     pager = ViewPager2(context)
     pager.offscreenPageLimit = 1
-    pager.setPageTransformer(MarginPageTransformer(dp(12f)))
+    // [2026-10-16 motion] Margem + parallax: o conteúdo anda ~22% mais devagar
+    // que a página (scrollX do `content` — não mexe no translation do arrasto
+    // de fechar; o próprio content recorta). Kill switch: __chatyy_motion_media_parallax.
+    pager.setPageTransformer(CompositePageTransformer().apply {
+      addTransformer(MarginPageTransformer(dp(12f)))
+      addTransformer { page, position ->
+        val pv = page as? MVPageView ?: return@addTransformer
+        val on = MVMotion.parallax && !MVMotion.reduceMotion
+        val p = position.coerceIn(-1f, 1f)
+        val sx = if (!on || abs(p) < 0.002f) 0 else (p * page.width * 0.22f).toInt()
+        if (pv.content.scrollX != sx) pv.content.scrollX = sx
+      }
+    })
     pager.adapter = PageAdapter()
     (pager.getChildAt(0) as? RecyclerView)?.let { rv ->
       rv.overScrollMode = View.OVER_SCROLL_NEVER
@@ -455,14 +468,25 @@ class MediaViewerDialog(
 
   private fun setChrome(visible: Boolean) {
     chromeVisible = visible
+    // [2026-10-16 motion] fade + deslize (cima sobe, baixo desce). Kill switch: __chatyy_motion_media_chrome.
+    val slide = MVMotion.chromeSlide && !MVMotion.reduceMotion
     for (bar in arrayOf<View>(topBar, bottomBar)) {
       bar.animate().cancel()
+      val off = if (bar === topBar) -dp(14f).toFloat() else dp(18f).toFloat()
       if (visible) {
         bar.visibility = View.VISIBLE
-        bar.animate().alpha(1f).setDuration(180).start()
+        if (slide) {
+          val sp = MVSpring(0.9f, 18f)
+          bar.animate().alpha(1f).translationY(0f).setInterpolator(sp).setDuration(sp.durationMs).start()
+        } else {
+          bar.translationY = 0f
+          bar.animate().alpha(1f).setDuration(180).start()
+        }
       } else {
         // INVISIBLE no fim: barra escondida não pode engolir o toque que a traz de volta.
-        bar.animate().alpha(0f).setDuration(180).withEndAction {
+        val a = bar.animate().alpha(0f).setDuration(180)
+        if (slide) a.translationY(off).setInterpolator(DecelerateInterpolator())
+        a.withEndAction {
           if (!chromeVisible) bar.visibility = View.INVISIBLE
         }.start()
       }
@@ -833,6 +857,18 @@ class MediaViewerDialog(
       topBar.animate().alpha(0f).setDuration(160).start()
       bottomBar.animate().alpha(0f).setDuration(160).start()
       backdrop.animate().alpha(0f).setDuration(200).withEndAction { finish("swipe", false) }.start()
+    } else if (MVMotion.flingSpring && !MVMotion.reduceMotion) {
+      // [2026-10-16 motion] Mola de volta herdando a velocidade do dedo.
+      val sp = MVSpring(0.8f, 16f, MVMotion.normVelocity(-vy, dy))
+      page.content.animate()
+        .translationX(0f).translationY(0f).scaleX(1f).scaleY(1f)
+        .setDuration(sp.durationMs)
+        .setInterpolator(sp)
+        .start()
+      backdrop.animate().alpha(1f).setDuration(220).start()
+      val a = if (chromeVisible) 1f else 0f
+      topBar.animate().alpha(a).setDuration(220).start()
+      bottomBar.animate().alpha(a).setDuration(220).start()
     } else {
       page.content.animate()
         .translationX(0f).translationY(0f).scaleX(1f).scaleY(1f)
@@ -995,7 +1031,7 @@ class MediaViewerDialog(
 
   /** Fecha encolhendo até a bolha; false = sem destino/imagem → fechamento normal. */
   private fun startHeroClose(reason: String, then: (() -> Unit)?): Boolean {
-    if (closed || !this::root.isInitialized || !root.isAttachedToWindow) return false
+    if (closed || MVMotion.reduceMotion || !this::root.isInitialized || !root.isAttachedToWindow) return false
     val ret = returnRects[current] ?: return false
     val page = currentPage() ?: return false
     val orig = pageDrawable(page) ?: return false

@@ -155,7 +155,26 @@ final class AttachSheetController: UIViewController,
       self.dimView.alpha = 1
       self.applyGeometry()
     }
+    cascadeActions()
     startCameraIfPossible()
+  }
+
+  // [2026-10-16 motion-attach] Galeria/Arquivo/Local/… sobem em cascata com
+  // mola enquanto a folha sobe (Telegram). Reduzir Movimento / motion=false → estático.
+  private var cascaded = false
+  private func cascadeActions() {
+    guard !cascaded else { return }
+    cascaded = true
+    guard config.motion, !UIAccessibility.isReduceMotionEnabled else { return }
+    for (i, b) in actionsStack.arrangedSubviews.enumerated() {
+      b.alpha = 0
+      b.transform = CGAffineTransform(translationX: 0, y: 22).scaledBy(x: 0.82, y: 0.82)
+      UIView.animate(withDuration: 0.55, delay: 0.08 + Double(min(i, 8)) * 0.035, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.4,
+                     options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        b.alpha = 1
+        b.transform = .identity
+      }, completion: nil)
+    }
   }
 
   override func viewWillDisappear(_ animated: Bool) {

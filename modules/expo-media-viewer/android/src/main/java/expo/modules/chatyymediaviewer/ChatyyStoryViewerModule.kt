@@ -31,7 +31,8 @@ class ChatyyStoryViewerModule : Module() {
     )
 
     // 2 = blocos/voz/boomerang/animação de texto/duplo toque/menu por item.
-    Function("apiVersion") { 2 }
+    // 3 = `originRect` (abre do anel do avatar e volta para ele) [2026-10-16 motion]
+    Function("apiVersion") { 3 }
 
     AsyncFunction("open") { options: Map<String, Any?> ->
       val activity = appContext.currentActivity ?: return@AsyncFunction 0
@@ -96,6 +97,16 @@ class ChatyyStoryViewerModule : Module() {
         },
       )
       dlgRef = dlg
+      // [2026-10-16 motion] frame do anel tocado (dp do RN, coordenadas de janela)
+      if (MVMotion.storyOrigin && !MVMotion.reduceMotion) {
+        (options["originRect"] as? Map<*, *>)?.let { m ->
+          fun f(k: String): Float? = (m[k] as? Number)?.toFloat()?.takeIf { x -> !x.isNaN() && !x.isInfinite() }
+          val x = f("x"); val y = f("y"); val w = f("width"); val h = f("height")
+          if (x != null && y != null && w != null && h != null && w >= 2f && h >= 2f) {
+            dlg.setOrigin(android.graphics.RectF(x, y, x + w, y + h))
+          }
+        }
+      }
       current = dlg
       try {
         dlg.show()

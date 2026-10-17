@@ -95,6 +95,12 @@ internal class NCVoicePanel(ctx: Context) : ViewGroup(ctx) {
   private val dotBg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
   var locked = false
   var dx = 0f
+  /** [2026-10-16 motion-composer] cutucada da seta (px, ≤ 0) somada ao arrasto. */
+  var nudge = 0f
+
+  fun applySlide() {
+    slide.translationX = min(0f, dx) * 0.6f + nudge
+  }
 
   init {
     dot.background = dotBg
@@ -158,7 +164,7 @@ internal class NCVoicePanel(ctx: Context) : ViewGroup(ctx) {
       slide.visibility = View.VISIBLE
       val sX = ncDp(context, 96f)
       slide.layout(sX, 0, sX + slide.measuredWidth, h)
-      slide.translationX = min(0f, dx) * 0.6f
+      applySlide()
     }
   }
 }
@@ -166,6 +172,7 @@ internal class NCVoicePanel(ctx: Context) : ViewGroup(ctx) {
 /** Camada sobre a janela durante o "segurar": círculo grande + pílula do cadeado. */
 @SuppressLint("ViewConstructor")
 internal class NCHoldOverlay(ctx: Context) : FrameLayout(ctx) {
+  val halo2 = View(ctx) // [2026-10-16 motion-composer] anel externo, mais lento (Telegram)
   val halo = View(ctx)
   val circle = FrameLayout(ctx)
   val mic = ImageView(ctx)
@@ -173,6 +180,7 @@ internal class NCHoldOverlay(ctx: Context) : FrameLayout(ctx) {
   val lockIcon = ImageView(ctx)
   val chevron = ImageView(ctx)
   private val haloBg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+  private val halo2Bg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
   private val circleBg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
   private val pillBg = GradientDrawable()
   private val d = ncDp(ctx, 92f)
@@ -185,6 +193,8 @@ internal class NCHoldOverlay(ctx: Context) : FrameLayout(ctx) {
     isClickable = false
     isFocusable = false
     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    halo2.background = halo2Bg
+    addView(halo2, LayoutParams(d, d))
     halo.background = haloBg
     addView(halo, LayoutParams(d, d))
     circle.background = circleBg
@@ -207,6 +217,7 @@ internal class NCHoldOverlay(ctx: Context) : FrameLayout(ctx) {
     originX = ox
     originY = oy
     haloBg.setColor((t.action and 0x00FFFFFF) or 0x2E000000)
+    halo2Bg.setColor((t.action and 0x00FFFFFF) or 0x14000000)
     circleBg.setColor(t.action)
     mic.imageTintList = android.content.res.ColorStateList.valueOf(t.actionIcon)
     pillBg.setColor(t.pill)
@@ -221,8 +232,21 @@ internal class NCHoldOverlay(ctx: Context) : FrameLayout(ctx) {
     circle.y = cy - d / 2f
     halo.x = cx - d / 2f
     halo.y = cy - d / 2f
+    halo2.x = cx - d / 2f
+    halo2.y = cy - d / 2f
     lockPill.x = originX - pillW / 2f
     lockPill.y = originY - ncDp(context, 64f) - pillH + pillDy
+  }
+
+  /** true = o halo é animado pelo tick (applyLevel), não pelo arrasto. */
+  var smooth = false
+
+  /** [2026-10-16 motion-composer] halo segue o volume suavizado; interpola entre ticks. */
+  fun applyLevel(inner: Float, outer: Float) {
+    val s = 1f + inner * 0.55f
+    val s2 = 1f + outer * 0.95f
+    halo.animate().scaleX(s).scaleY(s).setDuration(40).setInterpolator(null).start()
+    halo2.animate().scaleX(s2).scaleY(s2).setDuration(40).setInterpolator(null).start()
   }
 
   fun update(dx: Float, dy: Float, lockProgress: Float, level: Float) {
@@ -230,9 +254,11 @@ internal class NCHoldOverlay(ctx: Context) : FrameLayout(ctx) {
     var cy = originY
     if (abs(dx) > abs(dy)) cx += min(0f, dx) else cy += min(0f, dy)
     place(cx, cy, min(0f, dy) * 0.35f)
-    val s = 1f + level * 0.55f
-    halo.scaleX = s
-    halo.scaleY = s
+    if (!smooth) {
+      val s = 1f + level * 0.55f
+      halo.scaleX = s
+      halo.scaleY = s
+    }
     chevron.alpha = 1f - lockProgress
     lockIcon.translationY = lockProgress * ncDp(context, 8f)
   }
@@ -253,6 +279,12 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
   private var startedAt = 0L
   private val samples = ArrayList<Float>()
   private var lastLevel = 0f
+  // [2026-10-16 motion-composer] nível suavizado só p/ o halo (samples crus).
+  private var smoothLevel = 0f
+  private var smoothOuter = 0f
+  private var nudgeAnim: ValueAnimator? = null
+  private val motionOn: Boolean
+    get() = host.motionEnabled && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled())
   private var overlay: NCHoldOverlay? = null
   private var blink: ObjectAnimator? = null
   private var downX = 0f
@@ -403,7 +435,7 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     val cancelProgress = (-dx / cancelDistance).coerceIn(0f, 1f)
     panel.slide.alpha = 1f - cancelProgress * 0.85f
     panel.dx = dx
-    panel.slide.translationX = min(0f, dx) * 0.6f
+    panel.applySlide()
     if (lockProgress > 0.6f && !lockArmed) {
       lockArmed = true
       host.actionButton.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -447,6 +479,8 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     startedAt = SystemClock.elapsedRealtime()
     samples.clear()
     lastLevel = 0f
+    smoothLevel = 0f
+    smoothOuter = 0f
     try { rec.maxAmplitude } catch (_: Throwable) {} // 1ª leitura sempre 0
   }
 
@@ -461,9 +495,15 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     val secs = (elapsed / 1000).toInt()
     panel.time.text = String.format("%d:%02d", secs / 60, secs % 60)
     overlay?.let {
-      val s = 1f + level * 0.55f
-      it.halo.scaleX = s
-      it.halo.scaleY = s
+      if (it.smooth) {
+        smoothLevel += (level - smoothLevel) * (if (level > smoothLevel) 0.55f else 0.18f)
+        smoothOuter += (level - smoothOuter) * (if (level > smoothOuter) 0.30f else 0.08f)
+        it.applyLevel(smoothLevel, smoothOuter)
+      } else {
+        val s = 1f + level * 0.55f
+        it.halo.scaleX = s
+        it.halo.scaleY = s
+      }
     }
     if (elapsed >= maxDurationMs) finish(true)
   }
@@ -621,6 +661,9 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     val cx = (loc[0] - decorLoc[0]) + host.actionButton.width / 2f
     val cy = (loc[1] - decorLoc[1]) + host.actionButton.height / 2f
     o.setup(cx, cy, host.theme)
+    o.smooth = motionOn
+    o.halo2.visibility = if (o.smooth) View.VISIBLE else View.GONE
+    o.halo2.alpha = 0f
     decor.addView(o, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     overlay = o
     o.circle.scaleX = 0.45f
@@ -630,6 +673,7 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     o.lockPill.translationY = ncDp(ctx, 24f).toFloat()
     o.circle.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(OvershootInterpolator(1.8f)).start()
     o.halo.animate().alpha(1f).setDuration(200).start()
+    if (o.smooth) o.halo2.animate().alpha(1f).setDuration(260).start()
     o.lockPill.animate().alpha(1f).translationY(0f).setDuration(300).setInterpolator(DecelerateInterpolator()).start()
   }
 
@@ -661,6 +705,25 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
       repeatCount = ValueAnimator.INFINITE
       start()
     }
+    // [2026-10-16 motion-composer] seta "deslize p/ cancelar" cutuca p/ a esquerda.
+    nudgeAnim?.cancel()
+    nudgeAnim = null
+    panel.nudge = 0f
+    if (motionOn) {
+      val amp = ncDp(ctx, 7f).toFloat()
+      nudgeAnim = ValueAnimator.ofFloat(0f, 1f).apply {
+        duration = 750
+        repeatMode = ValueAnimator.REVERSE
+        repeatCount = ValueAnimator.INFINITE
+        interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+        addUpdateListener { va ->
+          if (nudgeAnim !== va) return@addUpdateListener
+          panel.nudge = -(va.animatedValue as Float) * amp
+          if (!panel.locked) panel.applySlide()
+        }
+        start()
+      }
+    }
     panel.requestLayout()
   }
 
@@ -673,6 +736,8 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     removeOverlay(animated = true)
     blink?.cancel()
     blink = null
+    nudgeAnim?.let { nudgeAnim = null; it.cancel() }
+    panel.nudge = 0f
     panel.dot.alpha = 1f
     panel.animate().cancel()
     panel.animate().alpha(0f).setDuration(160).withEndAction {

@@ -4,6 +4,7 @@ import Svg, { Path, Circle, Rect, G, Defs, LinearGradient, Stop } from 'react-na
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { cssLoop, IS_WEB } from '../utils/webCssLoop';
+import { motionEnabled } from '../constants/motion'; // [2026-10-16 motion] entrada de estado vazio
 
 // ---------- Illustrations ----------
 
@@ -213,12 +214,14 @@ export default function EmptyStateIllustrated({
     : (config.actionKey ? t(config.actionKey) : null);
 
   // Entrance animations
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.95)).current;
+  const still = useRef(!motionEnabled('empty_state')).current;
+  const fadeAnim = useRef(new Animated.Value(still ? 1 : 0)).current;
+  const scaleAnim = useRef(new Animated.Value(still ? 1 : 0.95)).current;
   // Floating animation on illustration
   const floatAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (still) return undefined; // Reduzir Movimento: sem entrada nem flutuação
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,

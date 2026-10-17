@@ -1,5 +1,8 @@
 package expo.modules.chatyycomposer
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -29,6 +32,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
@@ -476,6 +480,71 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   private val flushRunnable = Runnable { flushChange() }
   private var frames = Frames()
   private var kbLastLift = -1
+
+  // [2026-10-16 motion-composer] Campo cresce/encolhe por linha animado
+  // (Telegram). A altura reportada ao RN muda já (a lista acompanha no mesmo
+  // frame, como no iOS); só o desenho da pílula/fundo/cartão interpola do
+  // tamanho antigo ao novo, ancorado no rodapé. Kill switch: prop motion=false.
+  internal var motionEnabled = true
+    private set
+  private var rowAnimTarget = -1
+  private var rowAnimShown = -1f
+  private var rowAnim: ValueAnimator? = null
+
+  fun setMotion(v: Boolean) {
+    if (v == motionEnabled) return
+    motionEnabled = v
+    if (!v) stopRowAnim()
+  }
+
+  private fun stopRowAnim() {
+    val old = rowAnim
+    rowAnim = null
+    rowAnimShown = -1f
+    old?.cancel()
+  }
+
+  private fun trackRowAnim(target: Int) {
+    val prev = rowAnimTarget
+    rowAnimTarget = target
+    if (prev < 0 || prev == target) return
+    val from = if (rowAnim != null && rowAnimShown >= 0f) rowAnimShown else prev.toFloat()
+    stopRowAnim()
+    val enabled = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()
+    if (!motionEnabled || !enabled || !isAttachedToWindow || voice.isActive || kotlin.math.abs(target - from) < 1f) return
+    rowAnimShown = from
+    val a = ValueAnimator.ofFloat(from, target.toFloat())
+    a.duration = 260
+    a.interpolator = PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
+    a.addUpdateListener { va ->
+      if (rowAnim !== va) return@addUpdateListener
+      rowAnimShown = va.animatedValue as Float
+      relayoutChildrenNow()
+    }
+    a.addListener(object : AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: Animator) {
+        if (rowAnim !== animation) return
+        rowAnim = null
+        rowAnimShown = -1f
+        relayoutChildrenNow()
+      }
+    })
+    rowAnim = a
+    a.start()
+  }
+
+  private fun relayoutChildrenNow() {
+    if (width <= 0 || height <= 0) return
+    try { onLayout(false, left, top, right, bottom) } catch (t: Throwable) { Log.w(TAG, "rowAnim: ${t.message}") }
+    clampEditScroll()
+  }
+
+  /** O EditText pode ter rolado enquanto estava mais baixo que o conteúdo. */
+  private fun clampEditScroll() {
+    val l = edit.layout ?: return
+    val maxY = max(0, l.height + edit.totalPaddingTop + edit.totalPaddingBottom - edit.height)
+    if (edit.scrollY > maxY) edit.scrollTo(edit.scrollX, maxY)
+  }
 
   private data class Frames(
     var total: Int = 0, var replyH: Int = 0, var cardH: Int = 0, var barH: Int = 0,
@@ -1035,11 +1104,14 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     val W = r - l
     val H = b - t
     if (W <= 0) return
+    trackRowAnim(f.rowH)
+    // >0 crescendo (desenha ainda mais baixo), <0 encolhendo.
+    val dRow = if (rowAnim != null && rowAnimShown >= 0f) (f.rowH - rowAnimShown).toInt() else 0
     val top = H - f.total
-    if (replyVisible) replyCard.layout(dp(8f), top, W - dp(8f), top + f.cardH)
+    if (replyVisible) replyCard.layout(dp(8f), top + dRow, W - dp(8f), top + dRow + f.cardH)
     val barTop = top + f.replyH
-    barBg.layout(0, barTop, W, barTop + barBg.measuredHeight)
-    hairline.layout(0, barTop, W, barTop + hairline.measuredHeight)
+    barBg.layout(0, barTop + dRow, W, barTop + barBg.measuredHeight)
+    hairline.layout(0, barTop + dRow, W, barTop + dRow + hairline.measuredHeight)
     val rowTop = barTop + dp(6f)
     val rowBottom = rowTop + f.rowH
     plusButton.layout(dp(4f), rowBottom - dp(44f), dp(44f), rowBottom)
@@ -1051,7 +1123,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     videoNoteButton.layout(vnX, rowBottom - dp(44f), vnX + dp(40f), rowBottom)
     val recording = voice.isActive
     videoNoteButton.visibility = if (f.videoNote && !recording) View.VISIBLE else View.GONE
-    pill.layout(f.pillX, rowTop, f.pillX + f.pillW, rowTop + f.rowH)
+    pill.layout(f.pillX, rowTop + dRow, f.pillX + f.pillW, rowTop + f.rowH)
     val inBottom = rowBottom - dp(1f)
     emojiButton.visibility = if (showEmoji) View.VISIBLE else View.GONE
     emojiButton.layout(f.pillX + dp(4f), inBottom - dp(42f), f.pillX + dp(40f), inBottom)
@@ -1071,7 +1143,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
       }
     }
     val tx = f.pillX + f.textX
-    edit.layout(tx, inBottom - f.textH, tx + f.textW, inBottom)
+    edit.layout(tx, inBottom - max(dp(20f), f.textH - dRow), tx + f.textW, inBottom)
     val panelW = max(0, f.actionX - dp(4f) - dp(4f))
     voice.panel.layout(dp(4f), rowTop, dp(4f) + panelW, rowTop + dp(44f))
   }

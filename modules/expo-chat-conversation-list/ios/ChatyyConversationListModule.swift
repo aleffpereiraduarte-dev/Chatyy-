@@ -105,6 +105,10 @@ public class ChatyyConversationListModule: Module {
       }
       // Android usa (prévia do toque longo); iOS já abre a prévia nativa do menu.
       Prop("peekMode") { (_: ChatyyConversationListView, _: String?) in }
+      // [2026-10-16 motion-nav] kill switch das molas da lista (JS só manda quando false).
+      Prop("springMotion") { (_: ChatyyConversationListView, value: Bool?) in
+        CLSpring.enabled = value ?? true
+      }
 
       OnViewDidUpdateProps { (view: ChatyyConversationListView) in
         view.commitProps()

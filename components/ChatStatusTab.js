@@ -51,6 +51,7 @@ import { registerTextStatusOpener, consumePendingTextComposer } from './status/s
 import { formatTime, formatDateTime } from '../utils/dateFormat'; // [2026-10-13 status-viewers]
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 import { tryOpenNativeStories } from './status/nativeStories'; // [2026-10-15 native-story]
+import { storyOriginRef, markStoryOrigin } from '../services/storyOrigin'; // [2026-10-16 motion] story cresce do anel
 // [2026-10-15 native-lists] Lista de atualizações NATIVA (ChatyyStatusList).
 // Binário sem a view / web → isStatusListAvailable() false → ScrollView JS idêntico.
 import NativeStatusList from './status/NativeStatusList';
@@ -896,10 +897,10 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
       {/* My status always first */}
       <TouchableOpacity
         style={styles.storyItem}
-        onPress={() => hasMyStatus ? onOpenViewer(myStatusGroup) : onOpenCreator()}
+        onPress={() => { if (hasMyStatus) { markStoryOrigin('bar', currentEmail); onOpenViewer(myStatusGroup); } else onOpenCreator(); }}
         activeOpacity={0.7}
       >
-        <View style={styles.storyAvatarWrap}>
+        <View style={styles.storyAvatarWrap} ref={storyOriginRef('bar', currentEmail)} collapsable={false}>
           <StoryRingAvatar
             name={currentName}
             email={currentEmail}
@@ -942,10 +943,10 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
           <TouchableOpacity
             key={group.ownerEmail}
             style={styles.storyItem}
-            onPress={() => onOpenViewer(group)}
+            onPress={() => { markStoryOrigin('bar', group.ownerEmail); onOpenViewer(group); }}
             activeOpacity={0.7}
           >
-            <View style={styles.storyAvatarWrap}>
+            <View style={styles.storyAvatarWrap} ref={storyOriginRef('bar', group.ownerEmail)} collapsable={false}>
               <StoryRingAvatar
                 name={group.ownerName}
                 email={group.ownerEmail}
@@ -3330,7 +3331,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             }
           } catch {}
         }}
-        onPress={() => openViewer(statusGroup)}
+        onPress={() => { markStoryOrigin('row', statusGroup.ownerEmail); openViewer(statusGroup); }}
         // Long-press → quick peek modal (Instagram pattern). Preview the
         // latest item without marking as viewed; releasing dismisses it.
         // We just open the full viewer for now (release-to-close needs a
@@ -3343,7 +3344,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         delayLongPress={350}
         activeOpacity={0.7}
       >
-        <Animated.View style={[styles.avatarWrapper, {
+        <Animated.View ref={storyOriginRef('row', statusGroup.ownerEmail)} collapsable={false} style={[styles.avatarWrapper, {
           transform: [{ scale: getPulseFor(statusGroup.ownerEmail) }],
         }]}>
           <SegmentedRing
@@ -3720,11 +3721,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         }]}>
           <View style={styles.myStatusRow}>
             <TouchableOpacity
-              onPress={() => hasMyStatus ? openViewer(myStatusGroup) : openCreator()}
+              onPress={() => { if (hasMyStatus) { markStoryOrigin('me', myStatusGroup?.ownerEmail); openViewer(myStatusGroup); } else openCreator(); }}
               activeOpacity={0.7}
               style={{ alignItems: 'center', justifyContent: 'center', marginRight: 16 }}
             >
-              <View style={styles.myAvatarWrapperHero}>
+              <View style={styles.myAvatarWrapperHero} ref={storyOriginRef('me', myStatusGroup?.ownerEmail)} collapsable={false}>
                 {hasMyStatus ? (
                   // Solid gradient ring when there's an active story.
                   <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>

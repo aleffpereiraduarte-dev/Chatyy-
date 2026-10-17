@@ -44,6 +44,11 @@
 //                    sheetContainerStyle, useOverlayColors)  — ./Sheet
 //   ActionList       linhas de ação de sheet/menu                — ./ActionList
 //   showToast/ToastHost  toasts                                  — ./Toast
+//   Checkbox, Chip   marcar (check c/ mola pop + tique) / pílula selecionável — ./Checkbox
+//   RefreshControl   pull-to-refresh P&B + toque soft (drop-in do RN) — ./RefreshControl
+//   MOVIMENTO        constants/motion.js — Springs/Durations/PressScale/Gestures,
+//                    springTo/timingTo/animateLayout, motionEnabled, useReducedMotion,
+//                    feedback (haptics c/ preferência do usuário). Nada de tension/friction avulso.
 //   PressableScale   toque premium (mola + haptic) — botões/cards/ícones
 //   PressableRow     toque NATIVO de célula (realce iOS / ripple Android)
 //   FadeSlideIn      entrada suave (fade + 8px) — listas/telas, sem exagero
@@ -79,6 +84,8 @@ export { default as useSurface } from './useSurface';
 export { default as Sheet, SheetHeader, SheetHandle, sheetContainerStyle, useOverlayColors } from './Sheet';
 export { default as ActionList } from './ActionList';
 export { showToast, hideToast, ToastHost } from './Toast';
+export { default as RefreshControl } from './RefreshControl';
+export { Checkbox, Chip } from './Checkbox';
 export { default as PressableScale } from '../PressableScale';
 export { default as PressableRow } from '../PressableRow';
 export { default as FadeSlideIn } from '../FadeSlideIn';

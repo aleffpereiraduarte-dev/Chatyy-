@@ -61,6 +61,43 @@ internal object CLMotion {
   }
 }
 
+/**
+ * [2026-10-16 motion-nav] Molas analíticas da lista (Telegram): sem
+ * dynamicanimation no módulo, então a física vira Interpolator/curva pura.
+ *  • Critical — mola criticamente amortecida (sai rápido, assenta sem
+ *    overshoot) p/ inserir/mover/remover linhas no ItemAnimator;
+ *  • bump(t) — impulso amortecido (sobe, passa um tico, volta a 1) p/ o
+ *    "pulo" do contador de não lidas.
+ * Kill switch: prop `springMotion=false` (JS globalThis.__chatyy_motion_list_spring = false)
+ * → `enabled=false` → curvas/pulo antigos.
+ */
+internal object CLSpring {
+  @Volatile var enabled = true
+
+  class Critical(private val wd: Float = 8f) : android.view.animation.Interpolator {
+    private val norm = 1f - (1f + wd) * kotlin.math.exp(-wd)
+    override fun getInterpolation(t: Float): Float {
+      if (t <= 0f) return 0f
+      if (t >= 1f) return 1f
+      val x = wd * t
+      return ((1f - (1f + x) * kotlin.math.exp(-x)) / norm).coerceIn(0f, 1.0f)
+    }
+  }
+
+  private const val ZETA = 0.5f
+  private const val OMEGA = 14f // rad/s → pico em ~86 ms, assenta em ~0,55 s
+  private val wdamp = OMEGA * kotlin.math.sqrt(1f - ZETA * ZETA)
+  private val tPeak = kotlin.math.atan(wdamp / (ZETA * OMEGA)) / wdamp
+  private val gPeak = kotlin.math.exp(-ZETA * OMEGA * tPeak) * kotlin.math.sin(wdamp * tPeak)
+  const val BUMP_MS = 560L
+
+  /** Deslocamento normalizado (pico = 1) do impulso no instante [sec]. */
+  fun bump(sec: Float): Float {
+    if (sec <= 0f) return 0f
+    return kotlin.math.exp(-ZETA * OMEGA * sec) * kotlin.math.sin(wdamp * sec) / gPeak
+  }
+}
+
 internal object CLType {
   fun weight(w: Int): Typeface {
     if (Build.VERSION.SDK_INT >= 28) return Typeface.create(Typeface.DEFAULT, w, false)

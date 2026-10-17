@@ -184,6 +184,7 @@ final class PGCell: UICollectionViewCell {
     // em voo de outro item caem pelo token.
     token += 1
     contentView.transform = .identity
+    checkView.transform = .identity
   }
 
   override func layoutSubviews() {
@@ -196,7 +197,9 @@ final class PGCell: UICollectionViewCell {
     gradient.frame = CGRect(x: 0, y: b.height * 0.6, width: b.width, height: b.height * 0.4)
     CATransaction.commit()
     badgeView.frame = CGRect(x: b.width - 21, y: b.height - 21, width: 18, height: 18)
-    checkView.frame = CGRect(x: b.width - 26, y: 4, width: 22, height: 22)
+    // bounds+center (nunca frame): o check pode estar com transform da mola.
+    checkView.bounds = CGRect(x: 0, y: 0, width: 22, height: 22)
+    checkView.center = CGPoint(x: b.width - 26 + 11, y: 4 + 11)
     playIcon.frame = CGRect(x: 5, y: b.height - 15, width: 10, height: 10)
     durationLabel.frame = CGRect(x: 17, y: b.height - 18, width: b.width - 40, height: 16)
     badgeView.isHidden = small || badgeView.image == nil
@@ -225,6 +228,15 @@ final class PGCell: UICollectionViewCell {
   func setSelectedAnimated(_ selected: Bool, compact: Bool, check: UIColor) {
     checkView.image = PGIcons.check(selected, color: check)
     dimView.isHidden = !selected
+    // [2026-10-16 motion] Check com mola (estoura de 0.55 → 1); kill switch __chatyy_motion_grid.
+    if MVMotion.gridSpring && !MVMotion.reduceMotion {
+      if selected { checkView.transform = CGAffineTransform(scaleX: 0.55, y: 0.55) }
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.62, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+        self.contentView.transform = (selected && !compact) ? CGAffineTransform(scaleX: 0.9, y: 0.9) : .identity
+        self.checkView.transform = .identity
+      }
+      return
+    }
     UIView.animate(withDuration: 0.16, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
       self.contentView.transform = (selected && !compact) ? CGAffineTransform(scaleX: 0.9, y: 0.9) : .identity
     }

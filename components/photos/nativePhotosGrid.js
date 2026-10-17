@@ -156,7 +156,14 @@ function hexColor(c, fallback) {
   return fallback;
 }
 
+
+// [2026-10-16 motion] Kill switches __chatyy_motion_* do pacote de mídia (check em mola).
+function _syncMotion() {
+  try { require('../../modules/expo-media-viewer/motion').syncMotion(); } catch {}
+}
+
 const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
+  useEffect(() => { if (Platform.OS === 'ios' || Platform.OS === 'android') _syncMotion(); }, []);
   const {
     colors = {}, isDark = false, t, locale = 'pt-BR', insetTop = 0, insetBottom = 0,
     userEmail = '', backupEnabled = false, includeLocal = true, zoomLevel,

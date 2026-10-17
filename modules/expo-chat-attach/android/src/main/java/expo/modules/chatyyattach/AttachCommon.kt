@@ -39,6 +39,8 @@ class CAConfig(o: Map<String, Any?>) {
   // [2026-10-15 native-status-studio] câmera do status: seletor Texto · Normal · Boomerang.
   val statusModes: Boolean
   val boomerangSec: Double
+  // [2026-10-16 motion-attach] botões de ação entram em cascata (false = estático)
+  val motion: Boolean
 
   init {
     val l = HashMap<String, String>()
@@ -68,6 +70,7 @@ class CAConfig(o: Map<String, Any?>) {
     withAudio = (o["withAudio"] as? Boolean) ?: true
     statusModes = (o["statusModes"] as? Boolean) ?: false
     boomerangSec = ((o["boomerangSec"] as? Number)?.toDouble() ?: 1.5).coerceIn(0.8, 4.0)
+    motion = (o["motion"] as? Boolean) ?: true
   }
 
   fun t(key: String, fallback: String): String {

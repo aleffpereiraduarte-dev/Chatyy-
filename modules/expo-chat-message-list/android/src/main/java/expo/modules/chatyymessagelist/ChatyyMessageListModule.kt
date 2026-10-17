@@ -20,7 +20,8 @@ class ChatyyMessageListModule : Module() {
     //     hint). responder → onSwipeReply dir 'reply'; reagir/mais → onRowLongPress
     //     (a11y: id); copiar/encaminhar → onRowPress part 'a11y' url id; clique do
     //     TalkBack → toque na parte principal.
-    Function("apiVersion") { 6 }
+    // 7 = [motion-conv] prop `motion` {i,e,t,r,s,a} (molas de entrada/edição, ✓✓ animado, pop+faíscas de reação, pílula, onda do áudio)
+    Function("apiVersion") { 7 }
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.
@@ -44,6 +45,8 @@ class ChatyyMessageListModule : Module() {
       Prop("stickyDate") { view: MLListView, v: Map<String, Any?>? -> view.setStickyDate(v) }
       Prop("store") { view: MLListView, v: Map<String, Any?>? -> view.setStore(v) }
       Prop("a11y") { view: MLListView, v: Map<String, Any?>? -> view.setA11yLabels(v) }
+      // [motion-conv] kill switches de movimento (apiVersion 7)
+      Prop("motion") { view: MLListView, v: Map<String, Any?>? -> view.setMotion(v) }
 
       OnViewDestroys { view: MLListView -> view.destroy() }
 

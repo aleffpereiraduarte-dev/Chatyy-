@@ -331,6 +331,9 @@ function NativeConversationListInner(props) {
     topInset: Math.max(0, Math.round(Number(topInset) || 0)),
     snapOffset: Math.max(0, Math.round(Number(snapOffset) || 0)),
     peekMode: (Platform.OS === 'android' && globalThis.__chatyy_native_list_peek !== false) ? 'peek' : 'menu',
+    // [2026-10-16 motion-nav] molas nativas (ItemAnimator Android + pulo do
+    // contador iOS/Android). Só vai quando DESLIGADO (binário sem a prop ignora).
+    ...(globalThis.__chatyy_motion_list_spring === false ? { springMotion: false } : null),
   } : null;
 
   if (!Native) return null;

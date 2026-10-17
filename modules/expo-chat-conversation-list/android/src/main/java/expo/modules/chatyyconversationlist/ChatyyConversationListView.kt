@@ -1303,7 +1303,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     recycler.clipToPadding = false
     recycler.overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
     recycler.setItemViewCacheSize(8)
-    recycler.itemAnimator = DefaultItemAnimator().apply {
+    recycler.itemAnimator = CLSpringItemAnimator().apply {
       supportsChangeAnimations = false
       // [wave8] conversa que recebeu mensagem sobe um pouco mais devagar (as
       // outras deslizam junto, sem "pulo").
@@ -1354,5 +1354,35 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     private const val TYPE_ROW = 1
     private const val TYPE_FOOTER = 2
     private val PAYLOAD_BIND = Any()
+  }
+}
+
+/**
+ * [2026-10-16 motion-nav] ItemAnimator com MOLA (Telegram): o DefaultItemAnimator
+ * força AccelerateDecelerate em resetAnimation(); aqui, logo depois do super
+ * enfileirar a animação (que só começa em runPendingAnimations), o
+ * ViewPropertyAnimator da linha recebe a mola criticamente amortecida — a
+ * conversa que recebeu mensagem sobe "lançada" e assenta, sem curva linear.
+ * CLSpring.enabled=false → curva padrão.
+ */
+internal class CLSpringItemAnimator : DefaultItemAnimator() {
+  private val spring = CLSpring.Critical()
+
+  override fun animateMove(holder: RecyclerView.ViewHolder, fromX: Int, fromY: Int, toX: Int, toY: Int): Boolean {
+    val r = super.animateMove(holder, fromX, fromY, toX, toY)
+    if (r && CLSpring.enabled) holder.itemView.animate().interpolator = spring
+    return r
+  }
+
+  override fun animateAdd(holder: RecyclerView.ViewHolder): Boolean {
+    val r = super.animateAdd(holder)
+    if (r && CLSpring.enabled) holder.itemView.animate().interpolator = spring
+    return r
+  }
+
+  override fun animateRemove(holder: RecyclerView.ViewHolder): Boolean {
+    val r = super.animateRemove(holder)
+    if (r && CLSpring.enabled) holder.itemView.animate().interpolator = spring
+    return r
   }
 }

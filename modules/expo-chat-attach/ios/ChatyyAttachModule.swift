@@ -177,6 +177,8 @@ struct AttachConfig {
   // [2026-10-15 native-status-studio] câmera do status: seletor Texto · Normal · Boomerang.
   let statusModes: Bool
   let boomerangSec: Double
+  // [2026-10-16 motion-attach] botões de ação entram em cascata (false = estático)
+  let motion: Bool
 
   init(_ o: [String: Any]) {
     var l: [String: String] = [:]
@@ -208,6 +210,7 @@ struct AttachConfig {
     withAudio = (o["withAudio"] as? Bool) ?? true
     statusModes = (o["statusModes"] as? Bool) ?? false
     boomerangSec = min(4, max(0.8, AttachConfig.double(o["boomerangSec"]) ?? 1.5))
+    motion = (o["motion"] as? Bool) ?? true
   }
 
   func t(_ key: String, _ fallback: String) -> String {

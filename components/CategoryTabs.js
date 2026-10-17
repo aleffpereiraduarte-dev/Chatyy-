@@ -1,8 +1,10 @@
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconInbox, IconUsers, IconTag, IconBell, IconMail, IconMailOpen, IconStarFilled } from './Icons';
+import PressableScale from './PressableScale';
+import { PressScale } from '../constants/motion';
 
 // [beauty 2026-10-01] Monochrome pills (one accent #111111 for every active
 // tab) — the per-category rainbow (pink/amber/green/blue) fought the app's
@@ -65,8 +67,14 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
         const activeColor = cat.color;
         const labelText = cat.i18nKey ? t(cat.i18nKey) : (cat.label || cat.key);
         return (
-          <TouchableOpacity
+          // [2026-10-16 motion] chip tátil: mola de toque (PressScale.chip) +
+          // tique de seleção só ao TROCAR de categoria.
+          <PressableScale
             key={cat.key}
+            scaleTo={PressScale.chip}
+            haptic={isActive ? false : 'select'}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
             style={[
               s.tab,
               isActive
@@ -85,7 +93,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                   },
             ]}
             onPress={() => onCategoryChange?.(cat.key)}
-            activeOpacity={0.6}
+            activeOpacity={0.85}
           >
             <Icon
               size={15}
@@ -114,7 +122,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                 </Text>
               </View>
             )}
-          </TouchableOpacity>
+          </PressableScale>
         );
       })}
     </ScrollView>

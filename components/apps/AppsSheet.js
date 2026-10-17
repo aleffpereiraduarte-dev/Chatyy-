@@ -25,6 +25,7 @@ import {
 import PressableScale from '../PressableScale';
 import { WALLET_ENABLED } from '../../constants/featureFlags';
 import { haptic } from '../../constants/theme';
+import { Springs, Durations, Easings, motionEnabled } from '../../constants/motion'; // [2026-10-16 motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad, nativeSheetBoundedOn } from '../NativeSheet';
 import BiaOrb from '../bia/BiaOrb';
 import { GlyphWave } from '../bia/BiaUI';
@@ -349,8 +350,8 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
     if (!mounted) return;
     if (closingByDragRef.current) { sheetY.setValue(sheetHRef.current); dragY.setValue(0); setMounted(false); return; }
     Animated.parallel([
-      Animated.timing(backdropA, { toValue: 0, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.timing(sheetY, { toValue: sheetHRef.current, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(backdropA, { toValue: 0, duration: motionEnabled() ? Durations.exit : 0, easing: Easings.fadeOut, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(sheetY, { toValue: sheetHRef.current, duration: motionEnabled() ? 220 : 0, easing: Easings.accelerate, useNativeDriver: Platform.OS !== 'web' }),
     ]).start(({ finished }) => { if (finished) setMounted(false); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -358,8 +359,10 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
     if (_NATIVE_SHEET || !mounted || !visible) return;
     dragY.setValue(0);
     Animated.parallel([
-      Animated.timing(backdropA, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
-      Animated.spring(sheetY, { toValue: 0, tension: 70, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(backdropA, { toValue: 1, duration: motionEnabled() ? 220 : 0, easing: Easings.fadeIn, useNativeDriver: Platform.OS !== 'web' }),
+      motionEnabled()
+        ? Animated.spring(sheetY, { toValue: 0, ...Springs.sheet, useNativeDriver: Platform.OS !== 'web' })
+        : Animated.timing(sheetY, { toValue: 0, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
     ]).start();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, openTick]);
@@ -370,16 +373,17 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
       if (g.dy > 110 || g.vy > 0.9) {
         closingByDragRef.current = true;
         try { haptic.light?.(); } catch {}
+        // [2026-10-16 motion] continua com a velocidade do dedo (mola sem overshoot).
         Animated.parallel([
-          Animated.timing(dragY, { toValue: sheetHRef.current, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
-          Animated.timing(backdropA, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.spring(dragY, { toValue: sheetHRef.current, velocity: Math.max(0, g.vy) * 1000, ...Springs.sheet, overshootClamping: true, restDisplacementThreshold: 2, restSpeedThreshold: 40, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(backdropA, { toValue: 0, duration: 200, easing: Easings.fadeOut, useNativeDriver: Platform.OS !== 'web' }),
         ]).start(() => { try { onCloseRef.current?.(); } catch {} });
       } else {
-        Animated.spring(dragY, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+        Animated.spring(dragY, { toValue: 0, ...Springs.sheet, velocity: g.vy * 1000, useNativeDriver: Platform.OS !== 'web' }).start();
       }
     },
     onPanResponderTerminate: () => {
-      Animated.spring(dragY, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+      Animated.spring(dragY, { toValue: 0, ...Springs.sheet, useNativeDriver: Platform.OS !== 'web' }).start();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);

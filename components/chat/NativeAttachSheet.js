@@ -199,6 +199,9 @@ export default function NativeAttachSheet({
           maxSelect: 30,
           hdDefault: false,
           allowCamera: true,
+          // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
+          // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
+          ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),
         });
       } catch (e) {
         if (__DEV__) console.warn('[native-attach] openSheet failed', e?.message || e);

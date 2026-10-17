@@ -17,7 +17,8 @@
 // Sem P2P (desligado no servidor): presente é pelo chat/live/reel/post.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, ScrollView, Share, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, ScrollView, Share, Platform } from 'react-native';
+import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { useRouter, Redirect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, nativeScrollInsetProps, NativeInsetView, IOS_NATIVE_INSET } from '../components/nativeHeader';
@@ -768,7 +769,7 @@ function WalletScreen() {
           showsVerticalScrollIndicator={false}
           initialNumToRender={14}
           windowSize={9}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
+          refreshControl={<UIRefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
         />
       )}
       <DiamondTopUpSheet visible={topupOpen} onClose={() => { setTopupOpen(false); load(); }} />

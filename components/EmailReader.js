@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions } from 'react-native';
 import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
@@ -18,6 +18,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow, haptic } from '../constants/theme';
+import { animateLayout } from '../constants/motion'; // [2026-10-16 motion] expandir/recolher com mola
 import { computeContentMaxWidth } from '../utils/responsive';
 import { Colors } from '../constants/theme';
 import SmartReplyChips from './SmartReplyChips';
@@ -778,7 +779,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               <TouchableOpacity
                 style={[s.quotedToggle, { backgroundColor: colors.primary + '12' }]}
                 onPress={() => {
-                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                  animateLayout();
                   setShowQuoted(!showQuoted);
                 }}
                 accessibilityLabel={showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || t('reader.showQuoted') || 'Show history')}
@@ -976,7 +977,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             <TouchableOpacity
               style={[s.quotedToggle, { backgroundColor: colors.primary + '12' }]}
               onPress={() => {
-                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                animateLayout();
                 setShowQuoted(!showQuoted);
               }}
               accessibilityLabel={showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || t('reader.showQuoted') || 'Show history')}
@@ -1487,7 +1488,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               <AvatarCircle name={user?.name || user?.email || ''} email={user?.email} size={32} />
               <TouchableOpacity
                 onPress={() => {
-                  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                  animateLayout();
                   setInlineReplyExpanded(true);
                 }}
                 activeOpacity={0.7}
@@ -1626,7 +1627,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   accessibilityLabel={t('reader.discard')}
                   accessibilityRole="button"
                   onPress={() => {
-                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    animateLayout();
                     setInlineReplyText('');
                     setInlineReplyExpanded(false);
                   }}

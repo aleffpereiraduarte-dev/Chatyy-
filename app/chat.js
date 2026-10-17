@@ -16,6 +16,8 @@ import {
   IconCheckCircle, // [2026-10-08 apps-native] tile Tarefas
 } from '../components/Icons';
 import PressableScale from '../components/PressableScale';
+import { isReduceMotionEnabled } from '../components/reducedMotion';
+import { SearchReveal, searchRevealEnabled } from '../components/chatlist/SearchReveal'; // [2026-10-16 motion-nav] busca abre c/ mola na UI thread
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
@@ -374,6 +376,13 @@ function ChatHub() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchAnim = useRef(new Animated.Value(0)).current;
+  // [2026-10-16 motion-nav] Nativo c/ Reanimated: a barra abre/fecha por
+  // components/chatlist/SearchReveal (mola na UI thread, interrompível);
+  // searchShown = alvo da mola, searchOpen continua = "barra montada" (cai p/
+  // false quando a mola de fechar termina). Kill switch: __chatyy_motion_search=false.
+  const [searchShown, setSearchShown] = useState(false);
+  const _searchRea = Platform.OS !== 'web' && searchRevealEnabled();
+  const _onSearchHidden = useCallback(() => { setSearchOpen(false); }, []);
 
   // Universal search overlay (search_global backend) — opens via "Buscar tudo"
   // chip dentro da search bar local; vai além do chat e procura emails, posts,
@@ -835,6 +844,9 @@ function ChatHub() {
     const dir = _tabSettleDirRef.current;
     if (dir == null) return;
     _tabSettleDirRef.current = null;
+    // [2026-10-16 motion-nav] Reduzir Movimento: troca de aba seca (sem
+    // deslize/esmaecer), como o push vira dissolve no _layout.
+    if (isReduceMotionEnabled()) { contentOpacity.setValue(1); contentTranslateX.setValue(0); return; }
     contentOpacity.setValue(0.6);
     contentTranslateX.setValue(dir * 16);
     Animated.parallel([
@@ -1032,13 +1044,17 @@ function ChatHub() {
 
   const toggleSearch = useCallback(() => {
     if (searchOpen) {
+      // [motion-nav] tocou de novo enquanto a mola fechava → reabre do ponto atual.
+      if (_searchRea && !searchShown) { setSearchShown(true); return; }
       setSearchQuery(''); // clear on close
+      if (_searchRea) { setSearchShown(false); return; } // SearchReveal → _onSearchHidden
       Animated.timing(searchAnim, { toValue: 0, duration: 220, useNativeDriver: false }).start(() => setSearchOpen(false));
     } else {
       setSearchOpen(true);
+      if (_searchRea) { setSearchShown(true); return; }
       Animated.spring(searchAnim, { toValue: 1, tension: 100, friction: 15, useNativeDriver: false }).start();
     }
-  }, [searchOpen, searchAnim]);
+  }, [searchOpen, searchAnim, _searchRea, searchShown]);
 
   // [2026-06-09 sweep] Web keyboard shortcuts (WhatsApp Web parity):
   // Ctrl/Cmd+K opens + focuses conversation search (the TextInput autoFocuses
@@ -1260,6 +1276,10 @@ function ChatHub() {
 
   const searchHeight = searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 52] });
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
+  // [motion-nav] casca da barra: SearchReveal (mola UI thread) ou o Animated.View antigo.
+  const SearchShell = _searchRea ? SearchReveal : Animated.View;
+  const _searchShellProps = _searchRea ? { shown: searchShown && searchOpen, onHidden: _onSearchHidden, height: 52 } : null;
+  const _searchAnimStyle = _searchRea ? null : { height: searchHeight, opacity: searchOpacity };
 
   // WhatsApp 2026 header style — CLEAN WHITE (2026-09-30 "much less black").
   // Was a solid black surface (#111 in both modes). Now a white (light) /
@@ -1365,8 +1385,7 @@ function ChatHub() {
           </View>
 
           {/* Search bar */}
-          <Animated.View style={[styles.searchBarOuter, {
-            height: searchHeight, opacity: searchOpacity,
+          <SearchShell {..._searchShellProps} style={[styles.searchBarOuter, _searchAnimStyle, {
             ...glassHeader,
             borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
             overflow: 'hidden',
@@ -1397,7 +1416,7 @@ function ChatHub() {
                 </TouchableOpacity>
               </View>
             )}
-          </Animated.View>
+          </SearchShell>
 
 
           {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
@@ -1598,8 +1617,7 @@ function ChatHub() {
       )}
 
       {/* Animated search bar */}
-      <Animated.View style={[styles.searchBarOuter, {
-        height: searchHeight, opacity: searchOpacity,
+      <SearchShell {..._searchShellProps} style={[styles.searchBarOuter, _searchAnimStyle, {
         ...glassHeader,
         borderBottomColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
         overflow: 'hidden',
@@ -1625,7 +1643,7 @@ function ChatHub() {
             </TouchableOpacity>
           </View>
         )}
-      </Animated.View>
+      </SearchShell>
 
 
       {/* Tab content with fade - lazy mount: only mount tab once visited */}

@@ -25,9 +25,13 @@ public class ChatyyMessageListModule: Module {
     //     (nomes das ações + hint). Ações: responder → onSwipeReply dir 'reply';
     //     reagir/mais → onRowLongPress (a11y: id); copiar/encaminhar → onRowPress
     //     part 'a11y' url id. Dynamic Type/"Escurecer cores" ao vivo.
+    // 7 = [motion-conv] prop `motion` {i, e, t, r, s, a} (0/1; ausente = ligado):
+    //     entrada com mola enviada/recebida, apagar/colapsar/altura com mola,
+    //     ✓→✓✓→lida animado, pop+faíscas de reação alheia, pílula de data com
+    //     mola, onda do áudio contínua.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 6
+      return 7
       #else
       return 3
       #endif
@@ -78,6 +82,10 @@ public class ChatyyMessageListModule: Module {
       }
       Prop("a11y") { (view: CMLListView, value: [String: Any]?) in
         view.setA11yLabels(value)
+      }
+      // [motion-conv] kill switches de movimento (apiVersion 7)
+      Prop("motion") { (view: CMLListView, value: [String: Any]?) in
+        view.setMotion(value)
       }
 
       AsyncFunction("applyRows") { (view: CMLListView, payload: [String: Any]) in

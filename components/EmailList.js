@@ -1,5 +1,6 @@
 import { useRef, useEffect, useMemo, useCallback, useState } from 'react';
-import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform, Alert } from 'react-native';
+import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Alert } from 'react-native';
+import UIRefreshControl from './ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 // [2026-09-24 nível-WhatsApp] Motor de lista NATIVO (FlashList v2). O v1 travava
 // no iOS SDK55 (por isso as listas voltaram pro FlatList); a v2 é New-Arch-native
 // (newArchEnabled=true) e já roda estável no ChatListTab. As props só-de-FlatList
@@ -358,7 +359,7 @@ export default function EmailList({
           renderItem={renderItem}
           contentContainerStyle={Platform.OS !== 'web' ? { paddingBottom: insets.bottom + 80 } : undefined}
           refreshControl={
-            <RefreshControl
+            <UIRefreshControl
               refreshing={!!refreshing || (loading && emails.length > 0)}
               onRefresh={onRefresh}
               colors={[colors.primary]}

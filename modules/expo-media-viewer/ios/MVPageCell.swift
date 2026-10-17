@@ -104,6 +104,20 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
     return page.convert(r, to: target)
   }
 
+  // [2026-10-16 motion] Parallax da paginação: desloca o conteúdo DENTRO da
+  // página (bounds.origin — não mexe no transform do arrasto de fechar) e
+  // recorta pela própria página só enquanto está fora do centro.
+  private(set) var parallaxX: CGFloat = 0
+  func setParallax(_ x: CGFloat) {
+    let nx = abs(x) < 0.5 ? 0 : x
+    if nx == parallaxX { return }
+    parallaxX = nx
+    page.clipsToBounds = nx != 0
+    var b = page.bounds
+    b.origin.x = nx
+    page.bounds = b
+  }
+
   var isZoomed: Bool {
     return !zoomView.isHidden && zoomView.zoomScale > zoomView.minimumZoomScale + 0.01
   }
@@ -186,7 +200,7 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
     let inset = MVPageCell.pageSpacing / 2
     let size = CGSize(width: max(0, contentView.bounds.width - inset * 2), height: contentView.bounds.height)
     // bounds + center (nunca frame): `page` pode estar com transform do arrasto.
-    page.bounds = CGRect(origin: .zero, size: size)
+    page.bounds = CGRect(origin: CGPoint(x: parallaxX, y: 0), size: size)
     page.center = CGPoint(x: contentView.bounds.midX, y: contentView.bounds.midY)
     let b = page.bounds
     zoomView.frame = b
@@ -212,6 +226,7 @@ final class MVPageCell: UICollectionViewCell, UIScrollViewDelegate {
     isActive = false
     zoomView.setZoomScale(1, animated: false)
     page.transform = .identity
+    setParallax(0)
     imageView.image = nil
     posterView.image = nil
     spinner.stopAnimating()

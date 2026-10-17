@@ -150,6 +150,15 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var visibleScheduled = false
   private var lastVisibleSig = ""
 
+  private val itemAnim = MLItemAnimator { h ->
+    val r = (h.itemView as? MLCellView)?.row
+    when {
+      r == null || r.kind != MLKind.MSG -> 2
+      r.own -> 1
+      else -> 0
+    }
+  }
+
   init {
     clipChildren = true
     rv.layoutManager = lm
@@ -160,12 +169,9 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     rv.setHasFixedSize(true)
     rv.setItemViewCacheSize(8)
     rv.recycledViewPool.setMaxRecycledViews(0, 24)
-    rv.itemAnimator = DefaultItemAnimator().apply {
-      supportsChangeAnimations = false
-      addDuration = 180
-      moveDuration = 200
-      removeDuration = 120
-    }
+    // [motion-conv] MLItemAnimator: style 0 = DefaultItemAnimator (mesmas durações
+    // de antes); 1/2 = molas (ver MLMotion.kt)
+    rv.itemAnimator = itemAnim
     addView(frame, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     frame.addView(rv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
     rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -236,6 +242,9 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   fun setTransfers(list: List<Map<String, Any?>>) { MLTransfers.setExternal(list) }
 
   // ─── [fase 2] props/comandos ─────────────────────────────────────────────
+  /** [motion-conv] prop `motion` (apiVersion 7) — ver MLMotion. */
+  fun setMotion(m: Map<String, Any?>?) { MLMotion.apply(m) }
+
   fun setStickyDate(m: Map<String, Any?>?) {
     val on = m != null && MLRow.bool(m["on"])
     stickyOn = on
@@ -284,7 +293,15 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       stickyVisible = true
       sticky.visibility = View.VISIBLE
       sticky.animate().cancel()
-      sticky.animate().alpha(1f).setDuration(180).start()
+      if (MLMotion.sticky && MLMotion.systemOn()) {
+        // [motion-conv] entra caindo de leve com mola (escala .9 + 6 dp acima)
+        if (sticky.alpha < 0.05f) { sticky.scaleX = 0.9f; sticky.scaleY = 0.9f; sticky.translationY = -dp(6f) }
+        sticky.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f).setDuration(320)
+          .setInterpolator(DecelerateInterpolator(1.6f)).start()
+      } else {
+        sticky.scaleX = 1f; sticky.scaleY = 1f; sticky.translationY = 0f
+        sticky.animate().alpha(1f).setDuration(180).start()
+      }
     }
     main.removeCallbacks(stickyHide)
   }
@@ -299,7 +316,14 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     if (!stickyVisible) return
     stickyVisible = false
     sticky.animate().cancel()
-    sticky.animate().alpha(0f).setDuration(400).withEndAction { if (!stickyVisible) sticky.visibility = View.GONE }.start()
+    if (MLMotion.sticky && MLMotion.systemOn()) {
+      // [motion-conv] sai encolhendo de leve
+      sticky.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setDuration(300)
+        .setInterpolator(android.view.animation.AccelerateInterpolator(1.2f))
+        .withEndAction { if (!stickyVisible) { sticky.visibility = View.GONE; sticky.scaleX = 1f; sticky.scaleY = 1f } }.start()
+    } else {
+      sticky.animate().alpha(0f).setDuration(400).withEndAction { if (!stickyVisible) sticky.visibility = View.GONE }.start()
+    }
   }
 
   // ─── [hero] frame da miniatura (mesmas coords do anchor: dp, relativo à raiz React)
@@ -688,7 +712,37 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       for ((i, k) in newKeys.withIndex()) if (k !in oldSet) { if (i < 4) insertedBottom++ else insertedElsewhere++ }
     }
     val atBottom = old.isEmpty() || distanceFromLatest() < dp(3f)
-    val animate = pendingAnim && atBottom && old.isNotEmpty() && insertedBottom in 1..3 && insertedElsewhere == 0
+    // [motion-conv] linha que SAIU (apagar / chave _d): com `e` ligado não "sobe do
+    // composer" como nova — vai p/ o colapso abaixo.
+    var removedAny = false
+    if (!orderSame && MLMotion.edit) { val ns0 = newKeys.toHashSet(); for (k in old) if (k !in ns0 && (rows[k]?.kind ?: MLKind.MSG) == MLKind.MSG) { removedAny = true; break } }
+    val animate = pendingAnim && atBottom && old.isNotEmpty() && insertedBottom in 1..3 && insertedElsewhere == 0 && !removedAny
+    // [motion-conv] apagar / virar "apagada" (chave _d = sai+entra no lugar) /
+    // altura mudou (editar, reação…): com mola se tudo que muda está NA TELA.
+    val sysAnim = MLMotion.systemOn()
+    var editAnim = false
+    if (!animate && pendingAnim && MLMotion.edit && sysAnim && old.isNotEmpty()) {
+      val vis = HashSet<String>()
+      val f0 = lm.findFirstVisibleItemPosition()
+      val f1 = lm.findLastVisibleItemPosition()
+      if (f0 != RecyclerView.NO_POSITION && f1 >= f0) for (i in f0..f1) old.getOrNull(i)?.let { vis.add(it) }
+      val newSet = newKeys.toHashSet()
+      var removed = 0
+      var removedOff = false
+      if (!orderSame) for (k in old) if (k !in newSet) { removed++; if (k !in vis) removedOff = true }
+      if (!orderSame) {
+        editAnim = removed in 1..3 && !removedOff && insertedBottom + insertedElsewhere <= removed
+      } else {
+        var hc = false
+        for (k in reconf) { val a = layouts[k]?.height; if (a != null && prevHeights[k] != null && prevHeights[k] != a) hc = true }
+        editAnim = hc && reconf.size <= 3 && reconf.all { it in vis }
+      }
+    }
+    itemAnim.style = when {
+      editAnim -> 2
+      animate && MLMotion.insert && sysAnim -> 1
+      else -> 0
+    }
     val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
       override fun getOldListSize() = old.size
       override fun getNewListSize() = newKeys.size
@@ -698,11 +752,14 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     applied = newKeys
     changedSinceApply.clear()
     pendingAnim = false
+    for (k in newKeys) layouts[k]?.let { prevHeights[k] = it.height }
+    if (prevHeights.size > newKeys.size + 300) { val keep = newKeys.toHashSet(); prevHeights.keys.retainAll(keep) }
+    val anim = animate || editAnim
     val animator = rv.itemAnimator
-    if (!animate) rv.itemAnimator = null
+    if (!anim) rv.itemAnimator = null
     diff.dispatchUpdatesTo(adapter)
     if (atBottom) rv.scrollToPosition(0)
-    if (!animate) rv.post { if (!destroyed) rv.itemAnimator = animator }
+    if (!anim) rv.post { if (!destroyed) rv.itemAnimator = animator }
     rv.post {
       if (destroyed) return@post
       sendReady()
@@ -711,6 +768,9 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       checkPendingPop()
     }
   }
+
+  /** [motion-conv] altura (px) já aplicada por chave → detectar "altura mudou". */
+  private val prevHeights = HashMap<String, Float>()
 
   private fun sendReady() {
     if (readySent) return

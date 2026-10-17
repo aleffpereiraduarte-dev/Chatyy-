@@ -15,6 +15,7 @@
 // os eventos às APIs (status_view, status_react, status_reply_dm…).
 
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import { syncMotion } from './motion';
 
 export type StoryItem = {
   id: string;
@@ -102,6 +103,11 @@ export type StoryOpenOptions = {
   /** Há mais pessoas depois/antes das enviadas → onNeedMore. */
   hasMoreNext?: boolean;
   hasMorePrev?: boolean;
+  /**
+   * [2026-10-16 motion] Frame do anel tocado (coordenadas de JANELA, pt/dp do
+   * RN): o story cresce dele e volta para ele ao fechar. apiVersion >= 3.
+   */
+  originRect?: { x: number; y: number; width: number; height: number } | null;
 };
 
 export type StoryViewerRow = { email: string; name?: string; avatar?: string; time?: string; reaction?: string };
@@ -190,8 +196,17 @@ export function apiVersion(): number {
 export async function open(options: StoryOpenOptions): Promise<number> {
   const m = mod();
   if (!m) return 0;
+  syncMotion(); // [2026-10-16 motion] kill switches __chatyy_motion_*
   try {
-    const sid = await m.open(options);
+    let opts: any = options;
+    if (opts && 'originRect' in opts) {
+      const { originRect, ...rest } = opts;
+      opts = rest;
+      const r: any = originRect;
+      const ok = r && [r.x, r.y, r.width, r.height].every((n: any) => typeof n === 'number' && Number.isFinite(n)) && r.width >= 2 && r.height >= 2;
+      if (ok && apiVersion() >= 3) opts.originRect = { x: r.x, y: r.y, width: r.width, height: r.height };
+    }
+    const sid = await m.open(opts);
     return typeof sid === 'number' ? sid : 0;
   } catch {
     return 0;

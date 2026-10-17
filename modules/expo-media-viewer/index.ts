@@ -17,6 +17,7 @@
 //   Todos os eventos trazem `session` — ignore os de sessões antigas.
 
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import { syncMotion } from './motion';
 
 export type MediaViewerItem = {
   /** URL remota (https) ou file:// — fonte principal. */
@@ -165,6 +166,7 @@ export function setReturnRect(index: number, rect: HeroRect | null, radius?: num
 export async function open(options: MediaViewerOpenOptions): Promise<number> {
   const m = mod();
   if (!m) return 0;
+  syncMotion(); // [2026-10-16 motion] kill switches __chatyy_motion_*
   try {
     // Binário antigo (apiVersion < 3) ou kill switch: nada novo atravessa a ponte.
     let opts: any = options;
@@ -212,4 +214,6 @@ export function addListener<K extends keyof MediaViewerEvents>(name: K, cb: Medi
   }
 }
 
-export default { isAvailable, supportsHero, open, close, setActionState, setReturnRect, prefetch, addListener };
+export { syncMotion };
+
+export default { isAvailable, supportsHero, open, close, setActionState, setReturnRect, prefetch, addListener, syncMotion };

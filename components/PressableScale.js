@@ -25,6 +25,7 @@ import React, { useRef } from 'react';
 import { TouchableOpacity, Animated } from 'react-native';
 import { haptic as themeHaptic } from '../constants/theme';
 import { isReduceMotionEnabled } from './reducedMotion';
+import { Springs, PressScale, motionEnabled } from '../constants/motion';
 
 export default function PressableScale({
   children,
@@ -37,7 +38,7 @@ export default function PressableScale({
   containerStyle, // [2026-10-16 polish3] opcional: estilo do Touchable externo (ex.: flex:1 p/ esticar na linha)
   activeOpacity = 0.9,
   haptic = 'light',
-  scaleTo = 0.97,
+  scaleTo = PressScale.default,
   disabled = false,
   ...props
 }) {
@@ -47,14 +48,13 @@ export default function PressableScale({
     if (!disabled) {
       // Reduce Motion: skip the scale spring (keep the haptic — a tactile tick
       // isn't "motion" and still confirms the tap for low-animation users).
-      if (!isReduceMotionEnabled()) {
-        // CLEAN 2026: snap-down suave (tension 340 vs 460) — sente responsivo
-        // mas leve, sem "tapa". Combina com o scale sutil 0.97.
+      if (!isReduceMotionEnabled() && motionEnabled('press')) {
+        // CLEAN 2026: snap-down suave (= tension 340/friction 12) — sente
+        // responsivo mas leve, sem "tapa". Token: constants/motion Springs.press.
         Animated.spring(scaleAnim, {
           toValue: scaleTo,
           useNativeDriver: true,
-          tension: 340,
-          friction: 12,
+          ...Springs.press,
         }).start();
       }
       // Tactile tick on press-in — feels instant, like iMessage / WhatsApp.
@@ -66,12 +66,12 @@ export default function PressableScale({
   };
 
   const handlePressOut = (e) => {
-    if (!disabled && !isReduceMotionEnabled()) {
+    if (!disabled) {
+      // Sempre volta a 1 (mesmo se o movimento foi desligado no meio do toque).
       Animated.spring(scaleAnim, {
         toValue: 1,
         useNativeDriver: true,
-        tension: 220,
-        friction: 13,
+        ...Springs.release,
       }).start();
     }
     onPressOut?.(e);

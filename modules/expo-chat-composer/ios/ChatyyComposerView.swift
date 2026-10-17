@@ -432,6 +432,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   var disabled = false { didSet { if disabled != oldValue { alpha = disabled ? 0.4 : 1; isUserInteractionEnabled = !disabled } } }
   var changeDebounceMs: Double = 60
   var keyboardTracking: String = "none" { didSet { if keyboardTracking != oldValue { updateKeyboardTracking() } } }
+  // [2026-10-16 motion-composer] false = movimento antigo (kill switch JS
+  // globalThis.__chatyy_motion_composer = false → prop motion=false).
+  var motion = true
 
   // MARK: Subviews
   let barView = UIView()
@@ -1035,7 +1038,14 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     if bounds.width > 0 {
       let f = computeFrames(width: bounds.width)
       reportHeight(f.total)
-      if animated && window != nil && !UIAccessibility.isReduceMotionEnabled {
+      if animated && window != nil && !UIAccessibility.isReduceMotionEnabled && motion && !voice.isActive {
+        // [2026-10-16 motion-composer] campo cresce/encolhe por linha com mola
+        // (Telegram): leve, sem overshoot visível, interrompível (beginFromCurrentState).
+        UIView.animate(withDuration: 0.34, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0,
+                       options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+          self.layoutIfNeeded()
+        }, completion: nil)
+      } else if animated && window != nil && !UIAccessibility.isReduceMotionEnabled {
         UIView.animate(withDuration: 0.18, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut], animations: {
           self.layoutIfNeeded()
         }, completion: nil)

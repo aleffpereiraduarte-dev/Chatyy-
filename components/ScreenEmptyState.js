@@ -30,6 +30,7 @@ import Svg, { Path, Circle, Rect, Defs, LinearGradient, RadialGradient, Stop, G,
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
+import { Springs, motionEnabled } from '../constants/motion'; // [2026-10-16 motion] entrada de estado vazio
 
 const AC = '#111111'; // brand accent
 
@@ -195,20 +196,23 @@ export default function ScreenEmptyState({
   const A = (isDark && /^#(?:[0-2][0-9a-f]){3}$/i.test(String(_rawA))) ? (colors.primary || '#F5F5F7') : _rawA;
   const ink = A === colors.primary ? (colors.onPrimary || '#fff') : '#fff';
 
-  const fade = useRef(new Animated.Value(0)).current;
-  const slide = useRef(new Animated.Value(12)).current;
-  const scale = useRef(new Animated.Value(0.92)).current;
+  // Reduzir Movimento / __chatyy_motion_empty_state=false → nasce assentado.
+  const still = useRef(!motionEnabled('empty_state')).current;
+  const fade = useRef(new Animated.Value(still ? 1 : 0)).current;
+  const slide = useRef(new Animated.Value(still ? 0 : 12)).current;
+  const scale = useRef(new Animated.Value(still ? 1 : 0.92)).current;
 
   // [2026-10-12 empty-state system] Calm entrance only — the endless float
   // loop + gradient halo were dropped for the shared premium look (soft
   // neutral circle + ink glyph, same as EmptyStateCard).
   useEffect(() => {
+    if (still) return;
     Animated.parallel([
       Animated.timing(fade, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(slide, { toValue: 0, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.spring(scale, { toValue: 1, friction: 7, tension: 90, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, ...Springs.gentle, useNativeDriver: true }),
     ]).start();
-  }, [fade, slide, scale]);
+  }, [fade, slide, scale, still]);
 
   const circle = compact ? 72 : 88;
   // Default ink → neutral gray circle; a caller accent (tasks group ink…)

@@ -9,6 +9,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Platform, Text, View } from 'react-native';
 import RollingNumber from '../RollingNumber';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { Springs, motionEnabled } from '../../constants/motion';
 
 // [2026-10-16 motion-telegram] Contador vivo (Telegram): quando o número SOBE
 // com o badge já na tela, a pílula dá um "pop" (mola nativa 1.18→1) e os
@@ -16,7 +17,7 @@ import { isReduceMotionEnabled } from '../reducedMotion';
 // Kill switch OTA: globalThis.__chatyy_badge_motion = false.
 const NATIVE = Platform.OS !== 'web';
 function motionOn() {
-  if (!NATIVE || isReduceMotionEnabled()) return false;
+  if (!NATIVE || isReduceMotionEnabled() || !motionEnabled()) return false;
   try { if (globalThis.__chatyy_badge_motion === false) return false; } catch {}
   return true;
 }
@@ -80,7 +81,7 @@ function BadgePop({ count, live, style, accessibilityLabel, children }) {
     if (!live || count == null || was == null || !(count > was)) return;
     scale.stopAnimation();
     scale.setValue(1.18);
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 340, friction: 11 }).start();
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, ...Springs.pop }).start();
   }, [count, live, scale]);
   if (!live) return <View accessibilityLabel={accessibilityLabel} style={style}>{children}</View>;
   return <Animated.View accessibilityLabel={accessibilityLabel} style={[style, { transform: [{ scale }] }]}>{children}</Animated.View>;

@@ -15,8 +15,9 @@
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, BackHandler, RefreshControl, Animated,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, BackHandler, Animated,
 } from 'react-native';
+import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { HapticsCompat as Haptics } from '../services/haptics';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
@@ -566,7 +567,7 @@ function SettingsScreenInner() {
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                     contentContainerStyle={[s.scroll, { paddingBottom: bottomPad, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}
-                    refreshControl={Platform.OS === 'web' ? undefined : <RefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={gc.secondary} colors={[colors.primary]} />}
+                    refreshControl={Platform.OS === 'web' ? undefined : <UIRefreshControl refreshing={pullRefreshing} onRefresh={onPullRefresh} tintColor={gc.secondary} colors={[colors.primary]} />}
                   >
                     {activeCategory === null && !twoPane ? (
                       <>

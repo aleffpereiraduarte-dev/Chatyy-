@@ -153,6 +153,15 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
 
   private var observers: [NSObjectProtocol] = []
 
+  // [2026-10-16 motion] Abre crescendo do anel do avatar (Telegram) e, se a
+  // pessoa ainda for a mesma, fecha voltando para ele. Kill switch:
+  // __chatyy_motion_story_origin. Reduzir Movimento → crossfade.
+  private var originRect: CGRect?
+  private var originOwner = ""
+  private var originOpenPending = false
+  private var originClosing = false
+  private let originMask = UIView()
+
   init(groups: [SVGroup], startGroup: Int, labels: SVLabels, reactions: [SVReaction], cube: Bool, hasMoreNext: Bool, hasMorePrev: Bool) {
     self.groups = groups
     self.currentGroup = max(0, min(groups.count - 1, startGroup))
@@ -168,6 +177,92 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+  /// Chamado ANTES do present (present sem animação — a origem é a animação).
+  func setOrigin(_ rect: CGRect) {
+    guard rect.width > 2, rect.height > 2, currentGroup < groups.count else { return }
+    originRect = rect
+    originOwner = groups[currentGroup].ownerEmail
+    originOpenPending = true
+  }
+
+  var hasOrigin: Bool { originRect != nil }
+
+  /// Transform que leva o círculo central do stage (lado = largura) até `r`.
+  private func originTransform(_ r: CGRect) -> CGAffineTransform {
+    let b = view.bounds
+    let s = max(0.02, min(r.width, r.height) / max(1, b.width))
+    return CGAffineTransform(translationX: r.midX - b.midX, y: r.midY - b.midY).scaledBy(x: s, y: s)
+  }
+
+  private func originCircle() -> CGRect {
+    let b = view.bounds
+    return CGRect(x: 0, y: (b.height - b.width) / 2, width: b.width, height: b.width)
+  }
+
+  private func runOriginOpen() -> Bool {
+    guard originOpenPending, let r = originRect else { return false }
+    originOpenPending = false
+    view.layoutIfNeeded()
+    let b = view.bounds
+    guard b.width > 0, b.height > 0 else { return false }
+    stage.transform = .identity
+    stage.frame = b
+    originMask.backgroundColor = .black
+    originMask.frame = originCircle()
+    originMask.layer.cornerRadius = b.width / 2
+    stage.mask = originMask
+    stage.transform = originTransform(r)
+    stage.alpha = 0
+    backdrop.alpha = 0
+    addPause("origin")
+    UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut], animations: { self.stage.alpha = 1 })
+    UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.88, initialSpringVelocity: 0, options: [.allowUserInteraction], animations: {
+      self.stage.transform = .identity
+      self.originMask.frame = CGRect(origin: .zero, size: b.size)
+      self.originMask.layer.cornerRadius = 0
+      self.backdrop.alpha = 1
+    }, completion: { _ in
+      if self.stage.mask === self.originMask && !self.originClosing { self.stage.mask = nil }
+      self.removePause("origin")
+    })
+    return true
+  }
+
+  /// Fecha encolhendo até o anel. false = outra pessoa / sem origem → normal.
+  private func tryOriginClose(reason: String, velocity: CGFloat = 0) -> Bool {
+    guard let r = originRect, !originClosing, !closed, MVMotion.storyOrigin, !MVMotion.reduceMotion,
+          isViewLoaded, view.window != nil, presentedViewController == nil,
+          currentGroup < groups.count, groups[currentGroup].ownerEmail == originOwner else { return false }
+    originClosing = true
+    view.isUserInteractionEnabled = false
+    addPause("origin")
+    field.resignFirstResponder()
+    let b = view.bounds
+    let curY = b.midY + stage.transform.ty
+    stage.layer.removeAllAnimations()
+    originMask.layer.removeAllAnimations()
+    originMask.backgroundColor = .black
+    originMask.frame = CGRect(origin: .zero, size: b.size)
+    originMask.layer.cornerRadius = stage.layer.cornerRadius
+    stage.layer.cornerRadius = 0
+    stage.mask = originMask
+    let target = originTransform(r)
+    let v0 = (velocity > 0 && r.midY > curY) ? MVMotion.springVelocity(velocity, remaining: r.midY - curY) : 0
+    UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.95, initialSpringVelocity: v0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
+      self.stage.transform = target
+      self.originMask.frame = self.originCircle()
+      self.originMask.layer.cornerRadius = b.width / 2
+      self.backdrop.alpha = 0
+      self.composer.alpha = 0
+    })
+    UIView.animate(withDuration: 0.12, delay: 0.24, options: [.curveEaseIn, .beginFromCurrentState], animations: {
+      self.stage.alpha = 0
+    }, completion: { _ in
+      self.finish(reason: reason, animated: false)
+    })
+    return true
+  }
 
   override var prefersStatusBarHidden: Bool { return true }
   override var preferredStatusBarStyle: UIStatusBarStyle { return .lightContent }
@@ -256,7 +351,9 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
 
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
-    if link == nil {
+    if link == nil && originOpenPending && runOriginOpen() {
+      // [2026-10-16 motion] cresce do anel do avatar
+    } else if link == nil {
       stage.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
       UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0.4, options: [.allowUserInteraction], animations: {
         self.stage.transform = .identity
@@ -343,7 +440,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     let off = pager.contentOffset.x / w
     for (i, p) in pages {
       let x = max(-1, min(1, CGFloat(i) - off))
-      if cube && x != 0 {
+      if cube && x != 0 && !MVMotion.reduceMotion {
         let edge: CGFloat = x < 0 ? w / 2 : -w / 2
         var m = CATransform3DMakeTranslation(-edge, 0, 0)
         m = CATransform3DConcat(m, CATransform3DMakeRotation(x * .pi / 2, 0, 1, 0))
@@ -612,10 +709,24 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
       haptic.impactOccurred()
       addPause("hold")
       currentPage?.setChromeHidden(true, animated: true)
+      // [2026-10-16 motion] Segurar = leve recuo com mola (kill switch __chatyy_motion_story_hold).
+      if MVMotion.holdScale && !MVMotion.reduceMotion && stage.transform.isIdentity && !originClosing && stage.mask == nil {
+        UIView.animate(withDuration: 0.34, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+          self.stage.transform = CGAffineTransform(scaleX: 0.965, y: 0.965)
+          self.stage.layer.cornerRadius = 14
+        })
+      }
     case .ended, .cancelled, .failed:
       if pauseReasons.contains("hold") {
         removePause("hold")
         currentPage?.setChromeHidden(false, animated: true)
+      }
+      if !pauseReasons.contains("dismiss") && !originClosing && !closed
+          && vpan.state != .began && vpan.state != .changed && !stage.transform.isIdentity {
+        UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.72, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+          self.stage.transform = .identity
+          self.stage.layer.cornerRadius = 0
+        })
       }
     default:
       break
@@ -629,6 +740,11 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     case .began:
       addPause("dismiss")
       vpanUp = false
+      // Mola do "segurar"/abertura em voo não briga com o dedo.
+      if !originClosing {
+        stage.layer.removeAllAnimations()
+        if stage.mask === originMask { stage.mask = nil; removePause("origin") }
+      }
     case .changed:
       if t.y >= 0 {
         let p = min(1, t.y / h)
@@ -663,6 +779,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   }
 
   private func dismissBySwipe(velocity: CGFloat) {
+    if tryOriginClose(reason: "swipe", velocity: velocity) { return }
     let h = view.bounds.height
     let dur = max(0.16, min(0.3, TimeInterval((h - stage.frame.minY) / max(900, velocity))))
     UIView.animate(withDuration: dur, delay: 0, options: [.curveEaseOut], animations: {
@@ -1308,6 +1425,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
 
   private func finish(reason: String, animated: Bool) {
     if closed { return }
+    if animated && reason != "replaced" && tryOriginClose(reason: reason) { return }
     closed = true
     link?.invalidate()
     link = nil

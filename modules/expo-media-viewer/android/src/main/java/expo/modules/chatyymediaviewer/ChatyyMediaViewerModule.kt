@@ -33,6 +33,13 @@ class ChatyyMediaViewerModule : Module() {
     // 3 = `sourceRect`/`sourceRadius` + setReturnRect (hero bolha ↔ viewer) [2026-10-15 hero]
     Function("apiVersion") { 3 }
 
+    // [2026-10-16 motion] Kill switches globalThis.__chatyy_motion_* (viewer,
+    // stories, grades). Chaves ausentes mantêm o valor atual (padrão: ligado).
+    Function("setMotion") { flags: Map<String, Any?> ->
+      MVMotion.apply(flags)
+      true
+    }
+
     AsyncFunction("open") { options: Map<String, Any?> ->
       val activity = appContext.currentActivity ?: return@AsyncFunction 0
       if (activity.isFinishing) return@AsyncFunction 0
@@ -88,7 +95,8 @@ class ChatyyMediaViewerModule : Module() {
         }
       })
       // [2026-10-15 hero] frame da miniatura (dp do RN)
-      rectFrom(options["sourceRect"])?.let { r ->
+      // Remover animações (sistema) → sem hero (fade normal).
+      if (!MVMotion.reduceMotion) rectFrom(options["sourceRect"])?.let { r ->
         dlg.setHeroSource(r, (options["sourceRadius"] as? Number)?.toFloat() ?: 0f)
       }
       current = dlg

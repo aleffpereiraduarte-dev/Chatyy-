@@ -25,6 +25,13 @@ public class ChatyyMediaViewerModule: Module {
       return 3
     }
 
+    // [2026-10-16 motion] Kill switches globalThis.__chatyy_motion_* (viewer,
+    // stories, grades). Chaves ausentes mantêm o valor atual (padrão: ligado).
+    Function("setMotion") { (flags: [String: Any]) -> Bool in
+      MVMotion.apply(flags)
+      return true
+    }
+
     AsyncFunction("open") { (options: [String: Any]) -> Int in
       let rawItems = options["items"] as? [[String: Any]] ?? []
       let items = rawItems.map { MVItem(dict: $0) }
@@ -57,7 +64,8 @@ public class ChatyyMediaViewerModule: Module {
         flags: flags
       )
       // [2026-10-15 hero] Frame da miniatura na bolha (coordenadas de janela).
-      let heroRect = MVItem.rectValue(options["sourceRect"])
+      // Reduzir Movimento → sem hero (crossfade do present).
+      let heroRect = MVMotion.reduceMotion ? nil : MVItem.rectValue(options["sourceRect"])
       let heroRadius = CGFloat(MVItem.doubleValue(options["sourceRadius"]) ?? 0)
       if let r = heroRect {
         vc.setHeroSource(r, radius: heroRadius)

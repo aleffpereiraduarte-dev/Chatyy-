@@ -16,9 +16,12 @@
 // `native` (iOS/Android): delega ao sheet DO SISTEMA (components/NativeSheet,
 // rota /native-sheet) — mesma API, o sistema desenha alça/raio/backdrop.
 // Sem dependências nativas novas (Animated + PanResponder, useNativeDriver).
+// [2026-10-16 motion] Molas/durações/limiares = constants/motion (Springs.sheet,
+// Durations.enter/exit, Gestures.sheetDismiss*). Prop `dragAnywhere` (padrão
+// true) — painel inteiro arrasta quando `scroll` é false.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated, Easing, Modal, PanResponder, Platform, Pressable, ScrollView,
+  Animated, Keyboard, Modal, PanResponder, Platform, Pressable, ScrollView,
   StyleSheet, Text, View, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,6 +32,7 @@ import { BlurBackdrop } from '../NativeBlur';
 import SheetKeyboardAvoider from '../chat/SheetKeyboardAvoider';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { Springs, Durations, Easings, Gestures, motionEnabled } from '../../constants/motion';
 
 export function useOverlayColors() {
   const { colors, isDark } = useTheme() || {};
@@ -111,6 +115,8 @@ export default function Sheet({
   contentStyle,
   native = false,
   detents = 'fitToContents',
+  // [2026-10-16 motion] false = só alça/cabeçalho arrastam (corpo com gesto próprio).
+  dragAnywhere = true,
   testID,
 }) {
   const oc = useOverlayColors();
@@ -127,6 +133,10 @@ export default function Sheet({
   const drag = useRef(new Animated.Value(0)).current;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const visibleRef = useRef(!!visible);
+  visibleRef.current = !!visible;
+  // Altura real do painel (onLayout) — fundo esmaece proporcional ao arrasto.
+  const [panelH, setPanelH] = useState(0);
 
   const requestClose = useCallback(() => {
     if (!dismissable) return;
@@ -141,38 +151,79 @@ export default function Sheet({
     if (visible) {
       setRendered(true);
       drag.setValue(0);
-      const reduce = isReduceMotionEnabled();
+      const reduce = isReduceMotionEnabled() || !motionEnabled();
       Animated.parallel([
-        Animated.timing(fade, { toValue: 1, duration: Overlay.enterMs, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 1, duration: Durations.enter, easing: Easings.fadeIn, useNativeDriver: true }),
         reduce
           ? Animated.timing(slide, { toValue: 0, duration: 1, useNativeDriver: true })
-          : Animated.spring(slide, { toValue: 0, ...Overlay.spring, useNativeDriver: true }),
+          : Animated.spring(slide, { toValue: 0, ...Springs.sheet, useNativeDriver: true }),
       ]).start();
     } else if (rendered) {
       Animated.parallel([
-        Animated.timing(fade, { toValue: 0, duration: Overlay.exitMs, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-        Animated.timing(slide, { toValue: 1, duration: Overlay.exitMs, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 0, duration: Durations.exit, easing: Easings.fadeOut, useNativeDriver: true }),
+        Animated.timing(slide, { toValue: 1, duration: Durations.exit, easing: Easings.accelerate, useNativeDriver: true }),
       ]).start(() => { if (!cancelled) setRendered(false); });
     }
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, useSystemSheet]);
 
-  // Arrastar alça/cabeçalho p/ baixo: > 96px ou flick rápido fecha.
+  // Arrastar p/ baixo fecha: > Gestures.sheetDismissDistance (96px) ou flick
+  // rápido (vy > 0.9). [2026-10-16 motion] Telegram/iOS:
+  //  • sem `scroll`, o painel INTEIRO arrasta (não só a alça) — toques curtos
+  //    continuam indo p/ as linhas; só um arrasto vertical claro é capturado;
+  //  • o fundo esmaece proporcional ao arrasto (backdropOpacity abaixo);
+  //  • soltar continua o movimento com a VELOCIDADE do dedo (mola com
+  //    velocity) — fechar segue o flick, voltar assenta sem degrau;
+  //  • começar a arrastar recolhe o teclado.
+  // Kill switch: globalThis.__chatyy_motion_sheet_drag = false → só alça/cabeçalho,
+  // fechamento pelo timing de saída (comportamento anterior).
+  const richDrag = motionEnabled('sheet_drag');
+  const panelHRef = useRef(0);
+  panelHRef.current = panelH;
+  const dragStart = useRef(0);
   const pan = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_e, g) => !wide && dismissable && g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx),
-    onPanResponderMove: (_e, g) => { drag.setValue(Math.max(0, g.dy)); },
+    onMoveShouldSetPanResponder: (_e, g) => !wide && dismissable && g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.2,
+    onPanResponderGrant: () => {
+      // (valor de mola nativa não volta síncrono p/ o JS → recomeça do dedo)
+      dragStart.current = 0;
+      drag.stopAnimation();
+      if (richDrag) { try { Keyboard.dismiss(); } catch {} }
+    },
+    onPanResponderMove: (_e, g) => { drag.setValue(Math.max(0, dragStart.current + g.dy)); },
     onPanResponderRelease: (_e, g) => {
-      if (g.dy > 96 || g.vy > 0.9) { requestClose(); return; }
-      Animated.spring(drag, { toValue: 0, ...Overlay.spring, useNativeDriver: true }).start();
+      const closing = (dragStart.current + g.dy) > Gestures.sheetDismissDistance || g.vy > Gestures.sheetDismissVelocity;
+      if (closing) {
+        if (richDrag && !isReduceMotionEnabled()) {
+          const h = panelHRef.current || winH;
+          Animated.spring(drag, {
+            toValue: h + 24, velocity: Math.max(0, g.vy) * 1000,
+            ...Springs.sheet, overshootClamping: true, useNativeDriver: true,
+          }).start();
+          // Se o pai não fechar (onClose ignorado), o painel volta.
+          setTimeout(() => {
+            if (visibleRef.current) Animated.spring(drag, { toValue: 0, ...Springs.sheet, useNativeDriver: true }).start();
+          }, 420);
+        }
+        requestClose();
+        return;
+      }
+      Animated.spring(drag, {
+        toValue: 0, ...Springs.sheet, useNativeDriver: true,
+        ...(richDrag ? { velocity: g.vy * 1000 } : null),
+      }).start();
     },
+    onPanResponderTerminationRequest: () => false,
     onPanResponderTerminate: () => {
-      Animated.spring(drag, { toValue: 0, ...Overlay.spring, useNativeDriver: true }).start();
+      Animated.spring(drag, { toValue: 0, ...Springs.sheet, useNativeDriver: true }).start();
     },
-  }), [wide, dismissable, drag, requestClose]);
+  }), [wide, dismissable, drag, requestClose, richDrag, winH]);
 
+  // Painel inteiro arrastável só quando o corpo não rola (ScrollView nativo
+  // disputaria o gesto) e no celular (web largo = cartão central).
+  const panelDrag = richDrag && dragAnywhere && !scroll && !wide;
   const header = (
-    <View {...pan.panHandlers}>
+    <View {...(panelDrag ? null : pan.panHandlers)}>
       {showHandle && !wide ? <SheetHandle /> : <View style={{ height: wide ? 12 : 8 }} />}
       <SheetHeader title={title} subtitle={subtitle} left={headerLeft} right={headerRight} align={headerAlign} />
     </View>
@@ -206,6 +257,12 @@ export default function Sheet({
   if (!rendered) return null;
 
   const offscreen = wide ? 24 : winH;
+  // Fundo: fade de entrada/saída × (1 − arrasto/altura do painel).
+  const backdropOpacity = richDrag && !wide
+    ? Animated.multiply(fade, drag.interpolate({
+      inputRange: [0, Math.max(1, panelH || Math.round(winH * 0.5))], outputRange: [1, 0], extrapolate: 'clamp',
+    }))
+    : fade;
   const translateY = Animated.add(
     slide.interpolate({ inputRange: [0, 1], outputRange: [0, offscreen] }),
     drag,
@@ -232,7 +289,7 @@ export default function Sheet({
       onRequestClose={requestClose}
     >
       <View style={StyleSheet.absoluteFill} testID={testID}>
-        <Animated.View style={[StyleSheet.absoluteFill, { opacity: fade }]}>
+        <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}>
           <BlurBackdrop isDark={isDark} dim={Overlay.backdrop} />
           <Pressable
             style={StyleSheet.absoluteFill}
@@ -256,6 +313,8 @@ export default function Sheet({
               panelStyle,
             ]}
             accessibilityViewIsModal
+            onLayout={richDrag ? (e) => { const h = e.nativeEvent.layout.height; if (Math.abs(h - panelH) > 1) setPanelH(h); } : undefined}
+            {...(panelDrag ? pan.panHandlers : null)}
           >
             {header}
             {body}

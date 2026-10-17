@@ -39,14 +39,40 @@ class PGCellView(context: Context) : ImageView(context) {
     setMeasuredDimension(w, w)
   }
 
+  // [2026-10-16 motion] check com mola (estoura 0.55 → 1) + recuo da célula em mola.
+  // Kill switch: __chatyy_motion_grid.
+  private var checkScale = 1f
+  private var checkAnim: android.animation.ValueAnimator? = null
+
   fun setSelectedAnimated(sel: Boolean, animate: Boolean) {
     if (selectedState == sel && scaleX == (if (sel) SEL_SCALE else 1f)) { invalidate(); return }
+    val was = selectedState
     selectedState = sel
     val target = if (sel) SEL_SCALE else 1f
     animate().cancel()
-    if (animate) animate().scaleX(target).scaleY(target).setDuration(140).start()
-    else { scaleX = target; scaleY = target }
+    val spring = animate && MVMotion.gridSpring && !MVMotion.reduceMotion
+    if (spring) {
+      val sp = MVSpring(0.72f, 19f)
+      animate().scaleX(target).scaleY(target).setInterpolator(sp).setDuration(sp.durationMs).start()
+      if (sel && !was) popCheck()
+    } else if (animate) {
+      animate().scaleX(target).scaleY(target).setInterpolator(android.view.animation.AccelerateDecelerateInterpolator()).setDuration(140).start()
+    } else { scaleX = target; scaleY = target }
     invalidate()
+  }
+
+  private fun popCheck() {
+    checkAnim?.cancel()
+    val sp = MVSpring(0.55f, 20f)
+    val a = android.animation.ValueAnimator.ofFloat(0.55f, 1f)
+    a.duration = sp.durationMs
+    a.interpolator = sp
+    a.addUpdateListener { va -> checkScale = va.animatedValue as Float; invalidate() }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: android.animation.Animator) { checkScale = 1f; if (checkAnim === a) checkAnim = null; invalidate() }
+    })
+    checkAnim = a
+    a.start()
   }
 
   override fun onDraw(canvas: Canvas) {
@@ -76,7 +102,7 @@ class PGCellView(context: Context) : ImageView(context) {
       val cy = h - 4 * d - r
       drawBadge(canvas, res, cx, cy, r, status)
     }
-    if (selectionMode) drawCheck(canvas, w - 6 * d - 10 * d, 6 * d + 10 * d, 10 * d, selectedState)
+    if (selectionMode) drawCheck(canvas, w - 6 * d - 10 * d, 6 * d + 10 * d, 10 * d * (if (selectedState) checkScale else 1f), selectedState)
   }
 
   private fun drawBadge(c: Canvas, res: Res, cx: Float, cy: Float, r: Float, st: Int) {

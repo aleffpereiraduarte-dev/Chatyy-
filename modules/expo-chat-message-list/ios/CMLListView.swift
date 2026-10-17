@@ -16,7 +16,13 @@ import ExpoChatStore
 
 final class CMLFlowLayout: UICollectionViewFlowLayout {
   var animateInsert = false
+  /// [motion-conv] estilo da animação do lote atual: 0 = antigo (fade+subida),
+  /// 1 = inserção com mola (enviada/recebida), 2 = edição (apagar/colapsar).
+  var motionStyle = 0
+  /// [motion-conv] índice (ordem NOVA) → 1 enviada, 0 recebida, 2 pílula.
+  var sideAt: ((Int) -> Int)?
   private var inserted = Set<IndexPath>()
+  private var deleted = Set<IndexPath>()
 
   override init() {
     super.init()
@@ -31,15 +37,18 @@ final class CMLFlowLayout: UICollectionViewFlowLayout {
   override func prepare(forCollectionViewUpdates updateItems: [UICollectionViewUpdateItem]) {
     super.prepare(forCollectionViewUpdates: updateItems)
     inserted.removeAll()
+    deleted.removeAll()
     guard animateInsert else { return }
-    for u in updateItems where u.updateAction == .insert {
-      if let ip = u.indexPathAfterUpdate, ip.item < 4 { inserted.insert(ip) }
+    for u in updateItems {
+      if u.updateAction == .insert, let ip = u.indexPathAfterUpdate, motionStyle == 2 || ip.item < 4 { inserted.insert(ip) }
+      if motionStyle == 2, u.updateAction == .delete, let ip = u.indexPathBeforeUpdate { deleted.insert(ip) }
     }
   }
 
   override func finalizeCollectionViewUpdates() {
     super.finalizeCollectionViewUpdates()
     inserted.removeAll()
+    deleted.removeAll()
   }
 
   override func initialLayoutAttributesForAppearingItem(at itemIndexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
@@ -47,7 +56,37 @@ final class CMLFlowLayout: UICollectionViewFlowLayout {
     guard inserted.contains(itemIndexPath), let a = base.copy() as? UICollectionViewLayoutAttributes else { return base }
     // Lista invertida: y menor = mais embaixo na tela → nasce "de dentro" do composer.
     a.alpha = 0
-    a.transform = CGAffineTransform(translationX: 0, y: -min(a.size.height, 56))
+    switch motionStyle {
+    case 1:
+      // [motion-conv] mesma coreografia do RowEnterMotion JS. A escala do UIKit é
+      // em torno do CENTRO da linha → desloca p/ ancorar no lado da bolha e na
+      // base (y invertido: base visual = minY).
+      let w = a.size.width, h = a.size.height
+      let side = sideAt?(itemIndexPath.item) ?? 2
+      if side == 1 {
+        let s: CGFloat = 0.9
+        a.transform = CGAffineTransform(translationX: (1 - s) * w / 2 - 14, y: -(1 - s) * h / 2 - 34).scaledBy(x: s, y: s)
+      } else if side == 0 {
+        let s: CGFloat = 0.96
+        a.transform = CGAffineTransform(translationX: -(1 - s) * w / 2, y: -(1 - s) * h / 2 - 14).scaledBy(x: s, y: s)
+      } else {
+        a.transform = CGAffineTransform(translationX: 0, y: -10)
+      }
+    case 2:
+      // "mensagem apagada" / linha nova no lugar: surge no mesmo ponto
+      a.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
+    default:
+      a.transform = CGAffineTransform(translationX: 0, y: -min(a.size.height, 56))
+    }
+    return a
+  }
+
+  override func finalLayoutAttributesForDisappearingItem(at itemIndexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+    guard let base = super.finalLayoutAttributesForDisappearingItem(at: itemIndexPath) else { return nil }
+    guard deleted.contains(itemIndexPath), let a = base.copy() as? UICollectionViewLayoutAttributes else { return base }
+    // [motion-conv] bolha apagada encolhe e some; as vizinhas assentam com a mola
+    a.alpha = 0
+    a.transform = CGAffineTransform(scaleX: 0.86, y: 0.86)
     return a
   }
 }
@@ -199,6 +238,12 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     cv.prefetchDataSource = self
     cv.isPrefetchingEnabled = true
     addSubview(cv)
+    // [motion-conv] lado da bolha p/ a mola de entrada (ordem nova = `applied`)
+    flow.sideAt = { [weak self] i in
+      guard let self = self, i >= 0, i < self.applied.count, let r = self.rows[self.applied[i]] else { return 2 }
+      if r.kind != .msg { return 2 }
+      return r.own ? 1 : 0
+    }
 
     ds = UICollectionViewDiffableDataSource<Int, String>(collectionView: cv) { [weak self] collectionView, indexPath, key in
       let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CMLCell.reuseId, for: indexPath) as! CMLCell
@@ -372,6 +417,11 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
 
   // MARK: [fase 2] pílula de data fixa / lift / spoiler
 
+  /// [motion-conv] prop `motion` (apiVersion 7) — ver CMLMotion.
+  func setMotion(_ d: [String: Any]?) {
+    CMLMotion.apply(d)
+  }
+
   func setStickyDate(_ d: [String: Any]?) {
     let dd = d ?? [:]
     stickyOn = CMLRow.bool(dd["on"])
@@ -427,17 +477,40 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     guard stickyOn, let s = style else { return }
     let t = stickyText()
     if t.isEmpty { hideSticky(animated: true); return }
+    let motion = CMLMotion.sticky && !CMLMotion.reduce
     if t != stickyLabel {
+      // [motion-conv] troca de dia com a pílula na tela → texto em fade
+      let fade = motion && !sticky.isHidden && sticky.alpha > 0.5 && !stickyLabel.isEmpty
       stickyLabel = t
-      sticky.setText(t, scale: s.scale)
+      if fade {
+        UIView.transition(with: sticky, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+          self.sticky.setText(t, scale: s.scale)
+        })
+      } else {
+        sticky.setText(t, scale: s.scale)
+      }
     }
     let sz = sticky.intrinsic
-    sticky.frame = CGRect(x: floor((bounds.width - sz.width) / 2), y: stickyTop, width: sz.width, height: sz.height)
+    let fr = CGRect(x: floor((bounds.width - sz.width) / 2), y: stickyTop, width: sz.width, height: sz.height)
+    // bounds+center (não frame): seguro com o transform da entrada
+    sticky.bounds = CGRect(origin: .zero, size: fr.size)
+    sticky.center = CGPoint(x: fr.midX, y: fr.midY)
     stickyHide?.cancel()
     stickyHide = nil
     if sticky.isHidden || sticky.alpha < 1 {
+      let wasHidden = sticky.isHidden || sticky.alpha < 0.05
       sticky.isHidden = false
-      UIView.animate(withDuration: 0.18, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: { self.sticky.alpha = 1 })
+      if motion {
+        // [motion-conv] entra caindo de leve com mola (escala .9 + 6 pt acima)
+        if wasHidden { sticky.transform = CGAffineTransform(translationX: 0, y: -6).scaledBy(x: 0.9, y: 0.9) }
+        UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.78, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+          self.sticky.alpha = 1
+          self.sticky.transform = .identity
+        })
+      } else {
+        sticky.transform = .identity
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: { self.sticky.alpha = 1 })
+      }
     }
   }
 
@@ -453,9 +526,18 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     stickyHide?.cancel()
     stickyHide = nil
     if sticky.isHidden { return }
-    if !animated { sticky.alpha = 0; sticky.isHidden = true; return }
-    UIView.animate(withDuration: 0.4, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: { self.sticky.alpha = 0 }, completion: { done in
-      if done && self.sticky.alpha < 0.01 { self.sticky.isHidden = true }
+    if !animated { sticky.alpha = 0; sticky.transform = .identity; sticky.isHidden = true; return }
+    let motion = CMLMotion.sticky && !CMLMotion.reduce
+    let curve: UIView.AnimationOptions = motion ? .curveEaseIn : .curveEaseInOut
+    UIView.animate(withDuration: motion ? 0.32 : 0.4, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState, curve], animations: {
+      self.sticky.alpha = 0
+      // [motion-conv] sai encolhendo de leve
+      if motion { self.sticky.transform = CGAffineTransform(scaleX: 0.94, y: 0.94) }
+    }, completion: { done in
+      if done && self.sticky.alpha < 0.01 {
+        self.sticky.isHidden = true
+        self.sticky.transform = .identity
+      }
     })
   }
 
@@ -504,7 +586,9 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     super.layoutSubviews()
     if !sticky.isHidden {
       let sz = sticky.intrinsic
-      sticky.frame = CGRect(x: floor((bounds.width - sz.width) / 2), y: stickyTop, width: sz.width, height: sz.height)
+      // bounds+center: [motion-conv] a pílula pode estar com transform (entrada/saída)
+      sticky.bounds = CGRect(origin: .zero, size: sz)
+      sticky.center = CGPoint(x: floor((bounds.width - sz.width) / 2) + sz.width / 2, y: stickyTop + sz.height / 2)
     }
     if cv.frame != bounds {
       let wasAtBottom = distanceFromLatest < 2
@@ -648,7 +732,37 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     let dist = distanceFromLatest
     let atBottom = applied.isEmpty || dist < 3
     let reduce = UIAccessibility.isReduceMotionEnabled
-    let animate = pendingAnim && atBottom && !applied.isEmpty && insertedAtBottom > 0 && insertedAtBottom <= 3 && insertedElsewhere == 0 && !reduce && window != nil
+    // [motion-conv] linha que SAIU (apagar / chave _d da "mensagem apagada"): não é
+    // "mensagem nova" — com `e` ligado vai p/ o colapso abaixo, não sobe do composer.
+    var removedAny = false
+    if !orderSame && CMLMotion.edit {
+      // pílula que sai (ex.: "não lidas" some ao enviar) não conta
+      for k in applied where !newSet.contains(k) && (rows[k]?.kind ?? .msg) == .msg { removedAny = true; break }
+    }
+    let animate = pendingAnim && atBottom && !applied.isEmpty && insertedAtBottom > 0 && insertedAtBottom <= 3 && insertedElsewhere == 0 && !reduce && window != nil && !removedAny
+    // [motion-conv] apagar (some encolhendo) / virar "apagada" (chave _d = sai+entra
+    // no mesmo lugar) / altura mudou (editar, reação, tradução): com mola, desde
+    // que tudo que muda esteja NA TELA (fora dela = troca seca + âncora, como antes).
+    var editAnim = false
+    if !animate && pendingAnim && CMLMotion.edit && !reduce && window != nil && !applied.isEmpty {
+      var visKeys = Set<String>()
+      for ip in cv.indexPathsForVisibleItems where ip.item < applied.count { visKeys.insert(applied[ip.item]) }
+      var removed = 0
+      var removedOff = false
+      if !orderSame {
+        for k in applied where !newSet.contains(k) {
+          removed += 1
+          if !visKeys.contains(k) { removedOff = true }
+        }
+      }
+      let insertedAll = insertedAtBottom + insertedElsewhere
+      if !orderSame {
+        editAnim = removed >= 1 && removed <= 3 && !removedOff && insertedAll <= removed
+      } else if heightChanged && reconf.count <= 3 {
+        editAnim = true
+        for k in reconf where !visKeys.contains(k) { editAnim = false; break }
+      }
+    }
 
     // âncora: lendo acima → a linha visível mais embaixo fica parada na tela
     var anchorKey: String? = nil
@@ -679,15 +793,28 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     pendingAnim = false
 
     if heightChanged { flow.invalidateLayout() }
-    flow.animateInsert = animate
-    if animate {
-      ds.apply(snap, animatingDifferences: true) { [weak self] in
+    flow.animateInsert = animate || editAnim
+    flow.motionStyle = editAnim ? 2 : (animate && CMLMotion.insert ? 1 : 0)
+    if animate || editAnim {
+      let applyIt = { [weak self] in
         guard let self = self else { return }
-        self.flow.animateInsert = false
-        self.afterApply()
+        self.ds.apply(snap, animatingDifferences: true) { [weak self] in
+          guard let self = self else { return }
+          self.flow.animateInsert = false
+          self.flow.motionStyle = 0
+          self.afterApply()
+        }
+      }
+      if flow.motionStyle == 0 {
+        applyIt()
+      } else {
+        // [motion-conv] o lote do UICollectionView herda a curva do bloco → mola
+        let dur = editAnim ? CMLMotion.editDuration : CMLMotion.insertDuration
+        let damp = editAnim ? CMLMotion.editDamping : CMLMotion.insertDamping
+        UIView.animate(withDuration: dur, delay: 0, usingSpringWithDamping: damp, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: applyIt)
       }
       // fica grudado no fim enquanto anima
-      cv.setContentOffset(CGPoint(x: 0, y: -cv.adjustedContentInset.top), animated: false)
+      if animate || atBottom { cv.setContentOffset(CGPoint(x: 0, y: -cv.adjustedContentInset.top), animated: false) }
     } else {
       UIView.performWithoutAnimation {
         ds.apply(snap, animatingDifferences: false)

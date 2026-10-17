@@ -154,6 +154,8 @@ final class CMLCell: UICollectionViewCell {
     reacts.layer.removeAllAnimations()
     reacts.transform = .identity
     reacts.alpha = 1
+    meta.cancelStatusAnim()
+    audio.resetPlayback()
     replyIcon.alpha = 0
     highlight.layer.removeAllAnimations()
     highlight.alpha = 0
@@ -192,6 +194,9 @@ final class CMLCell: UICollectionViewCell {
     let prevKey = self.key
     let prevSel = self.row?.sel ?? 0
     let prevOwn = self.row?.own ?? false
+    // [motion-conv] p/ animar ✓/✓✓/lida e reação nova de outra pessoa
+    let prevStatus = self.row?.status
+    let prevReacts = self.row?.reacts ?? []
     self.key = key
     self.row = row
     self.layoutInfo = L
@@ -441,6 +446,13 @@ final class CMLCell: UICollectionViewCell {
     meta.readColor = th.read
     meta.failedColor = th.failed
     place(meta, L.metaFrame, !L.metaFrame.isEmpty)
+    // [motion-conv] status avançou na MESMA linha visível → transição animada
+    if prevKey != key {
+      meta.cancelStatusAnim()
+    } else if let ps = prevStatus, let ns = L.meta.status, ns > ps, ps >= 0,
+              CMLMotion.ticks, !CMLMotion.reduce, window != nil, !meta.isHidden {
+      meta.animateStatus(from: ps)
+    }
 
     // reações (coordenadas da linha, não do balão)
     if !L.reactChips.isEmpty {
@@ -453,9 +465,77 @@ final class CMLCell: UICollectionViewCell {
       reacts.mineBg = th.selection.withAlphaComponent(0.9)
       reacts.mine = row.reacts.map { $0.mine }
       reacts.chips = L.reactChips
+      // [motion-conv] reação NOVA de outra pessoa (a minha já pula pelo menu
+      // nativo → checkPendingPop): emoji novo ou contagem subiu, "mine" igual.
+      if prevKey == key && CMLMotion.react && window != nil, let gi = CMLCell.othersReacted(prevReacts, row.reacts) {
+        DispatchQueue.main.async { [weak self] in
+          guard let self = self, self.key == key else { return }
+          self.popReactions()
+          self.sparkReaction(gi)
+        }
+      }
     } else {
       reacts.isHidden = true
     }
+  }
+
+  /// [motion-conv] Alguém (não eu) reagiu: emoji novo ou contagem maior, e o
+  /// conjunto das MINHAS reações não mudou → índice do chip que cresceu.
+  static func othersReacted(_ a: [CMLReact], _ b: [CMLReact]) -> Int? {
+    if b.isEmpty { return nil }
+    var oldCount: [String: Int] = [:]
+    var oldMine = Set<String>()
+    for r in a { oldCount[r.emoji] = r.count; if r.mine { oldMine.insert(r.emoji) } }
+    var newMine = Set<String>()
+    var grew: Int? = nil
+    for (i, r) in b.enumerated() {
+      if r.mine { newMine.insert(r.emoji) }
+      if grew == nil && r.count > (oldCount[r.emoji] ?? 0) { grew = i }
+    }
+    return oldMine == newMine ? grew : nil
+  }
+
+  /// [motion-conv] 6 pontinhos saem do chip `i` em leque, encolhem e somem
+  /// (= ReactionSparks do JS, ~380 ms). Camadas temporárias, sem layout.
+  func sparkReaction(_ i: Int) {
+    guard let L = layoutInfo, i >= 0, i < L.reactChips.count, !reacts.isHidden, !CMLMotion.reduce, window != nil else { return }
+    let f = L.reactChips[i].0
+    let c = CGPoint(x: L.reactsFrame.minX + f.midX, y: L.reactsFrame.minY + f.midY)
+    let color = UIColor(white: 0.5, alpha: 0.75).cgColor
+    let n = 6
+    let dist: CGFloat = 18
+    let sz: CGFloat = 4
+    var dots: [CALayer] = []
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    CATransaction.setCompletionBlock { for d in dots { d.removeFromSuperlayer() } }
+    for k in 0..<n {
+      let ang = CGFloat.pi * 2 * CGFloat(k) / CGFloat(n) - CGFloat.pi / 2 + 0.3
+      let d = CALayer()
+      d.bounds = CGRect(x: 0, y: 0, width: sz, height: sz)
+      d.cornerRadius = sz / 2
+      d.backgroundColor = color
+      d.position = c
+      d.opacity = 0
+      slide.layer.addSublayer(d)
+      let to = CGPoint(x: c.x + cos(ang) * dist, y: c.y + sin(ang) * dist)
+      let pos = CABasicAnimation(keyPath: "position")
+      pos.fromValue = NSValue(cgPoint: c)
+      pos.toValue = NSValue(cgPoint: to)
+      pos.timingFunction = CAMediaTimingFunction(name: .easeOut)
+      let op = CAKeyframeAnimation(keyPath: "opacity")
+      op.values = [0, 0.9, 0]
+      op.keyTimes = [0, 0.15, 1]
+      let sc = CAKeyframeAnimation(keyPath: "transform.scale")
+      sc.values = [0.6, 1, 0.2]
+      sc.keyTimes = [0, 0.3, 1]
+      let g = CAAnimationGroup()
+      g.animations = [pos, op, sc]
+      g.duration = 0.38
+      d.add(g, forKey: "spark")
+      dots.append(d)
+    }
+    CATransaction.commit()
   }
 
   func applyAudio(_ st: CMLAudioState?, style s: CMLStyle) {
@@ -466,11 +546,13 @@ final class CMLCell: UICollectionViewCell {
     var dur = Double(au.duration)
     if active, let d = st?.durMs, d > 0 { dur = d / 1000 }
     var shown = dur
+    // [motion-conv] progresso suave (extrapolado entre pulsos) com `motion.a`
+    audio.smooth = CMLMotion.audio
     if active, let p = st?.posMs, p > 0 {
       shown = p / 1000
-      audio.progress = dur > 0 ? CGFloat(min(1, (p / 1000) / dur)) : 0
+      audio.setPlayback(posMs: p, durMs: dur * 1000, playing: audio.playing)
     } else {
-      audio.progress = 0
+      audio.resetPlayback()
     }
     let sec = max(0, Int(shown.rounded()))
     let txt = String(format: "%d:%02d", sec / 60, sec % 60)

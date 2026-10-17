@@ -299,7 +299,30 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     invalidate()
   }
 
+  private val bumpAnims = HashMap<View, android.animation.ValueAnimator>() // [motion-nav] pulo em curso por pílula
+
   private fun pop(v: View) {
+    // [2026-10-16 motion-nav] Pulo com física (impulso de mola: 1 → 1,18 →
+    // 0,97 → 1) em vez do keyframe 0,8→1,2→1; Reduzir movimento = sem pulo.
+    if (CLMotion.reduced(context)) return
+    if (CLSpring.enabled) {
+      bumpAnims.remove(v)?.cancel()
+      val a = android.animation.ValueAnimator.ofFloat(0f, 1f)
+      a.duration = CLSpring.BUMP_MS
+      a.interpolator = android.view.animation.LinearInterpolator()
+      a.addUpdateListener {
+        val s = 1f + 0.18f * CLSpring.bump(it.animatedFraction * CLSpring.BUMP_MS / 1000f)
+        v.scaleX = s
+        v.scaleY = s
+      }
+      a.addListener(object : android.animation.AnimatorListenerAdapter() {
+        override fun onAnimationEnd(animation: android.animation.Animator) { v.scaleX = 1f; v.scaleY = 1f }
+        override fun onAnimationCancel(animation: android.animation.Animator) { v.scaleX = 1f; v.scaleY = 1f }
+      })
+      bumpAnims[v] = a
+      a.start()
+      return
+    }
     v.scaleX = 0.8f
     v.scaleY = 0.8f
     val sx = ObjectAnimator.ofFloat(v, View.SCALE_X, 0.8f, 1.2f, 1f)

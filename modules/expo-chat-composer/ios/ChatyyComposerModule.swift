@@ -183,6 +183,7 @@ public class ChatyyComposerModule: Module {
       Prop("disabled") { (view: ChatyyComposerView, v: Bool?) in view.disabled = v ?? false }
       Prop("changeDebounceMs") { (view: ChatyyComposerView, v: Double?) in view.changeDebounceMs = max(0, v ?? 60) }
       Prop("keyboardTracking") { (view: ChatyyComposerView, v: String?) in view.keyboardTracking = v ?? "none" }
+      Prop("motion") { (view: ChatyyComposerView, v: Bool?) in view.motion = v ?? true } // [2026-10-16 motion-composer]
 
       OnViewDidUpdateProps { (view: ChatyyComposerView) in
         view.didUpdateProps()

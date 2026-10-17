@@ -9,6 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { haptic, Radius } from '../../constants/theme';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { Springs, motionEnabled } from '../../constants/motion';
 import useSurface from './useSurface';
 
 export default function SegmentedControl({ options = [], value, onChange, size = 'md', style, testID }) {
@@ -21,8 +22,8 @@ export default function SegmentedControl({ options = [], value, onChange, size =
   const segW = w > 0 ? (w - pad * 2) / n : 0;
 
   useEffect(() => {
-    if (isReduceMotionEnabled()) { anim.setValue(idx); return; }
-    Animated.spring(anim, { toValue: idx, useNativeDriver: true, tension: 260, friction: 26 }).start();
+    if (isReduceMotionEnabled() || !motionEnabled()) { anim.setValue(idx); return; }
+    Animated.spring(anim, { toValue: idx, useNativeDriver: true, ...Springs.segment }).start();
   }, [idx, anim]);
 
   const h = size === 'sm' ? 30 : 36;

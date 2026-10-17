@@ -26,8 +26,9 @@
 // RN Animated only (no Reanimated) → ships via OTA. useNativeDriver:true so
 // it runs on the UI thread and never jank-blocks JS.
 import React, { useRef, useEffect } from 'react';
-import { Animated, Easing, Platform, StyleSheet } from 'react-native';
+import { Animated, Platform, StyleSheet } from 'react-native';
 import { isReduceMotionEnabled } from './reducedMotion';
+import { Durations, Distances, Easings, motionEnabled } from '../constants/motion';
 
 // [2026-10-14 piscada-voltar] Founder: "TODA transição entre páginas em
 // nativo". No iOS/Android a tela já entra com o push NATIVO (slide + parallax
@@ -71,8 +72,8 @@ const _WEB_NOFLEX = { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' };
 export default function FadeSlideIn({
   children,
   delay = 0,
-  distance = 10,
-  duration = 220,
+  distance = Distances.enter,
+  duration = Durations.fadeIn,
   style,
   // [2026-10-07 coldstart] `skip` = render settled (no fade/slide). Used when
   // content is painted from LOCAL cache on frame 1 (chat list cold start):
@@ -85,7 +86,7 @@ export default function FadeSlideIn({
   const _route = _NavRouteCtx ? React.useContext(_NavRouteCtx) : null; // eslint-disable-line react-hooks/rules-of-hooks
   const _settledByNav = useRef(null);
   if (_settledByNav.current === null) _settledByNav.current = _mountedWithRouteTransition(_route?.key);
-  const reduceMotion = isReduceMotionEnabled() || !!skip || _settledByNav.current;
+  const reduceMotion = isReduceMotionEnabled() || !motionEnabled() || !!skip || _settledByNav.current;
   const fade = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
   const slide = useRef(new Animated.Value(reduceMotion ? 0 : distance)).current;
 
@@ -96,14 +97,14 @@ export default function FadeSlideIn({
         toValue: 1,
         duration,
         delay,
-        easing: Easing.out(Easing.cubic),
+        easing: Easings.decelerate,
         useNativeDriver: true,
       }),
       Animated.timing(slide, {
         toValue: 0,
         duration: duration + 60,
         delay,
-        easing: Easing.out(Easing.cubic),
+        easing: Easings.decelerate,
         useNativeDriver: true,
       }),
     ]);

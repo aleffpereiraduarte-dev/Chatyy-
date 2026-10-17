@@ -41,6 +41,17 @@ export function shouldUseNativeComposer() {
   try { return !!(m && m.isAvailable && m.isAvailable()); } catch { return false; }
 }
 
+// [2026-10-16 motion-composer] Movimento nativo do compositor (campo crescendo
+// com mola, halo da gravação suavizado + anel externo, seta "deslize p/
+// cancelar" cutucando). Kill switch OTA: globalThis.__chatyy_motion_composer =
+// false (ou __chatyy_motion = false) → prop motion=false = movimento antigo.
+// Ligado = prop omitida (binários antigos não recebem nada novo).
+function _motionOff() {
+  try { if (globalThis.__chatyy_motion_composer === false) return true; } catch {}
+  try { if (globalThis.__chatyy_motion === false) return true; } catch {}
+  return false;
+}
+
 function _tr(t, key, fb, vars) {
   try {
     const v = t ? t(key, vars) : null;
@@ -347,6 +358,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       disabled={!!disabled}
       changeDebounceMs={40}
       keyboardTracking={keyboardTracking}
+      motion={_motionOff() ? false : undefined}
       onChangeText={_onChangeText}
       onSend={_onSend}
       onAttach={_onAttach}

@@ -75,7 +75,14 @@ export function formatDuration(secs) {
   return `${Math.floor(d / 60)}:${String(d % 60).padStart(2, '0')}`;
 }
 
+
+// [2026-10-16 motion] Kill switches __chatyy_motion_* do pacote de mídia (check em mola).
+function _syncMotion() {
+  try { require('../../modules/expo-media-viewer/motion').syncMotion(); } catch {}
+}
+
 const NativeMediaGrid = forwardRef(function NativeMediaGrid(props, ref) {
+  useEffect(() => { if (Platform.OS === 'ios' || Platform.OS === 'android') _syncMotion(); }, []);
   const {
     items, header, footer, style, columns = 3, spacing = 1, radius = 0, sections = false,
     locale, maxContentWidth = 0, contentInsetBottom = 0, theme,

@@ -28,8 +28,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Platform, RefreshControl, KeyboardAvoidingView, Linking,
+  View, Text, StyleSheet, ScrollView, TextInput, Platform, KeyboardAvoidingView, Linking,
 } from 'react-native';
+import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -754,7 +755,7 @@ export default function WalletCashoutScreen() {
             contentContainerStyle={[styles.scrollBody, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
+            refreshControl={<UIRefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
           >
             <SkeletonFadeIn style={{ gap: Space.md }}>{body}</SkeletonFadeIn>
           </ScrollView>

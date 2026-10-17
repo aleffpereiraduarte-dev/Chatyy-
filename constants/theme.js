@@ -533,8 +533,12 @@ function _getShim() {
   if (_HShim === null) { try { _HShim = require('../services/haptics') || false; } catch { _HShim = false; } }
   return _HShim || null;
 }
+function _hapticsOff() {
+  try { const P = require('../services/hapticsPref'); return !!(P && P.isHapticsEnabled && !P.isHapticsEnabled()); } catch { return false; }
+}
 function _hx(shimFn, legacy) {
   return () => {
+    if (_hapticsOff()) return; // [2026-10-16 motion] preferência do usuário
     const S = _getShim();
     if (S) { try { shimFn(S); return; } catch {} }
     const H = _getHaptics();

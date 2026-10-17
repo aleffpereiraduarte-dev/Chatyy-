@@ -22,8 +22,9 @@ public class ChatyyStoryViewerModule: Module {
 
     // 2 = blocos (figurinhas/texto/GIF/enquete/pergunta…), voz, boomerang,
     // animação de texto, duplo toque, menu por item, updateItem caption/overlay.
+    // 3 = `originRect` (abre do anel do avatar e volta para ele) [2026-10-16 motion]
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
     }
 
     AsyncFunction("open") { (options: [String: Any]) -> Int in
@@ -60,6 +61,10 @@ public class ChatyyStoryViewerModule: Module {
         hasMoreNext: (options["hasMoreNext"] as? Bool) ?? false,
         hasMorePrev: (options["hasMorePrev"] as? Bool) ?? false
       )
+      // [2026-10-16 motion] Frame do anel tocado (coordenadas de janela, pt).
+      if MVMotion.storyOrigin && !MVMotion.reduceMotion, let r = MVItem.rectValue(options["originRect"]) {
+        vc.setOrigin(r)
+      }
       vc.emit = { [weak self] name, body in
         var b = body
         b["session"] = sid
@@ -71,7 +76,7 @@ public class ChatyyStoryViewerModule: Module {
       }
       self.current = vc
       // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
-      presenter.present(vc, animated: true, completion: {
+      presenter.present(vc, animated: !vc.hasOrigin, completion: {
         NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
       })
       NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)

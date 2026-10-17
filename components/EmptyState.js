@@ -6,6 +6,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
 import { cssPulseScale, IS_WEB } from '../utils/webCssLoop';
 import { IllustrationSearch, IllustrationEmptyInbox, IconSend, IconTrash, IconArchive, IconAlertTriangle, IconClock, IconFileText, IconCompose, IconRefresh, IconMail } from './Icons';
+import { Springs, motionEnabled } from '../constants/motion'; // [2026-10-16 motion] entrada de estado vazio
 
 const FOLDER_EMPTY = {
   INBOX: { titleKey: 'empty.inbox.title', subKey: 'empty.inbox.sub', icon: 'inbox', cta: 'compose' },
@@ -36,15 +37,17 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
   const router = useRouter();
 
   // Entrance animations
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(0.8)).current;
-  const slideAnim = useRef(new Animated.Value(20)).current;
+  const still = useRef(!motionEnabled('empty_state')).current;
+  const fadeAnim = useRef(new Animated.Value(still ? 1 : 0)).current;
+  const scaleAnim = useRef(new Animated.Value(still ? 1 : 0.8)).current;
+  const slideAnim = useRef(new Animated.Value(still ? 0 : 20)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    if (still) return undefined; // Reduzir Movimento: sem entrada nem pulso
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.spring(scaleAnim, { toValue: 1, tension: 80, friction: 12, useNativeDriver: true }),
+      Animated.spring(scaleAnim, { toValue: 1, ...Springs.gentle, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
 

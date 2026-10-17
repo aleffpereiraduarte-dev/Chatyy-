@@ -19,6 +19,7 @@ import React, { useRef, useEffect } from 'react';
 import { View, Animated, StyleSheet, Platform } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { Shimmer } from './SkeletonLoader';
+import { Durations, Distances, Easings, motionEnabled } from '../constants/motion';
 
 // A single shimmering block. Everything else is built from this.
 //   • width / height — number (px) or string ('60%'). Default 100% × 12.
@@ -107,14 +108,19 @@ const styles = StyleSheet.create({
 // Crossfade helper: wrap the REAL content that replaces a skeleton so it
 // fades/rises in softly instead of popping (WhatsApp/Telegram feel).
 //   <SkeletonFadeIn>{rows}</SkeletonFadeIn>
-export function SkeletonFadeIn({ children, duration = 240, style }) {
-  const o = useRef(new Animated.Value(0)).current;
+export function SkeletonFadeIn({ children, duration = Durations.skeletonFade, style }) {
+  // [2026-10-16 motion] Reduzir Movimento / kill switch
+  // (__chatyy_motion_skeleton_fade=false) → nasce assentado. Curva decelerate
+  // (antes: easing padrão do Animated).
+  const still = useRef(!motionEnabled('skeleton_fade')).current;
+  const o = useRef(new Animated.Value(still ? 1 : 0)).current;
   useEffect(() => {
-    const a = Animated.timing(o, { toValue: 1, duration, useNativeDriver: true });
+    if (still) return undefined;
+    const a = Animated.timing(o, { toValue: 1, duration, easing: Easings.decelerate, useNativeDriver: Platform.OS !== 'web' });
     a.start();
     return () => a.stop();
-  }, [o, duration]);
-  const ty = o.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
+  }, [o, duration, still]);
+  const ty = o.interpolate({ inputRange: [0, 1], outputRange: [Distances.skeleton, 0] });
   return <Animated.View style={[{ flex: 1, opacity: o, transform: [{ translateY: ty }] }, style]}>{children}</Animated.View>;
 }
 

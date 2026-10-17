@@ -10,6 +10,29 @@ enum CLMotion {
   static var reduced: Bool { UIAccessibility.isReduceMotionEnabled }
 }
 
+/// [2026-10-16 motion-nav] Molas da lista (Telegram). Kill switch: prop
+/// `springMotion=false` (JS globalThis.__chatyy_motion_list_spring = false).
+enum CLSpring {
+  static var enabled = true
+  static let bumpDuration: CFTimeInterval = 0.56
+  /// Impulso amortecido ζ 0,5 · ω 14 rad/s normalizado no pico, 1 + 0,18·g(t).
+  static let bumpScales: [NSNumber] = {
+    let zeta = 0.5, omega = 14.0
+    let wd = omega * (1 - zeta * zeta).squareRoot()
+    let tPeak = atan(wd / (zeta * omega)) / wd
+    let gPeak = exp(-zeta * omega * tPeak) * sin(wd * tPeak)
+    let n = 48
+    var out: [NSNumber] = []
+    out.reserveCapacity(n + 1)
+    for i in 0...n {
+      let t = Double(i) / Double(n) * 0.56
+      let g = i == n ? 0 : exp(-zeta * omega * t) * sin(wd * t) / gPeak
+      out.append(NSNumber(value: 1 + 0.18 * g))
+    }
+    return out
+  }()
+}
+
 /// ✓ (enviado), ✓✓ cinza (entregue), ✓✓ azul (lido). Entregue→lido faz
 /// crossfade + pulso, como o ListReceiptIcon do JS.
 final class CLReceiptView: UIView {
@@ -378,6 +401,18 @@ final class CLPillView: UIView {
   }
 
   func pop() {
+    // [2026-10-16 motion-nav] Pulo com FÍSICA (impulso de mola amortecida:
+    // 1 → 1,18 → 0,97 → 1, pico em ~86 ms) amostrado em keyframes lineares —
+    // mesma curva do Android (CLSpring.bump). Reduzir movimento = sem pulo.
+    if CLMotion.reduced { return }
+    if CLSpring.enabled {
+      let a = CAKeyframeAnimation(keyPath: "transform.scale")
+      a.values = CLSpring.bumpScales
+      a.duration = CLSpring.bumpDuration
+      a.calculationMode = .linear
+      layer.add(a, forKey: "pop")
+      return
+    }
     let a = CAKeyframeAnimation(keyPath: "transform.scale")
     a.values = [0.8, 1.2, 1]
     a.keyTimes = [0, 0.45, 1]

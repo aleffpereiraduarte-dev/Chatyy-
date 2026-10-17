@@ -75,6 +75,8 @@ const ENTRIES = [
   ['storage_data', 'settings.storage.clearCache', 'Limpar cache', 'storage', 'cache limpar', 'native'],
   ['accessibility', 'settings.fontSize', 'Tamanho da fonte', 'reading', 'fonte font texto'],
   ['accessibility', 'quickSettings.density', 'Densidade', 'reading', 'density compacto'],
+  ['accessibility', 'settings.reduceMotion', 'Reduzir movimento', 'reading', 'animação animacao motion movimento'],
+  ['accessibility', 'settings.hapticsTouch', 'Vibração ao tocar', 'reading', 'vibrar vibracao haptic toque tátil'],
   ['language', 'settings.languageLabel', 'Idioma', 'language', 'language idioma'],
   ['language', 'settings.language.autoDetect', 'Seguir idioma do sistema', 'language', 'auto'],
   ['language', 'settings.currencyLabel', 'Moeda', 'language', 'currency moeda'],

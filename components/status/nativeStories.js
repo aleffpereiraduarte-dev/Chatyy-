@@ -21,6 +21,7 @@ import { Platform } from 'react-native';
 import * as api from '../../services/api';
 import { firstLink, itemBg, itemFontStyle, normalizeTextFont, textStatusDurationMs, textStatusSolid, itemTextAlign } from './textStatus';
 import { resolveTextGradient } from './textGradients';
+import { takeStoryOrigin } from '../../services/storyOrigin'; // [2026-10-16 motion]
 
 let _NS; // undefined = não resolvido; null = indisponível
 function _mod() {
@@ -860,19 +861,28 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
     if (after) setTimeout(after, 60);
   });
 
-  m.open(payload).then((sid) => {
+  const doOpen = (rect) => {
     if (_session !== sess) return;
-    if (!sid) {
+    // [2026-10-16 motion] cresce do anel tocado (nativo apiVersion >= 3)
+    if (rect) payload.originRect = rect;
+    m.open(payload).then((sid) => {
+      if (_session !== sess) return;
+      if (!sid) {
+        _endSession();
+        try { cb.onFallback?.(); } catch {}
+        return;
+      }
+      sess.sid = sid;
+      if (sid > _lastSid) _lastSid = sid;
+    }).catch(() => {
+      if (_session !== sess) return;
       _endSession();
       try { cb.onFallback?.(); } catch {}
-      return;
-    }
-    sess.sid = sid;
-    if (sid > _lastSid) _lastSid = sid;
-  }).catch(() => {
-    if (_session !== sess) return;
-    _endSession();
-    try { cb.onFallback?.(); } catch {}
-  });
+    });
+  };
+  let origin = null;
+  try { const g0 = list[sg]; origin = takeStoryOrigin(g0 && (g0.email || g0.ownerEmail)); } catch { origin = null; }
+  if (origin && typeof origin.then === 'function') origin.then((r) => doOpen(r || null), () => doOpen(null));
+  else doOpen(null);
   return true;
 }

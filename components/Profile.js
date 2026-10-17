@@ -50,6 +50,13 @@ import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-14] vazio P&B (er
 import { Shimmer } from './SkeletonLoader'; // [2026-10-16 polish-perfil] grade-skeleton das Lives
 import SendDiamondSheet from './SendDiamondSheet';
 import { haptic } from '../constants/theme';
+// [2026-10-16 motion] Molas/limiares canônicos (constants/motion).
+import { Springs, motionEnabled, springTo } from '../constants/motion';
+// Press-in pula com movimento reduzido (= PressableScale); soltar sempre volta a 1.
+function _pressSpring(v, to) {
+  if (to !== 1 && !motionEnabled('press')) return;
+  springTo(v, to, to === 1 ? 'release' : 'press').start();
+}
 import { useWallet, refreshWallet } from '../services/diamonds';
 import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -253,10 +260,10 @@ function relativeLastSeen(ts, t) {
 const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors, isDark }) {
   const scale = useRef(new Animated.Value(1)).current;
   const onPressIn = useCallback(() => {
-    Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 30, bounciness: 4 }).start();
+    _pressSpring(scale, 0.96);
   }, [scale]);
   const onPressOut = useCallback(() => {
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 8 }).start();
+    _pressSpring(scale, 1);
   }, [scale]);
   // CLEAN 2026 premium: the secondary button is now a soft *filled* surface
   // (not a thin outline) with a 12px rounded-rect corner — reads as a modern
@@ -356,8 +363,8 @@ function LiveWatchCta({ label, onPress }) {
     }}>
       <TouchableOpacity
         onPress={onPress}
-        onPressIn={() => Animated.spring(press, { toValue: 1, useNativeDriver: true, speed: 30, bounciness: 4 }).start()}
-        onPressOut={() => Animated.spring(press, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 8 }).start()}
+        onPressIn={() => { if (motionEnabled('press')) springTo(press, 1, 'press').start(); }}
+        onPressOut={() => springTo(press, 0, 'release').start()}
         activeOpacity={0.9}
         accessibilityRole="button"
         accessibilityLabel={label}
@@ -424,7 +431,7 @@ const ProfileWalletChip = memo(function ProfileWalletChip({ colors, isDark, t, o
   const glyphBg = isDark ? '#FFFFFF' : '#0B0B0C';
   const glyphFg = isDark ? '#0B0B0C' : '#FFFFFF';
   const S = (() => { try { return require('react-native-svg'); } catch { return null; } })();
-  const press = (v) => Animated.spring(scale, { toValue: v, useNativeDriver: true, speed: 40, bounciness: v === 1 ? 6 : 0 }).start();
+  const press = (v) => _pressSpring(scale, v);
   return (
     <Animated.View style={{ transform: [{ scale }], marginTop: 10 }}>
       <TouchableOpacity
@@ -471,8 +478,8 @@ const ChipButton = memo(function ChipButton({ icon: Icon, label, onPress, colors
     <Animated.View style={{ flex: 1, transform: [{ scale }] }}>
       <TouchableOpacity
         onPress={onPress}
-        onPressIn={() => Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 30, bounciness: 4 }).start()}
-        onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 8 }).start()}
+        onPressIn={() => _pressSpring(scale, 0.96)}
+        onPressOut={() => _pressSpring(scale, 1)}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel={label}
@@ -534,11 +541,11 @@ const Stat = memo(function Stat({ value, label, onPress, colors }) {
   const scale = useRef(new Animated.Value(1)).current;
   const onPressIn = useCallback(() => {
     if (!onPress) return;
-    Animated.spring(scale, { toValue: 0.94, useNativeDriver: true, speed: 28, bounciness: 6 }).start();
+    _pressSpring(scale, 0.94);
   }, [onPress, scale]);
   const onPressOut = useCallback(() => {
     if (!onPress) return;
-    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 10 }).start();
+    _pressSpring(scale, 1);
   }, [onPress, scale]);
   return (
     <TouchableOpacity
@@ -757,13 +764,9 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
   const indicatorOpacity = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (!barW) return;
+    // [2026-10-16 motion] indicador desliza com mola (Telegram) — interrompível.
     Animated.parallel([
-      Animated.timing(indicatorX, {
-        toValue: activeIdx * slotW,
-        duration: 200,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
+      springTo(indicatorX, activeIdx * slotW, 'snappy', { useNativeDriver: true }),
       Animated.sequence([
         Animated.timing(indicatorOpacity, { toValue: 0.4, duration: 100, useNativeDriver: true }),
         Animated.timing(indicatorOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
@@ -4561,9 +4564,13 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
   const backdropOpacity = useRef(new Animated.Value(1)).current;
   // Drives the inverse fade (closer to bottom = more transparent backdrop)
   // so the dismiss feels like one fluid gesture.
-  const _commitClose = () => {
+  const _commitClose = (vy = 0) => {
+    // [2026-10-16 motion] flick → a folha segue a velocidade do dedo.
+    const flick = vy > 0 && motionEnabled('sheet_drag');
     Animated.parallel([
-      Animated.timing(translateY, { toValue: SH, duration: 220, easing: Easing.bezier(0.55, 0.06, 0.68, 0.19), useNativeDriver: true }),
+      flick
+        ? Animated.spring(translateY, { toValue: SH, velocity: vy * 1000, ...Springs.sheet, overshootClamping: true, useNativeDriver: true })
+        : Animated.timing(translateY, { toValue: SH, duration: 220, easing: Easing.bezier(0.55, 0.06, 0.68, 0.19), useNativeDriver: true }),
       Animated.timing(backdropOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
     ]).start(() => {
       try { onClose?.(); } catch {}
@@ -4572,9 +4579,9 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
       backdropOpacity.setValue(1);
     });
   };
-  const _snapBack = () => {
+  const _snapBack = (vy = 0) => {
     Animated.parallel([
-      Animated.spring(translateY, { toValue: 0, friction: 8, tension: 90, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, ...Springs.sheet, velocity: vy * 1000, useNativeDriver: true }),
       Animated.timing(backdropOpacity, { toValue: 1, duration: 160, useNativeDriver: true }),
     ]).start();
   };
@@ -4592,7 +4599,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
         backdropOpacity.setValue(op);
       },
       onPanResponderRelease: (_, g) => {
-        if (g.dy > 110 || g.vy > 0.6) _commitClose(); else _snapBack();
+        if (g.dy > 110 || g.vy > 0.6) _commitClose(g.vy); else _snapBack(g.vy);
       },
       onPanResponderTerminate: () => _snapBack(),
     })
@@ -4601,7 +4608,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
       <Animated.View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdropOpacity }}>
-        <Pressable style={{ flex: 1 }} onPress={_commitClose} />
+        <Pressable style={{ flex: 1 }} onPress={() => _commitClose()} />
         <Animated.View
           style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
@@ -4620,7 +4627,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
           </View>
           {/* Close (X) — kept for non-gesture dismissal (web, accessibility) */}
-          <TouchableOpacity onPress={_commitClose} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
+          <TouchableOpacity onPress={() => _commitClose()} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
             <IconX size={20} color={colors?.textSecondary || '#888'} />
           </TouchableOpacity>
           <ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView>

@@ -297,6 +297,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     this.row = row
     this.lay = lay
     this.style = style
+    if (this.audio !== audio) audioAt = SystemClock.uptimeMillis() // [motion-conv]
     this.audio = audio
     if (changedRow) {
       for (i in 0 until 7) { ringShown[i] = 0f; ringVisible[i] = false; ringFinishAt[i] = 0L }
@@ -306,8 +307,20 @@ class MLCellView(context: Context) : ViewGroup(context) {
       flashAnim?.cancel(); flashAlpha = 0f
       selAnim?.cancel(); selProgress = 1f; selFrom = 0f; checkScale = 1f
       barAnim?.cancel(); barShown.clear(); barT = 1f
+      cancelTickAnim()
+      sparkAnim?.cancel(); sparkAnim = null; sparkT = 1f
       if (vnView != null) onRecycled?.invoke(this)
     } else if (prevRow != null && prevLay != null) {
+      // [motion-conv] ✓ → ✓✓ → lida na MESMA linha → transição animada
+      val ps = prevRow.status
+      val ns = row.status
+      if (ps != null && ns != null && ns > ps && ps >= 0.0 && ns >= 1.0 && MLMotion.ticks && MLMotion.systemOn() && isAttachedToWindow) startTickAnim(ps)
+      // [motion-conv] reação NOVA de outra pessoa → pop (a minha pula pelo menu nativo)
+      val gi = if (MLMotion.react && isAttachedToWindow) othersReacted(prevRow.reacts, row.reacts) else -1
+      if (gi >= 0) {
+        val k0 = key
+        post { if (this.key == k0) { popReactions(); startSparks(gi) } }
+      }
       // [fase 2] entrada/saída do modo seleção animada
       if ((prevRow.sel == 0) != (row.sel == 0)) {
         val dx = prevLay.bubble.left - lay.bubble.left
@@ -381,7 +394,87 @@ class MLCellView(context: Context) : ViewGroup(context) {
     a.start()
   }
 
-  fun setAudio(a: MLAudioState?) { audio = a; invalidate() }
+  fun setAudio(a: MLAudioState?) { audio = a; audioAt = SystemClock.uptimeMillis(); invalidate() }
+  // [motion-conv] progresso suave do áudio: instante do último pulso + último mostrado
+  private var audioAt = 0L
+  private var audioShown = 0f
+  private var audioShownId = ""
+
+  // ─── [motion-conv] ⏱ → ✓ → ✓✓ → lida (coreografia do AnimatedCheckStatus JS):
+  // ⏱→✓ relógio some e o ✓ dá um pop (.5 → 1 com overshoot); ✓→✓✓ 2º ✓ desliza
+  // da esquerda; →lida cinza→azul + pulso 1 → 1.15 → 1.
+  private var tickFrom = -1.0
+  private var tickT = 1f
+  private var tickAnim: ValueAnimator? = null
+
+  private fun startTickAnim(from: Double) {
+    tickAnim?.cancel()
+    tickFrom = from
+    tickT = 0f
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 420
+    a.interpolator = android.view.animation.LinearInterpolator()
+    a.addUpdateListener { tickT = it.animatedValue as Float; invalidate() }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: android.animation.Animator) { if (tickAnim === animation) { tickAnim = null; tickT = 1f; tickFrom = -1.0; invalidate() } }
+    })
+    tickAnim = a
+    a.start()
+  }
+
+  private fun cancelTickAnim() {
+    val a = tickAnim
+    tickAnim = null
+    a?.cancel()
+    tickT = 1f
+    tickFrom = -1.0
+  }
+
+  private fun backOut(t: Float): Float {
+    val c1 = 1.70158f
+    val c3 = c1 + 1f
+    val u = t - 1f
+    return 1f + c3 * u * u * u + c1 * u * u
+  }
+
+  private fun cubicOut(t: Float): Float { val u = 1f - t; return 1f - u * u * u }
+
+  private fun mixColor(a: Int, b: Int, t: Float): Int {
+    fun ch(sh: Int): Int { val x = (a ushr sh) and 0xFF; val y = (b ushr sh) and 0xFF; return (x + ((y - x) * t)).toInt().coerceIn(0, 255) }
+    return (ch(24) shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+  }
+
+  /** [motion-conv] alguém (não eu) reagiu: emoji novo/contagem maior e as MINHAS
+   *  iguais → índice do chip que cresceu (-1 = não). */
+  private fun othersReacted(a: List<MLReact>, b: List<MLReact>): Int {
+    if (b.isEmpty()) return -1
+    val oldCount = HashMap<String, Int>()
+    val oldMine = HashSet<String>()
+    for (r in a) { oldCount[r.emoji] = r.count; if (r.mine) oldMine.add(r.emoji) }
+    val newMine = HashSet<String>()
+    var grew = -1
+    for ((i, r) in b.withIndex()) { if (r.mine) newMine.add(r.emoji); if (grew < 0 && r.count > (oldCount[r.emoji] ?: 0)) grew = i }
+    return if (oldMine == newMine) grew else -1
+  }
+
+  private var sparkChip = -1
+  private var sparkT = 1f
+  private var sparkAnim: ValueAnimator? = null
+  private fun startSparks(i: Int) {
+    if (!MLMotion.systemOn()) return
+    sparkAnim?.cancel()
+    sparkChip = i
+    sparkT = 0f
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 380
+    a.interpolator = android.view.animation.LinearInterpolator()
+    a.addUpdateListener { sparkT = it.animatedValue as Float; invalidate() }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: android.animation.Animator) { if (sparkAnim === animation) { sparkAnim = null; sparkT = 1f; invalidate() } }
+    })
+    sparkAnim = a
+    a.start()
+  }
 
   fun recycle() {
     if (vnView != null) onRecycled?.invoke(this)
@@ -395,6 +488,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     for (i in 0 until 7) { ringShown[i] = 0f; ringVisible[i] = false; ringFinishAt[i] = 0L }
     flashAnim?.cancel(); flashAlpha = 0f
     jumboAnim?.cancel(); jumboAnim = null; jumboScale = 1f; jumboRot = 0f; jumboPending = false
+    cancelTickAnim()
+    sparkAnim?.cancel(); sparkAnim = null; sparkT = 1f
     swipeX = 0f
   }
 
@@ -809,6 +904,23 @@ class MLCellView(context: Context) : ViewGroup(context) {
         drawText(c, ch.second, tmpRect.centerX() - ch.second.width / 2, tmpRect.centerY() - ch.second.height / 2)
       }
       if (popOn) c.restore()
+      // [motion-conv] faíscas da reação nova (= ReactionSparks JS)
+      val si = sparkChip
+      if (sparkT < 1f && si >= 0 && si < L.chips.size) {
+        val ch = L.chips[si].first
+        val cx = L.reactsFrame.left + ch.centerX()
+        val cy = L.reactsFrame.centerY()
+        val p = sparkT
+        val e = 1f - (1f - p) * (1f - p) // quad out
+        val op = if (p < 0.15f) p / 0.15f * 0.9f else 0.9f * (1f - (p - 0.15f) / 0.85f)
+        val sc = if (p < 0.3f) 0.6f + 0.4f * (p / 0.3f) else 1f - 0.8f * ((p - 0.3f) / 0.7f)
+        fill.color = withAlpha(0xBF808080.toInt(), max(0f, op))
+        val rr = s.dp(2f) * sc
+        for (k in 0 until 6) {
+          val ang = (Math.PI * 2 * k / 6 - Math.PI / 2 + 0.3).toFloat()
+          c.drawCircle(cx + cos(ang) * s.dp(18f) * e, cy + sin(ang) * s.dp(18f) * e, rr, fill)
+        }
+      }
     }
     if (liftAlpha < 1f) c.restore()
     c.restore()
@@ -1013,6 +1125,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     val st = m.status ?: return
     x += s.dp(3f)
     val tickColor = if (st >= 2) s.theme.read else m.color
+    // [motion-conv] transição em curso (só ✓ em diante)
+    if (tickFrom >= 0.0 && tickT < 1f && st >= 1.0) { drawTicksAnimated(c, x, cy, st, tickFrom, tickT, m, s); return }
     when {
       st < 0 -> {
         fill.color = s.theme.failed; c.drawCircle(x + s.dp(6f), cy, s.dp(6f), fill)
@@ -1029,6 +1143,47 @@ class MLCellView(context: Context) : ViewGroup(context) {
       st >= 1.5 -> { drawCheck(c, x, cy - s.dp(5f), tickColor, s); drawCheck(c, x + s.dp(4.5f), cy - s.dp(5f), tickColor, s) }
       else -> drawCheck(c, x + s.dp(1f), cy - s.dp(5f), tickColor, s)
     }
+  }
+
+  private fun drawTicksAnimated(c: Canvas, x: Float, cy: Float, st: Double, from: Double, t: Float, m: MLMeta, s: MLStyle) {
+    val toRead = st >= 2 && from < 2
+    val color = if (toRead) mixColor(m.color, s.theme.read, cubicOut(min(1f, t * 1.6f))) else if (st >= 2) s.theme.read else m.color
+    val gx = x + s.dp(if (st >= 1.5) 8.5f else 6.5f)
+    c.save()
+    if (toRead) {
+      val p = 1f + 0.15f * kotlin.math.sin(Math.PI.toFloat() * min(1f, t * 1.3f))
+      c.scale(p, p, gx, cy)
+    }
+    var groupAlpha = 1f
+    if (from == 0.0) {
+      // ⏱ some rápido; os ✓ estalam
+      val ca = max(0f, 1f - t * 3f)
+      if (ca > 0f) {
+        stroke.color = withAlpha(m.color, ca); stroke.strokeWidth = s.dp(1.2f)
+        c.drawCircle(x + s.dp(6f), cy, s.dp(5f), stroke)
+        c.drawLine(x + s.dp(6f), cy, x + s.dp(6f), cy - s.dp(3.2f), stroke)
+        c.drawLine(x + s.dp(6f), cy, x + s.dp(8.4f), cy + s.dp(1f), stroke)
+      }
+      val ps = 0.5f + 0.5f * backOut(t)
+      c.scale(ps, ps, gx, cy)
+      groupAlpha = min(1f, t * 4f)
+    }
+    if (st >= 1.5) {
+      var x1 = x
+      var dx2 = 0f
+      var a2 = 1f
+      if (from >= 1.0 && from < 1.5) {
+        val e = cubicOut(t)
+        x1 = x + s.dp(1f) * (1f - e)
+        dx2 = -s.dp(4.5f) * (1f - e)
+        a2 = e
+      }
+      drawCheck(c, x1, cy - s.dp(5f), withAlpha(color, groupAlpha), s)
+      drawCheck(c, x + s.dp(4.5f) + dx2, cy - s.dp(5f), withAlpha(color, groupAlpha * a2), s)
+    } else {
+      drawCheck(c, x + s.dp(1f), cy - s.dp(5f), withAlpha(color, groupAlpha), s)
+    }
+    c.restore()
   }
 
   private fun drawSmallIcon(c: Canvas, paths: List<Path?>, x: Float, cy: Float, sz: Float, color: Int) {
@@ -1165,6 +1320,18 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (active) st!!.posMs?.let { p ->
       if (p > 0) { shown = p / 1000.0; progress = if (dur > 0) min(1.0, shown / dur).toFloat() else 0f }
     }
+    // [motion-conv] entre os pulsos do player extrapola até 0,5 s (redesenho por
+    // quadro) e não volta p/ trás por jitter (< 4%); barra da cabeça parcial.
+    val smooth = MLMotion.audio
+    if (smooth && playing && progress > 0f && dur > 0) {
+      val dt = SystemClock.uptimeMillis() - audioAt
+      val p0 = st!!.posMs ?: 0.0
+      progress = min(1.0, (p0 + min(500L, max(0L, dt))) / 1000.0 / dur).toFloat()
+      if (audioShownId == r.id && progress < audioShown && audioShown - progress < 0.04f) progress = audioShown
+      if (dt < 500L) postInvalidateOnAnimation()
+    }
+    audioShown = progress
+    audioShownId = r.id
     val bars = if (au.wave.isNotEmpty()) au.wave else FALLBACK_WAVE
     val x0 = f.left + b + s.dp(10f)
     val avail = f.right - x0 - s.dp(4f)
@@ -1178,9 +1345,21 @@ class MLCellView(context: Context) : ViewGroup(context) {
         val v = bars[i].coerceIn(0.08f, 1f)
         val h = max(s.dp(3f), v * s.dp(22f))
         val x = x0 + i * step
-        fill.color = if (i < playedUpTo) tint else dim
         tmpRect.set(x, midY - h / 2, x + bw, midY + h / 2)
-        c.drawRoundRect(tmpRect, bw / 2, bw / 2, fill)
+        val frac = playedUpTo - i
+        if (smooth && frac > 0f && frac < 1f) {
+          // [motion-conv] barra da cabeça preenchida em parte
+          fill.color = dim
+          c.drawRoundRect(tmpRect, bw / 2, bw / 2, fill)
+          c.save()
+          c.clipRect(x, tmpRect.top, x + bw * frac, tmpRect.bottom)
+          fill.color = tint
+          c.drawRoundRect(tmpRect, bw / 2, bw / 2, fill)
+          c.restore()
+        } else {
+          fill.color = if (i < playedUpTo) tint else dim
+          c.drawRoundRect(tmpRect, bw / 2, bw / 2, fill)
+        }
       }
     }
     val sec = max(0, Math.round(shown).toInt())

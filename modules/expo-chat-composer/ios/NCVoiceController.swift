@@ -54,6 +54,7 @@ final class NCWaveformView: UIView {
 /// Camada sobre a janela durante o "segurar": círculo grande que segue o dedo
 /// e a pílula do cadeado acima. Não recebe toques (o gesto continua no botão).
 final class NCHoldOverlay: UIView {
+  let halo2 = UIView() // [2026-10-16 motion-composer] anel externo, mais lento (Telegram)
   let halo = UIView()
   let circle = UIView()
   let mic = UIImageView()
@@ -67,6 +68,8 @@ final class NCHoldOverlay: UIView {
     isUserInteractionEnabled = false
     backgroundColor = .clear
     halo.isUserInteractionEnabled = false
+    halo2.isUserInteractionEnabled = false
+    addSubview(halo2)
     addSubview(halo)
     addSubview(circle)
     mic.image = UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold))
@@ -100,6 +103,10 @@ final class NCHoldOverlay: UIView {
     halo.bounds = CGRect(x: 0, y: 0, width: d, height: d)
     halo.layer.cornerRadius = d / 2
     halo.backgroundColor = theme.action.withAlphaComponent(0.18)
+    halo2.bounds = CGRect(x: 0, y: 0, width: d, height: d)
+    halo2.layer.cornerRadius = d / 2
+    halo2.backgroundColor = theme.action.withAlphaComponent(0.08)
+    halo2.center = o
     lockPill.bounds = CGRect(x: 0, y: 0, width: 40, height: 78)
     lockPill.backgroundColor = theme.pill
     lockPill.layer.borderColor = theme.pillBorder.cgColor
@@ -117,11 +124,20 @@ final class NCHoldOverlay: UIView {
     if abs(dx) > abs(dy) { c.x += min(0, dx) } else { c.y += min(0, dy) }
     circle.center = c
     halo.center = c
-    let s = 1 + CGFloat(level) * 0.55
-    halo.transform = CGAffineTransform(scaleX: s, y: s)
+    halo2.center = c
+    applyLevel(level, outer: level)
     lockPill.center = CGPoint(x: origin.x, y: origin.y - 64 - 39 + min(0, dy) * 0.35)
     chevron.alpha = 1 - lockProgress
     lockIcon.transform = CGAffineTransform(translationX: 0, y: lockProgress * 8)
+  }
+
+  /// [2026-10-16 motion-composer] Halo segue o volume (já suavizado no tick);
+  /// anel externo cresce mais e responde mais devagar.
+  func applyLevel(_ inner: Float, outer: Float) {
+    let s = 1 + CGFloat(inner) * 0.55
+    halo.transform = CGAffineTransform(scaleX: s, y: s)
+    let s2 = 1 + CGFloat(outer) * 0.95
+    halo2.transform = CGAffineTransform(scaleX: s2, y: s2)
   }
 }
 
@@ -138,6 +154,11 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
   private var startedAt: CFTimeInterval = 0
   private var samples: [Float] = []
   private var lastLevel: Float = 0
+  // [2026-10-16 motion-composer] nível suavizado (ataque rápido, queda lenta)
+  // só p/ o halo; samples/onda continuam com o valor cru (sem mudar o áudio).
+  private var smoothLevel: Float = 0
+  private var smoothOuter: Float = 0
+  private var motionOn: Bool { return (host?.motion ?? true) && !UIAccessibility.isReduceMotionEnabled }
   private var link: CADisplayLink?
   private var startPoint: CGPoint = .zero
   private var lastDx: CGFloat = 0
@@ -299,7 +320,8 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
       let dy = p.y - startPoint.y
       lastDx = dx
       let lockProgress = max(0, min(1, -dy / lockDistance))
-      overlay?.update(dx: dx, dy: dy, lockProgress: lockProgress, level: lastLevel)
+      overlay?.update(dx: dx, dy: dy, lockProgress: lockProgress, level: motionOn ? smoothLevel : lastLevel)
+      if motionOn { overlay?.applyLevel(smoothLevel, outer: smoothOuter) }
       let cancelProgress = max(0, min(1, -dx / cancelDistance))
       slideLabel.alpha = 1 - cancelProgress * 0.85
       if let bar = panel.superview { layoutPanel(in: bar, frame: panel.frame) }
@@ -363,6 +385,8 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     startedAt = CACurrentMediaTime()
     samples.removeAll()
     lastLevel = 0
+    smoothLevel = 0
+    smoothOuter = 0
     waveform.reset()
     let l = CADisplayLink(target: NCVoiceTick(self), selector: #selector(NCVoiceTick.tick))
     l.preferredFramesPerSecond = 30
@@ -389,8 +413,18 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     let secs = Int(elapsed)
     timeLabel.text = String(format: "%d:%02d", secs / 60, secs % 60)
     if !isLocked, let o = overlay {
-      let s = 1 + CGFloat(level) * 0.55
-      o.halo.transform = CGAffineTransform(scaleX: s, y: s)
+      if motionOn {
+        smoothLevel += (level - smoothLevel) * (level > smoothLevel ? 0.55 : 0.18)
+        smoothOuter += (level - smoothOuter) * (level > smoothOuter ? 0.30 : 0.08)
+        let a = smoothLevel, b = smoothOuter
+        // Interpola entre os ticks (30 Hz) → halo liso a 60/120 Hz.
+        UIView.animate(withDuration: 1.0 / 30.0, delay: 0, options: [.beginFromCurrentState, .curveLinear, .allowUserInteraction], animations: {
+          o.applyLevel(a, outer: b)
+        }, completion: nil)
+      } else {
+        let s = 1 + CGFloat(level) * 0.55
+        o.halo.transform = CGAffineTransform(scaleX: s, y: s)
+      }
     }
     if elapsed >= maxDurationSec { finish(send: true) }
   }
@@ -510,12 +544,15 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     overlay = o
     o.circle.transform = CGAffineTransform(scaleX: 0.45, y: 0.45)
     o.halo.alpha = 0
+    o.halo2.alpha = 0
+    o.halo2.isHidden = !motionOn
     o.lockPill.alpha = 0
     o.lockPill.transform = CGAffineTransform(translationX: 0, y: 24)
     UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.62, initialSpringVelocity: 0.4,
                    options: [.beginFromCurrentState], animations: {
       o.circle.transform = .identity
       o.halo.alpha = 1
+      o.halo2.alpha = 1
       o.lockPill.alpha = 1
       o.lockPill.transform = .identity
     }, completion: nil)
@@ -532,6 +569,21 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     blink.autoreverses = true
     blink.repeatCount = .infinity
     dot.layer.add(blink, forKey: "blink")
+    // [2026-10-16 motion-composer] seta/texto "deslize p/ cancelar" cutuca p/
+    // a esquerda (Telegram). Só a camada de apresentação: o frame que segue o
+    // dedo (layoutPanel) não muda.
+    slideLabel.layer.removeAnimation(forKey: "nudge")
+    if motionOn {
+      let nudge = CABasicAnimation(keyPath: "transform.translation.x")
+      nudge.fromValue = 0
+      nudge.toValue = -7
+      nudge.duration = 0.75
+      nudge.autoreverses = true
+      nudge.repeatCount = .infinity
+      nudge.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      nudge.isAdditive = true
+      slideLabel.layer.add(nudge, forKey: "nudge")
+    }
     panel.transform = CGAffineTransform(translationX: 24, y: 0)
     UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
       self.panel.alpha = 1
@@ -552,6 +604,7 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
       }, completion: { _ in o.removeFromSuperview() })
     }
     dot.layer.removeAnimation(forKey: "blink")
+    slideLabel.layer.removeAnimation(forKey: "nudge")
     UIView.animate(withDuration: 0.16, delay: 0, options: [.beginFromCurrentState], animations: {
       self.panel.alpha = 0
     }, completion: { _ in

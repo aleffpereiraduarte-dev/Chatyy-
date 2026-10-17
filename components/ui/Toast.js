@@ -11,12 +11,13 @@
 // arrastar p/ baixo dispensa; respeita reduzir-movimento. Sem deps nativas.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated, Easing, PanResponder, Platform, Pressable, Text, View, useWindowDimensions,
+  Animated, PanResponder, Platform, Pressable, Text, View, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Overlay, OverlayShadow } from '../../constants/theme';
 import { IconCheckCircle, IconAlertCircle, IconInfo } from '../Icons';
 import { isReduceMotionEnabled } from '../reducedMotion';
+import { Springs, Durations, Distances, Easings, Gestures, motionEnabled } from '../../constants/motion';
 import { useOverlayColors } from './Sheet';
 
 const _listeners = new Set();
@@ -51,13 +52,19 @@ export function ToastHost({ bottomOffset = 64 }) {
   const [toast, setToast] = useState(null);
   const anim = useRef(new Animated.Value(0)).current;
   const drag = useRef(new Animated.Value(0)).current;
+  // [2026-10-16 motion] arrastar p/ o LADO dispensa (Telegram/iOS); o timer
+  // pausa enquanto o dedo está no toast. Kill: __chatyy_motion_toast_swipe=false.
+  const dragX = useRef(new Animated.Value(0)).current;
   const timer = useRef(null);
   const current = useRef(null);
+  const msRef = useRef(Durations.toast);
+  const winWRef = useRef(winW);
+  winWRef.current = winW;
 
   const dismiss = useCallback(() => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
     const shown = current.current;
-    Animated.timing(anim, { toValue: 0, duration: Overlay.exitMs, easing: Easing.in(Easing.quad), useNativeDriver: true })
+    Animated.timing(anim, { toValue: 0, duration: Durations.exit, easing: Easings.fadeOut, useNativeDriver: true })
       .start(() => { if (current.current === shown) { current.current = null; setToast(null); } });
   }, [anim]);
 
@@ -67,14 +74,16 @@ export function ToastHost({ bottomOffset = 64 }) {
       if (timer.current) clearTimeout(timer.current);
       current.current = p;
       drag.setValue(0);
+      dragX.setValue(0);
       anim.setValue(0);
       setToast(p);
-      if (isReduceMotionEnabled()) {
+      if (isReduceMotionEnabled() || !motionEnabled()) {
         Animated.timing(anim, { toValue: 1, duration: 120, useNativeDriver: true }).start();
       } else {
-        Animated.spring(anim, { toValue: 1, ...Overlay.spring, useNativeDriver: true }).start();
+        Animated.spring(anim, { toValue: 1, ...Springs.sheet, useNativeDriver: true }).start();
       }
-      const ms = typeof p.duration === 'number' ? p.duration : (p.action ? 5000 : 3500);
+      const ms = typeof p.duration === 'number' ? p.duration : (p.action ? Durations.toastWithAction : Durations.toast);
+      msRef.current = ms;
       timer.current = setTimeout(dismiss, ms);
     };
     _listeners.add(fn);
@@ -82,12 +91,45 @@ export function ToastHost({ bottomOffset = 64 }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dismiss]);
 
+  const axis = useRef(null); // 'x' | 'y' — trava no eixo do 1º movimento
   const pan = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_e, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
-    onPanResponderMove: (_e, g) => drag.setValue(Math.max(0, g.dy)),
+    onMoveShouldSetPanResponder: (_e, g) => {
+      if (g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx)) { axis.current = 'y'; return true; }
+      if (motionEnabled('toast_swipe') && Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2) { axis.current = 'x'; return true; }
+      return false;
+    },
+    onPanResponderGrant: () => {
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    },
+    onPanResponderMove: (_e, g) => {
+      if (axis.current === 'x') dragX.setValue(g.dx);
+      else drag.setValue(Math.max(0, g.dy));
+    },
     onPanResponderRelease: (_e, g) => {
-      if (g.dy > 30 || g.vy > 0.6) dismiss();
-      else Animated.spring(drag, { toValue: 0, ...Overlay.spring, useNativeDriver: true }).start();
+      if (axis.current === 'x') {
+        if (Math.abs(g.dx) > Gestures.toastSwipeX || Math.abs(g.vx) > Gestures.toastSwipeVx) {
+          const dir = (g.dx || g.vx) < 0 ? -1 : 1;
+          const shown = current.current;
+          Animated.spring(dragX, {
+            toValue: dir * (winWRef.current || 400), velocity: g.vx * 1000,
+            ...Springs.snappy, overshootClamping: true, useNativeDriver: true,
+          }).start(() => { if (current.current === shown) { current.current = null; setToast(null); } });
+          return;
+        }
+        Animated.spring(dragX, { toValue: 0, ...Springs.snappy, velocity: g.vx * 1000, useNativeDriver: true }).start();
+        timer.current = setTimeout(dismiss, Math.min(msRef.current, 2500));
+        return;
+      }
+      if (g.dy > Gestures.toastDismissDistance || g.vy > Gestures.toastDismissVelocity) dismiss();
+      else {
+        Animated.spring(drag, { toValue: 0, ...Springs.sheet, useNativeDriver: true }).start();
+        timer.current = setTimeout(dismiss, Math.min(msRef.current, 2500));
+      }
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(drag, { toValue: 0, ...Springs.sheet, useNativeDriver: true }).start();
+      Animated.spring(dragX, { toValue: 0, ...Springs.snappy, useNativeDriver: true }).start();
+      if (!timer.current) timer.current = setTimeout(dismiss, 2500);
     },
   })).current;
 
@@ -112,9 +154,12 @@ export function ToastHost({ bottomOffset = 64 }) {
           width: wide ? undefined : winW - 24, alignSelf: 'center',
           paddingLeft: 16, paddingRight: toast.action ? 6 : 16, paddingVertical: 8,
           borderRadius: Overlay.toastRadius, backgroundColor: oc.toastBg,
-          opacity: anim,
+          opacity: Animated.multiply(anim, dragX.interpolate({
+            inputRange: [-(winW || 400), 0, (winW || 400)], outputRange: [0.2, 1, 0.2], extrapolate: 'clamp',
+          })),
           transform: [
-            { translateY: Animated.add(anim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }), drag) },
+            { translateX: dragX },
+            { translateY: Animated.add(anim.interpolate({ inputRange: [0, 1], outputRange: [Distances.toast, 0] }), drag) },
             { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
           ],
         }, OverlayShadow]}

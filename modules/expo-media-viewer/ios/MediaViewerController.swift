@@ -471,8 +471,8 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
 
   /// Fecha encolhendo a foto até a bolha. false = sem destino/imagem → caller
   /// segue o fechamento normal.
-  private func startHeroClose(reason: String, then: (() -> Void)?) -> Bool {
-    guard !closed, presentingViewController != nil, isViewLoaded, view.window != nil,
+  private func startHeroClose(reason: String, then: (() -> Void)?, velocityY: CGFloat = 0) -> Bool {
+    guard !closed, !MVMotion.reduceMotion, presentingViewController != nil, isViewLoaded, view.window != nil,
           let ret = heroReturnTarget(),
           let cell = currentCell(), let img = cell.heroImage,
           let start = cell.heroFrame(in: view) else { return false }
@@ -493,7 +493,10 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     view.isUserInteractionEnabled = false
     let idx = currentIndex
     let cb = onClose
-    UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.92, initialSpringVelocity: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+    // [2026-10-16 motion] Solto com força: a foto sai com a velocidade do dedo.
+    let dy = target.midY - start.midY
+    let v0: CGFloat = (velocityY != 0 && (dy > 0) == (velocityY > 0)) ? MVMotion.springVelocity(abs(velocityY), remaining: abs(dy)) : 0
+    UIView.animate(withDuration: 0.36, delay: 0, usingSpringWithDamping: 0.92, initialSpringVelocity: max(0, v0), options: [.curveEaseOut, .beginFromCurrentState], animations: {
       hv.frame = target
       hv.layer.cornerRadius = radius
       self.backdrop.alpha = 0
@@ -754,13 +757,22 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
 
   private func setChrome(visible: Bool, animated: Bool) {
     chromeVisible = visible
+    // [2026-10-16 motion] Barras somem com fade + deslize (Telegram): a de cima
+    // sobe, a de baixo desce. Kill switch: __chatyy_motion_media_chrome.
+    let slide = animated && MVMotion.chromeSlide && !MVMotion.reduceMotion
     let apply = {
       self.topBar.alpha = visible ? 1 : 0
       self.bottomBar.alpha = visible ? 1 : 0
+      if slide || visible {
+        self.topBar.transform = (visible || !slide) ? .identity : CGAffineTransform(translationX: 0, y: -14)
+        self.bottomBar.transform = (visible || !slide) ? .identity : CGAffineTransform(translationX: 0, y: 18)
+      }
     }
     topBar.isUserInteractionEnabled = visible
     bottomBar.isUserInteractionEnabled = visible
-    if animated {
+    if slide {
+      UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.92, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: apply, completion: nil)
+    } else if animated {
       UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: apply, completion: nil)
     } else {
       apply()
@@ -914,7 +926,7 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
       let vy = g.velocity(in: view).y
       let sameDir = (t.y >= 0) == (vy >= 0) || abs(vy) < 200
       let shouldClose = g.state == .ended && sameDir && (abs(t.y) > 110 || abs(vy) > 900)
-      if shouldClose && startHeroClose(reason: "swipe", then: nil) {
+      if shouldClose && startHeroClose(reason: "swipe", then: nil, velocityY: vy) {
         panCell = nil
         return
       }
@@ -937,7 +949,9 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
           }
         })
       } else {
-        UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        // [2026-10-16 motion] Mola de volta herdando a velocidade do dedo.
+        let v0 = MVMotion.springVelocity(-vy, remaining: t.y)
+        UIView.animate(withDuration: 0.34, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: v0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
           cell.page.transform = .identity
           self.backdrop.alpha = 1
           self.topBar.alpha = self.chromeVisible ? 1 : 0
@@ -988,6 +1002,7 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     guard scrollView === collectionView, !relayouting, !closed else { return }
     let w = scrollView.bounds.width
     guard w > 0, !items.isEmpty else { return }
+    applyParallax()
     let i = max(0, min(items.count - 1, Int((scrollView.contentOffset.x / w).rounded())))
     if i != currentIndex {
       currentIndex = i
@@ -1016,8 +1031,24 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
 
   /// Página assentada: ativa a atual (vídeo toca), desativa as outras,
   /// liga a barra de vídeo e pré-carrega as vizinhas.
+  /// [2026-10-16 motion] Parallax: o conteúdo anda ~22% mais devagar que a
+  /// página (recortado por ela). Kill switch: __chatyy_motion_media_parallax.
+  private func applyParallax() {
+    guard let cv = collectionView else { return }
+    let w = cv.bounds.width
+    guard w > 0 else { return }
+    let on = MVMotion.parallax && !MVMotion.reduceMotion
+    for c in cv.visibleCells {
+      guard let pc = c as? MVPageCell else { continue }
+      if !on { pc.setParallax(0); continue }
+      let d = max(-1, min(1, (pc.frame.minX - cv.contentOffset.x) / w))
+      pc.setParallax(abs(d) < 0.002 ? 0 : d * w * 0.22)
+    }
+  }
+
   private func settle() {
     guard !closed, let cv = collectionView else { return }
+    applyParallax()
     for c in cv.visibleCells {
       guard let pc = c as? MVPageCell, let ip = cv.indexPath(for: pc) else { continue }
       if ip.item == currentIndex {

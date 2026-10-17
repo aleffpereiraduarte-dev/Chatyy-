@@ -18,6 +18,9 @@
  *   ]);
  */
 import { Platform } from 'react-native';
+// [2026-10-16 motion] Preferência "Vibração ao tocar" (Configurações >
+// Acessibilidade). Padrão ligado = comportamento de sempre.
+import { isHapticsEnabled } from './hapticsPref';
 
 let _native = null;
 if (Platform.OS === 'ios') {
@@ -75,6 +78,7 @@ function _expoNotification(kind) {
 }
 
 export function tap(intensity = 'medium') {
+  if (!isHapticsEnabled()) return;
   if (_native?.hapticImpact) {
     try { _native.hapticImpact(intensity); return; } catch {}
   }
@@ -88,6 +92,7 @@ export function tap(intensity = 'medium') {
 // broken next to WhatsApp's crisp ticks; on Android it goes through
 // performHapticFeedback (see _androidHaptic above).
 export function selection() {
+  if (!isHapticsEnabled()) return;
   // Android: segment-tick (API 34) → clock-tick (all APIs) → vibrator.
   if (_androidHaptic('segment-tick', () => {
     if (!_androidHaptic('clock-tick', () => { try { _expoHaptics?.selectionAsync?.(); } catch {} })) {
@@ -101,6 +106,7 @@ export function selection() {
 }
 
 export function success() {
+  if (!isHapticsEnabled()) return;
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('success'); return; } catch {}
   }
@@ -111,6 +117,7 @@ export function success() {
 }
 
 export function warning() {
+  if (!isHapticsEnabled()) return;
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('warning'); return; } catch {}
   }
@@ -121,6 +128,7 @@ export function warning() {
 }
 
 export function error() {
+  if (!isHapticsEnabled()) return;
   if (_native?.hapticNotification) {
     try { _native.hapticNotification('error'); return; } catch {}
   }
@@ -140,6 +148,7 @@ export function error() {
  *   sharpness — 0..1 (low = soft thud, high = sharp tick)
  */
 export async function pattern(events) {
+  if (!isHapticsEnabled()) return;
   if (_native?.hapticPattern) {
     try { await _native.hapticPattern(events); return; } catch {}
   }

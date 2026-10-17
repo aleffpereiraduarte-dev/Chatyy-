@@ -21,6 +21,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import PressableScale from './PressableScale';
+import { Springs, motionEnabled } from '../constants/motion'; // [2026-10-16 motion] entrada de estado vazio
 
 export default function EmptyStateCard({
   Icon,
@@ -35,15 +36,17 @@ export default function EmptyStateCard({
   containerStyle,
 }) {
   const { colors } = useTheme();
-  const scale = useRef(new Animated.Value(0.94)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
+  const still = useRef(!motionEnabled('empty_state')).current;
+  const scale = useRef(new Animated.Value(still ? 1 : 0.94)).current;
+  const opacity = useRef(new Animated.Value(still ? 1 : 0)).current;
 
   useEffect(() => {
+    if (still) return;
     Animated.parallel([
-      Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 7, tension: 100 }),
+      Animated.spring(scale, { toValue: 1, useNativeDriver: true, ...Springs.gentle }),
       Animated.timing(opacity, { toValue: 1, duration: 240, useNativeDriver: true }),
     ]).start();
-  }, [scale, opacity]);
+  }, [scale, opacity, still]);
 
   const tint = tone === 'success' ? (colors.success || '#22c55e')
     : tone === 'warning' ? (colors.warning || '#f59e0b')

@@ -1,6 +1,7 @@
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { giftPreviewText as _giftPreviewText } from './gifts/giftCatalog'; // [2026-10-13 diamantes]
 import RollingNumber from './RollingNumber'; // [2026-10-15 nav-motion]
+import { ChipRail, RailChip, chipRailEnabled } from './chatlist/ChipRail'; // [2026-10-16 motion-nav] pílula deslizante dos filtros
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
@@ -7554,6 +7555,48 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     );
   }, [filter, isDark, P, handleDeleteFolderChip]);
 
+  // [2026-10-16 motion-nav] Filtros estilo Telegram: UMA pílula desliza com
+  // mola (UI thread) até o chip tocado e o texto inverte conforme ela cobre
+  // cada chip (components/chatlist/ChipRail). Os chips aqui são ESTÁVEIS (o
+  // FilterChip acima é recriado a cada troca de filtro = remonta tudo, o que
+  // mataria a mola). Kill switch: globalThis.__chatyy_motion_chips = false →
+  // FilterChip de sempre. Web: sempre o FilterChip.
+  const _chipRailOn = !isWeb && chipRailEnabled();
+  const _renderChip = ({ label, value, count, folder }, key) => {
+    if (!_chipRailOn) return <FilterChip key={key || value} label={label} value={value} count={count} folder={folder} />;
+    const content = (on) => {
+      const txt = on ? P.pillTxt : P.chipTxt;
+      return (
+        <>
+          {folder ? <FolderGlyph folder={folder} size={14} color={txt} /> : null}
+          <Text maxFontSizeMultiplier={1.25} style={[s.chipText, { color: txt, fontWeight: on ? '600' : '500' }]}>
+            {label}
+          </Text>
+          {count > 0 ? (
+            <View style={[s.chipBadge, { backgroundColor: on ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount }]}>
+              <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: txt }]} value={count > 99 ? '99+' : count} />
+            </View>
+          ) : null}
+        </>
+      );
+    };
+    return (
+      <RailChip
+        key={key || value}
+        value={value}
+        active={filter === value}
+        style={s.chip}
+        baseBg={P.chipBg}
+        activeBg={P.pillBg}
+        renderContent={content}
+        onPress={() => setFilter(filter === value ? 'all' : value)}
+        onLongPress={folder ? () => handleDeleteFolderChip(folder) : undefined}
+        delayLongPress={350}
+        accessibilityLabel={count > 0 ? `${label}, ${count}` : label}
+      />
+    );
+  };
+
   const renderPinnedLabel = () => {
     // [2026-10-10 qa-sweep] Buscando: as fixadas aparecem misturadas em
     // "CONVERSAS" (com o ícone de pin) → o rótulo "FIXADAS" ficava órfão/vazio.
@@ -8589,15 +8632,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         style={[{ flexGrow: 0, flexShrink: 0, height: 46 }, (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' }]}
         contentContainerStyle={s.filtersRow}
       >
-        <FilterChip label={t('chat.filterAll') || 'Todas'} value="all" />
-        <FilterChip label={t('chat.filterUnread') || 'Não lidas'} value="unread" count={unreadCount} />
-        <FilterChip label={t('chat.filterFavorites') || 'Favoritas'} value="favorites" count={favoritesCount} />
-        <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
-        <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
+        <ChipRail activeKey={filter} pillColor={P.pillBg}>
+        {_renderChip({ label: t('chat.filterAll') || 'Todas', value: 'all' })}
+        {_renderChip({ label: t('chat.filterUnread') || 'Não lidas', value: 'unread', count: unreadCount })}
+        {_renderChip({ label: t('chat.filterFavorites') || 'Favoritas', value: 'favorites', count: favoritesCount })}
+        {_renderChip({ label: t('chat.filterGroups') || 'Grupos', value: 'groups', count: groupCount })}
+        {_renderChip({ label: t('chat.channels') || 'Canais', value: 'channels', count: channelCount })}
         {chatFolders.map(f => (
-          <FilterChip key={f.id} label={f.name} value={`folder_${f.id}`} folder={f} count={folderUnreadCounts[f.id] || 0} />
+          _renderChip({ label: f.name, value: `folder_${f.id}`, folder: f, count: folderUnreadCounts[f.id] || 0 }, String(f.id))
         ))}
-        <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
+        {_renderChip({ label: t('chat.filterArchived') || 'Arquivadas', value: 'archived', count: archivedCount })}
         {/* [2026-10-16 wave12-B pastas] "+" no fim → tela de listas (criar/ordenar/editar) */}
         <TouchableOpacity
           style={[s.chip, { backgroundColor: P.chipBg, paddingHorizontal: 11 }, isWeb && { cursor: 'pointer' }]}
@@ -8609,10 +8653,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         >
           <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={P.chipTxt} strokeWidth={2.2} strokeLinecap="round"><Path d="M12 5v14M5 12h14" /></Svg>
         </TouchableOpacity>
+        </ChipRail>
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, P, t, FilterChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders, folderUnreadCounts, router]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders, folderUnreadCounts, router]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer

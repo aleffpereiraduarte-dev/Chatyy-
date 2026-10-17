@@ -6,7 +6,11 @@ import android.app.AlertDialog
 import android.app.Application
 import android.app.Dialog
 import android.content.Context
+import android.animation.ValueAnimator
 import android.graphics.Color
+import android.graphics.Outline
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -28,7 +32,9 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -149,6 +155,183 @@ class StoryViewerDialog(
   private val pendingMoreTimeout = Runnable { resolveMore(false) }
 
   private var started = false
+
+  // [2026-10-16 motion] Abre crescendo do anel do avatar (Telegram) e, se a
+  // pessoa ainda for a mesma, fecha voltando para ele (contorno arredondado
+  // animado + escala/translação do stage). Kill switch: __chatyy_motion_story_origin.
+  private var originRect: RectF? = null
+  private var originOwner = ""
+  private var originClosing = false
+  private var originAnim: ValueAnimator? = null
+  private val outlineRect = RectF()
+  private var outlineRadius = 0f
+  private var outlineOn = false
+  // Segurar = leve recuo com mola (kill switch __chatyy_motion_story_hold).
+  private var holdAnim: ValueAnimator? = null
+  private var holdF = 0f
+
+  /** Antes do show(): frame do anel (dp do RN, coordenadas de janela). */
+  fun setOrigin(r: RectF) {
+    if (r.width() < 2f || r.height() < 2f) return
+    originRect = RectF(r)
+    originOwner = groups.getOrNull(currentGroup)?.ownerEmail ?: ""
+  }
+
+  private fun rnToLocal(r: RectF): RectF {
+    val d = context.resources.displayMetrics.density
+    val vis = Rect()
+    try { host.window?.decorView?.getWindowVisibleDisplayFrame(vis) } catch (_: Throwable) {}
+    val rl = IntArray(2)
+    try { root.getLocationOnScreen(rl) } catch (_: Throwable) {}
+    val ox = vis.left - rl[0]
+    val oy = vis.top - rl[1]
+    return RectF(r.left * d + ox, r.top * d + oy, r.right * d + ox, r.bottom * d + oy)
+  }
+
+  private fun setOutline(l: Float, t: Float, r: Float, b: Float, rad: Float) {
+    outlineOn = true
+    outlineRect.set(l, t, r, b)
+    outlineRadius = max(0f, rad)
+    stage.invalidateOutline()
+  }
+
+  private fun clearOutline() {
+    outlineOn = false
+    stage.invalidateOutline()
+  }
+
+  private fun lerp(a: Float, b: Float, f: Float): Float = a + (b - a) * f
+
+  private fun runOriginOpen(): Boolean {
+    val r = originRect ?: return false
+    val w = stage.width.toFloat()
+    val h = stage.height.toFloat()
+    if (closed || w <= 0f || h <= 0f) return false
+    val t = rnToLocal(r)
+    val s0 = (min(t.width(), t.height()) / w).coerceAtLeast(0.02f)
+    val tx0 = t.centerX() - (stage.left + w / 2f)
+    val ty0 = t.centerY() - (stage.top + h / 2f)
+    val cTop = (h - w) / 2f
+    addPause("origin")
+    stage.scaleX = s0; stage.scaleY = s0
+    stage.translationX = tx0; stage.translationY = ty0
+    setOutline(0f, cTop, w, cTop + w, w / 2f)
+    stage.animate().alpha(1f).setDuration(120).setInterpolator(AccelerateDecelerateInterpolator()).start()
+    val sp = MVSpring(0.88f, 13f)
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = sp.durationMs
+    a.interpolator = sp
+    a.addUpdateListener { va ->
+      val f = va.animatedValue as Float
+      val sc = lerp(s0, 1f, f)
+      stage.scaleX = sc; stage.scaleY = sc
+      stage.translationX = lerp(tx0, 0f, f)
+      stage.translationY = lerp(ty0, 0f, f)
+      val o = f.coerceIn(0f, 1f)
+      setOutline(0f, lerp(cTop, 0f, o), w, lerp(cTop + w, h, o), lerp(w / 2f, 0f, o))
+      backdrop.alpha = min(1f, f * 1.5f)
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      private var cancelled = false
+      override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (originAnim === a) originAnim = null
+        if (cancelled || originClosing) return
+        stage.scaleX = 1f; stage.scaleY = 1f
+        stage.translationX = 0f; stage.translationY = 0f
+        backdrop.alpha = 1f
+        clearOutline()
+        removePause("origin")
+      }
+    })
+    originAnim = a
+    a.start()
+    return true
+  }
+
+  /** Fecha encolhendo até o anel; false = outra pessoa / sem origem → fechamento normal. */
+  private fun tryOriginClose(reason: String, vy: Float = 0f): Boolean {
+    val r = originRect ?: return false
+    if (closed || originClosing || !MVMotion.storyOrigin || MVMotion.reduceMotion) return false
+    if (!::stage.isInitialized || !root.isAttachedToWindow) return false
+    if (composerOpen || sheetOpen) return false
+    if ((groups.getOrNull(currentGroup)?.ownerEmail ?: "") != originOwner) return false
+    val w = stage.width.toFloat()
+    val h = stage.height.toFloat()
+    if (w <= 0f || h <= 0f) return false
+    originClosing = true
+    originAnim?.cancel()
+    holdAnim?.cancel()
+    stage.animate().cancel()
+    backdrop.animate().cancel()
+    addPause("origin")
+    val t = rnToLocal(r)
+    val s1 = (min(t.width(), t.height()) / w).coerceAtLeast(0.02f)
+    val tx1 = t.centerX() - (stage.left + w / 2f)
+    val ty1 = t.centerY() - (stage.top + h / 2f)
+    val s0 = stage.scaleX
+    val tx0 = stage.translationX
+    val ty0 = stage.translationY
+    val b0 = backdrop.alpha
+    val r0 = if (outlineOn) outlineRadius else 0f
+    val cTop = (h - w) / 2f
+    val dist = ty1 - ty0
+    val v0 = if (vy > 0f && dist > 0f) MVMotion.normVelocity(vy, dist).coerceAtLeast(0f) else 0f
+    val sp = MVSpring(0.95f, 14f, v0)
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = sp.durationMs
+    a.interpolator = sp
+    a.addUpdateListener { va ->
+      val f = va.animatedValue as Float
+      val sc = lerp(s0, s1, f)
+      stage.scaleX = sc; stage.scaleY = sc
+      stage.translationX = lerp(tx0, tx1, f)
+      stage.translationY = lerp(ty0, ty1, f)
+      val o = f.coerceIn(0f, 1f)
+      setOutline(0f, lerp(0f, cTop, o), w, lerp(h, cTop + w, o), lerp(r0, w / 2f, o))
+      backdrop.alpha = b0 * (1f - o)
+      stage.alpha = if (va.animatedFraction < 0.62f) 1f else max(0f, 1f - (va.animatedFraction - 0.62f) / 0.2f)
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      private var ended = false
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (ended) return
+        ended = true
+        finish(reason, false)
+      }
+    })
+    originAnim = a
+    a.start()
+    return true
+  }
+
+  private fun animateHold(target: Float) {
+    holdAnim?.cancel()
+    holdAnim = null
+    if (!::stage.isInitialized) return
+    val from = holdF
+    if (from == target) return
+    val sp = MVSpring(if (target > 0f) 0.8f else 0.7f, 17f)
+    val r = dp(14f).toFloat()
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = sp.durationMs
+    a.interpolator = sp
+    a.addUpdateListener { va ->
+      val f = lerp(from, target, va.animatedValue as Float)
+      holdF = f
+      val sc = 1f - 0.035f * f
+      stage.scaleX = sc; stage.scaleY = sc
+      if (f > 0.001f) setOutline(0f, 0f, stage.width.toFloat(), stage.height.toFloat(), r * f.coerceIn(0f, 1f)) else clearOutline()
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (holdAnim === a) holdAnim = null
+        if (target == 0f && holdF < 0.01f) { holdF = 0f; if (!originClosing && originAnim == null) clearOutline() }
+      }
+    })
+    holdAnim = a
+    a.start()
+  }
   private var lastFrameNs = 0L
   private val frameCb = object : Choreographer.FrameCallback {
     override fun doFrame(frameTimeNanos: Long) {
@@ -207,7 +390,13 @@ class StoryViewerDialog(
   override fun onStart() {
     super.onStart()
     window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-    if (!started && !closed) {
+    if (!started && !closed && originRect != null && MVMotion.storyOrigin && !MVMotion.reduceMotion) {
+      started = true
+      stage.alpha = 0f
+      backdrop.alpha = 0f
+      root.post { if (!runOriginOpen()) { stage.animate().alpha(1f).setDuration(180).start(); backdrop.alpha = 1f } }
+      Choreographer.getInstance().postFrameCallback(frameCb)
+    } else if (!started && !closed) {
       started = true
       stage.alpha = 0f
       stage.scaleX = 0.94f
@@ -289,6 +478,16 @@ class StoryViewerDialog(
     stage = FrameLayout(context)
     stage.setBackgroundColor(Color.BLACK)
     stage.clipToOutline = true
+    // [2026-10-16 motion] contorno animável (origem do anel / segurar); fora disso = retângulo cheio.
+    stage.outlineProvider = object : ViewOutlineProvider() {
+      override fun getOutline(view: View, outline: Outline) {
+        if (outlineOn) {
+          outline.setRoundRect(outlineRect.left.toInt(), outlineRect.top.toInt(), outlineRect.right.toInt(), outlineRect.bottom.toInt(), outlineRadius)
+        } else {
+          outline.setRect(0, 0, view.width, view.height)
+        }
+      }
+    }
     root.addView(stage, FrameLayout.LayoutParams(mp, mp))
 
     pager = ViewPager2(context)
@@ -301,7 +500,7 @@ class StoryViewerDialog(
     }
     val density = context.resources.displayMetrics.density
     pager.setPageTransformer { page, position ->
-      if (!cube) {
+      if (!cube || MVMotion.reduceMotion) {
         page.rotationY = 0f
         return@setPageTransformer
       }
@@ -456,9 +655,16 @@ class StoryViewerDialog(
           if (!vDrag && canVertical() && pager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
             val dx = ev.rawX - downX
             val dy = ev.rawY - downY
-            if (abs(dy) > slop && abs(dy) > abs(dx) * 1.2f) {
+            if (abs(dy) > slop && abs(dy) > abs(dx) * 1.2f && !originClosing) {
               vDrag = true
               addPause("dismiss")
+              // Mola do "segurar"/abertura em voo não briga com o dedo.
+              holdAnim?.cancel(); holdAnim = null; holdF = 0f
+              if (originAnim != null) { originAnim?.cancel(); originAnim = null; removePause("origin") }
+              stage.animate().cancel()
+              stage.alpha = 1f
+              backdrop.alpha = 1f
+              clearOutline()
               return true
             }
           }
@@ -497,11 +703,18 @@ class StoryViewerDialog(
           vDrag = false
           val up = ev.actionMasked == MotionEvent.ACTION_UP
           if (up && dy > 0 && (dy > dp(130f) || vy > dp(900f))) {
+            if (tryOriginClose("swipe", vy)) return true
             dismissBySwipe()
             return true
           }
           val openUp = up && dy < 0 && (dy < -dp(60f) || vy < -dp(650f))
-          stage.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(220).start()
+          if (MVMotion.flingSpring && !MVMotion.reduceMotion) {
+            // [2026-10-16 motion] mola de volta com a velocidade do dedo
+            val sp = MVSpring(0.82f, 16f, MVMotion.normVelocity(-vy, stage.translationY))
+            stage.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(sp).setDuration(sp.durationMs).start()
+          } else {
+            stage.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(AccelerateDecelerateInterpolator()).setDuration(220).start()
+          }
           backdrop.animate().alpha(1f).setDuration(220).start()
           removePause("dismiss")
           if (openUp) {
@@ -515,7 +728,7 @@ class StoryViewerDialog(
 
   private fun dismissBySwipe() {
     val h = root.height.toFloat()
-    stage.animate().translationY(stage.translationY + h * 0.6f).alpha(0f).setDuration(200).start()
+    stage.animate().translationY(stage.translationY + h * 0.6f).alpha(0f).setInterpolator(AccelerateDecelerateInterpolator()).setDuration(200).start()
     backdrop.animate().alpha(0f).setDuration(200).withEndAction { finish("swipe", false) }.start()
   }
 
@@ -682,9 +895,12 @@ class StoryViewerDialog(
       page.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
       addPause("hold")
       page.setChromeHidden(true)
+      if (MVMotion.holdScale && !MVMotion.reduceMotion && !originClosing && originAnim == null
+          && stage.translationX == 0f && stage.translationY == 0f && !pauseReasons.contains("dismiss")) animateHold(1f)
     } else if (pauseReasons.contains("hold")) {
       removePause("hold")
       page.setChromeHidden(false)
+      if (holdF > 0f && !pauseReasons.contains("dismiss") && !originClosing) animateHold(0f)
     }
   }
 
@@ -1468,7 +1684,10 @@ class StoryViewerDialog(
 
   private fun finish(reason: String, animated: Boolean) {
     if (closed) return
+    if (animated && reason != "replaced" && reason != "dismiss" && tryOriginClose(reason)) return
     closed = true
+    holdAnim?.cancel()
+    holdAnim = null
     Choreographer.getInstance().removeFrameCallback(frameCb)
     handler.removeCallbacksAndMessages(null)
     try { hideKeyboard() } catch (_: Throwable) {}
@@ -1495,7 +1714,7 @@ class StoryViewerDialog(
       realDismiss()
     }
     if (animated && ::stage.isInitialized) {
-      stage.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setDuration(180).start()
+      stage.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setInterpolator(AccelerateDecelerateInterpolator()).setDuration(180).start()
       backdrop.animate().alpha(0f).setDuration(180).withEndAction { done() }.start()
     } else {
       done()

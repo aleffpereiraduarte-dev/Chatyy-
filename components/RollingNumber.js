@@ -14,6 +14,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, PixelRatio, Platform, StyleSheet, Text, View } from 'react-native';
 import { isReduceMotionEnabled } from './reducedMotion';
+import { Springs, motionEnabled } from '../constants/motion';
 
 const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const NATIVE = Platform.OS !== 'web';
@@ -24,8 +25,8 @@ function DigitColumn({ digit, lineHeight, rowH, textStyle, maxFontSizeMultiplier
   useEffect(() => {
     const to = -digit * rowH;
     if (first.current) { first.current = false; anim.setValue(to); return; }
-    if (isReduceMotionEnabled()) { anim.setValue(to); return; }
-    Animated.spring(anim, { toValue: to, useNativeDriver: NATIVE, tension: 220, friction: 22 }).start();
+    if (isReduceMotionEnabled() || !motionEnabled()) { anim.setValue(to); return; }
+    Animated.spring(anim, { toValue: to, useNativeDriver: NATIVE, ...Springs.digit }).start();
   }, [digit, rowH, anim]);
   return (
     <View style={{ height: rowH, overflow: 'hidden' }}>

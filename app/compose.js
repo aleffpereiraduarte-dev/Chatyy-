@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-  LayoutAnimation, Animated, Modal, Pressable, Switch, AppState, useWindowDimensions,
+  Animated, Modal, Pressable, Switch, AppState, useWindowDimensions,
 } from 'react-native';
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -60,6 +60,7 @@ import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
+import { animateLayout } from '../constants/motion'; // [2026-10-16 motion] Cc/Cco com mola
 import AIComposeModal from '../components/AIComposeModal';
 import RichTextEditor from '../components/RichTextEditor';
 import ContactAutocomplete from '../components/ContactAutocomplete';
@@ -1860,7 +1861,7 @@ export default function ComposeScreen() {
       <View style={s.ccBtns}>
         {!showCc && (
           <TouchableOpacity
-            onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowCc(true); }}
+            onPress={() => { animateLayout(); setShowCc(true); }}
             style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}
             accessibilityLabel={t('compose.addCc') || 'Add Cc'}
             accessibilityRole="button"
@@ -1870,7 +1871,7 @@ export default function ComposeScreen() {
         )}
         {!showBcc && (
           <TouchableOpacity
-            onPress={() => { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setShowBcc(true); }}
+            onPress={() => { animateLayout(); setShowBcc(true); }}
             style={[s.ccToggleBtn, { backgroundColor: colors.surfaceVariant }]}
             accessibilityLabel={t('compose.addBcc') || 'Add Bcc'}
             accessibilityRole="button"

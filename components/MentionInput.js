@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, FlatList, StyleSheet, Platform } from 'react-native';
 import AvatarCircle from './AvatarCircle';
+import SuggestPopIn from './chat/SuggestPopIn'; // [2026-10-16 motion-composer] entrada com mola
 
 /**
  * MentionAutocomplete - Shows a dropdown list of group members when typing "@"
@@ -47,7 +48,7 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
   const combined = [...metaMatched, ...filtered];
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+    <SuggestPopIn style={[styles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <FlatList
         data={combined.slice(0, 6)}
         keyExtractor={(item) => item.email}
@@ -96,7 +97,7 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
           );
         }}
       />
-    </View>
+    </SuggestPopIn>
   );
 }
 

@@ -95,6 +95,22 @@
 //          onRowPress part 'a11y' → prop onA11yAction({item, key, action}).
 //          Kill switch: globalThis.__chatyy_native_list_a11y = false.
 //
+//   motion [apiVersion 7, motion-conv 2026-10-16] prop motion {i,e,t,r,s,a} (0/1;
+//          ausente = tudo ligado) → movimento nativo "nível Telegram":
+//          i inserção com mola (enviada sai do composer / recebida sobe curta,
+//            vizinhas andam junto) — off = fade+subida antigos;
+//          e apagar/"apagada"/altura mudou (editar, reação, tradução) com mola,
+//            só se tudo estiver na tela — off = troca seca;
+//          t ⏱→✓→✓✓→lida animado (= AnimatedCheckStatus do JS);
+//          r reação nova de outra pessoa → pop do chip;
+//          s pílula de data flutuante com escala na entrada/saída;
+//          a onda do áudio avança contínua (extrapolada entre pulsos, barra
+//            parcial) em vez de pular barra a barra.
+//          Kill switches: globalThis.__chatyy_motion = false (todos) ou
+//          __chatyy_motion_insert / _edit / _ticks / _react / _sticky / _audio = false.
+//          Reduzir Movimento (iOS) / remover animações (Android) = desligado
+//          no próprio nativo.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -136,6 +152,17 @@ function _ctxMenuSwitchOn() { try { return globalThis.__chatyy_native_ctxmenu !=
 /** Menu de contexto nativo disponível (binário apiVersion ≥ 3 + kill switch). */
 export function nativeCtxMenuAvailable() { _getNativeView(); return _api >= 3 && _ctxMenuSwitchOn(); }
 /** [wave13-C] kill switch OTA da acessibilidade nativa (rótulo JS + ações). */
+// [motion-conv] kill switches de movimento da lista nativa (apiVersion 7)
+function _motionFlag(name) {
+  try {
+    if (globalThis.__chatyy_motion === false) return 0;
+    return globalThis['__chatyy_motion_' + name] === false ? 0 : 1;
+  } catch { return 1; }
+}
+/** Assinatura das 6 chaves (insert/edit/ticks/react/sticky/audio) — estável entre renders. */
+function _motionSig() {
+  return '' + _motionFlag('insert') + _motionFlag('edit') + _motionFlag('ticks') + _motionFlag('react') + _motionFlag('sticky') + _motionFlag('audio');
+}
 function _a11ySwitchOn() { try { return globalThis.__chatyy_native_list_a11y !== false; } catch { return true; } }
 /** apiVersion do módulo nativo (0 = ausente). */
 export function nativeListApi() { _getNativeView(); return _api; }
@@ -1880,6 +1907,12 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       hint: L('a11y.msgHint', 'Há ações para responder, reagir, encaminhar ou apagar.'),
     };
   }, [_p2Label]);
+  // [motion-conv] prop motion (apiVersion 7): objeto novo só quando a assinatura muda
+  const _mSig = _api >= 7 ? _motionSig() : '';
+  const nativeMotion = useMemo(() => {
+    if (!_mSig) return undefined;
+    return { i: +_mSig[0], e: +_mSig[1], t: +_mSig[2], r: +_mSig[3], s: +_mSig[4], a: +_mSig[5] };
+  }, [_mSig]);
   const nativeSticky = useMemo(() => {
     if (!stickyDate || _api < 2) return undefined;
     const o = { on: stickyDate.on ? 1 : 0, top: Number(stickyDate.top) || 0 };
@@ -1976,6 +2009,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       {...(_api >= 3 ? { ctxMenu: !!ctxMenu && _ctxMenuSwitchOn() } : null)}
       {...(nativeStore ? { store: nativeStore } : null)}
       {...(nativeA11y ? { a11y: nativeA11y } : null)}
+      {...(nativeMotion ? { motion: nativeMotion } : null)}
       {...handlers}
     />
   );

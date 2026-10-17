@@ -4,7 +4,11 @@
 import { View } from 'react-native';
 import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
-import { SettingsGroup, SettingsPickerRow } from '../SettingsKit';
+import { SettingsGroup, SettingsPickerRow, SettingsSwitchRow } from '../SettingsKit';
+import {
+  useReducedMotion, isSystemReduceMotionEnabled, getReduceMotionPreference, setReduceMotionPreference,
+  useHapticsEnabled, setHapticsEnabled, feedback,
+} from '../../../constants/motion';
 import { useSettingsHost, useSettingsBlob, useSaveNotifPref } from './shared';
 
 export default function AccessibilityCategory() {
@@ -13,6 +17,11 @@ export default function AccessibilityCategory() {
   const { registerAnchor } = useSettingsHost();
   const { settings, setSettings } = useSettingsBlob();
   const saveNotifPref = useSaveNotifPref();
+  // [2026-10-16 motion] Movimento e toque (preferências LOCAIS do aparelho).
+  const tx = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  const reduceOn = useReducedMotion();
+  const systemReduce = isSystemReduceMotionEnabled();
+  const hapticsOn = useHapticsEnabled();
   return (
     <View ref={registerAnchor('reading')}>
       <SettingsGroup header={t('settings.cat.accessibility')} footer={t('settings.fontSizeDesc')}>
@@ -42,6 +51,26 @@ export default function AccessibilityCategory() {
             onChange={(v) => setDensity(v)}
           />
         )}
+      </SettingsGroup>
+      <SettingsGroup
+        header={tx('settings.motionHeader', 'Movimento e toque')}
+        footer={systemReduce
+          ? tx('settings.reduceMotionSystemOn', 'O "Reduzir movimento" do sistema está ativo, então as animações já estão reduzidas.')
+          : tx('settings.reduceMotionDesc', 'Troca molas e deslizes por transições discretas. A vibração ao tocar dá um retorno sutil nos botões e controles.')}
+      >
+        <SettingsSwitchRow
+          title={tx('settings.reduceMotion', 'Reduzir movimento')}
+          value={reduceOn || getReduceMotionPreference() === 'on'}
+          disabled={systemReduce}
+          onValueChange={(v) => setReduceMotionPreference(v ? 'on' : 'system')}
+          testID="settings-reduce-motion"
+        />
+        <SettingsSwitchRow
+          title={tx('settings.hapticsTouch', 'Vibração ao tocar')}
+          value={hapticsOn}
+          onValueChange={(v) => { setHapticsEnabled(v); if (v) feedback.selection(); }}
+          testID="settings-haptics"
+        />
       </SettingsGroup>
     </View>
   );

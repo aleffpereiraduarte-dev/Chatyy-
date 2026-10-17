@@ -513,6 +513,7 @@ class AttachSheetDialog(
       root.post {
         CAUtil.haptic(root, "select")
         animateTo(collapsedPos, 0f)
+        cascadeActions()
         startCameraIfPossible()
       }
     } else {
@@ -534,6 +535,25 @@ class AttachSheetDialog(
     sheetBg.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
     val travel = max(1f, winH - (expandedTop + cp))
     dim.alpha = max(0f, 1f - dismiss / travel)
+  }
+
+  // [2026-10-16 motion-attach] Galeria/Arquivo/Local/… sobem em cascata com
+  // mola enquanto a folha sobe (Telegram). Animações desligadas no sistema /
+  // motion=false → estático.
+  private fun cascadeActions() {
+    if (!cfg.motion) return
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !android.animation.ValueAnimator.areAnimatorsEnabled()) return
+    val dy = dp(22f).toFloat()
+    for (i in 0 until actionsRow.childCount) {
+      val v = actionsRow.getChildAt(i)
+      v.alpha = 0f
+      v.translationY = dy
+      v.scaleX = 0.82f
+      v.scaleY = 0.82f
+      v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+        .setStartDelay(80L + min(i, 8) * 35L).setDuration(420)
+        .setInterpolator(android.view.animation.OvershootInterpolator(1.3f)).start()
+    }
   }
 
   private fun animateTo(target: Float, velocity: Float, end: (() -> Unit)? = null) {

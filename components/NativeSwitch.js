@@ -16,6 +16,7 @@
 import React, { useRef, useEffect } from 'react';
 import { Switch, Platform, Pressable, Animated, Easing } from 'react-native';
 import { isReduceMotionEnabled } from './reducedMotion';
+import { Springs, motionEnabled } from '../constants/motion';
 
 // [2026-10-15 settings-2026] Web: o <Switch> do RN-web é um toggle de
 // formulário (trilho fino + bola que vaza). Desenha um UISwitch de verdade
@@ -24,8 +25,8 @@ import { isReduceMotionEnabled } from './reducedMotion';
 function WebSwitch({ value, onValueChange, disabled, onTrack, offTrack, onThumb, accessibilityLabel, testID, style }) {
   const anim = useRef(new Animated.Value(value ? 1 : 0)).current;
   useEffect(() => {
-    if (isReduceMotionEnabled()) { anim.setValue(value ? 1 : 0); return; }
-    Animated.spring(anim, { toValue: value ? 1 : 0, useNativeDriver: false, tension: 260, friction: 22 }).start();
+    if (isReduceMotionEnabled() || !motionEnabled()) { anim.setValue(value ? 1 : 0); return; }
+    Animated.spring(anim, { toValue: value ? 1 : 0, useNativeDriver: false, ...Springs.toggle }).start();
   }, [value, anim]);
   const bg = anim.interpolate({ inputRange: [0, 1], outputRange: [offTrack, onTrack] });
   const tx = anim.interpolate({ inputRange: [0, 1], outputRange: [2, 22] });

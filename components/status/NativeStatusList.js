@@ -272,6 +272,12 @@ function NativeStatusListInner(props) {
         const p = propsRef.current;
         try {
           if (id === 'sec:muted') { p.onToggleMuted?.(); return; }
+          // [2026-10-16 motion] Se o nativo mandar o frame do avatar (originRect,
+          // janela pt/dp), o story cresce dele. Sem o campo → abre como sempre.
+          if (group) {
+            const ne = e?.nativeEvent ?? e;
+            if (ne && ne.originRect) { try { require('../../services/storyOrigin').setStoryOriginHint(group.ownerEmail || group.email, ne.originRect); } catch {} }
+          }
           if (group) p.onOpen?.(group);
         } catch {}
       },

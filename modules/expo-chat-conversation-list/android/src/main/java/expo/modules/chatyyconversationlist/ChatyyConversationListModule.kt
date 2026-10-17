@@ -55,6 +55,8 @@ class ChatyyConversationListModule : Module() {
       Prop("topInset") { view: ChatyyConversationListView, v: Double? -> view.setTopInset(v ?: 0.0) }
       Prop("snapOffset") { view: ChatyyConversationListView, v: Double? -> view.setSnapOffset(v ?: 0.0) }
       Prop("peekMode") { view: ChatyyConversationListView, v: String? -> view.setPeekModeProp(v) }
+      // [2026-10-16 motion-nav] kill switch das molas da lista (JS só manda quando false).
+      Prop("springMotion") { _: ChatyyConversationListView, v: Boolean? -> CLSpring.enabled = v ?: true }
 
       OnViewDidUpdateProps { view: ChatyyConversationListView -> view.commitProps() }
 

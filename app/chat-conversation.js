@@ -149,6 +149,7 @@ import useConversationPrivacy from '../components/chat/useConversationPrivacy';
 import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
 import LazyMount from '../components/chat/LazyMount';
+import SuggestPopIn from '../components/chat/SuggestPopIn'; // [2026-10-16 motion-composer] sugestões /bot entram com mola
 import NowTicker from '../components/chat/NowTicker'; // [2026-10-15 conv-lite] // [2026-10-15 conv-lite] sheets/modais montados só na 1ª abertura
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetModal, NativeSheetKeyboardView, afterRNModal, runAfterNativeSheet, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2] +Modal drop-in/teclado
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35926,7 +35927,7 @@ function ChatConversationInner() {
           }
           if (rows.length === 0) return null;
           return (
-            <View
+            <SuggestPopIn
               style={{
                 position: 'absolute', bottom: '100%', left: 8, right: 8,
                 marginBottom: 6, maxHeight: 220,
@@ -35977,7 +35978,7 @@ function ChatConversationInner() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-            </View>
+            </SuggestPopIn>
           );
         })()}
         {/* Blocked banner */}

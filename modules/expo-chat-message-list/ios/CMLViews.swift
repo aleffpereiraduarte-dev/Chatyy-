@@ -184,6 +184,75 @@ final class CMLMetaView: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  // MARK: [motion-conv] ⏱ → ✓ → ✓✓ → lida (coreografia do AnimatedCheckStatus JS):
+  // ⏱→✓ relógio some e o ✓ dá um pop (.5 → 1, mola); ✓→✓✓ 2º ✓ desliza da
+  // esquerda; →lida cinza→azul em fade + pulso 1 → 1.15 → 1. ~120 Hz.
+  private var animFrom: Double?
+  private var animT: CGFloat = 1
+  private var animStart: CFTimeInterval = 0
+  private var link: CADisplayLink?
+  private static let statusAnimDur: CFTimeInterval = 0.42
+
+  /// Chamado DEPOIS de `meta` ter o status novo. Só anima avanço (nunca volta).
+  func animateStatus(from old: Double) {
+    guard let ns = meta.status, ns > old, old >= 0, ns >= 1 else { cancelStatusAnim(); return }
+    animFrom = old
+    animT = 0
+    animStart = CACurrentMediaTime()
+    if link == nil {
+      let l = CADisplayLink(target: CMLWeakLink(self) { obj in
+        if let v = obj as? CMLMetaView { v.stepStatusAnim() }
+      }, selector: #selector(CMLWeakLink.tick(_:)))
+      if #available(iOS 15.0, *) {
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+      }
+      l.add(to: .main, forMode: .common)
+      link = l
+    }
+    setNeedsDisplay()
+  }
+
+  func cancelStatusAnim() {
+    link?.invalidate()
+    link = nil
+    if animFrom != nil {
+      animFrom = nil
+      animT = 1
+      setNeedsDisplay()
+    }
+  }
+
+  private func stepStatusAnim() {
+    let t = CGFloat((CACurrentMediaTime() - animStart) / CMLMetaView.statusAnimDur)
+    if t >= 1 || window == nil { cancelStatusAnim(); return }
+    animT = max(0, t)
+    setNeedsDisplay()
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { cancelStatusAnim() }
+  }
+
+  private static func backOut(_ t: CGFloat) -> CGFloat {
+    let c1: CGFloat = 1.70158
+    let c3 = c1 + 1
+    let u = t - 1
+    return 1 + c3 * u * u * u + c1 * u * u
+  }
+
+  private static func cubicOut(_ t: CGFloat) -> CGFloat {
+    let u = 1 - t
+    return 1 - u * u * u
+  }
+
+  private static func mix(_ a: UIColor, _ b: UIColor, _ t: CGFloat) -> UIColor {
+    var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
+    var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+    guard a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa), b.getRed(&br, green: &bg, blue: &bb, alpha: &ba) else { return t < 0.5 ? a : b }
+    return UIColor(red: ar + (br - ar) * t, green: ag + (bg - ag) * t, blue: ab + (bb - ab) * t, alpha: aa + (ba - aa) * t)
+  }
+
   override func draw(_ rect: CGRect) {
     guard let ctx = UIGraphicsGetCurrentContext() else { return }
     var x: CGFloat = 0
@@ -217,11 +286,62 @@ final class CMLMetaView: UIView {
     }
     if let s = meta.status {
       x += 3
-      let tickColor = s >= 2 ? readColor : meta.color
+      var tickColor = s >= 2 ? readColor : meta.color
+      // [motion-conv] transição em curso (só ✓ em diante; falhou/pendente = estático)
+      let from: Double? = (animFrom != nil && animT < 1 && s >= 1) ? animFrom : nil
+      let t = animT
       if s < 0 {
         CMLIcons.alert(ctx, center: CGPoint(x: x + 6, y: cy), color: failedColor)
       } else if s == 0 {
         CMLIcons.clock(ctx, center: CGPoint(x: x + 6, y: cy), color: meta.color)
+      } else if let f = from {
+        let toRead = s >= 2 && f < 2
+        if toRead { tickColor = CMLMetaView.mix(meta.color, readColor, CMLMetaView.cubicOut(min(1, t * 1.6))) }
+        ctx.saveGState()
+        if toRead {
+          // pulso do grupo ao ficar lida
+          let p = 1 + 0.15 * sin(CGFloat.pi * min(1, t * 1.3))
+          let gx = x + (s >= 1.5 ? 8.5 : 6.5)
+          ctx.translateBy(x: gx, y: cy)
+          ctx.scaleBy(x: p, y: p)
+          ctx.translateBy(x: -gx, y: -cy)
+        }
+        if f == 0 {
+          // ⏱ some rápido; os ✓ "estalam" (.5 → 1 com overshoot)
+          let ca = max(0, 1 - t * 3)
+          if ca > 0 {
+            ctx.saveGState()
+            ctx.setAlpha(ca)
+            CMLIcons.clock(ctx, center: CGPoint(x: x + 6, y: cy), color: meta.color)
+            ctx.restoreGState()
+          }
+          let ps = 0.5 + 0.5 * CMLMetaView.backOut(t)
+          let gx = x + (s >= 1.5 ? 8.5 : 6.5)
+          ctx.translateBy(x: gx, y: cy)
+          ctx.scaleBy(x: ps, y: ps)
+          ctx.translateBy(x: -gx, y: -cy)
+          ctx.setAlpha(min(1, t * 4))
+        }
+        if s >= 1.5 {
+          var x1 = x
+          var dx2: CGFloat = 0
+          var a2: CGFloat = 1
+          if f >= 1 && f < 1.5 {
+            // 2º ✓ desliza da esquerda (sai de trás do 1º)
+            let e = CMLMetaView.cubicOut(t)
+            x1 = x + (1 - e)
+            dx2 = -4.5 * (1 - e)
+            a2 = e
+          }
+          CMLIcons.check(ctx, origin: CGPoint(x: x1, y: cy - 5), color: tickColor)
+          ctx.saveGState()
+          ctx.setAlpha(a2)
+          CMLIcons.check(ctx, origin: CGPoint(x: x + 4.5 + dx2, y: cy - 5), color: tickColor)
+          ctx.restoreGState()
+        } else {
+          CMLIcons.check(ctx, origin: CGPoint(x: x + 1, y: cy - 5), color: tickColor)
+        }
+        ctx.restoreGState()
       } else if s >= 1.5 {
         CMLIcons.check(ctx, origin: CGPoint(x: x, y: cy - 5), color: tickColor)
         CMLIcons.check(ctx, origin: CGPoint(x: x + 4.5, y: cy - 5), color: tickColor)
@@ -604,6 +724,62 @@ final class CMLAudioView: UIView {
 
   static let buttonSize: CGFloat = 38
 
+  // MARK: [motion-conv] progresso suave: entre os pulsos de posição do player
+  // (JS) extrapola até 0,5 s a 60–120 Hz e não volta p/ trás por jitter (< 4%);
+  // barra da cabeça preenchida em parte. `smooth` = CMLMotion.audio.
+  var smooth = false
+  private var pbPos: Double = 0
+  private var pbDur: Double = 0
+  private var pbAt: CFTimeInterval = 0
+  private var pbLink: CADisplayLink?
+
+  func setPlayback(posMs: Double, durMs: Double, playing: Bool) {
+    let p = durMs > 0 ? CGFloat(min(1, max(0, posMs / durMs))) : 0
+    pbPos = posMs
+    pbDur = durMs
+    pbAt = CACurrentMediaTime()
+    if smooth && playing && durMs > 0 && window != nil {
+      if !(p < progress && progress - p < 0.04) { progress = p }
+      if pbLink == nil {
+        let l = CADisplayLink(target: CMLWeakLink(self) { obj in
+          if let v = obj as? CMLAudioView { v.stepPlayback() }
+        }, selector: #selector(CMLWeakLink.tick(_:)))
+        if #available(iOS 15.0, *) {
+          l.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 120, preferred: 60)
+        }
+        l.add(to: .main, forMode: .common)
+        pbLink = l
+      }
+    } else {
+      stopPlaybackLink()
+      progress = p
+    }
+  }
+
+  func resetPlayback() {
+    stopPlaybackLink()
+    progress = 0
+  }
+
+  private func stopPlaybackLink() {
+    pbLink?.invalidate()
+    pbLink = nil
+  }
+
+  private func stepPlayback() {
+    let dt = CACurrentMediaTime() - pbAt
+    if window == nil || !playing || pbDur <= 0 { stopPlaybackLink(); return }
+    let est = CGFloat(min(1, (pbPos + min(0.5, dt) * 1000) / pbDur))
+    // didSet só redesenha com salto > 0,002 → aqui redesenha sempre que avança
+    if est > progress { progress = est; setNeedsDisplay() }
+    if dt >= 0.5 { stopPlaybackLink() } // pulso atrasado (buffer/pausa): espera o próximo
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { stopPlaybackLink() }
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
     spinner.center = CGPoint(x: CMLAudioView.buttonSize / 2, y: CMLAudioView.buttonSize / 2 + 1)
@@ -636,10 +812,24 @@ final class CMLAudioView: UIView {
         let h = max(3, v * 22)
         let x = x0 + CGFloat(i) * step
         let r = CGRect(x: x, y: midY - h / 2, width: bw, height: h)
-        ctx.setFillColor((CGFloat(i) < playedUpTo ? tint : dim).cgColor)
+        let frac = playedUpTo - CGFloat(i)
         let p = UIBezierPath(roundedRect: r, cornerRadius: bw / 2)
-        ctx.addPath(p.cgPath)
-        ctx.fillPath()
+        if smooth && frac > 0 && frac < 1 {
+          // [motion-conv] barra da "cabeça" preenchida em parte (avanço contínuo)
+          ctx.setFillColor(dim.cgColor)
+          ctx.addPath(p.cgPath)
+          ctx.fillPath()
+          ctx.saveGState()
+          ctx.clip(to: CGRect(x: x, y: r.minY, width: bw * frac, height: h))
+          ctx.setFillColor(tint.cgColor)
+          ctx.addPath(p.cgPath)
+          ctx.fillPath()
+          ctx.restoreGState()
+        } else {
+          ctx.setFillColor((CGFloat(i) < playedUpTo ? tint : dim).cgColor)
+          ctx.addPath(p.cgPath)
+          ctx.fillPath()
+        }
       }
     }
     if let t = durText {

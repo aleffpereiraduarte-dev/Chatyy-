@@ -371,9 +371,21 @@ final class MGCell: UICollectionViewCell {
   }
 
   func setSelection(on: Bool, selected: Bool) {
+    // [2026-10-16 motion] Marcou agora (com o modo já ligado) → check em mola.
+    let pop = on && selectionOn && selected && !selectedOn && window != nil
+      && MVMotion.gridSpring && !MVMotion.reduceMotion
     selectionOn = on
     selectedOn = selected
     applyBadges()
+    if pop {
+      checkView.transform = CGAffineTransform(scaleX: 0.55, y: 0.55)
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
+        self.checkView.transform = .identity
+      }
+    } else if !checkView.transform.isIdentity && !selected {
+      checkView.layer.removeAllAnimations()
+      checkView.transform = .identity
+    }
   }
 
   private func applyBadges() {
@@ -438,7 +450,9 @@ final class MGCell: UICollectionViewCell {
     }
     trBadge.frame = CGRect(x: b.width - m - 22, y: m, width: 22, height: 22)
     trIcon.frame = trBadge.bounds
-    checkView.frame = CGRect(x: b.width - 6 - 24, y: 6, width: 24, height: 24)
+    // bounds+center (nunca frame): o check pode estar com transform da mola.
+    checkView.bounds = CGRect(x: 0, y: 0, width: 24, height: 24)
+    checkView.center = CGPoint(x: b.width - 6 - 12, y: 6 + 12)
 
     var blx = m
     if !blIcon.isHidden {

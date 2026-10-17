@@ -562,9 +562,20 @@ internal class MGCellView(ctx: Context, private val glide: RequestManager) : Fra
   }
 
   fun setSelection(on: Boolean, selected: Boolean) {
+    // [2026-10-16 motion] Marcou agora (modo já ligado) → check em mola. Kill switch: __chatyy_motion_grid.
+    val pop = on && selectionOn && selected && !selectedOn && isAttachedToWindow
+      && MVMotion.gridSpring && !MVMotion.reduceMotion
     selectionOn = on
     selectedOn = selected
     applyBadges()
+    check.animate().cancel()
+    if (pop) {
+      val sp = MVSpring(0.55f, 20f)
+      check.scaleX = 0.55f; check.scaleY = 0.55f
+      check.animate().scaleX(1f).scaleY(1f).setInterpolator(sp).setDuration(sp.durationMs).start()
+    } else {
+      check.scaleX = 1f; check.scaleY = 1f
+    }
   }
 
   private fun vis(b: Boolean) = if (b) View.VISIBLE else View.GONE
