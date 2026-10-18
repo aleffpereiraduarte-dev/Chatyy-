@@ -4506,8 +4506,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // Allow stale responses if screen is empty — never leave user on blank
       if (!isFresh() && _convsCountRef.current > 0) return;
       if (r.success) {
+        // [2026-10-18 chat_list-1x] Uma chamada só. A 2ª (include_archived=1)
+        // repetia o mesmo chat_list: o servidor ignora include_archived (só
+        // filter=archived muda o conjunto) → resposta idêntica, 2× PG/rede no
+        // cold start. Partição única active/archived + cache + nativo daqui.
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
-        setConversations(_guardReadRows(convs.filter(c => !c.archived), _meLcRef.current));
+        const _active = []; const _arch = [];
+        for (const c of convs) (c.archived ? _arch : _active).push(c);
+        setConversations(_guardReadRows(_active, _meLcRef.current));
+        if (isFresh()) {
+          setArchivedConversations(_arch);
+          _saveNativeConversations(convs);
+        }
         cacheConversations(_guardReadRows(convs, _meLcRef.current)).catch(() => {});
         setLoadError(false);
       } else if (_convsCountRef.current === 0) {
@@ -4515,14 +4525,6 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // surface the error banner so the user sees something actionable.
         console.warn('[silent-fail-w3] chatList cold non-success', r?.message);
         setLoadError(true);
-      }
-      const rAll = await api.chatConversations(searchText, true);
-      if (!isFresh()) return;
-      if (rAll.success) {
-        const all = Array.isArray(rAll.data) ? rAll.data : (rAll.data?.conversations || []);
-        setArchivedConversations(all.filter(c => c.archived));
-        cacheConversations(_guardReadRows(all, _meLcRef.current)).catch(() => {});
-        _saveNativeConversations(all);
       }
     } catch (e) {
       // [silent-fail-w3] Was `catch {}` — completely silent. Now log + flag
@@ -5181,6 +5183,41 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               const _a = activeConvId();
               if (_a != null && data.conversation_id != null && String(_a) === String(data.conversation_id) && Number(_recvId) > 0) {
                 _noteSelfRead(data.conversation_id, null, Number(_recvId));
+              }
+            } catch {}
+            // [2026-10-18 relogio-eco] O eco do servidor/_self da msg cujo eco LOCAL
+            // pendente (relógio) já entrou era descartado aqui → o relógio só sumia no
+            // próximo chat_list. Se a prévia guardada dessa conversa é a pendente com
+            // o MESMO client id, troca SÓ ela (id real, _pending fora, recibos do
+            // evento) no lugar — sem subir unread, sem reordenar. Resto segue deduplicado.
+            try {
+              const _cidS = data.conversation_id != null ? String(data.conversation_id) : null;
+              const _cmiS = String(_recvCmi);
+              if (_cidS && !_lmPendingFlag(data)) {
+                const _fixPending = (rows) => {
+                  if (!Array.isArray(rows)) return rows;
+                  let hit = false;
+                  const out = rows.map((c) => {
+                    const lm = c && c.last_message;
+                    if (!lm || String(c.id) !== _cidS || !lm._pending || String(lm.client_message_id || '') !== _cmiS) return c;
+                    hit = true;
+                    const _realId = (_recvId != null && Number(_recvId) > 0) ? _recvId : lm.id;
+                    return {
+                      ...c,
+                      last_message: {
+                        ...lm,
+                        id: _realId,
+                        _pending: undefined,
+                        delivered_at: lm.delivered_at || data.delivered_at || null,
+                        read_at: lm.read_at || data.read_at || null,
+                      },
+                    };
+                  });
+                  return hit ? out : rows;
+                };
+                const _isPendingRow = (rows) => Array.isArray(rows) && rows.some((c) => c && String(c.id) === _cidS && c.last_message && c.last_message._pending && String(c.last_message.client_message_id || '') === _cmiS);
+                if (_isPendingRow(conversationsRef.current)) setConversations(_fixPending);
+                else setArchivedConversations(_fixPending);
               }
             } catch {}
             return;

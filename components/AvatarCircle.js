@@ -201,6 +201,32 @@ function GradientBg({ c1, c2, gid, size, w, h }) {
   );
 }
 
+// ── Web: <img> nativo do DOM [2026-10-18 avatar-1x] ──────────────
+// O <Image> do react-native-web baixava a MESMA URL 2-3×: (1) ImageLoader faz
+// `new window.Image()` de sonda; (2) enquanto a sonda carrega (LOADING sem
+// defaultSource) ele JÁ pinta `background-image:url()` + um <img> oculto — 3
+// pedidos concorrentes antes de existir entrada no cache HTTP; e (3) o efeito de
+// carga dele depende de `onError`/`onLoad`, que aqui eram arrow inline → todo
+// re-render do AvatarCircle (idioma, versão) abortava e refazia a sonda.
+// Um <img> só = 1 pedido; callbacks via ref (identidade não importa) e memo por src.
+const _WebAvatarImg = memo(function _WebAvatarImg({ src, width, height, radius, alt, onErrorRef }) {
+  return (
+    <img
+      src={src}
+      alt={alt || ''}
+      draggable={false}
+      loading="lazy"
+      decoding="async"
+      onError={() => { try { onErrorRef?.current?.(); } catch {} }}
+      style={{
+        position: 'absolute', top: 0, left: 0,
+        width, height, borderRadius: radius || 0,
+        objectFit: 'cover', display: 'block',
+      }}
+    />
+  );
+}, (a, b) => a.src === b.src && a.width === b.width && a.height === b.height && a.radius === b.radius && a.alt === b.alt);
+
 // ── Group collage tile ──────────────────────────────────────────
 // A single tile of a 2×2 (or 1+2) collage. Renders the member's avatar
 // when available, otherwise falls back to their initials on a colored
@@ -210,6 +236,8 @@ function GradientBg({ c1, c2, gid, size, w, h }) {
 function _CollageTile({ member, size, width, height }) {
   const [tileErr, setTileErr] = useState(false);
   const [tileCachedUri, setTileCachedUri] = useState(null);
+  const _tileErrRef = useRef(null);
+  _tileErrRef.current = () => setTileErr(true);
   // Tracks mount status so async cacheAvatar() resolutions don't setState
   // after the tile unmounts (chat-list rapid scroll → React warning +
   // memory leak when 100 tiles fire downloads but only 8 stay mounted).
@@ -288,7 +316,9 @@ function _CollageTile({ member, size, width, height }) {
       >
         {w < h ? String(initials || '').slice(0, 1) : initials}
       </Text>
-      {uri && !tileErr ? (
+      {uri && !tileErr && Platform.OS === 'web' ? (
+        <_WebAvatarImg src={uri} width={w} height={h} radius={0} onErrorRef={_tileErrRef} />
+      ) : uri && !tileErr ? (
         <ImageComponent
           source={avatarSource(uri)} // [avatar-privacy-auth 2026-10-14] Bearer p/ foto restrita (nativo)
           style={{ width: w, height: h, position: 'absolute' }}
@@ -361,6 +391,8 @@ function _GroupCollage({ members, size, style }) {
 function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress, prefetchFull = false }) {
   const _lang = useLanguageOptional();
   const [imgError, setImgError] = useState(false);
+  const _imgErrRef = useRef(null);
+  _imgErrRef.current = () => setImgError(true);
   // [2026-10-12 avatar-realtime] e-mail p/ versão: prop `email` OU o `email=` de
   // uma URL get_avatar passada em `uri` (chat list/headers passam conv.avatar_url).
   const _verEmail = email || _AV.emailFromAvatarUrl(uri);
@@ -607,7 +639,9 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       >
         {initials}
       </Text>
-      {showImage ? (
+      {showImage && Platform.OS === 'web' ? (
+        <_WebAvatarImg src={avatarUrl} width={size} height={size} radius={size / 2} alt={accessLabel} onErrorRef={_imgErrRef} />
+      ) : showImage ? (
         <ImageComponent
           source={avatarSource(avatarUrl)} // [avatar-privacy-auth 2026-10-14] Bearer p/ foto restrita (nativo)
           style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }}
