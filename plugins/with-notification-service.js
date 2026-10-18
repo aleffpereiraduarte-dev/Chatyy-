@@ -20,9 +20,12 @@
  *      shared E2E key + auth blob written by the main app + ShareExtension.
  *   5. Links UserNotifications.framework.
  *
- * IF YOU EDIT THE SOURCE: update BOTH the canonical copy under
- * ios/ChatyyNotificationService/ AND the embedded strings below. The
- * embedded version is what compiles; the canonical copy is reference.
+ * SOURCE OF TRUTH [2026-10-18]: plugins/notification-service/NotificationService.swift
+ * (committed). Every prebuild copies it over ios/ChatyyNotificationService/
+ * (gitignored, regenerated — never edit it there: a stale local copy there
+ * once drifted 3 weeks behind, without the 2xx/MIME attachment fix). The
+ * embedded legacy template in readCanonicalSwift() is only a last-resort
+ * fallback when that file is missing, and the prebuild warns loudly then.
  */
 
 const fs = require('fs');
@@ -158,11 +161,11 @@ function readCanonicalSwift(projectRoot) {
     const own = path.join(__dirname, 'notification-service', 'NotificationService.swift');
     if (fs.existsSync(own)) return fs.readFileSync(own, 'utf8');
   } catch {}
-  try {
-    const p = path.join(projectRoot, 'ios', EXT_NAME, 'NotificationService.swift');
-    if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
-  } catch {}
-  // Embedded canonical (used on cloud builds where ios/ is regenerated).
+  // [2026-10-18 nse-drift] No more fallback to ios/ChatyyNotificationService/:
+  // that copy is the OUTPUT of this mod (a previous prebuild), so reading it
+  // could only ever re-ship stale code. Missing plugin file → loud warning +
+  // the embedded legacy template (attachments still work, fewer features).
+  console.warn('[with-notification-service] WARNING: plugins/notification-service/NotificationService.swift missing — shipping the embedded LEGACY NSE');
   return `import UserNotifications
 
 /// Notification Service Extension — rich push (image attachment), WhatsApp-style.

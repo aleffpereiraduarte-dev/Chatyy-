@@ -51,6 +51,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.FileProvider
 import androidx.core.content.LocusIdCompat
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
@@ -63,6 +64,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -264,10 +267,21 @@ object ChatMessagingStyleHandler {
         }
         if (text.isBlank()) text = newMessageLabel(lang)
 
+        // [2026-10-18 push-thumb] Real media (image_is_avatar=0: photo / gif /
+        // video poster, chat.php sendPush) → inline thumbnail on the message
+        // (MessagingStyle.Message.setData), WhatsApp style. Never for locked
+        // chats / hidden previews; any failure → plain text, as before.
+        // Skipped for FCM/Expo redeliveries (already-cached message_id).
+        val mediaUrl = d["image"]?.trim().orEmpty()
+        val imgPath = if (!locked && d["image_is_avatar"] == "0" && mediaUrl.isNotEmpty() &&
+            d["preview_when"] != "never" && type != "chat_reaction" &&
+            !threadHasMid(ctx, conversationId, messageId))
+            ChatPushImageCache.fetch(ctx, mediaUrl) ?: "" else ""
+
         // Persist (dedupe by message_id — FCM/Expo can redeliver).
         val isNew = appendMessageToThread(
             ctx, conversationId,
-            ThreadMsg(senderEmail.ifEmpty { senderName }, senderName, text.take(1000), System.currentTimeMillis(), messageId)
+            ThreadMsg(senderEmail.ifEmpty { senderName }, senderName, text.take(1000), System.currentTimeMillis(), messageId, imgPath)
         )
         if (!isNew) {
             Log.d(TAG, "duplicate push conv=$conversationId mid=$messageId — skip")
@@ -297,7 +311,7 @@ object ChatMessagingStyleHandler {
         // importance with sound, so they are applied to DMs only (groups stay
         // in the quiet bucket unless the user picked a tone for that group).
         val ledColor = d["led_color"]?.takeIf { isValidHex(it) }
-        val toneChannelId = if (!isKeywordHit) ensureToneChannel(ctx, conversationId) else null
+        val toneChannelId = if (!isKeywordHit) ensureToneChannel(ctx, conversationId, isGroup) else null
         val channelId = when {
             isKeywordHit -> "chat_keyword"
             toneChannelId != null -> toneChannelId
@@ -368,7 +382,11 @@ object ChatMessagingStyleHandler {
         val style = NotificationCompat.MessagingStyle(me).setGroupConversation(isGroup)
         if (isGroup) style.conversationTitle = convName
         var otherCount = 0
-        for (m in thread) {
+        // [2026-10-18 push-thumb] Only the newest message carries its picture
+        // (older ones stay text: the shade shows one inline image, like WhatsApp).
+        val imageUri = if (locked || meta.optBoolean("hide_preview", false)) null
+            else thread.last().takeIf { it.key != "me" }?.img?.let { ChatPushImageCache.contentUri(ctx, it) }
+        for ((idx, m) in thread.withIndex()) {
             if (m.key == "me") {
                 style.addMessage(m.text, m.timestamp, null as Person?)
                 continue
@@ -382,7 +400,11 @@ object ChatMessagingStyleHandler {
                 .setKey(m.key.ifEmpty { m.senderName })
                 .apply { if (bmp != null) setIcon(IconCompat.createWithBitmap(bmp)) }
                 .build()
-            style.addMessage(m.text, m.timestamp, p)
+            val msg = NotificationCompat.MessagingStyle.Message(m.text, m.timestamp, p)
+            if (imageUri != null && idx == thread.lastIndex) {
+                try { msg.setData("image/jpeg", imageUri) } catch (_: Throwable) {}
+            }
+            style.addMessage(msg)
         }
 
         // Tap → deep link straight into the conversation.
@@ -807,7 +829,12 @@ object ChatMessagingStyleHandler {
     // Thread cache (SharedPreferences) — [name, text, ts, key, mid]
     // =========================================================================
 
-    private data class ThreadMsg(val key: String, val senderName: String, val text: String, val timestamp: Long, val mid: String)
+    /** img = absolute path of a cached media thumbnail (cacheDir/chat_push_img), "" = none. */
+    private data class ThreadMsg(val key: String, val senderName: String, val text: String, val timestamp: Long, val mid: String, val img: String = "")
+
+    /** Read-only dedupe probe (saves a media download on FCM/Expo redelivery). */
+    private fun threadHasMid(ctx: Context, conversationId: String, mid: String): Boolean =
+        mid.isNotEmpty() && loadThread(ctx, conversationId).any { it.mid == mid }
 
     /** Returns false when message_id was already cached (duplicate push). */
     @Synchronized
@@ -822,7 +849,7 @@ object ChatMessagingStyleHandler {
                     if (arr.optJSONArray(i)?.optString(4, "") == m.mid) return false
                 }
             }
-            arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid))
+            arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid).put(m.img))
             val trimmed = if (arr.length() > MAX_MESSAGES_PER_THREAD) {
                 val keep = JSONArray()
                 for (i in (arr.length() - MAX_MESSAGES_PER_THREAD) until arr.length()) keep.put(arr.get(i))
@@ -858,7 +885,7 @@ object ChatMessagingStyleHandler {
                 val name = item.optString(0)
                 // Legacy rows ([name, text, ts]) + legacy own reply ("Você").
                 val key = item.optString(3, "").ifEmpty { if (name == "Você") "me" else name }
-                out.add(ThreadMsg(key, name, item.optString(1), item.optLong(2), item.optString(4, "")))
+                out.add(ThreadMsg(key, name, item.optString(1), item.optLong(2), item.optString(4, ""), item.optString(5, "")))
             }
             out
         } catch (t: Throwable) {
@@ -871,7 +898,7 @@ object ChatMessagingStyleHandler {
         try {
             val arr = JSONArray()
             for (m in list.takeLast(MAX_MESSAGES_PER_THREAD)) {
-                arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid))
+                arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid).put(m.img))
             }
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString("thread_$conversationId", arr.toString()).apply()
@@ -898,6 +925,131 @@ object ChatMessagingStyleHandler {
             val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("meta_$conversationId", null) ?: return null
             JSONObject(raw)
         } catch (_: Throwable) { null }
+    }
+
+    // =========================================================================
+    // [2026-10-18 push-thumb] Media thumbnail cache (cacheDir/chat_push_img)
+    // =========================================================================
+
+    /**
+     * Downloads the push `image` (photo / gif / video poster) for an inline
+     * MessagingStyle thumbnail. Hard ~3 s budget on a worker thread (the FCM
+     * service thread just waits on the Future, so a slow CDN can't eat the
+     * ~10 s onMessageReceived window), ≤ 4 MB on the wire, downsampled and
+     * re-encoded to a ≤ 1024 px JPEG (so the mime is always image/jpeg).
+     * Exposed through expo-file-system's FileProvider
+     * (<pkg>.FileSystemFileProvider, cache-path "." → grantUriPermissions=true);
+     * NotificationManager grants SystemUI read access to MessagingStyle data
+     * URIs (API 28+), and we also grant it explicitly. Old files are pruned
+     * (48 h / 40 files). Any failure → null → text-only notification.
+     */
+    object ChatPushImageCache {
+        private const val LOG_TAG = "ChatPushImageCache"
+        private const val DIR = "chat_push_img"
+        private const val BUDGET_MS = 3000L
+        private const val MAX_BYTES = 4 * 1024 * 1024
+        private const val MAX_PX = 1024
+        private const val TTL_MS = 48L * 60 * 60 * 1000
+        private const val MAX_FILES = 40
+        private val exec = Executors.newCachedThreadPool { r -> Thread(r, "chatyy-push-img").apply { isDaemon = true } }
+
+        fun fetch(ctx: Context, url: String): String? {
+            val abs = when {
+                url.startsWith("https://") -> url
+                url.startsWith("/") -> API_HOST + url
+                else -> return null
+            }
+            val dir = File(ctx.cacheDir, DIR)
+            val f = File(dir, ChatAvatarCache.md5(abs) + ".jpg")
+            if (f.exists() && f.length() > 0) return f.absolutePath
+            val fut = try { exec.submit<String?> { download(abs, dir, f) } } catch (_: Throwable) { return null }
+            return try {
+                fut.get(BUDGET_MS, TimeUnit.MILLISECONDS)
+            } catch (t: Throwable) {
+                fut.cancel(true)
+                Log.w(LOG_TAG, "thumb fetch gave up: ${t.javaClass.simpleName}")
+                null
+            } finally {
+                try { exec.execute { prune(dir) } } catch (_: Throwable) {}
+            }
+        }
+
+        fun contentUri(ctx: Context, path: String): Uri? {
+            if (path.isEmpty()) return null
+            return try {
+                val f = File(path)
+                if (!f.exists() || f.length() == 0L) return null
+                val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".FileSystemFileProvider", f)
+                try {
+                    ctx.grantUriPermission("com.android.systemui", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Throwable) {}
+                uri
+            } catch (t: Throwable) {
+                Log.w(LOG_TAG, "contentUri failed: ${t.message}")
+                null
+            }
+        }
+
+        private fun download(url: String, dir: File, dest: File): String? {
+            var conn: HttpURLConnection? = null
+            return try {
+                conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 2000
+                    readTimeout = 2500
+                    instanceFollowRedirects = true
+                    doInput = true
+                }
+                if (conn.responseCode !in 200..299) return null
+                val ct = conn.contentType?.lowercase() ?: ""
+                if (ct.isNotEmpty() && !ct.startsWith("image/") && !ct.startsWith("application/octet-stream")) return null
+                if (conn.contentLengthLong > MAX_BYTES) return null
+                val bytes = conn.inputStream.use { input ->
+                    val bos = ByteArrayOutputStream()
+                    val buf = ByteArray(16 * 1024)
+                    var total = 0
+                    while (true) {
+                        if (Thread.currentThread().isInterrupted) return null
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        total += n
+                        if (total > MAX_BYTES) return null
+                        bos.write(buf, 0, n)
+                    }
+                    bos.toByteArray()
+                }
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= MAX_PX || bounds.outHeight / (sample * 2) >= MAX_PX) sample *= 2
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+                    BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+                dir.mkdirs()
+                val tmp = File(dir, dest.name + ".tmp")
+                FileOutputStream(tmp).use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                bmp.recycle()
+                if (!tmp.renameTo(dest)) { tmp.delete(); return null }
+                dest.absolutePath
+            } catch (t: Throwable) {
+                Log.w(LOG_TAG, "thumb download failed: ${t.message}")
+                null
+            } finally {
+                try { conn?.disconnect() } catch (_: Throwable) {}
+            }
+        }
+
+        private fun prune(dir: File) {
+            try {
+                val files = dir.listFiles() ?: return
+                val now = System.currentTimeMillis()
+                val keep = files.filter { f ->
+                    val old = now - f.lastModified() > TTL_MS
+                    if (old) f.delete()
+                    !old
+                }.sortedByDescending { it.lastModified() }
+                keep.drop(MAX_FILES).forEach { it.delete() }
+            } catch (_: Throwable) {}
+        }
     }
 
     // =========================================================================
@@ -1025,7 +1177,7 @@ object ChatMessagingStyleHandler {
             } catch (_: Throwable) { null }
         }
 
-        private fun md5(s: String): String {
+        internal fun md5(s: String): String {
             val d = MessageDigest.getInstance("MD5").digest(s.toByteArray(Charsets.UTF_8))
             return d.joinToString("") { "%02x".format(it) }
         }
@@ -1246,8 +1398,14 @@ object ChatMessagingStyleHandler {
         val hash = (sig.hashCode() and 0x7FFFFFFF).toString(16)
         // Keep the conv id sanitized so it's a valid channel id fragment.
         val safeConv = conversationId.filter { it.isLetterOrDigit() || it == '_' }.take(40)
-        return "chat_conv_tone_${safeConv}_$hash"
+        // [2026-10-18 tone-conv] API 30+: suffix marks channels created WITH
+        // setConversationId (a channel's conversation link is immutable, so the
+        // pre-suffix ones are migrated to a fresh id in ensureToneChannel).
+        val suffix = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) TONE_CONV_SUFFIX else ""
+        return "chat_conv_tone_${safeConv}_$hash$suffix"
     }
+
+    private const val TONE_CONV_SUFFIX = "_cv"
 
     /**
      * Ensure the per-conversation tone channel exists (create-if-missing) and
@@ -1255,12 +1413,28 @@ object ChatMessagingStyleHandler {
      * rejected it. Called from both the bridge and the push path so the channel
      * is guaranteed to exist before we post on it.
      */
-    private fun ensureToneChannel(ctx: Context, conversationId: String): String? {
-        val cfg = readToneConfig(ctx, conversationId) ?: return null
+    private fun ensureToneChannel(ctx: Context, conversationId: String, isGroupHint: Boolean? = null): String? {
+        var cfg = readToneConfig(ctx, conversationId) ?: return null
         // Pre-O has no channels; custom per-conv sound isn't applied there and
         // we fall back to the default channel (acceptable — Android 7 and older
         // is a vanishingly small install base). Returning null routes to "chat".
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        // [2026-10-18 tone-conv] Channel created before conversation linking →
+        // move to a fresh id (same sound/vibration/LED) that carries it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !cfg.channelId.endsWith(TONE_CONV_SUFFIX)) {
+            try {
+                val newId = computeToneChannelId(conversationId, cfg.sound, cfg.vib, cfg.vibOff, cfg.led)
+                val sp0 = ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
+                val raw = sp0.getString(toneCfgKey(conversationId), null)
+                if (raw != null && newId != cfg.channelId) {
+                    deleteToneChannel(ctx, cfg.channelId)
+                    sp0.edit().putString(toneCfgKey(conversationId), JSONObject(raw).put("channelId", newId).toString()).apply()
+                    cfg = cfg.copy(channelId = newId)
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "tone channel conv migration failed: ${t.message}")
+            }
+        }
         return try {
             val sp = ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
             val created = sp.getStringSet(TONE_CREATED_KEY, emptySet()) ?: emptySet()
@@ -1303,7 +1477,20 @@ object ChatMessagingStyleHandler {
                         lightColor = Color.parseColor(cfg.led)
                     } catch (_: Throwable) {}
                 }
+                // [2026-10-18 tone-conv] Android 11+: link the channel to the
+                // conversation shortcut ("chat_<id>", pushConversationShortcut)
+                // so it is listed under Conversas / priority-conversation
+                // settings instead of a loose "Chat (personalizado)" category.
+                // Parent = the base channel this chat would use without a tone.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        val isGroup = isGroupHint
+                            ?: (loadMeta(ctx, conversationId)?.optBoolean("group", false) == true)
+                        setConversationId(if (isGroup) "chat_group" else "chat_dm", "chat_$conversationId")
+                    } catch (_: Throwable) {}
+                }
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) ensureBaseChannels(ctx)
             nm.createNotificationChannel(channel)
             val next = HashSet(created)
             next.add(cfg.channelId)

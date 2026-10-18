@@ -86,6 +86,25 @@ private let kAcceptedUUIDByCallIdLock = NSLock()
 private var kThrowawayUUIDs: Set<UUID> = []
 private let kThrowawayUUIDsLock = NSLock()
 
+// [2026-10-18 group-callkit] CallKit display name for a ring. Group call
+// (is_group=1 or type incoming_group_call) with a real group_name → the group
+// name, as WhatsApp shows group calls on the lock screen / Recents. 1:1, or a
+// group payload without a usable name (chat.php falls back to the caller's
+// name) → the caller. Shared by the PushKit path and the module's JS report.
+func callKitDisplayName(_ dict: [AnyHashable: Any], callerName: String) -> String {
+    func flag(_ v: Any?) -> Bool {
+        if let s = v as? String { return s == "1" || s.lowercased() == "true" }
+        if let b = v as? Bool { return b }
+        if let n = v as? NSNumber { return n.boolValue }
+        return false
+    }
+    let isGroup = flag(dict["is_group"]) || (dict["type"] as? String) == "incoming_group_call"
+    guard isGroup else { return callerName }
+    let g = ((dict["group_name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !g.isEmpty, g != callerName else { return callerName }
+    return String(g.prefix(60))
+}
+
 // [2026-10-17 joao-busy] Module ProviderDelegate (RN booted) also receives
 // CXAnswer for throwaways — prod João answered 3 of them; each sent
 // call_answered with a UUID call_id and the hub marked him "busy" for 60 min.
@@ -654,6 +673,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // the push carries `caller_phone` (E.164), use that; otherwise fall
         // back to the display name on a `.generic` handle below.
         let callerPhone = (dict["caller_phone"] as? String) ?? ""
+        // [2026-10-18 group-callkit] Group ring (server: is_group=1 +
+        // group_name, type incoming_group_call) → CallKit shows the GROUP,
+        // like WhatsApp ("Família" — not just "Fulano"). `callerName` stays
+        // the person (in-call screen, missed-call notification, stash).
+        let ckName = callKitDisplayName(dict, callerName: callerName)
+        let isGroupRing = ckName != callerName
 
         // [native call screen day-3 finale, 2026-05-16] OPT-IN cold-start
         // auto-accept. If the server marks the push with `auto_accept=1`
@@ -679,12 +704,14 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // formatter PSTN uses, so Recents.app entry + lock-screen text matches
         // the user's contact card (auto-resolved against the address book).
         // No phone? Stay on .generic with the display name (no regression).
-        if !callerPhone.isEmpty {
+        // Group ring: never the caller's phone handle — iOS would resolve it
+        // against Contacts and show the person instead of the group.
+        if !callerPhone.isEmpty && !isGroupRing {
             update.remoteHandle = CXHandle(type: .phoneNumber, value: callerPhone)
         } else {
-            update.remoteHandle = CXHandle(type: .generic, value: callerName)
+            update.remoteHandle = CXHandle(type: .generic, value: ckName)
         }
-        update.localizedCallerName = callerName
+        update.localizedCallerName = ckName
         update.hasVideo = hasVideo
         update.supportsGrouping = false
         update.supportsUngrouping = false
@@ -693,12 +720,16 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // [2026-10-09 recents-redial] Remember handle → Chatyy account so a
         // tap on this entry in Phone.app Recents (INStartCallIntent carries
         // only the handle value) can call the right person back.
-        CallRecentsIntentStore.remember(
-            handleValue: update.remoteHandle?.value ?? callerName,
-            email: (dict["caller_email"] as? String) ?? "",
-            name: callerName,
-            conversationId: (dict["conversation_id"] as? String) ?? ""
-        )
+        // Not for group rings: the Recents entry is the group, and a redial
+        // must not silently turn into a 1:1 call to whoever rang.
+        if !isGroupRing {
+            CallRecentsIntentStore.remember(
+                handleValue: update.remoteHandle?.value ?? callerName,
+                email: (dict["caller_email"] as? String) ?? "",
+                name: callerName,
+                conversationId: (dict["conversation_id"] as? String) ?? ""
+            )
+        }
 
         // [stage 2] Stash payload keyed by UUID so the stub answer handler
         // can pre-connect LiveKit before the RN bundle is alive. Even if RN
@@ -802,13 +833,14 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 // pré-conexão (era o "Tocando…" falso do caller), avisa o
                 // caller (call_status=dnd) e posta "Ligação de X — toque para
                 // atender". Ver IncomingCallFilter.
+                // [2026-10-18 group-callkit] Re-ring (Focus off) shows the group too.
                 IncomingCallFilter.handleReportFailure(
                     error: error,
                     callId: callId,
                     uuid: uuid,
-                    callerName: callerName,
+                    callerName: ckName,
                     callerEmail: (dict["caller_email"] as? String) ?? "",
-                    callerPhone: callerPhone,
+                    callerPhone: isGroupRing ? "" : callerPhone,
                     conversationId: {
                         if let s = dict["conversation_id"] as? String { return s }
                         if let n = dict["conversation_id"] as? NSNumber { return n.stringValue }

@@ -31,6 +31,7 @@ import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -265,7 +266,11 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
 
     closeBtn.scaleType = ImageView.ScaleType.CENTER
     closeBtn.setImageDrawable(tintedIcon(ctx, R.drawable.cci_ic_close, palette.text))
-    closeBtn.setOnClickListener { onClose?.invoke() }
+    // [2026-10-18 haptics] same VIRTUAL_KEY tick as the rest of chat info.
+    closeBtn.setOnClickListener {
+      it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+      onClose?.invoke()
+    }
     closeBtn.isClickable = true
     closeBtn.isFocusable = true
     addView(closeBtn)
@@ -282,7 +287,12 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     navBtn.isClickable = true
     navBtn.isFocusable = true
     navBtn.visibility = View.GONE
-    navBtn.setOnClickListener { if (navKey.isNotEmpty()) onNav?.invoke(navKey) }
+    navBtn.setOnClickListener {
+      if (navKey.isNotEmpty()) {
+        it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        onNav?.invoke(navKey)
+      }
+    }
     addView(navBtn)
 
     segments.alpha = 0f

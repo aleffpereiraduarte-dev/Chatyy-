@@ -122,6 +122,11 @@ class LiveViewerActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-18 predictive-back] Always enabled → back never reaches the default
+    // finish(); same in-call/live behaviour as the old onBackPressed() override.
+    onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() { handleBackPress() }
+    })
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)
@@ -654,7 +659,10 @@ class LiveViewerActivity : ComponentActivity() {
   //  Lifecycle
   // ────────────────────────────────────────────────────────────────────────
 
-  override fun onBackPressed() { finishViewer("back") }
+  // [2026-10-18 predictive-back] Was a legacy onBackPressed() override, which is
+  // never called once the app opts into enableOnBackInvokedCallback (API 33+).
+  // Now driven by an always-enabled OnBackPressedDispatcher callback (onCreate).
+  private fun handleBackPress() { finishViewer("back") }
 
   // ────────────────────────────────────────────────────────────────────────
   //  Picture-in-Picture — wave 16 (2026-05-17)

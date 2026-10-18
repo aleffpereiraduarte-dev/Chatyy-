@@ -177,6 +177,11 @@ class LiveHostActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-18 predictive-back] Always enabled → back never reaches the default
+    // finish(); same in-call/live behaviour as the old onBackPressed() override.
+    onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() { handleBackPress() }
+    })
     current = this
 
     // Show over lockscreen (live broadcast may be started from lock — rare but
@@ -827,7 +832,10 @@ class LiveHostActivity : ComponentActivity() {
   //  Lifecycle
   // ────────────────────────────────────────────────────────────────────────
 
-  override fun onBackPressed() {
+  // [2026-10-18 predictive-back] Was a legacy onBackPressed() override, which is
+  // never called once the app opts into enableOnBackInvokedCallback (API 33+).
+  // Now driven by an always-enabled OnBackPressedDispatcher callback (onCreate).
+  private fun handleBackPress() {
     finishLive("back")
   }
 

@@ -232,10 +232,8 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     if (on) {
       val h = CIHeaderOverlay(context)
       h.onClose = { onClose(mapOf<String, Any>()) }
-      h.onNav = { key ->
-        h.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-        onAction(mapOf("key" to key))
-      }
+      // Haptic tick now lives in CIHeaderOverlay's own click listeners (close + nav).
+      h.onNav = { key -> onAction(mapOf("key" to key)) }
       stack.addView(h, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
       header = h
     } else {

@@ -551,8 +551,10 @@ public class ExpoCallKitModule: Module {
       return true
     }
 
-    AsyncFunction("displayIncomingCall") { (callId: String, callerName: String, hasVideo: Bool, callerEmail: String?, conversationId: String?) -> Void in
-      try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo)
+    // [2026-10-18 group-callkit] Optional 6th arg groupName: a group ring shows
+    // the group on CallKit (older JS passes 5 args → unchanged 1:1 display).
+    AsyncFunction("displayIncomingCall") { (callId: String, callerName: String, hasVideo: Bool, callerEmail: String?, conversationId: String?, groupName: String?) -> Void in
+      try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo, groupName: groupName)
     }
 
     // [Wave WhatsApp parity, 2026-05-20 gap H5] Optional `reason` arg lets JS
@@ -2393,7 +2395,7 @@ public class ExpoCallKitModule: Module {
     }
   }
 
-  func reportIncomingCall(callId: String, callerName: String, hasVideo: Bool) async throws {
+  func reportIncomingCall(callId: String, callerName: String, hasVideo: Bool, groupName: String? = nil) async throws {
     guard let provider = self.provider else {
       throw NSError(domain: "ExpoCallKit", code: 1, userInfo: [NSLocalizedDescriptionKey: "Provider not setup"])
     }
@@ -2418,8 +2420,13 @@ public class ExpoCallKitModule: Module {
     ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
 
     let update = CXCallUpdate()
-    update.remoteHandle = CXHandle(type: .generic, value: callerName)
-    update.localizedCallerName = callerName
+    // [2026-10-18 group-callkit] Group ring → group name (same rule as PushKit).
+    let ckName: String = {
+      guard let g = groupName, !g.isEmpty else { return callerName }
+      return callKitDisplayName(["is_group": "1", "group_name": g], callerName: callerName)
+    }()
+    update.remoteHandle = CXHandle(type: .generic, value: ckName)
+    update.localizedCallerName = ckName
     update.hasVideo = hasVideo
     update.supportsGrouping = false
     update.supportsUngrouping = false

@@ -100,6 +100,11 @@ class IncomingCallActivity : AppCompatActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-18 predictive-back] Always enabled → back never reaches the default
+    // finish(); same in-call/live behaviour as the old onBackPressed() override.
+    onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() { handleBackPress() }
+    })
 
     callId = intent.getStringExtra("call_id")
     try { CallDiag.setRole(callId, "callee") } catch (_: Throwable) {} // [2026-10-18 calls-data]
@@ -1173,7 +1178,10 @@ class IncomingCallActivity : AppCompatActivity() {
     super.onDestroy()
   }
 
-  override fun onBackPressed() {
+  // [2026-10-18 predictive-back] Was a legacy onBackPressed() override, which is
+  // never called once the app opts into enableOnBackInvokedCallback (API 33+).
+  // Now driven by an always-enabled OnBackPressedDispatcher callback (onCreate).
+  private fun handleBackPress() {
     // Do not allow back press to dismiss - must accept or decline
   }
 

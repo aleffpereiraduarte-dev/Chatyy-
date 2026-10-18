@@ -854,6 +854,11 @@ class CallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // [2026-10-18 predictive-back] Always enabled → back never reaches the default
+    // finish(); same in-call/live behaviour as the old onBackPressed() override.
+    onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() { handleBackPress() }
+    })
     // [2026-10-14 leave-first] A NEW call screen while another call is live
     // (accepted a 2nd call): end the old one FIRST — its finishCall sends
     // call_end + LiveKit LEAVE — instead of two calls / a ghost on the SFU.
@@ -1747,7 +1752,10 @@ class CallActivity : ComponentActivity() {
     super.onDestroy()
   }
 
-  override fun onBackPressed() {
+  // [2026-10-18 predictive-back] Was a legacy onBackPressed() override, which is
+  // never called once the app opts into enableOnBackInvokedCallback (API 33+).
+  // Now driven by an always-enabled OnBackPressedDispatcher callback (onCreate).
+  private fun handleBackPress() {
     // Hangup must be intentional — back never hangs up. [2026-10-11
     // ongoing-call] WhatsApp parity: back = minimize (call keeps running,
     // in-app bar / PiP brings it back).
