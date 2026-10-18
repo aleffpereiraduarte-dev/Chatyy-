@@ -461,7 +461,8 @@ jobs:
             --file ./build.ipa \
             --apiKey "$ASC_KEY_ID" \
             --apiIssuer "$ASC_ISSUER_ID" \
-            --verbose > /tmp/altool.log 2>&1; ALT_RC=$?
+            --verbose > /tmp/altool.log 2>&1 && ALT_RC=0 || ALT_RC=$?  # [2026-10-18] com `bash -e` o `; ALT_RC=$?` abortava antes do tail → erro da Apple invisível
+          grep -E "ERROR|error|ITMS|UPLOAD|Failed|NSLocalized" /tmp/altool.log | grep -v "AuthKey" | tail -30 || true
           tail -50 /tmp/altool.log
           rm -f ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
           # [2026-10-15] antes o `| tail` engolia o exit code: upload recusado (90062/90186) aparecia como sucesso.
