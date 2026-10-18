@@ -19614,10 +19614,22 @@ function ChatConversationInner() {
 
     // [2026-10-13 P2-7] Alvo 'tmp_' já confirmado → id do servidor.
     const replyId = _resolveReplyTargetId(replyTo) || replyTo?.id || null;
-    let currentMentions = [...mentionedEmails];
+    // [grupos 2026-10-18 ghost-mention] Menção apagada do texto NÃO notifica mais: só fica
+    // quem ainda tem o "@localpart" (inserido pelo insertMention) no texto enviado.
+    const _textLc = String(text || '').toLowerCase();
+    let currentMentions = [...mentionedEmails].filter((e) => {
+      if (!e || typeof e !== 'string') return false;
+      if (e.startsWith('@')) return _textLc.includes(e.toLowerCase());
+      const _lp = e.split('@')[0].toLowerCase();
+      return !!_lp && _textLc.includes('@' + _lp);
+    });
+    // [grupos 2026-10-18 everyone-admin] @everyone só para admin (o servidor descarta de
+    // não-admin; expandir aqui mandava a lista inteira e furava o mudo de todos).
+    const _meLc = String(currentEmail || '').toLowerCase();
+    const _iAmAdmin = (members || []).some((m) => String(m?.email || '').toLowerCase() === _meLc && m?.role === 'admin');
     // @everyone / @all — mention all group members (not for direct chats)
     const hasEveryoneMention = /@(everyone|all|todos)\b/i.test(text);
-    if (hasEveryoneMention && conversationType === 'group') {
+    if (hasEveryoneMention && conversationType === 'group' && _iAmAdmin) {
       const allMemberEmails = (members || []).map(m => m?.email).filter(e => e && e !== currentEmail);
       // Also send the literal '@everyone' token so the SERVER expands it against
       // the real current membership (chat.php:294). Without it, a group opened
