@@ -94,7 +94,8 @@ internal class DVLabels(m: Map<String, Any?>? = null) {
   fun action(a: String, starred: Boolean): String = when (a) {
     "open" -> get("open", "Abrir")
     "download" -> get("download", "Baixar")
-    "share" -> get("share", "Compartilhar")
+    "share" -> get("share", "Enviar para conversa") // [2026-10-18 cloud-send]
+    "shareaccess" -> get("shareaccess", "Compartilhar acesso")
     "rename" -> get("rename", "Renomear")
     "move" -> get("move", "Mover para...")
     "star" -> if (starred) get("unstar", "Desfavoritar") else get("star", "Favoritar")
@@ -124,7 +125,8 @@ internal object DVGlyphs {
   fun actionRes(a: String, starred: Boolean): Int = when (a) {
     "open" -> R.drawable.dv_ic_eye
     "download" -> R.drawable.dv_ic_download
-    "share" -> R.drawable.cct_ic_user_plus
+    "share" -> R.drawable.dv_ic_send_copy // [2026-10-18 cloud-send] enviar para conversa
+    "shareaccess" -> R.drawable.cct_ic_user_plus
     "rename" -> R.drawable.dv_ic_edit
     "move" -> R.drawable.dv_ic_folder
     "star" -> if (starred) R.drawable.cct_ic_star else R.drawable.cct_ic_star_fill

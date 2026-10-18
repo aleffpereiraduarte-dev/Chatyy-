@@ -5019,6 +5019,9 @@ export default {
   'drive.rename': 'Renombrar',
   'drive.download': 'Descargar',
   'drive.share': 'Compartir',
+  'drive.sendToChat': 'Enviar a un chat',
+  'drive.shareAccess': 'Compartir acceso',
+  'drive.sendToChatFailed': 'No se pudo preparar el archivo. Inténtalo de nuevo.',
   'drive.moveTo': 'Mover a...',
   'drive.star': 'Favorito',
   'drive.unstar': 'Quitar favorito',
@@ -8973,6 +8976,7 @@ export default {
   'share.noResults': 'No se encontraron chats.',
   'share.group': 'Grupo',
   'share.sendFailed': 'No se pudo enviar a todos. Toca enviar de nuevo.',
+  'share.sentTo': 'Enviado a {count} chats',
 
   // Compose leak + tone warnings
   'compose.leakWarning': 'Información sensible detectada',

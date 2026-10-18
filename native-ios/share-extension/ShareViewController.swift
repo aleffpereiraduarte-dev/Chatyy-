@@ -257,7 +257,10 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         else { return }
         // 1) Direct conversation match by conversationIdentifier (the value
         //    we set in donateRecipient, which is the chat conv ID).
-        if let convId = intent.conversationIdentifier, !convId.isEmpty {
+        // [2026-10-18] Donations use "chat_<id>" (same id as the NSE
+        // notification) — strip it, otherwise this never matched.
+        if var convId = intent.conversationIdentifier, !convId.isEmpty {
+            if convId.hasPrefix("chat_") { convId = String(convId.dropFirst(5)) }
             if allConversations.contains(where: { $0.id == convId }) {
                 selectedIds.insert(convId)
                 return

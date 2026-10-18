@@ -12788,7 +12788,30 @@ function ChatConversationInner() {
     const sharedText = params._shared_text;
     const sharedType = params._shared_type || 'text';
     const sharedName = params._shared_name || '';
-    if (sharedUri && (sharedType === 'image' || sharedType === 'video')) {
+    // [2026-10-18 share-suggestion] Share-sheet suggestion (iOS contact avatar /
+    // Android Direct Share) lands here with ALL shared photos/videos and their
+    // real mime (HEIC/PNG/MOV) — open the media preview with every item.
+    let sharedFiles = null;
+    try {
+      const arr = params._shared_files ? JSON.parse(String(params._shared_files)) : null;
+      if (Array.isArray(arr)) {
+        sharedFiles = arr.filter(f => f && f.uri && (f.kind === 'image' || f.kind === 'video')).slice(0, 10).map(f => {
+          const isVid = f.kind === 'video';
+          const m = String(f.mime || '').toLowerCase();
+          const okMime = isVid ? m.startsWith('video/') : m.startsWith('image/');
+          return {
+            uri: String(f.uri),
+            name: f.name || String(f.uri).split('/').pop() || 'shared',
+            type: okMime ? m : (isVid ? 'video/mp4' : 'image/jpeg'),
+            ...(Number(f.size) > 0 ? { size: Number(f.size) } : {}),
+            ...(Number(f.w) > 0 && Number(f.h) > 0 ? { width: Number(f.w), height: Number(f.h) } : {}),
+          };
+        });
+      }
+    } catch { sharedFiles = null; }
+    if (sharedFiles && sharedFiles.length) {
+      setMediaPreview({ visible: true, files: sharedFiles });
+    } else if (sharedUri && (sharedType === 'image' || sharedType === 'video')) {
       setMediaPreview({
         visible: true,
         files: [{

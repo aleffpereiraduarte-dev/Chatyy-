@@ -37,7 +37,7 @@ import {
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconGrid, IconShare, IconLink,
   IconCopy, IconMenu, IconUsers, IconPlay, IconHome, IconRefresh, IconCamera,
-  IconEye, IconSparkles,
+  IconEye, IconSparkles, IconSend,
 } from '../components/Icons';
 import { IconLock as IconVaultLock } from '../components/Icons'; // [2026-10-09 per-user-vault]
 import * as driveVault from '../services/driveVault';
@@ -52,7 +52,7 @@ import { driveRow } from '../components/native/driveListAdapter';
 import * as driveQueue from '../services/driveUploadQueue';
 import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { afterRNModal } from '../components/NativeSheet';
-import { openOnDevice, sendCopy, saveToDevice } from '../services/driveFileActions';
+import { openOnDevice, sendCopy, saveToDevice, sendToChat } from '../services/driveFileActions';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
@@ -914,6 +914,19 @@ function DriveScreenInner() {
     }
   }, [t]);
 
+  // [2026-10-18 cloud-send] "Enviar para conversa": o arquivo vai como ANEXO real
+  // (bolha nativa) pelo seletor de conversas do Chatyy; antes só existia
+  // "Compartilhar" = digitar e-mail p/ dar acesso no Drive (não chegava no chat)
+  // e "Copiar link" que no celular nem copiava.
+  const handleSendToChat = useCallback((item) => {
+    if (!item || item.is_folder || item.unavailable) return;
+    if (Platform.OS === 'web') {
+      sendToChat(item, router).catch(() => safeAlert(tt(t, 'drive.sendToChatFailed', 'Não foi possível preparar o arquivo. Tente novamente.')));
+      return;
+    }
+    runDeviceOp(item, (it, onProgress) => sendToChat(it, router, onProgress), 'share');
+  }, [router, runDeviceOp, t]);
+
   // Documento (não foto/vídeo) no celular → visualizador do sistema; falhou → visualizador do app.
   const openFileItem = useCallback((item) => {
     if (quickLookOn() && !isMedia(item) && !item.unavailable) {
@@ -1260,8 +1273,10 @@ function DriveScreenInner() {
         menu: isTrash
           ? ['restore', 'purge']
           : (isFolder
-            ? ['open', 'share', 'rename', 'move', 'star', 'delete', 'more']
-            : ['open', 'sendcopy', 'savefiles', 'share', 'rename', 'move', 'star', 'delete', 'more']),
+            ? ['open', 'shareaccess', 'rename', 'move', 'star', 'delete', 'more']
+            // [2026-10-18 cloud-send] 'share' = Enviar para conversa (anexo real no chat);
+            // permissão por e-mail virou 'shareaccess'.
+            : ['open', 'share', 'sendcopy', 'savefiles', 'shareaccess', 'rename', 'move', 'star', 'delete', 'more']),
       });
     });
     nativeDriveMeta.current = meta;
@@ -1800,7 +1815,8 @@ function DriveScreenInner() {
         else router.push('/documentos');
       }},
       !item.is_folder && { label: t('drive.download'), icon: <IconDownload size={18} color={colors.text} />, onPress: () => handleDownload(item) },
-      { label: t('drive.share'), icon: <IconShare size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setShareModal(item); } },
+      !item.is_folder && { label: tt(t, 'drive.sendToChat', 'Enviar para conversa'), icon: <IconSend size={18} color={colors.text} />, onPress: () => { setContextMenu(null); handleSendToChat(item); } },
+      { label: tt(t, 'drive.shareAccess', 'Compartilhar acesso'), icon: <IconShare size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setShareModal(item); } },
       { label: t('drive.rename'), icon: <IconEdit size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setRenameModal(item); setRenameText(item.name); } },
       { label: t('drive.moveTo'), icon: <IconFolder size={18} color={colors.text} />, onPress: () => { setContextMenu(null); setMoveModal(item); loadMoveFolders(); } },
       { label: item.is_starred ? t('drive.unstar') : t('drive.star'), icon: item.is_starred ? <IconStarFilled size={18} color={colors.text} /> : <IconStar size={18} color={colors.text} />, onPress: () => handleStar(item) },
@@ -2182,10 +2198,10 @@ function DriveScreenInner() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.detailsActionBtn, { backgroundColor: colors.surfaceVariant }]}
-                onPress={() => { setDetailsFile(null); setShareModal(item); }}
+                onPress={() => { setDetailsFile(null); handleSendToChat(item); }}
               >
-                <IconShare size={16} color={colors.text} />
-                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('drive.share')}</Text>
+                <IconSend size={16} color={colors.text} />
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{tt(t, 'drive.sendToChat', 'Enviar para conversa')}</Text>
               </TouchableOpacity>
             </View>
           </DragPanel>
@@ -2399,6 +2415,9 @@ function DriveScreenInner() {
           <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => handleDownload(item)}>
             <IconDownload size={16} color={colors.text} />
           </TouchableOpacity>
+          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => { setPreviewPanelFile(null); handleSendToChat(item); }} accessibilityLabel={tt(t, 'drive.sendToChat', 'Enviar para conversa')}>
+            <IconSend size={16} color={colors.text} />
+          </TouchableOpacity>
           <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => { setPreviewPanelFile(null); setShareModal(item); }}>
             <IconShare size={16} color={colors.text} />
             <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{t('drive.share')}</Text>
@@ -2449,7 +2468,8 @@ function DriveScreenInner() {
       case 'download': handleDownload(item); break;
       case 'savefiles': handleDownload(item); break; // [2026-10-16 drive-native]
       case 'sendcopy': runDeviceOp(item, sendCopy, 'share'); break;
-      case 'share': setShareModal(item); break;
+      case 'share': if (item.is_folder) setShareModal(item); else handleSendToChat(item); break;
+      case 'shareaccess': setShareModal(item); break;
       case 'rename': setRenameModal(item); setRenameText(item.name); break;
       case 'move': setMoveModal(item); loadMoveFolders(); break;
       case 'star': handleStar(item); break;
@@ -2715,7 +2735,9 @@ function DriveScreenInner() {
               selectedIds={Array.from(selectedItems)}
               uploads={uploading ? uploadProgress : []}
               labels={{
-                open: t('drive.preview'), download: t('drive.download'), share: t('drive.share'),
+                open: t('drive.preview'), download: t('drive.download'),
+                share: tt(t, 'drive.sendToChat', 'Enviar para conversa'),
+                shareaccess: tt(t, 'drive.shareAccess', 'Compartilhar acesso'),
                 rename: t('drive.rename'), move: t('drive.moveTo'), star: t('drive.star'), unstar: t('drive.unstar'),
                 delete: t('drive.delete'), restore: t('drive.restore'), purge: t('drive.deletePermanently'),
                 more: t('common.more'), uploading: t('drive.uploading'),

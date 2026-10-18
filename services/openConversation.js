@@ -29,7 +29,7 @@ const CONV_PATH = '/chat-conversation';
 // Params that ask the screen to DO something on mount. When the target chat is
 // already open we remount it (replace) so the action is not silently lost.
 const ACTION_PARAMS = ['autocall', 'startCall', 'autoCall', 'prefill', 'replyTo', 'replyStatus',
-  '_shared_uri', '_shared_type', '_shared_text', '_shared_name', 'voicemail_id'];
+  '_shared_uri', '_shared_type', '_shared_text', '_shared_name', '_shared_files', 'voicemail_id'];
 // Params the open screen can take via setParams without a remount.
 const SOFT_PARAMS = ['scrollToMessageId', 'highlightMessageId'];
 

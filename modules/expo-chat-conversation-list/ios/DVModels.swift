@@ -91,7 +91,8 @@ struct DVLabels {
     switch a {
     case "open": return get("open", "Abrir")
     case "download": return get("download", "Baixar")
-    case "share": return get("share", "Compartilhar")
+    case "share": return get("share", "Enviar para conversa") // [2026-10-18 cloud-send]
+    case "shareaccess": return get("shareaccess", "Compartilhar acesso")
     case "rename": return get("rename", "Renomear")
     case "move": return get("move", "Mover para...")
     case "star": return starred ? get("unstar", "Desfavoritar") : get("star", "Favoritar")
@@ -129,7 +130,8 @@ enum DVGlyphs {
     switch a {
     case "open": return "eye"
     case "download": return "arrow.down.circle"
-    case "share": return "person.crop.circle.badge.plus"
+    case "share": return "paperplane" // [2026-10-18 cloud-send] enviar para conversa
+    case "shareaccess": return "person.crop.circle.badge.plus"
     case "rename": return "pencil"
     case "move": return "folder"
     case "star": return starred ? "star.slash" : "star"

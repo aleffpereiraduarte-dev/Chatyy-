@@ -40,6 +40,36 @@ const THUMB_H = 84;
 
 function _rand() { return Math.random().toString(36).slice(2, 8); }
 
+// [2026-10-18 share-suggestion] Share-sheet suggestion (iOS INSendMessageIntent
+// avatar / Android Direct Share shortcut). The native side hands it out ONCE
+// (consumeShareTarget clears it), but a share mounts /share-receive TWICE: the
+// deep link (onemundomail://dataUrl=…, no params) opens an empty instance that
+// consumed the target, then ShareIntentWatcher REPLACES it with the payload →
+// the real instance found nothing and the suggestion was ignored (founder:
+// tapping "joao" just opened the generic list). Cache it at module scope, for
+// a short window, until an instance WITH payload uses it or goes away.
+const SHARE_TARGET_TTL_MS = 90 * 1000;
+let _shareTargetCache = null; // { target: { conversationId, handle }, at }
+function _readShareTarget() {
+  let fresh = null;
+  try {
+    if (Platform.OS === 'ios') {
+      const { Intents } = require('../modules/expo-native-toolkit');
+      fresh = Intents?.consumeShareTarget?.() || null;
+    } else if (Platform.OS === 'android') {
+      const { requireOptionalNativeModule } = require('expo');
+      const m = requireOptionalNativeModule('ExpoAppShortcuts');
+      fresh = (m && typeof m.consumeShareTarget === 'function') ? (m.consumeShareTarget() || null) : null;
+    }
+  } catch { fresh = null; }
+  if (fresh && (fresh.conversationId || fresh.handle)) {
+    _shareTargetCache = { target: { conversationId: String(fresh.conversationId || ''), handle: String(fresh.handle || '') }, at: Date.now() };
+  }
+  if (_shareTargetCache && Date.now() - _shareTargetCache.at > SHARE_TARGET_TTL_MS) _shareTargetCache = null;
+  return _shareTargetCache ? _shareTargetCache.target : null;
+}
+function _clearShareTarget() { _shareTargetCache = null; }
+
 // Local per-account conversation snapshot, synchronous. chatStore returns []
 // while the account scope is locked (never another account's rows).
 function readLocalConversations() {
@@ -157,8 +187,11 @@ export default function ShareReceiveScreen() {
   const _plainFiles = useMemo(() => files.map(({ uri, name, mime, size }) => ({ uri, name, mime, size })), [files]);
   const isStickerShare = useMemo(() => files.length > 0 && files.every((f) => /\.(webp|wastickers)$/i.test(f.name || '') || String(f.mime || '').toLowerCase() === 'image/webp'), [files]);
   const _routedRef = useRef(false);
+  // [2026-10-18 cloud-send] Aberto pelo Cloud ("Enviar para conversa"): nunca
+  // desviar para importador / figurinhas nem herdar sugestão do share sheet.
+  const fromCloud = String(params.src || '') === 'cloud';
   useEffect(() => {
-    if (_routedRef.current) return;
+    if (_routedRef.current || fromCloud) return;
     let target = null;
     try {
       const imp = require('../services/waImport/importer');
@@ -171,7 +204,7 @@ export default function ShareReceiveScreen() {
       }
     } catch {}
     if (target) { _routedRef.current = true; try { router.replace(target); } catch {} }
-  }, [files, sharedText, _plainFiles, router]);
+  }, [files, sharedText, _plainFiles, router, fromCloud]);
   const handleShareToStickers = useCallback(() => {
     try { router.replace({ pathname: '/stickers/import', params: { files: JSON.stringify(_plainFiles) } }); } catch {}
   }, [router, _plainFiles]);
@@ -249,34 +282,59 @@ export default function ShareReceiveScreen() {
   const selectedIds = useMemo(() => new Set(selected.map(c => String(c.id))), [selected]);
 
   // [2026-10-09 notif-native] Share-sheet suggestion (iOS INSendMessageIntent
-  // row / Android Direct Share shortcut) → preselect that chat, so "Enviar" is
-  // one tap like WhatsApp. Consumed once; no-op on binaries without it.
+  // row / Android Direct Share shortcut) → that chat, like WhatsApp.
+  // [2026-10-18 share-suggestion] Photos/videos (or plain text/link) go
+  // STRAIGHT into the conversation with the media preview open (caption, HD,
+  // editor, Enviar). Documents / contact cards keep this screen with the chat
+  // preselected (one tap on Enviar). Target read via the module cache above.
+  const hasPayload = hasMedia || !!sharedText || !!sharedContact;
   const shareTargetRef = useRef(undefined);
+  const directOpenedRef = useRef(false);
+  if (shareTargetRef.current === undefined) shareTargetRef.current = fromCloud ? null : _readShareTarget();
+  useEffect(() => () => { if (hasPayload && !fromCloud) _clearShareTarget(); }, [hasPayload, fromCloud]);
   useEffect(() => {
-    if (shareTargetRef.current === undefined) {
-      shareTargetRef.current = null;
-      try {
-        if (Platform.OS === 'ios') {
-          const { Intents } = require('../modules/expo-native-toolkit');
-          shareTargetRef.current = Intents?.consumeShareTarget?.() || null;
-        } else if (Platform.OS === 'android') {
-          const { requireOptionalNativeModule } = require('expo');
-          const m = requireOptionalNativeModule('ExpoAppShortcuts');
-          shareTargetRef.current = (m && typeof m.consumeShareTarget === 'function') ? (m.consumeShareTarget() || null) : null;
-        }
-      } catch { shareTargetRef.current = null; }
-    }
     const target = shareTargetRef.current;
-    if (!target || selected.length || !conversations.length) return;
+    if (!target || directOpenedRef.current || _routedRef.current) return;
+    if (!hasPayload) return; // empty deep-link instance: wait for the payload one
     const cid = String(target.conversationId || '');
     const handle = String(target.handle || '').toLowerCase();
-    const match = conversations.find(c => cid && String(c.id) === cid)
-      || (handle ? conversations.find(c => String(c.other_email || c.contact_email || '').toLowerCase() === handle) : null);
-    if (match) {
-      shareTargetRef.current = null;
-      setSelected([match]);
+    let match = conversations.find(c => cid && String(c.id) === cid)
+      || (handle && !handle.startsWith('group_') ? conversations.find(c => String(c.other_email || c.contact_email || '').toLowerCase() === handle) : null);
+    if (!match && handle.startsWith('group_')) {
+      const gid = handle.slice(6);
+      match = conversations.find(c => String(c.id) === gid) || null;
     }
-  }, [conversations, selected.length]);
+    const directOk = !sharedContact && (
+      (hasMedia && files.every(f => f.kind === 'image' || f.kind === 'video'))
+      || (!hasMedia && !!sharedText));
+    if (!match && directOk && /^\d+$/.test(cid) && netState !== 'loading') {
+      // Not in the cached/fetched list (old chat) — open by id anyway.
+      match = { id: cid, other_email: handle.includes('@') ? handle : '' };
+    }
+    if (!match) return;
+    if (directOk) {
+      directOpenedRef.current = true;
+      shareTargetRef.current = null;
+      _clearShareTarget();
+      const f0 = files[0] || null;
+      const visual = hasMedia ? files.map(({ uri, mime, name, kind, w, h, size }) => ({ uri, mime, name, kind, w, h, size })) : [];
+      const p = {
+        id: String(match.id),
+        name: displayNameOf(match),
+        email: match.other_email || match.contact_email || '',
+        ...(match.type ? { type: match.type } : {}),
+        _shared_uri: f0?.uri || '',
+        _shared_type: f0 ? f0.kind : 'text',
+        _shared_name: f0?.name || '',
+        _shared_text: hasMedia ? '' : sharedText,
+        ...(visual.length ? { _shared_files: JSON.stringify(visual) } : {}),
+      };
+      try { require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: p }, { replace: true }); } catch {}
+      return;
+    }
+    if (!selected.length) setSelected([match]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations, selected.length, hasPayload, hasMedia, files, sharedText, sharedContact, netState]);
 
   const displayNameOf = useCallback((c) => {
     if (!c) return '';
@@ -487,11 +545,15 @@ export default function ShareReceiveScreen() {
     if (selected.length === 1) {
       const conv = selected[0];
       require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(conv.id), name: displayNameOf(conv), email: conv.other_email || '', ...(conv.type ? { type: conv.type } : {}) } }, { replace: true });
+    } else if (fromCloud) {
+      // [2026-10-18 cloud-send] Vários destinos a partir do Cloud: volta ao Cloud e confirma.
+      try { require('../components/ui/Toast').showToast({ message: t('share.sentTo', { count: selected.length }), kind: 'success' }); } catch {}
+      try { router.back(); } catch { router.replace('/drive'); }
     } else {
       router.replace('/chat');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, selected, files, hasMedia, caption, text, router, displayNameOf, first, userEmail, sharedContact]);
+  }, [sending, selected, files, hasMedia, caption, text, router, displayNameOf, first, userEmail, sharedContact, fromCloud]);
 
   // ── Auth gates ───────────────────────────────────────────────────────────
   const [authTimedOut, setAuthTimedOut] = useState(false);

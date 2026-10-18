@@ -130,3 +130,28 @@ export async function saveToDevice(item, onProgress) {
   }
   return (await _shareLocal(local, item)) ? 'shared' : 'none';
 }
+
+/**
+ * [2026-10-18 cloud-send] "Enviar para conversa": arquivo do Cloud → anexo de
+ * VERDADE numa conversa do Chatyy (bolha nativa de foto/vídeo/documento), não
+ * link nem permissão por e-mail. Baixa com a permissão curta (dl) para o cache
+ * e entrega ao seletor /share-receive (mesmo seletor/fila durável do "Compartilhar
+ * no Chatyy" do sistema: escolhe o contato, envia, abre a conversa).
+ * Web: a URL com `dl` (curta, por arquivo) vira Blob no envio direto.
+ */
+export async function sendToChat(item, router, onProgress) {
+  if (!item?.id || item.is_folder) return false;
+  const mime = mimeOf(item) || 'application/octet-stream';
+  const kind = mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : 'file';
+  let uri = null;
+  if (Platform.OS === 'web') {
+    uri = await api.fileDownloadUrlGranted(item.id, { allowBearerFallback: false });
+    if (!uri) throw new Error('no_grant');
+  } else {
+    uri = await downloadToDevice(item, onProgress);
+  }
+  const name = _safeName(item.name || item.original_name, item.id);
+  const files = [{ uri, mime, name, kind, w: Number(item.width) || 0, h: Number(item.height) || 0, size: Number(item.size) || 0 }];
+  router.push({ pathname: '/share-receive', params: { files: JSON.stringify(files), uri, name, mime, type: kind, src: 'cloud' } });
+  return true;
+}

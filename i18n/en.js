@@ -5018,6 +5018,9 @@ export default {
   'drive.rename': 'Rename',
   'drive.download': 'Download',
   'drive.share': 'Share',
+  'drive.sendToChat': 'Send to chat',
+  'drive.shareAccess': 'Share access',
+  'drive.sendToChatFailed': "Couldn't prepare the file. Try again.",
   'drive.moveTo': 'Move to...',
   'drive.star': 'Star',
   'drive.unstar': 'Unstar',
@@ -8960,6 +8963,7 @@ export default {
   'share.noResults': 'No chats found.',
   'share.group': 'Group',
   'share.sendFailed': "Couldn't send to everyone. Tap send again.",
+  'share.sentTo': 'Sent to {count} chats',
 
   // Compose leak + tone warnings
   'compose.leakWarning': 'Sensitive information detected',
