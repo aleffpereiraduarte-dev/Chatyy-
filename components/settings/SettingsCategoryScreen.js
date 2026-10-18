@@ -20,6 +20,9 @@
 // → estado/folhas/handlers são os mesmos. Conteúdo fora do kit, erro nativo
 // ou kill switch (globalThis.__chatyy_native_settings_sub = false) → volta
 // sozinho para a tela JS abaixo.
+// [2026-10-18 settings-sub-native-2] + Conta, Conversas, E-mail, Idioma e
+// Armazenamento (campos → folha SettingsFormSheet; header `nativeHeaderBare`
+// = conteúdo RN sem o cartão em volta). Aparência segue JS.
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, Platform, BackHandler, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
@@ -34,7 +37,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useResponsive } from '../../utils/responsive';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset, nativeListLargeTitleOn } from '../nativeHeader';
 import NativeSettingsList from './NativeSettingsList';
-import { SettingsCollectContext, createCollector, nativeSettingsCategoryOn, markNativeCategoryFailed } from './nativeCollect';
+import { SettingsCollectContext, createCollector, nativeSettingsCategoryOn, markNativeCategoryFailed, NativeHeaderBare } from './nativeCollect';
 import { SettingsSearchContext, useGroupedColors } from './SettingsKit';
 import { categoryTitle, sectionToCategory, getCategoryComponent } from './categories';
 import { SettingsHostContext, emitSettingsRefresh } from './categories/shared';
@@ -216,8 +219,9 @@ function SettingsCategoryScreenInner() {
   const onNativeFailure = useCallback((msg) => dropNative('native: ' + String(msg || '')), [dropNative]);
   const nativeHeaderNode = nat.headers.length ? (
     <View>
-      {nat.headers.map((el, i) => (
-        <View key={i} style={[st.headCard, { backgroundColor: gc.cardBg }]}>{el}</View>
+      {nat.headers.map((el, i) => (el && el.type === NativeHeaderBare
+        ? <View key={i}>{el}</View>
+        : <View key={i} style={[st.headCard, { backgroundColor: gc.cardBg }]}>{el}</View>
       ))}
     </View>
   ) : <View />;

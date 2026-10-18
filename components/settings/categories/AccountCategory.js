@@ -15,6 +15,8 @@ import { BorderRadius, FontSize, Spacing } from '../../../constants/theme';
 import { IconAlertTriangle, IconCheck } from '../../Icons'; // [2026-10-17 settings-wa] sem ícone solto só em Denúncias (resto da página é texto puro)
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow } from '../SettingsKit';
 import { useSafeNav, useSettingsHost } from './shared';
+import { useSettingsCollector } from '../nativeCollect'; // [2026-10-18 settings-sub-native-2]
+import SettingsFormSheet from '../SettingsFormSheet';
 import { ChangePasswordModal, BackupPassphraseModal, LoginHistorySheet } from './SecurityModals';
 import TwoStepSheet from '../TwoStepSheet';
 import { getCachedTwoStep, loadTwoStep, fetchTwoStep, subscribeTwoStep } from '../twoStepState';
@@ -243,6 +245,104 @@ function DangerZone() {
   const confirmWord = t('settings.deleteAccountTypeWord') || 'DELETE';
   const typedOk = (typed || '').trim().toUpperCase() === String(confirmWord).toUpperCase();
   const canDelete = ack && typedOk && !!password.trim() && !deleting;
+  // [2026-10-18 settings-sub-native-2] Lista nativa: o formulário de exclusão
+  // (inline na tela JS) abre numa folha — mesmos campos e mesma chamada.
+  const collecting = !!useSettingsCollector();
+
+  const renderBox = (inSheet) => (
+        <View style={inSheet ? null : [st.box, { backgroundColor: colors.errorBg || (colors.error + '08'), borderColor: colors.error + '30' }]}>
+          {inSheet ? null : <Text style={[st.title, { color: colors.error }]}>{t('settings.confirmAccountDeletion')}</Text>}
+          <View style={{
+            flexDirection: 'row', gap: 12, padding: 14,
+            backgroundColor: (colors.error || '#dc2626') + '15',
+            borderRadius: 12, borderWidth: 1,
+            borderColor: (colors.error || '#dc2626') + '40',
+            marginBottom: 16,
+          }}>
+            <IconAlertTriangle size={20} color={colors.error || '#dc2626'} />
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '700', marginBottom: 4 }}>{t('settings.deleteAccountWarningTitle')}</Text>
+              <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('settings.deleteAccountWarningBody')}</Text>
+            </View>
+          </View>
+          <Text style={[st.text, { color: colors.textSecondary }]}>{t('settings.deleteAccountPasswordMessage')}</Text>
+          <TextInput
+            style={[st.input, { color: colors.text, borderColor: colors.error + '40', backgroundColor: colors.surface }]}
+            {...(inSheet ? { defaultValue: password } : { value: password })}
+            onChangeText={setPassword}
+            placeholder={t('settings.yourPassword')}
+            placeholderTextColor={colors.textTertiary}
+            secureTextEntry
+          />
+          <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, marginBottom: 6 }}>
+            {(t('settings.deleteAccountTypeHint') || 'Type {word} to confirm').replace('{word}', confirmWord)}
+          </Text>
+          <TextInput
+            style={[st.input, {
+              color: colors.text,
+              borderColor: typedOk ? (colors.success || '#16a34a') + '60' : (colors.error + '40'),
+              backgroundColor: colors.surface, marginTop: 0, letterSpacing: 1, fontWeight: '700',
+            }]}
+            {...(inSheet ? { defaultValue: typed } : { value: typed })}
+            onChangeText={setTyped}
+            placeholder={confirmWord}
+            placeholderTextColor={colors.textTertiary}
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+          <TouchableOpacity
+            onPress={() => setAck(v => !v)}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, paddingVertical: 4 }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: ack }}
+          >
+            <View style={{
+              width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+              borderColor: ack ? (colors.error || '#dc2626') : colors.border,
+              backgroundColor: ack ? (colors.error || '#dc2626') : 'transparent',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              {ack ? <IconCheck size={14} color="#fff" /> : null}
+            </View>
+            <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('settings.deleteAccountConfirmCheckbox')}</Text>
+          </TouchableOpacity>
+          {!!error && <Text style={[st.error, { color: colors.error, marginTop: 10 }]}>{error}</Text>}
+          <View style={st.actions}>
+            {inSheet ? null : (
+              <TouchableOpacity onPress={() => { setOpen(false); resetSheet(); }} style={[st.cancelBtn, { borderColor: colors.border }]}>
+                <Text style={[st.cancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={async () => {
+                if (!canDelete) return;
+                setDeleting(true);
+                setError('');
+                try {
+                  const { deleteAccount } = await import('../../../services/api');
+                  const r = await deleteAccount(password);
+                  if (r.success) {
+                    setOpen(false);
+                    if (Platform.OS === 'web') window.alert(t('settings.accountDeletedMessage'));
+                    else Alert.alert(t('settings.accountDeleted'), t('settings.accountDeletedMessage'));
+                    logout();
+                  } else {
+                    setError(r.message || t('settings.deleteAccountError'));
+                  }
+                } catch {
+                  setError(t('common.networkError'));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+              disabled={!canDelete}
+              style={[st.confirmBtn, { backgroundColor: colors.error, opacity: canDelete ? 1 : 0.4 }]}
+            >
+              {deleting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={st.confirmBtnText}>{t('settings.deleteMyAccount')}</Text>}
+            </TouchableOpacity>
+          </View>
+        </View>
+  );
 
   return (
     <View>
@@ -274,98 +374,11 @@ function DangerZone() {
         />
       </SettingsGroup>
 
-      {open && (
-        <View style={[st.box, { backgroundColor: colors.errorBg || (colors.error + '08'), borderColor: colors.error + '30' }]}>
-          <Text style={[st.title, { color: colors.error }]}>{t('settings.confirmAccountDeletion')}</Text>
-          <View style={{
-            flexDirection: 'row', gap: 12, padding: 14,
-            backgroundColor: (colors.error || '#dc2626') + '15',
-            borderRadius: 12, borderWidth: 1,
-            borderColor: (colors.error || '#dc2626') + '40',
-            marginBottom: 16,
-          }}>
-            <IconAlertTriangle size={20} color={colors.error || '#dc2626'} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '700', marginBottom: 4 }}>{t('settings.deleteAccountWarningTitle')}</Text>
-              <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('settings.deleteAccountWarningBody')}</Text>
-            </View>
-          </View>
-          <Text style={[st.text, { color: colors.textSecondary }]}>{t('settings.deleteAccountPasswordMessage')}</Text>
-          <TextInput
-            style={[st.input, { color: colors.text, borderColor: colors.error + '40', backgroundColor: colors.surface }]}
-            value={password}
-            onChangeText={setPassword}
-            placeholder={t('settings.yourPassword')}
-            placeholderTextColor={colors.textTertiary}
-            secureTextEntry
-          />
-          <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, marginBottom: 6 }}>
-            {(t('settings.deleteAccountTypeHint') || 'Type {word} to confirm').replace('{word}', confirmWord)}
-          </Text>
-          <TextInput
-            style={[st.input, {
-              color: colors.text,
-              borderColor: typedOk ? (colors.success || '#16a34a') + '60' : (colors.error + '40'),
-              backgroundColor: colors.surface, marginTop: 0, letterSpacing: 1, fontWeight: '700',
-            }]}
-            value={typed}
-            onChangeText={setTyped}
-            placeholder={confirmWord}
-            placeholderTextColor={colors.textTertiary}
-            autoCapitalize="characters"
-            autoCorrect={false}
-          />
-          <TouchableOpacity
-            onPress={() => setAck(v => !v)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, paddingVertical: 4 }}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: ack }}
-          >
-            <View style={{
-              width: 22, height: 22, borderRadius: 6, borderWidth: 2,
-              borderColor: ack ? (colors.error || '#dc2626') : colors.border,
-              backgroundColor: ack ? (colors.error || '#dc2626') : 'transparent',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              {ack ? <IconCheck size={14} color="#fff" /> : null}
-            </View>
-            <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('settings.deleteAccountConfirmCheckbox')}</Text>
-          </TouchableOpacity>
-          {!!error && <Text style={[st.error, { color: colors.error, marginTop: 10 }]}>{error}</Text>}
-          <View style={st.actions}>
-            <TouchableOpacity onPress={() => { setOpen(false); resetSheet(); }} style={[st.cancelBtn, { borderColor: colors.border }]}>
-              <Text style={[st.cancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={async () => {
-                if (!canDelete) return;
-                setDeleting(true);
-                setError('');
-                try {
-                  const { deleteAccount } = await import('../../../services/api');
-                  const r = await deleteAccount(password);
-                  if (r.success) {
-                    setOpen(false);
-                    if (Platform.OS === 'web') window.alert(t('settings.accountDeletedMessage'));
-                    else Alert.alert(t('settings.accountDeleted'), t('settings.accountDeletedMessage'));
-                    logout();
-                  } else {
-                    setError(r.message || t('settings.deleteAccountError'));
-                  }
-                } catch {
-                  setError(t('common.networkError'));
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-              disabled={!canDelete}
-              style={[st.confirmBtn, { backgroundColor: colors.error, opacity: canDelete ? 1 : 0.4 }]}
-            >
-              {deleting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={st.confirmBtnText}>{t('settings.deleteMyAccount')}</Text>}
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+      {collecting ? (
+        <SettingsFormSheet visible={open} onClose={() => { setOpen(false); if (!deleting) resetSheet(); }} title={t('settings.confirmAccountDeletion')} doneLabel={t('common.cancel')} testID="delete-account-sheet">
+          {renderBox(true)}
+        </SettingsFormSheet>
+      ) : (open && renderBox(false))}
     </View>
   );
 }

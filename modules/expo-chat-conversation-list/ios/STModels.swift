@@ -10,6 +10,8 @@ import UIKit
 //   acc ("" padrão · "c" seta · "n" nada · "k" check · "u" vazio · "s" spinner),
 //   dis (desabilitada), tl / sl (linhas do título / subtítulo; 0 = sem limite),
 //   ft (rodapé da seção — o 1º não vazio do grupo).
+// [2026-10-18 settings-sub-native-2] apiVersion 4: vd (texto de valor na cor
+//   destrutiva — ex.: "Limpar mídia", "Remover" nas sub-páginas nativas).
 
 struct STRow {
   var id: String = ""
@@ -29,6 +31,7 @@ struct STRow {
   var titleLines = 1
   var subLines = 1
   var footer: String = ""
+  var valueDestructive = false
   /// Texto normalizado (minúsculas, sem acento) p/ a busca nativa.
   var hay: String = ""
 
@@ -63,6 +66,7 @@ struct STRow {
     if d["tl"] != nil { titleLines = max(0, CLVal.int(d["tl"])) }
     if d["sl"] != nil { subLines = max(0, CLVal.int(d["sl"])) }
     footer = CLVal.str(d["ft"])
+    valueDestructive = CLVal.bool(d["vd"])
     hay = STText.normalize("\(title) \(sub) \(keywords)")
   }
 }

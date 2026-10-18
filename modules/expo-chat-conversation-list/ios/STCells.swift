@@ -222,7 +222,7 @@ final class STRowCell: UICollectionViewCell {
 
     // Acessórios à direita.
     valueLabel.text = row.value
-    valueLabel.textColor = p.secondary
+    valueLabel.textColor = row.valueDestructive ? p.destructive : p.secondary
     valueLabel.isHidden = row.value.isEmpty || row.center
     let showSpin = acc == "s"
     spinner.isHidden = !showSpin

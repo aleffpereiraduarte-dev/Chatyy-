@@ -13495,4 +13495,16 @@ export default {
   "smartDate.minAge": "Edad mínima: {n} años",
   "smartDate.maxAge": "Edad máxima: {n} años",
   "common.checkConnection": "Revisa tu conexión e inténtalo de nuevo.",
+  // [2026-10-18 settings-sub-native-2] sub-páginas nativas das Configurações
+  "settings.nat.searchLanguages": "Buscar idioma",
+  "settings.nat.mutedWordRemoveTitle": "¿Quitar \"{w}\"?",
+  "settings.nat.mutedWordRemoveMsg": "Las publicaciones con esta palabra volverán a aparecer en tu feed.",
+  "settings.nat.signatureUntitled": "Firma sin nombre",
+  "settings.nat.signatureEmpty": "Sin texto",
+  "settings.nat.signatureEdit": "Editar firma",
+  "settings.nat.autoReplyMessage": "Mensaje",
+  "settings.nat.autoReplyEmpty": "Toca para escribir la respuesta",
+  "settings.nat.forwardTo": "Reenviar a",
+  "settings.nat.notSet": "Sin definir",
+  "settings.nat.timeHint": "Usa el formato HH:MM (24 h).",
 };

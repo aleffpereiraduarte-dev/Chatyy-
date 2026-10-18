@@ -11,7 +11,8 @@ import { useLanguage } from '../../../context/LanguageContext';
 import { useConfirm } from '../../ConfirmModal';
 import * as settingsCache from '../../../services/settingsCache';
 import { Shimmer } from '../../SkeletonLoader';
-import { IconRefresh, IconImage } from '../../Icons';
+import { IconRefresh, IconImage, IconUser, IconUsers } from '../../Icons';
+import { useSettingsCollector } from '../nativeCollect'; // [2026-10-18 settings-sub-native-2]
 import AvatarCircle from '../../AvatarCircle';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsValueText, SettingsCardContent, useGroupedColors } from '../SettingsKit';
 import StorageMeter, { StorageNudgeCard } from '../../storage/StorageMeter'; // [2026-10-17 smart-storage]
@@ -67,8 +68,9 @@ export default function StorageCategory() {
     if ((kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') && nativeCallDataSaver.current === null) setLowDataCalls(true);
   });
 
-  return (
-    <View ref={registerAnchor('mediaAutoDownload')}>
+  const collecting = !!useSettingsCollector();
+  const cloud = (
+    <>
       <SettingsGroup header={t('storageData.cloud')}>
         {/* [2026-10-17 one-merge] Armazenamento = mesma tela do cartão Chatyy One (/settings-one) */}
         <SettingsRow title={t('storage.title')} subtitle={PLAN_NAME} onPress={() => safeNav('/settings-one')} />
@@ -78,7 +80,15 @@ export default function StorageCategory() {
         </SettingsCardContent>
         <SettingsRow title={t('manageStorage.title')} subtitle={t('manageStorage.rowSub')} onPress={() => safeNav('/manage-storage')} testID="storage-cat-manage" />
       </SettingsGroup>
-      <StorageNudgeCard style={{ marginHorizontal: 16, marginBottom: 24 }} testID="storage-cat-nudge" />
+      <StorageNudgeCard style={{ marginHorizontal: collecting ? 0 : 16, marginBottom: 24 }} testID="storage-cat-nudge" />
+    </>
+  );
+
+  return (
+    <View ref={registerAnchor('mediaAutoDownload')}>
+      {/* [2026-10-18 settings-sub-native-2] Lista nativa: o cartão da nuvem (medidor
+          JS + aviso de espaço) vai no slot do header, igual à tela JS. */}
+      {collecting ? <SettingsGroup nativeHeader nativeHeaderBare>{cloud}</SettingsGroup> : cloud}
       {!isWeb && (
         <>
           <SettingsGroup header={t('settings.mediaAutoDownload')} footer={t('settings.mediaAutoDownloadDesc')}>
@@ -162,6 +172,7 @@ function DeviceStorage() {
   const gc = useGroupedColors();
   const confirm = useConfirm();
   const { registerAnchor } = useSettingsHost();
+  const collecting = !!useSettingsCollector();
   const [stats, setStats] = useState(() => settingsCache.peek('storage_stats'));
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -303,6 +314,7 @@ function DeviceStorage() {
           onPress={busy ? undefined : refresh}
           chevron={false}
           accessibilityLabel={t('common.refresh') || 'Atualizar'}
+          native={collecting ? { val: stats == null ? '…' : fmtBytes(mediaTotal), acc: busy ? 's' : 'n' } : undefined}
           right={(
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               {stats == null
@@ -338,6 +350,20 @@ function DeviceStorage() {
               : (info
                 ? <AvatarCircle name={info.title} email={info.email || undefined} uri={info.uri || undefined} members={info.members} size={34} />
                 : <Shimmer style={{ width: 34, height: 34, borderRadius: 17 }} />);
+            if (collecting) {
+              // Nativo: ícone no lugar do avatar; "Limpar mídia" em vermelho (api ≥ 4).
+              return (
+                <SettingsRow
+                  key={'cm_' + cid}
+                  icon={other ? IconImage : (info && info.isGroup ? IconUsers : IconUser)}
+                  title={pending ? '…' : label}
+                  subtitle={`${fmtBytes(row.bytes)} · ${fmtCount(row.count)}`}
+                  chevron={false}
+                  onPress={rowBusy ? undefined : () => onClearConv(row.conversationId, label)}
+                  native={{ val: rowBusy ? '' : (t('settings.storage.clearChatMedia') || 'Limpar mídia'), acc: rowBusy ? 's' : 'n', vd: true }}
+                />
+              );
+            }
             return (
               <SettingsRow
                 key={'cm_' + cid}

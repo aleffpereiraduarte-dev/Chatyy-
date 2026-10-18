@@ -197,7 +197,7 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
     showValue = r.value.isNotEmpty() && !r.center
     valueTv.visibility = if (showValue) VISIBLE else GONE
     valueTv.text = r.value
-    valueTv.setTextColor(p.secondary)
+    valueTv.setTextColor(if (r.valueDestructive) p.destructive else p.secondary)
     showCheck = acc == "k" || acc == "u"
     checkIv.visibility = if (showCheck) VISIBLE else GONE
     if (acc == "k") checkIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_check, p.text)) else checkIv.setImageDrawable(null)

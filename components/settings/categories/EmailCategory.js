@@ -18,6 +18,10 @@ import {
   useSettingsHost, useSettingsBlob, useSection, useLocalKeys, setStorage, OPEN_TTL, catStyles,
 } from './shared';
 import BiaIcon from '../../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
+// [2026-10-18 settings-sub-native-2] Lista nativa (modo coleta): cada campo de
+// texto vira linha com o valor atual → folha com o MESMO campo e handler.
+import { useSettingsCollector } from '../nativeCollect';
+import SettingsFormSheet, { FormCard, FormHint } from '../SettingsFormSheet';
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -30,6 +34,9 @@ export default function EmailCategory() {
   const { settings, setSettings } = useSettingsBlob();
   const [showFilters, setShowFilters] = useState(false);
   const [filtersMounted, setFiltersMounted] = useState(false);
+  const collecting = !!useSettingsCollector();
+  // Folhas do modo nativo: null | 'dndStart' | 'dndEnd' | 'forward' | 'sig:<idx>'
+  const [edit, setEdit] = useState(null);
 
   // Preferências do aparelho.
   const [undoDelay, setUndoDelay] = useState(5);
@@ -138,7 +145,13 @@ export default function EmailCategory() {
               disabled={dndSaving}
             />
           )}
-          {settings.notifications && dndEnabled && (
+          {settings.notifications && dndEnabled && collecting && (
+            <SettingsRow title={t('settings.dndStart') || 'Início'} value={startDraft} chevron onPress={() => setEdit('dndStart')} />
+          )}
+          {settings.notifications && dndEnabled && collecting && (
+            <SettingsRow title={t('settings.dndEnd') || 'Fim'} value={endDraft} chevron onPress={() => setEdit('dndEnd')} />
+          )}
+          {settings.notifications && dndEnabled && !collecting && (
             <SettingsRow
               title={t('settings.dndStart') || 'Início'}
               right={(
@@ -156,7 +169,7 @@ export default function EmailCategory() {
               )}
             />
           )}
-          {settings.notifications && dndEnabled && (
+          {settings.notifications && dndEnabled && !collecting && (
             <SettingsRow
               title={t('settings.dndEnd') || 'Fim'}
               right={(
@@ -178,7 +191,17 @@ export default function EmailCategory() {
       </View>
 
       <SettingsGroup header={t('settings.signatures')} footer={t('settings.signatureDesc')}>
-        {sigList.map((sig, idx) => (
+        {collecting && sigList.map((sig, idx) => (
+          <SettingsRow
+            key={`sigr-${idx}`}
+            title={String(sig.name || '').trim() || (t('settings.nat.signatureUntitled') || 'Assinatura sem nome')}
+            subtitle={String(sig.content || '').replace(/\s+/g, ' ').trim() || (t('settings.nat.signatureEmpty') || 'Sem texto')}
+            value={sig.isDefault ? t('settings.signatureDefault') : undefined}
+            chevron
+            onPress={() => setEdit(`sig:${idx}`)}
+          />
+        ))}
+        {!collecting && sigList.map((sig, idx) => (
           <View key={`sig-${idx}`} style={st.sigBlock}>
             <View style={st.sigHeader}>
               <TextInput
@@ -234,7 +257,12 @@ export default function EmailCategory() {
           iconTile={false}
           title={t('settings.addSignature')}
           chevron={false}
-          onPress={() => { const sigs = baseSigs(); sigs.push({ name: '', content: '', isDefault: false }); setSettings(prev => ({ ...prev, signatures: sigs })); }}
+          onPress={() => {
+            const sigs = baseSigs();
+            sigs.push({ name: '', content: '', isDefault: false });
+            setSettings(prev => ({ ...prev, signatures: sigs }));
+            if (collecting) setEdit(`sig:${sigs.length - 1}`);
+          }}
         />
       </SettingsGroup>
 
@@ -273,7 +301,15 @@ export default function EmailCategory() {
       <View ref={registerAnchor('forwarding')}>
         <SettingsGroup header={t('settings.forwarding')} footer={t('settings.forwardingDesc')}>
           <SettingsSwitchRow title={t('settings.forwardingEnable')} value={settings.forwarding_enabled} onValueChange={(v) => setSettings(prev => ({ ...prev, forwarding_enabled: v }))} />
-          {settings.forwarding_enabled && (
+          {settings.forwarding_enabled && collecting && (
+            <SettingsRow
+              title={t('settings.nat.forwardTo') || 'Encaminhar para'}
+              value={String(settings.forwarding_email || '').trim() || (t('settings.nat.notSet') || 'Não definido')}
+              chevron
+              onPress={() => setEdit('forward')}
+            />
+          )}
+          {settings.forwarding_enabled && !collecting && (
             <View style={catStyles.cardInputWrap}>
               <TextInput
                 style={[catStyles.cardInput, { color: colors.text, backgroundColor: gc.fill }]}
@@ -291,7 +327,146 @@ export default function EmailCategory() {
       </View>
 
       {filtersMounted && <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />}
+      {collecting && (
+        <EmailEditSheets
+          edit={edit}
+          setEdit={setEdit}
+          settings={settings}
+          setSettings={setSettings}
+          baseSigs={baseSigs}
+          sigList={sigList}
+          startDraft={startDraft}
+          endDraft={endDraft}
+          setStartDraft={setStartDraft}
+          setEndDraft={setEndDraft}
+          saveDnd={saveDnd}
+        />
+      )}
     </View>
+  );
+}
+
+// [2026-10-18 settings-sub-native-2] Folhas de edição da lista nativa — os
+// mesmos campos/regras da tela JS (assinatura: nome, padrão, excluir, texto;
+// encaminhamento; Não perturbe HH:MM gravado ao fechar, inválido volta ao padrão).
+function EmailEditSheets({ edit, setEdit, settings, setSettings, baseSigs, sigList, startDraft, endDraft, setStartDraft, setEndDraft, saveDnd }) {
+  const { colors } = useTheme();
+  const { t } = useLanguage();
+  const gc = useGroupedColors();
+  const kind = edit ? String(edit).split(':')[0] : null;
+  const sigIdx = kind === 'sig' ? Number(String(edit).split(':')[1]) : -1;
+  const sig = sigIdx >= 0 ? sigList[sigIdx] : null;
+  const close = () => setEdit(null);
+  const inputStyle = [catStyles.cardInput, { color: colors.text, backgroundColor: gc.fill }];
+
+  const closeTime = (which) => {
+    if (which !== 'dndStart' && which !== 'dndEnd') { close(); return; }
+    const draft = which === 'dndStart' ? startDraft : endDraft;
+    const v = (draft || '').trim();
+    if (TIME_RE.test(v)) saveDnd(which === 'dndStart' ? { start_time: v } : { end_time: v });
+    else if (which === 'dndStart') setStartDraft('22:00');
+    else setEndDraft('07:00');
+    close();
+  };
+
+  return (
+    <>
+      <SettingsFormSheet visible={kind === 'dndStart' || kind === 'dndEnd'} onClose={() => closeTime(kind)} title={kind === 'dndEnd' ? (t('settings.dndEnd') || 'Fim') : (t('settings.dndStart') || 'Início')} testID="dnd-time-sheet">
+        <FormCard>
+          <TextInput
+            key={kind || 'none'}
+            defaultValue={kind === 'dndEnd' ? endDraft : startDraft}
+            onChangeText={kind === 'dndEnd' ? setEndDraft : setStartDraft}
+            onSubmitEditing={() => closeTime(kind)}
+            placeholder={kind === 'dndEnd' ? '07:00' : '22:00'}
+            placeholderTextColor={gc.secondary}
+            style={inputStyle}
+            keyboardType="numbers-and-punctuation"
+            returnKeyType="done"
+            maxLength={5}
+            autoFocus
+            accessibilityLabel={kind === 'dndEnd' ? (t('settings.dndEnd') || 'Fim') : (t('settings.dndStart') || 'Início')}
+          />
+        </FormCard>
+        <FormHint>{t('settings.nat.timeHint') || 'Use o formato HH:MM (24 h).'}</FormHint>
+      </SettingsFormSheet>
+
+      <SettingsFormSheet visible={kind === 'forward'} onClose={close} title={t('settings.forwarding')} testID="forwarding-sheet">
+        <FormCard>
+          <TextInput
+            defaultValue={settings.forwarding_email || ''}
+            onChangeText={(v) => setSettings(prev => ({ ...prev, forwarding_email: v }))}
+            onSubmitEditing={close}
+            placeholder={t('settings.forwardingPlaceholder')}
+            placeholderTextColor={gc.secondary}
+            style={inputStyle}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="done"
+            autoFocus
+          />
+        </FormCard>
+        <FormHint>{t('settings.forwardingDesc')}</FormHint>
+      </SettingsFormSheet>
+
+      <SettingsFormSheet visible={kind === 'sig' && !!sig} onClose={close} title={t('settings.nat.signatureEdit') || 'Editar assinatura'} testID="signature-sheet">
+        {sig ? (
+          <View key={`sig-${sigIdx}`}>
+            <FormCard>
+              <TextInput
+                defaultValue={sig.name}
+                onChangeText={(v) => { const sigs = baseSigs(); if (!sigs[sigIdx]) return; sigs[sigIdx] = { ...sigs[sigIdx], name: v }; setSettings(prev => ({ ...prev, signatures: sigs })); }}
+                placeholder={t('settings.signatureName')}
+                placeholderTextColor={gc.secondary}
+                style={[inputStyle, { fontWeight: '600' }]}
+              />
+              <TextInput
+                defaultValue={sig.content}
+                onChangeText={(v) => {
+                  const sigs = baseSigs();
+                  if (!sigs[sigIdx]) return;
+                  sigs[sigIdx] = { ...sigs[sigIdx], content: v };
+                  setSettings(prev => ({ ...prev, signatures: sigs, signature: sigs.find(x => x.isDefault)?.content || '' }));
+                }}
+                placeholder={t('settings.signaturePlaceholder')}
+                placeholderTextColor={gc.secondary}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                style={[inputStyle, { minHeight: 110, marginTop: 8 }]}
+              />
+            </FormCard>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <TouchableOpacity
+                onPress={() => { const sigs = baseSigs(); sigs.forEach((x, i) => { x.isDefault = i === sigIdx; }); setSettings(prev => ({ ...prev, signatures: sigs, signature: sigs[sigIdx]?.content || '' })); }}
+                style={[st.sheetBtn, sig.isDefault ? { backgroundColor: gc.ink } : { backgroundColor: gc.fill }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: !!sig.isDefault }}
+                accessibilityLabel={t('settings.signatureDefault')}
+              >
+                <Text style={{ fontSize: 15, color: sig.isDefault ? gc.onInk : gc.text, fontWeight: '600' }}>{t('settings.signatureDefault')}</Text>
+              </TouchableOpacity>
+              {(settings.signatures || []).length > 1 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    const sigs = (settings.signatures || []).filter((_, i) => i !== sigIdx);
+                    if (sig.isDefault && sigs.length > 0) sigs[0].isDefault = true;
+                    setSettings(prev => ({ ...prev, signatures: sigs }));
+                    close();
+                  }}
+                  style={[st.sheetBtn, { backgroundColor: gc.fill }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('common.delete') || 'Excluir'}
+                >
+                  <Text style={{ fontSize: 15, color: colors.error, fontWeight: '600' }}>{t('common.delete') || 'Excluir'}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        ) : null}
+      </SettingsFormSheet>
+    </>
   );
 }
 
@@ -344,6 +519,49 @@ function AutoReplyGroup() {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { timer.current = null; flush(); }, 500);
   };
+  // [2026-10-18 settings-sub-native-2] Lista nativa: assunto + texto numa folha.
+  const collecting = !!useSettingsCollector();
+  const [msgOpen, setMsgOpen] = useState(false);
+  if (collecting) {
+    const preview = [vacation.subject, vacation.body].map(x => String(x || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join(' · ');
+    return (
+      <>
+        <SettingsGroup header={t('settings.autoReply')} footer={t('settings.autoReplyDesc')}>
+          <SettingsSwitchRow title={t('settings.autoReplyEnable')} value={vacation.enabled} onValueChange={(v) => save({ enabled: v })} />
+          {vacation.enabled && (
+            <SettingsRow
+              title={t('settings.nat.autoReplyMessage') || 'Mensagem'}
+              subtitle={preview || (t('settings.nat.autoReplyEmpty') || 'Toque para escrever a resposta')}
+              chevron
+              onPress={() => setMsgOpen(true)}
+            />
+          )}
+        </SettingsGroup>
+        <SettingsFormSheet visible={msgOpen} onClose={() => setMsgOpen(false)} title={t('settings.autoReply')} testID="auto-reply-sheet">
+          <FormCard>
+            <TextInput
+              defaultValue={vacation.subject}
+              onChangeText={(v) => save({ subject: v })}
+              placeholder={t('settings.autoReplySubjectPlaceholder') || 'Assunto (opcional)'}
+              placeholderTextColor={gc.secondary}
+              style={[catStyles.cardInput, { color: colors.text, backgroundColor: gc.fill }]}
+            />
+            <TextInput
+              defaultValue={vacation.body}
+              onChangeText={(v) => save({ body: v })}
+              placeholder={t('settings.autoReplyPlaceholder')}
+              placeholderTextColor={gc.secondary}
+              multiline
+              numberOfLines={4}
+              textAlignVertical="top"
+              autoFocus={!vacation.body}
+              style={[catStyles.cardInput, { color: colors.text, backgroundColor: gc.fill, minHeight: 110, marginTop: 8 }]}
+            />
+          </FormCard>
+        </SettingsFormSheet>
+      </>
+    );
+  }
   return (
     <SettingsGroup header={t('settings.autoReply')} footer={t('settings.autoReplyDesc')}>
       <SettingsSwitchRow title={t('settings.autoReplyEnable')} value={vacation.enabled} onValueChange={(v) => save({ enabled: v })} />
@@ -380,6 +598,7 @@ const st = StyleSheet.create({
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   defaultBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  sheetBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 999 },
   signatureInput: {
     borderRadius: 10, marginTop: 8,
     paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, lineHeight: 20,

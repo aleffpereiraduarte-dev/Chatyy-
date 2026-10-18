@@ -6,6 +6,7 @@ import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import { IconCheck, IconDownload, IconRefresh } from '../../Icons';
 import { SettingsGroup, SettingsRow, SettingsValueText } from '../SettingsKit';
+import { useSettingsCollector } from '../nativeCollect'; // [2026-10-18 settings-sub-native-2]
 
 // History download / missing-media UI used inside the Storage section of
 // SettingsScreenInner. Hooks pull theme + i18n; SQLite counters come from
@@ -26,6 +27,8 @@ export default memo(function HistoryDownloadGroup() {
   const [autoSync, setAutoSync] = useState(null);
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
+  // Lista nativa: lado direito = valor/spinner da linha nativa (`native`).
+  const collecting = !!useSettingsCollector();
 
   const refreshStats = useCallback(async () => {
     if (Platform.OS === 'web') return;
@@ -144,6 +147,7 @@ export default memo(function HistoryDownloadGroup() {
       />
       <SettingsRow
         title={t('settings.storage.mediaSyncStatus') || 'Mídias'}
+        native={collecting ? { val: syncValue, acc: autoSyncing ? 's' : 'n' } : undefined}
         right={autoSyncing ? (
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <ActivityIndicator size="small" color={colors.text} style={{ marginRight: 6 }} />
@@ -168,6 +172,7 @@ export default memo(function HistoryDownloadGroup() {
         onPress={onDownloadAll}
         disabled={busyHistory}
         chevron={false}
+        native={collecting ? { acc: busyHistory ? 's' : 'n' } : undefined}
         right={busyHistory ? <ActivityIndicator size="small" color={colors.text} /> : <IconDownload size={18} color={colors.textTertiary} />}
         accessibilityLabel={t('settings.storage.downloadAll')}
       />
@@ -180,6 +185,7 @@ export default memo(function HistoryDownloadGroup() {
         onPress={onDownloadMissing}
         disabled={busyMedia}
         chevron={false}
+        native={collecting ? { acc: busyMedia ? 's' : 'n' } : undefined}
         right={busyMedia ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={18} color={colors.textTertiary} />}
         accessibilityLabel={t('settings.storage.syncNow') || t('settings.storage.downloadMedia')}
       />

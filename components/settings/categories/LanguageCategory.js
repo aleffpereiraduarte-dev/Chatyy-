@@ -16,6 +16,7 @@ import { SettingsGroup, SettingsPickerRow, SettingsRow, useGroupedColors } from 
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../../NativeSheet';
 import { IconSearch, IconX } from '../../Icons';
 import { useSettingsHost, useSettingsBlob, useLocalKeys, setStorage, removeStorage } from './shared';
+import { useSettingsCollector } from '../nativeCollect'; // [2026-10-18 settings-sub-native-2]
 
 export function languageOptions() {
   return SELECTABLE_LOCALES.map((code) => ({
@@ -62,14 +63,9 @@ function deviceLanguage() {
 // Busca sem acento/caixa.
 const _norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, onPick, t }) {
-  const g = useGroupedColors();
-  const insets = useSafeAreaInsets();
-  const win = useWindowDimensions();
-  const [q, setQ] = useState('');
-  const sysCode = useMemo(() => deviceLanguage(), [visible]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const items = useMemo(() => {
+// Lista (atual primeiro; resto pelo nome no idioma da UI) filtrada por `q`.
+function useLanguageItems(language, q) {
+  return useMemo(() => {
     const all = SELECTABLE_LOCALES.map((code) => {
       const e = _entry(code) || { label: code };
       const local = languageDisplayName(code, language);
@@ -83,6 +79,15 @@ function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, o
     const nq = _norm(q.trim());
     return nq ? list.filter((x) => x.hay.includes(nq)) : list;
   }, [language, q]);
+}
+
+function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, onPick, t }) {
+  const g = useGroupedColors();
+  const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
+  const [q, setQ] = useState('');
+  const sysCode = useMemo(() => deviceLanguage(), [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  const items = useLanguageItems(language, q);
 
   const close = () => { setQ(''); onClose?.(); };
   const sysName = sysCode ? `${(_entry(sysCode) || {}).label || sysCode}` : '';
@@ -191,6 +196,28 @@ function LanguagePickerSheet({ visible, onClose, language, auto, onPickSystem, o
   );
 }
 
+// Campo de busca no topo da lista nativa (não controlado: o valor só sobe).
+function LanguageSearchField({ onChangeText, t }) {
+  const g = useGroupedColors();
+  return (
+    <View style={[st.search, st.searchNative, { backgroundColor: g.fill }]}>
+      <IconSearch size={17} color={g.secondary} />
+      <TextInput
+        onChangeText={onChangeText}
+        placeholder={t('settings.nat.searchLanguages') || String(t('common.search') || '').replace(/[.…]+$/, '')}
+        placeholderTextColor={g.secondary}
+        style={[st.searchInput, { color: g.text }]}
+        autoCorrect={false}
+        autoCapitalize="none"
+        clearButtonMode="while-editing"
+        returnKeyType="search"
+        accessibilityLabel={t('common.search')}
+        testID="language-search-native"
+      />
+    </View>
+  );
+}
+
 export default function LanguageCategory() {
   const { t, language, changeLanguage } = useLanguage();
   const { currency, setCurrency, resetCurrency, autoDetected, supported, symbols } = useCurrency();
@@ -198,6 +225,11 @@ export default function LanguageCategory() {
   const { setSettings } = useSettingsBlob();
   const [auto, setAuto] = useState(false);
   const [open, setOpen] = useState(false);
+  const collecting = !!useSettingsCollector();
+  const [q, setQ] = useState('');
+  const items = useLanguageItems(language, collecting ? q : '');
+  const sysCode = useMemo(() => (collecting ? deviceLanguage() : null), [collecting]);
+  const sysName = sysCode ? `${(_entry(sysCode) || {}).label || sysCode}` : '';
   useLocalKeys(['language_auto'], (kv) => { if (kv.language_auto === 'true') setAuto(true); });
   const currencyName = (code) => {
     const k = 'settings.currency.' + code;
@@ -225,6 +257,62 @@ export default function LanguageCategory() {
       setSettings(prev => ({ ...prev, language: code }));
     }
   };
+  const currencyGroup = (
+    <SettingsGroup header={collecting ? (t('settings.currencyLabel') || 'Moeda') : undefined} footer={t('settings.currencyDesc') || 'Usada para exibir valores no app.'}>
+      <SettingsPickerRow
+        title={t('settings.currencyLabel') || 'Moeda'}
+        value={autoDetected ? '__auto__' : currency}
+        displayValue={autoDetected
+          ? `${t('settings.rd.auto') || 'Automático'} · ${currency}`
+          : `${symbols[currency] || ''} ${currency}`.trim()}
+        cancelLabel={t('common.cancel') || 'Cancelar'}
+        options={[
+          { value: '__auto__', label: t('settings.rd.auto') || 'Automático', sub: (t('settings.rd.currencyAutoSub') || 'Pela região do aparelho') + ` · ${currency}` },
+          ...supported.map(code => ({ value: code, label: currencyName(code), hint: `${symbols[code] || ''} ${code}`.trim() })),
+        ]}
+        onChange={(v) => {
+          if (v === '__auto__') { try { resetCurrency?.(); } catch {} }
+          else setCurrency(v);
+        }}
+      />
+    </SettingsGroup>
+  );
+
+  // [2026-10-18 settings-sub-native-2] Lista NATIVA (estilo Telegram): busca no
+  // topo (slot do header), moeda, "Idioma do sistema" e TODOS os idiomas na
+  // própria página com check no atual (atual primeiro). Mesmos pickSystem/pick.
+  if (collecting) {
+    const nq = q.trim();
+    return (
+      <View ref={registerAnchor('language')}>
+        <SettingsGroup nativeHeader nativeHeaderBare>
+          <LanguageSearchField onChangeText={setQ} t={t} />
+        </SettingsGroup>
+        {!nq && currencyGroup}
+        <SettingsGroup header={t('settings.languageLabel')} footer={auto ? (t('settings.language.autoDetectDesc') || undefined) : undefined}>
+          {!nq && (
+            <SettingsRow
+              title={t('settings.language.autoDetect')}
+              subtitle={sysName || t('settings.language.autoDetectDesc')}
+              checked={!!auto}
+              onPress={() => pickSystem(sysCode)}
+            />
+          )}
+          {items.map((item) => (
+            <SettingsRow
+              key={item.code}
+              title={item.native}
+              subtitle={item.local || undefined}
+              checked={!auto && item.code === language}
+              onPress={() => pick(item.code)}
+            />
+          ))}
+          {nq && !items.length ? <SettingsRow title={t('common.noResults')} /> : null}
+        </SettingsGroup>
+      </View>
+    );
+  }
+
   return (
     <View ref={registerAnchor('language')}>
       <SettingsGroup header={t('settings.language')} footer={auto ? (t('settings.language.autoDetectDesc') || undefined) : undefined}>
@@ -248,24 +336,7 @@ export default function LanguageCategory() {
           t={t}
         />
       )}
-      <SettingsGroup footer={t('settings.currencyDesc') || 'Usada para exibir valores no app.'}>
-        <SettingsPickerRow
-          title={t('settings.currencyLabel') || 'Moeda'}
-          value={autoDetected ? '__auto__' : currency}
-          displayValue={autoDetected
-            ? `${t('settings.rd.auto') || 'Automático'} · ${currency}`
-            : `${symbols[currency] || ''} ${currency}`.trim()}
-          cancelLabel={t('common.cancel') || 'Cancelar'}
-          options={[
-            { value: '__auto__', label: t('settings.rd.auto') || 'Automático', sub: (t('settings.rd.currencyAutoSub') || 'Pela região do aparelho') + ` · ${currency}` },
-            ...supported.map(code => ({ value: code, label: currencyName(code), hint: `${symbols[code] || ''} ${code}`.trim() })),
-          ]}
-          onChange={(v) => {
-            if (v === '__auto__') { try { resetCurrency?.(); } catch {} }
-            else setCurrency(v);
-          }}
-        />
-      </SettingsGroup>
+      {currencyGroup}
     </View>
   );
 }
@@ -274,6 +345,7 @@ const st = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 },
   title: { fontSize: 20, fontWeight: '700', flex: 1 },
   search: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 16, borderRadius: 10, paddingHorizontal: 10, height: 38 },
+  searchNative: { marginHorizontal: 0, marginBottom: 20 },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 16, paddingVertical: 0, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) },
   // [2026-10-17 settings-wa] raio 18 = mesmo cartão do SettingsGroup (era 12 só aqui).
   card: { marginHorizontal: 16, marginBottom: 20, borderRadius: 18, overflow: 'hidden' },

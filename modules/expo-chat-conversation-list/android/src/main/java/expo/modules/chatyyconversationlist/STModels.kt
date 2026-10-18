@@ -6,6 +6,7 @@ package expo.modules.chatyyconversationlist
 //   sid (seção), hd (cabeçalho), title, sub, icon, kw, dest, center, on.
 // [2026-10-18 settings-sub-native] apiVersion 2 (sub-páginas): k "i" (só
 //   informação), val, acc ("" · "c" · "n" · "k" · "u" · "s"), dis, tl, sl, ft.
+// [2026-10-18 settings-sub-native-2] apiVersion 4: vd (valor na cor destrutiva).
 
 import android.graphics.Color
 import java.text.Normalizer
@@ -30,6 +31,7 @@ internal data class STRow(
   val titleLines: Int = 1,
   val subLines: Int = 1,
   val footer: String = "",
+  val valueDestructive: Boolean = false,
   val hay: String = ""
 ) {
   /** Acessório efetivo: "t" interruptor · "c" seta · "n" nada · "k" check · "u" vazio · "s" spinner. */
@@ -69,6 +71,7 @@ internal data class STRow(
         titleLines = if (m.containsKey("tl")) max(0, CLVal.int(m["tl"])) else 1,
         subLines = if (m.containsKey("sl")) max(0, CLVal.int(m["sl"])) else 1,
         footer = CLVal.str(m["ft"]),
+        valueDestructive = CLVal.bool(m["vd"]),
         hay = STText.normalize("$title $sub $kw")
       )
     }

@@ -19,8 +19,17 @@
 // Grupo com `nativeHeader` (ex.: cabeçalho da Bia) vai como cartão RN no topo
 // da lista (slot do header nativo), não como linhas.
 //
-// Kill switches (OTA): globalThis.__chatyy_native_settings_sub = false (todas)
-// ou globalThis.__chatyy_native_settings_cats = ['privacy', …] (lista própria).
+// Kill switches (OTA): globalThis.__chatyy_native_settings_sub = false (todas),
+// globalThis.__chatyy_native_settings_cats = ['privacy', …] (lista própria) ou
+// globalThis.__chatyy_native_settings_off = ['email', …] (opt-out por categoria).
+//
+// [2026-10-18 settings-sub-native-2] + Conta, Conversas, E-mail, Idioma e
+// Armazenamento. O que não é linha do kit muda de forma SÓ no modo coleta
+// (useSettingsCollector() ≠ null): campos de texto viram linha → folha de
+// edição (SettingsFormSheet), lixeira/ação à direita vira valor `vd`
+// (vermelho, api ≥ 4), medidor/aviso da nuvem e busca de idioma vão no slot
+// do header (`nativeHeader` + `nativeHeaderBare`). A tela JS segue igual.
+// Aparência fica JS (prévia + slider + cartões de tema não são linhas).
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef } from 'react';
 import { View, ActivityIndicator, Platform, findNodeHandle } from 'react-native';
 import NativeSwitch from '../NativeSwitch';
@@ -31,7 +40,11 @@ const SlotContext = createContext(null);
 
 // Categorias que são só linhas do kit (as demais têm cartões/campos próprios
 // e ficam na tela JS). Conferido à mão + checagem de altura em tempo real.
-const DEFAULT_NATIVE_CATS = ['privacy', 'notifications', 'accessibility', 'help', 'invite', 'bia'];
+const DEFAULT_NATIVE_CATS = ['privacy', 'notifications', 'accessibility', 'help', 'invite', 'bia', 'account', 'chats', 'email', 'language', 'storage'];
+// apiVersion mínima da ChatyySettingsList por categoria (padrão 2). Conversas e
+// Armazenamento usam `vd` ("Remover"/"Limpar mídia" em vermelho) → api 4;
+// binário antigo segue na tela JS.
+const CAT_MIN_API = { chats: 4, storage: 4 };
 const _failedCats = new Set();
 
 export function nativeSettingsCategoryOn(cat) {
@@ -45,7 +58,8 @@ export function nativeSettingsCategoryOn(cat) {
   let allow = DEFAULT_NATIVE_CATS;
   try { if (Array.isArray(globalThis.__chatyy_native_settings_cats)) allow = globalThis.__chatyy_native_settings_cats; } catch {}
   if (!allow.includes(cat)) return false;
-  try { return settingsListApiVersion() >= 2 && isSettingsListAvailable(); } catch { return false; }
+  try { const off = globalThis.__chatyy_native_settings_off; if (Array.isArray(off) && off.includes(cat)) return false; } catch {}
+  try { return settingsListApiVersion() >= (CAT_MIN_API[cat] || 2) && isSettingsListAvailable(); } catch { return false; }
 }
 
 export function markNativeCategoryFailed(cat, why) {
@@ -123,6 +137,7 @@ function describeRow(p) {
     // Override explícito do lado direito (ex.: código do convite como valor).
     if (native.val !== undefined) d.val = String(native.val || '');
     if (native.acc) d.acc = String(native.acc);
+    if (native.vd) d.vd = true; // api ≥ 4: valor na cor destrutiva (antigo ignora → cinza)
   } else if (right) {
     const ty = right.type;
     if (ty === NativeSwitch) toggle = right.props || {};
@@ -312,7 +327,13 @@ export function useSettingsCollector() {
   return useContext(SettingsCollectContext);
 }
 
-export function CollectGroup({ col, header, footer, children, nativeHeader }) {
+// Header sem o cartão em volta (o conteúdo já traz o próprio: grupo JS com
+// título/rodapé, campo de busca, aviso da nuvem).
+export function NativeHeaderBare({ children }) {
+  return <View>{children}</View>;
+}
+
+export function CollectGroup({ col, header, footer, children, nativeHeader, nativeHeaderBare }) {
   const gidRef = useRef(0);
   if (!gidRef.current) gidRef.current = col.newGid();
   const gid = gidRef.current;
@@ -320,7 +341,7 @@ export function CollectGroup({ col, header, footer, children, nativeHeader }) {
     col.setGroup(gid, {
       header: header ? String(header) : '',
       footer: footer && (typeof footer === 'string' || typeof footer === 'number') ? String(footer) : '',
-      el: nativeHeader ? (children || null) : null,
+      el: nativeHeader ? (nativeHeaderBare ? <NativeHeaderBare>{children}</NativeHeaderBare> : (children || null)) : null,
     });
     if (footer && typeof footer !== 'string' && typeof footer !== 'number') col.fail('group footer');
   });

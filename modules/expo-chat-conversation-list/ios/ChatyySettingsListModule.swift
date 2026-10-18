@@ -19,7 +19,9 @@ public class ChatyySettingsListModule: Module {
       // 2 = [2026-10-18 settings-sub-native] val/acc/dis/tl/sl/ft, k "i",
       //     ícones do ChatInfo e prop scrollToId (sub-páginas nativas).
       // 3 = [2026-10-18 bia-orb-icon] ícone "biaOrb" (orb da Bia desenhado).
-      return 3
+      // 4 = [2026-10-18 settings-sub-native-2] "vd" (valor na cor destrutiva) —
+      //     Conta/Conversas/E-mail/Idioma/Armazenamento em nativo.
+      return 4
     }
 
     View(ChatyySettingsListView.self) {

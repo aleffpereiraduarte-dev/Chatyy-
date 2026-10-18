@@ -13574,4 +13574,16 @@ export default {
   "smartDate.minAge": "Idade mínima: {n} anos",
   "smartDate.maxAge": "Idade máxima: {n} anos",
   "common.checkConnection": "Verifique sua conexão e tente novamente.",
+  // [2026-10-18 settings-sub-native-2] sub-páginas nativas das Configurações
+  "settings.nat.searchLanguages": "Buscar idioma",
+  "settings.nat.mutedWordRemoveTitle": "Remover \"{w}\"?",
+  "settings.nat.mutedWordRemoveMsg": "Posts com essa palavra voltam a aparecer no seu feed.",
+  "settings.nat.signatureUntitled": "Assinatura sem nome",
+  "settings.nat.signatureEmpty": "Sem texto",
+  "settings.nat.signatureEdit": "Editar assinatura",
+  "settings.nat.autoReplyMessage": "Mensagem",
+  "settings.nat.autoReplyEmpty": "Toque para escrever a resposta",
+  "settings.nat.forwardTo": "Encaminhar para",
+  "settings.nat.notSet": "Não definido",
+  "settings.nat.timeHint": "Use o formato HH:MM (24 h).",
 };

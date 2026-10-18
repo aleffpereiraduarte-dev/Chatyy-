@@ -12310,4 +12310,16 @@ export default {
   "feedPublic.loadErrorBody": "Verifique a sua ligação e tente novamente.",
   "feedPublic.retry": "Tentar novamente",
   "chatConv.notMember": "Não faz parte desta conversa.",
+  // [2026-10-18 settings-sub-native-2] sub-páginas nativas das Configurações
+  "settings.nat.searchLanguages": "Procurar idioma",
+  "settings.nat.mutedWordRemoveTitle": "Remover \"{w}\"?",
+  "settings.nat.mutedWordRemoveMsg": "As publicações com esta palavra voltam a aparecer no seu feed.",
+  "settings.nat.signatureUntitled": "Assinatura sem nome",
+  "settings.nat.signatureEmpty": "Sem texto",
+  "settings.nat.signatureEdit": "Editar assinatura",
+  "settings.nat.autoReplyMessage": "Mensagem",
+  "settings.nat.autoReplyEmpty": "Toque para escrever a resposta",
+  "settings.nat.forwardTo": "Reencaminhar para",
+  "settings.nat.notSet": "Não definido",
+  "settings.nat.timeHint": "Use o formato HH:MM (24 h).",
 };

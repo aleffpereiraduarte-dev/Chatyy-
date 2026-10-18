@@ -9,7 +9,10 @@ import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
 import * as api from '../../../services/api';
 import * as settingsCache from '../../../services/settingsCache';
-import { IconDownload, IconTrash } from '../../Icons';
+import { IconDownload, IconTrash, IconPlus } from '../../Icons';
+import { useConfirm } from '../../ConfirmModal';
+import { useSettingsCollector } from '../nativeCollect'; // [2026-10-18 settings-sub-native-2]
+import SettingsFormSheet, { FormCard } from '../SettingsFormSheet';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, useGroupedColors } from '../SettingsKit';
 import { useSafeNav, useSettingsHost, useLocalKeys, setStorage, useSection, catStyles as s } from './shared';
 import * as mediaVis from '../../../services/mediaVisibility';
@@ -196,6 +199,73 @@ function MutedWordsGroup() {
   }, []);
 
   const disabled = loading || !input.trim();
+
+  // [2026-10-18 settings-sub-native-2] Lista nativa: "Adicionar palavra" abre
+  // uma folha com o MESMO campo/botão; cada palavra é uma linha com "Remover"
+  // em vermelho (toque → confirma → mesma remoção da lixeira da tela JS).
+  const collecting = !!useSettingsCollector();
+  const confirm = useConfirm();
+  const [addOpen, setAddOpen] = useState(false);
+  if (collecting) {
+    const removeLabel = t('common.remove') || 'Remover';
+    return (
+      <>
+        <SettingsGroup header={t('settings.mutedWords') || 'Palavras silenciadas'} footer={t('settings.mutedWordsDesc') || 'Posts cujo texto contenha qualquer dessas palavras não aparecem no seu feed.'}>
+          <SettingsRow
+            icon={IconPlus}
+            title={String(t('settings.mutedWordsAdd') || 'Adicionar palavra').replace(/[.…]+$/, '')}
+            chevron={false}
+            native={{ acc: loading ? 's' : 'n' }}
+            onPress={() => { setInput(''); setAddOpen(true); }}
+          />
+          {words.length === 0 ? (
+            <SettingsRow title={t('settings.mutedWordsEmpty') || 'Nenhuma palavra silenciada ainda.'} />
+          ) : words.map(w => (
+            <SettingsRow
+              key={w}
+              title={w}
+              native={{ val: removeLabel, acc: 'n', vd: true }}
+              onPress={async () => {
+                const ok = await confirm({
+                  title: (t('settings.nat.mutedWordRemoveTitle') || 'Remover "{w}"?').replace('{w}', w),
+                  message: t('settings.nat.mutedWordRemoveMsg') || 'Posts com essa palavra voltam a aparecer no seu feed.',
+                  confirmLabel: removeLabel,
+                  destructive: true,
+                });
+                if (ok) remove(w);
+              }}
+            />
+          ))}
+        </SettingsGroup>
+        <SettingsFormSheet visible={addOpen} onClose={() => setAddOpen(false)} title={t('settings.mutedWords') || 'Palavras silenciadas'} doneLabel={t('common.cancel') || 'Cancelar'} testID="muted-word-sheet">
+          <FormCard style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TextInput
+              defaultValue=""
+              onChangeText={setInput}
+              placeholder={t('settings.mutedWordsAdd') || 'Adicionar palavra…'}
+              placeholderTextColor={gc.secondary}
+              onSubmitEditing={() => { if (input.trim()) { add(); setAddOpen(false); } }}
+              returnKeyType="done"
+              autoFocus
+              autoCorrect={false}
+              autoCapitalize="none"
+              style={[s.cardInput, { flex: 1, color: colors.text, backgroundColor: gc.fill }]}
+              accessibilityLabel={t('settings.mutedWordsAdd') || 'Adicionar palavra'}
+            />
+            <TouchableOpacity
+              onPress={() => { add(); setAddOpen(false); }}
+              disabled={disabled}
+              style={[s.inkBtn, { backgroundColor: gc.ink, opacity: disabled ? 0.35 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.add') || 'Adicionar'}
+            >
+              <Text style={[s.inkBtnText, { color: gc.onInk }]}>{t('common.add') || 'Adicionar'}</Text>
+            </TouchableOpacity>
+          </FormCard>
+        </SettingsFormSheet>
+      </>
+    );
+  }
   return (
     <SettingsGroup header={t('settings.mutedWords') || 'Palavras silenciadas'} footer={t('settings.mutedWordsDesc') || 'Posts cujo texto contenha qualquer dessas palavras não aparecem no seu feed.'}>
       <View style={[s.cardInputWrap, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
