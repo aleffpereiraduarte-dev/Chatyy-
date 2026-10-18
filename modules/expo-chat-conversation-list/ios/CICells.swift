@@ -34,6 +34,9 @@ final class CIAvatarView: UIView {
   private let imageView = UIImageView()
   private var currentURL = ""
   var maxPixel: CGFloat = 192
+  /// [2026-10-18 elegance] 1 = círculo, 0 = retângulo (foto expandida do cabeçalho).
+  var roundness: CGFloat = 1 { didSet { if roundness != oldValue { setNeedsLayout() } } }
+  var hasImage: Bool { return imageView.image != nil }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -101,7 +104,7 @@ final class CIAvatarView: UIView {
     CATransaction.commit()
     imageView.frame = bounds
     let side = min(bounds.width, bounds.height)
-    layer.cornerRadius = side / 2
+    layer.cornerRadius = side / 2 * max(0, min(1, roundness))
     initialsLabel.font = UIFont.systemFont(ofSize: max(9, side * 0.38), weight: .semibold)
     initialsLabel.frame = bounds.insetBy(dx: 2, dy: 0)
   }
@@ -1034,4 +1037,409 @@ final class CICaptionCell: UICollectionViewCell {
     accessibilityLabel = text
     accessibilityTraits = footer ? .staticText : .header
   }
+}
+
+// MARK: - [2026-10-18 elegance] Cabeçalho que encolhe (Telegram)
+//
+// Modo `headerMode = "collapse"` (apiVersion ≥ 2): a 1ª célula da lista vira um
+// ESPAÇADOR (CIHeroSpacerCell) com a altura do cabeçalho, e o desenho fica no
+// CIHeaderOverlay, por cima da lista, recalculado a cada scrollViewDidScroll
+// (só frames/alpha/transform → 60/120 fps, sem ponte):
+//   rolar p/ cima → avatar encolhe e some sob a barra; nome/subtítulo sobem e
+//   assentam no título da barra; ladrilhos de ação esmaecem; a barra (fundo +
+//   hairline) aparece quando o nome encaixa.
+//   puxar p/ baixo → avatar cresce (rubber band); além de 72 pt com foto →
+//   a foto vira retângulo de largura total (expansão do perfil do Telegram),
+//   nome/subtítulo em branco no canto inferior esquerdo sobre um degradê.
+// O overlay só recebe toque no X (e na barra quando opaca); avatar/ladrilhos
+// são resolvidos pelo espaçador (toques passam pela lista → rolar de qualquer
+// ponto continua funcionando, como no Telegram).
+
+@inline(__always) func ciLerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat { return a + (b - a) * t }
+
+@inline(__always) func ciClamp01(_ v: CGFloat) -> CGFloat { return max(0, min(1, v)) }
+
+func ciSmooth(_ e0: CGFloat, _ e1: CGFloat, _ x: CGFloat) -> CGFloat {
+  if e1 <= e0 { return x >= e1 ? 1 : 0 }
+  let t = ciClamp01((x - e0) / (e1 - e0))
+  return t * t * (3 - 2 * t)
+}
+
+func ciMix(_ a: UIColor, _ b: UIColor, _ t: CGFloat) -> UIColor {
+  if t <= 0 { return a }
+  if t >= 1 { return b }
+  var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+  var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+  if !a.getRed(&r1, green: &g1, blue: &b1, alpha: &a1) { return t < 0.5 ? a : b }
+  if !b.getRed(&r2, green: &g2, blue: &b2, alpha: &a2) { return t < 0.5 ? a : b }
+  return UIColor(red: ciLerp(r1, r2, t), green: ciLerp(g1, g2, t), blue: ciLerp(b1, b2, t), alpha: ciLerp(a1, a2, t))
+}
+
+/// Célula vazia do topo no modo "collapse": reserva a altura do cabeçalho e
+/// repassa os toques (fase 0 = começou, 1 = terminou, 2 = cancelou).
+final class CIHeroSpacerCell: UICollectionViewCell {
+  var onTouch: ((Int, UITouch) -> Void)?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    backgroundColor = .clear
+    contentView.backgroundColor = .clear
+    isAccessibilityElement = false
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    super.touchesBegan(touches, with: event)
+    if let t = touches.first { onTouch?(0, t) }
+  }
+
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    super.touchesEnded(touches, with: event)
+    if let t = touches.first { onTouch?(1, t) }
+  }
+
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    super.touchesCancelled(touches, with: event)
+    if let t = touches.first { onTouch?(2, t) }
+  }
+}
+
+enum CIHeaderHit: Equatable {
+  case empty
+  case avatar
+  case action(String)
+}
+
+final class CIHeaderOverlay: UIView {
+  static let navH: CGFloat = 56
+  static let avatarSide: CGFloat = 104
+  static let avatarTop: CGFloat = 8
+  static let actionsH: CGFloat = 64
+
+  private let avatar = CIAvatarView()
+  private let scrim = UIView()
+  private let scrimLayer = CAGradientLayer()
+  private let badge = UIView()
+  private let badgeIcon = UIImageView()
+  private let spinner = UIActivityIndicatorView(style: .medium)
+  private let actionsRow = UIView()
+  private var tiles: [CIActionTile] = []
+  private let navBg = UIView()
+  private let hairline = UIView()
+  private let titleLabel = UILabel()
+  private let subLabel = UILabel()
+  let closeButton = UIButton(type: .system)
+
+  private var palette = STPalette(dark: false)
+  private var hasSub = false
+  private var hasActions = false
+  private var showBadge = false
+  private var picURL = ""
+  private var titleFit: CGFloat = 0
+  private var subFit: CGFloat = 0
+  private var pressed: CIHeaderHit = .empty
+  private var lastColorE: CGFloat = -1
+  /// Opacidade atual da barra (a barra opaca bloqueia toques nas linhas por baixo).
+  private(set) var navAlpha: CGFloat = 0
+
+  var onClose: (() -> Void)?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    backgroundColor = .clear
+    clipsToBounds = true
+
+    avatar.maxPixel = 1080
+    avatar.isAccessibilityElement = true
+    avatar.accessibilityTraits = [.button, .image]
+    addSubview(avatar)
+
+    scrim.isUserInteractionEnabled = false
+    scrimLayer.colors = [UIColor(white: 0, alpha: 0).cgColor, UIColor(white: 0, alpha: 0.55).cgColor]
+    scrimLayer.locations = [0.5, 1]
+    scrim.layer.addSublayer(scrimLayer)
+    scrim.alpha = 0
+    addSubview(scrim)
+
+    badge.isUserInteractionEnabled = false
+    badge.layer.borderWidth = 3
+    badgeIcon.contentMode = .center
+    badge.addSubview(badgeIcon)
+    spinner.hidesWhenStopped = true
+    badge.addSubview(spinner)
+    addSubview(badge)
+
+    actionsRow.isUserInteractionEnabled = false
+    addSubview(actionsRow)
+
+    navBg.isUserInteractionEnabled = false
+    navBg.alpha = 0
+    addSubview(navBg)
+    hairline.isUserInteractionEnabled = false
+    hairline.alpha = 0
+    addSubview(hairline)
+
+    titleLabel.font = UIFont.systemFont(ofSize: 22, weight: .semibold)
+    titleLabel.textAlignment = .center
+    titleLabel.lineBreakMode = .byTruncatingTail
+    titleLabel.numberOfLines = 1
+    titleLabel.isUserInteractionEnabled = false
+    titleLabel.accessibilityTraits = .header
+    addSubview(titleLabel)
+
+    subLabel.font = UIFont.systemFont(ofSize: 15, weight: .regular)
+    subLabel.textAlignment = .center
+    subLabel.lineBreakMode = .byTruncatingTail
+    subLabel.numberOfLines = 1
+    subLabel.isUserInteractionEnabled = false
+    addSubview(subLabel)
+
+    closeButton.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)), for: .normal)
+    closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+    closeButton.layer.shadowColor = UIColor.black.cgColor
+    closeButton.layer.shadowOffset = CGSize(width: 0, height: 1)
+    closeButton.layer.shadowRadius = 3
+    closeButton.layer.shadowOpacity = 0
+    addSubview(closeButton)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  // MARK: Geometria (pontos, conteúdo em repouso)
+
+  private var titleY0: CGFloat { return CIHeaderOverlay.avatarTop + CIHeaderOverlay.avatarSide + 28 }
+  private var subY0: CGFloat { return titleY0 + 28 }
+  private var textBottom0: CGFloat { return hasSub ? subY0 + 10 : titleY0 + 14 }
+  private var actionsTop0: CGFloat { return textBottom0 + 20 }
+  private var navTitleY: CGFloat { return hasSub ? 19 : CIHeaderOverlay.navH / 2 }
+
+  /// Altura do espaçador (a mesma do hero estático: foto + nome + subtítulo + ações).
+  var heroHeight: CGFloat {
+    return (hasActions ? actionsTop0 + CIHeaderOverlay.actionsH : textBottom0) + 24
+  }
+
+  /// Rolagem em que o nome encaixa no título da barra.
+  var dockRel: CGFloat { return max(1, titleY0 - navTitleY) }
+
+  var hasPhoto: Bool { return !picURL.isEmpty && avatar.hasImage }
+
+  private var photoH: CGFloat {
+    let W = bounds.width
+    let H = bounds.height
+    return max(200, min(W, max(260, H * 0.52)))
+  }
+
+  /// Quanto o conteúdo desce no modo foto (vira contentInset.top, animado).
+  var photoExtra: CGFloat {
+    let zone = photoH + (hasActions ? 12 + CIHeaderOverlay.actionsH + 24 : 24)
+    return max(0, zone - heroHeight)
+  }
+
+  // MARK: Dados
+
+  func configure(_ h: CIHero, palette p: STPalette, labels: CLLabels) {
+    palette = p
+    lastColorE = -1
+    avatar.configure(h.pic)
+    picURL = h.pic.url
+    avatar.accessibilityLabel = labels.get("photo", "Ver foto")
+    titleLabel.text = h.title
+    subLabel.text = h.sub
+    hasSub = !h.sub.isEmpty
+    subLabel.isHidden = !hasSub
+    titleFit = ceil(titleLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 30)).width)
+    subFit = ceil(subLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 22)).width)
+
+    showBadge = h.badge == "camera" || h.busy
+    badge.isHidden = !showBadge
+    badge.backgroundColor = p.text
+    badge.layer.borderColor = p.pageBg.cgColor
+    if h.busy {
+      badgeIcon.image = nil
+      spinner.color = p.pageBg
+      spinner.startAnimating()
+    } else {
+      spinner.stopAnimating()
+      badgeIcon.image = CIText.image("camera", size: 14, weight: .semibold, color: p.pageBg)
+    }
+
+    while tiles.count < h.actions.count {
+      let tile = CIActionTile()
+      tile.isUserInteractionEnabled = false
+      tiles.append(tile)
+      actionsRow.addSubview(tile)
+    }
+    while tiles.count > h.actions.count {
+      let tile = tiles.removeLast()
+      tile.removeFromSuperview()
+    }
+    for (i, a) in h.actions.enumerated() { tiles[i].configure(a, palette: p) }
+    hasActions = !h.actions.isEmpty
+
+    navBg.backgroundColor = p.pageBg
+    hairline.backgroundColor = p.separator
+    closeButton.accessibilityLabel = labels.get("close", "Fechar")
+    pressed = .empty
+    setNeedsLayout()
+  }
+
+  // MARK: Quadro a quadro
+
+  /// rel = rolagem relativa ao repouso (0 = topo; < 0 = puxando p/ baixo).
+  /// e = 0…1 expansão da foto.
+  func apply(rel: CGFloat, expand eIn: CGFloat) {
+    let W = bounds.width
+    if W <= 0 { return }
+    let e = ciClamp01(eIn)
+    let navH = CIHeaderOverlay.navH
+    let A = CIHeaderOverlay.avatarSide
+    let st = max(0, -rel)
+    let up = max(0, rel)
+    let dock = dockRel
+    let k = min(1, up / dock)
+    let hl = 1 / max(1, UIScreen.main.scale)
+
+    // ── Avatar (normal: círculo que encolhe/cresce; foto: largura total) ──
+    var nSide = A
+    var nCY = CIHeaderOverlay.avatarTop + A / 2
+    var nAlpha: CGFloat = 1
+    if st > 0 {
+      nSide = A * (1 + min(0.3, st / 260))
+      nCY += st * 0.5
+    } else {
+      nSide = A * ciLerp(1, 0.35, k)
+      nCY -= up * 0.6
+      nAlpha = 1 - ciSmooth(0.35, 0.85, k)
+    }
+    let pH = photoH
+    let pTop = -up
+    let nRect = CGRect(x: W / 2 - nSide / 2, y: nCY - nSide / 2, width: nSide, height: nSide)
+    let pRect = CGRect(x: 0, y: pTop, width: W, height: pH + st)
+    let aRect = CGRect(
+      x: ciLerp(nRect.minX, pRect.minX, e),
+      y: ciLerp(nRect.minY, pRect.minY, e),
+      width: ciLerp(nRect.width, pRect.width, e),
+      height: ciLerp(nRect.height, pRect.height, e)
+    )
+    avatar.frame = aRect
+    avatar.roundness = 1 - e
+    avatar.alpha = ciLerp(nAlpha, 1, e)
+    scrim.frame = aRect
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    scrimLayer.frame = scrim.bounds
+    CATransaction.commit()
+    scrim.alpha = e
+
+    // Selo da câmera (admin) acompanha a borda do círculo.
+    if showBadge {
+      let bs: CGFloat = 34 * max(0.5, min(1.2, nSide / A))
+      badge.bounds = CGRect(x: 0, y: 0, width: bs, height: bs)
+      badge.center = CGPoint(x: aRect.maxX - 14 * bs / 34, y: aRect.maxY - 14 * bs / 34)
+      badge.layer.cornerRadius = bs / 2
+      badgeIcon.frame = badge.bounds
+      spinner.center = CGPoint(x: bs / 2, y: bs / 2)
+      badge.alpha = nAlpha * (1 - e) * (1 - ciSmooth(0.1, 0.4, k))
+    }
+
+    // ── Nome / subtítulo ──
+    let tDock = ciClamp01((up - (dock - 40)) / 40)
+    let nTitleY = max(navTitleY, titleY0 - rel)
+    let nTitleS = ciLerp(1, 17.0 / 22.0, tDock)
+    let nSubY = nTitleY + ciLerp(subY0 - titleY0, 20, tDock)
+    let nSubS = ciLerp(1, 13.0 / 15.0, tDock)
+    let pBottom = pTop + pH + st
+    let subGap: CGFloat = hasSub ? 22 : 0
+    let pTitleY = pBottom - 16 - subGap - 14
+    let pSubY = pBottom - 16 - 10
+
+    let tw = min(titleFit, max(40, W - 48))
+    let sw = min(subFit, max(40, W - 48))
+    titleLabel.bounds = CGRect(x: 0, y: 0, width: tw, height: 28)
+    subLabel.bounds = CGRect(x: 0, y: 0, width: sw, height: 20)
+    titleLabel.center = CGPoint(x: ciLerp(W / 2, 16 + tw / 2, e), y: ciLerp(nTitleY, pTitleY, e))
+    subLabel.center = CGPoint(x: ciLerp(W / 2, 16 + sw / 2, e), y: ciLerp(nSubY, pSubY, e))
+    let ts = ciLerp(nTitleS, 1, e)
+    let ss = ciLerp(nSubS, 1, e)
+    titleLabel.transform = CGAffineTransform(scaleX: ts, y: ts)
+    subLabel.transform = CGAffineTransform(scaleX: ss, y: ss)
+    if abs(e - lastColorE) > 0.004 {
+      lastColorE = e
+      titleLabel.textColor = ciMix(palette.text, .white, e)
+      subLabel.textColor = ciMix(palette.secondary, UIColor(white: 1, alpha: 0.86), e)
+      closeButton.tintColor = ciMix(palette.text, .white, e)
+      closeButton.layer.shadowOpacity = Float(0.35 * e)
+    }
+
+    // ── Ladrilhos de ação: andam com o conteúdo e somem antes da barra ──
+    actionsRow.isHidden = !hasActions
+    if hasActions {
+      let nTop = actionsTop0 - rel
+      let pActTop = pH + 12 - rel
+      let top = ciLerp(nTop, pActTop, e)
+      let rowW = min(W - 32, 460)
+      let a = ciClamp01((top - navH) / 40)
+      actionsRow.transform = .identity
+      actionsRow.bounds = CGRect(x: 0, y: 0, width: rowW, height: CIHeaderOverlay.actionsH)
+      actionsRow.center = CGPoint(x: W / 2, y: top + CIHeaderOverlay.actionsH / 2)
+      let sc = ciLerp(0.92, 1, a)
+      actionsRow.transform = CGAffineTransform(scaleX: sc, y: sc)
+      actionsRow.alpha = a
+      let n = CGFloat(tiles.count)
+      let gap: CGFloat = 8
+      let tWidth = floor((rowW - gap * max(0, n - 1)) / max(1, n))
+      for (i, t) in tiles.enumerated() {
+        let f = CGRect(x: CGFloat(i) * (tWidth + gap), y: 0, width: tWidth, height: CIHeaderOverlay.actionsH)
+        if t.bounds.size != f.size || t.center != CGPoint(x: f.midX, y: f.midY) {
+          t.bounds = CGRect(origin: .zero, size: f.size)
+          t.center = CGPoint(x: f.midX, y: f.midY)
+        }
+      }
+    }
+
+    // ── Barra: aparece quando o nome encaixa (some no modo foto) ──
+    let barA = ciSmooth(dock - 30, dock, up) * (1 - e)
+    navAlpha = barA
+    navBg.frame = CGRect(x: 0, y: 0, width: W, height: navH)
+    navBg.alpha = barA
+    hairline.frame = CGRect(x: 0, y: navH - hl, width: W, height: hl)
+    hairline.alpha = barA
+    closeButton.frame = CGRect(x: W - 52, y: (navH - 44) / 2, width: 44, height: 44)
+  }
+
+  // MARK: Toques
+
+  func hit(_ p: CGPoint) -> CIHeaderHit {
+    if hasActions && !actionsRow.isHidden && actionsRow.alpha > 0.5 {
+      let lp = actionsRow.convert(p, from: self)
+      for t in tiles where t.frame.contains(lp) { return .action(t.key) }
+    }
+    if avatar.alpha > 0.4 && avatar.frame.insetBy(dx: -6, dy: -6).contains(p) && p.y > CIHeaderOverlay.navH * navAlpha {
+      return .avatar
+    }
+    return .empty
+  }
+
+  func setPressed(_ h: CIHeaderHit) {
+    if h == pressed { return }
+    pressed = h
+    for t in tiles {
+      let on = h == .action(t.key)
+      if t.isHighlighted == on { continue }
+      t.isHighlighted = on
+      UIView.animate(withDuration: on ? 0.12 : 0.34, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
+        t.transform = on ? CGAffineTransform(scaleX: 0.94, y: 0.94) : .identity
+      }
+    }
+  }
+
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    if isHidden || alpha < 0.01 { return nil }
+    if !closeButton.isHidden && closeButton.frame.insetBy(dx: -4, dy: -4).contains(point) { return closeButton }
+    if navAlpha > 0.5 && point.y < CIHeaderOverlay.navH { return self }
+    return nil
+  }
+
+  @objc private func closeTapped() { onClose?() }
 }

@@ -48,6 +48,8 @@ class MLStyle(
   val fontPx = sp(max(10f, fontSizeDp))
   val lineHeightPx = max(ceil(fontPx * 1.25f), sp(lineHeightDp))
   val radius = dp(radiusDp)
+  /** [2026-10-18 tg-look] visual Telegram (MLLook.tg na criação do estilo, na main) */
+  val tg: Boolean = MLLook.tg
 
   private fun paint(sizePx: Float, tf: Typeface = Typeface.DEFAULT): TextPaint =
     TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { textSize = sizePx; typeface = tf; color = 0xFF000000.toInt() }
@@ -170,6 +172,11 @@ class MLRowLayout {
   val fwdFrame = RectF(); var fwd: MLText? = null
   val replyFrame = RectF(); var replyName: MLText? = null; var replyText: MLText? = null; var replyThumb = false
   val mediaFrame = RectF(); var mediaRadius = 0f
+  // [2026-10-18 tg-look] raios por canto (8 floats p/ Path.addRoundRect; null = mediaRadius uniforme)
+  var mediaCorners: FloatArray? = null
+  var albumCorners: ArrayList<FloatArray>? = null
+  var mediaFlush = false
+  var mediaCaption = false
   val albumFrames = ArrayList<RectF>()
   val textFrame = RectF(); var text: MLText? = null; var deletedIcon = false
   val metaFrame = RectF(); var meta: MLMeta? = null
@@ -471,7 +478,12 @@ object MLLayoutBuilder {
       L.metaFrame.set(mx, sz + s.dp(2f), mx + mw, sz + s.dp(20f))
       bubbleH = sz + s.dp(20f)
     } else if (md != null || row.album.isNotEmpty()) {
-      val maxMediaW = min(bubbleMax - inset * 2, s.dp(280f))
+      // [2026-10-18 tg-look] sem peças no topo → mídia rente à bolha (mi 0)
+      val flush = s.tg && !hasTop && row.pre.isEmpty() && row.post.isEmpty()
+      val mi = if (flush) 0f else inset
+      L.mediaFlush = flush
+      L.mediaCaption = row.text.isNotEmpty()
+      val maxMediaW = min(bubbleMax - mi * 2, s.dp(280f))
       var mw = maxMediaW
       var mh = maxMediaW
       val cells = ArrayList<RectF>()
@@ -485,7 +497,7 @@ object MLLayoutBuilder {
         } else {
           mw = min(maxMediaW, s.dp(240f)); mh = mw
         }
-        mw = max(mw, min(maxMediaW, topMinW + padH * 2 - inset * 2))
+        mw = max(mw, min(maxMediaW, topMinW + padH * 2 - mi * 2))
       } else {
         val n = row.album.size
         val g = s.dp(2f)
@@ -509,7 +521,7 @@ object MLLayoutBuilder {
         }
       }
       mw = floor(mw); mh = floor(mh)
-      bubbleW = mw + inset * 2
+      bubbleW = mw + mi * 2
       val capMax = bubbleW - s.dp(18f)
       y = if (hasTop) {
         var yy = padV
@@ -517,10 +529,10 @@ object MLLayoutBuilder {
         if (fwdL != null) { fwdY = yy; yy += fwdL.height + s.dp(2f) }
         if (rName != null) { replyY = yy; yy += replyH + s.dp(4f) }
         yy
-      } else inset
-      L.mediaFrame.set(inset, y, inset + mw, y + mh)
-      L.mediaRadius = max(s.dp(4f), s.radius - inset)
-      for (c in cells) { c.offset(inset, y); L.albumFrames.add(c) }
+      } else mi
+      L.mediaFrame.set(mi, y, mi + mw, y + mh)
+      L.mediaRadius = max(s.dp(4f), s.radius - mi)
+      for (c in cells) { c.offset(mi, y); L.albumFrames.add(c) }
       y += mh
       if (row.text.isNotEmpty()) {
         val t = MLText.make(styled(row.text, row.spans, textColor, linkColor, s.fontPx * 1.2f, 0, false, s.density), s.body, capMax, s.lineHeightPx, 0, Layout.Alignment.ALIGN_NORMAL, textColor)
@@ -534,7 +546,7 @@ object MLLayoutBuilder {
         L.metaFrame.set(bubbleW - s.dp(9f) - meta.width, bubbleH - padV - meta.height, bubbleW - s.dp(7f), bubbleH - padV)
       } else {
         meta = makeMeta(row, s, onMedia = true)
-        bubbleH = y + inset
+        bubbleH = y + mi
         val pw = meta.width + s.dp(12f)
         L.metaFrame.set(L.mediaFrame.right - pw - s.dp(5f), L.mediaFrame.bottom - s.dp(23f), L.mediaFrame.right - s.dp(5f), L.mediaFrame.bottom - s.dp(5f))
       }
@@ -684,7 +696,29 @@ object MLLayoutBuilder {
       L.selCircle.set(s.dp(10f), cy - s.dp(11f), s.dp(32f), cy + s.dp(11f))
     }
     L.replyIconX = if (row.own) s.width - s.dp(44f) else side + gutter
-    if (showBubble) L.bubblePath = bubblePath(L.bubble, row.own, row.first, row.last, s.radius, tail, s.dp(5f), s.dp(9f))
+    if (s.tg) {
+      // [2026-10-18 tg-look] mídia rente sem legenda = só a mídia (sem fundo/rabicho)
+      val mediaOnly = L.mediaFlush && !L.mediaCaption
+      if (mediaOnly) L.showBubble = false
+      val cr = tgCorners(L.bubble, row.own, row.first, row.last, s.radius, s.dp(MLLook.GROUP_R), !mediaOnly)
+      if (L.mediaFlush) {
+        val mc = if (L.mediaCaption) floatArrayOf(cr[0], cr[1], 0f, 0f) else cr
+        val mf = L.mediaFrame
+        if (row.album.isEmpty()) {
+          L.mediaCorners = radii8(mc)
+        } else {
+          val inner = s.dp(4f)
+          val out = ArrayList<FloatArray>()
+          for (f in L.albumFrames) {
+            val l = f.left <= mf.left + 0.5f; val rr = f.right >= mf.right - 0.5f
+            val t = f.top <= mf.top + 0.5f; val b = f.bottom >= mf.bottom - 0.5f
+            out.add(radii8(floatArrayOf(if (t && l) mc[0] else inner, if (t && rr) mc[1] else inner, if (b && rr) mc[2] else inner, if (b && l) mc[3] else inner)))
+          }
+          L.albumCorners = out
+        }
+      }
+      if (L.showBubble) L.bubblePath = tgBubblePath(L.bubble, row.own, row.first, row.last, s.radius, tail, s.dp(MLLook.GROUP_R), s.dp(MLLook.TAIL_RISE), !mediaOnly, s.density)
+    } else if (showBubble) L.bubblePath = bubblePath(L.bubble, row.own, row.first, row.last, s.radius, tail, s.dp(5f), s.dp(9f))
     if (row.failed) {
       val sz = s.dp(22f)
       val cy = L.bubble.centerY()
@@ -703,6 +737,56 @@ object MLLayoutBuilder {
     L.imageOps = imgs
     L.text?.let { L.spoilers.addAll(it.spoilers) }
     return L
+  }
+
+  /** [2026-10-18 tg-look] [tl, tr, br, bl] → 8 raios (x,y) p/ Path.addRoundRect. */
+  fun radii8(c: FloatArray): FloatArray = floatArrayOf(c[0], c[0], c[1], c[1], c[2], c[2], c[3], c[3])
+
+  /**
+   * [2026-10-18 tg-look] Cantos [tl, tr, br, bl] estilo Telegram: lado do autor justo
+   * dentro do grupo; a última do grupo leva o rabicho embaixo (canto 0) — sem rabicho
+   * (mídia pura) fica redonda.
+   */
+  fun tgCorners(r: RectF, own: Boolean, first: Boolean, last: Boolean, radius: Float, smallR: Float, tail: Boolean): FloatArray {
+    val big = max(0f, min(radius, min(r.height() / 2, r.width() / 2)))
+    val small = min(smallR, big)
+    val aTop = if (first) big else small
+    val aBot = if (last) (if (tail) 0f else big) else small
+    return if (own) floatArrayOf(big, aTop, aBot, big) else floatArrayOf(aTop, big, big, aBot)
+  }
+
+  /** [2026-10-18 tg-look] Balão Telegram: rabicho curvo no canto de baixo do autor (última do grupo). */
+  fun tgBubblePath(r: RectF, own: Boolean, first: Boolean, last: Boolean, radius: Float, tail: Float, smallR: Float, rise: Float, tailOn: Boolean, d: Float): Path {
+    val c = tgCorners(r, own, first, last, radius, smallR, tailOn)
+    val tl = c[0]; val tr = c[1]; val br = c[2]; val bl = c[3]
+    val withTail = tailOn && last
+    val k = 0.5523f // arco de 90° por cúbica
+    val p = Path()
+    p.moveTo(r.left + tl, r.top)
+    p.lineTo(r.right - tr, r.top)
+    if (tr > 0) p.cubicTo(r.right - tr + tr * k, r.top, r.right, r.top + tr - tr * k, r.right, r.top + tr)
+    if (own && withTail) {
+      val ty = max(r.top + tr, r.bottom - rise)
+      p.lineTo(r.right, ty)
+      p.cubicTo(r.right, r.bottom - 4.5f * d, r.right + tail * 0.5f, r.bottom - 1.4f * d, r.right + tail, r.bottom - 0.6f * d)
+      p.quadTo(r.right + tail + 0.4f * d, r.bottom, r.right + tail - 2.4f * d, r.bottom)
+    } else {
+      p.lineTo(r.right, r.bottom - br)
+      if (br > 0) p.cubicTo(r.right, r.bottom - br + br * k, r.right - br + br * k, r.bottom, r.right - br, r.bottom)
+    }
+    if (!own && withTail) {
+      val ty = max(r.top + tl, r.bottom - rise)
+      p.lineTo(r.left - tail + 2.4f * d, r.bottom)
+      p.quadTo(r.left - tail - 0.4f * d, r.bottom, r.left - tail, r.bottom - 0.6f * d)
+      p.cubicTo(r.left - tail * 0.5f, r.bottom - 1.4f * d, r.left, r.bottom - 4.5f * d, r.left, ty)
+    } else {
+      p.lineTo(r.left + bl, r.bottom)
+      if (bl > 0) p.cubicTo(r.left + bl - bl * k, r.bottom, r.left, r.bottom - bl + bl * k, r.left, r.bottom - bl)
+    }
+    p.lineTo(r.left, r.top + tl)
+    if (tl > 0) p.cubicTo(r.left, r.top + tl - tl * k, r.left + tl - tl * k, r.top, r.left + tl, r.top)
+    p.close()
+    return p
   }
 
   /** Balão com cantos por posição no grupo + rabicho na 1ª do grupo. */

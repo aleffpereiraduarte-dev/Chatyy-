@@ -13,12 +13,15 @@ import UIKit
 //         onAvatarPress, onMediaPress {key} ("" = ver tudo),
 //         onMemberPress {id}, onMembersEnd {count}, onMemberQuery {q},
 //         onFirstPaint {count}, onNativeError {message}
+// [2026-10-18 elegance] apiVersion 2: prop headerMode ("collapse" = cabeçalho
+//         Telegram que encolhe p/ a barra + puxar expande a foto; a view
+//         desenha a própria barra com X) + evento onClose. Binário 1 ignora.
 public class ChatyyChatInfoModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatInfo")
 
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(ChatyyChatInfoView.self) {
@@ -32,7 +35,8 @@ public class ChatyyChatInfoModule: Module {
         "onMembersEnd",
         "onMemberQuery",
         "onFirstPaint",
-        "onNativeError"
+        "onNativeError",
+        "onClose"
       )
 
       Prop("hero") { (view: ChatyyChatInfoView, value: [String: Any]?) in
@@ -61,6 +65,9 @@ public class ChatyyChatInfoModule: Module {
       }
       Prop("maxContentWidth") { (view: ChatyyChatInfoView, value: Double?) in
         view.setMaxContentWidth(CGFloat(value ?? 0))
+      }
+      Prop("headerMode") { (view: ChatyyChatInfoView, value: String?) in
+        view.setHeaderMode(value ?? "")
       }
       Prop("authToken") { (_: ChatyyChatInfoView, value: String?) in
         if let v = value, !v.isEmpty { CLImageLoader.shared.authToken = v }

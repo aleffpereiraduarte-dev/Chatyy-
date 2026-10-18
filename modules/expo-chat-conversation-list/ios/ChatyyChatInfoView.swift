@@ -19,6 +19,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   let onMemberQuery = EventDispatcher()
   let onFirstPaint = EventDispatcher()
   let onNativeError = EventDispatcher()
+  let onClose = EventDispatcher()
 
   private var collectionView: CLCollectionView!
   private var dataSource: UICollectionViewDiffableDataSource<String, String>!
@@ -53,6 +54,21 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   private var queryWork: DispatchWorkItem?
   private var endAskedAt = -1
 
+  // [2026-10-18 elegance] Cabeçalho que encolhe (headerMode = "collapse").
+  private var collapsing = false
+  private var header: CIHeaderOverlay?
+  private var headerDirty = true
+  private var heroHeightApplied: CGFloat = 0
+  private var expandTarget: CGFloat = 0
+  private var expandValue: CGFloat = 0
+  private var expandVel: CGFloat = 0
+  private var photoInset: CGFloat = 0
+  private var adjustingInset = false
+  private var displayLink: CADisplayLink?
+  private let expandHaptic = UIImpactFeedbackGenerator(style: .medium)
+  private var photoTap: UITapGestureRecognizer?
+  private let photoTapDelegate = CIGestureGate()
+
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
     clipsToBounds = true
@@ -64,6 +80,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   deinit {
     NotificationCenter.default.removeObserver(self)
     queryWork?.cancel()
+    displayLink?.invalidate()
   }
 
   // MARK: - Setup
@@ -120,7 +137,13 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       guard let self = self else { return }
       cell.configure(text: self.members.empty, loading: self.members.loading, palette: self.palette)
     }
+    let spacerReg = UICollectionView.CellRegistration<CIHeroSpacerCell, String> { [weak self] cell, _, _ in
+      cell.onTouch = { [weak self] phase, touch in self?.heroTouch(phase, touch) }
+    }
     dataSource = UICollectionViewDiffableDataSource<String, String>(collectionView: cv) { [weak self] collectionView, indexPath, id in
+      if id == "hero2" {
+        return collectionView.dequeueConfiguredReusableCell(using: spacerReg, for: indexPath, item: id)
+      }
       if id == "hero" {
         return collectionView.dequeueConfiguredReusableCell(using: heroReg, for: indexPath, item: id)
       }
@@ -190,8 +213,13 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     if maxContentWidth > 0 && w > maxContentWidth { h = max(16, (w - maxContentWidth) / 2 + 16) }
     var est: CGFloat = 52
     if sid == "hero" { est = 300 } else if sid.hasPrefix("h|") || sid.hasPrefix("f|") { est = 24 }
-    let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(est)))
-    let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(est)), subitems: [item])
+    var dim = NSCollectionLayoutDimension.estimated(est)
+    if sid == "hero" && collapsing {
+      // Espaçador do cabeçalho que encolhe: altura exata (o desenho é do overlay).
+      dim = .absolute(max(1, heroHeightApplied))
+    }
+    let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: dim))
+    let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: dim), subitems: [item])
     let section = NSCollectionLayoutSection(group: group)
     if sid.hasPrefix("c|") {
       // Cartão: decoração arredondada atrás das linhas; 28 pt até o próximo
@@ -204,6 +232,8 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       section.decorationItems = [bg]
     } else if sid.hasPrefix("f|") {
       section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: 28, trailing: h)
+    } else if sid == "hero" && collapsing {
+      section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
     } else if sid == "hero" {
       section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: h, bottom: 24, trailing: h)
     } else {
@@ -219,6 +249,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     if h == hero && appliedOnce { return }
     hero = h
     dirty.insert("hero")
+    headerDirty = true
     needsApply = true
   }
 
@@ -289,6 +320,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   func setLabels(_ d: [String: Any]?) {
     labels = CLLabels(d)
     dirty.insert("hero")
+    headerDirty = true
     needsApply = true
   }
 
@@ -306,6 +338,40 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     collectionView.collectionViewLayout.invalidateLayout()
   }
 
+  /// [2026-10-18 elegance] "collapse" = cabeçalho Telegram (avatar encolhe p/ a
+  /// barra, puxar expande a foto); qualquer outro valor = hero estático.
+  func setHeaderMode(_ m: String) {
+    let on = m == "collapse"
+    if on == collapsing { return }
+    collapsing = on
+    if on {
+      let h = CIHeaderOverlay(frame: bounds)
+      h.onClose = { [weak self] in self?.onClose([:]) }
+      addSubview(h)
+      header = h
+      let tap = UITapGestureRecognizer(target: self, action: #selector(photoAreaTapped(_:)))
+      tap.cancelsTouchesInView = false
+      photoTapDelegate.shouldBegin = { [weak self] g in self?.photoTapShouldBegin(g) ?? false }
+      tap.delegate = photoTapDelegate
+      collectionView.addGestureRecognizer(tap)
+      photoTap = tap
+    } else {
+      stopExpandLink()
+      expandTarget = 0
+      expandValue = 0
+      expandVel = 0
+      photoInset = 0
+      header?.removeFromSuperview()
+      header = nil
+      if let tap = photoTap { collectionView.removeGestureRecognizer(tap) }
+      photoTap = nil
+    }
+    headerDirty = true
+    needsApply = true
+    refreshInsets()
+    collectionView.collectionViewLayout.invalidateLayout()
+  }
+
   func commitProps() {
     var reconfigureAll = false
     if paletteDirty {
@@ -317,9 +383,21 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       collectionView.indicatorStyle = palette.dark ? .white : .black
       collectionView.collectionViewLayout.invalidateLayout()
       reconfigureAll = appliedOnce
+      headerDirty = true
+    }
+    if let h = header, headerDirty {
+      headerDirty = false
+      h.configure(hero, palette: palette, labels: labels)
+      let hh = h.heroHeight
+      if hh != heroHeightApplied {
+        heroHeightApplied = hh
+        collectionView.collectionViewLayout.invalidateLayout()
+      }
+      if expandTarget > 0 && !h.hasPhoto { setExpand(0) }
     }
     applySnapshot(reconfigureAll: reconfigureAll)
     refreshInsets()
+    updateHeader()
   }
 
   // MARK: - Snapshot
@@ -334,9 +412,10 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     var mIndex: [String: Int] = [:]
     var seenItems = Set<String>()
 
+    let heroId = collapsing ? "hero2" : "hero"
     snap.appendSections(["hero"])
-    snap.appendItems(["hero"], toSection: "hero")
-    seenItems.insert("hero")
+    snap.appendItems([heroId], toSection: "hero")
+    seenItems.insert(heroId)
 
     func addCard(_ key: String, _ header: String, _ footer: String, _ items: [String]) {
       let uniq = items.filter { seenItems.insert($0).inserted }
@@ -469,16 +548,175 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   private func refreshInsets() {
     guard let cv = collectionView else { return }
     let b = max(bottomInset, keyboardInset)
-    let insets = UIEdgeInsets(top: 0, left: 0, bottom: b, right: 0)
+    let insets = UIEdgeInsets(top: collapsing ? photoInset : 0, left: 0, bottom: b, right: 0)
     if cv.contentInset != insets {
       cv.contentInset = insets
-      cv.verticalScrollIndicatorInsets = insets
+      var ind = insets
+      ind.top = collapsing ? CIHeaderOverlay.navH : 0
+      cv.verticalScrollIndicatorInsets = ind
     }
   }
 
   public override func layoutSubviews() {
     super.layoutSubviews()
     if collectionView.frame != bounds { collectionView.frame = bounds }
+    if let h = header {
+      if h.frame != bounds { h.frame = bounds }
+      updateHeader()
+    }
+  }
+
+  public override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil && displayLink != nil {
+      // Fora da tela: assenta a expansão no alvo, sem animação.
+      expandValue = expandTarget
+      expandVel = 0
+      stopExpandLink()
+      applyExpand()
+    }
+  }
+
+  // MARK: - Cabeçalho que encolhe
+
+  private var currentRel: CGFloat {
+    guard let cv = collectionView else { return 0 }
+    return cv.contentOffset.y + cv.contentInset.top
+  }
+
+  private func updateHeader() {
+    guard let h = header else { return }
+    h.apply(rel: currentRel, expand: expandValue)
+  }
+
+  private func setExpand(_ t: CGFloat) {
+    if expandTarget == t { return }
+    expandTarget = t
+    if displayLink == nil {
+      let link = CADisplayLink(target: CIWeakLinkTarget(self), selector: #selector(CIWeakLinkTarget.tick(_:)))
+      link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+      link.add(to: .main, forMode: .common)
+      displayLink = link
+    }
+  }
+
+  private func stopExpandLink() {
+    displayLink?.invalidate()
+    displayLink = nil
+  }
+
+  /// Mola criticamente amortecida (sem ponte) p/ a expansão da foto.
+  func expandTick(_ link: CADisplayLink) {
+    var dt = CGFloat(link.targetTimestamp - link.timestamp)
+    if dt <= 0 || dt > 0.05 { dt = 1.0 / 60.0 }
+    let stiffness: CGFloat = 320
+    let damping: CGFloat = 2 * 0.86 * sqrt(stiffness)
+    let h = dt / 2
+    for _ in 0..<2 {
+      let a = stiffness * (expandTarget - expandValue) - damping * expandVel
+      expandVel += a * h
+      expandValue += expandVel * h
+    }
+    if abs(expandTarget - expandValue) < 0.002 && abs(expandVel) < 0.02 {
+      expandValue = expandTarget
+      expandVel = 0
+      stopExpandLink()
+    }
+    applyExpand()
+  }
+
+  /// Aplica a expansão: o conteúdo desce/sobe via contentInset.top e o offset
+  /// é compensado na mesma medida (o dedo não "pula" durante o puxão).
+  private func applyExpand() {
+    guard let cv = collectionView, let h = header else { return }
+    let e = ciClamp01(expandValue)
+    let target = (h.photoExtra * e).rounded(.toNearestOrAwayFromZero)
+    let delta = target - photoInset
+    if abs(delta) > 0.001 {
+      adjustingInset = true
+      photoInset = target
+      var ins = cv.contentInset
+      ins.top = target
+      cv.contentInset = ins
+      var off = cv.contentOffset
+      off.y -= delta
+      cv.contentOffset = off
+      adjustingInset = false
+    }
+    h.apply(rel: currentRel, expand: e)
+  }
+
+  private func heroTouch(_ phase: Int, _ touch: UITouch) {
+    guard let h = header else { return }
+    let p = touch.location(in: h)
+    switch phase {
+    case 0:
+      h.setPressed(h.hit(p))
+    case 1:
+      let target = h.hit(p)
+      h.setPressed(.empty)
+      fireHeaderHit(target)
+    default:
+      h.setPressed(.empty)
+    }
+  }
+
+  private func fireHeaderHit(_ target: CIHeaderHit) {
+    switch target {
+    case .avatar:
+      onAvatarPress([:])
+    case .action(let key):
+      UISelectionFeedbackGenerator().selectionChanged()
+      onAction(["key": key])
+    case .empty:
+      break
+    }
+  }
+
+  /// Modo foto: a parte de cima da foto fica sobre o contentInset (sem célula).
+  @objc private func photoAreaTapped(_ g: UITapGestureRecognizer) {
+    guard let h = header, g.state == .ended else { return }
+    fireHeaderHit(h.hit(g.location(in: h)))
+  }
+
+  private func photoTapShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    guard let h = header, expandTarget > 0 else { return false }
+    let loc = g.location(in: collectionView)
+    if collectionView.indexPathForItem(at: loc) != nil { return false }
+    return h.hit(g.location(in: h)) != .empty
+  }
+
+  public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+    if collapsing { expandHaptic.prepare() }
+  }
+
+  public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    guard collapsing, let h = header else { return }
+    if adjustingInset { return }
+    let rel = currentRel
+    if expandTarget == 0 {
+      if scrollView.isTracking && rel < -72 && h.hasPhoto {
+        setExpand(1)
+        expandHaptic.impactOccurred()
+      }
+    } else if rel > 28 {
+      setExpand(0)
+    }
+    h.apply(rel: rel, expand: expandValue)
+  }
+
+  /// Parou no meio do encolhimento → assenta aberto ou encaixado (Telegram).
+  public func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+    guard collapsing, let h = header, expandTarget == 0 else { return }
+    let top = scrollView.contentInset.top
+    let dock = h.dockRel
+    let maxOff = scrollView.contentSize.height + scrollView.contentInset.bottom - scrollView.bounds.height
+    if maxOff + top < dock { return }
+    let tRel = targetContentOffset.pointee.y + top
+    if tRel <= 0 || tRel >= dock { return }
+    var snapTo: CGFloat = tRel < dock / 2 ? 0 : dock
+    if velocity.y > 0.2 { snapTo = dock } else if velocity.y < -0.2 { snapTo = 0 }
+    targetContentOffset.pointee.y = snapTo - top
   }
 
   // MARK: - UICollectionViewDelegate
@@ -519,5 +757,36 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       endAskedAt = count
       onMembersEnd(["count": count])
     }
+  }
+}
+
+/// Alvo fraco do CADisplayLink (o link retém o alvo; a view não fica presa).
+final class CIWeakLinkTarget: NSObject {
+  weak var owner: ChatyyChatInfoView?
+
+  init(_ owner: ChatyyChatInfoView) {
+    self.owner = owner
+    super.init()
+  }
+
+  @objc func tick(_ link: CADisplayLink) {
+    guard let o = owner else {
+      link.invalidate()
+      return
+    }
+    o.expandTick(link)
+  }
+}
+
+/// Delegate mínimo do toque na foto expandida (decide por closure).
+final class CIGestureGate: NSObject, UIGestureRecognizerDelegate {
+  var shouldBegin: ((UIGestureRecognizer) -> Bool)?
+
+  func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    return shouldBegin?(gestureRecognizer) ?? false
+  }
+
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    return true
   }
 }

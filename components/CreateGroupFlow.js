@@ -11,6 +11,7 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconArrowLeft, IconSearch, IconX, IconUsers, IconCheck, IconPlus } from './Icons';
+import SelectionCheck from './ui/SelectionCheck'; // [2026-10-18 elegance]
 import AvatarCircle from './AvatarCircle';
 import { Image as ExpoImage } from 'expo-image';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
@@ -249,12 +250,8 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
         accessibilityLabel={item.name || item.email}
       >
         {/* WhatsApp iOS: círculo de seleção à esquerda, separador começa no texto. */}
-        <View style={[sty.checkbox, {
-          backgroundColor: selected ? ink : 'transparent',
-          borderColor: selected ? ink : g.tertiary,
-        }]}>
-          {selected && <IconCheck size={14} color={onInk} />}
-        </View>
+        {/* [2026-10-18 elegance] círculo anima (preenche do centro + check com mola) */}
+        <SelectionCheck on={selected} size={22} borderWidth={1.5} onColor={ink} offColor={g.tertiary} checkColor={onInk} checkSize={14} />
         <AvatarCircle email={item.email} name={item.name || item.email} size={40} />
         <View style={[sty.contactInfo, { borderBottomColor: g.separator }]}>
           <Text style={[sty.contactName, { color: colors.text }]} numberOfLines={1}>

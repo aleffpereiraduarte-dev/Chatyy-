@@ -15,6 +15,7 @@ import * as api from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import AvatarCircle from '../components/AvatarCircle';
 import { IconArrowLeft, IconSearch, IconEyeOff, IconCheck } from '../components/Icons';
+import SelectionCheck from '../components/ui/SelectionCheck'; // [2026-10-18 elegance]
 import { emailToDisplayName } from '../services/api';
 
 export default function StatusExceptScreen() {
@@ -176,14 +177,8 @@ export default function StatusExceptScreen() {
                   <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{name}</Text>
                   <Text style={{ fontSize: 12, color: colors.textSecondary }}>{email}</Text>
                 </View>
-                <View style={{
-                  width: 26, height: 26, borderRadius: 13,
-                  borderWidth: 2, borderColor: isIn ? (colors.primary || '#111111') : colors.border,
-                  backgroundColor: isIn ? (colors.primary || '#111111') : 'transparent',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {isIn && <IconCheck size={15} color={colors.onPrimary || '#fff'} strokeWidth={3} />}
-                </View>
+                {/* [2026-10-18 elegance] círculo de seleção animado */}
+                <SelectionCheck on={!!isIn} size={26} borderWidth={2} onColor={colors.primary || '#111111'} offColor={colors.border} checkColor={colors.onPrimary || '#fff'} checkSize={15} strokeWidth={3} />
               </TouchableOpacity>
             );
           }}

@@ -111,6 +111,13 @@
 //          Reduzir Movimento (iOS) / remover animações (Android) = desligado
 //          no próprio nativo.
 //
+//   look  [apiVersion 10, tg-look 2026-10-18] prop look {tg: 0/1} → visual
+//          Telegram P&B: rabicho suave na ÚLTIMA bolha do grupo (embaixo, lado
+//          do autor), cantos do autor justos dentro do grupo, foto/vídeo/álbum
+//          sem nome/citação rente à bolha (sem moldura, cantos = bolha; sem
+//          legenda = sem fundo/rabicho). Binário < 10 não recebe a prop (visual
+//          antigo). Kill switch: globalThis.__chatyy_tg_look = false.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -163,6 +170,8 @@ function _motionFlag(name) {
 function _motionSig() {
   return '' + _motionFlag('insert') + _motionFlag('edit') + _motionFlag('ticks') + _motionFlag('react') + _motionFlag('sticky') + _motionFlag('audio');
 }
+/** [tg-look] visual Telegram (apiVersion 10) — padrão ligado; kill switch OTA. */
+export function tgLookOn() { try { return globalThis.__chatyy_tg_look !== false; } catch { return true; } }
 function _a11ySwitchOn() { try { return globalThis.__chatyy_native_list_a11y !== false; } catch { return true; } }
 /** apiVersion do módulo nativo (0 = ausente). */
 export function nativeListApi() { _getNativeView(); return _api; }
@@ -2040,6 +2049,9 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     if (!_mSig) return undefined;
     return { i: +_mSig[0], e: +_mSig[1], t: +_mSig[2], r: +_mSig[3], s: +_mSig[4], a: +_mSig[5] };
   }, [_mSig]);
+  // [tg-look] prop look (apiVersion 10): objeto estável por valor
+  const _tg = _api >= 10 ? (tgLookOn() ? 1 : 0) : -1;
+  const nativeLook = useMemo(() => (_tg < 0 ? undefined : { tg: _tg }), [_tg]);
   const nativeSticky = useMemo(() => {
     if (!stickyDate || _api < 2) return undefined;
     const o = { on: stickyDate.on ? 1 : 0, top: Number(stickyDate.top) || 0 };
@@ -2137,6 +2149,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       {...(nativeStore ? { store: nativeStore } : null)}
       {...(nativeA11y ? { a11y: nativeA11y } : null)}
       {...(nativeMotion ? { motion: nativeMotion } : null)}
+      {...(nativeLook ? { look: nativeLook } : null)}
       {...handlers}
     />
   );

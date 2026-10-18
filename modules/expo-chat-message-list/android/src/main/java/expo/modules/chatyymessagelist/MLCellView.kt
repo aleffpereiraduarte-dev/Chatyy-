@@ -279,6 +279,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
   private var audio: MLAudioState? = null
 
   val mediaSlot = MLImageSlot(this)
+  /** [2026-10-18 tg-look] recorte por canto da mídia rente */
+  private val cornerPath = Path()
   val replySlot = MLImageSlot(this)
   val albumSlots = Array(4) { MLImageSlot(this) }
 
@@ -741,7 +743,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (r.kind != MLKind.MSG) return null
     val s = style ?: return null
     val rect = RectF(L.bubble)
-    if (L.showBubble && r.first) { if (r.own) rect.right += s.dp(6f) else rect.left -= s.dp(6f) }
+    if (L.showBubble && (if (s.tg) r.last else r.first)) { if (r.own) rect.right += s.dp(6f) else rect.left -= s.dp(6f) } // [tg-look] rabicho na última
     rect.offset(swipeX, 0f)
     rect.intersect(0f, 0f, width.toFloat(), height.toFloat())
     return rect
@@ -754,7 +756,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (r.kind != MLKind.MSG) return null
     val s = style ?: return null
     val rect = RectF(L.bubble)
-    if (L.showBubble && r.first) { if (r.own) rect.right += s.dp(6f) else rect.left -= s.dp(6f) }
+    if (L.showBubble && (if (s.tg) r.last else r.first)) { if (r.own) rect.right += s.dp(6f) else rect.left -= s.dp(6f) } // [tg-look] rabicho na última
     rect.offset(swipeX, 0f)
     rect.intersect(0f, 0f, width.toFloat(), height.toFloat())
     val w = rect.width().toInt(); val h = rect.height().toInt()
@@ -928,17 +930,27 @@ class MLCellView(context: Context) : ViewGroup(context) {
     val md = r.media
     if (md != null && !L.mediaFrame.isEmpty) {
       val sticker = md.kind == "sticker"
-      val ok = mediaSlot.draw(c, L.mediaFrame, L.mediaRadius, sticker)
+      // [2026-10-18 tg-look] cantos por canto (recorte) em vez do raio uniforme
+      val mcr = L.mediaCorners
+      if (mcr != null) {
+        c.save()
+        cornerPath.reset()
+        cornerPath.addRoundRect(L.mediaFrame, mcr, Path.Direction.CW)
+        c.clipPath(cornerPath)
+      }
+      val mrad = if (mcr != null) 0f else L.mediaRadius
+      val ok = mediaSlot.draw(c, L.mediaFrame, mrad, sticker)
       if (!ok && !sticker) {
         fill.color = if (r.own) th.ownQuote else th.otherQuote
-        c.drawRoundRect(L.mediaFrame, L.mediaRadius, L.mediaRadius, fill)
+        c.drawRoundRect(L.mediaFrame, mrad, mrad, fill)
       }
       val (mode, done) = if (sticker) Pair(RingMode.Hidden, true) else xferMode(md.dl, md.up, true)
       if (!done && md.dl != null && !sticker) {
         // ainda não baixada: miniatura levemente escurecida (P&B premium)
         fill.color = 0x2E000000
-        c.drawRoundRect(L.mediaFrame, L.mediaRadius, L.mediaRadius, fill)
+        c.drawRoundRect(L.mediaFrame, mrad, mrad, fill)
       }
+      if (mcr != null) c.restore()
       if (md.kind == "video" && md.up == null && done && !snap) {
         val cx = L.mediaFrame.centerX(); val cy = L.mediaFrame.centerY(); val rad = s.dp(23f)
         fill.color = 0x73000000; c.drawCircle(cx, cy, rad, fill)
@@ -948,12 +960,23 @@ class MLCellView(context: Context) : ViewGroup(context) {
       if (!snap) drawRing(c, 0, mode, done, L.mediaFrame.centerX(), L.mediaFrame.centerY(), true, 0xFFFFFFFF.toInt(), s)
     }
     if (L.albumFrames.isNotEmpty()) {
+      val acr = L.albumCorners
       for ((i, f) in L.albumFrames.withIndex()) {
         if (i >= 4) break
-        if (!albumSlots[i].draw(c, f, s.dp(4f), false)) {
-          fill.color = if (r.own) th.ownQuote else th.otherQuote
-          c.drawRoundRect(f, s.dp(4f), s.dp(4f), fill)
+        // [2026-10-18 tg-look] cantos externos do álbum = cantos da bolha
+        val cr8 = if (acr != null && i < acr.size) acr[i] else null
+        if (cr8 != null) {
+          c.save()
+          cornerPath.reset()
+          cornerPath.addRoundRect(f, cr8, Path.Direction.CW)
+          c.clipPath(cornerPath)
         }
+        val arad = if (cr8 != null) 0f else s.dp(4f)
+        if (!albumSlots[i].draw(c, f, arad, false)) {
+          fill.color = if (r.own) th.ownQuote else th.otherQuote
+          c.drawRoundRect(f, arad, arad, fill)
+        }
+        if (cr8 != null) c.restore()
         if (!snap && i < r.album.size) {
           val am = r.album[i]
           val (mode, done) = xferMode(am.dl, am.up, false)
@@ -963,7 +986,14 @@ class MLCellView(context: Context) : ViewGroup(context) {
       val last = L.albumFrames.last()
       L.moreText?.let {
         fill.color = 0x73000000
-        c.drawRoundRect(last, s.dp(4f), s.dp(4f), fill)
+        val lcr = if (acr != null && acr.size == L.albumFrames.size) acr.last() else null
+        if (lcr != null) {
+          cornerPath.reset()
+          cornerPath.addRoundRect(last, lcr, Path.Direction.CW)
+          c.drawPath(cornerPath, fill)
+        } else {
+          c.drawRoundRect(last, s.dp(4f), s.dp(4f), fill)
+        }
         drawText(c, it, last.centerX() - it.width / 2, last.centerY() - it.height / 2)
       }
     }

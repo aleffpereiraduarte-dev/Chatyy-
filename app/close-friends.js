@@ -13,6 +13,7 @@ import * as settingsCache from '../services/settingsCache'; // [2026-10-13 setti
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { IconArrowLeft, IconSearch, IconStar, IconCheck } from '../components/Icons';
+import SelectionCheck from '../components/ui/SelectionCheck'; // [2026-10-18 elegance]
 import { emailToDisplayName } from '../services/api';
 
 export default function CloseFriendsScreen() {
@@ -163,14 +164,8 @@ export default function CloseFriendsScreen() {
                   <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{name}</Text>
                   <Text style={{ fontSize: 12, color: colors.textSecondary }}>{email}</Text>
                 </View>
-                <View style={{
-                  width: 26, height: 26, borderRadius: 13,
-                  borderWidth: 2, borderColor: isIn ? markOn : colors.border,
-                  backgroundColor: isIn ? markOn : 'transparent',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {isIn && <IconCheck size={15} color={markFg} strokeWidth={3} />}
-                </View>
+                {/* [2026-10-18 elegance] círculo de seleção animado */}
+                <SelectionCheck on={!!isIn} size={26} borderWidth={2} onColor={markOn} offColor={colors.border} checkColor={markFg} checkSize={15} strokeWidth={3} />
               </TouchableOpacity>
             );
           }}

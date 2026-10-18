@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState, PanResponder, DeviceEventEmitter } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Easing, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState, PanResponder, DeviceEventEmitter } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -21,7 +21,8 @@ import { SearchReveal, searchRevealEnabled } from '../components/chatlist/Search
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
-import { haptic } from '../constants/theme';
+import { haptic, Motion, Typography } from '../constants/theme';
+import { Springs } from '../constants/motion'; // [2026-10-18 elegance]
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import ChatListTab from '../components/ChatListTab';
 import { IS_TABLET_DEVICE } from '../utils/responsive'; // [2026-10-10 tablet-split]
@@ -71,7 +72,7 @@ import HomeDiscoverPills from '../components/home/HomeDiscoverPills'; // [2026-1
 
 function IconFeedTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="3" y="3" width="7" height="7" rx="1.5" />
       <Rect x="14" y="3" width="7" height="7" rx="1.5" />
       <Rect x="3" y="14" width="7" height="7" rx="1.5" />
@@ -82,7 +83,7 @@ function IconFeedTab({ size = 24, color = '#666', active }) {
 
 function IconCallsTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 1.6 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={active ? 1.6 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" />
     </Svg>
   );
@@ -92,7 +93,7 @@ function IconCallsTab({ size = 24, color = '#666', active }) {
 // de traço dos outros ícones da barra; play preenchido quando ativo).
 function IconReelsTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="3" y="3" width="18" height="18" rx="5" />
       <Line x1="3" y1="8.5" x2="21" y2="8.5" />
       <Line x1="9" y1="3.2" x2="11.5" y2="8.5" />
@@ -104,18 +105,18 @@ function IconReelsTab({ size = 24, color = '#666', active }) {
 
 function IconChatsTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill={active ? color : 'none'} />
       {/* [2026-10-13 design-system] ativo = balão PREENCHIDO (sem as linhas) */}
-      {!active && <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.5" />}
-      {!active && <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.5" />}
+      {!active && <Line x1="8" y1="9" x2="16" y2="9" stroke={color} strokeWidth="1.6" />}
+      {!active && <Line x1="8" y1="13" x2="13" y2="13" stroke={color} strokeWidth="1.6" />}
     </Svg>
   );
 }
 
 function IconConfigTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" />
       <SvgCircle cx="12" cy="12" r="3" />
     </Svg>
@@ -124,7 +125,7 @@ function IconConfigTab({ size = 24, color = '#666', active }) {
 
 function IconStatusTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <SvgCircle cx="12" cy="12" r="9" strokeDasharray={active ? undefined : "4 3"} />
       <SvgCircle cx="12" cy="12" r="4" />
     </Svg>
@@ -134,7 +135,7 @@ function IconStatusTab({ size = 24, color = '#666', active }) {
 function IconOneTab({ size = 24, color = '#666', active }) {
   // Sparkle / AI glyph for the One assistant tab
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z" fill={active ? color : 'none'} />
       <Path d="M19 15l.9 2.3L22 18l-2.1.7L19 21l-.9-2.3L16 18l2.1-.7z" fill={active ? color : 'none'} />
     </Svg>
@@ -146,7 +147,7 @@ function IconAppsTab({ size = 24, color = '#666', active }) {
     // [2026-10-13 design-system] Era uma grade de 9 bolinhas cheias (pesada,
     // destoava do traço fino dos outros ícones). Agora 2x2 quadrados
     // arredondados no mesmo traço; preenchidos quando ativo.
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={1.8} strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={active ? color : 'none'} stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="3.5" y="3.5" width="7" height="7" rx="2" />
       <Rect x="13.5" y="3.5" width="7" height="7" rx="2" />
       <Rect x="3.5" y="13.5" width="7" height="7" rx="2" />
@@ -157,7 +158,7 @@ function IconAppsTab({ size = 24, color = '#666', active }) {
 
 function IconEmailTab({ size = 24, color = '#666', active }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="2" y="4" width="20" height="16" rx="2" />
       <Path d="M2 7l10 6 10-6" />
     </Svg>
@@ -1796,7 +1797,7 @@ function ChatHub() {
               icon={(active) => {
                 const c = active ? '#f59e0b' : (barDark ? '#636366' : '#a0a8b4');
                 return (
-                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
                     <Rect x="2" y="7" width="20" height="15" rx="2" ry="2" />
                     <Path d="M17 2L12 7 7 2" />
                   </Svg>
@@ -1813,7 +1814,7 @@ function ChatHub() {
               icon={(active) => {
                 const c = active ? '#10b981' : (barDark ? '#636366' : '#a0a8b4');
                 return (
-                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2.2 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+                  <Svg width={25} height={25} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
                     <SvgCircle cx="12" cy="8" r="5" />
                     <Path d="M20 21a8 8 0 10-16 0" />
                   </Svg>
@@ -2025,8 +2026,13 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
   // (fade + leve expansão horizontal). iOS segue UITabBar: só cor/preenchimento.
   const showPill = Platform.OS !== 'ios';
   const pillAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
+  // [2026-10-18 elegance] Cross-fade do ícone (contorno ↔ preenchido) + leve
+  // "assentar" de escala no ativo — estilo Telegram. Os dois estados do ícone
+  // ficam empilhados e só a opacidade/escala anima (native driver, sem re-render).
+  const iconAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
 
   useEffect(() => {
+    Animated.timing(iconAnim, { toValue: active ? 1 : 0, duration: Motion.fast, easing: Easing.out(Easing.cubic), useNativeDriver: !isWeb }).start();
     if (showPill) {
       Animated.spring(pillAnim, { toValue: active ? 1 : 0, useNativeDriver: true, tension: 260, friction: 24 }).start();
     }
@@ -2039,10 +2045,10 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
   }, [active]);
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: true, tension: 400, friction: 28 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: true, ...Springs.press }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 260, friction: 14 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, ...Springs.release }).start();
   };
 
   // [2026-10-07 app-feel-nav] Pressable nativo: ripple Material no Android,
@@ -2077,7 +2083,17 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
             transform: [{ scaleX: pillAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
           }]} />
         )}
-        {icon(active)}
+        <View style={styles.tabIconStack}>
+          <Animated.View style={{ opacity: iconAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }}>
+            {icon(false)}
+          </Animated.View>
+          <Animated.View pointerEvents="none" style={[styles.tabIconOn, {
+            opacity: iconAnim,
+            transform: [{ scale: iconAnim.interpolate({ inputRange: [0, 1], outputRange: [0.84, 1] }) }],
+          }]}>
+            {icon(true)}
+          </Animated.View>
+        </View>
         {badge > 0 && <PulseBadge badge={badge} isDark={isDark} style={styles.tabBadgePos} />}
         {!badge && dot && (
           <View style={{
@@ -2183,10 +2199,12 @@ const styles = StyleSheet.create({
     position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth,
   },
   // WhatsApp iOS large title ("Conversas") — big, bold, left-aligned.
+  // [2026-10-18 elegance] 32→34 = Typography.largeTitle (mesmo tamanho do título
+  // grande nativo / LargeTitleHeader — web e nativo agora batem).
   bigTitle: {
-    fontSize: 32,
-    fontWeight: '700',
-    letterSpacing: -0.9,
+    fontSize: Typography.largeTitle.fontSize,
+    fontWeight: Typography.largeTitle.fontWeight,
+    letterSpacing: Typography.largeTitle.letterSpacing,
   },
 
   // Search bar
@@ -2260,6 +2278,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     borderRadius: 16,
+  },
+  // [2026-10-18 elegance] pilha do cross-fade do ícone (inativo em fluxo,
+  // ativo absoluto por cima, centralizado).
+  tabIconStack: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabIconOn: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBadgePos: {
     top: -4,

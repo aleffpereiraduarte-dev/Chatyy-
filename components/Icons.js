@@ -322,7 +322,7 @@ export function IconCheckbox({ size, color, style }) {
 }
 
 export function IconCheckboxChecked({ size, color, style }) {
-  return <I size={size} color={color} style={style}><Rect x="3" y="3" width="18" height="18" rx="2"/><Polyline points="9 11 12 14 22 4" strokeWidth="2.5"/></I>;
+  return <I size={size} color={color} style={style}><Rect x="3" y="3" width="18" height="18" rx="2"/><Polyline points="9 11 12 14 22 4" strokeWidth="2.1"/></I>; // [2026-10-18 elegance] era 2.5 (destoava do set 1.9)
 }
 
 export function IconMarkRead({ size, color, style }) {

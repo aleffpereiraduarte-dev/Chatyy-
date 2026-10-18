@@ -7,14 +7,21 @@ package expo.modules.chatyyconversationlist
 // onMemberQuery com debounce). Mesmo contrato do iOS
 // (ios/ChatyyChatInfoView.swift).
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
 import android.util.TypedValue
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -22,6 +29,7 @@ import androidx.recyclerview.widget.RecyclerView
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import kotlin.math.abs
 import kotlin.math.max
 
 @SuppressLint("ViewConstructor")
@@ -38,6 +46,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   val onMemberQuery by EventDispatcher()
   val onFirstPaint by EventDispatcher()
   val onNativeError by EventDispatcher()
+  val onClose by EventDispatcher()
 
   private val density = context.resources.displayMetrics.density
   private fun px(v: Float): Int = (v * density + 0.5f).toInt()
@@ -70,6 +79,23 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   private val recycler = RecyclerView(context)
   private val layoutManager = LinearLayoutManager(context)
   private val adapter = Adapter()
+
+  // [2026-10-18 elegance] Cabeçalho que encolhe (headerMode = "collapse").
+  // A lista fica num FrameLayout p/ o overlay poder ficar POR CIMA dela.
+  private val stack = FrameLayout(context)
+  private var collapsing = false
+  private var header: CIHeaderOverlay? = null
+  private var spacerView: CIHeroSpacer? = null
+  private var heroBaseH = 0
+  private var expandValue = 0f
+  private var expandTarget = 0f
+  private var expandAnim: ValueAnimator? = null
+  private var stretch = 0f
+  private var stretchAnim: ValueAnimator? = null
+  private var pulling = false
+  private var downX = 0f
+  private var downY = 0f
+  private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
   // ─── Props ───────────────────────────────────────────────────────────────
 
@@ -159,6 +185,32 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     updateInset(width)
   }
 
+  /** [2026-10-18 elegance] "collapse" = cabeçalho Telegram; outro valor = hero estático. */
+  fun setHeaderMode(v: String) {
+    val on = v == "collapse"
+    if (on == collapsing) return
+    collapsing = on
+    if (on) {
+      val h = CIHeaderOverlay(context)
+      h.onClose = { onClose(mapOf<String, Any>()) }
+      stack.addView(h, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+      header = h
+    } else {
+      expandAnim?.cancel()
+      stretchAnim?.cancel()
+      expandValue = 0f
+      expandTarget = 0f
+      setStretch(0f)
+      header?.let { stack.removeView(it) }
+      header = null
+      spacerView = null
+    }
+    needsApply = true
+    headerDirty = true
+  }
+
+  private var headerDirty = true
+
   fun commitProps() {
     var rebindAll = false
     if (paletteDirty) {
@@ -167,8 +219,185 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
       setBackgroundColor(palette.pageBg)
       recycler.setBackgroundColor(palette.pageBg)
       rebindAll = true
+      headerDirty = true
+    }
+    val h = header
+    if (h != null && (headerDirty || needsApply)) {
+      headerDirty = false
+      try {
+        h.configure(hero, palette, labels)
+        heroBaseH = h.heroHeight
+        if (expandTarget > 0f && !h.hasPhoto) animateExpand(0f)
+        updateSpacerHeight()
+      } catch (e: Throwable) {
+        onNativeError(mapOf("message" to ("header: " + (e.message ?: e.javaClass.simpleName))))
+      }
     }
     applyData(rebindAll)
+    recycler.post { updateHeader() }
+  }
+
+  // ─── Cabeçalho que encolhe ───────────────────────────────────────────────
+
+  /** Rolagem relativa ao repouso (px): 0 = topo; < 0 = puxando; grande = longe. */
+  private fun currentRel(): Float {
+    val first = recycler.findViewHolderForAdapterPosition(0)?.itemView
+    val scrolled = if (first != null) (recycler.paddingTop - first.top).toFloat() else 100000f
+    return scrolled - stretch
+  }
+
+  private fun updateHeader() {
+    val h = header ?: return
+    h.apply(currentRel(), expandValue)
+  }
+
+  private fun updateSpacerHeight() {
+    val h = header ?: return
+    val sv = spacerView ?: return
+    val extra = (h.photoExtra * ciClamp01(expandValue)).toInt()
+    sv.heightPx = max(1, heroBaseH + extra)
+  }
+
+  private fun animateExpand(target: Float) {
+    if (expandTarget == target) return
+    expandTarget = target
+    expandAnim?.cancel()
+    val a = ValueAnimator.ofFloat(expandValue, target)
+    a.duration = 380
+    a.interpolator = PathInterpolator(0.2f, 0.9f, 0.1f, 1f)
+    a.addUpdateListener {
+      expandValue = it.animatedValue as Float
+      updateSpacerHeight()
+      updateHeader()
+    }
+    expandAnim = a
+    a.start()
+  }
+
+  private fun setStretch(v: Float) {
+    stretch = max(0f, v)
+    recycler.translationY = stretch
+    updateHeader()
+  }
+
+  private fun releaseStretch() {
+    val from = stretch
+    stretchAnim?.cancel()
+    if (from <= 0f) return
+    val a = ValueAnimator.ofFloat(from, 0f)
+    a.duration = 320
+    a.interpolator = DecelerateInterpolator(1.8f)
+    a.addUpdateListener { setStretch(it.animatedValue as Float) }
+    stretchAnim = a
+    a.start()
+  }
+
+  private fun heroTouch(phase: Int, x: Float, y: Float) {
+    val h = header ?: return
+    val sv = spacerView ?: return
+    // Espaçador → coordenadas do overlay (o overlay cobre a pilha inteira).
+    val ox = x + sv.left + recycler.left + recycler.translationX
+    val oy = y + sv.top + recycler.top + recycler.translationY
+    when (phase) {
+      0 -> h.setPressed(h.hit(ox, oy))
+      1 -> {
+        val target = h.hit(ox, oy)
+        h.setPressed(null)
+        if (target == "avatar") {
+          onAvatarPress(mapOf<String, Any>())
+        } else if (target != null && target.startsWith("a:")) {
+          sv.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+          onAction(mapOf("key" to target.substring(2)))
+        }
+      }
+      else -> h.setPressed(null)
+    }
+  }
+
+  private fun notifyNativeGesture(ev: MotionEvent) {
+    try {
+      val cls = Class.forName("com.facebook.react.uimanager.events.NativeGestureUtil")
+      val m = cls.getMethod("notifyNativeGestureStarted", View::class.java, MotionEvent::class.java)
+      val target: Any? = if (java.lang.reflect.Modifier.isStatic(m.modifiers)) null else cls.getField("INSTANCE").get(null)
+      m.invoke(target, this, ev)
+    } catch (_: Throwable) {}
+  }
+
+  override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+    if (!collapsing || header == null) return super.onInterceptTouchEvent(ev)
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        downX = ev.x
+        downY = ev.y
+        pulling = false
+        if (stretchAnim?.isRunning == true) stretchAnim?.cancel()
+        if (stretch > 0f) {
+          // Pegou o elástico no meio da volta: continua o puxão de onde está.
+          pulling = true
+          downY = ev.y - stretchToDrag(stretch)
+          return true
+        }
+      }
+      MotionEvent.ACTION_MOVE -> {
+        if (pulling) return true
+        val dy = ev.y - downY
+        val dx = ev.x - downX
+        if (dy > touchSlop && dy > abs(dx) * 1.2f && !recycler.canScrollVertically(-1)) {
+          pulling = true
+          downY = ev.y
+          parent?.requestDisallowInterceptTouchEvent(true)
+          notifyNativeGesture(ev)
+          return true
+        }
+      }
+    }
+    return pulling
+  }
+
+  private val pullDim: Float get() = 400f * density
+
+  private fun dragToStretch(dy: Float): Float = (1f - 1f / (max(0f, dy) * 0.55f / pullDim + 1f)) * pullDim
+
+  private fun stretchToDrag(s: Float): Float {
+    val q = 1f - (s / pullDim)
+    if (q <= 0.01f) return pullDim * 100f
+    return (1f / q - 1f) * pullDim / 0.55f
+  }
+
+  @SuppressLint("ClickableViewAccessibility")
+  override fun onTouchEvent(ev: MotionEvent): Boolean {
+    if (!pulling) return super.onTouchEvent(ev)
+    when (ev.actionMasked) {
+      MotionEvent.ACTION_MOVE -> {
+        setStretch(dragToStretch(ev.y - downY))
+        val h = header
+        if (h != null && expandTarget == 0f && stretch > 72f * density && h.hasPhoto) {
+          performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+          animateExpand(1f)
+        }
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+        pulling = false
+        releaseStretch()
+      }
+    }
+    return true
+  }
+
+  /** Parou no meio do encolhimento → assenta aberto ou com o nome na barra. */
+  private fun maybeSnap() {
+    val h = header ?: return
+    if (expandTarget > 0f || pulling || stretch > 0f) return
+    val rel = currentRel()
+    val dock = h.dockRel
+    if (rel <= 0.5f || rel >= dock - 0.5f) return
+    if (!recycler.canScrollVertically(1) && rel < dock) {
+      // Conteúdo curto demais p/ encaixar: volta ao topo.
+      recycler.smoothScrollBy(0, (-rel).toInt())
+      return
+    }
+    val target = if (rel < dock / 2f) 0f else dock
+    recycler.smoothScrollBy(0, (target - rel).toInt())
   }
 
   // ─── Dados → itens ───────────────────────────────────────────────────────
@@ -177,6 +406,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     abstract val key: String
 
     data class Hero(val hero: CIHero, val inset: Int) : Item() { override val key = "hero" }
+    data class HeroSpacer(val base: Int) : Item() { override val key = "hero2" }
     data class Caption(override val key: String, val text: String, val footer: Boolean, val inset: Int, val gap: Int) : Item()
     data class Row(override val key: String, val row: CIRow, val first: Boolean, val last: Boolean, val inset: Int, val gap: Int) : Item()
     data class About(override val key: String, val row: CIRow, val first: Boolean, val last: Boolean, val inset: Int, val gap: Int) : Item()
@@ -202,8 +432,13 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
       val gapCard = px(28f)
       val next = ArrayList<Item>(rowOrder.size + members.items.size + 16)
       val seen = HashSet<String>()
-      next.add(Item.Hero(hero, ins))
-      seen.add("hero")
+      if (collapsing && header != null) {
+        next.add(Item.HeroSpacer(heroBaseH))
+        seen.add("hero2")
+      } else {
+        next.add(Item.Hero(hero, ins))
+        seen.add("hero")
+      }
 
       fun addCard(key: String, header: String, footer: String, list: List<Pending>) {
         val uniq = list.filter { seen.add(it.key) }
@@ -364,6 +599,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
 
     override fun getItemViewType(position: Int): Int = when (items[position]) {
       is Item.Hero -> TYPE_HERO
+      is Item.HeroSpacer -> TYPE_SPACER
       is Item.Caption -> TYPE_CAPTION
       is Item.Row -> TYPE_ROW
       is Item.About -> TYPE_ABOUT
@@ -389,6 +625,9 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
           tv.includeFontPadding = false
           tv.ellipsize = TextUtils.TruncateAt.END
           tv
+        }
+        TYPE_SPACER -> CIHeroSpacer(ctx).also { sp ->
+          sp.onTouch = { phase, x, y -> heroTouch(phase, x, y) }
         }
         TYPE_ABOUT -> CIAboutView(ctx)
         TYPE_MEDIA -> CIMediaView(ctx).also { m ->
@@ -418,6 +657,12 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
             margins(v, it.inset, 0)
             v.setPadding(0, px(12f), 0, px(24f))
             (v as? CIHeroView)?.bind(it.hero, palette, labels.get("photo", "Ver foto"))
+          }
+          is Item.HeroSpacer -> {
+            margins(v, 0, 0)
+            val sp = v as? CIHeroSpacer ?: return
+            spacerView = sp
+            updateSpacerHeight()
           }
           is Item.Caption -> {
             margins(v, it.inset, it.gap)
@@ -476,7 +721,19 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     recycler.isVerticalScrollBarEnabled = true
     recycler.itemAnimator = null
     recycler.setItemViewCacheSize(12)
-    addView(recycler, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.MATCH_PARENT))
+    stack.addView(recycler, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    addView(stack, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.MATCH_PARENT))
+    recycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+      override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+        if (!collapsing) return
+        if (expandTarget > 0f && currentRel() > 28f * density) animateExpand(0f)
+        updateHeader()
+      }
+
+      override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+        if (collapsing && newState == RecyclerView.SCROLL_STATE_IDLE) maybeSnap()
+      }
+    })
     hInsetPx = px(16f)
     setBackgroundColor(palette.pageBg)
   }
@@ -490,6 +747,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     private const val TYPE_MEMBER = 5
     private const val TYPE_SEARCH = 6
     private const val TYPE_STATE = 7
+    private const val TYPE_SPACER = 8
     private val PAYLOAD_BIND = Any()
   }
 }

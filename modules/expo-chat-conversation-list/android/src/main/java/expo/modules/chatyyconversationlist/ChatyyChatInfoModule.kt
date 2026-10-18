@@ -10,7 +10,8 @@ class ChatyyChatInfoModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyChatInfo")
 
-    Function("apiVersion") { 1 }
+    // [2026-10-18 elegance] 2 = prop headerMode ("collapse") + evento onClose.
+    Function("apiVersion") { 2 }
 
     View(ChatyyChatInfoView::class) {
       Events(
@@ -23,7 +24,8 @@ class ChatyyChatInfoModule : Module() {
         "onMembersEnd",
         "onMemberQuery",
         "onFirstPaint",
-        "onNativeError"
+        "onNativeError",
+        "onClose"
       )
 
       Prop("hero") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setHeroProp(v) }
@@ -35,6 +37,7 @@ class ChatyyChatInfoModule : Module() {
       Prop("labels") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setLabelsProp(v) }
       Prop("bottomInset") { view: ChatyyChatInfoView, v: Double? -> view.setBottomInset(v ?: 0.0) }
       Prop("maxContentWidth") { view: ChatyyChatInfoView, v: Double? -> view.setMaxContentWidth(v ?: 0.0) }
+      Prop("headerMode") { view: ChatyyChatInfoView, v: String? -> view.setHeaderMode(v ?: "") }
       Prop("authToken") { _: ChatyyChatInfoView, v: String? -> if (!v.isNullOrEmpty()) CLAuth.token = v }
 
       OnViewDidUpdateProps { view: ChatyyChatInfoView -> view.commitProps() }

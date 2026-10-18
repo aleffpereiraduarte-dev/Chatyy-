@@ -18,6 +18,13 @@
 // Gate: binário com a view (apiVersion ≥ 1) + kill switch OTA
 // globalThis.__chatyy_native_chat_info = false. Erro de render/nativo →
 // onFailure() e a conversa volta para a folha JS.
+//
+// [2026-10-18 elegance] apiVersion ≥ 2 → headerMode="collapse": cabeçalho
+// Telegram NATIVO (avatar encolhe p/ a barra, nome assenta no título, ações
+// esmaecem; puxar p/ baixo expande a foto em largura total). A view desenha
+// a PRÓPRIA barra com o X (evento onClose) → quem monta esconde o cabeçalho JS
+// quando nativeChatInfoOwnsHeader() = true. Binário 1 = hero estático de antes.
+// Kill switch só do cabeçalho: globalThis.__chatyy_native_chat_info_collapse = false.
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Platform, StyleSheet, processColor } from 'react-native';
 import { getNativeChatInfoView, chatInfoApiVersion } from '../../modules/expo-chat-conversation-list';
@@ -27,6 +34,13 @@ export function isNativeChatInfoEnabled() {
   if (Platform.OS === 'web') return false;
   try { if (globalThis.__chatyy_native_chat_info === false) return false; } catch {}
   try { return chatInfoApiVersion() >= 1 && !!getNativeChatInfoView(); } catch { return false; }
+}
+
+/** true → a view nativa desenha a barra (X + título ao encolher); esconda o cabeçalho JS. */
+export function nativeChatInfoOwnsHeader() {
+  if (!isNativeChatInfoEnabled()) return false;
+  try { if (globalThis.__chatyy_native_chat_info_collapse === false) return false; } catch {}
+  try { return chatInfoApiVersion() >= 2; } catch { return false; }
 }
 
 class Boundary extends React.Component {
@@ -66,6 +80,7 @@ function _stripRow(r) {
 function Inner(props) {
   const { hero, rows, media, members, bottomInset = 0, maxWidth = 0 } = props;
   const Native = getNativeChatInfoView();
+  const ownsHeader = nativeChatInfoOwnsHeader() && typeof props.onClose === 'function';
   const g = useGroupedColors();
   const isDark = !!g.isDark;
 
@@ -83,6 +98,11 @@ function Inner(props) {
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paletteKey]);
+
+  const labelsKey = JSON.stringify(props.labels || null) + '|' + (ownsHeader ? String(props.closeLabel || 'Fechar') : '');
+  const labelsProp = useMemo(() => (ownsHeader ? { ...(props.labels || {}), close: props.closeLabel || 'Fechar' } : (props.labels || null)),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [labelsKey]);
 
   // Handlers ficam AQUI (o nativo só recebe dados planos).
   const propsRef = useRef(props);
@@ -168,6 +188,7 @@ function Inner(props) {
         const q = String((e?.nativeEvent ?? e)?.q ?? '');
         try { propsRef.current.onMemberQuery?.(q); } catch {}
       },
+      onClose: () => { try { propsRef.current.onClose?.(); } catch {} },
       onNativeError: (e) => {
         const msg = String((e?.nativeEvent ?? e)?.message || 'native error');
         try { globalThis.__chatyyNativeChatInfoError = { at: Date.now(), msg }; } catch {}
@@ -187,7 +208,8 @@ function Inner(props) {
       members={nativeMembers}
       colors={colors}
       dark={isDark}
-      labels={props.labels || null}
+      labels={labelsProp}
+      headerMode={ownsHeader ? 'collapse' : undefined}
       bottomInset={bottomInset || 0}
       maxContentWidth={maxWidth || 0}
       authToken={authToken}

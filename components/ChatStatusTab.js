@@ -15,6 +15,7 @@ import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic, IconHeart, IconHeartOutline, IconFlame, IconLaughFace, IconSurpriseFace, IconSadFace, IconClap, IconThumbsUp, IconSparkles, IconMoreHorizontal, IconMessageCircle, IconStarFilled } from './Icons';
+import SelectionCheck from './ui/SelectionCheck'; // [2026-10-18 elegance]
 import ScreenEmptyState from './ScreenEmptyState'; // [2026-10-13 status-viewers]
 import ChatyyMascot from './mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { Shimmer } from './SkeletonLoader'; // [2026-10-16 polish-status]
@@ -6329,15 +6330,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: sel }}
                   >
-                    <View style={{
-                      width: 22, height: 22, borderRadius: 11,
-                      borderWidth: 2,
-                      borderColor: sel ? '#FF6B6B' : (isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'),
-                      backgroundColor: sel ? '#FF6B6B' : 'transparent',
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {sel ? <IconCheck size={14} color="#fff" strokeWidth={3} /> : null}
-                    </View>
+                    {/* [2026-10-18 elegance] círculo de seleção animado (mola) */}
+                    <SelectionCheck on={!!sel} size={22} borderWidth={2} onColor="#FF6B6B" offColor={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} checkColor="#fff" checkSize={14} strokeWidth={3} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
                         {nm}

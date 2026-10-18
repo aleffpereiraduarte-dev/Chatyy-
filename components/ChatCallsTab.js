@@ -21,7 +21,7 @@ import { useTheme } from '../context/ThemeContext'; // [2026-10-08 polish-leftov
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-17 brand-plan]
 import { ensureContactIndex, lookupName as lookupDeviceContactName, noteContactsPermission, contactsDeniedForever, openContactsSettings, alertContactsDenied } from '../services/deviceContactLookup';
 import { CallListSkeleton } from './SkeletonLoader';
-import { haptic } from '../constants/theme';
+import { haptic, Typography, BorderRadius, hairlineColor } from '../constants/theme';
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import { LargeTitle, useLargeTitleCollapse } from './LargeTitleHeader'; // [2026-10-15 nav-motion]
 import PressableScale from './PressableScale'; // [2026-10-15 nav-motion]
@@ -485,6 +485,7 @@ const CallFilterChips = memo(function CallFilterChips({ activeTab, onTabChange, 
   ].filter(Boolean);
   const ink = isDark ? '#F5F5F7' : '#111111';
   const onInk = isDark ? '#000000' : '#ffffff';
+  // (translúcido de propósito: a página de Ligações é cinza agrupado — um #f2f2f2 sólido sumia nela)
   const idleBg = isDark ? 'rgba(255, 255, 255,0.12)' : 'rgba(17, 17, 17,0.07)';
   return (
     <ScrollView
@@ -512,7 +513,7 @@ const CallFilterChips = memo(function CallFilterChips({ activeTab, onTabChange, 
             accessibilityLabel={tab.count ? `${tab.label} ${tab.count}` : tab.label}
             testID={`calls-filter-${tab.key}`}
           >
-            <Text style={{ fontSize: 14, fontWeight: active ? '600' : '500', color: active ? onInk : ink }}>
+            <Text style={{ fontSize: Typography.subhead.fontSize, letterSpacing: Typography.subhead.letterSpacing, fontWeight: active ? '600' : '500', color: active ? onInk : ink }}>
               {tab.label}
             </Text>
             {tab.count > 0 && (
@@ -3878,7 +3879,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
                 {group.data.map((item, idx) => (
                   <React.Fragment key={item.id || idx}>
                     {idx > 0 && (
-                      <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]} />
+                      <View style={[s.separator, { backgroundColor: hairlineColor(isDark) /* [2026-10-18 elegance] token único de hairline */ }]} />
                     )}
                     <SwipeAction
                       onSwipeLeft={() => handleDeleteEntry(item)}
@@ -4049,18 +4050,20 @@ const s = StyleSheet.create({
   // [2026-10-13 visual] header aligned to the card's text inset (16+16),
   // card on the same 16 gutter/14 radius as the toggles above; no tinted shadow
   // (the old slate #0f172a shadow read blue-ish on the P&B brand).
+  // [2026-10-18 elegance] = Typography.sectionHeader (mesmo cabeçalho das Configurações).
   sectionHeader: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: Typography.sectionHeader.fontSize,
+    lineHeight: Typography.sectionHeader.lineHeight,
+    fontWeight: Typography.sectionHeader.fontWeight,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    letterSpacing: Typography.sectionHeader.letterSpacing,
     paddingHorizontal: 32,
     paddingTop: 24,
     paddingBottom: 8,
   },
   sectionCard: {
     marginHorizontal: 16,
-    borderRadius: 14,
+    borderRadius: BorderRadius.card,
     overflow: 'hidden',
   },
 

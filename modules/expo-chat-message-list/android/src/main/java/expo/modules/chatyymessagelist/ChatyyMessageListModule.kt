@@ -21,7 +21,8 @@ class ChatyyMessageListModule : Module() {
     //     (a11y: id); copiar/encaminhar → onRowPress part 'a11y' url id; clique do
     //     TalkBack → toque na parte principal.
     // 7 = [motion-conv] prop `motion` {i,e,t,r,s,a} (molas de entrada/edição, ✓✓ animado, pop+faíscas de reação, pílula, onda do áudio)
-    Function("apiVersion") { 9 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
+    // 10 = [2026-10-18 tg-look] prop `look` {tg: 0/1} → rabicho Telegram na última bolha do grupo, mídia rente
+    Function("apiVersion") { 10 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.
@@ -47,6 +48,8 @@ class ChatyyMessageListModule : Module() {
       Prop("a11y") { view: MLListView, v: Map<String, Any?>? -> view.setA11yLabels(v) }
       // [motion-conv] kill switches de movimento (apiVersion 7)
       Prop("motion") { view: MLListView, v: Map<String, Any?>? -> view.setMotion(v) }
+      // [2026-10-18 tg-look] visual Telegram (apiVersion 10)
+      Prop("look") { view: MLListView, v: Map<String, Any?>? -> view.setLook(v) }
 
       OnViewDestroys { view: MLListView -> view.destroy() }
 

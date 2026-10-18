@@ -7,23 +7,27 @@
 // fina logo abaixo do header. Preto e branco, sem emoji, i18n existente
 // (community.title / channel.title).
 import React from 'react';
-import { ScrollView, Pressable, Text, StyleSheet, Platform } from 'react-native';
+import { ScrollView, Text, StyleSheet, Platform } from 'react-native';
+import PressableScale from '../PressableScale';
+import { PressScale } from '../../constants/motion';
 
 function Pill({ label, onPress, isDark, color }) {
   return (
-    <Pressable
+    // [2026-10-18 elegance] press = leve escala (Telegram) em vez de só opacidade;
+    // fundo claro = mesmo cinza dos chips de filtro da lista (#f2f2f2).
+    <PressableScale
       onPress={onPress}
       hitSlop={4}
+      haptic={false}
+      scaleTo={PressScale.chip}
+      activeOpacity={0.75}
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [
-        st.pill,
-        { backgroundColor: isDark ? '#1c1c1e' : '#F1F2F4', opacity: pressed ? 0.6 : 1 },
-        Platform.OS === 'web' ? st.webCursor : null,
-      ]}
+      containerStyle={Platform.OS === 'web' ? st.webCursor : undefined}
+      style={[st.pill, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f2' }]}
     >
       <Text style={[st.label, { color }]} numberOfLines={1}>{label}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 

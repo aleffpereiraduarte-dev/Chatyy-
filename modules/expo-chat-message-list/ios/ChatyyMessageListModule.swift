@@ -33,9 +33,11 @@ public class ChatyyMessageListModule: Module {
     //     onda (nota tocando/pausada); toque → onRowPress part 'action' url 'au:rate'.
     // 9 = [2026-10-18 vthumb] media.vf (vídeo sem pôster) → 1º frame extraído no
     //     nativo (CMLVideoFrameLoader: AVAssetImageGenerator + cache memória/disco).
+    // 10 = [2026-10-18 tg-look] prop `look` {tg: 0/1} → rabicho Telegram na última
+    //     bolha do grupo (embaixo), cantos do grupo justos, mídia rente à bolha.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 9
+      return 10
       #else
       return 3
       #endif
@@ -90,6 +92,10 @@ public class ChatyyMessageListModule: Module {
       // [motion-conv] kill switches de movimento (apiVersion 7)
       Prop("motion") { (view: CMLListView, value: [String: Any]?) in
         view.setMotion(value)
+      }
+      // [2026-10-18 tg-look] visual Telegram (apiVersion 10)
+      Prop("look") { (view: CMLListView, value: [String: Any]?) in
+        view.setLook(value)
       }
 
       AsyncFunction("applyRows") { (view: CMLListView, payload: [String: Any]) in

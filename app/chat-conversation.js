@@ -228,6 +228,8 @@ import WallpaperPicker, { WallpaperBackground } from '../components/WallpaperPic
 // [2026-10-15 native-wallpaper] fundo nativo (gradiente animado/padrão/foto/paralaxe) + bolhas derivadas do tema
 import ChatWallpaper, { notifyWallpaperScroll as _wpNotifyScroll } from '../components/wallpaper/ChatWallpaper';
 import { bubbleFor as _wpBubbleFor } from '../components/wallpaper/wallpaperSpec';
+// [2026-10-18 tg-look] rabiscos P&B sutis no fundo padrão ('none')
+import SubtlePattern, { subtlePatternOn as _subtlePatternOn } from '../components/wallpaper/SubtlePattern';
 import OngoingCallChip from '../components/OngoingCallChip';
 import { stopAllAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
@@ -245,7 +247,7 @@ import { detectReminder as detectChatReminder, createReminder as createChatRemin
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
-import NativeChatInfo, { isNativeChatInfoEnabled, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native]
+import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
 import GroupInfoEditor from '../components/chat/GroupInfoEditor'; // [2026-10-18 chat-info-native]
 import { contactTile } from '../components/contacts/contactListAdapter'; // [2026-10-18 chat-info-native]
 import { initialsOf, gradientIndex } from '../components/chatlist/nativeAdapter'; // [2026-10-18 chat-info-native]
@@ -1932,7 +1934,23 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
 // re-renderiza se lado/cor mudarem. pointerEvents none → gestos intactos.
 const _TAIL_PATH_OWN = 'M5.188 1H0v11.193l6.467-8.625C7.526 2.156 6.958 1 5.188 1z';
 const _TAIL_PATH_OTHER = 'M1.533 3.568L8 12.193V1H2.812C1.042 1 .474 2.156 1.533 3.568z';
-const BubbleTail = React.memo(function BubbleTail({ own, color }) {
+// [2026-10-18 tg-look] Telegram P&B: rabicho suave na ÚLTIMA bolha do grupo,
+// embaixo, do lado do autor (curva sai da lateral e assenta na base). 8×14,
+// sobrepõe 1px a bolha (sem emenda). Kill switch: globalThis.__chatyy_tg_look = false
+// (mesma chave da lista nativa apiVersion 10).
+const _TG_TAIL_OWN = 'M0 0C0 7.6 2.3 12.1 7.2 13.5C7.8 13.7 7.7 14 7.1 14H0Z';
+const _TG_TAIL_OTHER = 'M8 0C8 7.6 5.7 12.1 0.8 13.5C0.2 13.7 0.3 14 0.9 14H8Z';
+function _tgLook() { try { return globalThis.__chatyy_tg_look !== false; } catch { return true; } }
+const BubbleTail = React.memo(function BubbleTail({ own, color, tg }) {
+  if (tg) {
+    return (
+      <View pointerEvents="none" style={own ? styles.bubbleTailTgOwn : styles.bubbleTailTgOther}>
+        <Svg width={8} height={14} viewBox="0 0 8 14">
+          <Path d={own ? _TG_TAIL_OWN : _TG_TAIL_OTHER} fill={color} />
+        </Svg>
+      </View>
+    );
+  }
   return (
     <View pointerEvents="none" style={own ? styles.bubbleTailOwn : styles.bubbleTailOther}>
       <Svg width={8} height={13} viewBox="0 1 8 13">
@@ -2185,14 +2203,16 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
         backgroundColor: _typingDark ? '#1C1C1E' : '#EEEEF0',
         // [2026-10-13 conv-pb] mesma forma da 1ª bolha recebida do grupo:
         // canto sup. esquerdo reto + rabicho (era canto inf. 5 — outra forma).
-        borderRadius: 18, borderTopLeftRadius: stackList ? 18 : 0,
+        borderRadius: 18, borderTopLeftRadius: (stackList || _tgLook()) ? 18 : 0,
+        // [2026-10-18 tg-look] forma da ÚLTIMA bolha recebida (rabicho embaixo)
+        borderBottomLeftRadius: (!stackList && _tgLook()) ? 0 : 18,
         // [2026-10-17 conv-wa-polish] 14/14 → 35pt = altura de uma bolha de 1
         // linha (7+21+7): a bolha "digitando" e a mensagem que a substitui têm
         // o mesmo tamanho (sem salto).
         paddingHorizontal: 14, paddingVertical: 14,
         flexDirection: 'row', gap: 5, alignItems: 'center', minWidth: 56,
       }}>
-        {!stackList && <BubbleTail own={false} color={_typingDark ? '#1C1C1E' : '#EEEEF0'} />}
+        {!stackList && <BubbleTail own={false} tg={_tgLook()} color={_typingDark ? '#1C1C1E' : '#EEEEF0'} />}
         {recording ? (
           <>
             <IconMic size={15} color={colors.error || '#EF4444'} style={{ marginRight: 3 }} />
@@ -11777,19 +11797,22 @@ function ChatConversationInner() {
   // Bolhas sem rabicho (mídia com overflow:hidden, figurinha…) mantêm o canto
   // de cima redondo. 16 objetos ESTÁVEIS (memo pela forma) → a lista de
   // estilos da bolha não cria objeto novo por render (MemoizedMessageRow).
+  // [2026-10-18 tg-look] Telegram: rabicho na ÚLTIMA (canto de baixo do autor
+  // reto, o SVG completa); 1ª do grupo = canto de cima redondo; meio = justo (6).
+  const _tgOnConv = _tgLook();
   const bubbleCornerStyles = useMemo(() => {
     const R = bubbleRadius;
-    const r = bubbleTailRadius;
+    const r = _tgOnConv && R >= 10 ? 6 : bubbleTailRadius;
     const out = {};
     for (const own of [0, 1]) for (const first of [0, 1]) for (const last of [0, 1]) for (const tail of [0, 1]) {
-      const topA = first ? (tail ? 0 : R) : r;
-      const botA = last ? R : r;
+      const topA = _tgOnConv ? (first ? R : r) : (first ? (tail ? 0 : R) : r);
+      const botA = _tgOnConv ? (last ? (tail ? 0 : R) : r) : (last ? R : r);
       out[`${own}${first}${last}${tail}`] = own
         ? { borderTopLeftRadius: R, borderTopRightRadius: topA, borderBottomLeftRadius: R, borderBottomRightRadius: botA }
         : { borderTopLeftRadius: topA, borderTopRightRadius: R, borderBottomLeftRadius: botA, borderBottomRightRadius: R };
     }
     return out;
-  }, [bubbleRadius, bubbleTailRadius]);
+  }, [bubbleRadius, bubbleTailRadius, _tgOnConv]);
 
   // Native chat cache (iOS only) — synchronous SQLite read in Swift.
   // Used by both the initial render (useState initializer below) and by
@@ -25180,6 +25203,7 @@ function ChatConversationInner() {
   // erro nativo/render → _ciOff() e volta a folha JS.
   const [nativeChatInfoOff, setNativeChatInfoOff] = _useStateT(false);
   const _ciOn = Platform.OS !== 'web' && !nativeChatInfoOff && isNativeChatInfoEnabled();
+  const _ciOwnsHeader = _ciOn && nativeChatInfoOwnsHeader(); // [2026-10-18 elegance] binário api ≥ 2 desenha a barra (X) nativa
   const _ciOff = (why) => {
     try { globalThis.__chatyyNativeChatInfoFail = { at: Date.now(), why: String(why || '') }; } catch {}
     setNativeChatInfoOff(true);
@@ -33248,7 +33272,8 @@ function ChatConversationInner() {
     // ao recorte atual; a 1ª do grupo mantém o canto redondo.
     const _bubbleBare = !isDeleted && (msg.type === 'sticker' || msg.type === 'lottie_sticker' /* [2026-10-16 mascote] */ || msg.type === 'gif' || isVideoNoteMessage(msg) || _jumboNoBubble);
     const _bubbleClips = !isDeleted && (msg.type === 'image' || msg.type === 'video');
-    const _showTail = isFirstInGroup && !_bubbleBare && !_bubbleClips;
+    const _tgRow = _tgLook(); // [2026-10-18 tg-look] rabicho na última do grupo
+    const _showTail = (_tgRow ? isLastInGroup : isFirstInGroup) && !_bubbleBare && !_bubbleClips;
     const _bubbleBg = isOwn ? ownBubbleBg : (isUserMentioned(msg, currentEmail) ? (isDark ? '#2A2A2E' : '#E2E2E6') : otherBubbleBg);
     // Album grouping (WhatsApp-style): consecutive image/video messages from
     // the same sender within 30s share an _albumKey and collapse into a
@@ -33426,7 +33451,7 @@ function ChatConversationInner() {
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
           ]}>
-          {_showTail && <BubbleTail own={isOwn} color={_bubbleBg} />}
+          {_showTail && <BubbleTail own={isOwn} tg={_tgRow} color={_bubbleBg} />}
           {/* Jump-to-message flash — animated green wash pulse (was a static
               amber border that snapped on/off). Overlay inside the bubble so
               it clips to the rounded corners; pointerEvents none. */}
@@ -34720,8 +34745,9 @@ function ChatConversationInner() {
   const _nlSticky = _nl.on && nativeListApi() >= 2;
   const _nlStickyCfg = useMemo(() => (_nlSticky ? {
     on: 1, top: 8, shadow: 1,
-    bg: isDark ? 'rgba(20,20,20,0.92)' : 'rgba(255,255,255,0.95)',
-    fg: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)',
+    // [2026-10-18 tg-look] = pílula flutuante JS (vidro P&B)
+    bg: isDark ? 'rgba(28,28,30,0.88)' : 'rgba(255,255,255,0.92)',
+    fg: isDark ? 'rgba(255,255,255,0.86)' : 'rgba(0,0,0,0.68)',
   } : undefined), [_nlSticky, isDark]);
   // Destaque do salto p/ citação/busca/fixada (o JS marca replyJumpHighlightId).
   useEffect(() => {
@@ -35183,7 +35209,14 @@ function ChatConversationInner() {
       {/* Chat wallpaper — handles none / #solid / grad:<id> / image uri
           through the shared renderer so the picker and the chat agree. The
           web dotted pattern for 'none' is kept as an extra overlay. */}
-      {Platform.OS === 'web' && wallpaperColor === 'none' && (
+      {/* [2026-10-18 tg-look] padrão: fundo liso + rabiscos P&B quase invisíveis
+          (Telegram). Kill switch __chatyy_wp_subtle = false → pontinhos antigos (web) / liso. */}
+      {wallpaperColor === 'none' && _subtlePatternOn() && (
+        <View style={styles.wallpaper} pointerEvents="none">
+          <SubtlePattern isDark={isDark} />
+        </View>
+      )}
+      {Platform.OS === 'web' && wallpaperColor === 'none' && !_subtlePatternOn() && (
         <View style={[styles.wallpaper, { opacity: isDark ? 0.07 : 0.045 }]} pointerEvents="none">
           <View style={styles.wallpaperPattern} />
         </View>
@@ -36793,14 +36826,22 @@ function ChatConversationInner() {
           style={{
             position: 'absolute', top: (insets?.top || 0) + 56 + 8 + (showSearchBar ? ((searchBarH || 46) + (showSearchBar === 'filters' ? searchFiltersH : 0)) : 0), alignSelf: 'center', zIndex: 100,
             opacity: floatingDateOpacity,
+            // [2026-10-18 tg-look] entra com leve escala + desce 4pt (Telegram)
+            transform: [
+              { translateY: floatingDateOpacity.interpolate({ inputRange: [0, 1], outputRange: [-4, 0] }) },
+              { scale: floatingDateOpacity.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) },
+            ],
           }}
         >
           <View style={{
-            paddingHorizontal: 14, paddingVertical: 6, borderRadius: 14,
-            backgroundColor: isDark ? 'rgba(20,20,20,0.92)' : 'rgba(255,255,255,0.95)',
-            shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 4,
+            // [2026-10-18 tg-look] pílula P&B: cápsula, vidro claro/escuro, sombra-fio
+            paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999,
+            backgroundColor: isDark ? 'rgba(28,28,30,0.88)' : 'rgba(255,255,255,0.92)',
+            borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+            shadowColor: '#000', shadowOpacity: isDark ? 0.3 : 0.1, shadowRadius: 6, shadowOffset: { width: 0, height: 1 }, elevation: 2,
+            ...(Platform.OS === 'web' ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : null),
           }}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)' }}>
+            <Text style={{ fontSize: 12.5, fontWeight: '600', letterSpacing: 0.1, color: isDark ? 'rgba(255,255,255,0.86)' : 'rgba(0,0,0,0.68)' }}>
               {floatingDate}
             </Text>
           </View>
@@ -40418,7 +40459,7 @@ function ChatConversationInner() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
-          {(!_npContact || _ciOn) && (
+          {(_ciOn ? !_ciOwnsHeader : !_npContact) && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
             <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -40429,7 +40470,7 @@ function ChatConversationInner() {
           {/* [2026-10-15 native-profile] _npContact → cabeçalho nativo (avatar encolhe p/ a barra, puxar abre a galeria) */}
           {/* [2026-10-18 chat-info-native] tela 100% nativa; folha JS abaixo = fallback */}
           {_ciOn ? (
-            <NativeChatInfo {...buildContactChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} />
+            <NativeChatInfo {...buildContactChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} onClose={() => setShowContactInfo(false)} closeLabel={t('common.close') || 'Fechar'} />
           ) : (
           <ProfileScrollHost native={_npContact && showContactInfo ? buildContactNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
             {(() => {
@@ -41188,7 +41229,7 @@ function ChatConversationInner() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
-          {(!_npGroup || _ciOn) && (
+          {(_ciOn ? !_ciOwnsHeader : !_npGroup) && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfoTitle') || 'Dados do grupo'}</Text>
             <TouchableOpacity onPress={() => setShowGroupInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -41199,7 +41240,7 @@ function ChatConversationInner() {
           {/* [2026-10-15 native-profile] _npGroup → cabeçalho nativo; hero/descrição JS abaixo só no fallback */}
           {/* [2026-10-18 chat-info-native] tela 100% nativa; folha JS abaixo = fallback */}
           {_ciOn ? (
-            <NativeChatInfo {...buildGroupChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} />
+            <NativeChatInfo {...buildGroupChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} onClose={() => setShowGroupInfo(false)} closeLabel={t('common.close') || 'Fechar'} />
           ) : (
           <ProfileScrollHost native={_npGroup && showGroupInfo ? buildGroupNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl }}>
             {/* ─── Hero header — large centered avatar + name + member count ─── */}
@@ -43597,6 +43638,9 @@ const styles = StyleSheet.create({
   captionMeta: { position: 'absolute', right: 10, bottom: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3 },
   bubbleTailOwn: { position: 'absolute', top: 0, right: -8, width: 8, height: 13 },
   bubbleTailOther: { position: 'absolute', top: 0, left: -8, width: 8, height: 13 },
+  // [2026-10-18 tg-look] rabicho Telegram: embaixo, 1px sobre a bolha
+  bubbleTailTgOwn: { position: 'absolute', bottom: 0, right: -7, width: 8, height: 14 },
+  bubbleTailTgOther: { position: 'absolute', bottom: 0, left: -7, width: 8, height: 14 },
   // [2026-10-12 bubble-wa-tail] Recebida no CLARO: sombra-fio (web) p/ a bolha
   // cinza não "lavar" no fundo branco. Nativo segue chapado (sem custo de
   // composição na rolagem).

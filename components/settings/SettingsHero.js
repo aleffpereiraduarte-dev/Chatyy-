@@ -17,6 +17,7 @@ import { useGroupedColors, SettingsGroup, SettingsRow } from './SettingsKit';
 import Svg, { Path } from 'react-native-svg';
 import { IconEdit, IconRepeat, IconSparkles, IconMonitor, IconUsers, IconChevronRight, IconStar } from '../Icons';
 import { PLAN_NAME } from '../../services/brandPlan'; // [2026-10-17 brand-plan]
+import { BorderRadius } from '../../constants/theme'; // [2026-10-18 elegance]
 
 function QrGlyph({ size = 18, color }) {
   // Mesmo desenho do botão QR antigo (4 quadrados), em traço fino.
@@ -224,7 +225,7 @@ const st = StyleSheet.create({
   pillText: { fontSize: 14, fontWeight: '600', letterSpacing: -0.15 },
   tilesRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
   tileFill: { flex: 1 }, // [polish3] os 2 cartões com a mesma altura quando a legenda quebra em 2 linhas
-  tile: { borderRadius: 18, padding: 14, minHeight: 92, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  tile: { borderRadius: BorderRadius.card /* [2026-10-18 elegance] era 18 — = cards da lista */, padding: 14, minHeight: 92, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
   tileTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
   tileIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   tileTitle: { fontSize: 15, fontWeight: '600', letterSpacing: -0.2 },

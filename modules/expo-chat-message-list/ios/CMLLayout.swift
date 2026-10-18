@@ -64,6 +64,8 @@ final class CMLStyle {
   let version: Int
   /// Dynamic Type (0,85…1,4) — aplicado às fontes dos blocos (fs do JS).
   let scale: CGFloat
+  /// [2026-10-18 tg-look] visual Telegram (CMLLook.tg no momento da criação)
+  let tg: Bool
 
   let body: UIFont
   let bodyBold: UIFont
@@ -95,6 +97,7 @@ final class CMLStyle {
     // [wave13-C a11y] contraste reforçado com "Escurecer cores"
     self.theme = UIAccessibility.isDarkerSystemColorsEnabled ? theme.boostedContrast() : theme
     self.version = version
+    self.tg = CMLLook.tg
     body = UIFont.systemFont(ofSize: fs)
     bodyBold = UIFont.systemFont(ofSize: fs, weight: .semibold)
     bodyItalic = UIFont.italicSystemFont(ofSize: fs)
@@ -132,6 +135,7 @@ final class CMLStyle {
     self.theme = theme
     self.version = version
     self.scale = p.scale
+    self.tg = p.tg
     body = p.body; bodyBold = p.bodyBold; bodyItalic = p.bodyItalic; bodyBoldItalic = p.bodyBoldItalic
     mono = p.mono; meta = p.meta; name = p.name; fwd = p.fwd; quoteName = p.quoteName
     quoteText = p.quoteText; quoteItalic = p.quoteItalic; pill = p.pill; system = p.system
@@ -295,6 +299,15 @@ final class CMLRowLayout {
   var replyThumb = false
   var mediaFrame: CGRect = .zero
   var mediaRadius: CGFloat = 12
+  /// [2026-10-18 tg-look] cantos por canto da mídia única [tl, tr, br, bl] (vazio = mediaRadius uniforme)
+  var mediaCorners: [CGFloat] = []
+  /// [2026-10-18 tg-look] idem por célula do álbum (vazio = 4 uniforme)
+  var albumCorners: [[CGFloat]] = []
+  /// [2026-10-18 tg-look] mídia rente à bolha (sem moldura); `mediaCaption` = tem legenda
+  var mediaFlush = false
+  /// [2026-10-18 tg-look] cantos externos da área de mídia rente (snapshot do menu)
+  var mediaOuter: [CGFloat] = []
+  var mediaCaption = false
   var albumFrames: [CGRect] = []
   var textFrame: CGRect = .zero
   var text: CMLTextLayout? = nil
@@ -631,7 +644,12 @@ enum CMLLayoutBuilder {
       bubbleH = side + 2 + 18
     } else if row.media != nil || !row.album.isEmpty {
       // ---- mídia (foto / vídeo / gif / álbum) + legenda opcional
-      let maxMediaW = min(bubbleMax - mediaInset * 2, 280)
+      // [2026-10-18 tg-look] sem peças no topo → mídia rente à bolha (mi 0)
+      let flush = s.tg && !hasTop && row.pre.isEmpty && row.post.isEmpty
+      let mi: CGFloat = flush ? 0 : mediaInset
+      L.mediaFlush = flush
+      L.mediaCaption = !row.text.isEmpty
+      let maxMediaW = min(bubbleMax - mi * 2, 280)
       var mw: CGFloat = maxMediaW
       var mh: CGFloat = maxMediaW
       if let md = row.media {
@@ -644,7 +662,7 @@ enum CMLLayoutBuilder {
         } else {
           mw = min(maxMediaW, 240); mh = mw
         }
-        mw = max(mw, min(maxMediaW, topMinW + padH * 2 - mediaInset * 2))
+        mw = max(mw, min(maxMediaW, topMinW + padH * 2 - mi * 2))
       } else {
         let n = row.album.count
         mw = maxMediaW
@@ -677,7 +695,7 @@ enum CMLLayoutBuilder {
         L.albumFrames = frames
       }
       mw = floor(mw); mh = floor(mh)
-      bubbleW = mw + mediaInset * 2
+      bubbleW = mw + mi * 2
       let capMax = bubbleW - 18
       if hasTop {
         y = padV
@@ -685,12 +703,12 @@ enum CMLLayoutBuilder {
         if let f = fwdL { fwdY = y; y += f.size.height + 2 }
         if rName != nil { replyY = y; y += 50 + 4 }
       } else {
-        y = mediaInset
+        y = mi
       }
-      L.mediaFrame = CGRect(x: mediaInset, y: y, width: mw, height: mh)
-      L.mediaRadius = max(4, s.radius - mediaInset)
+      L.mediaFrame = CGRect(x: mi, y: y, width: mw, height: mh)
+      L.mediaRadius = max(4, s.radius - mi)
       // offset das células do álbum para coordenadas do balão
-      L.albumFrames = L.albumFrames.map { $0.offsetBy(dx: mediaInset, dy: y) }
+      L.albumFrames = L.albumFrames.map { $0.offsetBy(dx: mi, dy: y) }
       y += mh
       if !row.text.isEmpty {
         let attr = attributed(row.text, spans: row.spans, font: s.body, color: textColor, linkColor: row.own ? th.ownText : th.link, s: s)
@@ -709,7 +727,7 @@ enum CMLLayoutBuilder {
         var m = makeMeta(row, s, onMedia: true)
         m.onMedia = true
         meta = m
-        bubbleH = y + mediaInset
+        bubbleH = y + mi
         let pw = m.width + 12
         L.metaFrame = CGRect(x: L.mediaFrame.maxX - pw - 5, y: L.mediaFrame.maxY - 18 - 5, width: pw, height: 18)
       }
@@ -876,10 +894,104 @@ enum CMLLayoutBuilder {
       let fx = row.own ? L.bubbleFrame.minX - 6 - 22 : L.bubbleFrame.maxX + 6
       L.failFrame = CGRect(x: fx, y: L.bubbleFrame.midY - 11, width: 22, height: 22)
     }
+    if s.tg {
+      // [2026-10-18 tg-look] mídia rente sem legenda = só a mídia (sem fundo/rabicho)
+      let mediaOnly = L.mediaFlush && !L.mediaCaption
+      if mediaOnly { L.showBubble = false }
+      let c = tgCorners(L.bubbleFrame, own: row.own, first: row.first, last: row.last, radius: s.radius, tail: !mediaOnly)
+      if L.mediaFlush {
+        let mc: [CGFloat] = L.mediaCaption ? [c[0], c[1], 0, 0] : c
+        let mf = L.mediaFrame
+        L.mediaOuter = mc
+        if row.album.isEmpty {
+          L.mediaCorners = mc
+        } else {
+          let inner: CGFloat = 4
+          L.albumCorners = L.albumFrames.map { (f: CGRect) -> [CGFloat] in
+            let l = f.minX <= mf.minX + 0.5, r = f.maxX >= mf.maxX - 0.5
+            let t = f.minY <= mf.minY + 0.5, b = f.maxY >= mf.maxY - 0.5
+            return [(t && l) ? mc[0] : inner, (t && r) ? mc[1] : inner, (b && r) ? mc[2] : inner, (b && l) ? mc[3] : inner]
+          }
+        }
+      }
+      if L.showBubble {
+        L.bubblePath = tgBubblePath(L.bubbleFrame, own: row.own, first: row.first, last: row.last, radius: s.radius, tail: !mediaOnly)
+      }
+      return L
+    }
     if showBubble {
       L.bubblePath = bubblePath(L.bubbleFrame, own: row.own, first: row.first, last: row.last, radius: s.radius)
     }
     return L
+  }
+
+  /// [2026-10-18 tg-look] Cantos [tl, tr, br, bl] da bolha estilo Telegram: lado do
+  /// autor justo dentro do grupo (6 pt); a última do grupo leva o rabicho embaixo
+  /// (canto 0, o rabicho completa) — sem rabicho (mídia pura) fica redonda.
+  static func tgCorners(_ r: CGRect, own: Bool, first: Bool, last: Bool, radius: CGFloat, tail: Bool) -> [CGFloat] {
+    let big = max(0, min(radius, r.height / 2, r.width / 2))
+    let small = min(CMLLook.groupRadius, big)
+    let aTop: CGFloat = first ? big : small
+    let aBot: CGFloat = last ? (tail ? 0 : big) : small
+    return own ? [big, aTop, aBot, big] : [aTop, big, big, aBot]
+  }
+
+  /// [2026-10-18 tg-look] Balão estilo Telegram: rabicho curvo saindo do canto de
+  /// baixo do lado do autor (só na última do grupo), cantos por posição.
+  static func tgBubblePath(_ r: CGRect, own: Bool, first: Bool, last: Bool, radius: CGFloat, tail: Bool) -> CGPath {
+    let c = tgCorners(r, own: own, first: first, last: last, radius: radius, tail: tail)
+    let tl = c[0], tr = c[1], br = c[2], bl = c[3]
+    let withTail = tail && last
+    let w = CMLLayoutBuilder.tail
+    let p = CGMutablePath()
+    p.move(to: CGPoint(x: r.minX + tl, y: r.minY))
+    p.addLine(to: CGPoint(x: r.maxX - tr, y: r.minY))
+    if tr > 0 { p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.minY + tr), radius: tr) }
+    if own && withTail {
+      let ty = max(r.minY + tr, r.maxY - CMLLook.tailRise)
+      p.addLine(to: CGPoint(x: r.maxX, y: ty))
+      p.addCurve(to: CGPoint(x: r.maxX + w, y: r.maxY - 0.6),
+                 control1: CGPoint(x: r.maxX, y: r.maxY - 4.5),
+                 control2: CGPoint(x: r.maxX + w * 0.5, y: r.maxY - 1.4))
+      p.addQuadCurve(to: CGPoint(x: r.maxX + w - 2.4, y: r.maxY), control: CGPoint(x: r.maxX + w + 0.4, y: r.maxY))
+    } else {
+      p.addLine(to: CGPoint(x: r.maxX, y: r.maxY - br))
+      if br > 0 { p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.maxY), tangent2End: CGPoint(x: r.maxX - br, y: r.maxY), radius: br) }
+    }
+    if !own && withTail {
+      let ty = max(r.minY + tl, r.maxY - CMLLook.tailRise)
+      p.addLine(to: CGPoint(x: r.minX - w + 2.4, y: r.maxY))
+      p.addQuadCurve(to: CGPoint(x: r.minX - w, y: r.maxY - 0.6), control: CGPoint(x: r.minX - w - 0.4, y: r.maxY))
+      p.addCurve(to: CGPoint(x: r.minX, y: ty),
+                 control1: CGPoint(x: r.minX - w * 0.5, y: r.maxY - 1.4),
+                 control2: CGPoint(x: r.minX, y: r.maxY - 4.5))
+    } else {
+      p.addLine(to: CGPoint(x: r.minX + bl, y: r.maxY))
+      if bl > 0 { p.addArc(tangent1End: CGPoint(x: r.minX, y: r.maxY), tangent2End: CGPoint(x: r.minX, y: r.maxY - bl), radius: bl) }
+    }
+    p.addLine(to: CGPoint(x: r.minX, y: r.minY + tl))
+    if tl > 0 { p.addArc(tangent1End: CGPoint(x: r.minX, y: r.minY), tangent2End: CGPoint(x: r.minX + tl, y: r.minY), radius: tl) }
+    p.closeSubpath()
+    return p
+  }
+
+  /// [2026-10-18 tg-look] Retângulo com raio por canto [tl, tr, br, bl].
+  static func roundedPath(_ r: CGRect, _ c: [CGFloat]) -> CGPath {
+    guard c.count == 4 else { return CGPath(rect: r, transform: nil) }
+    let lim = min(r.width, r.height) / 2
+    let tl = max(0, min(c[0], lim)), tr = max(0, min(c[1], lim)), br = max(0, min(c[2], lim)), bl = max(0, min(c[3], lim))
+    let p = CGMutablePath()
+    p.move(to: CGPoint(x: r.minX + tl, y: r.minY))
+    p.addLine(to: CGPoint(x: r.maxX - tr, y: r.minY))
+    if tr > 0 { p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.minY), tangent2End: CGPoint(x: r.maxX, y: r.minY + tr), radius: tr) }
+    p.addLine(to: CGPoint(x: r.maxX, y: r.maxY - br))
+    if br > 0 { p.addArc(tangent1End: CGPoint(x: r.maxX, y: r.maxY), tangent2End: CGPoint(x: r.maxX - br, y: r.maxY), radius: br) }
+    p.addLine(to: CGPoint(x: r.minX + bl, y: r.maxY))
+    if bl > 0 { p.addArc(tangent1End: CGPoint(x: r.minX, y: r.maxY), tangent2End: CGPoint(x: r.minX, y: r.maxY - bl), radius: bl) }
+    p.addLine(to: CGPoint(x: r.minX, y: r.minY + tl))
+    if tl > 0 { p.addArc(tangent1End: CGPoint(x: r.minX, y: r.minY), tangent2End: CGPoint(x: r.minX + tl, y: r.minY), radius: tl) }
+    p.closeSubpath()
+    return p
   }
 
   /// Balão com cantos por posição no grupo + rabicho na 1ª do grupo (WhatsApp).

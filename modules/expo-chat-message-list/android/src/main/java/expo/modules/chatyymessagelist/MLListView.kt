@@ -247,6 +247,13 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   /** [motion-conv] prop `motion` (apiVersion 7) — ver MLMotion. */
   fun setMotion(m: Map<String, Any?>?) { MLMotion.apply(m) }
 
+  /** [2026-10-18 tg-look, apiVersion 10] visual Telegram (rabicho embaixo, mídia rente) */
+  fun setLook(m: Map<String, Any?>?) {
+    MLLook.apply(m)
+    val st = style
+    if (st != null && st.tg != MLLook.tg) markStyleDirty()
+  }
+
   fun setStickyDate(m: Map<String, Any?>?) {
     val on = m != null && MLRow.bool(m["on"])
     stickyOn = on

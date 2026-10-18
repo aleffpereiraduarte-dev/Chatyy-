@@ -27,6 +27,7 @@ import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../nativeHeader';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-09 native-sheets]
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
+import { Typography, BorderRadius, Elevation, hairlineColor } from '../../constants/theme'; // [2026-10-18 elegance]
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
@@ -36,12 +37,12 @@ export function useGroupedColors() {
     isDark: !!isDark,
     // [2026-10-15 settings-2026] claro mais limpo (cinza quase branco) e escuro
     // PRETO verdadeiro com cartões só um degrau acima; separadores mais leves.
-    pageBg: isDark ? (colors.background || '#000000') : '#F3F3F6',
+    pageBg: isDark ? (colors.background || Elevation.dark.grouped) : Elevation.light.grouped, // [2026-10-18 elegance] #F2F2F7 (iOS systemGroupedBackground; era #F3F3F6)
     // [2026-10-17 settings-wa] escuro: cartão #1C1C1E (secondarySystemGrouped
     // do iOS / WhatsApp) — #141416 quase sumia no preto e os separadores 0.07
     // ficavam invisíveis; claro: hairline um pouco mais legível.
-    cardBg: isDark ? '#1C1C1E' : '#FFFFFF',
-    separator: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(60,60,67,0.16)',
+    cardBg: isDark ? Elevation.dark.card : Elevation.light.card,
+    separator: hairlineColor(isDark), // [2026-10-18 elegance] token (mesmos valores)
     header: isDark ? '#7C7C82' : '#77777D',
     text: colors.text || (isDark ? '#F5F5F7' : '#111111'),
     secondary: isDark ? '#8E8E93' : '#8A8A8E',
@@ -438,7 +439,7 @@ export function SettingsCardContent({ children, style }) {
 const st = StyleSheet.create({
   webHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, minHeight: 52 },
   webBack: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
-  webTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
+  webTitle: { flex: 1, textAlign: 'center', fontSize: Typography.headline.fontSize, fontWeight: Typography.headline.fontWeight, letterSpacing: Typography.headline.letterSpacing },
   screenContent: { paddingHorizontal: 16, paddingTop: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
   cardInput: {
     borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, minHeight: 44,
@@ -446,9 +447,11 @@ const st = StyleSheet.create({
   },
   // [2026-10-15 settings-2026] títulos de grupo pequenos em caixa alta com
   // tracking; cartões mais arredondados (iOS 26); linhas mais arejadas.
-  header: { fontSize: 12, fontWeight: '600', letterSpacing: 0.7, paddingHorizontal: 18, marginBottom: 8 },
+  // [2026-10-18 elegance] cabeçalho de seção = Typography.sectionHeader (13, igual ao iOS) — era 12/0.7.
+  header: { fontSize: Typography.sectionHeader.fontSize, lineHeight: Typography.sectionHeader.lineHeight, fontWeight: Typography.sectionHeader.fontWeight, letterSpacing: Typography.sectionHeader.letterSpacing, paddingHorizontal: 18, marginBottom: 7 },
   footer: { fontSize: 13, lineHeight: 18, paddingHorizontal: 18, marginTop: 8 },
-  card: { borderRadius: 18, overflow: 'hidden' },
+  // [2026-10-18 elegance] raio único de card (14, = Ligações/BorderRadius.card); era 18.
+  card: { borderRadius: BorderRadius.card, overflow: 'hidden' },
   sep: { height: StyleSheet.hairlineWidth },
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingHorizontal: 16, paddingVertical: 11 },
   // [2026-10-17 settings-polish] iOS: corpo 17 pt (tracking do SF) como o Ajustes do iPhone; Android/web 16.
@@ -456,12 +459,12 @@ const st = StyleSheet.create({
   subtitle: { fontSize: 13, lineHeight: 17, marginTop: 2, letterSpacing: -0.05 },
   value: { fontSize: Platform.OS === 'ios' ? 17 : 16, letterSpacing: Platform.OS === 'ios' ? -0.41 : 0, marginLeft: 10, maxWidth: 170, textAlign: 'right' },
   sheetWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 10, maxWidth: 560, width: '100%', alignSelf: 'center' },
-  sheet: { borderRadius: 14, overflow: 'hidden' },
+  sheet: { borderRadius: BorderRadius.sheet, overflow: 'hidden' },
   sheetHead: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, alignItems: 'center' },
   sheetTitle: { fontSize: 14, fontWeight: '600', textAlign: 'center' },
   // [2026-10-17 settings-wa] sheet do sistema (com grabber): título 17 semibold como o WhatsApp.
   sheetTitleNative: { fontSize: 17, fontWeight: '600', letterSpacing: -0.41 },
   sheetMsg: { fontSize: 13, marginTop: 4, textAlign: 'center', lineHeight: 17 },
-  sheetCancel: { marginTop: 8, borderRadius: 14, minHeight: 54, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  sheetCancel: { marginTop: 8, borderRadius: BorderRadius.sheet, minHeight: 54, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
   sheetCancelText: { fontSize: 17, fontWeight: '600' },
 });

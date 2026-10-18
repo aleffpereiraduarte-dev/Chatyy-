@@ -343,7 +343,7 @@ final class CMLCell: UICollectionViewCell {
     let scale = UIScreen.main.scale
     if let md = row.media, !L.mediaFrame.isEmpty {
       place(media, L.mediaFrame, true)
-      media.layer.cornerRadius = L.mediaRadius
+      applyCorners(media, L.mediaCorners, L.mediaRadius)
       media.contentMode = md.kind == "sticker" ? .scaleAspectFit : .scaleAspectFill
       media.backgroundColor = md.kind == "sticker" ? .clear : (row.own ? th.ownQuote : th.otherQuote)
       let px = max(L.mediaFrame.width, L.mediaFrame.height) * scale
@@ -368,7 +368,7 @@ final class CMLCell: UICollectionViewCell {
         durLabel.isHidden = true
       }
       mediaDim.frame = media.frame
-      mediaDim.layer.cornerRadius = L.mediaRadius
+      applyCorners(mediaDim, L.mediaCorners, L.mediaRadius)
     } else {
       media.isHidden = true
       media.image = nil
@@ -387,6 +387,7 @@ final class CMLCell: UICollectionViewCell {
         if i < L.albumFrames.count && i < row.album.count {
           let md = row.album[i]
           place(iv, L.albumFrames[i], true)
+          applyCorners(iv, i < L.albumCorners.count ? L.albumCorners[i] : [], 4)
           iv.backgroundColor = row.own ? th.ownQuote : th.otherQuote
           let f = L.albumFrames[i]
           setImage(iv, slot: i, uri: effectiveURI(md), thumb: md.thumb, maxPixel: max(f.width, f.height) * scale, animated: false, vf: md.kind == "video" ? md.vf : "")
@@ -400,7 +401,7 @@ final class CMLCell: UICollectionViewCell {
       if row.more > 0, let last = L.albumFrames.last {
         moreDim.isHidden = false
         moreDim.frame = last.offsetBy(dx: o.x, dy: o.y)
-        moreDim.layer.cornerRadius = 4
+        applyCorners(moreDim, L.albumCorners.count == L.albumFrames.count ? (L.albumCorners.last ?? []) : [], 4)
         let ml = CMLLayoutBuilder.line("+\(row.more)", font: UIFont.systemFont(ofSize: 26, weight: .semibold), color: .white, maxWidth: 120)
         moreLabel.layout = ml
         moreLabel.isHidden = false
@@ -799,6 +800,20 @@ final class CMLCell: UICollectionViewCell {
     })
   }
 
+  /// [2026-10-18 tg-look] Raio por canto [tl, tr, br, bl] via máscara; vazio = raio uniforme (antigo).
+  private func applyCorners(_ v: UIView, _ c: [CGFloat], _ fallback: CGFloat) {
+    if c.count == 4 {
+      v.layer.cornerRadius = 0
+      let m = (v.layer.mask as? CAShapeLayer) ?? CAShapeLayer()
+      m.frame = v.bounds
+      m.path = CMLLayoutBuilder.roundedPath(v.bounds, c)
+      if v.layer.mask !== m { v.layer.mask = m }
+    } else {
+      if v.layer.mask != nil { v.layer.mask = nil }
+      v.layer.cornerRadius = fallback
+    }
+  }
+
   /// [native-ctxmenu] Retângulo ATUAL do balão na janela (p/ a volta do menu).
   func liftRectInWindow() -> CGRect? {
     guard let L = layoutInfo, let row = row, row.kind == .msg, window != nil else { return nil }
@@ -853,6 +868,18 @@ final class CMLCell: UICollectionViewCell {
     fmt.scale = UIScreen.main.scale
     let img = UIGraphicsImageRenderer(size: r.size, format: fmt).image { c in
       c.cgContext.translateBy(x: -L.bubbleFrame.minX, y: -L.bubbleFrame.minY)
+      // [2026-10-18 tg-look] render(in:) ignora máscaras → recorta pela forma da bolha/mídia
+      if !L.mediaOuter.isEmpty {
+        let clip: CGPath
+        if let bp = L.bubblePath, L.showBubble {
+          clip = bp
+        } else {
+          let mf = L.mediaFrame.offsetBy(dx: L.bubbleFrame.minX, dy: L.bubbleFrame.minY)
+          clip = CMLLayoutBuilder.roundedPath(mf, L.mediaOuter)
+        }
+        c.cgContext.addPath(clip)
+        c.cgContext.clip()
+      }
       self.slide.layer.render(in: c.cgContext)
     }
     slide.transform = savedT

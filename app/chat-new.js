@@ -38,6 +38,7 @@ import { buildFlatRows, contactTile } from '../components/contacts/contactListAd
 // globalThis.__chatyy_native_group_create = false (binário antigo = fluxo JS).
 import NativeChipStrip from '../components/groupCreate/NativeChipStrip';
 import { IconArrowRight as IconArrowRightNgc } from '../components/Icons';
+import SelectionCheck from '../components/ui/SelectionCheck'; // [2026-10-18 elegance]
 import { nativeGroupCreateEnabled, markNativeGroupCreateFailed, setGroupDraft, GROUP_MAX_MEMBERS } from '../components/groupCreate/groupCreateDraft';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -441,12 +442,8 @@ const ContactRow = React.memo(function ContactRow({
         ) : null}
       </View>
       {(mode === 'group' || mode === 'channel') && item.email && (
-        <View style={[sty.checkbox, {
-          backgroundColor: selected ? colors.primary : 'transparent',
-          borderColor: selected ? colors.primary : colors.border,
-        }]}>
-          {selected && <IconCheck size={14} color={colors.onPrimary || '#fff'} />}
-        </View>
+        // [2026-10-18 elegance] círculo anima (preenche do centro + check com mola)
+        <SelectionCheck on={!!selected} size={24} borderWidth={2} onColor={colors.primary} offColor={colors.border} checkColor={colors.onPrimary || '#fff'} checkSize={14} />
       )}
     </PressableRow>
   );

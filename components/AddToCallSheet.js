@@ -44,6 +44,7 @@ import {
   Platform,
   Keyboard,
 } from 'react-native';
+import { Springs as MotionSprings } from '../constants/motion'; // [2026-10-18 elegance]
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import {
@@ -177,7 +178,7 @@ export default function AddToCallSheet({
     if (visible) {
       Animated.parallel([
         Animated.timing(opacity, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.spring(translateY, { toValue: 0, friction: 9, tension: 70, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, ...MotionSprings.sheet, useNativeDriver: true }) /* [2026-10-18 elegance] era tension 70 (quicava) */,
       ]).start();
     } else {
       translateY.setValue(80);

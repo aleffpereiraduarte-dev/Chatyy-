@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { scaleSize, moderateScale } from '../utils/responsive';
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -494,7 +494,17 @@ export const Motion = {
   spring: { tension: 180, friction: 18 },            // standard spring (mais amortecido)
   springBouncy: { tension: 140, friction: 14 },      // hero moments (menos bounce)
   springSnappy: { tension: 260, friction: 22 },      // tight returns (dismiss, cancel)
+  // [2026-10-18 elegance] Escala semântica de duração (aditiva). Telegram/iOS:
+  // fast = toque/ícone/cor, base = fade/slide padrão, slow = sheet/crossfade.
+  fast: 150,
+  base: 250,
+  slow: 350,
 };
+
+// [2026-10-18 elegance] Molas canônicas (snappy/gentle/sheet/bouncy/press/
+// release/pop…) já moram em constants/motion.js → `Springs` (stiffness/damping,
+// aceitas direto pelo RN Animated.spring). NÃO duplicar aqui: motion.js importa
+// este arquivo (Overlay), então reexportar daqui criaria ciclo.
 
 // ── Chat bubble system ────────────────────────────────────────────────
 // WhatsApp-style geometry, pulled out so every bubble in the app matches.
@@ -567,6 +577,12 @@ export const BorderRadius = {
   xl: 12,   // was 10 — cards
   xxl: 16,  // was 14 — sheets / modals
   full: 999,
+  // [2026-10-18 elegance] Chaves SEMÂNTICAS (aditivas; as numéricas acima não
+  // mudaram). Preferir estas em telas novas/refinadas.
+  button: 10,   // botões, campos, segmented
+  card: 14,     // cards / grupos inset (= Radius.card; Ligações já usa 14)
+  sheet: 14,    // sheets compactas JS (o sheet NATIVO segue Overlay.sheetRadius)
+  chip: 999,    // chips de filtro (pílula)
 };
 
 // Sombras — NEUTRAL 2026: elevação bem SUTIL (menos peso), SEM glow colorido.
@@ -1028,3 +1044,57 @@ export function surfaceColors(colors, isDark) {
     text: c.text || base.text,
   };
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// [2026-10-18 elegance] Tokens "nível Telegram/iOS" — ADITIVOS. `Type` acima
+// (escala levemente compacta, já em uso) NÃO mudou; `Typography` é a escala
+// iOS HIG exata (Dynamic Type "Large") p/ títulos/cabeçalhos refinados.
+// ═════════════════════════════════════════════════════════════════════════
+export const Typography = {
+  largeTitle: { fontSize: 34, lineHeight: 41, fontWeight: '700', letterSpacing: -0.9 }, // = título grande da casa (LargeTitleHeader/ChatListTab); SF usa +0.37, mas o tracking apertado é a identidade P&B
+  title1:     { fontSize: 28, lineHeight: 34, fontWeight: '700', letterSpacing: -0.5 },
+  title2:     { fontSize: 22, lineHeight: 28, fontWeight: '700', letterSpacing: -0.35 },
+  title3:     { fontSize: 20, lineHeight: 25, fontWeight: '600', letterSpacing: -0.3 },
+  headline:   { fontSize: 17, lineHeight: 22, fontWeight: '600', letterSpacing: -0.41 },
+  body:       { fontSize: 17, lineHeight: 22, fontWeight: '400', letterSpacing: -0.41 },
+  callout:    { fontSize: 16, lineHeight: 21, fontWeight: '400', letterSpacing: -0.32 },
+  subhead:    { fontSize: 15, lineHeight: 20, fontWeight: '400', letterSpacing: -0.24 },
+  footnote:   { fontSize: 13, lineHeight: 18, fontWeight: '400', letterSpacing: -0.08 },
+  caption1:   { fontSize: 12, lineHeight: 16, fontWeight: '400', letterSpacing: 0 },
+  caption2:   { fontSize: 11, lineHeight: 13, fontWeight: '400', letterSpacing: 0.06 },
+  // Rótulo de seção agrupada (iOS footnote CAPS / Telegram section header).
+  sectionHeader: { fontSize: 13, lineHeight: 18, fontWeight: '600', letterSpacing: 0.3, textTransform: 'uppercase' },
+};
+
+// Elevação por NÍVEL DE SUPERFÍCIE (iOS system backgrounds). Escuro separa por
+// cinza (#000 → #1C1C1E → #2C2C2E), claro por grouped bg + card branco.
+export const Elevation = {
+  light: {
+    base: '#FFFFFF',          // fundo de tela simples
+    grouped: '#F2F2F7',       // fundo de lista agrupada (settings)
+    card: '#FFFFFF',          // célula / card sobre grouped
+    elevated: '#FFFFFF',      // sheet / menu (sombra faz a separação)
+    fill: 'rgba(118,118,128,0.12)', // chip inativo, campo de busca
+    fillPressed: 'rgba(118,118,128,0.20)',
+  },
+  dark: {
+    base: '#000000',
+    grouped: '#000000',
+    card: '#1C1C1E',
+    elevated: '#2C2C2E',
+    fill: 'rgba(118,118,128,0.24)',
+    fillPressed: 'rgba(118,118,128,0.34)',
+  },
+};
+export function elevationColors(isDark) { return isDark ? Elevation.dark : Elevation.light; }
+
+// Separador hairline (1 px físico). `inset` = recuo à esquerda típico de lista
+// com avatar/ícone (Telegram/iOS alinham a linha ao texto, não à borda).
+export const Hairline = {
+  width: StyleSheet.hairlineWidth,
+  light: 'rgba(60,60,67,0.16)',   // = separadores das Configurações (iOS separator ~0.29 é pesado demais no P&B)
+  dark: 'rgba(255,255,255,0.10)', // legível sobre #1C1C1E e sobre #000
+  lightOpaque: '#C6C6C8',
+  darkOpaque: '#38383A',
+};
+export function hairlineColor(isDark) { return isDark ? Hairline.dark : Hairline.light; }

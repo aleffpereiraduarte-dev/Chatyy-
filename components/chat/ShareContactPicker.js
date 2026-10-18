@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
 import { IconX, IconSearch, IconCheck, IconArrowLeft, IconSend, IconSmartphone, IconUser } from '../Icons';
+import SelectionCheck from '../ui/SelectionCheck'; // [2026-10-18 elegance] círculo de seleção animado
 import { MAX_SHARE_CONTACTS, toE164Smart, prettyPhone } from './contactShare';
 
 function _tr(t, k, fb) {
@@ -262,9 +263,7 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
           <Text style={[st.name, { color: ink }]} numberOfLines={1}>{r.name}</Text>
           {!!subline && <Text style={[st.subline, { color: sub }]} numberOfLines={1}>{subline}</Text>}
         </View>
-        <View style={[st.check, on ? { backgroundColor: ink, borderColor: ink } : { borderColor: ter }]}>
-          {on ? <IconCheck size={14} color={onInk} /> : null}
-        </View>
+        <SelectionCheck on={!!on} size={24} borderWidth={1.5} onColor={ink} offColor={ter} checkColor={onInk} checkSize={14} style={{ marginLeft: 10 }} />
       </TouchableOpacity>
     );
   };
@@ -323,9 +322,7 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
                     <Text style={{ color: sub, fontSize: 12 }}>{_tr(t, 'shareContact.phone', 'Telefone')}</Text>
                     <Text style={{ color: ink, fontSize: 15, marginTop: 1 }}>{prettyPhone(p.n)}</Text>
                   </View>
-                  <View style={[st.check, p.on ? { backgroundColor: ink, borderColor: ink } : { borderColor: ter }]}>
-                    {p.on ? <IconCheck size={14} color={onInk} /> : null}
-                  </View>
+                  <SelectionCheck on={!!p.on} size={24} borderWidth={1.5} onColor={ink} offColor={ter} checkColor={onInk} checkSize={14} style={{ marginLeft: 10 }} />
                 </TouchableOpacity>
               ))}
             </View>

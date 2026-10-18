@@ -28,7 +28,7 @@ import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
-import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { RECONNECT_BANNER_GRACE_MS, Typography } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
@@ -10645,8 +10645,10 @@ const s = StyleSheet.create({
   },
   // [2026-10-17 wa-polish] 14→15 (WhatsApp iOS filter chips).
   chipText: {
-    fontSize: 15,
-    letterSpacing: -0.2,
+    // [2026-10-18 elegance] iOS subhead (15/20, tracking -0.24) — mesma medida, ritmo vertical fixo.
+    fontSize: Typography.subhead.fontSize,
+    lineHeight: Typography.subhead.lineHeight,
+    letterSpacing: Typography.subhead.letterSpacing,
   },
   chipBadge: {
     minWidth: 18,

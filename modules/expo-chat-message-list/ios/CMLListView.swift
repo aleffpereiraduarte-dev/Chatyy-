@@ -422,6 +422,12 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     CMLMotion.apply(d)
   }
 
+  /// [2026-10-18 tg-look, apiVersion 10] visual Telegram (rabicho embaixo, mídia rente)
+  func setLook(_ d: [String: Any]?) {
+    _ = CMLLook.apply(d)
+    if let st = style, st.tg != CMLLook.tg { markStyleDirty() }
+  }
+
   func setStickyDate(_ d: [String: Any]?) {
     let dd = d ?? [:]
     stickyOn = CMLRow.bool(dd["on"])

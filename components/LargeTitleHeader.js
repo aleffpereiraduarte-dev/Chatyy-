@@ -17,6 +17,7 @@
 import React, { useCallback, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { isReduceMotionEnabled } from './reducedMotion';
+import { Typography } from '../constants/theme'; // [2026-10-18 elegance]
 
 // Mesmo limiar da home (ChatListTab LARGE_TITLE_COLLAPSE_Y): quando o título
 // grande passa por baixo do header, o compacto aparece.
@@ -75,7 +76,7 @@ export function useCollapsedTitleAnim() {
 const s = StyleSheet.create({
   // Mesmo layout de s.largeTitleWrap/largeTitleText da home (ChatListTab).
   wrap: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8 },
-  title: { flex: 1, fontSize: 34, fontWeight: '700', letterSpacing: -0.9 },
+  title: { flex: 1, fontSize: Typography.largeTitle.fontSize, fontWeight: Typography.largeTitle.fontWeight, letterSpacing: Typography.largeTitle.letterSpacing }, // [2026-10-18 elegance] token (sem mudança visual)
 });
 
 export default LargeTitle;
