@@ -6,7 +6,7 @@ import {
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
   Share, Linking, AppState, BackHandler,
 } from 'react-native';
-import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -52,7 +52,9 @@ try { autoBackupMod = require('../services/autoBackup'); } catch {}
 // [2026-10-15 photos-native] Grade de Fotos NATIVA (UICollectionView / RecyclerView)
 // + backup NATIVO (modules/expo-photos-backup). Kill switches OTA:
 // globalThis.__chatyy_native_photos / __chatyy_native_backup = false → fluxo antigo.
-import NativePhotosGrid, { isNativePhotosGridAvailable } from '../components/photos/nativePhotosGrid';
+import NativePhotosGrid, { isNativePhotosGridAvailable, isNativePhotosDatasetAvailable } from '../components/photos/nativePhotosGrid';
+// [2026-10-18 photos-native-always] viewer NATIVO sempre (JS = reserva); kill switch __chatyy_photos_native_always = false
+import { nativeMediaAlways, openNativeMediaList, setNativeActionState, setNativeReturnRect, closeNativeMedia } from '../services/nativeMediaOpen';
 import NativeBackupBanner from '../components/photos/NativeBackupBanner';
 let photosBackupNative = null;
 try { photosBackupNative = require('../services/photosBackupNative'); } catch {}
@@ -166,6 +168,47 @@ function isPhoto(item) {
 function isVideo(item) {
   const ext = getFileExt(item.name);
   return item.icon_type === 'video' || VIDEO_EXTENSIONS.includes(ext);
+}
+
+// [2026-10-18 photos-native-always] foto → item do viewer nativo / da grade nativa (modo lista).
+function _absPhotoUrl(u) {
+  if (!u) return '';
+  return /^(https?:|file:|ph:|content:|data:)/.test(u) ? u : (api.BASE_URL + u);
+}
+function _photoTs(p) {
+  const t = Date.parse(p.taken_at || p.created_at || p.uploaded_at || p.modificationTime || '');
+  return Number.isFinite(t) ? t : 0;
+}
+function _photoFull(p) {
+  if (p.isDevice) return p.uri || '';
+  if (p.cdn_url) return p.cdn_url;
+  if (p.id == null || p.id === '' || p.id === 'undefined') return '';
+  return api.fileDownloadUrl(p.id);
+}
+function _photoThumb(p) {
+  if (p.isDevice) return p.thumbUri || p.uri || '';
+  const vid = isVideo(p);
+  const full = _photoFull(p);
+  let u = p.thumbnail_url ? _absPhotoUrl(p.thumbnail_url) : '';
+  if (!u && !vid) u = full;
+  if (vid && u === full) u = ''; // a URL do vídeo não serve de miniatura
+  return u;
+}
+function photoToViewerItem(p) {
+  if (!p || p.unavailable) return null;
+  const uri = _photoFull(p);
+  if (!uri) return null;
+  const thumb = _photoThumb(p);
+  return {
+    uri, thumbUri: thumb || null, type: isVideo(p) ? 'video' : 'image', messageId: String(p.id),
+    createdAt: _photoTs(p) || null, width: p.width || 0, height: p.height || 0, starred: !!p.starred,
+  };
+}
+function photoToGridItem(p) {
+  return {
+    id: String(p.id), n: p.name || '', t: _photoTs(p), w: p.width || 0, h: p.height || 0,
+    v: isVideo(p), d: Number(p.duration) || 0, u: _photoThumb(p), f: p.isDevice ? '' : _photoFull(p), x: !!p.unavailable,
+  };
 }
 
 function formatDuration(seconds) {
@@ -1085,6 +1128,30 @@ function PhotosScreenInner() {
     setAlbumLoading(false);
   }, [devicePhotos]);
 
+  // [2026-10-18 photos-native-always] Polls do contador de backup: NADA com a tela fora
+  // de foco ou o app em segundo plano; 15 s com backup rodando, 60 s parado (eram 2×5 s
+  // fixos + 10 s, sempre). Voltar ao app/tela já atualiza na hora (AppState abaixo).
+  const pollGateRef = useRef({ focused: true, active: AppState.currentState !== 'background' && AppState.currentState !== 'inactive', last: 0 });
+  const backupStatusRef = useRef(backupStatus);
+  backupStatusRef.current = backupStatus;
+  useFocusEffect(useCallback(() => {
+    pollGateRef.current.focused = true;
+    return () => { pollGateRef.current.focused = false; };
+  }, []));
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => { pollGateRef.current.active = st === 'active'; });
+    return () => { try { sub.remove(); } catch {} };
+  }, []);
+  const pollOk = () => { const g = pollGateRef.current; return g.focused && g.active; };
+  const backupCountDue = () => {
+    const g = pollGateRef.current;
+    if (!g.focused || !g.active) return false;
+    const now = Date.now();
+    if (now - g.last < (backupStatusRef.current === 'backing_up' ? 15000 : 60000)) return false;
+    g.last = now;
+    return true;
+  };
+
   useEffect(() => {
     let mounted = true;
     // Skip full reload if already loaded (data persists in PhotosContext)
@@ -1132,6 +1199,7 @@ function PhotosScreenInner() {
         else setTimeout(() => loadCloudPhotos(1), 500);
       }
       const timer = setInterval(() => {
+        if (!backupCountDue()) return;
         api.apiCall('drive_backup_count').then(r => { const t = r?.data?.count || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
       }, 5000);
       return () => { mounted = false; clearInterval(timer); };
@@ -1182,6 +1250,7 @@ function PhotosScreenInner() {
     });
     // Refresh backed up count every 15 seconds
     const backupRefreshTimer = setInterval(() => {
+      if (!backupCountDue()) return;
       api.apiCall('drive_backup_count').then(r => {
         const serverTotal = r?.data?.count || r?.data?.total || 0;
         if (serverTotal > 0) setBackedUpTotal(serverTotal);
@@ -1770,6 +1839,27 @@ function PhotosScreenInner() {
     return m;
   }, [filteredPhotos]);
 
+  // [2026-10-18 photos-native-always] Busca/favoritos/memória filtrada também na grade
+  // NATIVA (modo lista: a grade recebe exatamente os itens filtrados). Ordem = a da
+  // grade (data desc), e o viewer desliza nessa mesma ordem. Falhou → SectionList JS.
+  const [nativeDsFailed, setNativeDsFailed] = useState(false);
+  const nativeDs = useMemo(() => {
+    if (!useNativeGrid || nativeDsFailed) return null;
+    if (!(searchText || showFavorites || presetFilter) || filteredPhotos.length === 0) return null;
+    let hasDevice = false;
+    const list = [];
+    for (const p of filteredPhotos) {
+      if (!p || p.id == null) continue;
+      if (p.isDevice) hasDevice = true;
+      list.push(p);
+    }
+    if (!isNativePhotosDatasetAvailable(hasDevice)) return null;
+    list.sort((a, b) => _photoTs(b) - _photoTs(a));
+    const keyIndex = new Map();
+    list.forEach((p, i) => { const k = 'c:' + String(p.id); if (!keyIndex.has(k)) keyIndex.set(k, i); });
+    return { list, items: list.map(photoToGridItem), keyIndex };
+  }, [useNativeGrid, nativeDsFailed, searchText, showFavorites, presetFilter, filteredPhotos]);
+
   // ============================================================
   // SELECTION
   // ============================================================
@@ -2034,6 +2124,7 @@ function PhotosScreenInner() {
     let lastTotal = 0;
     let staleCount = 0;
     const refreshTimer = setInterval(() => {
+      if (!pollOk()) return; // [2026-10-18] fora de foco / 2º plano: sem poll
       api.apiCall('drive_backup_count').then(r => {
         const t = r?.data?.count || r?.data?.total || 0;
         if (t > 0) {
@@ -2690,7 +2781,7 @@ function PhotosScreenInner() {
   const panX = useRef(new Animated.Value(0)).current;
   const lastTapRef = useRef(0);
 
-  const openViewer = useCallback((index) => {
+  const openJsViewer = useCallback((index) => {
     setViewerIndex(index);
     setViewerStarred(!!filteredPhotos[index]?.starred);
     viewerScaleAnim.setValue(0.85);
@@ -2701,6 +2792,87 @@ function PhotosScreenInner() {
       Animated.timing(viewerBgOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
     ]).start();
   }, [filteredPhotos, viewerScaleAnim, viewerBgOpacity]);
+
+  // [2026-10-18 photos-native-always] Foto/vídeo abre SEMPRE no viewer NATIVO
+  // (pager + zoom + vídeo nativos) com a lista inteira (ou janela de 400) para
+  // deslizar; o viewer JS abaixo fica só de reserva (binário sem o módulo, web,
+  // kill switch). Ações: compartilhar, salvar, favoritar (nuvem), apagar (v4).
+  const nativeOpeningRef = useRef(false);
+  const pendingNativeDeleteRef = useRef(null);
+  const [nativeDeleteTick, setNativeDeleteTick] = useState(0);
+  const openNativePhotos = useCallback(async (list, index, opts = {}) => {
+    if (nativeOpeningRef.current) return -1;
+    nativeOpeningRef.current = true;
+    setTimeout(() => { nativeOpeningRef.current = false; }, 700);
+    const hasDevice = list.some((p) => p && p.isDevice);
+    return openNativeMediaList({
+      list, index, t, sourceRect: opts.sourceRect || null,
+      toItem: photoToViewerItem,
+      allowShare: true, allowSave: true, allowStar: !hasDevice, allowDelete: true,
+      onIndexChange: (i, p, viewerIdx) => {
+        if (!opts.fromGrid || !p) return;
+        const key = 'c:' + String(p.id);
+        try { nativeGridRef.current?.scrollToKey(key, false); } catch {}
+        setTimeout(async () => {
+          let r = null;
+          try { r = await nativeGridRef.current?.frameForKey(key); } catch {}
+          setNativeReturnRect(viewerIdx, r || null);
+        }, 60);
+      },
+      onAction: async (ev, i, p) => {
+        if (!p) return;
+        if (ev.action === 'share') {
+          setNativeActionState('share', 'busy');
+          try { await sharePhoto(p); } catch {}
+          setNativeActionState('share', 'idle');
+        } else if (ev.action === 'save') {
+          if (p.isDevice) { setNativeActionState('save', 'done'); return; }
+          setNativeActionState('save', 'busy');
+          let ok = false;
+          try {
+            const ML = require('expo-media-library');
+            const perm = await ML.requestPermissionsAsync(true);
+            const url = p.cdn_url || (await api.fileDownloadUrlGranted(p.id));
+            if (perm?.status === 'granted' && url) {
+              let FileSystem; try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
+              const safe = String(p.name || `photo_${p.id}`).replace(/[^\w.\-]+/g, '_');
+              const dl = await FileSystem.downloadAsync(url, FileSystem.cacheDirectory + safe);
+              if (dl?.uri && (!dl.status || (dl.status >= 200 && dl.status < 300))) { await ML.saveToLibraryAsync(dl.uri); ok = true; }
+            }
+          } catch {}
+          setNativeActionState('save', ok ? 'done' : 'idle');
+        } else if (ev.action === 'star') {
+          if (!p.isDevice) toggleStar(p);
+        } else if (ev.action === 'delete') {
+          // fluxo de apagar de sempre (confirmação + nuvem/backup) depois de fechar o viewer
+          const fi = filteredPhotos.findIndex((x) => x && x.id === p.id);
+          closeNativeMedia();
+          if (fi < 0) return;
+          pendingNativeDeleteRef.current = fi;
+          setViewerIndex(fi);
+          setNativeDeleteTick((n) => n + 1);
+        }
+      },
+    });
+  }, [t, sharePhoto, toggleStar, filteredPhotos]);
+
+  // opts.list = lista na ordem em que está na tela (grade nativa em modo lista);
+  // sem ela, `index` é de filteredPhotos (como sempre).
+  const openViewer = useCallback((index, opts) => {
+    const list = (opts && Array.isArray(opts.list)) ? opts.list : filteredPhotos;
+    const jsIndex = () => {
+      if (list === filteredPhotos) return index;
+      const fi = filteredPhotos.indexOf(list[index]);
+      return fi >= 0 ? fi : 0;
+    };
+    if (Platform.OS !== 'web' && nativeMediaAlways() && list[index]) {
+      openNativePhotos(list, index, opts || {}).then((sid) => {
+        if (sid === 0) openJsViewer(jsIndex());
+      }).catch(() => openJsViewer(jsIndex()));
+      return;
+    }
+    openJsViewer(jsIndex());
+  }, [filteredPhotos, openNativePhotos, openJsViewer]);
 
   const closeViewer = useCallback(() => {
     Animated.parallel([
@@ -2868,6 +3040,19 @@ function PhotosScreenInner() {
 
     safeAlert(t('photos.deletePhoto'), t('photos.deletePhotoConfirm'), buttons);
   }, [viewerPhoto, t, closeViewer, loadCloudPhotos]);
+
+  const deleteViewerPhotoRef = useRef(null);
+  deleteViewerPhotoRef.current = deleteViewerPhoto;
+  // [2026-10-18 photos-native-always] "Apagar" no viewer nativo → mesmo fluxo acima
+  // (viewerIndex já aponta para a foto; o viewer nativo foi fechado).
+  useEffect(() => {
+    if (!nativeDeleteTick) return;
+    const fi = pendingNativeDeleteRef.current;
+    if (fi == null || fi !== viewerIndex) return;
+    pendingNativeDeleteRef.current = null;
+    // espera o viewer nativo sair da tela antes do alerta de confirmação
+    setTimeout(() => { try { deleteViewerPhotoRef.current && deleteViewerPhotoRef.current(); } catch {} }, 350);
+  }, [nativeDeleteTick, viewerIndex]);
 
   // ============================================================
   // THUMBNAIL URL
@@ -3440,6 +3625,7 @@ function PhotosScreenInner() {
             <NativeBackupBanner colors={colors} isDark={isDark} t={t} onPressSettings={() => { try { router.push('/backup'); } catch {} }} />
           ) : renderBackupBanner()}
           <NativePhotosGrid
+            key="main"
             ref={nativeGridRef}
             colors={colors}
             isDark={isDark}
@@ -3456,6 +3642,32 @@ function PhotosScreenInner() {
         </View>
       );
     }
+    // [2026-10-18 photos-native-always] busca/favoritos/filtro → grade nativa em modo lista
+    if (nativeDs) {
+      return (
+        <View style={{ flex: 1 }}>
+          <NativePhotosGrid
+            key="ds"
+            ref={nativeGridRef}
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            locale={locale}
+            insetBottom={80 + insets.bottom}
+            items={nativeDs.items}
+            onItemPress={(d) => {
+              const i = d && d.key != null ? nativeDs.keyIndex.get(String(d.key)) : undefined;
+              if (i == null) return;
+              openViewer(i, { list: nativeDs.list, fromGrid: true, sourceRect: d.frame || null });
+            }}
+            onSelectionChange={onNativeSelection}
+            onSelectionMode={onNativeSelectionMode}
+            onFail={(why) => { console.warn('[photos] grade nativa (lista) indisponível → JS:', why); setNativeDsFailed(true); }}
+          />
+        </View>
+      );
+    }
+
     if (loading && cloudPhotos.length === 0) {
       return <GridSkeleton count={12} columns={3} />;
     }

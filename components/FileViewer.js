@@ -10,8 +10,10 @@ import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, Icon
 
 import NativeDocPreview, { absoluteFileUrl, docPreviewSource } from './NativeDocPreview';
 import ArchiveBrowser, { ARCHIVE_EXTS as _ARCHIVE_EXTS } from './ArchiveBrowser';
-import { openOnDevice, sendCopy, saveToDevice } from '../services/driveFileActions';
+import { openOnDevice, sendCopy, saveToDevice, downloadToDevice } from '../services/driveFileActions';
 import { openDocumentWithSystem } from '../utils/openDocument';
+// [2026-10-18 photos-native-always] foto/vídeo do Drive → visualizador NATIVO (o Modal JS fica de reserva).
+import { nativeMediaAlways, openNativeMediaList, setNativeActionState } from '../services/nativeMediaOpen';
 
 // [2026-10-17 viewer-pb] Visualizador do Cloud: fundo PRETO opaco (antes
 // rgba .95 num Modal transparente → a lista do Drive aparecia por trás),
@@ -405,6 +407,17 @@ export function renderArchiveEntry({ url, name, size }) { // [abridores] também
   }
 }
 
+// [2026-10-18 photos-native-always] formatos que o pager nativo abre (AVPlayer/ExoPlayer, UIImage/Glide).
+const NATIVE_IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'];
+const NATIVE_VID_EXT = Platform.OS === 'android' ? ['mp4', 'mov', 'm4v', 'webm', 'mkv', '3gp'] : ['mp4', 'mov', 'm4v'];
+function nativeMediaKind(f) {
+  if (!f || f.is_folder || f.unavailable) return null;
+  const ext = getExt(f.name || f.original_name || f.filename || '');
+  if (NATIVE_IMG_EXT.includes(ext)) return 'image';
+  if (NATIVE_VID_EXT.includes(ext)) return 'video';
+  return null;
+}
+
 export default function FileViewer({ visible, file, files, initialIndex, onClose, getUrl, onArchiveExtracted }) {
   const { t } = useLanguage();
   // [2026-10-17 viewer-top] Dentro do Modal o provider às vezes devolve 0 → header
@@ -430,7 +443,81 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
   const fileList = files || (file ? [file] : []);
   const current = fileList[currentIndex] || file;
   useEffect(() => { setNote(null); }, [current?.id, currentIndex]);
+
+  // [2026-10-18 photos-native-always] foto/vídeo → pager nativo com a lista inteira
+  // (só mídia). Enquanto ele está aberto este componente não desenha nada; falhou
+  // (binário sem o módulo, kill switch) → Modal JS de sempre.
+  const [nativeFailed, setNativeFailed] = useState(false);
+  const nativeOpenRef = useRef(null);
+  const nvPropsRef = useRef({});
+  nvPropsRef.current = { fileList, getUrl, onClose, t };
+  // índice pelo id do arquivo tocado (initialIndex às vezes vem de outra lista)
+  const _byId = file && file.id != null ? fileList.findIndex((f) => f && f.id === file.id) : -1;
+  const startIdx = _byId >= 0 ? _byId : (initialIndex || 0);
+  const startFile = file || fileList[startIdx];
+  const wantNative = !!(visible && startFile && !nativeFailed && Platform.OS !== 'web'
+    && nativeMediaKind(startFile) && nativeMediaAlways());
+  useEffect(() => {
+    if (!visible) { nativeOpenRef.current = null; setNativeFailed(false); return; }
+    if (!wantNative) return;
+    const key = String(startFile?.id ?? startIdx);
+    if (nativeOpenRef.current === key) return;
+    nativeOpenRef.current = key;
+    const { fileList: fl, getUrl: gu } = nvPropsRef.current;
+    const inList = fl[startIdx] && startFile && fl[startIdx].id === startFile.id;
+    const list = inList ? fl : [startFile];
+    const urlOf = (f) => (gu ? gu(f) : f.url) || '';
+    const runAction = async (ev, f) => {
+      if (!f || !f.id) return;
+      const action = ev.action;
+      if (action !== 'share' && action !== 'save') return;
+      setNativeActionState(action, 'busy');
+      let ok = false;
+      try {
+        if (action === 'share') {
+          ok = (await sendCopy(f, () => {})) !== false;
+        } else {
+          // foto/vídeo → galeria (Fotos/Galeria), como o viewer do chat
+          const local = await downloadToDevice(f, () => {});
+          const ML = require('expo-media-library');
+          const perm = await ML.requestPermissionsAsync(true);
+          if (perm && perm.status === 'granted') { await ML.saveToLibraryAsync(local); ok = true; }
+        }
+      } catch { ok = false; }
+      setNativeActionState(action, ok && action === 'save' ? 'done' : 'idle');
+    };
+    openNativeMediaList({
+      list,
+      index: inList ? startIdx : 0,
+      t: nvPropsRef.current.t,
+      toItem: (f) => {
+        const kind = nativeMediaKind(f);
+        if (!kind) return null;
+        const uri = urlOf(f);
+        if (!uri) return null;
+        let thumb = f.thumbnail_url ? absoluteFileUrl(f.thumbnail_url) : '';
+        if (kind === 'video' && thumb === uri) thumb = '';
+        const ts = Date.parse(f.taken_at || f.created_at || f.uploaded_at || '') || null;
+        return {
+          uri, thumbUri: thumb || null, type: kind, messageId: String(f.id ?? ''),
+          caption: '', createdAt: ts, width: f.width || 0, height: f.height || 0,
+        };
+      },
+      allowShare: true,
+      allowSave: true,
+      onAction: (ev, _i, f) => { runAction(ev, f); },
+      onClose: () => {
+        nativeOpenRef.current = null;
+        const c = nvPropsRef.current.onClose;
+        try { c && c(); } catch {}
+      },
+    }).then((sid) => {
+      if (!sid) { nativeOpenRef.current = null; setNativeFailed(true); }
+    }).catch(() => { nativeOpenRef.current = null; setNativeFailed(true); });
+  }, [visible, wantNative, startFile?.id, startIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!visible || !current) return null;
+  if (wantNative) return null;
 
   const url = getUrl ? getUrl(current) : current.url;
   const fileName = current.name || current.original_name || current.filename || '';

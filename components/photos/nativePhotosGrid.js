@@ -45,6 +45,20 @@ function gridModule() {
   return _gridMod;
 }
 
+/**
+ * [2026-10-18 photos-native-always] Grade com LISTA ARBITRÁRIA vinda do JS (prop
+ * `items`: busca, favoritos, filtros/memórias, aba Fotos do Drive). Já funciona com
+ * a API atual (includeLocal=false + setCloudItems); só a miniatura de arquivo do
+ * aparelho (file:// / content://) no Android precisa da apiVersion 3.
+ * Kill switch OTA/console: globalThis.__chatyy_photos_native_always = false.
+ */
+export function isNativePhotosDatasetAvailable(hasDeviceFiles = false) {
+  try { if (globalThis.__chatyy_photos_native_always === false) return false; } catch {}
+  if (!isNativePhotosGridAvailable()) return false;
+  if (hasDeviceFiles && Platform.OS === 'android') return _gridApi >= 3;
+  return true;
+}
+
 export function isNativePhotosGridAvailable() {
   let force = false;
   try {
@@ -169,7 +183,11 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
     userEmail = '', backupEnabled = false, includeLocal = true, zoomLevel,
     onSelectionChange, onSelectionMode, onZoomChange, onFail, onReady: onReadyProp, onPermissionNeeded,
     style,
+    // [2026-10-18 photos-native-always] modo LISTA: itens compactos { id, n, t, w, h, v, d, u, f, x }
+    // (u = miniatura https/ph:///file://; f = original). Sem nuvem/selos/aparelho próprios.
+    items, onItemPress,
   } = props;
+  const dataset = Array.isArray(items);
   const V = NativeView();
   const viewRef = useRef(null);
   const aliveRef = useRef(true);
@@ -183,7 +201,7 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
   // handlers da view ficam estáveis e o React.memo abaixo corta re-render da view
   // nativa quando a tela re-renderiza (progresso do backup etc.).
   const cbRef = useRef({});
-  cbRef.current = { onSelectionChange, onSelectionMode, onZoomChange, onFail, onReadyProp, onPermissionNeeded };
+  cbRef.current = { onSelectionChange, onSelectionMode, onZoomChange, onFail, onReadyProp, onPermissionNeeded, onItemPress };
   const askedPermRef = useRef(false);
   const openingRef = useRef(false);
 
@@ -213,7 +231,7 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
 
   // ─── nuvem ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!V || !userEmail) return undefined;
+    if (!V || !userEmail || dataset) return undefined;
     let alive = true;
     const isAlive = () => alive && aliveRef.current;
     // só depois do 1º onReady (as AsyncFunctions da view precisam dela montada)
@@ -222,11 +240,19 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
       loadCloudIndex(userEmail, (items, replace) => { call('setCloudItems', items, !!replace); }, isAlive).catch(() => {});
     });
     return () => { alive = false; };
-  }, [V, userEmail, call, whenReady]);
+  }, [V, userEmail, call, whenReady, dataset]);
+
+  // ─── modo lista (dataset) ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!V || !dataset) return undefined;
+    let alive = true;
+    whenReady().then(() => { if (alive && aliveRef.current) call('setCloudItems', items, true); });
+    return () => { alive = false; };
+  }, [V, dataset, items, call, whenReady]);
 
   // ─── status de backup ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!V) return undefined;
+    if (!V || dataset) return undefined;
     let alive = true;
     let unsub = () => {};
     let pending = { cloud: [], uploading: [], pending: [], failed: [] };
@@ -259,7 +285,7 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
       }
     })();
     return () => { alive = false; unsub(); if (flushTm) clearTimeout(flushTm); };
-  }, [V, call, userEmail, whenReady]);
+  }, [V, call, userEmail, whenReady, dataset]);
 
   // ─── visualizador nativo ──────────────────────────────────────────────
   const openViewer = useCallback(async (e) => {
@@ -349,7 +375,12 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
     try { cb.onReadyProp && cb.onReadyProp(d); } catch {}
   }, [call]);
 
-  const onPress = useCallback((e) => { openViewer((e && e.nativeEvent) || {}); }, [openViewer]);
+  const onPress = useCallback((e) => {
+    const d = (e && e.nativeEvent) || {};
+    const f = cbRef.current.onItemPress;
+    if (f) { try { f(d); } catch {} return; }
+    openViewer(d);
+  }, [openViewer]);
   const onSel = useCallback((e) => { const d = (e && e.nativeEvent) || {}; const f = cbRef.current.onSelectionChange; f && f(d.count || 0, d.keys || []); }, []);
   const onSelMode = useCallback((e) => { const f = cbRef.current.onSelectionMode; f && f(!!(e && e.nativeEvent && e.nativeEvent.active)); }, []);
   const onZoom = useCallback((e) => { const f = cbRef.current.onZoomChange; f && f(e && e.nativeEvent ? e.nativeEvent.level : 3); }, []);
@@ -361,6 +392,8 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
     selectAll: () => call('selectAll'),
     getSelection: () => call('getSelection'),
     scrollToTop: (animated = true) => call('scrollToTop', !!animated),
+    scrollToKey: (key, animated = false) => call('scrollToKey', String(key), !!animated),
+    frameForKey: (key) => call('frameForKey', String(key)),
     reloadLocal: () => call('reloadLocal'),
     reloadCloud: () => {
       invalidateCloudIndex(userEmail);
@@ -407,9 +440,9 @@ const NativePhotosGridInner = forwardRef(function NativePhotosGrid(props, ref) {
       labels={labels}
       contentInsetTop={insetTop}
       contentInsetBottom={insetBottom}
-      includeLocal={!!includeLocal}
-      backupEnabled={!!backupEnabled}
-      showBadges
+      includeLocal={dataset ? false : !!includeLocal}
+      backupEnabled={dataset ? false : !!backupEnabled}
+      showBadges={!dataset}
       {...(zoomLevel != null ? { zoomLevel } : {})}
       onReady={onReady}
       onPress={onPress}
@@ -461,7 +494,7 @@ const styles = StyleSheet.create({ fill: { flex: 1 } });
 
 // [2026-10-15 photos-flicker] re-render só quando muda o que a view usa — callbacks
 // do pai são lidos por ref (cbRef), então mudança só de função não conta.
-const DATA_PROPS = ['colors', 'isDark', 't', 'locale', 'insetTop', 'insetBottom', 'userEmail', 'backupEnabled', 'includeLocal', 'zoomLevel', 'style'];
+const DATA_PROPS = ['colors', 'isDark', 't', 'locale', 'insetTop', 'insetBottom', 'userEmail', 'backupEnabled', 'includeLocal', 'zoomLevel', 'style', 'items'];
 function sameGridProps(a, b) {
   for (const k of DATA_PROPS) {
     if (k === 'colors') {

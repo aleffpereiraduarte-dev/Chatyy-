@@ -12,7 +12,9 @@ class ChatyyPhotosGridModule : Module() {
     Name("ChatyyPhotosGrid")
 
     // 2 = [2026-10-15 photos-flicker] props idempotentes + lista igual sem notifyDataSetChanged.
-    Function("apiVersion") { 2 }
+    // 3 = [2026-10-18 photos-native-always] setCloudItems aceita miniatura file:// / content://
+    //     (lista arbitrária do JS: busca, favoritos, filtros, aba Fotos do Drive).
+    Function("apiVersion") { 3 }
 
     View(PGGridView::class) {
       Events("onReady", "onPress", "onZoomChange", "onScrollState", "onNativeError", "onSelectionChange", "onSelectionMode")

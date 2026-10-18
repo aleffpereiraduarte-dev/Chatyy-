@@ -650,6 +650,11 @@ class PGGridView(context: Context, appContext: AppContext) : ExpoView(context, a
         cell.setImageDrawable(null)
       } else if (it.local) {
         glide.load(Uri.parse(src)).apply(localOpts!!).into(cell)
+      } else if (src.startsWith("file://") || src.startsWith("content://") || src.startsWith("/")) {
+        // [2026-10-18 photos-native-always] apiVersion 3: item "da nuvem" vindo do JS com
+        // arquivo do aparelho (busca/favoritos/filtro passam qualquer lista) → Glide local.
+        val u = if (src.startsWith("/")) Uri.fromFile(java.io.File(src)) else Uri.parse(src)
+        glide.load(u).apply(localOpts!!).into(cell)
       } else {
         glide.load(PGGlideUrl(src, PGUtil.stripQuery(src))).apply(cloudOpts!!).into(cell)
       }

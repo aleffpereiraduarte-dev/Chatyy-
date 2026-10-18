@@ -51,6 +51,7 @@ import {
   IconGrid, IconMenu, IconFilter, IconChevronUp, IconChevronDown,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
+import ThumbImage from '../components/ThumbImage'; // [2026-10-18 photos-native-always] miniaturas expo-image (memory-disk + recyclingKey)
 import { ListSkeleton } from '../components/SkeletonLoader';
 import EmptyStateCard from '../components/EmptyStateCard';
 import ScreenEmptyState from '../components/ScreenEmptyState';
@@ -351,8 +352,9 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
         )}
         {hasThumb ? (
           <View style={[styles.itemThumbWrap]}>
-            <Image
-              source={{ uri: thumbUrl }}
+            <ThumbImage
+              uri={thumbUrl}
+              recyclingKey={file.id}
               style={styles.itemThumb}
               resizeMode="cover"
             />
@@ -821,8 +823,9 @@ function PhotoThumbnail({ file, size, onPress, isDark, colors }) {
       activeOpacity={0.85}
       style={[photosStyles.photoThumb, { width: size, height: size }]}
     >
-      <Image
-        source={{ uri: thumbUrl }}
+      <ThumbImage
+        uri={thumbUrl}
+        recyclingKey={file.id}
         style={photosStyles.photoThumbImage}
         resizeMode="cover"
       />
@@ -2474,7 +2477,7 @@ function FilesScreenInner() {
         )}
         {hasGridThumb ? (
           <View style={styles.gridThumbWrap}>
-            <Image source={{ uri: gridThumbUrl }} style={styles.gridThumb} resizeMode="cover" />
+            <ThumbImage uri={gridThumbUrl} recyclingKey={item.id} style={styles.gridThumb} resizeMode="cover" />
             {item.icon_type === 'video' && (
               <View style={styles.gridVideoOverlay}><IconFilm size={16} color="#fff" /></View>
             )}

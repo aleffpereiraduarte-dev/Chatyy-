@@ -48,6 +48,9 @@ import CachedImage from '../components/CachedImage';
 // [2026-10-15 native-drive] Lista/grade nativa (kill switch __chatyy_native_drive).
 import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriveList';
 import { driveRow } from '../components/native/driveListAdapter';
+// [2026-10-18 photos-native-always] aba Fotos = grade NATIVA (ChatyyPhotosGrid em modo lista); FlatList JS = reserva.
+import NativePhotosGrid, { isNativePhotosDatasetAvailable } from '../components/photos/nativePhotosGrid';
+import ThumbImage from '../components/ThumbImage';
 // [2026-10-16 drive-native] fila durável de envio + abrir/enviar/salvar no aparelho (sem URL pública)
 import * as driveQueue from '../services/driveUploadQueue';
 import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
@@ -195,7 +198,7 @@ function groupByDate(items, t) {
 // ============================================================
 function DriveScreenInner() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -1283,6 +1286,35 @@ function DriveScreenInner() {
     return out;
   }, [nativeDriveOn, activeTab, displayItems, t]);
 
+  // [2026-10-18 photos-native-always] aba Fotos na grade nativa (datas grudadas, pinça,
+  // seleção arrastando). Toque → FileViewer → visualizador nativo. Falhou → FlatList.
+  const drivePhotosGridRef = useRef(null);
+  const [drivePhotosGridFailed, setDrivePhotosGridFailed] = useState(false);
+  const drivePhotosGrid = useMemo(() => {
+    if (activeTab !== 'photos' || drivePhotosGridFailed || Platform.OS === 'web') return null;
+    if (!isNativePhotosDatasetAvailable(false)) return null;
+    const media = allPhotos.length > 0 ? allPhotos : [...files].filter(f => isMedia(f));
+    if (media.length === 0) return null;
+    const byKey = new Map();
+    const items = [];
+    for (const f of media) {
+      if (!f || f.id == null) continue;
+      const vid = isVideo(f);
+      let u = f.thumbnail_url || '';
+      if (u && !/^(https?:|file:|data:)/.test(u)) u = api.BASE_URL + u;
+      if (!u && !vid) u = api.fileDownloadUrl(f.id);
+      const ts = Date.parse(f.taken_at || f.created_at || f.uploaded_at || '') || 0;
+      items.push({ id: String(f.id), n: f.name || '', t: ts, w: f.width || 0, h: f.height || 0, v: vid, d: Number(f.duration) || 0, u, f: '', x: !!f.unavailable });
+      byKey.set('c:' + String(f.id), f);
+    }
+    return items.length ? { items, byKey } : null;
+  }, [activeTab, drivePhotosGridFailed, allPhotos, files]);
+  // seleção encerrada pelo JS (X, apagar em lote…) → grade nativa sai da seleção também
+  useEffect(() => {
+    if (selectMode || !drivePhotosGridRef.current) return;
+    try { drivePhotosGridRef.current.clearSelection(); drivePhotosGridRef.current.setSelectionMode(false); } catch {}
+  }, [selectMode]);
+
   // Recent files - last 10 modified, only shown at root
   const recentFiles = useMemo(() => {
     if (activeTab !== 'files' || breadcrumbs.length > 1 || searchResults !== null) return [];
@@ -1602,7 +1634,7 @@ function DriveScreenInner() {
                   <IconFolder size={40} color={isDark ? '#AEAEB2' : '#48484A'} />
                 </View>
               : (isPhoto(item) && item.thumbnail_url
-                ? <Image source={{ uri: item.thumbnail_url }} style={styles.gridThumbnail} resizeMode="cover" />
+                ? <ThumbImage uri={item.thumbnail_url} recyclingKey={item.id} style={styles.gridThumbnail} resizeMode="cover" />
                 : getFileIcon(item.icon_type, 36, colors.textSecondary))
             }
             {badge && (
@@ -1649,7 +1681,7 @@ function DriveScreenInner() {
             )}
           </View>
         ) : (
-          <CachedImage source={{ uri: thumbUrl }} style={styles.photoThumb} resizeMode="cover" />
+          <CachedImage source={{ uri: thumbUrl }} style={styles.photoThumb} resizeMode="cover" recyclingKey={String(item.id)} />
         )}
         {isVid && (
           <View style={styles.videoOverlay}>
@@ -1664,6 +1696,37 @@ function DriveScreenInner() {
 
   // --- Photos Tab Content ---
   const renderPhotosTab = () => {
+    if (drivePhotosGrid) {
+      return (
+        <View style={{ flex: 1 }}>
+          <TouchableOpacity style={[styles.backupBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#F1F3F5', borderColor: colors.primary + '30', marginHorizontal: isDesktop ? 40 : 12 }]} onPress={handleUploadPhotos}>
+            <IconCamera size={18} color={colors.primary} />
+            <Text style={[styles.backupBtnText, { color: colors.primary }]}>{t('drive.backupPhotos')}</Text>
+          </TouchableOpacity>
+          <NativePhotosGrid
+            key="drive-photos"
+            ref={drivePhotosGridRef}
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            locale={language || 'pt-BR'}
+            insetBottom={96}
+            items={drivePhotosGrid.items}
+            onItemPress={(d) => {
+              const f = d && d.key != null ? drivePhotosGrid.byKey.get(String(d.key)) : null;
+              if (f) setPreviewFile(f);
+            }}
+            onSelectionMode={(active) => { setSelectMode(!!active); if (!active) setSelectedItems(new Set()); }}
+            onSelectionChange={(count, keys) => {
+              const next = new Set();
+              for (const k of keys || []) if (typeof k === 'string' && k.startsWith('c:')) next.add('i_' + k.slice(2));
+              setSelectedItems(next);
+            }}
+            onFail={(why) => { console.warn('[drive] grade nativa de fotos indisponível → JS:', why); setDrivePhotosGridFailed(true); }}
+          />
+        </View>
+      );
+    }
     // Use allPhotos (from drive_photos API) which includes backup photos from ALL folders
     const media = allPhotos.length > 0 ? allPhotos : [...files].filter(f => isMedia(f));
     if (media.length === 0) {
@@ -2324,7 +2387,7 @@ function DriveScreenInner() {
               >
                 <View style={[styles.recentThumb, { backgroundColor: getIconBgColor(item.icon_type, isDark) }]}>
                   {isPhoto(item) && item.thumbnail_url
-                    ? <Image source={{ uri: item.thumbnail_url }} style={{ width: '100%', height: '100%', borderRadius: 6 }} resizeMode="cover" />
+                    ? <ThumbImage uri={item.thumbnail_url} recyclingKey={item.id} style={{ width: '100%', height: '100%', borderRadius: 6 }} resizeMode="cover" />
                     : getFileIcon(item.icon_type, 24, colors.textSecondary)
                   }
                   {badge && (
