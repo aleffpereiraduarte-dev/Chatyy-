@@ -346,6 +346,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
   private val ringText = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD) }
 
   private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE } // [2026-10-18 media-edge]
   private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
   private val tmpRect = RectF()
   private val tmpPath = Path()
@@ -949,6 +950,17 @@ class MLCellView(context: Context) : ViewGroup(context) {
         // ainda não baixada: miniatura levemente escurecida (P&B premium)
         fill.color = 0x2E000000
         c.drawRoundRect(L.mediaFrame, mrad, mrad, fill)
+      }
+      // [2026-10-18 media-edge] contorno fino (dentro do recorte) da mídia rente
+      // ao fundo (sem bolha): print de tela com áreas brancas sumia no fundo
+      // branco e parecia uma "faixa em branco" no meio da foto.
+      if (!L.showBubble && !sticker) {
+        val wl = th.wall
+        val lum = (0.299 * ((wl shr 16) and 0xFF) + 0.587 * ((wl shr 8) and 0xFF) + 0.114 * (wl and 0xFF)) / 255.0
+        edgePaint.color = if (lum < 0.5) 0x1FFFFFFF else 0x1A000000
+        edgePaint.strokeWidth = maxOf(1f, s.dp(1f))
+        if (mcr != null) c.drawPath(cornerPath, edgePaint)
+        else c.drawRoundRect(L.mediaFrame, mrad, mrad, edgePaint)
       }
       if (mcr != null) c.restore()
       if (md.kind == "video" && md.up == null && done && !snap) {

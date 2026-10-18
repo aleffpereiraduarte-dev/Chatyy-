@@ -23,6 +23,10 @@ final class CMLCell: UICollectionViewCell {
   // [2026-10-15 native-media-dl] anel único de transferência (baixar/enviar)
   let xRing = CMLTransferRing()
   let mediaDim = UIView()
+  /// [2026-10-18 media-edge] contorno fino da mídia SEM bolha (visual tg, rente):
+  /// foto com áreas brancas (print de tela) sumia no fundo branco da conversa e
+  /// parecia "faixa em branco" no meio da imagem (print do founder 18/10).
+  let mediaEdge = CAShapeLayer()
   var albumRings: [CMLTransferRing] = []
   let audioRing = CMLTransferRing()
   let fileRing = CMLTransferRing()
@@ -102,6 +106,9 @@ final class CMLCell: UICollectionViewCell {
     slide.addSubview(reply)
     media.contentMode = .scaleAspectFill
     media.clipsToBounds = true
+    mediaEdge.fillColor = UIColor.clear.cgColor
+    mediaEdge.isHidden = true
+    media.layer.addSublayer(mediaEdge)
     slide.addSubview(media)
     for _ in 0..<4 {
       let iv = UIImageView()
@@ -344,6 +351,24 @@ final class CMLCell: UICollectionViewCell {
     if let md = row.media, !L.mediaFrame.isEmpty {
       place(media, L.mediaFrame, true)
       applyCorners(media, L.mediaCorners, L.mediaRadius)
+      // [2026-10-18 media-edge] contorno de 1 px (dentro do recorte) só quando a
+      // mídia fica rente ao fundo (sem bolha atrás) e não é figurinha.
+      if !L.showBubble && md.kind != "sticker" {
+        var wr: CGFloat = 1, wg: CGFloat = 1, wb: CGFloat = 1, wa: CGFloat = 1
+        if !th.wall.getRed(&wr, green: &wg, blue: &wb, alpha: &wa) { th.wall.getWhite(&wr, alpha: &wa); wg = wr; wb = wr }
+        let darkWall = (0.299 * wr + 0.587 * wg + 0.114 * wb) < 0.5
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        mediaEdge.frame = media.bounds
+        mediaEdge.path = L.mediaCorners.count == 4
+          ? CMLLayoutBuilder.roundedPath(media.bounds, L.mediaCorners)
+          : UIBezierPath(roundedRect: media.bounds, cornerRadius: L.mediaRadius).cgPath
+        mediaEdge.lineWidth = 2 / max(1, scale)
+        mediaEdge.strokeColor = (darkWall ? UIColor(white: 1, alpha: 0.12) : UIColor(white: 0, alpha: 0.10)).cgColor
+        mediaEdge.isHidden = false
+        CATransaction.commit()
+      } else {
+        mediaEdge.isHidden = true
+      }
       media.contentMode = md.kind == "sticker" ? .scaleAspectFit : .scaleAspectFill
       media.backgroundColor = md.kind == "sticker" ? .clear : (row.own ? th.ownQuote : th.otherQuote)
       let px = max(L.mediaFrame.width, L.mediaFrame.height) * scale

@@ -8,8 +8,9 @@ public class ChatyyPinnedStripModule: Module {
     Name("ChatyyPinnedStrip")
 
     // 2 = [2026-10-17 peek-fixed] prévia de altura fixa + prop `peekHeight`.
+    // 3 = [2026-10-18 peek-full] prévia com até 15 balões + fundo da conversa (`peek.bg`).
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
     }
 
     View(ChatyyPinnedStripView.self) {

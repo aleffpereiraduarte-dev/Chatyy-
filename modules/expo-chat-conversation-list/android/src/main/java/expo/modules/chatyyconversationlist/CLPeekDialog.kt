@@ -60,6 +60,8 @@ internal class CLPeekDialog(
 
   companion object {
     const val DEFAULT_FRACTION = 0.42f
+    /** [2026-10-18 peek-full] até 15 balões (JS PEEK_MAX = 15). */
+    const val MAX_MESSAGES = 15
   }
 
   val convId: String = row.id
@@ -78,6 +80,17 @@ internal class CLPeekDialog(
   private val column = LinearLayout(activity)
   private val msgScroll = ScrollView(activity)
   private val msgBox = LinearLayout(activity)
+  // [2026-10-18 peek-full] fundo da conversa atrás dos balões (chave `bg` da prop
+  // peek): cor base, foto (CENTER_CROP) + escurecimento, padrão vetorial em azulejo.
+  private val msgFrame = FrameLayout(activity)
+  private val bgImage = ImageView(activity)
+  private val bgDim = View(activity)
+  private val bgPattern = View(activity)
+  private var bgMap: Map<String, Any?>? = null
+  private var bgKey = ""
+  private var ownBg: Int? = null
+  private var ownInk: Int? = null
+  private var otherBg: Int? = null
   private var menuScroll: ScrollView? = null
   private var menuView: View? = null
   private var messages: List<Msg> = emptyList()
@@ -122,9 +135,13 @@ internal class CLPeekDialog(
 
   fun update(m: Map<String, Any?>) {
     if (CLVal.str(m["id"]) != convId) return
+    CLVal.map(m["bg"])?.let { bg ->
+      bgMap = bg
+      applyBackground()
+    }
     val items = CLVal.list(m["items"])?.mapNotNull { CLVal.map(it) } ?: return
-    if (items.isEmpty()) return
-    messages = items.takeLast(12).map {
+    if (items.isEmpty()) { if (card != null) rebuildMessages(); return }
+    messages = items.takeLast(MAX_MESSAGES).map {
       Msg(CLVal.bool(it["m"]), CLVal.str(it["t"]), CLVal.str(it["h"]), CLVal.str(it["s"]),
         CLVal.int(it["r"]), CLVal.str(it["k"]), CLVal.str(it["u"]), CLVal.str(it["c"]),
         CLVal.double(it["w"]), CLVal.double(it["h2"]))
@@ -198,8 +215,20 @@ internal class CLPeekDialog(
     }
     msgScroll.setOnClickListener { onOpen(); dismiss() }
     msgScroll.addView(msgBox, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-    card.addView(msgScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    // [2026-10-18 peek-full] moldura com o fundo da conversa (fixo; só os balões rolam)
+    bgImage.scaleType = ImageView.ScaleType.CENTER_CROP
+    bgImage.visibility = View.GONE
+    bgDim.setBackgroundColor(Color.BLACK)
+    bgDim.visibility = View.GONE
+    bgPattern.visibility = View.GONE
+    val mp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    msgFrame.addView(bgImage, FrameLayout.LayoutParams(mp))
+    msgFrame.addView(bgDim, FrameLayout.LayoutParams(mp))
+    msgFrame.addView(bgPattern, FrameLayout.LayoutParams(mp))
+    msgFrame.addView(msgScroll, FrameLayout.LayoutParams(mp))
+    card.addView(msgFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     if (messages.isEmpty()) seedFromRow()
+    applyBackground()
     rebuildMessages()
     column.addView(card, LinearLayout.LayoutParams(cardW, ViewGroup.LayoutParams.WRAP_CONTENT))
 
@@ -299,9 +328,9 @@ internal class CLPeekDialog(
       cardH = min(cardH, usable - gap - px(46f) * 3)
       val msgsH = max(px(72f), cardH - headerH)
       msgBox.minimumHeight = msgsH
-      (msgScroll.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+      (msgFrame.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
         lp.height = msgsH
-        msgScroll.layoutParams = lp
+        msgFrame.layoutParams = lp
       }
       val menuMax = max(px(46f) * 3, usable - gap - headerH - msgsH)
       val menuFinal = min(menuH, menuMax)
@@ -327,8 +356,118 @@ internal class CLPeekDialog(
     messages = listOf(Msg(mine, txt, row.time, if (!mine && row.isGroupish) row.sender else "", row.receipt))
   }
 
+  /** [2026-10-18 peek-full] aplica o fundo da conversa (recalcula só quando muda). */
+  private fun applyBackground() {
+    val bg = bgMap ?: return
+    ownBg = peekColor(CLVal.str(bg["ob"]))
+    ownInk = peekColor(CLVal.str(bg["oi"]))
+    otherBg = peekColor(CLVal.str(bg["rb"]))
+    val c = card ?: return
+    val uri = CLVal.str(bg["u"])
+    val pat = CLVal.map(bg["p"])
+    val pc = CLVal.str(bg["pc"])
+    val pi = CLVal.double(bg["pi"])
+    val ps = CLVal.double(bg["ps"])
+    val key = listOf(CLVal.str(bg["c"]), uri, CLVal.double(bg["ua"]), CLVal.double(bg["ud"]), CLVal.list(pat?.get("items"))?.size ?: 0, pc, pi, ps, theme.dark).joinToString("|")
+    if (key == bgKey) return
+    bgKey = key
+    peekColor(CLVal.str(bg["c"]))?.let { base -> c.background = rounded(base, 18f) }
+    try {
+      if (uri.isNotEmpty()) {
+        bgImage.visibility = View.VISIBLE
+        val ua = CLVal.double(bg["ua"])
+        bgImage.alpha = (if (ua > 0) ua else 1.0).toFloat().coerceIn(0.05f, 1f)
+        RLImages.load(bgImage, uri, false)
+        val dim = CLVal.double(bg["ud"]).toFloat()
+        bgDim.visibility = if (dim > 0.001f) View.VISIBLE else View.GONE
+        bgDim.alpha = dim.coerceIn(0f, 0.9f)
+      } else {
+        bgImage.visibility = View.GONE
+        bgDim.visibility = View.GONE
+      }
+    } catch (_: Throwable) {}
+    try {
+      val tile = if (pat != null && pi > 0.001) {
+        val col = peekColor(pc) ?: (if (theme.dark) Color.WHITE else Color.BLACK)
+        val a = (pi.coerceIn(0.0, 1.0) * 255).toInt()
+        peekPatternTile(pat, Color.argb(a, Color.red(col), Color.green(col), Color.blue(col)), if (ps > 0.05) ps.toFloat() else 1f)
+      } else null
+      if (tile != null) {
+        val d = android.graphics.drawable.BitmapDrawable(activity.resources, tile)
+        d.setTileModeXY(android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
+        bgPattern.background = d
+        bgPattern.visibility = View.VISIBLE
+      } else {
+        bgPattern.background = null
+        bgPattern.visibility = View.GONE
+      }
+    } catch (_: Throwable) {
+      bgPattern.visibility = View.GONE
+    }
+  }
+
+  private fun peekColor(s: String): Int? {
+    val h = s.trim()
+    if (!h.startsWith("#")) return null
+    return try {
+      var v = h.substring(1)
+      if (v.length == 3) v = v.map { "$it$it" }.joinToString("")
+      when (v.length) {
+        6 -> Color.parseColor("#$v")
+        8 -> Color.parseColor("#" + v.substring(6, 8) + v.substring(0, 6)) // CSS #RRGGBBAA → #AARRGGBB
+        else -> null
+      }
+    } catch (_: Throwable) { null }
+  }
+
+  /** Azulejo do padrão (mesmo desenho do JS wallpaperSpec / iOS CLPeekPattern). */
+  private fun peekPatternTile(pat: Map<String, Any?>, color: Int, scale: Float): android.graphics.Bitmap? {
+    val tile = CLVal.double(pat["tile"]).let { if (it >= 40 && it <= 2000) it.toFloat() else 300f }
+    val strokeW = CLVal.double(pat["stroke"]).let { if (it > 0) it.toFloat() else 1.5f }
+    val items = CLVal.list(pat["items"])?.mapNotNull { CLVal.map(it) }?.take(200) ?: return null
+    if (items.isEmpty()) return null
+    val T = tile * scale * density
+    if (T < 4f) return null
+    val size = T.toInt().coerceIn(4, 2048)
+    val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+    val cv = android.graphics.Canvas(bmp)
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+      style = android.graphics.Paint.Style.STROKE
+      strokeCap = android.graphics.Paint.Cap.ROUND
+      strokeJoin = android.graphics.Paint.Join.ROUND
+      this.color = color
+    }
+    val k = scale * density
+    for (it in items) {
+      val d = CLVal.str(it["d"])
+      if (d.isEmpty()) continue
+      val path = try { androidx.core.graphics.PathParser.createPathFromPathData(d) } catch (_: Throwable) { null } ?: continue
+      val x = CLVal.double(it["x"]).toFloat()
+      val y = CLVal.double(it["y"]).toFloat()
+      val sc = CLVal.double(it["s"]).toFloat().let { v -> if (v > 0.1f) v else 1f }
+      val r = CLVal.double(it["r"]).toFloat()
+      for (ox in -1..1) for (oy in -1..1) {
+        val cx = x + ox * tile
+        val cy = y + oy * tile
+        val reach = 18f * sc
+        if (cx < -reach || cy < -reach || cx > tile + reach || cy > tile + reach) continue
+        cv.save()
+        cv.translate(cx * k, cy * k)
+        cv.rotate(r)
+        cv.scale(sc * k, sc * k)
+        cv.translate(-12f, -12f)
+        paint.strokeWidth = strokeW / sc
+        cv.drawPath(path, paint)
+        cv.restore()
+      }
+    }
+    return bmp
+  }
+
   private fun bubbleColor(m: Msg): Int =
-    if (m.mine) (if (theme.dark) Color.parseColor("#2C2C2E") else Color.parseColor("#0B0B0B"))
+    if (m.mine && ownBg != null) ownBg!!
+    else if (!m.mine && otherBg != null) otherBg!!
+    else if (m.mine) (if (theme.dark) Color.parseColor("#2C2C2E") else Color.parseColor("#0B0B0B"))
     else (if (theme.dark) Color.parseColor("#1C1C1E") else Color.WHITE)
 
   /** Hora + recibo (✓ / ✓✓ / azul) numa linha. */
@@ -376,9 +515,9 @@ internal class CLPeekDialog(
     tv.maxLines = 4
     tv.ellipsize = TextUtils.TruncateAt.END
     tv.maxWidth = (cardW * 0.8f).toInt() - px(22f)
-    tv.setTextColor(if (m.mine && !theme.dark) Color.WHITE else theme.text)
+    tv.setTextColor(if (m.mine) (ownInk ?: (if (!theme.dark) Color.WHITE else theme.text)) else theme.text)
     b.addView(tv)
-    val metaColor = if (m.mine && !theme.dark) Color.argb(153, 255, 255, 255) else theme.sub
+    val metaColor = if (m.mine) (ownInk?.let { Color.argb(158, Color.red(it), Color.green(it), Color.blue(it)) } ?: (if (!theme.dark) Color.argb(153, 255, 255, 255) else theme.sub)) else theme.sub
     val meta = metaRow(m, metaColor)
     if (meta.childCount > 0) {
       val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -439,7 +578,7 @@ internal class CLPeekDialog(
       cap.maxLines = 2
       cap.ellipsize = TextUtils.TruncateAt.END
       cap.maxWidth = side - px(12f)
-      cap.setTextColor(if (m.mine && !theme.dark) Color.WHITE else theme.text)
+      cap.setTextColor(if (m.mine) (ownInk ?: (if (!theme.dark) Color.WHITE else theme.text)) else theme.text)
       val clp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
       clp.leftMargin = px(6f); clp.topMargin = px(4f)
       b.addView(cap, clp)

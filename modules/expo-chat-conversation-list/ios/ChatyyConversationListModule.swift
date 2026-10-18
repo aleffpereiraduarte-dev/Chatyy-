@@ -35,9 +35,12 @@ public class ChatyyConversationListModule: Module {
     // 6 = [2026-10-18 tg-list] evento `onPullReveal` {distance}: puxar a lista
     //     além de 64 pt no topo (uma vez por arrasto) — o JS revela a linha
     //     "Arquivadas" escondida (Telegram). Sem prop nova.
+    // 7 = [2026-10-18 peek-full] prévia do toque longo desenha até 15 balões e
+    //     o FUNDO da conversa (chave opcional `bg` na prop `peek`: cor, padrão
+    //     vetorial, foto, cores dos balões). Sem prop nova (binário antigo ignora).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 6
+      return 7
       #else
       return 1
       #endif

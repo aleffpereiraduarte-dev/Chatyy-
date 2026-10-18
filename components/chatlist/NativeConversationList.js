@@ -15,7 +15,7 @@ import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; //
 import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, createPatcher } from './nativeAdapter';
-import { buildPeekItems, peekHeightFraction } from './peekItems';
+import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
 
 class NativeListBoundary extends React.Component {
   constructor(props) {
@@ -205,6 +205,8 @@ function NativeConversationListInner(props) {
   const propsRef = useRef(props);
   propsRef.current = props;
   const ctxRef = useRef(ctx);
+  const darkRef = useRef(!!isDark); // [2026-10-18 peek-full]
+  darkRef.current = !!isDark;
   ctxRef.current = ctx;
 
   const handlers = useMemo(() => {
@@ -216,8 +218,10 @@ function NativeConversationListInner(props) {
         const items = buildPeekItems(m.conv, c);
         const id = String(m.conv.id);
         setPeek(prev => {
-          const next = { id, items: items.slice(-12) };
-          if (prev && prev.id === id && JSON.stringify(prev.items) === JSON.stringify(next.items)) return prev;
+          const next = { id, items: items.slice(-PEEK_MAX) };
+          // [2026-10-18 peek-full] fundo da conversa (papel de parede) — nativo novo desenha
+          try { const bg = buildPeekBg(id, !!darkRef.current, c.me); if (bg) next.bg = bg; } catch {}
+          if (prev && prev.id === id && JSON.stringify(prev.items) === JSON.stringify(next.items) && JSON.stringify(prev.bg || null) === JSON.stringify(next.bg || null)) return prev;
           return next;
         });
       } catch {}

@@ -750,27 +750,60 @@ function buildJsonPlaylist(j, row, C) {
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 
+// [2026-10-18 call-card-wa] Glifos CHEIOS do cartão de chamada (viewBox 24,
+// só M/L/H/V/C/Z — sem arcos e sem traço). Antes: icon(IconPhone) em traço
+// fino com arcos SVG → o founder via só o círculo escuro vazio no balão
+// próprio. Cheio + cor explícita = sempre visível (iOS e Android).
+const CALL_GLYPH_PHONE = 'M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z';
+const CALL_GLYPH_VIDEO = 'M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z';
+
+/** Subtítulo estilo WhatsApp: "Sem resposta" / "Perdida" / "Recusada" / "3 min" / "45 s". */
+export function callCardSubtitle(cd, own, tr) {
+  const st = String((cd && cd.call_status) || '');
+  const ds = Math.max(0, Math.round(Number(cd && cd.duration) || 0));
+  if (st === 'declined') return tr('call.declined', 'Chamada recusada');
+  if (st === 'missed' || st === 'no_answer' || st === 'busy' || st === 'cancelled' || st === 'canceled') {
+    return own ? tr('call.noAnswer', 'Sem resposta') : tr('chatConv.missedCall', 'Perdida');
+  }
+  if (ds > 0) {
+    if (ds < 60) return `${ds} s`;
+    const mi = Math.round(ds / 60);
+    if (mi < 60) return `${mi} min`;
+    const h = Math.floor(mi / 60); const r = mi % 60;
+    return r ? `${h} h ${r} min` : `${h} h`;
+  }
+  return '';
+}
+
 function buildCallCard(m, row, ctx, C, own) {
   const cd = _json(m.content) || {};
   const col = C.colors || {};
   const isVideo = cd.call_type === 'video';
-  const missed = cd.call_status === 'missed' || cd.call_status === 'declined';
-  const ds = Number(cd.duration) || 0;
-  const dStr = ds > 0 ? (ds < 60 ? `${ds}s` : `${Math.floor(ds / 60)}m ${ds % 60}s`) : '';
-  const title = isVideo ? _tr(C, 'call.videoCall', 'Chamada de vídeo') : _tr(C, 'call.audioCall', 'Chamada de voz');
-  const prim = col.primary || '#111111';
-  const btnLbl = _tr(C, 'chatConv.callButton', 'LIGAR');
-  const w = _clampW(220, 280, 38 + 10 + _estW(title, 14, true) + 10 + 24 + _estW(btnLbl, 12, true));
-  const Ic = isVideo ? IconVideo : IconPhone;
+  const st = String(cd.call_status || '');
+  const missed = st === 'missed' || st === 'declined' || st === 'no_answer' || st === 'busy';
+  const tr = (k, fb) => _tr(C, k, fb);
+  const title = isVideo ? tr('call.videoCall', 'Chamada de vídeo') : tr('call.audioCall', 'Chamada de voz');
+  const sub = callCardSubtitle(cd, own, tr);
+  // "Ligar" (caixa de frase, como o resto da UI) — não o antigo "LIGAR".
+  const btnLbl = tr('chatConv.callContact', 'Ligar');
+  // Cores: balão próprio escuro (P&B) → glifo branco em círculo translúcido;
+  // recebido → glifo na tinta do texto em círculo cinza suave. Perdida = vermelho.
+  const ink = own ? (C.ownText || '#FFFFFF') : (col.text || '#111111');
+  const glyphC = missed && !own ? '#E5484D' : ink;
+  const circleBg = own ? 'rgba(255,255,255,0.16)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const subC = missed && !own ? '#E5484D' : (own ? (C.ownMeta || 'rgba(255,255,255,0.62)') : (C.otherMeta || col.textTertiary));
+  // Largura: título SEMPRE numa linha (estimativa folgada + ml:1 trunca se o
+  // texto do usuário estiver grande) — nunca mais "Chamada de / voz".
+  const btnW = _estW(btnLbl, 14, true) + 28;
+  const w = _clampW(236, 300, 40 + 12 + Math.max(_estW(title, 15, true) * 1.12, _estW(sub, 13) * 1.1) + 12 + btnW);
   row.bl = [vstack([hstack([
-    vstack([icon(Ic, { s: 18, c: missed ? '#EF4444' : '#FFFFFF' })], { w: 38, h: 38, r: 19, bg: missed ? '#EF444420' : (own ? 'rgba(255,255,255,0.18)' : prim), al: 'c', jc: 'c' }),
+    vstack([iconPaths([{ d: isVideo ? CALL_GLYPH_VIDEO : CALL_GLYPH_PHONE, f: glyphC }], { s: 20 })], { w: 40, h: 40, r: 20, bg: circleBg, al: 'c', jc: 'c' }),
     vstack([
-      text(title, { fs: 14, fw: 600, c: own ? '#FFFFFF' : col.text }),
-      missed ? text(_tr(C, 'chatConv.missedCall', 'Perdida'), { fs: 12, c: '#EF4444', fw: 600, m: [2, 0, 0, 0] })
-        : (dStr ? text(dStr, { fs: 12, c: own ? 'rgba(255,255,255,0.6)' : col.textTertiary, m: [2, 0, 0, 0] }) : null),
+      text(title, { fs: 15, fw: 600, c: ink, ml: 1 }),
+      sub ? text(sub, { fs: 13, c: subC, ml: 1, m: [1, 0, 0, 0] }) : null,
     ], { fl: 1 }),
-    vstack([text(btnLbl, { fs: 12, fw: 700, c: own ? '#FFFFFF' : C.otherInk })], { p: [6, 12, 6, 12], r: 14, bg: own ? 'rgba(255,255,255,0.2)' : (/^#[0-9a-f]{6}$/i.test(prim) ? prim + '18' : 'rgba(17,17,17,0.09)'), a: `call_back:${isVideo ? 'v' : 'a'}` }),
-  ], { g: 10, al: 'c', w: -1 })], { w })];
+    vstack([text(btnLbl, { fs: 14, fw: 600, c: own ? '#FFFFFF' : (C.otherInk || col.text), ml: 1 })], { p: [7, 14, 7, 14], r: 16, bg: own ? 'rgba(255,255,255,0.16)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)'), a: `call_back:${isVideo ? 'v' : 'a'}` }),
+  ], { g: 12, al: 'c', w: -1 })], { w })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 

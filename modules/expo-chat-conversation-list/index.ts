@@ -14,7 +14,9 @@
 //   props  rowsPatch {seq, base, reset?, upsert?, remove?, order?} (ver
 //          components/chatlist/nativeAdapter.js), dark, selectionMode, labels,
 //          authToken, headerHeight, footerHeight, bottomInset, collapseOffset,
-//          peek {id, items:[{m, t, h, s}]}, swipeEnabled, menuEnabled,
+//          peek {id, items:[{m, t, h, s}], bg?} (bg = fundo da conversa,
+//          iOS api >= 7 / Android api >= 8; ver components/chatlist/peekItems.js),
+//          swipeEnabled, menuEnabled,
 //          scrollToTopSeq
 //   events onRowPress {id}, onRowPressIn {id}, onAvatarPress {id},
 //          onRowAction {id, action, source}, onLongPress {id},

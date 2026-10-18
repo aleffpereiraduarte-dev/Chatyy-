@@ -17,7 +17,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, View } from 'react-native';
 import { getNativePinnedStripView, pinnedStripApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, rowEqual } from './nativeAdapter';
-import { buildPeekItems, peekHeightFraction } from './peekItems';
+import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
 
 function _lazy(fn) {
   let v; let done = false;
@@ -184,6 +184,8 @@ function PinnedStripInner({ data, actionsRef, avatarSize, height }) {
   const dataRef = useRef(data);
   dataRef.current = data;
   const ctxRef = useRef(ctx);
+  const darkRef = useRef(!!isDark); // [2026-10-18 peek-full]
+  darkRef.current = !!isDark;
   ctxRef.current = ctx;
 
   const handlers = useMemo(() => {
@@ -202,8 +204,10 @@ function PinnedStripInner({ data, actionsRef, avatarSize, height }) {
         const out = buildPeekItems(m.conv, c);
         const id = String(m.conv.id);
         setPeek(prev => {
-          const next = { id, items: out.slice(-12) };
-          if (prev && prev.id === id && JSON.stringify(prev.items) === JSON.stringify(next.items)) return prev;
+          const next = { id, items: out.slice(-PEEK_MAX) };
+          // [2026-10-18 peek-full] fundo da conversa (papel de parede) — nativo novo desenha
+          try { const bg = buildPeekBg(id, !!darkRef.current, c.me); if (bg) next.bg = bg; } catch {}
+          if (prev && prev.id === id && JSON.stringify(prev.items) === JSON.stringify(next.items) && JSON.stringify(prev.bg || null) === JSON.stringify(next.bg || null)) return prev;
           return next;
         });
       } catch {}

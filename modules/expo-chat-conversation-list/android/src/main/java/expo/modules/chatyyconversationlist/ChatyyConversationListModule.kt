@@ -26,7 +26,9 @@ class ChatyyConversationListModule : Module() {
     // 7 = [2026-10-18 tg-list] evento `onPullReveal` {distance}: puxar a lista
     //     além de 64 dp no topo (uma vez por gesto) — o JS revela a linha
     //     "Arquivadas" escondida (Telegram). Sem prop nova.
-    Function("apiVersion") { 7 }
+    // 8 = [2026-10-18 peek-full] prévia (CLPeekDialog) com até 15 balões e o
+    //     FUNDO da conversa (chave opcional `bg` na prop `peek`). Sem prop nova.
+    Function("apiVersion") { 8 }
 
     View(ChatyyConversationListView::class) {
       Events(

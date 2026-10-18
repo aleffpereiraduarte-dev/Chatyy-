@@ -32008,19 +32008,17 @@ function ChatConversationInner() {
                     : <IconPhone size={18} color={isMissed ? '#EF4444' : '#fff'} />}
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: isOwn ? '#fff' : colors.text }}>
+                  <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '600', color: isOwn ? '#fff' : colors.text }}>
                     {isVideo ? (t('call.videoCall') || 'Chamada de v\u00EDdeo') : (t('call.audioCall') || 'Chamada de voz')}
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                    {isMissed ? (
-                      <Text style={{ fontSize: 12, color: '#EF4444', fontWeight: '600' }}>
-                        {t('chatConv.missedCall') || 'Perdida'}
-                      </Text>
-                    ) : (
-                      <>
-                        {durationStr ? <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }}>{durationStr}</Text> : null}
-                      </>
-                    )}
+                    {/* [2026-10-18 call-card-wa] subtítulo WhatsApp numa linha: "Sem resposta" / "Perdida" / "3 min" */}
+                    {(() => {
+                      let _sub = '';
+                      try { _sub = require('../components/chat/nativeRowCards').callCardSubtitle(callData, isOwn, (k, fb) => { const v = t(k); return v && v !== k ? v : fb; }); } catch { _sub = isMissed ? (t('chatConv.missedCall') || 'Perdida') : durationStr; }
+                      if (!_sub) return null;
+                      return <Text numberOfLines={1} style={{ fontSize: 12, color: (isMissed && !isOwn) ? '#EF4444' : (isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary) }}>{_sub}</Text>;
+                    })()}
                   </View>
                 </View>
                 <TouchableOpacity
@@ -32036,8 +32034,8 @@ function ChatConversationInner() {
                     backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : (colors.primary + '18'),
                   }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: isOwn ? '#fff' : otherInk }}>
-                    {t('chatConv.callButton') || 'LIGAR'}
+                  <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '600', color: isOwn ? '#fff' : otherInk }}>
+                    {t('chatConv.callContact') || 'Ligar'}
                   </Text>
                 </TouchableOpacity>
               </View>

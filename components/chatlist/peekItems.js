@@ -12,6 +12,9 @@
 // Kill switch: globalThis.__chatyy_peek_media === false → só texto (como antes).
 import { splitPreviewIcon } from './nativeAdapter';
 
+/** [2026-10-18 peek-full] últimas N mensagens (nativo novo desenha até 15; antigo corta em 12). */
+export const PEEK_MAX = 15;
+
 const MEDIA_KINDS = { image: 'image', video: 'video', gif: 'gif', sticker: 'sticker' };
 
 function _hhmm(msg) {
@@ -121,14 +124,49 @@ function _kindOf(msg) {
 
 function _isViewOnce(m) { return !!(m && (m.is_view_once || m.isViewOnce || m.view_once)); }
 
+// [2026-10-18 peek-full] Fonte das mensagens da prévia = a MESMA da 1ª pintura
+// da conversa (services/chatStore.getMessagesSync: SQLite canônico → MMKV).
+// Antes só lia o smartChatCache (MMKV/memória), que fica FRIO para a maioria
+// das conversas (o sync grava no SQLite; o acelerador só esquenta ao abrir a
+// conversa) → items vazio → o nativo caía no "seed" da linha: cartão vazio e
+// só a última mensagem embaixo (print do founder 18/10). Mescla as duas fontes
+// por id (pendentes/otimistas do acelerador entram), ordem antiga → nova.
+function _peekSource(convId, limit, me) {
+  let a = [];
+  let b = [];
+  try { a = require('../../services/chatStore').getMessagesSync(convId, limit) || []; } catch { a = []; }
+  try { b = require('../../services/smartChatCache').getCachedMessagesSync(convId, limit) || []; } catch { b = []; }
+  if (!a.length && !b.length && me) {
+    // último recurso: store nativo (fase 2, raw do servidor) — mesmo dado da lista nativa
+    try { a = require('../../services/nativeChatStore').nativeMessagesSync(me, convId, limit) || []; } catch { a = []; }
+  }
+  if (!a.length) return b.slice(-limit);
+  if (!b.length) return a.slice(-limit);
+  const seen = new Set();
+  const out = [];
+  const key = (m) => (m && (m.id != null ? 'i' + m.id : (m.temp_id || m.client_message_id || m._tempId || ''))) || '';
+  for (const m of a) { const k = key(m); if (k) seen.add(k); out.push(m); }
+  let maxId = 0;
+  for (const m of a) { const n = Number(m && m.id); if (Number.isFinite(n) && n > maxId) maxId = n; }
+  for (const m of b) {
+    const k = key(m);
+    if (k && seen.has(k)) continue;
+    const n = Number(m && m.id);
+    // só o que é MAIS NOVO que o SQLite (ou ainda sem id do servidor)
+    if (Number.isFinite(n) && n > 0 && n <= maxId) continue;
+    if (k) seen.add(k);
+    out.push(m);
+  }
+  return out.slice(-limit);
+}
+
 /**
  * conv: conversa (id, type, members, last_message); c: { me, computePreview, emailToDisplayName }.
- * Devolve até 12 itens (mais antigos → mais novos).
+ * Devolve até PEEK_MAX itens (mais antigos → mais novos).
  */
 export function buildPeekItems(conv, c) {
-  const { getCachedMessagesSync } = require('../../services/smartChatCache');
-  const msgs = getCachedMessagesSync(conv.id, 40) || [];
   const me = String(c.me || '').toLowerCase();
+  const msgs = _peekSource(conv.id, 40, me);
   const isGroup = conv.type === 'group' || conv.type === 'channel';
   const mediaOn = globalThis.__chatyy_peek_media !== false;
 
@@ -200,7 +238,7 @@ export function buildPeekItems(conv, c) {
     if (!it.t) continue;
     items.push(it);
   }
-  return items.slice(-12);
+  return items.slice(-PEEK_MAX);
 }
 
 // [2026-10-17 peek-fixed] Altura do cartão da prévia (toque longo) = fração
@@ -216,4 +254,113 @@ export function peekHeightFraction() {
   const n = Number(g);
   if (g != null && Number.isFinite(n) && n >= 0.2 && n <= 0.7) return n;
   return PEEK_HEIGHT_DEFAULT;
+}
+
+// ─── [2026-10-18 peek-full] Fundo da prévia = fundo da conversa ──────────────
+// Mesma resolução de chat-conversation.js (wallpaperColor): por conversa (MMKV
+// `wallpaper_<id>`) → configuração da conta (chat_settings_v1.wallpaper) →
+// padrão local (wallpaper_default) → 'none'. Devolve o que o nativo desenha
+// (lista iOS api >= 8 / Android api >= 8; binário antigo ignora a chave `bg`):
+//   c  cor de base (#RRGGBB)        u/ua  foto (uri + opacidade sobre a base)
+//   p  padrão {tile, stroke, items} pc/pi/ps  cor/opacidade/escala do traço
+//   ob/oi  balão próprio (fundo/tinta)   rb  balão recebido
+// Kill switch: globalThis.__chatyy_peek_bg === false → sem `bg` (cinza antigo).
+
+function _hexRgb(h) {
+  const s = String(h || '').replace('#', '');
+  const v = s.length === 3 ? s.split('').map((x) => x + x).join('') : s.slice(0, 6);
+  const n = parseInt(v, 16);
+  if (!Number.isFinite(n)) return [0, 0, 0];
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function _mix(base, over, a) {
+  const b = _hexRgb(base); const o = _hexRgb(over);
+  const h = (x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0');
+  return `#${h(b[0] + (o[0] - b[0]) * a)}${h(b[1] + (o[1] - b[1]) * a)}${h(b[2] + (o[2] - b[2]) * a)}`;
+}
+
+function _wallpaperValue(convId, me) {
+  try {
+    const mmkv = require('../../services/mmkv');
+    const v = mmkv.getString(`wallpaper_${convId}`);
+    if (v && v !== '__global__') return v;
+  } catch {}
+  try {
+    const h = require('../../utils/chatOpenHandoff');
+    const cs = me ? h.getCachedChatSettings(me) : null;
+    if (cs && typeof cs.wallpaper === 'string' && cs.wallpaper) return cs.wallpaper;
+    const lp = h.getCachedLocalPrefs ? h.getCachedLocalPrefs() : null;
+    if (lp && typeof lp.wallpaper_default === 'string' && lp.wallpaper_default) return lp.wallpaper_default;
+  } catch {}
+  return 'none';
+}
+
+function _patternProp(pat) {
+  return pat ? { tile: pat.tile, stroke: pat.stroke, items: pat.items } : null;
+}
+
+export function buildPeekBg(convId, isDark, me) {
+  if (globalThis.__chatyy_peek_bg === false) return null;
+  try {
+    const dark = !!isDark;
+    const base = dark ? '#000000' : '#FFFFFF';
+    // Balões iguais aos da conversa (chat-conversation.js ~11815).
+    const out = { c: base, ob: dark ? '#333336' : '#111111', oi: dark ? '#F5F5F7' : '#FFFFFF', rb: dark ? '#1C1C1E' : '#EEEEF0' };
+    const value = _wallpaperValue(convId, String(me || '').toLowerCase());
+    const spec = require('../wallpaper/wallpaperSpec');
+    if (value === 'none' || !value) {
+      // padrão: liso + rabiscos P&B quase invisíveis (SubtlePattern)
+      let subtle = true;
+      try { subtle = require('../wallpaper/SubtlePattern').subtlePatternOn(); } catch {}
+      if (subtle) {
+        out.p = _patternProp(spec.patternById('doodles'));
+        out.pc = dark ? '#FFFFFF' : '#000000';
+        out.pi = dark ? 0.038 : 0.032;
+        out.ps = 0.82;
+      }
+      return out;
+    }
+    try {
+      const bb = spec.bubbleFor(value, dark);
+      if (bb && bb.bg) { out.ob = bb.bg; out.oi = bb.text || '#FFFFFF'; }
+    } catch {}
+    const r = spec.resolve(value, dark);
+    if (r.kind === 'native') {
+      if (r.imageUri) {
+        let u = r.imageUri;
+        try { u = require('../WallpaperPicker').resolveWallpaperUri(u) || u; } catch {}
+        out.u = u; out.ua = 1;
+        if (r.dim > 0) out.ud = r.dim;
+        return out;
+      }
+      const cols = Array.isArray(r.colors) && r.colors.length ? r.colors : null;
+      if (r.patternMode === 'mask') {
+        // escuro: preto + padrão "aceso" nas cores do tema
+        out.c = '#000000';
+        if (r.pattern) { out.p = _patternProp(r.pattern); out.pc = cols ? spec.averageColor(cols) : '#FFFFFF'; out.pi = r.patternIntensity || 0.55; out.ps = 1; }
+        return out;
+      }
+      out.c = cols ? spec.averageColor(cols) : (r.baseColor || base);
+      if (r.pattern) { out.p = _patternProp(r.pattern); out.pc = r.patternColor || '#000000'; out.pi = r.patternIntensity || 0.1; out.ps = 1; }
+      return out;
+    }
+    if (r.kind === 'legacy') {
+      const v = String(r.value || '');
+      if (v.startsWith('grad:')) {
+        try {
+          const g = require('../WallpaperPicker').gradientById(v.slice(5));
+          if (g && g.colors) out.c = _mix(base, spec.averageColor(g.colors), dark ? 0.32 : 0.4);
+        } catch {}
+        return out;
+      }
+      if (/^#[0-9a-f]{3,8}$/i.test(v)) { out.c = _mix(base, v, 0.15); return out; }
+      let u = v;
+      try { u = require('../WallpaperPicker').resolveWallpaperUri(v) || v; } catch {}
+      if (u) { out.u = u; out.ua = dark ? 0.55 : 0.85; }
+      return out;
+    }
+    return out;
+  } catch {
+    return null;
+  }
 }
