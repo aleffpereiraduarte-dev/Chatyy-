@@ -2103,7 +2103,13 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     const rec = shellRecRef.current;
     const sc = storeConvRef.current;
     if (!rec.list || !sc || !sc.a || sc.c == null) return;
-    const v = nativeRef.current;
+    // [2026-10-18 row-zoom] o ref de requireNativeView é a classe wrapper do
+    // expo-modules-core (PureComponent, sem measureInWindow); a host view fica em
+    // .nativeRef.current. Antes: typeof !== 'function' → return SEMPRE → nenhum
+    // registro de casca → casca leve e zoom linha→conversa nunca rodavam
+    // (fb.row_zoom = no_shell_rec em 100 % das sessões iOS com o módulo).
+    let v = nativeRef.current;
+    if (v && typeof v.measureInWindow !== 'function' && v.nativeRef && v.nativeRef.current) v = v.nativeRef.current;
     if (!v || typeof v.measureInWindow !== 'function') return;
     try {
       v.measureInWindow((x, y, w, h) => {

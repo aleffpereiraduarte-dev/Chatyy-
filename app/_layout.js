@@ -2277,6 +2277,8 @@ export default function RootLayout() {
                     gestureEnabled: true,
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
                   })} />
+                  {/* [2026-10-18 chat-info-push] Dados do contato/grupo empurrado (era <Modal slide>): swipe-back em tela cheia. Kill: globalThis.__chatyy_chatinfo_push = false */}
+                  <Stack.Screen name="chat-info/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true, ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}) }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
                   {/* [2026-10-15 native-group-create] Novo grupo/canal — passo de detalhes (lista agrupada nativa). */}
                   <Stack.Screen name="group-new-details" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />

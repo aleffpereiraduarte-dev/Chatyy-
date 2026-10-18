@@ -11309,6 +11309,7 @@ function ChatConversationInner() {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      try { if (require('../services/chatInfoRoute').dismissTopInfo()) return true; } catch {} // [chat-info-push] info empurrada por cima: voltar fecha ELA
       try {
         const o = androidBackOverlayRef.current;
         if (o) {
@@ -11352,26 +11353,6 @@ function ChatConversationInner() {
   // — sem isso, refresh do app traz o unread badge de volta. markReadUpTo só
   // dispara em scroll (debounce), então uma conversa curta que abre sem scroll
   // ficava marcada como unread no servidor.
-  // [2026-10-18 read-id] chat_mark_read SEMPRE com message_id = a msg mais nova
-  // realmente exibida (maior id real carregado na tela). message_id=0 fazia o
-  // servidor usar MAX(id) e marcava como lida msg que chegou depois e nunca
-  // apareceu (e o outro aparelho zerava o contador por isso).
-  const _newestShownMsgId = () => {
-    try {
-      const arr = messagesRef.current;
-      if (!Array.isArray(arr)) return 0;
-      let mx = 0;
-      for (let i = 0; i < arr.length; i++) {
-        const m = arr[i];
-        const n = m && typeof m.id === 'number' ? m.id : 0;
-        if (!n || (m.conversation_id != null && conversationId != null && String(m.conversation_id) !== String(conversationId))) continue;
-        if (n > mx) mx = n;
-      }
-      return mx;
-    } catch { return 0; }
-  };
-  const _newestShownMsgIdRef = useRef(_newestShownMsgId);
-  _newestShownMsgIdRef.current = _newestShownMsgId;
   useEffect(() => {
     if (!conversationId) return;
     // [2026-10-15 unread-instant] Zera NA HORA linha da lista (JS+nativa, via
@@ -11392,21 +11373,12 @@ function ChatConversationInner() {
     // perigoso: uma montagem sem a tela visível pintava a conversa INTEIRA de
     // azul. [2026-10-06] Só dispara com app ativo + tela focada; senão fica
     // deferido e o flush manda quando a tela realmente aparecer.
-    // [2026-10-18 read-id] espera as msgs aparecerem (até ~3 s) p/ mandar o id
-    // real; sem nenhuma na tela, o markReadUpTo do load/onViewable cobre.
-    let _tries = 0;
-    let t = null;
-    const _fire = () => {
+    const t = setTimeout(() => {
       if (!canAckReadNowRef.current()) {
         deferredReadRef.current.all = true;
         return;
       }
-      const _mid = _newestShownMsgIdRef.current();
-      if (!_mid) { if (++_tries <= 10) t = setTimeout(_fire, 300); return; }
-      api.chatRead?.(conversationId, _mid).catch(() => {});
-    };
-    t = setTimeout(() => {
-      _fire();
+      api.chatRead?.(conversationId, 0).catch(() => {});
       // [2026-10-08 receipts-speed] 250ms → 50ms: message_id=0 o servidor já
       // resolve pro MAX(id) — não precisa esperar as msgs carregarem. Eram
       // 200ms parados no caminho "abri a conversa → azul no remetente". O gate
@@ -13098,10 +13070,7 @@ function ChatConversationInner() {
     deferredReadRef.current = { id: 0, all: false };
     if (all && conversationId) {
       try { require('../services/unreadBadge').markConversationReadLocal(conversationId, { email: (user?.email || '').toLowerCase() }); } catch {} // [2026-10-15 unread-instant]
-      // [2026-10-18 read-id] id real exibido (nunca 0); sem msgs ainda → fica deferido.
-      const _mid = _newestShownMsgIdRef.current?.() || 0;
-      if (_mid) { try { api.chatRead?.(conversationId, Math.max(_mid, Number(id) || 0)).catch(() => {}); } catch {} }
-      else deferredReadRef.current.all = true;
+      try { api.chatRead?.(conversationId, 0).catch(() => {}); } catch {}
     }
     if (id) markReadUpTo(id);
   }, [conversationId, markReadUpTo]);
@@ -24937,8 +24906,10 @@ function ChatConversationInner() {
     try {
       const r = await api.chatLeaveGroup(conversationId);
       if (r.success) {
-        setShowGroupInfo(false);
-        router.back();
+        if (!_ciPushGo('group', null, true)) { // [chat-info-push] info empurrada: sai info + conversa
+          setShowGroupInfo(false);
+          router.back();
+        }
       } else {
         safeAlert(t('common.error') || 'Erro', r?.message || t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo');
       }
@@ -24964,7 +24935,7 @@ function ChatConversationInner() {
       if (leave) {
         try {
           const lr = await api.chatLeaveGroup(conversationId);
-          if (lr?.success) { setShowGroupInfo(false); safeAlert(t('w12e.groupReported')); try { router.back(); } catch {} return; }
+          if (lr?.success) { safeAlert(t('w12e.groupReported')); if (!_ciPushGo('group', null, true)) { setShowGroupInfo(false); try { router.back(); } catch {} } return; }
         } catch {}
         safeAlert(t('common.error') || 'Erro', t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo');
         return;
@@ -25020,7 +24991,19 @@ function ChatConversationInner() {
   // present over a presented one). iOS: close the sheet, open after the
   // dismiss animation. Elsewhere: `keepOpen` stacks the picker over the sheet
   // (later JSX sibling renders on top), so the user lands back in the sheet.
+  // [2026-10-18 chat-info-push] info EMPURRADA → sai a rota (pop nativo) e a
+  // ação roda quando a conversa voltou à janela (services/chatInfoRoute).
+  const _ciPushGo = (kind, fn, back) => {
+    try {
+      const cr = require('../services/chatInfoRoute');
+      const k = cr.chatInfoKey(kind, conversationId);
+      if (!cr.isInfoOpen(k) && !back) return false;
+      if (kind === 'group') setShowGroupInfo(false); else setShowContactInfo(false);
+      return cr.closeInfo(k, { after: fn, back: !!back });
+    } catch { return false; }
+  };
   const groupInfoGo = (fn, keepOpen = false) => {
+    if (_ciPushGo('group', fn)) return;
     if (Platform.OS === 'ios') {
       setShowGroupInfo(false);
       setTimeout(() => { try { fn(); } catch {} }, 350);
@@ -25030,6 +25013,7 @@ function ChatConversationInner() {
     try { fn(); } catch {}
   };
   const contactInfoGo = (fn) => {
+    if (_ciPushGo('contact', fn)) return;
     setShowContactInfo(false);
     if (Platform.OS === 'ios') setTimeout(() => { try { fn(); } catch {} }, 350);
     else { try { fn(); } catch {} }
@@ -25277,6 +25261,63 @@ function ChatConversationInner() {
     fallback: members,
   });
   const _ciTr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  // ── [2026-10-18 chat-info-push] Dados do contato/grupo como ROTA EMPURRADA
+  // (app/chat-info/[id].js): swipe-back nativo, pilha de verdade. Esta tela
+  // segue dona dos descritores/handlers e publica a cada render enquanto aberta
+  // (services/chatInfoRoute) → a rota não busca nada (sem piscar). Fallback =
+  // <Modal> de antes: kill switch globalThis.__chatyy_chatinfo_push = false,
+  // binário com ChatyyChatInfo api < 4, ou falha nativa (_ciOff).
+  let _ciPush = false;
+  try { _ciPush = _ciOn && _ciOwnsHeader && require('../services/chatInfoRoute').chatInfoPushEnabled(); } catch { _ciPush = false; }
+  const _ciPushKind = conversationType === 'group' ? 'group' : (conversationType === 'direct' ? 'contact' : '');
+  const _ciPushWant = !!_ciPush && !!_ciPushKind && (_ciPushKind === 'group' ? !!showGroupInfo : !!showContactInfo);
+  const _ciPushProps = () => (_ciPushKind === 'group'
+    ? {
+      ...buildGroupChatInfo(),
+      bottomInset: insets.bottom + 16,
+      onFailure: _ciOff,
+      overlay: (
+        <GroupInfoEditor
+          visible={!!groupEditor}
+          mode={groupEditor === 'name' ? 'name' : 'description'}
+          initial={groupEditor === 'name' ? (conversationName || '') : (conversationDescription || '')}
+          onClose={() => setGroupEditor(null)}
+          onSave={(v) => _ciSaveGroupField(groupEditor === 'name' ? 'name' : 'description', v)}
+          t={t}
+        />
+      ),
+    }
+    : { ...buildContactChatInfo(), bottomInset: insets.bottom + 16, onFailure: _ciOff });
+  useEffect(() => {
+    if (!_ciPushKind || !conversationId) return;
+    let cr = null;
+    try { cr = require('../services/chatInfoRoute'); } catch { return; }
+    const k = cr.chatInfoKey(_ciPushKind, conversationId);
+    if (_ciPushWant && !cr.isInfoOpen(k)) {
+      let props = null;
+      try { props = _ciPushProps(); } catch { props = null; }
+      if (!props) return;
+      cr.openInfo(k, { props, onDismiss: () => { if (_ciPushKind === 'group') setShowGroupInfo(false); else setShowContactInfo(false); } });
+      try { Keyboard.dismiss(); } catch {}
+      try { router.push({ pathname: '/chat-info/[id]', params: { id: k } }); } catch { cr.closeInfo(k); }
+    } else if (!_ciPushWant && cr.isInfoOpen(k)) {
+      cr.closeInfo(k);
+    }
+  }, [_ciPushWant, _ciPushKind, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!_ciPushWant) return;
+    try {
+      const cr = require('../services/chatInfoRoute');
+      const k = cr.chatInfoKey(_ciPushKind, conversationId);
+      if (cr.isInfoOpen(k)) cr.publishInfo(k, _ciPushProps());
+    } catch {}
+  });
+  useEffect(() => () => {
+    try {
+      const cr = require('../services/chatInfoRoute');
+      if (_ciPushKind) { const k = cr.chatInfoKey(_ciPushKind, conversationId); if (cr.isInfoOpen(k)) cr.closeInfo(k); }
+    } catch {}
+  }, [_ciPushKind, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
   const _ciPic = (ref, name, email) => {
     const pic = { i: initialsOf(name, email), g: gradientIndex(name || email || '') };
     if (ref && ref.uri) {
@@ -25474,7 +25515,7 @@ function ChatConversationInner() {
       { text: _ciTr('chatInfo.viewMember', 'Ver perfil'), onPress: openProfile },
       { text: m.role === 'admin' ? _ciTr('chatConv.demote', 'Remover admin') : _ciTr('chatInfo.makeAdmin', 'Tornar admin do grupo'), onPress: () => handleToggleAdmin(m.email, m.role) },
     ];
-    if (m.role === 'admin') buttons.push({ text: _ciTr('chatConv.editPermissions', 'Editar permissões'), onPress: () => onNativeMemberAction(String(m.email), 'perms') });
+    if (m.role === 'admin') buttons.push({ text: _ciTr('chatConv.editPermissions', 'Editar permissões'), onPress: () => groupInfoGo(() => onNativeMemberAction(String(m.email), 'perms')) }); // [chat-info-push] folha de permissões = Modal da conversa → info sai antes
     buttons.push({ text: _ciTr('chatInfo.removeMember', 'Remover do grupo'), style: 'destructive', onPress: () => handleRemoveMember(m.email, name) });
     buttons.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel' });
     try { require('../services/alerts').safeAlert(name, String(m.email || ''), buttons); } catch {}
@@ -25602,8 +25643,10 @@ function ChatConversationInner() {
           const ok = await confirm({ title: _ciTr('chatInfo.deleteGroup', 'Apagar grupo'), message: _ciTr('chatInfo.deleteGroupConfirm', 'Apagar este grupo e as mensagens deste aparelho?'), confirmLabel: _ciTr('common.delete', 'Apagar'), destructive: true });
           if (!ok) return;
           try { await require('../services/chatCache').removeConversationFromCache?.(conversationId); } catch {}
-          setShowGroupInfo(false);
-          try { router.back(); } catch {}
+          if (!_ciPushGo('group', null, true)) {
+            setShowGroupInfo(false);
+            try { router.back(); } catch {}
+          }
         },
       });
     } else {
@@ -38298,7 +38341,7 @@ function ChatConversationInner() {
           onClose={() => setShowSummarizeModal(false)}
           onMarkRead={() => {
             try {
-              const lastId = _newestShownMsgIdRef.current?.() || 0; // [2026-10-18 read-id] maior id real (último pode ser tmp_)
+              const lastId = messages.length ? messages[messages.length - 1].id : 0;
               if (lastId) api.chatRead?.(conversationId, lastId).catch(() => {});
             } catch {}
             firstUnreadIdRef.current = null;
@@ -39555,10 +39598,7 @@ function ChatConversationInner() {
               })() && (
                 (() => {
                   const createdAt = selectedMsg?.created_at;
-                  // [2026-10-18 server-clock] relógio do SERVIDOR (offset do WS), não o do aparelho.
-                  let _nowSrv = Date.now();
-                  try { _nowSrv = require('../services/websocket').default?.serverNow?.() || _nowSrv; } catch {}
-                  const canEdit = createdAt ? (_nowSrv - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
+                  const canEdit = createdAt ? (Date.now() - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
                   return canEdit ? (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={ctxS.ctxSecondaryItem}
@@ -40533,7 +40573,7 @@ function ChatConversationInner() {
           grupos em comum, "Mais", e ações destrutivas com texto vermelho.
           Toda linha delega aos MESMOS handlers/modais já existentes. */}
       {conversationType === 'direct' && (
-      <LazyMount when={showContactInfo}>{(_lmV) => (<Modal
+      <LazyMount when={showContactInfo && !(_ciPush && _ciPushKind === 'contact')}>{(_lmV) => (<Modal
         visible={_lmV}
         transparent
         animationType="slide"
@@ -41303,7 +41343,7 @@ function ChatConversationInner() {
         </NativeSheetKeyboardView>
       </NativeSheetModal>)}</LazyMount>
       {/* Group Info Modal */}
-      <LazyMount when={showGroupInfo}>{(_lmV) => (<Modal
+      <LazyMount when={showGroupInfo && !(_ciPush && _ciPushKind === 'group')}>{(_lmV) => (<Modal
         visible={_lmV}
         transparent
         animationType="slide"
@@ -43193,7 +43233,7 @@ function ChatConversationInner() {
           onJumpToMessage={(id) => { try { safeScrollToMsg({ id }); } catch {} }}
           onMarkRead={() => {
             try {
-              const lastId = _newestShownMsgIdRef.current?.() || 0; // [2026-10-18 read-id] maior id real (último pode ser tmp_)
+              const lastId = messages.length ? messages[messages.length - 1].id : 0;
               if (lastId) api.chatRead?.(conversationId, lastId).catch(() => {});
             } catch {}
             firstUnreadIdRef.current = null;
