@@ -358,14 +358,52 @@ function _rcLivePeerFloor(c, meLc, old) {
     if (!lm || lm.read_at || !_lmIsMine(lm, meLc)) return c;
     const lmId = Number(lm.id) || 0;
     if (!(lmId > 0)) return c;
-    const wm = require('../services/peerReadLive').getPeerReadLiveMax(meLc, c.id);
-    if (!(wm >= lmId)) return c;
+    const PRL = require('../services/peerReadLive');
+    const wm = PRL.getPeerReadLiveMax(meLc, c.id);
     const olm = old && old.last_message && typeof old.last_message === 'object' ? old.last_message : null;
-    const same = !!(olm && olm.read_at && String(olm.id) === String(lm.id)); // estável entre refreshes
     const nowIso = new Date().toISOString();
-    const rAt = same ? olm.read_at : nowIso;
-    return { ...c, last_message: { ...lm, read_at: rAt, delivered_at: lm.delivered_at || (same && olm.delivered_at) || rAt, _rcLiveAt: (same && olm._rcLiveAt) || Date.now() } };
+    if (wm >= lmId) {
+      const same = !!(olm && olm.read_at && String(olm.id) === String(lm.id)); // estável entre refreshes
+      const rAt = same ? olm.read_at : nowIso;
+      return { ...c, last_message: { ...lm, read_at: rAt, delivered_at: lm.delivered_at || (same && olm.delivered_at) || rAt, _rcLiveAt: (same && olm._rcLiveAt) || Date.now() } };
+    }
+    // [2026-10-18 lista-entregue] piso de ENTREGA (recibo que chegou antes da linha).
+    if (lm.delivered_at || typeof PRL.getPeerDeliveredLiveMax !== 'function') return c;
+    const dm = PRL.getPeerDeliveredLiveMax(meLc, c.id);
+    if (!(dm >= lmId)) return c;
+    const sameD = !!(olm && olm.delivered_at && String(olm.id) === String(lm.id));
+    return { ...c, last_message: { ...lm, delivered_at: sameD ? olm.delivered_at : nowIso, _rcLiveAt: (sameD && olm._rcLiveAt) || Date.now() } };
   } catch { return c; }
+}
+// [2026-10-18 lista-entregue] A prévia nova é a MESMA msg da atual (mesmo id real
+// ou mesmo client id) → recibos nunca rebaixam (enviado < entregue < lido): o eco
+// atrasado do servidor / re-eco local com id real (mídia) vinha com delivered_at
+// null e apagava o ✓✓ que o chat_delivered já tinha pintado. Depois aplica o piso
+// ao vivo (recibo que chegou ANTES da linha). Só 1:1 no piso; a herança vale p/ todos.
+function _rcKeepReceipts(c, oldRow, meLc) {
+  if (!c) return c;
+  let out = c;
+  try {
+    const lm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+    const olm = oldRow && oldRow.last_message && typeof oldRow.last_message === 'object' ? oldRow.last_message : null;
+    if (lm && olm && olm !== lm) {
+      const sameId = lm.id != null && olm.id != null && String(lm.id) === String(olm.id);
+      const sameCmi = !!(lm.client_message_id && olm.client_message_id && String(lm.client_message_id) === String(olm.client_message_id));
+      if ((sameId || sameCmi) && ((olm.delivered_at && !lm.delivered_at) || (olm.read_at && !lm.read_at) || (olm.all_read && !lm.all_read))) {
+        const n = { ...lm };
+        if (olm.delivered_at && !n.delivered_at) n.delivered_at = olm.delivered_at;
+        if (olm.read_at && !n.read_at) n.read_at = olm.read_at;
+        if (olm.all_read && !n.all_read) n.all_read = true;
+        if (Array.isArray(olm._dlv_by) && !Array.isArray(n._dlv_by)) n._dlv_by = olm._dlv_by;
+        if (Array.isArray(olm._rd_by) && !Array.isArray(n._rd_by)) n._rd_by = olm._rd_by;
+        if (olm._rcLiveAt && !n._rcLiveAt) n._rcLiveAt = olm._rcLiveAt;
+        if (!_lmIsRealId(n.id) && _lmIsRealId(olm.id)) n.id = olm.id;
+        delete n._pending; delete n._failed;
+        out = { ...c, last_message: n };
+      }
+    }
+  } catch {}
+  return _rcLivePeerFloor(out, meLc, oldRow);
 }
 function _mergeServerConvRow(old, c, meLc) {
   return _rcLivePeerFloor(_mergeServerConvRowBase(old, c, meLc), meLc, old);
@@ -5273,7 +5311,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                     if (!lm || String(c.id) !== _cidS || !(lm._pending || lm._failed) || String(lm.client_message_id || '') !== _cmiS) return c;
                     hit = true;
                     const _realId = (_recvId != null && Number(_recvId) > 0) ? _recvId : lm.id;
-                    return {
+                    const _fx = {
                       ...c,
                       last_message: {
                         ...lm,
@@ -5284,6 +5322,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                         read_at: lm.read_at || data.read_at || null,
                       },
                     };
+                    return _rcLivePeerFloor(_fx, String(user?.email || '').toLowerCase(), c); // [2026-10-18 lista-entregue]
                   });
                   return hit ? out : rows;
                 };
@@ -5455,6 +5494,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 last_message_at: data.created_at || new Date().toISOString(),
                 unread_count: (isSelf || senderLc === meLc || (() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })()) ? 0 : ((nextArch[ai].unread_count || 0) + 1), // [2026-10-14 lista-eco-envio] enviar = ler
               };
+              nextArch[ai] = _rcKeepReceipts(nextArch[ai], prevArch[ai], meLc); // [2026-10-18 lista-entregue]
               return nextArch;
             }
             unarchivedConv = { ...prevArch[ai], archived: 0 };
@@ -5496,7 +5536,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               };
               const pinned = prev.filter(c => !!c.pinned);
               const unpinned = prev.filter(c => !c.pinned);
-              nextConvsForCache = [...pinned, promoted, ...unpinned];
+              nextConvsForCache = [...pinned, _rcKeepReceipts(promoted, unarchivedConv, meLc), ...unpinned]; // [2026-10-18 lista-entregue]
               return nextConvsForCache;
             }
             if (idx === -1) {
@@ -5536,7 +5576,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 muted: 0,
                 pinned: 0,
               };
-              return [placeholder, ...prev];
+              return [_rcLivePeerFloor(placeholder, meLc, null), ...prev]; // [2026-10-18 lista-entregue]
             }
             // [2026-10-15 unread-mono] Evento ATRASADO (replay do transporte/sync/push) de
             // msg de outra pessoa que eu já li aqui (id ≤ guarda de leitura) não sobe o
@@ -5550,7 +5590,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               }
             }
             // Move updated conversation to top with spring animation
-            const updated = {
+            let updated = {
               ...prev[idx],
               last_message: {
                 ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
@@ -5581,6 +5621,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               // do chat_mark_read) não trazer "não lida" de volta por alguns segundos.
               unread_count: isSelf ? 0 : ((() => { const a = activeConvId(); const open = a && String(a) === String(data.conversation_id); if (open) { try { _noteSelfRead(data.conversation_id, { last_message: { id: data.id ?? data.message_id } }); } catch {} } else { try { require('../services/unreadBadge').noteIncomingUnread(data.conversation_id); } catch {} } return open; })() ? 0 : ((prev[idx].unread_count || 0) + 1)),
             };
+            // [2026-10-18 lista-entregue] mesma msg → recibos não rebaixam + piso ao vivo
+            // (chat_delivered que chegou antes do eco do servidor: GIF/mídia da fila nativa).
+            updated = _rcKeepReceipts(updated, prev[idx], String(user?.email || '').toLowerCase());
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
             const unpinned = prev.filter((c, i) => i !== idx && !c.pinned);
@@ -5863,7 +5906,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             }
             hit = true;
             if (fail) return { ...c, last_message: { ...lm, _pending: undefined, _failed: true } };
-            return { ...c, last_message: { ...lm, id: sid != null ? sid : lm.id, _pending: undefined, _failed: undefined } };
+            // [2026-10-18 lista-entregue] id real agora → piso de entrega/leitura ao vivo
+            // (o recibo pode ter chegado antes do ACK); nunca apaga delivered/read já pintados.
+            return _rcLivePeerFloor({ ...c, last_message: { ...lm, id: sid != null ? sid : lm.id, _pending: undefined, _failed: undefined } }, String(user?.email || '').toLowerCase(), c);
           });
           return hit ? out : rows;
         };

@@ -85,3 +85,64 @@ export function ingestReadEvent(me, data) {
     notePeerReadLive(me, conv, peer, id);
   } catch {}
 }
+
+// [2026-10-18 lista-entregue] Watermark de ENTREGA ao vivo do peer (mesma regra
+// peer-only). Bug founder (conv 934, 07:22Z): o GIF vai pela fila nativa, sem eco
+// local na lista; o chat_delivered (+1,3 s) chegou ANTES do eco do servidor
+// (_publishServerRow, depois da resposta HTTP via edge) → o handler da lista viu a
+// prévia anterior já ✓✓ (no-op) e o eco seguinte entrou com delivered_at null →
+// "✓ Você: GIF" preso com a bolha ✓✓. A lista aplica este piso sempre que troca a
+// última msg. Entrega é monotônica (nunca volta), por isso o TTL é mais longo.
+const DLV_TTL_MS = 600000;
+const _d = new Map(); // `${me}|${conv}` → Map(peerLc → { id, at })
+
+export function notePeerDeliveredLive(me, convId, peer, msgId) {
+  const meLc = String(me || '').trim().toLowerCase();
+  const p = String(peer || '').trim().toLowerCase();
+  const n = Number(msgId);
+  if (!meLc || !p || p === meLc || convId == null || convId === '' || !Number.isFinite(n) || n <= 0) return false;
+  const k = _k(meLc, convId);
+  let per = _d.get(k);
+  if (!per) {
+    per = new Map();
+    _d.set(k, per);
+    if (_d.size > MAX_CONVS) { const k0 = _d.keys().next().value; _d.delete(k0); }
+  }
+  const cur = per.get(p);
+  if (cur && cur.id >= n) { cur.at = Date.now(); return false; }
+  per.set(p, { id: n, at: Date.now() });
+  return true;
+}
+
+/** Maior id ENTREGUE (ou lido — ler implica entregar) por QUALQUER peer. -1 = nenhum. */
+export function getPeerDeliveredLiveMax(me, convId, maxAgeMs = DLV_TTL_MS) {
+  let max = getPeerReadLiveMax(me, convId);
+  const per = _d.get(_k(me, convId));
+  if (per) {
+    const now = Date.now();
+    for (const v of per.values()) if (v && (now - v.at) < maxAgeMs && v.id > max) max = v.id;
+  }
+  return max;
+}
+
+/**
+ * Frame de chat_delivered (PHP: {conversation_id, message_id, message_ids, email})
+ * ou message_delivered (hub: {conversation_id, message_ids, email|delivered_to}).
+ * email = QUEM recebeu; o meu próprio ack (msgs que EU recebi) é ignorado.
+ */
+export function ingestDeliveredEvent(me, data) {
+  try {
+    if (!data || typeof data !== 'object' || data._local) return;
+    const d = data.data && typeof data.data === 'object' && data.conversation_id == null ? data.data : data;
+    const conv = d.conversation_id ?? d.conversationId;
+    if (conv == null || conv === '') return;
+    const peer = d.email || (typeof d.delivered_to === 'string' ? d.delivered_to : '');
+    if (!peer || typeof peer !== 'string') return;
+    let id = Number(d.message_id) || 0;
+    if (Array.isArray(d.message_ids)) {
+      for (const x of d.message_ids) { const v = Number(x); if (Number.isFinite(v) && v > id) id = v; }
+    }
+    if (!id) return;
+    notePeerDeliveredLive(me, conv, peer, id);
+  } catch {}
+}

@@ -20785,6 +20785,22 @@ function ChatConversationInner() {
       // (backoff / worker) → sem relay antecipado: o par veria o GIF ANTES dela.
       // O worker envia em ordem (seq) e o fan-out do servidor entrega.
       if (!_richConvBusyNow()) mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
+      // [2026-10-18 lista-entregue] GIF não avisava a LISTA (texto/figurinha/mídia
+      // avisam): a prévia só mudava no eco do servidor, que podia chegar DEPOIS do
+      // chat_delivered → "✓ Você: GIF" preso com a bolha ✓✓. Agora entra com
+      // relógio na hora e o ACK (outbox/api, por este client id) leva ao ✓/✓✓.
+      mailWs._emit?.('chat_local_outbound', {
+        conversation_id: conversationId,
+        id: tempId,
+        client_message_id: msgId,
+        sender_email: currentEmail,
+        sender_name: user?.name || currentEmail,
+        content: bodyContent,
+        ...(fileUrlArg ? { file_url: fileUrlArg } : {}),
+        type: 'gif',
+        created_at: optimisticMsg.created_at,
+        _local: true,
+      });
     } catch {}
 
     // [2026-10-07 send-media] Native: durable outbox (GIF, then the caption as

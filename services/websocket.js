@@ -3277,6 +3277,9 @@ class MailWebSocket {
     // [2026-10-17 visto-lista-conversa] Leitura do peer vira estado GLOBAL (não só
     // de quem estiver escutando agora) → a conversa aberta depois herda o piso.
     if (event === 'chat_read' || event === 'message_read') { try { require('./peerReadLive').ingestReadEvent(this.email, data); } catch {} }
+    // [2026-10-18 lista-entregue] idem p/ ENTREGA: a lista aplica o piso quando a
+    // última msg chega DEPOIS do recibo (eco do servidor atrasado / GIF da fila nativa).
+    else if (event === 'chat_delivered' || event === 'message_delivered') { try { require('./peerReadLive').ingestDeliveredEvent(this.email, data); } catch {} }
     const cbs = this.listeners.get(event);
     if (cbs) cbs.forEach(cb => { try { cb(data); } catch {} });
   }
