@@ -290,7 +290,7 @@ export function disableNativeThreadListForConv(cid, reason, ttlMs) {
   if (cid == null || cid === '') { _beacon('disabled', 'conv=? ' + why); return; }
   const k = String(cid);
   if (_convOffEntry(k)) return;
-  const ttl = Number(ttlMs) > 0 ? Number(ttlMs) : (/^stale:/.test(why) ? CONV_OFF_SHORT_MS : CONV_OFF_LONG_MS);
+  const ttl = Number(ttlMs) > 0 ? Number(ttlMs) : ((/^stale:/.test(why) || why === 'ready-timeout') ? CONV_OFF_SHORT_MS : CONV_OFF_LONG_MS) /* [2026-10-18] ready-timeout = TTL curto */;
   if (_convOff.size >= CONV_OFF_MAX) { const first = _convOff.keys().next().value; _convOff.delete(first); }
   _convOff.set(k, { until: Date.now() + ttl, reason: why });
   _beacon('disabled', `conv ttl=${Math.round(ttl / 1000)}s ${why}`);

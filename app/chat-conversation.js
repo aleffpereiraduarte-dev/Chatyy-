@@ -4847,7 +4847,9 @@ function describeReplyTarget(rt, ref, t) {
     case 'sticker':
     case 'lottie_sticker': {
       const src = type === 'sticker' ? (fileUrl || (isUrl(content) ? content : '')) : '';
-      return { Icon: IconStickyNote, label: tr('chat.sticker', 'Figurinha'), lines: 1, thumb: src ? { kind: 'sticker', uris: [_rtMediaUri(src)] } : null };
+      // [2026-10-18 reply-sticker] com miniatura → só a figurinha (sem escrever "Figurinha").
+      if (src) return { Icon: null, label: '', lines: 1, thumb: { kind: 'sticker', uris: [_rtMediaUri(src)] } };
+      return { Icon: IconStickyNote, label: tr('chat.sticker', 'Figurinha'), lines: 1, thumb: null };
     }
     case 'location': {
       const j = _rtJSON(m.content) || {};
