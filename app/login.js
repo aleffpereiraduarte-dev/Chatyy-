@@ -348,7 +348,7 @@ export default function LoginScreen() {
   // [2026-10-07 login-ux] 'smart' = single identifier field (phone / e-mail /
   // @usuário). 'phone' now only hosts the OTP step, 'email' only the password
   // step — both are reached FROM 'smart'. Desktop still opens on QR.
-  const [loginMode, setLoginMode] = useState(isDesktop ? 'qr' : 'smart');
+  const [loginMode, setLoginMode] = useState('smart'); // [2026-10-18] web abre em telefone/e-mail; QR é a 2ª aba
 
   // Telegram-style intro carousel — ONLY shown on the very first visit
   // per device. Once user dismisses (or completes), persist a flag so
@@ -2753,7 +2753,7 @@ export default function LoginScreen() {
               }]}>
                 {isDesktop && renderHero(true)}
 
-                {/* Desktop: QR (pair with your phone) | Telefone ou e-mail */}
+                {/* Desktop: Telefone ou e-mail | QR (pair with your phone) */}
                 {isDesktop && (
                   <View style={{
                     flexDirection: 'row',
@@ -2761,8 +2761,8 @@ export default function LoginScreen() {
                     borderRadius: 14, padding: 4, marginBottom: 24, gap: 4,
                   }}>
                     {[
-                      { key: 'qr', label: t('login.tabQr'), Icon: IconGlobe },
                       { key: 'smart', label: t('login.tabPhoneEmail'), Icon: IconPhone },
+                      { key: 'qr', label: t('login.tabQr'), Icon: IconGlobe },
                     ].map(({ key, label, Icon }) => {
                       const active = key === 'qr' ? !smartTabActive : smartTabActive;
                       return (
