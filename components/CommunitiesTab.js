@@ -418,7 +418,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         initialNumToRender={10}
         windowSize={7}
         contentContainerStyle={communities.length === 0 ? { flexGrow: 1 } : { paddingBottom: 80 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[ACCENT]} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[(colors?.primary || ACCENT)]} />}
         ListEmptyComponent={failed ? (
           <ScreenEmptyState
             kind="search"

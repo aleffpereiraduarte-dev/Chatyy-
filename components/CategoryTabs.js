@@ -11,25 +11,19 @@ import { PressScale } from '../constants/motion';
 // neutral palette and read dated. Each category still reads distinctly via its
 // SVG icon; the active fill is the single brand accent, Gmail/WhatsApp-style.
 const CATEGORIES = [
-  { key: 'all', i18nKey: 'category.all', icon: IconMail, color: '#111111' },
-  { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen, color: '#111111' },
+  { key: 'all', i18nKey: 'category.all', icon: IconMail },
+  { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen },
   // "Importantes" — driven by the AI importance classifier (level === 'high')
   // OR a flagged message. Sits second so users see prioritized work first.
-  { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled, color: '#111111' },
-  { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#111111' },
-  { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#111111' },
-  { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag, color: '#111111' },
-  { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#111111' },
+  { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled },
+  { key: 'primary', i18nKey: 'category.primary', icon: IconInbox },
+  { key: 'social', i18nKey: 'category.social', icon: IconUsers },
+  { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag },
+  { key: 'updates', i18nKey: 'category.updates', icon: IconBell },
 ];
 
-// Backend-supplied bundles (Gmail-style grouping) — also mono now.
-const BUNDLE_COLORS = {
-  compras: '#111111',
-  viagens: '#111111',
-  financas: '#111111',
-  foruns: '#111111',
-  notificacoes: '#111111',
-};
+// [2026-10-18 dark-fix] Cor do chip ativo vem do tema (colors.primary +
+// onPrimary): o #111111/#fff fixo sumia no fundo preto do modo escuro.
 function defaultBundleIcon() { return IconTag; }
 
 export default function CategoryTabs({ activeCategory = 'all', onCategoryChange, counts = {}, bundles = [] }) {
@@ -47,11 +41,13 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
       key: b.id,
       label: b.label || b.id,
       icon: defaultBundleIcon(),
-      color: BUNDLE_COLORS[b.id] || '#111111',
       isBundle: true,
       bundleCount: b.count || 0,
     }));
   const merged = [...CATEGORIES, ...extraBundles];
+  const activeColor = colors.primary || colors.text;
+  const activeInk = colors.onPrimary || colors.textOnPrimary || colors.background || '#ffffff';
+  const activeInkLight = /^#?[c-f]/i.test(String(activeInk));
 
   return (
     <ScrollView
@@ -64,7 +60,6 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
         const isActive = activeCategory === cat.key;
         const count = counts[cat.key] != null ? counts[cat.key] : (cat.isBundle ? cat.bundleCount : undefined);
         const Icon = cat.icon;
-        const activeColor = cat.color;
         const labelText = cat.i18nKey ? t(cat.i18nKey) : (cat.label || cat.key);
         return (
           // [2026-10-16 motion] chip tátil: mola de toque (PressScale.chip) +
@@ -97,13 +92,13 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
           >
             <Icon
               size={15}
-              color={isActive ? '#fff' : colors.textTertiary}
+              color={isActive ? activeInk : colors.textTertiary}
               style={{ marginRight: 6 }}
             />
             <Text
               style={[
                 s.tabText,
-                { color: isActive ? '#fff' : colors.textSecondary },
+                { color: isActive ? activeInk : colors.textSecondary },
                 isActive && s.tabTextActive,
               ]}
             >
@@ -112,11 +107,11 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
             {count > 0 && (
               <View style={[
                 s.badge,
-                { backgroundColor: isActive ? 'rgba(255,255,255,0.28)' : (colors.textTertiary + '22') },
+                { backgroundColor: isActive ? (activeInkLight ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.12)') : (colors.textTertiary + '22') },
               ]}>
                 <Text style={[
                   s.badgeText,
-                  { color: isActive ? '#fff' : colors.textSecondary },
+                  { color: isActive ? activeInk : colors.textSecondary },
                 ]}>
                   {count > 99 ? '99+' : count}
                 </Text>

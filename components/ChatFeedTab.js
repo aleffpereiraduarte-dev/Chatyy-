@@ -276,9 +276,9 @@ function EmptyFeedIllustration({ isDark }) {
       <Path d="M28 50 L38 42 L45 48 L55 38 L72 50" stroke={isDark ? '#48484a' : '#9ca3af'} strokeWidth="1.5" fill="none" strokeLinejoin="round" />
       <Rect x="28" y="60" width="30" height="3" rx="1.5" fill={isDark ? '#2c2c2e' : '#e5e7eb'} />
       <Rect x="28" y="67" width="20" height="3" rx="1.5" fill={isDark ? '#2c2c2e' : '#e5e7eb'} />
-      <Circle cx="70" cy="65" r="4" stroke={ACCENT} strokeWidth="1.5" fill="none" />
-      <Path d="M68 65 L72 65" stroke={ACCENT} strokeWidth="1.5" strokeLinecap="round" />
-      <Path d="M70 63 L70 67" stroke={ACCENT} strokeWidth="1.5" strokeLinecap="round" />
+      <Circle cx="70" cy="65" r="4" stroke={(isDark ? '#F5F5F7' : ACCENT)} strokeWidth="1.5" fill="none" />
+      <Path d="M68 65 L72 65" stroke={(isDark ? '#F5F5F7' : ACCENT)} strokeWidth="1.5" strokeLinecap="round" />
+      <Path d="M70 63 L70 67" stroke={(isDark ? '#F5F5F7' : ACCENT)} strokeWidth="1.5" strokeLinecap="round" />
     </Svg>
   );
 }
@@ -2280,7 +2280,7 @@ const styles = StyleSheet.create({
   // Back to posts pill (reels mode)
   backToPostsPill: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 56 : androidTopInset(18),
+    top: 0, // [2026-10-18 safe-area] real = safeTopPill inline (insets.top)
     left: 14,
     backgroundColor: 'rgba(0,0,0,0.4)',
     paddingHorizontal: 14,

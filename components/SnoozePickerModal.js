@@ -110,7 +110,7 @@ export default function SnoozePickerModal({ visible, onClose, onSnooze }) {
                     }}
                   />
                 ) : (
-                  <Text style={{ color: colors.textTertiary, marginBottom: 12 }}>Disponivel apenas na web</Text>
+                  <Text style={{ color: colors.textTertiary, marginBottom: 12 }}>{t('snooze.webOnly', 'Disponível apenas na web')}</Text>
                 )}
                 <TouchableOpacity
                   style={[s.applyBtn, { backgroundColor: colors.primary }, !customDate && { opacity: 0.5 }]}

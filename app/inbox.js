@@ -84,16 +84,16 @@ const HEADER_FOLDER_KEYS = {
 };
 
 const SIDE_PANEL_ROUTES = {
-  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#111111' },
-  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#111111' },
-  '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#111111' },
-  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#111111' },
-  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#111111' },
-  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#111111' },
-  '/one': { key: 'one', icon: IconZap, label: 'Bia', color: '#111111' },
-  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#111111' },
-  '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#111111' },
-  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#111111' },
+  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages' },
+  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar' },
+  '/drive': { key: 'drive', icon: IconFolder, label: 'sidebar.chatyyCloud' },
+  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings' },
+  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents' },
+  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts' },
+  '/one': { key: 'one', icon: IconZap, label: 'Bia' },
+  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title' },
+  '/backup': { key: 'backup', icon: IconArchive, label: 'sidebar.backup' },
+  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes' },
 };
 
 // Wrap the inner screen in an ErrorBoundary so that any crash inside

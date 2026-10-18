@@ -10,6 +10,7 @@ import {
   Platform,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguageOptional } from '../context/LanguageContext';
 import { IconCheck, IconX, IconCalendar, IconCake } from './Icons';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 
@@ -27,12 +28,24 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 export default function SmartDateInput({
   value = '',
   onChange,
-  label = 'Data de nascimento',
-  placeholder = 'DD/MM/AAAA',
+  label,
+  placeholder,
   minAge = 6,
   maxAge = 13,
 }) {
   const { colors, isDark } = useTheme();
+  // [2026-10-18 i18n] textos eram PT fixo; agora via t() com fallback PT.
+  const _lang = useLanguageOptional();
+  const tr = useCallback((k, fb, p) => {
+    let v = _lang?.t ? _lang.t(k, p) : null;
+    if (typeof v !== 'string' || !v || v === k) {
+      v = fb;
+      if (p) Object.keys(p).forEach((pk) => { v = v.replace(new RegExp(`\\{${pk}\\}`, 'g'), String(p[pk])); });
+    }
+    return v;
+  }, [_lang]);
+  if (label == null) label = tr('smartDate.label', 'Data de nascimento');
+  if (placeholder == null) placeholder = tr('smartDate.placeholder', 'DD/MM/AAAA');
   const [focused, setFocused] = useState(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;
   // ── Auto-format logic (simple and reliable) ─────────────────────────
@@ -122,21 +135,21 @@ export default function SmartDateInput({
   const ageText = useMemo(() => {
     if (!ageInfo) return null;
     const { years, months } = ageInfo;
-    const yStr = years === 1 ? '1 ano' : `${years} anos`;
-    const mStr = months === 1 ? '1 mês' : `${months} meses`;
+    const yStr = years === 1 ? tr('smartDate.oneYear', '1 ano') : tr('smartDate.years', '{n} anos', { n: years });
+    const mStr = months === 1 ? tr('smartDate.oneMonth', '1 mês') : tr('smartDate.months', '{n} meses', { n: months });
     if (months === 0) return yStr;
-    return `${yStr} e ${mStr}`;
-  }, [ageInfo]);
+    return tr('smartDate.yearsAndMonths', '{years} e {months}', { years: yStr, months: mStr });
+  }, [ageInfo, tr]);
 
   // ── Validation message ────────────────────────────────────────────
   const validationMsg = useMemo(() => {
     if (!isComplete) return null;
-    if (!parsed) return 'Data inválida';
+    if (!parsed) return tr('smartDate.invalid', 'Data inválida');
     if (!ageInfo) return null;
-    if (ageInfo.years < minAge) return `Idade mínima: ${minAge} anos`;
-    if (ageInfo.years > maxAge) return `Idade máxima: ${maxAge} anos`;
+    if (ageInfo.years < minAge) return tr('smartDate.minAge', 'Idade mínima: {n} anos', { n: minAge });
+    if (ageInfo.years > maxAge) return tr('smartDate.maxAge', 'Idade máxima: {n} anos', { n: maxAge });
     return null;
-  }, [isComplete, parsed, ageInfo, minAge, maxAge]);
+  }, [isComplete, parsed, ageInfo, minAge, maxAge, tr]);
 
   // ── Border color ──────────────────────────────────────────────────
   const borderColor = isValid

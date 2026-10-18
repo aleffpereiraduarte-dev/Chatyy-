@@ -142,7 +142,7 @@ export default function LikersSheet({
           {header}
           {loading && (
             <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-              <ActivityIndicator color={ACCENT} />
+              <ActivityIndicator color={(colors?.primary || ACCENT)} />
             </View>
           )}
           {!!err && !loading && (

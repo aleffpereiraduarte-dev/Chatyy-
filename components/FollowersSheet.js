@@ -243,7 +243,7 @@ export default function FollowersSheet({
           {/* Body */}
           {activeLoading && (
             <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-              <ActivityIndicator color={ACCENT} />
+              <ActivityIndicator color={(colors?.primary || ACCENT)} />
             </View>
           )}
           {activeEmpty && (
@@ -265,7 +265,7 @@ export default function FollowersSheet({
             onEndReachedThreshold={0.4}
             ListFooterComponent={loadingMore[tab] ? (
               <View style={{ paddingVertical: 16, alignItems: 'center' }}>
-                <ActivityIndicator size="small" color={ACCENT} />
+                <ActivityIndicator size="small" color={(colors?.primary || ACCENT)} />
               </View>
             ) : null}
           /></DragScroll>

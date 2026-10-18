@@ -60,7 +60,7 @@ export default function BiaSettings() {
       if (tone.trim()) await aiMemorySet('tone', tone.trim());
       if (signature.trim()) await aiMemorySet('signature', signature.trim());
       try { settingsCache.patch('bia_memory', { ...(tone.trim() ? { tone: tone.trim() } : {}), ...(signature.trim() ? { signature: signature.trim() } : {}) }); } catch {}
-      showToast(t('bia.saved') || 'Preferências salvas ✓');
+      showToast(t('bia.saved') || 'Preferências salvas');
     } catch {
       showToast(t('bia.saveError') || 'Não consegui salvar agora');
     }

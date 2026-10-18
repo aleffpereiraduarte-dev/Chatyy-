@@ -147,7 +147,7 @@ export default function MeetingRecapScreen() {
 
   const statusBadge = (status) => {
     const map = {
-      active: { bg: ACCENT + '20', color: ACCENT, label: t('meetingRecap.statusActive') },
+      active: { bg: ACCENT + '20', color: (colors?.primary || ACCENT), label: t('meetingRecap.statusActive') },
       scheduled: { bg: colors.primary + '20', color: colors.primary, label: t('meetingRecap.statusScheduled') },
       ended: { bg: colors.textTertiary + '20', color: colors.textSecondary, label: t('meetingRecap.statusEnded') },
       cancelled: { bg: colors.error + '20', color: colors.error, label: t('meetingRecap.statusCancelled') },
@@ -227,7 +227,7 @@ export default function MeetingRecapScreen() {
           </View>
           <View style={[styles.infoRow, { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '40' }]}>
             <View style={[styles.infoIconWrap, { backgroundColor: ACCENT + '15' }]}>
-              <IconClock size={15} color={ACCENT} />
+              <IconClock size={15} color={(colors?.primary || ACCENT)} />
             </View>
             <Text style={[styles.infoText, { color: colors.text }]}>
               {formatDate(meeting.scheduled_at || meeting.created_at, t('_locale'))} {t('meetingRecap.at')} {formatTime(meeting.scheduled_at || meeting.created_at, t('_locale'))}
@@ -252,7 +252,7 @@ export default function MeetingRecapScreen() {
             <View style={{ alignItems: 'center', paddingVertical: Spacing.lg }}>
               {generatingSummary ? (
                 <>
-                  <ActivityIndicator size="small" color={ACCENT} />
+                  <ActivityIndicator size="small" color={(colors?.primary || ACCENT)} />
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, marginTop: Spacing.sm }}>{t('meetingRecap.generatingSummary')}</Text>
                 </>
               ) : (
@@ -274,7 +274,7 @@ export default function MeetingRecapScreen() {
               {t('meetingRecap.attendanceTitle', { count: attendance.length, s: attendance.length !== 1 ? 's' : '' })}
             </Text>
             <View style={[styles.countBadge, { backgroundColor: ACCENT + '20' }]}>
-              <Text style={[styles.countBadgeText, { color: ACCENT }]}>{attendance.length}</Text>
+              <Text style={[styles.countBadgeText, { color: (colors?.primary || ACCENT) }]}>{attendance.length}</Text>
             </View>
           </View>
           {attendance.map((a, i) => (
@@ -292,7 +292,7 @@ export default function MeetingRecapScreen() {
                 </Text>
               </View>
               <View style={[styles.roleBadge, { backgroundColor: a.role === 'host' ? ACCENT + '18' : colors.textTertiary + '15' }]}>
-                <Text style={[styles.roleBadgeText, { color: a.role === 'host' ? ACCENT : colors.textSecondary }]}>
+                <Text style={[styles.roleBadgeText, { color: a.role === 'host' ? (colors?.primary || ACCENT) : colors.textSecondary }]}>
                   {a.role === 'host' ? t('meetingRecap.host') : t('meetingRecap.participant')}
                 </Text>
               </View>
@@ -308,8 +308,8 @@ export default function MeetingRecapScreen() {
           )}
           {attendance.length > 0 && (
             <TouchableOpacity style={[styles.outlineBtn, { borderColor: ACCENT + '40', marginTop: Spacing.lg }]} onPress={handleDownloadCSV} activeOpacity={0.7}>
-              <IconDownload size={16} color={ACCENT} />
-              <Text style={[styles.outlineBtnText, { color: ACCENT }]}>{t('meetingRecap.downloadCSV')}</Text>
+              <IconDownload size={16} color={(colors?.primary || ACCENT)} />
+              <Text style={[styles.outlineBtnText, { color: (colors?.primary || ACCENT) }]}>{t('meetingRecap.downloadCSV')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -355,7 +355,7 @@ export default function MeetingRecapScreen() {
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
               <View style={[styles.badge, { backgroundColor: recording.status === 'completed' ? ACCENT + '20' : colors.warning + '20' }]}>
-                <Text style={[styles.badgeText, { color: recording.status === 'completed' ? ACCENT : colors.warning }]}>
+                <Text style={[styles.badgeText, { color: recording.status === 'completed' ? (colors?.primary || ACCENT) : colors.warning }]}>
                   {recording.status === 'completed' ? t('meetingRecap.recordingReady') : t('meetingRecap.recordingProcessing')}
                 </Text>
               </View>
@@ -368,8 +368,8 @@ export default function MeetingRecapScreen() {
                 if (Platform.OS === 'web') window.open(recording.file_path, '_blank');
                 else router.push(recording.file_path);
               }} activeOpacity={0.7}>
-                <IconDownload size={16} color={ACCENT} />
-                <Text style={[styles.outlineBtnText, { color: ACCENT }]}>{t('meetingRecap.downloadRecording')}</Text>
+                <IconDownload size={16} color={(colors?.primary || ACCENT)} />
+                <Text style={[styles.outlineBtnText, { color: (colors?.primary || ACCENT) }]}>{t('meetingRecap.downloadRecording')}</Text>
               </TouchableOpacity>
             )}
           </View>

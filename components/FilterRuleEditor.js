@@ -409,10 +409,12 @@ export default function FilterRuleEditor({ visible, onClose }) {
                   style={[s.saveBtn, { backgroundColor: colors.surfaceVariant, flex: 1, marginTop: 0, borderWidth: 1, borderColor: colors.border }]}
                 >
                   {testing ? <ActivityIndicator size="small" color={colors.primary} /> : (
-                    <Text style={[s.saveBtnText, { color: colors.text }]}>
-                      {testResult === 'match' ? '✓ ' : testResult === 'no-match' ? '✗ ' : ''}
-                      {t('filters.testRun') || 'Testar'}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      {testResult === 'match' ? <IconCheck size={16} color={colors.text} /> : testResult === 'no-match' ? <IconX size={16} color={colors.text} /> : null}
+                      <Text style={[s.saveBtnText, { color: colors.text }]}>
+                        {t('filters.testRun') || 'Testar'}
+                      </Text>
+                    </View>
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity style={[s.saveBtn, { backgroundColor: colors.primary, flex: 2, marginTop: 0 }]} onPress={handleSave}>

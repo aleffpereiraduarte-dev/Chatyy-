@@ -395,8 +395,14 @@ export function LanguageProvider({ children }) {
     // idioma remoto ainda baixando nunca mostra chave crua.
     // [2026-10-15 boot-i18n] lookupKey (i18n/index.js): mesma cadeia, mas o
     // outro idioma core só é avaliado depois do 1º paint (allowDeferredFallback).
+    // [2026-10-18 t-fallback] 2º argumento: string = fallback (t('k','Texto'));
+    // objeto = params de interpolação ({name}); params.defaultValue também vale
+    // como fallback. Sem fallback → chave crua (comportamento antigo).
+    let fallback;
+    if (typeof params === 'string') { fallback = params; params = undefined; }
+    else if (params && typeof params === 'object' && typeof params.defaultValue === 'string') fallback = params.defaultValue;
     let str = lookupKey(language, key);
-    if (str == null) str = key;
+    if (str == null) str = fallback != null ? fallback : key;
     // For arrays (like time.days), return as-is
     if (Array.isArray(str)) return str;
     // Interpolate {param} placeholders.

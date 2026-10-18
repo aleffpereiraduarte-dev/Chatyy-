@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, TextInput, Alert, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import {
   IconArrowLeft, IconEye, IconShield, IconCamera, IconVideo, IconMusic, IconPaperclip,
@@ -74,6 +75,7 @@ function ParentalChildChatScreenInner() {
   const params = useLocalSearchParams();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] header encostava no notch/status bar
   // expo-router pode retornar params como string[] em deep links — sempre
   // extrai o primeiro pra evitar passar array pra API/comparações.
   const childEmail = Array.isArray(params.child_email) ? params.child_email[0] : params.child_email;
@@ -182,7 +184,7 @@ function ParentalChildChatScreenInner() {
             : { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderBottomLeftRadius: 4 },
           flagged && { borderWidth: 2, borderColor: '#ef4444' },
         ]}>
-          {!fromChild && <Text style={[s.msgSender, { color: ACCENT }]}>{senderName}</Text>}
+          {!fromChild && <Text style={[s.msgSender, { color: (colors?.primary || ACCENT) }]}>{senderName}</Text>}
           {contentIcon ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               {contentIcon}
@@ -218,7 +220,7 @@ function ParentalChildChatScreenInner() {
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* Header — avatar + name + risk chip */}
-      <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+      <View style={[s.header, { paddingTop: (insets.top || 0) + 10, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
@@ -273,7 +275,7 @@ function ParentalChildChatScreenInner() {
                 s.filterChip,
                 {
                   backgroundColor: active ? ACCENT + '22' : (isDark ? '#1c1c1e' : '#f3f4f6'),
-                  borderColor: active ? ACCENT : 'transparent',
+                  borderColor: active ? (colors?.primary || ACCENT) : 'transparent',
                 },
               ]}
               accessibilityRole="button"
@@ -281,7 +283,7 @@ function ParentalChildChatScreenInner() {
             >
               <Text style={{
                 fontSize: 12, fontWeight: '700',
-                color: active ? ACCENT : (isDark ? '#cbd5e1' : '#475569'),
+                color: active ? (colors?.primary || ACCENT) : (isDark ? '#cbd5e1' : '#475569'),
               }}>
                 {t(f.labelKey) || f.fallback}
               </Text>
@@ -301,7 +303,7 @@ function ParentalChildChatScreenInner() {
 
       {/* Messages */}
       {loading ? (
-        <ActivityIndicator size="large" color={ACCENT} style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color={(colors?.primary || ACCENT)} style={{ marginTop: 40 }} />
       ) : (
         <FlatList
           data={filtered}

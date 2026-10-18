@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import { IconArrowLeft, IconPlus, IconTrash, IconDownload, IconMail, IconCheck, IconChevronLeft, IconChevronRight } from '../components/Icons';
@@ -1286,6 +1287,7 @@ export default function NotebookEditorScreen() {
   const params = useLocalSearchParams();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] era 54 fixo no iOS
 
   const notebookId = parseInt(params.notebook_id) || 0;
   const notebookName = params.notebook_name ? decodeURIComponent(params.notebook_name) : t('notes.notebook');
@@ -1568,6 +1570,7 @@ export default function NotebookEditorScreen() {
     <View style={[styles.container, { backgroundColor: isDark ? '#1a1a1a' : '#f5f0e8' }]}>
       {/* Header - Noteshelf style with notebook color */}
       <View style={[styles.header, {
+        ...(Platform.OS === 'ios' ? { paddingTop: insets.top + 8 } : null),
         backgroundColor: notebookColor,
         ...(Platform.OS === 'web' ? {
           background: `linear-gradient(135deg, ${notebookColor}, ${darkenColor(notebookColor, 20)})`,
@@ -1712,7 +1715,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: Platform.OS === 'ios' ? 54 : Platform.OS === 'web' ? 12 : 10,
+    paddingTop: Platform.OS === 'web' ? 12 : 10, // iOS: insets.top + 8 inline
     paddingBottom: 10,
     paddingHorizontal: 8,
     zIndex: 10,

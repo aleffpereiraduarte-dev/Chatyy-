@@ -1770,9 +1770,9 @@ export default function PlansScreen() {
               gap: 8, marginTop: 18, paddingHorizontal: 8,
             }}>
               {[
-                { icon: '✓', label: t('plans.heroPill1') },
-                { icon: '✓', label: t('plans.heroPill2') },
-                { icon: '✓', label: t('plans.heroPill3') },
+                { label: t('plans.heroPill1') },
+                { label: t('plans.heroPill2') },
+                { label: t('plans.heroPill3') },
               ].map((p, i) => (
                 <View key={i} style={{
                   flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -1781,7 +1781,7 @@ export default function PlansScreen() {
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   borderWidth: 1, borderColor: 'rgba(17, 17, 17, 0.18)',
                 }}>
-                  {p.icon === '✓' ? <IconCheck size={11} color="#F1F3F5" /> : <Text style={{ color: '#F1F3F5', fontSize: 11, fontWeight: '900' }}>{p.icon}</Text>}
+                  <IconCheck size={11} color="#F1F3F5" />
                   <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11.5, fontWeight: '600' }}>{p.label}</Text>
                 </View>
               ))}

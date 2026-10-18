@@ -10,6 +10,7 @@
  */
 
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
@@ -464,6 +465,7 @@ function EmptyState({ colors, t }) {
 export default function NotificationsHub({
   visible, onClose, colors, isDark, t, router,
 }) {
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] topo real (era 60 fixo no iOS)
   // [WAVE 100] Lazy init from live store → MMKV → []. Modal opens with
   // notifications already rendered if we've fetched recently.
   const [itemsRaw, setItems] = useState(() => {
@@ -734,7 +736,7 @@ export default function NotificationsHub({
         <Pressable
           style={{
             position: 'absolute',
-            top: Platform.OS === 'ios' ? 60 : androidTopInset(30),
+            top: Platform.OS === 'ios' ? insets.top + 12 : androidTopInset(30),
             right: 12,
             left: Platform.OS === 'web' ? undefined : 12,
             width: Platform.OS === 'web' ? 440 : undefined,

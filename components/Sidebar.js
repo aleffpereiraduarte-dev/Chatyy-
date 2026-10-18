@@ -359,16 +359,16 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   if (collapsed) {
     const quickItems = [
       { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
-      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#111111', badge: chatUnread },
-      { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#111111' },
-      { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#111111' },
-      { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#111111' },
-      { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#111111' },
-      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#111111' },
-      { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#111111' },
-      { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#111111' },
-      { label: 'Bia', icon: IconZap, route: '/one', color: '#111111' },
-      { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map', color: '#111111' },
+      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
+      { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings' },
+      { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
+      { label: t('sidebar.cloud', 'Cloud'), icon: IconFolder, route: '/drive' },
+      { label: t('photos.title'), icon: IconCamera, route: '/photos' },
+      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts' },
+      { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos' },
+      { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes' },
+      { label: 'Bia', icon: IconZap, route: '/one' },
+      { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map' },
     ];
     return (
       <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.collapsedContent}>
@@ -445,35 +445,35 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         // visíveis sempre, duplicando o que o Apps drawer (chat tab) já oferece.
         // Reclamação do usuário: "abre todas as funções de novo no menu lateral".
         const primary = [
-          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#111111' },
-          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#111111', badge: notifsUnread },
+          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__' },
+          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', badge: notifsUnread },
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
         const secondary = [
-          { label: 'Bia',                  icon: IconZap,        route: '/one',       color: '#111111' },
-          { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#111111' },
-          { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#111111' },
+          { label: 'Bia',                  icon: IconZap,        route: '/one' },
+          { label: t('photos.title'),      icon: IconCamera,     route: '/photos' },
+          { label: t('sidebar.chatyyCloud', 'Chatyy Cloud'),         icon: IconFolder,     route: '/drive' },
           { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
           { label: t('sidebar.calendar'),  icon: IconCalendar,   route: '/calendar' },
           { label: t('sidebar.contacts'),  icon: IconUser,       route: '/contacts' },
-          { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos', color: '#111111' },
-          { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes',      color: '#111111' },
+          { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos' },
+          { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes' },
           // Saved Messages — Telegram-style "chat with yourself" with
           // dedicated screen (tabs, search, schedule reminders). Floppy-
           // disk feel uses IconBookmark since the codebase already ships it.
-          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#111111' },
+          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages' },
           // Lives salvas — replays of broadcasts the user saved (CF Stream
           // VOD). WAVE 99 (2026-05-21): user reported "salvo em lives mas
           // onde tá essa opção?" — the only discoverable entry points were
           // the Profile "Lives" tab and the end-card CTA after a broadcast.
           // Surfacing it in the sidebar More section gives a permanent
           // navigation target so the host can find their replays anytime.
-          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved', color: '#111111' },
+          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved' },
           // Snap-Map / Friends-on-a-Map — Snapchat-style "where are my
           // friends" screen. Pin-icon is overloaded for "live location"
           // semantics already; the green color (matches the live-share
           // pulse) reads as "live now" at a glance.
-          { label: t('snapmap.sidebar') || 'Mapa de Amigos', icon: IconMapPin, route: '/snap-map', color: '#111111' },
+          { label: t('snapmap.sidebar') || 'Mapa de Amigos', icon: IconMapPin, route: '/snap-map' },
         ];
         const list = showMoreQuick ? [...primary, ...secondary] : primary;
         return (

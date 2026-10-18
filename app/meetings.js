@@ -208,8 +208,22 @@ function AvatarStack({ meeting, colors }) {
   );
 }
 
+function _isLightHex(c) {
+  const h = String(c || '').replace('#', '');
+  const f = h.length === 3 ? h.split('').map((x) => x + x).join('') : h.slice(0, 6);
+  const n = parseInt(f, 16);
+  if (!Number.isFinite(n) || f.length !== 6) return true;
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, bl = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * bl) > 150;
+}
+
 function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
   const { language } = useLanguage();
+  // [2026-10-18 dark-fix] Texto sobre colors.primary usa onPrimary (no escuro o
+  // primary é BRANCO → texto #fff sumia). Tons translúcidos seguem a tinta.
+  const fg = colors.onPrimary || colors.textOnPrimary || '#ffffff';
+  const fgLight = _isLightHex(fg);
+  const fgSoft = (a) => (fgLight ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`);
   return (
     <PressableScale
       haptic="light"
@@ -222,24 +236,24 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
       <View style={[styles.heroOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.04)' }]} />
       <View style={styles.heroContent}>
         <View style={styles.heroTopRow}>
-          <View style={styles.heroLiveBadge}>
-            <LivePulseDot color="#fff" size={7} />
-            <Text style={styles.heroLiveBadgeText}>{t('meetings.live').toUpperCase()}</Text>
+          <View style={[styles.heroLiveBadge, { backgroundColor: fgSoft(fgLight ? 0.22 : 0.10) }]}>
+            <LivePulseDot color={fg} size={7} />
+            <Text style={[styles.heroLiveBadgeText, { color: fg }]}>{t('meetings.live').toUpperCase()}</Text>
           </View>
-          <Text style={styles.heroParticipants} numberOfLines={1}>
+          <Text style={[styles.heroParticipants, { color: fgSoft(0.92) }]} numberOfLines={1}>
             {meeting.participant_count > 0 ? tl(t, language, 'meetings.inRoom', { pt: '{n} na sala', en: '{n} in room', es: '{n} en la sala' }, { n: meeting.participant_count }) : ''}
           </Text>
         </View>
-        <Text style={styles.heroTitle} numberOfLines={2}>
+        <Text style={[styles.heroTitle, { color: fg }]} numberOfLines={2}>
           {meeting.title || t('meetings.untitled')}
         </Text>
         {meeting.host_name ? (
-          <Text style={styles.heroHost} numberOfLines={1}>{t('meetings.organizer')}: {meeting.host_name}</Text>
+          <Text style={[styles.heroHost, { color: fgSoft(0.85) }]} numberOfLines={1}>{t('meetings.organizer')}: {meeting.host_name}</Text>
         ) : null}
         <PressableScale
           haptic="medium"
           onPress={onJoin}
-          style={styles.heroJoinBtn}
+          style={[styles.heroJoinBtn, { backgroundColor: fg }]}
           accessibilityRole="button"
         >
           <IconVideo size={18} color={colors.primary} />

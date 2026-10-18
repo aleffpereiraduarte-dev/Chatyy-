@@ -1553,7 +1553,7 @@ function ParentalScreenInner() {
             </View>
             {!summaryLoading && summaryData && !summaryData.error && (
               <TouchableOpacity onPress={shareSummary} style={[s.modalClose, { marginRight: 4 }]} accessibilityLabel={t('parental.share') || 'Compartilhar'} accessibilityRole="button">
-                <IconCopy size={18} color={ACCENT} />
+                <IconCopy size={18} color={(colors?.primary || ACCENT)} />
               </TouchableOpacity>
             )}
             <TouchableOpacity onPress={() => setSummaryModal(false)} style={s.modalClose} accessibilityLabel={t('common.close')} accessibilityRole="button">
@@ -1564,7 +1564,7 @@ function ParentalScreenInner() {
           <ScrollView style={s.modalBody} showsVerticalScrollIndicator={false}>
             {summaryLoading ? (
               <View style={s.summaryLoading}>
-                <ActivityIndicator size="large" color={ACCENT} />
+                <ActivityIndicator size="large" color={(colors?.primary || ACCENT)} />
                 <Text style={[s.summaryLoadingText, { color: colors.textSecondary }]}>{t('parental.loadingSummary')}</Text>
               </View>
             ) : summaryData?.error ? (
@@ -1587,7 +1587,7 @@ function ParentalScreenInner() {
                 {summaryData.summary && (
                   <View style={[s.summarySection, { borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                      <IconSparkles size={14} color={ACCENT} />
+                      <IconSparkles size={14} color={(colors?.primary || ACCENT)} />
                       <Text style={[s.summarySectionTitle, { color: colors.textSecondary, marginBottom: 0 }]}>{t('parental.summary')}</Text>
                     </View>
                     {renderInlineMarkdown(summaryData.summary, [s.summarySectionBody, { color: colors.text }])}
@@ -1646,10 +1646,10 @@ function ParentalScreenInner() {
 
                 {summaryData.recommendations?.length > 0 && (
                   <View style={[s.summarySection, { borderColor: isDark ? '#2c2c2e' : '#e2e8f0' }]}>
-                    <Text style={[s.summarySectionTitle, { color: ACCENT }]}>{t('parental.recommendations')}</Text>
+                    <Text style={[s.summarySectionTitle, { color: (colors?.primary || ACCENT) }]}>{t('parental.recommendations')}</Text>
                     {summaryData.recommendations.map((rec, i) => (
                       <View key={i} style={s.flaggedItem}>
-                        <Text style={{ color: ACCENT }}>-</Text>
+                        <Text style={{ color: (colors?.primary || ACCENT) }}>-</Text>
                         <Text style={[s.flaggedText, { color: colors.text }]}>{rec}</Text>
                       </View>
                     ))}

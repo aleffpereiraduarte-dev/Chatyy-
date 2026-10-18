@@ -6206,6 +6206,7 @@ function MemoriesCarousel({
 // navigate, tap-and-hold to pause, swipe-down or X to close. Pure JS — reuses
 // the same thumbnail URLs the grid already resolves.
 function MemoryViewer({ memory, onClose, getThumbnailUrl, t, colors }) {
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] era 52/64 fixo no iOS
   const photos = Array.isArray(memory?.photos) ? memory.photos : [];
   const [index, setIndex] = React.useState(0);
   const [paused, setPaused] = React.useState(false);
@@ -6275,7 +6276,7 @@ function MemoryViewer({ memory, onClose, getThumbnailUrl, t, colors }) {
         />
 
         {/* Segmented progress bars (one per photo). */}
-        <View style={s.memViewerBars} pointerEvents="none">
+        <View style={[s.memViewerBars, Platform.OS === 'ios' && { top: insets.top + 6 }]} pointerEvents="none">
           {photos.map((_, i) => (
             <View key={`seg-${i}`} style={s.memViewerBarTrack}>
               <Animated.View
@@ -6293,7 +6294,7 @@ function MemoryViewer({ memory, onClose, getThumbnailUrl, t, colors }) {
         </View>
 
         {/* Header: title + subtitle + close. */}
-        <View style={s.memViewerHeader} pointerEvents="box-none">
+        <View style={[s.memViewerHeader, Platform.OS === 'ios' && { top: insets.top + 18 }]} pointerEvents="box-none">
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={s.memViewerTitle} numberOfLines={1}>{memory.title}</Text>
             {!!memory.subtitle && (

@@ -7,6 +7,7 @@ import {
 import { FlashList } from '@shopify/flash-list';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
@@ -39,6 +40,7 @@ export default function SearchScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] topo real (era 50 fixo no iOS)
 
   // [2026-10-14 busca-global] /search?tab=messages abre direto na aba Mensagens.
   const _params = useLocalSearchParams();
@@ -435,6 +437,7 @@ export default function SearchScreen() {
       {/* Header — back chevron + search input. Auto-focuses the input on
           mount so the user can start typing immediately. */}
       <View style={[styles.header, {
+        ...(Platform.OS === 'ios' ? { paddingTop: insets.top + 6 } : null),
         backgroundColor: colors.background,
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       }]}>
@@ -546,7 +549,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    ...(Platform.OS === 'ios' ? { paddingTop: 50 } : {}),
   },
   searchWrap: {
     flex: 1,

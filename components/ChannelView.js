@@ -155,9 +155,9 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
       {/* Author row */}
       <View style={styles.postAuthorRow}>
         <View style={[styles.channelBadge, { backgroundColor: ACCENT + '22' }]}>
-          <IconMegaphone size={12} color={ACCENT} />
+          <IconMegaphone size={12} color={(colors?.primary || ACCENT)} />
         </View>
-        <Text style={[styles.postAuthorName, { color: ACCENT }]} numberOfLines={1}>
+        <Text style={[styles.postAuthorName, { color: (colors?.primary || ACCENT) }]} numberOfLines={1}>
           {item.channel_name || t('channel.channel') || 'Channel'}
         </Text>
         {item.is_pinned ? (
@@ -197,7 +197,7 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
       </Text>
       {needsTruncate && !showAll && (
         <TouchableOpacity onPress={() => setShowAll(true)}>
-          <Text style={{ color: ACCENT, fontSize: 13, marginTop: 4 }}>{t('channel.readMore') || 'Read more'}</Text>
+          <Text style={{ color: (colors?.primary || ACCENT), fontSize: 13, marginTop: 4 }}>{t('channel.readMore') || 'Read more'}</Text>
         </TouchableOpacity>
       )}
 
@@ -221,7 +221,7 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
                     backgroundColor: item.my_reaction === r.emoji
                       ? (isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.1)')
                       : (isDark ? '#1c1c1e' : '#f3f4f6'),
-                    borderColor: item.my_reaction === r.emoji ? ACCENT : 'transparent',
+                    borderColor: item.my_reaction === r.emoji ? (colors?.primary || ACCENT) : 'transparent',
                   },
                 ]}
               >
@@ -574,7 +574,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
           borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
           shadowColor: '#000',
         }]}>
-          <Text style={[styles.aboutLabel, { color: ACCENT }]}>
+          <Text style={[styles.aboutLabel, { color: (colors?.primary || ACCENT) }]}>
             {(t('channel.about') || 'Sobre').toUpperCase()}
           </Text>
           <Text style={[styles.aboutText, { color: colors.text }]}>
@@ -595,13 +595,13 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
       {/* ── Posts ── */}
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={ACCENT} />
+          <ActivityIndicator size="large" color={(colors?.primary || ACCENT)} />
         </View>
       ) : (
         <FlatList
           data={posts}
           keyExtractor={(item) => String(item.id)}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={(colors?.primary || ACCENT)} colors={[(colors?.primary || ACCENT)]} />}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.3}
           contentContainerStyle={posts.length === 0 ? styles.emptyContainer : { paddingBottom: isAdmin ? 80 : 20 }}
@@ -619,7 +619,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
             </View>
           )}
           ListFooterComponent={loadingMore ? (
-            <ActivityIndicator size="small" color={ACCENT} style={{ marginVertical: 16 }} />
+            <ActivityIndicator size="small" color={(colors?.primary || ACCENT)} style={{ marginVertical: 16 }} />
           ) : null}
           renderItem={({ item }) => (
             <PostCard
@@ -649,7 +649,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
             accessibilityRole="button"
           >
             {attaching ? (
-              <ActivityIndicator size="small" color={ACCENT} />
+              <ActivityIndicator size="small" color={(colors?.primary || ACCENT)} />
             ) : (
               <IconPaperclip size={22} color={isDark ? '#8b8b96' : '#6b7280'} />
             )}

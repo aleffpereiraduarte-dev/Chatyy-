@@ -415,7 +415,7 @@ export default function NotificationsFeedScreen() {
       {loading && items.length === 0 ? (
         <NativeInsetView>
         <View style={styles.empty}>
-          <ActivityIndicator size="large" color={ACCENT} />
+          <ActivityIndicator size="large" color={(colors?.primary || ACCENT)} />
         </View>
         </NativeInsetView>
       ) : items.length === 0 ? (
@@ -456,7 +456,7 @@ export default function NotificationsFeedScreen() {
           renderItem={renderItem}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.6}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={(colors?.primary || ACCENT)} />}
           contentContainerStyle={{ paddingVertical: 4 }}
         />
       )}

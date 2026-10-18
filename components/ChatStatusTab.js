@@ -1700,7 +1700,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         const convId = createRes?.data?.conversation_id || createRes?.data?.id;
         if (!convId) throw new Error('No conversation');
         const statusType = currentItem?.type || 'text';
-        const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
+        // [2026-10-18 no-emoji] sem ↩️ no texto: o corpo da mensagem não
+        // aceita SVG (fallback legado; o caminho principal é o card do servidor).
+        const statusLabel = `${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
         // [deep-20260813] Same media_url-vs-legacy-content shape fix as
         // handleForwardToConversation above: current statuses carry media in
         // media_url (content is only the caption), so keying off content sent
@@ -4432,7 +4434,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             backgroundColor: '#000',
           }]}>
             {/* Progress bars */}
-            <View style={styles.progressBarRow}>
+            <View style={[styles.progressBarRow, Platform.OS === 'ios' && { paddingTop: insets.top + 8 }]}>
               {viewerStatuses.map((item, idx) => (
                 <View key={item.id || idx} style={styles.progressBarTrack}>
                   <Animated.View
@@ -5578,7 +5580,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 breathing room; iOS keeps its prior 54pt baseline. */}
             <View style={[
               styles.creatorHeader,
-              { paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54) },
+              { paddingTop: Platform.OS === 'android' ? insets.top + 8 : ((insets.top || 46) + 8) },
             ]}>
               <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); setExceptEmails([]); setExceptPickerVisible(false); setTextAnimation('none'); setCrossPostFeed(false); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
@@ -5665,7 +5667,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 {statusPrivacy === 'all' ? (
                   <IconEye size={18} color="#fff" />
                 ) : statusPrivacy === 'contacts' ? (
-                  <IconEye size={18} color={ACCENT} />
+                  <IconEye size={18} color="#fff" />
                 ) : statusPrivacy === 'close_friends' ? (
                   <IconStarFilled size={16} color="#fff" />
                 ) : (
@@ -6795,7 +6797,7 @@ const styles = StyleSheet.create({
   progressBarRow: {
     flexDirection: 'row',
     paddingHorizontal: 10,
-    paddingTop: Platform.OS === 'ios' ? 54 : ANDROID_TOP_INSET + 10,
+    paddingTop: ANDROID_TOP_INSET + 10, // iOS: insets.top + 8 inline (era 54 fixo)
     gap: 3,
   },
   progressBarTrack: {
@@ -7068,7 +7070,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 54 : ANDROID_TOP_INSET + 12,
+    paddingTop: ANDROID_TOP_INSET + 12, // iOS: insets.top inline (era 54 fixo)
     paddingBottom: 12,
     zIndex: 2,
   },

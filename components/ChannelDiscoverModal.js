@@ -182,7 +182,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
         <View style={[sty.channelIcon, {
           backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)',
         }]}>
-          <IconHashtag size={22} color={ACCENT} />
+          <IconHashtag size={22} color={(colors?.primary || ACCENT)} />
         </View>
         <View style={sty.channelInfo}>
           <Text style={[sty.channelName, { color: colors.text }]} numberOfLines={1}>
@@ -197,7 +197,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
         </View>
         {isMember ? (
           <View style={[sty.joinedBadge, { backgroundColor: ACCENT + '18' }]}>
-            <Text style={[sty.joinedText, { color: ACCENT }]}>{t('channel.joined')}</Text>
+            <Text style={[sty.joinedText, { color: (colors?.primary || ACCENT) }]}>{t('channel.joined')}</Text>
           </View>
         ) : (
           <TouchableOpacity
@@ -254,7 +254,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
         {/* Channel list */}
         {loading ? (
           <View style={sty.loader}>
-            <ActivityIndicator size="large" color={ACCENT} />
+            <ActivityIndicator size="large" color={(colors?.primary || ACCENT)} />
           </View>
         ) : (
           <FlatList

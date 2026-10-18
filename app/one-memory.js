@@ -36,8 +36,8 @@ function EmptyOrb({ isDark }) {
         <Defs>
           <RadialGradient id="memOrb" cx="50%" cy="45%" r="55%">
             <Stop offset="0%" stopColor="#111111" stopOpacity={isDark ? 0.7 : 0.55} />
-            <Stop offset="60%" stopColor={ACCENT} stopOpacity={0.32} />
-            <Stop offset="100%" stopColor={ACCENT} stopOpacity={0} />
+            <Stop offset="60%" stopColor={(isDark ? '#F5F5F7' : ACCENT)} stopOpacity={0.32} />
+            <Stop offset="100%" stopColor={(isDark ? '#F5F5F7' : ACCENT)} stopOpacity={0} />
           </RadialGradient>
         </Defs>
         <SvgCircle cx={48} cy={48} r={44} fill="url(#memOrb)" />
@@ -191,7 +191,7 @@ export default function OneMemoryScreen() {
 
       {loading && memories.length === 0 ? (
         <View style={styles.empty}>
-          <ActivityIndicator size="large" color={ACCENT} />
+          <ActivityIndicator size="large" color={(colors?.primary || ACCENT)} />
         </View>
       ) : memories.length === 0 ? (
         <View style={styles.empty}>
@@ -215,7 +215,7 @@ export default function OneMemoryScreen() {
             data={memories}
             keyExtractor={(item) => item.key}
             renderItem={renderItem}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={ACCENT} />}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={(colors?.primary || ACCENT)} />}
             contentContainerStyle={{ padding: 14, paddingBottom: 110 }}
             ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           />

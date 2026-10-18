@@ -17,6 +17,7 @@
 // The caller arrives here via `router.replace('/voicemail-recorder?...')`
 // from call.js's call_missed / call_declined WS handler.
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Easing, Platform, StatusBar, Vibration,
@@ -35,6 +36,7 @@ export default function VoicemailRecorder() {
   const router = useRouter();
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] era 60 fixo no iOS
   const params = useLocalSearchParams();
   const recipientEmail = String(params.recipient || params.recipient_email || '').trim();
   const recipientName = String(params.name || params.contactName || recipientEmail || '').trim();
@@ -535,7 +537,7 @@ export default function VoicemailRecorder() {
   };
 
   const isDark = colors.background === '#000' || colors.background === '#000000' || (colors._mode === 'dark');
-  const styles = makeStyles(colors);
+  const styles = makeStyles(colors, insets);
 
   const headerLine = reason === 'declined'
     ? (t('voicemail.declinedTitle') || 'Não pôde atender — gravar mensagem de voz?')
@@ -719,9 +721,9 @@ export default function VoicemailRecorder() {
   );
 }
 
-function makeStyles(colors) {
+function makeStyles(colors, insets) {
   return StyleSheet.create({
-    root: { flex: 1, backgroundColor: colors.background || '#0b0b12', paddingTop: Platform.OS === 'ios' ? 60 : androidTopInset(40) },
+    root: { flex: 1, backgroundColor: colors.background || '#0b0b12', paddingTop: Platform.OS === 'ios' ? (insets?.top || 0) + 12 : androidTopInset(40) },
     header: { paddingHorizontal: 24, alignItems: 'center' },
     headerTitle: { color: colors.text || '#fff', fontSize: 20, fontWeight: '700', textAlign: 'center' },
     headerSubtitle: { color: colors.textSecondary || 'rgba(255,255,255,0.7)', fontSize: 15, marginTop: 6, textAlign: 'center' },

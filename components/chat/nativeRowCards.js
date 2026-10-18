@@ -712,7 +712,7 @@ function buildPlaylist(m, row, ctx, C) {
   for (const s of songs.slice(0, 4)) need = Math.max(need, 20 + 22 + 18 + _estW(s && s.title, 12));
   const w = _clampW(210, 270, need);
   const kids = [hstack([
-    vstack([text('🎵', { fs: 15 })], { w: 30, h: 30, r: 8, bg: 'rgba(17, 17, 17,0.14)', al: 'c', jc: 'c', m: [0, 8, 0, 0] }),
+    vstack([icon(IconMusic, { s: 16, c: txt })], { w: 30, h: 30, r: 8, bg: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)', al: 'c', jc: 'c', m: [0, 8, 0, 0] }), // [2026-10-18 no-emoji] era 🎵
     vstack([text(String(pl.playlist_name || ''), { fw: 700, fs: 14, c: txt, ml: 1 }), text(subLine, { fs: 10, c: sub })], { fl: 1 }),
   ], { m: [0, 0, 6, 0], al: 'c' })];
   songs.slice(0, 4).forEach((song, idx) => {

@@ -311,11 +311,11 @@ export default function ChatNotificationSettingsSheet({
               <TouchableOpacity onPress={() => { stopPreview(); setShowRingtones(false); }} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }} accessibilityRole="button" accessibilityLabel={t?.('common.back') || 'Voltar'} style={{ marginRight: 6 }}>
                 <IconChevronLeft size={22} color={colors?.text} />
               </TouchableOpacity>
-            ) : <IconBell size={20} color={ACCENT} />}
+            ) : <IconBell size={20} color={(colors?.primary || ACCENT)} />}
             <Text style={{ flex: 1, marginLeft: 10, fontSize: 17, fontWeight: '700', color: colors?.text }} numberOfLines={1}>
               {showRingtones ? (t?.('chatConv.ringtone') || 'Toque personalizado') : (t?.('notifications.title') || 'Notificações')}
             </Text>
-            {saving ? <ActivityIndicator size="small" color={ACCENT} style={{ marginRight: 8 }} /> : null}
+            {saving ? <ActivityIndicator size="small" color={(colors?.primary || ACCENT)} style={{ marginRight: 8 }} /> : null}
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }} accessibilityRole="button" accessibilityLabel={t?.('common.close') || 'Fechar'}>
               <IconX size={22} color={colors?.textSecondary} />
             </TouchableOpacity>
@@ -330,7 +330,7 @@ export default function ChatNotificationSettingsSheet({
           ) : (<>
             {loading && !settings ? (
               <View style={{ padding: 32, alignItems: 'center' }}>
-                <ActivityIndicator color={ACCENT} />
+                <ActivityIndicator color={(colors?.primary || ACCENT)} />
               </View>
             ) : null}
 
@@ -662,10 +662,10 @@ function CustomVibrationRecorder({ visible, onClose, onSave, initialPattern, col
               height: 140, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
               backgroundColor: recording ? ACCENT + '22' : (isDark ? '#1a1a1f' : '#f3f4f6'),
               borderWidth: recording ? 2 : 1,
-              borderColor: recording ? ACCENT : (colors?.border || '#ddd'),
+              borderColor: recording ? (colors?.primary || ACCENT) : (colors?.border || '#ddd'),
             }}
           >
-            <Text style={{ fontSize: 36, fontWeight: '700', color: recording ? ACCENT : colors?.textSecondary }}>
+            <Text style={{ fontSize: 36, fontWeight: '700', color: recording ? (colors?.primary || ACCENT) : colors?.textSecondary }}>
               {recording ? `${(remaining / 1000).toFixed(1)}s` : `${Math.floor(durations.length / 2)}`}
             </Text>
             <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 4 }}>
@@ -786,7 +786,7 @@ function LedColorRow({ value, onChange, defaultLabel, colors }) {
               alignItems: 'center', justifyContent: 'center',
               backgroundColor: isDefault ? 'transparent' : c.hex,
               borderWidth: active ? 3 : (isDefault ? 1.5 : StyleSheet.hairlineWidth),
-              borderColor: active ? ACCENT : (colors?.border || '#ccc'),
+              borderColor: active ? (colors?.primary || ACCENT) : (colors?.border || '#ccc'),
             }}>
               {active ? (
                 <IconCheck size={16} color={isDefault ? (colors?.text || '#000') : '#fff'} />
@@ -843,7 +843,7 @@ function PickerRowItem({ opt, active, isLast, onPress, colors }) {
       >
         <Text style={{ flex: 1, fontSize: 15, color: colors?.text }}>{opt.label}</Text>
         <Animated.View style={{ opacity: checkFade, transform: [{ scale: checkFade }] }}>
-          <IconCheck size={18} color={ACCENT} />
+          <IconCheck size={18} color={(colors?.primary || ACCENT)} />
         </Animated.View>
       </TouchableOpacity>
     </Animated.View>

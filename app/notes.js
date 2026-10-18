@@ -3219,6 +3219,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     >
       {/* Editor Header */}
       <View style={[s.editorHeader, {
+        ...(Platform.OS === 'ios' ? { paddingTop: insets.top + 8 } : null), // [2026-10-18 safe-area]
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
         ...(Platform.OS === 'web' ? {
           backdropFilter: 'blur(12px)',
@@ -3628,6 +3629,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
       {sidebarPeekOpen ? (
         <Pressable style={s.sidebarPeekOverlay} onPress={() => setSidebarPeekOpen(false)}>
           <Pressable style={[s.sidebarPeekPanel, {
+            ...(Platform.OS === 'ios' ? { paddingTop: insets.top + 12 } : null), // [2026-10-18 safe-area]
             backgroundColor: isDark ? 'rgba(20,20,30,0.96)' : 'rgba(255,255,255,0.98)',
             borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
             ...(Platform.OS === 'web' ? {
@@ -4067,7 +4069,7 @@ const s = StyleSheet.create({
   // Header - frosted glass
   header: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12,
-    paddingTop: Platform.OS === 'ios' ? 54 : Platform.OS === 'web' ? 16 : 12,
+    paddingTop: Platform.OS === 'web' ? 16 : 12, // iOS/Android: insets.top inline
     paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth,
     zIndex: 10,
   },
@@ -4507,7 +4509,7 @@ const s = StyleSheet.create({
   editorHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 8,
-    paddingTop: Platform.OS === 'ios' ? 54 : Platform.OS === 'web' ? 16 : 12,
+    paddingTop: Platform.OS === 'web' ? 16 : 12, // iOS: insets.top + 8 inline
     paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   editorHeaderBtn: { padding: 10, borderRadius: 12 },
@@ -4702,7 +4704,7 @@ const s = StyleSheet.create({
     width: Platform.OS === 'web' && SCREEN_WIDTH > 600 ? 320 : Math.min(300, SCREEN_WIDTH * 0.82),
     height: '100%',
     borderRightWidth: 1,
-    paddingTop: Platform.OS === 'ios' ? 60 : androidTopInset(18),
+    paddingTop: androidTopInset(18), // iOS: insets.top + 12 inline
     paddingHorizontal: 14,
     paddingBottom: 18,
   },

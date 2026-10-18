@@ -1,5 +1,6 @@
 import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Dimensions, Modal, FlatList, TextInput, Switch, AppState, Share } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
@@ -1217,6 +1218,7 @@ function ActiveCallScreen({
   visible, number, contactName, isDark, t, onHangup, callState, duration,
   isMuted, onToggleMute, isSpeaker, onToggleSpeaker, onSendDTMF, onMinimize,
 }) {
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] topo real (era 50 fixo no iOS)
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseRingAnim = useRef(new Animated.Value(0)).current;
   const [showKeypad, setShowKeypad] = useState(false);
@@ -1296,7 +1298,7 @@ function ActiveCallScreen({
 
         {/* Top bar: minimize button (left) + quality indicator (right) */}
         <View style={{
-          position: 'absolute', top: Platform.OS === 'ios' ? 50 : androidTopInset(20), left: 0, right: 0,
+          position: 'absolute', top: Platform.OS === 'ios' ? insets.top + 6 : androidTopInset(20), left: 0, right: 0,
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 18, zIndex: 10,
         }}>

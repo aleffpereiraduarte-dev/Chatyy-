@@ -34,6 +34,9 @@ export default function HashtagScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [count, setCount] = useState(0);
+  // [2026-10-18 no-silent-catch] falha de rede/servidor deixava a grade vazia
+  // ("nenhum post") sem aviso. Agora: estado de erro + Tentar novamente.
+  const [loadError, setLoadError] = useState(false);
   // Wave 15: hashtag follow state. Hydrated from hashtag_followed_list
   // on screen mount. Optimistic toggle on tap, reverts on API failure.
   const [following, setFollowing] = useState(false);
@@ -42,6 +45,7 @@ export default function HashtagScreen() {
   const load = useCallback(async (p) => {
     if (loading || !tag) return;
     setLoading(true);
+    setLoadError(false);
     try {
       const r = await api.feedHashtagPosts(tag, p, 21);
       if (r?.success && r.data) {
@@ -50,8 +54,13 @@ export default function HashtagScreen() {
         setHasMore(!!r.data.has_more);
         setPage(p);
         if (r.data.total_count != null) setCount(r.data.total_count);
+      } else {
+        setLoadError(true);
       }
-    } catch {}
+    } catch (e) {
+      if (__DEV__) console.warn('[hashtag] load failed', e?.message || e);
+      setLoadError(true);
+    }
     setLoading(false);
   }, [tag, loading]);
 
@@ -68,7 +77,11 @@ export default function HashtagScreen() {
         if (!alive) return;
         const tags = (r?.success && r?.data?.tags) ? r.data.tags : [];
         setFollowing(tags.some(row => String(row.tag || '').toLowerCase() === tag.toLowerCase()));
-      } catch {}
+      } catch (e) {
+        // Só hidrata o botão Seguir; sem lista o botão fica em "Seguir" e o
+        // toque continua funcionando (o servidor é idempotente).
+        if (__DEV__) console.warn('[hashtag] followed list failed', e?.message || e);
+      }
     })();
     return () => { alive = false; };
   }, [tag]);
@@ -167,11 +180,27 @@ export default function HashtagScreen() {
         numColumns={COLS}
         renderItem={renderItem}
         onEndReachedThreshold={0.5}
-        onEndReached={() => { if (hasMore && !loading) load(page + 1); }}
-        ListFooterComponent={loading ? <ActivityIndicator color={colors.primary} style={{ paddingVertical: 20 }} /> : null}
-        ListEmptyComponent={!loading ? (
+        onEndReached={() => { if (hasMore && !loading && !loadError) load(page + 1); }}
+        ListFooterComponent={loading ? <ActivityIndicator color={colors.primary} style={{ paddingVertical: 20 }} /> : (loadError && posts.length > 0 ? (
+          <TouchableOpacity
+            onPress={() => load(page + 1)}
+            accessibilityRole="button"
+            style={{ alignSelf: 'center', marginVertical: 16, paddingHorizontal: 18, paddingVertical: 9, borderRadius: 18, borderWidth: 1, borderColor: colors.border }}
+          >
+            <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t('common.retry', 'Tentar novamente')}</Text>
+          </TouchableOpacity>
+        ) : null)}
+        ListEmptyComponent={!loading ? (loadError ? (
+          <ScreenEmptyState
+            kind="feed"
+            compact
+            title={t('hashtag.loadFailed', 'Não foi possível carregar.')}
+            subtitle={t('common.checkConnection', 'Verifique sua conexão e tente novamente.')}
+            cta={{ label: t('common.retry', 'Tentar novamente'), onPress: () => load(1) }}
+          />
+        ) : (
           <ScreenEmptyState kind="feed" compact title={t('feed.noPosts')} />
-        ) : null}
+        )) : null}
         contentContainerStyle={{ paddingTop: 4 }}
         ListHeaderComponent={USE_NATIVE_HEADER ? (
           <Text style={{ color: colors.textSecondary, fontSize: 13, paddingHorizontal: 12, paddingVertical: 8 }}>

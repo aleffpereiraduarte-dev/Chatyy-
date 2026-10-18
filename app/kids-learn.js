@@ -3,6 +3,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, ActivityIndicator, Platform, Linking, Animated, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSend, IconZap, IconHash, IconFileText, IconSparkles, IconBuilding, IconTranslate, IconPalette, IconMusic, IconGlobe, IconBookmark, IconFilm, IconClock, IconAward } from '../components/Icons';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
@@ -85,6 +86,7 @@ function KidsLearnScreenInner() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] era 56 fixo no iOS
   const [activeCategory, setActiveCategory] = useState('math');
   const [question, setQuestion] = useState('');
   const [tutorResponse, setTutorResponse] = useState('');
@@ -120,7 +122,8 @@ function KidsLearnScreenInner() {
       <View style={[s.header,
         Platform.OS === 'web'
           ? { background: 'linear-gradient(135deg, #111111 0%, #111111 40%, #111111 70%, #f43f5e 100%)' }
-          : { backgroundColor: '#111111' }
+          : { backgroundColor: '#111111' },
+        Platform.OS === 'ios' && { paddingTop: insets.top + 10 },
       ]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel={t('common.back')} accessibilityRole="button">
           <IconArrowLeft size={24} color="#fff" />
@@ -260,7 +263,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', padding: 18,
-    paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(18), gap: 10,
+    paddingTop: androidTopInset(18), gap: 10, // iOS: insets.top + 10 inline
   },
   backBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   headerEmoji: { alignItems: 'center', justifyContent: 'center' },

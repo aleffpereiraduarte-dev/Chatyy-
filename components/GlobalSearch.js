@@ -20,6 +20,7 @@
  */
 
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
@@ -232,6 +233,7 @@ function Leading({ item, colors }) {
 export default function GlobalSearch({
   visible, onClose, colors, isDark, t, router,
 }) {
+  const insets = useSafeAreaInsets(); // [2026-10-18 safe-area] topo real (era 60 fixo no iOS)
   const _lang = useLanguageOptional();
   let me = '';
   try { me = String(useAuth()?.user?.email || '').toLowerCase(); } catch { me = ''; }
@@ -696,7 +698,7 @@ export default function GlobalSearch({
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={close}>
         <Pressable
           style={{
-            marginTop: Platform.OS === 'ios' ? 60 : androidTopInset(30),
+            marginTop: Platform.OS === 'ios' ? insets.top + 12 : androidTopInset(30),
             marginHorizontal: 12,
             borderRadius: 16,
             backgroundColor: colors?.background || '#fff',
