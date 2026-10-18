@@ -1,77 +1,90 @@
 /**
- * Expo config plugin — wire up the Chatyy custom ShareExtension UI + Siri
- * suggestions plumbing during prebuild.
+ * Expo config plugin — Chatyy ShareExtension (iOS): NATIVE share UI + Siri
+ * share-sheet suggestions, applied on every `expo prebuild --clean` (ios/ is
+ * gitignored).
  *
- * Background
- * ----------
- * /ios is gitignored in this repo; the iOS folder is generated fresh by
- * `expo prebuild --clean` on every CI build. The default `expo-share-intent`
- * plugin writes a bare ShareViewController.swift that we replaced with a
- * 1700-line WhatsApp-style multi-select UI (Frequent / Recent sections,
- * Status / Feed shortcuts, background uploads, INSendMessageIntent
- * pre-selection). That custom Swift lives at `/native-ios/share-extension/
- * ShareViewController.swift` so it survives in git; this plugin copies it
- * into the prebuild output AFTER expo-share-intent has run, overwriting
- * the default template.
+ * What ships (FINALIZED mod, i.e. after expo-share-intent's XCODEPROJ mod wrote
+ * its template into ios/ShareExtension/):
+ *   ios/ShareExtension/ShareViewController.swift
+ *       = expo-share-intent template, class renamed to
+ *         ChatyyShareIntentFallbackController (+ chatyyLegacyAllowed /
+ *         chatyyStartLegacyFlow hooks) → the OLD flow (copy to App Group, open
+ *         the app at /share-receive), kept as the fallback
+ *       + native-ios/share-extension/ChatyyNativeShare.swift appended
+ *         (`final class ShareViewController: ChatyyShareIntentFallbackController`,
+ *         UIKit picker / preview / caption / background send)
+ *       + suggestion capture (chatyy.share_target, used by the fallback)
+ *   ios/ShareExtension/ShareExtension-Info.plist
+ *       NSExtensionAttributes.IntentsSupported += INSendMessageIntent,
+ *       ChatyyNativeShare = true|false (native code present)
+ *   ios/<MainTarget>/Info.plist  NSUserActivityTypes += INSendMessageIntent
  *
- * Why a config plugin instead of a build-time bash step:
- *   - Runs in the same prebuild step the rest of the project uses, so any
- *     env that's right for prebuild is right for us too.
- *   - Order of plugins in app.json determines execution order — putting
- *     this AFTER `expo-share-intent` guarantees we win the file race.
- *   - The plugin also patches the main app's Info.plist to declare
- *     `INSendMessageIntent` in NSUserActivityTypes (required for iOS to
- *     surface the Share Sheet "Suggested" avatar row).
- *
- * Files written:
- *   ios/ShareExtension/ShareViewController.swift  ← overwritten with custom
- *   ios/<MainTarget>/Info.plist                   ← NSUserActivityTypes
+ * Build gate: CHATYY_NATIVE_SHARE=0 → template only. Runtime gates (App Group,
+ * written by the app): see ChatyyNativeShare.swift header.
  */
-const { withDangerousMod, withInfoPlist, withFinalizedMod } = require('@expo/config-plugins');
+const { withInfoPlist, withFinalizedMod } = require('@expo/config-plugins');
 const fs = require('fs');
 const path = require('path');
 
-const SRC_SWIFT = path.join(
-  __dirname,
-  '..',
-  'native-ios',
-  'share-extension',
-  'ShareViewController.swift'
-);
-const DEST_REL = path.join('ShareExtension', 'ShareViewController.swift');
+// [2026-10-18 native-share] Compartilhar 100% nativo (UIKit, sem abrir o RN):
+// native-ios/share-extension/ChatyyNativeShare.swift é ANEXADO ao
+// ShareViewController.swift do template do expo-share-intent (o target da
+// extensão só compila esse arquivo). O template vira a classe-base
+// ChatyyShareIntentFallbackController = fallback "abre o app em /share-receive".
+// CHATYY_NATIVE_SHARE=0 no prebuild → só o template (comportamento antigo).
+// (O antigo native-ios/share-extension/ShareViewController.swift NUNCA embarcou:
+// o mod XCODEPROJ do expo-share-intent reescrevia o arquivo depois do dangerous
+// mod que o copiava. Este plugin não o usa mais — é só referência histórica.)
+const NATIVE_SRC = path.join(__dirname, '..', 'native-ios', 'share-extension', 'ChatyyNativeShare.swift');
+const NATIVE_MARK = '// [chatyy native share v1]';
+const BASE_CLASS = 'ChatyyShareIntentFallbackController';
 
-const withCustomShareExtensionSwift = (config) =>
-  withDangerousMod(config, [
-    'ios',
-    async (cfg) => {
-      const iosRoot = cfg.modRequest.platformProjectRoot;
-      const dest = path.join(iosRoot, DEST_REL);
-      if (!fs.existsSync(SRC_SWIFT)) {
-        console.warn(
-          `[with-custom-share-extension] source missing: ${SRC_SWIFT} — leaving expo-share-intent default in place`
-        );
-        return cfg;
-      }
-      // The folder is created by expo-share-intent earlier in the
-      // prebuild pipeline. If it's not there yet, our plugin ran out of
-      // order — emit a clear warning instead of silently no-op'ing.
-      if (!fs.existsSync(path.dirname(dest))) {
-        console.warn(
-          `[with-custom-share-extension] ${path.dirname(
-            dest
-          )} missing — expo-share-intent did not run before this plugin. Check plugin order in app.json (expo-share-intent must come first).`
-        );
-        return cfg;
-      }
-      fs.copyFileSync(SRC_SWIFT, dest);
-      console.log(
-        `[with-custom-share-extension] wrote custom Swift (${fs
-          .statSync(dest)
-          .size} bytes) → ${dest}`
-      );
-      return cfg;
-    },
-  ]);
+function nativeShareGateOn() {
+  const v = String(process.env.CHATYY_NATIVE_SHARE == null ? '1' : process.env.CHATYY_NATIVE_SHARE).trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+
+/**
+ * Pure (exported for tests): template VC source → template renamed to the
+ * fallback base class + legacy hooks + the native Swift appended. Returns null
+ * when the template anchors are not found (expo-share-intent changed) → the
+ * caller keeps the template untouched (old behaviour, never a broken build).
+ */
+function composeNativeShareSource(templateSrc, nativeSrc) {
+  if (templateSrc.includes(NATIVE_MARK)) return templateSrc;
+  const classRe = /^class ShareViewController: UIViewController \{[ \t]*$/m;
+  const handleAnchor = 'private func handleViewLoad() {';
+  const classMatches = templateSrc.match(new RegExp(classRe.source, 'gm')) || [];
+  if (classMatches.length !== 1) return null;
+  if (templateSrc.split(handleAnchor).length !== 2) return null;
+  if (!/super\.viewDidLoad\(\)/.test(templateSrc)) return null;
+  let src = templateSrc.replace(classRe, [
+    `class ${BASE_CLASS}: UIViewController {`,
+    '  // [chatyy native share] false = a subclasse nativa assumiu; o fluxo do template não roda.',
+    '  var chatyyLegacyAllowed: Bool = true',
+    '  /// Fallback sob demanda (sem token/snapshot, erro, "Mais opções no Chatyy").',
+    '  func chatyyStartLegacyFlow() {',
+    '    chatyyLegacyAllowed = true',
+    '    view.backgroundColor = .clear',
+    '    view.isOpaque = false',
+    '    handleViewLoad()',
+    '  }',
+  ].join('\n'));
+  src = src.replace(handleAnchor, `${handleAnchor}\n    guard chatyyLegacyAllowed else { return }`);
+  // imports do arquivo nativo sobem para o topo (junto dos do template)
+  const nativeLines = nativeSrc.split('\n');
+  const imports = [];
+  const body = [];
+  for (const line of nativeLines) {
+    const m = /^import\s+([A-Za-z0-9_]+)\s*$/.exec(line);
+    if (m) { imports.push(m[1]); } else { body.push(line); }
+  }
+  const have = new Set();
+  src.replace(/^import\s+([A-Za-z0-9_]+)\s*$/gm, (_, mod) => { have.add(mod); return _; });
+  const add = imports.filter((m) => !have.has(m)).map((m) => `import ${m}`);
+  if (add.length) src = `${add.join('\n')}\n${src}`;
+  return `${src}\n\n${NATIVE_MARK} — appended by plugins/with-custom-share-extension.js\n${body.join('\n')}\n`;
+}
 
 const withMainAppIntentTypes = (config) =>
   withInfoPlist(config, (cfg) => {
@@ -103,10 +116,10 @@ const withMainAppIntentTypes = (config) =>
 // Runs as a FINALIZED mod (after xcodeproj) so it sees the final files.
 const SHARE_EXT_DIR = 'ShareExtension';
 const SHARE_TARGET_MARK = '// [chatyy share-target capture v1]';
-const SHARE_TARGET_EXT = `
+const shareTargetExt = (cls) => `
 
 ${SHARE_TARGET_MARK} — injected by plugins/with-custom-share-extension.js
-extension ShareViewController {
+extension ${cls} {
   func chatyyRecordShareTarget() {
     guard #available(iOS 14.0, *),
           let intent = extensionContext?.intent as? INSendMessageIntent else { return }
@@ -119,12 +132,48 @@ extension ShareViewController {
 }
 `;
 
+/** Pure (exported for tests): inject the suggestion capture into the VC source. */
+function injectShareTargetCapture(src) {
+  if (src.includes(SHARE_TARGET_MARK)) return src;
+  const anchor = 'super.viewDidLoad()';
+  const i = src.indexOf(anchor);
+  if (i < 0) return null;
+  const cls = src.includes(`class ${BASE_CLASS}:`) ? BASE_CLASS : 'ShareViewController';
+  if (cls === 'ShareViewController' && !/class ShareViewController\b/.test(src)) return null;
+  let out = src.slice(0, i + anchor.length) + '\n    chatyyRecordShareTarget()' + src.slice(i + anchor.length);
+  if (!/^import Intents\b/m.test(out)) {
+    out = out.replace(/^import UIKit\b.*$/m, (m) => `${m}\nimport Intents`);
+    if (!/^import Intents\b/m.test(out)) out = `import Intents\n${out}`;
+  }
+  return out + shareTargetExt(cls);
+}
+
 const withShareSuggestionsSupport = (config) =>
   withFinalizedMod(config, [
     'ios',
     async (cfg) => {
       const dir = path.join(cfg.modRequest.platformProjectRoot, SHARE_EXT_DIR);
-      // 1) Info.plist → IntentsSupported
+      const vcPath = path.join(dir, 'ShareViewController.swift');
+      // 1) ShareViewController → native UI (subclass) + fallback base class
+      let nativeOn = false;
+      try {
+        if (nativeShareGateOn() && fs.existsSync(vcPath) && fs.existsSync(NATIVE_SRC)) {
+          const composed = composeNativeShareSource(fs.readFileSync(vcPath, 'utf8'), fs.readFileSync(NATIVE_SRC, 'utf8'));
+          if (composed) {
+            fs.writeFileSync(vcPath, composed);
+            nativeOn = true;
+            console.log(`[with-custom-share-extension] native share UI appended (${composed.length} chars)`);
+          } else {
+            console.warn('[with-custom-share-extension] template anchors not found — native share OFF (template fallback only)');
+          }
+        } else if (!nativeShareGateOn()) {
+          console.log('[with-custom-share-extension] CHATYY_NATIVE_SHARE=0 — template only');
+        }
+      } catch (e) {
+        nativeOn = false;
+        console.warn('[with-custom-share-extension] native share compose failed:', e?.message || e);
+      }
+      // 2) Info.plist → IntentsSupported + ChatyyNativeShare flag
       try {
         const plistPath = path.join(dir, 'ShareExtension-Info.plist');
         if (fs.existsSync(plistPath)) {
@@ -133,38 +182,27 @@ const withShareSuggestionsSupport = (config) =>
           obj.NSExtension = obj.NSExtension || {};
           const attrs = obj.NSExtension.NSExtensionAttributes || {};
           const cur = Array.isArray(attrs.IntentsSupported) ? attrs.IntentsSupported : [];
-          if (!cur.includes('INSendMessageIntent')) {
-            attrs.IntentsSupported = [...cur, 'INSendMessageIntent'];
-            obj.NSExtension.NSExtensionAttributes = attrs;
-            fs.writeFileSync(plistPath, plist.build(obj));
-          }
-          console.log('[with-custom-share-extension] ShareExtension IntentsSupported=[INSendMessageIntent]');
+          if (!cur.includes('INSendMessageIntent')) attrs.IntentsSupported = [...cur, 'INSendMessageIntent'];
+          obj.NSExtension.NSExtensionAttributes = attrs;
+          obj.ChatyyNativeShare = nativeOn;
+          fs.writeFileSync(plistPath, plist.build(obj));
+          console.log(`[with-custom-share-extension] ShareExtension IntentsSupported=[INSendMessageIntent] ChatyyNativeShare=${nativeOn}`);
         } else {
           console.warn(`[with-custom-share-extension] ${plistPath} missing — share suggestions NOT enabled`);
         }
       } catch (e) {
-        console.warn('[with-custom-share-extension] IntentsSupported patch failed:', e?.message || e);
+        console.warn('[with-custom-share-extension] Info.plist patch failed:', e?.message || e);
       }
-      // 2) ShareViewController → capture the tapped suggestion
+      // 3) ShareViewController → capture the tapped suggestion (legacy /share-receive path)
       try {
-        const vcPath = path.join(dir, 'ShareViewController.swift');
         if (fs.existsSync(vcPath)) {
-          let src = fs.readFileSync(vcPath, 'utf8');
-          if (!src.includes(SHARE_TARGET_MARK)) {
-            const anchor = 'super.viewDidLoad()';
-            const i = src.indexOf(anchor);
-            if (i < 0 || !/class ShareViewController\b/.test(src)) {
-              console.warn('[with-custom-share-extension] viewDidLoad anchor not found — share-target capture skipped');
-            } else {
-              src = src.slice(0, i + anchor.length) + '\n    chatyyRecordShareTarget()' + src.slice(i + anchor.length);
-              if (!/^import Intents\b/m.test(src)) {
-                src = src.replace(/^import UIKit\b.*$/m, (m) => `${m}\nimport Intents`);
-                if (!/^import Intents\b/m.test(src)) src = `import Intents\n${src}`;
-              }
-              src += SHARE_TARGET_EXT;
-              fs.writeFileSync(vcPath, src);
-              console.log('[with-custom-share-extension] share-target capture injected');
-            }
+          const src = fs.readFileSync(vcPath, 'utf8');
+          const out = injectShareTargetCapture(src);
+          if (out === null) {
+            console.warn('[with-custom-share-extension] viewDidLoad anchor not found — share-target capture skipped');
+          } else if (out !== src) {
+            fs.writeFileSync(vcPath, out);
+            console.log('[with-custom-share-extension] share-target capture injected');
           }
         }
       } catch (e) {
@@ -176,7 +214,8 @@ const withShareSuggestionsSupport = (config) =>
 
 module.exports = function withCustomShareExtension(config) {
   config = withMainAppIntentTypes(config);
-  config = withCustomShareExtensionSwift(config);
   config = withShareSuggestionsSupport(config);
   return config;
 };
+module.exports.composeNativeShareSource = composeNativeShareSource;
+module.exports.injectShareTargetCapture = injectShareTargetCapture;

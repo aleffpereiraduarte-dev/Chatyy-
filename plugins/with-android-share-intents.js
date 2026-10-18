@@ -33,7 +33,77 @@
  * "Share foto NO ANDROID trava — não aparece o picker do Chatyy
  *  no share sheet do Android".
  */
-const { withAndroidManifest } = require('@expo/config-plugins');
+const { withAndroidManifest, withFinalizedMod, AndroidConfig } = require('@expo/config-plugins');
+const path = require('path');
+
+// [2026-10-18 native-share] Compartilhar NATIVO: os filtros SEND vão para
+// modules/expo-chat-transport … ChatyyShareActivity (picker/prévia/legenda em
+// Kotlin; envio pela fila nativa). A MainActivity perde os filtros SEND (senão o
+// Chatyy aparece 2× na folha), mas continua recebendo o MESMO intent por
+// encaminhamento explícito quando a Activity cai no fallback (kill switch, sem
+// snapshot/credencial, conteúdo não suportado) → /share-receive como antes.
+// CHATYY_NATIVE_SHARE=0 → comportamento antigo (filtros na MainActivity).
+const SHARE_ACTIVITY = 'expo.modules.chatyytransport.ChatyyShareActivity';
+function nativeShareAndroidOn() {
+  const v = String(process.env.CHATYY_NATIVE_SHARE == null ? '1' : process.env.CHATYY_NATIVE_SHARE).trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+const SEND_ACTIONS = new Set(['android.intent.action.SEND', 'android.intent.action.SEND_MULTIPLE']);
+const isSendFilter = (f) => (f.action || []).some((x) => SEND_ACTIONS.has(x.$?.['android:name']));
+
+function shareActivityElement(pkg) {
+  const filters = [];
+  for (const { action, mimeType } of SHARE_FILTERS) {
+    filters.push({
+      action: [{ $: { 'android:name': action } }],
+      category: [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }],
+      data: [{ $: { 'android:mimeType': mimeType } }],
+    });
+  }
+  return {
+    $: {
+      'android:name': SHARE_ACTIVITY,
+      'android:exported': 'true',
+      'android:label': '@string/app_name',
+      // translúcida: no fallback (encaminha p/ o app) não pisca uma tela branca
+      'android:theme': '@android:style/Theme.Translucent.NoTitleBar',
+      'android:taskAffinity': `${pkg}.share`,
+      'android:excludeFromRecents': 'true',
+      'android:launchMode': 'standard',
+      'android:windowSoftInputMode': 'adjustResize|stateHidden',
+      'android:configChanges': 'orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden',
+    },
+    'intent-filter': filters,
+  };
+}
+
+/** Pure (exported for tests): manifest object → native share wiring. */
+function applyNativeShareManifest(manifest, pkg) {
+  const app = manifest.manifest.application?.[0];
+  if (!app || !Array.isArray(app.activity)) return manifest;
+  const main = app.activity.find((a) => a.$?.['android:name'] === '.MainActivity' || a.$?.['android:name'] === `${pkg}.MainActivity`);
+  if (main && Array.isArray(main['intent-filter'])) main['intent-filter'] = main['intent-filter'].filter((f) => !isSendFilter(f));
+  app.activity = app.activity.filter((a) => a.$?.['android:name'] !== SHARE_ACTIVITY);
+  app.activity.push(shareActivityElement(pkg));
+  return manifest;
+}
+
+// Roda DEPOIS de todos os mods (o expo-share-intent também injeta SEND na
+// MainActivity, num mod que executa depois do nosso withAndroidManifest).
+const withNativeShareFinal = (config) =>
+  withFinalizedMod(config, ['android', async (cfg) => {
+    try {
+      const pkg = cfg.android?.package || 'com.onemundo.mail';
+      const file = path.join(cfg.modRequest.platformProjectRoot, 'app', 'src', 'main', 'AndroidManifest.xml');
+      const manifest = await AndroidConfig.Manifest.readAndroidManifestAsync(file);
+      applyNativeShareManifest(manifest, pkg);
+      await AndroidConfig.Manifest.writeAndroidManifestAsync(file, manifest);
+      console.log('[with-android-share-intents] native share: SEND filters → ChatyyShareActivity');
+    } catch (e) {
+      console.warn('[with-android-share-intents] native share manifest patch failed:', e?.message || e);
+    }
+    return cfg;
+  }]);
 
 const SHARE_FILTERS = [
   { action: 'android.intent.action.SEND', mimeType: 'image/*' },
@@ -56,6 +126,13 @@ const SHARE_FILTERS = [
 ];
 
 module.exports = function withAndroidShareIntents(config) {
+  if (nativeShareAndroidOn()) {
+    config = withAndroidManifest(config, (cfg) => {
+      applyNativeShareManifest(cfg.modResults, cfg.android?.package || 'com.onemundo.mail');
+      return cfg;
+    });
+    return withNativeShareFinal(config);
+  }
   return withAndroidManifest(config, (cfg) => {
     const manifest = cfg.modResults;
     const app = manifest.manifest.application?.[0];
@@ -84,3 +161,6 @@ module.exports = function withAndroidShareIntents(config) {
     return cfg;
   });
 };
+module.exports.nativeShareAndroidOn = nativeShareAndroidOn;
+module.exports.applyNativeShareManifest = applyNativeShareManifest;
+module.exports.SHARE_ACTIVITY = SHARE_ACTIVITY;

@@ -156,8 +156,15 @@ function shortcutsXml(pkg) {
   // recent chats on top of the system share sheet. The share lands on
   // MainActivity's existing SEND filters with EXTRA_SHORTCUT_ID = chat_<id>;
   // /share-receive preselects that chat. MIME types mirror those filters.
+  // [2026-10-18 native-share] Direct Share abre a ChatyyShareActivity nativa
+  // (que tem os filtros SEND) — ver plugins/with-android-share-intents.js.
+  let shareClass = `${pkg}.MainActivity`;
+  try {
+    const si = require('./with-android-share-intents');
+    if (si.nativeShareAndroidOn && si.nativeShareAndroidOn()) shareClass = si.SHARE_ACTIVITY;
+  } catch {}
   const shareTarget = [
-    `  <share-target android:targetClass="${pkg}.MainActivity">`,
+    `  <share-target android:targetClass="${shareClass}">`,
     ...SHARE_TARGET_MIMES.map((m) => `    <data android:mimeType="${m}" />`),
     `    <category android:name="${pkg}${SHARE_TARGET_CATEGORY_SUFFIX}" />`,
     '  </share-target>',

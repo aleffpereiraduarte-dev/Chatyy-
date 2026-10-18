@@ -115,6 +115,8 @@ function _flush() {
 /** Debounced; call whenever the chat list changes (cheap before debounce). */
 export function scheduleSystemSnapshot(conversations, opts) {
   if (Platform.OS === 'web') return;
+  // [2026-10-18 native-share] snapshot do compartilhar nativo (iOS/Android)
+  try { require('./nativeShareSnapshot').scheduleShareSnapshot(conversations, opts); } catch {}
   if (!getModule()) return;
   try {
     _pending = { items: buildSystemSnapshot(conversations, opts), locked: _appLockOn() };
@@ -125,6 +127,7 @@ export function scheduleSystemSnapshot(conversations, opts) {
 
 /** Logout / account wipe: empties widgets + Siri contact list. */
 export function clearSystemIntegration() {
+  try { require('./nativeShareSnapshot').clearShareSnapshot(); } catch {}
   if (_timer) { clearTimeout(_timer); _timer = null; }
   _pending = null;
   _lastSig = null;

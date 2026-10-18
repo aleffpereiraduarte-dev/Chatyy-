@@ -95,10 +95,28 @@ class ExpoChatyySystemModule : Module() {
       count
     }
 
+    // [2026-10-18 native-share] snapshot do compartilhar nativo (ChatyyShareActivity).
+    // items: [{ id, title, is_group, email, avatar_url }]; opts: { enabled, account, base, locked }.
+    AsyncFunction("setShareSnapshot") { items: List<Map<String, Any?>>, opts: Map<String, Any?> ->
+      val c = ctx ?: return@AsyncFunction 0
+      try {
+        ChatyyShareSnapshot.write(c, items, opts)
+      } catch (t: Throwable) {
+        Log.w(TAG, "setShareSnapshot failed: ${t.message}")
+        0
+      }
+    }
+
+    Function("clearShareSnapshot") {
+      ctx?.let { ChatyyShareSnapshot.clear(it) }
+      true
+    }
+
     AsyncFunction("clear") {
       val c = ctx
       if (c != null) {
         try {
+          ChatyyShareSnapshot.clear(c)
           c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
           ChatyyConversationsWidget.refreshAll(c)
         } catch (t: Throwable) {

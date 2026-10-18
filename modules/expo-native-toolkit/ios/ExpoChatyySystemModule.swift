@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import Foundation
 import Network
+import ImageIO
 import UIKit
 #if canImport(WidgetKit)
 import WidgetKit
@@ -108,6 +109,21 @@ public class ExpoChatyySystemModule: Module {
       return clean.count
     }
 
+    // [2026-10-18 native-share] Snapshot p/ a ShareExtension NATIVA (lista de
+    // conversas sem abrir o app) + kill switch. JS: services/nativeShareSnapshot.js.
+    // items: [{ id, title, is_group, email, avatar_url }] — o JS já tirou E2EE,
+    // bloqueadas, trancadas, arquivadas e canais.
+    // opts: { enabled, account, base, locked }. enabled=false → apaga o snapshot
+    // e a extensão volta a abrir o app (/share-receive).
+    AsyncFunction("setShareSnapshot") { (items: [[String: Any]], opts: [String: Any]) -> Int in
+      return ChatyyShareSnapshotWriter.write(items: items, opts: opts)
+    }
+
+    Function("clearShareSnapshot") { () -> Bool in
+      ChatyyShareSnapshotWriter.clear()
+      return true
+    }
+
     // [2026-10-16 boot-trace] época do processo (ms) — ver chatyyProcessStartEpochMs.
     Function("processStartTime") { () -> Double in
       return chatyyProcessStartEpochMs()
@@ -127,6 +143,7 @@ public class ExpoChatyySystemModule: Module {
         for k in [kConvsKey, kPinnedKey, kUpdatedKey, kFocusKey, kLockedKey,
                   kBadgeCountKey, kBadgeAtKey, kBadgeLastServerKey] { ud.removeObject(forKey: k) }
       }
+      ChatyyShareSnapshotWriter.clear()
       ExpoChatyySystemModule.reloadWidgets()
       ExpoChatyySystemModule.refreshSiriPhrases()
       return true
@@ -233,5 +250,137 @@ public class ExpoChatyySystemModule: Module {
     if let n = v as? NSNumber { return n.intValue }
     if let s = v as? String, let i = Int(s) { return i }
     return 0
+  }
+}
+
+// MARK: - [2026-10-18 native-share] snapshot da ShareExtension nativa
+
+/// Grava no App Group o que a extensão precisa p/ mostrar a lista SEM rede:
+///   chatyy.share.snapshot.v1  = {"v":1,"acct","at","locked","items":[{id,title,is_group,email,avatar}]}
+///   chatyy.share.native_enabled = Bool (kill switch do JS)
+///   ChatyyShare/avatars/<hash>.jpg = miniatura 132 px de cada avatar (baixada aqui,
+///   em 2º plano; a extensão só lê do disco).
+/// Token/base já estão no App Group (ExpoChatyyIntents.setShareExtensionAuth).
+enum ChatyyShareSnapshotWriter {
+  static let snapshotKey = "chatyy.share.snapshot.v1"
+  static let enabledKey = "chatyy.share.native_enabled"
+  private static let q = DispatchQueue(label: "chatyy.share.snapshot", qos: .utility)
+  private static let maxItems = 60
+  private static let avatarMaxAge: TimeInterval = 3 * 24 * 3600
+
+  static func avatarsDir() -> URL? {
+    guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: kAppGroup) else { return nil }
+    let d = root.appendingPathComponent("ChatyyShare", isDirectory: true).appendingPathComponent("avatars", isDirectory: true)
+    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    return d
+  }
+
+  /// FNV-1a 64 → nome de arquivo estável por URL.
+  static func hashName(_ s: String) -> String {
+    var h: UInt64 = 0xcbf29ce484222325
+    for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
+    return String(h, radix: 16) + ".jpg"
+  }
+
+  static func absoluteURL(_ raw: String, base: String) -> URL? {
+    let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if s.isEmpty { return nil }
+    if s.hasPrefix("https://") { return URL(string: s) }
+    if s.hasPrefix("/") {
+      let b = base.hasPrefix("https://") ? base : "https://chatyy.com.br"
+      return URL(string: b.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + s)
+    }
+    return nil
+  }
+
+  static func write(items: [[String: Any]], opts: [String: Any]) -> Int {
+    guard let ud = UserDefaults(suiteName: kAppGroup) else { return 0 }
+    let enabled = ExpoChatyySystemModule.bool(opts["enabled"])
+    let acct = ExpoChatyySystemModule.str(opts["account"]).lowercased()
+    ud.set(enabled, forKey: enabledKey)
+    if !enabled || acct.isEmpty {
+      ud.removeObject(forKey: snapshotKey)
+      return 0
+    }
+    let base = ExpoChatyySystemModule.str(opts["base"])
+    var rows: [[String: Any]] = []
+    var downloads: [(String, URL)] = []
+    var seen = Set<String>()
+    for item in items {
+      if rows.count >= maxItems { break }
+      let id = ExpoChatyySystemModule.str(item["id"])
+      let title = ExpoChatyySystemModule.str(item["title"])
+      if id.isEmpty || title.isEmpty || seen.contains(id) { continue }
+      seen.insert(id)
+      var avatar = ""
+      if let u = absoluteURL(ExpoChatyySystemModule.str(item["avatar_url"]), base: base) {
+        avatar = hashName(u.absoluteString)
+        downloads.append((avatar, u))
+      }
+      rows.append([
+        "id": id,
+        "title": String(title.prefix(80)),
+        "is_group": ExpoChatyySystemModule.bool(item["is_group"]),
+        "email": ExpoChatyySystemModule.str(item["email"]).lowercased(),
+        "avatar": avatar,
+      ])
+    }
+    let obj: [String: Any] = [
+      "v": 1, "acct": acct, "at": Date().timeIntervalSince1970 * 1000,
+      "locked": ExpoChatyySystemModule.bool(opts["locked"]), "items": rows,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: obj, options: []) else { return 0 }
+    ud.set(data, forKey: snapshotKey)
+    q.async { fetchAvatars(downloads) }
+    return rows.count
+  }
+
+  static func clear() {
+    if let ud = UserDefaults(suiteName: kAppGroup) {
+      ud.removeObject(forKey: snapshotKey)
+      ud.removeObject(forKey: enabledKey)
+    }
+    q.async {
+      if let d = avatarsDir() { try? FileManager.default.removeItem(at: d) }
+    }
+  }
+
+  private static func fetchAvatars(_ list: [(String, URL)]) {
+    guard let dir = avatarsDir() else { return }
+    let fm = FileManager.default
+    let keep = Set(list.map { $0.0 })
+    let now = Date()
+    // poda: o que saiu da lista e tem mais de 7 dias
+    if let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) {
+      for f in files where !keep.contains(f.lastPathComponent) {
+        let m = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
+        if now.timeIntervalSince(m) > 7 * 24 * 3600 { try? fm.removeItem(at: f) }
+      }
+    }
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 15
+    let session = URLSession(configuration: cfg)
+    for (name, url) in list {
+      let dst = dir.appendingPathComponent(name)
+      if let m = (try? dst.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+         now.timeIntervalSince(m) < avatarMaxAge { continue }
+      let sem = DispatchSemaphore(value: 0)
+      session.dataTask(with: url) { data, resp, _ in
+        defer { sem.signal() }
+        guard let d = data, d.count > 0, d.count < 4 * 1024 * 1024,
+              ((resp as? HTTPURLResponse)?.statusCode ?? 0) == 200,
+              let src = CGImageSourceCreateWithData(d as CFData, nil) else { return }
+        let o: [CFString: Any] = [
+          kCGImageSourceCreateThumbnailFromImageAlways: true,
+          kCGImageSourceCreateThumbnailWithTransform: true,
+          kCGImageSourceThumbnailMaxPixelSize: 132,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, o as CFDictionary) else { return }
+        guard let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.8) else { return }
+        try? jpg.write(to: dst, options: .atomic)
+      }.resume()
+      _ = sem.wait(timeout: .now() + 20)
+    }
+    session.finishTasksAndInvalidate()
   }
 }

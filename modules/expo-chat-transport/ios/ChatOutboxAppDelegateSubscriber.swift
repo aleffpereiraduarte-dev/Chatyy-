@@ -16,7 +16,13 @@ public class ChatOutboxAppDelegateSubscriber: ExpoAppDelegateSubscriber {
   ) -> Bool {
     ChatOutboxBackground.registerOnce()
     ChatOutbox.shared.start()
+    // [2026-10-18 native-share] jobs da ShareExtension que ficaram órfãos
+    ChatyyShareOutbox.shared.drainSoon("launch", delay: 6)
     return true
+  }
+
+  public func applicationDidBecomeActive(_ application: UIApplication) {
+    ChatyyShareOutbox.shared.drainSoon("active", delay: 2)
   }
 
   public func application(
@@ -27,6 +33,11 @@ public class ChatOutboxAppDelegateSubscriber: ExpoAppDelegateSubscriber {
     // Outras sessões (backup, ChatTransfer…) têm donos próprios. O Expo AGREGA o
     // handler de todos os assinantes → ack imediato do que não é nosso, senão o
     // iOS nunca recebe o "terminei" das sessões dos outros.
+    // [2026-10-18 native-share] uploads da ShareExtension (sessão por envio)
+    if ChatyyShareOutbox.isShareSession(identifier) {
+      ChatyyShareOutbox.shared.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
+      return
+    }
     guard identifier == ChatOutbox.bgSessionId else { completionHandler(); return }
     ChatOutbox.shared.handleBackgroundEvents(completionHandler)
   }
