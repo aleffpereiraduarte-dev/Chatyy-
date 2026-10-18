@@ -16,6 +16,11 @@
 //                                     presentes no binário, quais montaram, quais
 //                                     caíram p/ JS, apiVersion da lista, b=/ota=).
 //
+//   startPerfTelemetry / notePerfRoute / notePerfStall
+//                                     perf (quadros lentos/congelados por rota, memória,
+//                                     avisos) + perf_exit (motivo da saída anterior) —
+//                                     ver §perf no fim. Kill: __chatyy_perf_telemetry = false.
+//
 // Kill switch (OTA): globalThis.__chatyy_native_telemetry = false.
 // Taxa de amostragem: globalThis.__chatyy_conv_open_sample (0..1, padrão 0.2).
 import { useEffect, useRef } from 'react';
@@ -37,6 +42,8 @@ const PROBE_MODULES = [
   // [2026-10-16 android-wave8] módulos das levas 7/8 — valor = apiVersion (0 = ausente)
   'ChatyyConversationList', 'ChatyyPinnedStrip', 'ChatyyRowZoom', 'ChatyyEmojiPanel',
   'ChatyyInAppBanner', 'ChatyyMediaGrid', 'ChatyyComposer',
+  // [2026-10-18 perf-telemetry] quadros/memória/saída
+  'ChatyyPerf',
 ];
 // flags globais de fallback já usadas pelas telas (ErrorBoundary → JS)
 const FAILED_FLAGS = [
@@ -84,7 +91,7 @@ function _dev() {
   try { const cr = require('./crashReporter'); return String(cr.getAnonIdSync?.() || ''); } catch { return ''; }
 }
 
-function _send(kind, info, data) {
+function _send(kind, info, data, onOk) {
   if (_off()) return;
   try {
     const m = require('./api');
@@ -95,7 +102,15 @@ function _send(kind, info, data) {
     if (data && typeof data === 'object') body.data = data;
     // [perf 2026-10-17 boot-fanout] no boot espera a 1ª pintura + ~25 s + ocioso
     // (bootIdle) — beacon de telemetria não disputa rede com a lista/conversa.
-    const fire = () => { try { api.apiCall?.('callkit_diag', body, 'POST')?.catch?.(() => {}); } catch {} };
+    // onOk: só confirma (ack nativo) quando o servidor respondeu sem erro.
+    const fire = () => {
+      try {
+        const pr = api.apiCall?.('callkit_diag', body, 'POST');
+        if (pr && typeof pr.then === 'function') {
+          pr.then((r) => { if (onOk && !(r && r.success === false)) { try { onOk(); } catch {} } }, () => {});
+        }
+      } catch {}
+    };
     try { require('./bootIdle').runWhenBootIdle(fire); } catch { setTimeout(fire, 0); }
   } catch {}
 }
@@ -378,6 +393,253 @@ export function flushNativeTelemetry(why) {
       _send('native_coverage', `native_coverage ${why || ''} #${_coverageSends}`, _coverage());
     }
   } catch {}
+}
+
+// ─── perf: fluidez, memória e motivo de saída ──────────────────────────────
+// [2026-10-18 perf-telemetry] Módulo nativo ChatyyPerf (expo-native-toolkit,
+// apiVersion ≥ 1): CADisplayLink/Choreographer agregam no nativo, por rota, quadros
+// lentos (> 2× orçamento) e congelados (≥ 700 ms) + pico de memória + avisos de
+// memória, em janelas de 60 s (fecha também ao ir p/ 2º plano) numa fila persistida.
+// Na próxima abertura o nativo entrega a sessão anterior (rota/fg/memória) e as
+// saídas (Android ApplicationExitInfo; iOS MetricKit resumido).
+// Aqui: lê (peek), soma as janelas num beacon e confirma (ack) só depois do POST.
+//   kind 'perf'      — data { w, t0, t1, rr, rt:[{r,n,sl,fz,mx,j,js,jb,jmx}], mem:{…} }
+//   kind 'perf_exit' — data { prev:{…}, js:{…}, ex:[…] } (só se morreu em 1º plano / houve saída)
+// Também recebe os stalls do JS ≥ 400 ms (freezeWatch → notePerfStall), agregados
+// por rota (faixas 400–700/700–1500/1500–2500/≥2500) — sem 1 beacon por stall.
+// Binário antigo (sem o módulo / apiVersion < 1): só os stalls do JS.
+// Kill switch (OTA): globalThis.__chatyy_perf_telemetry = false.
+const PERF_BATCH_WINDOWS = 5;          // ~5 min de uso em 1º plano por beacon
+const PERF_MIN_GAP_MS = 2 * 60 * 1000; // entre beacons 'perf' (fora o de 2º plano)
+const PERF_BG_GAP_MS = 60 * 1000;
+const PERF_MAX_SENDS = 40;             // por sessão
+const PERF_MAX_ROUTES = 16;
+const PREV_MAX_AGE_S = 6 * 3600;
+
+let _perfMod; // undefined = não sondado · null = ausente
+let _perfStarted = false;
+let _perfRoute = '';
+let _perfLastSend = 0;
+let _perfSending = false;
+let _perfSends = 0;
+let _perfExitSends = 0;
+let _jsStall = Object.create(null); // rota → { c, b:[4], mx, sum }
+let _jsStallN = 0;
+
+function _perfOff() {
+  if (_off()) return true;
+  try { return globalThis.__chatyy_perf_telemetry === false; } catch { return false; }
+}
+
+/** Módulo nativo só se o binário tem a API certa (typeof + apiVersion). */
+function _perfNative() {
+  if (_perfMod !== undefined) return _perfMod;
+  _perfMod = null;
+  try {
+    const { requireOptionalNativeModule } = require('expo-modules-core');
+    const m = typeof requireOptionalNativeModule === 'function' ? requireOptionalNativeModule('ChatyyPerf') : null;
+    if (m && typeof m.apiVersion === 'function' && typeof m.start === 'function'
+      && typeof m.peek === 'function' && typeof m.ack === 'function' && typeof m.setRoute === 'function') {
+      if ((Number(m.apiVersion()) || 0) >= 1) _perfMod = m;
+    }
+  } catch { _perfMod = null; }
+  return _perfMod;
+}
+
+/** "/meet/8f3a…" → "/meet/:id" — sem ids/e-mails/telefones na rota. */
+export function normalizePerfRoute(r) {
+  try {
+    let p = String(r || '').split(/[?#]/)[0];
+    if (!p) return '';
+    p = p.split('/').map((seg) => {
+      if (!seg) return seg;
+      if (/@/.test(seg) || /^\+?\d{3,}$/.test(seg) || /^[0-9a-f-]{16,}$/i.test(seg) || (seg.length >= 20 && /\d/.test(seg))) return ':id';
+      return seg;
+    }).join('/');
+    return p.slice(0, 48);
+  } catch { return ''; }
+}
+
+export function notePerfRoute(r) {
+  const n = normalizePerfRoute(r);
+  if (!n || n === _perfRoute) return;
+  _perfRoute = n;
+  if (!_perfStarted) return;
+  const m = _perfNative();
+  if (m) { try { m.setRoute(n); } catch {} }
+}
+
+/** Stall do JS (atraso do timer com o app ativo), ms ≥ 400. Só agrega. */
+export function notePerfStall(ms, route) {
+  if (_perfOff()) return;
+  const v = Math.round(Number(ms) || 0);
+  if (!(v >= 400)) return;
+  const r = normalizePerfRoute(route || _perfRoute) || '-';
+  let k = r;
+  if (!_jsStall[k] && Object.keys(_jsStall).length >= PERF_MAX_ROUTES) k = 'other';
+  const e = _jsStall[k] || (_jsStall[k] = { c: 0, b: [0, 0, 0, 0], mx: 0, sum: 0 });
+  e.c += 1; e.sum += v;
+  e.b[v < 700 ? 0 : v < 1500 ? 1 : v < 2500 ? 2 : 3] += 1;
+  if (v > e.mx) e.mx = v;
+  _jsStallN += 1;
+}
+
+function _num(x) { const n = Number(x); return Number.isFinite(n) ? n : 0; }
+
+function _perfAggregate(windows) {
+  const rt = Object.create(null);
+  const mem = { pk: 0, cur: 0, mw: 0 };
+  let t0 = 0; let t1 = 0; let rr = 0; let maxSeq = 0; let n = 0;
+  for (const w of windows) {
+    if (!w || typeof w !== 'object') continue;
+    n += 1;
+    maxSeq = Math.max(maxSeq, _num(w.s));
+    const a = _num(w.t0); const b = _num(w.t1);
+    if (a && (!t0 || a < t0)) t0 = a;
+    if (b > t1) t1 = b;
+    if (_num(w.rr)) rr = _num(w.rr);
+    mem.pk = Math.max(mem.pk, _num(w.pk));
+    if (_num(w.cur)) mem.cur = _num(w.cur);
+    mem.mw += _num(w.mw);
+    if (_num(w.av) > 0) mem.av = mem.av ? Math.min(mem.av, _num(w.av)) : _num(w.av);
+    if (_num(w.pss)) mem.pss = Math.max(mem.pss || 0, _num(w.pss));
+    if (_num(w.jh)) mem.jh = Math.max(mem.jh || 0, _num(w.jh));
+    if (_num(w.jmax)) mem.jmax = _num(w.jmax);
+    if (w.trim && typeof w.trim === 'object') {
+      mem.trim = mem.trim || {};
+      for (const lv of Object.keys(w.trim)) mem.trim['l' + lv] = (mem.trim['l' + lv] || 0) + _num(w.trim[lv]);
+    }
+    for (const x of (Array.isArray(w.rt) ? w.rt : [])) {
+      if (!x) continue;
+      const r = String(x.r || '-').slice(0, 48);
+      const e = rt[r] || (rt[r] = { r, n: 0, sl: 0, fz: 0, mx: 0, j: 0 });
+      e.n += _num(x.n); e.sl += _num(x.sl); e.fz += _num(x.fz); e.j += _num(x.j);
+      e.mx = Math.max(e.mx, _num(x.mx));
+    }
+  }
+  return { rt, mem, t0, t1, rr, maxSeq, n };
+}
+
+function _perfStatus() {
+  try { return require('react-native').AppState.currentState || ''; } catch { return ''; }
+}
+
+function _perfMaybeSend(why) {
+  if (_perfSending || _perfOff()) return;
+  if (_perfSends >= PERF_MAX_SENDS) return;
+  const now = Date.now();
+  const m = _perfNative();
+  let pk = null;
+  if (m) { try { pk = m.peek(); } catch { pk = null; } }
+  const windows = (pk && Array.isArray(pk.windows)) ? pk.windows : [];
+
+  // 1) perf_exit — no boot (sessão anterior + saídas) e quando o MetricKit
+  //    entrega um payload depois (evento 'exit'); no máx. 3 por sessão.
+  if (m && pk && _perfExitSends < 3 && (_perfExitSends === 0 || why === 'exit')) {
+    _perfExitSends += 1;
+    _perfSendExit(m, pk);
+  }
+
+  // 2) perf
+  const bg = why === 'bg' || _perfStatus() === 'background';
+  const gap = now - _perfLastSend;
+  const due = (bg && gap >= PERF_BG_GAP_MS && (windows.length || _jsStallN))
+    || (windows.length >= PERF_BATCH_WINDOWS && gap >= PERF_MIN_GAP_MS)
+    || (!m && _jsStallN > 0 && gap >= 5 * PERF_MIN_GAP_MS);
+  if (!due) return;
+  const ag = _perfAggregate(windows);
+  const stalls = _jsStall; const stallN = _jsStallN;
+  if (!ag.n && !stallN) return;
+  _jsStall = Object.create(null); _jsStallN = 0;
+  for (const r of Object.keys(stalls)) {
+    const e = ag.rt[r] || (ag.rt[r] = { r, n: 0, sl: 0, fz: 0, mx: 0, j: 0 });
+    e.js = stalls[r].c; e.jb = stalls[r].b; e.jmx = stalls[r].mx; e.jsum = stalls[r].sum;
+  }
+  const routes = Object.values(ag.rt)
+    .sort((a, b) => ((b.fz * 50 + b.sl + (b.js || 0) * 5) - (a.fz * 50 + a.sl + (a.js || 0) * 5)) || (b.n - a.n))
+    .slice(0, PERF_MAX_ROUTES);
+  let fr = 0; let sl = 0; let fz = 0;
+  for (const e of routes) { fr += e.n; sl += e.sl; fz += e.fz; }
+  const data = { w: ag.n, t0: ag.t0, t1: ag.t1, rr: ag.rr, rt: routes, mem: ag.mem, why: String(why || '').slice(0, 8), api: m ? 1 : 0 };
+  _perfLastSend = now;
+  _perfSends += 1;
+  _perfSending = true;
+  const seq = ag.maxSeq;
+  _ensureLifecycle();
+  _send('perf', `perf w=${ag.n} n=${fr} sl=${sl} fz=${fz} js=${stallN} pk=${ag.mem.pk} mw=${ag.mem.mw}`, data, () => {
+    if (m && seq > 0) { try { m.ack(seq, 0, false); } catch {} }
+  });
+  // sem retorno de erro: libera o próximo envio de qualquer jeito (o ack só vem no sucesso)
+  setTimeout(() => { _perfSending = false; }, 15000);
+}
+
+function _perfSendExit(m, pk) {
+  try {
+    const exits = Array.isArray(pk.exits) ? pk.exits.slice(0, 6) : [];
+    const prev = pk.prev && typeof pk.prev === 'object' ? pk.prev : null;
+    const nowS = Math.floor(Date.now() / 1000);
+    // sessão anterior só interessa se morreu em 1º plano (sem passar pelo 2º plano)
+    let prevOut = null;
+    if (prev && _num(prev.fg) === 1 && nowS - _num(prev.t) >= 0 && nowS - _num(prev.t) < PREV_MAX_AGE_S) {
+      prevOut = { ...prev, gap: nowS - _num(prev.t) };
+      if (_num(prev.lzt)) prevOut.lzago = _num(prev.t) - _num(prev.lzt); // congelou x s antes do último registro
+    }
+    let js = null;
+    try {
+      const fw = require('./freezeWatch'); // eslint-disable-line global-require
+      js = typeof fw.getPrevEnd === 'function' ? fw.getPrevEnd() : null;
+    } catch {}
+    if (!exits.length && !prevOut) { try { m.ack(0, 0, !!prev); } catch {} return; }
+    const summary = exits.map((e) => {
+      if (!e) return '?';
+      if (e.k === 'aexit') return `${e.reason || '?'}@${e.imp || 0}`;
+      if (e.k === 'mx_diag') return `diag${e.crash ? ':crash' + e.crash.length : ''}${e.hang ? ':hang' + e.hang.length : ''}`;
+      return String(e.k || '?');
+    }).join(',');
+    const info = `perf_exit prev=${prevOut ? `fg r=${prevOut.r || '-'} pk=${_num(prevOut.pk)} mw=${_num(prevOut.mw)}${prevOut.term ? ' term' : ''}` : '-'} ex=${summary || '-'}`;
+    const data = { ex: exits };
+    if (prevOut) data.prev = prevOut;
+    if (js) data.js = js;
+    const nEx = exits.length;
+    const hadPrev = !!prev;
+    _ensureLifecycle();
+    _send('perf_exit', info, data, () => { try { m.ack(0, nEx, hadPrev); } catch {} });
+  } catch {}
+}
+
+/** Liga a coleta nativa (se o binário tiver) + o envio. Chamado pelo freezeWatch após o boot. */
+export function startPerfTelemetry() {
+  if (_perfStarted || !IS_NATIVE || _perfOff()) return;
+  _perfStarted = true;
+  const m = _perfNative();
+  if (m) {
+    try { m.start({}); } catch {}
+    try { if (_perfRoute) m.setRoute(_perfRoute); } catch {}
+    try {
+      if (typeof m.addListener === 'function') m.addListener('onPerfWindow', (e) => { try { _perfMaybeSend(e && e.why); } catch {} });
+    } catch {}
+  }
+  try {
+    AppState.addEventListener('change', (s) => {
+      if (s !== 'background') return;
+      try {
+        if (_perfOff()) { if (m && typeof m.stop === 'function') m.stop(); return; }
+        _perfMaybeSend('bg');
+      } catch {}
+    });
+  } catch {}
+  // sessão anterior/saídas: logo após o boot (o _send ainda espera o bootIdle)
+  setTimeout(() => { try { _perfMaybeSend('boot'); } catch {} }, 1500);
+  // binário antigo: sem evento nativo → varre os stalls do JS a cada 5 min
+  if (!m) setInterval(() => { try { _perfMaybeSend('t'); } catch {} }, 5 * 60 * 1000);
+}
+
+/** Depuração (console): estado do coletor nativo. */
+export function perfTelemetryStats() {
+  const m = _perfNative();
+  let st = null;
+  try { st = m && typeof m.stats === 'function' ? m.stats() : null; } catch {}
+  return { started: _perfStarted, native: !!m, route: _perfRoute, jsStalls: _jsStallN, sends: _perfSends, st };
 }
 
 // timer/AppState da cobertura começam no 1º import (tela de conversa / home)
