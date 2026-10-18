@@ -123,7 +123,10 @@ class ExpoNativeVideoModule : Module() {
         // URLs via the (String, headers) overload, but our use-case is
         // always local capture so we treat anything else as the raw path
         // and let setDataSource throw if it's not.
-        mmr.setDataSource(srcUri)
+        // [2026-10-18 vthumb] http(s): overload com headers (o de String só abre arquivo) →
+        // 1º frame de vídeo recebido sem pôster (services/videoFirstFrame.js).
+        if (uri.scheme == "http" || uri.scheme == "https") mmr.setDataSource(srcUri, HashMap<String, String>())
+        else mmr.setDataSource(srcUri)
       }
     } catch (t: Throwable) {
       try { mmr.release() } catch (_: Throwable) {}

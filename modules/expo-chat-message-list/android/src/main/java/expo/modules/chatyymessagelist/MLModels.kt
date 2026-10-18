@@ -35,6 +35,8 @@ data class MLMedia(
   val id: String,
   /** [native-media-dl] baixar nativo (null = já local / JS cuida) */
   val dl: MLMediaDL? = null,
+  /** [2026-10-18 vthumb, api 9] vídeo sem pôster: URL (http/file) p/ extrair o 1º frame */
+  val vf: String = "",
 )
 
 data class MLReply(val id: String, val name: String, val text: String, val color: Int, val thumb: String, val italic: Boolean)
@@ -152,6 +154,7 @@ class MLRow(d: Map<String, Any?>) {
         up = num(m["up"])?.toInt(),
         id = str(m["id"]),
         dl = MLMediaDL.parse(m["dl"]),
+        vf = str(m["vf"]),
       )
     }
 

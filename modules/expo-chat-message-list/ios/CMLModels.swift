@@ -47,6 +47,8 @@ struct CMLMedia {
   var id: String = ""
   /// [native-media-dl] baixar nativo (nil = já local / JS cuida)
   var dl: CMLMediaDL? = nil
+  /// [2026-10-18 vthumb, api 9] vídeo sem pôster: URL (http/file) p/ extrair o 1º frame
+  var vf: String = ""
 }
 
 struct CMLReply {
@@ -249,6 +251,7 @@ final class CMLRow {
     if let u = num(m["up"]) { md.up = Int(u) }
     md.id = str(m["id"])
     md.dl = CMLMediaDL.parse(m["dl"])
+    md.vf = str(m["vf"])
     return md
   }
 

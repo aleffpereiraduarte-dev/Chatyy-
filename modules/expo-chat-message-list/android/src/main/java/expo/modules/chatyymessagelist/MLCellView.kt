@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.TextPaint
 import android.graphics.drawable.Animatable
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.SystemClock
@@ -52,9 +53,14 @@ class MLImageSlot(private val owner: View) {
   // [native-media-dl] miniatura → foto nítida com cross-fade (só se a foto chegou depois)
   private var setAt = 0L
   private var fadeAt = 0L
+  // [2026-10-18 vthumb] 1º frame de vídeo sem pôster (MLVideoFrames): URL em voo + fade de entrada
+  private var vfUrl: String = ""
+  private var frameFadeAt = 0L
 
-  fun set(uri: String, thumbUri: String, w: Int, h: Int, animated: Boolean, fit: Boolean = false) {
-    if (uri == model && thumbUri == thumbModel && (drawable != null || target != null)) return
+  fun set(uri: String, thumbUri: String, w: Int, h: Int, animated: Boolean, fit: Boolean = false, vf: String = "") {
+    val vfUse = if (uri.isEmpty() && thumbUri.isEmpty()) vf else ""
+    val key = if (vfUse.isNotEmpty()) "vf:$vfUse" else uri
+    if (key == model && thumbUri == thumbModel && (drawable != null || target != null || vfUrl.isNotEmpty())) return
     // [native-media-dl] mesma miniatura, foto nova (baixou agora) → mantém a
     // miniatura na tela enquanto a foto decodifica (cross-fade em draw)
     val keepThumb = thumbUri.isNotEmpty() && thumbUri == thumbModel && thumb != null && drawable == null
@@ -62,7 +68,7 @@ class MLImageSlot(private val owner: View) {
     val keptThumbTarget = if (keepThumb) thumbTarget else null
     if (keepThumb) thumbTarget = null
     clear()
-    model = uri
+    model = key
     thumbModel = thumbUri
     setAt = android.os.SystemClock.uptimeMillis()
     fadeAt = 0L
@@ -80,7 +86,10 @@ class MLImageSlot(private val owner: View) {
       thumbTarget = t
       try { Glide.with(ctx).load(modelOf(thumbUri)).into(t) } catch (_: Throwable) {}
     }
-    if (uri.isEmpty()) return
+    if (uri.isEmpty()) {
+      if (vfUse.isNotEmpty()) loadFrame(vfUse, key, max(w, h))
+      return
+    }
     val tw = max(16, w)
     val th = max(16, h)
     val t = object : CustomTarget<Drawable>(tw, th) {
@@ -111,8 +120,33 @@ class MLImageSlot(private val owner: View) {
     } catch (_: Throwable) {}
   }
 
+  private fun loadFrame(url: String, key: String, px: Int) {
+    val res = owner.resources
+    val hit = MLVideoFrames.cached(url)
+    if (hit != null) {
+      drawable = BitmapDrawable(res, hit)
+      frameFadeAt = 0L
+      owner.invalidate()
+      return
+    }
+    vfUrl = url
+    MLVideoFrames.load(owner.context, url, px) { bmp ->
+      if (vfUrl == url) vfUrl = ""
+      if (model == key && bmp != null) {
+        drawable = BitmapDrawable(res, bmp)
+        frameFadeAt = android.os.SystemClock.uptimeMillis()
+        owner.invalidate()
+      }
+    }
+  }
+
   fun clear() {
     val ctx = owner.context.applicationContext
+    if (vfUrl.isNotEmpty()) {
+      MLVideoFrames.cancel(vfUrl)
+      vfUrl = ""
+    }
+    frameFadeAt = 0L
     target?.let { try { Glide.with(ctx).clear(it) } catch (_: Throwable) {} }
     thumbTarget?.let { try { Glide.with(ctx).clear(it) } catch (_: Throwable) {} }
     val d = drawable
@@ -138,6 +172,15 @@ class MLImageSlot(private val owner: View) {
         return true
       }
       fadeAt = 0L
+    }
+    if (full != null && th == null && frameFadeAt > 0L) {
+      val ft = (android.os.SystemClock.uptimeMillis() - frameFadeAt) / 220f
+      if (ft < 1f) {
+        drawOne(c, full, r, radius, fit, (255 * ft).toInt().coerceIn(0, 255))
+        owner.postInvalidateOnAnimation()
+        return true
+      }
+      frameFadeAt = 0L
     }
     val d = full ?: th ?: return false
     drawOne(c, d, r, radius, fit, 255)
@@ -354,12 +397,12 @@ class MLCellView(context: Context) : ViewGroup(context) {
     // imagens
     val md = row.media
     if (md != null && !lay.mediaFrame.isEmpty) {
-      mediaSlot.set(effectiveUri(md), md.thumb, lay.mediaFrame.width().toInt(), lay.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker")
+      mediaSlot.set(effectiveUri(md), md.thumb, lay.mediaFrame.width().toInt(), lay.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker", if (md.kind == "video") md.vf else "")
     } else mediaSlot.clear()
     for (i in 0 until 4) {
       if (i < row.album.size && i < lay.albumFrames.size) {
         val f = lay.albumFrames[i]
-        albumSlots[i].set(effectiveUri(row.album[i]), row.album[i].thumb, f.width().toInt(), f.height().toInt(), false)
+        albumSlots[i].set(effectiveUri(row.album[i]), row.album[i].thumb, f.width().toInt(), f.height().toInt(), false, false, if (row.album[i].kind == "video") row.album[i].vf else "")
       } else albumSlots[i].clear()
     }
     val rp = row.reply
@@ -1508,12 +1551,12 @@ class MLCellView(context: Context) : ViewGroup(context) {
     ringAnimated = true
     val md = r.media
     if (md != null && !L.mediaFrame.isEmpty) {
-      mediaSlot.set(effectiveUri(md), md.thumb, L.mediaFrame.width().toInt(), L.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker")
+      mediaSlot.set(effectiveUri(md), md.thumb, L.mediaFrame.width().toInt(), L.mediaFrame.height().toInt(), md.kind == "gif" || md.kind == "sticker", md.kind == "sticker", if (md.kind == "video") md.vf else "")
     }
     for (i in 0 until 4) {
       if (i < r.album.size && i < L.albumFrames.size) {
         val f = L.albumFrames[i]
-        albumSlots[i].set(effectiveUri(r.album[i]), r.album[i].thumb, f.width().toInt(), f.height().toInt(), false)
+        albumSlots[i].set(effectiveUri(r.album[i]), r.album[i].thumb, f.width().toInt(), f.height().toInt(), false, false, if (r.album[i].kind == "video") r.album[i].vf else "")
       }
     }
     if (anySpin() || L.hasLoader) startSpinner() else stopSpinner()

@@ -31,9 +31,11 @@ public class ChatyyMessageListModule: Module {
     //     mola, onda do áudio contínua.
     // 8 = [voz-wa] setAudioState {rl: "1,5×"} → pílula de velocidade à direita da
     //     onda (nota tocando/pausada); toque → onRowPress part 'action' url 'au:rate'.
+    // 9 = [2026-10-18 vthumb] media.vf (vídeo sem pôster) → 1º frame extraído no
+    //     nativo (CMLVideoFrameLoader: AVAssetImageGenerator + cache memória/disco).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 8
+      return 9
       #else
       return 3
       #endif

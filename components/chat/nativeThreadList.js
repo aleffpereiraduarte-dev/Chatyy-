@@ -934,6 +934,26 @@ function _mdlMod() {
   return _mdlModRef;
 }
 function _mc() { try { return require('../../services/mediaCache'); } catch { return null; } }
+// [2026-10-18 vthumb] 1º frame local p/ vídeo recebido sem poster (binário ≥ 9 extrai no nativo: campo `vf`)
+function _vff() { try { return require('../../services/videoFirstFrame'); } catch { return null; } }
+function _vfMedia(m, out, ctx) {
+  if (m._uploading || m._compressing || m._queued || m._failed || m.deleted_at || _isTmpId(m.id)) return;
+  const vff = _vff();
+  if (!vff || !vff.isVideoFirstFrameOn()) return;
+  let src = '';
+  try { const l = ctx && ctx.localOf ? ctx.localOf(m) : null; if (typeof l === 'string' && /^file:/i.test(l)) src = l; } catch {}
+  if (!src) {
+    const fu = m.file_url;
+    if (!fu || typeof fu !== 'string' || /^(file|content|ph|data|asset|blob):/i.test(fu)) return;
+    try { src = require('../../services/api').getMediaUrl(fu); } catch { return; }
+    if (typeof src !== 'string' || !/^https?:\/\//i.test(src)) return;
+    try { src = encodeURI(decodeURI(src)); } catch { src = src.replace(/ /g, '%20'); }
+  }
+  const loc = vff.getVideoFirstFrameSync(src);
+  if (loc) { out.uri = loc; return; }
+  if (_api >= 9) { out.vf = src; return; }
+  vff.requestVideoFirstFrame(src);
+}
 let _mdlCfgAt = 0;
 let _mdlOfLabel = '{a} / {b}';
 /** Manda ao nativo: pasta do cache do mediaCache + matriz + economia de dados. */
@@ -1180,6 +1200,7 @@ function _mediaFor(m, ctx) {
   if (m.type === 'video') {
     const d = Number(m.duration) || 0;
     if (d > 0) out.dur = _fmtDur(d);
+    if (!out.uri && !out.th) _vfMedia(m, out, ctx);
   }
   if (m._uploading || m._compressing) out.up = typeof m._uploadPct === 'number' ? Math.max(0, Math.min(100, Math.round(m._uploadPct))) : -1;
   else if (m._queued && _isTmpId(m.id) && !m._failed) out.up = -1;
@@ -1559,6 +1580,20 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const cbRef = useRef({});
   cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer, onA11yAction: props.onA11yAction };
   const failRef = useRef(false);
+  // [2026-10-18 vthumb] 1º frame local ficou pronto → rebuild das linhas de vídeo
+  const [vfTick, setVfTick] = useState(0);
+  useEffect(() => {
+    const vff = _vff();
+    if (!vff || typeof vff.subscribeVideoFirstFrame !== 'function') return undefined;
+    return vff.subscribeVideoFirstFrame(() => {
+      const list = dataRef.current;
+      const cache = rowCacheRef.current;
+      if (Array.isArray(list)) {
+        for (const it of list) { if (it && (it.type === 'video' || it.type === 'short_video' || it._type === 'album')) cache.delete(it); }
+      }
+      setVfTick((t) => t + 1);
+    });
+  }, []);
 
   // [2026-10-16 android-wave8 + wave10-A] applyRows rejeitado porque a view
   // nativa ainda não está montada no Fabric (iOS "The 1st argument cannot be
@@ -1695,7 +1730,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     } catch (e) {
       onApplyError(e, view, 'apply-throw:');
     }
-  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, onApplyOk, scheduleRetry, applyRetry, gateOpen]);
+  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, onApplyOk, scheduleRetry, applyRetry, gateOpen, vfTick]);
 
   // [native-media-dl] política atualizada + view registrada p/ setTransfers +
   // progresso dos downloads do JS (mediaCache) pintando o MESMO anel nativo.

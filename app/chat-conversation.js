@@ -7061,15 +7061,24 @@ function _grabVideoFrame(uri) {
   _vfgInflight.set(uri, p);
   return p;
 }
+// [2026-10-18 vthumb] 1º frame persistido (cacheDirectory + MMKV) p/ vídeo remoto sem poster.
+function _vffMod() { try { return require('../services/videoFirstFrame'); } catch { return null; } }
+function _vffSync(uri) {
+  try { const m = _vffMod(); return (m && /^https?:/i.test(uri) && m.getVideoFirstFrameSync(uri)) || null; } catch { return null; }
+}
 function VideoFrameGrab({ uri, style }) {
-  const [thumb, setThumb] = React.useState(() => (uri && _vfgCache.get(uri)) || null);
+  const [thumb, setThumb] = React.useState(() => (uri && (_vfgCache.get(uri) || _vffSync(uri))) || null);
   // [2026-10-08 chat-open-flicker] Frame already grabbed (reopened chat) →
   // paint it on mount without the cross-dissolve; fade only a fresh grab.
-  const _fadeRef = useRef(!(uri && _vfgCache.get(uri)));
+  const _fadeRef = useRef(!(uri && (_vfgCache.get(uri) || _vffSync(uri))));
   React.useEffect(() => {
     if (!uri || Platform.OS === 'web') return undefined;
     let alive = true;
-    _grabVideoFrame(uri).then((t) => { if (alive && t) setThumb(t); }).catch(() => {});
+    const _vm = /^https?:/i.test(uri) ? _vffMod() : null;
+    const _run = (_vm && _vm.isVideoFirstFrameOn())
+      ? _vm.requestVideoFirstFrame(uri).then((f) => f || _grabVideoFrame(uri), () => _grabVideoFrame(uri))
+      : _grabVideoFrame(uri);
+    _run.then((t) => { if (alive && t) setThumb(t); }).catch(() => {});
     return () => { alive = false; };
   }, [uri]);
   if (!thumb) return null;
@@ -33448,6 +33457,8 @@ function ChatConversationInner() {
         const iv = variants(m);
         const local = localOf(m);
         let uri = local || '';
+        // [2026-10-18 vthumb] vídeo baixado: o .mp4 local não é imagem (bolha ficava só no LQIP/cinza) → pôster/1º frame
+        if (uri && m.type === 'video' && !/\.(jpe?g|png|webp|heic)(\?|$)/i.test(uri)) uri = '';
         if (!uri && m.type === 'image') {
           try { if (iv && typeof iv.display === 'string' && iv.display && !m._blurred) uri = api.getMediaUrl(iv.display); } catch {}
         }

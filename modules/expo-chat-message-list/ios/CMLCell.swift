@@ -60,6 +60,8 @@ final class CMLCell: UICollectionViewCell {
   private(set) var layoutInfo: CMLRowLayout?
   private var mediaToken = ""
   private var albumTokens: [String] = []
+  /// [2026-10-18 vthumb] slot (-1 mídia única, 0..3 álbum) → URL do vídeo cujo 1º frame está em voo
+  private var vfReq: [Int: String] = [:]
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -172,6 +174,8 @@ final class CMLCell: UICollectionViewCell {
     jumboPending = false
     mediaToken = ""
     albumTokens = []
+    for (_, v) in vfReq { CMLVideoFrameLoader.shared.cancel(v) }
+    vfReq = [:]
     media.image = nil
     reply.thumb.image = nil
     reply.thumbToken = ""
@@ -335,7 +339,7 @@ final class CMLCell: UICollectionViewCell {
       media.contentMode = md.kind == "sticker" ? .scaleAspectFit : .scaleAspectFill
       media.backgroundColor = md.kind == "sticker" ? .clear : (row.own ? th.ownQuote : th.otherQuote)
       let px = max(L.mediaFrame.width, L.mediaFrame.height) * scale
-      setImage(media, slot: -1, uri: effectiveURI(md), thumb: md.thumb, maxPixel: px, animated: md.kind == "gif" || md.kind == "sticker")
+      setImage(media, slot: -1, uri: effectiveURI(md), thumb: md.thumb, maxPixel: px, animated: md.kind == "gif" || md.kind == "sticker", vf: md.kind == "video" ? md.vf : "")
       let isVideo = md.kind == "video"
       let showPlay = isVideo && md.up == nil
       playBadge.isHidden = !showPlay
@@ -361,6 +365,7 @@ final class CMLCell: UICollectionViewCell {
       media.isHidden = true
       media.image = nil
       mediaToken = ""
+      _ = trackVF(-1, "")
       playBadge.isHidden = true
       durLabel.isHidden = true
       mediaDim.isHidden = true
@@ -376,11 +381,12 @@ final class CMLCell: UICollectionViewCell {
           place(iv, L.albumFrames[i], true)
           iv.backgroundColor = row.own ? th.ownQuote : th.otherQuote
           let f = L.albumFrames[i]
-          setImage(iv, slot: i, uri: effectiveURI(md), thumb: md.thumb, maxPixel: max(f.width, f.height) * scale, animated: false)
+          setImage(iv, slot: i, uri: effectiveURI(md), thumb: md.thumb, maxPixel: max(f.width, f.height) * scale, animated: false, vf: md.kind == "video" ? md.vf : "")
         } else {
           iv.isHidden = true
           iv.image = nil
           albumTokens[i] = ""
+          _ = trackVF(i, "")
         }
       }
       if row.more > 0, let last = L.albumFrames.last {
@@ -398,6 +404,7 @@ final class CMLCell: UICollectionViewCell {
     } else {
       for iv in albumViews { iv.isHidden = true; iv.image = nil }
       albumTokens = []
+      for i in 0..<4 { _ = trackVF(i, "") }
       moreDim.isHidden = true
       moreLabel.isHidden = true
     }
@@ -581,8 +588,23 @@ final class CMLCell: UICollectionViewCell {
     }
   }
 
-  private func setImage(_ iv: UIImageView, slot: Int, uri: String, thumb: String, maxPixel: CGFloat, animated: Bool) {
-    let tok = uri + "#" + thumb
+  /// [2026-10-18 vthumb] registra o 1º frame pedido p/ o slot; cancela o anterior. true = precisa pedir.
+  private func trackVF(_ slot: Int, _ vf: String) -> Bool {
+    let prev = vfReq[slot] ?? ""
+    if prev == vf { return false }
+    if !prev.isEmpty { CMLVideoFrameLoader.shared.cancel(prev) }
+    if vf.isEmpty {
+      vfReq.removeValue(forKey: slot)
+    } else {
+      vfReq[slot] = vf
+    }
+    return !vf.isEmpty
+  }
+
+  private func setImage(_ iv: UIImageView, slot: Int, uri: String, thumb: String, maxPixel: CGFloat, animated: Bool, vf: String = "") {
+    // [2026-10-18 vthumb] vídeo sem pôster (uri e miniatura vazias) → 1º frame extraído no aparelho
+    let vfUse = (uri.isEmpty && thumb.isEmpty) ? vf : ""
+    let tok = uri + "#" + thumb + (vfUse.isEmpty ? "" : "#vf:" + vfUse)
     let cur = slot < 0 ? mediaToken : (slot < albumTokens.count ? albumTokens[slot] : "")
     if cur == tok && iv.image != nil { return }
     if slot < 0 { mediaToken = tok } else if slot < albumTokens.count { albumTokens[slot] = tok }
@@ -596,7 +618,29 @@ final class CMLCell: UICollectionViewCell {
         if self.currentToken(for: iv) == myTok { iv.image = img }
       }
     }
-    if uri.isEmpty { return }
+    if uri.isEmpty {
+      if vfUse.isEmpty {
+        _ = trackVF(slot, "")
+        return
+      }
+      let vfl = CMLVideoFrameLoader.shared
+      if let frame = vfl.cached(vfUse) {
+        _ = trackVF(slot, "")
+        iv.image = frame
+        return
+      }
+      if trackVF(slot, vfUse) {
+        vfl.load(vfUse, maxPixel: maxPixel) { [weak self, weak iv] img in
+          guard let self = self else { return }
+          if self.vfReq[slot] == vfUse { self.vfReq.removeValue(forKey: slot) }
+          guard let iv = iv, let img = img else { return }
+          guard self.currentToken(for: iv) == myTok else { return }
+          UIView.transition(with: iv, duration: 0.22, options: [.transitionCrossDissolve, .allowUserInteraction], animations: { iv.image = img })
+        }
+      }
+      return
+    }
+    _ = trackVF(slot, "")
     loader.load(uri, maxPixel: maxPixel, animated: animated) { [weak self, weak iv] img in
       guard let self = self, let iv = iv, let img = img else { return }
       guard self.currentToken(for: iv) == myTok else { return }
