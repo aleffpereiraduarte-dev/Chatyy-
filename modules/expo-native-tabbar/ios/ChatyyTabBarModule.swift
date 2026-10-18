@@ -5,7 +5,8 @@ import UIKit
 // A view só desenha e entrega toques — quem decide o que cada aba faz continua
 // sendo o JS (handleTabPress / requestNewStatus).
 //
-// Props: items[{key,label,sfSymbol,sfSymbolActive,badge,dot,longPress,selectable}],
+// Props: items[{key,label,sfSymbol,sfSymbolActive,badge,dot,longPress,selectable,
+//        avatarUrl,avatarHeaders (api 3+)}],
 //        selectedKey (String|null), theme{dark,active,inactive,background,hairline,
 //        badgeBackground,badgeText,pill,ripple}, translucent, bounce.
 // Eventos: onTabPress{key}, onTabLongPress{key}, onPreferredHeight{height}
@@ -21,6 +22,11 @@ struct NTBItemRecord: Record {
   @Field var dot: Bool = false
   @Field var longPress: Bool = false
   @Field var selectable: Bool = true
+  /// [2026-10-18 you-tab-avatar] api 3: foto redonda no lugar do SF Symbol
+  /// (http(s)://, file:// ou caminho absoluto). Vazio/nil = ícone.
+  @Field var avatarUrl: String? = nil
+  /// Cabeçalhos do download (ex.: Authorization p/ foto restrita).
+  @Field var avatarHeaders: [String: String]? = nil
 }
 
 struct NTBThemeRecord: Record {
@@ -50,8 +56,9 @@ public class ChatyyTabBarModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyTabBar")
 
+    // 3 = [2026-10-18 you-tab-avatar] items[].avatarUrl (foto redonda na aba Você).
     Function("apiVersion") { () -> Int in
-      return 1
+      return 3
     }
 
     View(ChatyyTabBarView.self) {

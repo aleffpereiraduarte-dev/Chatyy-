@@ -26,6 +26,10 @@ export type NativeTabItem = {
   longPress?: boolean;
   /** false = nunca fica marcada (ex.: Email abre outra tela). */
   selectable?: boolean;
+  /** [2026-10-18 you-tab-avatar] api 3+: foto redonda no lugar do ícone (http(s)/file://). */
+  avatarUrl?: string | null;
+  /** Cabeçalhos do download da foto (ex.: Authorization). */
+  avatarHeaders?: Record<string, string> | null;
 };
 
 export type NativeTabTheme = {
@@ -76,7 +80,8 @@ export function isAvailable(): boolean {
   return !!getNativeTabBarView();
 }
 
-/** [2026-10-18 you-tab] Versão do contrato nativo (0 = desconhecida). Android 2+ = ícone "you". */
+/** [2026-10-18 you-tab] Versão do contrato nativo (0 = desconhecida). Android 2+ = ícone "you".
+ *  3+ (iOS e Android) = items[].avatarUrl (foto na aba Você). */
 export function apiVersion(): number {
   try {
     const mod: any = requireOptionalNativeModule('ChatyyTabBar');

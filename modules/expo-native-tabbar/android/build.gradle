@@ -21,6 +21,9 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+  // [2026-10-18 you-tab-avatar] foto da aba "Você" (api 3) — mesma Glide dos
+  // outros módulos (expo-chat-conversation-list etc.), sem versão nova no app.
+  implementation 'com.github.bumptech.glide:glide:5.0.5'
   // [2026-10-15 native-tabs] Só framework Android + expo-modules-core: a barra
   // é desenhada com View/LinearLayout/RippleDrawable (sem Material Components,
   // que exigiria Theme.MaterialComponents — o app usa Theme.AppCompat).

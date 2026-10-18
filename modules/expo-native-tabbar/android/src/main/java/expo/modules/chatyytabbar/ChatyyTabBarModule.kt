@@ -9,7 +9,8 @@ import expo.modules.kotlin.records.Record
  * [2026-10-15 native-tabs] Barra de abas inferior da home NATIVA (Android).
  * Mesmo contrato da versão iOS (ios/ChatyyTabBarModule.swift):
  *
- * Props: items[{key,label,androidIcon,badge,dot,longPress,selectable}],
+ * Props: items[{key,label,androidIcon,badge,dot,longPress,selectable,
+ *   avatarUrl,avatarHeaders (api 3+)}],
  *   selectedKey, theme{dark,active,inactive,background,hairline,badgeBackground,
  *   badgeText,pill,ripple}, bottomInset (dp), bounce.
  * Eventos: onTabPress{key}, onTabLongPress{key}.
@@ -24,6 +25,10 @@ class NTBItemRecord : Record {
   @Field val dot: Boolean = false
   @Field val longPress: Boolean = false
   @Field val selectable: Boolean = true
+  /** [2026-10-18 you-tab-avatar] api 3: foto redonda no lugar do vetor (http(s)/file:// /caminho). */
+  @Field val avatarUrl: String? = null
+  /** Cabeçalhos do download (ex.: Authorization p/ foto restrita). */
+  @Field val avatarHeaders: Map<String, String>? = null
 }
 
 class NTBThemeRecord : Record {
@@ -49,7 +54,8 @@ class ChatyyTabBarModule : Module() {
     Name("ChatyyTabBar")
 
     // 2 = [2026-10-18 you-tab] ícone "you" (aba Você). JS: binário < 2 no Android → barra JS.
-    Function("apiVersion") { 2 }
+    // 3 = [2026-10-18 you-tab-avatar] items[].avatarUrl (foto redonda + anel quando ativa).
+    Function("apiVersion") { 3 }
 
     View(ChatyyTabBarView::class) {
       Events("onTabPress", "onTabLongPress", "onPreferredHeight")

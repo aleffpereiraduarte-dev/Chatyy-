@@ -13,6 +13,9 @@ import UIKit
 // - Haptic de seleção ao trocar; impacto médio no long-press.
 // - Long-press só nas abas com `longPress: true` (o reconhecedor nem começa
 //   nas outras, então o toque normal delas não é cancelado).
+// - [2026-10-18 you-tab-avatar] api 3: `avatarUrl` no item → foto redonda
+//   (NTBAvatar.swift) no lugar do SF Symbol; anel quando selecionado. Até a
+//   foto chegar (ou se falhar) fica o SF Symbol.
 final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDelegate {
   let onTabPress = EventDispatcher()
   let onTabLongPress = EventDispatcher()
@@ -31,6 +34,9 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
   private var theme = NTBThemeRecord()
   private var themeDirty = true
   private var translucent = true
+
+  /// Item i → assinatura do que está pintado nele ("url|cor|escuro"); nil = SF Symbol.
+  private var avatarSig: [Int: String] = [:]
 
   var bounceEnabled = true
 
@@ -134,12 +140,67 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
         built.append(item)
       }
       tabBar.setItems(built, animated: false)
+      avatarSig.removeAll()
       // As abas novas perderam a seleção — reaplica sem animar.
       let keep = displayedKey
       displayedKey = nil
       setDisplayed(keep ?? selectedKey, bounce: false)
     }
     applyBadges()
+    applyAvatars()
+  }
+
+  // MARK: - Avatar (api 3)
+
+  private static func avatarURL(_ r: NTBItemRecord) -> String {
+    return (r.avatarUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func applyAvatars() {
+    guard let items = tabBar.items else { return }
+    for (i, item) in items.enumerated() where i < records.count {
+      let r = records[i]
+      let url = ChatyyTabBarView.avatarURL(r)
+      if url.isEmpty {
+        if avatarSig[i] != nil { restoreSymbol(at: i) }
+        continue
+      }
+      if let photo = NTBAvatarLoader.shared.cached(url) {
+        paintAvatar(item, at: i, photo: photo, url: url)
+        continue
+      }
+      // Enquanto baixa: mantém o que já está (SF Symbol ou a foto anterior,
+      // quando só mudou a versão `v=` da URL) — sem piscar.
+      NTBAvatarLoader.shared.load(url, headers: r.avatarHeaders) { [weak self] photo in
+        guard let self = self, i < self.records.count,
+              ChatyyTabBarView.avatarURL(self.records[i]) == url,
+              let items = self.tabBar.items, i < items.count else { return }
+        if let photo = photo {
+          self.paintAvatar(items[i], at: i, photo: photo, url: url)
+        } else if self.avatarSig[i] != nil {
+          self.restoreSymbol(at: i)
+        }
+      }
+    }
+  }
+
+  private func paintAvatar(_ item: UITabBarItem, at i: Int, photo: UIImage, url: String) {
+    let dark = theme.dark
+    let ring = ntbColor(theme.active, dark ? .white : .black)
+    let sig = "\(url)|\(theme.active.map { String($0) } ?? "-")|\(dark)"
+    if avatarSig[i] == sig { return }
+    avatarSig[i] = sig
+    item.image = ntbAvatarImage(photo, ring: nil, dark: dark)
+    item.selectedImage = ntbAvatarImage(photo, ring: ring, dark: dark)
+  }
+
+  private func restoreSymbol(at i: Int) {
+    avatarSig[i] = nil
+    guard let items = tabBar.items, i < items.count, i < records.count else { return }
+    let r = records[i]
+    let img = UIImage(systemName: r.sfSymbol) ?? UIImage(systemName: "circle")
+    items[i].image = img
+    items[i].selectedImage = r.sfSymbolActive.flatMap { UIImage(systemName: $0) } ?? img
   }
 
   private func applyBadges() {
@@ -207,6 +268,7 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
       tabBar.scrollEdgeAppearance = ap
     }
     applyBadges()
+    applyAvatars() // anel/contorno seguem a cor ativa e o modo escuro
   }
 
   // MARK: - Selection

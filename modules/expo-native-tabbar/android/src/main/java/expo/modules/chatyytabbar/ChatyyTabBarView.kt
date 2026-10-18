@@ -3,9 +3,17 @@ package expo.modules.chatyytabbar
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.Looper
@@ -20,11 +28,87 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.load.model.GlideUrl
+import com.bumptech.glide.load.model.LazyHeaders
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.transition.Transition
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
+import java.io.File
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+
+/**
+ * [2026-10-18 you-tab-avatar] Foto redonda da aba "Você" (api 3). A foto já vem
+ * recortada em círculo pela Glide (circleCrop); aqui só posiciona e desenha o
+ * anel de 1,5 dp na cor ativa quando a aba está selecionada (+ contorno 0,5 dp
+ * quase invisível p/ foto clara em fundo claro não "sumir"). Sem tint.
+ */
+internal class NTBAvatarDrawable(
+  private val photo: Bitmap,
+  private val ring: Int?,
+  private val edge: Int,
+  private val density: Float,
+) : Drawable() {
+  private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+  private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+  private val dst = RectF()
+
+  override fun draw(canvas: Canvas) {
+    val b = bounds
+    val side = min(b.width(), b.height()).toFloat()
+    if (side <= 0f || photo.isRecycled) return
+    val cx = b.exactCenterX()
+    val cy = b.exactCenterY()
+    val r = side / 2f
+    var pr = r - 1f * density
+    if (ring != null) {
+      val lw = 1.5f * density
+      stroke.strokeWidth = lw
+      stroke.color = ring
+      canvas.drawCircle(cx, cy, r - lw / 2f, stroke)
+      pr = r - lw - 1.5f * density
+    }
+    dst.set(cx - pr, cy - pr, cx + pr, cy + pr)
+    canvas.drawBitmap(photo, null, dst, paint)
+    stroke.strokeWidth = 0.5f * density
+    stroke.color = edge
+    canvas.drawCircle(cx, cy, pr - 0.25f * density, stroke)
+  }
+
+  override fun setAlpha(alpha: Int) {
+    paint.alpha = alpha
+    stroke.alpha = alpha
+    invalidateSelf()
+  }
+
+  override fun setColorFilter(colorFilter: ColorFilter?) {
+    paint.colorFilter = colorFilter
+    invalidateSelf()
+  }
+
+  @Deprecated("Deprecated in Java")
+  override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+/** Modelo Glide: http(s) (com cabeçalhos opcionais), file://, content:// ou caminho. */
+internal fun ntbAvatarModel(u: String, headers: Map<String, String>?): Any? {
+  if (u.startsWith("http://") || u.startsWith("https://")) {
+    if (!headers.isNullOrEmpty()) {
+      val b = LazyHeaders.Builder()
+      for ((k, v) in headers) if (k.isNotBlank()) b.addHeader(k, v)
+      return GlideUrl(u, b.build())
+    }
+    return u
+  }
+  if (u.startsWith("file://") || u.startsWith("content://")) return Uri.parse(u)
+  if (u.startsWith("/")) return File(u)
+  return null
+}
 
 /**
  * [2026-10-15 native-tabs] Barra inferior estilo Material 3 NavigationBar,
@@ -73,6 +157,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
   private var cBadgeBg = Color.BLACK
   private var cBadgeFg = Color.WHITE
   private var cRipple = 0x14000000
+  private var isDarkTheme = false
 
   private val resync = Runnable {
     if (displayedKey != selectedKey) setDisplayed(selectedKey, animate = true, bounce = false)
@@ -142,6 +227,12 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
     var active = false
     var shownBadge = -1
     var colorAnim: ValueAnimator? = null
+    // [2026-10-18 you-tab-avatar] foto (cópia própria — o bitmap da Glide pode
+    // ser reciclado quando o target é limpo) e o pedido em andamento.
+    var avatarBmp: Bitmap? = null
+    var avatarReqUrl = ""
+    var avatarTarget: CustomTarget<Bitmap>? = null
+    var avatarShown = false
 
     init {
       root.orientation = LinearLayout.VERTICAL
@@ -212,11 +303,85 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
       }
       updateIcon()
       updateBadge(animate = false)
+      updateAvatar()
+    }
+
+    private fun setIconSizeDp(v: Float) {
+      val lp = icon.layoutParams as? FrameLayout.LayoutParams ?: return
+      val px = dp(v)
+      if (lp.width != px || lp.height != px) {
+        lp.width = px
+        lp.height = px
+        icon.layoutParams = lp
+      }
     }
 
     fun updateIcon() {
+      val bmp = avatarBmp
+      if (bmp != null) {
+        setIconSizeDp(28f)
+        icon.imageTintList = null
+        val edge = if (isDarkTheme) 0x24FFFFFF else 0x1A000000
+        icon.setImageDrawable(NTBAvatarDrawable(bmp, if (active) cActive else null, edge, density))
+        avatarShown = true
+        return
+      }
+      setIconSizeDp(24f)
       val res = iconRes(record.androidIcon ?: record.key, active)
       if (res != 0) icon.setImageResource(res) else icon.setImageDrawable(null)
+      if (avatarShown) {
+        avatarShown = false
+        icon.imageTintList = ColorStateList.valueOf(if (active) cActive else cInactive)
+      }
+    }
+
+    /** Pede a foto quando `avatarUrl` muda. Até chegar fica o que já está (vetor
+     *  ou a foto anterior, se só mudou o `v=`); erro → volta ao vetor (ntb_you). */
+    fun updateAvatar() {
+      val url = record.avatarUrl?.trim().orEmpty()
+      if (url == avatarReqUrl) return
+      avatarReqUrl = url
+      val app = context.applicationContext
+      avatarTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+      avatarTarget = null
+      val model = if (url.isEmpty()) null else ntbAvatarModel(url, record.avatarHeaders)
+      if (model == null) {
+        if (avatarBmp != null) {
+          avatarBmp = null
+          updateIcon()
+        }
+        return
+      }
+      val px = dp(28f)
+      val target = object : CustomTarget<Bitmap>(px, px) {
+        override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+          if (avatarTarget !== this) return
+          val own = try {
+            resource.copy(Bitmap.Config.ARGB_8888, false)
+          } catch (_: Throwable) {
+            null
+          } ?: return
+          avatarBmp = own
+          updateIcon()
+        }
+
+        override fun onLoadFailed(errorDrawable: Drawable?) {
+          if (avatarTarget !== this) return
+          if (avatarBmp != null) {
+            avatarBmp = null
+            updateIcon()
+          }
+        }
+
+        override fun onLoadCleared(placeholder: Drawable?) {}
+      }
+      avatarTarget = target
+      try {
+        Glide.with(app).asBitmap().load(model).circleCrop()
+          .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).into(target)
+      } catch (_: Throwable) {
+        avatarTarget = null
+      }
     }
 
     fun updateBadge(animate: Boolean) {
@@ -267,10 +432,11 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
       }
       colorAnim?.cancel()
       tint(if (active) cActive else cInactive)
+      if (avatarBmp != null) updateIcon() // anel/contorno seguem cor ativa e modo escuro
     }
 
     fun tint(c: Int) {
-      icon.imageTintList = ColorStateList.valueOf(c)
+      if (avatarBmp == null) icon.imageTintList = ColorStateList.valueOf(c)
       label.setTextColor(c)
     }
 
@@ -350,6 +516,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
         val c = cells[i]
         c.record = r
         c.updateBadge(animate = true)
+        c.updateAvatar()
       }
     }
   }
@@ -357,6 +524,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
   private fun applyTheme() {
     val t = theme
     val dark = t.dark
+    isDarkTheme = dark
     cActive = ntbColor(t.active, if (dark) 0xFFF5F5F5.toInt() else 0xFF0B0B0B.toInt())
     cInactive = ntbColor(t.inactive, if (dark) 0xFF8E8E93.toInt() else 0xFF6E6E73.toInt())
     cBackground = ntbColor(t.background, if (dark) 0xFF0B0B0B.toInt() else Color.WHITE)

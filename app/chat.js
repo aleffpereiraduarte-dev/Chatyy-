@@ -62,7 +62,7 @@ import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components
 import GlobalSearch from '../components/GlobalSearch';
 import FirstRunGate from '../components/onboarding/FirstRunGate'; // [2026-10-07 welcome]
 import { BarMaterial, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
-import NativeHomeTabBar, { nativeTabsAvailable, nativeTabsApi } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
+import NativeHomeTabBar, { nativeTabsAvailable, nativeTabsApi, useNativeTabAvatar } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
 import { useCollapsedTitleAnim } from '../components/LargeTitleHeader'; // [2026-10-15 nav-motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2]
 import AppsDrawerModal from '../components/apps/AppsSheet'; // [2026-10-15 apps-v3]
@@ -565,12 +565,20 @@ function ChatHub() {
   // cima onde tá meu perfil" (WhatsApp "Você" / Telegram Ajustes). Celular não-Kids:
   // a 5ª aba vira "Você" (→ /settings, mesmo push do avatar) e o avatar do topo
   // vira o botão Apps (mesmo AppsSheet). Kill switch: globalThis.__chatyy_you_tab = false.
-  // A aba nativa usa ícone (SF Symbol / vetor "you"); foto na aba nativa = build futuro.
+  // A aba nativa usa ícone (SF Symbol / vetor "you") até o binário com o módulo api 3;
+  // a partir dele, a própria foto redonda (useNativeTabAvatar → items[].avatarUrl).
   const YOU_TAB = !isKids && (() => { try { return globalThis.__chatyy_you_tab !== false; } catch { return true; } })();
   // Android: o vetor "you" só existe no binário com o módulo api 2+; antes disso a
   // aba nativa ficaria sem ícone → usa a barra JS (TabBarItem, com a foto) até o build.
   const NATIVE_TABS = useMemo(() => !isKids && nativeTabsAvailable()
     && !(YOU_TAB && Platform.OS === 'android' && nativeTabsApi() < 2), [isKids, YOU_TAB]);
+  // [2026-10-18 you-tab-avatar] api 3+ (iOS/Android): foto do usuário na aba "Você"
+  // (mesma URL/cache do AvatarCircle). Binário < 3 → ícone de antes.
+  const NATIVE_YOU_AVATAR = useMemo(() => NATIVE_TABS && YOU_TAB && nativeTabsApi() >= 3
+    && (() => { try { return globalThis.__chatyy_you_tab_avatar !== false; } catch { return true; } })(), [NATIVE_TABS, YOU_TAB]);
+  const youTabAvatar = useNativeTabAvatar(user?.email, user?.name || user?.email, NATIVE_YOU_AVATAR);
+  const youAvatarUrl = youTabAvatar?.uri || null;
+  const youAvatarHeaders = youTabAvatar?.headers || null;
   const nativeTabItems = useMemo(() => {
     if (!NATIVE_TABS) return null;
     return [
@@ -579,10 +587,11 @@ function ChatHub() {
       { key: 'reels', label: t('reels.title') || 'Reels', sfSymbol: 'play.rectangle', sfSymbolActive: 'play.rectangle.fill', androidIcon: 'reels' },
       { key: 'calls', label: t('chat.tabCalls') || 'Ligações', sfSymbol: 'phone', sfSymbolActive: 'phone.fill', androidIcon: 'calls', badge: missedCallBadge || 0 },
       YOU_TAB
-        ? { key: 'you', label: t('chat.tabYou') || 'Você', sfSymbol: 'person.crop.circle', sfSymbolActive: 'person.crop.circle.fill', androidIcon: 'you', selectable: false }
+        ? { key: 'you', label: t('chat.tabYou') || 'Você', sfSymbol: 'person.crop.circle', sfSymbolActive: 'person.crop.circle.fill', androidIcon: 'you', selectable: false,
+            ...(youAvatarUrl ? { avatarUrl: youAvatarUrl, avatarHeaders: youAvatarHeaders } : null) }
         : { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
     ];
-  }, [NATIVE_TABS, YOU_TAB, t, chatsBadge, emailBadge, missedCallBadge]);
+  }, [NATIVE_TABS, YOU_TAB, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders]);
 
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
