@@ -2,8 +2,9 @@ import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Pressable,
   KeyboardAvoidingView, Platform, Dimensions,
-  ScrollView, Modal, Linking, Image, Alert, Share,
+  ScrollView, Modal, Linking, Image, Alert, Share, TextInput,
 } from 'react-native';
+import NativeSheetDialog from '../components/NativeSheetDialog'; // [bia-fase0 2026-10-18] sheet do sistema p/ "o que estava errado?"
 import { HeaderIconButton } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -856,7 +857,7 @@ export default function OneScreen() {
           const msgs = hRes?.data?.messages || (Array.isArray(hRes?.data) ? hRes.data : []);
           if (msgs.length > 0) {
             const mapped = msgs.map((m, i) => ({
-              id: `h-${i}`, role: m.role, content: m.content,
+              id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0,
               actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
               userName: firstName,
             }));
@@ -975,7 +976,7 @@ export default function OneScreen() {
       const res = await api.oneHistory(conv.id);
       const msgs = res?.data?.messages || (Array.isArray(res?.data) ? res.data : []);
       setMessages(msgs.map((m, i) => ({
-        id: `h-${i}`, role: m.role, content: m.content,
+        id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0,
         actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
         userName: firstName,
       })));
@@ -1288,6 +1289,7 @@ export default function OneScreen() {
           id: aiMsgId, role: 'assistant',
           content: responseText,
           actions: result.data.actions || [],
+          serverId: result.data.message_id || 0,
         }]);
         handleAIResponse(responseText, result.data.actions || [], aiMsgId);
       } else {
@@ -1402,6 +1404,7 @@ export default function OneScreen() {
       let streamActions = [];
       let activeToolName = null;
       let streamConvId = conversationId;
+      let streamMsgServerId = 0; // [bia-fase0 2026-10-18] id da resposta no servidor (feedback)
       let streamFailed = false;
       // Typing indicator state — shown while a tool is executing (no text yet for that round)
       let toolPending = false;
@@ -1479,6 +1482,7 @@ export default function OneScreen() {
               setConversationId(meta.conversation_id);
             }
             if (meta.actions) streamActions = meta.actions;
+            if (meta.message_id) streamMsgServerId = meta.message_id;
             // Suggested follow-ups arrive in the final meta event — surface
             // them as chips under the last AI reply.
             if (Array.isArray(meta.suggested_followups) && meta.suggested_followups.length > 0) {
@@ -1499,7 +1503,7 @@ export default function OneScreen() {
             if (parsedFollowups.length > 0) setLastFollowups(parsedFollowups);
             setMessages(prev => prev.map(m =>
               m.id === aiMsgId
-                ? { ...m, content: cleanText, actions: streamActions, _streaming: false, _toolPending: false, _toolName: null }
+                ? { ...m, content: cleanText, actions: streamActions, serverId: streamMsgServerId || m.serverId, _streaming: false, _toolPending: false, _toolName: null }
                 : m
             ));
             setLoading(false);
@@ -1525,7 +1529,7 @@ export default function OneScreen() {
               if (parsedFollowups.length > 0) setLastFollowups(parsedFollowups);
               setMessages(prev => prev.map(m =>
                 m.id === aiMsgId
-                  ? { ...m, content: cleanText, actions: streamActions, _streaming: false, _toolPending: false, _toolName: null }
+                  ? { ...m, content: cleanText, actions: streamActions, serverId: streamMsgServerId || m.serverId, _streaming: false, _toolPending: false, _toolName: null }
                   : m
               ));
               setLoading(false);
@@ -2349,16 +2353,37 @@ export default function OneScreen() {
     setCtxSheetItem(item);
   }, []);
 
-  // [2026-10-15 bia-design] curtir/descurtir — registro leve (haptic + aviso no 👎 como antes)
+  // [bia-fase0 2026-10-18] curtir/descurtir GRAVA no servidor (bia_feedback). Descurtir abre um sheet
+  // opcional "o que estava errado?" — a correção vira memória e a Bia usa nas próximas respostas.
+  const [fbSheet, setFbSheet] = useState(null); // { item, reason, text, sending }
+  const sendFeedback = useCallback((item, value, extra) => {
+    const mid = Number(item?.serverId) || 0;
+    return api.apiCall('one_feedback', { message_id: mid, conversation_id: mid ? 0 : (conversationId || 0), value, ...(extra || {}) }, 'POST')
+      .catch(() => null);
+  }, [conversationId]);
   const onFeedback = useCallback((item, v) => {
+    if (!item) return;
     haptic('light');
-    if (v < 0) {
+    setMessages(prev => prev.map(m => (m.id === item.id ? { ...m, _vote: v } : m)));
+    sendFeedback(item, v);
+    if (v < 0) setFbSheet({ item, reason: null, text: '', sending: false });
+  }, [sendFeedback]);
+  const submitFbSheet = useCallback(async () => {
+    const cur = fbSheet;
+    if (!cur) return;
+    const text = (cur.text || '').trim();
+    if (!text && !cur.reason) { setFbSheet(null); return; }
+    setFbSheet({ ...cur, sending: true });
+    const r = await sendFeedback(cur.item, -1, { reason: cur.reason || undefined, correction: text || undefined });
+    haptic(r?.success ? 'success' : 'light');
+    setFbSheet(null);
+    if (!r?.success) {
       try {
-        if (Platform.OS === 'web') window.alert(t('one.badResponseThanks'));
-        else Alert.alert(t('one.badResponseThanks'));
+        if (Platform.OS === 'web') window.alert(t('common.networkError'));
+        else Alert.alert(t('common.error'), t('common.networkError'));
       } catch {}
     }
-  }, [t]);
+  }, [fbSheet, sendFeedback, t]);
 
   // nível de voz p/ o orb (lido ~30 Hz pelo próprio orb, sem render React)
   voiceStateRef.current = voiceState;
@@ -2633,19 +2658,59 @@ export default function OneScreen() {
         canRegenerate={!!(ctxSheetItem && ctxSheetItem.id === lastAIId)}
         onCopy={() => ctxSheetItem && copyMessage(ctxSheetItem)}
         onRegenerate={() => ctxSheetItem && regenerateLast(ctxSheetItem)}
-        onBadResponse={() => {
-          // Lightweight feedback hook — wire to telemetry later. For now, just confirm visually.
-          haptic('light');
-          try {
-            const { Alert } = require('react-native');
-            if (Platform.OS === 'web') {
-              window.alert(t('one.badResponseThanks') || 'Thanks — feedback noted.');
-            } else {
-              Alert.alert(t('one.badResponseThanks') || 'Thanks — feedback noted.');
-            }
-          } catch {}
-        }}
+        onBadResponse={() => { const it = ctxSheetItem; setCtxSheetItem(null); if (it) setTimeout(() => onFeedback(it, -1), 350); /* deixa o sheet de contexto fechar antes */ }}
       />
+
+      {/* [bia-fase0 2026-10-18] descurtir → "o que estava errado?" (opcional) */}
+      <NativeSheetDialog
+        visible={!!fbSheet}
+        onClose={() => setFbSheet(null)}
+        animationType="slide"
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+        panelStyle={[fbStyles.panel, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', paddingBottom: Math.max(16, insets.bottom + 8) }]}
+      >
+        <Text style={[fbStyles.title, { color: isDark ? '#F5F5F7' : '#111111' }]}>{t('one.fbTitle')}</Text>
+        <Text style={[fbStyles.hint, { color: isDark ? 'rgba(245,245,247,0.6)' : 'rgba(17,17,17,0.55)' }]}>{t('one.fbHint')}</Text>
+        <View style={fbStyles.chips}>
+          {['incorrect', 'not_done', 'unhelpful', 'too_long'].map((k) => {
+            const on = fbSheet?.reason === k;
+            return (
+              <TouchableOpacity
+                key={k}
+                onPress={() => { haptic('light'); setFbSheet(f => (f ? { ...f, reason: on ? null : k } : f)); }}
+                style={[fbStyles.chip, { backgroundColor: on ? (isDark ? '#F5F5F7' : '#111111') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)') }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+              >
+                <Text style={[fbStyles.chipText, { color: on ? (isDark ? '#111111' : '#FFFFFF') : (isDark ? '#F5F5F7' : '#111111') }]}>{t('one.fbReason_' + k)}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <TextInput
+          value={fbSheet?.text || ''}
+          onChangeText={(text) => setFbSheet(f => (f ? { ...f, text } : f))}
+          placeholder={t('one.fbPlaceholder')}
+          placeholderTextColor={isDark ? 'rgba(245,245,247,0.4)' : 'rgba(17,17,17,0.4)'}
+          multiline
+          maxLength={500}
+          style={[fbStyles.input, { color: isDark ? '#F5F5F7' : '#111111', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]}
+          accessibilityLabel={t('one.fbTitle')}
+        />
+        <View style={fbStyles.row}>
+          <TouchableOpacity onPress={() => setFbSheet(null)} style={[fbStyles.btn, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]} accessibilityRole="button">
+            <Text style={[fbStyles.btnText, { color: isDark ? '#F5F5F7' : '#111111' }]}>{t('one.fbSkip')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={submitFbSheet}
+            disabled={!!fbSheet?.sending}
+            style={[fbStyles.btn, { backgroundColor: isDark ? '#F5F5F7' : '#111111', opacity: fbSheet?.sending ? 0.6 : 1 }]}
+            accessibilityRole="button"
+          >
+            <Text style={[fbStyles.btnText, { color: isDark ? '#111111' : '#FFFFFF' }]}>{t('common.send')}</Text>
+          </TouchableOpacity>
+        </View>
+      </NativeSheetDialog>
 
       {/* "+": câmera · fotos · voz · ajustes */}
       <BiaAttachSheet
@@ -2714,6 +2779,20 @@ export default function OneScreen() {
 }
 
 // ─── Styles ───
+
+// [bia-fase0 2026-10-18] sheet "o que estava errado?"
+const fbStyles = StyleSheet.create({
+  panel: { width: '100%', maxWidth: 520, alignSelf: 'center', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 18 },
+  title: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3, marginBottom: 4 },
+  hint: { fontSize: 13.5, lineHeight: 19, marginBottom: 14 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  chip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 16 },
+  chipText: { fontSize: 13.5, fontWeight: '600' },
+  input: { minHeight: 76, maxHeight: 160, borderRadius: 14, paddingHorizontal: 13, paddingTop: 11, paddingBottom: 11, fontSize: 15, textAlignVertical: 'top', marginBottom: 14 },
+  row: { flexDirection: 'row', gap: 10 },
+  btn: { flex: 1, paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
+  btnText: { fontSize: 15, fontWeight: '700' },
+});
 
 const st = StyleSheet.create({
   container: { flex: 1 },

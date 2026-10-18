@@ -341,7 +341,7 @@ export const BiaMessageActions = memo(function BiaMessageActions({ item, isDark,
     const ok = await onCopy?.(item);
     if (ok !== false) { setCopied(true); if (tmr.current) clearTimeout(tmr.current); tmr.current = setTimeout(() => setCopied(false), 1600); }
   };
-  const doVote = (v) => { const nv = vote === v ? 0 : v; setVote(nv); if (nv) onFeedback?.(item, nv); };
+  const doVote = (v) => { const nv = vote === v ? 0 : v; setVote(nv); onFeedback?.(item, nv); }; // [bia-fase0 2026-10-18] 0 = desfaz o voto no servidor
   const btn = (key, label, icon, onPress, active) => (
     <TouchableOpacity key={key} onPress={onPress} hitSlop={4} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={label}
       style={[as.btn, active && { backgroundColor: P.chip }]}>
