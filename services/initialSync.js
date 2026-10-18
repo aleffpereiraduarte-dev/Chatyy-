@@ -407,7 +407,7 @@ export async function runDeltaSync(api) {
   const isNative = Platform.OS !== 'web';
   try {
     // 1. Conversations
-    const convResult = await api.chatConversations('', false);
+    const convResult = await api.chatConversations('', true) /* [2026-10-18] inclui arquivadas no cache */;
     if (convResult.success) {
       const convs = Array.isArray(convResult.data) ? convResult.data : (convResult.data?.conversations || []);
       await cacheConversations(convs);

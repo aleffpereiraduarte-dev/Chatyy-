@@ -4404,7 +4404,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
 
     if (alreadyHasVisible && !searchText) {
       // Data is already painted — silent delta sync only
-      api.chatConversations('', false).then(r => {
+      // [2026-10-18 include-archived] servidor só devolve arquivadas com include_archived=1
+      // (linhas com archived=1, limite próprio — não empurram as ativas da 1ª página).
+      api.chatConversations('', true).then(r => {
         if (!isFresh()) return;
         if (!r?.success) {
           // Silent-fail audit: server returned non-success while cached
@@ -4445,7 +4447,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             const old = prevById.get(String(c.id));
             if (!old) return _mergeServerConvRow(null, c, _meLc);
             return _keepKnownName(old, _mergeServerConvRow(old, c, _meLc)); // [2026-10-14 grupo-nome] nunca regride p/ vazio
-          }), convs.length, _archIds));
+          }), _active.length, _archIds));
         });
         setArchivedConversations(prev => _reuseConvRows(prev, _arch));
         cacheConversations(_guardReadRows(convs, _meLcRef.current)).catch(() => {});
@@ -4472,7 +4474,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // Background delta sync
         if (!searchText) {
           const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
-          api.chatConversations('', false).then(r => {
+          api.chatConversations('', true).then(r => {
             if (!isFresh()) return;
             if (!r?.success) return;
             const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
@@ -4486,7 +4488,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 const _pById = new Map((Array.isArray(prev) ? prev : []).map(p => [String(p.id), p]));
                 const _meLc = _meLcRef.current; // [2026-10-14 lista-eco-envio]
                 const _actM = _act.map(c => { const _o = _pById.get(String(c.id)); return _keepKnownName(_o, _mergeServerConvRow(_o, c, _meLc)); });
-                return _keepBeyondPage(prev, _actM, convs.length, _aIds);
+                return _keepBeyondPage(prev, _actM, _act.length, _aIds);
               });
             }
             setArchivedConversations(convs.filter(c => c.archived));
@@ -4502,7 +4504,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // NO CACHE AT ALL → full API fetch
     if (showLoader) setLoading(true);
     try {
-      const r = await api.chatConversations(searchText, false);
+      const r = await api.chatConversations(searchText, true);
       // Allow stale responses if screen is empty — never leave user on blank
       if (!isFresh() && _convsCountRef.current > 0) return;
       if (r.success) {
@@ -4510,6 +4512,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // repetia o mesmo chat_list: o servidor ignora include_archived (só
         // filter=archived muda o conjunto) → resposta idêntica, 2× PG/rede no
         // cold start. Partição única active/archived + cache + nativo daqui.
+        // [2026-10-18 include-archived] agora pede include_archived=1 (servidor passou a honrar).
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         const _active = []; const _arch = [];
         for (const c of convs) (c.archived ? _arch : _active).push(c);
@@ -4893,7 +4896,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // broadcast was dropped). Fire-and-forget alongside the full refresh.
       try { reconcileReceipts(); } catch {}
       // Silent delta sync (no loading indicator — instant, no flicker if unchanged)
-      api.chatConversations(searchText || '', false).then(r => {
+      api.chatConversations(searchText || '', true).then(r => {
         if (r?.success) {
           const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
           // Fast dedup: fingerprint includes id + unread_count + updated_at
