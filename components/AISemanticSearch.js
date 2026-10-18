@@ -4,6 +4,7 @@ import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 import useIsMounted from '../hooks/useIsMounted';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
 // Secondary gradient stop — pairs with brand for the "AI gradient" header.
@@ -33,7 +34,7 @@ export function AISemanticSearchHeader({ query, explanation, colors, onDismiss }
     <View style={[s.header, { backgroundColor: (colors?.surface || '#fff'), borderColor: colors?.border || 'rgba(0,0,0,0.06)' }]}>
       <View style={s.headerRow}>
         <View style={s.sparkBadge}>
-          <IconSparkles size={14} color={BRAND} />
+          <BiaIcon size={14} color={BRAND} />
         </View>
         <Text style={[s.headerTitle, titleStyle]}>
           {t?.('search.aiTitle') || 'Buscar com IA'}
@@ -114,7 +115,7 @@ export default function AISemanticSearch({ query, emails, onReranked, colors }) 
       {loading ? (
         <ActivityIndicator size="small" color={BRAND} style={{ marginRight: 4 }} />
       ) : (
-        <IconSparkles size={12} color={active ? BRAND : colors.textSecondary} style={{ marginRight: 4 }} />
+        <BiaIcon size={12} color={active ? BRAND : colors.textSecondary} style={{ marginRight: 4 }} />
       )}
       <Text style={[s.chipText, { color: active ? BRAND : colors.textSecondary }]}>
         {active ? t('search.aiSorted') : t('search.aiSort')}

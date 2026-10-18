@@ -24,6 +24,7 @@ import {
   Platform,
 } from 'react-native';
 import { IconSparkles, IconX, IconCheck } from '../Icons';
+import BiaIcon from '../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
 
@@ -95,7 +96,7 @@ export default function AISummarizeModal({
           <View style={s.header}>
             <View style={s.headerLeft}>
               <View style={[s.iconCircle, { backgroundColor: colors?.surfaceVariant || (BRAND + '14') }]}>
-                <IconSparkles size={18} color={colors?.primary || BRAND} />
+                <BiaIcon size={18} color={colors?.primary || BRAND} />
               </View>
               <Text style={[s.title, { color: colors?.text || '#000' }]}>
                 {t?.('chatConv.summaryTitle') || 'Resumo da conversa'}

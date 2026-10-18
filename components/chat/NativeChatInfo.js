@@ -61,6 +61,17 @@ export function isNativeProfileEnabled() {
   try { return chatInfoApiVersion() >= 3; } catch { return false; }
 }
 
+/**
+ * [2026-10-18 profile-edit-native] "Editar perfil" NATIVO (Telegram) dentro da
+ * mesma view: binário api ≥ 4 + perfil nativo ligado + kill switch OTA
+ * globalThis.__chatyy_native_profile_edit = false (volta à folha JS).
+ */
+export function isNativeProfileEditEnabled() {
+  if (!isNativeProfileEnabled()) return false;
+  try { if (globalThis.__chatyy_native_profile_edit === false) return false; } catch {}
+  try { return chatInfoApiVersion() >= 4; } catch { return false; }
+}
+
 class Boundary extends React.Component {
   constructor(props) {
     super(props);
@@ -164,6 +175,12 @@ function Inner(props) {
     };
   }, [members]);
 
+  // [2026-10-18 profile-edit-native] api ≥ 4: descritor do modo edição (plano).
+  const editOn = !!props.edit && (() => { try { return chatInfoApiVersion() >= 4; } catch { return false; } })();
+  const editKey = editOn ? JSON.stringify(props.edit) : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableEdit = useMemo(() => (editOn ? props.edit : null), [editKey]);
+
   let authToken = '';
   try { authToken = require('../../services/api').getAuthToken?.() || ''; } catch {}
 
@@ -216,6 +233,10 @@ function Inner(props) {
         try { propsRef.current.onMemberQuery?.(q); } catch {}
       },
       onClose: () => { try { propsRef.current.onClose?.(); } catch {} },
+      onEdit: (e) => {
+        const ev = e?.nativeEvent ?? e;
+        try { propsRef.current.onEdit?.(ev || {}); } catch {}
+      },
       onNativeError: (e) => {
         const msg = String((e?.nativeEvent ?? e)?.message || 'native error');
         try { globalThis.__chatyyNativeChatInfoError = { at: Date.now(), msg }; } catch {}
@@ -240,6 +261,7 @@ function Inner(props) {
       bottomInset={bottomInset || 0}
       maxContentWidth={maxWidth || 0}
       authToken={authToken}
+      {...(stableEdit ? { edit: stableEdit } : null)}
       {...handlers}
     />
   );

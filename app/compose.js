@@ -78,6 +78,7 @@ import {
   IconLock, IconAlertTriangle, IconCheck, IconLink,
 } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const DRAFT_SAVE_INTERVAL = 5000;
 
@@ -239,7 +240,7 @@ function SpinningSparkle({ size, color }) {
   const spin = rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   return (
     <Animated.View style={{ transform: [{ rotate: spin }] }}>
-      <IconSparkles size={size} color={color} />
+      <BiaIcon size={size} color={color} />
     </Animated.View>
   );
 }
@@ -1931,7 +1932,7 @@ export default function ComposeScreen() {
           accessibilityLabel={showMeet ? t('compose.writeWithAI') : t('compose.ai')}
           accessibilityRole="button"
         >
-          <IconSparkles size={14} color={colors.primary} />
+          <BiaIcon size={14} color={colors.primary} />
           <Text style={[s.toolBtnText, { color: colors.primary }]}>{showMeet ? t('compose.writeWithAI') : t('compose.ai')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1948,7 +1949,7 @@ export default function ComposeScreen() {
             </>
           ) : (
             <>
-              <IconSparkles size={13} color={colors.textSecondary} />
+              <BiaIcon size={13} color={colors.textSecondary} />
               <Text style={[s.toolBtnText, { color: colors.textSecondary }]}>{t('compose.improveText')}</Text>
             </>
           )}
@@ -1961,7 +1962,7 @@ export default function ComposeScreen() {
             paddingHorizontal: 10, paddingVertical: 4,
             marginLeft: 4, alignSelf: 'center',
           }}>
-            <IconSparkles size={12} color={colors.primary} />
+            <BiaIcon size={12} color={colors.primary} />
             <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600' }}>
               {t('compose.aiImproved') || 'Texto melhorado'}
             </Text>

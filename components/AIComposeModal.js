@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconSparkles, IconX, IconBriefcase, IconSmile, IconCrop, IconLaughFace, IconZap, IconHeartOutline, IconRefresh, IconCheck, IconCopy, IconArrowRight } from './Icons';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
 const BRAND_PINK = '#111111';
@@ -100,7 +101,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
           <View style={[s.header, { borderBottomColor: colors.borderLight, backgroundColor: colors.surface }]}>
             <View style={s.headerLeft}>
               <View style={s.sparkleBadge}>
-                <IconSparkles size={18} color="#fff" />
+                <BiaIcon size={18} color="#fff" />
               </View>
               <View>
                 <Text style={[s.headerTitle, { color: colors.text }]}>{t('aiCompose.title')}</Text>
@@ -205,7 +206,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
                     </>
                   ) : (
                     <>
-                      <IconSparkles size={18} color="#fff" />
+                      <BiaIcon size={18} color="#fff" />
                       <Text style={s.generateText}>{t('aiComposeModal.generate')}</Text>
                     </>
                   )}
@@ -223,7 +224,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
             {draft ? (
               <View style={[s.resultCard, { backgroundColor: colors.surface, borderColor: BRAND + '30' }, Shadow.md]}>
                 <View style={s.resultHeader}>
-                  <IconSparkles size={14} color={BRAND} />
+                  <BiaIcon size={14} color={BRAND} />
                   <Text style={[s.resultLabel, { color: BRAND }]}>{t('aiComposeModal.draftGenerated')}</Text>
                 </View>
                 <TextInput

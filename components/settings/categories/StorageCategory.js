@@ -11,7 +11,8 @@ import { useLanguage } from '../../../context/LanguageContext';
 import { useConfirm } from '../../ConfirmModal';
 import * as settingsCache from '../../../services/settingsCache';
 import { Shimmer } from '../../SkeletonLoader';
-import { IconRefresh } from '../../Icons';
+import { IconRefresh, IconImage } from '../../Icons';
+import AvatarCircle from '../../AvatarCircle';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsValueText, SettingsCardContent, useGroupedColors } from '../SettingsKit';
 import StorageMeter, { StorageNudgeCard } from '../../storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { PLAN_NAME } from '../../../services/brandPlan';
@@ -163,11 +164,55 @@ function DeviceStorage() {
   const { registerAnchor } = useSettingsHost();
   const [stats, setStats] = useState(() => settingsCache.peek('storage_stats'));
   const [busy, setBusy] = useState(false);
-  const [convNames, setConvNames] = useState({});
   const [showAll, setShowAll] = useState(false);
   const [clearingConv, setClearingConv] = useState(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+
+  // [2026-10-18 storage-names] Nome + avatar de cada conversa SÍNCRONOS no 1º
+  // frame (cache local da lista + último nome resolvido salvo), com a mesma
+  // regra da lista de conversas (apelido > agenda > perfil > e-mail formatado).
+  // Nunca "#id": até o cache completo responder → shimmer; sem nada → "Conversa".
+  const syncIdx = useRef(null);
+  if (syncIdx.current === null) {
+    try { syncIdx.current = require('../../../services/convDisplay').convIndexSync(); } catch { syncIdx.current = new Map(); }
+  }
+  const persistedNames = useRef(null);
+  if (persistedNames.current === null) {
+    let v = null;
+    try { v = settingsCache.peek('storage_conv_names'); } catch {}
+    persistedNames.current = (v && typeof v === 'object') ? v : {};
+  }
+  const [fullIdx, setFullIdx] = useState(null);
+  const [agenda, setAgenda] = useState(null);
+  const [namesSettled, setNamesSettled] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const cd = require('../../../services/convDisplay');
+        const [idx, ag] = await Promise.all([cd.convIndexAsync(syncIdx.current), cd.agendaNamesAsync()]);
+        if (!alive.current) return;
+        setFullIdx(idx);
+        if (ag && ag.size) setAgenda(ag);
+      } catch {}
+      if (alive.current) setNamesSettled(true);
+    })();
+  }, []);
+  const resolveConv = useCallback((cid) => {
+    const p = persistedNames.current[cid];
+    // Antes da agenda/cache completo responderem, o último nome RESOLVIDO salvo
+    // (já com agenda) vence — sem trocar "Ana Carla Pereira Ramos" → "Ana Carla".
+    if (!namesSettled && p && p.n) return { title: String(p.n), email: p.e || null, uri: p.u || '', members: undefined, isGroup: !!p.g };
+    const c = (fullIdx && fullIdx.get(cid)) || syncIdx.current.get(cid);
+    if (c) {
+      try {
+        const d = require('../../../services/convDisplay').convDisplay(c, { t, agenda });
+        if (d && d.title) return d;
+      } catch {}
+    }
+    if (p && p.n) return { title: String(p.n), email: p.e || null, uri: p.u || '', members: undefined, isGroup: !!p.g };
+    return null;
+  }, [fullIdx, agenda, t, namesSettled]);
 
   const refresh = useCallback(async () => {
     try {
@@ -177,19 +222,6 @@ function DeviceStorage() {
       if (!alive.current) return;
       setStats(st);
       try { if (st && typeof st === 'object') settingsCache.put('storage_stats', st); } catch {}
-      if (st && Array.isArray(st.conversations) && st.conversations.length) {
-        try {
-          const cc = require('../../../services/chatCache');
-          const list = (await cc.getCachedConversations?.()) || [];
-          const names = {};
-          for (const c of list) {
-            if (!c || c.id == null) continue;
-            const nm = c.display_name || c.name || c.title || c.other_name || c.peer_name || c.other_email || '';
-            if (nm) names[String(c.id)] = String(nm);
-          }
-          if (alive.current) setConvNames(names);
-        } catch {}
-      }
     } catch {}
   }, []);
   // Ao abrir e ao voltar de outra tela (throttle 30 s — pickers re-focam a tela).
@@ -245,6 +277,24 @@ function DeviceStorage() {
   const conv = Array.isArray(s.conversations) ? s.conversations : [];
   const shown = showAll ? conv : conv.slice(0, 8);
 
+  // Salva o último nome/avatar resolvido (próxima abertura já pinta o nome certo).
+  const convKey = conv.map((r) => String(r.conversationId)).join(',');
+  useEffect(() => {
+    if (!namesSettled || !convKey) return;
+    try {
+      const next = {};
+      for (const cid of convKey.split(',')) {
+        if (!cid || cid === '_') continue;
+        const d = resolveConv(cid);
+        if (d && d.title) next[cid] = { n: d.title, e: d.email || '', u: d.uri || '', g: d.isGroup ? 1 : 0 };
+      }
+      const prev = persistedNames.current || {};
+      const same = Object.keys(next).length === Object.keys(prev).length
+        && Object.keys(next).every((k) => prev[k] && prev[k].n === next[k].n && prev[k].e === next[k].e && prev[k].u === next[k].u);
+      if (!same) { persistedNames.current = next; settingsCache.put('storage_conv_names', next); }
+    } catch {}
+  }, [namesSettled, convKey, resolveConv]);
+
   return (
     <View ref={registerAnchor('storage')}>
       <SettingsGroup header={t('settings.storage.title')}>
@@ -272,12 +322,27 @@ function DeviceStorage() {
         <SettingsGroup header={t('settings.storage.byChat') || 'Mídia por conversa'} footer={t('settings.storage.byChatFooter')}>
           {shown.map((row) => {
             const cid = String(row.conversationId);
-            const label = cid === '_' ? (t('settings.storage.unknownChat') || 'Outras mídias') : (convNames[cid] || ('#' + cid));
+            const other = cid === '_';
+            const info = other ? null : resolveConv(cid);
+            const pending = !other && !info && !namesSettled;
+            const label = other
+              ? (t('settings.storage.unknownChat') || 'Outras mídias')
+              : ((info && info.title) || (pending ? '' : (t('settings.storage.chatFallback') || 'Conversa')));
             const rowBusy = clearingConv === row.conversationId;
+            const avatar = other
+              ? (
+                <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: gc.chipBg, alignItems: 'center', justifyContent: 'center' }}>
+                  <IconImage size={17} color={gc.chipFg} />
+                </View>
+              )
+              : (info
+                ? <AvatarCircle name={info.title} email={info.email || undefined} uri={info.uri || undefined} members={info.members} size={34} />
+                : <Shimmer style={{ width: 34, height: 34, borderRadius: 17 }} />);
             return (
               <SettingsRow
                 key={'cm_' + cid}
-                title={label}
+                left={avatar}
+                title={pending ? ' ' : label}
                 subtitle={`${fmtBytes(row.bytes)} · ${fmtCount(row.count)}`}
                 chevron={false}
                 accessibilityLabel={`${t('settings.storage.clearChatMedia') || 'Limpar mídia'} ${label}`}
@@ -285,7 +350,9 @@ function DeviceStorage() {
                 right={rowBusy
                   ? <ActivityIndicator size="small" color={colors.text} />
                   : <SettingsValueText color={gc.destructive}>{t('settings.storage.clearChatMedia') || 'Limpar mídia'}</SettingsValueText>}
-              />
+              >
+                {pending ? <Shimmer style={{ position: 'absolute', left: 0, top: 4, width: 132, height: 13, borderRadius: 6 }} /> : null}
+              </SettingsRow>
             );
           })}
           {!showAll && conv.length > shown.length && (

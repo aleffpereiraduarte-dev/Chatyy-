@@ -14,7 +14,9 @@ class ChatyyChatInfoModule : Module() {
     // [2026-10-18 profile-native] 3 = perfil próprio/público: hero.photos
     // (carrossel), hero.nav {key,label} (botão de texto → onAction), hero.back
     // (seta à esquerda) e onAvatarPress {index}.
-    Function("apiVersion") { 3 }
+    // [2026-10-18 profile-edit-native] 4 = prop `edit` + evento onEdit
+    // ("Editar perfil" nativo estilo Telegram; contrato em CIEditPanel.kt).
+    Function("apiVersion") { 4 }
 
     View(ChatyyChatInfoView::class) {
       Events(
@@ -28,7 +30,8 @@ class ChatyyChatInfoModule : Module() {
         "onMemberQuery",
         "onFirstPaint",
         "onNativeError",
-        "onClose"
+        "onClose",
+        "onEdit"
       )
 
       Prop("hero") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setHeroProp(v) }
@@ -41,6 +44,7 @@ class ChatyyChatInfoModule : Module() {
       Prop("bottomInset") { view: ChatyyChatInfoView, v: Double? -> view.setBottomInset(v ?: 0.0) }
       Prop("maxContentWidth") { view: ChatyyChatInfoView, v: Double? -> view.setMaxContentWidth(v ?: 0.0) }
       Prop("headerMode") { view: ChatyyChatInfoView, v: String? -> view.setHeaderMode(v ?: "") }
+      Prop("edit") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setEditProp(v) }
       Prop("authToken") { _: ChatyyChatInfoView, v: String? -> if (!v.isNullOrEmpty()) CLAuth.token = v }
 
       OnViewDidUpdateProps { view: ChatyyChatInfoView -> view.commitProps() }

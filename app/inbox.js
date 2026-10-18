@@ -61,6 +61,7 @@ import { classifyImportanceLocal, buildImportanceContext } from '../services/ema
 import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
 import { canNavigateNow } from '../services/navGuard';
 import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
@@ -2087,7 +2088,7 @@ function InboxScreenInner() {
               backgroundColor: colors.surfaceVariant,
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <IconSparkles size={17} color={colors.text} />
+              <BiaIcon size={17} color={colors.text} />
             </View>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection:'row', alignItems:'center', marginBottom: 4 }}>

@@ -11,6 +11,7 @@ import {
   SettingsScreen, SettingsGroup, SettingsRow, useGroupedColors, useSettingsInputStyle,
 } from '../components/settings/SettingsKit';
 import BiaOrb from '../components/bia/BiaOrb';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 export default function BiaSettings() {
   const { t } = useLanguage();
@@ -160,7 +161,7 @@ export default function BiaSettings() {
               titleStyle={{ fontWeight: '600', color: g.ink }}
               chevron={false}
               disabled={learning}
-              right={learning ? <ActivityIndicator size="small" color={g.text} /> : <IconSparkles size={18} color={g.text} />}
+              right={learning ? <ActivityIndicator size="small" color={g.text} /> : <BiaIcon size={18} color={g.text} />}
               onPress={handleLearn}
             />
           </SettingsGroup>

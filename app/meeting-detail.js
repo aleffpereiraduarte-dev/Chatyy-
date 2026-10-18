@@ -20,6 +20,7 @@ import {
   IconMapPin, IconLock, IconShare, IconSparkles, IconPlus, IconStarFilled,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // Design-2026: ACCENT/ACCENT_DARK/ACCENT_DEEP feed the fixed purple hero
 // gradient (3 stacked overlays) and the static StyleSheet fallbacks below —
@@ -408,7 +409,7 @@ export default function MeetingDetailScreen() {
               <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(17, 17, 17,0.08)', borderRadius: 18 }]} />
               <View pointerEvents="none" style={[styles.recapGradientBlob]} />
               <View style={[styles.recapIconWrap, { backgroundColor: colors.primary }]}>
-                <IconSparkles size={22} color={colors.onPrimary || '#fff'} />
+                <BiaIcon size={22} color={colors.onPrimary || '#fff'} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.recapTitle, { color: isDark ? '#fff' : colors.primaryDark }]}>

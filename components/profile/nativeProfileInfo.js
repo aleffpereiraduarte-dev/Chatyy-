@@ -142,12 +142,10 @@ export function buildNativeProfileInfo(ctx) {
   }
   if (website) rows.push({ id: 'site', k: 'about', sid: 'info', title: website, sub: tr('nativeProfile.website', 'Site'), onPress: () => on.link?.(website) });
 
-  if (self) {
-    rows.push({ id: 'setPhoto', k: 'a', sid: 'me', icon: 'camera', title: tr('nativeProfile.setPhoto', 'Definir foto de perfil'), onPress: () => on.edit?.() });
-    rows.push({ id: 'edit', sid: 'me', icon: 'edit', title: tr('profile.edit', 'Editar perfil'), onPress: () => on.edit?.() });
-    rows.push({ id: 'qr', sid: 'me', icon: 'qr', title: tr('nativeProfile.myQr', 'Meu QR code'), onPress: () => on.qr?.() });
-    rows.push({ id: 'share', k: 'a', sid: 'me', icon: 'share', title: tr('profile.share', 'Compartilhar perfil'), onPress: () => on.share?.() });
-  }
+  // [2026-10-18 profile-edit-native] Perfil próprio = SÓ conteúdo público
+  // (informações, status, destaques, seguidores, publicações). Nada de lista
+  // de opções: "Editar" fica na barra (modo edição nativo) e foto/QR/
+  // compartilhar moram na tela "Você" (Configurações).
 
   // ── Status / destaques / seguidores ──
   const stories = Array.isArray(ctx.stories) ? ctx.stories : [];

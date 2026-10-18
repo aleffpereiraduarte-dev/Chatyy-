@@ -21,12 +21,15 @@ import UIKit
 //         terços laterais troca), hero.nav {key,label} (botão de texto na
 //         barra → onAction {key}), hero.back (seta à esquerda no lugar do X),
 //         onAvatarPress {index} (foto visível do carrossel).
+// [2026-10-18 profile-edit-native] apiVersion 4: prop `edit` + evento onEdit
+//         ("Editar perfil" nativo estilo Telegram por cima da mesma view;
+//         contrato em CIEditPanel.swift).
 public class ChatyyChatInfoModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatInfo")
 
     Function("apiVersion") { () -> Int in
-      return 3
+      return 4
     }
 
     View(ChatyyChatInfoView.self) {
@@ -41,7 +44,8 @@ public class ChatyyChatInfoModule: Module {
         "onMemberQuery",
         "onFirstPaint",
         "onNativeError",
-        "onClose"
+        "onClose",
+        "onEdit"
       )
 
       Prop("hero") { (view: ChatyyChatInfoView, value: [String: Any]?) in
@@ -73,6 +77,9 @@ public class ChatyyChatInfoModule: Module {
       }
       Prop("headerMode") { (view: ChatyyChatInfoView, value: String?) in
         view.setHeaderMode(value ?? "")
+      }
+      Prop("edit") { (view: ChatyyChatInfoView, value: [String: Any]?) in
+        view.setEdit(value)
       }
       Prop("authToken") { (_: ChatyyChatInfoView, value: String?) in
         if let v = value, !v.isEmpty { CLImageLoader.shared.authToken = v }

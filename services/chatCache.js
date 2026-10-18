@@ -480,6 +480,16 @@ function _hydrateList(list) {
   return Array.isArray(list) ? list.map(_hydrateConvNames) : list;
 }
 
+// [2026-10-18 storage-names] Leitura SÍNCRONA do espelho MMKV da lista (≤100
+// conversas) — p/ telas que precisam do nome/avatar no 1º frame (Armazenamento).
+export function getCachedConversationsMmkvSync() {
+  if (isCacheScopeLocked()) return [];
+  try {
+    const raw = getString(_convKey());
+    return _hydrateList(raw ? JSON.parse(raw) : []);
+  } catch { return []; }
+}
+
 // Get cached conversations (INSTANT)
 export async function getCachedConversations() {
   // Same account-switch gate as getCachedMessages — see lockCacheScope().

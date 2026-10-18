@@ -11,7 +11,9 @@ class ChatyyAppsGridModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyAppsGrid")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-18 apps-compact] grade única compacta estilo Outlook (sem Bia hero,
+    //     sem Recentes/fixados/editar; cabeçalho só se a seção tiver título).
+    Function("apiVersion") { 2 }
 
     View(ChatyyAppsGridView::class) {
       Events(

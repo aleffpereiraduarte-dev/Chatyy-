@@ -19,6 +19,7 @@ import {
   IconCopy, IconCheck, IconCalendar, IconMail, IconUsers, IconClock, IconChevronRight,
   IconGlobe, IconSearch, IconFolder, IconMessageSquare, IconSparkles, IconInbox, IconMapPin,
 } from './Icons';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
 const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu;
@@ -70,7 +71,7 @@ function kindIcon(kind) {
     case 'files': return IconFolder;
     case 'web': return IconGlobe;
     case 'reminder': return IconClock;
-    case 'memory': return IconSparkles;
+    case 'memory': return BiaIcon;
     default: return IconSearch;
   }
 }

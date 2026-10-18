@@ -61,6 +61,7 @@ import CalendarSmartBar from '../components/calendar/CalendarSmartBar';
 import NativeCalendarView, { useNativeCalendar, argb as calArgb } from '../components/native/NativeCalendarView';
 import * as pim from '../services/pim';
 import { parseCalDate, toCalString, startOfDay as calStartOfDay, addDays as calAddDays, dayKey as calDayKey } from '../utils/calDate';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // Try to import expo-calendar (native only)
 let ExpoCalendar = null;
@@ -3133,7 +3134,7 @@ function CalendarScreenInner() {
       {aiReminders.length > 0 && (
         <View style={[styles.remindersCard, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
           <View style={styles.remindersHeader}>
-            <IconSparkles size={14} color={colors.primary} />
+            <BiaIcon size={14} color={colors.primary} />
             <Text style={[styles.remindersTitle, { color: colors.primary }]}>{t('calendar.smartReminders')}</Text>
             <TouchableOpacity onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <IconX size={14} color={colors.textTertiary} />
@@ -3553,7 +3554,7 @@ function CalendarScreenInner() {
             { key: 'import', icon: IconUpload, label: t('calendar.importIcs'), onPress: handleImportICS, disabled: importing },
             { key: 'export', icon: IconDownload, label: t('calendar.export'), onPress: handleExportMonth },
             ...(Platform.OS === 'web' ? [{ key: 'sub', icon: IconCalendar, label: t('calendar.subscribe'), onPress: handleSubscribeCalendar }] : []),
-            { key: 'ai', icon: IconSparkles, label: t('calendar.smartReminders'), onPress: generateSmartReminders, disabled: loadingReminders },
+            { key: 'ai', icon: BiaIcon, label: t('calendar.smartReminders'), onPress: generateSmartReminders, disabled: loadingReminders },
           ]}
         />
       </Sheet>

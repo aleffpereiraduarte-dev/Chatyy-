@@ -20,6 +20,12 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   let onFirstPaint = EventDispatcher()
   let onNativeError = EventDispatcher()
   let onClose = EventDispatcher()
+  // [2026-10-18 profile-edit-native] apiVersion 4: modo edição do perfil próprio.
+  let onEdit = EventDispatcher()
+
+  private var editPanel: CIEditPanel?
+  private var editState = CIEditState()
+  private var editDirty = false
 
   private var collectionView: CLCollectionView!
   private var dataSource: UICollectionViewDiffableDataSource<String, String>!
@@ -306,6 +312,30 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     needsApply = true
   }
 
+  /// [2026-10-18 profile-edit-native] Editar perfil nativo (CIEditPanel.swift).
+  func setEdit(_ d: [String: Any]?) {
+    let s = CIEditState(d)
+    if s == editState && editPanel != nil { return }
+    editState = s
+    editDirty = true
+  }
+
+  private func applyEdit(force: Bool) {
+    guard editDirty || force else { return }
+    editDirty = false
+    if editPanel == nil {
+      if !editState.on { return }
+      let p = CIEditPanel(frame: bounds)
+      p.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      p.onEvent = { [weak self] ev in self?.onEdit(ev) }
+      addSubview(p)
+      editPanel = p
+    }
+    guard let p = editPanel else { return }
+    bringSubviewToFront(p)
+    p.configure(editState, palette: palette, bottomInset: bottomInset)
+  }
+
   func setDark(_ d: Bool) {
     if d == dark { return }
     dark = d
@@ -402,6 +432,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     applySnapshot(reconfigureAll: reconfigureAll)
     refreshInsets()
     updateHeader()
+    applyEdit(force: reconfigureAll)
   }
 
   // MARK: - Snapshot
@@ -568,6 +599,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       if h.frame != bounds { h.frame = bounds }
       updateHeader()
     }
+    if let p = editPanel, p.frame != bounds { p.frame = bounds }
   }
 
   public override func didMoveToWindow() {

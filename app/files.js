@@ -64,6 +64,7 @@ import { driveRow } from '../components/native/driveListAdapter';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
 
@@ -3179,7 +3180,7 @@ function FilesScreenInner() {
                   } catch {}
                 }}>
                   <View style={[styles.actionItemIcon, { backgroundColor: colors.primary }]}>
-                    <IconSparkles size={16} color={colors.onPrimary} />
+                    <BiaIcon size={16} color={colors.onPrimary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.primary, fontWeight: '700' }]}>{t('files.analyzeWithOne')}</Text>
                 </TouchableOpacity>

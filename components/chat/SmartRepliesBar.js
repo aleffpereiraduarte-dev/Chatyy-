@@ -31,6 +31,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { IconSparkles } from '../Icons';
+import BiaIcon from '../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
 
@@ -88,7 +89,7 @@ export default function SmartRepliesBar({ conversationId, lastIncomingId, onPick
   return (
     <View style={[s.wrap, { backgroundColor: colors?.background || '#fff' }]}>
       <View style={s.label}>
-        <IconSparkles size={11} color={BRAND} />
+        <BiaIcon size={11} color={BRAND} />
         <Text style={[s.labelText, { color: colors?.textTertiary || '#888' }]}>
           {t?.('chatConv.smartReplies') || 'Sugestões'}
         </Text>

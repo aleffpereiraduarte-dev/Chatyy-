@@ -160,13 +160,21 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
     if (background !is RippleDrawable) background = RippleDrawable(ripple, cardBg, maskBg)
     else (background as RippleDrawable).setColor(ripple)
 
-    val res = if (r.center) 0 else STText.drawable(r.icon)
-    hasIcon = res != 0
+    // [2026-10-18 bia-orb-icon] "biaOrb" = orb da Bia ocupando o chip (sem tint, sem fundo).
+    val orb = !r.center && r.icon == "biaOrb"
+    val res = if (r.center || orb) 0 else STText.drawable(r.icon)
+    hasIcon = res != 0 || orb
     chip.visibility = if (hasIcon) VISIBLE else GONE
-    glyph.visibility = if (hasIcon) VISIBLE else GONE
-    if (hasIcon) {
-      chipBg.setColor(p.chipBg)
-      glyph.setImageDrawable(tintedIcon(context, res, p.chipFg))
+    glyph.visibility = if (hasIcon && !orb) VISIBLE else GONE
+    if (orb) {
+      chip.background = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ccl_bia_orb)
+      glyph.setImageDrawable(null)
+    } else {
+      if (chip.background !== chipBg) chip.background = chipBg
+      if (hasIcon) {
+        chipBg.setColor(p.chipBg)
+        glyph.setImageDrawable(tintedIcon(context, res, p.chipFg))
+      }
     }
 
     // setSingleLine ANTES de maxLines (setSingleLine(false) zera o limite).

@@ -39,6 +39,7 @@ import {
   IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread, IconGlobe, IconCalendar,
   IconReceipt, IconUser, IconCheck, IconInbox,
 } from './Icons';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
 
@@ -1771,7 +1772,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               <ActivityIndicator size={12} color={colors.textSecondary} />
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <IconSparkles size={14} color={colors.textSecondary} />
+                <BiaIcon size={14} color={colors.textSecondary} />
                 <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.tasks')}</Text>
               </View>
             )}
@@ -1943,7 +1944,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:20, maxWidth:500, width:'100%', maxHeight:'80%' }}>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <IconSparkles size={18} color={colors.text} />
+                <BiaIcon size={18} color={colors.text} />
                 <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>{t('reader.tasksExtracted')}</Text>
               </View>
               <TouchableOpacity onPress={() => setActionItems(null)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={t('common.close')} style={{ padding: 4 }}><IconX size={20} color={colors.textSecondary} /></TouchableOpacity>

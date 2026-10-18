@@ -15,6 +15,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import ProfileEditSheet from '../components/ProfileEditSheet';
+import { useLocalSearchParams } from 'expo-router';
+import { isNativeProfileEditEnabled } from '../components/profile/nativeProfileEdit';
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -23,6 +25,19 @@ export default function EditProfileScreen() {
   const { t } = useLanguage();
   const { user, loading } = useAuth();
   const [identity, setIdentity] = useState(null);
+  // [2026-10-18 profile-edit-native] Com o editor NATIVO disponível esta tela
+  // JS só serve como "Links extras e tipo de conta" (?legacy=1); qualquer
+  // outra entrada (busca das Configurações, /profile?edit=1, deep link) vai
+  // para o perfil próprio já em modo edição.
+  const params = useLocalSearchParams();
+  const legacy = String(Array.isArray(params?.legacy) ? params.legacy[0] : (params?.legacy || '')) === '1';
+  const redirectedRef = React.useRef(false);
+  useEffect(() => {
+    if (legacy || loading || redirectedRef.current || !user?.email) return;
+    if (!isNativeProfileEditEnabled()) return;
+    redirectedRef.current = true;
+    try { router.replace(`/u/${encodeURIComponent(user.email)}?edit=1`); } catch {}
+  }, [legacy, loading, user?.email, router]);
 
   useEffect(() => {
     if (loading) return;
@@ -54,7 +69,7 @@ export default function EditProfileScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors?.background }} testID="edit-profile-screen">
-      {!identity ? (
+      {(!identity || (!legacy && !!user?.email && isNativeProfileEditEnabled())) ? (
         <View style={{ flex: 1, paddingTop: insets.top }}>
           <TouchableOpacity
             onPress={close}

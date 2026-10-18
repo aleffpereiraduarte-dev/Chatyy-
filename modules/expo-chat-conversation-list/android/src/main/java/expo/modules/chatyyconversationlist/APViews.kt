@@ -152,23 +152,24 @@ internal class APTileView(ctx: Context) : FrameLayout(ctx) {
     iconWrap.clipToPadding = false
     addView(inner, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-    iconBox.addView(gloss, LayoutParams(LayoutParams.MATCH_PARENT, apDp(this, 33f), Gravity.TOP).apply {
+    // [2026-10-18 apps-compact] 60 → 48 dp (estilo Outlook: grade enxuta).
+    iconBox.addView(gloss, LayoutParams(LayoutParams.MATCH_PARENT, apDp(this, 26f), Gravity.TOP).apply {
       leftMargin = 1; rightMargin = 1; topMargin = 1
     })
     glyph.scaleType = ImageView.ScaleType.FIT_CENTER
-    iconBox.addView(glyph, LayoutParams(apDp(this, 26f), apDp(this, 26f), Gravity.CENTER))
-    iconWrap.addView(iconBox, LayoutParams(apDp(this, 60f), apDp(this, 60f)))
+    iconBox.addView(glyph, LayoutParams(apDp(this, 22f), apDp(this, 22f), Gravity.CENTER))
+    iconWrap.addView(iconBox, LayoutParams(apDp(this, 48f), apDp(this, 48f)))
 
-    badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
     badge.typeface = Typeface.create("sans-serif", Typeface.BOLD)
     badge.gravity = Gravity.CENTER
     badge.includeFontPadding = false
     badge.maxLines = 1
-    badge.minWidth = apDp(this, 22f)
-    badge.setPadding(apDp(this, 6f), 0, apDp(this, 6f), 0)
-    iconWrap.addView(badge, LayoutParams(LayoutParams.WRAP_CONTENT, apDp(this, 22f), Gravity.TOP or Gravity.END).apply {
-      topMargin = -apDp(this@APTileView, 6f)
-      rightMargin = -apDp(this@APTileView, 9f)
+    badge.minWidth = apDp(this, 18f)
+    badge.setPadding(apDp(this, 5f), 0, apDp(this, 5f), 0)
+    iconWrap.addView(badge, LayoutParams(LayoutParams.WRAP_CONTENT, apDp(this, 18f), Gravity.TOP or Gravity.END).apply {
+      topMargin = -apDp(this@APTileView, 5f)
+      rightMargin = -apDp(this@APTileView, 8f)
     })
 
     markGlyph.scaleType = ImageView.ScaleType.FIT_CENTER
@@ -177,8 +178,8 @@ internal class APTileView(ctx: Context) : FrameLayout(ctx) {
       topMargin = -apDp(this@APTileView, 7f)
       leftMargin = -apDp(this@APTileView, 7f)
     })
-    inner.addView(iconWrap, LayoutParams(apDp(this, 60f), apDp(this, 60f), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
-      topMargin = apDp(this@APTileView, 8f)
+    inner.addView(iconWrap, LayoutParams(apDp(this, 48f), apDp(this, 48f), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+      topMargin = apDp(this@APTileView, 6f)
     })
 
     label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -188,7 +189,7 @@ internal class APTileView(ctx: Context) : FrameLayout(ctx) {
     label.includeFontPadding = false
     label.setLineSpacing(apDp(this, 2f).toFloat(), 1f)
     inner.addView(label, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP).apply {
-      topMargin = apDp(this@APTileView, 8f + 60f + 7f)
+      topMargin = apDp(this@APTileView, 6f + 48f + 6f)
       leftMargin = apDp(this@APTileView, 2f)
       rightMargin = apDp(this@APTileView, 2f)
     })
@@ -200,25 +201,31 @@ internal class APTileView(ctx: Context) : FrameLayout(ctx) {
   fun bind(item: APItem, theme: APTheme, badgeCount: Int, editing: Boolean, pinned: Boolean,
            singleLine: Boolean, seed: Int, labels: Map<String, String>, reduceMotion: Boolean) {
     appId = item.id
-    val r = apDp(this, 18f).toFloat()
+    val r = apDp(this, 14f).toFloat()
     val fill = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(theme.tileTop, theme.tileMid, theme.tileBot))
     fill.cornerRadius = r
     fill.setStroke(1, theme.tileBorder)
     iconBox.background = fill
-    iconBox.elevation = if (theme.dark) 0f else apDp(this, 2f).toFloat()
+    iconBox.elevation = if (theme.dark) 0f else apDp(this, 1.5f).toFloat()
     val gl = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(theme.gloss, Color.TRANSPARENT))
     gl.cornerRadii = floatArrayOf(r - 1f, r - 1f, r - 1f, r - 1f, 0f, 0f, 0f, 0f)
     gloss.background = gl
-    glyph.setImageResource(APText.icon(item.id))
-    glyph.setColorFilter(theme.glyph, PorterDuff.Mode.SRC_IN)
+    // [2026-10-18 bia-orb-icon] Bia ("one") = orb colorido (sem tint), não a estrelinha.
+    if (item.id == "one") {
+      glyph.setImageResource(R.drawable.ccl_bia_orb)
+      glyph.clearColorFilter()
+    } else {
+      glyph.setImageResource(APText.icon(item.id))
+      glyph.setColorFilter(theme.glyph, PorterDuff.Mode.SRC_IN)
+    }
 
     val showBadge = badgeCount > 0 && !editing
     badge.visibility = if (showBadge) View.VISIBLE else View.GONE
     if (showBadge) {
       val bg = GradientDrawable()
-      bg.cornerRadius = apDp(this, 11f).toFloat()
+      bg.cornerRadius = apDp(this, 9f).toFloat()
       bg.setColor(theme.badgeBg)
-      bg.setStroke(apDp(this, 2f), theme.ring)
+      bg.setStroke(apDp(this, 1.5f), theme.ring)
       badge.background = bg
       badge.setTextColor(theme.badgeFg)
       badge.text = APText.badge(badgeCount)
@@ -295,7 +302,7 @@ internal class APTileView(ctx: Context) : FrameLayout(ctx) {
     super.setPressed(pressed)
     if (was == pressed) return
     if (pressed) {
-      inner.animate().scaleX(0.88f).scaleY(0.88f).setDuration(110).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+      inner.animate().scaleX(0.92f).scaleY(0.92f).setDuration(110).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
     } else {
       inner.animate().scaleX(1f).scaleY(1f).setDuration(320)
         .setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).start()

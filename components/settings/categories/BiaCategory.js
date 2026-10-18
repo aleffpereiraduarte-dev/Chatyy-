@@ -6,7 +6,8 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
-import { IconSparkles, IconMail, IconBell, IconPhone } from '../../Icons';
+import { IconMail, IconBell, IconPhone } from '../../Icons';
+import BiaIcon from '../../bia/BiaIcon';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsIconTile, useGroupedColors } from '../SettingsKit';
 import { useLocalKeys, setStorage } from './shared';
 
@@ -25,7 +26,7 @@ export default function BiaCategory() {
     <View>
       <SettingsGroup nativeHeader>
         <View style={st.header}>
-          <SettingsIconTile Icon={IconSparkles} size={64} />
+          <SettingsIconTile Icon={BiaIcon} size={64} />
           <Text style={[st.name, { color: colors.text }]} numberOfLines={1}>Bia</Text>
           <Text style={[st.desc, { color: gc.secondary }]}>{t('settings.oneAssistantDesc')}</Text>
         </View>

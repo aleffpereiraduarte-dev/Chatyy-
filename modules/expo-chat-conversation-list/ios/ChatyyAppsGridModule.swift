@@ -20,7 +20,9 @@ public class ChatyyAppsGridModule: Module {
     Name("ChatyyAppsGrid")
 
     Function("apiVersion") { () -> Int in
-      return 1
+      // 2 = [2026-10-18 apps-compact] grade única compacta estilo Outlook (sem Bia
+      //     hero, sem Recentes/fixados/editar; cabeçalho só se a seção tiver título).
+      return 2
     }
 
     View(ChatyyAppsGridView.self) {

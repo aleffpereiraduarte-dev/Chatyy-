@@ -66,6 +66,7 @@ import HighlightEditSheet from './HighlightEditSheet';
 import ReportSheet from './ReportSheet'; // [central-moderacao 2026-10-14] motivos padronizados
 import NativeChatInfo, { isNativeProfileEnabled } from './chat/NativeChatInfo'; // [2026-10-18 profile-native]
 import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-10-18 profile-native]
+import { useNativeProfileEdit, isNativeProfileEditEnabled } from './profile/nativeProfileEdit'; // [2026-10-18 profile-edit-native]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
 import HighlightShareSheet from './HighlightShareSheet';
 import {
@@ -1189,6 +1190,8 @@ export default function Profile({
   nativeProfile = false,   // rota pede o nativo (modo full); a grade JS completa vem por ?grid=1
   onNativeActive,          // (bool) → a rota esconde o próprio botão voltar quando o nativo desenha a barra
   nativeBottomInset = 0,   // respiro inferior (safe area) da lista nativa
+  autoEdit = false,        // [2026-10-18 profile-edit-native] /u/<me>?edit=1 → abre direto no modo edição nativo
+  onNativeEditActive,      // (bool) → a rota trava o gesto de voltar enquanto edita
   initialTab,              // aba inicial da grade JS ('posts' | 'reels' | 'lives' | 'media')
   colors, isDark, t, router,
 }) {
@@ -4203,7 +4206,7 @@ export default function Profile({
               label: t?.('profile.avatarEditPhoto') || 'Mudar foto de perfil',
               hint: t?.('profile.avatarEditPhotoHint') || 'Atualizar foto, nome, bio',
               icon: <IconEdit size={20} color={colors?.text} />,
-              onPress: () => { setAvatarActionOpen(false); setEditOpen(true); },
+              onPress: () => { setAvatarActionOpen(false); if (_npEditOn && _npEdit.start()) return; setEditOpen(true); },
             },
             {
               key: 'viewPhoto',
@@ -4490,6 +4493,54 @@ export default function Profile({
   const _npOn = mode === 'full' && !WEB && !!nativeProfile && !nativeProfileOff && isNativeProfileEnabled();
   const _npActive = _npOn && !loading && !err && !!identity;
   useEffect(() => { try { onNativeActive?.(_npActive); } catch {} }, [_npActive, onNativeActive]);
+  // ─── [2026-10-18 profile-edit-native] "Editar" = MESMA tela nativa em modo
+  // edição (Telegram). Binário api ≥ 4 + kill switch
+  // globalThis.__chatyy_native_profile_edit = false → folha JS de sempre.
+  const _npEditOn = _npActive && !!actions?.is_self && isNativeProfileEditEnabled();
+  const _npEdit = useNativeProfileEdit({
+    t,
+    identity,
+    enabled: _npEditOn,
+    abs: resolveMedia,
+    onSaved: (next) => {
+      setData(prev => prev ? { ...prev, identity: { ...prev.identity, ...next } } : prev);
+      invalidateProfileCache(fetchKey);
+      try { if (identity?.username && identity.username !== fetchKey) invalidateProfileCache(identity.username); } catch {}
+    },
+    onAvatarChanged: () => { invalidateProfileCache(fetchKey); },
+    // Aberto direto no modo edição (/u/<me>?edit=1, tela "Você") → Concluído/
+    // Cancelar voltam para quem abriu, como no Telegram.
+    onClosed: () => { if (_autoEditFiredRef.current) _npBack(); },
+    onRow: (rid) => {
+      if (rid === 'phone') { _npEdit.close(true); _npGo('/settings-section?section=account&anchor=security'); return; }
+      if (rid === 'privacy') { _npGo('/settings-section?section=privacy'); return; }
+      if (rid === 'more') { _npEdit.close(true); _npGo('/edit-profile?legacy=1'); return; }
+      if (rid === 'email' && identity?.email) _npCopy(identity.email);
+    },
+  });
+  const _autoEditFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoEdit || _autoEditFiredRef.current || !_npEditOn) return;
+    _autoEditFiredRef.current = true;
+    _npEdit.start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoEdit, _npEditOn]);
+  useEffect(() => { try { onNativeEditActive?.(!!_npEdit.active); } catch {} }, [_npEdit.active, onNativeEditActive]);
+  const _npEditBackRef = useRef(null);
+  _npEditBackRef.current = _npEdit.active ? _npEdit.back : null;
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !_npEdit.active) return undefined;
+    let sub = null;
+    try {
+      sub = require('react-native').BackHandler.addEventListener('hardwareBackPress', () => {
+        const fn = _npEditBackRef.current;
+        if (!fn) return false;
+        fn();
+        return true;
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [_npEdit.active]);
   const _npGo = (href) => { try { if (router?.push) router.push(href); } catch {} };
   const _npKey = identity?.username || identity?.email || fetchKey || '';
   const _npGrid = (tab) => _npGo(`/u/${encodeURIComponent(String(_npKey))}?grid=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}`);
@@ -4546,7 +4597,7 @@ export default function Profile({
     planDesc: (() => { const v = t?.('chatyyOne.rowDesc'); return v && v !== 'chatyyOne.rowDesc' ? v : ''; })(),
     abs: resolveMedia,
     on: {
-      edit: () => setEditOpen(true),
+      edit: () => { if (_npEditOn && _npEdit.start()) return; setEditOpen(true); },
       avatar: _npAvatar,
       stories: () => openStoriesAt(0),
       qr: () => _npGo('/profile-qr'),
@@ -4588,6 +4639,8 @@ export default function Profile({
             maxWidth={computeContentMaxWidth(SCREEN_W)}
             onFailure={_npFail}
             onClose={_npBack}
+            edit={_npEditOn ? _npEdit.edit : null}
+            onEdit={_npEdit.onEdit}
             closeLabel={t?.('common.back') || 'Voltar'}
           />
         ) : (_nativeGridOn && !loading && !err) ? (

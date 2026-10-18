@@ -4,6 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconSparkles, IconSend } from './Icons';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
 
@@ -111,7 +112,7 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
           activeOpacity={0.7}
           accessibilityLabel={t('smartReply.generate') || 'Gerar resposta com IA'}
         >
-          <IconSparkles size={15} color={colors.text} style={{ marginRight: 7 }} />
+          <BiaIcon size={15} color={colors.text} style={{ marginRight: 7 }} />
           <Text style={[s.genBtnText, { color: colors.text }]}>
             {t('smartReply.generate') || 'Gerar resposta com IA'}
           </Text>
@@ -123,7 +124,7 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
   return (
     <View style={[s.container, { borderTopColor: colors.borderLight }]}>
       <View style={s.labelRow}>
-        <IconSparkles size={14} color={BRAND} style={{ marginRight: 6 }} />
+        <BiaIcon size={14} color={BRAND} style={{ marginRight: 6 }} />
         <Text style={[s.label, { color: colors.textSecondary }]}>
           {customLabel || t('smartReply.suggested') || 'Sugestões de resposta'}
         </Text>

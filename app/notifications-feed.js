@@ -90,6 +90,7 @@ import {
   IconArrowLeft, IconHeart, IconMessageCircle, IconUser,
   IconSparkles, IconBell, IconCheck,
 } from '../components/Icons';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const ACCENT = '#111111';
 
@@ -109,7 +110,7 @@ function NotificationIcon({ type, colors }) {
   if (type === 'feed_like') return <IconHeart size={22} color={colors.text} />;
   if (type === 'feed_comment') return <IconMessageCircle size={22} color={colors.text} />;
   if (type === 'follow') return <IconUser size={22} color={colors.text} />;
-  if (type === 'one_alert') return <IconSparkles size={20} color={colors.text} />;
+  if (type === 'one_alert') return <BiaIcon size={20} color={colors.text} />;
   if (type === 'contact_joined') return <IconUser size={22} color={colors.text} />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
 }

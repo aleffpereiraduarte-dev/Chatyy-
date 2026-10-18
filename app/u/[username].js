@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useState } from 'react';
 import { View, StyleSheet, Platform, StatusBar, Alert, useWindowDimensions } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -27,7 +27,7 @@ try {
 } catch {}
 
 export default function UserProfileScreen() {
-  const { username, openStatus, openSettings, grid, tab } = useLocalSearchParams();
+  const { username, openStatus, openSettings, grid, tab, edit } = useLocalSearchParams();
   // [2026-10-18 profile-native] Perfil Telegram NATIVO (meu perfil e perfil
   // público): a view nativa desenha a própria barra (seta + título que
   // encolhe) → esta rota esconde o botão voltar flutuante enquanto o nativo
@@ -74,6 +74,12 @@ export default function UserProfileScreen() {
     })();
   }, [router, t]);
 
+  // [2026-10-18 profile-edit-native] editando → sem gesto de voltar (iOS) p/ não perder o rascunho.
+  const navigation = useNavigation();
+  const onNativeEditActive = useCallback((on) => {
+    try { navigation?.setOptions?.({ gestureEnabled: !on }); } catch {}
+  }, [navigation]);
+
   const handleEmail = useCallback((email) => {
     if (!email) return;
     router.push(`/compose?to=${encodeURIComponent(email)}`);
@@ -112,6 +118,8 @@ export default function UserProfileScreen() {
         nativeProfile={Platform.OS !== 'web' && !wantsGrid}
         onNativeActive={setNativeActive}
         nativeBottomInset={(insets.bottom || 0) + 24}
+        autoEdit={_one(edit) === '1' || _one(edit) === 'true'}
+        onNativeEditActive={onNativeEditActive}
         initialTab={typeof _one(tab) === 'string' ? _one(tab) : undefined}
         onOpenChat={handleChat}
         onOpenCall={handleCall}

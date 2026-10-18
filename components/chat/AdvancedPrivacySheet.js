@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet';
 import { IconShield, IconLock, IconEye, IconDownload, IconForward, IconSparkles, IconX } from '../Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
+import BiaIcon from '../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 function _tt(t, key, fb) {
   try {
@@ -57,7 +58,7 @@ export default function AdvancedPrivacySheet({
           <Bullet Icon={IconEye} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletNotice', 'Avisa a conversa quando alguém tira um print.')} />
           <Bullet Icon={IconForward} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletExport', 'Ninguém pode exportar a conversa nem encaminhar as mídias dela.')} />
           <Bullet Icon={IconDownload} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletGallery', 'As mídias não são salvas automaticamente na galeria.')} />
-          <Bullet Icon={IconSparkles} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletAi', 'A Bia não lê as mensagens desta conversa.')} />
+          <Bullet Icon={BiaIcon} color={fg} sub={fg} text={_tt(t, 'advPriv.bulletAi', 'A Bia não lê as mensagens desta conversa.')} />
         </ScrollView></DragScroll>
 
         <View style={[s.row, { borderTopColor: line }]}>

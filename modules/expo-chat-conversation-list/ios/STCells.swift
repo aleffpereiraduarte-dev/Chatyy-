@@ -191,7 +191,12 @@ final class STRowCell: UICollectionViewCell {
     // Ícone (chip suave) — linhas sem ícone/centradas (Sair) não têm chip.
     var hasIcon = false
     glyph.image = nil
-    if !row.center, let sym = STText.symbol(row.icon) {
+    if !row.center, row.icon == "biaOrb" {
+      // [2026-10-18 bia-orb-icon] Bia = orb ocupando o chip (sem fundo atrás).
+      glyph.image = BiaOrbArt.image(diameter: 30, dark: p.dark)
+      chip.backgroundColor = .clear
+      hasIcon = true
+    } else if !row.center, let sym = STText.symbol(row.icon) {
       let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
       glyph.image = UIImage(systemName: sym, withConfiguration: cfg)?.withTintColor(p.chipFg, renderingMode: .alwaysOriginal)
       chip.backgroundColor = p.chipBg

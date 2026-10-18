@@ -17,6 +17,7 @@ import { isNativeEmailBodyOn } from '../../email/NativeEmailBody';
 import {
   useSettingsHost, useSettingsBlob, useSection, useLocalKeys, setStorage, OPEN_TTL, catStyles,
 } from './shared';
+import BiaIcon from '../../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -256,7 +257,7 @@ export default function EmailCategory() {
         <SettingsSwitchRow icon={IconMessageSquare} iconTile={false} title={t('settings.smartReply')} subtitle={t('settings.smartReplyDesc')} value={ai.ai_smart_reply} onValueChange={(v) => setAiFlag('ai_smart_reply', v)} />
         <SettingsRow icon={IconPenTool} iconTile={false} title={t('settings.aiDrafts')} />
         <SettingsSwitchRow icon={IconDraft} iconTile={false} title={t('settings.aiSummary')} subtitle={t('settings.aiSummaryDesc')} value={ai.ai_summary} onValueChange={(v) => setAiFlag('ai_summary', v)} />
-        <SettingsSwitchRow icon={IconSparkles} iconTile={false} title={t('settings.aiEnhance')} subtitle={t('settings.aiEnhanceDesc')} value={ai.ai_enhance} onValueChange={(v) => setAiFlag('ai_enhance', v)} />
+        <SettingsSwitchRow icon={BiaIcon} iconTile={false} title={t('settings.aiEnhance')} subtitle={t('settings.aiEnhanceDesc')} value={ai.ai_enhance} onValueChange={(v) => setAiFlag('ai_enhance', v)} />
         <SettingsSwitchRow
           title={t('settings.smartCompose')}
           subtitle={t('settings.smartComposeDesc')}

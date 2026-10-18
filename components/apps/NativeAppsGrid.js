@@ -1,13 +1,13 @@
 // components/apps/NativeAppsGrid.js — [2026-10-18 native-apps-grid]
 //
 // Painel "Apps" em NATIVO (modules/expo-chat-conversation-list → view
-// ChatyyAppsGrid): iOS UICollectionView compositional + diffable (faixa
-// Recentes com rolagem ortogonal, grade 4 col por seção), Android RecyclerView
-// + GridLayoutManager. Busca ao vivo, badges, modo editar (segurar) com tremor,
-// fixar/tirar e reordenar fixados arrastando, press-scale + haptic, claro/escuro.
+// ChatyyAppsGrid): iOS UICollectionView compositional + diffable, Android
+// RecyclerView + GridLayoutManager. [2026-10-18 apps-compact] api 2 = grade
+// única compacta estilo Outlook (ladrilho 48, sem Bia hero/Recentes/editar;
+// cabeçalho só p/ seção com título). Binário api 1 (layout antigo) → grade JS.
 //
-// O AppsSheet continua dono das rotas, do MMKV (recentes/uso/fixados) e da
-// folha (Modal + cabeçalho). Eventos chegam por id:
+// O AppsSheet continua dono das rotas e da folha (Modal + cabeçalho).
+// Eventos chegam por id:
 //   onAppPress(id, voice) · onEditingChange(bool) · onPinnedChange(ids)
 //   onContentHeight(h) · onPullDismiss()
 // Erro de render/onNativeError → onFailure(msg) e o AppsSheet volta ao JS
@@ -21,13 +21,13 @@ import { getNativeAppsGridView, appsGridApiVersion } from '../../modules/expo-ch
 
 const KILL = '__chatyy_native_apps';
 
-/** Liga o painel nativo? (binário com a view api ≥ 1 + kill switch + não falhou na sessão). */
+/** Liga o painel nativo? (binário com a view api ≥ 2 + kill switch + não falhou na sessão). */
 export function nativeAppsEnabled() {
   if (Platform.OS === 'web') return false;
   try {
     if (globalThis[KILL] === false) return false;
     if (globalThis[`${KILL}_failed`]) return false;
-    if (appsGridApiVersion() < 1) return false;
+    if (appsGridApiVersion() < 2) return false; // api 1 = layout antigo (Bia/Recentes) → JS
     return !!getNativeAppsGridView();
   } catch { return false; }
 }

@@ -54,6 +54,7 @@ import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../component
 import { afterRNModal } from '../components/NativeSheet';
 import { openOnDevice, sendCopy, saveToDevice } from '../services/driveFileActions';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // ============================================================
 // Web-only drag/drop wrapper — RN Web's View strips drag props,
@@ -1770,7 +1771,7 @@ function DriveScreenInner() {
     ] : [
       !item.is_folder && {
         label: t('files.analyzeWithOne'),
-        icon: <IconSparkles size={18} color={colors.primary} />,
+        icon: <BiaIcon size={18} color={colors.primary} />,
         accent: '#111111',
         onPress: () => {
           setContextMenu(null);

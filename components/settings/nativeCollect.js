@@ -55,6 +55,15 @@ export function markNativeCategoryFailed(cat, why) {
   try { require('../../services/crashReporter').reportNativeFallback?.('native_settings_sub', `${cat}: ${String(why || '')}`); } catch {}
 }
 
+// [2026-10-18 bia-orb-icon] Ícone da Bia = ORB (não a estrelinha). A lista
+// nativa desenha o orb com a chave 'biaOrb' a partir da apiVersion 3; binário
+// antigo não conhece a chave → manda 'status' (círculo neutro; sem ícone se
+// nem isso existir), nunca mais 'sparkles'.
+export function nativeIconKey(name) {
+  if (name !== 'biaOrb') return name || '';
+  try { return settingsListApiVersion() >= 3 ? 'biaOrb' : 'status'; } catch { return 'status'; }
+}
+
 // Componente de ícone (components/Icons) → nome lógico do nativo.
 let _iconNames = null;
 function iconName(Icon) {
@@ -75,8 +84,9 @@ function iconName(Icon) {
       };
       for (const k of Object.keys(pairs)) if (I[k]) _iconNames.set(I[k], pairs[k]);
     } catch {}
+    try { _iconNames.set(require('../bia/BiaIcon').default, 'biaOrb'); } catch {}
   }
-  return _iconNames.get(Icon) || '';
+  return nativeIconKey(_iconNames.get(Icon) || '');
 }
 
 function _isText(v) { return typeof v === 'string' || typeof v === 'number'; }
@@ -93,6 +103,7 @@ function describeRow(p) {
     numberOfLines = 1, subtitleLines = 2, center, children, native,
   } = p || {};
   if (_hasChildren(children)) return { bad: 'row children' };
+  if (p && p.left) return { bad: 'row left' };
   if (!_isText(title)) return { bad: 'row title' };
   if (subtitle && !_isText(subtitle)) return { bad: 'row subtitle' };
   const d = {

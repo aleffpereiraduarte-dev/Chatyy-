@@ -13,7 +13,8 @@ class ChatyySettingsListModule : Module() {
 
     // 2 = [2026-10-18 settings-sub-native] val/acc/dis/tl/sl/ft, k "i", ícones do
     //     ChatInfo e prop scrollToId (sub-páginas das Configurações em nativo).
-    Function("apiVersion") { 2 }
+    // 3 = [2026-10-18 bia-orb-icon] ícone "biaOrb" (orb da Bia, drawable ccl_bia_orb).
+    Function("apiVersion") { 3 }
 
     View(ChatyySettingsListView::class) {
       Events(

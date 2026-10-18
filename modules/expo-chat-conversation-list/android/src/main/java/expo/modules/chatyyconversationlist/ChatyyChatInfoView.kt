@@ -47,6 +47,12 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   val onFirstPaint by EventDispatcher()
   val onNativeError by EventDispatcher()
   val onClose by EventDispatcher()
+  // [2026-10-18 profile-edit-native] apiVersion 4: modo edição do perfil próprio.
+  val onEdit by EventDispatcher()
+
+  private var editPanel: CIEditPanel? = null
+  private var editState = CIEditState()
+  private var editDirty = false
 
   private val density = context.resources.displayMetrics.density
   private fun px(v: Float): Int = (v * density + 0.5f).toInt()
@@ -154,6 +160,39 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     }
   }
 
+  /** [2026-10-18 profile-edit-native] Editar perfil nativo (CIEditPanel.kt). */
+  fun setEditProp(m: Map<String, Any?>?) {
+    try {
+      val s = CIEditState.from(m)
+      if (s == editState && editPanel != null) return
+      editState = s
+      editDirty = true
+    } catch (e: Throwable) {
+      onNativeError(mapOf("message" to ("edit: " + (e.message ?: e.javaClass.simpleName))))
+    }
+  }
+
+  private fun applyEdit(force: Boolean) {
+    if (!editDirty && !force) return
+    editDirty = false
+    try {
+      if (editPanel == null) {
+        if (!editState.on) return
+        val p = CIEditPanel(context)
+        p.onEvent = { ev -> onEdit(ev) }
+        stack.addView(p, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        editPanel = p
+      }
+      val p = editPanel ?: return
+      p.bringToFront()
+      p.configure(editState, palette, bottomInsetPx)
+    } catch (e: Throwable) {
+      onNativeError(mapOf("message" to ("edit: " + (e.message ?: e.javaClass.simpleName))))
+    }
+  }
+
+  private fun editShowing(): Boolean = editPanel?.visibility == View.VISIBLE
+
   fun setDark(v: Boolean) {
     if (v == dark) return
     dark = v
@@ -239,6 +278,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     }
     applyData(rebindAll)
     recycler.post { updateHeader() }
+    applyEdit(rebindAll)
   }
 
   // ─── Cabeçalho que encolhe ───────────────────────────────────────────────
@@ -333,6 +373,10 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   }
 
   override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+    if (editShowing()) {
+      pulling = false
+      return false
+    }
     if (!collapsing || header == null) return super.onInterceptTouchEvent(ev)
     when (ev.actionMasked) {
       MotionEvent.ACTION_DOWN -> {

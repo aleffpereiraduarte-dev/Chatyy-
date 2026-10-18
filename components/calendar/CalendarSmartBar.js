@@ -11,6 +11,7 @@ import { parseCalDate, sameDay, hhmm, freeSlots, eventsOnDay } from '../../utils
 import { parseEventText } from '../../services/pim';
 import { haptic } from '../../constants/theme';
 import { dueDate } from '../../utils/taskUtils';
+import BiaIcon from '../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 function relIn(ms, t) {
   const m = Math.round(ms / 60000);
@@ -120,7 +121,7 @@ export default function CalendarSmartBar({
       )}
 
       <View style={[s.nl, { backgroundColor: card, borderColor: border }]}>
-        <IconSparkles size={16} color={ink} />
+        <BiaIcon size={16} color={ink} />
         <TextInput
           value={text}
           onChangeText={(v) => { setText(v); if (draft) setDraft(null); }}

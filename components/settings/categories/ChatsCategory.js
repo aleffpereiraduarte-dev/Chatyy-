@@ -1,5 +1,5 @@
-// [2026-10-15 settings-split] Categoria "Conversas": tema, cor de destaque,
-// papel de parede/backup, digitação, mensagens, importar do WhatsApp,
+// [2026-10-15 settings-split] Categoria "Conversas": backup (tema/cor/papel de
+// parede/balões → Aparência desde 2026-10-18), digitação, mensagens, importar do WhatsApp,
 // palavras silenciadas, economia de dados e recursos beta. Preferências do
 // aparelho (mesmas chaves locais lidas pelo chat) + settingsCache 'muted_words'.
 import { useState, useCallback, useSyncExternalStore } from 'react';
@@ -10,9 +10,7 @@ import { useLanguage } from '../../../context/LanguageContext';
 import * as api from '../../../services/api';
 import * as settingsCache from '../../../services/settingsCache';
 import { IconDownload, IconTrash } from '../../Icons';
-import SettingsSegmented from '../../SettingsSegmented';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, SettingsCardContent, useGroupedColors } from '../SettingsKit';
-import { AccentColorGroup, WallpaperRow } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useLocalKeys, setStorage, useSection, catStyles as s } from './shared';
 import * as mediaVis from '../../../services/mediaVisibility';
 
@@ -58,24 +56,9 @@ export default function ChatsCategory() {
 
   return (
     <View>
-      <SettingsGroup header={t('settings.theme.label') || 'Tema'} footer={t('settings.rd.themeFooter') || 'Sistema acompanha o modo claro/escuro do aparelho.'}>
-        <SettingsCardContent>
-          <SettingsSegmented
-            colors={colors}
-            isDark={isDark}
-            value={themeMode}
-            onChange={(v) => setThemeMode(v)}
-            options={[
-              { value: 'light', label: t('settings.theme.light') || 'Claro' },
-              { value: 'dark', label: t('settings.theme.dark') || 'Escuro' },
-              { value: 'system', label: t('settings.theme.system') || 'Sistema' },
-            ]}
-          />
-        </SettingsCardContent>
-      </SettingsGroup>
-      <AccentColorGroup />
+      {/* [2026-10-18 me-merge] Tema, cor de destaque, papel de parede e estilo dos
+          balões foram para a categoria Aparência (AppearanceCategory.js). */}
       <SettingsGroup>
-        <WallpaperRow />
         <SettingsRow title={t('sidebar.backup')} subtitle={t('settings.backupSub')} onPress={() => safeNav('/backup')} />
       </SettingsGroup>
 
@@ -118,18 +101,6 @@ export default function ChatsCategory() {
             { value: 2, label: t('settings.voiceSpeed.option_2') || '2×' },
           ]}
           onChange={(v) => setPref('voiceSpeed', 'voice_speed_default', v)}
-        />
-        <SettingsPickerRow
-          title={t('settings.bubble.title') || 'Estilo dos balões'}
-          value={prefs.bubble}
-          sheetMessage={t('settings.bubble.subtitle') || 'Formato visual das mensagens.'}
-          cancelLabel={t('common.cancel') || 'Cancelar'}
-          options={[
-            { value: 'rounded', label: t('settings.bubble.rounded') || 'Arredondado' },
-            { value: 'square', label: t('settings.bubble.square') || 'Quadrado' },
-            { value: 'classic', label: t('settings.bubble.classic') || 'Clássico' },
-          ]}
-          onChange={(v) => setPref('bubble', 'bubble_shape', v)}
         />
       </SettingsGroup>
 

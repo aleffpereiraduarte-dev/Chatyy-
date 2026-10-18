@@ -72,6 +72,8 @@ export function useGroupedColors() {
 export function SettingsIconTile({ Icon, size = 32, muted = false, solid = false }) {
   const g = useGroupedColors();
   if (!Icon) return null;
+  // [2026-10-18 bia-orb-icon] Ícone que é a própria forma (orb da Bia): ocupa o ladrilho, sem chip atrás.
+  if (Icon.__fillsTile) return <Icon size={size} />;
   return (
     <View style={{
       width: size, height: size, borderRadius: Math.round(size * 0.31),
@@ -122,6 +124,7 @@ function useCascadeDelay() {
 // por baixo do ícone em quadradinho: 16 + 32 + 14 = 62; ícone solto: 54).
 function _autoInset(child) {
   const p = child && child.props;
+  if (p && p.left) return 62; // [2026-10-18 storage-names] avatar 34 + 12 + 16
   if (!p || !p.icon) return 16;
   return p.iconTile === false ? 54 : 62;
 }
@@ -191,7 +194,7 @@ export function SettingsRow(props) {
 function SettingsRowJS({
   title, subtitle, value, icon: Icon, iconTile = true, onPress, onLongPress, chevron,
   right, destructive, disabled, checked, titleStyle, numberOfLines = 1, subtitleLines = 2,
-  accessibilityLabel, accessibilityRole, center, testID, children,
+  accessibilityLabel, accessibilityRole, center, testID, children, left,
 }) {
   const g = useGroupedColors();
   const searchQ = useContext(SettingsSearchContext);
@@ -205,7 +208,9 @@ function SettingsRowJS({
   const _gapStart = (n) => (_rtl ? { marginRight: n } : { marginLeft: n });
   const body = (
     <View style={[st.row, disabled && { opacity: 0.45 }]}>
-      {!!Icon && (iconTile
+      {/* [2026-10-18 storage-names] `left` = nó próprio à esquerda (ex.: avatar da conversa). */}
+      {left ? <View style={{ ..._gapEnd(12) }}>{left}</View> : null}
+      {!left && !!Icon && (iconTile
         ? <View style={{ ..._gapEnd(14) }}><SettingsIconTile Icon={Icon} /></View>
         : <View style={{ ..._gapEnd(14), width: 24, alignItems: 'center' }}><Icon size={20} color={destructive ? g.destructive : g.text} /></View>)}
       <View style={{ flex: 1, minWidth: 0, alignItems: center ? 'center' : 'flex-start' }}>

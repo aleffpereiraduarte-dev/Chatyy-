@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles } from './Icons';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
 const DEBOUNCE_MS = 1500;
@@ -105,7 +106,7 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept, mo
     <View style={s.ghostWrap} pointerEvents="box-none">
       {loading ? (
         <View style={s.thinkingRow} pointerEvents="none">
-          <IconSparkles size={11} color={ghostColor} />
+          <BiaIcon size={11} color={ghostColor} />
           <Text style={[s.thinkingDot, { color: ghostColor }]}>•</Text>
           <Text style={[s.thinkingDot, { color: ghostColor }]}>•</Text>
           <Text style={[s.thinkingDot, { color: ghostColor }]}>•</Text>

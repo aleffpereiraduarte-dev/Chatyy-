@@ -184,7 +184,7 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
     recycler.clipChildren = false
     recycler.overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
     recycler.isVerticalScrollBarEnabled = false
-    recycler.setPadding(px(16f), 0, px(16f), px(20f))
+    recycler.setPadding(px(16f), 0, px(16f), px(8f))
     recycler.itemAnimator = if (reduceMotion) null else DefaultItemAnimator().apply {
       supportsChangeAnimations = false
       moveDuration = 220
@@ -270,7 +270,7 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
     val c = Math.max(0.0, v)
     if (Math.abs(c - bottomInsetDp) < 0.5) return
     bottomInsetDp = c
-    recycler.setPadding(px(16f), 0, px(16f), px((c + 20.0).toFloat()))
+    recycler.setPadding(px(16f), 0, px(16f), px((c + 8.0).toFloat()))
     dirty = true
   }
 
@@ -342,39 +342,16 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
     dirty = false
     val q = query
     val next = ArrayList<APRow>()
-    var strip: List<String> = emptyList()
-    if (q.isEmpty() && itemById["one"]?.featured == true) next.add(APRow(T_BIA, "bia"))
-    if (q.isEmpty()) {
-      if (editing) {
-        val fav = ArrayList<String>()
-        for (k in pinned) if (itemById.containsKey(k) && !fav.contains(k)) fav.add(k)
-        if (fav.isNotEmpty()) {
-          next.add(APRow(T_HEADER, "h:fav", title = labels["pinned"] ?: ""))
-          for (k in fav) next.add(APRow(T_TILE, "f:$k", appId = k, fav = true))
-          next.add(APRow(T_GAP, "gap:fav"))
-        }
-      } else {
-        val out = ArrayList<String>()
-        val seen = HashSet<String>()
-        for (k in pinned + recent) {
-          if (!itemById.containsKey(k) || !seen.add(k)) continue
-          out.add(k)
-          if (out.size >= STRIP_MAX) break
-        }
-        if (out.isNotEmpty()) {
-          next.add(APRow(T_HEADER, "h:strip", title = labels["recent"] ?: ""))
-          next.add(APRow(T_STRIP, "strip"))
-          next.add(APRow(T_GAP, "gap:strip"))
-          strip = out
-        }
-      }
-    }
+    // [2026-10-18 apps-compact] sem cartão da Bia (vira ladrilho com o orb) e sem
+    // faixa Recentes / fixados: uma grade só, altura do conteúdo.
+    val strip: List<String> = emptyList()
     var anyGrid = false
     for (s in sections) {
       val secHit = q.isNotEmpty() && s.norm.contains(q)
-      val items = s.items.filter { if (q.isEmpty()) !it.featured else (secHit || it.norm.contains(q)) }
+      // [2026-10-18 apps-compact] "featured" (Bia) fica na grade como ladrilho normal.
+      val items = s.items.filter { q.isEmpty() || secHit || it.norm.contains(q) }
       if (items.isEmpty()) continue
-      next.add(APRow(T_HEADER, "h:${s.key}", title = s.title))
+      if (s.title.isNotEmpty()) next.add(APRow(T_HEADER, "h:${s.key}", title = s.title))
       for (it in items) next.add(APRow(T_TILE, "g:${s.key}:${it.id}", appId = it.id))
       next.add(APRow(T_GAP, "gap:${s.key}"))
       anyGrid = true
@@ -413,22 +390,22 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
     while (i < rows.size) {
       val r = rows[i]
       when (r.type) {
-        T_HEADER -> dp += 24.0
+        T_HEADER -> dp += 22.0
         T_BIA -> dp += 98.0
         T_STRIP -> dp += 98.0
-        T_GAP -> dp += 12.0
+        T_GAP -> dp += 6.0
         T_EMPTY -> dp += 170.0
         T_TILE -> {
           var n = 0
           while (i < rows.size && rows[i].type == T_TILE) { n++; i++ }
-          dp += Math.ceil(n / 4.0) * 110.0
+          dp += Math.ceil(n / 4.0) * TILE_H_DP
           continue
         }
       }
       i++
     }
     if (searchEnabled) dp += 44.0 + 14.0
-    dp += bottomInsetDp + 20.0
+    dp += bottomInsetDp + 8.0
     if (Math.abs(dp - lastContentDp) > 0.5) {
       lastContentDp = dp
       onContentHeight(mapOf("height" to dp))
@@ -521,7 +498,8 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
 
   private fun onTileLong(appId: String, fav: Boolean, v: View): Boolean {
     if (appId.isEmpty()) return false
-    if (!editing) { setEditingInternal(true, v); return true }
+    // [2026-10-18 apps-compact] sem modo editar/fixar (founder quer simples).
+    if (!editing) return false
     if (fav) return false // ItemTouchHelper assume o arrasto
     togglePin(appId, v)
     return true
@@ -599,7 +577,7 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
       when (viewType) {
         T_HEADER -> {
           val v = APHeaderView(parent.context)
-          v.layoutParams = RecyclerView.LayoutParams(mw, px(24f))
+          v.layoutParams = RecyclerView.LayoutParams(mw, px(22f))
           return Holder(v)
         }
         T_BIA -> {
@@ -638,7 +616,7 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
         }
         T_TILE -> {
           val cell = APTileView(parent.context)
-          cell.layoutParams = RecyclerView.LayoutParams(mw, px(110f))
+          cell.layoutParams = RecyclerView.LayoutParams(mw, px(TILE_H_DP.toFloat()))
           val h = Holder(cell)
           cell.setOnClickListener { v ->
             val p = h.bindingAdapterPosition
@@ -659,7 +637,7 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
         }
         else -> {
           val v = View(parent.context)
-          v.layoutParams = RecyclerView.LayoutParams(mw, px(12f))
+          v.layoutParams = RecyclerView.LayoutParams(mw, px(6f))
           return Holder(v)
         }
       }
@@ -766,6 +744,8 @@ class ChatyyAppsGridView(context: Context, appContext: AppContext) : ExpoView(co
 
   companion object {
     private const val STRIP_MAX = 8
+    // [2026-10-18 apps-compact] ladrilho 48 dp + rótulo 12 sp (até 2 linhas).
+    private const val TILE_H_DP = 90.0
     private const val T_HEADER = 0
     private const val T_BIA = 1
     private const val T_STRIP = 2

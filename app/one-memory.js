@@ -19,6 +19,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { ORIGIN_BASE, getAuthHeaders } from '../services/api'; // [2026-10-10] /api/rust/one só existe no US (edges devolviam o SPA)
 import { IconArrowLeft, IconTrash, IconSparkles } from '../components/Icons';
 import { safeAlert as _sharedSafeAlert } from '../services/alerts';
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const ACCENT = '#111111';
 
@@ -40,10 +41,9 @@ function EmptyOrb({ isDark }) {
           </RadialGradient>
         </Defs>
         <SvgCircle cx={48} cy={48} r={44} fill="url(#memOrb)" />
-        <SvgCircle cx={48} cy={48} r={22} fill={ACCENT} fillOpacity={0.92} />
       </Svg>
       <View style={{ position: 'absolute' }}>
-        <IconSparkles size={22} color="#fff" />
+        <BiaIcon size={48} />
       </View>
     </View>
   );
@@ -79,7 +79,7 @@ function MemoryRow({ item, index, isDark, colors, onDelete, t }) {
       ]}
     >
       <View style={styles.rowIconChip}>
-        <IconSparkles size={12} color="#fff" />
+        <BiaIcon size={12} color="#fff" />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4 }}>

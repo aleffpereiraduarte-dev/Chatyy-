@@ -22,7 +22,7 @@ import * as api from '../services/api';
 // never noticed. Now: if iOS/Android won't show the system dialog anymore
 // (canAskAgain === false), we pop a real Alert that routes straight to
 // system Settings so the user can actually flip the toggle.
-async function ensurePhotoPermission(t) {
+export async function ensurePhotoPermission(t) {
   try {
     const ImagePicker = require('expo-image-picker');
     let perm = await ImagePicker.getMediaLibraryPermissionsAsync?.();

@@ -30,7 +30,8 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
   private static let side: CGFloat = 16
   private static let searchH: CGFloat = 44
   private static let searchGap: CGFloat = 14
-  private static let tileH: CGFloat = 110
+  // [2026-10-18 apps-compact] ladrilho 48 pt + rótulo 12 pt (até 2 linhas) — estilo Outlook.
+  private static let tileH: CGFloat = 90
   private static let stripH: CGFloat = 98
 
   private var collectionView: UICollectionView!
@@ -154,6 +155,8 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
 
     let lp = UILongPressGestureRecognizer(target: self, action: #selector(onLongPress(_:)))
     lp.minimumPressDuration = 0.38
+    // [2026-10-18 apps-compact] sem modo editar/fixar (founder quer simples).
+    lp.isEnabled = false
     cv.addGestureRecognizer(lp)
     longPress = lp
   }
@@ -225,7 +228,7 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
     let c = CGFloat(max(0, v))
     if abs(c - bottomInset) < 0.5 { return }
     bottomInset = c
-    collectionView.contentInset.bottom = c + 20
+    collectionView.contentInset.bottom = c + 8
     setNeedsLayout()
   }
 
@@ -270,8 +273,8 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
       field.accessibilityLabel = ph
       clearButton.accessibilityLabel = labels["clear"] ?? ""
     }
-    if collectionView.contentInset.bottom < bottomInset + 20 {
-      collectionView.contentInset.bottom = bottomInset + 20
+    if collectionView.contentInset.bottom < bottomInset + 8 {
+      collectionView.contentInset.bottom = bottomInset + 8
     }
     apply()
   }
@@ -286,50 +289,16 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
     var ids: [String] = []
     var titles: [String: String] = [:]
     var map: [String: String] = [:]
-    var strip = Set<String>()
+    // [2026-10-18 apps-compact] sem cartão da Bia (vira ladrilho com o orb) e sem
+    // faixa Recentes / fixados: uma grade só, altura do conteúdo.
+    let strip = Set<String>()
 
-    if q.isEmpty, let one = itemById["one"], one.featured {
-      snap.appendSections(["bia"])
-      snap.appendItems(["bia"], toSection: "bia")
-      ids.append("bia")
-    }
-    if q.isEmpty {
-      if editing {
-        var fav: [String] = []
-        for k in pinned where itemById[k] != nil && !fav.contains(k) { fav.append(k) }
-        if !fav.isEmpty {
-          snap.appendSections(["fav"])
-          let iids = fav.map { "f:" + $0 }
-          snap.appendItems(iids, toSection: "fav")
-          for (i, k) in fav.enumerated() { map[iids[i]] = k }
-          ids.append("fav")
-          titles["fav"] = labels["pinned"] ?? ""
-        }
-      } else {
-        var out: [String] = []
-        var seen = Set<String>()
-        for k in pinned + recent {
-          if seen.contains(k) || itemById[k] == nil { continue }
-          seen.insert(k)
-          out.append(k)
-          if out.count >= ChatyyAppsGridView.stripMax { break }
-        }
-        if !out.isEmpty {
-          snap.appendSections(["strip"])
-          let iids = out.map { "s:" + $0 }
-          snap.appendItems(iids, toSection: "strip")
-          for (i, k) in out.enumerated() { map[iids[i]] = k }
-          ids.append("strip")
-          titles["strip"] = labels["recent"] ?? ""
-          strip = Set(out)
-        }
-      }
-    }
     var anyGrid = false
     for s in sections {
       let secHit = !q.isEmpty && s.norm.contains(q)
+      // [2026-10-18 apps-compact] "featured" (Bia) fica na grade como ladrilho normal.
       let items = s.items.filter { it in
-        q.isEmpty ? !it.featured : (secHit || it.norm.contains(q))
+        q.isEmpty || secHit || it.norm.contains(q)
       }
       if items.isEmpty { continue }
       let sid = "sec:" + s.key
@@ -415,7 +384,8 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
       sec.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: side, bottom: sid == "bia" ? 20 : 0, trailing: side)
       return sec
     }
-    let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(24))
+    let hasTitle = !(sectionTitles[sid] ?? "").isEmpty
+    let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(22))
     let header = NSCollectionLayoutBoundarySupplementaryItem(layoutSize: headerSize,
                                                              elementKind: UICollectionView.elementKindSectionHeader,
                                                              alignment: .top)
@@ -436,8 +406,8 @@ public final class ChatyyAppsGridView: ExpoView, UICollectionViewDelegate, UITex
     let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(ChatyyAppsGridView.tileH))
     let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
     let sec = NSCollectionLayoutSection(group: group)
-    sec.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: side, bottom: 12, trailing: side)
-    sec.boundarySupplementaryItems = [header]
+    sec.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: side, bottom: 6, trailing: side)
+    if hasTitle { sec.boundarySupplementaryItems = [header] }
     return sec
   }
 

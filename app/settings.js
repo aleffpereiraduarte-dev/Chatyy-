@@ -1,4 +1,20 @@
-// /settings — hub das Configurações.
+// /settings — hub das Configurações = tela "Você".
+//
+// [2026-10-18 me-merge] Founder (prints do Telegram Ajustes e do "Você" do
+// WhatsApp): UMA tela só para "eu" — perfil + configurações juntos. Topo =
+// components/settings/MeHeader (barra Buscar · QR · lápis, balão do recado
+// acima do avatar 120, nome + chevron de troca de conta, telefone • @usuário);
+// depois 3 cartões sem cabeçalho:
+//   1. Chatyy Plus · Perfil público · Listas · Mensagens de transmissão ·
+//      Mensagens favoritas · Aparelhos conectados
+//   2. Conta · Privacidade · Conversas · Aparência · Notificações ·
+//      Armazenamento e dados · Idioma · Acessibilidade
+//   3. Carteira · Bia · E-mail · Ajuda · Convidar amigos
+//   + Sair.
+// Lápis / nome = editar o perfil (modo edição do perfil nativo,
+// /u/<eu>?edit=1). O perfil público fica só para VER (posts/seguidores) — não
+// repete linhas daqui. O topo é RN hospedado pela lista NATIVA
+// (ChatyySettingsList, cabeçalho filho) → funciona em qualquer binário (OTA).
 //
 // [2026-10-18 settings-sub-native] Sem duplicar o Meu perfil: a raiz NÃO tem
 // mais hero (foto grande/nome/QR/Editar) nem cartões Chatyy Plus/Carteira/
@@ -29,10 +45,9 @@ import { HapticsCompat as Haptics } from '../services/haptics';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } from '../components/settings/SettingsKit';
-import AvatarCircle from '../components/AvatarCircle';
-import PressableRow from '../components/PressableRow';
+import MeHeader from '../components/settings/MeHeader';
+import { normalizePlanState, planDisplayName } from '../services/planState';
 import { PLAN_NAME } from '../services/brandPlan';
-import { isReduceMotionEnabled } from '../components/reducedMotion';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset, nativeListLargeTitleOn } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,7 +61,7 @@ import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/the
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
-  IconChevronRight, IconMonitor, IconStar, IconCreditCard,
+  IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers,
 } from '../components/Icons';
 import * as settingsCache from '../services/settingsCache';
 import { useWallet, refreshWallet } from '../services/diamonds';
@@ -60,41 +75,23 @@ import { SettingsHostContext, normalizePrivacy, privacyValueLabel, pushLevelOf, 
 import { buildSearchIndex, filterSearchIndex } from '../components/settings/categories/searchIndex';
 import NativeSettingsList, { isNativeSettingsListAvailable } from '../components/settings/NativeSettingsList';
 import SettingsCategoryScreen from '../components/settings/SettingsCategoryScreen';
+import BiaIcon from '../components/bia/BiaIcon';
+import { nativeIconKey } from '../components/settings/nativeCollect';
 import { pushOnce, useReleaseNavLockOnFocus } from '../services/navOnce';
 
 const CAT_ICONS = {
   user: IconUser, shield: IconShield, message: IconMessageSquare, bell: IconBell, database: IconDatabase,
   type: IconType, globe: IconGlobe, mail: IconMail, sparkles: IconSparkles, help: IconHelpCircle, userPlus: IconUserPlus,
+  biaOrb: BiaIcon, // [2026-10-18 bia-orb-icon] Bia = orb (não a estrelinha)
+  palette: IconPalette,
 };
 
-// [2026-10-18 settings-sub-native] Linha compacta "Meu perfil" no topo da raiz
-// (WhatsApp/Telegram): avatar 40 + nome + "Ver perfil" + seta. Um toque abre o
-// perfil (nativo Telegram no app; JS no web). Sem foto grande, sem QR/editar.
-function MyProfileRow({ user, profile, avatarKey, onPress, t }) {
-  const g = useGroupedColors();
-  const name = (profile?.name || user?.name || user?.display_name || '').trim()
-    || (user?.email ? user.email.split('@')[0] : '');
-  const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
-  const sub = tr('settings.viewProfile', 'Ver perfil');
-  return (
-    <View style={[s.meCard, { backgroundColor: g.cardBg }]}>
-      <PressableRow
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`${tr('settings.myProfile', 'Meu perfil')}: ${name}`}
-        testID="settings-profile-card"
-      >
-        <View style={s.meRow}>
-          <AvatarCircle key={avatarKey} email={user?.email} name={name || user?.email} size={40} />
-          <View style={s.meText}>
-            <Text style={[s.meName, { color: g.text }]} numberOfLines={1} maxFontSizeMultiplier={1.6}>{name}</Text>
-            <Text style={[s.meSub, { color: g.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.6}>{sub}</Text>
-          </View>
-          <IconChevronRight size={17} color={g.tertiary} />
-        </View>
-      </PressableRow>
-    </View>
-  );
+let _AvatarLightbox = null;
+function LazyAvatarLightbox(props) {
+  if (!props.visible) return null;
+  if (!_AvatarLightbox) _AvatarLightbox = require('../components/AvatarLightbox').default;
+  const C = _AvatarLightbox;
+  return <C {...props} />;
 }
 
 function appVersionLabel() {
@@ -128,7 +125,7 @@ function SettingsScreenInner() {
   const { colors, isDark, themeMode } = useTheme();
   const gc = useGroupedColors();
   const { t, language } = useLanguage();
-  const { logout, user } = useAuth();
+  const { logout, user, accounts } = useAuth();
   const confirm = useConfirm();
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -184,14 +181,11 @@ function SettingsScreenInner() {
   const _q = (searchQuery || '').trim().toLowerCase();
   const searching = !!_q;
   const [searchFocused, setSearchFocused] = useState(false);
+  // [2026-10-18 me-merge] Busca escondida atrás da lupa da barra do topo
+  // (WhatsApp "Você"): abre a barra com o teclado; Cancelar fecha.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const searchInputRef = useRef(null);
-  const searchAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const to = searchFocused || !!searchQuery ? 1 : 0;
-    if (isReduceMotionEnabled()) { searchAnim.setValue(to); return; }
-    Animated.spring(searchAnim, { toValue: to, useNativeDriver: false, tension: 220, friction: 24 }).start();
-  }, [searchFocused, searchQuery, searchAnim]);
 
   // ── Saldo de diamantes p/ o cartão da Carteira (some se desativado) ─────
   // [2026-10-17 carteira-sem-piscar] Antes: estado local null + fetch 500 ms
@@ -233,6 +227,7 @@ function SettingsScreenInner() {
   const referral = usePeek('referral');
   const storageStats = usePeek('storage_stats');
   const settingsData = usePeek('settings');
+  const planSnap = usePeek('plan');
 
   // [2026-10-17 nav-once] push NA HORA (sem esperar o próximo frame) e
   // idempotente: trava em voo + nunca empilha a mesma rota que já está no topo.
@@ -358,11 +353,12 @@ function SettingsScreenInner() {
   })();
   const referralCount = (referral && referral.referred_count) || 0;
   const catSubtitle = {
-    account: (myProfile?.phone || user?.email || ''),
+    account: '',
     privacy: `${t('settings.privacyLastSeen')}: ${privacyValueLabel(t, normalizePrivacy(privData), 'last_seen')}`,
-    chat: `${t('settings.theme.label') || ''}: ${themeLabel}`,
+    chat: '',
+    appearance: `${t('settings.theme.label') || ''}: ${themeLabel}`,
     notifications: pushLabel,
-    storage_data: [PLAN_NAME, storageSub].filter(Boolean).join(' · '),
+    storage_data: storageSub,
     accessibility: `${t('settings.fontSize')}: ${fontLabel}`,
     language: langLabel,
     email: user?.email || '',
@@ -386,26 +382,84 @@ function SettingsScreenInner() {
     setNativeFailed(true);
   }, []);
 
-  const openMyProfile = useCallback(() => {
-    if (!user?.email) { safeNav('/edit-profile'); return; }
-    safeNav(`/u/${encodeURIComponent(user.email)}`);
-  }, [user?.email, safeNav]);
+  // ── Topo "Você" ─────────────────────────────────────────────────────────
+  const tr = useCallback((k, fb) => { const v = t(k); return v && v !== k ? v : fb; }, [t]);
+  const meHref = user?.email ? `/u/${encodeURIComponent(user.email)}` : null;
+  // Perfil público (só ver: posts, seguidores, destaques).
+  const openPublicProfile = useCallback(() => {
+    if (!meHref) { safeNav('/edit-profile'); return; }
+    safeNav(meHref);
+  }, [meHref, safeNav]);
+  // Lápis / nome / selo da câmera = modo EDIÇÃO do perfil nativo (?edit=1).
+  const openEditProfile = useCallback(() => {
+    if (!meHref) { safeNav('/edit-profile'); return; }
+    safeNav({ pathname: '/u/[username]', params: { username: user.email, edit: '1' } });
+  }, [meHref, safeNav, user?.email]);
+  const openSearch = useCallback(() => {
+    try { Haptics.selectionAsync?.(); } catch {}
+    setSearchOpen(true);
+    setTimeout(() => { try { searchInputRef.current?.focus?.(); } catch {} }, 60);
+  }, []);
+  const closeSearch = useCallback(() => {
+    setSearchQuery(''); setSearchFocused(false); setSearchOpen(false);
+    try { searchInputRef.current?.blur?.(); } catch {}
+  }, []);
+  const multiAccount = (accounts?.length || 0) > 1;
   const heroNode = (
-    <MyProfileRow user={user} profile={myProfile} avatarKey={avatarKey} onPress={openMyProfile} t={t} />
+    <MeHeader
+      user={user}
+      profile={myProfile}
+      avatarKey={avatarKey}
+      multiAccount={multiAccount}
+      t={t}
+      onSearch={openSearch}
+      onQr={() => safeNav('/profile-qr')}
+      onEdit={openEditProfile}
+      onAbout={openEditProfile}
+      onAvatar={() => { try { Haptics.selectionAsync?.(); } catch {} setAvatarOpen(true); }}
+      onChangePhoto={openEditProfile}
+      onSwitch={openAccountSwitcher}
+    />
   );
 
-  // Atalhos da raiz (rotas próprias): Aparelhos conectados, Mensagens
-  // favoritas, Carteira (some se desligada no servidor).
+  // ── Linhas da raiz (3 cartões sem cabeçalho + Sair) ─────────────────────
+  // Mesma lista para a lista JS e a nativa. type: 'r' rota · 'c' categoria.
   const _fmtNum = (n) => { try { return Number(n).toLocaleString(); } catch { return String(n); } };
-  const shortcuts = [
-    { key: 'devices', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices'), route: '/linked-devices' },
-    { key: 'starred', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
-    (walletDiamonds !== null && walletDiamonds !== undefined) ? {
-      key: 'wallet', icon: 'wallet', Icon: IconCreditCard, title: t('wallet.title') || 'Carteira',
-      sub: walletDiamonds === '' ? '' : `${_fmtNum(walletDiamonds)} ${t('wallet.diamondsLabel') || ''}`.trim(),
-      route: '/wallet',
-    } : null,
-  ].filter(Boolean);
+  const _plan = (() => { try { return normalizePlanState(planSnap?.plan || null, planSnap?.usage || null); } catch { return null; } })();
+  const plusValue = _plan && _plan.isPaid ? (planDisplayName(_plan.planId, t) || '') : '';
+  const catRow = (key) => ({ key, type: 'c', cat: key, icon: CATEGORY_META[key].icon, Icon: CAT_ICONS[CATEGORY_META[key].icon], title: categoryTitle(t, key), sub: catSubtitle[key] || '' });
+  const rootCards = [
+    [
+      { key: 'plus', type: 'r', icon: 'sparkles', Icon: IconSparkles, title: PLAN_NAME, sub: plusValue ? '' : tr('me.plusSub', 'Assinaturas e armazenamento'), value: plusValue, route: '/settings-one' },
+      { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Perfil público'), sub: tr('me.publicProfileSub', 'Posts, seguidores e destaques'), go: openPublicProfile },
+      { key: 'lists', type: 'r', icon: 'archive', Icon: IconFolder, title: tr('me.lists', 'Listas'), route: '/chat-folders' },
+      { key: 'broadcast', type: 'r', icon: 'forward', Icon: IconBroadcast, title: tr('me.broadcast', 'Mensagens de transmissão'), route: '/chat-new' },
+      { key: 'starred', type: 'r', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
+      { key: 'devices', type: 'r', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices') || 'Aparelhos conectados', route: '/linked-devices' },
+    ],
+    CATEGORY_GROUPS[0].map(catRow),
+    [
+      (walletDiamonds !== null && walletDiamonds !== undefined) ? {
+        key: 'wallet', type: 'r', icon: 'wallet', Icon: IconCreditCard, title: t('wallet.title') || 'Carteira',
+        sub: walletDiamonds === '' ? '' : `${_fmtNum(walletDiamonds)} ${t('wallet.diamondsLabel') || ''}`.trim(),
+        route: '/wallet',
+      } : null,
+      ...CATEGORY_GROUPS[1].map(catRow),
+    ].filter(Boolean),
+  ];
+  const rootRowByKey = {};
+  for (const card of rootCards) for (const r of card) rootRowByKey[r.key] = r;
+  const pressRootRow = (r) => {
+    if (!r) return;
+    if (r.type === 'c') { openCategory(r.cat); return; }
+    if (r.go) { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} r.go(); return; }
+    if (r.route) safeNav(r.route);
+  };
+  const openSearchResult = (r) => {
+    if (r.route === '/u/me') { openPublicProfile(); return; }
+    if (r.route === '/edit-profile') { openEditProfile(); return; }
+    if (r.route) safeNav(r.route); else openCategory(r.cat, r.anchor);
+  };
 
   const searchBarNode = (
     <View style={s.searchWrap}>
@@ -425,6 +479,7 @@ function SettingsScreenInner() {
           style={[s.searchInput, { color: colors.text }]}
           autoCorrect={false}
           autoCapitalize="none"
+          autoFocus={searchOpen}
           returnKeyType="search"
           accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
         />
@@ -434,18 +489,18 @@ function SettingsScreenInner() {
           </TouchableOpacity>
         )}
       </Animated.View>
-      <Animated.View style={{ overflow: 'hidden', maxWidth: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 110] }), opacity: searchAnim }}>
-        <TouchableOpacity
-          onPress={() => { setSearchQuery(''); setSearchFocused(false); try { searchInputRef.current?.blur?.(); } catch {} }}
-          style={s.searchCancel}
-          accessibilityRole="button"
-          accessibilityLabel={t('common.cancel') || 'Cancelar'}
-        >
-          <Text style={{ color: gc.text, fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{t('common.cancel') || 'Cancelar'}</Text>
-        </TouchableOpacity>
-      </Animated.View>
+      <TouchableOpacity
+        onPress={closeSearch}
+        style={s.searchCancel}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.cancel') || 'Cancelar'}
+      >
+        <Text style={{ color: gc.text, fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{t('common.cancel') || 'Cancelar'}</Text>
+      </TouchableOpacity>
     </View>
   );
+  // Topo: busca aberta = só a barra de busca; senão o cabeçalho "Você".
+  const topNode = searchOpen || searching ? searchBarNode : heroNode;
 
   // Resultados (lista JS): uma linha por configuração, subtítulo = categoria.
   const searchResultsNode = searching ? (
@@ -460,7 +515,7 @@ function SettingsScreenInner() {
               title={r.title}
               subtitle={categoryTitle(t, r.cat)}
               subtitleLines={1}
-              onPress={() => (r.route ? safeNav(r.route) : openCategory(r.cat, r.anchor))}
+              onPress={() => openSearchResult(r)}
             />
           );
         })}
@@ -473,39 +528,24 @@ function SettingsScreenInner() {
     )
   ) : null;
 
-  const shortcutsNode = (
-    <SettingsGroup key="shortcuts" inset={62}>
-      {shortcuts.map((sc) => (
+  const categoryGroupsNode = rootCards.map((card, gi) => (
+    <SettingsGroup key={'card' + gi} inset={62}>
+      {card.map((r) => (
         <SettingsRow
-          key={sc.key}
-          icon={sc.Icon}
-          title={sc.title}
-          subtitle={sc.sub || undefined}
+          key={r.key}
+          icon={r.Icon}
+          title={r.title}
+          subtitle={r.sub || undefined}
+          value={r.value || undefined}
           subtitleLines={1}
-          testID={'settings-row-' + sc.key}
-          onPress={() => safeNav(sc.route)}
+          titleStyle={twoPane && r.type === 'c' && activeCategory === r.cat ? { fontWeight: '700' } : undefined}
+          accessibilityState={twoPane && r.type === 'c' ? { selected: activeCategory === r.cat } : undefined}
+          testID={(r.type === 'c' ? 'settings-cat-' : 'settings-row-') + r.key}
+          onPress={() => pressRootRow(r)}
         />
       ))}
     </SettingsGroup>
-  );
-  const categoryGroupsNode = CATEGORY_GROUPS.map((keys, gi) => [
-    <SettingsGroup key={gi} inset={62} header={t(GROUP_HEADER_KEYS[gi])}>
-      {keys.map((key) => (
-        <SettingsRow
-          key={key}
-          icon={CAT_ICONS[CATEGORY_META[key].icon]}
-          title={categoryTitle(t, key)}
-          subtitle={catSubtitle[key] || undefined}
-          subtitleLines={1}
-          titleStyle={twoPane && activeCategory === key ? { fontWeight: '700' } : undefined}
-          accessibilityState={twoPane ? { selected: activeCategory === key } : undefined}
-          testID={'settings-cat-' + key}
-          onPress={() => openCategory(key)}
-        />
-      ))}
-    </SettingsGroup>,
-    gi === 0 ? shortcutsNode : null,
-  ]);
+  ));
   const logoutNode = (
     <SettingsGroup>
       <SettingsRow title={t('settings.logoutAccount')} destructive center onPress={handleSettingsLogout} />
@@ -513,54 +553,50 @@ function SettingsScreenInner() {
   );
   const homeListNode = (
     <View>
-      {heroNode}
       {categoryGroupsNode}
       {logoutNode}
     </View>
   );
 
-  // Linhas da lista nativa (categorias + resultados de busca + Sair).
+  // Linhas da lista nativa (cartões + resultados de busca + Sair).
+  const _rootSig = JSON.stringify(rootCards.map((c) => c.map((r) => [r.key, r.title, r.sub || '', r.value || ''])));
   const nativeSections = useMemo(() => {
     if (!useNativeRoot) return null;
     const rows = [];
-    CATEGORY_GROUPS.forEach((keys, gi) => {
-      for (const key of keys) {
-        rows.push({
-          id: 'c:' + key, k: 'c', sid: 'g' + gi, hd: t(GROUP_HEADER_KEYS[gi]),
-          title: categoryTitle(t, key), sub: catSubtitle[key] || '', icon: CATEGORY_META[key].icon,
-        });
-      }
-      if (gi === 0) {
-        for (const sc of shortcuts) {
-          rows.push({ id: 's:' + sc.key, k: 'c', sid: 'shortcuts', hd: '', title: sc.title, sub: sc.sub || '', icon: sc.icon });
-        }
+    rootCards.forEach((card, gi) => {
+      for (const r of card) {
+        const row = {
+          id: (r.type === 'c' ? 'c:' : 's:') + r.key, k: 'c', sid: 'me' + gi, hd: '',
+          title: r.title, sub: r.sub || '', icon: nativeIconKey(r.icon),
+        };
+        if (r.value) row.val = r.value; // api ≥ 2 (binário antigo ignora)
+        rows.push(row);
       }
     });
     rows.push({ id: 'a:logout', k: 'a', sid: 'logout', hd: '', title: t('settings.logoutAccount'), dest: true, center: true });
     for (const e of searchIndex) {
-      rows.push({ id: e.id, k: 'q', sid: 'q', hd: '', title: e.title, sub: categoryTitle(t, e.cat), icon: CATEGORY_META[e.cat]?.icon || '', kw: e.kw });
+      rows.push({ id: e.id, k: 'q', sid: 'q', hd: '', title: e.title, sub: categoryTitle(t, e.cat), icon: nativeIconKey(CATEGORY_META[e.cat]?.icon || ''), kw: e.kw });
     }
     return rows;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useNativeRoot, t, searchIndex, JSON.stringify(catSubtitle), JSON.stringify(shortcuts.map((x) => [x.key, x.title, x.sub || '']))]);
+  }, [useNativeRoot, t, searchIndex, _rootSig]);
   const searchIndexById = useMemo(() => {
     const m = new Map();
     for (const e of searchIndex) m.set(e.id, e);
     return m;
   }, [searchIndex]);
+  const _rowsRef = useRef(rootRowByKey);
+  _rowsRef.current = rootRowByKey;
+  const _pressRef = useRef(null);
+  _pressRef.current = { pressRootRow, openSearchResult, handleSettingsLogout };
   const onNativeRowPress = useCallback((id) => {
     if (!id) return;
-    if (id === 'a:logout') { handleSettingsLogout(); return; }
-    if (id.startsWith('c:')) { openCategory(id.slice(2)); return; }
-    if (id.startsWith('s:')) {
-      const sc = shortcuts.find((x) => x.key === id.slice(2));
-      if (sc) safeNav(sc.route);
-      return;
-    }
+    const h = _pressRef.current;
+    if (id === 'a:logout') { h.handleSettingsLogout(); return; }
+    if (id.startsWith('c:') || id.startsWith('s:')) { h.pressRootRow(_rowsRef.current[id.slice(2)]); return; }
     const e = searchIndexById.get(id);
-    if (e) { if (e.route) safeNav(e.route); else openCategory(e.cat, e.anchor); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchIndexById, openCategory, safeNav, shortcuts.map((x) => x.key).join('|')]);
+    if (e) h.openSearchResult(e);
+  }, [searchIndexById]);
 
   const nativeLabels = useMemo(() => ({
     results: t('settings.matchesFound') || 'Resultados',
@@ -590,7 +626,9 @@ function SettingsScreenInner() {
           colors,
           isDark,
           blur: false,
-          title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
+          // [2026-10-18 me-merge] Raiz sem título (a barra do "Você" — busca/QR/
+          // lápis — é o 1º item do conteúdo, como o WhatsApp).
+          title: activeCategory !== null ? activeCategoryTitle : '',
           // [2026-10-17 swipe-back] Sempre ligado: no nativo a categoria é rota
           // própria (inCategorySubpage só existe no web estreito).
           gestureEnabled: !inCategorySubpage,
@@ -648,7 +686,7 @@ function SettingsScreenInner() {
               keyboardShouldPersistTaps="handled"
               testID="settings-left-pane"
             >
-              {searchBarNode}
+              {topNode}
               <SettingsSearchContext.Provider value={_q}>
                 {searching ? searchResultsNode : homeListNode}
               </SettingsSearchContext.Provider>
@@ -659,7 +697,7 @@ function SettingsScreenInner() {
               <NativeSettingsList
                 rows={nativeSections}
                 query={searchQuery}
-                header={<>{searchBarNode}{searching ? null : heroNode}</>}
+                header={topNode}
                 isDark={isDark}
                 palette={gc}
                 maxWidth={contentMaxWidth}
@@ -685,7 +723,7 @@ function SettingsScreenInner() {
                   >
                     {activeCategory === null && !twoPane ? (
                       <>
-                        {searchBarNode}
+                        {topNode}
                         {searching ? searchResultsNode : homeListNode}
                       </>
                     ) : activeCategory ? (
@@ -700,6 +738,14 @@ function SettingsScreenInner() {
       </SettingsHostContext.Provider>
 
       <AccountSwitcherSheet visible={accountSwitcherOpen} onClose={() => setAccountSwitcherOpen(false)} />
+      <LazyAvatarLightbox
+        visible={avatarOpen}
+        onClose={() => setAvatarOpen(false)}
+        email={user?.email}
+        uri={myProfile?.avatar_url || undefined}
+        name={(myProfile?.name || user?.name || '').trim()}
+        isSelf
+      />
     </View>
   );
 }
@@ -726,11 +772,6 @@ const s = StyleSheet.create({
   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 12, height: 42, gap: 8, borderWidth: 1 },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 40, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
   searchCancel: { paddingLeft: 12, paddingVertical: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
-  meCard: { borderRadius: BorderRadius.card, overflow: 'hidden', marginBottom: 24 },
-  meRow: { flexDirection: 'row', alignItems: 'center', minHeight: 60, paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
-  meText: { flex: 1, minWidth: 0 },
-  meName: { fontSize: Platform.OS === 'ios' ? 17 : 16, fontWeight: '600', letterSpacing: Platform.OS === 'ios' ? -0.41 : -0.2 },
-  meSub: { fontSize: 13, marginTop: 2, letterSpacing: -0.05 },
 });
 
 // [2026-10-17 settings-light] Nativo: link antigo /settings?section=<cat|bloco>

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated }
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
 import useIsMounted from '../hooks/useIsMounted';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 export default function AIEmailSummary({ email, colors, t }) {
   const [summarizing, setSummarizing] = useState(false);
@@ -37,7 +38,7 @@ export default function AIEmailSummary({ email, colors, t }) {
     return (
       <View style={[s.box, { backgroundColor: colors.primaryLight + '30', borderColor: colors.primaryLight }]}>
         <View style={s.header}>
-          <IconSparkles size={14} color={colors.primary} style={{ marginRight: 6 }} />
+          <BiaIcon size={14} color={colors.primary} style={{ marginRight: 6 }} />
           <Text style={[s.label, { color: colors.primary }]}>{t?.('reader.summaryLabel') || 'AI Summary'}</Text>
           <View style={{ flex: 1 }} />
           <TouchableOpacity onPress={() => setSummary('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -60,7 +61,7 @@ export default function AIEmailSummary({ email, colors, t }) {
           <ActivityIndicator size="small" color={colors.primary} />
         ) : (
           <>
-            <IconSparkles size={14} color={colors.primary} style={{ marginRight: 6 }} />
+            <BiaIcon size={14} color={colors.primary} style={{ marginRight: 6 }} />
             <Text style={[s.btnText, { color: colors.primary }]}>{t?.('reader.summarize') || 'Summarize with AI'}</Text>
           </>
         )}

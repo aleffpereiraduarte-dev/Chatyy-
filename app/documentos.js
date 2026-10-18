@@ -26,6 +26,7 @@ import { getCached, setCache } from '../services/cache';
 import SwipeableRow from '../components/SwipeableRow';
 import BrandFab from '../components/BrandFab';
 import { usePreventRemove } from '@react-navigation/native'; // [2026-10-17 swipe-back]
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // Docs subpath is served by the same origin as the API (chatyy.com.br primary).
 // mail.onemundo.com.br was the legacy hostname — new hostname is chatyy.com.br
@@ -396,7 +397,7 @@ function DocumentosScreenInner() {
 
   // Context menu items
   const contextMenuItems = [
-    { key: 'analyze', label: tr('docs.analyzeWithBia', 'Analisar com a Bia'), icon: IconSparkles, color: colors.text, action: handleAnalyzeWithOne },
+    { key: 'analyze', label: tr('docs.analyzeWithBia', 'Analisar com a Bia'), icon: BiaIcon, color: colors.text, action: handleAnalyzeWithOne },
     { key: 'edit', label: t('common.edit'), icon: IconEdit, color: colors.text, action: openEdit },
     { key: 'rename', label: t('docs.rename'), icon: IconFileText, color: colors.text, action: openRename },
     { key: 'duplicate', label: t('docs.duplicate'), icon: IconCopy, color: colors.text, action: handleDuplicate },

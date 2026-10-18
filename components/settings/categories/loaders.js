@@ -4,6 +4,7 @@ export const LOADERS = {
   account: () => import('./AccountCategory'),
   privacy: () => import('./PrivacyCategory'),
   chat: () => import('./ChatsCategory'),
+  appearance: () => import('./AppearanceCategory'), // [2026-10-18 me-merge]
   notifications: () => import('./NotificationsCategory'),
   storage_data: () => import('./StorageCategory'),
   accessibility: () => import('./AccessibilityCategory'),

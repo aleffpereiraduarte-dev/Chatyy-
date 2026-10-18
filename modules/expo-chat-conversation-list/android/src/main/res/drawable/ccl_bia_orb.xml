@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [2026-10-18 bia-orb-icon] Orb da Bia (esfera preta brilhante) — mesmo desenho do
+     components/bia/BiaIcon.js. Usado SEM tint (Configurações "biaOrb", Apps "one"). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+  <!-- corpo: gradiente radial deslocado p/ cima-esquerda -->
+  <path android:pathData="M24,0.5a23.5,23.5 0,1 1,0 47a23.5,23.5 0,1 1,0 -47z">
+    <aapt:attr name="android:fillColor">
+      <gradient
+          android:type="radial"
+          android:centerX="18.2"
+          android:centerY="15.4"
+          android:gradientRadius="34.6">
+        <item android:offset="0" android:color="#FF55555C" />
+        <item android:offset="0.55" android:color="#FF1A1A1E" />
+        <item android:offset="1" android:color="#FF030304" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <!-- luz refletida embaixo -->
+  <path android:pathData="M17.9,37a9,9 0,1 0,18 0a9,9 0,1 0,-18 0z">
+    <aapt:attr name="android:fillColor">
+      <gradient
+          android:type="radial"
+          android:centerX="26.9"
+          android:centerY="37"
+          android:gradientRadius="9">
+        <item android:offset="0" android:color="#38FFFFFF" />
+        <item android:offset="1" android:color="#00FFFFFF" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <!-- reflexo especular -->
+  <path android:pathData="M8.8,14.4a8.5,8.5 0,1 0,17 0a8.5,8.5 0,1 0,-17 0z">
+    <aapt:attr name="android:fillColor">
+      <gradient
+          android:type="radial"
+          android:centerX="17.3"
+          android:centerY="14.4"
+          android:gradientRadius="8.5">
+        <item android:offset="0" android:color="#D9FFFFFF" />
+        <item android:offset="1" android:color="#00FFFFFF" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <!-- aro de luz sutil -->
+  <path
+      android:pathData="M24,1a23,23 0,1 1,0 46a23,23 0,1 1,0 -46z"
+      android:fillColor="#00000000"
+      android:strokeColor="#2EFFFFFF"
+      android:strokeWidth="1" />
+</vector>

@@ -69,7 +69,7 @@ enum APText {
     case "feed": return "square.grid.2x2"
     case "live": return "dot.radiowaves.left.and.right"
     case "snapmap": return "mappin.and.ellipse"
-    case "one": return "sparkles"
+    case "one": return "circle.fill"
     case "calendar": return "calendar"
     case "contacts": return "person.2"
     case "files": return "folder"
@@ -156,7 +156,9 @@ struct APTheme {
 // MARK: - Ladrilho (app)
 
 final class APTileCell: UICollectionViewCell {
-  static let tile: CGFloat = 60
+  // [2026-10-18 apps-compact] 60 → 48 pt (estilo Outlook: grade enxuta).
+  static let tile: CGFloat = 48
+  static let radius: CGFloat = 14
 
   private let iconBox = UIView()
   private let fill = CAGradientLayer()
@@ -177,16 +179,16 @@ final class APTileCell: UICollectionViewCell {
     contentView.clipsToBounds = false
 
     iconBox.isUserInteractionEnabled = false
-    iconBox.layer.cornerRadius = 18
+    iconBox.layer.cornerRadius = APTileCell.radius
     iconBox.layer.cornerCurve = .continuous
     iconBox.layer.borderWidth = 1.0 / UIScreen.main.scale
-    fill.cornerRadius = 18
+    fill.cornerRadius = APTileCell.radius
     fill.cornerCurve = .continuous
     fill.locations = [0, 0.55, 1]
     fill.startPoint = CGPoint(x: 0.5, y: 0)
     fill.endPoint = CGPoint(x: 0.5, y: 1)
     iconBox.layer.addSublayer(fill)
-    glossLayer.cornerRadius = 17
+    glossLayer.cornerRadius = APTileCell.radius - 1
     glossLayer.cornerCurve = .continuous
     glossLayer.startPoint = CGPoint(x: 0.5, y: 0)
     glossLayer.endPoint = CGPoint(x: 0.5, y: 1)
@@ -196,10 +198,10 @@ final class APTileCell: UICollectionViewCell {
     contentView.addSubview(iconBox)
 
     badge.isUserInteractionEnabled = false
-    badge.layer.borderWidth = 2
-    badge.layer.cornerRadius = 11
+    badge.layer.borderWidth = 1.5
+    badge.layer.cornerRadius = 9
     badge.clipsToBounds = true
-    badgeLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11, weight: .heavy)
+    badgeLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 10, weight: .bold)
     badgeLabel.textAlignment = .center
     badge.addSubview(badgeLabel)
     contentView.addSubview(badge)
@@ -238,11 +240,14 @@ final class APTileCell: UICollectionViewCell {
       iconBox.layer.shadowOpacity = 0
     } else {
       iconBox.layer.shadowColor = UIColor.black.cgColor
-      iconBox.layer.shadowOpacity = 0.09
-      iconBox.layer.shadowRadius = 8
-      iconBox.layer.shadowOffset = CGSize(width: 0, height: 4)
+      iconBox.layer.shadowOpacity = 0.07
+      iconBox.layer.shadowRadius = 6
+      iconBox.layer.shadowOffset = CGSize(width: 0, height: 2)
     }
-    glyph.image = APText.image(APText.symbol(for: item.id, override: item.sf), pointSize: 24, weight: .regular, color: theme.glyph)
+    // [2026-10-18 bia-orb-icon] Bia ("one") = orb, não o SF "sparkles".
+    glyph.image = item.id == "one"
+      ? BiaOrbArt.image(diameter: 26, dark: theme.dark)
+      : APText.image(APText.symbol(for: item.id, override: item.sf), pointSize: 20, weight: .regular, color: theme.glyph)
 
     let showBadge = badgeCount > 0 && !editing
     badge.isHidden = !showBadge
@@ -308,9 +313,9 @@ final class APTileCell: UICollectionViewCell {
     let b = contentView.bounds
     let s = APTileCell.tile
     let x = floor((b.width - s) / 2)
-    let y: CGFloat = 8
+    let y: CGFloat = 6
     iconBox.frame = CGRect(x: x, y: y, width: s, height: s)
-    iconBox.layer.shadowPath = UIBezierPath(roundedRect: iconBox.bounds, cornerRadius: 18).cgPath
+    iconBox.layer.shadowPath = UIBezierPath(roundedRect: iconBox.bounds, cornerRadius: APTileCell.radius).cgPath
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     fill.frame = iconBox.bounds
@@ -319,14 +324,14 @@ final class APTileCell: UICollectionViewCell {
     glyph.frame = iconBox.bounds
 
     badgeLabel.sizeToFit()
-    let bw = max(22, ceil(badgeLabel.bounds.width) + 12)
-    badge.frame = CGRect(x: x + s - bw + 9, y: y - 6, width: bw, height: 22)
+    let bw = max(18, ceil(badgeLabel.bounds.width) + 10)
+    badge.frame = CGRect(x: x + s - bw + 8, y: y - 5, width: bw, height: 18)
     badgeLabel.frame = badge.bounds
     mark.frame = CGRect(x: x - 7, y: y - 7, width: 24, height: 24)
     markGlyph.frame = mark.bounds
 
-    let lh: CGFloat = singleLine ? 16 : 31
-    label.frame = CGRect(x: 2, y: y + s + 7, width: b.width - 4, height: lh)
+    let lh: CGFloat = singleLine ? 16 : 30
+    label.frame = CGRect(x: 2, y: y + s + 6, width: b.width - 4, height: lh)
     if !singleLine {
       // Rótulo de 1 linha encosta no topo (sem centralizar verticalmente as 2 linhas).
       let fit = label.sizeThatFits(CGSize(width: b.width - 4, height: lh))
@@ -340,7 +345,7 @@ final class APTileCell: UICollectionViewCell {
       UIView.animate(withDuration: down ? 0.14 : 0.42, delay: 0,
                      usingSpringWithDamping: down ? 1 : 0.55, initialSpringVelocity: down ? 0 : 0.6,
                      options: [.allowUserInteraction, .beginFromCurrentState], animations: {
-        self.contentView.transform = down ? CGAffineTransform(scaleX: 0.88, y: 0.88) : .identity
+        self.contentView.transform = down ? CGAffineTransform(scaleX: 0.92, y: 0.92) : .identity
       }, completion: nil)
     }
   }

@@ -18,7 +18,8 @@ public class ChatyySettingsListModule: Module {
     Function("apiVersion") { () -> Int in
       // 2 = [2026-10-18 settings-sub-native] val/acc/dis/tl/sl/ft, k "i",
       //     ícones do ChatInfo e prop scrollToId (sub-páginas nativas).
-      return 2
+      // 3 = [2026-10-18 bia-orb-icon] ícone "biaOrb" (orb da Bia desenhado).
+      return 3
     }
 
     View(ChatyySettingsListView.self) {

@@ -425,6 +425,7 @@ import { heroRef as _heroRef } from '../services/mediaHero'; // [2026-10-15 hero
 // Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
 import { boraStyleUrl } from '../components/BoraMap';
 import { singleLineInputStyle } from '../components/ui/inputStyle'; // [2026-10-17 input-align] campo 1 linha centrado no iOS
+import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 // [2026-10-13 web-focus] Web com mouse+teclado (desktop). Web mobile/touch = false.
 const _IS_DESKTOP_WEB = (() => {
   if (Platform.OS !== 'web') return false;
@@ -35148,17 +35149,17 @@ function ChatConversationInner() {
             accessibilityRole="button"
             hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
           >
-            <IconSparkles size={15} color={colors.text} />
+            <BiaIcon size={15} color={colors.text} />
             <Text style={{ color: colors.text, fontSize: 11, fontWeight: '700' }}>
               {initialUnreadCountRef.current > 99 ? '99+' : String(initialUnreadCountRef.current)}
             </Text>
           </TouchableOpacity>
         )}
         {/* [2026-10-17 header-wa] WhatsApp iOS: à direita só vídeo + voz (nome
-            ganha espaço). A busca foi p/ o menu ⋯ ("Pesquisar") e segue em
-            Dados do contato/grupo. O ⋯ fica: é a ÚNICA entrada do menu (mídia,
-            silenciar, temporárias, papel de parede, exportar, limpar…).
-            Canal (sem chamadas) → busca no lugar das chamadas. */}
+            ganha espaço). Canal (sem chamadas) → busca no lugar das chamadas.
+            [2026-10-18 header-no-more] ⋯ saiu: tudo dele vive em Dados do
+            contato/grupo (toque no nome). Fica só p/ canal/sem dados/web largo
+            — ver _headerMoreOn (kill switch globalThis.__chatyy_header_more). */}
         {conversationType === 'channel' ? (
         <TouchableOpacity
           onPress={() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus?.(), 200); }}
@@ -35180,9 +35181,11 @@ function ChatConversationInner() {
         </TouchableOpacity>
         </>
         )}
+        {_headerMoreOn(conversationType, conversationType === 'group' || (conversationType === 'direct' && !!getContactPeerEmail())) ? (
         <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={[styles.headerBtn, { width: 36 }]} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
           <IconMoreVert size={22} color={colors.text} />
         </TouchableOpacity>
+        ) : null}
       </View>
       )}
 
@@ -35646,7 +35649,7 @@ function ChatConversationInner() {
               accessibilityRole="button"
               accessibilityLabel={t('chatSum.menuLabel') || 'Resumir com a Bia'}
             >
-              <IconSparkles size={13} color={colors.text} />
+              <BiaIcon size={13} color={colors.text} />
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
                 {(t('chatSum.unreadChip') || '{n} não lidas · Resumir').replace('{n}', initialUnreadCountRef.current > 999 ? '999+' : String(initialUnreadCountRef.current))}
               </Text>
@@ -38431,7 +38434,7 @@ function ChatConversationInner() {
               {sug ? (
                 <View style={{ backgroundColor: colors.background, padding: 14, borderRadius: 14, marginBottom: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <IconSparkles size={13} color={colors.primary} />
+                    <BiaIcon size={13} color={colors.primary} />
                     <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.4, textTransform: 'uppercase' }}>
                       {t('chat.toneSuggestion') || 'Sugestão'}
                     </Text>
@@ -39463,7 +39466,7 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={{ marginLeft: 0, marginRight: 4 }}><IconSparkles size={18} color={colors.text} /></View>
+                  <View style={{ marginLeft: 0, marginRight: 4 }}><BiaIcon size={18} color={colors.text} /></View>
                   <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>{_mt('chatConv.transcribeSummarize', 'Transcrever + resumir')}</Text>
                 </PressableRow>
               )}
@@ -40642,7 +40645,7 @@ function ChatConversationInner() {
 
                     <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
                     <GroupCard colors={colors} isDark={isDark}>
-                      <GroupRow colors={colors} Icon={IconSparkles}
+                      <GroupRow colors={colors} Icon={BiaIcon}
                         title={t('chatSum.menuLabel') || 'Resumir com a Bia'} right="chevron"
                         onPress={() => contactInfoGo(runAiSummary)} />
                       <GroupDivider colors={colors} />
@@ -40877,7 +40880,7 @@ function ChatConversationInner() {
                   // [2026-10-17 share-contact] "Enviar contato" (mesmo seletor do "+"); menu é <Modal> RN → abre depois que ele desce.
                   ...(conversationType !== 'channel' ? [{ Icon: IconUser, label: t('shareContact.menuSend') || 'Enviar contato', onPress: () => { closeMenu(); afterRNModal(() => handleShareContact(), true); }}] : []),
                   { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); (_advPriv.guard('export') || setShowExportModal(true)); }},
-                  { Icon: IconSparkles, label: t('chatSum.menuLabel') || 'Resumir com a Bia', onPress: () => { closeMenu(); runAiSummary(); }},
+                  { Icon: BiaIcon, label: t('chatSum.menuLabel') || 'Resumir com a Bia', onPress: () => { closeMenu(); runAiSummary(); }},
                   // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
                   ...(waImported ? [] : [{ Icon: IconDownload, label: t('waImport.menuItem'), onPress: () => { closeMenu(); openWhatsAppImport(); }}]),
                   { Icon: IconTrash, danger: true, label: t('chatConv.clearChat') || 'Limpar conversa', onPress: () => { closeMenu(); confirmClearHistory(); }},
@@ -42067,7 +42070,7 @@ function ChatConversationInner() {
 
             <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
             <GroupCard colors={colors} isDark={isDark}>
-              <GroupRow colors={colors} Icon={IconSparkles}
+              <GroupRow colors={colors} Icon={BiaIcon}
                 title={t('chatSum.menuLabel') || 'Resumir com a Bia'} right="chevron"
                 onPress={() => groupInfoGo(runAiSummary)} />
               <GroupDivider colors={colors} />
@@ -43201,7 +43204,7 @@ function ChatConversationInner() {
           <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 340, maxWidth: '90%', padding: 20 }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <IconSparkles size={22} color={colors.primary} />
+                <BiaIcon size={22} color={colors.primary} />
                 <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('chatAi.title') || 'Chatyy AI'}</Text>
               </View>
               <TouchableOpacity onPress={() => { setShowAiModal(false); setAiResult(null); }}>
@@ -43246,7 +43249,7 @@ function ChatConversationInner() {
                 {[
                   { key: 'summarize', icon: IconFileText, label: t('chatAi.summarize') || 'Summarize conversation', desc: t('chatAi.summarizeDesc') || 'Generate a summary of recent messages' },
                   { key: 'translate', icon: IconGlobe, label: t('chatAi.translate') || 'Translate last message', desc: t('chatAi.translateDesc') || 'Translate the last received message' },
-                  { key: 'suggest', icon: IconSparkles, label: t('chatAi.suggest') || 'Suggest reply', desc: t('chatAi.suggestDesc') || 'AI suggests a contextual reply' },
+                  { key: 'suggest', icon: BiaIcon, label: t('chatAi.suggest') || 'Suggest reply', desc: t('chatAi.suggestDesc') || 'AI suggests a contextual reply' },
                   { key: 'fix', icon: IconPenTool, label: t('chatAi.fix') || 'Fix text', desc: t('chatAi.fixDesc') || 'Fix grammar and spelling' },
                 ].map((opt) => (
                   <TouchableOpacity
@@ -43984,6 +43987,22 @@ function _pickLightShell(params, acct, isDark, language, insetsTop) {
   } catch { return null; }
 }
 
+// [2026-10-18 header-no-more] WhatsApp iOS: à direita do header só vídeo + voz;
+// tocar no nome/avatar abre Dados do contato/grupo (nativo ChatyyChatInfo ou a
+// folha JS), que já tem TUDO do antigo menu ⋯ (pesquisar, mídia, silenciar,
+// temporárias, papel de parede, exportar, Bia, importar WhatsApp, limpar,
+// denunciar/bloquear, sair do grupo). O ⋯ só fica onde o toque no header NÃO
+// leva a essas opções: canal / conversa sem dados (vai p/ o perfil), e web
+// largo (desktop, estilo WhatsApp Web). Kill switch:
+// globalThis.__chatyy_header_more = true → ⋯ volta em todo lugar.
+function _headerMoreOn(type, infoReachable) {
+  try { if (globalThis.__chatyy_header_more === true) return true; } catch {}
+  if (type !== 'group' && type !== 'direct') return true;
+  if (!infoReachable) return true;
+  if (Platform.OS === 'web') { try { if ((Dimensions.get('window').width || 0) >= 900) return true; } catch {} }
+  return false;
+}
+
 function ConvLightShell({ rec, params, acct, colors, isDark, t, insets, onBack }) {
   const L = rec.list; const I = rec.info || {}; const F = rec.frame;
   const name = String(I.name || params.name || '');
@@ -44045,7 +44064,7 @@ function ConvLightShell({ rec, params, acct, colors, isDark, t, insets, onBack }
               <View style={styles.headerBtn}><IconPhone size={22} color={colors.text} /></View>
             </>
           )}
-          <View style={[styles.headerBtn, { width: 36 }]}><IconMoreVert size={22} color={colors.text} /></View>
+          {_headerMoreOn(type, type === 'group' || (type === 'direct' && !!peer)) ? <View style={[styles.headerBtn, { width: 36 }]}><IconMoreVert size={22} color={colors.text} /></View> : null}
         </View>
       </View>
       <View style={{ position: 'absolute', top: F.y, left: F.x || 0, width: F.w, height: F.h }}>

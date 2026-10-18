@@ -33,6 +33,7 @@ import {
   IconX, IconSend, IconChevronDown, IconChevronUp,
   IconPaperclip, IconSparkles,
 } from './Icons';
+import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const DRAFT_SAVE_INTERVAL = 5000;
 
@@ -653,7 +654,7 @@ export default function ComposeModal({ params, onClose }) {
                       } catch {}
                     }}
                   >
-                    <IconSparkles size={15} color={colors.primary} />
+                    <BiaIcon size={15} color={colors.primary} />
                   </TouchableOpacity>
                 </ScrollView>
 
