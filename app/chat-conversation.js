@@ -11676,6 +11676,13 @@ function ChatConversationInner() {
   const [wallpaperDefaultPref, setWallpaperDefaultPref] = _useStateT(() => ((typeof _lpInit.wallpaper_default === 'string' && _lpInit.wallpaper_default.length > 0) ? _lpInit.wallpaper_default : null));
   // [2026-10-14 feel] double_tap_react — toque duplo na bolha reage com ❤ (padrão ON; Configurações › Conversas).
   const [doubleTapReact, setDoubleTapReact] = _useStateT(() => _lpInit.double_tap_react !== 'false');
+  // [2026-10-18 appearance-telegram] Configurações › Aparência: tamanho do texto
+  // 13–20 (chat_font_px; vazio = enum do servidor) e emojis grandes (jumbo_emoji).
+  const _normFontPx = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 13 && n <= 20 ? n : 0; };
+  const [chatFontPx, setChatFontPx] = _useStateT(() => _normFontPx(_lpInit.chat_font_px));
+  const [jumboOn, setJumboOn] = _useStateT(() => _lpInit.jumbo_emoji !== 'false');
+  const jumboOnRef = useRef(jumboOn);
+  jumboOnRef.current = jumboOn;
   const doubleTapReactRef = useRef(doubleTapReact);
   doubleTapReactRef.current = doubleTapReact;
   const _hydrateLocalPrefs = useCallback(() => {
@@ -11693,10 +11700,12 @@ function ChatConversationInner() {
         }
         if (kv.double_tap_react === 'false') setDoubleTapReact(false);
         else if (kv.double_tap_react === 'true') setDoubleTapReact(true);
+        setChatFontPx(_normFontPx(kv.chat_font_px)); // [2026-10-18 appearance-telegram]
+        setJumboOn(kv.jumbo_emoji !== 'false');
         setCachedLocalPrefs(kv); // [2026-10-08 chat-open-flicker] frame-1 seed for the next open
       } catch {}
     };
-    const KEYS = ['enter_sends', 'autocorrect_enabled', 'bubble_shape', 'wallpaper_default', 'double_tap_react'];
+    const KEYS = ['enter_sends', 'autocorrect_enabled', 'bubble_shape', 'wallpaper_default', 'double_tap_react', 'chat_font_px', 'jumbo_emoji'];
     if (Platform.OS === 'web') {
       try {
         const kv = {};
@@ -11728,14 +11737,18 @@ function ChatConversationInner() {
         try { require('../services/mediaCache').refreshDataSaver?.(); } catch {}
       }
     });
-    return () => { try { sub?.remove?.(); } catch {} };
+    // [2026-10-18 appearance-telegram] Aparência mudou com a conversa montada (tablet/2 painéis) → relê já.
+    let _apSub = null;
+    try { _apSub = require('react-native').DeviceEventEmitter.addListener('chatyy:appearancePrefs', () => _hydrateLocalPrefs()); } catch {}
+    return () => { try { sub?.remove?.(); } catch {} try { _apSub?.remove?.(); } catch {} };
   }, [_hydrateLocalPrefs]);
 
   // [2026-10-10 chat-bubbles-polish] médio 15→16 (corpo iMessage/WhatsApp ~16–17).
   const fontSizeMap = { small: 14, medium: 16, large: 18 };
   const lineHeightMap = { small: 19, medium: 21, large: 26 };
-  const msgFontSize = fontSizeMap[chatyySettings.font_size] || 16;
-  const msgLineHeight = lineHeightMap[chatyySettings.font_size] || 21;
+  // [2026-10-18 appearance-telegram] ajuste fino local (13–20) vence o degrau do servidor.
+  const msgFontSize = chatFontPx || fontSizeMap[chatyySettings.font_size] || 16;
+  const msgLineHeight = chatFontPx ? Math.round(chatFontPx * 1.31) : (lineHeightMap[chatyySettings.font_size] || 21);
 
   // Jumbo emoji (Telegram/WhatsApp): standalone-emoji messages render
   // 3-4× bigger so a single ❤️ feels expressive instead of being a tiny
@@ -11744,7 +11757,7 @@ function ChatConversationInner() {
   // falls back to normal text rendering.
   const _emojiOnlyRe = /^(\s|‍|️|[\u{1F000}-\u{1FFFF}]|[\u{2600}-\u{27BF}]|[\u{2300}-\u{23FF}]|[\u{2B00}-\u{2BFF}])+$/u;
   function jumboEmojiSize(text) {
-    if (!text) return 0;
+    if (!text || !jumboOnRef.current) return 0; // [2026-10-18 appearance-telegram] Aparência › Emojis grandes
     const trimmed = String(text).trim();
     if (!trimmed || trimmed.length > 24) return 0;
     if (!_emojiOnlyRe.test(trimmed)) return 0;

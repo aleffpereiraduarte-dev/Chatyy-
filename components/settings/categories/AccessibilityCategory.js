@@ -9,7 +9,7 @@ import {
   useReducedMotion, isSystemReduceMotionEnabled, getReduceMotionPreference, setReduceMotionPreference,
   useHapticsEnabled, setHapticsEnabled, feedback,
 } from '../../../constants/motion';
-import { useSettingsHost, useSettingsBlob, useSaveNotifPref } from './shared';
+import { useSettingsHost, useSettingsBlob, useSaveNotifPref, removeStorage } from './shared';
 
 export default function AccessibilityCategory() {
   const { density, setDensity } = useTheme();
@@ -36,6 +36,9 @@ export default function AccessibilityCategory() {
             saveNotifPref({ font_size: v });
             // O chat cacheia chat_get_settings por 10 min → sinaliza revisão nova.
             try { globalThis.__chatyy_chat_settings_rev = (Number(globalThis.__chatyy_chat_settings_rev) || 0) + 1; } catch {}
+            // [2026-10-18 appearance-telegram] degrau escolhido aqui vence o ajuste fino (13–20) da Aparência.
+            removeStorage('chat_font_px');
+            try { require('../AppearanceExtras').emitAppearanceChanged(); } catch {}
           }}
         />
         {typeof setDensity === 'function' && (
