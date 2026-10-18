@@ -67,7 +67,9 @@ internal object ChatTransport {
   private const val TAG = "ChatyyTransport"
   // 2 = [2026-10-15 fase 2b/4] grava frames no store nativo (storeIngest) +
   //     fila de envio nativa (outbox*) + conta da sessão.
-  const val VERSION = 2
+  // 3 = [2026-10-18 outbox-progress] onOutboxState "progress" (bytes reais do
+  //     upload) + fallback do upload regional → origem US após 2 falhas.
+  const val VERSION = 3
 
   private val exec = ScheduledThreadPoolExecutor(1) { r ->
     Thread(r, "chatyy-transport").apply { isDaemon = true }

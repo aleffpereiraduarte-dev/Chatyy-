@@ -1997,6 +1997,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     if self.isOutgoing && !self.outgoingMicGateOpen {
                         // [2026-10-03 ring-leak] Caller: hold the mic until answered.
                         print("[CallVC] outgoing mic publish DEFERRED until answer — callId=\(self.callId)")
+                        // [2026-10-18 caller-warm] Warm the publisher PC while it rings
+                        // (no media): on answer only the mic track is added.
+                        Self.warmPublisherTransport(r, callId: self.callId, label: "outgoing")
                     } else if P2PCallBridge.ownsMedia(self.callId)
                                 || (!self.isOutgoing && P2PCallBridge.startIfEligible(callId: self.callId, isCaller: false, hasVideo: self.hasVideo)) {
                         // [2026-10-09 p2p-ios] P2P dono da mídia — LiveKit em espera.
@@ -5186,6 +5189,36 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     // MARK: - Presentation helper
+
+    /// [2026-10-18 caller-warm] CALLER twin of the ring-window warm-up in
+    /// preconnectRoom below. LiveKitClient 2.0.18 only negotiates the publisher
+    /// PeerConnection at the FIRST publish, so the caller's mic waited for a
+    /// full publisher ICE + DTLS after the answer (call_1792267743898_zkca2agc0:
+    /// mic reached the SFU 1.66 s after the connect). publish(data:) to our OWN
+    /// identity negotiates it now WITHOUT any media: no track, no audio, the
+    /// SFU delivers the packet to nobody (ring-leak gate unchanged — the mic is
+    /// still published only on answer). Fire-and-forget; idempotent enough
+    /// (a 2nd call just sends one more 1-byte packet). Same kill switch as the
+    /// callee warm-up: App Group bool "chatyy_warm_publisher_off".
+    static func warmPublisherTransport(_ r: Room, callId: String, label: String) {
+        if UserDefaults(suiteName: "group.com.onemundo.mail")?.bool(forKey: "chatyy_warm_publisher_off") ?? false { return }
+        Task.detached(priority: .userInitiated) {
+            guard r.connectionState == .connected, let me = r.localParticipant.identity else {
+                nativeCallDiag("\(label)_pub_warm_skip", callId, "lk=\(NativeCallRoom.stateName(r.connectionState))")
+                return
+            }
+            let tWarm = Date()
+            do {
+                try await r.localParticipant.publish(
+                    data: Data([1]),
+                    options: DataPublishOptions(destinationIdentities: [me], topic: "chatyy_warm", reliable: true)
+                )
+                nativeCallDiag("\(label)_pub_warm_ok", callId, "ms=\(Int(Date().timeIntervalSince(tWarm) * 1000))")
+            } catch {
+                nativeCallDiag("\(label)_pub_warm_err", callId, "ms=\(Int(Date().timeIntervalSince(tWarm) * 1000)) err=\(error)")
+            }
+        }
+    }
 
     /// [STAGE-A 2026-05-20] GAP #2 — Pre-connect the LiveKit Room DURING the
     /// CallKit ring window (i.e. before the user taps Accept). Same plumbing

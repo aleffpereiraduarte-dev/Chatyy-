@@ -20,7 +20,9 @@ final class ChatTransport {
   static let shared = ChatTransport()
   // 2 = [2026-10-15 fase 2b/4] grava frames no store nativo (storeIngest) +
   //     fila de envio nativa (outbox*) + conta da sessão.
-  static let version = 2
+  // 3 = [2026-10-18 outbox-progress] onOutboxState "progress" (bytes reais do
+  //     upload) + fallback do upload regional → origem US após 2 falhas.
+  static let version = 3
 
   let q = DispatchQueue(label: "chatyy.transport", qos: .userInitiated)
   private lazy var opQueue: OperationQueue = {

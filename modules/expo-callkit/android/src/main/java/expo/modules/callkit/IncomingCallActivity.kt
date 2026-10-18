@@ -672,6 +672,21 @@ class IncomingCallActivity : AppCompatActivity() {
     CallNotificationService.cancelNotification(this, callId ?: "")
     stopRingingService()
 
+    // [2026-10-18 mic-at-tap] Claim voice-call audio focus + route NOW (ring
+    // already stopped above), before the early mic publish below, instead of
+    // in CallActivity.onCreate after the Activity transition. Same idempotent
+    // per-call AudioRouter.configureForCall the warm Telecom path
+    // (NativeCallRoom.ensureForegroundServiceForWarmCall) already runs first;
+    // CallActivity's own call is then a same-call no-op. 1:1 only
+    // (GroupCallActivity configures with the room name, not the callId).
+    if (!isGroup && !callId.isNullOrEmpty()) {
+      try {
+        expo.modules.callkit.audio.AudioRouter.get(applicationContext).configureForCall(hasVideo, callId ?: "")
+      } catch (t: Throwable) {
+        Log.w("IncomingCallActivity", "early AudioRouter.configureForCall failed: ${t.message}")
+      }
+    }
+
     // [2026-10-08 call-connect-fast] Publish the mic on the warm ring-window
     // Room RIGHT NOW (this Activity is visible = mic capture allowed), in
     // parallel with the CallActivity launch — CallActivity adopts the same

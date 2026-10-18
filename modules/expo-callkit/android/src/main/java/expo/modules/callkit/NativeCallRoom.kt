@@ -511,6 +511,23 @@ object NativeCallRoom {
     // setCameraEnabled / Room.connect are suspend internally; we wrap them
     // here. Returns Unit so JS sees immediate Promise.resolve(undefined).
 
+    // [2026-10-18 mic-at-tap] Wall clock of the FIRST mic-on request for
+    // [micRequestCallId] (answer tap: IncomingCallActivity early publish /
+    // Telecom adoptForCall). CallActivity's mic_first_frame probe reports
+    // since_tap_ms against it, so "tap → first capture frame" is measured end
+    // to end (the CallActivity publish starts ~0.3-1 s after the tap and its
+    // since_publish_ms alone hid where the Samsung A26's ~7 s went).
+    @Volatile var micRequestedAt: Long = 0L
+        private set
+    @Volatile var micRequestCallId: String? = null
+        private set
+
+    /** ms since the first mic-on request for [forCallId], or -1. */
+    fun msSinceMicRequested(forCallId: String, nowMs: Long): Long {
+        val at = micRequestedAt
+        return if (at > 0L && micRequestCallId == forCallId) nowMs - at else -1L
+    }
+
     fun setMicEnabled(enabled: Boolean) {
         // [2026-10-10 p2p-android] Ligação 1:1 indo P2P: o mic é do motor P2P.
         try { P2PCallSession.active()?.setMicEnabled(enabled) } catch (_: Throwable) {}
@@ -519,10 +536,21 @@ object NativeCallRoom {
             Log.w(TAG, "setMicEnabled($enabled): no live Room")
             return
         }
+        // [2026-10-18 mic-at-tap] First mic-on of this call → time the publish RPC.
+        val cid = callId
+        val firstOn = enabled && cid != null && micRequestCallId != cid
+        if (firstOn) {
+            micRequestCallId = cid
+            micRequestedAt = System.currentTimeMillis()
+        }
+        val t0 = System.currentTimeMillis()
         scope.launch {
             try {
                 r.localParticipant.setMicrophoneEnabled(enabled)
                 ExpoCallKitModule.emitLkLocalAudioChanged(enabled)
+                if (firstOn) {
+                    try { CallDiag.log("mic_publish_native", cid, "ms=${System.currentTimeMillis() - t0} lk=${r.state}") } catch (_: Throwable) {}
+                }
             } catch (t: Throwable) {
                 Log.w(TAG, "setMicEnabled($enabled) threw: ${t.message}")
             }
@@ -864,7 +892,9 @@ object NativeCallRoom {
         }
     }
 
-    private suspend fun warmPublisher(ctx: Context, r: Room, callId: String) {
+    // [2026-10-18 caller-warm] internal: CallActivity also warms the CALLER's
+    // publisher while it rings (publishLocalMediaAfterConnect ring-gate branch).
+    internal suspend fun warmPublisher(ctx: Context, r: Room, callId: String) {
         try {
             val off = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
                 .getBoolean("chatyy_warm_publisher_off", false)

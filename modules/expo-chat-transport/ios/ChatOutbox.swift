@@ -27,6 +27,12 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
   static let wsAckMs: Double = 4000
   static let maxUploads = 2
   static let sentKeepMs: Int64 = 7 * 24 * 3600 * 1000
+  /// [2026-10-18 outbox-progress] US origin: upload fallback when the regional base keeps failing.
+  static let usOrigin = "https://chatyy.com.br"
+  /// Consecutive upload failures on the regional `up.base` before switching to `usOrigin`.
+  static let regionalUploadMaxFails: Int64 = 2
+  /// Progress events: at most one per this many ms (plus the 100% one).
+  static let progressMinMs: Int64 = 150
   private static let hardRe = try! NSRegularExpression(pattern: "\\b403\\b|forbidden|not.?a.?member|no_permission|permission_denied|conversation.?deleted|admin.?only", options: [.caseInsensitive])
 
   private var q: DispatchQueue { return ChatTransport.shared.q }
@@ -50,6 +56,8 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
   private var inflight: [String: Attempt] = [:]
   private var uploads: [String: Attempt] = [:]
   private var uploadData: [Int: Data] = [:]
+  /// [2026-10-18 outbox-progress] taskIdentifier → last progress event (throttle).
+  private var progressLast: [Int: (ms: Int64, pct: Int)] = [:]
   private var authWaitUntil: [String: Int64] = [:]
   private var wake: DispatchWorkItem?
   private var wakeAt: Int64 = 0
@@ -531,8 +539,22 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     }
     ensureBgSessionLocked()
     guard let session = bgSession else { return }
+    // [2026-10-18 outbox-progress] Regional media edge (`up.base`, set by JS)
+    // first; after regionalUploadMaxFails consecutive failed uploads (every
+    // earlier try of this item went to the regional base) → US origin. `tries`
+    // is persisted in the store, so this survives the app being killed.
     let ub = ChatyyOutboxUtil.str(up["base"])
-    let base = Self.isUsableBase(ub) ? String(ub.reversed().drop(while: { $0 == "/" }).reversed()) : c.base
+    let regional = Self.isUsableBase(ub) ? String(ub.reversed().drop(while: { $0 == "/" }).reversed()) : ""
+    let tries = ChatyyOutboxUtil.i64(it["tries"])
+    var base = c.base
+    if !regional.isEmpty {
+      if tries >= Self.regionalUploadMaxFails && regional != Self.usOrigin {
+        base = Self.usOrigin
+        bump("uploadUsFallback")
+      } else {
+        base = regional
+      }
+    }
     var name = ChatyyOutboxUtil.str(up["filename"]); if name.isEmpty { name = (path as NSString).lastPathComponent }
     var mime = ChatyyOutboxUtil.str(up["mime"]); if mime.isEmpty { mime = "application/octet-stream" }
     var ctxName = ChatyyOutboxUtil.str(up["context"]); if ctxName.isEmpty { ctxName = "chat" }
@@ -608,8 +630,28 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     uploadData[dataTask.taskIdentifier, default: Data()].append(data)
   }
 
+  /// [2026-10-18 outbox-progress] REAL bytes-sent progress for the bubble ring
+  /// (was a fake 10% → 50% → 100%). Throttled to ~7/s. Old JS ignores
+  /// state "progress". Only delivered while the app runs (background session).
+  func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+    guard let d = task.taskDescription, d.hasPrefix("u|") else { return }
+    let parts = d.split(separator: "|", maxSplits: 3).map(String.init)
+    if parts.count < 4 { return }
+    let total: Int64 = totalBytesExpectedToSend > 0 ? totalBytesExpectedToSend : 0
+    let pct: Int = total > 0 ? Int(min(Int64(100), max(Int64(0), (totalBytesSent * 100) / total))) : 0
+    let t = now()
+    if let last = progressLast[task.taskIdentifier] {
+      if pct == last.pct { return }
+      if pct < 100 && t - last.ms < Self.progressMinMs { return }
+    }
+    progressLast[task.taskIdentifier] = (ms: t, pct: pct)
+    emit(["account": parts[1], "cmi": parts[2], "conv": parts[3], "state": "progress",
+          "sent": NSNumber(value: totalBytesSent), "total": NSNumber(value: total), "pct": NSNumber(value: pct)])
+  }
+
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     let data = uploadData.removeValue(forKey: task.taskIdentifier) ?? Data()
+    progressLast.removeValue(forKey: task.taskIdentifier)
     guard let d = task.taskDescription, d.hasPrefix("u|") else { return }
     let parts = d.split(separator: "|", maxSplits: 3).map(String.init)
     if parts.count < 4 { return }

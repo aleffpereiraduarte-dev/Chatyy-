@@ -2,13 +2,19 @@ package expo.modules.chatyytransport
 
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.Buffer
+import okio.BufferedSink
+import okio.ForwardingSink
+import okio.buffer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -68,6 +74,12 @@ class OutboxCore(
     const val WS_ACK_MS = 4000L
     const val MAX_UPLOADS = 2
     const val SENT_KEEP_MS = 7L * 24 * 3600 * 1000
+    /** [2026-10-18 outbox-progress] US origin: upload fallback when the regional base keeps failing. */
+    const val US_ORIGIN = "https://chatyy.com.br"
+    /** Consecutive upload failures on the regional `up.base` before switching to [US_ORIGIN]. */
+    const val REGIONAL_UPLOAD_MAX_FAILS = 2L
+    /** Progress events: at most one per this many ms (plus the 100% one). */
+    const val PROGRESS_MIN_MS = 150L
     private val HARD_RE = Regex("\\b403\\b|forbidden|not.?a.?member|no_permission|permission_denied|conversation.?deleted|admin.?only", RegexOption.IGNORE_CASE)
     private val JSON_MT = "application/json; charset=utf-8".toMediaType()
     fun isUsableBase(b: String): Boolean = b.startsWith("https://") && (b.removePrefix("https://").substringBefore('/').let { h -> h == "chatyy.com.br" || h.endsWith(".chatyy.com.br") })
@@ -472,11 +484,39 @@ class OutboxCore(
     val at = Attempt(a, cmi, conv, "upload")
     uploads[cmi] = at
     emit(mapOf("account" to a, "cmi" to cmi, "conv" to conv, "state" to "uploading"))
-    val base = baseOverride ?: up.optString("base").let { if (isUsableBase(it)) it.trimEnd('/') else c.base }
+    // [2026-10-18 outbox-progress] Regional media edge (`up.base`, set by JS)
+    // first; after REGIONAL_UPLOAD_MAX_FAILS consecutive failed uploads (every
+    // earlier try of this item went to the regional base) → US origin. `tries`
+    // is persisted, so this survives process death; retry() resets it.
+    val regional = up.optString("base").let { b -> if (isUsableBase(b)) b.trimEnd('/') else "" }
+    val tries = it.optLong("tries")
+    val base = baseOverride ?: when {
+      regional.isEmpty() -> c.base
+      tries >= REGIONAL_UPLOAD_MAX_FAILS && regional != US_ORIGIN -> { bump("uploadUsFallback"); US_ORIGIN }
+      else -> regional
+    }
     val name = up.optString("filename").ifEmpty { f.name }
     val mime = up.optString("mime").ifEmpty { "application/octet-stream" }
+    // [2026-10-18 outbox-progress] REAL bytes-sent progress for the bubble ring
+    // (was a fake 10% → 50% → 100%). Throttled; posted on exec and dropped if
+    // the attempt is no longer current. Old JS ignores state "progress".
+    var lastAt = 0L
+    var lastPct = -1
+    val fileBody = ProgressRequestBody(f.asRequestBody(mime.toMediaType())) { sent, total ->
+      val pct = if (total > 0L) ((sent * 100L) / total).toInt().coerceIn(0, 100) else 0
+      val t = now()
+      if (pct != lastPct && (pct >= 100 || t - lastAt >= PROGRESS_MIN_MS)) {
+        lastAt = t
+        lastPct = pct
+        post {
+          if (uploads[cmi] === at) {
+            emit(mapOf("account" to a, "cmi" to cmi, "conv" to conv, "state" to "progress", "sent" to sent, "total" to total, "pct" to pct))
+          }
+        }
+      }
+    }
     val mb = MultipartBody.Builder().setType(MultipartBody.FORM)
-      .addFormDataPart("file", name, f.asRequestBody(mime.toMediaType()))
+      .addFormDataPart("file", name, fileBody)
       .addFormDataPart("user_email", up.optString("user_email").ifEmpty { a })
       .addFormDataPart("context", up.optString("context").ifEmpty { "chat" })
       .addFormDataPart("filename", name)
@@ -523,5 +563,34 @@ class OutboxCore(
     if (code == 401) emit(mapOf("account" to at.account, "state" to "auth_needed"))
     bump("uploadRetries")
     pumpNow()
+  }
+}
+
+/**
+ * [2026-10-18 outbox-progress] Wraps the file part and reports the bytes OkHttp
+ * actually wrote to the socket (onProgress(sent, total), on OkHttp's writer
+ * thread). A retried write (OkHttp re-sends the body) simply starts again at 0
+ * — the JS ring is monotonic.
+ */
+private class ProgressRequestBody(
+  private val inner: RequestBody,
+  private val onProgress: (Long, Long) -> Unit,
+) : RequestBody() {
+  override fun contentType(): MediaType? = inner.contentType()
+  override fun contentLength(): Long = inner.contentLength()
+  override fun isOneShot(): Boolean = inner.isOneShot()
+  override fun writeTo(sink: BufferedSink) {
+    val total = contentLength()
+    val counting = object : ForwardingSink(sink) {
+      private var sent = 0L
+      override fun write(source: Buffer, byteCount: Long) {
+        super.write(source, byteCount)
+        sent += byteCount
+        try { onProgress(sent, total) } catch (_: Throwable) {}
+      }
+    }
+    val buffered = counting.buffer()
+    inner.writeTo(buffered)
+    buffered.flush()
   }
 }

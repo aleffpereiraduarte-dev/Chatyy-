@@ -405,12 +405,31 @@ function _onEvent(ev) {
   if (!cmi) return;
   const ow = _owned.get(cmi); if (ow) ow.at = Date.now(); // ainda vivo no nativo
   if (st === 'uploaded') { _mediaProgress(cmi, 100, 'commit'); return; }
-  if (st === 'uploading') { _mediaProgress(cmi, 50, 'upload'); return; }
+  // [2026-10-18 outbox-progress] Binário ≥ 3: bytes REAIS enviados pelo
+  // uploader nativo (URLSession didSendBodyData / OkHttp RequestBody). 100% dos
+  // bytes ≠ concluído (o servidor ainda grava no R2) → teto 99 até 'uploaded'.
+  if (st === 'progress') {
+    const tot = Number(ev.total) || 0;
+    const raw = tot > 0 ? ((Number(ev.sent) || 0) / tot) * 100 : (Number(ev.pct) || 0);
+    _mediaProgress(cmi, Math.max(0, Math.min(99, Math.round(raw))), 'upload');
+    return;
+  }
+  // binário antigo (sem 'progress'): mantém o degrau de 50%
+  if (st === 'uploading') { if (!_hasNativeProgress()) _mediaProgress(cmi, 50, 'upload'); return; }
   if (st !== 'sent' && st !== 'failed') return;
   const set = _waiters.get(cmi);
   if (set && set.size) { for (const fn of Array.from(set)) { try { fn(ev); } catch {} } return; }
   // ninguém esperando (envio deferido / JS recarregou / mídia): concilia aqui
   _conclude(ev).catch(() => {});
+}
+
+let _progressCap; // undefined = não verificado
+function _hasNativeProgress() {
+  if (_progressCap !== undefined) return _progressCap;
+  let v = false;
+  try { const m = _resolve(); v = !!(m && typeof m.version === 'function' && Number(m.version()) >= 3); } catch { v = false; }
+  _progressCap = v;
+  return v;
 }
 
 function _mediaProgress(cmi, pct, phase) {

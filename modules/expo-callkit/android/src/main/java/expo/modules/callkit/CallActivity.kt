@@ -2235,6 +2235,16 @@ class CallActivity : ComponentActivity() {
       // call rings. Capture LOCALLY only (nothing published → the callee's
       // subscribe-only preconnect still receives nothing before Accept).
       startCallerRingPreview(r)
+      // [2026-10-18 caller-warm] Twin of iOS warmPublisherTransport: negotiate
+      // the publisher PC now (1 data packet to OUR OWN identity, no track, no
+      // audio) so the answer only adds the mic track. No-op if the SDK already
+      // negotiated it at join (fast_publish). Kill switch: prefs bool
+      // "chatyy_warm_publisher_off".
+      val warmCtx = applicationContext
+      val warmCallId = callId
+      lifecycleScope.launch {
+        try { NativeCallRoom.warmPublisher(warmCtx, r, warmCallId) } catch (_: Throwable) {}
+      }
       return
     }
     // [2026-10-14 self-view] Answered → release the preview capturer BEFORE
@@ -2319,7 +2329,10 @@ class CallActivity : ComponentActivity() {
       if (ff == 0L) {
         CallDiag.log("mic_first_frame_timeout", callId, "waited=$waited ns=${proc.available}", applicationContext)
       } else {
-        CallDiag.log("mic_first_frame", callId, "since_publish_ms=${ff - micT0} pub_ms=$pubMs ns=${proc.available}", applicationContext)
+        // [2026-10-18 mic-at-tap] since_tap_ms = first frame vs the answer tap
+        // (NativeCallRoom's first mic-on request; -1 = no early request).
+        val sinceTap = try { NativeCallRoom.msSinceMicRequested(callId, ff) } catch (_: Throwable) { -1L }
+        CallDiag.log("mic_first_frame", callId, "since_publish_ms=${ff - micT0} since_tap_ms=$sinceTap pub_ms=$pubMs ns=${proc.available}", applicationContext)
       }
     }
   }
