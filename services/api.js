@@ -8188,6 +8188,17 @@ async function _pickRustUploadBase() {
 }
 /** Base the next Rust upload will use (after a probe). Exposed for diagnostics. */
 export function getRustUploadBase() { return _rustUploadBase(); }
+/**
+ * [2026-10-18 media-wa] Nearest base that ADVERTISES local media (probe cached
+ * 10 min), or null when it is the US origin / probe failed. Used by the native
+ * outbox so small photos go phone→edge (SP/EU) instead of phone→US.
+ */
+export async function pickRegionalMediaBase() {
+  try {
+    const b = await _pickRustUploadBase();
+    return (b && !_isUsUploadBase(b)) ? b : null;
+  } catch { return null; }
+}
 let _rustUploadAvailable = null;
 let _rustUploadProbedAt = 0;
 let _rustUploadProbedBase = null;

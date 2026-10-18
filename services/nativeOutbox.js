@@ -341,11 +341,25 @@ export async function handoffUpload(row, p, file, size, metaFields) {
     if (!cmi || pp.cdn_url || !canTakeMedia(pp, size)) return false;
     const path = String(file?.uri || '');
     if (!path.startsWith('file://') && !path.startsWith('/')) return false;
+    const up = { filename: file?.name || pp.file_name || 'file', mime: file?.type || pp.mime_type || 'application/octet-stream', context: 'chat', user_email: _acct() };
+    // [2026-10-18 media-wa] Upload to the nearest media edge (BR/EU/Asia) when it
+    // advertises the local pipeline — phone→SP instead of phone→US measured
+    // ~0.7 s less per photo from Brazil. The edge forwards to the US Rust if its
+    // own R2 PUT fails, so a regional base never strands the native retry loop.
+    // The chat_send commit still goes to the account's configured base.
+    try {
+      // probe is cached 10 min; never hold the photo more than ~0.8 s for it.
+      const rb = await Promise.race([
+        Promise.resolve(_api()?.pickRegionalMediaBase?.()).catch(() => null),
+        new Promise((r) => setTimeout(() => r(null), 800)),
+      ]);
+      if (rb && /^https:\/\/([a-z0-9-]+\.)?chatyy\.com\.br$/i.test(String(rb).replace(/\/+$/, ''))) up.base = String(rb).replace(/\/+$/, '');
+    } catch {}
     const item = {
       cmi, conv: String(pp.conversation_id), kind: 'media',
       body: _mediaBody(pp, metaFields),
       file: path,
-      up: { filename: file?.name || pp.file_name || 'file', mime: file?.type || pp.mime_type || 'application/octet-stream', context: 'chat', user_email: _acct() },
+      up,
     };
     _mediaCtx.set(cmi, { p: pp });
     const st = await _submit(item);

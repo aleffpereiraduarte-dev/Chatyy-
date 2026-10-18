@@ -96,13 +96,27 @@ function _weakLink() {
 }
 
 /**
+ * [2026-10-18 media-wa] On mobile data (cellular/roaming) the AUTO default is
+ * WhatsApp's standard 720p (~1.5 Mbps): a 20 s clip is ~3.9 MB instead of
+ * ~11 MB at 1080p, i.e. ~3x less uplink before the recipient sees anything.
+ * Wi-Fi/ethernet keeps the saved HD default; the chip still forces HD per send.
+ */
+function _onMobileData() {
+  try {
+    const t = require('./networkInfo').getNetworkType?.();
+    return t === 'mobile' || t === 'roaming';
+  } catch { return false; }
+}
+
+/**
  * Should the HD chip start ON for a VIDEO right now?
- * Saved 'hd' AND not data-saver AND link not weak.
+ * Saved 'hd' AND not data-saver AND link not weak AND not on mobile data.
  */
 export function defaultVideoHd() {
   if (getMediaUploadQuality() !== 'hd') return false;
   if (_dataSaverOn()) return false;
   if (_weakLink()) return false;
+  if (_onMobileData()) return false;
   return true;
 }
 
