@@ -1863,7 +1863,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // later via supplyLateToken (CXStartCallAction fetch / JS
             // persistPendingLkToken) and the Room connects then.
             print("[CallVC] No lkUrl/lkToken yet — Room.connect waits for supplyLateToken callId=\(callId)")
-            if isOutgoing { nativeCallDiag("callvc_waiting_token", callId) }
+            if isOutgoing {
+                nativeCallDiag("callvc_waiting_token", callId)
+                // [2026-10-18 call-connect-fast] resolve the LK host while the token is in flight.
+                Self.prewarmLkDns(callId: callId)
+            }
         }
 
         // Stage #993 — set up PiP for video calls. The display layer +
@@ -1889,6 +1893,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // token can connect as soon as one arrives. Idempotent: one Room per VC.
     private func startFreshRoomConnect(url: String, token: String) {
         guard room == nil, !didHangup else { return }
+            Self.rememberLkHost(url) // [2026-10-18 call-connect-fast] next call's DNS prewarm
             print("[CallVC] Starting LiveKit connect — callId=\(callId)")
             // [2026-05-17 MediaPipe] Touch the BackgroundProcessor singleton so
             // it's allocated before Room.connect — the first published video
@@ -5189,6 +5194,41 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     // MARK: - Presentation helper
+
+    /// [2026-10-18 call-connect-fast] Outgoing screen presented before the
+    /// LiveKit token exists: resolve the host(s) the token will most likely
+    /// point to (the last one used + the US default) so Room.connect does not
+    /// pay a cold DNS lookup on cellular once the token lands
+    /// (call_1792267743898_zkca2agc0: signal join took ~0.7 s after the token).
+    /// getaddrinfo on a background queue, results discarded (the system
+    /// resolver cache keeps them). Never blocks the connect. Kill switch:
+    /// App Group bool "chatyy_lk_dns_prewarm_off".
+    static func prewarmLkDns(callId: String) {
+        let ud = UserDefaults(suiteName: "group.com.onemundo.mail")
+        if ud?.bool(forKey: "chatyy_lk_dns_prewarm_off") ?? false { return }
+        var hosts: [String] = []
+        if let last = ud?.string(forKey: "chatyy_last_lk_host"), !last.isEmpty { hosts.append(last) }
+        if !hosts.contains("livekit.chatyy.com.br") { hosts.append("livekit.chatyy.com.br") }
+        let hostList = hosts
+        DispatchQueue.global(qos: .userInitiated).async {
+            for h in hostList {
+                let t0 = Date()
+                var hints = addrinfo()
+                hints.ai_socktype = SOCK_STREAM
+                var res: UnsafeMutablePointer<addrinfo>? = nil
+                let rc = getaddrinfo(h, "443", &hints, &res)
+                if let r = res { freeaddrinfo(r) }
+                nativeCallDiag("lk_dns_prewarm", callId, "host=\(h) rc=\(rc) ms=\(Int(Date().timeIntervalSince(t0) * 1000))")
+            }
+        }
+    }
+
+    /// [2026-10-18 call-connect-fast] Host of the LiveKit URL this call connects
+    /// to, kept for the next call's DNS prewarm (region rarely changes).
+    static func rememberLkHost(_ url: String) {
+        guard let host = URL(string: url)?.host, !host.isEmpty else { return }
+        UserDefaults(suiteName: "group.com.onemundo.mail")?.set(host, forKey: "chatyy_last_lk_host")
+    }
 
     /// [2026-10-18 caller-warm] CALLER twin of the ring-window warm-up in
     /// preconnectRoom below. LiveKitClient 2.0.18 only negotiates the publisher
