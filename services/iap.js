@@ -699,8 +699,15 @@ export function isDiamondSkuAvailable(productId) {
 export async function purchaseSubscription(productId) {
   const mod = _getIAP();
   if (Platform.OS !== 'ios' || !mod || !_available) {
-    try { Linking.openURL(`${getBaseUrl()}/#/plans`); } catch {}
-    return { success: false, message: 'web_fallback' };
+    // [2026-10-18 stripe-off] Sem checkout na web (compra só nas lojas): não abre mais
+    // /plans no navegador (viraria laço "Assine pelo app"). Só com o kill switch ligado.
+    let stripeOn = false;
+    try { stripeOn = globalThis.__chatyy_stripe_checkout === true; } catch {}
+    if (stripeOn) {
+      try { Linking.openURL(`${getBaseUrl()}/#/plans`); } catch {}
+      return { success: false, message: 'web_fallback' };
+    }
+    return { success: false, message: 'iap_unavailable' };
   }
   try {
     await mod.requestPurchase({
