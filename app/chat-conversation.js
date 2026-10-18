@@ -1741,7 +1741,36 @@ function _fwdOriginName(m, me) {
 }
 // Mesma mensagem (mesmo id) chegando de novo pelo WS/TCP: mantém a linha atual, exceto
 // quando a nova é encaminhada e a atual não sabe disso → copia só os campos de encaminhamento.
+// [2026-10-18 vthumb-lqip] Re-broadcast do sweeper (cron-video-thumbs) / do
+// enriquecimento de mídia traz o MESMO id com pôster/LQIP/dimensões novos. A
+// linha local (sem thumbnail_url) ficava pra sempre: bolha de vídeo nativa
+// mostrava só o LQIP 48px esticado (getThumbB64Sync) = imagem "pixelada".
+// Devolve os campos de mídia que a linha local ainda não tem (ou null).
+const _MEDIA_ENRICH_KEYS = ['thumbnail_url', 'thumb_b64', 'poster_url', 'video_thumb', 'image_variants', 'image_width', 'image_height', 'width', 'height', 'duration'];
+function _mediaEnrichPatch(ex, msg) {
+  if (!ex || !msg) return null;
+  const t = ex.type || msg.type;
+  if (t !== 'video' && t !== 'image' && t !== 'short_video' && t !== 'gif') return null;
+  let patch = null;
+  for (const k of _MEDIA_ENRICH_KEYS) {
+    const v = msg[k];
+    if (v == null || v === '' || v === 0) continue;
+    const cur = ex[k];
+    if (cur != null && cur !== '' && cur !== 0) continue; // nunca rebaixa o que já existe
+    (patch || (patch = {}))[k] = v;
+  }
+  return patch;
+}
+function _mediaUpgradeRow(prev, i, msg) {
+  const ex = prev[i];
+  const patch = _mediaEnrichPatch(ex, msg);
+  if (!patch) return prev;
+  const next = prev.slice();
+  next[i] = { ...ex, ...patch };
+  return next;
+}
 function _fwdUpgradeRow(prev, i, msg) {
+  prev = _mediaUpgradeRow(prev, i, msg); // [2026-10-18 vthumb-lqip]
   const ex = prev[i];
   if (!ex || !msg || !_isForwardedMsg(msg)) return prev;
   if ((Number(ex.forward_count) || 0) === (Number(msg.forward_count) || 0) && (ex.forwarded_from || null) === (msg.forwarded_from || null)) return prev;
@@ -15487,7 +15516,19 @@ function ChatConversationInner() {
               }
               return s;
             };
-            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs) && _fwdSig(prev) === _fwdSig(newMsgs) && !(_tm && _resetWin)) return prev; // Same messages AND same receipts — skip setState (no flicker)
+            // [2026-10-18 vthumb-lqip] pôster/LQIP preenchidos DEPOIS (cron-video-thumbs):
+            // mesmos ids + mesmos recibos devolvia `prev` → a linha sem thumbnail_url
+            // ficava pra sempre (bolha de vídeo só com o LQIP esticado).
+            const _mediaSig = (arr) => {
+              let s = '';
+              for (let i = 0; i < arr.length; i++) {
+                const m = arr[i];
+                if (!m || typeof m.id !== 'number' || (m.type !== 'video' && m.type !== 'image' && m.type !== 'short_video')) continue;
+                s += m.id + ':' + (m.thumbnail_url ? 't' : '') + (m.thumb_b64 ? 'b' : '') + (m.image_variants ? 'v' : '') + ',';
+              }
+              return s;
+            };
+            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs) && _fwdSig(prev) === _fwdSig(newMsgs) && _mediaSig(prev) === _mediaSig(newMsgs) && !(_tm && _resetWin)) return prev; // Same messages AND same receipts — skip setState (no flicker)
             // Merge: keep pending/tmp messages, replace server ones. If we
             // already have a decrypted plaintext locally (sent-by-us or
             // previously-decrypted), prefer it over the server's encrypted
@@ -17016,7 +17057,34 @@ function ChatConversationInner() {
         // followed by the canonical broadcast doesn't produce two bubbles.
         const rawCid = raw.client_message_id || raw._client_id;
         const cidKey = rawCid ? 'c:' + String(rawCid) : null;
-        if (_recvIdSet.current.has(idKey)) return;
+        if (_recvIdSet.current.has(idKey)) {
+          // [2026-10-18 vthumb-lqip] mesmo id de novo = re-broadcast de enriquecimento
+          // (pôster/LQIP/dimensões gerados depois). Antes era descartado aqui → a bolha
+          // ficava só no LQIP esticado ("pixelado") até limpar o cache. Mescla só os
+          // campos de mídia que faltam e persiste (abre de novo já com o pôster).
+          if (raw.thumbnail_url || raw.thumb_b64 || raw.image_variants || raw.poster_url) {
+            try { if (raw.thumb_b64 && Platform.OS !== 'web') require('../services/mediaCache').persistThumbB64?.(raw.id, raw.thumb_b64); } catch {}
+            setMessages(prev => {
+              for (let _i = prev.length - 1; _i >= 0; _i--) {
+                const _r = prev[_i];
+                if (_r && String(_r.id) === idKey) {
+                  const next = _mediaUpgradeRow(prev, _i, raw);
+                  if (next !== prev) {
+                    const _upRow = next[_i];
+                    // fora do updater (sem efeito colateral no render); upsert é idempotente
+                    setTimeout(() => {
+                      try { _cacheOne(conversationId, _upRow); } catch {}
+                      try { const _p = require('../services/chatStore').upsertMessages?.(conversationId, [_upRow]); _p?.catch?.(() => {}); } catch {}
+                    }, 0);
+                  }
+                  return next;
+                }
+              }
+              return prev;
+            });
+          }
+          return;
+        }
         if (cidKey && _recvIdSet.current.has(cidKey)) return;
         // The server sends the message row DIRECTLY as `data` (no `data.message`
         // wrapper). A previous version of the protocol used `{ message: {...} }`
@@ -33523,6 +33591,13 @@ function ChatConversationInner() {
         if (!uri && m.type === 'video') {
           const p = m._posterUri || m.thumbnail_url || m.poster_url || m.video_thumb || (iv && (iv.poster || iv.thumb)) || '';
           if (p) uri = /^(data:|file:)/.test(p) ? p : resolve(p);
+        }
+        // [2026-10-18 vthumb-lqip] linha antiga no cache sem thumbnail_url mas COM LQIP
+        // (o sweeper gera os dois juntos em <file_url>.thumb.jpg) → pede o pôster nítido
+        // em vez de mostrar só o LQIP esticado. Sem LQIP fica com o 1º frame (media.vf).
+        if (!uri && m.type === 'video' && (m.thumb_b64 || getThumbB64Sync(m.id))) {
+          const fu = typeof m.file_url === 'string' ? m.file_url : '';
+          if (/^https:\/\/[^?#]+\.(mp4|mov|m4v|webm|3gp)$/i.test(fu)) uri = resolve(fu + '.thumb.jpg') || '';
         }
         // [native-media-dl] com o download nativo ligado a lista baixa (com anel);
         // aqui só consulta o índice local — sem disparar o cacheMedia do JS.
