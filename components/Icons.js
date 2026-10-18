@@ -257,6 +257,12 @@ export function IconQuote({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M17 6H3"/><Path d="M21 12H8"/><Path d="M21 18H8"/><Path d="M3 12v6"/></I>;
 }
 
+// [2026-10-18 plus-icon] "Chatyy Plus" sem estrela/brilho (founder): círculo + "+",
+// monocromático, mesmo traço dos demais.
+export function IconPlusCircle({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="9"/><Path d="M12 8v8"/><Path d="M8 12h8"/></I>;
+}
+
 export function IconMessageSquare({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></I>;
 }

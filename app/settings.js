@@ -59,7 +59,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import { SELECTABLE_LOCALES, LANGUAGES as I18N_LANGUAGES } from '../i18n';
 import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/theme';
 import {
-  IconArrowLeft, IconSparkles, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
+  IconArrowLeft, IconSparkles, IconPlusCircle, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
   IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers,
 } from '../components/Icons';
@@ -74,6 +74,10 @@ import {
 import { SettingsHostContext, normalizePrivacy, privacyValueLabel, pushLevelOf, emitSettingsRefresh, useSection } from '../components/settings/categories/shared';
 import { buildSearchIndex, filterSearchIndex } from '../components/settings/categories/searchIndex';
 import NativeSettingsList, { isNativeSettingsListAvailable } from '../components/settings/NativeSettingsList';
+import { settingsListApiVersion } from '../modules/expo-chat-conversation-list';
+// [2026-10-18 plus-icon] Ícone do "Chatyy Plus" na lista nativa SEM estrela:
+// "plus" (api >= 2); binário antigo não conhece "plus" → selo ("check").
+function PLUS_NATIVE_ICON() { try { return settingsListApiVersion() >= 2 ? 'plus' : 'check'; } catch { return 'check'; } }
 import SettingsCategoryScreen from '../components/settings/SettingsCategoryScreen';
 import BiaIcon from '../components/bia/BiaIcon';
 import { nativeIconKey } from '../components/settings/nativeCollect';
@@ -186,6 +190,12 @@ function SettingsScreenInner() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const searchInputRef = useRef(null);
+  // [2026-10-18 me-search-overlay] Busca = camada própria POR CIMA da lista
+  // (ver searchOverlayNode). 0 → 1 = some o "Você", barra no topo.
+  const searchAnim = useRef(new Animated.Value(0)).current;
+  const searchOpenRef = useRef(false);
+  searchOpenRef.current = searchOpen || !!searchQuery;
+  const closeSearchRef = useRef(null);
 
   // ── Saldo de diamantes p/ o cartão da Carteira (some se desativado) ─────
   // [2026-10-17 carteira-sem-piscar] Antes: estado local null + fetch 500 ms
@@ -207,8 +217,15 @@ function SettingsScreenInner() {
   // ── Perfil do hero (recarrega ao voltar do /edit-profile) ───────────────
   const [myProfile, setMyProfile] = useState(() => settingsCache.peek('profile'));
   const [avatarKey, setAvatarKey] = useState(Date.now());
+  // [2026-10-18 me-header-instant] Revalidação silenciosa: só remonta o avatar
+  // quando a FOTO muda (antes cada revalidação ao focar remontava o
+  // AvatarCircle = piscada de iniciais no topo do "Você").
+  const _avatarUrlRef = useRef(myProfile?.avatar_url || '');
   useEffect(() => settingsCache.subscribe('profile', (v) => {
-    if (v && typeof v === 'object') { setMyProfile(v); setAvatarKey(Date.now()); }
+    if (!v || typeof v !== 'object') return;
+    setMyProfile(v);
+    const u = v.avatar_url || '';
+    if (u !== _avatarUrlRef.current) { _avatarUrlRef.current = u; setAvatarKey(Date.now()); }
   }), []);
   const _profileFetchedAt = useRef(0);
   useFocusEffect(useCallback(() => {
@@ -259,6 +276,8 @@ function SettingsScreenInner() {
     setPendingAnchor(anchor || null);
     setSearchQuery('');
     setSearchFocused(false);
+    setSearchOpen(false);
+    try { searchAnim.setValue(0); } catch {}
     setActiveCategory(key);
     if (!IOS_AUTO_INSET) { try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -298,6 +317,7 @@ function SettingsScreenInner() {
   useFocusEffect(useCallback(() => {
     if (Platform.OS !== 'android') return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (searchOpenRef.current) { try { closeSearchRef.current?.(); } catch {} return true; }
       if (activeCategory !== null && !requestedSection) { setActiveCategory(null); setPendingAnchor(null); return true; }
       try { if (!router.canGoBack?.()) { router.replace('/chat'); return true; } } catch {}
       return false;
@@ -395,15 +415,34 @@ function SettingsScreenInner() {
     if (!meHref) { safeNav('/edit-profile'); return; }
     safeNav({ pathname: '/u/[username]', params: { username: user.email, edit: '1' } });
   }, [meHref, safeNav, user?.email]);
+  // [2026-10-18 me-search-overlay] Founder (print iPhone): tocar na lupa
+  // deixava um VÃO enorme com spinner onde ficava o "Você" e a barra de busca
+  // no meio da tela. Causa: o topo da lista NATIVA (ChatyySettingsList) era
+  // TROCADO hero (~330pt) → barra (~60pt); o nativo encolhe contentInset.top
+  // mas só re-ancora o offset se estiver EXATAMENTE no topo — com o teclado
+  // subindo/bounce o offset ficava em -330 com inset -60 → ~270pt de
+  // overscroll = área do UIRefreshControl (o spinner) e a barra (headerHost em
+  // y=-60) no meio. Agora o cabeçalho da lista NUNCA muda de altura: a busca
+  // é uma camada própria por cima (barra fixa no topo sob a nav bar +
+  // resultados logo abaixo), com fade/slide; Cancelar recolhe e o "Você"
+  // reaparece no mesmo lugar. Só JS (OTA), qualquer binário.
   const openSearch = useCallback(() => {
     try { Haptics.selectionAsync?.(); } catch {}
     setSearchOpen(true);
-    setTimeout(() => { try { searchInputRef.current?.focus?.(); } catch {} }, 60);
-  }, []);
+    try { searchAnim.stopAnimation(); } catch {}
+    Animated.timing(searchAnim, { toValue: 1, duration: 200, useNativeDriver: Platform.OS !== 'web' }).start();
+    setTimeout(() => { try { searchInputRef.current?.focus?.(); } catch {} }, 40);
+  }, [searchAnim]);
   const closeSearch = useCallback(() => {
-    setSearchQuery(''); setSearchFocused(false); setSearchOpen(false);
     try { searchInputRef.current?.blur?.(); } catch {}
-  }, []);
+    setSearchFocused(false);
+    try { searchAnim.stopAnimation(); } catch {}
+    Animated.timing(searchAnim, { toValue: 0, duration: 170, useNativeDriver: Platform.OS !== 'web' }).start(({ finished }) => {
+      if (!finished) return;
+      setSearchQuery(''); setSearchOpen(false);
+    });
+  }, [searchAnim]);
+  closeSearchRef.current = closeSearch;
   const multiAccount = (accounts?.length || 0) > 1;
   const heroNode = (
     <MeHeader
@@ -430,7 +469,7 @@ function SettingsScreenInner() {
   const catRow = (key) => ({ key, type: 'c', cat: key, icon: CATEGORY_META[key].icon, Icon: CAT_ICONS[CATEGORY_META[key].icon], title: categoryTitle(t, key), sub: catSubtitle[key] || '' });
   const rootCards = [
     [
-      { key: 'plus', type: 'r', icon: 'sparkles', Icon: IconSparkles, title: PLAN_NAME, sub: plusValue ? '' : tr('me.plusSub', 'Assinaturas e armazenamento'), value: plusValue, route: '/settings-one' },
+      { key: 'plus', type: 'r', icon: PLUS_NATIVE_ICON(), Icon: IconPlusCircle, title: PLAN_NAME, sub: plusValue ? '' : tr('me.plusSub', 'Assinaturas e armazenamento'), value: plusValue, route: '/settings-one' },
       { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Perfil público'), sub: tr('me.publicProfileSub', 'Posts, seguidores e destaques'), go: openPublicProfile },
       { key: 'lists', type: 'r', icon: 'archive', Icon: IconFolder, title: tr('me.lists', 'Listas'), route: '/chat-folders' },
       { key: 'broadcast', type: 'r', icon: 'forward', Icon: IconBroadcast, title: tr('me.broadcast', 'Mensagens de transmissão'), route: '/chat-new' },
@@ -499,8 +538,10 @@ function SettingsScreenInner() {
       </TouchableOpacity>
     </View>
   );
-  // Topo: busca aberta = só a barra de busca; senão o cabeçalho "Você".
-  const topNode = searchOpen || searching ? searchBarNode : heroNode;
+  // Topo da lista: SEMPRE o "Você" (altura estável na lista nativa). Só os 2
+  // painéis do web trocam pela barra inline (lá não há camada de busca).
+  const searchLayer = !twoPane && activeCategory === null && (searchOpen || searching);
+  const topNode = twoPane && (searchOpen || searching) ? searchBarNode : heroNode;
 
   // Resultados (lista JS): uma linha por configuração, subtítulo = categoria.
   const searchResultsNode = searching ? (
@@ -526,6 +567,39 @@ function SettingsScreenInner() {
         <Text style={{ color: gc.secondary, fontSize: 15, marginTop: 10 }}>{t('settings.noMatches') || 'Nenhum resultado'}</Text>
       </View>
     )
+  ) : null;
+
+  // Camada de busca (1 painel): barra FIXA no topo (sticky, sob a nav bar via
+  // inset automático) + resultados logo abaixo. Cobre a lista (a de baixo não
+  // muda nada → ao cancelar o "Você" está exatamente onde estava).
+  const searchOverlayNode = searchLayer ? (
+    <Animated.View
+      style={[StyleSheet.absoluteFill, {
+        backgroundColor: gc.pageBg,
+        opacity: searchAnim,
+        transform: [{ translateY: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
+      }]}
+      testID="settings-search-layer"
+    >
+      <Animated.ScrollView
+        style={s.flex1}
+        contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        stickyHeaderIndices={[0]}
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
+      >
+        <View style={[s.searchSticky, { backgroundColor: gc.pageBg }]}>
+          <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>{searchBarNode}</View>
+        </View>
+        <View style={[s.searchBody, { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}>
+          <SettingsSearchContext.Provider value={_q}>
+            {searchResultsNode}
+          </SettingsSearchContext.Provider>
+        </View>
+      </Animated.ScrollView>
+    </Animated.View>
   ) : null;
 
   const categoryGroupsNode = rootCards.map((card, gi) => (
@@ -696,7 +770,7 @@ function SettingsScreenInner() {
             {showNativeRoot ? (
               <NativeSettingsList
                 rows={nativeSections}
-                query={searchQuery}
+                query=""
                 header={topNode}
                 isDark={isDark}
                 palette={gc}
@@ -724,7 +798,7 @@ function SettingsScreenInner() {
                     {activeCategory === null && !twoPane ? (
                       <>
                         {topNode}
-                        {searching ? searchResultsNode : homeListNode}
+                        {homeListNode}
                       </>
                     ) : activeCategory ? (
                       <CategoryHost key={activeCategory} cat={activeCategory} />
@@ -733,6 +807,7 @@ function SettingsScreenInner() {
                 </SettingsSearchContext.Provider>
               </FadeSlideIn>
             )}
+            {searchOverlayNode}
           </View>
         </View>
       </SettingsHostContext.Provider>
@@ -769,6 +844,8 @@ const s = StyleSheet.create({
   headerTitle: { flex: 1, fontSize: FontSize.title, fontWeight: '700', letterSpacing: LetterSpacing.tighter },
   scroll: { paddingHorizontal: 16, paddingTop: Spacing.md, paddingBottom: 80 },
   searchWrap: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
+  searchSticky: { paddingHorizontal: 16, paddingTop: Spacing.sm, paddingBottom: 2 },
+  searchBody: { paddingHorizontal: 16 },
   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 12, height: 42, gap: 8, borderWidth: 1 },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 40, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
   searchCancel: { paddingLeft: 12, paddingVertical: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },

@@ -121,7 +121,7 @@ export default function MeHeader({
             accessibilityLabel={tr('profile.avatarView', 'Ver foto')}
             testID="settings-profile-card"
           >
-            <AvatarCircle key={avatarKey} email={user?.email} name={name || user?.email} size={120} />
+            <AvatarCircle key={avatarKey} email={user?.email} uri={profile?.avatar_url || undefined} name={name || user?.email} size={120} />
           </PressableScale>
           <PressableScale
             onPress={onChangePhoto || onEdit}
