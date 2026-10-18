@@ -1350,6 +1350,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         colors={colors}
         t={t}
         language={language}
+        isDark={isDark}
       />
       <LanguageSheet
         visible={showLang}

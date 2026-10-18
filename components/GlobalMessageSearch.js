@@ -21,6 +21,12 @@ import * as api from '../services/api';
 import NativeResultList, { useNativeResults } from './native/NativeResultList';
 import { snippetAround } from './native/resultListAdapter';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
+// [2026-10-18 search-tabs] aba Mídia da busca global em grade NATIVA (ChatyyMediaGrid) quando o binário tem.
+import NativeMediaGrid, { isNativeMediaGridAvailable } from './media/NativeMediaGrid';
+
+// [2026-10-18 search-tabs] Debounce único: LOCAL (SQLite FTS5) quase na hora, servidor depois.
+const LOCAL_DEBOUNCE_MS = 60;
+const SERVER_DEBOUNCE_MS = 250;
 
 const KINDS = [
   { key: 'photo', labelKey: 'gsearch.photos', fallback: 'Fotos', Icon: IconImage },
@@ -54,7 +60,10 @@ function fmtDuration(sec) {
   return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
 }
 
-export default function GlobalMessageSearch({ query, colors, isDark, t, router, pillStyle }) {
+// [2026-10-18 search-tabs] lockedTypes (ex.: ['photo','video'] = aba Mídia) fixa o
+// tipo e esconde os chips de tipo — lista as mais recentes mesmo sem texto.
+// layout 'grid' = grade nativa de miniaturas (fallback: lista).
+export default function GlobalMessageSearch({ query, colors, isDark, t, router, pillStyle, lockedTypes, layout, emptyText }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag419 = useDragToDismiss({ onDismiss: () => { const f = () => setDateSheet(false); f(); } });
   const { user } = useAuth();
@@ -79,50 +88,61 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
   const [nativeOn, onNativeFailure] = useNativeResults('__chatyy_native_search');
 
   const q = String(query || '').trim();
-  const active = !!kind || !!range || q.length >= 2;
+  const locked = Array.isArray(lockedTypes) && lockedTypes.length ? lockedTypes : null;
+  const lockedKey = locked ? locked.join(',') : '';
+  const active = !!locked || !!kind || !!range || q.length >= 2;
+  const localRef = useRef({ req: -1, rows: null });
+  const serverDoneRef = useRef(-1);
 
-  const fetchPage = useCallback(async (cur) => {
-    const myReq = cur ? reqRef.current : ++reqRef.current;
-    if (cur) setLoadingMore(true); else { setLoading(true); setError(false); }
-    // [busca-wa 2026-10-18] LOCAL primeiro (SQLite FTS5 do aparelho, prefixo
-    // por palavra, sem acento): pinta na hora e funciona OFFLINE; o servidor
-    // substitui quando responde. Só texto puro (tipo/data = servidor).
-    let localShown = null; // linhas locais já pintadas (null = nenhuma)
-    if (!cur && !kind && !range && q.length >= 2) {
+  // LOCAL (FTS5 do aparelho, prefixo por palavra, sem acento): pinta na hora e
+  // funciona OFFLINE; o servidor substitui quando responde. Só texto puro.
+  const runLocal = useCallback(async (myReq) => {
+    if (locked || kind || range || q.length < 2) return;
+    try {
+      const { dbSearchMessages } = require('../services/db');
+      const loc = await dbSearchMessages(q, 40, null, { prefix: true });
+      if (myReq !== reqRef.current || serverDoneRef.current === myReq) return;
+      if (!Array.isArray(loc) || !loc.length) return;
+      const seen = new Set();
+      const out = [];
+      for (const m0 of loc) {
+        const m = m0 && m0._row ? { ...m0, id: m0.id ?? m0._row.id, conversation_id: m0.conversation_id ?? m0._row.conversation_id, created_at: m0.created_at ?? m0._row.created_at } : m0;
+        if (!m || m.id == null || m.conversation_id == null || seen.has(String(m.id))) continue;
+        seen.add(String(m.id));
+        out.push({ id: m.id, conversation_id: m.conversation_id, sender_email: m.sender_email, sender_name: m.sender_name, content: m.content, type: m.type || 'text', file_name: m.file_name, file_url: m.file_url, thumbnail_url: m.thumbnail_url, duration: m.duration, created_at: m.created_at, kind: 'text', _local: true });
+      }
+      out.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      let cv = {};
       try {
-        const { dbSearchMessages } = require('../services/db');
-        const loc = await dbSearchMessages(q, 40, null, { prefix: true });
-        if (myReq !== reqRef.current) return;
-        if (Array.isArray(loc) && loc.length) {
-          const seen = new Set();
-          const out = [];
-          for (const m0 of loc) {
-            const m = m0 && m0._row ? { ...m0, id: m0.id ?? m0._row.id, conversation_id: m0.conversation_id ?? m0._row.conversation_id, created_at: m0.created_at ?? m0._row.created_at } : m0;
-            if (!m || m.id == null || m.conversation_id == null || seen.has(String(m.id))) continue;
-            seen.add(String(m.id));
-            out.push({ id: m.id, conversation_id: m.conversation_id, sender_email: m.sender_email, sender_name: m.sender_name, content: m.content, type: m.type || 'text', file_name: m.file_name, file_url: m.file_url, thumbnail_url: m.thumbnail_url, duration: m.duration, created_at: m.created_at, kind: 'text', _local: true });
-          }
-          out.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
-          let cv = {};
-          try {
-            const list = require('../services/chatStore').getConversationsSync() || [];
-            const want = new Set(out.map(m => String(m.conversation_id)));
-            for (const c of list) {
-              if (!c || !want.has(String(c.id))) continue;
-              cv[String(c.id)] = { type: c.type || (c.is_group ? 'group' : 'direct'), name: c.display_name || c.name || '', peer_email: c.other_email || c.contact_email || c.peer_email || '', avatar_url: c.avatar_url || c.group_avatar || c.avatar || null };
-            }
-          } catch { cv = {}; }
-          setConvs(cv);
-          setRows(out);
-          localShown = out;
+        const list = require('../services/chatStore').getConversationsSync() || [];
+        const want = new Set(out.map(m => String(m.conversation_id)));
+        for (const c of list) {
+          if (!c || !want.has(String(c.id))) continue;
+          cv[String(c.id)] = { type: c.type || (c.is_group ? 'group' : 'direct'), name: c.display_name || c.name || '', peer_email: c.other_email || c.contact_email || c.peer_email || '', avatar_url: c.avatar_url || c.group_avatar || c.avatar || null };
         }
-      } catch {}
-    }
+      } catch { cv = {}; }
+      localRef.current = { req: myReq, rows: out };
+      setConvs(cv);
+      setRows(out);
+      setLoading(false);
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, kind, range, lockedKey]);
+
+  const fetchPage = useCallback(async (cur, reqArg) => {
+    const myReq = cur ? reqRef.current : (reqArg != null ? reqArg : ++reqRef.current);
+    if (cur) setLoadingMore(true); else { setLoading(true); setError(false); }
+    // Achados locais desta rodada (runLocal) — mesclados com o servidor abaixo.
+    // Lidos na RESPOSTA (o local pode terminar enquanto o servidor responde).
+    const localNow = () => (!cur && localRef.current.req === myReq ? localRef.current.rows : null);
+    let localShown = null;
     try {
       const r = await api.chatSearchAdvanced({
-        query: q, types: kind ? [kind] : [], dateFrom: range?.from, dateTo: range?.to, cursor: cur || undefined,
+        query: q, types: locked || (kind ? [kind] : []), dateFrom: range?.from, dateTo: range?.to, cursor: cur || undefined,
       });
       if (myReq !== reqRef.current) return;
+      if (!cur) serverDoneRef.current = myReq;
+      localShown = localNow();
       if (!r?.success) { if (!cur && !localShown) { setRows([]); setError(true); } return; }
       const d = r.data || {};
       const msgs = Array.isArray(d.messages) ? d.messages : [];
@@ -145,23 +165,34 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
       setHasMore(!!d.has_more && !!d.next_cursor);
       setCursor(d.next_cursor || null);
     } catch {
-      if (myReq === reqRef.current && !cur && !localShown) { setRows([]); setError(true); }
+      if (myReq === reqRef.current && !cur) serverDoneRef.current = myReq;
+      if (myReq === reqRef.current && !cur && !localNow()) { setRows([]); setError(true); }
     } finally {
       if (myReq === reqRef.current) { setLoading(false); setLoadingMore(false); }
     }
-  }, [q, kind, range]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, kind, range, lockedKey]);
 
-  // Debounce 350ms (mesmo da tela) — texto, tipo ou data mudou → página 1.
+  // [2026-10-18 search-tabs] texto, tipo ou data mudou → página 1: local em
+  // 60 ms (FTS5), servidor em 250 ms (0 ms sem texto: só filtro de tipo/data).
+  const localTimerRef = useRef(null);
   useEffect(() => {
     if (debRef.current) clearTimeout(debRef.current);
+    if (localTimerRef.current) clearTimeout(localTimerRef.current);
+    const myReq = ++reqRef.current;
+    localRef.current = { req: -1, rows: null };
     if (!active) {
-      reqRef.current++;
       setRows([]); setConvs({}); setHasMore(false); setCursor(null); setLoading(false); setError(false);
       return undefined;
     }
-    debRef.current = setTimeout(() => { fetchPage(null); }, q.length >= 2 ? 350 : 0);
-    return () => { if (debRef.current) clearTimeout(debRef.current); };
-  }, [active, fetchPage]);
+    const typed = q.length >= 2;
+    if (typed) localTimerRef.current = setTimeout(() => { runLocal(myReq); }, LOCAL_DEBOUNCE_MS);
+    debRef.current = setTimeout(() => { fetchPage(null, myReq); }, typed ? SERVER_DEBOUNCE_MS : 0);
+    return () => {
+      if (debRef.current) clearTimeout(debRef.current);
+      if (localTimerRef.current) clearTimeout(localTimerRef.current);
+    };
+  }, [active, fetchPage, runLocal]);
 
   const loadMore = useCallback(() => {
     if (!hasMore || loading || loadingMore || !cursor) return;
@@ -340,7 +371,7 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
           <IconSearch size={26} color={sub} />
         </View>
         <Text style={{ color: sub, fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
-          {active ? tt('gsearch.empty', 'Nenhuma mensagem encontrada') : tt('gsearch.hint', 'Digite para buscar ou toque em um tipo')}
+          {active ? (emptyText || tt('gsearch.empty', 'Nenhuma mensagem encontrada')) : tt('gsearch.hint', 'Digite para buscar ou toque em um tipo')}
         </Text>
       </View>
     );
@@ -381,13 +412,48 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
     if (loading || loadingMore) out.push({ id: 'l:more', k: 'l' });
     else if (!out.length) {
       if (error) { out.push({ id: 'n:error', k: 'n', t: tt('gsearch.error', 'Não foi possível buscar. Toque para tentar de novo.'), gl: 'search' }); meta.set('n:error', () => fetchPage(null)); }
-      else out.push({ id: 'n:empty', k: 'n', t: active ? tt('gsearch.empty', 'Nenhuma mensagem encontrada') : tt('gsearch.hint', 'Digite para buscar ou toque em um tipo'), gl: 'search', tap: 0 });
+      else out.push({ id: 'n:empty', k: 'n', t: active ? (emptyText || tt('gsearch.empty', 'Nenhuma mensagem encontrada')) : tt('gsearch.hint', 'Digite para buscar ou toque em um tipo'), gl: 'search', tap: 0 });
     }
     nativeMeta.current = meta;
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeOn, items, convs, hasMore, loading, loadingMore, error, active, q, me, tt, fmtDate]);
   const onNativePress = useCallback((id) => { const fn = nativeMeta.current.get(id); if (fn) fn(); }, []);
+
+  // ── [2026-10-18 search-tabs] grade nativa (aba Mídia) ──────────────────────
+  const gridOn = layout === 'grid' && isNativeMediaGridAvailable();
+  const gridById = useRef(new Map());
+  const gridItems = useMemo(() => {
+    if (!gridOn) return [];
+    const out = [];
+    const by = new Map();
+    for (const m of rows) {
+      const k = m.kind || (/^video/.test(String(m.type || '')) ? 'video' : (m.type === 'image' || m.type === 'gif' ? 'photo' : ''));
+      if (k !== 'photo' && k !== 'video') continue;
+      const key = String(m.id);
+      let u = '';
+      if (m.thumb_b64) u = String(m.thumb_b64).startsWith('data:') ? m.thumb_b64 : `data:image/jpeg;base64,${m.thumb_b64}`;
+      else if (m.thumbnail_url) u = api.getMediaUrl(m.thumbnail_url);
+      else if (k === 'photo' && m.file_url) u = api.getMediaUrl(m.file_url);
+      const ts = parseTs(m.created_at);
+      const it = { k: key, u, t: ts ? ts.getTime() : 0, a: convMeta(m.conversation_id, m).name || '' };
+      if (k === 'video') {
+        it.v = true; it.tr = 'video';
+        if (!u && m.file_url) { it.vu = api.getMediaUrl(m.file_url); it.ad = true; }
+        const dur = fmtDuration(m.duration);
+        if (dur) it.br = dur;
+      }
+      out.push(it);
+      by.set(key, m);
+    }
+    gridById.current = by;
+    return out;
+  }, [gridOn, rows, convMeta]);
+  const gridTheme = useMemo(() => {
+    const hex = (c, fb) => (typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c.trim()) ? c.trim() : fb);
+    return { bg: hex(colors.background, isDark ? '#000000' : '#FFFFFF'), placeholder: hex(colors.surface, '#8E8E93'), sectionText: hex(colors.text, isDark ? '#FFFFFF' : '#111111') };
+  }, [colors.background, colors.surface, colors.text, isDark]);
+  const onGridPress = useCallback((e) => { const m = gridById.current.get(String(e?.key)); if (m) openHit(m); }, [openHit]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -414,7 +480,7 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
             </TouchableOpacity>
           ) : null}
         </TouchableOpacity>
-        {KINDS.map((k) => {
+        {!locked && KINDS.map((k) => {
           const on = kind === k.key;
           return (
             <TouchableOpacity
@@ -437,7 +503,18 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
         <View style={{ paddingVertical: 10 }}><ActivityIndicator size="small" color={sub} /></View>
       ) : null}
 
-      {nativeOn ? (
+      {gridOn && gridItems.length > 0 ? (
+        <NativeMediaGrid
+          items={gridItems}
+          sections
+          spacing={2}
+          locale={loc || ''}
+          theme={gridTheme}
+          contentInsetBottom={28}
+          onItemPress={onGridPress}
+          onEndReached={loadMore}
+        />
+      ) : nativeOn ? (
         <NativeResultList
           rows={nativeRows}
           highlight={q}

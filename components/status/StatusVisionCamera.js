@@ -65,11 +65,15 @@ const AR_ASSETS = {
 };
 
 function StatusVisionCameraInner(
-  { facing = 'front', mode = 'picture', arFilterKey = 'none', isActive = true, onError },
+  { facing = 'front', mode = 'picture', arFilterKey = 'none', isActive = true, onError, flash = 'off' },
   ref,
 ) {
   const device = useCameraDevice(facing === 'front' ? 'front' : 'back');
   const camera = useRef(null);
+  // [2026-10-18 status-flash] modo do flash vindo do botão (off/on/auto). Lente
+  // sem flash (frontal na maioria) → 'off' (takePhoto lança se pedir flash sem hardware).
+  const flashRef = useRef('off');
+  flashRef.current = (device && device.hasFlash && (flash === 'on' || flash === 'auto')) ? flash : 'off';
 
   // Face detector plugin (same session — frame-processor plugin). On Android
   // this is MLKit; on iOS it's Apple Vision (the shim picks the right engine —
@@ -252,7 +256,7 @@ function StatusVisionCameraInner(
   const takePictureAsync = useCallback(async () => {
     if (!camera.current) throw new Error('camera-not-ready');
     const photo = await camera.current.takePhoto({
-      flash: 'off',
+      flash: flashRef.current || 'off',
       enableShutterSound: false,
     });
     if (!photo || !photo.path) return null;
@@ -319,6 +323,7 @@ function StatusVisionCameraInner(
       video={mode === 'video'}
       audio={mode === 'video'}
       frameProcessor={frameProcessor}
+      torch={mode === 'video' && flash === 'on' && device.hasTorch ? 'on' : 'off'}
       onError={(e) => { try { onError?.(e); } catch {} }}
     />
   );

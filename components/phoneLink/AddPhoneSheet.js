@@ -308,6 +308,7 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
         colors={colors}
         t={t}
         language={language}
+        isDark={isDark}
       />
     </View>
   );

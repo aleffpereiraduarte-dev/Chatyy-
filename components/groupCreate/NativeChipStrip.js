@@ -34,10 +34,11 @@ function Inner({ members, colors, isDark, removeLabel, onRemove, onFailure, bord
     prevOpen.current = open;
     try { LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity')); } catch {}
   }
+  // [2026-10-18 fwd-native] `id`/`tiles` opcionais (encaminhar: chip = conversa).
   const items = useMemo(() => (members || []).map(m => ({
-    id: String(m.email),
+    id: String(m.id != null ? m.id : m.email),
     t: displayName(m),
-    tiles: contactTile(m.email, displayName(m)),
+    tiles: Array.isArray(m.tiles) ? m.tiles : contactTile(m.email, displayName(m)),
   })), [members]);
   const nColors = useMemo(() => ({
     ...nativeColors({

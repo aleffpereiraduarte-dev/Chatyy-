@@ -5,10 +5,11 @@ import {
   ActivityIndicator, Platform, ScrollView, Image,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
@@ -20,21 +21,62 @@ import GlobalMessageSearch from '../components/GlobalMessageSearch'; // [2026-10
 // (ChatyyResultList) quando o binário tem a view; kill switch
 // globalThis.__chatyy_native_search = false → FlashList JS abaixo (igual antes).
 import NativeResultList, { useNativeResults } from '../components/native/NativeResultList';
-import { contactTile } from '../components/native/resultListAdapter';
+import { contactTile, photoTile, queryTokens, matchesAll, snippetAround } from '../components/native/resultListAdapter';
+// [2026-10-18 search-tabs] barra de busca NATIVA no header (UISearchController /
+// SearchView) + abas estilo Telegram. Kill switch: __chatyy_native_search_header = false.
+import { USE_NATIVE_HEADER, nativeHeaderOptions, NativeHeaderSafeArea } from '../components/nativeHeader';
 
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
 // the matching backend endpoint (search_users, trending_hashtags + feed
 // captions, chat_status_music_search, live_list). The tab bar is a sliding
 // pill consistent with the rest of the app (ChatFeedTab + ChatListTab).
+// [2026-10-18 search-tabs] abas estilo Telegram: Conversas (local, na hora),
+// Mensagens, Pessoas, Mídia / Links / Arquivos / Voz (chat_search_advanced com
+// tipo fixo) e, por último, as abas sociais (Hashtags / Sons / Lives).
 const TABS = [
-  { key: 'people',   labelKey: 'search.people',   fallback: 'Pessoas' },
+  { key: 'chats',    labelKey: 'search.tabChats', fallback: 'Conversas' },
   // [2026-10-14 busca-global] mensagens de todas as conversas por texto/tipo/data (chat_search_advanced).
   { key: 'messages', labelKey: 'gsearch.tab',     fallback: 'Mensagens' },
+  { key: 'people',   labelKey: 'search.people',   fallback: 'Pessoas' },
+  { key: 'media',    labelKey: 'search.tabMedia', fallback: 'Mídia' },
+  { key: 'links',    labelKey: 'gsearch.links',   fallback: 'Links' },
+  { key: 'files',    labelKey: 'search.tabFiles', fallback: 'Arquivos' },
+  { key: 'voice',    labelKey: 'search.tabVoice', fallback: 'Voz' },
   { key: 'hashtags', labelKey: 'search.hashtags', fallback: 'Hashtags' },
   { key: 'sounds',   labelKey: 'search.sounds',   fallback: 'Sons' },
   { key: 'lives',    labelKey: 'search.lives',    fallback: 'Lives' },
 ];
+// Abas de mensagens com tipo fixo → GlobalMessageSearch (servidor; arrays estáveis).
+const MSG_TABS = {
+  messages: null,
+  media: { types: ['photo', 'video'], layout: 'grid', emptyKey: 'search.emptyMedia', emptyFb: 'Nenhuma foto ou vídeo encontrado' },
+  links: { types: ['link'], emptyKey: 'search.emptyLinks', emptyFb: 'Nenhum link encontrado' },
+  files: { types: ['doc'], emptyKey: 'search.emptyFiles', emptyFb: 'Nenhum arquivo encontrado' },
+  voice: { types: ['audio'], emptyKey: 'search.emptyVoice', emptyFb: 'Nenhuma mensagem de voz encontrada' },
+};
+const isMsgTab = (k) => Object.prototype.hasOwnProperty.call(MSG_TABS, k);
+const LOCAL_DEBOUNCE_MS = 60;
+const SERVER_DEBOUNCE_MS = 250;
+
+function nativeSearchHeaderOn() {
+  if (!USE_NATIVE_HEADER) return false;
+  try { if (globalThis.__chatyy_native_search_header === false) return false; } catch {}
+  return true;
+}
+
+/** Conversa → nome exibido (apelido, "Mensagens salvas", handle bonito). */
+function convDisplay(c, me, t) {
+  const type = c.type || (c.is_group ? 'group' : 'direct');
+  const peer = type === 'direct' ? String(c.other_email || c.contact_email || c.peer_email || '') : '';
+  const saved = type === 'saved' || (!!peer && !!me && peer.toLowerCase() === me);
+  if (saved) return { type, peer, name: (t('chat.savedMessages') || 'Mensagens salvas'), saved: true };
+  let nick = '';
+  if (peer) { try { nick = require('../services/nicknames').getNickname?.(peer) || ''; } catch {} }
+  let name = nick || c.display_name || c.name || '';
+  if (!name && peer) { try { name = api.emailToDisplayName(peer) || peer.split('@')[0]; } catch { name = peer.split('@')[0]; } }
+  return { type, peer, name: name || '?', saved: false };
+}
 
 export default function SearchScreen() {
   const router = useRouter();
@@ -44,7 +86,7 @@ export default function SearchScreen() {
 
   // [2026-10-14 busca-global] /search?tab=messages abre direto na aba Mensagens.
   const _params = useLocalSearchParams();
-  const [tab, setTab] = useState(() => (TABS.some((x) => x.key === _params?.tab) ? String(_params.tab) : 'people'));
+  const [tab, setTab] = useState(() => (TABS.some((x) => x.key === _params?.tab) ? String(_params.tab) : 'chats'));
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   // [2026-10-14 offline-first] listas iniciais (em alta / sons / lives) pintam
@@ -110,7 +152,7 @@ export default function SearchScreen() {
   // results immediately for the most common case (Pessoas). Other tabs are
   // lazy-loaded on demand to keep mobile bandwidth low.
   const runSearch = useCallback(async (q, activeTab) => {
-    if (activeTab === 'messages') return; // [2026-10-14 busca-global] a aba Mensagens busca sozinha (GlobalMessageSearch)
+    if (isMsgTab(activeTab) || activeTab === 'chats') return; // [2026-10-14 busca-global] abas de mensagens buscam sozinhas (GlobalMessageSearch); Conversas é local
     const trimmed = String(q || '').trim();
     if (trimmed.length < 2) {
       setLoading(false);
@@ -169,9 +211,73 @@ export default function SearchScreen() {
       setResults(prev => ({ ...prev, people: [], sounds: [] }));
       return;
     }
-    debounceRef.current = setTimeout(() => { runSearch(query, tab); }, 250);
+    if (tab === 'chats' || isMsgTab(tab)) { setLoading(false); return undefined; }
+    // [2026-10-18 search-tabs] filtro LOCAL na hora (listas já carregadas), servidor em 250 ms.
+    const needle = query.trim().toLowerCase();
+    if (tab === 'hashtags') {
+      const n = needle.replace(/^#/, '');
+      setResults(prev => ({ ...prev, hashtags: (trendingTags || []).filter(tg => String(tg.tag || '').toLowerCase().includes(n)) }));
+    }
+    debounceRef.current = setTimeout(() => { runSearch(query, tab); }, SERVER_DEBOUNCE_MS);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, tab, runSearch]);
+
+  // ── [2026-10-18 search-tabs] Conversas: lista local (0 ms) + mensagens do
+  // SQLite FTS5 (60 ms). Sem rede; "Ver todas" leva à aba Mensagens (servidor).
+  const { user } = useAuth();
+  const me = String(user?.email || '').toLowerCase();
+  const [convIndex, setConvIndex] = useState([]);
+  useEffect(() => {
+    if (tab !== 'chats') return;
+    try {
+      const list = require('../services/chatStore').getConversationsSync() || [];
+      setConvIndex(list.filter(c => c && c.id != null && !c.locked).map((c) => {
+        const d = convDisplay(c, me, t);
+        const hay = [d.name, d.peer, c.name, c.display_name, c.username].filter(Boolean).join(' ');
+        return { c, d, hay };
+      }));
+    } catch { setConvIndex([]); }
+  }, [tab, me, t]);
+  const chatHits = React.useMemo(() => {
+    if (tab !== 'chats') return [];
+    const toks = queryTokens(query);
+    if (!toks.length) return convIndex.slice(0, 30);
+    const out = [];
+    for (const e of convIndex) { if (matchesAll(toks, e.hay)) { out.push(e); if (out.length >= 60) break; } }
+    return out;
+  }, [tab, query, convIndex]);
+  const [localMsgs, setLocalMsgs] = useState({ q: '', list: [] });
+  useEffect(() => {
+    if (tab !== 'chats') return undefined;
+    const q = query.trim();
+    if (q.length < 2) { setLocalMsgs({ q: '', list: [] }); return undefined; }
+    let alive = true;
+    const tm = setTimeout(async () => {
+      try {
+        const { dbSearchMessages } = require('../services/db');
+        const rows0 = await dbSearchMessages(q, 12, null, { prefix: true });
+        if (!alive) return;
+        const list = (rows0 || []).map(m0 => (m0 && m0._row ? { ...m0, id: m0.id ?? m0._row.id, conversation_id: m0.conversation_id ?? m0._row.conversation_id, created_at: m0.created_at ?? m0._row.created_at } : m0))
+          .filter(m => m && m.id != null && m.conversation_id != null);
+        setLocalMsgs({ q, list });
+      } catch { if (alive) setLocalMsgs({ q, list: [] }); }
+    }, LOCAL_DEBOUNCE_MS);
+    return () => { alive = false; clearTimeout(tm); };
+  }, [tab, query]);
+  const openConv = useCallback((c, d, extra) => {
+    try {
+      require('../services/openConversation').openConversation({
+        pathname: '/chat-conversation',
+        params: { id: String(c.id), name: d.name || '', type: d.type, ...(d.type === 'direct' && d.peer ? { email: d.peer } : {}), ...(extra || {}) },
+      }, { router });
+    } catch {}
+  }, [router]);
+  const convById = React.useMemo(() => {
+    const m = new Map();
+    for (const e of convIndex) m.set(String(e.c.id), e);
+    return m;
+  }, [convIndex]);
 
   // Renderers per tab.
   const renderPeople = () => (
@@ -364,14 +470,100 @@ export default function SearchScreen() {
 
   // ── [2026-10-15 native-search-notifs] linhas da lista nativa por aba ──────
   const tt = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  // [2026-10-18 search-tabs] seções da aba Conversas (mesmo modelo p/ nativo e JS).
+  const chatSections = React.useMemo(() => {
+    if (tab !== 'chats') return [];
+    const q = query.trim();
+    const out = [];
+    const convRows = chatHits.map(({ c, d }) => {
+      const url = c.avatar_url || c.group_avatar || '';
+      const tiles = (!d.peer && url) ? photoTile(api.getMediaUrl ? api.getMediaUrl(url) : url, d.name, String(c.id)) : contactTile(d.peer || (d.saved ? me : ''), d.name);
+      const sub = d.type === 'group' ? `${c.member_count || c.members?.length || ''} ${tt('chat.members', 'membros')}`.trim() : (d.peer && !d.saved ? d.peer : '');
+      const row = { id: `c:${c.id}`, k: 'r', t: d.name, tiles, hl: 1 };
+      if (sub) row.sb = sub;
+      return { row, c, d, open: () => openConv(c, d) };
+    });
+    if (convRows.length) out.push({ key: 'convs', title: q ? tt('search.tabChats', 'Conversas') : tt('chatConv.recents', 'Recentes'), rows: convRows });
+    const lm = localMsgs.q === q ? localMsgs.list : [];
+    if (q.length >= 2 && lm.length) {
+      const msgRows = lm.slice(0, 8).map((m) => {
+        const e = convById.get(String(m.conversation_id));
+        const d = e ? e.d : { type: 'direct', peer: '', name: '' };
+        const own = String(m.sender_email || '').toLowerCase() === me;
+        const who = own ? tt('gsearch.you', 'Você') : (d.type === 'direct' ? d.name : (m.sender_name || d.name));
+        const row = { id: `m:${m.id}`, k: 'r', t: d.name || who || '', sb: snippetAround(`${d.type !== 'direct' && who ? who + ': ' : ''}${String(m.content || m.file_name || '')}`, q), sl: 2, hl: 1, gl: 'message', gs: 'r' };
+        return { row, m, d, open: () => (e ? openConv(e.c, d, { scrollToMessageId: String(m.id), highlightMessageId: String(m.id) }) : setTab('messages')) };
+      });
+      out.push({ key: 'msgs', title: tt('gsearch.tab', 'Mensagens'), more: tt('search.seeAll', 'Ver todas'), rows: msgRows });
+    }
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, query, chatHits, localMsgs, convById, me, t, openConv]);
+
+  const renderChats = () => {
+    const flat = [];
+    for (const s0 of chatSections) {
+      flat.push({ _h: true, key: `s:${s0.key}`, title: s0.title, more: s0.more });
+      for (const r of s0.rows) flat.push({ key: r.row.id, r });
+    }
+    return (
+      <FlashList
+        data={flat}
+        keyExtractor={(it) => it.key}
+        getItemType={(it) => (it._h ? 'h' : 'r')}
+        contentContainerStyle={{ padding: 12 }}
+        keyboardShouldPersistTaps="handled"
+        renderItem={({ item }) => item._h ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary, flex: 1 }]}>{item.title}</Text>
+            {item.more ? (
+              <TouchableOpacity onPress={() => setTab('messages')} accessibilityRole="button" hitSlop={8}>
+                <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600', marginBottom: 8 }}>{item.more}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : colors.surface }]}
+            activeOpacity={0.75}
+            onPress={item.r.open}
+            accessibilityRole="button"
+            accessibilityLabel={item.r.row.t}
+          >
+            <AvatarCircle name={item.r.d?.name || item.r.row.t} email={item.r.d?.peer || undefined} size={46} />
+            <View style={styles.rowText}>
+              <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>{item.r.row.t}</Text>
+              {item.r.row.sb ? <Text style={[styles.rowSub, { color: colors.textSecondary }]} numberOfLines={2}>{item.r.row.sb}</Text> : null}
+            </View>
+          </TouchableOpacity>
+        )}
+        ListEmptyComponent={(
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            {query.trim().length >= 2 ? (t('feed.noResults') || 'Sem resultados') : tt('search.chatsHint', 'Busque conversas, grupos e mensagens')}
+          </Text>
+        )}
+      />
+    );
+  };
+
   const nativeMeta = useRef(new Map());
   const nativeRows = React.useMemo(() => {
-    if (!nativeOn || tab === 'messages') return [];
+    if (!nativeOn || isMsgTab(tab)) return [];
     const q = query.trim();
     const typed = q.length >= 2;
     const rows = [];
     const meta = new Map();
     const note = (txt, gl) => rows.push({ id: `n:${tab}`, k: 'n', t: txt, gl: gl || 'search', tap: 0 });
+    if (tab === 'chats') {
+      for (const s0 of chatSections) {
+        rows.push({ id: `s:${s0.key}`, k: 's', t: s0.title, ...(s0.more ? { ac: s0.more } : {}) });
+        if (s0.more) meta.set(`s:${s0.key}`, () => setTab('messages'));
+        for (const r of s0.rows) { rows.push(r.row); meta.set(r.row.id, r.open); }
+      }
+      if (!rows.length) note(typed ? tt('feed.noResults', 'Sem resultados') : tt('search.chatsHint', 'Busque conversas, grupos e mensagens'), 'search');
+      nativeMeta.current = meta;
+      return rows;
+    }
     if (tab === 'people') {
       for (const u of results.people || []) {
         if (!u?.email) continue;
@@ -429,13 +621,46 @@ export default function SearchScreen() {
     nativeMeta.current = meta;
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nativeOn, tab, query, results, trendingTags, trendingSounds, loading, t]);
+  }, [nativeOn, tab, query, results, trendingTags, trendingSounds, loading, t, chatSections]);
   const onNativePress = useCallback((id) => { const fn = nativeMeta.current.get(id); if (fn) fn(); }, []);
+  // Seção com "Ver todas" (Mensagens locais → aba Mensagens).
+  const onNativeAction = useCallback((id, action) => { if (action === 'section') { const fn = nativeMeta.current.get(id); if (fn) fn(); } }, []);
+
+  // [2026-10-18 search-tabs] barra de busca nativa: foco ao abrir (iOS precisa do ref).
+  const nativeHdr = nativeSearchHeaderOn();
+  const searchBarRef = useRef(null);
+  useEffect(() => {
+    if (!nativeHdr) return undefined;
+    const tm = setTimeout(() => { try { searchBarRef.current?.focus?.(); } catch {} }, Platform.OS === 'ios' ? 450 : 250);
+    return () => clearTimeout(tm);
+  }, [nativeHdr]);
+  const placeholder = isMsgTab(tab) ? (t('gsearch.placeholder') || 'Pesquisar mensagens…')
+    : tab === 'chats' ? tt('search.chatsPlaceholder', 'Pesquisar conversas e mensagens')
+    : (t('search.placeholder') || 'Pesquisar pessoas, hashtags, sons…');
+  const msgCfg = isMsgTab(tab) ? MSG_TABS[tab] : null;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {nativeHdr ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: tt('search.title', 'Pesquisar'),
+          search: {
+            ref: searchBarRef,
+            placeholder,
+            autoFocus: true,
+            obscureBackground: false,
+            hideNavigationBar: false,
+            onChangeText: (e) => setQuery(e?.nativeEvent?.text ?? ''),
+            onCancelButtonPress: () => setQuery(''),
+          },
+        })} />
+      ) : null}
+      <NativeHeaderSafeArea enabled={nativeHdr}>
       {/* Header — back chevron + search input. Auto-focuses the input on
           mount so the user can start typing immediately. */}
+      {!nativeHdr && (
       <View style={[styles.header, {
         ...(Platform.OS === 'ios' ? { paddingTop: insets.top + 6 } : null),
         backgroundColor: colors.background,
@@ -455,7 +680,7 @@ export default function SearchScreen() {
           <IconSearch size={18} color={colors.textSecondary} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder={tab === 'messages' ? (t('gsearch.placeholder') || 'Pesquisar mensagens…') : (t('search.placeholder') || 'Pesquisar pessoas, hashtags, sons…')}
+            placeholder={placeholder}
             placeholderTextColor={colors.textSecondary}
             value={query}
             onChangeText={setQuery}
@@ -472,6 +697,7 @@ export default function SearchScreen() {
           )}
         </View>
       </View>
+      )}
 
       {/* Tab bar — 4 tabs (Pessoas / Hashtags / Sons / Lives). */}
       <ScrollView
@@ -490,7 +716,7 @@ export default function SearchScreen() {
           return (
             <TouchableOpacity
               key={tb.key}
-              onPress={() => setTab(tb.key)}
+              onPress={() => { if (tab !== tb.key) { try { require('../constants/theme').haptic?.select?.(); } catch {} } setTab(tb.key); }}
               style={[styles.tabPill, {
                 // [2026-10-14 vis3] ativo = pílula sólida (primary/onPrimary), igual aos filtros da home.
                 // Antes: texto #111 sobre #111 translúcido → "Pessoas" invisível no escuro.
@@ -510,32 +736,40 @@ export default function SearchScreen() {
         })}
       </ScrollView>
 
-      {loading && !(nativeOn && tab !== 'messages') && (
+      {loading && !(nativeOn && !isMsgTab(tab)) && !isMsgTab(tab) && tab !== 'chats' && (
         <View style={{ paddingVertical: 10 }}>
           <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
       )}
 
-      {nativeOn && tab !== 'messages' ? (
+      {isMsgTab(tab) ? (
+        <GlobalMessageSearch
+          key={tab}
+          query={query} colors={colors} isDark={isDark} t={t} router={router} pillStyle={styles.tabPill}
+          lockedTypes={msgCfg ? msgCfg.types : undefined}
+          layout={msgCfg ? msgCfg.layout : undefined}
+          emptyText={msgCfg ? tt(msgCfg.emptyKey, msgCfg.emptyFb) : undefined}
+        />
+      ) : nativeOn ? (
         <NativeResultList
           rows={nativeRows}
           highlight={query.trim().length >= 2 ? query.trim().replace(/^#/, '') : ''}
           colors={colors}
           isDark={isDark}
           onPress={onNativePress}
+          onAction={onNativeAction}
           onFailure={onNativeFailure}
         />
       ) : (
       <FadeSlideIn>
+        {tab === 'chats' && renderChats()}
         {tab === 'people' && renderPeople()}
-        {tab === 'messages' && (
-          <GlobalMessageSearch query={query} colors={colors} isDark={isDark} t={t} router={router} pillStyle={styles.tabPill} />
-        )}
         {tab === 'hashtags' && renderHashtags()}
         {tab === 'sounds' && renderSounds()}
         {tab === 'lives' && renderLives()}
       </FadeSlideIn>
       )}
+      </NativeHeaderSafeArea>
     </View>
   );
 }

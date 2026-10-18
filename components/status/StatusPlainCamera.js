@@ -31,7 +31,7 @@ import { CameraView } from 'expo-camera';
 
 function StatusPlainCameraInner(
   // eslint-disable-next-line no-unused-vars
-  { facing = 'front', mode = 'picture', arFilterKey = 'none', isActive = true, onError },
+  { facing = 'front', mode = 'picture', arFilterKey = 'none', isActive = true, onError, flash = 'off' },
   ref,
 ) {
   const camera = useRef(null);
@@ -86,6 +86,10 @@ function StatusPlainCameraInner(
         // is `active`. Pausing the preview when the modal is hidden keeps the
         // lens from staying hot behind the preview/compose screens.
         active={isActive !== false}
+        // [2026-10-18 status-flash] flash da foto ('off' | 'on' | 'auto'); no
+        // vídeo o "ligado" vira lanterna (o expo-camera não tem flash de vídeo).
+        flash={flash === 'on' || flash === 'auto' ? flash : 'off'}
+        enableTorch={mode === 'video' && flash === 'on'}
         onMountError={(e) => { try { onError?.(e); } catch {} }}
       />
     </View>

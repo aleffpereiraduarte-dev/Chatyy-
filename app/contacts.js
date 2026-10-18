@@ -5,7 +5,7 @@ import React from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
   ActivityIndicator, Platform, Modal, Alert, SectionList, Animated, Easing,
-  KeyboardAvoidingView, RefreshControl,
+  KeyboardAvoidingView, RefreshControl, PixelRatio,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter, Stack } from 'expo-router';
@@ -470,9 +470,11 @@ function ContactsScreenInner() {
   // the results of a newer query (search.js uses the same guard).
   const searchReqRef = useRef(0);
 
-  // Debounced local search
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const searchDebounceRef = useRef(null);
+  // [2026-10-18 contacts-instant] Filtro LOCAL na hora (era debounce de 300 ms):
+  // useDeferredValue mantém a digitação fluida em agendas grandes (o React
+  // re-filtra em prioridade baixa). O nome segue "debouncedSearch" p/ não mexer
+  // nos usos; a busca no SERVIDOR (aba No Chatyy) tem o próprio timer de 250 ms.
+  const debouncedSearch = React.useDeferredValue(search);
 
   // [WA-parity 2026-05-31] Share-contact (send a contact card to a chat).
   // shareContactCard holds the {name,phone,email} card being shared; when
@@ -491,15 +493,6 @@ function ContactsScreenInner() {
   ];
 
   useEffect(() => { loadContacts(); }, []);
-
-  // Debounce search input (300ms)
-  useEffect(() => {
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
-    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
-  }, [search]);
 
   // Debounced server search for family tab
   useEffect(() => {
@@ -545,7 +538,7 @@ function ContactsScreenInner() {
       } finally {
         if (reqId === searchReqRef.current) setSearchingUsers(false);
       }
-    }, 200);
+    }, 250); // [2026-10-18 contacts-instant] debounce único do servidor (antes 300 + 200 ms)
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [debouncedSearch, activeTab]);
 
@@ -2261,6 +2254,9 @@ function ContactsScreenInner() {
                   ? shareConvList.filter(cv => (cv.name || cv.display_name || cv.other_email || '').toLowerCase().includes(shareConvSearch.trim().toLowerCase()))
                   : shareConvList)}
                 keyExtractor={(item, index) => String(item.id || index)}
+                // [2026-10-18 contacts-instant] linha de 1 linha + avatar 40 = altura fixa
+                // (minHeight 64); com fonte grande do sistema a altura varia → sem layout fixo.
+                getItemLayout={_shareRowFixed ? _shareRowLayout : undefined}
                 style={{ maxHeight: 380 }}
                 ListEmptyComponent={
                   <View style={{ paddingVertical: Spacing.lg, alignItems: 'center' }}>
@@ -2296,6 +2292,11 @@ function ContactsScreenInner() {
     </View>
   );
 }
+
+// [2026-10-18 contacts-instant] layout fixo da lista "Enviar contato para…".
+const SHARE_ROW_H = 64;
+const _shareRowFixed = (() => { try { return Platform.OS !== 'web' && PixelRatio.getFontScale() <= 1.15; } catch { return false; } })();
+const _shareRowLayout = (_, index) => ({ length: SHARE_ROW_H, offset: SHARE_ROW_H * index, index });
 
 const s = StyleSheet.create({
   container: { flex: 1 },

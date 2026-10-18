@@ -1240,6 +1240,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
               facing={facing}
               mode={captureMode === 'video' ? 'video' : 'picture'}
               arFilterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none'}
+              flash={flash} /* [2026-10-18 status-flash] o botão de flash agora chega à câmera */
               isActive={visible && !preview}
               onError={(e) => { if (__DEV__) console.warn('[StatusCamera] vision-camera error:', e?.message || e); }}
             />
@@ -1261,6 +1262,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
             ref={cameraRef}
             facing={facing}
             mode={captureMode === 'video' ? 'video' : 'picture'}
+            flash={flash} /* [2026-10-18 status-flash] */
             isActive={visible && !preview}
             onError={(e) => { if (__DEV__) console.warn('[StatusCamera] plain-camera error:', e?.message || e); }}
           />

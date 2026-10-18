@@ -9,6 +9,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COUNTRIES, countryDisplayName } from '../../constants/countries';
 import { IconX, IconCheck, IconSearch } from '../Icons';
 import FlagIcon from './FlagIcon';
+// [2026-10-18 onboarding-native-picker] Lista em NATIVO (ChatyyResultList:
+// UICollectionView / RecyclerView, destaque do termo sem acento) dentro da
+// MESMA folha (pageSheet iOS). Seletor ÚNICO: app/signup-phone.js também usa
+// este componente quando o nativo está ligado. Kill switch (OTA/console):
+// globalThis.__chatyy_onboarding_native_picker = false → FlatList JS abaixo.
+import NativeResultList, { useNativeResults } from '../native/NativeResultList';
+import { gradientIndex } from '../chatlist/nativeAdapter';
+
+export const ONBOARDING_PICKER_KILL = '__chatyy_onboarding_native_picker';
+/** Seletor nativo disponível? (binário com ChatyyResultList + kill switch + sem falha na sessão). */
+export function onboardingNativePickerOn() {
+  if (Platform.OS === 'web') return false;
+  try {
+    if (globalThis[ONBOARDING_PICKER_KILL] === false) return false;
+    return require('../native/NativeResultList').nativeResultsEnabled(ONBOARDING_PICKER_KILL);
+  } catch { return false; }
+}
 
 const ROW_H = 56;
 
@@ -16,7 +33,7 @@ function _norm(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 }
 
-export default function CountryPicker({ visible, onClose, onSelect, selected, suggested = [], colors, t, language }) {
+export default function CountryPicker({ visible, onClose, onSelect, selected, suggested = [], colors, t, language, isDark }) {
   const insets = useSafeAreaInsets();
   const [q, setQ] = useState('');
   const inputRef = useRef(null);
@@ -87,6 +104,34 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
 
   const keyExtractor = useCallback((item) => item.key || item.code, []);
 
+  // ── Nativo ────────────────────────────────────────────────────────────────
+  const [nativeOn, onNativeFailure] = useNativeResults(ONBOARDING_PICKER_KILL);
+  const useNative = nativeOn && Platform.OS !== 'web';
+  const byId = useRef(new Map());
+  const nativeRows = useMemo(() => {
+    if (!useNative) return [];
+    const out = [];
+    const map = new Map();
+    const selLabel = t('nob.countrySelected') || 'Selecionado';
+    for (const item of data) {
+      if (item._header) { out.push({ id: `s:${item.key}`, k: 's', t: String(item.title || '') }); continue; }
+      const id = `c:${item.key || item.code}`;
+      const on = item.code === selected;
+      const row = {
+        id, k: 'r', t: item.label, tm: item.dial, hl: 1,
+        tiles: [{ u: '', i: String(item.code || '').toUpperCase(), g: gradientIndex(item.code || '') }],
+        a11y: `${item.label}, ${item.dial}${on ? `, ${selLabel}` : ''}`,
+      };
+      if (on) row.sb = selLabel;
+      out.push(row);
+      map.set(id, item);
+    }
+    if (!out.length) out.push({ id: 'n:empty', k: 'n', t: t('nob.noCountry') || 'Nenhum país encontrado', gl: 'search', tap: 0 });
+    byId.current = map;
+    return out;
+  }, [useNative, data, selected, t]);
+  const onNativePress = useCallback((id) => { const c = byId.current.get(id); if (c) pick(c); }, [pick]);
+
   return (
     <Modal
       visible={!!visible}
@@ -123,6 +168,19 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
             testID="nob-country-search"
           />
         </View>
+        {useNative ? (
+          <NativeResultList
+            rows={nativeRows}
+            highlight={_norm(q).replace(/^\+/, '')}
+            colors={colors}
+            isDark={isDark != null ? !!isDark : !!colors.isDark}
+            separators
+            swipeEnabled={false}
+            bottomInset={insets.bottom + 24}
+            onPress={onNativePress}
+            onFailure={onNativeFailure}
+          />
+        ) : (
         <FlatList
           data={data}
           keyExtractor={keyExtractor}
@@ -136,6 +194,7 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
             <Text style={[st.empty, { color: colors.textSecondary }]}>{t('nob.noCountry') || 'Nenhum país encontrado'}</Text>
           )}
         />
+        )}
       </View>
     </Modal>
   );

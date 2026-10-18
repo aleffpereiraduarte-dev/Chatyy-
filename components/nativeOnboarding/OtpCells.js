@@ -10,6 +10,7 @@ const LEN = 6;
 
 const OtpCells = forwardRef(function OtpCells({
   value, onChange, onComplete, colors, errorTick = 0, disabled = false, reduced = false, accessibilityLabel, autoFocus = true, testID,
+  haptics = true,
 }, ref) {
   const inputRef = useRef(null);
   const { width } = useWindowDimensions();
@@ -68,6 +69,11 @@ const OtpCells = forwardRef(function OtpCells({
 
   const handleChange = (raw) => {
     const d = String(raw || '').replace(/\D/g, '').slice(0, LEN);
+    // [2026-10-18 otp-haptics] toque leve a cada dígito DIGITADO (colar/autofill
+    // = vários de uma vez → sem toque; erro/sucesso ficam com quem verifica).
+    if (haptics && Platform.OS !== 'web' && d.length === String(value || '').length + 1) {
+      try { require('../../services/haptics').tap('light'); } catch {}
+    }
     onChange?.(d);
     if (d.length === LEN) onComplete?.(d);
   };

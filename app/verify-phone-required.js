@@ -16,6 +16,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconSmartphone } from '../components/Icons';
+// [2026-10-18 otp-haptics] toque leve por dígito, erro/sucesso na verificação.
+import { tap as hTap, success as hSuccess, error as hError } from '../services/haptics';
 
 export default function VerifyPhoneRequiredScreen() {
   const { colors } = useTheme();
@@ -65,18 +67,21 @@ export default function VerifyPhoneRequiredScreen() {
 
   const verifyCode = async () => {
     setError('');
-    if (code.length !== 6) { setError(t('verifyPhoneReq.codeLength')); return; }
+    if (code.length !== 6) { try { hError(); } catch {} setError(t('verifyPhoneReq.codeLength')); return; }
     setLoading(true);
     try {
       const r = await api.verifyPhoneCheck(phone, code);
       if (r?.success) {
+        try { hSuccess(); } catch {}
         // Refresh user data — server now returns needs_phone_verification=false
         await refreshAuth();
         router.replace('/inbox');
       } else {
+        try { hError(); } catch {}
         setError(r?.message || t('signup.validation.invalidCode'));
       }
     } catch (e) {
+      try { hError(); } catch {}
       setError(t('compose.errorConnection'));
     } finally {
       setLoading(false);
@@ -145,7 +150,11 @@ export default function VerifyPhoneRequiredScreen() {
             <TextInput
               ref={codeRef}
               value={code}
-              onChangeText={(v) => setCode(v.replace(/\D/g, '').slice(0, 6))}
+              onChangeText={(v) => {
+                const d = v.replace(/\D/g, '').slice(0, 6);
+                if (Platform.OS !== 'web' && d.length === code.length + 1) { try { hTap('light'); } catch {} }
+                setCode(d);
+              }}
               placeholder="000000"
               placeholderTextColor={colors.textTertiary}
               keyboardType="number-pad"

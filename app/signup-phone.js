@@ -40,6 +40,8 @@ import { VOICE_OTP_ENABLED } from '../constants/featureFlags';
 import { markFreshSignup } from '../services/firstRun'; // [2026-10-11 funnel-qa]
 import NativeOnboardingGate from '../components/nativeOnboarding/NativeOnboardingGate'; // [2026-10-15 native-onboarding]
 import { isNativeOnboardingOn } from '../components/nativeOnboarding/flag';
+// [2026-10-18 onboarding-native-picker] seletor de país ÚNICO (lista nativa na folha) quando ligado.
+import CountryPicker, { onboardingNativePickerOn } from '../components/nativeOnboarding/CountryPicker';
 // [2026-10-07 signup-ux] keyboard-controller aware container (falls back to RN
 // KeyboardAvoidingView when KC native is absent / on web), draft resume,
 // smarter phone/handle/password helpers.
@@ -2195,8 +2197,28 @@ function SignupPhoneLegacy() {
         </TouchableOpacity>
       </Modal>
 
-      {/* Country picker — full-screen list with search. Replaces PhoneInput's
-          inline picker and matches the login.js modal pattern. */}
+      {/* [2026-10-18 onboarding-native-picker] mesmo seletor do onboarding nativo
+          (folha + lista nativa + busca). Kill switch → Modal JS abaixo (igual antes). */}
+      {onboardingNativePickerOn() ? (
+        <CountryPicker
+          visible={showCountryPicker}
+          onClose={() => { setShowCountryPicker(false); setCountrySearch(''); }}
+          onSelect={(cc) => {
+            // não limpa o telefone digitado (padrão WhatsApp)
+            setCountryCode(cc);
+            setShowCountryPicker(false);
+            setCountrySearch('');
+          }}
+          selected={countryCode}
+          suggested={[countryCode, 'BR', 'US', 'PT']}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          language={language}
+        />
+      ) : (
+      /* Country picker — full-screen list with search. Replaces PhoneInput's
+          inline picker and matches the login.js modal pattern. */
       <Modal
         visible={showCountryPicker}
         animationType="slide"
@@ -2324,6 +2346,7 @@ function SignupPhoneLegacy() {
         </View>
         </View>
       </Modal>
+      )}
 
       {/* WhatsApp-style "Encontramos um backup" sheet. Surfaces after auth
           (signup completion OR existing-account OTP login) when the user

@@ -1142,7 +1142,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
             kept as a quick-search-in-feed surface for users who want to find
             an account without leaving the feed. */}
         <TouchableOpacity
-          onPress={() => { try { router?.push('/search'); } catch {} }}
+          onPress={() => { try { router?.push('/search?tab=people'); } catch {} }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={t('feed.unifiedSearch') || 'Pesquisa'}
           accessibilityRole="button"
@@ -1465,7 +1465,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         title={t('feed.empty')}
         subtitle={t('feed.emptySubtext')}
         cta={{ label: t('feed.createPost') || 'Criar publicação', onPress: () => { try { haptic.light(); } catch {} setCreateVisible(true); } }}
-        secondary={algorithm === 'following' ? { label: t('feed.forYou') || 'Para você', onPress: () => setAlgorithm('fyp') } : { label: t('feed.findPeople') || 'Encontrar pessoas', onPress: () => { try { router?.push('/search'); } catch {} } }}
+        secondary={algorithm === 'following' ? { label: t('feed.forYou') || 'Para você', onPress: () => setAlgorithm('fyp') } : { label: t('feed.findPeople') || 'Encontrar pessoas', onPress: () => { try { router?.push('/search?tab=people'); } catch {} } }}
       />
     );
   }, [loading, feedError, t, loadPosts, algorithm, router]);

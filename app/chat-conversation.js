@@ -259,6 +259,7 @@ import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPane
 import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, isNativeProfileEnabled, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
 import GroupInfoEditor from '../components/chat/GroupInfoEditor'; // [2026-10-18 chat-info-native]
 import { contactTile } from '../components/contacts/contactListAdapter'; // [2026-10-18 chat-info-native]
+import ForwardNativeList, { nativeForwardEnabled, markNativeForwardFailed } from '../components/chat/ForwardNativeList'; // [2026-10-18 fwd-native]
 import { initialsOf, gradientIndex } from '../components/chatlist/nativeAdapter'; // [2026-10-18 chat-info-native]
 import { shouldUseNativeProfile, ProfileScrollHost, NativeProfileMedia, NativeProfileList, profileTheme, profileInitials, avatarRefForEmail, avatarRefForUrl, hasRealPhoto, extractRecentLinks, profileColor } from '../components/chat/NativeProfileBridge'; // [2026-10-15 native-profile]
 // [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
@@ -41401,7 +41402,7 @@ function ChatConversationInner() {
                     borderBottomWidth: 1, borderBottomColor: colors.border + '40',
                     backgroundColor: isSelected ? (isDark ? 'rgba(17, 17, 17,0.16)' : 'rgba(17, 17, 17,0.08)') : 'transparent',
                   }}
-                  onPress={() => toggleForwardTarget(item.id)}
+                  onPress={() => { if (Platform.OS !== 'web') { try { Haptics.selectionAsync(); } catch {} } toggleForwardTarget(item.id); }}
                   activeOpacity={0.65}
                 >
                   <AvatarCircle
@@ -41450,6 +41451,28 @@ function ChatConversationInner() {
             };
             return (
               <View collapsable={false} style={{ flex: 1, overflow: 'hidden', zIndex: 1 }}>
+                {/* [2026-10-18 fwd-native] lista NATIVA virtualizada (seções, check animado + haptic) + chips; falha/kill switch → FlatList JS abaixo. */}
+                {nativeForwardEnabled() ? (
+                <ForwardNativeList
+                  recents={recents}
+                  rest={rest}
+                  query={q}
+                  selected={forwardSelected}
+                  currentEmail={currentEmail}
+                  lookup={(id) => forwardConversations.find(c => String(c.id) === String(id)) || null}
+                  onToggle={toggleForwardTarget}
+                  onFailure={(m) => { markNativeForwardFailed(m); setForwardSelected(prev => new Set(prev)); }}
+                  colors={colors}
+                  isDark={isDark}
+                  t={t}
+                  bottomInset={forwardSelected.size > 0 ? 136 : 12}
+                  empty={filtered.length === 0 ? (
+                    <Text style={[styles.forwardEmpty, { color: colors.textSecondary, marginTop: 40 }]}>
+                      {t('chatConv.noConversationsToForward') || 'Nenhuma conversa encontrada'}
+                    </Text>
+                  ) : null}
+                />
+                ) : (
                 <FlatList
                   style={{ flex: 1 }}
                   keyboardShouldPersistTaps="handled"
@@ -41483,6 +41506,7 @@ function ChatConversationInner() {
                     </>
                   }
                 />
+                )}
                 {/* Floating "Encaminhar para N" — só aparece quando há ao menos
                     um destino marcado. Botão único em vez de tap-per-target. */}
                 {forwardSelected.size > 0 && (
