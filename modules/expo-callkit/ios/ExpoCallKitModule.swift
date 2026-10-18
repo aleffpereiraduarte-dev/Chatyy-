@@ -785,6 +785,18 @@ public class ExpoCallKitModule: Module {
       return CallFx.shared.isEnabled
     }
 
+    // ─── [2026-10-18 call-resilience] In-call resilience flags ─────────
+    // JSON object (see CallResilience.swift header) → App Group
+    // `call_res_flags`; read at the start of every call. "" = defaults.
+    // JS mirrors globalThis.__chatyy_call_res (OTA kill switch).
+    Function("setCallResilienceFlags") { (json: String) -> Bool in
+      return CallResilience.save(json: json)
+    }
+
+    Function("getCallResilienceFlags") { () -> String in
+      return UserDefaults(suiteName: CallResilience.appGroup)?.string(forKey: CallResilience.flagsKey) ?? ""
+    }
+
     // Current choice: { background: "none|blur_light|blur_strong|wp:N|custom", light: "none|retouch|low_light" }.
     Function("getCallEffects") { () -> [String: Any] in
       return [

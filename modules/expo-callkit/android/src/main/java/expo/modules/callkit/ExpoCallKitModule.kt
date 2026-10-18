@@ -1348,6 +1348,18 @@ class ExpoCallKitModule : Module() {
       try { expo.modules.callkit.video.CallFx.isEnabled(context.applicationContext) } catch (_: Throwable) { false }
     }
 
+    // ─── [2026-10-18 call-resilience] In-call resilience flags ──────────
+    // JSON object (see CallResilience.kt header) → prefs "call_res_flags";
+    // read at the start of every call. "" = defaults. JS mirrors
+    // globalThis.__chatyy_call_res (OTA kill switch).
+    Function("setCallResilienceFlags") { json: String ->
+      try { CallResilience.save(context.applicationContext, json) } catch (_: Throwable) { false }
+    }
+
+    Function("getCallResilienceFlags") {
+      try { CallResilience.raw(context.applicationContext) } catch (_: Throwable) { "" }
+    }
+
     Function("getCallEffects") {
       try {
         val fx = expo.modules.callkit.video.CallFx

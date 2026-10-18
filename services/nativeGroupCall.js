@@ -72,6 +72,16 @@ export function syncNativeGroupCallFlag(email) {
       m.setCallEffectsEnabled(globalThis.__chatyy_call_fx !== false);
     }
   } catch {}
+  // [2026-10-18 call-resilience] Resiliência em chamada (tom "Reconectando",
+  // espera 30 s, teto 45 s, aviso "conexão perdida", pausa automática do
+  // vídeo) — kill switch OTA/console: globalThis.__chatyy_call_res =
+  // { enabled: false } desliga tudo; ausente = padrões do nativo.
+  try {
+    if (m && typeof m.setCallResilienceFlags === 'function') {
+      const f = globalThis.__chatyy_call_res;
+      m.setCallResilienceFlags(f && typeof f === 'object' ? JSON.stringify(f) : '');
+    }
+  } catch {}
   if (!m || typeof m.setNativeGroupCallUiEnabled !== 'function') return false;
   try {
     return m.setNativeGroupCallUiEnabled(canUseNativeGroupCall(email));

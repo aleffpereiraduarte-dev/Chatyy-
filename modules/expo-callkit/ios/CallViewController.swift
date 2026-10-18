@@ -397,7 +397,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // call_1791692518038_sm6ld6796).
     private var peerGoneWork: DispatchWorkItem?
     private var peerGoneRearms = 0
-    private static let peerGoneGraceSeconds: Double = 15
+    // [2026-10-18 call-resilience] Was a fixed 15 s; WhatsApp waits ~30 s for a
+    // peer in an elevator/tunnel. Flag `peer_grace_s` (master off → 15 s).
+    private static var peerGoneGraceSeconds: Double { CallResilience.flags().peerGraceS }
+    // [2026-10-18 call-resilience] Reconnect tone + trail diag + hold cap, and
+    // camera auto-pause on a very poor uplink (CallResilience.swift).
+    private var reconnectGuard: CallReconnectGuard?
+    private var videoAutoPause: CallVideoAutoPause?
 
     // [2026-10-12 deinit-guard] Live CallViewController instances (weak). A
     // duplicate VC for the same call (safety-net re-present, redial while the
@@ -463,7 +469,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private static func isTerminalStatus(_ s: String) -> Bool {
         if kTerminalStatuses.contains(s) { return true }
         return [CallStrings.s("declined"), CallStrings.s("busy"),
-                CallStrings.s("unavailable"), CallStrings.s("ended")].contains(s)
+                CallStrings.s("unavailable"), CallStrings.s("ended"),
+                CallResilience.text("connectionLost", lang: GroupCallStrings.lang)].contains(s) // [2026-10-18 call-resilience]
     }
     /// [2026-10-11 call-parity] Internal status literals are pt-BR (the state
     /// machine compares them); the label shows the app language.
@@ -526,7 +533,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 return
             }
             nativeCallDiag("peer_gone_timeout", self.callId, "remotes=0")
-            self.handleHangup(reason: "peer_left", statusText: "Encerrada", sendCallEnd: true)
+            self.endForConnectionLoss(reason: "peer_left")
         }
         peerGoneWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.peerGoneGraceSeconds, execute: work)
@@ -545,6 +552,109 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let r = room, r.connectionState == .reconnecting { return }
         session.isReconnecting = false
         session.status = (callConnectedAt != nil) ? "Conectado" : statusDotsBase
+    }
+
+    // MARK: - [2026-10-18 call-resilience] reconnect guard / video auto-pause
+
+    /// Main thread (viewDidLoad). Kill switch: App Group `call_res_flags`
+    /// {"enabled":false} → nothing installed (legacy behaviour).
+    private func installCallResilience() {
+        let f = CallResilience.flags()
+        guard f.enabled else { return }
+        let cid = callId
+        let g = CallReconnectGuard(
+            flags: f,
+            isReconnecting: { [weak self] in
+                guard let self = self, !self.didHangup else { return false }
+                return self.session.isReconnecting
+            },
+            mediaConnected: { [weak self] in
+                guard let self = self else { return false }
+                return self.callConnectedAt != nil && !self.session.isGroup
+            },
+            onGiveUp: { [weak self] in
+                self?.reconnectHoldCapReached()
+            },
+            diag: { ev, detail in nativeCallDiag(ev, cid, detail) }
+        )
+        reconnectGuard = g
+        g.start()
+        if f.videoAutoPause {
+            let vp = CallVideoAutoPause(
+                flags: f,
+                cameraWanted: { [weak self] in
+                    guard let self = self, !self.didHangup else { return false }
+                    return self.session.camEnabled
+                },
+                eligible: { [weak self] in
+                    guard let self = self, self.session.localVideoTrack != nil else { return false }
+                    if self.session.isGroup || self.gridActive || self.screenSharing { return false }
+                    if self.session.onHold || self.peerOnHold || self.session.isReconnecting { return false }
+                    return self.callConnectedAt != nil
+                },
+                pause: { [weak self] in
+                    guard let self = self, let t = self.session.localVideoTrack else { return }
+                    Task { try? await t.mute() }
+                },
+                resume: { [weak self] in
+                    guard let self = self, !self.didHangup, self.session.camEnabled,
+                          let t = self.session.localVideoTrack else { return }
+                    Task { try? await t.unmute() }
+                },
+                changed: { [weak self] in
+                    self?.updateWeakConnectionPill()
+                },
+                diag: { ev, detail in nativeCallDiag(ev, cid, detail) }
+            )
+            videoAutoPause = vp
+            vp.start()
+        }
+    }
+
+    private func stopCallResilience() {
+        reconnectGuard?.stop()
+        reconnectGuard = nil
+        videoAutoPause?.stop()
+    }
+
+    /// "Reconectando…" for `hold_cap_s` straight. A Room that is connected
+    /// with the peer present means the flag is stale (no frozen screen): clear
+    /// it; otherwise the connection is really gone → end.
+    private func reconnectHoldCapReached() {
+        if let r = room, r.connectionState == .connected, !r.remoteParticipants.isEmpty,
+           !P2PCallBridge.ownsMedia(callId) {
+            nativeCallDiag("call_reconnect_stale", callId, "remotes=\(r.remoteParticipants.count)")
+            peerGoneWork?.cancel(); peerGoneWork = nil
+            peerGoneRearms = 0
+            session.isReconnecting = false
+            session.status = (callConnectedAt != nil) ? "Conectado" : statusDotsBase
+            return
+        }
+        endForConnectionLoss(reason: "reconnect_timeout")
+    }
+
+    /// Ends the call because the connection is gone (hold cap / peer never
+    /// came back): WhatsApp "Chamada encerrada — conexão perdida".
+    private func endForConnectionLoss(reason: String) {
+        guard !didHangup else { return }
+        let f = CallResilience.flags()
+        let txt = CallResilience.text("connectionLost", lang: GroupCallStrings.lang)
+        nativeCallDiag("call_end_connection_lost", callId, "reason=\(reason)")
+        handleHangup(reason: reason, statusText: f.endNotice ? txt : "Encerrada", sendCallEnd: true)
+        if f.endNotice { CallEndNotice.show(txt, delay: 0.6) }
+    }
+
+    /// LiveKit `didDisconnectWithError` → localized "connection lost" text when
+    /// the error is a network-class failure on a call whose media flowed;
+    /// nil for our own leave, kicks, room deleted, duplicate identity.
+    private static func connectionLostText(error: LiveKitError?, mediaFlowed: Bool) -> String? {
+        guard mediaFlowed, let e = error, CallResilience.flags().endNotice else { return nil }
+        switch e.type {
+        case .cancelled, .duplicateIdentity, .participantRemoved, .roomDeleted:
+            return nil
+        default:
+            return CallResilience.text("connectionLost", lang: GroupCallStrings.lang)
+        }
     }
 
     /// Single place that commits "Conectado": opens the caller gate, stops
@@ -1020,6 +1130,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         super.viewDidLoad()
         CallViewController.liveInstance = self // [2026-10-11 ongoing-call]
         view.backgroundColor = UIColor.black // [2026-10-16 P&B premium] era #0B141A
+        installCallResilience() // [2026-10-18 call-resilience]
         // [2026-10-09 p2p-ios] Tipo da ligação p/ o P2PCallBridge + estado P2P → UI.
         P2PCallBridge.noteCall(callId: callId, hasVideo: hasVideo)
         installP2PObserver()
@@ -2158,6 +2269,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        stopCallResilience() // [2026-10-18 call-resilience]
         stopOutgoingCameraPreview() // [2026-10-14 self-view] camera off if never answered
         peerGoneWork?.cancel(); peerGoneWork = nil // [2026-10-12 peer-gone]
         P2PCallBridge.close(callId: callId, reason: "hangup") // [2026-10-09 p2p-ios]
@@ -2555,6 +2667,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var camOnAnswerPending = false
 
     private func applyCamEnabled(_ enabled: Bool) {
+        videoAutoPause?.userToggledCamera() // [2026-10-18 call-resilience] the user's choice wins
         if isOutgoing && !outgoingMicGateOpen && !hasVideo {
             camOnAnswerPending = enabled
             Task { @MainActor in self.isTogglingCamera = false }
@@ -6613,7 +6726,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if adaptiveVideo == nil, let r = room {
             let c = AdaptiveVideoController(room: r, callId: callId, canApply: { [weak self] in
                 guard let self = self else { return false }
-                return !self.didHangup
+                // [2026-10-18 call-resilience] never restart a camera we auto-paused.
+                return !self.didHangup && !(self.videoAutoPause?.paused ?? false)
             })
             c.start()
             adaptiveVideo = c
@@ -6729,6 +6843,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let text: String?
         if didHangup || session.onHold || peerOnHold || reconnecting {
             text = nil
+        } else if videoAutoPause?.paused == true {
+            text = CallResilience.text("videoPaused", lang: GroupCallStrings.lang) // [2026-10-18 call-resilience]
         } else if localWeak {
             text = CallStrings.s("weakConnection")
         } else if peerWeak {
@@ -6785,6 +6901,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// one-way "cellular + 2× poor → 540p" step-down is folded into it).
     private func noteLocalConnectionQuality(_ score: Int) {
         adaptiveVideo?.noteLocalQuality(score)
+        videoAutoPause?.noteLocalQuality(score) // [2026-10-18 call-resilience]
     }
 
     private func cleanupCallTimers() {
@@ -7691,10 +7808,14 @@ extension CallViewController: RoomDelegate {
         Task { @MainActor in
             switch connectionState {
             case .reconnecting:
+                if !self.session.isReconnecting {
+                    nativeCallDiag("lk_reconnecting", self.callId, "media=\(self.callConnectedAt != nil ? 1 : 0)") // [2026-10-18 call-resilience]
+                }
                 self.session.status = "Reconectando..."
                 self.session.isReconnecting = true
             case .connected:
                 if self.session.isReconnecting {
+                    nativeCallDiag("lk_reconnected", self.callId, "media=\(self.callConnectedAt != nil ? 1 : 0)") // [2026-10-18 call-resilience]
                     // [2026-10-10 call-states] Back to the REAL phase: only a
                     // call whose media already flowed goes back to "Conectado"
                     // (timer resumes); otherwise restore Chamando/Tocando/
@@ -7753,6 +7874,7 @@ extension CallViewController: RoomDelegate {
             // (Room is already gone; CXEndCallAction would still fire but
             // CallSignalWs.fireCallEnd would duplicate the server-side BYE).
             // Re-entrant calls still trigger forceDismissSelf via handleHangup.
+            let endedBefore = self.didHangup // [2026-10-18 call-resilience]
             self.didHangup = true
             // [minimize-drop fix 2026-05-26] Peer ended the call (possibly
             // while we were minimized). Clear the minimize flag + holder so the
@@ -7761,11 +7883,21 @@ extension CallViewController: RoomDelegate {
             // above), so deinit's room-teardown is a no-op either way.
             self.isMinimizing = false
             CallViewController.minimizedInstance = nil
+            // [2026-10-18 call-resilience] LiveKit gave up its own reconnect
+            // (network/timeout class error) on a call whose media flowed →
+            // WhatsApp "Chamada encerrada — conexão perdida".
+            self.stopCallResilience()
+            let lostText: String? = endedBefore ? nil : Self.connectionLostText(error: error, mediaFlowed: self.callConnectedAt != nil)
+            if lostText != nil {
+                let errType: String = error.map { String(describing: $0.type) } ?? "nil"
+                nativeCallDiag("call_end_connection_lost", self.callId, "reason=lk_" + errType)
+            }
             // [#1171 redux dismiss, 2026-05-19] Update visible status BEFORE
             // teardown so the user sees the call is ending — same rationale
             // as handleHangup. Mostly relevant for peer-end / network-drop
             // where the user didn't tap hangup themselves.
-            self.session.status = "Encerrada"
+            self.session.status = lostText ?? "Encerrada"
+            if let t = lostText { CallEndNotice.show(t, delay: 0.6) }
             self.stopRingbackTone(reason: "didDisconnectWithError")
             NotificationCenter.default.post(
                 name: CallViewController.callEndedNotification,

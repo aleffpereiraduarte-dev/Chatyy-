@@ -171,6 +171,10 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // [2026-10-16 wave13-B] Efeitos em chamada (kill switch + escolha atual).
   setCallEffectsEnabled?(enabled: boolean): boolean;
   getCallEffectsEnabled?(): boolean;
+  // [2026-10-18 call-resilience] In-call resilience flags (JSON object string;
+  // "" = defaults). Binaries before 2026-10-18 lack it.
+  setCallResilienceFlags?(json: string): boolean;
+  getCallResilienceFlags?(): string;
   openNativeGroupCall?(params: Record<string, any>): Promise<boolean>;
 
   // [2026-05-17 RNNoise] Per-user ML noise suppression toggle. Default ON.
@@ -898,6 +902,23 @@ export function setCallEffectsEnabled(enabled: boolean): boolean {
   try {
     if (m && typeof m.setCallEffectsEnabled === 'function') {
       return !!m.setCallEffectsEnabled(!!enabled);
+    }
+  } catch {}
+  return false;
+}
+
+/** [2026-10-18 call-resilience] Kill switches for the native call screen's
+ *  network resilience (reconnect tone, 30 s peer grace, 45 s hold cap,
+ *  "conexão perdida" notice, camera auto-pause). `flags` = null/undefined →
+ *  native defaults. Keys: enabled, reconnect_tone, peer_grace_s, hold_cap_s,
+ *  end_notice, video_autopause, vpause_after_s, vresume_after_s.
+ *  Older binaries lack it → false. */
+export function setCallResilienceFlags(flags?: Record<string, any> | null): boolean {
+  const m = getModule();
+  try {
+    if (m && typeof m.setCallResilienceFlags === 'function') {
+      const json = flags && typeof flags === 'object' ? JSON.stringify(flags) : '';
+      return !!m.setCallResilienceFlags(json);
     }
   } catch {}
   return false;

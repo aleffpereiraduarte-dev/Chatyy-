@@ -442,6 +442,11 @@ class CallActivity : ComponentActivity() {
   //   phone was still ringing). After accept: no media in 8s → resubscribe
   //   nudge; 25s → "Não foi possível conectar" + call_end{reason:failed}.
   private var mediaFlowing: Boolean = false
+  // [2026-10-18 call-resilience] Reconnect tone/trail/hold cap + camera
+  // auto-pause on a very poor uplink (CallResilience.kt). Installed on the
+  // first media; kill switch prefs "call_res_flags" {"enabled":false}.
+  private var reconnectGuard: CallReconnectGuard? = null
+  private var videoAutoPause: CallVideoAutoPause? = null
   private var connectWatchdogJob: Job? = null
   /** Caller ring gate: true once mic/camera were published after the answer. */
   private var callerMediaPublished: Boolean = false
@@ -712,6 +717,7 @@ class CallActivity : ComponentActivity() {
       state.connectionStartedAt = System.currentTimeMillis()
     }
     if (first) {
+      installCallResilience() // [2026-10-18 call-resilience]
       Log.i(TAG, "[call-states] Conectado (media truth) src=$src callId=$callId")
       try { CallVideoQuality.postDiag("call_state_media", "src=$src") } catch (_: Throwable) {}
     }
@@ -1049,6 +1055,7 @@ class CallActivity : ComponentActivity() {
           onToggleMute = { desired -> applyMuteToggle(desired) },
           onToggleCam = onToggleCam@{ desired ->
             CallDiag.log("camera_toggle", callId, "on=$desired p2p=${p2p != null} media=$mediaFlowing", applicationContext)
+            videoAutoPause?.userToggledCamera() // [2026-10-18 call-resilience] the user's choice wins
             // [2026-10-10 p2p-android] Ligação P2P: câmera = replaceTrack no
             // transceiver de vídeo (sem renegociar). O outro lado vira vídeo
             // sozinho quando os frames chegam.
@@ -1645,6 +1652,7 @@ class CallActivity : ComponentActivity() {
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
     try { stopCallerRingPreview() } catch (_: Throwable) {} // [2026-10-14 self-view]
+    stopCallResilience() // [2026-10-18 call-resilience]
     // [2026-10-11 ongoing-call] Forget the live screen + refresh the JS bar.
     if (liveRef?.get() === this) { liveRef = null; uiVisible = false }
     try { ExpoCallKitModule.emitCallUiChanged() } catch (_: Throwable) {}
@@ -2950,6 +2958,104 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // ────────────── [2026-10-18 call-resilience]
+
+  /** Network-class LiveKit drop (not our leave / kick / room deleted / dup). */
+  private fun isNetworkLoss(reason: DisconnectReason?): Boolean = when (reason) {
+    DisconnectReason.CLIENT_INITIATED,
+    DisconnectReason.DUPLICATE_IDENTITY,
+    DisconnectReason.PARTICIPANT_REMOVED,
+    DisconnectReason.ROOM_DELETED,
+    DisconnectReason.ROOM_CLOSED,
+    DisconnectReason.USER_REJECTED,
+    DisconnectReason.USER_UNAVAILABLE -> false
+    else -> true
+  }
+
+  private fun installCallResilience() {
+    if (reconnectGuard != null || finishing) return
+    val f = try { CallResilience.flags(applicationContext) } catch (_: Throwable) { return }
+    if (!f.enabled) return
+    val ctx = applicationContext
+    val cid = callId
+    val diag: (String, String) -> Unit = { ev, d -> CallDiag.log(ev, cid, d, ctx) }
+    val g = CallReconnectGuard(
+      flags = f,
+      isReconnecting = { !finishing && state.isReconnecting },
+      mediaConnected = { mediaFlowing && state.groupParticipants.size < 2 },
+      onGiveUp = { reconnectHoldCapReached() },
+      diag = diag,
+    )
+    reconnectGuard = g
+    g.start()
+    if (f.videoAutoPause) {
+      val vp = CallVideoAutoPause(
+        flags = f,
+        cameraWanted = { !finishing && state.isCameraOn },
+        eligible = {
+          p2p == null && room != null && state.hasLocalVideo && state.groupParticipants.size < 2 &&
+            !state.isScreenSharing && !state.isOnHold && !state.peerOnHold && !state.isReconnecting && mediaFlowing
+        },
+        pause = {
+          val r = room
+          if (r != null) lifecycleScope.launch {
+            try { r.localParticipant.setCameraEnabled(false) } catch (t: Throwable) { Log.w(TAG, "autopause: ${t.message}") }
+          }
+        },
+        resume = {
+          val r = room
+          if (r != null && !finishing && state.isCameraOn) lifecycleScope.launch {
+            try {
+              r.localParticipant.setCameraEnabled(true)
+              bindLocalCameraIfReady(r)
+            } catch (t: Throwable) { Log.w(TAG, "autoresume: ${t.message}") }
+          }
+        },
+        changed = { on -> state.videoAutoPaused = on },
+        diag = diag,
+      )
+      videoAutoPause = vp
+      vp.start()
+    }
+  }
+
+  private fun stopCallResilience() {
+    try { reconnectGuard?.stop() } catch (_: Throwable) {}
+    reconnectGuard = null
+    try { videoAutoPause?.stop() } catch (_: Throwable) {}
+    videoAutoPause = null
+  }
+
+  /** "Reconectando…" for hold_cap_s straight. A CONNECTED Room with the peer
+   *  present means the flag is stale (no frozen screen): clear it; otherwise
+   *  the connection is really gone → end. */
+  private fun reconnectHoldCapReached() {
+    val r = room
+    if (p2p == null && r != null && r.state == Room.State.CONNECTED && r.remoteParticipants.isNotEmpty()) {
+      CallDiag.log("call_reconnect_stale", callId, "remotes=${r.remoteParticipants.size}", applicationContext)
+      peerGoneJob?.cancel(); peerGoneJob = null
+      state.isReconnecting = false
+      state.status = steadyStatusLabel()
+      return
+    }
+    endForConnectionLoss(reason = "reconnect_timeout")
+  }
+
+  /** The connection is gone (hold cap / peer never came back / rejoins
+   *  exhausted): WhatsApp "Chamada encerrada — conexão perdida". */
+  private fun endForConnectionLoss(reason: String) {
+    if (finishing) return
+    val f = try { CallResilience.flags(applicationContext) } catch (_: Throwable) { CallResilience.Flags(enabled = false) }
+    CallDiag.log("call_end_connection_lost", callId, "reason=$reason media=$mediaFlowing", applicationContext)
+    if (f.endNotice && mediaFlowing) {
+      val txt = CallResilience.text("connectionLost")
+      state.isReconnecting = false
+      state.status = txt
+      try { android.widget.Toast.makeText(applicationContext, txt, android.widget.Toast.LENGTH_LONG).show() } catch (_: Throwable) {}
+    }
+    finishCall(reason = reason)
+  }
+
   private fun scheduleLkRejoin(r: Room, why: String) {
     if (lkRejoinJob?.isActive == true) return
     lkRejoinAttempts++
@@ -2988,7 +3094,7 @@ class CallActivity : ComponentActivity() {
           scheduleLkRejoin(r, "retry")
         } else {
           stopRingback()
-          finishCall(reason = "room_disconnect")
+          endForConnectionLoss(reason = "room_disconnect") // [2026-10-18 call-resilience]
         }
       }
     }
@@ -2998,13 +3104,15 @@ class CallActivity : ComponentActivity() {
     if (peerGoneJob?.isActive == true) return
     state.status = "Reconectando…"
     state.isReconnecting = true
+    // [2026-10-18 call-resilience] grace from flags (default 30 s; master off → 15 s).
+    val graceMs = try { CallResilience.flags(applicationContext).peerGraceMs } catch (_: Throwable) { PEER_GONE_GRACE_MS }
     peerGoneJob = lifecycleScope.launch {
-      delay(PEER_GONE_GRACE_MS)
+      delay(graceMs)
       if (finishing || isFinishing) return@launch
       if ((room?.remoteParticipants?.size ?: 0) == 0) {
-        Log.d(TAG, "Peer did not come back in ${PEER_GONE_GRACE_MS}ms — finishing 1:1 call")
+        Log.d(TAG, "Peer did not come back in ${graceMs}ms — finishing 1:1 call")
         CallDiag.log("peer_gone_timeout", callId, "", applicationContext)
-        finishCall(reason = "peer_left")
+        endForConnectionLoss(reason = "peer_left")
       } else {
         state.isReconnecting = false
         state.status = steadyStatusLabel()
@@ -3247,6 +3355,11 @@ class CallActivity : ComponentActivity() {
         // or exhausted retries finishes the call.
         if (!finishing && shouldRejoinAfter(event.reason)) {
           scheduleLkRejoin(r, "disconnected:${event.reason}")
+        } else if (!finishing && isNetworkLoss(event.reason)) {
+          // [2026-10-18 call-resilience] rejoins exhausted on a network-class
+          // drop → "Chamada encerrada — conexão perdida".
+          stopRingback()
+          endForConnectionLoss(reason = "room_disconnect")
         } else {
           stopRingback()
           finishCall(reason = "room_disconnect")
@@ -3614,6 +3727,16 @@ class CallActivity : ComponentActivity() {
         }
         if (event.participant === r.localParticipant) {
           state.localQuality = q
+          // [2026-10-18 call-resilience] LOST=0 / UNKNOWN=-1 kept apart here.
+          videoAutoPause?.noteLocalQuality(
+            when (event.quality.name.uppercase()) {
+              "EXCELLENT" -> 3
+              "GOOD" -> 2
+              "POOR" -> 1
+              "LOST" -> 0
+              else -> -1
+            }
+          )
           // [2026-10-11 full-hd] feeds the adaptive controller (poor ~10 s →
           // one rung down; good ~20 s → one rung up) + the "Conexão fraca" pill.
           try {
@@ -3737,6 +3860,7 @@ class CallActivity : ComponentActivity() {
     ExpoCallKitModule.emitCallUiChanged() // [2026-10-11 ongoing-call] drop the in-app bar
 
     Log.d(TAG, "finishCall reason=$reason remote=$remote callId=$callId")
+    stopCallResilience() // [2026-10-18 call-resilience]
     stopRingback()
     peerGoneJob?.cancel(); peerGoneJob = null
     lkRejoinJob?.cancel(); lkRejoinJob = null
@@ -3952,7 +4076,8 @@ class CallActivity : ComponentActivity() {
       CallVideoQuality.startAdaptive(
         applicationContext, callId,
         room = { room },
-        canApply = { p2p == null && !isFinishing },
+        // [2026-10-18 call-resilience] never restart a camera we auto-paused.
+        canApply = { p2p == null && !isFinishing && videoAutoPause?.paused != true },
         onApplied = { rr -> bindLocalCameraIfReady(rr) },
       )
     } catch (_: Throwable) {}
@@ -5171,6 +5296,8 @@ class CallSessionStateAndroid {
   /** [2026-10-11 full-hd] "Conexão fraca" pill (debounced in CallActivity). */
   var localWeak by mutableStateOf(false)
   var peerWeak by mutableStateOf(false)
+  /** [2026-10-18 call-resilience] Our camera auto-paused (very poor uplink). */
+  var videoAutoPaused by mutableStateOf(false)
 }
 
 /** One floating emoji burst. The activity scope removes it after ~3s. */
@@ -5879,6 +6006,7 @@ private fun WeakConnectionPill(state: CallSessionStateAndroid) {
   val connected = state.connectionStartedAt > 0L && !state.isReconnecting && !state.isOnHold && !state.peerOnHold
   val text: String? = when {
     !connected -> null
+    state.videoAutoPaused -> CallResilience.text("videoPaused") // [2026-10-18 call-resilience]
     state.localWeak -> CallStrings.s("weakConnection")
     state.peerWeak -> CallStrings.s("peerWeakConnection", "name" to state.callerName.ifEmpty { state.callerEmail.substringBefore('@') })
     else -> null
