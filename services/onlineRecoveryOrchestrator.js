@@ -248,7 +248,8 @@ async function _runRecovery(reason) {
     //    and last_message updates.
     try {
       if (typeof _apiRef.chatConversations === 'function') {
-        const r = await _apiRef.chatConversations();
+        // [2026-10-18 cold-start] mesma chave da lista (include_archived=1) → dedupe.
+        const r = await _apiRef.chatConversations('', true);
         if (r?.success) {
           try {
             const { cacheConversations } = await import('./chatCache');

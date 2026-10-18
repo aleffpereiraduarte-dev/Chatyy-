@@ -328,7 +328,10 @@ export const MMKV_LAZY_IOS = true;
 //     (config.kv_sqlite_reset = valor novo limpa a trava).
 //   Telemetria: nativeBeacon('kv_store', boot|migrated|migrate_failed|abandon|…).
 export const KV_SQLITE_ENABLED = false;
-export const KV_SQLITE_ROLLOUT_PCT = 10;
+// [2026-10-18 cold-start] 10 → 100: canário 16-18/10 sem kv_write/migrate/open
+//   failed (≈11 aparelhos em SQLite; 1 crash_guard tratado). Boot kv Android
+//   AsyncStorage p50 301/p95 716 ms vs SQLite 35/88 ms. Volta: config.kv_sqlite_pct.
+export const KV_SQLITE_ROLLOUT_PCT = 100;
 export const KV_SQLITE_KILL = false;
 //
 // NATIVE_CHAT_CACHE_ENABLED: religa modules/expo-chat-cache (Swift SQLite) no

@@ -176,7 +176,7 @@ export function subscribe(section, fn) {
 
 // ── Revalidação (2º plano, dedupe em voo) ─────────────────────────────────
 const _inflight = new Map(); // fullKey -> Promise
-export function revalidate(section, { force = false, ttl = DEFAULT_TTL_MS } = {}) {
+export function revalidate(section, { force = false, ttl = DEFAULT_TTL_MS, swrMaxAgeMs = 15000 } = {}) {
   const def = SECTIONS[section];
   const acct = activeAccount();
   const k = _key(section, acct);
@@ -191,7 +191,7 @@ export function revalidate(section, { force = false, ttl = DEFAULT_TTL_MS } = {}
       // [2026-10-15 boot-dedupe] force → sempre fresco; senão reaproveita cópia SWR de ≤15 s.
       try {
         if (def.action) {
-          if (!force && api.swrInvalidateIfOlder) api.swrInvalidateIfOlder(def.action, 15000);
+          if (!force && api.swrInvalidateIfOlder) api.swrInvalidateIfOlder(def.action, swrMaxAgeMs);
           else api.swrInvalidate?.(def.action);
         }
       } catch {}
@@ -216,6 +216,27 @@ export function isRevalidating(section) {
 export function prefetchAll({ force = false, sections = PREFETCH, ttl = DEFAULT_TTL_MS } = {}) {
   if (!activeAccount()) return Promise.resolve([]);
   return Promise.all(sections.map((s) => revalidate(s, { force, ttl }).catch(() => null)));
+}
+
+// [2026-10-18 cold-start] Aquecimento do BOOT/login: antes eram as 12 seções em
+// PARALELO a +4 s (12 GETs no meio da rajada do boot). Agora espera o boot
+// assentar (bootIdle, ≥15 s do início do JS) e vai UMA seção por vez com folga;
+// chat_settings/profile primeiro e reaproveitando a cópia SWR do api.js de até
+// 60 s (o _layout já leu chat_get_settings e o screenPrefetch profile_get) → sem
+// GET duplicado. Telas abertas antes disso revalidam sozinhas (useSettingsSection).
+const PREFETCH_IDLE_ORDER = ['chat_settings', 'profile', 'settings', 'notif', 'privacy', 'defaults', 'blocked', 'plan', 'vacation', 'referral', 'muted_words', 'notif_keywords'];
+export function prefetchAllIdle({ startMs = 15000, gapMs = 400 } = {}) {
+  const acct = activeAccount();
+  if (!acct) return;
+  const run = async () => {
+    for (const s of PREFETCH_IDLE_ORDER) {
+      if (activeAccount() !== acct) return; // trocou de conta / saiu
+      try { await revalidate(s, { swrMaxAgeMs: 60000 }); } catch {}
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  };
+  try { require('./bootIdle').runWhenBootIdle(() => { run().catch(() => {}); }, { minMs: startMs, key: 'settings_prefetch_all' }); }
+  catch { setTimeout(() => { run().catch(() => {}); }, startMs); }
 }
 
 // ── Alteração otimista + fila offline ─────────────────────────────────────

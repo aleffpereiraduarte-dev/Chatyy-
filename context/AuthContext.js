@@ -1327,7 +1327,8 @@ export function AuthProvider({ children }) {
     setTimeout(() => {
       try {
         const sc = require('../services/settingsCache');
-        if (sc.activeAccount() === String(email).trim().toLowerCase()) sc.prefetchAll().catch(() => {});
+        // [2026-10-18 cold-start] uma seção por vez, depois do boot (era Promise.all de 12).
+        if (sc.activeAccount() === String(email).trim().toLowerCase()) sc.prefetchAllIdle();
       } catch {}
     }, 4000);
     // [2026-10-14 offline-first] perfil/carteira/notificações/contatos salvos no aparelho.

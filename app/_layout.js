@@ -927,7 +927,12 @@ function AppInit({ onNotification, setOtaToast }) {
   useEffect(() => {
     if (Platform.OS === 'web') return;
     if (typeof setOtaToast !== 'function') return;
-    (async () => {
+    // [2026-10-18 cold-start] fallbackToCacheTimeout=0: o nativo (ON_LOAD) já
+    // checa+baixa em 2º plano no launch. A checagem JS (banner "Nova versão")
+    // espera 15 s p/ não duplicar o request no burst do boot; se o nativo já
+    // baixou, fetchUpdateAsync só confirma e o banner aparece igual.
+    let otaCancelled = false;
+    const otaDelay = setTimeout(() => { if (!otaCancelled) (async () => {
       try {
         const Updates = require('expo-updates');
         if (!Updates?.checkForUpdateAsync) return;
@@ -952,8 +957,8 @@ function AppInit({ onNotification, setOtaToast }) {
           },
         });
       } catch (e) {}
-    })();
-    return () => { if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
+    })(); }, 15000);
+    return () => { otaCancelled = true; clearTimeout(otaDelay); if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
   }, [setOtaToast]);
 
   // [2026-05-25] iOS answer → open the rich /call.js. The native CallKit answer
@@ -1214,7 +1219,9 @@ function AppInit({ onNotification, setOtaToast }) {
         // a specific conversation.
         setTimeout(async () => {
           try {
-            const convRes = await apiMod.chatConversations();
+            // [2026-10-18 cold-start] mesma chave da ChatListTab/initialSync
+            // (include_archived=1) → junta no in-flight/SWR em vez de 2º GET.
+            const convRes = await apiMod.chatConversations('', true);
             if (convRes?.success) {
               const convs = convRes.data?.conversations || convRes.data?.chats || [];
               cacheConversations(convs).catch(() => {});

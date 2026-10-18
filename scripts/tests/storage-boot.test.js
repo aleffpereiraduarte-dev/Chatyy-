@@ -82,6 +82,10 @@ fs.writeFileSync(path.join(mockDir, 'nativeTelemetry.js'), `
 module.exports = { nativeBeacon(p, s, i) { globalThis.__MOCK.beacons.push(p + ' ' + s + ' ' + (i || '')); } };`);
 fs.writeFileSync(path.join(mockDir, 'expo-chat-cache.js'), `
 module.exports = { __esModule: true, get default() { return globalThis.__MOCK.nativeChatCache; } };`);
+// [2026-10-18] produção usa KV_SQLITE_ROLLOUT_PCT=100; os cenários abaixo
+// testam a semântica do canário com o padrão antigo de 10 %.
+fs.writeFileSync(path.join(mockDir, 'featureFlags.js'), `
+module.exports = Object.assign({}, require(${JSON.stringify(path.join(ROOT, 'constants/featureFlags.js'))}), { KV_SQLITE_ROLLOUT_PCT: 10 });`);
 globalThis.__MOCK = MOCK;
 MOCK.sqliteDir = path.join(TMP, 'sqlite'); fs.mkdirSync(MOCK.sqliteDir);
 
@@ -93,6 +97,7 @@ Module._resolveFilename = function (req, parent, ...rest) {
   if (/modules\/expo-chat-cache$/.test(req)) return path.join(mockDir, 'expo-chat-cache.js');
   if (req === './api' && /services\/mmkv\.js$/.test(parent && parent.filename || '')) return path.join(mockDir, 'api.js');
   if (req === './nativeTelemetry') return path.join(mockDir, 'nativeTelemetry.js');
+  if (req === '../constants/featureFlags' && /services\/mmkv\.js$/.test(parent && parent.filename || '')) return path.join(mockDir, 'featureFlags.js');
   if (req === './crashReporter' || req === './e2eeV4Shape' || req === './chatCache') return path.join(mockDir, 'empty.js');
   return origResolve.call(this, req, parent, ...rest);
 };
