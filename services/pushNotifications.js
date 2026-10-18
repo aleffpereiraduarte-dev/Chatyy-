@@ -3062,7 +3062,21 @@ function _navigateForNotification(data) {
       // type strings — the backend uses either, and 'email' used to fall
       // through to the generic Inbox route, losing the specific message.
       const folder = data.folder || 'INBOX';
-      _pushOverHome(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}`);
+      // [2026-10-18 email-reader-rea] vizinhos da lista em cache → o swipe
+      // entre e-mails funciona também quando o leitor abre pelo push.
+      let nb = '';
+      try {
+        if (globalThis.__chatyy_mail_reader_rea !== false) {
+          const list = require('./offlineCache').getEmailsFromCacheSync(folder) || [];
+          const idx = list.findIndex(e => e && String(e.uid) === String(data.uid));
+          if (idx >= 0) {
+            const p = idx > 0 ? String(list[idx - 1].uid || '') : '';
+            const n = idx < list.length - 1 ? String(list[idx + 1].uid || '') : '';
+            if (p || n) nb = `&prevUid=${encodeURIComponent(p)}&nextUid=${encodeURIComponent(n)}`;
+          }
+        }
+      } catch {}
+      _pushOverHome(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}${nb}`);
       return;
     }
     // [2026-10-13 calendario] lembrete local de tarefa → Tarefas; lembrete de

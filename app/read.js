@@ -14,9 +14,10 @@ import { IconChevronLeft, IconChevronRight, IconReply, IconReplyAll, IconArchive
 import SnoozePickerModal from '../components/SnoozePickerModal';
 import { MessageSkeleton } from '../components/SkeletonLoader';
 import { isNativeEmailBodyOn } from '../components/email/NativeEmailBody';
+import ReaderSwipePager, { isReaderReaOn } from '../components/email/ReaderSwipePager'; // [2026-10-18 email-reader-rea]
 
 export default function ReadScreen() {
-  const { uid, folder = 'INBOX', prevUid, nextUid } = useLocalSearchParams();
+  const { uid, folder = 'INBOX', prevUid: _prevUidParam, nextUid: _nextUidParam } = useLocalSearchParams();
   // [2026-10-08 offline-first] Frame-1 paint from the local body cache (no
   // skeleton flash on a cache hit; works in airplane mode). The network fetch
   // below still runs and replaces it with the fresh copy.
@@ -82,6 +83,35 @@ export default function ReadScreen() {
     }
   }, [loading, email]);
 
+  // [2026-10-18 email-reader-rea] Swipe na thread de UI (Reanimated) + espiada
+  // do próximo/anterior. Decide uma vez por montagem.
+  const [_reaSwipe] = useState(() => {
+    if (Platform.OS === 'web' || !isNativeEmailBodyOn() || !isReaderReaOn()) return false;
+    try { if (globalThis.__chatyy_email_swipe === false) return false; } catch {}
+    return true;
+  });
+  // Vizinhos: os params mandam; sem params (abriu pelo push, link, busca…) →
+  // tira da lista em memória DA MESMA pasta (uid só é único por pasta).
+  const _nb = useMemo(() => {
+    let on = true;
+    try { on = globalThis.__chatyy_mail_reader_rea !== false; } catch {}
+    const list = Array.isArray(emails) ? emails : [];
+    const sameFolder = String(currentFolder || 'INBOX') === String(folder || 'INBOX');
+    const find = (u) => (u && sameFolder ? list.find(e => e && String(e.uid) === String(u)) || null : null);
+    let p = _prevUidParam || '';
+    let n = _nextUidParam || '';
+    if (on && !p && !n && sameFolder && uid) {
+      const idx = list.findIndex(e => e && String(e.uid) === String(uid));
+      if (idx >= 0) {
+        p = idx > 0 ? String(list[idx - 1].uid || '') : '';
+        n = idx < list.length - 1 ? String(list[idx + 1].uid || '') : '';
+      }
+    }
+    return { p, n, pItem: on ? find(p) : null, nItem: on ? find(n) : null };
+  }, [emails, currentFolder, folder, uid, _prevUidParam, _nextUidParam]);
+  const prevUid = _nb.p;
+  const nextUid = _nb.n;
+
   const navigateToEmail = (targetUid) => {
     if (!targetUid) return;
     // uid do param chega como string; uid da lista pode ser number
@@ -94,6 +124,7 @@ export default function ReadScreen() {
 
   const swipeGH = useMemo(() => {
     if (Platform.OS === 'web') return null;
+    if (_reaSwipe) return null; // [2026-10-18] caminho Reanimated (ReaderSwipePager)
     // Junto com o leitor nativo (binário antigo = comportamento antigo).
     if (!isNativeEmailBodyOn()) return null;
     try { if (globalThis.__chatyy_email_swipe === false) return null; } catch {}
@@ -133,7 +164,24 @@ export default function ReadScreen() {
     } catch { return null; }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bodyZoomed, prevUid, nextUid]);
-  const withSwipe = (node) => (swipeGH ? <swipeGH.GH.GestureDetector gesture={swipeGH.gesture}>{node}</swipeGH.GH.GestureDetector> : node);
+  const withSwipe = (node) => {
+    if (_reaSwipe) {
+      return (
+        <ReaderSwipePager
+          enabled={!bodyZoomed}
+          canPrev={!!prevUid}
+          canNext={!!nextUid}
+          prevItem={_nb.pItem}
+          nextItem={_nb.nItem}
+          colors={colors}
+          onNavigate={(dir) => { try { swipeNavRef.current?.(dir === 'next' ? nextUid : prevUid); } catch {} }}
+        >
+          {node}
+        </ReaderSwipePager>
+      );
+    }
+    return swipeGH ? <swipeGH.GH.GestureDetector gesture={swipeGH.gesture}>{node}</swipeGH.GH.GestureDetector> : node;
+  };
 
   // Keyboard shortcuts (web only)
   useEffect(() => {

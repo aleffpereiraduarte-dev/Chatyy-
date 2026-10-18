@@ -18,6 +18,7 @@ import {
   queueOfflineAction, replayOfflineQueue,
   isOnline, onOnlineStatusChange,
 } from '../services/offlineCache';
+import { isLocalSearchOn, matchLocalRows, searchCachedBodies, mergeSearchResults } from '../services/mailLocalSearch'; // [2026-10-18 email-local-search]
 import { getCached, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
 
 // Native cache (iOS only) — synchronous SQLite read for instant inbox first paint.
@@ -373,6 +374,10 @@ export function MailProvider({ children }) {
   // when either changes (prevents requesting a non-existent page after a
   // folder/search switch). Seeded to the initial folder.
   const loadEmailsCtxRef = useRef({ folder: 'INBOX', query: '' });
+  // [2026-10-18 email-local-search] resultados locais da busca ativa — unidos
+  // ao resultado do servidor quando ele chega (e mantidos se a rede falhar).
+  const localSearchRef = useRef({ q: '', folder: '', rows: [] });
+  const searchServerDoneRef = useRef(false);
   const [recentlyReadLoaded, setRecentlyReadLoaded] = useState(false);
 
   // Load persisted recently-read UIDs on mount (survives app restart).
@@ -600,6 +605,10 @@ export function MailProvider({ children }) {
       // data arriving after the user moved to B. Drop it: painting or caching
       // it now would leak A into B and poison B's persisted cache namespace.
       if ((api.getActiveAccountEmail?.() ?? '') !== _acctEpoch) return;
+      // [2026-10-18 email-local-search] busca: resposta de uma consulta/pasta
+      // que já não é a atual (digitou de novo, limpou) não pinta por cima.
+      if ((q || loadEmailsCtxRef.current.query) && isLocalSearchOn()
+          && (loadEmailsCtxRef.current.query !== q || loadEmailsCtxRef.current.folder !== f)) return;
       if (r.success) {
         let emailList = r.data?.emails || [];
         // Drop rows whose removal is still pending/settling server-side so a
@@ -629,7 +638,13 @@ export function MailProvider({ children }) {
             return rf && e.flagged !== rf.flagged ? { ...e, flagged: rf.flagged } : e;
           });
 
-        if (pg > 1) {
+        const _ls = localSearchRef.current;
+        if (pg === 1 && q && _ls.q === q) searchServerDoneRef.current = true;
+        if (pg === 1 && q && silent === 'local' && _ls.q === q && _ls.folder === f) {
+          // Local já está na tela: servidor por cima + achados locais que ele
+          // não trouxe (corpo em cache, prévia), sem spinner nem pulo.
+          setEmails(mergeSearchResults(applyRecentFlags(applyRecentlyRead(emailList)), _ls.rows));
+        } else if (pg > 1) {
           // Pagination (infinite scroll / pager "next"): APPEND this page and
           // dedupe by uid instead of REPLACING the list. Previously loadEmails
           // replaced state for pg>1, so scrolling to page 2 wiped page 1 and
@@ -701,7 +716,8 @@ export function MailProvider({ children }) {
         } else {
           // Non-silent load: replace all, but still protect recently-read emails
           const fresh = applyRecentFlags(applyRecentlyRead(emailList));
-          setEmails((pg === 1 && !q && !category && !label) ? mergePendingSent(f, fresh) : fresh);
+          if (pg === 1 && q && _ls.q === q && _ls.folder === f) setEmails(mergeSearchResults(fresh, _ls.rows));
+          else setEmails((pg === 1 && !q && !category && !label) ? mergePendingSent(f, fresh) : fresh);
         }
         setTotal(r.data?.total || 0);
         // Update label unread counts from server
@@ -1123,8 +1139,43 @@ export function MailProvider({ children }) {
   const doSearch = useCallback((q) => {
     setSearch(q);
     setPage(1);
+    // [2026-10-18 email-local-search] 1º o que já está no aparelho (na hora),
+    // depois o servidor mescla por cima. Kill: __chatyy_mail_local_search=false.
+    const qq = String(q || '').trim();
+    if (qq && isLocalSearchOn()) {
+      const f = currentFolder;
+      let hits = null;
+      try {
+        const base = [];
+        const mem = folderRowsRef.current.get(f);
+        if (Array.isArray(mem)) base.push(...mem);
+        if (!search && Array.isArray(emailsRef.current)) base.push(...emailsRef.current);
+        let disk = null;
+        try { disk = getEmailsFromCacheSync(f); } catch {}
+        if (Array.isArray(disk)) base.push(...disk);
+        hits = matchLocalRows(base, qq);
+      } catch { hits = null; }
+      if (hits) {
+        localSearchRef.current = { q, folder: f, rows: hits };
+        searchServerDoneRef.current = false;
+        if (hits.length) setEmails(hits);
+        const stale = () => localSearchRef.current.q !== q || localSearchRef.current.folder !== f;
+        searchCachedBodies(f, qq, new Set(hits.map(e => String(e.uid))), stale).then((more) => {
+          if (stale() || !more || !more.length) return;
+          const hadRows = localSearchRef.current.rows.length > 0;
+          localSearchRef.current = { q, folder: f, rows: mergeSearchResults(localSearchRef.current.rows, more) };
+          // Sem achado nas linhas a tela ainda mostra a pasta → troca; com
+          // achados (ou servidor já chegou) → só acrescenta.
+          if (!hadRows && !searchServerDoneRef.current) setEmails(localSearchRef.current.rows);
+          else setEmails(prev => mergeSearchResults(prev, more));
+        }).catch(() => {});
+        loadEmails(f, 1, q, '', '', hits.length ? 'local' : false);
+        return;
+      }
+    }
+    localSearchRef.current = { q: '', folder: '', rows: [] };
     loadEmails(currentFolder, 1, q);
-  }, [currentFolder, loadEmails]);
+  }, [currentFolder, loadEmails, search]);
 
   const deleteEmail = useCallback(async (uid, folder) => {
     // folder is OPTIONAL and defaults to currentFolder. The reader (read.js)

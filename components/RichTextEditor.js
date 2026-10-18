@@ -954,6 +954,25 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
   ));
   const fallBack = useCallback(() => setUseNative(false), []);
 
+  // [2026-10-18 email-quote-html] Volta pro nativo quando o conteúdo fica simples
+  // de novo. Só em troca vinda de FORA (IA, modelo, rascunho, assinatura,
+  // citação separada) — nunca no meio da digitação no WebView (trocar a view
+  // ali derrubaria o foco/teclado). Kill switch: __chatyy_mail_quote_html=false.
+  const webEmittedRef = useRef(value);
+  const onWebChange = useCallback((html) => {
+    webEmittedRef.current = html;
+    onChange?.(html);
+  }, [onChange]);
+  useEffect(() => {
+    if (useNative || Platform.OS === 'web') return;
+    let on = true;
+    try { on = globalThis.__chatyy_mail_quote_html !== false; } catch {}
+    if (!on) return;
+    if (value === webEmittedRef.current) return; // eco do próprio WebView
+    webEmittedRef.current = value;
+    if (getNativeRichEditorView() && canUseNativeEditor(value)) setUseNative(true);
+  }, [value, useNative]);
+
   if (useNative && Platform.OS !== 'web') {
     return (
       <NativeEditor
@@ -985,7 +1004,7 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
   return (
     <MobileEditor
       value={value}
-      onChange={onChange}
+      onChange={onWebChange}
       placeholder={placeholder}
       minHeight={minHeight}
       colors={colors}

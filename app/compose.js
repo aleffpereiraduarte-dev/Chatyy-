@@ -63,6 +63,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { animateLayout } from '../constants/motion'; // [2026-10-16 motion] Cc/Cco com mola
 import AIComposeModal from '../components/AIComposeModal';
 import RichTextEditor from '../components/RichTextEditor';
+import QuotedHtmlView, { isQuoteHtmlOn } from '../components/email/QuotedHtmlView'; // [2026-10-18 email-quote-html]
 import ContactAutocomplete from '../components/ContactAutocomplete';
 import AttachmentPicker from '../components/AttachmentPicker';
 // [2026-10-08 email-outbox] pre-upload on pick + durable outbox
@@ -78,9 +79,60 @@ import {
   IconLock, IconAlertTriangle, IconCheck, IconLink,
 } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
+import {
+  isDraftLocalOn, newDraftSid, saveLocalDraft, markLocalDraftSynced, clearLocalDraft, recoverOrphanDrafts,
+  DRAFT_IDLE_SYNC_MS, DRAFT_MAX_WAIT_MS,
+} from '../services/mailDraftLocal'; // [2026-10-18 email-draft-local]
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
-const DRAFT_SAVE_INTERVAL = 5000;
+const DRAFT_SAVE_INTERVAL = 5000; // legado (__chatyy_mail_draft_local === false)
+
+// [2026-10-18 email-quote-html] Citação (responder/encaminhar) com HTML de
+// verdade: leitura nativa read-only abaixo do editor + blockquote no envio e no
+// rascunho (com classes p/ o rascunho reaberto separar a citação de novo).
+// Kill switch: globalThis.__chatyy_mail_quote_html = false → texto puro antigo.
+function _quoteHtmlOn() {
+  try { return globalThis.__chatyy_mail_quote_html !== false; } catch { return true; }
+}
+function _escHtml(s) {
+  return String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function buildQuotedSendBody(body, quotedHeader, quotedHtml) {
+  if (!quotedHtml) return body;
+  if (!_quoteHtmlOn()) {
+    const qh = quotedHeader
+      ? `<p style="color:#5f6368;font-size:13px">${quotedHeader.replace(/\n/g, '<br/>')}</p>`
+      : '';
+    return body + `<br/><br/>${qh}<blockquote style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote>`;
+  }
+  // Cabeçalho ESCAPADO: "Fulano <a@b.com>" virava uma tag desconhecida e o
+  // endereço sumia da citação.
+  const qh = quotedHeader
+    ? `<p class="chatyy-quote-h" style="color:#5f6368;font-size:13px">${_escHtml(quotedHeader).replace(/\n/g, '<br/>')}</p>`
+    : '';
+  return (body || '') + `<br/><br/><div class="chatyy-quote">${qh}<blockquote class="chatyy-quote-b" style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote></div>`;
+}
+// Rascunho reaberto: separa o que o usuário escreveu da citação (salva por
+// buildQuotedSendBody). null = sem citação reconhecível.
+function splitQuotedDraft(html) {
+  if (!html || typeof html !== 'string' || !_quoteHtmlOn()) return null;
+  const m = /<div[^>]*class="[^"]*\bchatyy-quote\b[^"]*"[^>]*>/i.exec(html);
+  if (!m) return null;
+  const rest = html.slice(m.index + m[0].length);
+  const bq = /<blockquote[^>]*>/i.exec(rest);
+  if (!bq) return null;
+  const end = rest.lastIndexOf('</blockquote>');
+  if (end < bq.index) return null;
+  const quote = rest.slice(bq.index + bq[0].length, end);
+  let header = '';
+  const hm = /<p[^>]*class="[^"]*\bchatyy-quote-h\b[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(rest.slice(0, bq.index));
+  if (hm) {
+    header = hm[1].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+  }
+  const body = html.slice(0, m.index).replace(/(?:\s|<br\s*\/?>)+$/i, '').replace(/(?:<br\s*\/?>\s*)+$/i, '');
+  return { body, header, quote };
+}
 
 // Matches styles.header.height below — used as the iOS KeyboardAvoidingView
 // offset (header sits INSIDE the KAV, above the scrollable form) so the
@@ -449,7 +501,7 @@ export default function ComposeScreen() {
   const params = useLocalSearchParams();
   const { user } = useAuth();
   const { refresh } = useMail();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -615,6 +667,18 @@ export default function ComposeScreen() {
   // precedent: the storage-quota retry storm, pulse-20260723.
   const draftSaveFailsRef = useRef(0);
   const mountedRef = useIsMounted();
+  // [2026-10-18 email-draft-local] Local a cada mudança; servidor só depois de
+  // ~30 s parado / 2º plano / saída. Decide UMA vez por montagem (OTA flag).
+  const draftLocalOnRef = useRef(null);
+  if (draftLocalOnRef.current === null) draftLocalOnRef.current = isDraftLocalOn();
+  const draftSidRef = useRef(null);
+  if (!draftSidRef.current) draftSidRef.current = newDraftSid();
+  // Pedido de salvar chegou com outro em voo → roda de novo quando ele acabar
+  // (antes era descartado: o flush do unmount se perdia ou duplicava).
+  const draftPendingRef = useRef(false);
+  const draftIdleTimerRef = useRef(null);
+  const draftLocalWriteTimerRef = useRef(null);
+  const draftDirtySinceRef = useRef(0);
 
   // --- Animated values ---
   const undoOpacity = useRef(new Animated.Value(0)).current;
@@ -662,7 +726,17 @@ export default function ComposeScreen() {
           if (draft.bcc) { setBcc(parseEmailsParam(draft.bcc)); setShowBcc(true); }
           if (draft.subject) setSubject(draft.subject);
           if (draft.body_html || draft.body_text || draft.body) {
-            setBody(draft.body_html || draft.body_text || draft.body);
+            const raw = draft.body_html || draft.body_text || draft.body;
+            // [2026-10-18 email-quote-html] citação salva no rascunho volta pro
+            // bloco read-only (o editor nativo fica só com o texto do usuário).
+            const sp = draft.body_html ? splitQuotedDraft(draft.body_html) : null;
+            if (sp && sp.quote) {
+              setBody(sp.body);
+              setQuotedHeader(sp.header || '');
+              setQuotedHtml(sanitizeQuotedHtml(sp.quote));
+            } else {
+              setBody(raw);
+            }
           }
           draftUidRef.current = params.draft_uid;
         }
@@ -918,7 +992,9 @@ export default function ComposeScreen() {
     if (sentRef.current || discardedRef.current) return;
     // Save already in flight → skip WITHOUT consuming the dirty flag; the
     // next tick (or the in-flight save itself) picks the content up.
-    if (draftSavingRef.current) return;
+    // [2026-10-18] Fluxo local: marca pendente → o save em voo re-dispara no
+    // finally com o uid que acabou de voltar (nunca 2 draft_save simultâneos).
+    if (draftSavingRef.current) { if (draftLocalOnRef.current) draftPendingRef.current = true; return; }
     if (!contentChangedRef.current) return;
     // Never persist a completely empty compose as a draft. If we are
     // editing an existing draft that the user cleared to empty, delete it
@@ -955,22 +1031,32 @@ export default function ComposeScreen() {
       } else if (mountedRef.current) {
         setDraftStatus('idle');
       }
+      if (draftLocalOnRef.current) clearLocalDraft(draftSidRef.current);
       return;
     }
     contentChangedRef.current = false;
-    setDraftStatus('saving');
+    draftDirtySinceRef.current = 0;
+    if (draftIdleTimerRef.current) { clearTimeout(draftIdleTimerRef.current); draftIdleTimerRef.current = null; }
+    if (mountedRef.current) setDraftStatus('saving');
     draftSavingRef.current = true;
     try {
       // api.draftSave = keepalive fetch on web so the beforeunload flush
       // actually completes after the tab closes (plain apiCall was killed
       // by the browser and everything since the last tick was lost).
+      // [2026-10-18 email-quote-html] a citação vai junto no rascunho (antes o
+      // rascunho de uma resposta reaberto perdia o e-mail original).
+      const draftBody = _quoteHtmlOn() ? buildQuotedSendBody(body, quotedHeader, quotedHtml) : body;
       const r = await api.draftSave({
         subject, to: contactsToString(to), cc: contactsToString(cc),
-        bcc: contactsToString(bcc), body,
+        bcc: contactsToString(bcc), body: draftBody,
         draft_uid: draftUidRef.current || undefined,
       });
+      // uid ANTES do check de montado: o save que roda depois do unmount
+      // (pendente) precisa trocar ESTE rascunho, não criar outro.
+      if (r?.success && r.data?.draft_uid) draftUidRef.current = r.data.draft_uid;
       if (r?.success) {
         draftSaveFailsRef.current = 0;
+        if (draftLocalOnRef.current && !contentChangedRef.current) markLocalDraftSynced(draftSidRef.current, draftUidRef.current);
       } else {
         // Failure consumed the dirty flag above — re-arm it so the content
         // is retried next tick instead of silently never saved (3-strike
@@ -979,7 +1065,6 @@ export default function ComposeScreen() {
         if (draftSaveFailsRef.current < 3) contentChangedRef.current = true;
       }
       if (!mountedRef.current) return;
-      if (r.success && r.data?.draft_uid) draftUidRef.current = r.data.draft_uid;
       setDraftSaved(true);
       setDraftStatus(r?.success ? 'saved' : 'error');
       if (r?.success) setLastSavedAt(new Date());
@@ -994,8 +1079,15 @@ export default function ComposeScreen() {
       if (mountedRef.current) setDraftStatus('error');
     } finally {
       draftSavingRef.current = false;
+      if (draftPendingRef.current) {
+        draftPendingRef.current = false;
+        // Ref = closure mais nova (conteúdo atual), mesmo após o unmount.
+        if (contentChangedRef.current && !sentRef.current && !discardedRef.current) {
+          setTimeout(() => { try { saveDraftRef.current?.(); } catch {} }, 0);
+        }
+      }
     }
-  }, [subject, to, cc, bcc, body, contactsToString, isComposeEmpty]);
+  }, [subject, to, cc, bcc, body, quotedHeader, quotedHtml, contactsToString, isComposeEmpty]);
 
   useEffect(() => { toValueRef.current = to; }, [to]);
   useEffect(() => { ccValueRef.current = cc; }, [cc]);
@@ -1004,6 +1096,61 @@ export default function ComposeScreen() {
 
   const saveDraftRef = useRef(saveDraft);
   useEffect(() => { saveDraftRef.current = saveDraft; }, [saveDraft]);
+
+  // [2026-10-18 email-draft-local] Cada mudança → slot local (síncrono, sem
+  // rede) + agenda o servidor p/ 30 s depois da ÚLTIMA mudança (no máx. 2 min
+  // digitando sem parar). Primeira passada (montagem) não conta.
+  const draftLocalFirstRef = useRef(true);
+  const draftLocalSnapRef = useRef(null);
+  // Grava o último retrato pendente (timer de 400 ms, ou já no unmount/2º plano).
+  const writeLocalDraftNow = useCallback(() => {
+    if (draftLocalWriteTimerRef.current) { clearTimeout(draftLocalWriteTimerRef.current); draftLocalWriteTimerRef.current = null; }
+    const pending = draftLocalSnapRef.current;
+    draftLocalSnapRef.current = null;
+    if (!pending || sentRef.current || discardedRef.current) return;
+    const snap = pending.snap;
+    if (!snap) { clearLocalDraft(draftSidRef.current); return; }
+    saveLocalDraft(draftSidRef.current, {
+      draftUid: draftUidRef.current,
+      subject: snap.subject, to: snap.to, cc: snap.cc, bcc: snap.bcc,
+      body: buildQuotedSendBody(snap.body, snap.quotedHeader, snap.quotedHtml),
+      // já sincronizado entre a mudança e a gravação? então não é órfão
+      dirty: !!contentChangedRef.current || !!draftSavingRef.current,
+    });
+  }, []);
+  useEffect(() => {
+    if (!draftLocalOnRef.current) return;
+    if (draftLocalFirstRef.current) { draftLocalFirstRef.current = false; return; }
+    if (sentRef.current || discardedRef.current) return;
+    // Gravação local com respiro de 400 ms (corpo + citação grandes não são
+    // serializados a cada tecla); o servidor continua no timer de 30 s.
+    const empty = isComposeEmpty();
+    const snap = empty ? null : {
+      subject, to: contactsToString(to), cc: contactsToString(cc), bcc: contactsToString(bcc),
+      body, quotedHeader, quotedHtml,
+    };
+    draftLocalSnapRef.current = { snap };
+    if (draftLocalWriteTimerRef.current) clearTimeout(draftLocalWriteTimerRef.current);
+    draftLocalWriteTimerRef.current = setTimeout(writeLocalDraftNow, 400);
+    const now = Date.now();
+    if (!draftDirtySinceRef.current) draftDirtySinceRef.current = now;
+    if (draftIdleTimerRef.current) clearTimeout(draftIdleTimerRef.current);
+    const waited = now - draftDirtySinceRef.current;
+    const delay = waited >= DRAFT_MAX_WAIT_MS ? 0 : Math.min(DRAFT_IDLE_SYNC_MS, DRAFT_MAX_WAIT_MS - waited);
+    draftIdleTimerRef.current = setTimeout(() => {
+      draftIdleTimerRef.current = null;
+      try { saveDraftRef.current?.(); } catch {}
+    }, delay);
+  }, [to, cc, bcc, subject, body, quotedHeader, quotedHtml, contactsToString, isComposeEmpty]);
+
+  // Rascunho de sessão anterior que morreu antes de sincronizar → Rascunhos.
+  useEffect(() => {
+    if (!draftLocalOnRef.current) return undefined;
+    const tm = setTimeout(() => {
+      recoverOrphanDrafts(draftSidRef.current, api.draftSave).catch(() => {});
+    }, 4000);
+    return () => clearTimeout(tm);
+  }, []);
 
   // Force a final draft persist regardless of where we are in the autosave
   // cycle. Used by the unmount cleanup and by the web beforeunload / native
@@ -1024,7 +1171,8 @@ export default function ComposeScreen() {
   useEffect(() => { flushDraftRef.current = flushDraft; }, [flushDraft]);
 
   useEffect(() => {
-    draftTimerRef.current = setInterval(() => saveDraftRef.current(), DRAFT_SAVE_INTERVAL);
+    // Legado: servidor a cada 5 s. Fluxo local: o timer de ociosidade acima.
+    if (!draftLocalOnRef.current) draftTimerRef.current = setInterval(() => saveDraftRef.current(), DRAFT_SAVE_INTERVAL);
 
     // Persist on web tab close/refresh and on native app-background. Without
     // this a user who closes the tab or backgrounds the app between autosave
@@ -1040,6 +1188,7 @@ export default function ComposeScreen() {
     } else {
       _appStateSub = AppState.addEventListener('change', (next) => {
         if (next === 'background' || next === 'inactive') {
+          try { if (draftLocalOnRef.current) writeLocalDraftNow(); } catch {}
           try { flushDraftRef.current?.(); } catch {}
         }
       });
@@ -1047,6 +1196,10 @@ export default function ComposeScreen() {
 
     return () => {
       if (draftTimerRef.current) clearInterval(draftTimerRef.current);
+      if (draftIdleTimerRef.current) { clearTimeout(draftIdleTimerRef.current); draftIdleTimerRef.current = null; }
+      // Gravação local pendente vai pro disco AGORA (se o flush abaixo falhar
+      // offline, a próxima abertura recupera o slot).
+      try { writeLocalDraftNow(); } catch {}
       if (draftSavedTimerRef.current) clearTimeout(draftSavedTimerRef.current);
       // Clean up undo send timers on unmount to prevent sending after navigation
       if (undoSendRef.current) clearTimeout(undoSendRef.current);
@@ -1066,6 +1219,10 @@ export default function ComposeScreen() {
       }
       // Final flush so an in-progress draft survives navigating away / unmount.
       try { flushDraftRef.current?.(); } catch {}
+      // Enviado / descartado → o slot local some (senão "recuperaria" depois).
+      if (draftLocalOnRef.current && (sentRef.current || discardedRef.current)) {
+        try { clearLocalDraft(draftSidRef.current); } catch {}
+      }
       try { _removeBeforeUnload?.(); } catch {}
       try { _appStateSub?.remove?.(); } catch {}
     };
@@ -1317,13 +1474,7 @@ export default function ComposeScreen() {
     const sendBcc = [...bccValueRef.current];
     const sendSubject = subject;
     // Build final body: user's reply + quoted original
-    let sendBody = body;
-    if (quotedHtml) {
-      const qh = quotedHeader
-        ? `<p style="color:#5f6368;font-size:13px">${quotedHeader.replace(/\n/g, '<br/>')}</p>`
-        : '';
-      sendBody = body + `<br/><br/>${qh}<blockquote style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote>`;
-    }
+    const sendBody = buildQuotedSendBody(body, quotedHeader, quotedHtml);
     const sendAttachments = [...attachments];
 
     // After a successful send (queued or immediate), transition the UI to
@@ -1581,13 +1732,7 @@ export default function ComposeScreen() {
     try {
       // Inclui bloco citado (reply/forward) + anexos para paridade com envio
       // imediato — antes scheduled mandava só body cru e perdia anexos.
-      let sendBody = body;
-      if (quotedHtml) {
-        const qh = quotedHeader
-          ? `<p style="color:#5f6368;font-size:13px">${quotedHeader.replace(/\n/g, '<br/>')}</p>`
-          : '';
-        sendBody = body + `<br/><br/>${qh}<blockquote style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote>`;
-      }
+      const sendBody = buildQuotedSendBody(body, quotedHeader, quotedHtml);
       const r = await api.apiCall('schedule_send', {
         to: contactsToString(schedTo), subject, body: sendBody,
         cc: contactsToString(schedCc), bcc: contactsToString(schedBcc),
@@ -2255,11 +2400,13 @@ export default function ComposeScreen() {
                       dangerouslySetInnerHTML={{ __html: quotedHtml }}
                     />
                   )}
-                  {showQuote && Platform.OS !== 'web' && (
+                  {showQuote && Platform.OS !== 'web' && (isQuoteHtmlOn() ? (
+                    <QuotedHtmlView html={quotedHtml} colors={colors} isDark={isDark} />
+                  ) : (
                     <Text style={[s.origFullText, { color: colors.textSecondary }]} selectable>
                       {quotedHtml.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()}
                     </Text>
-                  )}
+                  ))}
                 </View>
               ) : null}
             </View>
@@ -2542,6 +2689,10 @@ export default function ComposeScreen() {
                         }}
                         dangerouslySetInnerHTML={{ __html: quotedHtml }}
                       />
+                    ) : isQuoteHtmlOn() ? (
+                      <View style={[s.quoteBody, { borderLeftColor: colors.borderLight, paddingVertical: 0 }]}>
+                        <QuotedHtmlView html={quotedHtml} colors={colors} isDark={isDark} />
+                      </View>
                     ) : (
                       <View style={[s.quoteBody, { borderLeftColor: colors.borderLight }]}>
                         <Text style={[s.quoteBodyText, { color: colors.textSecondary }]} numberOfLines={50}>

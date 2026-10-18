@@ -110,7 +110,11 @@ export default function EmailList({
   const insets = useSafeAreaInsets();
   // [2026-10-15 native-inbox] Busca ativa (destaque do termo) fica na lista JS.
   const [_nativeInboxFailed, _setNativeInboxFailed] = useState(() => !!globalThis.__chatyy_native_inbox_failed);
-  const _useNativeInbox = Platform.OS !== 'web' && !_nativeInboxFailed && !searchQuery
+  // [2026-10-18 email-local-search] A lista nativa mostra quaisquer linhas
+  // (patches) → fica nativa também na busca (sem o destaque do termo, que é só
+  // da FlashList). __chatyy_mail_local_search=false → busca volta pra JS.
+  const _searchNativeOk = (() => { try { return globalThis.__chatyy_mail_local_search !== false; } catch { return true; } })();
+  const _useNativeInbox = Platform.OS !== 'web' && !_nativeInboxFailed && (!searchQuery || _searchNativeOk)
     && globalThis.__chatyy_native_inbox !== false && _nativeInboxAvailable();
   const _onNativeInboxFailure = useCallback((msg) => {
     try { globalThis.__chatyy_native_inbox_failed = true; console.warn('[native-inbox] fallback FlashList:', msg); try { require('../services/crashReporter').reportNativeFallback('native_inbox', msg); } catch {} } catch {}

@@ -307,6 +307,20 @@ export function getMessageFromCacheSync(uid, folder) {
   } catch { return null; }
 }
 
+// [2026-10-18 email-local-search] uids com corpo em cache nesta pasta (conta
+// ativa), mais recentes primeiro — a busca local procura dentro deles.
+export function getCachedMessageUids(folder) {
+  try {
+    const idx = getJSON(_msgIndexKey()) || [];
+    const pfx = (folder || 'INBOX') + '|';
+    const out = [];
+    for (const id of idx) {
+      if (typeof id === 'string' && id.indexOf(pfx) === 0) out.push(id.slice(pfx.length));
+    }
+    return out;
+  } catch { return []; }
+}
+
 // ─── Calendar Cache ───
 
 export async function saveCalendarEvents(events) {
