@@ -162,7 +162,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
     { key: 'calendar',    label: t('sidebar.calendar'),  ic: I(IconCalendar),    route: '/calendar' },
     { key: 'meet',        label: t('sidebar.meetings'),  ic: I(IconVideo),       route: '/meetings' },
     { key: 'files',       label: t('sidebar.files'),     ic: I(IconFolder),      route: '/files' },
-    { key: 'photos',      label: t('sidebar.photos'),    ic: I(IconImage),       route: '/photos' },
+    // [2026-10-18] Fotos sai do Apps no celular: já tem atalho no topo da home.
     { key: 'docs',        label: t('sidebar.documents'), ic: I(IconFileText),    route: '/documentos' },
     { key: 'notes',       label: t('sidebar.notes'),     ic: I(IconStickyNote),  route: '/notes' },
     { key: 'tasks',       label: t('tasks.title'),       ic: I(IconCheckCircle), route: '/tasks' },
