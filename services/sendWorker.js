@@ -790,19 +790,17 @@ function _publishServerRow(p, r, cmi) {
 // (chat_local_outbound, que não sobrevive ao processo). Aqui, assim que a lista
 // estiver ouvindo, re-emite esse MESMO eco local (nunca vai à rede) para a msg
 // mais nova da fila de cada conversa. Regras (iguais às do envio ao vivo):
-//   • só sem rede — é aí que a lista põe o relógio (_lmPendingFlag); com rede a
-//     fila drena em segundos e o eco do servidor/chat_list atualiza a prévia, e
-//     nunca mostramos ✓ falso de msg que não saiu;
+//   • [2026-10-18 relogio-lista] com OU sem rede: msg na fila = relógio na lista
+//     (igual à bolha). Antes só sem rede (NetInfo) → Wi-Fi sem internet/captive
+//     mostrava ✓ falso. O ACK (markSent → barramento '*' do outbox, api.chatSend
+//     → 'chat_local_ack') tira o relógio; falha definitiva vira ! vermelho;
 //   • nunca rebaixa a prévia: se a lista em cache já tem msg mais nova (ou a
-//     própria msg), não emite; falhas definitivas (vermelho) e E2E sem texto
-//     local não entram.
+//     própria msg), não emite; E2E sem texto local não entra; falha definitiva
+//     entra com _failed (a bolha mostra "não enviada").
 const _ANNOUNCE_MAX_WAIT_MS = 30000;
 let _announced = false;
 function _listListening(ws) {
   try { const s = ws && ws.listeners && ws.listeners.get && ws.listeners.get('chat_local_outbound'); return !!(s && s.size > 0); } catch { return false; }
-}
-function _isOfflineNow() {
-  try { const ni = require('./networkInfo'); return typeof ni?.isConnected === 'function' && ni.isConnected() === false; } catch { return false; }
 }
 function _announcePendingToList() {
   if (_announced || Platform.OS === 'web') return;
@@ -826,7 +824,6 @@ function _tsOf(v) {
   return Number.isFinite(n) ? n : 0;
 }
 async function _emitPendingPreviews(ws) {
-  if (!_isOfflineNow()) return;
   let rows = [];
   try { rows = await messageOutbox.getPending(null); } catch { rows = []; }
   if (!rows || !rows.length) return;
@@ -836,7 +833,7 @@ async function _emitPendingPreviews(ws) {
   // msg mais nova (created_at) por conversa; 'msg' e 'upload'/'ready' (mídia na fila)
   const newest = new Map();
   for (const r of rows) {
-    if (!r || r.state === 'failed') continue;
+    if (!r) continue;
     const p = r.payload || {};
     const conv = p.conversation_id ?? r.conversation_id;
     const cmi = String(r.client_message_id || p.client_message_id || '');
@@ -850,7 +847,7 @@ async function _emitPendingPreviews(ws) {
     const at = _tsOf(p.created_at) || _tsOf(r.created_at);
     const prev = newest.get(String(conv));
     if (prev && prev.at >= at) continue;
-    newest.set(String(conv), { at, conv, cmi, p, content, type });
+    newest.set(String(conv), { at, conv, cmi, p, content, type, failed: r.state === 'failed' });
   }
   if (!newest.size) return;
   let cached = [];
@@ -861,11 +858,20 @@ async function _emitPendingPreviews(ws) {
     const c = byId.get(String(it.conv));
     const lm = c && c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
     if (lm) {
-      if (String(lm.client_message_id || '') === it.cmi) continue; // a lista já tem esta msg
+      // a lista já tem esta msg: só re-anuncia se a cópia em cache perdeu o relógio
+      // (sem id real do servidor e sem _pending/_failed → desenharia ✓ falso)
+      if (String(lm.client_message_id || '') === it.cmi) {
+        const _real = lm.id != null && /^\d{1,19}$/.test(String(lm.id)) && Number(lm.id) > 0;
+        if (_real || lm._pending || lm._failed) continue;
+      }
       const lmAt = _tsOf(lm.created_at) || _tsOf(c.last_message_at) || _tsOf(c.updated_at);
       if (lmAt && it.at && lmAt > it.at) continue; // prévia mais nova → não rebaixa
     }
-    if (!_isOfflineNow()) return; // rede voltou no meio: a fila drena
+    // a fila pode ter drenado enquanto líamos o cache → só anuncia o que AINDA não saiu
+    let _st = null;
+    try { _st = await messageOutbox.getStatus(it.cmi); } catch { _st = null; }
+    if (!_st || !['queued', 'sending', 'upload', 'ready', 'failed'].includes(_st.state)) continue;
+    const _failed = _st.state === 'failed';
     try {
       ws._emit?.('chat_local_outbound', {
         conversation_id: it.conv,
@@ -879,6 +885,7 @@ async function _emitPendingPreviews(ws) {
         created_at: it.p.created_at || (it.at ? new Date(it.at).toISOString() : new Date().toISOString()),
         _local: true,
         _restored: true,
+        ...(_failed ? { _failed: true } : {}),
       });
     } catch {}
   }

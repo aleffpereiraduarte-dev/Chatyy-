@@ -32,7 +32,7 @@ import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconArrowRight, IconPencil } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconArrowRight, IconPencil, IconAlertCircle } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -197,19 +197,59 @@ function _lmExtrasFromEvent(d) {
 }
 // [2026-10-17 offline-wa] Prévia da lista com RELÓGIO (não ✓) para o envio
 // local que ainda não saiu do aparelho (WhatsApp: "Você: oi 🕓" offline).
-// Só o eco LOCAL do próprio envio (chat_local_outbound) com o aparelho SEM
-// rede — aí o HTTP certamente falhou e a msg está na fila. O sucesso do
-// reenvio (sendWorker/_publishServerRow, offlineCache replay) emite
-// 'chat_message' com a linha do servidor → a prévia é reconstruída sem a flag;
-// o refresh do chat_list pós-reconexão (id real ≠ tmp) também limpa.
+// [2026-10-18 relogio-lista] Bug founder (iPhone, sem internet): na conversa a
+// bolha estava com relógio e a LISTA já mostrava ✓. A regra antiga só punha o
+// relógio quando o NetInfo dizia "sem rede" — Wi-Fi sem internet/captive/socket
+// morto = isConnected true → statusType 'sent' → ✓ falso. Agora o estado vem do
+// MESMO lugar que a bolha: eco LOCAL (chat_local_outbound) sem id real do
+// servidor = SEMPRE relógio, com ou sem rede. Sai do relógio só com o ACK:
+//  • 'chat_local_ack' (api.chatSend ok / falha definitiva da conversa);
+//  • messageOutbox '*' (markSent/markAccepted/markFailed — fila JS e nativa);
+//  • eco do servidor/_self (chat_message com o mesmo client id) ou chat_list.
+// _lmRecentAcks cobre a corrida "ACK antes do eco local ser aplicado"
+// (o eco entra num setTimeout por conversa; o ACK do Rust pode vir em ms).
+const _lmRecentAcks = new Map(); // 'c:<cmi>' | 't:<tempId>' → { state, sid, at }
+const _LM_ACK_TTL = 120000;
+function _lmIsRealId(id) {
+  return id != null && /^\d{1,19}$/.test(String(id)) && Number(id) > 0;
+}
+function _lmNoteAck(cmi, tempId, state, sid) {
+  const now = Date.now();
+  if (_lmRecentAcks.size > 400) {
+    for (const [k, v] of _lmRecentAcks) { if (now - v.at > _LM_ACK_TTL || _lmRecentAcks.size > 300) _lmRecentAcks.delete(k); else break; }
+  }
+  const v = { state, sid: _lmIsRealId(sid) ? Number(sid) : null, at: now };
+  if (cmi) _lmRecentAcks.set('c:' + String(cmi), v);
+  if (tempId) _lmRecentAcks.set('t:' + String(tempId), v);
+}
+function _lmAckOf(d) {
+  if (!d) return null;
+  const keys = [];
+  const cmi = d.client_message_id || d._client_id;
+  if (cmi) keys.push('c:' + String(cmi));
+  const id = d.id ?? d.message_id;
+  if (id != null && !_lmIsRealId(id)) keys.push('t:' + String(id));
+  for (const k of keys) {
+    const v = _lmRecentAcks.get(k);
+    if (v && Date.now() - v.at < _LM_ACK_TTL) return v;
+  }
+  return null;
+}
 function _lmPendingFlag(d) {
   if (!d || !d._local) return undefined;
-  try {
-    if (Platform.OS === 'web') {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
-    } else if (require('../services/networkInfo').isConnected() === false) return true;
-  } catch {}
-  return undefined;
+  if (d._failed) return undefined;
+  if (d.delivered_at || d.read_at) return undefined;
+  if (_lmIsRealId(d.id ?? d.message_id)) return undefined; // eco com a linha do servidor (id real)
+  const a = _lmAckOf(d);
+  if (a) return undefined;
+  return true;
+}
+// Flags de envio da prévia (relógio / falhou) — mesmas da bolha.
+function _lmSendFlags(d) {
+  if (!d || !d._local) return null;
+  const a = _lmAckOf(d);
+  if ((a && a.state === 'failed') || (!a && d._failed)) return { _failed: true };
+  return _lmPendingFlag(d) ? { _pending: true } : null;
 }
 function _rcMergeListRow(old, c) {
   if (!old || !c || !old.last_message || !c.last_message) return c;
@@ -886,6 +926,10 @@ function ListReceiptIcon({ statusType, isDark }) {
   if (statusType === 'pending') {
     return <View style={{ marginRight: 3 }}><IconClockMini size={13} color={sentColor} /></View>;
   }
+  // [2026-10-18 relogio-lista] falha definitiva (a bolha mostra "não enviada") → ! vermelho.
+  if (statusType === 'failed') {
+    return <View style={{ marginRight: 3 }}><IconAlertCircle size={14} color={isDark ? '#FF6B6B' : '#E53935'} /></View>;
+  }
   // Single check (sent) — no crossfade, just the faint single tick.
   if (rank === 0) {
     return <IconCheck size={15} color={sentColor} style={{ marginRight: 3 }} />;
@@ -1028,6 +1072,7 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
       const _deliv = !!lastMsg.delivered_at || !!lastMsg.read_at;
       if (lastMsg.read_at && _deliv && (!isGroup || lastMsg.all_read)) statusType = 'read';
       else if (_deliv) statusType = 'delivered';
+      else if (lastMsg._failed) statusType = 'failed'; // [2026-10-18 relogio-lista] igual à bolha (! vermelho)
       else if (lastMsg._pending) statusType = 'pending'; // [2026-10-17 offline-wa] relógio
       else statusType = 'sent';
     }
@@ -1646,6 +1691,7 @@ const ConversationRow = React.memo(function ConversationRow({
         const st = statusType === 'read' ? _a11yT(t, 'a11y.msgRead', 'Lida')
           : statusType === 'delivered' ? _a11yT(t, 'a11y.msgDelivered', 'Entregue')
           : statusType === 'pending' ? _a11yT(t, 'chat.sending', 'Enviando...')
+          : statusType === 'failed' ? _a11yT(t, 'chat.notSent', 'Não enviada')
           : _a11yT(t, 'a11y.msgSent', 'Enviada');
         parts.push(`${_a11yT(t, 'common.you', 'Você')}: ${pv}`, st);
       } else if (previewSender) {
@@ -5202,7 +5248,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   let hit = false;
                   const out = rows.map((c) => {
                     const lm = c && c.last_message;
-                    if (!lm || String(c.id) !== _cidS || !lm._pending || String(lm.client_message_id || '') !== _cmiS) return c;
+                    if (!lm || String(c.id) !== _cidS || !(lm._pending || lm._failed) || String(lm.client_message_id || '') !== _cmiS) return c;
                     hit = true;
                     const _realId = (_recvId != null && Number(_recvId) > 0) ? _recvId : lm.id;
                     return {
@@ -5211,6 +5257,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                         ...lm,
                         id: _realId,
                         _pending: undefined,
+                        _failed: undefined,
                         delivered_at: lm.delivered_at || data.delivered_at || null,
                         read_at: lm.read_at || data.read_at || null,
                       },
@@ -5218,7 +5265,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   });
                   return hit ? out : rows;
                 };
-                const _isPendingRow = (rows) => Array.isArray(rows) && rows.some((c) => c && String(c.id) === _cidS && c.last_message && c.last_message._pending && String(c.last_message.client_message_id || '') === _cmiS);
+                try { _lmNoteAck(_cmiS, null, 'sent', _recvId); } catch {}
+                const _isPendingRow = (rows) => Array.isArray(rows) && rows.some((c) => c && String(c.id) === _cidS && c.last_message && (c.last_message._pending || c.last_message._failed) && String(c.last_message.client_message_id || '') === _cmiS);
                 if (_isPendingRow(conversationsRef.current)) setConversations(_fixPending);
                 else setArchivedConversations(_fixPending);
               }
@@ -5371,7 +5419,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   // the thread correctly showed ✓. Same fix in all 4
                   // last_message constructions below.
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                  client_message_id: data.client_message_id || data._client_id || null, ..._lmSendFlags(data), // [2026-10-17 offline-wa] [2026-10-18 relogio-lista] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5410,7 +5458,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 last_message: {
                   ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                  client_message_id: data.client_message_id || data._client_id || null, ..._lmSendFlags(data), // [2026-10-17 offline-wa] [2026-10-18 relogio-lista] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5450,7 +5498,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
                 last_message: {
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                  client_message_id: data.client_message_id || data._client_id || null, ..._lmSendFlags(data), // [2026-10-17 offline-wa] [2026-10-18 relogio-lista] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5485,7 +5533,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               last_message: {
                 ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                 id: data.id ?? data.message_id ?? null,
-                client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                client_message_id: data.client_message_id || data._client_id || null, ..._lmSendFlags(data), // [2026-10-17 offline-wa] [2026-10-18 relogio-lista] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                 read_at: data.read_at || null,
                 delivered_at: data.delivered_at || null,
                 content: data.content || data.message,
@@ -5756,6 +5804,66 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // chat_message; the existing isSelf guard inside onIncomingForList keeps
       // unread at 0 and skips the receive sound.
       unsubs.push(mailWs.on('chat_local_outbound', onIncomingForList));
+
+      // [2026-10-18 relogio-lista] ACK do envio → a prévia sai do relógio (ou vai
+      // p/ "não enviada") no MESMO momento que a bolha. Fontes: 'chat_local_ack'
+      // (api.chatSend ok — todos os caminhos HTTP, web incluso — e falhas
+      // definitivas da conversa) e o barramento '*' do messageOutbox (fila JS +
+      // nativa: markSent/markAccepted/markFailed/requeue). Casa pelo client id
+      // ou pelo id tmp_ do eco local; nunca reordena nem mexe no unread.
+      const _applyLocalSendState = (ev) => {
+        if (!ev || typeof ev !== 'object') return;
+        const st = String(ev.state || '');
+        const ack = st === 'sent' || st === 'accepted' || st === 'delivered' || st === 'read';
+        const fail = st === 'failed';
+        const retry = st === 'queued' || st === 'sending' || st === 'upload' || st === 'ready';
+        if (!ack && !fail && !retry) return;
+        const cmi = ev.client_message_id != null ? String(ev.client_message_id) : '';
+        const tid = ev.temp_id != null ? String(ev.temp_id) : '';
+        if (!cmi && !tid) return;
+        const cidS = ev.conversation_id != null ? String(ev.conversation_id) : null;
+        if (ack || fail) { try { _lmNoteAck(cmi, tid, fail ? 'failed' : 'sent', ev.server_id); } catch {} }
+        else { try { if (cmi) _lmRecentAcks.delete('c:' + cmi); if (tid) _lmRecentAcks.delete('t:' + tid); } catch {} }
+        const sid = _lmIsRealId(ev.server_id) ? Number(ev.server_id) : null;
+        const fix = (rows) => {
+          if (!Array.isArray(rows)) return rows;
+          let hit = false;
+          const out = rows.map((c) => {
+            const lm = c && c.last_message;
+            if (!lm || typeof lm !== 'object' || !(lm._pending || lm._failed)) return c;
+            if (cidS && String(c.id) !== cidS) return c;
+            const same = (cmi && String(lm.client_message_id || '') === cmi) || (tid && String(lm.id ?? '') === tid);
+            if (!same) return c;
+            if (retry) {
+              if (!lm._failed) return c;
+              hit = true;
+              return { ...c, last_message: { ...lm, _failed: undefined, _pending: true } };
+            }
+            hit = true;
+            if (fail) return { ...c, last_message: { ...lm, _pending: undefined, _failed: true } };
+            return { ...c, last_message: { ...lm, id: sid != null ? sid : lm.id, _pending: undefined, _failed: undefined } };
+          });
+          return hit ? out : rows;
+        };
+        setConversations(fix);
+        setArchivedConversations(fix);
+      };
+      unsubs.push(mailWs.on('chat_local_ack', _applyLocalSendState));
+      try {
+        const _ob = require('../services/messageOutbox');
+        const _obUnsub = _ob?.subscribe?.('*', (snap) => {
+          if (!snap || !snap.state) return;
+          const p = snap.payload || {};
+          _applyLocalSendState({
+            state: snap.state,
+            client_message_id: snap.client_message_id,
+            temp_id: p.temp_id || null,
+            conversation_id: snap.conversation_id ?? p.conversation_id ?? null,
+            server_id: snap.server_id ?? null,
+          });
+        });
+        if (typeof _obUnsub === 'function') unsubs.push(_obUnsub);
+      } catch {}
 
       // Reconnect catchup — messages that arrived while WS was down never
       // hit the chat_message listener above, so the list would stay frozen

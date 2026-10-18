@@ -1056,6 +1056,16 @@ async function _webPendingOutboxRows(conversationId, me) {
   return [...byCmi.values()].sort((x, y) => (x.created_at || 0) - (y.created_at || 0));
 }
 
+// [2026-10-18 relogio-lista] A prévia da LISTA segue a bolha: falha definitiva
+// ("não enviada") → ! vermelho na lista (o ✓ vem do api.chatSend/outbox).
+// Barramento LOCAL apenas (ws._emit nunca vai à rede).
+function _listSendState(convId, tempId, state, cmi = null) {
+  try {
+    require('../services/websocket').default?._emit?.('chat_local_ack', {
+      state, conversation_id: convId ?? null, temp_id: tempId || null, client_message_id: cmi || null,
+    });
+  } catch {}
+}
 function _mapKeep(arr, fn) {
   if (!Array.isArray(arr)) return arr;
   let out = null;
@@ -19846,7 +19856,7 @@ function ChatConversationInner() {
         try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
       }
       if (e2eKeys.v4 && (!encrypted || typeof encrypted !== 'string' || encrypted === text)) {
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         removePendingMessage(conversationId, tempId).catch(() => {});
         _dropOptimisticNativeRow();
         if (OUTBOX_V2_ONLY) _outboxThen(() => messageOutbox.remove(msgId));
@@ -19867,7 +19877,7 @@ function ChatConversationInner() {
         // never see plaintext when encryption falls over.
         // [bug 2026-05-15 #980 e2ee-silent-fail] Surface Alert so user
         // understands this isn't a network issue.
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         removePendingMessage(conversationId, tempId).catch(() => {});
         _dropOptimisticNativeRow();
         if (OUTBOX_V2_ONLY) {
@@ -20360,7 +20370,7 @@ function ChatConversationInner() {
             await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null, opts: _outboxSendOpts });
             setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
           } catch {
-            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
           }
           if (OUTBOX_V2_ONLY) {
             // [401 not-rescued fix] Without this the outbox row stays stuck in
@@ -20379,7 +20389,7 @@ function ChatConversationInner() {
         // send (older message still pending) was already handed to the worker.
         const _kind = r?._deferred ? 'deferred' : (messageOutbox.classifySendResult?.(r) || 'transient');
         if (_kind === 'hard') {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: r?.message || 'rejected' } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: r?.message || 'rejected' } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
           _outboxThen(() => messageOutbox.markFailed(msgId, r?.message || r?.error || 'rejected', { kind: 'hard' }));
         } else {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId } : m));
@@ -20401,7 +20411,7 @@ function ChatConversationInner() {
           await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null, opts: _outboxSendOpts });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         }
         if (OUTBOX_V2_ONLY) {
           // Bump attempt counter in SQLite — sendWorker's periodic drain
@@ -20423,7 +20433,7 @@ function ChatConversationInner() {
         // original row — never a duplicate).
         const _k = messageOutbox.classifySendResult?.(null, e) || 'transient';
         if (_k === 'hard') {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: e?.message || 'rejected' } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: e?.message || 'rejected' } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         } else {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
         }
@@ -20469,7 +20479,7 @@ function ChatConversationInner() {
           } catch {}
         }, 5000);
       } catch {
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: e?.message || 'unknown' } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: e?.message || 'unknown' } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       }
     } finally {
       setSending(false);
@@ -20681,7 +20691,7 @@ function ChatConversationInner() {
         // Hard server reject — retrying can never succeed, so show the failed
         // bubble instead of queueing it forever.
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       } else {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
@@ -20689,13 +20699,13 @@ function ChatConversationInner() {
           await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         }
       }
     } catch (_gifErr) {
       if (/\b(400|403|413|415|422|429)\b|too large|rejected|blocked|forbidden|unsupported|invalid/i.test(String(_gifErr?.message || ''))) {
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         return;
       }
       try {
@@ -20703,7 +20713,7 @@ function ChatConversationInner() {
         await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       }
     }
   };
@@ -20766,6 +20776,7 @@ function ChatConversationInner() {
       mailWs._emit?.('chat_local_outbound', {
         conversation_id: conversationId,
         id: tempId,
+        client_message_id: msgId, // [2026-10-18 relogio-lista] o ACK (outbox/api) casa a prévia por este id
         sender_email: currentEmail,
         sender_name: user?.name || currentEmail,
         content: '',
@@ -20798,7 +20809,7 @@ function ChatConversationInner() {
           await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         }
       }
     } catch {
@@ -20807,7 +20818,7 @@ function ChatConversationInner() {
         await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       }
     }
   };
@@ -21496,6 +21507,7 @@ function ChatConversationInner() {
       mailWsList._emit?.('chat_local_outbound', {
         conversation_id: conversationId,
         id: tempId,
+        client_message_id: msgId, // [2026-10-18 relogio-lista] o ACK (outbox/api) casa a prévia por este id
         sender_email: user?.email,
         sender_name: user?.name || user?.email || '',
         content: caption || '',
@@ -22095,7 +22107,7 @@ function ChatConversationInner() {
             // Hard error (413/415/403/etc.) — user needs to know so they
             // can pick a smaller file / different format. Keep the red ❗
             // bubble + alert that surfaces the HTTP code.
-            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+            setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
             setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
             const detail = lastError?.message ? ` (${lastError.message})` : '';
             safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
@@ -22301,7 +22313,7 @@ function ChatConversationInner() {
         // can never succeed → failed bubble, don't queue (same regex as the
         // photo/video path's _isHard).
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       } else {
         // Falhou no server (5xx, timeout, etc) → queue pra retry automático
         // quando a rede voltar. Antes ficava como _failed e só re-enviava
@@ -22324,7 +22336,7 @@ function ChatConversationInner() {
           });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
         } catch {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         }
       }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
@@ -22334,7 +22346,7 @@ function ChatConversationInner() {
       // Hard rejects (403/413/429/507) are permanent → failed bubble, no queue.
       if (/\b41[35]\b|\b403\b|\b429\b|\b507\b|too large|size|mime|rejected|blocked|forbidden|unsupported|quota|storage/i.test(String(_audErr?.message || ''))) {
         removePendingMessage(conversationId, tempId).catch(() => {});
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         return;
       }
@@ -22354,7 +22366,7 @@ function ChatConversationInner() {
         });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
       } catch {
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
     } finally {
@@ -22519,7 +22531,7 @@ function ChatConversationInner() {
           });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
         } catch {
-          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+          setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
           safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.sendFailed') || 'Failed to send');
         }
       }
@@ -22533,7 +22545,7 @@ function ChatConversationInner() {
         });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
       } catch {
-        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+        setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
       }
     } finally {
       if (mountedRef.current) {

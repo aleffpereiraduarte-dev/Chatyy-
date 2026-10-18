@@ -5767,7 +5767,29 @@ function _webNoteSendOutcome(conversationId, cmi, result, opts) {
   } catch {}
 }
 
+// [2026-10-18 relogio-lista] Toda resposta OK do chat_send (foreground, sendWorker,
+// fila web do offlineCache, figurinha/GIF/local…) avisa a LISTA pelo barramento
+// LOCAL (nunca vai à rede): a prévia "Você: … 🕓" vira ✓ no mesmo instante que a
+// bolha. O ACK só existe quando o servidor devolveu a linha (data.id) — sem isso
+// a prévia continua no relógio, igual à bolha.
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
+  const r = await _chatSendInner(conversationId, content, type, replyToId, mentions, fileUrl, tempId, clientMessageId, topicId, opts);
+  try {
+    const d = r && r.success && !r._deferred ? (r.data || null) : null;
+    const sid = d ? (d.id ?? d.message_id ?? null) : null;
+    if (sid != null) {
+      require('./websocket').default?._emit?.('chat_local_ack', {
+        state: 'sent',
+        conversation_id: conversationId,
+        client_message_id: d.client_message_id || clientMessageId || null,
+        temp_id: tempId || d.client_temp_id || d.temp_id || null,
+        server_id: sid,
+      });
+    }
+  } catch {}
+  return r;
+}
+async function _chatSendInner(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
   // Guard: server raises an unhelpful 400 when conversation_id is empty/0,
   // and the client bubble sticks as "pending" because the error message
   // isn't surfaced. Reject here with a clear error so the caller can handle.
