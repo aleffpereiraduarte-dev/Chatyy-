@@ -8,7 +8,7 @@ import { IconSparkles } from '../components/Icons';
 import { aiMemoryGet, aiMemorySet, aiMemoryLearnStyle } from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import {
-  SettingsScreen, SettingsGroup, SettingsRow, useGroupedColors, useSettingsInputStyle,
+  SettingsScreen, SettingsGroup, SettingsRow, SettingsSwitchRow, useGroupedColors, useSettingsInputStyle,
 } from '../components/settings/SettingsKit';
 import BiaOrb from '../components/bia/BiaOrb';
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
@@ -27,6 +27,8 @@ export default function BiaSettings() {
   const [tone, setTone] = useState('');
   const [signature, setSignature] = useState('');
   const [learnedStyle, setLearnedStyle] = useState('');
+  // [bia-contexto 2026-10-18] "A Bia aprende comigo" (ai_memory bia_personalize; padrão ligado)
+  const [learnOn, setLearnOn] = useState(true);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -38,6 +40,7 @@ export default function BiaSettings() {
     if (mem.tone) setTone(mem.tone);
     if (mem.signature) setSignature(mem.signature);
     if (mem.writing_style) setLearnedStyle(mem.writing_style);
+    if (mem.bia_personalize != null) setLearnOn(String(mem.bia_personalize) !== '0');
   }, []);
 
   useEffect(() => {
@@ -53,6 +56,18 @@ export default function BiaSettings() {
       setLoading(false);
     })();
   }, [hydrate]);
+
+  const handleLearnToggle = useCallback(async (v) => {
+    setLearnOn(v);
+    try {
+      const r = await aiMemorySet('bia_personalize', v ? '1' : '0');
+      if (!r?.success) throw new Error('fail');
+      try { settingsCache.patch('bia_memory', { bia_personalize: v ? '1' : '0' }); } catch {}
+    } catch {
+      setLearnOn(!v);
+      showToast(t('bia.toggleError') || 'Não consegui salvar agora');
+    }
+  }, [showToast, t]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -106,6 +121,10 @@ export default function BiaSettings() {
                 {t('bia.intro') || 'A Bia usa essas preferências pra escrever emails e respostas na sua voz. Quanto mais você ensina, mais parecida com você ela fica.'}
               </Text>
             </View>
+          </SettingsGroup>
+
+          <SettingsGroup footer={t('bia.learnMeDesc') || 'A Bia lembra seu nome, preferências e o que você conta pra ela, no texto e na voz. Desligado, ela não usa nem guarda memórias.'}>
+            <SettingsSwitchRow title={t('bia.learnMe') || 'A Bia aprende comigo'} value={learnOn} onValueChange={handleLearnToggle} />
           </SettingsGroup>
 
           <SettingsGroup header={t('bia.tone') || 'Tom preferido'}>
