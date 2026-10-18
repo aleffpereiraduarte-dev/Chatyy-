@@ -160,6 +160,9 @@ export function friendlyServerError(r, fallbackKey) {
   // [phone-obrigatorio 2026-10-15] signup/username_signup sem telefone → 403 reason=phone_required.
   if (r?.data?.reason === 'phone_required' || /cadastro s[oó] com n[uú]mero/.test(m)) return { key: 'auth.phoneRequired', kind: 'phone' };
   if (r?.data?.reason === 'phone_taken') return { key: 'phoneLink.taken', kind: 'phone' };
+  // [otp-wa 2026-10-18] BR sem DDD / DDD inexistente / celular sem o 9: o texto do
+  // servidor já diz o que corrigir (ex. "Inclua o DDD: ex. (11) 91234-5678").
+  if (r?.data?.reason === 'missing_area_code' || (/\bddd\b/.test(m) && msg)) return { key: 'login.phoneInvalid', text: msg, kind: 'phone' };
   if (/username ja foi escolhido|username já foi escolhido/.test(m)) return { key: 'signupPhone.err.usernameTaken', kind: 'username' };
   if (/username reservado/.test(m)) return { key: 'signupPhone.err.usernameReserved', kind: 'username' };
   if (/username (muito curto|invalido|inválido|muito longo)/.test(m)) return { key: 'signupPhone.err.usernameInvalid', kind: 'username' };

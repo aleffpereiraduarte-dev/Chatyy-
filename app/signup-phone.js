@@ -11,7 +11,7 @@
 // encrypted recovery blob (see /var/www/mail/api/phone-auth.php).
 
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
-import { useState, useEffect, useRef, useMemo, Fragment } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, Fragment } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, ScrollView, Dimensions, Modal,
@@ -200,7 +200,17 @@ function SignupPhoneLegacy() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [resendCountdown, setResendCountdown] = useState(0);
+  // [otp-wa 2026-10-18] contagem pelo relógio (prazo absoluto) — o setTimeout congela
+  // com o app em segundo plano enquanto o usuário vai ler o SMS/WhatsApp.
+  const [resendCountdown, _setResendCountdown] = useState(0);
+  const resendDeadlineRef = useRef(0);
+  const setResendCountdown = useCallback((n) => {
+    const s = Math.max(0, Math.round(Number(n) || 0));
+    resendDeadlineRef.current = s > 0 ? Date.now() + s * 1000 : 0;
+    _setResendCountdown(s);
+  }, []);
+  // [otp-wa 2026-10-18] número sem WhatsApp (servidor) → esconde "Receber pelo WhatsApp".
+  const [waUnavailable, setWaUnavailable] = useState(false);
   // Canal pelo qual o último código saiu ('sms' | 'voice'). [2026-06-19] WhatsApp
   // REMOVIDO do cadastro a pedido do founder — só SMS (Twilio) + ligação (Vonage).
   const [sentVia, setSentVia] = useState('sms');
@@ -436,7 +446,10 @@ function SignupPhoneLegacy() {
   // Resend countdown ticker (60s after each verify_send).
   useEffect(() => {
     if (resendCountdown <= 0) return;
-    resendTimerRef.current = setTimeout(() => setResendCountdown(c => Math.max(0, c - 1)), 1000);
+    resendTimerRef.current = setTimeout(() => {
+      const dl = resendDeadlineRef.current;
+      _setResendCountdown(c => (dl > 0 ? Math.max(0, Math.ceil((dl - Date.now()) / 1000)) : Math.max(0, c - 1)));
+    }, 1000);
     return () => clearTimeout(resendTimerRef.current);
   }, [resendCountdown]);
 
@@ -544,6 +557,7 @@ function SignupPhoneLegacy() {
     const digits = phone.replace(/\D/g, '');
     if (digits.length < 8 || !E164_RE.test(fullPhone)) { setError(t('login.phoneInvalid') || 'Número inválido'); return; }
     setError(''); setBusy(true);
+    if (step !== 'otp') setWaUnavailable(false); // [otp-wa 2026-10-18] número novo → reavalia
     try {
       // 1. Check if account exists (no SMS sent — cheap PG/Maildir lookup).
       //    If it does AND user wasn't routed here from login, surface the
@@ -561,7 +575,19 @@ function SignupPhoneLegacy() {
             // login). If they're in fromLogin=1 we trust the original
             // routing — but a fresh exists:true is still surfaced via the
             // banner below.
+            if (exists && lr?.data?.delivered === false) {
+              // [otp-wa 2026-10-18] Conta existe mas NENHUM canal entregou: antes ia
+              // para a tela do código esperando algo que nunca chegaria. Fica aqui com
+              // o erro do servidor e o tempo real para tentar de novo.
+              const _ra = Math.min(3600, Math.max(0, Number(lr?.data?.retry_after || 0)));
+              if (_ra > 0) setResendCountdown(_ra);
+              setError(lr?.message || t('signupPhone.sendError'));
+              setAccountExists(null);
+              setBusy(false);
+              return;
+            }
             if (exists) {
+              if (lr?.data?.whatsapp_available === false) setWaUnavailable(true);
               // [2026-10-11 funnel-qa] phone_login_request ALREADY texted the
               // code for an existing account (and armed the 60s per-number
               // cooldown). Bouncing to /login made the user tap "Enviar
@@ -605,6 +631,7 @@ function SignupPhoneLegacy() {
         else setSentVia('sms');
         const _wa = r?.data?.whatsapp_sent; const _sms = r?.data?.sms_sent;
         setOtpChannels((_wa === undefined && _sms === undefined) ? { wa: true, sms: true } : { wa: !!_wa, sms: !!_sms });
+        if (r?.data?.whatsapp_available === false) setWaUnavailable(true);
         if (step !== 'otp') goStep('otp');
         setCode('');
       } else {
@@ -694,6 +721,7 @@ function SignupPhoneLegacy() {
         // existing backup tied to this phone (reinstall scenario). On
         // any probe error or web platform we just navigate immediately.
         try { await loginWithToken(r.data.token, r.data.email); } catch {}
+        try { require('../services/nativeTelemetry').markAuthDone('login'); } catch {} // [otp-wa 2026-10-18]
         clearSignupDraft(); // [2026-10-07 signup-ux]
         goStep('done');
         _maybePromptRestoreThenGoChat();
@@ -868,6 +896,7 @@ function SignupPhoneLegacy() {
         const lr = await loginWithToken(r.data.token, r.data.email);
         if (!mountedRef.current) return;
         if (lr?.success) {
+          try { require('../services/nativeTelemetry').markAuthDone('signup'); } catch {} // [otp-wa 2026-10-18]
           clearSignupDraft(); // [2026-10-07 signup-ux] account exists now — nothing to resume
           // Best-effort avatar upload — runs after auth so the bearer token
           // is in place. Failure is swallowed (signup already succeeded).
@@ -1568,6 +1597,7 @@ function SignupPhoneLegacy() {
                     "Receber pelo WhatsApp" (whatsapp). */}
                 {resendCountdown <= 30 && (() => {
                   const _toSms = sentVia === 'voice' || (otpChannels.wa && !otpChannels.sms);
+                  if (waUnavailable && !_toSms) return null; // [otp-wa 2026-10-18] sem WhatsApp
                   return (
                   <TouchableOpacity
                     onPress={() => sendOtp(_toSms ? 'force_sms' : 'whatsapp')}

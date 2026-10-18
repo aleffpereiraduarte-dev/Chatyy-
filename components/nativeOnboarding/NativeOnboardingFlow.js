@@ -123,7 +123,18 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const [usernameChecking, setUsernameChecking] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [resendCountdown, setResendCountdown] = useState(0);
+  // [otp-wa 2026-10-18] Contagem pelo RELÓGIO (prazo absoluto): o setTimeout do JS
+  // congela com o app em segundo plano (usuário sai p/ ler o SMS/WhatsApp) e o
+  // "Reenviar em Ns" voltava parado. Agora cada tique recalcula do prazo.
+  const [resendCountdown, _setResendCountdown] = useState(0);
+  const resendDeadlineRef = useRef(0);
+  const setResendCountdown = useCallback((n) => {
+    const s = Math.max(0, Math.round(Number(n) || 0));
+    resendDeadlineRef.current = s > 0 ? Date.now() + s * 1000 : 0;
+    _setResendCountdown(s);
+  }, []);
+  // [otp-wa 2026-10-18] servidor disse que o número NÃO tem WhatsApp → some o "Receber pelo WhatsApp".
+  const [waUnavailable, setWaUnavailable] = useState(false);
   const [sentVia, setSentVia] = useState('sms');
   const [otpChannels, setOtpChannels] = useState({ wa: true, sms: true });
   const [accountExists, setAccountExists] = useState(null);
@@ -248,7 +259,10 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   // ── contagem p/ reenviar ───────────────────────────────────────────────
   useEffect(() => {
     if (resendCountdown <= 0) return undefined;
-    const id = setTimeout(() => setResendCountdown((x) => Math.max(0, x - 1)), 1000);
+    const id = setTimeout(() => {
+      const dl = resendDeadlineRef.current;
+      _setResendCountdown((x) => (dl > 0 ? Math.max(0, Math.ceil((dl - Date.now()) / 1000)) : Math.max(0, x - 1)));
+    }, 1000);
     return () => clearTimeout(id);
   }, [resendCountdown]);
 
@@ -263,6 +277,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     if (digits.length < 8 || !E164_RE.test(fullPhone)) { setError(T('login.phoneInvalid', 'Número inválido')); return; }
     setError(''); setBusy(true);
     setCodeAlreadySent(false);
+    if (stepRef.current !== 'otp') setWaUnavailable(false); // número novo → reavalia
     // [2026-10-15 onb-existing] Já existe um código válido emitido há < 60 s (cooldown
     // do servidor, compartilhado por phone_login_request/verify_send) → vai para a
     // tela do código em vez de travar no telefone com "Aguarde Ns".
@@ -288,6 +303,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           setAccountExists(true);
           const wa = !!lr.data.whatsapp_sent;
           setOtpChannels({ wa, sms: !wa && lr.data.sms_sent !== false });
+          if (lr.data.whatsapp_available === false) setWaUnavailable(true);
           setSentVia('sms');
           setCode('');
           if (lr.data.delivered === false) {
@@ -328,6 +344,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         setSentVia(channel === 'voice' ? 'voice' : 'sms');
         const wa = r?.data?.whatsapp_sent; const sms = r?.data?.sms_sent;
         setOtpChannels((wa === undefined && sms === undefined) ? { wa: true, sms: true } : { wa: !!wa, sms: !!sms });
+        if (r?.data?.whatsapp_available === false) setWaUnavailable(true);
         if (stepRef.current !== 'otp') go('otp', 1);
         setCode('');
       } else if (!toOtpOnCooldown(r)) {
@@ -379,6 +396,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
       if (r?.success && r.data?.token) {
         if (phoneViaFirebaseRef.current) { fbSignOut(); }
         try { await loginWithToken(r.data.token, r.data.email); } catch {}
+        try { require('../../services/nativeTelemetry').markAuthDone('login'); } catch {} // [otp-wa 2026-10-18]
         clearSignupDraft();
         try { hSuccess(); } catch {}
         setIsNewAccount(false);
@@ -515,6 +533,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         const lr = await loginWithToken(r.data.token, r.data.email);
         if (!mountedRef.current) return;
         if (lr?.success) {
+          try { require('../../services/nativeTelemetry').markAuthDone('signup'); } catch {} // [otp-wa 2026-10-18]
           clearSignupDraft();
           if (avatarUri) {
             try {
@@ -967,7 +986,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
               {resendCountdown > 0 ? t('onb.resendIn', { s: resendCountdown }) : T('signupPhone.resend', 'Reenviar código')}
             </Text>
           </Pressable>
-          {resendCountdown <= 30 && (
+          {resendCountdown <= 30 && !(waUnavailable && !toSms) && (
             <Pressable
               disabled={busy}
               onPress={() => sendOtp(toSms ? 'force_sms' : 'whatsapp')}

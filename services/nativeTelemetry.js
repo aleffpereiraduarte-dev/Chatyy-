@@ -116,10 +116,29 @@ function _ensureLifecycle() {
 
 // ─── beacons de diagnóstico ────────────────────────────────────────────────
 /** Beacon de diagnóstico de uma tela nativa (substitui o POST cru a callkit_diag). */
+// ─── auth_funnel: login/cadastro por telefone → 1ª lista de conversas ──────
+// [otp-wa 2026-10-18] markAuthDone() no fim do OTP (login) ou do cadastro; o 1º
+// 'native_list store_ready' depois disso manda `auth_funnel first_list ms=… n=…`
+// (n = conversas na lista). Uma vez por login, só se ocorrer em até 15 min.
+let _authT0 = 0;
+let _authKind = '';
+export function markAuthDone(kind) {
+  try { _authT0 = Date.now(); _authKind = String(kind || '').slice(0, 12); } catch {}
+}
+
 export function nativeBeacon(prefix, step, info) {
   if (_off()) return;
   const p = String(prefix || 'native').slice(0, 24);
   const s = String(step || '');
+  if (_authT0 && p === 'native_list' && s === 'store_ready') {
+    const ms = Date.now() - _authT0;
+    const k = _authKind;
+    _authT0 = 0;
+    if (ms >= 0 && ms < 15 * 60 * 1000) {
+      const n = (String(info || '').match(/\bn=(\d+)/) || [])[1];
+      try { _ensureLifecycle(); _send('auth_funnel', `auth_funnel first_list ms=${ms} kind=${k}${n != null ? ` n=${n}` : ''}`); } catch {}
+    }
+  }
   // cobertura: lê os passos conhecidos
   if (p === 'native_list') {
     if (s === 'store_ready') noteNativeMount('native_list');

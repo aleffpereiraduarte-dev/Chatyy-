@@ -423,6 +423,23 @@ export default function LoginScreen() {
   const [phoneResendTimer, setPhoneResendTimer] = useState(0);
   const phoneOtpRefs = useRef([]);
   const phoneResendRef = useRef(null);
+  // [otp-wa 2026-10-18] Contagem do "Reenviar" pelo RELÓGIO: o setInterval congela com o
+  // app em segundo plano (usuário sai p/ ler o SMS) e voltava com o tempo parado.
+  const armPhoneResend = (sec) => {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    if (phoneResendRef.current) clearInterval(phoneResendRef.current);
+    phoneResendRef.current = null;
+    setPhoneResendTimer(s);
+    if (s <= 0) return;
+    const deadline = Date.now() + s * 1000;
+    phoneResendRef.current = setInterval(() => {
+      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setPhoneResendTimer(left);
+      if (left <= 0 && phoneResendRef.current) { clearInterval(phoneResendRef.current); phoneResendRef.current = null; }
+    }, 1000);
+  };
+  // [otp-wa 2026-10-18] servidor: número sem WhatsApp → esconde "Receber pelo WhatsApp".
+  const [phoneWaUnavailable, setPhoneWaUnavailable] = useState(false);
   // Firebase Phone Auth (2026-06-18): when available (native), the OTP is sent
   // by Google/Firebase and confirmed client-side. fbConfirmRef holds the
   // confirmation between send→verify; fbIdTokenRef holds the ID token after
@@ -1532,6 +1549,7 @@ export default function LoginScreen() {
     if (!online) { setError(t('login.errorOffline')); shake(); return; }
     setError('');
     setPhoneSending(true);
+    if (phoneStep !== 'otp') setPhoneWaUnavailable(false); // [otp-wa 2026-10-18] número novo → reavalia
     try {
       const fullPhone = dialUse + cleaned;
       // Unified flow (user feedback 2026-05-07): just send the SMS — don't
@@ -1586,14 +1604,8 @@ export default function LoginScreen() {
         } else {
           setPhoneStep('otp');
         }
-        setPhoneResendTimer(60);
-        if (phoneResendRef.current) clearInterval(phoneResendRef.current);
-        phoneResendRef.current = setInterval(() => {
-          setPhoneResendTimer(prev => {
-            if (prev <= 1) { clearInterval(phoneResendRef.current); return 0; }
-            return prev - 1;
-          });
-        }, 1000);
+        if (r.data?.whatsapp_available === false) setPhoneWaUnavailable(true);
+        armPhoneResend(60);
       } else {
         // [2026-10-11 funnel-qa] Backend text is pt-BR without accents
         // ("Aguarde 42s antes de pedir outro codigo.") and transport failures
@@ -1607,14 +1619,7 @@ export default function LoginScreen() {
           setPhoneOtp(['', '', '', '', '', '']);
           if (loginMode !== 'phone') swapTo(() => { setLoginMode('phone'); setPhoneStep('otp'); }, 1);
           else setPhoneStep('otp');
-          setPhoneResendTimer(_f.seconds);
-          if (phoneResendRef.current) clearInterval(phoneResendRef.current);
-          phoneResendRef.current = setInterval(() => {
-            setPhoneResendTimer(prev => {
-              if (prev <= 1) { clearInterval(phoneResendRef.current); return 0; }
-              return prev - 1;
-            });
-          }, 1000);
+          armPhoneResend(_f.seconds);
         } else {
           setError(_f.text || t(_f.key));
           shake();
@@ -1721,6 +1726,7 @@ export default function LoginScreen() {
         // The Chatyy bearer is now the real session — drop the Firebase one.
         if (phoneViaFirebaseRef.current) { fbSignOut(); }
         await loginWithToken(r.data.token, r.data.email);
+        try { require('../services/nativeTelemetry').markAuthDone('login'); } catch {} // [otp-wa 2026-10-18]
         saveLastIdentifier(fullPhone);
         showSuccessPop();
         setTimeout(() => {
@@ -2612,8 +2618,10 @@ export default function LoginScreen() {
                                 pelo timer prendia o user. O cooldown REAL é no servidor
                                 (enforcePhoneOtpSendLimit) — se tocar cedo, ele responde
                                 "aguarde Xs". O contador vira só uma dica entre parênteses. */}
-                            <TouchableOpacity onPress={() => handlePhoneSendOtp('sms')} disabled={phoneSending} activeOpacity={0.6}>
-                              <Text style={[s.linkText, { color: colors.primary }]}>
+                            {/* [otp-wa 2026-10-18] contagem agora é pelo relógio (não congela em
+                                segundo plano) → dá p/ travar o botão até zerar, igual WhatsApp. */}
+                            <TouchableOpacity onPress={() => handlePhoneSendOtp('sms')} disabled={phoneSending || phoneResendTimer > 0} activeOpacity={0.6}>
+                              <Text style={[s.linkText, { color: phoneResendTimer > 0 ? colors.textSecondary : colors.primary }]}>
                                 {t('login.phoneResend')}{phoneResendTimer > 0 ? ` (${phoneResendTimer}s)` : ''}
                               </Text>
                             </TouchableOpacity>
@@ -2625,7 +2633,7 @@ export default function LoginScreen() {
                           {/* [otp-global 2026-10-15] Botão de TROCAR canal: chegou pelo WhatsApp →
                               "Enviar por SMS" (force_sms); chegou por SMS → "Receber pelo WhatsApp"
                               (whatsapp). O servidor libera a troca em 30 s (responde "aguarde Xs"). */}
-                          {(
+                          {!(phoneWaUnavailable && !otpWentViaWhatsapp) && (
                             <TouchableOpacity
                               onPress={() => handlePhoneSendOtp(otpWentViaWhatsapp ? 'force_sms' : 'whatsapp')}
                               disabled={phoneSending}
