@@ -341,7 +341,7 @@ export default function AddToCallSheet({
       <View style={styles.center}>
         <IconAlert size={30} color={C.text3} />
         <Text style={styles.centerTitle}>{tr('callAdd.loadError', 'Não foi possível carregar seus contatos.')}</Text>
-        <TouchableOpacity onPress={loadBase} style={styles.retryBtn} activeOpacity={0.8}>
+        <TouchableOpacity onPress={() => { require('../utils/userRetry').noteUserRetry(); loadBase(); }} style={styles.retryBtn} activeOpacity={0.8}>
           <Text style={styles.retryText}>{tr('callAdd.retry', 'Tentar de novo')}</Text>
         </TouchableOpacity>
       </View>

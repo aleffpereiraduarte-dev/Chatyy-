@@ -21,6 +21,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import PressableScale from './PressableScale';
+import { wrapRetryPress } from '../utils/userRetry'; // [2026-10-18 breaker-ux]
 import { Springs, motionEnabled } from '../constants/motion'; // [2026-10-16 motion] entrada de estado vazio
 
 export default function EmptyStateCard({
@@ -100,7 +101,7 @@ export default function EmptyStateCard({
         // [2026-10-11 visual polish] Primary CTA → PressableScale (spring +
         // light haptic), same tactile tap as the other primary buttons.
         <PressableScale
-          onPress={onPress}
+          onPress={wrapRetryPress(onPress, ctaLabel)}
           activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityLabel={ctaLabel}

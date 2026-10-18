@@ -738,7 +738,14 @@ async function _httpSend(row) {
 function _publishServerRow(p, r, cmi) {
   try {
     const row = (r && r.data && r.data.id != null) ? r.data : null;
-    if (!row || r.envelope_mode) return;
+    if (!row) return;
+    // [2026-10-18 eco-e2e] Modo envelope (E2E): não existe linha em chat_messages
+    // — r.data é sintetizado LOCALMENTE em chatSend (id = cmi). Antes saía sem
+    // emitir → relógio da lista só sumia no próximo chat_list e a bolha da fila
+    // offline dependia do sync. Agora emite o MESMO eco local, com o texto que o
+    // remetente já tem (display_content/conteúdo local). Nada disso vai à rede:
+    // ws.emit é só o barramento local de eventos.
+    const _env = !!(r.envelope_mode || row._envelope_mode);
     // [2026-10-13] Eco LOCAL do próprio envio: a linha do servidor às vezes vem
     // sem sender_email (modo envelope / Rust) → a lista tratava como RECEBIDA
     // (não lida +1, sem "Você:"/✓) até atualizar. Garante o remetente + _self.
@@ -747,6 +754,16 @@ function _publishServerRow(p, r, cmi) {
     const serverMsg = { ...row, client_message_id: row.client_message_id || cmi, sender_email: row.sender_email || p.sender_email || _me || row.sender_email, _self: true };
     if (p && p.display_content && serverMsg.content !== p.display_content && p._e2e) {
       serverMsg.content = p.display_content; serverMsg._e2e = true;
+    }
+    if (_env) {
+      const _local = (p && (p.display_content || p.content)) || row.content || '';
+      serverMsg.content = String(_local);
+      serverMsg._envelope_mode = true;
+      serverMsg.id = row.id != null ? row.id : cmi;
+      if (!serverMsg.client_temp_id && p && p.temp_id) serverMsg.client_temp_id = p.temp_id;
+      if (!serverMsg.conversation_id) serverMsg.conversation_id = p.conversation_id;
+      if (!serverMsg.type) serverMsg.type = (p && p.type) || 'text';
+      if (!serverMsg.created_at) serverMsg.created_at = (p && p.created_at) || new Date().toISOString();
     }
     try {
       const cc = require('./chatCache');
@@ -765,6 +782,107 @@ function _publishServerRow(p, r, cmi) {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+
+// [2026-10-18 relógio-boot] App reaberto com mensagens na fila (JS ou possuídas
+// pela fila NATIVA — a linha JS fica 'sending' até o evento do nativo): a
+// conversa já reidrata as bolhas com relógio (_rehydrateOutbox → getPending), mas
+// a LISTA só desenhava o relógio a partir do eco local do envio
+// (chat_local_outbound, que não sobrevive ao processo). Aqui, assim que a lista
+// estiver ouvindo, re-emite esse MESMO eco local (nunca vai à rede) para a msg
+// mais nova da fila de cada conversa. Regras (iguais às do envio ao vivo):
+//   • só sem rede — é aí que a lista põe o relógio (_lmPendingFlag); com rede a
+//     fila drena em segundos e o eco do servidor/chat_list atualiza a prévia, e
+//     nunca mostramos ✓ falso de msg que não saiu;
+//   • nunca rebaixa a prévia: se a lista em cache já tem msg mais nova (ou a
+//     própria msg), não emite; falhas definitivas (vermelho) e E2E sem texto
+//     local não entram.
+const _ANNOUNCE_MAX_WAIT_MS = 30000;
+let _announced = false;
+function _listListening(ws) {
+  try { const s = ws && ws.listeners && ws.listeners.get && ws.listeners.get('chat_local_outbound'); return !!(s && s.size > 0); } catch { return false; }
+}
+function _isOfflineNow() {
+  try { const ni = require('./networkInfo'); return typeof ni?.isConnected === 'function' && ni.isConnected() === false; } catch { return false; }
+}
+function _announcePendingToList() {
+  if (_announced || Platform.OS === 'web') return;
+  _announced = true;
+  const t0 = Date.now();
+  const tick = () => {
+    if (_stopped) return;
+    const ws = _ws();
+    if (!_listListening(ws)) {
+      if (Date.now() - t0 < _ANNOUNCE_MAX_WAIT_MS) setTimeout(tick, 400);
+      return;
+    }
+    _emitPendingPreviews(ws).catch(() => {});
+  };
+  setTimeout(tick, 300);
+}
+function _tsOf(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return v;
+  const n = Date.parse(String(v).replace(' ', 'T'));
+  return Number.isFinite(n) ? n : 0;
+}
+async function _emitPendingPreviews(ws) {
+  if (!_isOfflineNow()) return;
+  let rows = [];
+  try { rows = await messageOutbox.getPending(null); } catch { rows = []; }
+  if (!rows || !rows.length) return;
+  let me = '';
+  try { me = String(_api()?.getActiveAccountEmail?.() || ''); } catch {}
+  const meLc = me.trim().toLowerCase();
+  // msg mais nova (created_at) por conversa; 'msg' e 'upload'/'ready' (mídia na fila)
+  const newest = new Map();
+  for (const r of rows) {
+    if (!r || r.state === 'failed') continue;
+    const p = r.payload || {};
+    const conv = p.conversation_id ?? r.conversation_id;
+    const cmi = String(r.client_message_id || p.client_message_id || '');
+    if (conv == null || !cmi) continue;
+    const snd = String(p.sender_email || '').trim().toLowerCase();
+    if (snd && meLc && snd !== meLc) continue;
+    let content = p.display_content || '';
+    if (!content && !(p._e2e || p.e2e || p._e2eWanted)) content = p.content || p.caption || '';
+    const type = p.type || 'text';
+    if (!content && type === 'text') continue; // E2E sem texto local → não vira prévia
+    const at = _tsOf(p.created_at) || _tsOf(r.created_at);
+    const prev = newest.get(String(conv));
+    if (prev && prev.at >= at) continue;
+    newest.set(String(conv), { at, conv, cmi, p, content, type });
+  }
+  if (!newest.size) return;
+  let cached = [];
+  try { cached = (await require('./chatCache').getCachedConversations()) || []; } catch { cached = []; }
+  const byId = new Map();
+  for (const c of cached) { if (c && c.id != null) byId.set(String(c.id), c); }
+  for (const it of newest.values()) {
+    const c = byId.get(String(it.conv));
+    const lm = c && c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+    if (lm) {
+      if (String(lm.client_message_id || '') === it.cmi) continue; // a lista já tem esta msg
+      const lmAt = _tsOf(lm.created_at) || _tsOf(c.last_message_at) || _tsOf(c.updated_at);
+      if (lmAt && it.at && lmAt > it.at) continue; // prévia mais nova → não rebaixa
+    }
+    if (!_isOfflineNow()) return; // rede voltou no meio: a fila drena
+    try {
+      ws._emit?.('chat_local_outbound', {
+        conversation_id: it.conv,
+        id: it.p.temp_id || ('tmp_' + it.cmi),
+        client_message_id: it.cmi,
+        sender_email: it.p.sender_email || me,
+        content: it.content,
+        type: it.type,
+        ...(typeof it.p.file_url === 'string' && /^https?:\/\//i.test(it.p.file_url) ? { file_url: it.p.file_url } : {}),
+        ...(it.p.file_name ? { file_name: it.p.file_name } : {}),
+        created_at: it.p.created_at || (it.at ? new Date(it.at).toISOString() : new Date().toISOString()),
+        _local: true,
+        _restored: true,
+      });
+    } catch {}
+  }
+}
 
 /**
  * Start the worker. Wires AppState + NetInfo + WS listeners and starts the
@@ -795,6 +913,8 @@ export function start() {
 
   // Initial drain after a short delay so the app finishes booting first.
   setTimeout(() => { kick('boot'); }, 1500);
+  // [2026-10-18 relógio-boot] lista: prévia "Você: … 🕓" das msgs ainda na fila.
+  try { _announcePendingToList(); } catch {}
   // [2026-10-07 send-media] media upload lane shares the worker lifecycle.
   try { _mediaQueue()?.start?.(); } catch {}
 
@@ -887,6 +1007,7 @@ export function start() {
 export function stop() {
   _stopped = true;
   _started = false;
+  _announced = false; // [2026-10-18 relógio-boot] próxima conta/boot anuncia de novo
   if (_periodicTimer) { try { clearInterval(_periodicTimer); } catch {} _periodicTimer = null; }
   if (_cleanupTimer) { try { clearInterval(_cleanupTimer); } catch {} _cleanupTimer = null; }
   if (_wakeTimer) { try { clearTimeout(_wakeTimer); } catch {} _wakeTimer = null; _wakeAt = 0; }

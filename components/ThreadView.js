@@ -298,7 +298,7 @@ function MessageItem({ message, initiallyExpanded, colors, t, onReply, onReplyAl
     if (!mHasBody && bodyFailed) {
       return (
         <TouchableOpacity
-          onPress={() => setAttempt((a) => a + 1)}
+          onPress={() => { require('../utils/userRetry').noteUserRetry(); setAttempt((a) => a + 1); }}
           accessibilityRole="button"
           style={{ paddingVertical: 6, minHeight: 32, justifyContent: 'center' }}
         >

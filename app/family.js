@@ -738,7 +738,7 @@ function FamilyScreenInner() {
           </View>
           <Text style={{ fontSize: FontSize.lg, fontWeight: '800', color: colors.text, marginBottom: 6 }}>{t('family.loadErrorTitle')}</Text>
           <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, textAlign: 'center', marginBottom: 20, lineHeight: 19 }}>{t('family.loadErrorBody')}</Text>
-          <PressableScale onPress={() => { setLoading(true); loadInfo(); }} style={[s.cta, { backgroundColor: accent }]} accessibilityRole="button" accessibilityLabel={t('common.tryAgain')}>
+          <PressableScale onPress={() => { require('../utils/userRetry').noteUserRetry(); setLoading(true); loadInfo(); }} style={[s.cta, { backgroundColor: accent }]} accessibilityRole="button" accessibilityLabel={t('common.tryAgain')}>
             <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>{t('common.tryAgain')}</Text>
           </PressableScale>
         </View>

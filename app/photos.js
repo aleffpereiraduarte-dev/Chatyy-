@@ -5777,7 +5777,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
           {error}
         </Text>
-        <TouchableOpacity onPress={loadClusters} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#111111' }}>
+        <TouchableOpacity onPress={() => { require('../utils/userRetry').noteUserRetry(); loadClusters(); }} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#111111' }}>
           <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.retry') || 'Tentar de novo'}</Text>
         </TouchableOpacity>
       </View>

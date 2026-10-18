@@ -404,18 +404,18 @@ function _onEvent(ev) {
   const cmi = ev.cmi != null ? String(ev.cmi) : '';
   if (!cmi) return;
   const ow = _owned.get(cmi); if (ow) ow.at = Date.now(); // ainda vivo no nativo
-  if (st === 'uploaded') { _mediaProgress(cmi, 100, 'commit'); return; }
+  if (st === 'uploaded') { _mediaProgress(cmi, 100, 'commit', ev.conv); return; }
   // [2026-10-18 outbox-progress] Binário ≥ 3: bytes REAIS enviados pelo
   // uploader nativo (URLSession didSendBodyData / OkHttp RequestBody). 100% dos
   // bytes ≠ concluído (o servidor ainda grava no R2) → teto 99 até 'uploaded'.
   if (st === 'progress') {
     const tot = Number(ev.total) || 0;
     const raw = tot > 0 ? ((Number(ev.sent) || 0) / tot) * 100 : (Number(ev.pct) || 0);
-    _mediaProgress(cmi, Math.max(0, Math.min(99, Math.round(raw))), 'upload');
+    _mediaProgress(cmi, Math.max(0, Math.min(99, Math.round(raw))), 'upload', ev.conv);
     return;
   }
   // binário antigo (sem 'progress'): mantém o degrau de 50%
-  if (st === 'uploading') { if (!_hasNativeProgress()) _mediaProgress(cmi, 50, 'upload'); return; }
+  if (st === 'uploading') { if (!_hasNativeProgress()) _mediaProgress(cmi, 50, 'upload', ev.conv); return; }
   if (st !== 'sent' && st !== 'failed') return;
   const set = _waiters.get(cmi);
   if (set && set.size) { for (const fn of Array.from(set)) { try { fn(ev); } catch {} } return; }
@@ -432,10 +432,36 @@ function _hasNativeProgress() {
   return v;
 }
 
-function _mediaProgress(cmi, pct, phase) {
+/** [2026-10-18] Binário reporta bytes reais ('progress', transport ≥ 3)? */
+export function hasNativeProgress() { return _hasNativeProgress(); }
+
+function _mediaProgress(cmi, pct, phase, conv) {
   const c = _mediaCtx.get(cmi);
-  if (!c) return;
+  // [2026-10-18 restore] Sem contexto em memória = upload entregue ao nativo num
+  // processo ANTERIOR (app reaberto). A bolha reidratada do outbox (relógio +
+  // anel) escuta pelo cmi → emite mesmo assim com a conversa do evento, senão o
+  // anel ficava parado em 0 até o 'sent'.
+  // O payload (temp_id: a tela indexa o anel por ele) vem da fila JS uma vez.
+  if (!c) { _restoreMediaCtx(cmi, conv, pct, phase); return; }
   try { require('./mediaSendQueue').emitProgressExternal?.(c.p, cmi, pct, phase); } catch {}
+}
+const _ctxLoading = new Map(); // cmi → último {pct, phase, conv} enquanto lê a fila JS
+function _restoreMediaCtx(cmi, conv, pct, phase) {
+  const busy = _ctxLoading.has(cmi);
+  _ctxLoading.set(cmi, { pct, phase, conv });
+  if (busy) return;
+  (async () => {
+    let p = null;
+    try { const s = await require('./messageOutbox').getStatus(cmi); p = (s && s.payload) || null; } catch {}
+    const last = _ctxLoading.get(cmi);
+    _ctxLoading.delete(cmi);
+    if (!last) return;
+    const pp = p ? { ...p, client_message_id: cmi, conversation_id: p.conversation_id ?? last.conv }
+      : (last.conv != null ? { conversation_id: last.conv, client_message_id: cmi } : null);
+    if (!pp) return;
+    if (p && !_mediaCtx.has(cmi)) _mediaCtx.set(cmi, { p: pp });
+    try { require('./mediaSendQueue').emitProgressExternal?.(pp, cmi, last.pct, last.phase); } catch {}
+  })().catch(() => { _ctxLoading.delete(cmi); });
 }
 
 /** Concilia um resultado do nativo com a fila JS + UI (mesmo eco do sendWorker). */

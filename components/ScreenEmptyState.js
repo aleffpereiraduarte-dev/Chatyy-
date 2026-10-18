@@ -26,6 +26,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated, Easing, StyleSheet, Platform } from 'react-native';
 import PressableScale from './PressableScale';
+import { wrapRetryPress } from '../utils/userRetry'; // [2026-10-18 breaker-ux]
 import Svg, { Path, Circle, Rect, Defs, LinearGradient, RadialGradient, Stop, G, Line } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
@@ -239,7 +240,7 @@ export default function ScreenEmptyState({
         // [2026-10-11 visual polish] Primary CTA → PressableScale (spring + light haptic).
         <PressableScale
           activeOpacity={0.85}
-          onPress={cta.onPress}
+          onPress={wrapRetryPress(cta.onPress, cta.label)}
           accessibilityRole="button"
           accessibilityLabel={cta.label}
           style={[styles.cta, { backgroundColor: A }]}

@@ -3413,7 +3413,7 @@ export default function Profile({
       ) : (
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <TouchableOpacity
-          onPress={() => { setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
+          onPress={() => { require('../utils/userRetry').noteUserRetry(); setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
           style={{
             paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12, minHeight: 44, justifyContent: 'center',
             backgroundColor: colors?.primary || '#111111',

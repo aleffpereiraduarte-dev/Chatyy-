@@ -6,6 +6,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
 import { cssPulseScale, IS_WEB } from '../utils/webCssLoop';
 import { IllustrationSearch, IllustrationEmptyInbox, IconSend, IconTrash, IconArchive, IconAlertTriangle, IconClock, IconFileText, IconCompose, IconRefresh, IconMail } from './Icons';
+import { wrapRetryPress } from '../utils/userRetry'; // [2026-10-18 breaker-ux]
 import { Springs, motionEnabled } from '../constants/motion'; // [2026-10-16 motion] entrada de estado vazio
 
 const FOLDER_EMPTY = {
@@ -113,7 +114,7 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
         {onRefresh && (
           <TouchableOpacity
             style={[s.ctaBtnOutline, { borderColor: colors.border }]}
-            onPress={onRefresh}
+            onPress={wrapRetryPress(onRefresh, '', true)}
             activeOpacity={0.7}
           >
             <IconRefresh size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />

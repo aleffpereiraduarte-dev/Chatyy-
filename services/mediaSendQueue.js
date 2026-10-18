@@ -512,7 +512,12 @@ async function _process(row) {
           let meta = null;
           try { meta = require('./sendWorker').mediaMetaFields?.(p, p.type) || null; } catch {}
           if (await no.handoffUpload(row, p, file, size, meta)) {
-            _emit(p, cmi, 10, 'upload');
+            // [2026-10-18 outbox-progress] transport ≥ 3: começa em 0 e segue os
+            // bytes REAIS ('progress' → emitProgressExternal). Binário antigo:
+            // degrau fixo de 10% (o máximo monotônico seguraria o anel em 10).
+            let _real = false;
+            try { _real = !!(no.hasNativeProgress && no.hasNativeProgress()); } catch {}
+            _emit(p, cmi, _real ? 0 : 10, 'upload');
             return;
           }
         }

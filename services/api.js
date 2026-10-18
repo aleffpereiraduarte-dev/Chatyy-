@@ -2639,6 +2639,35 @@ function _boShortCircuit(e) {
   const body = { success: false, message: st === 0 ? 'Connection error' : 'Servidor indisponivel', backoff: true, retry_in_ms: Math.max(0, e.until - Date.now()) };
   return _withHttpStatus(body, st);
 }
+// [2026-10-18 breaker-ux] "Tentar de novo" EXPLÍCITO do usuário: com o breaker
+// aberto a chamada falhava na hora por até 60 s (o botão parecia morto). Agora o
+// toque abre uma janela curta em que CADA chave aberta deixa sair UMA sonda
+// (as demais chamadas da mesma chave seguem em curto-circuito); se a sonda
+// voltar OK o breaker fecha (_boOk), se falhar re-arma com o backoff normal.
+const _BO_USER_WIN_MS = 5000;
+let _boUserUntil = 0;
+const _boProbed = new Set(); // chaves infra já sondadas nesta janela
+/**
+ * Chamar no onPress de um "Tentar de novo"/recarregar explícito, ANTES de refazer
+ * a carga. Ex.: onPress={() => { noteUserRetry(); load(); }}.
+ */
+export function noteUserRetry(ms = _BO_USER_WIN_MS) {
+  _boUserUntil = Date.now() + Math.max(500, Math.min(15000, Number(ms) || _BO_USER_WIN_MS));
+  _boProbed.clear();
+}
+/** Executa fn() como retry explícito do usuário (atalho p/ noteUserRetry + fn). */
+export function withUserRetry(fn) {
+  noteUserRetry();
+  return typeof fn === 'function' ? fn() : undefined;
+}
+function _boTakeUserProbe(keys) {
+  if (!_boUserUntil || Date.now() > _boUserUntil) return false;
+  const k = keys.infra;
+  if (_boProbed.has(k)) return false;
+  _boProbed.add(k);
+  return true;
+}
+
 /** Diagnóstico/QA: estado atual do breaker (chave → {n, em_ms, status}). */
 export function getApiBackoffState() {
   const out = {}; const now = Date.now();
@@ -2662,7 +2691,7 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
   if (_boK) {
     _boK.host = _boH;
     const _open = _boOpen(_boK);
-    if (_open) return _boShortCircuit(_open);
+    if (_open && !_boTakeUserProbe(_boK)) return _boShortCircuit(_open);
   }
   let result = await _rawApiCall(action, params, method);
 

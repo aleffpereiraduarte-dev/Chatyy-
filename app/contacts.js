@@ -1888,7 +1888,7 @@ function ContactsScreenInner() {
           <View style={s.emptyCTARow}>
             <TouchableOpacity
               style={[s.emptyCTABtn, { backgroundColor: colors.primary }]}
-              onPress={loadContacts}
+              onPress={() => { require('../utils/userRetry').noteUserRetry(); loadContacts(); }}
               activeOpacity={0.8}
             >
               <IconRefresh size={16} color={colors.onPrimary} />
