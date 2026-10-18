@@ -11,7 +11,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // [2026-10-15 native-transport] Fio nativo (modules/expo-chat-transport). Ver
 // services/nativeTransport.js. Binário sem o módulo / web / flag
 // __chatyy_native_ws === false → WebSocket JS de sempre.
-import { isNativeTransportEnabled, createNativeSocket, markNativeTransportBroken, getNativeTransportStats } from './nativeTransport';
+import { isNativeTransportEnabled, createNativeSocket, markNativeTransportBroken, getNativeTransportStats, nativeTransportVersion } from './nativeTransport';
 // Sentinela de pingTimer no modo nativo (o keepalive roda no nativo).
 const NATIVE_PING = 'native';
 // [2026-10-15 fase 2b] transporte nativo → store nativo direto. Kill switches:
@@ -260,6 +260,25 @@ function _pickWsUrl() {
 // 401 (token just expired, refresh succeeds, server accepts) never reaches
 // this threshold — only a token the server keeps rejecting does.
 const AUTH_REJECT_STOP = 3;
+
+// [2026-10-18 ws-400] Recusa HTTP no handshake do WebSocket (resposta != 101).
+// 400/401/403 NÃO são queda de rede: reconectar em backoff só repete a recusa
+// (telemetria 72 h: 1.728 ws_close http=400 em 93 aparelhos Android). Vão pro
+// fluxo "auth needed" (_onHandshakeRejected). 429/5xx seguem no backoff normal.
+function _isHandshakeRejectHttp(h) {
+  const n = Number(h) || 0;
+  return n === 400 || n === 401 || n === 403;
+}
+// Extrai o status HTTP da mensagem de erro do WebSocket do RN.
+//   Android (OkHttp): "Expected HTTP 101 response but was '400 Bad Request'"
+//   iOS (SocketRocket): "Received bad response code from server: 400."
+function _parseHandshakeHttp(msg) {
+  const s = String(msg || '');
+  if (!s) return 0;
+  let m = /Expected HTTP 101 response but was '(\d{3})/i.exec(s);
+  if (!m) m = /bad response code from server:?\s*(\d{3})/i.exec(s);
+  return m ? Number(m[1]) : 0;
+}
 // Exponential backoff (with cap) BETWEEN auth-driven reconnects so even
 // before we hard-stop we're not hammering: 2s → 4s → 8s … capped at 60s.
 const AUTH_REJECT_BACKOFF_BASE = 2000;
@@ -568,6 +587,21 @@ class MailWebSocket {
     if (!ev || this.ws !== ns) return;
     const st = ev.state;
     this._logGhost?.('native_' + st, { code: ev.code, attempt: ev.attempt, reason: ev.reason });
+    // [2026-10-18 ws-400] Fio nativo reconectando SEM token vivo (logout /
+    // bearer purgado sem disconnect) → derruba e não reabre até haver login.
+    if (st === 'reconnecting' || st === 'auth_wait') {
+      let _tok = '';
+      try { _tok = require('./api').getAuthToken?.() || ''; } catch {}
+      if (!_tok) { this._stopNoToken('native_' + st); return; }
+    }
+    // [2026-10-18 ws-400] Binário antigo (nativo < v4) segue em backoff depois
+    // de 400/401/403 no handshake e o shim fica em CONNECTING → a cada ~10 s o
+    // connect() recriava a sessão nativa (contador de recusas zerava) = laço
+    // eterno. Agora a 1ª recusa já vai pro fluxo "auth needed".
+    if (st === 'reconnecting' && _isHandshakeRejectHttp(ev.http)) {
+      this._onHandshakeRejected(Number(ev.http), 'native_v' + (nativeTransportVersion() || 0));
+      return;
+    }
     switch (st) {
       case 'connecting':
         break;
@@ -742,6 +776,12 @@ class MailWebSocket {
         return 'stopped';
       }
     }
+    // [2026-10-18 ws-400] Parado por recusa no handshake: só token NOVO libera.
+    if (this._hsStopped) {
+      if (token === this._hsStopped.token) return 'stopped';
+      this._hsStopped = null;
+      this._hsRefreshTried = false;
+    }
     if (this.destroyed) {
       // destroyed = tombstone (session_replaced / auth streak) ou disconnect()
       // de logout. Com token vivo no api.js estamos logados → revive.
@@ -856,11 +896,31 @@ class MailWebSocket {
     // the WS auth_error streak. Falls back to the argument if api isn't
     // ready yet (very cold start).
     let liveToken = token;
+    let _apiTok = '';
     try {
       const apiMod = require('./api');
       const fresh = apiMod.getAuthToken?.();
-      if (fresh && typeof fresh === 'string' && fresh.length > 0) liveToken = fresh;
+      if (fresh && typeof fresh === 'string' && fresh.length > 0) { liveToken = fresh; _apiTok = fresh; }
     } catch {}
+    // [2026-10-18 ws-400] NUNCA abre fio (nativo ou JS) sem token válido. Sem
+    // token = tela de login / logout / bearer purgado: abrir só gerava handshake
+    // inútil em laço (telemetria 72 h: 1.728 ws_close http=400). Depois de uma
+    // sessão (logout/purga), o this.token velho não vale — só o token VIVO do
+    // api.js; no cold start (api ainda hidratando) vale o argumento.
+    if (!liveToken || typeof liveToken !== 'string' ||
+        (!_apiTok && (this._loggedOut || this._hadSession))) {
+      try { this._logGhost?.('connect_no_token', { loggedOut: !!this._loggedOut }); } catch {}
+      if (this.ws) { try { this._cleanup(); } catch {} }
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+      return;
+    }
+    // Handshake recusado (400/401/403) já esgotou o refresh → parado até login.
+    if (this._hsStopped) {
+      if (liveToken === this._hsStopped.token) return;
+      this._hsStopped = null; // token novo (re-login / troca de conta) → libera
+      this._hsRefreshTried = false;
+    }
 
     // [2026-10-01 instant-open] Idempotent connect. A socket may already be
     // in flight for THIS exact token — most importantly the eager bootstrap
@@ -1221,6 +1281,20 @@ class MailWebSocket {
         } catch {}
       }
 
+      // [2026-10-18 ws-400] WebSocket JS recusado no handshake (400/401/403):
+      // não é queda de rede → fluxo "auth needed" (sem backoff eterno).
+      if (!wasAuthenticated && !(this.ws && this.ws.__native)) {
+        let _h = 0;
+        try {
+          if (this._jsHsHttp && this._jsHsHttp.ws === this.ws) _h = this._jsHsHttp.http;
+          if (!_h) _h = _parseHandshakeHttp(closeReason);
+        } catch {}
+        this._jsHsHttp = null;
+        if (_isHandshakeRejectHttp(_h)) {
+          this._onHandshakeRejected(_h, 'js_ws');
+          return;
+        }
+      }
       if (closeCode === 4002) {
         this._emit('connection', { status: 'session_replaced', message: closeReason });
         return;
@@ -1236,9 +1310,16 @@ class MailWebSocket {
         try {
           require('./crashReporter').reportStep?.('ws_close', `native_end code=${closeCode} reason=${closeReason.slice(0, 80)}`);
         } catch {}
-        if (closeCode === 4401) {
-          try { this._handleMessage({ type: 'auth_error', message: 'handshake_rejected', reason: closeReason }); } catch {}
-          return;
+        // [2026-10-18 ws-400] 4401 (401/403) e 4400 (nativo v4: 400 já na 1ª
+        // recusa; antigos: 4xx x4) → fluxo "auth needed": 1 refresh do bearer;
+        // falhou ou recusou de novo → para até login. Sem laço.
+        if (closeCode === 4401 || closeCode === 4400) {
+          const _m = /http=(\d{3})/.exec(closeReason);
+          const _h = _m ? Number(_m[1]) : (closeCode === 4401 ? 401 : 400);
+          if (_isHandshakeRejectHttp(_h)) {
+            this._onHandshakeRejected(_h, 'native_close_' + closeCode);
+            return;
+          }
         }
         try { markNativeTransportBroken('close ' + closeCode + ' ' + closeReason); } catch {}
         this.reconnectAttempt = Math.max(this.reconnectAttempt, 3);
@@ -1256,8 +1337,15 @@ class MailWebSocket {
       if (!this.destroyed) this._scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    this.ws.onerror = (e) => {
       // onclose will fire after this
+      // [2026-10-18 ws-400] WebSocket JS: guarda o HTTP da recusa do handshake
+      // (Android/OkHttp: "Expected HTTP 101 response but was '400 Bad Request'";
+      // iOS: "...bad response code from server: 400") p/ o onclose decidir.
+      try {
+        const h = _parseHandshakeHttp(e && (e.message || e.reason));
+        if (h) this._jsHsHttp = { ws: this.ws, http: h };
+      } catch {}
     };
   }
 
@@ -1305,6 +1393,8 @@ class MailWebSocket {
     this._authRejectStreak = 0;
     this._authRejectBackoff = 0;
     this._authReloginStopped = false;
+    this._hsStopped = null;
+    this._hsRefreshTried = false;
     this._seenMsgIds.clear();
     this._seenMsgIdQueue = [];
     if (fullWipe) {
@@ -1859,6 +1949,96 @@ class MailWebSocket {
     }
   }
 
+  // [2026-10-18 ws-400] Sem token vivo: derruba o fio (nativo ou JS) e NÃO
+  // agenda reconexão. Volta sozinho quando houver login (ensureConnected com
+  // token do api.js → connect()).
+  _stopNoToken(reason) {
+    try { this._logGhost?.('ws_stop_no_token', { reason }); } catch {}
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    try { this._cleanup(); } catch {}
+    this._emit('connection', { status: 'disconnected', reason: 'no_token' });
+  }
+
+  // [2026-10-18 ws-400] Handshake recusado com HTTP 400/401/403 (fio nativo ou
+  // WebSocket JS). Fluxo "auth needed":
+  //   1. sem token vivo → para (tela de login / logout);
+  //   2. 1ª recusa → UM refresh do bearer (forceBearerRefresh, teto 5 s) e UMA
+  //      nova tentativa (400 tenta pelo WebSocket JS: outra pilha HTTP);
+  //   3. refresh falhou ou recusou de novo → PARA até login/troca de conta
+  //      (_hsStopped guarda o token recusado; token novo libera no connect()).
+  //      401/403 também avisam o app (chatyy:authFailure → AuthContext valida
+  //      o bearer e pede re-login se preciso); 400 não força logout (é recusa
+  //      de cabeçalho — ex. proxy que remove o Upgrade — não de credencial).
+  _onHandshakeRejected(http, src) {
+    const h = Number(http) || 0;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    try { this._cleanup(); } catch {}
+    this._lastConnectAt = 0;
+    let tok = '';
+    try { tok = require('./api').getAuthToken?.() || ''; } catch {}
+    try {
+      if (tok) {
+        require('./crashReporter').reportStep?.(
+          'ws_handshake_rejected',
+          `http=${h} src=${src} refreshTried=${this._hsRefreshTried ? 1 : 0}`,
+        );
+      }
+    } catch {}
+    try { this._logGhost?.('handshake_rejected', { http: h, src, refreshTried: !!this._hsRefreshTried }); } catch {}
+    this._emit('connection', { status: 'auth_needed', http: h, source: src });
+    if (!tok) { this._stopNoToken('handshake_' + h); return; }
+    if (this.destroyed) return;
+    if (h === 400 && String(src).indexOf('native') === 0) {
+      try { markNativeTransportBroken('handshake http=400'); } catch {}
+    }
+    if (this._hsRefreshTried) { this._parkHandshake(h, tok); return; }
+    this._hsRefreshTried = true;
+    let apiMod = null;
+    try { apiMod = require('./api'); } catch {}
+    const refreshFn = apiMod && (apiMod.forceBearerRefresh || apiMod.refreshAuthToken);
+    const before = tok;
+    const TIMEOUT = { __timeout: true };
+    const p = typeof refreshFn === 'function'
+      ? Promise.resolve().then(() => refreshFn()).catch(() => false)
+      : Promise.resolve(false);
+    Promise.race([p, new Promise((r) => setTimeout(() => r(TIMEOUT), 5000))]).then((ok) => {
+      if (this.destroyed || this._hsStopped) return;
+      let now = '';
+      try { now = apiMod?.getAuthToken?.() || ''; } catch {}
+      if (!now) { this._stopNoToken('handshake_refresh_no_token'); return; }
+      if (ok === TIMEOUT || ok === false) {
+        // 400 = recusa de cabeçalho: o bearer não está em jogo → ainda vale
+        // UMA tentativa (já pelo WebSocket JS). 401/403 sem refresh → para.
+        if (h !== 400) { this._parkHandshake(h, now); return; }
+      }
+      try { console.warn('[WS] handshake http=' + h + ' — 1 nova tentativa após refresh do bearer'); } catch {}
+      this.token = now;
+      this.reconnectAttempt = Math.max(this.reconnectAttempt, 3);
+      this.connect(now);
+    });
+  }
+
+  _parkHandshake(http, token) {
+    this._hsStopped = { http, token, at: Date.now() };
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    try { this._cleanup(); } catch {}
+    try { console.warn('[WS] handshake recusado (http=' + http + ') após refresh — parado até login'); } catch {}
+    try { this._logGhost?.('handshake_stop', { http }); } catch {}
+    try { require('./crashReporter').reportStep?.('ws_handshake_stop', `http=${http}`); } catch {}
+    if (http === 401 || http === 403) {
+      try {
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__chatyy_authFailure = Date.now();
+          if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+        }
+      } catch {}
+    }
+    this._emit('connection', { status: 'needs_relogin', reason: 'handshake_' + http });
+  }
+
   // [P0 2026-05-25] Enter the "needs re-login" hard-stop. Called when the
   // server keeps rejecting a freshly-refreshed token (auth-reject storm).
   // Stops all auto-reconnect: clears the reconnect timer, sets the stop flag
@@ -1897,6 +2077,8 @@ class MailWebSocket {
   // if a reconnect was kicked off.
   manualReconnect() {
     this._authReloginStopped = false;
+    this._hsStopped = null;
+    this._hsRefreshTried = false;
     this._authRejectStreak = 0;
     this._authRejectBackoff = 0;
     this._authFailStreak = 0;
@@ -2057,6 +2239,9 @@ class MailWebSocket {
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
+        this._hadSession = true;
+        this._hsRefreshTried = false;
+        this._hsStopped = null;
         // [2026-10-08 regions-fast] Desfecho da tentativa (fallback regional→US).
         if (this._wsAttempt) {
           this._wsAttempt.authed = true;

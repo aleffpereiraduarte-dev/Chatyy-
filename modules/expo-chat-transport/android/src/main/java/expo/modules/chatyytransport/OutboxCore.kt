@@ -80,6 +80,10 @@ class OutboxCore(
     const val REGIONAL_UPLOAD_MAX_FAILS = 2L
     /** Progress events: at most one per this many ms (plus the 100% one). */
     const val PROGRESS_MIN_MS = 150L
+    /** [2026-10-18 net-change] upload sem bytes há mais que isso na troca de rede = preso → reinicia. */
+    const val NET_CHANGE_UPLOAD_IDLE_MS = 3000L
+    /** [2026-10-18 upload-4xx] 4xx definitivo no upload: tentativas antes de 'failed'. */
+    const val UPLOAD_4XX_MAX_TRIES = 3L
     private val HARD_RE = Regex("\\b403\\b|forbidden|not.?a.?member|no_permission|permission_denied|conversation.?deleted|admin.?only", RegexOption.IGNORE_CASE)
     private val JSON_MT = "application/json; charset=utf-8".toMediaType()
     fun isUsableBase(b: String): Boolean = b.startsWith("https://") && (b.removePrefix("https://").substringBefore('/').let { h -> h == "chatyy.com.br" || h.endsWith(".chatyy.com.br") })
@@ -99,7 +103,10 @@ class OutboxCore(
     .callTimeout(40, TimeUnit.SECONDS).retryOnConnectionFailure(true).build()
   private val upHttp: OkHttpClient = http.newBuilder().callTimeout(6, TimeUnit.MINUTES).writeTimeout(5, TimeUnit.MINUTES).build()
 
-  private class Attempt(val account: String, val cmi: String, val conv: String, var phase: String, var timer: ScheduledFuture<*>? = null, var call: Call? = null)
+  private class Attempt(val account: String, val cmi: String, val conv: String, var phase: String, var timer: ScheduledFuture<*>? = null, var call: Call? = null) {
+    /** [2026-10-18 net-change] último sinal de vida do request (início / bytes enviados). */
+    @Volatile var lastIoAt: Long = System.currentTimeMillis()
+  }
 
   private val creds = HashMap<String, Creds>()
   private val accounts = LinkedHashSet<String>()
@@ -214,6 +221,39 @@ class OutboxCore(
   }
 
   fun onNetwork(up: Boolean) { if (up) kick("net_up") }
+
+  /**
+   * [2026-10-18 net-change] Troca de rede (wifi↔4G) ou rede de volta: o request
+   * HTTP em voo ficou preso na interface velha até o timeout (30/40 s). Cancela,
+   * devolve à fila SEM contar tentativa (o servidor deduplica por
+   * client_message_id) e bombeia já. Envios aguardando ack do WS também voltam
+   * (o socket velho caiu junto). Upload só é cancelado se estiver parado
+   * (sem bytes há > NET_CHANGE_UPLOAD_IDLE_MS): um upload que continua andando
+   * (interface velha ainda viva) não perde o que já subiu.
+   */
+  fun onNetChange(reason: String = "net_change") {
+    post {
+      val t = now()
+      for (at in inflight.values.toList()) {
+        if (at.phase != "http" && at.phase != "ws") continue
+        inflight.remove(at.cmi)
+        at.timer?.cancel(false)
+        try { at.call?.cancel() } catch (_: Throwable) {}
+        storage.patch(at.account, at.cmi, JSONObject().put("state", "queued").put("next_at", 0).put("err", reason))
+        bump("netChangeRequeued")
+        emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "queued", "err" to reason, "retryInMs" to 0))
+      }
+      for (at in uploads.values.toList()) {
+        if (t - at.lastIoAt < NET_CHANGE_UPLOAD_IDLE_MS) continue
+        uploads.remove(at.cmi)
+        try { at.call?.cancel() } catch (_: Throwable) {}
+        storage.patch(at.account, at.cmi, JSONObject().put("state", "uploading").put("next_at", 0).put("err", reason))
+        bump("netChangeUploadRequeued")
+        emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "uploading"))
+      }
+    }
+    kick(reason)
+  }
 
   /** Executor do outbox: há algo pendente (pra agendar o dreno em 2º plano)? */
   fun pendingCount(): Int {
@@ -505,6 +545,7 @@ class OutboxCore(
     val fileBody = ProgressRequestBody(f.asRequestBody(mime.toMediaType())) { sent, total ->
       val pct = if (total > 0L) ((sent * 100L) / total).toInt().coerceIn(0, 100) else 0
       val t = now()
+      at.lastIoAt = t // [net-change] bytes andando = upload vivo (thread do OkHttp; @Volatile)
       if (pct != lastPct && (pct >= 100 || t - lastAt >= PROGRESS_MIN_MS)) {
         lastAt = t
         lastPct = pct
@@ -558,6 +599,12 @@ class OutboxCore(
     }
     val row = findItem(at.account, at.cmi)
     val tries = (row?.optLong("tries") ?: 0L) + (if (net.online()) 1 else 0)
+    // [2026-10-18 upload-4xx] 400/403/404/422… não se curam sozinhos: limite de
+    // tentativas e depois 'failed' ("!", reenviável). 401/408/429 seguem transitórios.
+    if (code in 400..499 && code != 401 && code != 408 && code != 429 && tries >= UPLOAD_4XX_MAX_TRIES) {
+      inflight[at.cmi] = at
+      hard(at, "upload_http_$code"); return
+    }
     val delay = if (!net.online()) 30000L else BACKOFF_MS[minOf((tries - 1).toInt().coerceAtLeast(0), BACKOFF_MS.size - 1)]
     storage.patch(at.account, at.cmi, JSONObject().put("state", "uploading").put("tries", tries).put("next_at", now() + delay).put("err", "upload_http_$code"))
     if (code == 401) emit(mapOf("account" to at.account, "state" to "auth_needed"))

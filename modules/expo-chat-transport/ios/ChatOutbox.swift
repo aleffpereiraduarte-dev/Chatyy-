@@ -33,6 +33,9 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
   static let regionalUploadMaxFails: Int64 = 2
   /// Progress events: at most one per this many ms (plus the 100% one).
   static let progressMinMs: Int64 = 150
+  /// [2026-10-18 upload-4xx] 4xx definitivo no upload (≠ 401/408/429/413/415):
+  /// depois de tantas tentativas o item vira 'failed' ("!") em vez de relógio eterno.
+  static let upload4xxMaxTries: Int64 = 3
   private static let hardRe = try! NSRegularExpression(pattern: "\\b403\\b|forbidden|not.?a.?member|no_permission|permission_denied|conversation.?deleted|admin.?only", options: [.caseInsensitive])
 
   private var q: DispatchQueue { return ChatTransport.shared.q }
@@ -239,6 +242,25 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
   }
 
   func onNetworkUp() { kick("net_up") }
+
+  /// [2026-10-18 net-change] Troca de interface (wifi↔4G): o chat_send HTTP em
+  /// voo ficou preso na interface velha até o timeout (30/40 s). Cancela, devolve
+  /// à fila SEM contar tentativa (o servidor deduplica por client_message_id) e
+  /// bombeia já. Envios aguardando ack do WS voltam também (o socket velho caiu).
+  /// Uploads NÃO: rodam na URLSession de 2º plano, que o próprio iOS migra/retoma.
+  func onNetChange(_ reason: String) {
+    q.async { [self] in
+      for at in Array(inflight.values) where at.phase == "http" || at.phase == "ws" {
+        inflight.removeValue(forKey: at.cmi)
+        at.timer?.cancel(); at.timer = nil
+        at.task?.cancel()
+        store.outboxPatch(account: at.account, cmi: at.cmi, patch: ["state": "queued", "next_at": 0, "err": reason])
+        bump("netChangeRequeued")
+        emit(["account": at.account, "cmi": at.cmi, "conv": at.conv, "state": "queued", "err": reason, "retryInMs": 0])
+      }
+    }
+    kick(reason)
+  }
 
   /// Itens pendentes (todas as contas). Só na fila q.
   func pendingCountLocked() -> Int {
@@ -617,6 +639,13 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     }
     let row = findItem(at.account, at.cmi)
     let tries = ChatyyOutboxUtil.i64(row?["tries"]) + (online() ? 1 : 0)
+    // [2026-10-18 upload-4xx] 400/403/404/422… não se curam sozinhos: limite de
+    // tentativas e depois 'failed' (o usuário vê "!" e pode reenviar). 401
+    // (auth), 408 e 429 seguem transitórios.
+    if code >= 400 && code <= 499 && code != 401 && code != 408 && code != 429 && tries >= Self.upload4xxMaxTries {
+      inflight[at.cmi] = at
+      hard(at, "upload_http_\(code)"); return
+    }
     let delay: Int64 = !online() ? 30000 : Self.backoffMs[min(max(Int(tries) - 1, 0), Self.backoffMs.count - 1)]
     store.outboxPatch(account: at.account, cmi: at.cmi, patch: ["state": "uploading", "tries": tries, "next_at": now() + delay, "err": "upload_http_\(code)"])
     if code == 401 { emit(["account": at.account, "state": "auth_needed"]) }

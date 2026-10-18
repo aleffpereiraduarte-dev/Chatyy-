@@ -22,7 +22,9 @@ final class ChatTransport {
   //     fila de envio nativa (outbox*) + conta da sessão.
   // 3 = [2026-10-18 outbox-progress] onOutboxState "progress" (bytes reais do
   //     upload) + fallback do upload regional → origem US após 2 falhas.
-  static let version = 3
+  // v4 (2026-10-18): HTTP 400/401/403 no upgrade é terminal na 1ª recusa
+  // (evento handshake_rejected + close 4400/4401). JS lê via version().
+  static let version = 4
 
   let q = DispatchQueue(label: "chatyy.transport", qos: .userInitiated)
   private lazy var opQueue: OperationQueue = {
@@ -189,6 +191,9 @@ final class ChatTransport {
       primaryIface = iface
       bump("netChanges")
       session?.onNetwork("net_change")
+      // [2026-10-18 net-change] request do outbox em voo na interface velha →
+      // cancela e reenfileira sem contar tentativa (+ kick).
+      ChatOutbox.shared.onNetChange("net_change")
     }
   }
 
@@ -662,10 +667,15 @@ final class TransportSession {
     owner.bump("drops")
     if http >= 400 && http <= 499 {
       owner.bump("httpRejects")
-      if http == 401 || http == 403 {
-        // Token recusado no handshake: NÃO reconecta em laço. O JS trata como
-        // auth_error (1 refresh do bearer; persistindo → para e pede re-login).
-        endLogical(4401, "handshake http=\(http)")
+      if http == 400 || http == 401 || http == 403 {
+        // [v4 2026-10-18 ws-400] 400/401/403 no upgrade = TERMINAL já na 1ª
+        // recusa (antes 400 ia pro backoff → laço). Para o backoff, avisa o JS
+        // (evento handshake_rejected) e fecha o socket LÓGICO: 4401 = 401/403
+        // (token), 4400 = 400 (cabeçalho). O JS faz 1 refresh do bearer e,
+        // persistindo, para até o login.
+        owner.bump("handshakeRejected")
+        emitState("handshake_rejected", ["http": http, "url": url?.absoluteString, "attempt": attempt])
+        endLogical(http == 400 ? 4400 : 4401, "handshake_rejected http=\(http)")
         return
       }
       httpRejects += 1

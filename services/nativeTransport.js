@@ -112,6 +112,24 @@ export function createNativeSocket(url, opts = {}) {
   return new NativeTransportSocket(m, url, opts);
 }
 
+/**
+ * [2026-10-18 ws-400] Versão da API do módulo nativo (0 = indisponível).
+ *   v4+: HTTP 400/401/403 no handshake é TERMINAL já na 1ª recusa — o nativo
+ *        emite onTransportState {state:'handshake_rejected', http} e fecha a
+ *        sessão lógica (4400 = 400, 4401 = 401/403) sem backoff.
+ *   < v4: 401/403 → 4401; 400 seguia em backoff ('reconnecting' com http) e só
+ *        fechava (4400) após 4 recusas — o websocket.js trata o 1º
+ *        'reconnecting' com http 400/401/403 como recusa terminal.
+ */
+export function nativeTransportVersion() {
+  try {
+    const m = _resolve();
+    return m ? (Number(m.version()) || 0) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export function getNativeTransportStats() {
   const out = { js: { ..._jsStats, states: { ..._jsStats.states } } };
   try {
@@ -252,4 +270,4 @@ class NativeTransportSocket {
   }
 }
 
-export default { isNativeTransportEnabled, createNativeSocket, getNativeTransportStats, markNativeTransportBroken };
+export default { isNativeTransportEnabled, createNativeSocket, getNativeTransportStats, markNativeTransportBroken, nativeTransportVersion };
