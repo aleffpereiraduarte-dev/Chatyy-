@@ -1591,7 +1591,10 @@ export async function replayOfflineQueue(api) {
                 break;
               case 'chat_read': {
                 if (!params.conversation_id) break;
-                const r = await api.chatReadAck(params.conversation_id);
+                // [2026-10-18 read-id] com o id que a notificação mostrava.
+                const r = Number(params.message_id) > 0
+                  ? await api.chatRead(params.conversation_id, Number(params.message_id))
+                  : await api.chatReadAck(params.conversation_id);
                 if (r && r.success === false) {
                   const msg = String(r.message || r.error || '');
                   const isHardError = /not_found|permission|forbidden|invalid/i.test(msg);

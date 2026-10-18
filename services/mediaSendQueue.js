@@ -203,10 +203,13 @@ async function _makeDurable(cmi, uri, name, mime, ownTemp) {
 }
 
 async function _deleteDurable(p) {
-  if (!p?.durable_name) return;
+  if (!p?.durable_name && !p?.src_durable) return;
   const FS = _FS();
   if (!FS?.documentDirectory) return;
-  try { await FS.deleteAsync(FS.documentDirectory + DURABLE_DIR + p.durable_name, { idempotent: true }); } catch {}
+  // [2026-10-18 durable-src] also the original copied at enqueue time.
+  for (const n of new Set([p.durable_name, p.src_durable].filter(Boolean))) {
+    try { await FS.deleteAsync(FS.documentDirectory + DURABLE_DIR + n, { idempotent: true }); } catch {}
+  }
 }
 
 // ─── Compression ─────────────────────────────────────────────────────────────
@@ -289,7 +292,10 @@ async function _compressVideo(p, uri, signal, onPct) {
 async function _prepare(row, p, signal) {
   const cmi = row.client_message_id;
   const type = p.type || 'file';
-  let uri = p.local_uri || p.uri;
+  // [2026-10-18 durable-src] durable original copied at enqueue (rebuilt from
+  // the stored name: the iOS container path can change across updates).
+  let uri = (p.src_durable ? resolveLocalUri(p) : null) || p.local_uri || p.uri;
+  const srcUri = uri;
   let name = p.file_name || 'file';
   let mime = p.mime_type || '';
   let size = Number(p.file_size) || 0;
@@ -326,9 +332,16 @@ async function _prepare(row, p, signal) {
   }
   if (signal?.aborted) return null;
 
-  const durable = await _makeDurable(cmi, uri, name, mime, ownTemp);
+  // [2026-10-18 durable-src] Not re-encoded → the enqueue-time durable copy IS
+  // the final file (no second copy). Re-encoded → move the output in and drop
+  // the original copy once the new one is safe.
+  const reuseSrc = !!(p.src_durable && uri === srcUri);
+  const durable = reuseSrc ? p.src_durable : await _makeDurable(cmi, uri, name, mime, ownTemp);
   // [2026-10-12 P2] cancelado durante a cópia → não deixa órfão nem grava payload.
-  if (signal?.aborted) { if (durable) await _deleteDurable({ durable_name: durable }); return null; }
+  if (signal?.aborted) { if (durable && !reuseSrc) await _deleteDurable({ durable_name: durable }); return null; }
+  if (durable && p.src_durable && durable !== p.src_durable) {
+    await _deleteDurable({ durable_name: p.src_durable });
+  }
   const finalUri = durable ? (_FS().documentDirectory + DURABLE_DIR + durable) : uri;
   const info = await _fileInfo(finalUri);
   if (info?.size) size = info.size;
@@ -336,6 +349,8 @@ async function _prepare(row, p, signal) {
     prepared: true,
     local_uri: finalUri,
     durable_name: durable || null,
+    // kept when it IS the final file, or when the move failed (cleanup later).
+    src_durable: (durable && durable !== p.src_durable) ? null : (p.src_durable || null),
     file_name: name,
     mime_type: mime,
     file_size: size,
@@ -355,6 +370,8 @@ const TOO_LARGE_RE = /file_too_large|\b413\b|_413\b|too large|muito grande|excee
 const HARD_RE = /\b41[35]\b|_41[35]\b|\b403\b|too large|exceeds|mime|unsupported|not allowed|blocked|forbidden|rejected|parental|admins? only|only admins|not.?a.?member|permission|conversation.?deleted/i;
 // Rust failures that mean "network blipped" — keep the resumable session and
 // retry later instead of re-sending the whole file through PHP right now.
+// [2026-10-18 resume-first] ~1 h of resumable retries (TRANSIENT_BACKOFF_MS).
+const RUST_RESUME_MAX_ATTEMPTS = 20;
 const RUST_RETRYABLE_RE = /chunk_\d|network|timeout|read_chunk|complete_|bg_/i; // bg_: [2026-10-09 media-native] OS transfer stalled/cancelled
 
 function _kindFor(r, err) {
@@ -527,6 +544,7 @@ async function _process(row) {
       _emit(p, cmi, 0, 'upload');
       const usePhp = p.upload_via === 'php' || p.type === 'audio' || p.type === 'voice';
       let rr = null;
+      let _sessionThisRun = false;
       if (!usePhp) {
         const onPct = (f) => _emit(p, cmi, Math.round((Number(f) || 0) * 100), 'upload');
         try {
@@ -541,7 +559,7 @@ async function _process(row) {
               // (resume must keep it; rows without it start a fresh session).
               chunkSize: Number(p.rust_upload_chunk) || null,
               bgTitle: p.file_name || null,
-              onUploadId: (id, base, chunk) => { updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null, rust_upload_chunk: Number(chunk) || null }).catch(() => {}); },
+              onUploadId: (id, base, chunk) => { _sessionThisRun = !!id; updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null, rust_upload_chunk: Number(chunk) || null }).catch(() => {}); },
             };
             rr = await api.rustChunkedUpload(file, p.sender_email || null, 'chat', onPct, ctrl.signal, resume);
           } else if (api.rustUpload) {
@@ -559,7 +577,13 @@ async function _process(row) {
         }
         // Network-ish Rust failure → keep the resumable session, retry later
         // (offline-aware backoff). After a few attempts give PHP a chance.
-        if (!rr?.success && (row.attempts | 0) < 4 && RUST_RETRYABLE_RE.test(String(rr?.error || ''))) {
+        // [2026-10-18 resume-first] …but only when there is no resumable
+        // session: PHP re-sends the WHOLE file from byte 0, so with a session
+        // open we keep resuming (backoff caps at 5 min) for up to
+        // RUST_RESUME_MAX_ATTEMPTS before the from-scratch fallback.
+        const _att = row.attempts | 0;
+        const _hasSession = !!(p.rust_upload_id || _sessionThisRun);
+        if (!rr?.success && (_att < 4 || (_hasSession && _att < RUST_RESUME_MAX_ATTEMPTS)) && RUST_RETRYABLE_RE.test(String(rr?.error || ''))) {
           await markFailed(cmi, 'rust:' + String(rr?.error || 'network'), { kind: 'transient' });
           _emit(p, cmi, 0, 'queued');
           return;
@@ -698,7 +722,24 @@ export async function enqueueMedia(payload) {
   if (Platform.OS === 'web' || !payload) return null;
   // [2026-10-08 upload-br] user is chatting → photo backup yields (governor).
   try { require('./backup/uploadGovernor').noteChatActivity?.(); } catch {}
+  // [2026-10-18 durable-src] Copy the picker/recorder original into
+  // chat-outbox/ NOW, before compression: the OS may purge its temp/cache file
+  // if the app is killed mid-compress, which used to end in a permanent
+  // 'file_missing' "!". _prepare compresses from this copy; onCommitted/cancel
+  // delete it.
+  let _srcCopy = null;
+  try {
+    const src = payload.local_uri || payload.uri;
+    if (src && payload.client_message_id && !payload.durable_name && !payload.src_durable && !/^(https?|blob|data):/i.test(String(src))) {
+      _srcCopy = await _makeDurable(String(payload.client_message_id) + '_src', src, payload.file_name, payload.mime_type, false);
+      if (_srcCopy) {
+        const FS = _FS();
+        payload = { ...payload, src_durable: _srcCopy, durable_name: _srcCopy, orig_uri: src, local_uri: FS.documentDirectory + DURABLE_DIR + _srcCopy };
+      }
+    }
+  } catch { _srcCopy = null; }
   const r = await enqueue(payload, { lane: 'upload' });
+  if (!r && _srcCopy) { try { await _deleteDurable({ durable_name: _srcCopy }); } catch {} }
   if (r) {
     _emit(payload, payload.client_message_id, 0, 'queued');
     drain();

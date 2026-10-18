@@ -2737,7 +2737,7 @@ export async function setupNotificationListeners() {
       const userText = response.userText;
       if (userText?.trim()) {
         // [2026-10-09] iOS native handler already sent it → never twice.
-        if (!_handledNatively(response)) handleChatReplyFromNotification(data.conversation_id, userText.trim(), _notifReplyToId(data));
+        if (!_handledNatively(response)) handleChatReplyFromNotification(data.conversation_id, userText.trim(), _notifReplyToId(data), _notifMsgId(data));
         // WhatsApp parity: replying from the banner = you read the chat → clear
         // this conversation's notifications from the tray (and trim the badge).
         _dismissAfterChatAction(response, data.conversation_id);
@@ -2747,7 +2747,7 @@ export async function setupNotificationListeners() {
     // CHAT: Mark as read. `mark_read` is shared with the email legacy handler above,
     // but that branch guards on `data?.uid` so chat pushes (with `conversation_id`) fall through here.
     if ((actionId === 'mark_read' || actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
-      if (!_handledNatively(response)) handleMarkReadChatFromNotification(data.conversation_id);
+      if (!_handledNatively(response)) handleMarkReadChatFromNotification(data.conversation_id, _notifMsgId(data));
       _dismissAfterChatAction(response, data.conversation_id);
       return;
     }
@@ -2758,7 +2758,7 @@ export async function setupNotificationListeners() {
     if (/^smart_reply_\d+$/.test(actionId || '') && data?.conversation_id) {
       const userText = response.userText;
       if (userText?.trim() && !_handledNatively(response)) {
-        handleChatReplyFromNotification(data.conversation_id, userText.trim());
+        handleChatReplyFromNotification(data.conversation_id, userText.trim(), null, _notifMsgId(data));
       }
       return;
     }
@@ -3460,6 +3460,13 @@ async function handleDeleteFromNotification(data) {
 
 // [reply-v2] Em GRUPO, responder pela notificação cita a mensagem notificada
 // (WhatsApp/Telegram); em privado não. Kill switch: __chatyy_native_reply_v2.
+// [2026-10-18 read-id] id da msg que a notificação MOSTRAVA → chat_mark_read
+// com message_id real (0 = "MAX(id) no servidor" marcava como lidas msgs que
+// chegaram depois e o usuário nunca viu). Sem id no payload → 0 (legado).
+function _notifMsgId(data) {
+  try { const n = Number(data && data.message_id); return Number.isFinite(n) && n > 0 ? n : 0; } catch { return 0; }
+}
+
 function _notifReplyToId(data) {
   try {
     if (globalThis.__chatyy_native_reply_v2 === false) return null;
@@ -3475,10 +3482,10 @@ function _notifReplyToId(data) {
 export function sendQuickReplyFromBanner(data, text) {
   const t = String(text || '').trim();
   if (!data || !data.conversation_id || !t) return Promise.resolve(false);
-  return handleChatReplyFromNotification(data.conversation_id, t, _notifReplyToId(data)).then(() => true, () => false);
+  return handleChatReplyFromNotification(data.conversation_id, t, _notifReplyToId(data), _notifMsgId(data)).then(() => true, () => false);
 }
 
-async function handleChatReplyFromNotification(conversationId, text, replyToId = null) {
+async function handleChatReplyFromNotification(conversationId, text, replyToId = null, readUpToId = 0) {
   // [2026-10-15 mensagens-whatsapp] UM client_message_id para a 1ª tentativa E para
   // a fila: antes o chatSend gerava `cli_…` por dentro e, se a resposta se perdesse
   // (POST gravado no servidor), a fila reenviava com um `qr-…` NOVO → mensagem
@@ -3492,9 +3499,9 @@ async function handleChatReplyFromNotification(conversationId, text, replyToId =
     // Mark as read too — best effort; failure here doesn't roll back the
     // send, just queues a chat_read retry.
     try {
-      await chatRead(conversationId, 0);
+      await chatRead(conversationId, readUpToId || 0);
     } catch (readErr) {
-      await _queueNotificationAction('chat_read', { conversation_id: conversationId });
+      await _queueNotificationAction('chat_read', { conversation_id: conversationId, ...(readUpToId ? { message_id: readUpToId } : null) });
     }
     try { await refreshBadgeCount?.(); } catch {}
   } catch (err) {
@@ -3516,7 +3523,7 @@ async function handleChatReplyFromNotification(conversationId, text, replyToId =
       });
       // Also queue a chat_read so when the reply finally lands, the
       // conversation is marked read just like the inline tap would.
-      await _queueNotificationAction('chat_read', { conversation_id: conversationId });
+      await _queueNotificationAction('chat_read', { conversation_id: conversationId, ...(readUpToId ? { message_id: readUpToId } : null) });
     } catch (qErr) {
       _diagPush('notif_chat_reply_queue_err', qErr?.message || String(qErr));
     }
@@ -3535,15 +3542,15 @@ function _localReadFromNotification(conversationId, extra = null) {
   } catch {}
 }
 
-async function handleMarkReadChatFromNotification(conversationId) {
+async function handleMarkReadChatFromNotification(conversationId, readUpToId = 0) {
   _localReadFromNotification(conversationId);
   try {
     const { chatRead } = require('./api');
-    await chatRead(conversationId, 0);
+    await chatRead(conversationId, readUpToId || 0);
     try { await refreshBadgeCount?.(); } catch {}
   } catch (err) {
     _diagPush('notif_chat_markread_offline', err?.message || String(err));
-    await _queueNotificationAction('chat_read', { conversation_id: conversationId });
+    await _queueNotificationAction('chat_read', { conversation_id: conversationId, ...(readUpToId ? { message_id: readUpToId } : null) });
   }
 }
 

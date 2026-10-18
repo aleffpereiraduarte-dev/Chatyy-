@@ -20,7 +20,7 @@
 //
 // Fora do nativo (seguem no caminho JS de sempre): web, binário sem o módulo
 // (ChatyyTransport version < 2 / store apiVersion < 3), modo envelope / E2EE,
-// tópico, meta/replyExt, voz/áudio (servidor transcodifica), mídia > 1 MB (o
+// tópico, meta/replyExt, voz/áudio (servidor transcodifica), mídia > 8 MB (o
 // upload em pedaços retomável + bgTransfer já é nativo).
 //
 // Kill switch (OTA): globalThis.__chatyy_native_outbox = false → tudo volta à
@@ -29,7 +29,12 @@ import { Platform } from 'react-native';
 
 const DEFAULT_ON = true;
 const ORIGIN = 'https://chatyy.com.br';
-export const NATIVE_MEDIA_MAX_BYTES = 1024 * 1024;
+// [2026-10-18 native-8mb] 1 → 8 MB. Both native uploaders stream the file
+// (iOS background URLSession uploadTask(fromFile:), Android OkHttp
+// File.asRequestBody with 5 min write / 6 min call timeout) and the server's
+// single POST (/api/rust/upload) accepts 200 MB, so 1–8 MB no longer depends on
+// JS being alive. Only on fast links (mediaSendQueue checks _slowLink()).
+export const NATIVE_MEDIA_MAX_BYTES = 8 * 1024 * 1024;
 
 let _mod; // undefined = não resolvido; null = indisponível
 let _sub = null;

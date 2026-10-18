@@ -4672,6 +4672,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // tick. Fully defensive: tolerates any event-shape drift, never throws.
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
+  const archivedConvsRef = useRef(archivedConversations); // [2026-10-18 conv-state]
+  archivedConvsRef.current = archivedConversations;
   const applyReceiptMarks = useCallback((perConv) => {
     try {
       if (!Array.isArray(perConv) || perConv.length === 0) return;
@@ -5730,6 +5732,28 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         });
       }));
 
+      // [2026-10-18 read-partial] chat_read/message_read do MEU outro aparelho
+      // com last_read_id < id real da última msg da linha = leitura parcial.
+      // Sem id comparável (tmp_/ausente) ou última msg minha → cobre (como antes).
+      const _selfReadPartial = (c, upTo, meLc) => {
+        try {
+          if (!(Number(upTo) > 0) || !(Number(c?.unread_count) > 0)) return false;
+          const lm = c && c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+          if (lm && _lmIsMine(lm, meLc)) return false;
+          const lmId = _rowLmId(c);
+          return lmId > 0 && Number(upTo) < lmId;
+        } catch { return false; }
+      };
+      let _unreadRecomputeT = null;
+      const _scheduleUnreadRecompute = () => {
+        if (_unreadRecomputeT) return;
+        _unreadRecomputeT = setTimeout(() => {
+          _unreadRecomputeT = null;
+          try { api.swrInvalidate?.('chat_list'); } catch {}
+          try { loadConvRef.current?.(false); } catch {}
+        }, 600);
+      };
+      unsubs.push(() => { if (_unreadRecomputeT) { clearTimeout(_unreadRecomputeT); _unreadRecomputeT = null; } });
       unsubs.push(mailWs.on('chat_read', (data) => {
         const meLower = (user?.email || '').toLowerCase();
         const readerLower = (data?.reader_email || data?.email || '').toLowerCase();
@@ -5759,6 +5783,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             // badge when a peer (or an incomplete WS frame) triggered the
             // event. Missing email now falls through (no-op) instead.
             if (readerLower && readerLower === meLower) {
+              // [2026-10-18 read-partial] Outro aparelho leu só ATÉ last_read_id:
+              // zera apenas se cobre a última msg da linha (ou ela é minha);
+              // senão mantém o contador e recalcula pelo chat_list (servidor).
+              const _upTo = data._local ? 0 : (Number(data?.last_read_id ?? data?.message_id) || 0);
+              if (_selfReadPartial(c, _upTo, meLower)) {
+                _noteSelfRead(c.id, null, _upTo);
+                _scheduleUnreadRecompute();
+                return c;
+              }
               next.unread_count = 0;
               if (next.unread_mentions) next.unread_mentions = 0; // [2026-10-15 unread-instant] "@" some junto
               _noteSelfRead(c.id, c, data?.last_read_id ?? data?.message_id); // [2026-10-14 lista-eco-envio] snapshot atrasado não repõe o contador; [2026-10-17 lida-lista] até o id lido
@@ -5779,6 +5812,89 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           });
         });
       }));
+
+      // [2026-10-18 conv-state] Estado POR USUÁRIO da conversa mudou noutro
+      // aparelho/web (canal próprio): {conversation_id, archived, muted_until,
+      // marked_unread}. Campo ausente = não mexe. Atualiza a linha (move entre
+      // ativas/arquivadas) e o cache local. Nomes alternativos aceitos por defesa.
+      const _onConvState = (raw) => {
+        try {
+          const d = raw && typeof raw === 'object' ? (raw.data && typeof raw.data === 'object' && raw.data.conversation_id != null ? raw.data : raw) : null;
+          if (!d || d.conversation_id == null) return;
+          const cid = String(d.conversation_id);
+          const has = (k) => Object.prototype.hasOwnProperty.call(d, k) && d[k] !== undefined;
+          const _bool = (v) => !(v === false || v === 0 || v === '0' || v === 'f' || v === 'false' || v == null);
+          const patchRow = (c) => {
+            const n = { ...c };
+            if (has('archived')) n.archived = _bool(d.archived) ? 1 : 0;
+            if (has('muted_until') || has('mute_until') || has('muted')) {
+              const mu = has('muted_until') ? d.muted_until : (has('mute_until') ? d.mute_until : undefined);
+              let muted;
+              if (has('muted')) muted = _bool(d.muted);
+              else if (mu == null || mu === '' || mu === 0 || mu === '0') muted = false;
+              else {
+                const ms = typeof mu === 'number' ? (mu < 1e12 ? mu * 1000 : mu) : Date.parse(String(mu));
+                // 'forever'/-1/ data inválida = silenciada sem fim
+                muted = !Number.isFinite(ms) || ms <= 0 || ms > Date.now();
+              }
+              n.muted = muted ? 1 : 0;
+              n.mute_until = muted ? (mu ?? null) : null;
+            }
+            if (has('marked_unread')) {
+              if (_bool(d.marked_unread)) {
+                n.unread_count = Math.max(1, Number(c.unread_count) || 0);
+                n.marked_unread = 1;
+              } else {
+                n.marked_unread = 0;
+              }
+            }
+            return n;
+          };
+          if (has('marked_unread')) {
+            if (_bool(d.marked_unread)) _clearSelfRead(cid);
+            else _scheduleUnreadRecompute(); // contador real vem do servidor
+          }
+          const wantArch = has('archived') ? _bool(d.archived) : null;
+          const _match = (c) => !!c && (String(c.id) === cid || String(c.conversation_id) === cid);
+          // Linha de origem lida dos refs (sem setState aninhado em updater).
+          const fromActive = (conversationsRef.current || []).find(_match) || null;
+          const fromArch = (archivedConvsRef.current || []).find(_match) || null;
+          const src = fromActive || fromArch;
+          if (src) {
+            const row = patchRow(src);
+            const toArch = wantArch != null ? wantArch : !!fromArch;
+            setConversations(prev => {
+              const rest = prev.filter(c => !_match(c));
+              if (toArch) return rest.length === prev.length ? prev : rest;
+              if (rest.length === prev.length) return [row, ...prev];
+              return prev.map(c => (_match(c) ? patchRow(c) : c));
+            });
+            setArchivedConversations(prev => {
+              const arr = Array.isArray(prev) ? prev : [];
+              const rest = arr.filter(c => !_match(c));
+              if (!toArch) return rest.length === arr.length ? prev : rest;
+              if (rest.length === arr.length) return [row, ...arr];
+              return arr.map(c => (_match(c) ? patchRow(c) : c));
+            });
+          }
+          try {
+            getCachedConversations().then((cached) => {
+              if (!Array.isArray(cached)) return;
+              let hit = false;
+              const next = cached.map((c) => {
+                if (!c || (String(c.id) !== cid && String(c.conversation_id) !== cid)) return c;
+                hit = true; return patchRow(c);
+              });
+              if (hit) cacheConversations(next).catch?.(() => {});
+            }).catch(() => {});
+          } catch {}
+          // linha fora das duas listas (paginada) / ordem após (des)arquivar → chat_list.
+          if (wantArch != null) _scheduleUnreadRecompute();
+        } catch {}
+      };
+      unsubs.push(mailWs.on('conv_state', _onConvState));
+      unsubs.push(mailWs.on('conversation_state', _onConvState));
+      unsubs.push(mailWs.on('chat_conv_state', _onConvState));
 
       // Peer delivered (received) our outbound → upgrade ✓ to ✓✓ gray.
       unsubs.push(mailWs.on('chat_delivered', (data) => {
@@ -5848,9 +5964,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             if (i !== idx) return c;
             const next = { ...c };
             if (readerLower && readerLower === meLower) {
-              // Me reading on ANOTHER device — zero the badge here too.
+              // Me reading on ANOTHER device — zero the badge here too…
+              // [2026-10-18 read-partial] …only when the read covers the row's
+              // last message; a partial read keeps the count and recomputes.
+              if (_selfReadPartial(c, readUpTo, meLower)) {
+                _noteSelfRead(c.id, null, readUpTo);
+                _scheduleUnreadRecompute();
+                return c;
+              }
               next.unread_count = 0;
-              _noteSelfRead(c.id, c); // [2026-10-14 lista-eco-envio]
+              _noteSelfRead(c.id, c, readUpTo || undefined); // [2026-10-14 lista-eco-envio]
             } else if (readerLower && c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower
                        && !c.last_message.read_at
@@ -6613,7 +6736,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         ? { ...c, unread_count: markRead ? 0 : Math.max(c.unread_count || 0, 1) }
         : c));
       if (markRead) {
-        const lastId = conv.last_message?.id || conv.last_message_id || 0;
+        // [2026-10-18 read-id] id REAL da prévia exibida (tmp_… não serve).
+        const lastId = _rowLmId(conv) || 0;
         await api.chatRead(conv.id, lastId);
       } else {
         await api.chatMarkUnread(conv.id);

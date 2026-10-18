@@ -1297,6 +1297,7 @@ class MailWebSocket {
       }
       if (closeCode === 4002) {
         this._emit('connection', { status: 'session_replaced', message: closeReason });
+        this._scheduleReplacedReconnect(); // [2026-10-18 replaced-backoff]
         return;
       }
       // [2026-10-15 native-transport] Fechamentos sintéticos do fio nativo:
@@ -2097,6 +2098,34 @@ class MailWebSocket {
     return true;
   }
 
+  // [2026-10-18 server-clock] Server time in ms (offset from auth_success
+  // server_ts, hub UnixMilli). Falls back to the device clock when unknown or
+  // implausible (> 1 year off). Used by time-window checks (edit 15 min).
+  serverNow() {
+    const o = Number(this._serverTimeOffset) || 0;
+    return Math.abs(o) < 365 * 86400000 ? Date.now() + o : Date.now();
+  }
+
+  // [2026-10-18 replaced-backoff] session_replaced / close 4002 used to leave
+  // the JS socket dead until the next foreground. Reconnect after 30 s; if it
+  // gets replaced again within 10 min, wait 2 min (no tug-of-war with the
+  // device that took over). Coalesced; ensureConnected() revives `destroyed`
+  // only while a live token exists (logout → 'no_token', stays down).
+  _scheduleReplacedReconnect() {
+    try {
+      const now = Date.now();
+      const recent = this._replacedAt && (now - this._replacedAt) < 10 * 60 * 1000;
+      this._replacedAt = now;
+      const delay = recent ? 120000 : 30000;
+      if (this._replacedTimer) clearTimeout(this._replacedTimer);
+      this._replacedTimer = setTimeout(() => {
+        this._replacedTimer = null;
+        if (this._loggedOut) return;
+        try { this.ensureConnected('session_replaced_backoff'); } catch {}
+      }, delay);
+    } catch {}
+  }
+
   _scheduleReconnect() {
     if (this.destroyed || this._hidden || this._authReloginStopped) return;
     // Don't burn retries while the device is offline — the OS will fire a
@@ -2656,9 +2685,13 @@ class MailWebSocket {
 
       case 'session_replaced':
         // Another device/tab opened — this session is being kicked.
-        // Mark destroyed to prevent any reconnect attempts.
+        // Mark destroyed to prevent the FAST reconnect loop (ping-pong with
+        // the other device)…
         this.destroyed = true;
         this._emit('connection', { status: 'session_replaced', message: msg.message });
+        // [2026-10-18 replaced-backoff] …but never permanently: come back
+        // after a long backoff (30 s, then 2 min while it keeps happening).
+        this._scheduleReplacedReconnect();
         break;
 
       // Chat message deduplication + media prefetch
