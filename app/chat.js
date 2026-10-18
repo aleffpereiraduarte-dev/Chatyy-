@@ -62,7 +62,7 @@ import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components
 import GlobalSearch from '../components/GlobalSearch';
 import FirstRunGate from '../components/onboarding/FirstRunGate'; // [2026-10-07 welcome]
 import { BarMaterial, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
-import NativeHomeTabBar, { nativeTabsAvailable } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
+import NativeHomeTabBar, { nativeTabsAvailable, nativeTabsApi } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
 import { useCollapsedTitleAnim } from '../components/LargeTitleHeader'; // [2026-10-15 nav-motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2]
 import AppsDrawerModal from '../components/apps/AppsSheet'; // [2026-10-15 apps-v3]
@@ -561,7 +561,16 @@ function ChatHub() {
   // globalThis.__chatyy_native_tabs = false → barra JS (TabBarItem) de antes.
   // Mesmo comportamento: badge de Conversas/Email/Ligações, Email abre /inbox
   // (nunca fica marcada), segurar Conversas = câmera do status.
-  const NATIVE_TABS = useMemo(() => !isKids && nativeTabsAvailable(), [isKids]);
+  // [2026-10-18 you-tab] founder: "coloca o perfil embaixo onde tá o apps e os apps em
+  // cima onde tá meu perfil" (WhatsApp "Você" / Telegram Ajustes). Celular não-Kids:
+  // a 5ª aba vira "Você" (→ /settings, mesmo push do avatar) e o avatar do topo
+  // vira o botão Apps (mesmo AppsSheet). Kill switch: globalThis.__chatyy_you_tab = false.
+  // A aba nativa usa ícone (SF Symbol / vetor "you"); foto na aba nativa = build futuro.
+  const YOU_TAB = !isKids && (() => { try { return globalThis.__chatyy_you_tab !== false; } catch { return true; } })();
+  // Android: o vetor "you" só existe no binário com o módulo api 2+; antes disso a
+  // aba nativa ficaria sem ícone → usa a barra JS (TabBarItem, com a foto) até o build.
+  const NATIVE_TABS = useMemo(() => !isKids && nativeTabsAvailable()
+    && !(YOU_TAB && Platform.OS === 'android' && nativeTabsApi() < 2), [isKids, YOU_TAB]);
   const nativeTabItems = useMemo(() => {
     if (!NATIVE_TABS) return null;
     return [
@@ -569,9 +578,11 @@ function ChatHub() {
       { key: 'email', label: t('chat.tabEmail') || 'Email', sfSymbol: 'envelope', sfSymbolActive: 'envelope.fill', androidIcon: 'email', badge: emailBadge || 0, selectable: false },
       { key: 'reels', label: t('reels.title') || 'Reels', sfSymbol: 'play.rectangle', sfSymbolActive: 'play.rectangle.fill', androidIcon: 'reels' },
       { key: 'calls', label: t('chat.tabCalls') || 'Ligações', sfSymbol: 'phone', sfSymbolActive: 'phone.fill', androidIcon: 'calls', badge: missedCallBadge || 0 },
-      { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
+      YOU_TAB
+        ? { key: 'you', label: t('chat.tabYou') || 'Você', sfSymbol: 'person.crop.circle', sfSymbolActive: 'person.crop.circle.fill', androidIcon: 'you', selectable: false }
+        : { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
     ];
-  }, [NATIVE_TABS, t, chatsBadge, emailBadge, missedCallBadge]);
+  }, [NATIVE_TABS, YOU_TAB, t, chatsBadge, emailBadge, missedCallBadge]);
 
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
@@ -904,6 +915,9 @@ function ChatHub() {
     // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
     // chats tab active underneath and just open the modal.
     if (tab === 'apps') { setShowAppsDrawer(true); return; }
+    // [2026-10-18 you-tab] "Você" = tela de perfil+ajustes (/settings), push nativo
+    // (slide + swipe-back), igual ao toque no avatar de antes; não troca de aba.
+    if (tab === 'you') { try { router.push('/settings'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "One" is the AI assistant screen — full navigation, not an inline tab.
     if (tab === 'one') { try { router.push('/one'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Email" jumps to the inbox screen (same pattern as One).
@@ -1219,7 +1233,7 @@ function ChatHub() {
     if (!tp || tp === lastTabParamRef.current) return;
     lastTabParamRef.current = tp;
     if (tp === 'reels') { handleTabPress('reels'); return; }
-    if (tp === 'apps' || tp === 'email' || tp === 'one') { handleTabPress(tp); return; }
+    if (tp === 'apps' || tp === 'email' || tp === 'one' || tp === 'you') { handleTabPress(tp); return; }
     if (VALID_TABS.includes(tp)) handleTabPress(tp);
   }, [params.tab]); // eslint-disable-line react-hooks/exhaustive-deps
   // PERF: tabProps was a fresh object every render and is spread into ALL
@@ -1613,7 +1627,22 @@ function ChatHub() {
         {/* Profile avatar — opens the unified profile (/u/{me}).
             Was routing to the deprecated "config" tab (ChatProfileTab),
             which duplicated the profile UI inside the chat shell. */}
-        {activeTab === 'chats' && (
+        {/* [2026-10-18 you-tab] Perfil foi p/ a aba "Você" (barra de baixo); aqui fica o Apps
+            (mesmo AppsSheet/animação da antiga aba). Kill switch → avatar de volta. */}
+        {activeTab === 'chats' && YOU_TAB && (
+          <TouchableOpacity
+            onPress={() => handleTabPress('apps')}
+            activeOpacity={0.6}
+            hitSlop={6}
+            style={[styles.headerIconBtn, { marginRight: 4, marginLeft: -6 }]}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.tabApps') || 'Apps'}
+            accessibilityState={{ expanded: !!showAppsDrawer }}
+          >
+            <IconAppsTab size={22} color={colors.text} active={showAppsDrawer} />
+          </TouchableOpacity>
+        )}
+        {activeTab === 'chats' && !YOU_TAB && (
           <TouchableOpacity
             onPress={() => { try { router.push('/settings'); } catch {} }} /* [2026-10-18 apps-lean] avatar → "Você" (perfil+ajustes) */
             activeOpacity={0.7}
@@ -1750,7 +1779,7 @@ function ChatHub() {
       {NATIVE_TABS && nativeTabItems ? (
         <NativeHomeTabBar
           items={nativeTabItems}
-          selectedKey={showAppsDrawer ? 'apps' : ((activeTab === 'chats' || activeTab === 'reels' || activeTab === 'calls') ? activeTab : null)}
+          selectedKey={(showAppsDrawer && !YOU_TAB) ? 'apps' : ((activeTab === 'chats' || activeTab === 'reels' || activeTab === 'calls') ? activeTab : null)}
           isDark={barDark}
           translucent={GLASS_TAB_BAR}
           bottomInset={insets.bottom}
@@ -1893,6 +1922,21 @@ function ChatHub() {
               isDark={barDark}
               badge={missedCallBadge}
             />
+            {YOU_TAB ? (
+            // [2026-10-18 you-tab] "Você": a própria foto redonda (WhatsApp/Telegram),
+            // anel fino na cor ativa enquanto a tela Você está aberta (push → nunca "ativa").
+            <TabBarItem
+              icon={(active) => (
+                <View style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: barDark ? TAB_ON_DARK : TAB_ON_LIGHT }}>
+                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? 21 : 24} />
+                </View>
+              )}
+              label={t('chat.tabYou') || 'Você'}
+              active={false}
+              onPress={() => handleTabPress('you')}
+              isDark={barDark}
+            />
+            ) : (
             <TabBarItem
               icon={(active) => <IconAppsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabApps') || 'Apps'}
@@ -1900,6 +1944,7 @@ function ChatHub() {
               onPress={() => handleTabPress('apps')}
               isDark={barDark}
             />
+            )}
           </>
         )}
       </View>

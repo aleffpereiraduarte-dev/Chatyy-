@@ -25,6 +25,13 @@ export function nativeTabsAvailable() {
   try { return !!(m && m.isAvailable && m.isAvailable()); } catch { return false; }
 }
 
+// [2026-10-18 you-tab] Versão do módulo nativo (0 = sem módulo / desconhecida).
+// Android api 2+ desenha o ícone "you" (aba Você); antes disso o chat.js usa a barra JS.
+export function nativeTabsApi() {
+  const m = nativeMod();
+  try { return Number(m && m.apiVersion ? m.apiVersion() : 0) || 0; } catch { return 0; }
+}
+
 // Altura do conteúdo (sem a área do home indicator / gestos):
 // iOS = UITabBar 49 pt; Android = mesma altura da barra JS (10 + 56).
 const CONTENT_H = Platform.OS === 'ios' ? 49 : 66;

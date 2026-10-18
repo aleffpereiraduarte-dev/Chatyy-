@@ -324,6 +324,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
     "reels" -> if (on) R.drawable.ntb_reels_on else R.drawable.ntb_reels
     "calls" -> if (on) R.drawable.ntb_calls_on else R.drawable.ntb_calls
     "apps" -> if (on) R.drawable.ntb_apps_on else R.drawable.ntb_apps
+    "you" -> if (on) R.drawable.ntb_you_on else R.drawable.ntb_you // [2026-10-18 you-tab] api 2
     else -> 0
   }
 

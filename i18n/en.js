@@ -3720,6 +3720,7 @@ export default {
   'community.catBusiness': 'Business',
   'community.catOther': 'Other',
   'chat.tabApps': 'Apps',
+  'chat.tabYou': 'You',
   'chat.apps': 'Apps',
   'apps.productivity': 'Productivity',
   'apps.media': 'Media',

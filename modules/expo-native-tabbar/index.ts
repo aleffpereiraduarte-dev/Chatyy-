@@ -18,7 +18,7 @@ export type NativeTabItem = {
   /** iOS: SF Symbol (inativo / ativo). */
   sfSymbol: string;
   sfSymbolActive?: string;
-  /** Android: chats | email | reels | calls | apps (vetores do módulo). */
+  /** Android: chats | email | reels | calls | apps | you (api 2+) (vetores do módulo). */
   androidIcon?: string;
   badge?: number;
   dot?: boolean;
@@ -76,4 +76,15 @@ export function isAvailable(): boolean {
   return !!getNativeTabBarView();
 }
 
-export default { isAvailable, getNativeTabBarView };
+/** [2026-10-18 you-tab] Versão do contrato nativo (0 = desconhecida). Android 2+ = ícone "you". */
+export function apiVersion(): number {
+  try {
+    const mod: any = requireOptionalNativeModule('ChatyyTabBar');
+    const v = mod && typeof mod.apiVersion === 'function' ? Number(mod.apiVersion()) : 0;
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export default { isAvailable, getNativeTabBarView, apiVersion };

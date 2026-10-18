@@ -1,0 +1,6 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+  <!-- [2026-10-18 you-tab] aba "Você" ativa (person.crop.circle.fill: furos evenOdd) -->
+  <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd" android:pathData="M2.6,12a9.4,9.4 0,1 0,18.8 0a9.4,9.4 0,1 0,-18.8 0zM9,10a3,3 0,1 0,6 0a3,3 0,1 0,-6 0zM6.4,18.6C7.7,16.6 9.7,15.5 12,15.5s4.3,1.1 5.6,3.1C16.1,20.1 14.1,21 12,21s-4.1,-0.9 -5.6,-2.4z"/>
+</vector>

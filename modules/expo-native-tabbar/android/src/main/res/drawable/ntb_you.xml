@@ -1,0 +1,6 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+  <!-- [2026-10-18 you-tab] aba "Você" (person.crop.circle) -->
+  <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M3.5,12a8.5,8.5 0,1 0,17 0a8.5,8.5 0,1 0,-17 0zM9,10a3,3 0,1 0,6 0a3,3 0,1 0,-6 0zM6.6,18.4C7.9,16.6 9.8,15.6 12,15.6s4.1,1 5.4,2.8"/>
+</vector>

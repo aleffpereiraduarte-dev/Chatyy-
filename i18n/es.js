@@ -3721,6 +3721,7 @@ export default {
   'community.catBusiness': 'Negocios',
   'community.catOther': 'Otros',
   'chat.tabApps': 'Apps',
+  'chat.tabYou': 'Tú',
   'chat.apps': 'Apps',
   'apps.productivity': 'Productividad',
   'apps.media': 'Medios',
