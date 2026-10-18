@@ -250,6 +250,8 @@ import { resampleVoiceLevels } from '../components/chat/VoiceBars';
 import Profile from '../components/Profile';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
 import NativeComposerBridge, { shouldUseNativeComposer } from '../components/chat/NativeComposerBridge'; // [2026-10-14 native-composer]
+import ComposerLinkPreviewStrip from '../components/chat/ComposerLinkPreviewStrip'; // [linkpreview 2026-10-18]
+import { previewForMessage as _lpForMsg, isFreshMessage as _lpIsFresh, composerSendDecision as _lpSendDecision, setLocalPreviewForCmi as _lpSetLocal, parseLinkPreview as _lpParse, LP_SKELETON as _LP_SK } from '../components/chat/linkPreviewState'; // [linkpreview 2026-10-18]
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
 import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
@@ -3611,40 +3613,71 @@ function _lpHashColor(seed) {
   return `hsl(0, 0%, ${28 + (Math.abs(h) % 20)}%)`;
 }
 
-function LinkPreview({ url, colors, ink = null, sub = null }) {
+function LinkPreview({ url, colors, ink = null, sub = null, msg = null }) {
   // Skip our own domains — cards linking back to the app are pure noise.
   if (_lpShouldSkip(url)) return null;
 
-  // Initial state pulls from the module cache so a re-rendered row
-  // (scrolled away + back) instantly shows the preview, no flicker.
-  // `false` means "we tried, no data" → render nothing this session.
-  const cached = _lpCacheGet(url);
-  const [preview, setPreview] = useState(cached === undefined ? null : cached);
+  // [linkpreview 2026-10-18] 1º a prévia que o SERVIDOR gravou na mensagem (msg.link_preview — histórico,
+  // frame WS ou patch 'message_update'): desenha sem rede. Sem ela: cache do módulo; senão busca (msg
+  // recém-chegada espera ~4 s pelo patch do servidor) e mostra um ESQUELETO com a altura do cartão p/ a
+  // lista não pular quando a prévia chega.
+  const _known = _lpForMsg(msg, url);
+  useEffect(() => {
+    if (_known && _known.kind === 'ok' && _lpCacheGet(url) === undefined) _lpCacheSet(url, _known.data);
+  }, [url, _known && _known.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [_fetched, _setFetched] = useState(undefined);
+  useEffect(() => { _setFetched(undefined); }, [url]);
+  const _hit = _lpCacheGet(url);
+  const cached = _known ? (_known.kind === 'ok' ? _known.data : false) : (_fetched !== undefined ? _fetched : _hit);
+  const preview = cached || null;
+  const setPreview = _setFetched;
+  const _lpFreshDelay = _lpIsFresh(msg) ? 4000 : 300;
   // Favicon load state — flips true on Image onError so we drop back to
   // the IconGlobe SVG fallback. Reset when the URL changes (otherwise a
   // recycled row would keep showing the SVG for a different domain).
   const [faviconFailed, setFaviconFailed] = useState(false);
   useEffect(() => { setFaviconFailed(false); }, [url]);
 
+  const _lpPending = cached === undefined;
   useEffect(() => {
-    if (cached !== undefined) return; // already resolved
+    if (!_lpPending) return; // already resolved
     let cancelled = false;
     // Debounce 300ms — if a user scrolls past the row quickly we don't
     // fire dozens of curl-backed fetches.
     const timer = setTimeout(() => {
+      const _c2 = _lpCacheGet(url); // [linkpreview 2026-10-18] patch WS/outra linha já resolveu
+      if (_c2 !== undefined) { if (!cancelled) setPreview(_c2); return; }
       api.chatLinkPreview(url).then(r => {
         if (cancelled) return;
-        if (r && r.success && r.data && (r.data.title || r.data.image)) {
+        if (r && r.success && r.data && (r.data.title || r.data.image) && !r.data.failed) {
           _lpCacheSet(url, r.data);
           setPreview(r.data);
         } else {
           _lpCacheSet(url, false);
+          setPreview(false);
         }
-      }).catch(() => { if (!cancelled) _lpCacheSet(url, false); });
-    }, 300);
+      }).catch(() => { if (!cancelled) { _lpCacheSet(url, false); setPreview(false); } });
+    }, _lpFreshDelay);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [url, cached]);
+  }, [url, _lpPending]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (_lpPending) {
+    // [linkpreview 2026-10-18] esqueleto = mesma caixa do cartão (imagem 140 + texto) → nada pula.
+    const _skInk = ink || colors.text;
+    let _skBg = 'rgba(128,128,128,0.10)'; let _skBlk = 'rgba(128,128,128,0.16)';
+    try { const _pl = require('../components/chat/pollLook'); _skBg = _pl.inkAlpha(_skInk, 0.08); _skBlk = _pl.inkAlpha(_skInk, 0.12); } catch {}
+    return (
+      <View style={[linkPreviewStyles.container, { backgroundColor: _skBg, width: _LP_SK.width }]} accessibilityLabel="Carregando prévia do link">
+        <View style={{ height: _LP_SK.imageH, backgroundColor: _skBlk }} />
+        <View style={[linkPreviewStyles.textContainer, { height: _LP_SK.textH }]}>
+          <View style={{ width: 90, height: 10, borderRadius: 5, backgroundColor: _skBlk, marginTop: 3, marginBottom: 7 }} />
+          <View style={{ width: '80%', height: 12, borderRadius: 6, backgroundColor: _skBlk, marginBottom: 9 }} />
+          <View style={{ width: '92%', height: 10, borderRadius: 5, backgroundColor: _skBlk, marginBottom: 7 }} />
+          <View style={{ width: '60%', height: 10, borderRadius: 5, backgroundColor: _skBlk }} />
+        </View>
+      </View>
+    );
+  }
   if (!preview) return null;
 
   // Domain shown in small caps above title (WhatsApp pattern).
@@ -17841,6 +17874,28 @@ function ChatConversationInner() {
       };
       wsUnsubs.push(_wsOnB('edit', onWsEdit));
 
+      // [linkpreview 2026-10-18] Patch do servidor: a prévia do link ficou pronta (chat_send/chat_edit
+      // gravaram chat_messages.link_preview). Atualiza a linha (JS + lista nativa via setMessages), o cache
+      // de prévias e a persistência local — sem nenhuma busca no aparelho.
+      const onWsLinkPreview = (payload) => {
+        if (!mountedRef.current) return;
+        const d = (payload && payload.kind) ? payload : ((payload && payload.data) || payload || {});
+        if (!d || d.kind !== 'link_preview' || String(d.conversation_id) !== String(conversationId)) return;
+        const mid = d.message_id ?? d.id;
+        const lp = _lpParse(d.link_preview);
+        if (mid == null || !lp) return;
+        try {
+          if (lp.src && !lp.disabled) _lpCacheSet(lp.src, lp.failed ? false : lp);
+        } catch {}
+        const _same = (row) => { try { return JSON.stringify(_lpParse(row.link_preview)) === JSON.stringify(lp); } catch { return false; } };
+        try {
+          const base = (messagesRef.current || []).find(r => r && String(r.id) === String(mid));
+          if (base && !_same(base)) _cacheOne(conversationId, { ...base, link_preview: lp });
+        } catch {}
+        setMessages(prev => _mapKeep(prev, row => (row && String(row.id) === String(mid) && !_same(row)) ? { ...row, link_preview: lp } : row));
+      };
+      wsUnsubs.push(_wsOnB('message_update', onWsLinkPreview));
+
       const onWsPollVote = (payload) => {
         if (!mountedRef.current) return;
         const m = _extractWsMsg(payload);
@@ -19752,6 +19807,9 @@ function ChatConversationInner() {
     const _sendSilent = sendSilentNextRef.current === true; sendSilentNextRef.current = false; // [w12e] one-shot
     _reportChatDebug('handleSend-start', { len: inputText?.length || 0, hasReply: !!replyTo, conversationId });
     const text = compressText(inputText.trim());
+    // [linkpreview 2026-10-18] lê a faixa de prévia ANTES de limpar o campo (limpar zera a faixa).
+    let _lpSendPre = null;
+    try { const _lpM0 = text && text.match(/(https?:\/\/[^\s<]+)/); _lpSendPre = _lpSendDecision(text, _lpM0 ? _lpM0[0] : null); } catch {}
     // Whitespace-only guard: even after trim, weird unicode whitespace
     // (NBSP, zero-width space) can pass. Strict check kills any send that
     // is purely whitespace post-trim. Empty string → bail silently.
@@ -20075,6 +20133,15 @@ function ChatConversationInner() {
       // [responder-privado 2026-10-15] citação de outra conversa já na bolha otimista
       ...((!replyId && !(e2eEnabled && e2eKeys?.v4)) ? (() => { try { const q = require('../utils/privateReplyQuote').optimisticExtQuoteText(replyTo); return q ? { reply_quote_text: q } : {}; } catch { return {}; } })() : {}),
     };
+    // [linkpreview 2026-10-18] faixa do compositor: dispensada → no_preview=1 (servidor grava {disabled});
+    // prévia pronta → a bolha otimista já nasce com o cartão (o servidor resolve do cache que a faixa aqueceu).
+    let _lpSend = null;
+    try {
+      if (!(e2eEnabled && e2eKeys)) {
+        _lpSend = _lpSendPre;
+        if (_lpSend && _lpSend.local) { _lpSetLocal(msgId, _lpSend.local); optimisticMsg.link_preview = _lpSend.local; }
+      }
+    } catch {}
     // [2026-10-18 tg-list] morph do envio (lista nativa api 11): retângulo do campo do
     // compositor ANTES do applyRows da bolha otimista (Fabric mede síncrono).
     try {
@@ -20123,6 +20190,7 @@ function ChatConversationInner() {
     if (stagedEffect) _outboxSendOpts.effect = stagedEffect;
     if (_sendSilent) _outboxSendOpts.silent = true; // [w12e] sem som também no reenvio
     if (sealedSenderRef.current) _outboxSendOpts.sealed = true;
+    if (_lpSend && _lpSend.noPreview) _outboxSendOpts.noPreview = true; // [linkpreview 2026-10-18]
     if (replyTo?.quoteText && !(e2eEnabled && e2eKeys?.v4)) _outboxSendOpts.replyQuoteText = replyTo.quoteText;
     if (!(e2eEnabled && e2eKeys?.v4)) { const _xq = require('../utils/privateReplyQuote').extSendOpts(replyTo); if (_xq) _outboxSendOpts.replyExt = _xq; } // [responder-privado 2026-10-15]
     let _outboxReady = Promise.resolve();
@@ -20483,6 +20551,7 @@ function ChatConversationInner() {
       // of awaiting a dynamic import + AsyncStorage on every send — that await
       // sat BEFORE api.chatSend fired and slowed the actual dispatch.
       if (sealedSenderRef.current) _sendOpts.sealed = true;
+      if (_lpSend && _lpSend.noPreview) _sendOpts.noPreview = true; // [linkpreview 2026-10-18]
       const _stagedEffectForThisSend = stagedEffect; // capture for optimistic bubble + receipt overlay
       // Effect is one-shot: clear it the moment we hand off the send. If the
       // user long-presses again to set another effect before the request
@@ -33556,7 +33625,7 @@ function ChatConversationInner() {
                   )}
                 </View>
               )}
-              {firstUrl && <LinkPreview url={firstUrl} colors={colors} ink={isOwn ? ownTextColor : otherInk} sub={isOwn ? ownMetaColor : otherMetaColor} />}
+              {firstUrl && <LinkPreview url={firstUrl} msg={msg} colors={colors} ink={isOwn ? ownTextColor : otherInk} sub={isOwn ? ownMetaColor : otherMetaColor} />}
               <SmartActions
                 actions={detectSmartActions(msg.content)}
                 colors={colors}
@@ -37270,6 +37339,8 @@ function ChatConversationInner() {
         </Animated.View>
       )) || null} />
 
+      {/* [linkpreview 2026-10-18] faixa de prévia do link digitado (JS, acima do compositor JS ou nativo) */}
+      <ComposerLinkPreviewStrip store={composerStore} colors={colors} isDark={isDark} enabled={!editingMsg && !composerBlocked && !(e2eEnabled && e2eKeys)} skip={_lpShouldSkip} cacheGet={_lpCacheGet} cacheSet={_lpCacheSet} />
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
           Animated entrance: slide up + fade in for the "I'm replying" cue. */}
       {(replyTo || editingMsg) && !(shouldUseNativeComposer() && _nativeReplyCardOn() && !isSavedMode && !composerBlocked && !isRecording) /* [2026-10-14 native-composer] barra nativa; [reply-card-fallback] iOS 692 = barra JS */ && (() => {

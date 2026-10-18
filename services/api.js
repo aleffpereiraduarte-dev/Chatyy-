@@ -5897,6 +5897,9 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   // Silent mode (Telegram parity): recipient receives the message in-thread
   // but with no notification banner/sound. Callers opt in via opts.silent.
   if (opts?.silent) payload.silent = true;
+  // [linkpreview 2026-10-18] remetente dispensou a prévia do link no compositor → servidor grava
+  // {disabled:true} e ninguém vê cartão (servidor sem o kit ignora o campo — inofensivo).
+  if (opts?.noPreview) payload.no_preview = 1;
   // Partial-text quote (Telegram premium): user replied to a snippet of a
   // longer parent message. Sent as a separate field so the parent body and
   // the quoted excerpt can both live in cache without one overwriting the

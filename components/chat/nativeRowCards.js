@@ -39,6 +39,7 @@ import {
   IconFile, IconFilm, IconMessageCircle, IconChevronRight, IconSmile, IconUsers,
 } from '../Icons';
 import { parseContactPayload, contactTitle } from './contactShare'; // [2026-10-17 share-contact]
+import { previewForMessage, isFreshMessage, LP_SKELETON } from './linkPreviewState'; // [linkpreview 2026-10-18]
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
 const URL_RE = /(https?:\/\/[^\s<]+)/;
@@ -86,7 +87,7 @@ function _hm(d) {
 
 // ─── caches assíncronos ─────────────────────────────────────────────────────
 const _lpInflight = new Set();
-function _lpFor(url, C) {
+function _lpFor(url, C, delayMs = 300) {
   const lp = C.lp;
   if (!lp || typeof lp.get !== 'function') return null;
   if (lp.skip && lp.skip(url)) return null;
@@ -94,8 +95,10 @@ function _lpFor(url, C) {
   if (v !== undefined) return v || null;
   if (_lpInflight.has(url)) return null;
   _lpInflight.add(url);
-  // Mesmo debounce de 300 ms do LinkPreview JS.
+  // Mesmo debounce de 300 ms do LinkPreview JS. [linkpreview 2026-10-18] msg recém-chegada: espera o
+  // patch WS do servidor (message_update) antes de buscar — re-checa o cache na hora de ir à rede.
   setTimeout(() => {
+    try { const v2 = lp.get(url); if (v2 !== undefined) { _lpInflight.delete(url); try { C.bump && C.bump(); } catch {} return; } } catch {}
     let api = null;
     try { api = require('../../services/api'); api = api.default || api; } catch { api = null; }
     const done = (val) => { _lpInflight.delete(url); try { lp.set(url, val); } catch {} try { C.bump && C.bump(); } catch {} };
@@ -104,7 +107,7 @@ function _lpFor(url, C) {
       if (r && r.success && r.data && (r.data.title || r.data.image)) done(r.data);
       else done(false);
     }).catch(() => done(false));
-  }, 300);
+  }, delayMs);
   return null;
 }
 
@@ -1122,9 +1125,41 @@ export function buildFallbackCard(item, row, ctx, reason) {
   return !!(row.bl[0]);
 }
 
-function linkCard(url, C, own) {
-  const pv = _lpFor(url, C);
-  if (!pv) return null;
+// [linkpreview 2026-10-18] Esqueleto com a altura do cartão (imagem + texto) enquanto a prévia não chega
+// (patch WS do servidor ou busca) — a lista nativa já reserva o espaço, nada pula. Só nós JS (sem build).
+function linkSkeleton(url, C, own) {
+  const col = C.colors || {};
+  const ink = own ? (C.ownText || '#FFFFFF') : (C.otherInk || col.text || '#111111');
+  let cardBg = 'rgba(128,128,128,0.10)'; let blk = 'rgba(128,128,128,0.16)';
+  try { cardBg = inkAlpha(ink, 0.08); blk = inkAlpha(ink, 0.12); } catch {}
+  return vstack([
+    vstack([], { w: -1, h: LP_SKELETON.imageH, bg: blk }),
+    vstack([
+      vstack([], { w: 90, h: 10, r: 5, bg: blk, m: [3, 0, 7, 0] }),
+      vstack([], { w: 200, h: 12, r: 6, bg: blk, m: [0, 0, 9, 0] }),
+      vstack([], { w: 230, h: 10, r: 5, bg: blk, m: [0, 0, 7, 0] }),
+      vstack([], { w: 160, h: 10, r: 5, bg: blk }),
+    ], { p: [8, 12, 8, 12], w: -1, h: LP_SKELETON.textH }),
+  ], { id: 'lp', w: LP_SKELETON.width, r: 10, m: [6, 0, 0, 0], bg: cardBg, a: 'lp:' + url });
+}
+
+function linkCard(url, C, own, item) {
+  // [linkpreview 2026-10-18] 1º a prévia gravada pelo servidor na mensagem (sem rede); depois cache/busca.
+  const known = previewForMessage(item, url);
+  let pv = null;
+  if (known) {
+    if (known.kind !== 'ok') return null;
+    pv = known.data;
+    try { if (C.lp && C.lp.get(url) === undefined) C.lp.set(url, pv); } catch {}
+  } else {
+    if (C.lp && C.lp.skip && C.lp.skip(url)) return null;
+    pv = _lpFor(url, C, isFreshMessage(item) ? 4000 : 300);
+    if (!pv) {
+      let pending = false;
+      try { pending = !!(C.lp && typeof C.lp.get === 'function' && C.lp.get(url) === undefined); } catch {}
+      return pending ? linkSkeleton(url, C, own) : null;
+    }
+  }
   const col = C.colors || {};
   let domain = pv.site_name || '';
   if (!domain) { try { domain = (url.match(/^https?:\/\/([^/]+)/i) || [])[1] || ''; } catch {} }
@@ -1182,7 +1217,7 @@ export function buildCard(item, row, ctx) {
     if ((item.type || 'text') === 'text' && !item._type && !item.deleted_at && typeof item.content === 'string') {
       const mm = item.content.match(URL_RE);
       if (mm) {
-        const card = linkCard(mm[0], C, own);
+        const card = linkCard(mm[0], C, own, item);
         if (card) row.post = (row.post || []).concat([card]);
       }
     }
