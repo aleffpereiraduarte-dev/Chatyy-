@@ -15,8 +15,9 @@ import { IconLock } from '../Icons';
 
 const ND = Platform.OS !== 'web';
 
+// [2026-10-18 polish2] helper central (Core Haptics + pref "Vibração ao tocar"), não expo-haptics direto.
 let Haptics = null;
-try { Haptics = require('expo-haptics'); } catch {}
+try { Haptics = require('../../services/haptics').HapticsCompat; } catch {}
 
 function ChatGreetingCard({ isDark, t, onGreet, canSend = true, offline = false, e2e = false }) {
   const tr = (k, fb) => { try { const v = t?.(k); return v && v !== k ? v : fb; } catch { return fb; } };

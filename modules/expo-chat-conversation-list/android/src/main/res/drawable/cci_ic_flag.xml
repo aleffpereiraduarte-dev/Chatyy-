@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [2026-10-18 chat-info-native] Ícone de traço (lucide, viewBox 24, traço 2). Cor aplicada por tint. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:pathData="M4,15s1,-1 4,-1s5,2 8,2s4,-1 4,-1V3s-1,1 -4,1s-5,-2 -8,-2s-4,1 -4,1z M4,22v-7"
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="2"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round" />
+</vector>

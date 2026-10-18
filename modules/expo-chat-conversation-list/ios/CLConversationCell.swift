@@ -13,6 +13,7 @@ final class CLConversationCell: UICollectionViewListCell {
   private let timeLabel = UILabel()
   private let lockIcon = UIImageView()
   private let clockIcon = UIImageView()
+  private let failIcon = UIImageView()   // [2026-10-18] "!" vermelho (última enviada falhou)
   private let receipt = CLReceiptView()
   private let typingDots = CLTypingDots()
   private let previewLabel = UILabel()
@@ -55,7 +56,7 @@ final class CLConversationCell: UICollectionViewListCell {
       cv.addSubview(l)
     }
     timeLabel.textAlignment = .right
-    for iv in [lockIcon, clockIcon, muteIcon, pinIcon] {
+    for iv in [lockIcon, clockIcon, failIcon, muteIcon, pinIcon] {
       iv.contentMode = .center
       cv.addSubview(iv)
     }
@@ -172,7 +173,15 @@ final class CLConversationCell: UICollectionViewListCell {
     receipt.readColor = theme.receiptRead
     receipt.setState(showReceipt ? r.receipt : 0, animated: animated && (previous?.receipt ?? 0) != r.receipt)
 
-    clockIcon.isHidden = !((r.scheduled || (r.pending && r.receipt <= 0)) && !typing && !drafting && !r.locked)
+    // [2026-10-18] falha definitiva: "!" vermelho no lugar do relógio/✓ (o JS manda
+    // receipt 0 + failed:true). Falha vence o relógio de "na fila".
+    let showFailed = r.failed && r.receipt <= 0 && !typing && !drafting && !r.locked
+    failIcon.isHidden = !showFailed
+    if showFailed {
+      failIcon.image = CLSymbols.image("exclamationmark.circle.fill", pointSize: 12, weight: .semibold, color: theme.danger)
+      failIcon.accessibilityLabel = labels.get("notSent", "Não enviada")
+    }
+    clockIcon.isHidden = showFailed || !((r.scheduled || (r.pending && r.receipt <= 0)) && !typing && !drafting && !r.locked)
     if !clockIcon.isHidden {
       clockIcon.image = CLSymbols.image("clock", pointSize: 11, weight: .medium, color: theme.sub)
     }
@@ -426,6 +435,10 @@ final class CLConversationCell: UICollectionViewListCell {
     if !typingDots.isHidden {
       typingDots.frame = CGRect(x: px, y: cy - 4, width: CLTypingDots.width, height: 8)
       px += CLTypingDots.width + 6
+    }
+    if !failIcon.isHidden {
+      failIcon.frame = CGRect(x: px, y: cy - 7, width: 14, height: 14)
+      px += 14 + 4
     }
     if !clockIcon.isHidden {
       clockIcon.frame = CGRect(x: px, y: cy - 7, width: 14, height: 14)

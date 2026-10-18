@@ -149,8 +149,11 @@ public class ChatyyComposerModule: Module {
 
     // [2026-10-16 reply-card-ios] 2 = cartão de resposta nativo corrigido no iOS
     // (app/chat-conversation.js `_nativeReplyCardOn()` religa o cartão nativo).
+    // 3 = [2026-10-18 voz-pausa] gravação travada com PAUSAR/CONTINUAR + prévia
+    //     (play) antes de enviar; novos onVoiceState "paused"/"resumed" e labels
+    //     pauseRecording/resumeRecording/playPreview/pausePreview.
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
     }
 
     View(ChatyyComposerView.self) {

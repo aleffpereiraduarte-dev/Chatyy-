@@ -237,3 +237,27 @@ export function contactListApiVersion(): number {
   } catch { _ctApi = 0; }
   return _ctApi;
 }
+
+// ── [2026-10-18 chat-info-native] "Dados do contato" / "Dados do grupo" ──────
+// View `ChatyyChatInfo` (hero + cartões + membros virtualizados). Binário sem
+// a view (build antigo) → null e a conversa mantém a folha JS. Kill switch:
+// globalThis.__chatyy_native_chat_info = false. JS: components/chat/NativeChatInfo.js.
+export const CHAT_INFO_VIEW_NAME = 'ChatyyChatInfo';
+export function getNativeChatInfoView(): any { return _probeNamed(CHAT_INFO_VIEW_NAME); }
+
+let _ciApi = -1;
+/** apiVersion da ChatyyChatInfo (0 = ausente). */
+export function chatInfoApiVersion(): number {
+  if (_ciApi >= 0) return _ciApi;
+  _ciApi = 0;
+  if (Platform.OS === 'web') return 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function'
+      ? core.requireOptionalNativeModule(CHAT_INFO_VIEW_NAME)
+      : null;
+    if (mod && typeof mod.apiVersion === 'function') _ciApi = Number(mod.apiVersion()) || 0;
+  } catch { _ciApi = 0; }
+  return _ciApi;
+}

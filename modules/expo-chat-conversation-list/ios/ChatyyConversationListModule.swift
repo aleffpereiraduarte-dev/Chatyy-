@@ -30,9 +30,11 @@ public class ChatyyConversationListModule: Module {
     //     dígitos rolando, ✓→✓✓ animado, reordenação com mola (sem contrato).
     // 4 = [2026-10-17 peek-fixed] prévia do toque longo com altura FIXA
     //     (igual em toda conversa) + prop `peekHeight` (fração da tela).
+    // 5 = [2026-10-18 failed-row] linha com `failed:true` desenha "!" vermelho
+    //     (exclamação em círculo) no lugar do relógio/✓ (chave extra; sem contrato).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 4
+      return 5
       #else
       return 1
       #endif

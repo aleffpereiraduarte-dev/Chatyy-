@@ -53,6 +53,10 @@ import {
 
 const AUTO_KEY = '@chatyy_backup_auto';
 
+async function _hasRememberedPass() {
+  try { return !!(await require('expo-secure-store').getItemAsync('chatyy_cloud_backup_passphrase')); } catch { return false; }
+}
+
 /**
  * Stage 8 UI — Chat backup screen.
  *
@@ -158,6 +162,14 @@ export default function ChatBackupScreen() {
   // the scheduled task. Persist the user's choice so it survives reload.
   const handleToggleAutoSchedule = useCallback(async () => {
     const next = !autoSchedule;
+    if (next && password.length < 8 && !(await _hasRememberedPass())) {
+      Alert.alert(
+        t('backup.needPassTitle') || 'Senha obrigatória',
+        t('backup.autoNeedPass') || 'Digite a senha do backup (mín. 8 caracteres) para ativar o backup automático.'
+      );
+      return;
+    }
+    if (next && password.length >= 8) { try { await rememberPassphrase(password); } catch {} }
     setAutoSchedule(next);
     try { await AsyncStorage.setItem(AUTO_KEY, next ? '1' : '0'); } catch {}
     try {
@@ -169,7 +181,7 @@ export default function ChatBackupScreen() {
         String(e?.message || e)
       );
     }
-  }, [autoSchedule, t]);
+  }, [autoSchedule, password, t]);
 
   const handleBackup = async () => {
     if (password.length < 8) {
@@ -370,13 +382,22 @@ export default function ChatBackupScreen() {
   const handleCycleFrequency = useCallback(async () => {
     const idx = BACKUP_FREQUENCIES.indexOf(frequency);
     const next = BACKUP_FREQUENCIES[(idx + 1) % BACKUP_FREQUENCIES.length];
+    // [2026-10-18 wa-parity] backup automático sem senha guardada falhava em silêncio (tarefa de
+    // fundo não tem com o que cifrar). Exige a senha no campo OU uma já lembrada.
+    if (next !== 'off' && password.length < 8 && !(await _hasRememberedPass())) {
+      Alert.alert(
+        t('backup.needPassTitle') || 'Senha obrigatória',
+        t('backup.autoNeedPass') || 'Digite a senha do backup (mín. 8 caracteres) para ativar o backup automático.'
+      );
+      return;
+    }
     setFrequency(next);
     try { await setBackupFrequency(next); } catch {}
     if (next !== 'off' && password.length >= 8) {
       // Pre-cache passphrase so the background task can run unattended.
       await rememberPassphrase(password);
     }
-  }, [frequency, password]);
+  }, [frequency, password, t]);
 
   const handleToggleWifiOnly = useCallback(async () => {
     const next = !wifiOnly;

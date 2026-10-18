@@ -1410,7 +1410,12 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       }
       swipeArmed = armedNow
     case .ended, .cancelled, .failed:
-      let fire = g.state == .ended && swipeArmed
+      // [2026-10-18 swipe-wa] "peteleco" rápido também responde (WhatsApp): soltou
+      // antes do limiar mas com velocidade alta no sentido certo → dispara (+ haptic).
+      let flingV = g.velocity(in: cv).x * swipeDir
+      let flung = g.state == .ended && !swipeArmed && flingV > 900 && max(0, t) >= swipeThreshold * 0.55
+      if flung { haptic.impactOccurred() }
+      let fire = (g.state == .ended && swipeArmed) || flung
       let key = cell.key
       let dir = swipeDir
       // [reply-v2] volta com mola (leve overshoot), velocidade do dedo.

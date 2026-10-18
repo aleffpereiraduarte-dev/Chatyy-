@@ -85,7 +85,11 @@ class ChatyyComposerModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyComposer")
 
-    Function("apiVersion") { 1 }
+    // 3 = [2026-10-18 voz-pausa] gravação travada com PAUSAR/CONTINUAR + prévia
+    //     (play) antes de enviar; novos onVoiceState "paused"/"resumed" e labels
+    //     pauseRecording/resumeRecording/playPreview/pausePreview. (Pula o 2 p/
+    //     alinhar com o iOS; o gate `>= 2` do cartão de resposta é só iOS.)
+    Function("apiVersion") { 3 }
 
     View(ChatyyComposerView::class) {
       Events(

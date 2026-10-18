@@ -402,8 +402,8 @@ export default function NotificationToast({ notification, onDismiss }) {
     // swipe did anything.
     try {
       if (Platform.OS !== 'web') {
-        const Haptics = require('expo-haptics');
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        // [2026-10-18 polish2] via services/haptics (Core Haptics + pref "Vibração ao tocar").
+        require('../services/haptics').hapticEvent('sheetClose');
       }
     } catch {}
     Animated.parallel([

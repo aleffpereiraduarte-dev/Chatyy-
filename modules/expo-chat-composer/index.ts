@@ -61,7 +61,9 @@ export type ComposerMenuItem = { key: string; label: string };
 
 export type VoiceState =
   | 'recording' | 'locked' | 'sent' | 'cancelled' | 'tooShort' | 'tapHint'
-  | 'blocked' | 'error' | 'permissionGranted';
+  | 'blocked' | 'error' | 'permissionGranted'
+  // [2026-10-18 voz-pausa] apiVersion >= 3: travado → pausar / continuar
+  | 'paused' | 'resumed';
 
 export type ComposerEvents = {
   onChangeText: { text: string };
@@ -121,7 +123,7 @@ export function isAvailable(): boolean {
   return !!getNativeComposerView();
 }
 
-/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. */
+/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. 3 = voz pausar/continuar + prévia. */
 let _api: number | null = null;
 export function apiVersion(): number {
   if (_api != null) return _api;

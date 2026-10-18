@@ -241,6 +241,11 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     deleteRecording: _tr(t, 'nativeComposer.deleteRecording', 'Apagar gravação'),
     cancelRecording: _tr(t, 'chatConv.cancelRecording', 'Cancelar gravação'),
     recording: _tr(t, 'nativeComposer.recording', 'Gravando áudio'),
+    // [2026-10-18 voz-pausa] composer apiVersion >= 3 (binário antigo ignora)
+    pauseRecording: _tr(t, 'nativeComposer.pauseRecording', 'Pausar gravação'),
+    resumeRecording: _tr(t, 'nativeComposer.resumeRecording', 'Continuar gravação'),
+    playPreview: _tr(t, 'nativeComposer.playPreview', 'Ouvir gravação'),
+    pausePreview: _tr(t, 'nativeComposer.pausePreview', 'Pausar'),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [labelsKey, t]);
 

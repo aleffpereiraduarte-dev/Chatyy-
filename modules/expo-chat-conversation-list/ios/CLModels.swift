@@ -76,6 +76,7 @@ struct CLRow {
   var receipt: Int = 0               // 0 nada · 1 enviado · 2 entregue · 3 lido
   var scheduled: Bool = false
   var pending: Bool = false             // [2026-10-17] na fila sem rede → relógio (receipt 0)
+  var failed: Bool = false              // [2026-10-18] última enviada falhou → "!" vermelho (receipt 0)
   var typing: String = ""            // "Ana digitando..." (vazio = ninguém)
   var draft: String = ""
   var draftLabel: String = ""
@@ -115,6 +116,7 @@ struct CLRow {
     receipt = CLVal.int(d["receipt"])
     scheduled = CLVal.bool(d["scheduled"])
     pending = CLVal.bool(d["pending"])
+    failed = CLVal.bool(d["failed"])
     typing = CLVal.str(d["typing"])
     draft = CLVal.str(d["draft"])
     draftLabel = CLVal.str(d["draftLabel"])
@@ -202,6 +204,7 @@ struct CLTheme {
   let receiptSent: UIColor
   let receiptGray: UIColor
   let receiptRead: UIColor
+  let danger: UIColor
   let ringHot: UIColor
   let ringCold: UIColor
   let online: UIColor
@@ -252,6 +255,7 @@ struct CLTheme {
       ringCold = UIColor(white: 0, alpha: 0.25)
     }
     receiptRead = UIColor(clHex: 0x53BDEB)
+    danger = dark ? UIColor(clHex: 0xFF453A) : UIColor(clHex: 0xFF3B30)
     online = UIColor(clHex: 0x22C55E)
   }
 

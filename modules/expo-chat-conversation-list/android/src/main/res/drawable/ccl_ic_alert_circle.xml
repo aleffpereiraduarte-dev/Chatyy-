@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [2026-10-18 failed-row] "!" em círculo cheio (falha de envio) — o "!" é vazado
+     (evenOdd) para o fundo da linha aparecer; cor aplicada por tint (vermelho do tema). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:fillType="evenOdd"
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M2,12a10,10 0,1 0,20 0a10,10 0,1 0,-20 0z M10.9,6.5h2.2l-0.35,8h-1.5z M10.75,16.2h2.5v2.4h-2.5z" />
+</vector>

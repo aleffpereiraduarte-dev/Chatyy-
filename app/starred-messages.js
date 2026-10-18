@@ -84,6 +84,27 @@ export default function StarredMessagesScreen() {
     } catch (e) { console.warn('[starred] nav:', e); }
   };
 
+  // [2026-10-18 wa-parity] WhatsApp: segurar uma favorita → "Desfavoritar" (antes a tela só listava).
+  const askUnstar = useCallback((msg) => {
+    if (!msg || msg.id == null) return;
+    const doIt = async () => {
+      setMessages((prev) => prev.filter((m) => String(m.id) !== String(msg.id)));
+      try {
+        const r = await api.chatStarMessage(msg.id, false);
+        if (r && r.success === false) throw new Error(r.message || '');
+      } catch {
+        setMessages((prev) => (prev.some((m) => String(m.id) === String(msg.id)) ? prev : [msg, ...prev]));
+      }
+    };
+    const title = t('chat.unstar') || 'Desfavoritar';
+    const body = t('starred.unstarConfirm') || 'Remover esta mensagem das favoritas?';
+    if (Platform.OS === 'web') { if (window.confirm(`${title}\n\n${body}`)) doIt(); return; }
+    require('react-native').Alert.alert(title, body, [
+      { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+      { text: title, style: 'destructive', onPress: doIt },
+    ]);
+  }, [t]);
+
   const formatDate = (iso) => {
     if (!iso) return '';
     try {
@@ -193,7 +214,7 @@ export default function StarredMessagesScreen() {
             </Text>
           )}
           renderItem={({ item }) => (
-            <TouchableOpacity onPress={() => openConversation(item)} style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}>
+            <TouchableOpacity onPress={() => openConversation(item)} onLongPress={() => askUnstar(item)} delayLongPress={350} style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}>
               <AvatarCircle name={item.sender_name || item.sender_email} email={item.sender_email} size={44} />
               <View style={styles.rowBody}>
                 <View style={styles.rowHead}>

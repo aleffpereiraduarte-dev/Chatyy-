@@ -83,6 +83,7 @@ internal data class CLRow(
   val receipt: Int = 0,
   val scheduled: Boolean = false,
   val pending: Boolean = false, // [2026-10-17] na fila sem rede → relógio (receipt 0)
+  val failed: Boolean = false, // [2026-10-18] última enviada falhou → "!" vermelho (receipt 0)
   val typing: String = "",
   val draft: String = "",
   val draftLabel: String = "",
@@ -126,6 +127,7 @@ internal data class CLRow(
         receipt = CLVal.int(m["receipt"]),
         scheduled = CLVal.bool(m["scheduled"]),
         pending = CLVal.bool(m["pending"]),
+        failed = CLVal.bool(m["failed"]),
         typing = CLVal.str(m["typing"]),
         draft = CLVal.str(m["draft"]),
         draftLabel = CLVal.str(m["draftLabel"]),
@@ -187,6 +189,7 @@ internal class CLTheme(val dark: Boolean) {
   val receiptSent: Int
   val receiptGray: Int
   val receiptRead: Int = Color.parseColor("#53BDEB")
+  val danger: Int = if (dark) Color.parseColor("#FF453A") else Color.parseColor("#FF3B30")
   val ringHot: Int
   val ringCold: Int
   val online: Int = Color.parseColor("#22C55E")

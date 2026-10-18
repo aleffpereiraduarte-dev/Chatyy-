@@ -2477,8 +2477,8 @@ export default function Profile({
           // tile menus. Lazy-required so a missing peer dep doesn't crash.
           const openActionSheet = () => {
             try {
-              const H = require('expo-haptics');
-              H.impactAsync?.(H.ImpactFeedbackStyle?.Medium);
+              // [2026-10-18 polish2] helper central (mesma intensidade de long-press do app).
+              require('../services/haptics').hapticEvent('longPress');
             } catch {}
             setHighlightSheet({ open: true, highlight: { id: h.id, title: h.title, cover_url: h.cover_url, isSelf } });
           };

@@ -56,6 +56,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   private val previewTv = label(15f, 1.3f, 400)
   private val lockIv = ImageView(ctx)
   private val clockIv = ImageView(ctx)
+  private val failIv = ImageView(ctx) // [2026-10-18] "!" vermelho (última enviada falhou)
   private val muteIv = ImageView(ctx)
   private val pinIv = ImageView(ctx)
   private val receipt = CLReceiptView(ctx)
@@ -102,7 +103,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     addView(avatar)
     for (v in listOf(nameTv, activityTv, timeTv, previewTv, mentionTv)) addView(v)
     addView(unreadTv)
-    for (iv in listOf(lockIv, clockIv, muteIv, pinIv)) {
+    for (iv in listOf(lockIv, clockIv, failIv, muteIv, pinIv)) {
       iv.scaleType = ImageView.ScaleType.FIT_CENTER
       addView(iv)
     }
@@ -210,7 +211,15 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     receipt.readColor = t.receiptRead
     receipt.update(if (showReceipt) r.receipt else 0, prev != null && prev.receipt != r.receipt)
 
-    val sched = (r.scheduled || (r.pending && r.receipt <= 0)) && !isTyping && !drafting && !r.locked
+    // [2026-10-18] falha definitiva: "!" vermelho no lugar do relógio/✓ (o JS manda
+    // receipt 0 + failed:true). Falha vence o relógio de "na fila".
+    val showFailed = r.failed && r.receipt <= 0 && !isTyping && !drafting && !r.locked
+    failIv.visibility = if (showFailed) VISIBLE else GONE
+    if (showFailed) {
+      failIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_alert_circle, t.danger))
+      failIv.contentDescription = labels.get("notSent", "Não enviada")
+    }
+    val sched = !showFailed && (r.scheduled || (r.pending && r.receipt <= 0)) && !isTyping && !drafting && !r.locked
     clockIv.visibility = if (sched) VISIBLE else GONE
     if (sched) clockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_clock, t.sub))
 
@@ -455,6 +464,10 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       typing.measure(exactly(px(18f)), exactly(px(8f)))
       pxX += px(18f) + px(6f)
     }
+    if (failIv.visibility == VISIBLE) {
+      failIv.measure(exactly(px(14f)), exactly(px(14f)))
+      pxX += px(14f) + px(4f)
+    }
     if (clockIv.visibility == VISIBLE) {
       clockIv.measure(exactly(px(14f)), exactly(px(14f)))
       pxX += px(14f) + px(4f)
@@ -538,6 +551,11 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (typing.visibility == VISIBLE) {
       typing.layout(px0, cy - px(4f), px0 + px(18f), cy + px(4f))
       px0 += px(18f) + px(6f)
+    }
+    if (failIv.visibility == VISIBLE) {
+      val s = px(14f)
+      failIv.layout(px0, cy - s / 2, px0 + s, cy - s / 2 + s)
+      px0 += s + px(4f)
     }
     if (clockIv.visibility == VISIBLE) {
       val s = px(14f)

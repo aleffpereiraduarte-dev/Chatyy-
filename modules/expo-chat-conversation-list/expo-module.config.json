@@ -21,7 +21,8 @@
       "ChatyyChannelFeedModule",
       "ChatyyCommunityListModule",
       "ChatyyCommunityDetailModule",
-      "ChatyyChipStripModule"
+      "ChatyyChipStripModule",
+      "ChatyyChatInfoModule"
     ]
   },
   "android": {
@@ -42,7 +43,8 @@
       "expo.modules.chatyyconversationlist.ChatyyChannelFeedModule",
       "expo.modules.chatyyconversationlist.ChatyyCommunityListModule",
       "expo.modules.chatyyconversationlist.ChatyyCommunityDetailModule",
-      "expo.modules.chatyyconversationlist.ChatyyChipStripModule"
+      "expo.modules.chatyyconversationlist.ChatyyChipStripModule",
+      "expo.modules.chatyyconversationlist.ChatyyChatInfoModule"
     ]
   }
 }

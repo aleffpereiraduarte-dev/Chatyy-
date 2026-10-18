@@ -3827,6 +3827,19 @@ function _reuseConvRows(prev, next) {
   return allSame ? prev : out;
 }
 
+async function _clBlockPeer(api, peerEmail, t) {
+  // [2026-10-18 wa-parity] bloquear pela lista: antes engolia erro e não dava retorno nenhum.
+  try {
+    const r = await api.chatBlockUser(peerEmail);
+    if (r && r.success === false) throw new Error(r.message || r.error || '');
+    safeAlert(t('chat.userBlocked') || 'Usuário bloqueado');
+    return true;
+  } catch (e) {
+    safeAlert(t('common.error') || 'Erro', (e && e.message) || (t('chat.blockFailed') || 'Não foi possível bloquear. Tente de novo.'));
+    return false;
+  }
+}
+
 function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0, topOverlayInset = 0, onNativeTopBar }) {
   { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.list++; }
   // [2026-10-14 lista-eco-envio] e-mail da conta (minúsculo) sempre atual p/ closures antigas.
@@ -4103,14 +4116,23 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     })();
     return () => { alive = false; };
   }, [_secretCodeKey]);
-  const persistSecretCode = useCallback(async (code) => {
+  // [2026-10-18 wa-parity lock-code] a tela /locked-chats agora define o código → lista atualiza na hora.
+  useEffect(() => {
+    let sub = null;
     try {
-      const SecureStore = require('expo-secure-store');
-      if (code) await SecureStore.setItemAsync(_secretCodeKey, code);
-      else await SecureStore.deleteItemAsync(_secretCodeKey);
+      const { DeviceEventEmitter } = require('react-native');
+      const { SECRET_CODE_EVENT } = require('../services/lockedSecretCode');
+      sub = DeviceEventEmitter.addListener(SECRET_CODE_EVENT, (p) => {
+        if (!p || String(p.email || '').toLowerCase() !== String(user?.email || '').toLowerCase()) return;
+        setSecretCode(p.code || '');
+      });
     } catch {}
+    return () => { try { sub && sub.remove(); } catch {} };
+  }, [user?.email]);
+  const persistSecretCode = useCallback(async (code) => {
+    try { await require('../services/lockedSecretCode').setSecretCode(user?.email, code); } catch {}
     setSecretCode(code || '');
-  }, [_secretCodeKey]);
+  }, [user?.email]);
   const [typingUsers, setTypingUsers] = useState({});
   const [showBroadcast, setShowBroadcast] = useState(false);
   const [showFabMenu, setShowFabMenu] = useState(false);
@@ -6687,7 +6709,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
             {
               text: t('chat.block') || 'Bloquear', style: 'destructive',
-              onPress: async () => { try { await api.chatBlockUser(peerEmail); } catch {} },
+              onPress: async () => { await _clBlockPeer(api, peerEmail, t); },
             },
           ]
         );
@@ -6855,7 +6877,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           destructive: true,
         });
         if (!ok) return;
-        try { await api.chatBlockUser(peerEmail); } catch {}
+        await _clBlockPeer(api, peerEmail, t);
       };
       const handleLockToggle = async () => {
         try {
@@ -8640,8 +8662,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               >
                 <AvatarCircle name={ch.name || ch.email} email={ch.email} size={44} />
                 <View style={{ flex: 1 }}>
-                  <Text maxFontSizeMultiplier={1.35} style={{ fontSize: 16, fontWeight: '600', letterSpacing: -0.3, color: P.text }} numberOfLines={1}>{_highlightQuery(ch.name, sq, colors.text)}</Text>
-                  <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 14, color: P.sub, marginTop: 1 }} numberOfLines={1}>{ch.email}</Text>
+                  <Text maxFontSizeMultiplier={1.35} style={{ fontSize: 17 /* [2026-10-18 polish2] = rowName (HIG 17) */, fontWeight: '600', letterSpacing: -0.3, color: P.text }} numberOfLines={1}>{_highlightQuery(ch.name, sq, colors.text)}</Text>
+                  <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 15, color: P.sub, marginTop: 1 }} numberOfLines={1}>{ch.email}</Text>
                 </View>
               </TouchableOpacity>
             ))}
@@ -8768,14 +8790,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               )}
               <View style={{ flex: 1, alignSelf: 'stretch', justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <Text maxFontSizeMultiplier={1.35} style={{ fontSize: 16, fontWeight: '600', letterSpacing: -0.3, color: P.text, flexShrink: 1, marginRight: 8 }} numberOfLines={1}>
+                  <Text maxFontSizeMultiplier={1.35} style={{ fontSize: 17 /* [2026-10-18 polish2] = rowName (HIG 17) */, fontWeight: '600', letterSpacing: -0.3, color: P.text, flexShrink: 1, marginRight: 8 }} numberOfLines={1}>
                     {convName}
                   </Text>
                   <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 13, color: P.sub, fontVariant: ['tabular-nums'] }}>
                     {date}
                   </Text>
                 </View>
-                <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 14, lineHeight: 19, color: P.sub, marginTop: 2 }} numberOfLines={2}>
+                <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 15, lineHeight: 20, color: P.sub, marginTop: 2 }} numberOfLines={2}>
                   {_highlightQuery(_snippetAround(snippet, sq), sq, colors.text)}
                 </Text>
               </View>

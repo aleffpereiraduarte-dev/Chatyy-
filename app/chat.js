@@ -1258,7 +1258,7 @@ function ChatHub() {
     }
     if (activeTab === 'calls') {
       return (
-        <TouchableOpacity onPress={() => { try { if (globalThis.__chatyyOpenNewCall?.()) return; } catch {} router.push('/chat-new'); }} activeOpacity={0.6}
+        <TouchableOpacity onPress={() => { try { if (globalThis.__chatyyOpenNewCall?.()) return; } catch {} router.push('/chat-new'); }} activeOpacity={0.6} hitSlop={6 /* [2026-10-18 polish2] 36+12 = alvo ≥44 (HIG), igual aos outros botões do topo */}
           style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityRole="button" accessibilityLabel={t('a11y.newCall')}>{/* [2026-10-17 sem-pstn] abre "Nova chamada" (só Chatyy) da aba Ligações */}
           <IconPhone size={17} color={headerIconColor} />
         </TouchableOpacity>
@@ -1269,7 +1269,7 @@ function ChatHub() {
         // [2026-06-04] era onPress={() => {}} — botão de câmera morto (caçada
         // R2). Reusa o fluxo do strip "+ status": requestNewStatus() flipa
         // autoNewStatus e o ChatStatusTab abre o composer canônico.
-        <TouchableOpacity onPress={requestNewStatus} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={t('a11y.camera')}
+        <TouchableOpacity onPress={requestNewStatus} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={t('a11y.camera')} hitSlop={6 /* [2026-10-18 polish2] alvo ≥44 */}
           style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
           <IconCameraHeader size={18} color={headerIconColor} />
         </TouchableOpacity>

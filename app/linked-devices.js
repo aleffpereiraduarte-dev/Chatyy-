@@ -240,14 +240,24 @@ export default function LinkedDevicesScreen() {
       } catch {}
       setRevoking(session.id || session.token_hash);
       try {
-        await api.apiCall('revoke_session', { session_id: session.id || session.token_hash }, 'POST');
+        const r = await api.apiCall('revoke_session', { session_id: session.id || session.token_hash }, 'POST');
+        // [2026-10-18 wa-parity] falha (success:false) era muda — o aparelho seguia conectado sem aviso.
+        if (r && r.success === false) throw new Error(r.message || r.error || '');
         await load();
       } catch (e) {
         console.warn('[devices] revoke:', e);
+        _revokeFailed(e);
       }
       setRevoking(null);
     });
   };
+
+  function _revokeFailed(e) {
+    const title = t('common.error') || 'Erro';
+    const msg = (e && e.message) || t('devices.revokeFailed') || 'Não foi possível desconectar. Tente de novo.';
+    if (Platform.OS === 'web') { try { window.alert(`${title}\n\n${msg}`); } catch {} return; }
+    try { Alert.alert(title, msg); } catch {}
+  }
 
   const revokeAll = () => {
     const confirmFn = Platform.OS === 'web'
@@ -263,9 +273,10 @@ export default function LinkedDevicesScreen() {
 
     confirmFn(async () => {
       try {
-        await api.apiCall('revoke_all_sessions', {}, 'POST');
+        const r = await api.apiCall('revoke_all_sessions', {}, 'POST');
+        if (r && r.success === false) throw new Error(r.message || r.error || '');
         await load();
-      } catch (e) { console.warn('[devices] revokeAll:', e); }
+      } catch (e) { console.warn('[devices] revokeAll:', e); _revokeFailed(e); }
     });
   };
 

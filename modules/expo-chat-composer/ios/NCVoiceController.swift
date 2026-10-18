@@ -13,6 +13,12 @@ final class NCWaveformView: UIView {
   var barColor: UIColor = .label { didSet { setNeedsDisplay() } }
   private let barW: CGFloat = 2.5
   private let barGap: CGFloat = 2
+  // [2026-10-18 voz-pausa] Modo estático (gravação pausada): a onda inteira
+  // reamostrada na largura, da esquerda p/ a direita, com o trecho já ouvido
+  // na prévia pintado em `playedColor`. `staticSource == nil` = modo ao vivo.
+  private var staticSource: [Float]? = nil
+  var playedColor: UIColor = .systemBlue { didSet { setNeedsDisplay() } }
+  var progress: CGFloat = 0 { didSet { setNeedsDisplay() } }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -25,11 +31,33 @@ final class NCWaveformView: UIView {
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   func reset() {
+    staticSource = nil
+    progress = 0
     levels.removeAll()
     setNeedsDisplay()
   }
 
+  /// [2026-10-18 voz-pausa] Onda inteira (pausado) — reamostrada na largura atual.
+  func setStatic(_ src: [Float]) {
+    staticSource = src
+    progress = 0
+    refitStatic()
+  }
+
+  private func refitStatic() {
+    guard let src = staticSource else { return }
+    let cap = max(8, Int(bounds.width / (barW + barGap)))
+    levels = NCVoiceController.resample(src, bars: cap)
+    setNeedsDisplay()
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    if staticSource != nil { refitStatic() }
+  }
+
   func push(_ level: Float) {
+    if staticSource != nil { return }
     levels.append(level)
     let cap = max(8, Int(bounds.width / (barW + barGap)) + 1)
     if levels.count > cap { levels.removeFirst(levels.count - cap) }
@@ -38,8 +66,22 @@ final class NCWaveformView: UIView {
 
   override func draw(_ rect: CGRect) {
     guard !levels.isEmpty else { return }
-    barColor.setFill()
     let h = bounds.height
+    if staticSource != nil {
+      let n = levels.count
+      var sx: CGFloat = 0
+      for (i, lv) in levels.enumerated() {
+        if sx + barW > bounds.width { break }
+        let played = n > 0 && (CGFloat(i) + 0.5) / CGFloat(n) <= progress
+        (played ? playedColor : barColor).setFill()
+        let bh = max(3, CGFloat(lv) * h)
+        let r = CGRect(x: sx, y: (h - bh) / 2, width: barW, height: bh)
+        UIBezierPath(roundedRect: r, cornerRadius: barW / 2).fill()
+        sx += barW + barGap
+      }
+      return
+    }
+    barColor.setFill()
     var x = bounds.width - barW
     for lv in levels.reversed() {
       if x < 0 { break }
@@ -141,13 +183,23 @@ final class NCHoldOverlay: UIView {
   }
 }
 
-final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRecorderDelegate {
+final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRecorderDelegate, AVAudioPlayerDelegate {
   weak var host: ChatyyComposerView?
   weak var button: NCActionButton?
   var labels: [String: String] = [:] { didSet { applyLabels() } }
 
   private(set) var isActive = false
   private(set) var isLocked = false
+  // [2026-10-18 voz-pausa] WhatsApp: travado → pausar (prévia ouvível) → continuar
+  // gravando → enviar. Cada trecho gravado vira um arquivo (o m4a só fica
+  // tocável depois do stop()); no envio com >1 trecho, junta num m4a só.
+  private(set) var isPaused = false
+  private var segments: [URL] = []
+  private var segDurations: [TimeInterval] = []
+  private var accumulated: CFTimeInterval = 0
+  private var previewPlayer: AVAudioPlayer?
+  private var previewIndex = 0
+  private var previewTimer: Timer?
 
   private var recorder: AVAudioRecorder?
   private var fileURL: URL?
@@ -175,6 +227,8 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
   private let slideLabel = UILabel()
   private let waveform = NCWaveformView(frame: .zero)
   private let trashButton = UIButton(type: .system)
+  private let pauseButton = UIButton(type: .system)   // [voz-pausa] pausar ⇄ continuar (mic)
+  private let playButton = UIButton(type: .system)    // [voz-pausa] prévia play/pause (só pausado)
 
   private let cancelDistance: CGFloat = 120
   private let lockDistance: CGFloat = 84
@@ -198,11 +252,19 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     trashButton.setImage(UIImage(systemName: "trash", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)), for: .normal)
     trashButton.addTarget(self, action: #selector(trashTapped), for: .touchUpInside)
     panel.addSubview(trashButton)
+    pauseButton.addTarget(self, action: #selector(pauseTapped), for: .touchUpInside)
+    pauseButton.isHidden = true
+    panel.addSubview(pauseButton)
+    playButton.addTarget(self, action: #selector(playTapped), for: .touchUpInside)
+    playButton.isHidden = true
+    panel.addSubview(playButton)
+    refreshPauseIcons()
     applyLabels()
   }
 
   deinit {
     link?.invalidate()
+    previewTimer?.invalidate()
     if let o = interruptionObs { NotificationCenter.default.removeObserver(o) }
   }
 
@@ -222,8 +284,11 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     dot.backgroundColor = t.recording
     timeLabel.textColor = t.text
     slideLabel.textColor = t.secondaryText
-    waveform.barColor = t.text
+    waveform.barColor = isPaused ? t.secondaryText : t.text
+    waveform.playedColor = t.accent
     trashButton.tintColor = t.recording
+    pauseButton.tintColor = t.recording
+    playButton.tintColor = t.text
   }
 
   private func applyLabels() {
@@ -231,6 +296,23 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     slideLabel.text = "‹  " + slide
     trashButton.accessibilityLabel = labels["deleteRecording"] ?? labels["cancelRecording"]
     panel.accessibilityLabel = labels["recording"]
+    pauseButton.accessibilityLabel = isPaused
+      ? (labels["resumeRecording"] ?? "Continuar gravação")
+      : (labels["pauseRecording"] ?? "Pausar gravação")
+    let previewing = previewPlayer?.isPlaying ?? false
+    playButton.accessibilityLabel = previewing
+      ? (labels["pausePreview"] ?? "Pausar")
+      : (labels["playPreview"] ?? "Ouvir gravação")
+  }
+
+  /// [voz-pausa] Ícones dos botões do painel travado conforme o estado.
+  private func refreshPauseIcons() {
+    let cfg = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+    pauseButton.setImage(UIImage(systemName: isPaused ? "mic.fill" : "pause.fill", withConfiguration: cfg), for: .normal)
+    let previewing = previewPlayer?.isPlaying ?? false
+    let pcfg = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+    playButton.setImage(UIImage(systemName: previewing ? "pause.fill" : "play.fill", withConfiguration: pcfg), for: .normal)
+    applyLabels()
   }
 
   func layoutPanel(in bar: UIView, frame: CGRect) {
@@ -240,13 +322,31 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     if isLocked {
       trashButton.isHidden = false
       trashButton.frame = CGRect(x: 0, y: 0, width: 44, height: h)
-      dot.frame = CGRect(x: 48, y: (h - 10) / 2, width: 10, height: 10)
-      timeLabel.frame = CGRect(x: 64, y: 0, width: 56, height: h)
-      waveform.isHidden = false
-      waveform.frame = CGRect(x: 124, y: 8, width: max(0, frame.width - 124 - 8), height: h - 16)
+      pauseButton.isHidden = false
+      pauseButton.frame = CGRect(x: max(0, frame.width - 44), y: 0, width: 44, height: h)
+      let waveRight = max(0, frame.width - 44 - 4)
+      if isPaused {
+        // [voz-pausa] [lixeira] [play] 0:07 [onda inteira] [mic = continuar]
+        dot.isHidden = true
+        playButton.isHidden = false
+        playButton.frame = CGRect(x: 44, y: 0, width: 40, height: h)
+        timeLabel.frame = CGRect(x: 86, y: 0, width: 50, height: h)
+        waveform.isHidden = false
+        waveform.frame = CGRect(x: 138, y: 8, width: max(0, waveRight - 138), height: h - 16)
+      } else {
+        dot.isHidden = false
+        playButton.isHidden = true
+        dot.frame = CGRect(x: 48, y: (h - 10) / 2, width: 10, height: 10)
+        timeLabel.frame = CGRect(x: 64, y: 0, width: 56, height: h)
+        waveform.isHidden = false
+        waveform.frame = CGRect(x: 124, y: 8, width: max(0, waveRight - 124), height: h - 16)
+      }
       slideLabel.isHidden = true
     } else {
       trashButton.isHidden = true
+      pauseButton.isHidden = true
+      playButton.isHidden = true
+      dot.isHidden = false
       dot.frame = CGRect(x: 14, y: (h - 10) / 2, width: 10, height: 10)
       timeLabel.frame = CGRect(x: 32, y: 0, width: 56, height: h)
       waveform.isHidden = true
@@ -361,6 +461,21 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
   // MARK: Recording
 
   private func startRecording() throws {
+    segments.removeAll()
+    segDurations.removeAll()
+    accumulated = 0
+    isPaused = false
+    samples.removeAll()
+    lastLevel = 0
+    smoothLevel = 0
+    smoothOuter = 0
+    waveform.reset()
+    try startSegment()
+  }
+
+  /// [2026-10-18 voz-pausa] Um trecho novo: início da gravação ou "continuar"
+  /// depois de pausar. Cada trecho = um m4a próprio (tocável após o stop()).
+  private func startSegment() throws {
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
     try session.setActive(true)
@@ -377,17 +492,13 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     r.isMeteringEnabled = true
     r.delegate = self
     guard r.prepareToRecord(), r.record() else {
-      deactivateSession()
+      if segments.isEmpty { deactivateSession() }
       throw NSError(domain: "ChatyyComposer", code: 2, userInfo: [NSLocalizedDescriptionKey: "record() failed"])
     }
     recorder = r
     fileURL = url
     startedAt = CACurrentMediaTime()
-    samples.removeAll()
-    lastLevel = 0
-    smoothLevel = 0
-    smoothOuter = 0
-    waveform.reset()
+    link?.invalidate()
     let l = CADisplayLink(target: NCVoiceTick(self), selector: #selector(NCVoiceTick.tick))
     l.preferredFramesPerSecond = 30
     l.add(to: .main, forMode: .common)
@@ -396,8 +507,23 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
       interruptionObs = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
         guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
               AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-        self?.cancel(reason: "interrupted")
+        self?.handleInterruption()
       }
+    }
+  }
+
+  /// Ligação/Siri no meio: segurando = cancela (como antes); travado = PAUSA e
+  /// guarda o que já foi gravado (WhatsApp).
+  private func handleInterruption() {
+    guard isActive else { return }
+    if isLocked {
+      if isPaused {
+        stopPreview()
+      } else {
+        pause()
+      }
+    } else {
+      cancel(reason: "interrupted")
     }
   }
 
@@ -409,7 +535,7 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     lastLevel = level
     samples.append(level)
     if isLocked { waveform.push(level) }
-    let elapsed = CACurrentMediaTime() - startedAt
+    let elapsed = accumulated + (CACurrentMediaTime() - startedAt)
     let secs = Int(elapsed)
     timeLabel.text = String(format: "%d:%02d", secs / 60, secs % 60)
     if !isLocked, let o = overlay {
@@ -429,16 +555,32 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     if elapsed >= maxDurationSec { finish(send: true) }
   }
 
-  private func stopRecorder() -> (url: URL?, durationMs: Int) {
+  /// Fecha o trecho atual (arquivo fica tocável) e soma a duração dele.
+  private func stopSegment() {
     link?.invalidate()
     link = nil
-    let durationMs = Int((CACurrentMediaTime() - startedAt) * 1000)
-    recorder?.stop()
+    guard let r = recorder else { return }
+    let d = CACurrentMediaTime() - startedAt
+    accumulated += d
+    r.stop()
     recorder = nil
-    let url = fileURL
+    if let u = fileURL {
+      segments.append(u)
+      segDurations.append(d)
+    }
     fileURL = nil
+  }
+
+  private func stopRecorder() -> (urls: [URL], durationMs: Int) {
+    stopPreview()
+    stopSegment()
     deactivateSession()
-    return (url, durationMs)
+    let urls = segments
+    let durationMs = Int(accumulated * 1000)
+    segments.removeAll()
+    segDurations.removeAll()
+    accumulated = 0
+    return (urls, durationMs)
   }
 
   private func deactivateSession() {
@@ -457,23 +599,43 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
 
   func finish(send: Bool) {
     guard isActive else { return }
-    let (url, durationMs) = stopRecorder()
+    let (urls, durationMs) = stopRecorder()
     let snapshot = samples
     teardownUI()
-    guard let fileUrl = url else { return }
-    var size = 0
-    if let attrs = try? FileManager.default.attributesOfItem(atPath: fileUrl.path), let n = attrs[.size] as? NSNumber {
-      size = n.intValue
-    }
+    if urls.isEmpty { return }
     if !send {
-      try? FileManager.default.removeItem(at: fileUrl)
+      NCVoiceController.removeFiles(urls)
       return
     }
     if durationMs < 1000 {
-      try? FileManager.default.removeItem(at: fileUrl)
+      NCVoiceController.removeFiles(urls)
       UINotificationFeedbackGenerator().notificationOccurred(.warning)
       host?.emitVoiceState("tooShort")
       return
+    }
+    if urls.count == 1 {
+      deliver(urls[0], durationMs: durationMs, snapshot: snapshot)
+      return
+    }
+    // [voz-pausa] >1 trecho (pausou e continuou) → um m4a só antes de entregar.
+    NCVoiceController.merge(urls) { [weak self] merged in
+      NCVoiceController.removeFiles(urls)
+      guard let self = self else {
+        if let m = merged { try? FileManager.default.removeItem(at: m) }
+        return
+      }
+      guard let m = merged else {
+        self.host?.emitVoiceState("error", reason: "merge")
+        return
+      }
+      self.deliver(m, durationMs: durationMs, snapshot: snapshot)
+    }
+  }
+
+  private func deliver(_ fileUrl: URL, durationMs: Int, snapshot: [Float]) {
+    var size = 0
+    if let attrs = try? FileManager.default.attributesOfItem(atPath: fileUrl.path), let n = attrs[.size] as? NSNumber {
+      size = n.intValue
     }
     if size < 1500 {
       try? FileManager.default.removeItem(at: fileUrl)
@@ -492,6 +654,48 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     host?.emitVoiceState("sent")
   }
 
+  private static func removeFiles(_ urls: [URL]) {
+    for u in urls { try? FileManager.default.removeItem(at: u) }
+  }
+
+  /// Junta os trechos (mesmo perfil AAC) num m4a só. Conclusão na main.
+  private static func merge(_ urls: [URL], completion: @escaping (URL?) -> Void) {
+    let comp = AVMutableComposition()
+    guard let track = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+      completion(nil)
+      return
+    }
+    var cursor = CMTime.zero
+    for u in urls {
+      let asset = AVURLAsset(url: u, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+      guard let src = asset.tracks(withMediaType: .audio).first else { continue }
+      let range = src.timeRange
+      guard range.duration.isValid, CMTimeGetSeconds(range.duration) > 0.02 else { continue }
+      do {
+        try track.insertTimeRange(range, of: src, at: cursor)
+        cursor = CMTimeAdd(cursor, range.duration)
+      } catch {
+        continue
+      }
+    }
+    guard CMTimeCompare(cursor, .zero) > 0,
+          let ex = AVAssetExportSession(asset: comp, presetName: AVAssetExportPresetAppleM4A) else {
+      completion(nil)
+      return
+    }
+    let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+    let out = dir.appendingPathComponent("voice_\(UUID().uuidString).m4a")
+    ex.outputURL = out
+    ex.outputFileType = .m4a
+    ex.exportAsynchronously {
+      let ok = ex.status == .completed
+      DispatchQueue.main.async {
+        if !ok { try? FileManager.default.removeItem(at: out) }
+        completion(ok ? out : nil)
+      }
+    }
+  }
+
   func finishLocked() {
     guard isActive, isLocked else { return }
     finish(send: true)
@@ -499,8 +703,8 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
 
   func cancel(reason: String, silent: Bool = false) {
     guard isActive else { return }
-    let (url, _) = stopRecorder()
-    if let u = url { try? FileManager.default.removeItem(at: u) }
+    let (urls, _) = stopRecorder()
+    NCVoiceController.removeFiles(urls)
     teardownUI()
     if !silent && reason != "unmount" && reason != "js" {
       UINotificationFeedbackGenerator().notificationOccurred(.warning)
@@ -510,6 +714,139 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
 
   @objc private func trashTapped() {
     cancel(reason: "trash")
+  }
+
+  // MARK: Pausa / prévia (travado) — [2026-10-18 voz-pausa]
+
+  @objc private func pauseTapped() {
+    if isPaused { resume() } else { pause() }
+  }
+
+  private func pause() {
+    guard isActive, isLocked, !isPaused else { return }
+    stopSegment()
+    isPaused = true
+    dot.layer.removeAnimation(forKey: "blink")
+    waveform.barColor = theme.secondaryText
+    waveform.setStatic(samples)
+    setTimeLabel(accumulated)
+    refreshPauseIcons()
+    if let bar = panel.superview { layoutPanel(in: bar, frame: panel.frame) }
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    host?.emitVoiceState("paused")
+  }
+
+  private func resume() {
+    guard isActive, isLocked, isPaused else { return }
+    stopPreview()
+    do {
+      try startSegment()
+    } catch {
+      // Continua pausado: o que já foi gravado segue enviável.
+      host?.emitVoiceState("error", reason: "start")
+      return
+    }
+    isPaused = false
+    waveform.reset()
+    waveform.barColor = theme.text
+    for s in samples.suffix(120) { waveform.push(s) }
+    startBlink()
+    refreshPauseIcons()
+    if let bar = panel.superview { layoutPanel(in: bar, frame: panel.frame) }
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    host?.emitVoiceState("resumed")
+  }
+
+  @objc private func playTapped() {
+    guard isActive, isPaused else { return }
+    if let p = previewPlayer {
+      if p.isPlaying {
+        p.pause()
+        previewTimer?.invalidate()
+        previewTimer = nil
+      } else {
+        p.play()
+        startPreviewTimer()
+      }
+      refreshPauseIcons()
+      return
+    }
+    playSegment(0)
+  }
+
+  private func playSegment(_ i: Int) {
+    guard i < segments.count else {
+      stopPreview()
+      return
+    }
+    do {
+      let session = AVAudioSession.sharedInstance()
+      try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+      try session.setActive(true)
+      let p = try AVAudioPlayer(contentsOf: segments[i])
+      p.delegate = self
+      p.prepareToPlay()
+      previewPlayer = p
+      previewIndex = i
+      p.play()
+      startPreviewTimer()
+      refreshPauseIcons()
+    } catch {
+      stopPreview()
+    }
+  }
+
+  func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, player === self.previewPlayer else { return }
+      let next = self.previewIndex + 1
+      if flag && next < self.segments.count {
+        self.playSegment(next)
+      } else {
+        self.stopPreview()
+      }
+    }
+  }
+
+  private func startPreviewTimer() {
+    previewTimer?.invalidate()
+    let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+      self?.previewTick()
+    }
+    RunLoop.main.add(t, forMode: .common)
+    previewTimer = t
+  }
+
+  private func previewTick() {
+    guard let p = previewPlayer else { return }
+    var played: TimeInterval = 0
+    let upto = min(previewIndex, segDurations.count)
+    for j in 0..<upto { played += segDurations[j] }
+    played += p.currentTime
+    let total = max(0.001, accumulated)
+    waveform.progress = CGFloat(min(1, played / total))
+    setTimeLabel(played)
+  }
+
+  private func stopPreview() {
+    previewTimer?.invalidate()
+    previewTimer = nil
+    if let p = previewPlayer {
+      p.delegate = nil
+      p.stop()
+    }
+    previewPlayer = nil
+    previewIndex = 0
+    if isPaused {
+      waveform.progress = 0
+      setTimeLabel(accumulated)
+    }
+    refreshPauseIcons()
+  }
+
+  private func setTimeLabel(_ t: TimeInterval) {
+    let secs = max(0, Int(t))
+    timeLabel.text = String(format: "%d:%02d", secs / 60, secs % 60)
   }
 
   private func lock() {
@@ -527,6 +864,7 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     // Onda com o histórico já gravado.
     waveform.reset()
     for s in samples.suffix(120) { waveform.push(s) }
+    refreshPauseIcons()
     if let bar = panel.superview { layoutPanel(in: bar, frame: panel.frame) }
     host?.voiceDidLock()
     host?.emitVoiceState("locked")
@@ -562,13 +900,7 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     panel.isHidden = false
     slideLabel.alpha = 1
     timeLabel.text = "0:00"
-    let blink = CABasicAnimation(keyPath: "opacity")
-    blink.fromValue = 1
-    blink.toValue = 0.15
-    blink.duration = 0.55
-    blink.autoreverses = true
-    blink.repeatCount = .infinity
-    dot.layer.add(blink, forKey: "blink")
+    startBlink()
     // [2026-10-16 motion-composer] seta/texto "deslize p/ cancelar" cutuca p/
     // a esquerda (Telegram). Só a camada de apresentação: o frame que segue o
     // dedo (layoutPanel) não muda.
@@ -591,11 +923,26 @@ final class NCVoiceController: NSObject, UIGestureRecognizerDelegate, AVAudioRec
     }, completion: nil)
   }
 
+  /// Ponto vermelho piscando (gravando).
+  private func startBlink() {
+    dot.layer.removeAnimation(forKey: "blink")
+    let blink = CABasicAnimation(keyPath: "opacity")
+    blink.fromValue = 1
+    blink.toValue = 0.15
+    blink.duration = 0.55
+    blink.autoreverses = true
+    blink.repeatCount = .infinity
+    dot.layer.add(blink, forKey: "blink")
+  }
+
   private func teardownUI() {
     let wasActive = isActive
     isActive = false
     isLocked = false
+    isPaused = false
     lastDx = 0
+    waveform.barColor = theme.text
+    refreshPauseIcons()
     if let o = overlay {
       overlay = nil
       UIView.animate(withDuration: 0.18, animations: {

@@ -320,7 +320,7 @@ function ParentalScreenInner() {
     if (step === 3 && showWizard) {
       setShowConfetti(true);
       if (Platform.OS !== 'web') {
-        try { Vibration.vibrate(100); } catch {}
+        try { haptics.success(); /* [2026-10-18 polish2] era Vibration.vibrate(100) */ } catch {}
       }
       const screenW = Dimensions.get('window').width;
       const animations = confettiAnims.map((anim, i) => {

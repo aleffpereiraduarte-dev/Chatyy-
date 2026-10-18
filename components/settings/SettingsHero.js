@@ -15,7 +15,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useReducedMotion } from '../reducedMotion';
 import { useGroupedColors, SettingsGroup, SettingsRow } from './SettingsKit';
 import Svg, { Path } from 'react-native-svg';
-import { IconEdit, IconRepeat, IconSparkles, IconMonitor, IconUsers, IconChevronRight } from '../Icons';
+import { IconEdit, IconRepeat, IconSparkles, IconMonitor, IconUsers, IconChevronRight, IconStar } from '../Icons';
 import { PLAN_NAME } from '../../services/brandPlan'; // [2026-10-17 brand-plan]
 
 function QrGlyph({ size = 18, color }) {
@@ -167,7 +167,7 @@ function FeatureTile({ icon: Icon, title, subtitle, onPress, testID }) {
   );
 }
 
-export function SettingsSpecialCards({ user, accounts, walletDiamonds, onOne, onWallet, onAccounts, onDevices }) {
+export function SettingsSpecialCards({ user, accounts, walletDiamonds, onOne, onWallet, onAccounts, onDevices, onStarred }) {
   const { t } = useLanguage();
   const active = (user?.email || '').toLowerCase();
   const list = [];
@@ -201,6 +201,8 @@ export function SettingsSpecialCards({ user, accounts, walletDiamonds, onOne, on
           testID="settings-row-accounts"
         />
         <SettingsRow icon={IconMonitor} title={t('settings.linkedDevices')} onPress={onDevices} testID="settings-row-devices" />
+        {/* [2026-10-18 wa-parity] /starred-messages existia mas nenhuma tela levava até ela (WhatsApp: Ajustes → Mensagens favoritas). */}
+        {onStarred ? <SettingsRow icon={IconStar} title={t('chat.starredMessages') || 'Mensagens favoritas'} onPress={onStarred} testID="settings-row-starred" /> : null}
       </SettingsGroup>
     </View>
   );

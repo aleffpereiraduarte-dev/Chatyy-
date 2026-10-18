@@ -2410,6 +2410,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               if (activeCall) { try { handleHangup(); } catch {} }
               onClose();
             }}
+            hitSlop={6 /* [2026-10-18 polish2] 36+12 = alvo ≥44 */}
             style={[s.dialerCloseBtn, {
               width: 36, height: 36, borderRadius: 18,
               backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
@@ -2601,7 +2602,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               style={{ maxHeight: 200, marginHorizontal: 16, borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: 0.5, borderBottomColor: isDark ? '#2c2c2e' : '#e5e7eb' }}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#2c2c2e' : '#e5e7eb' }}
                   onPress={() => { setNumber(item.phone.replace(/\D/g, '')); setShowContacts(false); }}
                   activeOpacity={0.6}
                 >
@@ -4092,7 +4093,7 @@ const s = StyleSheet.create({
   },
   // WhatsApp-grade: name is semibold so it reads as the row's anchor.
   historyName: {
-    fontSize: 16,
+    fontSize: 17, // [2026-10-18 polish2] HIG body 17 = mesma âncora da lista de conversas (rowName)
     fontWeight: '600',
     letterSpacing: -0.2,
     flex: 1,
@@ -4109,7 +4110,7 @@ const s = StyleSheet.create({
     gap: 10,
   },
   historyTime: {
-    fontSize: 12,
+    fontSize: 13, // [2026-10-18 polish2] HIG footnote 13 (era 12)
     fontWeight: '500',
     letterSpacing: 0.2,
     fontVariant: ['tabular-nums'],
@@ -4146,13 +4147,13 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 21,
-    fontWeight: '800',
+    fontSize: 20, // [2026-10-18 polish2] HIG title3 20/700 (era 21/800) = igual ScreenEmptyState
+    fontWeight: '700',
     marginBottom: 8,
     letterSpacing: -0.4,
   },
   emptySubtitle: {
-    fontSize: 14.5,
+    fontSize: 15, // [2026-10-18 polish2] HIG subhead 15 (era 14.5)
     textAlign: 'center',
     lineHeight: 21,
     fontWeight: '500',

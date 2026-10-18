@@ -21,7 +21,9 @@ class ChatyyConversationListModule : Module() {
     //     O JS só liga o header sobreposto no Android com api >= 4.
     // 5 = [2026-10-17 peek-fixed] prévia (peekMode "peek") com cartão de altura
     //     FIXA igual em toda conversa + prop `peekHeight` (fração da tela).
-    Function("apiVersion") { 5 }
+    // 6 = [2026-10-18 failed-row] linha com `failed:true` desenha "!" vermelho
+    //     (exclamação em círculo) no lugar do relógio/✓ (chave extra; sem contrato).
+    Function("apiVersion") { 6 }
 
     View(ChatyyConversationListView::class) {
       Events(

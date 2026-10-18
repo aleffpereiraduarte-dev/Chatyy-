@@ -5139,7 +5139,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                     </View>
                   ))}
                 </View>
-                <Text style={{ marginTop: 16, fontSize: 11, color: isDark ? '#6C6C70' : '#9ca3af', textAlign: 'center', lineHeight: 16 }}>
+                <Text style={{ marginTop: 16, fontSize: 11, color: isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */, textAlign: 'center', lineHeight: 16 }}>
                   {t?.('status.analyticsNote') || 'Atualizado em tempo real. Estatísticas privadas — só você vê.'}
                 </Text>
               </View>
@@ -5178,12 +5178,17 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#6b7280', marginBottom: 12, paddingHorizontal: 4 }}>
               {t?.('status.archiveHint') || 'Toque longo em um status para repostar.'}
             </Text>
-            {archiveLoading ? (
+            {/* [2026-10-18 polish2] spinner só sem nada em cache (re-abrir mostra a lista na hora) + vazio ilustrado */}
+            {(archiveLoading && archiveItems.length === 0) ? (
               <ActivityIndicator size="large" color={isDark ? "#fff" : ACCENT} style={{ marginVertical: 32 }} />
             ) : archiveItems.length === 0 ? (
-              <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 32, fontSize: 14 }}>
-                {t?.('status.archiveEmpty') || 'Nenhum status arquivado'}
-              </Text>
+              <ScreenEmptyState
+                kind="photos"
+                compact
+                title={t?.('status.archiveEmpty') || 'Nenhum status arquivado'}
+                subtitle={t?.('status.archiveEmptyBody') || 'Seus status ficam guardados aqui depois de 24 horas, só para você.'}
+                style={{ backgroundColor: 'transparent' }}
+              />
             ) : (
               <DragScroll drag={_drag5238}><ScrollView>
                 {/* Grid of archived rows — 3 cols on phone, more on
@@ -5300,12 +5305,16 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 </Text>
               </View>
             </View>
-            {forwardLoading ? (
+            {(forwardLoading && forwardConversations.length === 0) ? (
               <ActivityIndicator size="large" color={isDark ? "#fff" : ACCENT} style={{ marginVertical: 32 }} />
             ) : forwardConversations.length === 0 ? (
-              <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 32, fontSize: 15 }}>
-                {t?.('status.noConversations') || 'Nenhuma conversa'}
-              </Text>
+              <ScreenEmptyState
+                kind="chat"
+                compact
+                title={t?.('status.noConversations') || 'Nenhuma conversa'}
+                subtitle={t?.('status.noConversationsBody') || 'Comece uma conversa para encaminhar este status.'}
+                style={{ backgroundColor: 'transparent' }}
+              />
             ) : (
               <DragScroll drag={_drag5376}><ScrollView>
                 {forwardConversations.map((conv) => (
@@ -5325,7 +5334,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                         {conv.name || conv.other_name || emailToDisplayName(conv.other_email || '')}
                       </Text>
                       {conv.last_message && (
-                        <Text style={{ fontSize: 12, color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                        <Text style={{ fontSize: 12, color: isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */, marginTop: 2 }} numberOfLines={1}>
                           {conv.last_message}
                         </Text>
                       )}
@@ -5347,7 +5356,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             where the close (X) button sat under the system bar on Pixel/Galaxy
             devices. iOS already had the 54pt baseline so this is a no-op there
             (translucent on iOS just keeps the existing default). */}
-        <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+        <StatusBar translucent backgroundColor="transparent" barStyle={(musicPickerVisible && !isDark) ? 'dark-content' : 'light-content' /* [2026-10-18 polish2] seletor de música é claro no tema claro → ícones escuros */} />
         <KeyboardAvoidingView style={[{ flex: 1 }, creatorKb > 0 ? { paddingBottom: creatorKb } : null]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           {/* ─── Music Picker (rendered INSIDE creator modal to avoid iOS stacking issues) ─── */}
           {musicPickerVisible ? (
@@ -5355,7 +5364,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               {/* Header with back button — same Android translucent fix as
                   the parent composer header. Uses runtime insets.top instead
                   of the stale ANDROID_TOP_INSET module-load constant. */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54), paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
                 <TouchableOpacity onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); setMusicQuery(''); setMusicResults([]); }} style={{ padding: 4 }}>
                   <IconChevronLeft size={24} color={isDark ? '#fff' : '#111'} />
                 </TouchableOpacity>
@@ -5366,11 +5375,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
               {/* Search input */}
               <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, backgroundColor: isDark ? '#2c2c2e' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
-                <IconSearch size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
+                <IconSearch size={18} color={isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */} />
                 <TextInput
                   style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
                   placeholder={t?.('status.searchMusic') || 'Buscar música ou artista...'}
-                  placeholderTextColor={isDark ? '#6C6C70' : '#9ca3af'}
+                  placeholderTextColor={isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */}
                   value={musicQuery}
                   onChangeText={(q) => {
                     setMusicQuery(q);
@@ -5397,7 +5406,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 />
                 {musicQuery.length > 0 && (
                   <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }} hitSlop={12}>
-                    <IconX size={18} color={isDark ? '#6C6C70' : '#9ca3af'} />
+                    <IconX size={18} color={isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -5407,15 +5416,19 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
               <ScrollView style={{ flex: 1 }}>
                 {!musicSearching && musicResults.length === 0 && musicQuery.length >= 2 && (
-                  <Text style={{ textAlign: 'center', color: isDark ? '#6C6C70' : '#9ca3af', marginVertical: 24, fontSize: 14 }}>
-                    {t?.('status.noMusicResults') || 'Nenhum resultado encontrado'}
-                  </Text>
+                  <ScreenEmptyState
+                    kind="search"
+                    compact
+                    title={t?.('status.noMusicResults') || 'Nenhum resultado encontrado'}
+                    subtitle={t?.('status.noMusicResultsBody') || 'Tente outro nome de música ou artista.'}
+                    style={{ backgroundColor: 'transparent' }}
+                  />
                 )}
 
                 {!musicSearching && musicResults.length === 0 && musicQuery.length < 2 && (
                   <View style={{ alignItems: 'center', marginTop: 60 }}>
-                    <IconMusicNote size={48} color={isDark ? '#2c2c2e' : '#d1d5db'} />
-                    <Text style={{ color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 16, fontSize: 15 }}>
+                    <IconMusicNote size={48} color={isDark ? '#48484A' : '#C7C7CC'} />{/* [2026-10-18 polish2] #2c2c2e sumia no #1c1c1e */}
+                    <Text style={{ color: isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */, marginTop: 16, fontSize: 15 }}>
                       {t?.('status.searchMusicHint') || 'Pesquise uma música para adicionar'}
                     </Text>
                   </View>
@@ -5439,7 +5452,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       <CachedImage source={{ uri: track.coverUrl }} style={{ width: 50, height: 50, borderRadius: 6 }} />
                     ) : (
                       <View style={{ width: 50, height: 50, borderRadius: 6, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb', alignItems: 'center', justifyContent: 'center' }}>
-                        <IconMusicNote size={20} color={isDark ? '#6C6C70' : '#9ca3af'} />
+                        <IconMusicNote size={20} color={isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */} />
                       </View>
                     )}
 
@@ -5448,13 +5461,14 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#fff' : '#111' }} numberOfLines={1}>
                         {track.title}
                       </Text>
-                      <Text style={{ fontSize: 13, color: isDark ? '#6C6C70' : '#9ca3af', marginTop: 2 }} numberOfLines={1}>
+                      <Text style={{ fontSize: 13, color: isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */, marginTop: 2 }} numberOfLines={1}>
                         {track.artist}
                       </Text>
                     </View>
 
                     {/* Preview play button */}
                     <TouchableOpacity
+                      hitSlop={6 /* [2026-10-18 polish2] alvo ≥44 */}
                       style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
                       onPress={(e) => {
                         e.stopPropagation?.();
@@ -6136,7 +6150,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                                     }}
                                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, gap: 10 }}
                                   >
-                                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }}>
+                                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isDark ? '#3A3A3C' : '#111111' /* [2026-10-18 polish2] #111 sumia no escuro */, alignItems: 'center', justifyContent: 'center' }}>
                                       <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{(c.name || c.email || '?').charAt(0).toUpperCase()}</Text>
                                     </View>
                                     <View style={{ flex: 1 }}>
@@ -6622,7 +6636,7 @@ const styles = StyleSheet.create({
   },
   avatarWrapper: { position: 'relative' },
   statusInfo: { flex: 1, marginLeft: 16 },
-  statusName: { fontSize: 16, fontWeight: '600', letterSpacing: 0.15 },
+  statusName: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2 }, // [2026-10-18 polish2] = myStatusName/rowName (HIG body 17)
   statusMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 8 },
   statusTime: { fontSize: 13, letterSpacing: 0.1 },
   countPill: {
@@ -6673,13 +6687,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyText: {
-    fontSize: 18,
+    fontSize: 20, // [2026-10-18 polish2] HIG title3 = vazios de Ligações/ScreenEmptyState
     fontWeight: '700',
     textAlign: 'center',
     marginTop: 24,
   },
   emptySubtext: {
-    fontSize: 14,
+    fontSize: 15, // [2026-10-18 polish2] HIG subhead
     marginTop: 8,
     textAlign: 'center',
     lineHeight: 20,

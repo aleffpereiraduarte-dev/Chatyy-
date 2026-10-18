@@ -6937,6 +6937,15 @@ export async function chatMembers(conversationId) {
   return apiCall('chat_info', { conversation_id: conversationId });
 }
 
+// [2026-10-18 chat-info-native] membros PAGINADOS (servidor: members_limit 1..500,
+// members_offset, members_q; resposta traz members_total/members_next_offset).
+// Servidor velho ignora os params e devolve todos (sem members_total).
+export async function chatMembersPage(conversationId, { limit = 80, offset = 0, q = '' } = {}) {
+  const params = { conversation_id: conversationId, members_limit: limit, members_offset: offset };
+  if (q) params.members_q = q;
+  return apiCall('chat_info', params);
+}
+
 export async function chatAddMember(conversationId, email) {
   return apiCall('chat_add_member', { conversation_id: conversationId, email }, 'POST');
 }

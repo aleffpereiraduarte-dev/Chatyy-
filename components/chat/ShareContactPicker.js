@@ -167,12 +167,12 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
     setSel((prev) => {
       if (prev.includes(key)) return prev.filter((k) => k !== key);
       if (prev.length >= MAX_SHARE_CONTACTS) {
-        try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Warning); } catch {}
+        try { require('../../services/haptics').hapticEvent('warning'); } catch {}
         setLimitHit(true);
         setTimeout(() => { if (aliveRef.current) setLimitHit(false); }, 2200);
         return prev;
       }
-      try { require('expo-haptics').selectionAsync(); } catch {}
+      try { require('../../services/haptics').hapticEvent('toggle'); } catch {}
       return [...prev, key];
     });
   }, []);

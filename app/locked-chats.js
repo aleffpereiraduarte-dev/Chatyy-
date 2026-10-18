@@ -19,13 +19,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
+  Modal, TextInput, Platform,
 } from 'react-native';
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 more-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconLock, IconShield } from '../components/Icons';
+import { IconArrowLeft, IconLock, IconShield, IconKey, IconChevronRight } from '../components/Icons';
+import { useAuth } from '../context/AuthContext';
+import { getSecretCode, setSecretCode as saveSecretCode } from '../services/lockedSecretCode';
 import AvatarCircle from '../components/AvatarCircle';
 import PressableScale from '../components/PressableScale';
 import ChatLockSheet from '../components/ChatLockSheet';
@@ -95,6 +98,23 @@ export default function LockedChatsScreen() {
   const [loading, setLoading] = useState(false);
   const [convs, setConvs] = useState([]);
   const [sheetConv, setSheetConv] = useState(null);
+  // [2026-10-18 wa-parity lock-code] Código secreto (WhatsApp): definido AQUI, dentro da pasta
+  // já autenticada. Com código, a entrada "Conversas trancadas" some da lista e só volta
+  // quando o código exato é digitado na busca (ChatListTab.renderLockedHeader).
+  const { user } = useAuth() || {};
+  const [secretCode, setSecretCodeState] = useState('');
+  const [codeModal, setCodeModal] = useState(false);
+  const [codeInput, setCodeInput] = useState('');
+  useEffect(() => {
+    let alive = true;
+    getSecretCode(user?.email).then((c) => { if (alive) setSecretCodeState(c || ''); });
+    return () => { alive = false; };
+  }, [user?.email]);
+  const persistCode = useCallback(async (c) => {
+    const v = await saveSecretCode(user?.email, c);
+    setSecretCodeState(v);
+    setCodeModal(false);
+  }, [user?.email]);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -148,6 +168,28 @@ export default function LockedChatsScreen() {
       setConvs(prev => prev.filter(c => c.id !== sheetConv.id));
     }
   }, [sheetConv]);
+
+  const secretCodeRow = (
+    <TouchableOpacity
+      onPress={() => { setCodeInput(''); setCodeModal(true); }}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      style={[styles.codeRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)' }]}
+    >
+      <View style={[styles.lockBtn, { marginLeft: 0, backgroundColor: isDark ? '#2c2c2e' : '#eceef3' }]}>
+        <IconKey size={16} color={colors.text} />
+      </View>
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={[styles.rowName, { color: colors.text }]}>{t('chat.secretCode') || 'Código secreto'}</Text>
+        <Text style={[styles.rowPreview, { color: colors.textTertiary || '#888' }]} numberOfLines={2}>
+          {secretCode
+            ? (t('chat.secretCodeOn') || 'Ativado — busque pelo código para ver')
+            : (t('chat.secretCodeOff') || 'Defina um código para ocultar esta pasta')}
+        </Text>
+      </View>
+      <IconChevronRight size={18} color={colors.textTertiary || '#888'} />
+    </TouchableOpacity>
+  );
 
   const renderRow = ({ item }) => {
     const name = emailToDisplayName(item.name || item.display_name || item.other_email || '') || item.name || '—';
@@ -228,6 +270,7 @@ export default function LockedChatsScreen() {
         </View>
       )}
 
+      {phase === 'ok' && !loading && convs.length === 0 ? secretCodeRow : null}
       {phase === 'ok' && (
         loading ? (
           <View style={styles.center}><ActivityIndicator color={colors.text} /></View>
@@ -248,9 +291,58 @@ export default function LockedChatsScreen() {
             data={convs}
             keyExtractor={(c) => String(c.id)}
             renderItem={renderRow}
+            ListHeaderComponent={secretCodeRow}
             contentContainerStyle={{ paddingVertical: 6, paddingBottom: insets.bottom + 20 }}
           />
         )
+      )}
+
+      {codeModal && (
+        <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => setCodeModal(false)}>
+          <View style={styles.modalDim}>
+            <View style={[styles.modalCard, { backgroundColor: colors.surface || (isDark ? '#1c1c1e' : '#fff') }]}>
+              <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 6 }}>
+                {t('chat.secretCode') || 'Código secreto'}
+              </Text>
+              <Text style={{ color: colors.textTertiary || '#888', fontSize: 13, marginBottom: 16, lineHeight: 18 }}>
+                {t('chat.secretCodeHelp') || 'Com um código definido, a pasta de conversas trancadas fica oculta e só aparece quando você digita o código na busca.'}
+              </Text>
+              <TextInput
+                value={codeInput}
+                onChangeText={setCodeInput}
+                placeholder={t('chat.secretCodePlaceholder') || 'Digite um código'}
+                placeholderTextColor={colors.textTertiary || '#888'}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoFocus
+                secureTextEntry
+                style={{
+                  color: colors.text, fontSize: 15, height: 43, paddingHorizontal: 14, borderRadius: 10,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+                {!!secretCode && (
+                  <TouchableOpacity onPress={() => persistCode('')} style={[styles.mBtn, { backgroundColor: 'rgba(220,38,38,0.12)' }]}>
+                    <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '700' }}>{t('common.remove') || 'Remover'}</Text>
+                  </TouchableOpacity>
+                )}
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity onPress={() => setCodeModal(false)} style={[styles.mBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }]}>
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={!codeInput.trim()}
+                  onPress={() => persistCode(codeInput)}
+                  style={[styles.mBtn, { backgroundColor: colors.text, opacity: codeInput.trim() ? 1 : 0.4 }]}
+                >
+                  <Text style={{ color: colors.background, fontSize: 14, fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       )}
 
       <ChatLockSheet
@@ -281,4 +373,8 @@ const styles = StyleSheet.create({
   centerText: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
   retryBtn: { marginTop: 22, paddingVertical: 12, paddingHorizontal: 28, borderRadius: 12 },
   retryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  codeRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  modalDim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
+  modalCard: { width: '100%', maxWidth: 380, borderRadius: 18, padding: 22 },
+  mBtn: { paddingVertical: 11, paddingHorizontal: 16, borderRadius: 10 },
 });

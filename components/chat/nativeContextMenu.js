@@ -147,6 +147,9 @@ export function buildNativeCtxMenu(key, msg, env) {
     }
   }
 
+  // [2026-10-18 wa-parity] lápide: "Apagar para mim" (handleDelete já não oferece "para todos").
+  if (deleted) add('delete', _tf(t, 'chatConv.deleteForMe', 'Apagar para mim'), 'trash', IconTrash, { destructive: 1 });
+
   const dark = !!env.isDark;
   const payload = {
     key: String(key),

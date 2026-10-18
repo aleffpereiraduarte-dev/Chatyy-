@@ -245,6 +245,10 @@ import { detectReminder as detectChatReminder, createReminder as createChatRemin
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
+import NativeChatInfo, { isNativeChatInfoEnabled, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native]
+import GroupInfoEditor from '../components/chat/GroupInfoEditor'; // [2026-10-18 chat-info-native]
+import { contactTile } from '../components/contacts/contactListAdapter'; // [2026-10-18 chat-info-native]
+import { initialsOf, gradientIndex } from '../components/chatlist/nativeAdapter'; // [2026-10-18 chat-info-native]
 import { shouldUseNativeProfile, ProfileScrollHost, NativeProfileMedia, NativeProfileList, profileTheme, profileInitials, avatarRefForEmail, avatarRefForUrl, hasRealPhoto, extractRecentLinks, profileColor } from '../components/chat/NativeProfileBridge'; // [2026-10-15 native-profile]
 // [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
 import StickerMaker from '../components/stickers/StickerMaker';
@@ -1311,6 +1315,21 @@ function ReactionChipPop({ popKey, children, sparkColor = 'rgba(128,128,128,0.75
       transform: [{ scale }],
     }}>{children}<ReactionSparks color={sparkColor} /></Animated.View>
   );
+}
+// [2026-10-18 polish2] Contagem de um chip que JÁ existia (+1/−1) dava um salto
+// seco no número. Agora: mola curta 1.22→1 só quando o número muda com o chip
+// montado (histórico/rolagem montam estáticos). Respeita Reduzir movimento.
+function ReactionCountBump({ count, style }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const prev = useRef(count);
+  useEffect(() => {
+    if (prev.current === count) return;
+    prev.current = count;
+    if (isReduceMotionEnabled()) return;
+    scale.setValue(1.22);
+    Animated.spring(scale, { toValue: 1, stiffness: 520, damping: 15, mass: 0.8, useNativeDriver: _SEND_MOTION_ND }).start();
+  }, [count, scale]);
+  return <Animated.Text style={[style, { transform: [{ scale }] }]}>{count}</Animated.Text>;
 }
 
 // ============================================================
@@ -3709,33 +3728,98 @@ const linkPreviewStyles = StyleSheet.create({
 // ============================================================
 // REACTION DETAIL MODAL
 // ============================================================
-function ReactionDetailModal({ visible, onClose, emoji, reactors, colors }) {
+// [2026-10-18 wa-parity reactions] Lista completa de quem reagiu (WhatsApp): aba "Todas N" + uma
+// aba por emoji; cada linha mostra o emoji DAQUELA pessoa (antes o chip "+N" mostrava "+" em todas
+// as linhas); a minha linha = "Você · Toque para remover"; figurinha-reação vira imagem.
+function _allReactorsOf(reactions) {
+  const out = [];
+  const seen = new Set();
+  for (const r of (Array.isArray(reactions) ? reactions : [])) {
+    const em = r && (r.emoji || r.reaction);
+    if (!em) continue;
+    const us = typeof r.users === 'string' ? r.users.split(',') : (r.users || []);
+    for (const u of us) {
+      const k = String(u || '').toLowerCase() + '|' + em;
+      if (!u || seen.has(k)) continue;
+      seen.add(k);
+      out.push({ email: u, name: emailToDisplayName(u), emoji: em });
+    }
+  }
+  return out;
+}
+
+function _ReactionGlyph({ emoji, size }) {
+  const e = String(emoji || '');
+  if (e.startsWith('sticker:')) {
+    return (
+      <ExpoImage source={{ uri: api.getMediaUrl(e.slice(8)) }} style={{ width: size + 6, height: size + 6, borderRadius: 4 }}
+        contentFit="contain" resizeMode="contain" cachePolicy="memory-disk" transition={0} />
+    );
+  }
+  return <Text style={{ fontSize: size }}>{REACTION_EMOJI_MAP[e] || e}</Text>;
+}
+
+function ReactionDetailModal({ visible, onClose, emoji, reactors, colors, currentEmail, onRemove, t }) {
+  const [tab, setTab] = useState(emoji && emoji !== '+' ? emoji : 'all');
+  useEffect(() => { setTab(emoji && emoji !== '+' ? emoji : 'all'); }, [emoji, visible]);
   if (!visible) return null;
+  const list = Array.isArray(reactors) ? reactors : [];
+  const meLc = String(currentEmail || '').toLowerCase();
+  const groups = [];
+  const gIdx = {};
+  for (const r of list) {
+    const em = r.emoji || emoji;
+    if (!em || em === '+') continue;
+    if (gIdx[em] == null) { gIdx[em] = groups.length; groups.push([em, 0]); }
+    groups[gIdx[em]][1]++;
+  }
+  groups.sort((a, b) => b[1] - a[1]);
+  const rows = (tab === 'all' ? list : list.filter((r) => (r.emoji || emoji) === tab))
+    .slice()
+    .sort((a, b) => (String(b.email || '').toLowerCase() === meLc) - (String(a.email || '').toLowerCase() === meLc));
+  const _tt = (k, fb) => { try { const v = t ? t(k) : ''; return v && v !== k ? v : fb; } catch { return fb; } };
+  const tabStyle = (on) => ({ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: on ? 'rgba(128,128,128,0.18)' : 'transparent' });
   // [2026-10-15 native-sheets-v2] NativeSheetDialog: sheet do sistema no nativo; web = Modal de sempre.
   return (
     <NativeSheetDialog visible onClose={onClose} animationType="slide"
       overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
       panelStyle={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '50%', paddingBottom: 34 }}
       nativePanelStyle={{ paddingTop: 10 }}>
-          {/* [2026-10-17 conv-wa-polish] cabeçalho = chip "emoji + N" (WhatsApp)
-              com hairline; linhas 40pt de avatar, nome 16/500, emoji à direita
-              e separador recuado até o texto (lista do iOS). */}
-          <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 18, backgroundColor: 'rgba(128,128,128,0.14)' }}>
-              <Text style={{ fontSize: 22 }}>{emoji}</Text>
-              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{reactors.length}</Text>
-            </View>
+          <View style={{ paddingTop: 8, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 6, alignItems: 'center' }}>
+              <TouchableOpacity onPress={() => setTab('all')} style={tabStyle(tab === 'all')} accessibilityRole="tab" accessibilityState={{ selected: tab === 'all' }}>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{_tt('chatConv.reactionsAll', 'Todas')}</Text>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{list.length}</Text>
+              </TouchableOpacity>
+              {groups.map(([em, n]) => (
+                <TouchableOpacity key={em} onPress={() => setTab(em)} style={tabStyle(tab === em)} accessibilityRole="tab" accessibilityState={{ selected: tab === em }}>
+                  <_ReactionGlyph emoji={em} size={18} />
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] }}>{n}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
           <ScrollView style={USE_NATIVE_SHEETS ? { maxHeight: Math.round(Dimensions.get('window').height * 0.6) } : undefined}>
-            {reactors.map((r, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 16, gap: 12 }}>
-                <AvatarCircle name={r.name || r.email} email={r.email} size={40} />
-                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingRight: 16, borderBottomWidth: i < reactors.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors.border }}>
-                  <Text style={{ color: colors.text, fontSize: 16, fontWeight: '500', flex: 1 }} numberOfLines={1}>{r.name || r.email}</Text>
-                  <Text style={{ fontSize: 20 }}>{emoji}</Text>
-                </View>
-              </View>
-            ))}
+            {rows.map((r, i) => {
+              const mine = !!meLc && String(r.email || '').toLowerCase() === meLc;
+              const em = r.emoji || emoji;
+              const Row = mine && onRemove ? TouchableOpacity : View;
+              return (
+                <Row key={`${r.email}|${em}|${i}`} {...(mine && onRemove ? { onPress: () => { onRemove(em); onClose && onClose(); }, accessibilityRole: 'button', accessibilityHint: _tt('chatConv.tapToRemove', 'Toque para remover') } : null)}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 16, gap: 12 }}>
+                  <AvatarCircle name={r.name || r.email} email={r.email} size={40} />
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingRight: 16, borderBottomWidth: i < rows.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors.border }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontSize: 16, fontWeight: '500' }} numberOfLines={1}>{mine ? _tt('common.you', 'Você') : (r.name || r.email)}</Text>
+                      {mine && onRemove ? (
+                        <Text style={{ color: colors.textTertiary || colors.textSecondary, fontSize: 13, marginTop: 1 }}>{_tt('chatConv.tapToRemove', 'Toque para remover')}</Text>
+                      ) : null}
+                    </View>
+                    <_ReactionGlyph emoji={em} size={20} />
+                  </View>
+                </Row>
+              );
+            })}
           </ScrollView>
     </NativeSheetDialog>
   );
@@ -8527,7 +8611,9 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       if (!mountedRef.current || !conversationId) return;
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const d = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        // [2026-10-18 wa-parity] desconta o tempo pausado (= timer e duração final)
+        const _pz = (pausedTotalRef.current || 0) + (pausedAtRef.current ? Date.now() - pausedAtRef.current : 0);
+        const d = Math.max(0, Math.floor((Date.now() - startTimeRef.current - _pz) / 1000));
         await AsyncStorage.setItem(
           'voice_draft:' + conversationId,
           JSON.stringify({ uri: voiceDraftUriRef.current || null, duration: d, waveform: waveformLevels.slice(-60) })
@@ -9036,6 +9122,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         pausedAtRef.current = Date.now();
         setRecPaused(true);
         try { pulseLoopRef.current?.stop?.(); } catch {}
+        setLive(false); // [2026-10-18 wa-parity] pausado ≠ "gravando áudio…" p/ o outro lado
       } else {
         if (r === 'web') mediaRecorderRef.current?.resume?.();
         else if (r.__native) await r.NativeAudio.resumeRecording();
@@ -9044,6 +9131,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         pausedAtRef.current = 0;
         setRecPaused(false);
         try { pulseLoopRef.current?.start?.(); } catch {}
+        setLive(true);
       }
       try { if (Platform.OS !== 'web') require('../services/haptics').tap('light'); } catch {}
     } catch (e) {
@@ -14155,7 +14243,9 @@ function ChatConversationInner() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await api.chatBlockUser(email);
+              const r = await api.chatBlockUser(email);
+              // [2026-10-18 wa-parity] só confirma se o servidor aceitou (antes: "bloqueado" mesmo com erro).
+              if (r && r.success === false) throw new Error(r.message || r.error || (t('common.error') || 'Erro'));
               setIBlockedThem(true);
               safeAlert(t('chat.userBlocked'));
             } catch (e) {
@@ -14366,11 +14456,15 @@ function ChatConversationInner() {
     } catch {}
     return () => { alive = false; };
   }, [conversationId]);
+  // [2026-10-18 chat-info-native] ex-membro (removido/saiu): histórico só leitura, sem composer.
+  const [exMember, setExMember] = _useStateT(false);
+  // [2026-10-18 chat-info-native] "Editar dados do grupo: Todos os membros" (eco do servidor).
+  const [membersEditInfo, setMembersEditInfo] = _useStateT(false);
   const composerBlocked = useMemo(() => (
-    waImported ||
+    waImported || exMember ||
     (conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
     (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin'))
-  ), [waImported, conversationType, members, currentEmail, adminOnlyMessages]);
+  ), [waImported, exMember, conversationType, members, currentEmail, adminOnlyMessages]);
 
   // Rehydrate the live-location dup-session guard on mount / after messages
   // load. `liveLocActive` initializes to null and was NEVER restored, so after
@@ -15378,6 +15472,8 @@ function ChatConversationInner() {
         return;
       }
       if (!r.success && mountedRef.current && !beforeId) {
+        // [2026-10-18 chat-info-native] grupo sem membership (removido/saiu) → só leitura.
+        try { if (conversationType === 'group' && require('../services/chatErrorText').isNotMemberError(r)) setExMember(true); } catch {}
         if (_messagesCountRef.current === 0) {
           // OFFLINE-FIRST (#1098): before declaring failure, fall back to the
           // SQLite cache one more time. If we have any rows persisted from
@@ -16646,9 +16742,12 @@ function ChatConversationInner() {
   // existing manual-translate flow, so the bubble renders unchanged.
   // Throttled to 4 inflight to keep OpenAI rate-limit / cost in check.
   const autoTranslateInflightRef = useRef(new Set());
+  const autoTranslateFailedRef = useRef(new Set());
   useEffect(() => {
     if (!autoTranslateLocale) return;
     if (!Array.isArray(messages) || messages.length === 0) return;
+    // [2026-10-18 wa-parity] E2EE: o servidor só vê ciphertext — igual ao fluxo manual, não traduz.
+    try { if (require('../services/e2eeV4').isConversationE2ee(conversationId)) return; } catch {}
     const targetShort = String(autoTranslateLocale).toLowerCase().split('-')[0];
 
     // 1) Seed from server-provided cached translations. This is the warm
@@ -16674,28 +16773,34 @@ function ChatConversationInner() {
     // 2) Misses: fire chatTranslateMessage for incoming text rows that have
     //    no translation yet. Cap inflight at 4 to avoid hammering the
     //    backend on initial load.
-    const fire = (mid) => {
+    // [2026-10-18 wa-parity translate-loop] Antes, a falha apagava a entrada → este efeito (depende de
+    // translatedMessages) re-disparava → laço infinito de requests em 400/429. Agora o id vai p/
+    // autoTranslateFailedRef e não é tentado de novo nesta sessão. Voz: o servidor recusa message_id de áudio (400)
+    // → manda a transcrição como texto direto (chat_translate_message aceita `text`).
+    const fire = (mid, directText) => {
       autoTranslateInflightRef.current.add(mid);
       setTranslatedMessages(prev => ({ ...prev, [mid]: { ...(prev[mid] || {}), loading: true, targetLang: targetShort, _auto: true } }));
-      api.chatTranslateMessage?.(mid, targetShort).then(r => {
+      const _fail = () => {
         autoTranslateInflightRef.current.delete(mid);
-        if (r?.success && r.data?.translated) {
-          setTranslatedMessages(prev => ({ ...prev, [mid]: { text: r.data.translated, loading: false, targetLang: targetShort, _auto: true } }));
-        } else {
-          setTranslatedMessages(prev => {
-            const copy = { ...prev };
-            delete copy[mid];
-            return copy;
-          });
-        }
-      }).catch(() => {
-        autoTranslateInflightRef.current.delete(mid);
+        autoTranslateFailedRef.current.add(mid);
         setTranslatedMessages(prev => {
+          if (!prev[mid] || prev[mid].text) return prev;
           const copy = { ...prev };
           delete copy[mid];
           return copy;
         });
-      });
+      };
+      const _req = directText
+        ? api.apiCall('chat_translate_message', { text: directText, target_lang: targetShort }, 'POST')
+        : api.chatTranslateMessage?.(mid, targetShort);
+      Promise.resolve(_req).then(r => {
+        if (r?.success && r.data?.translated) {
+          autoTranslateInflightRef.current.delete(mid);
+          setTranslatedMessages(prev => ({ ...prev, [mid]: { text: r.data.translated, loading: false, targetLang: targetShort, _auto: true } }));
+        } else {
+          _fail();
+        }
+      }).catch(_fail);
     };
     for (const m of messages) {
       if (!m || typeof m.id !== 'number' || m.id <= 0) continue;
@@ -16714,7 +16819,8 @@ function ChatConversationInner() {
       }
       const existing = translatedMessages[m.id];
       if (existing && (existing.text || existing.loading)) continue;
-      fire(m.id);
+      if (autoTranslateFailedRef.current.has(m.id)) continue;
+      fire(m.id, m.type === 'text' ? null : String(m.transcript || '').trim());
     }
   }, [messages, autoTranslateLocale, currentEmail, translatedMessages]);
   useEffect(() => () => {
@@ -17501,7 +17607,9 @@ function ChatConversationInner() {
             t?.('chatConv.removedFromGroup') || 'Você foi removido deste grupo.'
           );
         } catch {}
-        try { router.back(); } catch {}
+        // [2026-10-18 chat-info-native] WhatsApp: fica na conversa, histórico só leitura
+        // (barra "não é mais membro" no lugar do composer). Fallback antigo: voltar.
+        try { setExMember(true); } catch { try { router.back(); } catch {} }
       };
       wsUnsubs.push(mailWs.on('removed_from_conversation', onRemovedFromConv));
 
@@ -19623,6 +19731,20 @@ function ChatConversationInner() {
       const _lp = e.split('@')[0].toLowerCase();
       return !!_lp && _textLc.includes('@' + _lp);
     });
+    // [2026-10-18 wa-parity mention-native] Composer NATIVO (NativeComposerBridge) não passa pelo
+    // insertMention JS → mentionedEmails ficava vazio e o mencionado nunca era notificado.
+    // Grupo: todo membro cujo "@localpart" aparece como token no texto entra na lista.
+    if (conversationType === 'group' && _textLc.includes('@')) {
+      const _meLc0 = String(currentEmail || '').toLowerCase();
+      for (const _mb of (members || [])) {
+        const _em = String(_mb?.email || '').toLowerCase();
+        if (!_em || _em === _meLc0 || currentMentions.some((x) => String(x).toLowerCase() === _em)) continue;
+        const _lp = _em.split('@')[0];
+        if (!_lp) continue;
+        const _re = new RegExp('(^|[^\\w.])@' + _lp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w@-]|\\.\\w)', 'i');
+        if (_re.test(text)) currentMentions.push(_mb.email);
+      }
+    }
     // [grupos 2026-10-18 everyone-admin] @everyone só para admin (o servidor descarta de
     // não-admin; expandir aqui mandava a lista inteira e furava o mudo de todos).
     const _meLc = String(currentEmail || '').toLowerCase();
@@ -23409,32 +23531,76 @@ function ChatConversationInner() {
 
   const handleDeleteSelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
-    const promptMsg = `${t('common.delete')} ${selectedIds.size} ${t('chatConv.messages') || 'mensagens'}?`;
-    // Prefer custom WhatsApp-grade modal over Alert.alert (Android 6 feel).
-    const confirmed = Platform.OS === 'web'
-      ? window.confirm(promptMsg)
-      : await confirm({
-          title: t('common.delete') || 'Apagar',
-          message: promptMsg,
-          confirmLabel: t('common.delete') || 'Apagar',
-          destructive: true,
-        });
-    if (!confirmed) return;
-
     const ids = Array.from(selectedIds);
+    // [2026-10-18 wa-parity bulk-delete] WhatsApp: "Apagar para todos" só aparece se TODAS as
+    // selecionadas são minhas e estão dentro da janela (60 h); senão só "Apagar para mim".
+    // Antes: mandava for_all p/ toda msg minha sem perguntar (403 fora da janela = só console.warn)
+    // e a bolha sumia em vez de virar "Você apagou esta mensagem".
+    const _now = Date.now();
+    const _sel = ids.map((id) => messages.find((m) => m.id === id)).filter(Boolean);
+    const _canForAll = _sel.length > 0 && _sel.every((m) => {
+      if (m.sender_email !== currentEmail || _chatOrder().isImportedMsg(m)) return false;
+      if (m.deleted_at || m.type === 'system' || typeof m.id !== 'number' || m.id <= 0) return false;
+      const _ca = String(m.created_at || '');
+      const ts = Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(_ca) ? _ca : _ca + 'Z');
+      return Number.isFinite(ts) && (_now - ts) < DELETE_FOR_ALL_WINDOW_MS;
+    });
+    const promptMsg = `${t('common.delete')} ${ids.length} ${t('chatConv.messages') || 'mensagens'}?`;
+    let mode = null;
+    if (Platform.OS === 'web') {
+      if (_canForAll) {
+        mode = window.confirm(`${promptMsg}\n\n${t('chatConv.bulkDeleteForAllAsk') || 'OK = apagar para todos · Cancelar = outras opções'}`)
+          ? 'for_all'
+          : (window.confirm(`${t('chatConv.deleteForMe') || 'Apagar para mim'}?`) ? 'for_me' : null);
+      } else {
+        mode = window.confirm(promptMsg) ? 'for_me' : null;
+      }
+    } else {
+      mode = await new Promise((resolve) => {
+        const btns = [];
+        if (_canForAll) btns.push({ text: t('chatConv.deleteForEveryone') || 'Apagar para todos', style: 'destructive', onPress: () => resolve('for_all') });
+        btns.push({ text: t('chatConv.deleteForMe') || 'Apagar para mim', style: 'destructive', onPress: () => resolve('for_me') });
+        btns.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(null) });
+        try { Alert.alert(t('common.delete') || 'Apagar', promptMsg, btns, { cancelable: true, onDismiss: () => resolve(null) }); } catch { resolve(null); }
+      });
+    }
+    if (!mode) return;
+
+    if (mode === 'for_all') {
+      // Lápide otimista (mesma forma do deleteForEveryone de 1 mensagem).
+      const _deletedAt = new Date().toISOString();
+      const _idSet = new Set(ids.map(String));
+      const _prev = new Map();
+      setMessages(prev => _mapKeep(prev, m => {
+        if (!_idSet.has(String(m.id))) return m;
+        _prev.set(String(m.id), m);
+        return { ...m, deleted_at: _deletedAt, content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null, hls_url: null, waveform: null, deleted_by: user?.email, _tombIn: true };
+      }));
+      handleClearSelection();
+      const results = await Promise.allSettled(ids.map((msgId) => api.chatDelete(msgId, 'for_all')));
+      let failed = 0;
+      results.forEach((res, i) => {
+        const ok = res.status === 'fulfilled' && !(res.value && res.value.success === false);
+        if (ok) {
+          try { require('../services/smartChatCache').updateCachedMessage?.(conversationId, ids[i], { deleted_at: _deletedAt, content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null }); } catch {}
+          return;
+        }
+        failed++;
+        const old = _prev.get(String(ids[i]));
+        if (old) setMessages(prev => _mapKeep(prev, m => (String(m.id) === String(ids[i]) ? old : m)));
+      });
+      if (failed) safeAlert(t('common.error') || 'Erro', t('chatConv.bulkDeleteSomeFailed') || 'Algumas mensagens não puderam ser apagadas para todos.');
+      return;
+    }
     // Use allSettled — a single failing delete used to throw and abort the
     // rest of the batch, leaving selection half-deleted and state stale.
-    const results = await Promise.allSettled(ids.map(msgId => {
-      const msg = messages.find(m => m.id === msgId);
-      const mode = (msg && msg.sender_email === currentEmail && !_chatOrder().isImportedMsg(msg)) ? 'for_all' : 'for_me'; // [wa-remetente 2026-10-13]
-      return api.chatDelete(msgId, mode);
-    }));
+    const results = await Promise.allSettled(ids.map(msgId => api.chatDelete(msgId, 'for_me')));
     results.forEach((res, i) => {
       if (res.status === 'fulfilled') animateDeleteThenRemove(ids[i]);
       else console.warn('Delete failed for', ids[i], res.reason?.message || res.reason);
     });
     handleClearSelection();
-  }, [selectedIds, messages, currentEmail]);
+  }, [selectedIds, messages, currentEmail, conversationId, user?.email, t]);
 
   const _handleForwardRef = useRef(null);
   const handleForwardSelected = useCallback(async () => {
@@ -23555,7 +23721,7 @@ function ChatConversationInner() {
     const elapsedMs = createdMs ? (Date.now() - createdMs) : Infinity;
     const remainingMs = Math.max(0, deleteForAllWindowMs - elapsedMs);
     const isWithinWindow = createdMs > 0 && elapsedMs < deleteForAllWindowMs;
-    const canDeleteForAll = isMine && isWithinWindow;
+    const canDeleteForAll = isMine && isWithinWindow && !msg.deleted_at; // [2026-10-18 wa-parity] lápide: só "apagar para mim"
     // Remaining time for the subtitle ("2 h 15 min" / "12 min" / "40 s").
     const remainingLabel = _fmtDeleteWindowLeft(remainingMs);
 
@@ -24382,6 +24548,7 @@ function ChatConversationInner() {
       setAdminOnlyMessages(!!(conv.admin_only_post ?? conv.admin_only));
     }
     if (typeof conv.hide_members !== 'undefined') setHideMembers(!!conv.hide_members);
+    if (typeof conv.members_edit_info !== 'undefined') setMembersEditInfo(!!conv.members_edit_info); // [2026-10-18 chat-info-native]
     if (typeof conv.members_hidden !== 'undefined') setMembersHiddenForMe(!!conv.members_hidden);
     if (typeof conv.member_count !== 'undefined') setGroupMemberCount(Number(conv.member_count || 0));
     if (typeof conv.forwarding_disabled !== 'undefined') setForwardingDisabled(!!conv.forwarding_disabled);
@@ -24988,6 +25155,395 @@ function ChatConversationInner() {
         ...(rolePermsLocal[m.email] || {}),
       });
     }
+  };
+  // ── [2026-10-18 chat-info-native] "Dados do contato/grupo" 100% NATIVOS
+  // (modules/expo-chat-conversation-list → ChatyyChatInfo; components/chat/
+  // NativeChatInfo.js). Só DESCRITORES: toda linha chama os MESMOS handlers da
+  // folha JS abaixo (que segue como fallback). Gate: binário com a view
+  // (apiVersion ≥ 1) + kill switch globalThis.__chatyy_native_chat_info = false;
+  // erro nativo/render → _ciOff() e volta a folha JS.
+  const [nativeChatInfoOff, setNativeChatInfoOff] = _useStateT(false);
+  const _ciOn = Platform.OS !== 'web' && !nativeChatInfoOff && isNativeChatInfoEnabled();
+  const _ciOff = (why) => {
+    try { globalThis.__chatyyNativeChatInfoFail = { at: Date.now(), why: String(why || '') }; } catch {}
+    setNativeChatInfoOff(true);
+  };
+  const [groupEditor, setGroupEditor] = _useStateT(null); // 'name' | 'description' | null
+  const _ciRosterKey = `${(members || []).length}|${(members || []).filter((m) => m && m.role === 'admin').map((m) => m.email).join(',')}`;
+  const _ciPager = useGroupMembersPager({
+    api,
+    conversationId,
+    enabled: _ciOn && showGroupInfo && conversationType === 'group' && !exMember,
+    version: _ciRosterKey,
+    fallback: members,
+  });
+  const _ciTr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  const _ciPic = (ref, name, email) => {
+    const pic = { i: initialsOf(name, email), g: gradientIndex(name || email || '') };
+    if (ref && ref.uri) {
+      pic.u = ref.uri;
+      if (ref.headers && (ref.headers.Authorization || ref.headers.authorization)) pic.a = 1;
+    }
+    return pic;
+  };
+  const _ciMuteVal = () => {
+    if (!mutedUntil) return '';
+    if (String(mutedUntil).startsWith('2099')) return _ciTr('chatConv.mutedForever', 'Sempre');
+    try { return new Date(mutedUntil).toLocaleString(undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
+  };
+  const _ciMedia = () => {
+    const src = (infoNativeMedia.media && infoNativeMedia.media.length ? infoNativeMedia.media : infoMediaThumbs) || [];
+    return src.filter((it) => it && (it.thumb_url || it.file_url)).slice(0, 12).map((it, i) => ({
+      key: String(it.id || i),
+      u: _npAbs(it.thumb_url || it.file_url),
+      video: /video/.test(String(it.type || it.msg_type || '')),
+    }));
+  };
+  const _ciOpenGallery = (go) => go(() => { setMediaGalleryTab('image'); setShowMediaGallery(true); });
+  const _ciSearchInChat = (go) => go(() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); });
+  const _ciCommonRows = (go, sidPrefix) => {
+    const onLabel = _ciTr('chatConv.enabledState', 'Ativado');
+    const offLabel = _ciTr('common.off', 'Desativado');
+    const rows = [];
+    rows.push({ id: 'notif', sid: `${sidPrefix}prefs`, icon: mutedUntil ? 'bellOff' : 'bell', title: _ciTr('chatInfo.notifications', 'Notificações'), val: mutedUntil ? _ciTr('chatInfo.muted', 'Silenciadas') : '', sub: mutedUntil ? `${_ciTr('chatConv.mutedUntil', 'Até')} ${_ciMuteVal()}`.trim() : '', onPress: () => go(() => setShowMuteModal(true)) });
+    rows.push({ id: 'customNotif', sid: `${sidPrefix}prefs`, icon: 'music', title: _ciTr('chatConv.customNotifications', 'Notificações personalizadas'), onPress: () => go(() => setShowNotifSettingsSheet(true)) });
+    rows.push({ id: 'wallpaper', sid: `${sidPrefix}prefs`, icon: 'palette', title: _ciTr('chatInfo.wallpaper', 'Papel de parede e som'), onPress: () => go(() => setShowWallpaperPicker(true)) });
+    if (_mediaVis && !_advPriv.enabled) {
+      rows.push({ id: 'mediaVis', sid: `${sidPrefix}prefs`, icon: 'image', title: _mediaVis.title, val: _mediaVis.subtitle, onPress: () => go(() => setMediaVisSheet(true)) });
+    }
+    rows.push({ id: 'disappearing', sid: `${sidPrefix}priv`, icon: 'clock', title: _ciTr('chat.disappearing', 'Mensagens temporárias'), val: disappearingSummary || '', onPress: () => go(() => setShowDisappearingModal(true)) });
+    rows.push({ id: 'chatLock', sid: `${sidPrefix}priv`, icon: 'lock', title: _ciTr('chatInfo.chatLock', 'Bloqueio da conversa'), val: chatLocked ? onLabel : offLabel, sub: _ciTr('chatInfo.chatLockHint', 'Tranque e oculte esta conversa neste aparelho.'), onPress: () => go(toggleChatLockFromUi) });
+    rows.push({ id: 'e2e', sid: `${sidPrefix}priv`, icon: 'shield', title: _ciTr('chatConv.e2eTitle', 'Criptografia'), sub: e2eEnabled ? _ciTr('chatConv.e2eSafetyHint', 'Ponta a ponta ativa. Toque para ver o número de segurança.') : _ciTr('chatConv.e2eInactive', 'Criptografia desativada'), onPress: () => go(showE2eInfo) });
+    rows.push({ id: 'advPriv', sid: `${sidPrefix}priv`, icon: 'eye', title: _ciTr('advPriv.title', 'Privacidade avançada da conversa'), val: _advPriv.statusLabel || '', onPress: () => go(_advPriv.openSheet) });
+    return rows;
+  };
+  const _ciMoreRows = (go) => {
+    const rows = [
+      { id: 'aiSummary', sid: 'more', icon: 'sparkles', title: _ciTr('chatSum.menuLabel', 'Resumir com a Bia'), onPress: () => go(runAiSummary) },
+      { id: 'stats', sid: 'more', icon: 'chart', title: _ciTr('chatConv.stats', 'Estatísticas'), onPress: () => go(() => setShowStatsModal(true)) },
+      { id: 'scheduled', sid: 'more', icon: 'calendar', title: _ciTr('chatConv.scheduledMessages', 'Mensagens agendadas'), onPress: () => go(() => { setShowScheduledMessages(true); loadScheduledMessages(); }) },
+      { id: 'translate', sid: 'more', icon: 'globe', title: _ciTr('chatConv.autoTranslate', 'Auto-traduzir'), val: autoTranslateLocale ? String(autoTranslateLocale).toUpperCase() : _ciTr('common.off', 'Desativado'), onPress: () => go(() => setShowAutoTranslatePicker(true)) },
+      { id: 'export', sid: 'misc', icon: 'export', title: _ciTr('chatConv.exportChat', 'Exportar conversa'), onPress: () => go(() => (_advPriv.guard('export') || setShowExportModal(true))) },
+    ];
+    if (!waImported) rows.push({ id: 'waImport', sid: 'misc', icon: 'download', title: _ciTr('waImport.menuItem', 'Importar do WhatsApp'), onPress: () => go(openWhatsAppImport) });
+    rows.push({ id: 'archive', sid: 'misc', k: 'a', icon: 'archive', title: _ciTr('chatConv.archive', 'Arquivar conversa'), onPress: () => go(archiveConversation) });
+    return rows;
+  };
+  const buildContactChatInfo = () => {
+    const go = contactInfoGo;
+    const peerEmail = getContactPeerEmail();
+    const peer = peerEmail || params.email || '';
+    const ident = contactIdentity && String(contactIdentity.email || '').toLowerCase() === String(peerEmail || '').toLowerCase() ? contactIdentity : null;
+    const subLine = [ident?.phone || null, ident?.username ? `@${ident.username}` : null].filter(Boolean).join('  ·  ') || peerEmail || '';
+    const peerName = conversationName || '';
+    const hero = {
+      title: peerName,
+      sub: subLine,
+      tile: _ciPic(peerEmail ? avatarRefForEmail(peerEmail, peerName, 'full') : null, peerName, peerEmail),
+      actions: [
+        { key: 'call', icon: 'phone', label: _ciTr('chatInfo.audio', 'Áudio'), onPress: () => go(() => handleStartAudioCall()) },
+        { key: 'video', icon: 'video', label: _ciTr('chatConv.video', 'Vídeo'), onPress: () => go(() => handleStartVideoCall()) },
+        { key: 'search', icon: 'search', label: _ciTr('chatInfo.search', 'Pesquisar'), onPress: () => _ciSearchInChat(go) },
+      ],
+      onAvatarPress: () => go(() => setAvatarLightbox({ name: conversationName, email: peerEmail, uri: null })),
+    };
+    const rows = [];
+    if (ident?.bio) rows.push({ id: 'about', k: 'about', sid: 'about', title: String(ident.bio) });
+    rows.push({ id: 'media', k: 'media', sid: 'media', title: _ciTr('chatConv.mediaLinksDocs', 'Mídia, links e docs') });
+    rows.push({ id: 'starred', sid: 'media', icon: 'star', title: _ciTr('chat.starredMessages', 'Mensagens favoritas'), onPress: () => go(() => { setShowStarredModal(true); loadStarredMessages(); }) });
+    rows.push(..._ciCommonRows(go, ''));
+    if (contactCommonGroups.length > 0) {
+      contactCommonGroups.slice(0, 5).forEach((g, i) => {
+        rows.push({
+          id: `grp:${g.id}`, sid: 'groups', hd: i === 0 ? `${_ciTr('profile.commonChats', 'Grupos em comum')} (${contactCommonGroups.length})` : '',
+          icon: 'users', title: String(g.name || ''),
+          onPress: () => go(() => require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: g.id, name: g.name || '', type: 'group' } }, { replace: true })),
+        });
+      });
+    }
+    rows.push(..._ciMoreRows(go).filter((r) => r.sid === 'more'));
+    if (!!peer && peer.toLowerCase() !== (currentEmail || '').toLowerCase()) {
+      rows.push({ id: 'liveLoc', sid: 'more', k: 'a', icon: 'mapPin', title: _ciTr('location.requestLive', 'Pedir localização ao vivo'), onPress: () => go(requestPeerLiveLocation) });
+    }
+    if (!e2eEnabled) rows.push({ id: 'secret', sid: 'more', icon: 'secret', title: _ciTr('chat.startSecret', 'Chat secreto'), onPress: () => go(startSecretChat) });
+    if (contactPinned !== null) {
+      rows.push({ id: 'pin', sid: 'misc', k: 'a', icon: 'pin', title: contactPinned ? _ciTr('chatConv.removeFromFavorites', 'Remover das favoritas') : _ciTr('chatConv.addToFavorites', 'Adicionar às favoritas'), onPress: handleToggleContactPinned });
+    }
+    rows.push(..._ciMoreRows(go).filter((r) => r.sid === 'misc'));
+    rows.push({ id: 'profile', sid: 'misc', icon: 'user', title: _ciTr('chatConv.viewFullProfile', 'Ver perfil'), onPress: () => go(() => setProfileViewer({ name: conversationName, email: peer })) });
+    if (peer) {
+      rows.push({
+        id: 'shareContact', sid: 'misc', icon: 'share', title: _ciTr('shareContact.shareThis', 'Compartilhar contato'),
+        onPress: () => go(() => {
+          const _ph = ident && ident.phone ? String(ident.phone) : '';
+          const payload = require('../components/chat/contactShare').buildContactPayload([{ name: conversationName || String(peer).split('@')[0], email: String(peer), chatyy: true, phone: _ph, phones: _ph ? [_ph] : [] }]);
+          if (payload) { try { router.push({ pathname: '/share-receive', params: { contact: payload } }); } catch {} }
+        }),
+      });
+    }
+    rows.push({ id: 'clear', sid: 'danger', k: 'a', dest: true, icon: 'trash', title: _ciTr('chatConv.clearChat', 'Limpar conversa'), onPress: () => go(confirmClearHistory) });
+    if (iBlockedThem) rows.push({ id: 'unblock', sid: 'danger', k: 'a', icon: 'block', title: `${_ciTr('chat.unblockUser', 'Desbloquear')} ${peerName}`.trim(), onPress: () => go(() => handleUnblockUser(peer)) });
+    else rows.push({ id: 'block', sid: 'danger', k: 'a', dest: true, icon: 'block', title: `${_ciTr('chat.blockUser', 'Bloquear')} ${peerName}`.trim(), onPress: () => go(() => handleBlockUser(peer)) });
+    rows.push({ id: 'report', sid: 'danger', k: 'a', dest: true, icon: 'flag', title: `${_ciTr('chat.reportUser', 'Denunciar')} ${peerName}`.trim(), onPress: () => go(() => handleReportUser(peer, null, false)) });
+    rows.push({ id: 'reportLeave', sid: 'danger', k: 'a', dest: true, icon: 'logout', title: _ciTr('chatConv.reportAndLeave', 'Reportar e sair'), onPress: () => go(handleReportAndLeave) });
+    return {
+      hero, rows, media: _ciMedia(),
+      onMediaPress: () => _ciOpenGallery(go),
+      labels: { photo: _ciTr('chatConv.viewPhoto', 'Ver foto') },
+    };
+  };
+  const _ciSaveGroupField = async (field, value) => {
+    try {
+      const r = field === 'name'
+        ? await api.chatUpdate(conversationId, { name: value })
+        : await api.chatUpdateGroup(conversationId, { description: value });
+      if (!r?.success) {
+        safeAlert(t('common.error') || 'Erro', r?.message || _ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'));
+        return false;
+      }
+      if (field === 'name') {
+        const savedName = String(r?.data?.name || value).trim() || value;
+        setConversationName(savedName);
+        setEditGroupName(savedName);
+        try { require('react-native').DeviceEventEmitter.emit('chatyy:convMeta', { conversation_id: conversationId, name: savedName }); } catch {}
+      } else {
+        setConversationDescription(value);
+      }
+      return true;
+    } catch {
+      safeAlert(t('common.error') || 'Erro', _ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'));
+      return false;
+    }
+  };
+  const _ciToggleMembersEditInfo = async (adminsOnly) => {
+    const next = !adminsOnly;
+    setMembersEditInfo(next);
+    try {
+      const r = await api.chatUpdateGroup(conversationId, { members_edit_info: next });
+      if (!r?.success) setMembersEditInfo(!next);
+    } catch { setMembersEditInfo(!next); }
+  };
+  const _ciGroupInviteMenu = async () => {
+    try {
+      const r = await api.chatGroupInviteLinkV2(conversationId, 'get');
+      const url = r?.data?.url || '';
+      if (!url) { safeAlert(t('common.error'), r?.message || 'Falha ao gerar link'); return; }
+      setInviteLink(url);
+      safeAlert(t('chatConv.inviteLink') || 'Link de convite', url, [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t('common.copy') || 'Copiar', onPress: () => { try { Clipboard.setStringAsync(url); } catch {} } },
+        { text: t('chatConv.shareLink') || 'Compartilhar link', onPress: () => { try { Share.share({ message: url, title: t('chatConv.groupLink') || 'Link do grupo' }); } catch {} } },
+        { text: t('chatConv.inviteRotate') || 'Gerar novo', onPress: async () => {
+          const rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate');
+          if (rr?.success) { setInviteLink(rr?.data?.url || null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado'); }
+          else safeAlert(t('common.error') || 'Erro', rr?.message || 'Falha');
+        } },
+        { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
+          const rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke');
+          if (rv?.success) { setInviteLink(null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.'); }
+          else safeAlert(t('common.error') || 'Erro', rv?.message || 'Falha');
+        } },
+      ]);
+    } catch {}
+  };
+  const _ciAddMember = () => {
+    setShowGroupInfo(false);
+    router.push({ pathname: '/chat-new', params: { addMemberToConv: String(conversationId), addMemberConvType: conversationType, addMemberConvName: conversationName || '' } });
+  };
+  const _ciMemberItem = (m) => {
+    const em = String(m?.email || '');
+    const isMe = em.toLowerCase() === String(currentEmail || '').toLowerCase();
+    let nick = '';
+    if (em && !isMe) { try { nick = require('../services/nicknames').getNickname?.(em) || ''; } catch {} }
+    const name = isMe ? _ciTr('chat.you', 'Você') : (nick || emailToDisplayName(m.display_name || em.split('@')[0] || ''));
+    let tile = null;
+    try { tile = contactTile(em, m.display_name || em)[0]; } catch { tile = { i: initialsOf(name, em), g: gradientIndex(name || em) }; }
+    return { id: em || name, title: name, sub: isMe ? '' : em, tile, pill: m.role === 'admin' ? _ciTr('chatInfo.adminPill', 'Admin') : '', me: isMe };
+  };
+  const _ciOnMemberPress = (id) => {
+    const m = (_ciPager.items || []).find((x) => String(x.email) === id) || (members || []).find((x) => String(x.email) === id);
+    if (!m) return;
+    const isMe = String(m.email || '').toLowerCase() === String(currentEmail || '').toLowerCase();
+    if (isMe) return;
+    let nick = '';
+    try { nick = require('../services/nicknames').getNickname?.(m.email) || ''; } catch {}
+    const name = nick || emailToDisplayName(m.display_name || m.email?.split('@')[0] || '');
+    const openProfile = () => groupInfoGo(() => setProfileViewer({ name: m.display_name || m.email, email: m.email }));
+    if (!isGroupAdmin || exMember) { openProfile(); return; }
+    const buttons = [
+      { text: _ciTr('chatInfo.viewMember', 'Ver perfil'), onPress: openProfile },
+      { text: m.role === 'admin' ? _ciTr('chatConv.demote', 'Remover admin') : _ciTr('chatInfo.makeAdmin', 'Tornar admin do grupo'), onPress: () => handleToggleAdmin(m.email, m.role) },
+    ];
+    if (m.role === 'admin') buttons.push({ text: _ciTr('chatConv.editPermissions', 'Editar permissões'), onPress: () => onNativeMemberAction(String(m.email), 'perms') });
+    buttons.push({ text: _ciTr('chatInfo.removeMember', 'Remover do grupo'), style: 'destructive', onPress: () => handleRemoveMember(m.email, name) });
+    buttons.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel' });
+    try { require('../services/alerts').safeAlert(name, String(m.email || ''), buttons); } catch {}
+  };
+  const buildGroupChatInfo = () => {
+    const go = groupInfoGo;
+    const canEdit = !exMember && (isGroupAdmin || !!membersEditInfo);
+    const total = _ciPager.total || (membersHiddenForMe && groupMemberCount > 0 ? groupMemberCount : (members || []).length);
+    const cnt = t('chatConv.groupMembersCount', { n: total }) || `${total} membros`;
+    const full = conversationAvatar ? avatarRefForUrl(conversationAvatar, 'full') : null;
+    const actions = exMember ? [] : [
+      { key: 'call', icon: 'phone', label: _ciTr('chatInfo.audio', 'Áudio'), onPress: () => { setShowGroupInfo(false); handleStartAudioCall(); } },
+      { key: 'video', icon: 'video', label: _ciTr('chatConv.video', 'Vídeo'), onPress: () => { setShowGroupInfo(false); handleStartVideoCall(); } },
+    ];
+    if (!exMember && isGroupAdmin) actions.push({ key: 'add', icon: 'userPlus', label: _ciTr('chatInfo.add', 'Adicionar'), onPress: _ciAddMember });
+    actions.push({ key: 'search', icon: 'search', label: _ciTr('chatInfo.search', 'Pesquisar'), onPress: () => _ciSearchInChat(go) });
+    const hero = {
+      title: conversationName || '',
+      sub: exMember ? _ciTr('chatInfo.exMemberShort', 'Você não é mais membro') : `${_ciTr('chatConv.group', 'Grupo')} · ${cnt}`,
+      tile: _ciPic(full, conversationName, null),
+      badge: canEdit ? 'camera' : '',
+      busy: !!changingGroupPhoto,
+      actions,
+      onAvatarPress: () => {
+        const view = () => { if (conversationAvatar) go(() => setAvatarLightbox({ name: conversationName, email: null, uri: conversationAvatar })); };
+        if (!canEdit) { view(); return; }
+        if (changingGroupPhoto) return;
+        const btns = [];
+        if (conversationAvatar) btns.push({ text: _ciTr('chatConv.viewPhoto', 'Ver foto'), onPress: view });
+        btns.push({ text: _ciTr('chatConv.changeGroupPhoto', 'Alterar foto do grupo'), onPress: handleChangeGroupPhoto });
+        btns.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel' });
+        try { require('../services/alerts').safeAlert(conversationName || '', '', btns); } catch {}
+      },
+    };
+    const rows = [];
+    if (conversationDescription || canEdit) {
+      rows.push({
+        id: 'description', k: 'about', sid: 'about', title: String(conversationDescription || ''),
+        val: _ciTr('chatInfo.addDescription', 'Adicionar descrição do grupo'),
+        dis: !canEdit,
+        onPress: canEdit ? () => setGroupEditor('description') : undefined,
+      });
+    }
+    rows.push({ id: 'media', k: 'media', sid: 'media', title: _ciTr('chatConv.mediaLinksDocs', 'Mídia, links e docs') });
+    rows.push({ id: 'starred', sid: 'media', icon: 'star', title: _ciTr('chat.starredMessages', 'Mensagens favoritas'), onPress: () => { loadStarredMessages(); go(() => setShowStarredModal(true)); } });
+    if (isGroupAdmin && !exMember && pendingMembers.length > 0) {
+      rows.push({
+        id: 'pending', sid: 'pending', icon: 'userPlus',
+        title: `${pendingMembers.length} ${pendingMembers.length === 1 ? (t('chatConv.pendingRequestSingular') || 'solicitação pendente') : (t('chatConv.pendingRequestsPlural') || 'solicitações pendentes')}`,
+        sub: t('chatConv.pendingTapToReview') || 'Toque para revisar',
+        onPress: () => { refreshPendingMembers(); go(() => setShowPendingModal(true), !USE_NATIVE_SHEETS); },
+      });
+    }
+    const common = _ciCommonRows((fn) => go(fn, !USE_NATIVE_SHEETS), 'g');
+    rows.push(...common.filter((r) => r.sid === 'gprefs'));
+    rows.push({
+      id: 'notifSound', sid: 'gprefs', icon: 'music', title: _ciTr('chatNotif.title', 'Som de notificação'),
+      val: chatNotifSound === 'default' ? _ciTr('chatNotif.default', 'Padrão') : chatNotifSound === 'bell' ? _ciTr('chatNotif.bell', 'Sino') : chatNotifSound === 'pop' ? _ciTr('chatNotif.pop', 'Pop') : _ciTr('chatNotif.none', 'Nenhum'),
+      onPress: () => go(() => setShowNotifSoundPicker(true), !USE_NATIVE_SHEETS),
+    });
+    if (!exMember) {
+      rows.push({
+        id: 'topics', sid: 'gprefs', icon: 'hash', title: _ciTr('chat.topics', 'Tópicos'),
+        val: activeTopic ? String(activeTopic.name || '') : '',
+        onPress: async () => {
+          try { const r = await api.chatTopicList(conversationId); if (r?.success) setTopics(r.data?.topics || r.data?.items || []); } catch {}
+          go(() => setShowTopicsModal(true), true);
+        },
+      });
+    }
+    rows.push(...common.filter((r) => r.sid === 'gpriv'));
+    if (!exMember) {
+      rows.push({
+        id: 'members', k: 'members', sid: 'members',
+        ft: membersHiddenForMe && !isGroupAdmin ? _ciTr('chatConv.membersHiddenNote', 'Os admins ocultaram a lista de membros deste grupo.') : '',
+      });
+    }
+    if (isGroupAdmin && !exMember) {
+      const sid = 'gset';
+      const hd = _ciTr('chatInfo.groupSettings', 'Configurações do grupo');
+      rows.push({ id: 'editName', sid, hd, icon: 'edit', title: _ciTr('chatInfo.groupName', 'Nome do grupo'), val: conversationName || '', onPress: () => setGroupEditor('name') });
+      rows.push({ id: 'infoAdminsOnly', sid, k: 't', icon: 'edit', title: _ciTr('chatInfo.infoAdminsOnly', 'Só admins editam os dados do grupo'), sub: _ciTr('chatInfo.infoAdminsOnlyHint', 'Nome, foto e descrição'), on: !membersEditInfo, onToggle: (v) => _ciToggleMembersEditInfo(v) });
+      rows.push({
+        id: 'adminOnlySend', sid, k: 't', icon: 'message', title: _ciTr('chatInfo.sendAdminsOnly', 'Só admins enviam mensagens'), on: !!adminOnlyMessages,
+        onToggle: async (v) => {
+          setAdminOnlyMessages(v);
+          try { const r = await api.chatGroupSetAdminOnly(conversationId, v); if (!r?.success) setAdminOnlyMessages(!v); } catch { setAdminOnlyMessages(!v); }
+        },
+      });
+      rows.push({
+        id: 'approval', sid, k: 't', icon: 'userPlus', title: _ciTr('group.approval.title', 'Aprovar novos membros'), sub: approvalRequired ? _ciTr('group.approval.subtitle', 'Você decide quem entra no grupo') : _ciTr('group.approval.off', 'Qualquer um com o link entra direto'), on: !!approvalRequired,
+        onToggle: async (v) => {
+          setApprovalRequired(v);
+          try { const r = await api.chatGroupSetApprovalRequired(conversationId, v); if (!r?.success) setApprovalRequired(!v); } catch { setApprovalRequired(!v); }
+        },
+      });
+      rows.push({ id: 'hideMembers', sid, k: 't', icon: 'eye', title: _ciTr('chatConv.hideMembers', 'Ocultar lista de membros'), on: !!hideMembers, onToggle: () => handleToggleHideMembers() });
+      rows.push({ id: 'noForward', sid, k: 't', icon: 'forward', title: _ciTr('chatInfo.noForward', 'Não permitir encaminhar'), on: !!forwardingDisabled, onToggle: () => handleToggleForwardingDisabled() });
+      rows.push({
+        id: 'slowMode', sid, icon: 'slow', title: _ciTr('chat.slowMode', 'Modo lento'),
+        val: slowModeSeconds === 0 ? _ciTr('common.off', 'Desativado') : slowModeSeconds < 60 ? `${slowModeSeconds}s` : slowModeSeconds < 3600 ? `${Math.round(slowModeSeconds / 60)}m` : `${Math.round(slowModeSeconds / 3600)}h`,
+        onPress: () => go(() => setShowSlowModePicker(true), !USE_NATIVE_SHEETS),
+      });
+      rows.push({ id: 'inviteLink', sid, icon: 'link', title: _ciTr('chatConv.inviteLink', 'Link de convite'), onPress: _ciGroupInviteMenu });
+      rows.push({
+        id: 'inviteQr', sid, icon: 'qr', title: _ciTr('chat.showQr', 'Mostrar QR'), ft: _ciTr('chatInfo.settingsFooter', 'Só admins podem mudar estas configurações.'),
+        onPress: async () => {
+          if (!inviteLink && !inviteLinkLoading) {
+            setInviteLinkLoading(true);
+            try { const r = await api.chatGroupInviteLink(conversationId, false); const link = r?.data?.link || r?.data?.url || ''; if (r?.success && link) setInviteLink(link); } catch {}
+            setInviteLinkLoading(false);
+          }
+          go(() => setShowInviteQr(true), true);
+        },
+      });
+    } else if (canEdit) {
+      rows.push({ id: 'editName', sid: 'gset', icon: 'edit', title: _ciTr('chatInfo.groupName', 'Nome do grupo'), val: conversationName || '', onPress: () => setGroupEditor('name') });
+    }
+    rows.push(..._ciMoreRows(go));
+    rows.push({ id: 'clear', sid: 'danger', k: 'a', dest: true, icon: 'trash', title: _ciTr('chatConv.clearChat', 'Limpar conversa'), onPress: () => go(confirmClearHistory) });
+    if (exMember) {
+      rows.push({
+        id: 'deleteGroup', sid: 'danger', k: 'a', dest: true, icon: 'trash', title: _ciTr('chatInfo.deleteGroup', 'Apagar grupo'),
+        onPress: async () => {
+          const ok = await confirm({ title: _ciTr('chatInfo.deleteGroup', 'Apagar grupo'), message: _ciTr('chatInfo.deleteGroupConfirm', 'Apagar este grupo e as mensagens deste aparelho?'), confirmLabel: _ciTr('common.delete', 'Apagar'), destructive: true });
+          if (!ok) return;
+          try { await require('../services/chatCache').removeConversationFromCache?.(conversationId); } catch {}
+          setShowGroupInfo(false);
+          try { router.back(); } catch {}
+        },
+      });
+    } else {
+      rows.push({ id: 'reportGroup', sid: 'danger', k: 'a', dest: true, icon: 'flag', title: t('w12e.reportGroup') || 'Denunciar grupo', onPress: handleReportGroup });
+      rows.push({ id: 'leave', sid: 'danger', k: 'a', dest: true, icon: 'logout', title: _ciTr('chatConv.leaveGroup', 'Sair do grupo'), onPress: handleLeaveGroup });
+    }
+    let mItems = (_ciPager.items && _ciPager.items.length ? _ciPager.items : []);
+    if (!_ciPager.hasMore) {
+      const meLc = String(currentEmail || '').toLowerCase();
+      mItems = [...mItems].sort((a, b) => {
+        const am = String(a.email || '').toLowerCase() === meLc; const bm = String(b.email || '').toLowerCase() === meLc;
+        if (am !== bm) return am ? -1 : 1;
+        const aa = a.role === 'admin'; const ba = b.role === 'admin';
+        if (aa !== ba) return aa ? -1 : 1;
+        return String(a.display_name || a.email || '').localeCompare(String(b.display_name || b.email || ''));
+      });
+    }
+    const memberActions = [];
+    if (isGroupAdmin && !exMember) {
+      memberActions.push({ id: 'addMember', title: _ciTr('chatInfo.addMembers', 'Adicionar membros'), icon: 'userPlus', onPress: _ciAddMember });
+      memberActions.push({ id: 'inviteViaLink', title: _ciTr('chatInfo.inviteViaLink', 'Convidar via link'), icon: 'link', onPress: () => handleGenerateInviteLink(false) });
+    }
+    return {
+      hero, rows, media: _ciMedia(),
+      onMediaPress: () => _ciOpenGallery(go),
+      members: {
+        header: cnt,
+        items: mItems.map(_ciMemberItem),
+        total,
+        hasMore: !!_ciPager.hasMore,
+        loading: !!_ciPager.loading && mItems.length === 0,
+        search: total >= 6 ? _ciTr('chatInfo.searchMembers', 'Pesquisar membros') : '',
+        empty: _ciPager.q ? _ciTr('group.search.empty', 'Nenhum membro encontrado') : '',
+        actions: memberActions,
+      },
+      onMemberPress: _ciOnMemberPress,
+      onMembersEnd: _ciPager.loadMore,
+      onMemberQuery: _ciPager.setQuery,
+      labels: { photo: _ciTr('chatConv.viewPhoto', 'Ver foto') },
+    };
   };
   useEffect(() => {
     if (!showContactInfo) return undefined;
@@ -25911,6 +26467,16 @@ function ChatConversationInner() {
 
   const handleTranslate = async (msg) => {
     setSelectedMsg(null);
+    // If already translated, toggle visibility.
+    // [2026-10-18 wa-parity] ANTES do gate premium/transcrição: esconder não gasta tradução grátis.
+    if (msg && translatedMessages[msg.id]?.text) {
+      setTranslatedMessages(prev => {
+        const copy = { ...prev };
+        delete copy[msg.id];
+        return copy;
+      });
+      return;
+    }
     // Voice/audio messages get a transcribe→translate chain. The transcript
     // is rendered alongside the translation so the user can see the
     // original wording too. Existing text/image flow falls through unchanged.
@@ -25966,16 +26532,6 @@ function ChatConversationInner() {
       }
       trackFeatureUsage('ai_translate');
     } catch {}
-
-    // If already translated, toggle visibility
-    if (translatedMessages[msg.id]?.text) {
-      setTranslatedMessages(prev => {
-        const copy = { ...prev };
-        delete copy[msg.id];
-        return copy;
-      });
-      return;
-    }
 
     // Target = user's current app locale so translation goes TO the language
     // they read. Hardcoded 'pt-BR' made translations unhelpful for EN/ES users.
@@ -26268,10 +26824,15 @@ function ChatConversationInner() {
     if (vanishMode) handleToggleVanishMode();
     try {
       const r = await api.chatSetDisappearing(conversationId, timer);
-      if (r.success) {
+      if (r?.success) {
         setDisappearingTimer(timer);
+      } else {
+        // [2026-10-18 wa-parity] antes: falha muda (ex.: membro comum em grupo "só admins") → nada acontecia.
+        safeAlert(t('common.error') || 'Erro', (r && (r.message || r.error)) || (t('chatConv.disappearingFailed') || 'Não foi possível alterar as mensagens temporárias.'));
       }
-    } catch {}
+    } catch (e) {
+      safeAlert(t('common.error') || 'Erro', (e && e.message) || (t('chatConv.disappearingFailed') || 'Não foi possível alterar as mensagens temporárias.'));
+    }
   };
 
 
@@ -33370,10 +33931,10 @@ function ChatConversationInner() {
                   // Long-press any reaction → open reactor list (fallback so
                   // you can see who reacted even on your own).
                   onPress={() => {
-                    if (meReacted) handleReact(msg.id, emoji);
-                    else setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) });
+                    if (meReacted) handleReact(msg.id, emoji, String(emoji).startsWith('sticker:') ? String(emoji).slice(8) : undefined);
+                    else setReactionDetail({ emoji, msgId: msg.id, reactors: _allReactorsOf(msg.reactions) });
                   }}
-                  onLongPress={() => setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) })}
+                  onLongPress={() => setReactionDetail({ emoji, msgId: msg.id, reactors: _allReactorsOf(msg.reactions) })}
                   delayLongPress={400}
                   // [2026-10-08 chat-beauty-bubbles] Chip sobreposto à borda da
                   // bolha com anel da cor do fundo (recorte limpo, sem sombra).
@@ -33408,7 +33969,7 @@ function ChatConversationInner() {
                   )}
 
                   {users.length > 1 && (
-                    <Text style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '600' }]}>{users.length}</Text>
+                    <ReactionCountBump count={users.length} style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '600' }]} />
                   )}
                 </TouchableOpacity>
                 </ReactionChipPop>
@@ -33421,8 +33982,7 @@ function ChatConversationInner() {
                         // reactor across all overflow emojis. Re-uses the
                         // existing reactionDetail modal but seeds it with
                         // the merged set so the user sees everyone.
-                        const allReactors = overflow.flatMap(([em, us]) => us.map(u => ({ email: u, name: emailToDisplayName(u), emoji: em })));
-                        setReactionDetail({ emoji: '+', reactors: allReactors });
+                        setReactionDetail({ emoji: 'all', msgId: msg.id, reactors: _allReactorsOf(msg.reactions) });
                       }}
                       style={[styles.reactionChip, { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF', borderColor: chatWallBg }]}
                       accessibilityLabel={_mt('chatConv.moreReactionsA11y', 'Ver mais {count} reações').replace('{count}', String(overflowCount))}
@@ -33944,7 +34504,7 @@ function ChatConversationInner() {
           for (const u of us) if (u && !users.includes(u)) users.push(u);
         }
         if (users.some(u => String(u).toLowerCase() === meLc)) A.handleReact(target.id, emoji);
-        else setReactionDetail({ emoji, reactors: users.map(u => ({ email: u, name: emailToDisplayName(u) })) });
+        else setReactionDetail({ emoji, msgId: target.id, reactors: _allReactorsOf(target.reactions) });
         return;
       }
       case 'link': {
@@ -36380,7 +36940,7 @@ function ChatConversationInner() {
           members === []), so the composer never hides during initial load. */}
       {composerBlocked ? (
         <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
-          <Text style={{ color: colors.textTertiary, fontSize: 14, textAlign: 'center' }}>{waImported ? t('waImport.readOnlyBanner') : t('chat.onlyAdmins')}</Text>
+          <Text style={{ color: colors.textTertiary, fontSize: 14, textAlign: 'center' }}>{waImported ? t('waImport.readOnlyBanner') : exMember ? (t('chatInfo.exMemberBanner') || 'Você não pode enviar mensagens para este grupo porque não é mais membro.') : t('chat.onlyAdmins')}</Text>
         </View>
       ) : null}
 
@@ -37513,6 +38073,13 @@ function ChatConversationInner() {
                 return;
               }
               if (state === 'locked') return;
+              // [2026-10-18 voz-pausa] composer api >= 3: pausado = para o "gravando…" do outro lado; continuar = volta.
+              if (state === 'paused') { try { _ncWs()?.sendStoppedTyping?.(conversationId); } catch {} return; }
+              if (state === 'resumed') {
+                if (blockRecordingDuringCall('voice')) { try { inputRef.current?.cancelVoice?.(); } catch {} return; }
+                try { _ncWs()?.sendTyping?.(conversationId, true); } catch {}
+                return;
+              }
               if (state === 'blocked') { blockRecordingDuringCall('voice'); return; }
               if (state === 'tapHint') {
                 // Toque simples (e VoiceOver/TalkBack) = gravação mãos-livres JS de antes.
@@ -38036,6 +38603,9 @@ function ChatConversationInner() {
         emoji={reactionDetail?.emoji}
         reactors={reactionDetail?.reactors || []}
         colors={colors}
+        t={t}
+        currentEmail={currentEmail}
+        onRemove={reactionDetail?.msgId != null ? (em) => { try { const _st = String(em || '').startsWith('sticker:'); handleReact(reactionDetail.msgId, em, _st ? String(em).slice(8) : undefined); } catch {} } : null}
       />)}</LazyMount>
 
       {/* Attachment Menu Modal */}
@@ -38333,6 +38903,17 @@ function ChatConversationInner() {
                     <IconReply size={20} color={colors.primary} />
                   </View>
                   <Text style={[ctxS.ctxIconLabel, { color: colors.primary }]}>{t('chatConv.reply') || 'Responder'}</Text>
+                </PressableScale>
+                {/* [2026-10-18 wa-parity] lápide também sai da conversa ("Apagar para mim"). */}
+                <PressableScale haptic={false}
+                  style={ctxS.ctxIconBtn}
+                  onPress={() => { const _m = selectedMsg; setSelectedMsg(null); if (_m) handleDelete(_m.id); }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: (colors.error || '#dc2626') + '22' }]}>
+                    <IconTrash size={20} color={colors.error || '#dc2626'} />
+                  </View>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.error || '#dc2626' }]}>{t('chatConv.deleteForMe') || 'Apagar para mim'}</Text>
                 </PressableScale>
               </View>
             ) : (
@@ -39821,7 +40402,7 @@ function ChatConversationInner() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
-          {!_npContact && (
+          {(!_npContact || _ciOn) && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
             <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -39830,6 +40411,10 @@ function ChatConversationInner() {
           </View>
           )}
           {/* [2026-10-15 native-profile] _npContact → cabeçalho nativo (avatar encolhe p/ a barra, puxar abre a galeria) */}
+          {/* [2026-10-18 chat-info-native] tela 100% nativa; folha JS abaixo = fallback */}
+          {_ciOn ? (
+            <NativeChatInfo {...buildContactChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} />
+          ) : (
           <ProfileScrollHost native={_npContact && showContactInfo ? buildContactNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
             {(() => {
               const peerEmail = getContactPeerEmail();
@@ -40106,6 +40691,7 @@ function ChatConversationInner() {
               );
             })()}
           </ProfileScrollHost>
+          )}
         </View>
         </View>
       </Modal>)}</LazyMount>
@@ -40586,7 +41172,7 @@ function ChatConversationInner() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
-          {!_npGroup && (
+          {(!_npGroup || _ciOn) && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.groupInfoTitle') || 'Dados do grupo'}</Text>
             <TouchableOpacity onPress={() => setShowGroupInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -40595,6 +41181,10 @@ function ChatConversationInner() {
           </View>
           )}
           {/* [2026-10-15 native-profile] _npGroup → cabeçalho nativo; hero/descrição JS abaixo só no fallback */}
+          {/* [2026-10-18 chat-info-native] tela 100% nativa; folha JS abaixo = fallback */}
+          {_ciOn ? (
+            <NativeChatInfo {...buildGroupChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} />
+          ) : (
           <ProfileScrollHost native={_npGroup && showGroupInfo ? buildGroupNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl }}>
             {/* ─── Hero header — large centered avatar + name + member count ─── */}
             {_npGroup ? (
@@ -40701,6 +41291,17 @@ function ChatConversationInner() {
                 </GroupCard>
               </>
             ) : null}
+
+            {/* [2026-10-18 chat-info-native] Descrição do grupo (tela de edição) */}
+            {(isGroupAdmin || membersEditInfo) && !exMember && (
+              <GroupCard colors={colors} isDark={isDark}>
+                <GroupRow colors={colors} Icon={IconEdit}
+                  title={t('chatInfo.editDescTitle') || 'Descrição do grupo'}
+                  subtitle={conversationDescription ? String(conversationDescription).slice(0, 80) : (t('chatInfo.addDescription') || 'Adicionar descrição do grupo')}
+                  right="chevron"
+                  onPress={() => setGroupEditor('description')} />
+              </GroupCard>
+            )}
 
             {/* Pending join requests — admin-only. Surfaces a single row
                 with the count; tap opens a modal listing each requester
@@ -41254,6 +41855,18 @@ function ChatConversationInner() {
                       }}
                     />
                     <GroupDivider colors={colors} />
+                    {/* [2026-10-18 chat-info-native] "Editar dados do grupo": só admins (padrão) / todos */}
+                    <GroupRow
+                      colors={colors}
+                      Icon={IconEdit}
+                      title={t('chatInfo.infoAdminsOnly') || 'Só admins editam os dados do grupo'}
+                      subtitle={t('chatInfo.infoAdminsOnlyHint') || 'Nome, foto e descrição'}
+                      right={<GroupToggle value={!membersEditInfo} isDark={isDark} />}
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: !membersEditInfo }}
+                      onPress={() => _ciToggleMembersEditInfo(!membersEditInfo)}
+                    />
+                    <GroupDivider colors={colors} />
                     {/* Hide member list — when ON, non-admins shouldn't be
                         able to see the member list. UI persists the flag
                         via chat_group_admin; the actual list-filter wiring
@@ -41453,6 +42066,16 @@ function ChatConversationInner() {
             </GroupCard>
             </View>
           </ProfileScrollHost>
+          )}
+          {/* [2026-10-18 chat-info-native] Nome/Descrição do grupo — Modal DENTRO da folha (iOS não apresenta irmão) */}
+          <GroupInfoEditor
+            visible={!!groupEditor}
+            mode={groupEditor === 'name' ? 'name' : 'description'}
+            initial={groupEditor === 'name' ? (conversationName || '') : (conversationDescription || '')}
+            onClose={() => setGroupEditor(null)}
+            onSave={(v) => _ciSaveGroupField(groupEditor === 'name' ? 'name' : 'description', v)}
+            t={t}
+          />
         </View>
         </View>
       </Modal>)}</LazyMount>

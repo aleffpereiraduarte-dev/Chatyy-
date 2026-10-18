@@ -2455,7 +2455,8 @@ export default function LiveViewerScreen() {
       if (cohostRoomRef.current || cohostJoiningRef.current) return;
       setStageInviteHost(m?.host_name || '');
       setStageSheet('invite');
-      try { require('react-native').Vibration.vibrate(60); } catch {}
+      // [2026-10-18 polish2] era Vibration.vibrate(60) = buzz cheio ~400 ms no iOS → aviso nativo.
+      try { require('../services/haptics').hapticEvent('warning'); } catch {}
     },
     onRemoved: () => { leaveCohost(); setJoinRequested(false); flashStageNotice(t('liveGuests.removedByHost')); },
     onMuted: (m) => {
@@ -3107,7 +3108,7 @@ export default function LiveViewerScreen() {
       lastCommentTapRef.current[msg.id] = 0;
       fireCommentHeart(msg.id);
       spawnHeart();
-      try { require('react-native').Vibration.vibrate([0, 12, 8, 18]); } catch {}
+      try { require('../services/haptics').hapticEvent('reaction'); /* [2026-10-18 polish2] era Vibration pattern */ } catch {}
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         try {
           wsRef.current.send(JSON.stringify({
@@ -3411,7 +3412,7 @@ export default function LiveViewerScreen() {
     const x = Number(ne.x) || SCREEN_W / 2;
     const y = Number(ne.y) || SCREEN_H / 2;
     const color = typeof ne.color === 'string' ? ne.color : HEART_COLORS[0];
-    if (ne.double) { try { require('react-native').Vibration.vibrate(10); } catch {} }
+    if (ne.double) { try { require('../services/haptics').hapticEvent('reaction'); /* [2026-10-18 polish2] era Vibration.vibrate(10) */ } catch {} }
     handleStageHeartSpam(x, y, color);
   }, [handleStageHeartSpam]);
   const _onNativeSwipe = useCallback((e) => {

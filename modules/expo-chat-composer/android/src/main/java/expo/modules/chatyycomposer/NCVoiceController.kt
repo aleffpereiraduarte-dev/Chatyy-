@@ -15,6 +15,11 @@ import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMuxer
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
@@ -35,6 +40,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.log10
@@ -42,6 +48,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 private const val VTAG = "ChatyyComposerVoice"
+/** 1 quadro AAC = 1024 amostras @ 24 kHz ≈ 42,667 ms (emenda dos trechos). */
+private const val AAC_FRAME_US = 42_667L
 
 /**
  * [2026-10-14 native-composer] Gravação de voz dentro do composer (Android).
@@ -56,12 +64,48 @@ internal class NCWaveformView(ctx: Context) : View(ctx) {
   private val rect = RectF()
   private val barW = ncDp(ctx, 2.5f).toFloat()
   private val barGap = ncDp(ctx, 2f).toFloat()
+  // [2026-10-18 voz-pausa] Modo estático (pausado): onda inteira reamostrada na
+  // largura, esquerda → direita; trecho já ouvido na prévia em `playedPaint`.
+  private var staticSrc: List<Float>? = null
+  private val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  var progress = 0f
+    set(v) {
+      field = v
+      invalidate()
+    }
 
   fun setColor(c: Int) { paint.color = c; invalidate() }
 
-  fun reset() { levels.clear(); invalidate() }
+  fun setPlayedColor(c: Int) { playedPaint.color = c; invalidate() }
+
+  fun reset() {
+    staticSrc = null
+    progress = 0f
+    levels.clear()
+    invalidate()
+  }
+
+  fun setStatic(src: List<Float>) {
+    staticSrc = ArrayList(src)
+    progress = 0f
+    refit()
+  }
+
+  private fun refit() {
+    val src = staticSrc ?: return
+    val cap = max(8, (width / (barW + barGap)).toInt())
+    levels.clear()
+    levels.addAll(NCVoiceController.resample(src, cap))
+    invalidate()
+  }
+
+  override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+    super.onSizeChanged(w, h, oldw, oldh)
+    if (staticSrc != null) refit()
+  }
 
   fun push(level: Float) {
+    if (staticSrc != null) return
     levels.add(level)
     val cap = max(8, (width / (barW + barGap)).toInt() + 1)
     while (levels.size > cap) levels.removeAt(0)
@@ -72,8 +116,21 @@ internal class NCWaveformView(ctx: Context) : View(ctx) {
     super.onDraw(canvas)
     if (levels.isEmpty()) return
     val h = height.toFloat()
-    var x = width - barW
     val minH = ncDp(context, 3f).toFloat()
+    if (staticSrc != null) {
+      val n = levels.size
+      var sx = 0f
+      for (i in 0 until n) {
+        if (sx + barW > width) break
+        val played = (i + 0.5f) / n <= progress
+        val bh = max(minH, levels[i] * h)
+        rect.set(sx, (h - bh) / 2f, sx + barW, (h + bh) / 2f)
+        canvas.drawRoundRect(rect, barW / 2f, barW / 2f, if (played) playedPaint else paint)
+        sx += barW + barGap
+      }
+      return
+    }
+    var x = width - barW
     for (i in levels.indices.reversed()) {
       if (x < 0) break
       val bh = max(minH, levels[i] * h)
@@ -92,8 +149,13 @@ internal class NCVoicePanel(ctx: Context) : ViewGroup(ctx) {
   val slide = TextView(ctx)
   val wave = NCWaveformView(ctx)
   val trash = NCIconButton(ctx, R.drawable.nc_ic_trash, 22f)
+  // [2026-10-18 voz-pausa] travado: pausar ⇄ continuar (mic) à direita; pausado:
+  // play/pause da prévia ao lado da lixeira.
+  val pauseBtn = NCIconButton(ctx, R.drawable.nc_ic_pause, 22f)
+  val playBtn = NCIconButton(ctx, R.drawable.nc_ic_play, 22f)
   private val dotBg = GradientDrawable().apply { shape = GradientDrawable.OVAL }
   var locked = false
+  var paused = false
   var dx = 0f
   /** [2026-10-16 motion-composer] cutucada da seta (px, ≤ 0) somada ao arrasto. */
   var nudge = 0f
@@ -117,15 +179,32 @@ internal class NCVoicePanel(ctx: Context) : ViewGroup(ctx) {
     addView(wave)
     trash.visibility = View.GONE
     addView(trash)
+    pauseBtn.visibility = View.GONE
+    addView(pauseBtn)
+    playBtn.visibility = View.GONE
+    addView(playBtn)
   }
 
-  fun colors(bg: Int, text: Int, secondary: Int, rec: Int) {
+  private var textColor = 0xFF111111.toInt()
+  private var secondaryColor = 0xFF6E6E73.toInt()
+
+  fun colors(bg: Int, text: Int, secondary: Int, rec: Int, accent: Int) {
     setBackgroundColor(bg)
+    textColor = text
+    secondaryColor = secondary
     time.setTextColor(text)
     slide.setTextColor(secondary)
-    wave.setColor(text)
+    wave.setColor(if (paused) secondary else text)
+    wave.setPlayedColor(accent)
     dotBg.setColor(rec)
     trash.tint(rec)
+    pauseBtn.tint(rec)
+    playBtn.tint(text)
+  }
+
+  /** Cor da onda: viva = texto; pausada = secundária (o ouvido vai em accent). */
+  fun refreshWaveColor() {
+    wave.setColor(if (paused) secondaryColor else textColor)
   }
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -136,26 +215,46 @@ internal class NCVoicePanel(ctx: Context) : ViewGroup(ctx) {
     dot.measure(ex(ncDp(context, 10f)), ex(ncDp(context, 10f)))
     time.measure(ex(ncDp(context, 60f)), ex(h))
     slide.measure(ex(max(0, w - ncDp(context, 96f))), ex(h))
-    wave.measure(ex(max(0, w - ncDp(context, 132f))), ex(max(0, h - ncDp(context, 16f))))
+    val waveX = ncDp(context, if (paused) 138f else 128f)
+    wave.measure(ex(max(0, w - waveX - ncDp(context, 48f))), ex(max(0, h - ncDp(context, 16f))))
     trash.measure(ex(ncDp(context, 44f)), ex(h))
+    pauseBtn.measure(ex(ncDp(context, 44f)), ex(h))
+    playBtn.measure(ex(ncDp(context, 40f)), ex(h))
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
     val h = b - t
     val d10 = ncDp(context, 10f)
     if (locked) {
+      val w = r - l
       trash.visibility = View.VISIBLE
       trash.layout(0, 0, ncDp(context, 44f), h)
-      val dX = ncDp(context, 48f)
-      dot.layout(dX, (h - d10) / 2, dX + d10, (h + d10) / 2)
-      val tX = ncDp(context, 64f)
-      time.layout(tX, 0, tX + time.measuredWidth, h)
+      pauseBtn.visibility = View.VISIBLE
+      pauseBtn.layout(max(0, w - ncDp(context, 44f)), 0, w, h)
+      if (paused) {
+        dot.visibility = View.GONE
+        playBtn.visibility = View.VISIBLE
+        val pX = ncDp(context, 44f)
+        playBtn.layout(pX, 0, pX + playBtn.measuredWidth, h)
+        val tX = ncDp(context, 86f)
+        time.layout(tX, 0, tX + time.measuredWidth, h)
+      } else {
+        dot.visibility = View.VISIBLE
+        playBtn.visibility = View.GONE
+        val dX = ncDp(context, 48f)
+        dot.layout(dX, (h - d10) / 2, dX + d10, (h + d10) / 2)
+        val tX = ncDp(context, 64f)
+        time.layout(tX, 0, tX + time.measuredWidth, h)
+      }
       wave.visibility = View.VISIBLE
-      val wX = ncDp(context, 128f)
+      val wX = ncDp(context, if (paused) 138f else 128f)
       wave.layout(wX, ncDp(context, 8f), wX + wave.measuredWidth, ncDp(context, 8f) + wave.measuredHeight)
       slide.visibility = View.GONE
     } else {
       trash.visibility = View.GONE
+      pauseBtn.visibility = View.GONE
+      playBtn.visibility = View.GONE
+      dot.visibility = View.VISIBLE
       val dX = ncDp(context, 14f)
       dot.layout(dX, (h - d10) / 2, dX + d10, (h + d10) / 2)
       val tX = ncDp(context, 32f)
@@ -273,6 +372,17 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     private set
   var isLocked = false
     private set
+  // [2026-10-18 voz-pausa] WhatsApp: travado → pausar (prévia ouvível) →
+  // continuar → enviar. Cada trecho = um m4a próprio (só fica tocável depois do
+  // stop()); no envio com >1 trecho, MediaMuxer junta num m4a só.
+  var isPaused = false
+    private set
+  private val segments = ArrayList<File>()
+  private val segDurations = ArrayList<Long>()
+  private var accumulatedMs = 0L
+  private var lostMs = 0L
+  private var previewPlayer: MediaPlayer? = null
+  private var previewIndex = 0
 
   private var recorder: MediaRecorder? = null
   private var file: File? = null
@@ -303,6 +413,8 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     panel.visibility = View.GONE
     panel.alpha = 0f
     panel.trash.setOnClickListener { cancel("trash") }
+    panel.pauseBtn.setOnClickListener { if (isPaused) resume() else pause() }
+    panel.playBtn.setOnClickListener { playTapped() }
     applyLabels()
   }
 
@@ -315,10 +427,32 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     panel.slide.text = "‹  " + (labels["slideToCancel"] ?: "Slide to cancel")
     panel.trash.contentDescription = labels["deleteRecording"] ?: labels["cancelRecording"]
     panel.contentDescription = labels["recording"]
+    panel.pauseBtn.contentDescription = if (isPaused) {
+      labels["resumeRecording"] ?: "Continuar gravação"
+    } else {
+      labels["pauseRecording"] ?: "Pausar gravação"
+    }
+    panel.playBtn.contentDescription = if (previewPlaying()) {
+      labels["pausePreview"] ?: "Pausar"
+    } else {
+      labels["playPreview"] ?: "Ouvir gravação"
+    }
+  }
+
+  private fun previewPlaying(): Boolean {
+    val p = previewPlayer ?: return false
+    return try { p.isPlaying } catch (_: Throwable) { false }
+  }
+
+  /** [voz-pausa] Ícones do painel travado conforme o estado. */
+  private fun refreshPauseIcons() {
+    panel.pauseBtn.setImageResource(if (isPaused) R.drawable.nc_ic_mic else R.drawable.nc_ic_pause)
+    panel.playBtn.setImageResource(if (previewPlaying()) R.drawable.nc_ic_pause else R.drawable.nc_ic_play)
+    applyLabels()
   }
 
   fun applyTheme(t: NCResolved) {
-    panel.colors(t.surface, t.text, t.secondaryText, t.recording)
+    panel.colors(t.surface, t.text, t.secondaryText, t.recording, t.accent)
   }
 
   private val startRunnable = Runnable { beginHold() }
@@ -451,8 +585,22 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
 
   // ── Gravação ──
 
-  @Suppress("DEPRECATION")
   private fun startRecorder() {
+    segments.clear()
+    segDurations.clear()
+    accumulatedMs = 0L
+    lostMs = 0L
+    isPaused = false
+    samples.clear()
+    lastLevel = 0f
+    smoothLevel = 0f
+    smoothOuter = 0f
+    startSegment()
+  }
+
+  /** [2026-10-18 voz-pausa] Trecho novo: início ou "continuar" depois de pausar. */
+  @Suppress("DEPRECATION")
+  private fun startSegment() {
     val out = File(ctx.cacheDir, "voice_${UUID.randomUUID()}.m4a")
     val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(ctx) else MediaRecorder()
     rec.setAudioSource(MediaRecorder.AudioSource.MIC)
@@ -473,15 +621,22 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     }
     recorder = rec
     file = out
+    abandonFocus()
     requestFocus()
     rec.prepare()
     rec.start()
     startedAt = SystemClock.elapsedRealtime()
-    samples.clear()
-    lastLevel = 0f
-    smoothLevel = 0f
-    smoothOuter = 0f
     try { rec.maxAmplitude } catch (_: Throwable) {} // 1ª leitura sempre 0
+  }
+
+  /** Ligação/outro app pegou o áudio: segurando = cancela; travado = PAUSA (WhatsApp). */
+  private fun onInterrupted() {
+    if (!isActive) return
+    if (isLocked) {
+      if (isPaused) stopPreview() else pause()
+    } else {
+      cancel("interrupted")
+    }
   }
 
   private fun tick() {
@@ -491,9 +646,8 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     lastLevel = level
     samples.add(level)
     if (isLocked) panel.wave.push(level)
-    val elapsed = SystemClock.elapsedRealtime() - startedAt
-    val secs = (elapsed / 1000).toInt()
-    panel.time.text = String.format("%d:%02d", secs / 60, secs % 60)
+    val elapsed = accumulatedMs + (SystemClock.elapsedRealtime() - startedAt)
+    setTime(elapsed)
     overlay?.let {
       if (it.smooth) {
         smoothLevel += (level - smoothLevel) * (if (level > smoothLevel) 0.55f else 0.18f)
@@ -506,6 +660,11 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
       }
     }
     if (elapsed >= maxDurationMs) finish(true)
+  }
+
+  private fun setTime(ms: Long) {
+    val secs = (max(0L, ms) / 1000).toInt()
+    panel.time.text = String.format("%d:%02d", secs / 60, secs % 60)
   }
 
   private fun releaseRecorderQuietly(deleteFile: Boolean): Pair<File?, String?> {
@@ -524,25 +683,74 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     return Pair(f, null)
   }
 
+  /** Fecha o trecho atual (arquivo tocável) e soma a duração dele. */
+  private fun stopSegment() {
+    handler.removeCallbacks(tickRunnable)
+    if (recorder == null) return
+    val d = SystemClock.elapsedRealtime() - startedAt
+    val (f, err) = releaseRecorderQuietly(deleteFile = false)
+    if (f != null && err == null) {
+      segments.add(f)
+      segDurations.add(d)
+      accumulatedMs += d
+    } else {
+      lostMs += d
+    }
+  }
+
+  private fun deleteFiles(list: List<File>) {
+    for (f in list) {
+      try { f.delete() } catch (_: Throwable) {}
+    }
+  }
+
   fun finish(send: Boolean) {
     if (!isActive) return
-    handler.removeCallbacks(tickRunnable)
-    val durationMs = SystemClock.elapsedRealtime() - startedAt
-    val (f, err) = releaseRecorderQuietly(deleteFile = !send)
+    stopPreview()
+    stopSegment()
     abandonFocus()
+    val segs = ArrayList(segments)
+    segments.clear()
+    segDurations.clear()
+    val durationMs = accumulatedMs
+    val wallMs = accumulatedMs + lostMs
+    accumulatedMs = 0L
+    lostMs = 0L
     val snapshot = ArrayList(samples)
     teardownUI()
-    if (!send) return
-    if (err != null || f == null) {
-      host.emitVoiceState("error", if (durationMs < 1000) "tooShort" else "empty")
+    if (!send) {
+      deleteFiles(segs)
+      return
+    }
+    if (segs.isEmpty()) {
+      host.emitVoiceState("error", if (wallMs < 1000) "tooShort" else "empty")
       return
     }
     if (durationMs < 1000) {
-      try { f.delete() } catch (_: Throwable) {}
+      deleteFiles(segs)
       reject()
       host.emitVoiceState("tooShort")
       return
     }
+    if (segs.size == 1) {
+      deliver(segs[0], durationMs, snapshot)
+      return
+    }
+    // [voz-pausa] >1 trecho → um m4a só (thread própria; entrega na main).
+    Thread {
+      val merged = mergeSegments(segs)
+      handler.post {
+        deleteFiles(segs)
+        if (merged == null) {
+          host.emitVoiceState("error", "merge")
+        } else {
+          deliver(merged, durationMs, snapshot)
+        }
+      }
+    }.start()
+  }
+
+  private fun deliver(f: File, durationMs: Long, snapshot: List<Float>) {
     val size = f.length()
     if (size < 1500) {
       try { f.delete() } catch (_: Throwable) {}
@@ -567,6 +775,73 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     host.emitVoiceState("sent")
   }
 
+  /** Concatena os trechos AAC (mesmo perfil) num MP4 só, sem reencodar. */
+  private fun mergeSegments(segs: List<File>): File? {
+    val out = File(ctx.cacheDir, "voice_${UUID.randomUUID()}.m4a")
+    var muxer: MediaMuxer? = null
+    try {
+      val mx = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      muxer = mx
+      var track = -1
+      var offsetUs = 0L
+      val buf = ByteBuffer.allocate(256 * 1024)
+      val info = MediaCodec.BufferInfo()
+      for (f in segs) {
+        val ex = MediaExtractor()
+        try {
+          ex.setDataSource(f.absolutePath)
+          var ti = -1
+          for (i in 0 until ex.trackCount) {
+            val mime = ex.getTrackFormat(i).getString(MediaFormat.KEY_MIME) ?: ""
+            if (mime.startsWith("audio/")) {
+              ti = i
+              break
+            }
+          }
+          if (ti < 0) continue
+          ex.selectTrack(ti)
+          if (track < 0) {
+            track = mx.addTrack(ex.getTrackFormat(ti))
+            mx.start()
+          }
+          var lastUs = -1L
+          while (true) {
+            buf.clear()
+            val n = ex.readSampleData(buf, 0)
+            if (n < 0) break
+            val t = ex.sampleTime
+            lastUs = t
+            info.offset = 0
+            info.size = n
+            info.presentationTimeUs = offsetUs + max(0L, t)
+            info.flags = if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+            mx.writeSampleData(track, buf, info)
+            ex.advance()
+          }
+          // próximo trecho começa 1 quadro AAC depois do último (1024 amostras @ 24 kHz)
+          if (lastUs >= 0) offsetUs += lastUs + AAC_FRAME_US
+        } finally {
+          try { ex.release() } catch (_: Throwable) {}
+        }
+      }
+      if (track < 0) {
+        try { mx.release() } catch (_: Throwable) {}
+        muxer = null
+        try { out.delete() } catch (_: Throwable) {}
+        return null
+      }
+      mx.stop()
+      mx.release()
+      muxer = null
+      return out
+    } catch (t: Throwable) {
+      Log.w(VTAG, "merge: ${t.message}")
+      try { muxer?.release() } catch (_: Throwable) {}
+      try { out.delete() } catch (_: Throwable) {}
+      return null
+    }
+  }
+
   fun finishLocked() {
     if (isActive && isLocked) finish(true)
   }
@@ -577,12 +852,153 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
       pendingStart = false
       return
     }
+    stopPreview()
     handler.removeCallbacks(tickRunnable)
     releaseRecorderQuietly(deleteFile = true)
+    deleteFiles(ArrayList(segments))
+    segments.clear()
+    segDurations.clear()
+    accumulatedMs = 0L
+    lostMs = 0L
     abandonFocus()
     teardownUI()
     if (!silent && reason != "unmount" && reason != "js") reject()
     if (reason != "unmount") host.emitVoiceState("cancelled", reason)
+  }
+
+  // ── Pausa / prévia (travado) — [2026-10-18 voz-pausa] ──
+
+  private fun pause() {
+    if (!isActive || !isLocked || isPaused) return
+    stopSegment()
+    isPaused = true
+    panel.paused = true
+    blink?.cancel()
+    blink = null
+    panel.dot.alpha = 1f
+    panel.refreshWaveColor()
+    panel.wave.setStatic(samples)
+    setTime(accumulatedMs)
+    refreshPauseIcons()
+    panel.requestLayout()
+    host.actionButton.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    host.emitVoiceState("paused")
+  }
+
+  private fun resume() {
+    if (!isActive || !isLocked || !isPaused) return
+    stopPreview()
+    try {
+      startSegment()
+    } catch (t: Throwable) {
+      // Continua pausado: o que já foi gravado segue enviável.
+      Log.w(VTAG, "resume: ${t.message}")
+      releaseRecorderQuietly(deleteFile = true)
+      host.emitVoiceState("error", "start")
+      return
+    }
+    isPaused = false
+    panel.paused = false
+    panel.wave.reset()
+    panel.refreshWaveColor()
+    val from = max(0, samples.size - 120)
+    for (i in from until samples.size) panel.wave.push(samples[i])
+    startBlink()
+    refreshPauseIcons()
+    panel.requestLayout()
+    handler.removeCallbacks(tickRunnable)
+    handler.post(tickRunnable)
+    host.actionButton.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    host.emitVoiceState("resumed")
+  }
+
+  private val previewTick = object : Runnable {
+    override fun run() {
+      val p = previewPlayer ?: return
+      var played = 0L
+      val upto = min(previewIndex, segDurations.size)
+      for (j in 0 until upto) played += segDurations[j]
+      played += try { p.currentPosition.toLong() } catch (_: Throwable) { 0L }
+      val total = max(1L, accumulatedMs)
+      panel.wave.progress = (played.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+      setTime(played)
+      handler.postDelayed(this, 33)
+    }
+  }
+
+  private fun playTapped() {
+    if (!isActive || !isPaused) return
+    val p = previewPlayer
+    if (p != null) {
+      try {
+        if (p.isPlaying) {
+          p.pause()
+          handler.removeCallbacks(previewTick)
+        } else {
+          p.start()
+          handler.removeCallbacks(previewTick)
+          handler.post(previewTick)
+        }
+      } catch (t: Throwable) {
+        stopPreview()
+      }
+      refreshPauseIcons()
+      return
+    }
+    playSegment(0)
+  }
+
+  private fun playSegment(i: Int) {
+    if (i >= segments.size) {
+      stopPreview()
+      return
+    }
+    releasePreviewPlayer()
+    try {
+      val mp = MediaPlayer()
+      mp.setAudioAttributes(
+        AudioAttributes.Builder()
+          .setUsage(AudioAttributes.USAGE_MEDIA)
+          .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+          .build()
+      )
+      mp.setDataSource(segments[i].absolutePath)
+      mp.setOnCompletionListener { done ->
+        if (done === previewPlayer) {
+          val next = previewIndex + 1
+          if (next < segments.size) playSegment(next) else stopPreview()
+        }
+      }
+      mp.prepare()
+      previewPlayer = mp
+      previewIndex = i
+      mp.start()
+      handler.removeCallbacks(previewTick)
+      handler.post(previewTick)
+      refreshPauseIcons()
+    } catch (t: Throwable) {
+      Log.w(VTAG, "preview: ${t.message}")
+      stopPreview()
+    }
+  }
+
+  private fun releasePreviewPlayer() {
+    val p = previewPlayer ?: return
+    previewPlayer = null
+    try { p.setOnCompletionListener(null) } catch (_: Throwable) {}
+    try { p.stop() } catch (_: Throwable) {}
+    try { p.release() } catch (_: Throwable) {}
+  }
+
+  private fun stopPreview() {
+    handler.removeCallbacks(previewTick)
+    releasePreviewPlayer()
+    previewIndex = 0
+    if (isPaused) {
+      panel.wave.progress = 0f
+      setTime(accumulatedMs)
+    }
+    refreshPauseIcons()
   }
 
   private fun lock() {
@@ -594,6 +1010,7 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     panel.wave.reset()
     val from = max(0, samples.size - 120)
     for (i in from until samples.size) panel.wave.push(samples[i])
+    refreshPauseIcons()
     panel.requestLayout()
     host.voiceDidLock()
     host.emitVoiceState("locked")
@@ -606,7 +1023,7 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
       val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
       val l = AudioManager.OnAudioFocusChangeListener { change ->
         if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-          handler.post { if (isActive) cancel("interrupted") }
+          handler.post { onInterrupted() }
         }
       }
       focusListener = l
@@ -698,13 +1115,7 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     panel.time.text = "0:00"
     panel.translationX = ncDp(ctx, 24f).toFloat()
     panel.animate().alpha(1f).translationX(0f).setDuration(200).setInterpolator(DecelerateInterpolator()).start()
-    blink?.cancel()
-    blink = ObjectAnimator.ofFloat(panel.dot, View.ALPHA, 1f, 0.15f).apply {
-      duration = 550
-      repeatMode = ValueAnimator.REVERSE
-      repeatCount = ValueAnimator.INFINITE
-      start()
-    }
+    startBlink()
     // [2026-10-16 motion-composer] seta "deslize p/ cancelar" cutuca p/ a esquerda.
     nudgeAnim?.cancel()
     nudgeAnim = null
@@ -727,11 +1138,26 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     panel.requestLayout()
   }
 
+  /** Ponto vermelho piscando (gravando). */
+  private fun startBlink() {
+    blink?.cancel()
+    blink = ObjectAnimator.ofFloat(panel.dot, View.ALPHA, 1f, 0.15f).apply {
+      duration = 550
+      repeatMode = ValueAnimator.REVERSE
+      repeatCount = ValueAnimator.INFINITE
+      start()
+    }
+  }
+
   private fun teardownUI() {
     val was = isActive
     isActive = false
     isLocked = false
+    isPaused = false
     panel.locked = false
+    panel.paused = false
+    panel.refreshWaveColor()
+    refreshPauseIcons()
     panel.dx = 0f
     removeOverlay(animated = true)
     blink?.cancel()

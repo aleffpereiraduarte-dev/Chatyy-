@@ -367,6 +367,7 @@ function SettingsScreenInner() {
         onWallet={() => safeNav('/wallet')}
         onAccounts={openAccountSwitcher}
         onDevices={() => safeNav('/linked-devices')}
+        onStarred={() => safeNav('/starred-messages')}
       />
     </>
   );

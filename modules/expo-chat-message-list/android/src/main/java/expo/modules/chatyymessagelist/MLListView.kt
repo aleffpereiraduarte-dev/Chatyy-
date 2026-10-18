@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -1047,6 +1048,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     private var swiping = false
     private var dir = 1f
     private var armed = false
+    // [2026-10-18 swipe-wa] velocidade p/ o "peteleco" (soltar rápido antes do limiar responde).
+    private var vt: VelocityTracker? = null
     private val threshold = dp(64f)
     private val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
       override fun onDown(e: MotionEvent): Boolean = true
@@ -1077,6 +1080,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
             if (dx < 0 && (!r.own || r.deleted)) return false
             dir = if (dx > 0) 1f else -1f
             swiping = true
+            vt?.recycle()
+            vt = VelocityTracker.obtain().also { it.addMovement(e) }
             rv.parent?.requestDisallowInterceptTouchEvent(true)
             val cancel = MotionEvent.obtain(e).apply { action = MotionEvent.ACTION_CANCEL }
             detector.onTouchEvent(cancel)
@@ -1090,6 +1095,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
 
     override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {
       val c = cell ?: return
+      vt?.addMovement(e)
       when (e.actionMasked) {
         MotionEvent.ACTION_MOVE -> {
           val raw = max(0f, (e.x - downX) * dir)
@@ -1106,7 +1112,19 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
         }
         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
           c.pressedAction = -1
-          val fire = e.actionMasked == MotionEvent.ACTION_UP && armed
+          var flingDp = 0f
+          vt?.let { t ->
+            t.computeCurrentVelocity(1000)
+            flingDp = t.xVelocity * dir / resources.displayMetrics.density
+            t.recycle()
+          }
+          vt = null
+          val rawUp = max(0f, (e.x - downX) * dir)
+          val flung = e.actionMasked == MotionEvent.ACTION_UP && !armed && flingDp > 900f && rawUp >= threshold * 0.55f
+          if (flung) {
+            try { c.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 34) 23 else HapticFeedbackConstants.KEYBOARD_TAP) } catch (_: Throwable) {}
+          }
+          val fire = (e.actionMasked == MotionEvent.ACTION_UP && armed) || flung
           val from = c.swipeX
           val a = ValueAnimator.ofFloat(from, 0f)
           a.duration = 340
