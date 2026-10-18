@@ -27,7 +27,7 @@ import { IconCheck, IconCloud, IconZap, IconTrash, IconCreditCard } from '../Ico
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import StorageMeter, { StorageNudgeCard, meterFromPlan } from '../storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { normalizePlanState, planDisplayName, formatQuotaBytes } from '../../services/planState';
-import { openStripePortal, isStripeCardAvailable } from '../../services/stripeCheckout';
+import { openStripePortal, isStripePortalAvailable } from '../../services/stripeCheckout'; // [2026-10-18 stripe-off] compra nova só nas lojas; portal p/ assinantes Stripe existentes
 import { MONETIZATION_ENABLED } from '../../constants/featureFlags';
 
 // ─── Storage helpers (per-account, same contract as the old sheet) ────────
@@ -421,7 +421,7 @@ export function ChatyyOnePanel() {
   const hasUsage = Number.isFinite(used) && limit > 0;
   const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
   const isIOS = Platform.OS === 'ios';
-  const stripeOk = isStripeCardAvailable();
+  const stripeOk = isStripePortalAvailable();
   const gbTxt = formatQuotaBytes(limit);
   const breakdown = usage?.breakdown && typeof usage.breakdown === 'object' ? usage.breakdown : null;
   const fmtDate = (iso) => {
@@ -511,6 +511,15 @@ export function ChatyyOnePanel() {
               title={t('storage.manage') || 'Gerenciar assinatura'}
               onPress={() => { Linking.openURL('https://apps.apple.com/account/subscriptions').catch(() => {}); }}
               testID="one-manage-apple"
+            />
+          ) : null}
+          {Platform.OS === 'android' && stripeSub === false ? (
+            // [2026-10-18 stripe-off] assinatura pelo Google Play = gerenciada na conta Google.
+            <SettingsRow
+              icon={IconCreditCard}
+              title={t('storeOnly.managePlay')}
+              onPress={() => { Linking.openURL('https://play.google.com/store/account/subscriptions?package=com.onemundo.mail').catch(() => {}); }}
+              testID="one-manage-play"
             />
           ) : null}
         </SettingsGroup>

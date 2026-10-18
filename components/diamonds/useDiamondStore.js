@@ -41,6 +41,10 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
   const [webPack, setWebPack] = useState(null);
 
   const minor = isMinorAccount();
+  // [2026-10-18 stripe-off] web: sem checkout Stripe (compra só pelo app). Kill switch globalThis.__chatyy_stripe_checkout.
+  let _stripeOn = false;
+  try { _stripeOn = globalThis.__chatyy_stripe_checkout === true; } catch {}
+  const webStoreOnly = isWeb && !_stripeOn;
   const purchaseOff = wallet.loaded && (!wallet.enabled || !wallet.purchaseEnabled);
 
   useEffect(() => { if (typeof wallet.diamonds === 'number') onBalanceChange?.(wallet.diamonds); }, [wallet.diamonds, onBalanceChange]);
@@ -85,10 +89,10 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
   const packs = useMemo(() => (isWeb ? (webPacks || []) : DIAMOND_PACKS), [isWeb, webPacks]);
 
   const available = useCallback((p) => {
-    if (isWeb) return !!stripeKey;
+    if (isWeb) return !webStoreOnly && !!stripeKey;
     if (!DIAMONDS_IAP_ENABLED || iapState !== 'ready') return false;
     return isDiamondSkuAvailable(p.sku);
-  }, [isWeb, stripeKey, iapState]);
+  }, [isWeb, webStoreOnly, stripeKey, iapState]);
 
   let blockText = '';
   if (minor) blockText = tr(t, 'diamondShop.minorBlocked', 'Compras não estão disponíveis para contas supervisionadas.');
@@ -101,7 +105,7 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
   const onBuy = useCallback(async (pack) => {
     if (pendingSku || minor || purchaseOff) return;
     setBanner(null);
-    if (isWeb) { setWebPack(pack); return; }
+    if (isWeb) { if (!webStoreOnly) setWebPack(pack); return; }
     setPendingSku(pack.sku);
     try {
       const r = await purchaseDiamonds(pack.sku);
@@ -130,7 +134,7 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
     } finally {
       setPendingSku(null);
     }
-  }, [pendingSku, minor, purchaseOff, isWeb, t, language]);
+  }, [pendingSku, minor, purchaseOff, isWeb, webStoreOnly, t, language]);
 
   const onRestore = useCallback(async () => {
     if (restoring) return;
@@ -168,7 +172,7 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
 
   const allSoon = !isWeb && packs.length > 0 && packs.every((p) => !available(p));
 
-  const checkout = webPack ? (
+  const checkout = (webPack && !webStoreOnly) ? (
     <WebDiamondCheckout
       pack={webPack}
       publishableKey={stripeKey}
@@ -181,5 +185,6 @@ export default function useDiamondStore({ t, language, onBalanceChange } = {}) {
     wallet, isWeb, packs, webPacks, iapState, pendingSku, banner, setBanner, restoring,
     available, priceLabel, isSoon, canBuy, onBuy, onRestore, blockText, allSoon, checkout, refValue,
     restoreAvailable: !isWeb && DIAMONDS_IAP_ENABLED,
+    webStoreOnly,
   };
 }

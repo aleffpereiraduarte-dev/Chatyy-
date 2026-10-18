@@ -95,6 +95,8 @@ export function normalizePlanState(info, usage) {
     expiryNotice: planExpiryNotice(info),
     storageTier: usage?.tier || null,
     storageAddon: !!usage?.storage_addon,
+    // [2026-10-18 stripe-off] assinante Stripe existente → mostra "Gerenciar assinatura" (portal)
+    hasStripeBilling: !!(info?.has_stripe_subscription || (info?.has_stripe_customer && usage?.storage_addon)),
     activeUntil: Number(usage?.active_until) || 0,
     graceActive: !!usage?.grace_active,
     breakdown: usage?.breakdown || null,

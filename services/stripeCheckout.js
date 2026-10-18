@@ -15,8 +15,21 @@ import * as WebBrowser from 'expo-web-browser';
 import { apiCall, planInfo } from './api';
 import { STRIPE_ENABLED, STRIPE_STORAGE_CHECKOUT } from '../constants/featureFlags';
 
+// [2026-10-18 stripe-off] Founder: compra NOVA só nas lojas (App Store / Google Play).
+// Kill switch globalThis.__chatyy_stripe_checkout (default OFF = checkout Stripe some).
+// O servidor também recusa (stripe_disabled) sem STRIPE_CHECKOUT_ENABLED=1.
+export function isStripeCheckoutEnabled() {
+  try { return globalThis.__chatyy_stripe_checkout === true; } catch { return false; }
+}
+
+// Pode COMPRAR com cartão (Stripe)? Só com o kill switch ligado e fora do iOS.
 export function isStripeCardAvailable() {
-  return STRIPE_ENABLED && Platform.OS !== 'ios';
+  return STRIPE_ENABLED && Platform.OS !== 'ios' && isStripeCheckoutEnabled();
+}
+
+// Assinantes Stripe existentes continuam podendo gerenciar/cancelar (portal), fora do iOS.
+export function isStripePortalAvailable() {
+  return Platform.OS !== 'ios';
 }
 
 export function isStripeStorageCheckoutAvailable() {
@@ -65,6 +78,8 @@ export async function startStripeCheckout(tierId, period = 'monthly') {
   }
   const url = r?.data?.url;
   if (!r?.success || typeof url !== 'string' || !/^https:\/\//.test(url)) {
+    // [2026-10-18 stripe-off] servidor recusa compra nova por Stripe → UI mostra "Assine pelo app"
+    if (r?.data?.error_code === 'stripe_disabled' || r?.message === 'stripe_disabled') return { success: false, message: 'stripe_disabled' };
     return { success: false, message: r?.message || 'checkout_failed' };
   }
   // [2026-10-16 storage-billing] Web: popup aberto depois de um await é bloqueado pelo
@@ -77,7 +92,7 @@ export async function startStripeCheckout(tierId, period = 'monthly') {
 
 // Portal do Stripe: trocar/remover cartao, cancelar assinatura.
 export async function openStripePortal() {
-  if (!isStripeCardAvailable()) return { success: false, message: 'stripe_unavailable' };
+  if (!isStripePortalAvailable()) return { success: false, message: 'stripe_unavailable' };
   let r;
   try {
     r = await apiCall('stripe_portal', {}, 'POST');

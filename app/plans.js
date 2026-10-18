@@ -15,6 +15,8 @@ import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import * as IAP from '../services/iap';
+import { isStripeCardAvailable, isStripePortalAvailable, openStripePortal } from '../services/stripeCheckout'; // [2026-10-18 stripe-off]
+import SubscribeInAppCard from '../components/SubscribeInAppCard';
 import AvatarCircle from '../components/AvatarCircle';
 import { openInApp } from '../utils/inAppBrowser'; // [2026-10-07 app-feel-webview]
 // [2026-10-09 plans-consistency] plano/cota/preços vêm do backend (plan_info.catalog).
@@ -600,6 +602,22 @@ export default function PlansScreen() {
   const [iapRestoring, setIapRestoring] = useState(false);
   const [hasAppleSub, setHasAppleSub] = useState(false);
   const isIOS = Platform.OS === 'ios';
+  // [2026-10-18 stripe-off] Founder: compra NOVA só nas lojas. iOS e Android → IAP nativo;
+  // web → cartão "Assine pelo app". Stripe só com globalThis.__chatyy_stripe_checkout=true.
+  const stripeBuyOk = isStripeCardAvailable();
+  const useStoreIAP = isIOS || (Platform.OS === 'android' && !stripeBuyOk);
+  const webStoreOnly = Platform.OS === 'web' && !stripeBuyOk;
+  const [storeOnlyModal, setStoreOnlyModal] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
+  const handleOpenPortal = async () => {
+    if (portalBusy) return;
+    setPortalBusy(true);
+    try {
+      const r = await openStripePortal();
+      if (!r?.success && !r?.redirected) safeAlert(t('common.error'), t('storeOnly.manageStripeFailed'));
+      else { loadPlanInfo().catch(() => {}); }
+    } finally { setPortalBusy(false); }
+  };
 
   // Stripe Elements refs (web only)
   const stripeRef = useRef(null);
@@ -678,9 +696,9 @@ export default function PlansScreen() {
   useEffect(() => { loadSubscriptionInfo(); }, [loadSubscriptionInfo]);
   useEffect(() => { loadFamilyMembers(); }, [loadFamilyMembers]);
 
-  // Initialize Apple IAP on iOS
+  // Initialize Apple IAP on iOS (+ Google Play no Android quando o Stripe está desligado)
   useEffect(() => {
-    if (!isIOS) return;
+    if (!useStoreIAP) return;
     let cancelled = false;
     const init = async () => {
       try {
@@ -710,7 +728,7 @@ export default function PlansScreen() {
       cancelled = true;
       try { IAP.disconnectIAP?.(); } catch {}
     };
-  }, [isIOS]);
+  }, [useStoreIAP]);
 
   // Animate modal in when opening
   useEffect(() => {
@@ -901,6 +919,11 @@ export default function PlansScreen() {
       productId = IAP.getProductId(plan, bp);
     }
 
+    if (!productId && !stripeBuyOk) {
+      // [2026-10-18 stripe-off] sem checkout web → não manda p/ /plans na web (laço).
+      safeAlert(t('storeOnly.unavailableTitle'), t('storeOnly.unavailableBody'));
+      return;
+    }
     if (!productId) {
       // IAP path missing → don't dead-end the user with "Em breve". Surface
       // a real CTA pointing at the web checkout (which uses their existing
@@ -947,6 +970,9 @@ export default function PlansScreen() {
       const result = await IAP.purchaseSubscription(productId);
       if (result?.deferred) {
         safeAlert(t('iap.purchaseDeferred'), '');
+      } else if (result && result.success === false) {
+        // [2026-10-18 stripe-off] loja indisponível (ex.: Android sem produto no Play) — antes caía no "sucesso".
+        safeAlert(t('storeOnly.unavailableTitle'), t('storeOnly.unavailableBody'));
       } else {
         // requestPurchase returns immediately after queuing — the real
         // success event arrives via purchaseUpdatedListener → receipt
@@ -1001,7 +1027,8 @@ export default function PlansScreen() {
     // already has ANY active plan (iAP or Stripe from web), switching plans
     // on iOS goes through Apple's subscription-group upgrade flow (same
     // group, different product = auto-prorated swap by Apple).
-    if (isIOS) {
+    // [2026-10-18 stripe-off] Android também vai pelo Google Play quando o Stripe está desligado.
+    if (useStoreIAP) {
       let available = IAP.isAvailable() && IAP.getProducts().length > 0;
       if (!available) {
         try { await IAP.initIAP(); available = IAP.isAvailable() && IAP.getProducts().length > 0; } catch {}
@@ -1010,6 +1037,9 @@ export default function PlansScreen() {
       showIapUnavailable();
       return;
     }
+
+    // [2026-10-18 stripe-off] web sem checkout Stripe → "Assine pelo app".
+    if (!stripeBuyOk) { setStoreOnlyModal(true); return; }
 
     // Non-iOS (web + Android): Stripe path.
     // If already a paid subscriber, try to do a plan change (no card needed).
@@ -1110,7 +1140,9 @@ export default function PlansScreen() {
       // the user already had an Apple subscription, which meant first-time
       // storage buyers on iOS got the Stripe modal and Apple wouldn't
       // accept the build. Now: iOS = IAP always; web/Android = Stripe.
-      if (isIOS) {
+      // [2026-10-18 stripe-off] Android também IAP (Stripe desligado); web → "Assine pelo app".
+      if (!useStoreIAP && !stripeBuyOk) { setStoreOnlyModal(true); return; }
+      if (useStoreIAP) {
         const productId = IAP.getProductId(null, 'monthly', storageGb);
         if (!productId) {
           safeAlert(
@@ -1122,7 +1154,9 @@ export default function PlansScreen() {
         setIapPurchasing(true);
         try {
           const result = await IAP.purchaseSubscription(productId);
-          if (result && !result.deferred) {
+          if (result && result.success === false) {
+            safeAlert(t('storeOnly.unavailableTitle'), t('storeOnly.unavailableBody'));
+          } else if (result && !result.deferred) {
             safeAlert(t('plans.storageUpgradeSuccess'), t('plans.storageUpgradeSuccessMsg'));
             await loadPlanInfo();
           } else if (result?.deferred) {
@@ -1483,7 +1517,7 @@ export default function PlansScreen() {
   };
   const storePriced = isIOS && planPrice('one', 'monthly').store;
   // Nota "cobrado em reais" p/ quem não é BR (idioma ≠ pt-BR ou moeda de exibição ≠ BRL).
-  const showBrlNote = !storePriced && (language !== 'pt-BR' || (displayCurrency && displayCurrency !== 'BRL'));
+  const showBrlNote = !storePriced && stripeBuyOk && (language !== 'pt-BR' || (displayCurrency && displayCurrency !== 'BRL'));
 
   // Storage tier selector — modern chips
   const StorageSelector = ({ options, selected, onSelect, accentColor, basePrice }) => {
@@ -1921,6 +1955,11 @@ export default function PlansScreen() {
                 )}
               </View>
             </View>
+          )}
+
+          {/* [2026-10-18 stripe-off] web: sem checkout — assinatura só pelo app (App Store / Google Play). */}
+          {webStoreOnly && (
+            <SubscribeInAppCard style={{ marginTop: 16 }} />
           )}
 
           {/* [2026-10-09 plans-intl] web/Android cobram em BRL via Stripe → avisa quem não é BR. */}
@@ -2610,6 +2649,20 @@ export default function PlansScreen() {
               {/* Divider */}
               <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 4 }} />
 
+              {/* [2026-10-18 stripe-off] assinante Stripe existente: portal (cartão, faturas, cancelar) */}
+              {isStripePortalAvailable() && (
+                <TouchableOpacity
+                  onPress={handleOpenPortal}
+                  disabled={portalBusy}
+                  style={{ alignItems: 'center', marginTop: 12, paddingVertical: 10, opacity: portalBusy ? 0.5 : 1 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '600', textDecorationLine: 'underline' }}>
+                    {t('storeOnly.manageStripe')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               {/* Cancel / Reactivate */}
               {subInfo.cancel_at_period_end ? (
                 <TouchableOpacity
@@ -2641,7 +2694,7 @@ export default function PlansScreen() {
           {/* ============================================================ */}
           {/* STORAGE UPGRADE — For active subscribers */}
           {/* ============================================================ */}
-          {currentPlan !== 'free' && subInfo && isAdmin && !subInfo.cancel_at_period_end && (() => {
+          {currentPlan !== 'free' && subInfo && isAdmin && !subInfo.cancel_at_period_end && !webStoreOnly && (() => {
             const plan = currentPlan === 'family' ? 'family' : 'one';
             const currentStorageTier = subInfo.storage_tier || planInfo?.storage_tier || planInfo?.storage_limit_gb || PLANS[plan]?.storage;
             const bp = planInfo?.billing_period || 'monthly';
@@ -2920,7 +2973,7 @@ export default function PlansScreen() {
               only in limited conditions; now restore is always rendered
               on iOS and manage opens only when the user actually has a
               subscription to manage. */}
-          {isIOS && (
+          {useStoreIAP && (
             <View style={{ marginTop: 20, marginBottom: 8, gap: 12 }}>
               <TouchableOpacity
                 onPress={handleRestorePurchases}
@@ -2953,7 +3006,7 @@ export default function PlansScreen() {
 
               {hasAppleSub && (
                 <TouchableOpacity
-                  onPress={() => Linking.openURL('https://apps.apple.com/account/subscriptions')}
+                  onPress={() => Linking.openURL(isIOS ? 'https://apps.apple.com/account/subscriptions' : 'https://play.google.com/store/account/subscriptions?package=com.onemundo.mail')}
                   activeOpacity={0.7}
                   style={{
                     backgroundColor: colors.surface,
@@ -2972,7 +3025,7 @@ export default function PlansScreen() {
                 >
                   <IconSettings size={18} color={colors.textSecondary} />
                   <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, fontWeight: '600' }}>
-                    {t('iap.manageSubscription')}
+                    {isIOS ? t('iap.manageSubscription') : t('storeOnly.managePlay')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -3478,6 +3531,16 @@ export default function PlansScreen() {
                 }
               </TouchableOpacity>
             </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* [2026-10-18 stripe-off] web: "Assine pelo app" ao tocar em assinar/upgrade */}
+      <Modal visible={storeOnlyModal} transparent animationType="fade" onRequestClose={() => setStoreOnlyModal(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setStoreOnlyModal(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{ width: '100%', maxWidth: 560 }}>
+            <SubscribeInAppCard onClose={() => setStoreOnlyModal(false)} style={{ backgroundColor: colors.background }} />
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>

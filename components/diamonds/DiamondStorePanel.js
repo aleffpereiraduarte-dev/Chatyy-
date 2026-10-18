@@ -21,6 +21,7 @@ import { refreshWallet } from '../../services/diamonds';
 import { useSurface, PressableScale, FadeSlideIn, Type, Space, Radius } from '../ui';
 import { HeroCard, HERO, AnimatedNumber, DiamondMark, PackCard, TABULAR, NOFLEX, tr } from '../wallet/WalletKit';
 import useDiamondStore from './useDiamondStore';
+import SubscribeInAppCard from '../SubscribeInAppCard'; // [2026-10-18 stripe-off]
 
 const POPULAR = 1700;
 const BEST = 6000;
@@ -76,6 +77,9 @@ export default function DiamondStorePanel({ compact = false, onBalanceChange }) 
         </Text>
       ) : null}
 
+      {store.webStoreOnly ? (
+        <SubscribeInAppCard title={t('storeOnly.diamondsTitle')} body={t('storeOnly.diamondsBody')} style={{ marginBottom: 16 }} />
+      ) : null}
       {blockText ? <Text style={[styles.notice, { color: s.textSecondary, borderColor: s.separator }]}>{blockText}</Text> : null}
       {banner ? (
         <Text style={[styles.notice, { color: banner.tone === 'warn' ? s.danger : s.text, borderColor: s.separator }]} accessibilityLiveRegion="polite">{banner.text}</Text>

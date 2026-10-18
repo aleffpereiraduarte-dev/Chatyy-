@@ -15,7 +15,9 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice, restorePurchases } from '../services/iap';
 import { getOriginBase, storageUsage } from '../services/api'; // [2026-10-10] loja web = host canônico
-import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
+import { startStripeCheckout, openStripePortal, isStripePortalAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
+import SubscribeInAppCard from './SubscribeInAppCard'; // [2026-10-18 stripe-off] web: compra só pelo app
+import { usePlanState } from '../services/planState';
 import { IconX, IconCloud, IconCheck, IconCheckCircle, IconUsers, IconImage, IconShield, IconZap } from './Icons';
 import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
 import { useSurface, PressableScale, FadeSlideIn } from './ui';
@@ -92,8 +94,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
       // [2026-10-16 storage-billing] Web: o botão principal abria /storage de novo (laço,
       // nunca cobrava). Na web a compra é o checkout de cartão (Stripe hospedado).
       if (isStripeStorageCheckoutAvailable()) { onPayCardRef.current?.(tier); return; }
-      const base = (typeof getOriginBase === 'function' && getOriginBase()) || 'https://chatyy.com.br';
-      Linking.openURL(`${base.replace(/\/$/, '')}/storage?tier=${tier.id}&cycle=${cycle}`).catch(() => {});
+      // [2026-10-18 stripe-off] sem checkout na web: o CTA vira o cartão "Assine pelo app".
       return;
     }
     setPendingTier(tier.id);
@@ -108,7 +109,7 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
       } else if (r?.message === 'cancelled') {
         // silent
       } else if (r?.message === 'web_fallback' || r?.message === 'iap_unavailable') {
-        if (Platform.OS === 'android') {
+        if (Platform.OS === 'android' && isStripeStorageCheckoutAvailable()) {
           const base = (typeof getOriginBase === 'function' ? getOriginBase() : 'https://chatyy.com.br').replace(/\/$/, '');
           Alert.alert(
             t('storage.unavailableTitle') || 'Indisponível',
@@ -145,7 +146,9 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
     setPendingTier(tier.id);
     try {
       const r = await startStripeCheckout(tier.id, cycle);
-      if (!r?.success) {
+      if (r?.message === 'stripe_disabled') {
+        safeAlert(t('storeOnly.title'), t('storeOnly.body'));
+      } else if (!r?.success) {
         Alert.alert(t('common.error') || 'Erro', t('storage.cardFailed') || 'Não foi possível abrir o pagamento com cartão. Tente novamente em instantes.');
       }
     } finally {
@@ -185,7 +188,11 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
 
   // [2026-10-16 storage-billing] na web o botão principal JÁ é o cartão → sem botão duplicado
   const showCard = isStripeStorageCheckoutAvailable() && Platform.OS !== 'web';
-  const showPortal = isStripeCardAvailable();
+  // [2026-10-18 stripe-off] portal só p/ quem JÁ assina com cartão (Stripe) — cancelar/trocar cartão.
+  const { plan: _planState } = usePlanState();
+  const showPortal = isStripePortalAvailable() && !!_planState?.hasStripeBilling;
+  // Web sem checkout Stripe: não há compra aqui → cartão com selos das lojas no lugar do botão.
+  const webStoreOnly = Platform.OS === 'web' && !isStripeStorageCheckoutAvailable();
 
   const tiers = useMemo(() => STORAGE_TIERS, []);
   // [2026-10-13] iOS: só vender o que a App Store tem no catálogo (planos com
@@ -419,6 +426,8 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                   {(t('storage.downgradeTooSmall') || 'Você usa {used} — libere espaço para mudar para {size}').replace('{used}', fmtBytes(used)).replace('{size}', gbLabel(selected.gb))}
                 </Text>
               </View>
+            ) : webStoreOnly ? (
+              <SubscribeInAppCard style={{ borderRadius: 16, padding: 14 }} />
             ) : (
               <PressableScale
                 haptic="medium"
@@ -451,20 +460,16 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
             {showPortal && (
               <TouchableOpacity onPress={onManageCard} style={{ alignSelf: 'center', paddingVertical: 6 }}>
                 <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' }}>
-                  {t('storage.manageCard') || 'Gerenciar cartão / assinatura'}
+                  {t('storeOnly.manageStripe')}
                 </Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={onRestore} disabled={restoring} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 6, opacity: restoring ? 0.5 : 1 }}>
+            {!webStoreOnly && <TouchableOpacity onPress={onRestore} disabled={restoring} accessibilityRole="button" style={{ alignSelf: 'center', paddingVertical: 6, opacity: restoring ? 0.5 : 1 }}>
               <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' }}>
                 {t('iap.restorePurchases') || 'Restaurar compras'}
               </Text>
-            </TouchableOpacity>
-            {Platform.OS === 'ios' && (
-              <Text style={[styles.foot, { color: muted }]}>
-                {t('storage.manageSite') || 'Gerencie sua assinatura pelo site chatyy.com.br'}
-              </Text>
-            )}
+            </TouchableOpacity>}
+
             <Text style={[styles.foot, { color: muted }]}>
               {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
             </Text>
