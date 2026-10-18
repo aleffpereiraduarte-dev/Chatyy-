@@ -48,6 +48,17 @@ export default function AccountCategory() {
     fetchTwoStep(myEmail).then((s2) => { if (alive && s2) setTwoStep(s2); }).catch(() => {});
     return () => { alive = false; un(); };
   }, [myEmail]);
+  // [recovery 2026-10-18] conta sem nenhuma forma de recuperação → lembrete na linha
+  const [recNone, setRecNone] = useState(false);
+  useEffect(() => {
+    if (!myEmail) return undefined;
+    let alive = true;
+    try {
+      require('../../../services/api').recoveryOptionsGet()
+        .then((r) => { if (alive && r?.success && r.data) setRecNone(!r.data.has_any); }).catch(() => {});
+    } catch {}
+    return () => { alive = false; };
+  }, [myEmail]);
   const AUTO_LOCK_OPTIONS = [
     { value: '0', label: t('biometric.lockImmediate') || 'Imediatamente' },
     { value: '60', label: t('biometric.lock1Min') || 'Após 1 minuto' },
@@ -97,6 +108,14 @@ export default function AccountCategory() {
         )}
 
         <SettingsGroup header={t('settings.security') || 'Segurança'}>
+          {/* [recovery 2026-10-18] Opções de recuperação (Gmail): e-mail/telefone/aparelhos */}
+          <SettingsRow
+            testID="settings-row-recovery"
+            title={t('rec.opts.title')}
+            subtitle={recNone ? t('rec.opts.rowNudge') : t('rec.opts.rowSub')}
+            value={recNone ? t('rec.opts.rowNone') : undefined}
+            onPress={() => safeNav('/recovery-options')}
+          />
           <SettingsRow
             title={t('settings.changePassword') || 'Alterar senha'}
             subtitle={t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}

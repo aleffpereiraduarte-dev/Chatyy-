@@ -57,6 +57,16 @@ const ACTION_META = {
   byok_key_cleared:       { tier: 'critical',  bucket: 'sensitive', Icon: IconKey,            tint: '#dc2626' },
   discoverable_on:        { tier: 'routine',   bucket: 'routine',   Icon: IconShield,         tint: '#10b981' },
   discoverable_off:       { tier: 'routine',   bucket: 'routine',   Icon: IconShield,         tint: '#94a3b8' },
+  // [recovery 2026-10-18] recuperação de conta
+  password_reset:           { tier: 'critical',  bucket: 'sensitive', Icon: IconLock,       tint: '#111111' },
+  recovery_code_phone:      { tier: 'important', bucket: 'sensitive', Icon: IconShield,     tint: '#111111' },
+  recovery_code_email:      { tier: 'important', bucket: 'sensitive', Icon: IconShield,     tint: '#111111' },
+  recovery_device_prompt:   { tier: 'important', bucket: 'sensitive', Icon: IconSmartphone, tint: '#111111' },
+  recovery_device_approved: { tier: 'important', bucket: 'sensitive', Icon: IconSmartphone, tint: '#111111' },
+  recovery_device_denied:   { tier: 'critical',  bucket: 'sensitive', Icon: IconSmartphone, tint: '#111111' },
+  recovery_locked:          { tier: 'critical',  bucket: 'sensitive', Icon: IconShield,     tint: '#111111' },
+  recovery_email_set:       { tier: 'important', bucket: 'sensitive', Icon: IconShield,     tint: '#111111' },
+  recovery_email_removed:   { tier: 'important', bucket: 'sensitive', Icon: IconShield,     tint: '#111111' },
 };
 
 function describeAction(action, t) {
@@ -77,6 +87,18 @@ function describeAction(action, t) {
       case 'byok_key_cleared':       return t('activity.byokCleared');
       case 'discoverable_on':        return t('activity.discoverableOn');
       case 'discoverable_off':       return t('activity.discoverableOff');
+      case 'password_reset':           return t('activity.passwordReset');
+      case 'recovery_code_phone':
+      case 'recovery_code_email':
+      case 'recovery_device_prompt':   return t('activity.recoveryStarted');
+      case 'recovery_device_approved':
+      case 'recovery_verified_phone':
+      case 'recovery_verified_email':
+      case 'recovery_verified_passkey': return t('activity.recoveryVerified');
+      case 'recovery_device_denied':   return t('activity.recoveryDenied');
+      case 'recovery_locked':          return t('activity.recoveryLocked');
+      case 'recovery_email_set':       return t('activity.recoveryEmailSet');
+      case 'recovery_email_removed':   return t('activity.recoveryEmailRemoved');
       default: return action;
     }
   })();

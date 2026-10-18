@@ -12,6 +12,7 @@ import NativeSheetDialog from '../../NativeSheetDialog';
 import { USE_NATIVE_SHEETS } from '../../NativeSheet';
 import { useTheme } from '../../../context/ThemeContext';
 import { useLanguage } from '../../../context/LanguageContext';
+import { useAuth } from '../../../context/AuthContext';
 import { Spacing } from '../../../constants/theme';
 import { IconCheck } from '../../Icons';
 import * as api from '../../../services/api';
@@ -31,6 +32,7 @@ export function ChangePasswordModal({ visible, onClose }) {
   const [cpLoading, setCpLoading] = useState(false);
   const [cpError, setCpError] = useState('');
   const [cpSuccess, setCpSuccess] = useState(false);
+  const authUser = (useAuth() || {}).user;
   const inputStyle = (mb) => ({
     borderWidth: 1,
     borderColor: cpError ? colors.error : colors.border,
@@ -67,8 +69,20 @@ export function ChangePasswordModal({ visible, onClose }) {
               onChangeText={v => { setCpCurrent(v); setCpError(''); }}
               secureTextEntry autoCapitalize="none" autoCorrect={false}
               placeholder="••••••••" placeholderTextColor={colors.textTertiary}
-              style={inputStyle(14)} editable={!cpLoading}
+              style={inputStyle(6)} editable={!cpLoading}
             />
+            {/* [recovery 2026-10-18] "Esqueceu a senha atual?" → recuperação (Gmail) */}
+            <TouchableOpacity
+              onPress={() => {
+                const em = String(authUser?.email || '');
+                try { onClose && onClose(); } catch {}
+                try { require('expo-router').router.push(em ? `/forgot?email=${encodeURIComponent(em)}` : '/forgot'); } catch {}
+              }}
+              style={{ alignSelf: 'flex-end', paddingVertical: 8, marginBottom: 6 }}
+              accessibilityRole="button"
+            >
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('rec.forgotCurrent')}</Text>
+            </TouchableOpacity>
             <Text style={label}>{(t('settings.newPassword') || 'Nova senha').toUpperCase()}</Text>
             <TextInput
               value={cpNew}

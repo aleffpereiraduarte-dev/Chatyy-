@@ -1,29 +1,44 @@
-import { useState, useRef, useEffect } from 'react';
+// [recovery 2026-10-18] Recuperação de conta nível Gmail.
+// Fluxo: identificar (e-mail, @usuário ou telefone) → escolher como confirmar
+// (aparelho conectado, código por WhatsApp/SMS, código no e-mail de recuperação,
+// chave de acesso) → PIN da verificação em duas etapas quando a conta tem e o
+// fator não foi aparelho/chave → nova senha (força + confirmação + "Sair de todos
+// os outros aparelhos") → pronto. Backend: account-recovery.php (ações recovery_*).
+// Antes: forgot_password_options/find_account nem existiam no servidor ("Unknown
+// action") — quem esquecia a senha não tinha saída.
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Animated, Easing, Linking,
-  useWindowDimensions,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
+  Animated, Easing, Linking, Switch, AppState, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuthTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { forgotPasswordOptions, forgotPasswordInitiate, forgotPasswordVerify, resetPassword, BASE_URL } from '../services/api';
+import {
+  recoveryLookup, recoverySend, recoveryStatus, recoveryVerify, recoveryPin,
+  recoveryPasskeyBegin, recoveryPasskeyFinish, recoveryReset,
+} from '../services/api';
 import OtpInput from '../components/signup/OtpInput';
-import PasswordStrength, { calcStrength } from '../components/signup/PasswordStrength';
+import { calcStrength } from '../components/signup/PasswordStrength';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import {
-  IconMailLogo, IconAlertTriangle, IconArrowRight, IconArrowLeft,
-  IconMail, IconShield, IconCheckCircle, IconEye, IconEyeOff, IconSend, IconLock,
-  IconSun, IconMoon, IconSmartphone,
+  IconMailLogo, IconAlertTriangle, IconArrowRight, IconMail, IconShield, IconCheckCircle,
+  IconEye, IconEyeOff, IconLock, IconSun, IconMoon, IconSmartphone, IconKey, IconMessageSquare,
 } from '../components/Icons';
-// [2026-10-07 login-ux] shared auth-screen pieces (keyboard-aware scroll,
-// inline notices, haptics, identifier normalisation, last-identifier prefill).
 import LoginKeyboardScroll from '../components/login/LoginKeyboardScroll';
 import LoginNotice from '../components/login/LoginNotice';
-import PressableScale from '../components/PressableScale'; // [2026-10-11] primary CTAs: spring + haptic
-import { normalizeLoginEmail, isPlausibleEmail, saveLastIdentifier } from '../components/login/loginSmart';
+import PressableScale from '../components/PressableScale';
+import { saveLastIdentifier } from '../components/login/loginSmart';
 import { tap as hTap, success as hSuccess, error as hError, selection as hSelection } from '../services/haptics';
+import { PASSKEYS_ENABLED } from '../constants/featureFlags';
+
+const SUPPORT_EMAIL = 'suporte@chatyy.com.br';
+
+function firstParam(v) {
+  if (Array.isArray(v)) return v[0] || '';
+  return typeof v === 'string' ? v : '';
+}
 
 export default function ForgotPassword() {
   const { colors, isDark, toggle } = useAuthTheme();
@@ -31,62 +46,61 @@ export default function ForgotPassword() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  // [2026-10-12 first-run polish] Card chrome only on wide web (login parity);
-  // phones get the flat full-bleed layout the login uses.
-  const { width: _winW } = useWindowDimensions();
-  const isDesktop = Platform.OS === 'web' && _winW >= 768;
+  const { width: winW } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && winW >= 768;
+  const accent = colors.authAccent || colors.text;
+  const onAccent = colors.authOnAccent || colors.background || '#fff';
+
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
-  // Steps: 1=email, 2=choose method, 3=verify code, 4=new password, 5=success
-  // ?find=1 (login "Não lembra seu e-mail?") opens straight on the finder.
-  const [step, setStep] = useState(() => (String(params?.find || '') === '1' ? 6 : 1));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  // Step 1
-  // ?email= from the login password step → prefilled (no retyping).
-  const [username, setUsername] = useState(() => {
-    try {
-      const pre = typeof params?.email === 'string' ? params.email : (Array.isArray(params?.email) ? params.email[0] : '');
-      return pre ? String(pre).replace(/\s+/g, '').toLowerCase() : '';
-    } catch { return ''; }
-  });
-  const [domain, setDomain] = useState('chatyy.com.br');
-  const [findQuery, setFindQuery] = useState('');
-  const [foundEmails, setFoundEmails] = useState([]);
+  // identify | methods | code | device | pin | password | done
+  const [step, setStep] = useState('identify');
+  const [loading, setLoading] = useState(false);
+  const [busyMethod, setBusyMethod] = useState('');
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [focused, setFocused] = useState('');
 
-  // Step 2: method selection
+  const [identifier, setIdentifier] = useState(() => {
+    const pre = firstParam(params?.email) || firstParam(params?.identifier);
+    return pre ? String(pre).replace(/\s+/g, '').toLowerCase() : '';
+  });
+  const [phoneHint, setPhoneHint] = useState(() => firstParam(params?.find) === '1');
+
+  const [rid, setRid] = useState('');
+  const [account, setAccount] = useState('');
   const [methods, setMethods] = useState([]);
-  const [phoneMasked, setPhoneMasked] = useState('');
-  const [emailMasked, setEmailMasked] = useState('');
-  const [selectedMethod, setSelectedMethod] = useState('');
+  const [pinRequired, setPinRequired] = useState(false);
 
-  // Step 3: verify
+  const [method, setMethod] = useState('');
+  const [masked, setMasked] = useState('');
+  const [sentVia, setSentVia] = useState('');
+  const [waAvailable, setWaAvailable] = useState(null);
   const [code, setCode] = useState('');
-  const [maskedTarget, setMaskedTarget] = useState('');
-  const [resetToken, setResetToken] = useState('');
-  const [countdown, setCountdown] = useState(0);
-  const timerRef = useRef(null);
+  const [codeKey, setCodeKey] = useState(0);
+  const [resendAt, setResendAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
 
-  // Step 4
+  const [deviceNumber, setDeviceNumber] = useState(0);
+  const [deviceUntil, setDeviceUntil] = useState(0);
+  const [deviceState, setDeviceState] = useState('pending');
+  const pollRef = useRef(null);
+
+  const [pin, setPin] = useState('');
+  const [resetToken, setResetToken] = useState('');
   const [newPwd, setNewPwd] = useState('');
   const [confirmPwd, setConfirmPwd] = useState('');
   const [showPwd, setShowPwd] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [logoutOthers, setLogoutOthers] = useState(true);
+  const [doneEmail, setDoneEmail] = useState('');
 
-  // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(12)).current;
-  const successAnim = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
     fadeAnim.setValue(0);
     slideAnim.setValue(12);
-    // Telegram-style ease-out-quint — same curve we use in signup-phone for
-    // step transitions. Springs felt slightly bouncy on auth screens; users
-    // expect form transitions to settle deterministically.
     const EASE = Easing.bezier(0.23, 1, 0.32, 1);
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 260, easing: EASE, useNativeDriver: true }),
@@ -94,736 +108,663 @@ export default function ForgotPassword() {
     ]).start();
   }, [step]);
 
+  // Relógio (contagem pelo relógio — não congela em segundo plano).
   useEffect(() => {
-    if (step === 5) {
-      Animated.spring(successAnim, { toValue: 1, tension: 50, friction: 8, useNativeDriver: true }).start();
-    }
+    if (step !== 'code' && step !== 'device') return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
   }, [step]);
 
-  useEffect(() => {
-    if (countdown > 0) {
-      timerRef.current = setTimeout(() => setCountdown(countdown - 1), 1000);
-    }
-    return () => clearTimeout(timerRef.current);
-  }, [countdown]);
-
-  // [2026-10-07 login-ux] BUG FIX: was always `${username}@${domain}` — the
-  // field accepts a FULL address of any domain (Apple 2.1a fix), so typing
-  // "ana@gmail.com" asked the server about "ana@gmail.com@chatyy.com.br" and
-  // recovery could never find the account.
-  const fullEmail = String(username || '').includes('@')
-    ? normalizeLoginEmail(username)
-    : normalizeLoginEmail(`${String(username || '').replace(/^@/, '')}@${domain}`);
-
-  // Haptic on every new inline error (was silent).
   useEffect(() => { if (error) hError(); }, [error]);
+
+  const passkeyUsable = (() => {
+    if (!PASSKEYS_ENABLED) return false;
+    try { return !!require('../services/passkeys').isPasskeySupported(); } catch { return false; }
+  })();
+  const visibleMethods = methods.filter(m => m && (m.type !== 'passkey' || passkeyUsable));
+
   const goBackToLogin = () => {
     hSelection();
     try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
     router.replace('/login');
   };
 
-  // Step 1: Get recovery options
-  const handleGetOptions = async () => {
-    if (!username.trim()) { setError(t('forgot.validation.usernameRequired')); return; }
-    if (!isPlausibleEmail(fullEmail)) { setError(t('login.errorEmailInvalid')); return; }
-    hTap('light');
-    setError('');
-    setLoading(true);
-    try {
-      const r = await forgotPasswordOptions(fullEmail);
-      if (r.success) {
-        const m = r.data?.methods || [];
-        setMethods(m);
-        setPhoneMasked(r.data?.phone_masked || '');
-        setEmailMasked(r.data?.email_masked || '');
-        if (m.length === 0) {
-          // No methods available
-          setStep(2);
-        } else if (m.length === 1) {
-          // Only one method, auto-select and go to initiate
-          setSelectedMethod(m[0]);
-          setStep(2);
-        } else {
-          // Multiple methods, let user choose
-          setStep(2);
-        }
-      } else {
-        setError(r.message || t('forgot.validation.initiateError'));
-      }
-    } catch { setError(t('forgot.validation.connectionError')); }
-    finally { setLoading(false); }
+  const restart = (msg) => {
+    stopPolling();
+    setRid(''); setMethods([]); setMethod(''); setCode(''); setPin(''); setResetToken('');
+    setStep('identify');
+    setInfo('');
+    setError(msg || '');
   };
 
-  // Find email by phone or name (Google-style "Forgot email?")
-  const handleFindEmail = async () => {
-    if (!findQuery.trim() || findQuery.trim().length < 3) { setError(t('forgot.findMinChars')); return; }
-    hTap('light');
-    setError('');
-    setLoading(true);
-    try {
-      const res = await fetch(`${BASE_URL}/api/email.php?action=find_account`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: findQuery.trim() }),
-      });
-      const data = await res.json();
-      if (data?.success) {
-        setFoundEmails((data.data?.accounts || []).map(a => ({
-          email: a.email,
-          name: a.name,
-          match: a.match,
-        })));
-      } else {
-        setError(data?.message || t('forgot.findError'));
-        setFoundEmails([]);
-      }
-    } catch { setError(t('forgot.validation.connectionError')); }
-    finally { setLoading(false); }
-  };
-
-  // Step 2: Initiate with selected method
-  const handleSelectMethod = async (method) => {
-    setSelectedMethod(method);
-    setError('');
-    setLoading(true);
-    try {
-      const r = await forgotPasswordInitiate(fullEmail, method);
-      if (r.success) {
-        if (method === 'phone') {
-          setMaskedTarget(r.data?.masked_phone || phoneMasked);
-        } else {
-          setMaskedTarget(r.data?.masked_email || emailMasked);
-        }
-        setStep(3);
-        setCountdown(60);
-      } else {
-        setError(r.message || t('forgot.validation.initiateError'));
-      }
-    } catch { setError(t('forgot.validation.connectionError')); }
-    finally { setLoading(false); }
-  };
-
-  // Step 3: Verify code
-  const handleVerify = async (codeToVerify) => {
-    const c = codeToVerify || code;
-    if (c.length < 6) { setError(t('forgot.validation.codeLength')); return; }
-    setError('');
-    setLoading(true);
-    try {
-      const r = await forgotPasswordVerify(fullEmail, c);
-      if (r.success) {
-        setResetToken(r.data?.reset_token || '');
-        setStep(4);
-      } else {
-        setError(r.message || t('forgot.validation.invalidCode'));
-      }
-    } catch { setError(t('forgot.validation.connectionError')); }
-    finally { setLoading(false); }
-  };
-
-  const handleCodeChange = (newCode) => {
-    setCode(newCode);
-    if (newCode.length === 6 && !loading) {
-      setTimeout(() => handleVerify(newCode), 300);
+  // Mensagem por motivo estável do servidor (i18n), com fallback no texto dele.
+  const errText = (r, fallbackKey) => {
+    const d = r?.data || {};
+    const reason = d.reason || '';
+    const mins = (s) => Math.max(1, Math.ceil(Number(s || 0) / 60));
+    switch (reason) {
+      case 'rate_limited': return t('rec.err.rateLimited');
+      case 'locked': return t('rec.err.locked', { min: mins(d.retry_after) });
+      case 'cooldown': return t('rec.err.cooldown', { s: Math.max(1, Number(d.retry_after || 30)) });
+      case 'wrong_code':
+        return (typeof d.attempts_left === 'number' && d.attempts_left >= 0)
+          ? t('rec.err.wrongCodeLeft', { n: d.attempts_left }) : t('rec.err.wrongCode');
+      case 'expired': return t('rec.err.codeExpired');
+      case 'too_many_attempts': return t('rec.err.tooManyAttempts');
+      case 'network': return t('rec.err.network');
+      case 'weak_password': return r?.message || t('rec.err.weak');
+      case 'wrong_pin':
+        return (typeof d.attempts_left === 'number') ? t('rec.err.wrongPinLeft', { n: d.attempts_left }) : t('rec.err.wrongPin');
+      case 'method_unavailable': return t('rec.err.methodUnavailable');
+      case 'passkey_failed': return t('rec.err.passkey');
+      case 'identifier_required': return t('rec.err.identifierRequired');
+      default: return r?.message || t(fallbackKey || 'forgot.validation.connectionError');
     }
   };
+  const isExpiredSession = (r) => r?.data?.reason === 'session_expired' || r?.status === 410;
 
-  const handleResend = async () => {
-    setError('');
+  // ── 1) identificar ────────────────────────────────────────────────
+  const handleLookup = async () => {
+    const id = String(identifier || '').trim();
+    if (!id) { setError(t('rec.err.identifierRequired')); return; }
+    hTap('light');
+    setError(''); setInfo('');
     setLoading(true);
     try {
-      const r = await forgotPasswordInitiate(fullEmail, selectedMethod);
-      if (r.success) {
-        setCountdown(60);
-        setCode('');
+      const r = await recoveryLookup(id);
+      if (r?.success && r.data?.rid) {
+        setRid(r.data.rid);
+        setAccount(r.data.account || '');
+        setMethods(Array.isArray(r.data.methods) ? r.data.methods : []);
+        setPinRequired(!!r.data.pin_required);
+        setStep('methods');
       } else {
-        setError(r.message || t('forgot.validation.resendError'));
+        setError(errText(r));
       }
     } catch { setError(t('forgot.validation.connectionError')); }
     finally { setLoading(false); }
   };
 
-  // Step 4: Reset password
+  // ── 2) enviar código / prompt ─────────────────────────────────────
+  const startMethod = async (m, channel) => {
+    if (!rid) { restart(); return; }
+    hTap('light');
+    setError(''); setInfo('');
+    setBusyMethod(m + (channel || ''));
+    setLoading(true);
+    try {
+      if (m === 'passkey') { await runPasskey(); return; }
+      const r = await recoverySend(rid, m, channel);
+      if (r?.success) {
+        setMethod(m);
+        setMasked(r.data?.masked || '');
+        if (m === 'device') {
+          setDeviceNumber(Number(r.data?.number || 0));
+          setDeviceUntil(Date.now() + 1000 * Number(r.data?.expires_in || 180));
+          setDeviceState('pending');
+          setStep('device');
+          startPolling();
+        } else {
+          setSentVia(r.data?.channel || (m === 'email' ? 'email' : 'sms'));
+          if (r.data && 'whatsapp_available' in r.data) setWaAvailable(r.data.whatsapp_available);
+          setResendAt(Date.now() + 1000 * Number(r.data?.resend_after || 60));
+          setCode(''); setCodeKey(k => k + 1);
+          setStep('code');
+          if (step === 'code') setInfo(t('rec.resent'));
+        }
+      } else if (isExpiredSession(r)) {
+        restart(t('rec.err.sessionExpired'));
+      } else {
+        setError(errText(r));
+        const ra = Number(r?.data?.retry_after || 0);
+        if (ra > 0 && step === 'code') setResendAt(Date.now() + ra * 1000);
+      }
+    } catch { setError(t('forgot.validation.connectionError')); }
+    finally { setLoading(false); setBusyMethod(''); }
+  };
+
+  const runPasskey = async () => {
+    const b = await recoveryPasskeyBegin(rid);
+    if (!b?.success) { if (isExpiredSession(b)) restart(t('rec.err.sessionExpired')); else setError(errText(b)); return; }
+    const pk = require('../services/passkeys');
+    const g = await pk.getPasskeyAssertion(b.data);
+    if (!g?.ok) { if (g?.reason !== 'cancelled') setError(t('rec.err.passkey')); return; }
+    const f = await recoveryPasskeyFinish(rid, g.assertion);
+    if (f?.success) afterVerified(f.data, 'passkey');
+    else if (isExpiredSession(f)) restart(t('rec.err.sessionExpired'));
+    else setError(errText(f));
+  };
+
+  const afterVerified = (d, m) => {
+    hSuccess();
+    if (d?.pin_required) { setPin(''); setStep('pin'); return; }
+    if (d?.reset_token) { setResetToken(d.reset_token); setStep('password'); return; }
+    restart(t('rec.err.sessionExpired'));
+  };
+
+  // ── aparelho: polling do status ───────────────────────────────────
+  const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  const pollOnce = useCallback(async (ridNow) => {
+    try {
+      const r = await recoveryStatus(ridNow);
+      if (!r?.success) { if (isExpiredSession(r)) { stopPolling(); restart(t('rec.err.sessionExpired')); } return; }
+      const st = r.data?.status;
+      if (st === 'approved') { stopPolling(); setDeviceState('approved'); afterVerified(r.data, 'device'); }
+      else if (st === 'denied') { stopPolling(); setDeviceState('denied'); }
+      else if (st === 'expired' || st === 'none') { stopPolling(); setDeviceState('expired'); }
+    } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const startPolling = () => {
+    stopPolling();
+    const ridNow = rid;
+    pollRef.current = setInterval(() => pollOnce(ridNow), 2500);
+  };
+  useEffect(() => () => stopPolling(), []);
+  // Volta do outro app/aparelho → confere na hora.
+  useEffect(() => {
+    if (step !== 'device') return undefined;
+    const sub = AppState.addEventListener?.('change', (s) => { if (s === 'active' && rid) pollOnce(rid); });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [step, rid, pollOnce]);
+  useEffect(() => {
+    if (step === 'device' && deviceState === 'pending' && deviceUntil && now > deviceUntil + 3000) {
+      stopPolling(); setDeviceState('expired');
+    }
+  }, [now, step, deviceState, deviceUntil]);
+
+  // ── 3) código ─────────────────────────────────────────────────────
+  const handleVerify = async (c0) => {
+    const c = String(c0 || code).replace(/\D/g, '');
+    if (c.length < 6) { setError(t('forgot.validation.codeLength')); return; }
+    setError(''); setInfo('');
+    setLoading(true);
+    try {
+      const r = await recoveryVerify(rid, c);
+      if (r?.success) afterVerified(r.data, method);
+      else if (isExpiredSession(r)) restart(t('rec.err.sessionExpired'));
+      else { setError(errText(r, 'forgot.validation.invalidCode')); setCode(''); setCodeKey(k => k + 1); }
+    } catch { setError(t('forgot.validation.connectionError')); }
+    finally { setLoading(false); }
+  };
+  const handleCodeChange = (c) => {
+    setCode(c);
+    if (error) setError('');
+    if (String(c).length === 6 && !loading) setTimeout(() => handleVerify(c), 200);
+  };
+
+  // ── 4) PIN ────────────────────────────────────────────────────────
+  const handlePin = async () => {
+    const p = String(pin || '').replace(/\D/g, '');
+    if (p.length < 4) { setError(t('rec.err.pinLength')); return; }
+    setError('');
+    setLoading(true);
+    try {
+      const r = await recoveryPin(rid, p);
+      if (r?.success && r.data?.reset_token) { hSuccess(); setResetToken(r.data.reset_token); setStep('password'); }
+      else if (isExpiredSession(r)) restart(t('rec.err.sessionExpired'));
+      else { setError(errText(r)); setPin(''); }
+    } catch { setError(t('forgot.validation.connectionError')); }
+    finally { setLoading(false); }
+  };
+
+  // ── 5) nova senha ─────────────────────────────────────────────────
+  const strength = calcStrength(newPwd);
   const handleReset = async () => {
     if (!newPwd) { setError(t('forgot.validation.passwordRequired')); return; }
     if (newPwd.length < 8) { setError(t('forgot.validation.passwordMinLength')); return; }
-    if (!confirmPwd) { setError(t('forgot.validation.confirmRequired')); return; }
     if (newPwd !== confirmPwd) { setError(t('forgot.validation.passwordsMismatch')); return; }
     setError('');
     setLoading(true);
     try {
-      const r = await resetPassword(fullEmail, resetToken, newPwd);
-      if (r.success) {
+      const r = await recoveryReset(rid, resetToken, newPwd, logoutOthers);
+      if (r?.success) {
         hSuccess();
-        // The login screen will open with this account prefilled.
-        saveLastIdentifier(fullEmail);
-        setStep(5);
+        const em = r.data?.email || '';
+        setDoneEmail(em);
+        if (em) saveLastIdentifier(em);
+        setNewPwd(''); setConfirmPwd('');
+        setStep('done');
+      } else if (isExpiredSession(r)) {
+        restart(t('rec.err.sessionExpired'));
       } else {
-        setError(r.message || t('forgot.validation.resetError'));
+        setError(errText(r, 'forgot.validation.resetError'));
       }
     } catch { setError(t('forgot.validation.connectionError')); }
     finally { setLoading(false); }
   };
 
+  const openSupport = () => {
+    const url = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(t('rec.supportSubject'))}`;
+    if (Platform.OS === 'web') { try { window.open(url, '_blank'); } catch {} }
+    else Linking.openURL(url).catch(() => {});
+  };
+
+  // ── UI helpers ────────────────────────────────────────────────────
   const inputBoxStyle = (name) => [
     s.inputBox,
-    {
-      backgroundColor: colors.authInputBg,
-      borderColor: focused === name ? colors.authInputFocusBorder : colors.authInputBorder,
-    },
-    focused === name && {
-      borderWidth: 2,
-      ...Platform.select({ web: { boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}` }, default: {} }),
-    },
+    { backgroundColor: colors.authInputBg, borderColor: focused === name ? colors.authInputFocusBorder : colors.authInputBorder },
+    focused === name && { borderWidth: 2, ...Platform.select({ web: { boxShadow: `0 0 0 3px ${colors.authInputFocusGlow}` }, default: {} }) },
   ];
-
-  const entryScale = fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
-
-  // [2026-10-07 login-ux] Same inline notice as the login (a11y live region).
-  const renderError = () => !!error && (
-    <LoginNotice tone="error" text={error} colors={colors} style={{ marginBottom: 16 }} />
+  const renderNotice = () => (
+    <>
+      {!!error && <LoginNotice tone="error" text={error} colors={colors} style={{ marginBottom: 14 }} />}
+      {!!info && !error && <LoginNotice tone="info" text={info} colors={colors} style={{ marginBottom: 14 }} />}
+    </>
   );
+  const PrimaryBtn = ({ label, onPress, disabled, icon }) => (
+    <PressableScale
+      style={[s.primaryBtn, { backgroundColor: accent }, (loading || disabled) && { opacity: 0.6 }]}
+      onPress={onPress}
+      haptic={false}
+      disabled={loading || disabled}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      {loading && !busyMethod ? <ActivityIndicator color={onAccent} size="small" /> : (
+        <>
+          {icon}
+          <Text style={[s.primaryBtnText, { color: onAccent }]}>{label}</Text>
+        </>
+      )}
+    </PressableScale>
+  );
+  const LinkBtn = ({ label, onPress, muted }) => (
+    <TouchableOpacity style={s.linkBtn} onPress={onPress} activeOpacity={0.6} accessibilityRole="button">
+      <Text style={[s.linkText, { color: muted ? colors.textSecondary : colors.text }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+  const AccountChip = () => (!account ? null : (
+    <View style={[s.accountChip, { borderColor: colors.authInputBorder }]}>
+      <View style={[s.accountDot, { backgroundColor: colors.surfaceVariant }]}>
+        <Text style={[s.accountDotText, { color: colors.text }]}>{String(account).charAt(0).toUpperCase()}</Text>
+      </View>
+      <Text style={[s.accountText, { color: colors.text }]} numberOfLines={1}>{account}</Text>
+    </View>
+  ));
 
+  const methodIcon = (type) => {
+    const c = colors.text;
+    if (type === 'device') return <IconSmartphone size={20} color={c} />;
+    if (type === 'phone') return <IconMessageSquare size={20} color={c} />;
+    if (type === 'email') return <IconMail size={20} color={c} />;
+    return <IconKey size={20} color={c} />;
+  };
+  const methodTitle = (m) => ({
+    device: t('rec.method.device'),
+    phone: t('rec.method.phone'),
+    email: t('rec.method.email'),
+    passkey: t('rec.method.passkey'),
+  }[m.type] || m.type);
+  const methodDesc = (m) => {
+    if (m.type === 'device') return t('rec.method.deviceDesc', { n: m.count || 1 });
+    if (m.type === 'phone') return t('rec.method.phoneDesc', { phone: m.masked || '' });
+    if (m.type === 'email') return t('rec.method.emailDesc', { email: m.masked || '' });
+    return t('rec.method.passkeyDesc');
+  };
+
+  const fmtLeft = (ms) => {
+    const sec = Math.max(0, Math.ceil(ms / 1000));
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  };
+
+  // ── telas ─────────────────────────────────────────────────────────
   const renderContent = () => {
-    // Step 1: Enter email
-    if (step === 1) return (
+    if (step === 'identify') return (
       <>
-        {renderError()}
-        <View style={s.hintRow}>
-          <IconShield size={16} color={colors.textTertiary} />
-          <Text style={[s.hintText, { color: colors.textTertiary }]}>
-            {t('forgot.hint')}
-          </Text>
-        </View>
-
-        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.emailLabel')}</Text>
-        <View style={inputBoxStyle('username')}>
+        {renderNotice()}
+        <Text style={[s.label, { color: colors.authLabelColor }]}>{phoneHint ? t('rec.identify.labelPhone') : t('rec.identify.label')}</Text>
+        <View style={inputBoxStyle('id')}>
           <TextInput
             style={[s.textInput, { color: colors.text }]}
-            value={username}
-            onChangeText={(val) => {
-              // Accept a FULL email of ANY domain, or a bare username — never
-              // strip what the user typed. (Apple review 2.1a, 2026-06-03: the
-              // old regex deleted everything after "@", so reviewers literally
-              // could not type a non-chatyy email like apitest@onemundo.com.br.)
-              setUsername((val || '').replace(/\s+/g, ''));
-              if (error) setError('');
-            }}
-            placeholder="nome@chatyy.com.br"
+            value={identifier}
+            onChangeText={(v) => { setIdentifier(String(v || '').replace(/^\s+/, '')); if (error) setError(''); }}
+            placeholder={phoneHint ? t('rec.identify.placeholderPhone') : t('rec.identify.placeholder')}
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
             spellCheck={false}
-            keyboardType="email-address"
-            textContentType="username"
-            autoComplete="username"
+            keyboardType={phoneHint ? 'phone-pad' : 'email-address'}
+            textContentType={phoneHint ? 'telephoneNumber' : 'username'}
+            autoComplete={phoneHint ? 'tel' : 'username'}
             importantForAutofill="yes"
-            accessibilityLabel={t('forgot.emailLabel')}
-            autoFocus={!username}
+            accessibilityLabel={t('rec.identify.label')}
+            autoFocus={!identifier}
             returnKeyType="go"
-            onSubmitEditing={() => { if (username && !loading) handleGetOptions(); }}
-            onFocus={() => setFocused('username')}
+            onSubmitEditing={() => { if (!loading) handleLookup(); }}
+            onFocus={() => setFocused('id')}
             onBlur={() => setFocused('')}
           />
         </View>
-
+        <Text style={[s.hintText, { color: colors.textTertiary, marginTop: 8 }]}>{t('rec.identify.hint')}</Text>
         <View style={s.btnCol}>
-          <PressableScale
-            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
-            onPress={handleGetOptions}
-            haptic={false /* handler already ticks after validation */}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
-            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
-              <>
-                <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.continue')}</Text>
-                <IconArrowRight size={15} color={colors.onPrimary || '#fff'} style={{ marginLeft: 6 }} />
-              </>
-            )}
-          </PressableScale>
-          <TouchableOpacity style={s.backBtn} onPress={() => setStep(6)} activeOpacity={0.6}>
-            <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.forgotEmail') || 'Esqueceu o email?'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.backBtn} onPress={goBackToLogin} activeOpacity={0.6} accessibilityRole="button">
-            <Text style={[s.backText, { color: colors.textSecondary }]}>{t('forgot.backToLogin')}</Text>
-          </TouchableOpacity>
+          <PrimaryBtn label={t('forgot.continue')} onPress={handleLookup} icon={null} />
+          <LinkBtn label={phoneHint ? t('rec.identify.useEmail') : t('rec.identify.usePhone')} onPress={() => { hSelection(); setPhoneHint(v => !v); setIdentifier(''); setError(''); }} />
+          <LinkBtn label={t('forgot.backToLogin')} onPress={goBackToLogin} muted />
         </View>
       </>
     );
 
-    // Step 6: Find email by phone or name (Google-style)
-    if (step === 6) return (
+    if (step === 'methods') return (
       <>
-        {renderError()}
-        <View style={s.hintRow}>
-          <IconShield size={16} color={colors.textTertiary} />
-          <Text style={[s.hintText, { color: colors.textTertiary }]}>
-            {t('forgot.findHint')}
-          </Text>
-        </View>
-
-        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.findLabel')}</Text>
-        <View style={inputBoxStyle('findEmail')}>
-          <TextInput
-            style={[s.textInput, { color: colors.text }]}
-            value={findQuery}
-            onChangeText={(v) => { setFindQuery(v); if (error) setError(''); }}
-            placeholder={t('forgot.findPlaceholder')}
-            placeholderTextColor={colors.textTertiary}
-            autoCapitalize="words"
-            autoCorrect={false}
-            returnKeyType="search"
-            onSubmitEditing={() => { if (!loading && findQuery.trim()) handleFindEmail(); }}
-            accessibilityLabel={t('forgot.findLabel')}
-            autoFocus
-            onFocus={() => setFocused('findEmail')}
-            onBlur={() => setFocused('')}
-          />
-        </View>
-
-        {foundEmails.length > 0 && (
-          <View style={{ marginTop: 12 }}>
-            <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.foundAccounts')}</Text>
-            {foundEmails.map((acc, i) => (
+        {renderNotice()}
+        <AccountChip />
+        {visibleMethods.length === 0 ? (
+          <View style={s.noMethodsBox}>
+            <View style={[s.noMethodsIcon, { backgroundColor: colors.surfaceVariant }]}>
+              <IconAlertTriangle size={30} color={colors.text} />
+            </View>
+            <Text style={[s.noMethodsTitle, { color: colors.text }]}>{t('rec.none.title')}</Text>
+            <Text style={[s.noMethodsDesc, { color: colors.textSecondary }]}>{t('rec.none.desc')}</Text>
+            <View style={{ width: '100%', marginTop: 18 }}>
+              <PrimaryBtn label={t('forgot.contactSupportBtn')} onPress={openSupport} icon={<IconMail size={16} color={onAccent} style={{ marginRight: 8 }} />} />
+            </View>
+          </View>
+        ) : (
+          <View style={s.methodsList}>
+            {visibleMethods.map((m) => (
               <TouchableOpacity
-                key={i}
+                key={m.type}
                 style={[s.methodCard, { backgroundColor: colors.authInputBg, borderColor: colors.authInputBorder }]}
-                onPress={() => {
-                  const parts = acc.email.split('@');
-                  setUsername(parts[0]);
-                  setDomain(parts[1] || 'chatyy.com.br');
-                  setFoundEmails([]);
-                  setFindQuery('');
-                  setStep(1);
-                }}
+                onPress={() => startMethod(m.type)}
+                disabled={loading}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`${methodTitle(m)}. ${methodDesc(m)}`}
               >
-                <View style={[s.methodIconWrap, { backgroundColor: colors.primary + '15' }]}>
-                  <IconMail size={18} color={colors.primary} />
-                </View>
+                <View style={[s.methodIconWrap, { backgroundColor: colors.surfaceVariant }]}>{methodIcon(m.type)}</View>
                 <View style={s.methodInfo}>
-                  <Text style={[s.methodTitle, { color: colors.text }]}>{acc.name || acc.email.split('@')[0]}</Text>
-                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>{acc.email}</Text>
+                  <Text style={[s.methodTitle, { color: colors.text }]}>{methodTitle(m)}</Text>
+                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>{methodDesc(m)}</Text>
                 </View>
-                <IconArrowRight size={14} color={colors.textTertiary} />
+                {loading && busyMethod === m.type
+                  ? <ActivityIndicator size="small" color={colors.text} />
+                  : <IconArrowRight size={16} color={colors.textTertiary} />}
               </TouchableOpacity>
             ))}
+            {pinRequired && (
+              <View style={s.hintRow}>
+                <IconShield size={15} color={colors.textTertiary} />
+                <Text style={[s.hintText, { color: colors.textTertiary }]}>{t('rec.pinNotice')}</Text>
+              </View>
+            )}
           </View>
         )}
-
-        {findQuery.length > 0 && foundEmails.length === 0 && !loading && (
-          <Text style={{ color: colors.textSecondary, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
-            {t('forgot.noAccountsFound')}
-          </Text>
-        )}
-
-        <View style={s.btnCol}>
-          <PressableScale
-            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
-            onPress={handleFindEmail}
-            haptic={false /* handler already ticks after validation */}
-            disabled={loading || !findQuery.trim()}
-            activeOpacity={0.85}
-          >
-            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.findCta')}</Text>
-            )}
-          </PressableScale>
-          <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setFindQuery(''); setFoundEmails([]); }} activeOpacity={0.6}>
-            <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
-          </TouchableOpacity>
+        <View style={{ marginTop: 10 }}>
+          {visibleMethods.length > 0 && <LinkBtn label={t('rec.noAccess')} onPress={openSupport} muted />}
+          <LinkBtn label={t('rec.otherAccount')} onPress={() => restart()} />
         </View>
       </>
     );
 
-    // Step 2: Choose verification method
-    if (step === 2) return (
-      <>
-        {renderError()}
-
-        {methods.length === 0 ? (
-          // No recovery methods available
-          <View style={s.noMethodsBox}>
-            <View style={[s.noMethodsIcon, { backgroundColor: colors.error + '12' }]}>
-              <IconAlertTriangle size={36} color={colors.error} />
-            </View>
-            <Text style={[s.noMethodsTitle, { color: colors.text }]}>{t('forgot.noMethods')}</Text>
-            <Text style={[s.noMethodsDesc, { color: colors.textSecondary }]}>{t('forgot.contactSupport')}</Text>
-            <PressableScale
-              style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 20, width: '100%' }]}
-              onPress={() => {
-                if (Platform.OS === 'web') {
-                  window.open('mailto:suporte@chatyy.com.br', '_blank');
-                } else {
-                  Linking.openURL('mailto:suporte@chatyy.com.br').catch(() => {});
-                }
-              }}
-              activeOpacity={0.85}
-            >
-              <IconMail size={16} color={colors.onPrimary} style={{ marginRight: 8 }} />
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.contactSupportBtn')}</Text>
-            </PressableScale>
-          </View>
-        ) : (
-          // Show available methods
-          <View style={s.methodsList}>
-            {methods.includes('phone') && (
-              <TouchableOpacity
-                style={[s.methodCard, {
-                  backgroundColor: colors.authInputBg,
-                  borderColor: colors.authInputBorder,
-                }]}
-                onPress={() => handleSelectMethod('phone')}
-                disabled={loading}
-                activeOpacity={0.7}
-              >
-                <View style={[s.methodIconWrap, { backgroundColor: colors.authSuccessGreen + '15' }]}>
-                  <IconSmartphone size={22} color={colors.authSuccessGreen} />
-                </View>
-                <View style={s.methodInfo}>
-                  <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodPhone')}</Text>
-                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
-                    {t('forgot.methodPhoneTo', { phone: phoneMasked })}
-                  </Text>
-                </View>
-                {loading && selectedMethod === 'phone' ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <IconArrowRight size={16} color={colors.textTertiary} />
-                )}
-              </TouchableOpacity>
-            )}
-
-            {methods.includes('email') && (
-              <TouchableOpacity
-                style={[s.methodCard, {
-                  backgroundColor: colors.authInputBg,
-                  borderColor: colors.authInputBorder,
-                }]}
-                onPress={() => handleSelectMethod('email')}
-                disabled={loading}
-                activeOpacity={0.7}
-              >
-                <View style={[s.methodIconWrap, { backgroundColor: colors.primary + '15' }]}>
-                  <IconMail size={22} color={colors.primary} />
-                </View>
-                <View style={s.methodInfo}>
-                  <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodEmail')}</Text>
-                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
-                    {t('forgot.methodEmailTo', { email: emailMasked })}
-                  </Text>
-                </View>
-                {loading && selectedMethod === 'email' ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <IconArrowRight size={16} color={colors.textTertiary} />
-                )}
-              </TouchableOpacity>
-            )}
-
-            {methods.includes('self_email') && (
-              <TouchableOpacity
-                style={[s.methodCard, {
-                  backgroundColor: colors.authInputBg,
-                  borderColor: colors.authInputBorder,
-                }]}
-                onPress={() => handleSelectMethod('self_email')}
-                disabled={loading}
-                activeOpacity={0.7}
-              >
-                <View style={[s.methodIconWrap, { backgroundColor: colors.brandSecondary + '15' }]}>
-                  <IconMail size={22} color={colors.brandSecondary} />
-                </View>
-                <View style={s.methodInfo}>
-                  <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodSelfEmail')}</Text>
-                  <Text style={[s.methodDesc, { color: colors.textSecondary }]}>
-                    {t('forgot.methodSelfEmailTo', { email: emailMasked })}
-                  </Text>
-                </View>
-                {loading && selectedMethod === 'self_email' ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <IconArrowRight size={16} color={colors.textTertiary} />
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setError(''); setMethods([]); }} activeOpacity={0.6}>
-          <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
-        </TouchableOpacity>
-      </>
-    );
-
-    // Step 3: Verify code
-    if (step === 3) return (
-      <>
-        {renderError()}
-        <View style={[s.sentBox, { backgroundColor: colors.authChipBg, borderColor: colors.authChipBorder }]}>
-          <View style={[s.sentIconWrap, { backgroundColor: (selectedMethod === 'phone' ? colors.authSuccessGreen : colors.primary) + '12' }]}>
-            {selectedMethod === 'phone' ? (
-              <IconSmartphone size={18} color={colors.authSuccessGreen} />
-            ) : (
-              <IconSend size={18} color={colors.primary} />
-            )}
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[s.sentTitle, { color: colors.text }]}>
-              {selectedMethod === 'phone' ? t('forgot.smsSent') : t('forgot.codeSent')}
-            </Text>
-            <Text style={[s.sentText, { color: colors.textSecondary }]}>{maskedTarget}</Text>
-          </View>
-        </View>
-
-        {selectedMethod === 'email' && (
-          <TouchableOpacity
-            style={[s.openEmailBtn, { borderColor: colors.primary + '40', backgroundColor: colors.primary + '08' }]}
-            onPress={() => {
-              if (Platform.OS === 'web') {
-                const emailDomain = maskedTarget.match(/@([^.]+)/)?.[1]?.toLowerCase();
-                const urlMap = { gmail: 'https://mail.google.com', outlook: 'https://outlook.live.com', hotmail: 'https://outlook.live.com', yahoo: 'https://mail.yahoo.com' };
-                const url = urlMap[emailDomain] || 'mailto:';
-                window.open(url, '_blank');
-              } else {
-                Linking.openURL('mailto:').catch(() => {});
-              }
-            }}
-            activeOpacity={0.7}
-          >
-            <IconMail size={16} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.openEmailText, { color: colors.primary }]}>{t('forgot.openEmail')}</Text>
-          </TouchableOpacity>
-        )}
-
-        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.enterCode')}</Text>
-        <OtpInput value={code} onChange={handleCodeChange} />
-
-        <PressableScale
-          style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 22 }, loading && { opacity: 0.65 }]}
-          onPress={() => handleVerify()}
-          disabled={loading}
-          activeOpacity={0.85}
-        >
-          {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
-            <>
-              <IconCheckCircle size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
-              <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.verifyCode')}</Text>
-            </>
-          )}
-        </PressableScale>
-
-        {countdown > 0 ? (
-          <Text style={[s.countdownText, { color: colors.textTertiary }]}>
-            {t('forgot.resendIn', { time: `${Math.floor(countdown / 60)}:${(countdown % 60).toString().padStart(2, '0')}` })}
-          </Text>
-        ) : (
-          <TouchableOpacity style={s.resendBtn} onPress={handleResend} activeOpacity={0.6}>
-            <Text style={[s.resendText, { color: colors.primary }]}>{t('forgot.resendCode')}</Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity style={s.backBtn} onPress={() => { setStep(2); setCode(''); setError(''); }} activeOpacity={0.6}>
-          <Text style={[s.backText, { color: colors.primary }]}>{t('forgot.back')}</Text>
-        </TouchableOpacity>
-      </>
-    );
-
-    // Step 4: New password
-    if (step === 4) return (
-      <>
-        {renderError()}
-
-        {/* Keychain anchor: lets iOS / password managers attach the NEW
-            password to THIS account (invisible, not focusable). */}
-        <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}>
-          <TextInput
-            value={fullEmail}
-            editable
-            textContentType="username"
-            autoComplete="username"
-            importantForAutofill="yes"
-            autoCapitalize="none"
-            {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})}
-            style={{ width: 1, height: 1 }}
-          />
-        </View>
-
-        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.newPassword')}</Text>
-        <View style={inputBoxStyle('newPwd')}>
-          <TextInput
-            style={[s.textInput, { color: colors.text }]}
-            value={newPwd}
-            onChangeText={(v) => { setNewPwd(v); if (error) setError(''); }}
-            placeholder={t('forgot.newPasswordPlaceholder')}
-            placeholderTextColor={colors.textTertiary}
-            secureTextEntry={!showPwd}
-            // iOS strong-password suggestion + Keychain update; Android/web
-            // password managers offer to save the NEW password.
-            textContentType="newPassword"
-            autoComplete={Platform.OS === 'android' ? 'password-new' : 'new-password'}
-            passwordRules="minlength: 8;"
-            importantForAutofill="yes"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="next"
-            accessibilityLabel={t('forgot.newPassword')}
-            autoFocus
-            onFocus={() => setFocused('newPwd')}
-            onBlur={() => setFocused('')}
-          />
-          <TouchableOpacity style={s.eyeBtn} onPress={() => setShowPwd(!showPwd)} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={showPwd ? t('login.hidePassword') : t('login.showPassword')}>
-            {showPwd ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
-          </TouchableOpacity>
-        </View>
-
-        <PasswordStrength password={newPwd} />
-
-        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.confirmNewPassword')}</Text>
-        <View style={inputBoxStyle('confirmPwd')}>
-          <TextInput
-            style={[s.textInput, { color: colors.text }]}
-            value={confirmPwd}
-            onChangeText={(v) => { setConfirmPwd(v); if (error) setError(''); }}
-            placeholder={t('forgot.repeatPassword')}
-            placeholderTextColor={colors.textTertiary}
-            secureTextEntry={!showConfirm}
-            textContentType="newPassword"
-            autoComplete={Platform.OS === 'android' ? 'password-new' : 'new-password'}
-            importantForAutofill="yes"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="go"
-            onSubmitEditing={() => { if (!loading) handleReset(); }}
-            accessibilityLabel={t('forgot.confirmNewPassword')}
-            onFocus={() => setFocused('confirmPwd')}
-            onBlur={() => setFocused('')}
-          />
-          <TouchableOpacity style={s.eyeBtn} onPress={() => setShowConfirm(!showConfirm)} activeOpacity={0.6} accessibilityRole="button" accessibilityLabel={showConfirm ? t('login.hidePassword') : t('login.showPassword')}>
-            {showConfirm ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
-          </TouchableOpacity>
-        </View>
-
-        {confirmPwd && newPwd !== confirmPwd && (
-          <View style={s.matchRow}>
-            <IconAlertTriangle size={13} color={colors.error} />
-            <Text style={[s.matchText, { color: colors.error }]}>{t('forgot.passwordsMismatch')}</Text>
-          </View>
-        )}
-        {confirmPwd && newPwd === confirmPwd && confirmPwd.length >= 8 && (
-          <View style={s.matchRow}>
-            <IconCheckCircle size={13} color={colors.authSuccessGreen} />
-            <Text style={[s.matchText, { color: colors.authSuccessGreen, fontWeight: '700' }]}>{t('forgot.passwordsMatch')}</Text>
-          </View>
-        )}
-
-        <View style={s.btnCol}>
-          <PressableScale
-            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
-            onPress={handleReset}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
-            {loading ? <ActivityIndicator color={colors.onPrimary || '#fff'} size="small" /> : (
-              <>
-                <IconLock size={16} color={colors.onPrimary || '#fff'} style={{ marginRight: 8 }} />
-                <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.changePassword')}</Text>
-              </>
-            )}
-          </PressableScale>
-        </View>
-      </>
-    );
-
-    // Step 5: Success
-    if (step === 5) {
-      const scale = successAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
+    if (step === 'code') {
+      const left = resendAt - now;
+      const isPhone = method === 'phone';
       return (
-        <Animated.View style={[s.successBox, { opacity: successAnim, transform: [{ scale }] }]}>
-          <View style={[s.successIcon, { backgroundColor: colors.authSuccessGreen + '12' }]}>
-            <IconCheckCircle size={52} color={colors.authSuccessGreen} />
+        <>
+          {renderNotice()}
+          <View style={[s.sentBox, { backgroundColor: colors.authChipBg, borderColor: colors.authChipBorder }]}>
+            <View style={[s.sentIconWrap, { backgroundColor: colors.surfaceVariant }]}>
+              {isPhone ? <IconMessageSquare size={18} color={colors.text} /> : <IconMail size={18} color={colors.text} />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.sentTitle, { color: colors.text }]}>
+                {isPhone ? (sentVia === 'whatsapp' ? t('rec.code.sentWa') : t('rec.code.sentSms')) : t('rec.code.sentEmail')}
+              </Text>
+              <Text style={[s.sentText, { color: colors.textSecondary }]}>{masked}</Text>
+            </View>
           </View>
-          <Text style={[s.successTitle, { color: colors.authSuccessGreen }]}>{t('forgot.passwordChanged')}</Text>
-          <Text style={[s.successSub, { color: colors.textSecondary }]}>{t('forgot.passwordChangedDesc')}</Text>
-          <PressableScale
-            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 24, width: '100%' }]}
-            onPress={() => router.replace('/login')}
-            activeOpacity={0.85}
-          >
-            <Text style={[s.primaryBtnText, { color: colors.onPrimary || '#fff' }]}>{t('forgot.goToLogin')}</Text>
-          </PressableScale>
-        </Animated.View>
+          <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.enterCode')}</Text>
+          <OtpInput key={codeKey} value={code} onChange={handleCodeChange} />
+          <View style={s.btnCol}>
+            <PrimaryBtn label={t('forgot.verifyCode')} onPress={() => handleVerify()} icon={<IconCheckCircle size={16} color={onAccent} style={{ marginRight: 8 }} />} />
+          </View>
+          {left > 0 ? (
+            <Text style={[s.countdownText, { color: colors.textTertiary }]}>{t('forgot.resendIn', { time: fmtLeft(left) })}</Text>
+          ) : (
+            <View>
+              <LinkBtn label={t('forgot.resendCode')} onPress={() => startMethod(method)} />
+              {isPhone && sentVia === 'whatsapp' && <LinkBtn label={t('rec.code.viaSms')} onPress={() => startMethod('phone', 'force_sms')} />}
+              {isPhone && sentVia !== 'whatsapp' && waAvailable !== false && <LinkBtn label={t('rec.code.viaWa')} onPress={() => startMethod('phone', 'whatsapp')} />}
+            </View>
+          )}
+          <LinkBtn label={t('rec.tryAnother')} onPress={() => { setError(''); setInfo(''); setStep('methods'); }} muted />
+        </>
       );
     }
+
+    if (step === 'device') {
+      const left = deviceUntil - now;
+      return (
+        <>
+          {renderNotice()}
+          <AccountChip />
+          {deviceState === 'pending' && (
+            <>
+              <View style={s.deviceBox}>
+                <View style={[s.deviceIcon, { backgroundColor: colors.surfaceVariant }]}>
+                  <IconSmartphone size={30} color={colors.text} />
+                </View>
+                <Text style={[s.deviceLead, { color: colors.text }]}>{t('rec.device.lead')}</Text>
+                <Text style={[s.deviceSub, { color: colors.textSecondary }]}>{t('rec.device.sub')}</Text>
+                <View style={[s.numberBadge, { borderColor: colors.text }]} accessibilityLabel={t('rec.device.numberA11y', { n: deviceNumber })}>
+                  <Text style={[s.numberText, { color: colors.text }]}>{deviceNumber}</Text>
+                </View>
+                <View style={s.waitRow}>
+                  <ActivityIndicator size="small" color={colors.textSecondary} />
+                  <Text style={[s.waitText, { color: colors.textSecondary }]}>{t('rec.device.waiting', { time: fmtLeft(left) })}</Text>
+                </View>
+              </View>
+              <LinkBtn label={t('rec.device.resend')} onPress={() => startMethod('device')} />
+            </>
+          )}
+          {deviceState !== 'pending' && (
+            <View style={s.deviceBox}>
+              <View style={[s.deviceIcon, { backgroundColor: colors.surfaceVariant }]}>
+                <IconAlertTriangle size={28} color={colors.text} />
+              </View>
+              <Text style={[s.deviceLead, { color: colors.text }]}>
+                {deviceState === 'denied' ? t('rec.device.denied') : t('rec.device.expired')}
+              </Text>
+              <Text style={[s.deviceSub, { color: colors.textSecondary }]}>
+                {deviceState === 'denied' ? t('rec.device.deniedDesc') : t('rec.device.expiredDesc')}
+              </Text>
+              <View style={{ width: '100%', marginTop: 16 }}>
+                <PrimaryBtn label={t('rec.device.again')} onPress={() => startMethod('device')} />
+              </View>
+            </View>
+          )}
+          <LinkBtn label={t('rec.tryAnother')} onPress={() => { stopPolling(); setError(''); setStep('methods'); }} muted />
+        </>
+      );
+    }
+
+    if (step === 'pin') return (
+      <>
+        {renderNotice()}
+        <View style={s.hintRow}>
+          <IconShield size={16} color={colors.textTertiary} />
+          <Text style={[s.hintText, { color: colors.textTertiary }]}>{t('rec.pin.hint')}</Text>
+        </View>
+        <Text style={[s.label, { color: colors.authLabelColor }]}>{t('rec.pin.label')}</Text>
+        <View style={inputBoxStyle('pin')}>
+          <TextInput
+            style={[s.textInput, { color: colors.text, letterSpacing: 8, fontSize: 20, textAlign: 'center' }]}
+            value={pin}
+            onChangeText={(v) => { setPin(String(v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
+            keyboardType="number-pad"
+            secureTextEntry
+            maxLength={6}
+            autoFocus
+            textContentType="oneTimeCode"
+            accessibilityLabel={t('rec.pin.label')}
+            returnKeyType="go"
+            onSubmitEditing={() => { if (!loading) handlePin(); }}
+            onFocus={() => setFocused('pin')}
+            onBlur={() => setFocused('')}
+          />
+        </View>
+        <View style={s.btnCol}>
+          <PrimaryBtn label={t('forgot.continue')} onPress={handlePin} />
+        </View>
+        <Text style={[s.hintText, { color: colors.textTertiary, textAlign: 'center', marginTop: 12 }]}>{t('rec.pin.forgot')}</Text>
+        {visibleMethods.some(m => m.type === 'device' || m.type === 'passkey') && (
+          <LinkBtn label={t('rec.tryAnother')} onPress={() => { setError(''); setStep('methods'); }} muted />
+        )}
+      </>
+    );
+
+    if (step === 'password') {
+      const bars = Math.max(0, Math.min(4, strength.score + (newPwd.length >= 8 && strength.score === 0 ? 1 : 0)));
+      const levelKey = ['signup.password.weak', 'signup.password.weak', 'signup.password.fair', 'signup.password.good', 'signup.password.strong'][bars];
+      return (
+        <>
+          {renderNotice()}
+          {/* âncora invisível: gerenciadores de senha associam a senha nova a ESTA conta */}
+          <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}>
+            <TextInput value={doneEmail || (account && account.includes('•') ? '' : account)} editable textContentType="username" autoComplete="username" importantForAutofill="yes" autoCapitalize="none" {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})} style={{ width: 1, height: 1 }} />
+          </View>
+          <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.newPassword')}</Text>
+          <View style={inputBoxStyle('pwd')}>
+            <TextInput
+              style={[s.textInput, { color: colors.text }]}
+              value={newPwd}
+              onChangeText={(v) => { setNewPwd(v); if (error) setError(''); }}
+              placeholder={t('forgot.newPasswordPlaceholder')}
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry={!showPwd}
+              textContentType="newPassword"
+              autoComplete={Platform.OS === 'android' ? 'password-new' : 'new-password'}
+              passwordRules="minlength: 8;"
+              importantForAutofill="yes"
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoFocus
+              accessibilityLabel={t('forgot.newPassword')}
+              onFocus={() => setFocused('pwd')}
+              onBlur={() => setFocused('')}
+            />
+            <TouchableOpacity style={s.eyeBtn} onPress={() => setShowPwd(v => !v)} accessibilityRole="button" accessibilityLabel={showPwd ? t('login.hidePassword') : t('login.showPassword')}>
+              {showPwd ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
+            </TouchableOpacity>
+          </View>
+          {!!newPwd && (
+            <View style={s.meterWrap} accessibilityLabel={t(levelKey)}>
+              <View style={s.meterRow}>
+                {[0, 1, 2, 3].map(i => (
+                  <View key={i} style={[s.meterBar, { backgroundColor: i < bars ? colors.text : colors.authInputBorder }]} />
+                ))}
+              </View>
+              <Text style={[s.meterText, { color: colors.textSecondary }]}>{t(levelKey)}</Text>
+            </View>
+          )}
+          <Text style={[s.label, { color: colors.authLabelColor }]}>{t('forgot.confirmNewPassword')}</Text>
+          <View style={inputBoxStyle('confirm')}>
+            <TextInput
+              style={[s.textInput, { color: colors.text }]}
+              value={confirmPwd}
+              onChangeText={(v) => { setConfirmPwd(v); if (error) setError(''); }}
+              placeholder={t('forgot.repeatPassword')}
+              placeholderTextColor={colors.textTertiary}
+              secureTextEntry={!showPwd}
+              textContentType="newPassword"
+              autoComplete={Platform.OS === 'android' ? 'password-new' : 'new-password'}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="go"
+              onSubmitEditing={() => { if (!loading) handleReset(); }}
+              accessibilityLabel={t('forgot.confirmNewPassword')}
+              onFocus={() => setFocused('confirm')}
+              onBlur={() => setFocused('')}
+            />
+          </View>
+          {!!confirmPwd && (
+            <Text style={[s.matchText, { color: newPwd === confirmPwd ? colors.text : colors.error }]}>
+              {newPwd === confirmPwd ? t('forgot.passwordsMatch') : t('forgot.passwordsMismatch')}
+            </Text>
+          )}
+          <View style={[s.switchRow, { borderColor: colors.authInputBorder }]}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[s.switchTitle, { color: colors.text }]}>{t('rec.logoutOthers')}</Text>
+              <Text style={[s.switchDesc, { color: colors.textSecondary }]}>{t('rec.logoutOthersDesc')}</Text>
+            </View>
+            <Switch
+              value={logoutOthers}
+              onValueChange={(v) => { hSelection(); setLogoutOthers(v); }}
+              trackColor={{ false: colors.authInputBorder, true: colors.text }}
+              thumbColor={Platform.OS === 'android' ? (logoutOthers ? onAccent : '#f4f4f4') : undefined}
+              accessibilityLabel={t('rec.logoutOthers')}
+            />
+          </View>
+          <View style={s.btnCol}>
+            <PrimaryBtn label={t('rec.savePassword')} onPress={handleReset} icon={<IconLock size={16} color={onAccent} style={{ marginRight: 8 }} />} />
+          </View>
+        </>
+      );
+    }
+
+    // done
+    return (
+      <View style={s.successBox}>
+        <View style={[s.successIcon, { backgroundColor: colors.surfaceVariant }]}>
+          <IconCheckCircle size={44} color={colors.text} />
+        </View>
+        <Text style={[s.successTitle, { color: colors.text }]}>{t('forgot.passwordChanged')}</Text>
+        <Text style={[s.successSub, { color: colors.textSecondary }]}>
+          {logoutOthers ? t('rec.done.descLoggedOut') : t('rec.done.desc')}
+        </Text>
+        <View style={{ width: '100%', marginTop: 22 }}>
+          <PrimaryBtn
+            label={t('forgot.goToLogin')}
+            onPress={() => router.replace(doneEmail ? `/login?email=${encodeURIComponent(doneEmail)}` : '/login')}
+          />
+        </View>
+      </View>
+    );
   };
 
   const TITLES = {
-    1: { title: t('forgot.title'), subtitle: t('forgot.subtitle') },
-    2: { title: methods.length > 0 ? t('forgot.chooseMethodTitle') : t('forgot.title'), subtitle: methods.length > 0 ? t('forgot.chooseMethodSubtitle') : '' },
-    3: { title: t('forgot.verifyTitle'), subtitle: selectedMethod === 'phone' ? t('forgot.verifySubtitlePhone') : t('forgot.verifySubtitle') },
-    4: { title: t('forgot.newPasswordTitle'), subtitle: t('forgot.newPasswordSubtitle') },
-    5: { title: '', subtitle: '' },
-    // Step 6 = "find email by phone/name". Reachable via the "Esqueceu o
-    // email?" link on step 1. Without this entry the screen renders with
-    // empty title/subtitle (broken state).
-    6: { title: t('forgot.titleNoEmail') || 'Esqueceu o email?', subtitle: t('forgot.subNoEmail') || 'Digite seu telefone ou nome completo para encontrarmos sua conta.' },
+    identify: [t('rec.title.identify'), t('rec.sub.identify')],
+    methods: [visibleMethods.length ? t('rec.title.methods') : t('rec.title.identify'), visibleMethods.length ? t('rec.sub.methods') : ''],
+    code: [t('rec.title.code'), method === 'phone' ? t('rec.sub.codePhone') : t('rec.sub.codeEmail')],
+    device: [t('rec.title.device'), ''],
+    pin: [t('rec.title.pin'), t('rec.sub.pin')],
+    password: [t('rec.title.password'), t('rec.sub.password')],
+    done: ['', ''],
   };
+  const [title, subtitle] = TITLES[step] || ['', ''];
+  const entryScale = fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
 
   return (
     <View style={[s.outerRoot, { backgroundColor: colors.authBg }]}>
-      {/* [2026-10-12 first-run polish] decorative blobs removed (one was
-          green-tinted — off-brand for the B&W auth screens). */}
-
-      {/* Theme toggle */}
       <TouchableOpacity onPress={toggle} style={[s.themeToggle, { top: insets.top + 16 }]} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
         <View style={s.themeBtn}>
           {isDark ? <IconSun size={16} color={colors.textSecondary} /> : <IconMoon size={16} color={colors.textSecondary} />}
         </View>
       </TouchableOpacity>
 
-    <LoginKeyboardScroll
-      contentContainerStyle={s.scroll}
-      bottomOffset={96}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
-    >
+      <LoginKeyboardScroll contentContainerStyle={s.scroll} bottomOffset={96} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}>
         <View style={[s.center, { paddingBottom: 48 + insets.bottom }, !isDesktop && { justifyContent: 'flex-start', paddingTop: insets.top + 72 }]}>
           <Animated.View style={[s.cardWrap, { opacity: fadeAnim, transform: [{ scale: entryScale }, { translateY: slideAnim }] }]}>
             <View style={[s.card, !isDesktop ? s.cardFlat : {
               backgroundColor: colors.authCardBg,
               ...(Platform.OS === 'web' ? {
-                boxShadow: isDark
-                  ? '0 2px 8px rgba(0,0,0,0.35), 0 8px 32px rgba(0,0,0,0.2)'
-                  : '0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.08)',
-              } : {
-                shadowColor: colors.shadow,
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: isDark ? 0.3 : 0.12,
-                shadowRadius: 24,
-                elevation: 8,
-              }),
+                boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.35), 0 8px 32px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.08)',
+              } : {}),
               borderColor: isDark ? colors.authCardBorder : 'transparent',
               borderWidth: isDark ? 1 : 0,
               borderRadius: 24, paddingHorizontal: 40, paddingTop: 36, paddingBottom: 28,
             }]}>
-              {/* Icon with glow */}
               <View style={s.iconRow}>
-                <View style={s.iconWrap}>
-                  <View style={[s.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
-                    <IconMailLogo size={26} color={colors.text} />
-                  </View>
+                <View style={[s.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
+                  <IconMailLogo size={26} color={colors.text} />
                 </View>
               </View>
-
-              {/* Title */}
-              {!!TITLES[step]?.title && <Text style={[s.title, { color: colors.text }]}>{TITLES[step].title}</Text>}
-              {!!TITLES[step]?.subtitle && <Text style={[s.subtitle, { color: colors.textSecondary }]}>{TITLES[step].subtitle}</Text>}
-
+              {!!title && <Text style={[s.title, { color: colors.text }]} accessibilityRole="header">{title}</Text>}
+              {!!subtitle && <Text style={[s.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>}
               {renderContent()}
             </View>
 
-            {/* Footer */}
             <View style={[s.footer, !isDesktop && s.footerStacked]}>
               <Text style={[s.footerItem, { color: colors.authFooterText }]}>{t('forgot.footerLanguage')}</Text>
               <View style={s.footerLinks}>
@@ -839,169 +780,84 @@ export default function ForgotPassword() {
             <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
           </Animated.View>
         </View>
-    </LoginKeyboardScroll>
+      </LoginKeyboardScroll>
     </View>
   );
 }
 
 const s = StyleSheet.create({
   outerRoot: { flex: 1, overflow: 'hidden' },
-  flex: { flex: 1 },
   scroll: { flexGrow: 1 },
-
-  /* Decorative background */
-  bgDecor: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0,
-    overflow: 'hidden',
-  },
-  bgCircle1: {
-    position: 'absolute', width: 400, height: 400, borderRadius: 200,
-    top: -120, right: -100,
-  },
-  bgCircle2: {
-    position: 'absolute', width: 300, height: 300, borderRadius: 150,
-    bottom: -60, left: -80,
-  },
-  bgCircle3: {
-    position: 'absolute', width: 200, height: 200, borderRadius: 100,
-    top: '40%', left: '60%',
-  },
-
-  /* Theme toggle */
   themeToggle: { position: 'absolute', top: 16, right: 16, zIndex: 10 },
-  themeBtn: {
-    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
-  },
-
-  center: {
-    flex: 1, justifyContent: 'center', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 48, minHeight: '100%',
-    zIndex: 1,
-  },
+  themeBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 48, minHeight: '100%', zIndex: 1 },
   cardWrap: { width: '100%', maxWidth: 448 },
-  card: {
-    borderRadius: 16, paddingHorizontal: 28, paddingTop: 28, paddingBottom: 24, width: '100%',
-  },
-  // Phones: no card, same gutters as /login (center 16 + card 8).
+  card: { borderRadius: 16, paddingHorizontal: 28, paddingTop: 28, paddingBottom: 24, width: '100%' },
   cardFlat: { backgroundColor: 'transparent', paddingHorizontal: 8, paddingTop: 0, paddingBottom: 8 },
-
   iconRow: { alignItems: 'center', marginBottom: 14 },
-  iconWrap: { alignItems: 'center', justifyContent: 'center' },
-  iconGlow: {
-    position: 'absolute', width: 56, height: 56, borderRadius: 28,
-  },
-  iconCircle: {
-    width: 60, height: 60, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  // [2026-10-12 first-run polish] login type scale (28/800 + 15/22).
+  iconCircle: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 28, fontWeight: '800', textAlign: 'center', marginBottom: 8, letterSpacing: -0.7, lineHeight: 34 },
   subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 22, lineHeight: 22 },
-
-  errorBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    padding: 12, borderRadius: 12, marginBottom: 16, borderWidth: 1,
-  },
-  errorText: { fontSize: 13, flex: 1, fontWeight: '500' },
-
-  hintRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginBottom: 8 },
+  hintRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginTop: 4 },
   hintText: { fontSize: 13, lineHeight: 19, flex: 1 },
-
   label: { fontSize: 12, fontWeight: '600', marginBottom: 6, marginTop: 14, textTransform: 'uppercase', letterSpacing: 0.5 },
-  inputBox: {
-    flexDirection: 'row', alignItems: 'center', minHeight: 52,
-    borderWidth: 1, borderRadius: 14,
-    ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
-  },
+  inputBox: { flexDirection: 'row', alignItems: 'center', minHeight: 52, borderWidth: 1, borderRadius: 14 },
   textInput: {
-    flex: 1, minWidth: 0, fontSize: 16, paddingVertical: Platform.OS === 'web' ? 14 : 12,
-    paddingHorizontal: 14,
+    flex: 1, minWidth: 0, fontSize: 16, paddingVertical: Platform.OS === 'web' ? 14 : 12, paddingHorizontal: 14,
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
-  inputSuffix: { fontSize: 13, fontWeight: '500', paddingRight: 16 },
-  eyeBtn: { padding: 8, marginRight: 4 },
-
+  eyeBtn: { padding: 10, marginRight: 4 },
   btnCol: { marginTop: 20 },
   primaryBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    // [2026-10-10 visual] match login CTA (radius 14, ~52pt tall)
-    // [2026-10-12 first-run polish] 50pt + quiet lift (login/signup CTA).
-    borderRadius: 14, paddingVertical: 12, minHeight: 50,
-    ...Platform.select({
-      web: {
-        cursor: 'pointer', transition: 'all 0.2s ease',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.10), 0 6px 16px rgba(0,0,0,0.12)',
-      },
-      default: {
-        shadowColor: '#000000', shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.14, shadowRadius: 10, elevation: 2,
-      },
-    }),
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 12, minHeight: 50,
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
-  backBtn: { paddingVertical: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 4 },
-  backText: { fontSize: 14, fontWeight: '600' },
-
-  // Method selection cards (Step 2)
-  methodsList: { gap: 12, marginTop: 4 },
-  methodCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 14, borderRadius: 14, borderWidth: 1, minHeight: 64,
-    ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.15s ease' }, default: {} }),
+  primaryBtnText: { fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+  linkBtn: { paddingVertical: 10, minHeight: 44, justifyContent: 'center', alignItems: 'center', marginTop: 2 },
+  linkText: { fontSize: 14, fontWeight: '600' },
+  accountChip: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 8, borderWidth: 1, borderRadius: 999,
+    paddingVertical: 5, paddingLeft: 5, paddingRight: 14, marginBottom: 18, maxWidth: '100%',
   },
-  methodIconWrap: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  accountDot: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  accountDotText: { fontSize: 13, fontWeight: '700' },
+  accountText: { fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  methodsList: { gap: 10 },
+  methodCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 14, borderWidth: 1, minHeight: 64 },
+  methodIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   methodInfo: { flex: 1 },
   methodTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
-  methodDesc: { fontSize: 12.5 },
-
-  // No methods available
-  noMethodsBox: { alignItems: 'center', paddingVertical: 16 },
-  noMethodsIcon: {
-    width: 80, height: 80, borderRadius: 40,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-  },
-  noMethodsTitle: { fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 8 },
+  methodDesc: { fontSize: 13 },
+  noMethodsBox: { alignItems: 'center', paddingVertical: 8 },
+  noMethodsIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  noMethodsTitle: { fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 6 },
   noMethodsDesc: { fontSize: 13, textAlign: 'center', lineHeight: 19 },
-
-  sentBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 16, borderRadius: 14, marginBottom: 8, borderWidth: 1,
-  },
-  sentIconWrap: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  sentBox: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 14, marginBottom: 4, borderWidth: 1 },
+  sentIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   sentTitle: { fontSize: 14, fontWeight: '700' },
-  sentText: { fontSize: 12, marginTop: 2 },
-  openEmailBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderRadius: 12, paddingVertical: 10, marginTop: 12, marginBottom: 4,
-  },
-  openEmailText: { fontSize: 14, fontWeight: '600' },
-
+  sentText: { fontSize: 13, marginTop: 2 },
   countdownText: { textAlign: 'center', fontSize: 13, marginTop: 16, fontWeight: '500' },
-  resendBtn: { alignItems: 'center', marginTop: 16, paddingVertical: 8 },
-  resendText: { fontSize: 14, fontWeight: '600' },
-
-  matchRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
-  matchText: { fontSize: 12, fontWeight: '500' },
-
-  successBox: { alignItems: 'center', padding: 24 },
-  successIcon: {
-    width: 64, height: 64, borderRadius: 32,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 14,
-  },
-  successTitle: { fontSize: 20, fontWeight: '700', marginBottom: 6 },
-  successSub: { fontSize: 13, marginBottom: 0 },
-
-  footer: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginTop: 24, paddingHorizontal: 8,
-  },
+  deviceBox: { alignItems: 'center', paddingVertical: 4 },
+  deviceIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  deviceLead: { fontSize: 17, fontWeight: '700', textAlign: 'center', marginBottom: 6 },
+  deviceSub: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  numberBadge: { marginTop: 20, width: 96, height: 96, borderRadius: 48, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  numberText: { fontSize: 40, fontWeight: '800', letterSpacing: -1 },
+  waitRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 18 },
+  waitText: { fontSize: 13 },
+  meterWrap: { marginTop: 8 },
+  meterRow: { flexDirection: 'row', gap: 6 },
+  meterBar: { flex: 1, height: 4, borderRadius: 2 },
+  meterText: { fontSize: 12, marginTop: 6, fontWeight: '600' },
+  matchText: { fontSize: 12, marginTop: 6, fontWeight: '600' },
+  switchRow: { flexDirection: 'row', alignItems: 'center', marginTop: 20, paddingTop: 16, borderTopWidth: StyleSheet.hairlineWidth },
+  switchTitle: { fontSize: 15, fontWeight: '600' },
+  switchDesc: { fontSize: 12.5, marginTop: 2, lineHeight: 17 },
+  successBox: { alignItems: 'center', paddingVertical: 16 },
+  successIcon: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  successTitle: { fontSize: 22, fontWeight: '800', marginBottom: 6, letterSpacing: -0.4 },
+  successSub: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 24, paddingHorizontal: 8 },
   footerStacked: { flexDirection: 'column', gap: 8, marginTop: 32 },
   footerLinks: { flexDirection: 'row', alignItems: 'center' },
   footerItem: { fontSize: 12 },

@@ -196,6 +196,22 @@ export async function loginWithPasskey(email) {
   }
 }
 
+/**
+ * [recovery 2026-10-18] Asserção crua p/ a recuperação de conta (o servidor
+ * de recuperação gera o desafio e confere; não faz login).
+ * @returns {{ok:true, assertion:object} | {ok:false, reason:'unavailable'|'cancelled'|'error'}}
+ */
+export async function getPasskeyAssertion(options) {
+  if (!isPasskeySupported()) return { ok: false, reason: 'unavailable' };
+  try {
+    const assertion = await _platformGet(options);
+    if (!assertion) return { ok: false, reason: 'cancelled' };
+    return { ok: true, assertion };
+  } catch (e) {
+    return { ok: false, reason: _isCancel(e) ? 'cancelled' : 'error' };
+  }
+}
+
 /** Passkeys registered on the signed-in account (any device). */
 export async function listPasskeys() {
   try {

@@ -2589,6 +2589,10 @@ export async function setupNotificationListeners() {
   const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
     // When a push arrives in foreground, emit event so chat can refresh instantly
     const data = notification.request?.content?.data;
+    // [recovery 2026-10-18] prompt de recuperação com o app aberto → RecoveryPromptHost abre a tela
+    if (data?.type === 'account_recovery_prompt') {
+      try { require('react-native').DeviceEventEmitter.emit('chatyy:recovery_prompt', { challenge_id: data.challenge_id }); } catch {}
+    }
     // [2026-10-09 open-instant] The push carries the message: put it in the
     // local store NOW (SQLite + list preview) — no-op when the WS already
     // delivered it (dedup by server id). services/bgJournal.ingestPushPayload.
@@ -3346,6 +3350,8 @@ function _extraNotificationTarget(data) {
     case 'new_login':
     case 'security_alert':
       return { href: '/linked-devices' };
+    case 'account_recovery_prompt': // [recovery 2026-10-18] "Você está tentando recuperar sua conta?"
+      return { href: '/recovery-approve' };
     case 'plan_expiry':
       return { href: '/plans' };
     case 'moderation':

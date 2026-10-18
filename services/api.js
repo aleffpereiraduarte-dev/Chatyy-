@@ -4768,6 +4768,53 @@ export async function resetPassword(email, resetToken, newPassword) {
   return apiCall('reset_password', { email, reset_token: resetToken, new_password: newPassword }, 'POST');
 }
 
+// ---- [recovery 2026-10-18] Recuperação de conta nível Gmail ----
+// Pré-login: identificar → métodos (aparelho/telefone/e-mail/passkey) → código
+// ou prompt no aparelho → PIN (se houver) → nova senha. `rid` = sessão opaca.
+export async function recoveryLookup(identifier) {
+  return apiCall('recovery_lookup', { identifier }, 'POST');
+}
+export async function recoverySend(rid, method, channel) {
+  return apiCall('recovery_send', channel ? { rid, method, channel } : { rid, method }, 'POST');
+}
+export async function recoveryStatus(rid) {
+  return apiCall('recovery_status', { rid }, 'POST');
+}
+export async function recoveryVerify(rid, code) {
+  return apiCall('recovery_verify', { rid, code }, 'POST');
+}
+export async function recoveryPin(rid, pin) {
+  return apiCall('recovery_pin', { rid, pin }, 'POST');
+}
+export async function recoveryPasskeyBegin(rid) {
+  return apiCall('recovery_passkey_begin', { rid }, 'POST');
+}
+export async function recoveryPasskeyFinish(rid, assertion) {
+  return apiCall('recovery_passkey_finish', { rid, id: assertion?.id, response: assertion?.response }, 'POST');
+}
+export async function recoveryReset(rid, resetToken, newPassword, logoutOthers = true) {
+  return apiCall('recovery_reset', { rid, reset_token: resetToken, new_password: newPassword, logout_others: !!logoutOthers }, 'POST');
+}
+// Logado: prompt "Você está tentando recuperar sua conta?" + Opções de recuperação.
+export async function recoveryDevicePending() {
+  return apiCall('recovery_device_pending', {}, 'GET');
+}
+export async function recoveryDeviceRespond(challengeId, approve, number) {
+  return apiCall('recovery_device_respond', { challenge_id: challengeId, approve: !!approve, number: number || 0 }, 'POST');
+}
+export async function recoveryOptionsGet() {
+  return apiCall('recovery_options_get', {}, 'GET');
+}
+export async function recoveryEmailStart(email) {
+  return apiCall('recovery_email_start', { email }, 'POST');
+}
+export async function recoveryEmailConfirm(code) {
+  return apiCall('recovery_email_confirm', { code }, 'POST');
+}
+export async function recoveryEmailRemove() {
+  return apiCall('recovery_email_remove', {}, 'POST');
+}
+
 // Change password
 export async function changePassword(currentPassword, newPassword) {
   return apiCall('change_password', { current_password: currentPassword, new_password: newPassword }, 'POST');

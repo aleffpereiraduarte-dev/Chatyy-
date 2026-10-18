@@ -534,6 +534,7 @@ const _LATE_OVERLAYS = {
   PushPermissionPrimer: () => require('../components/PushPermissionPrimer').default, // [2026-10-07 native-polish]
   TermsUpdateGate: () => require('../components/consent/TermsUpdateNotice').default, // [2026-10-13 consent-lgpd]
   AddPhoneGate: () => require('../components/phoneLink/AddPhoneGate').default, // [phone-obrigatorio 2026-10-15]
+  RecoveryPromptHost: () => require('../components/RecoveryPromptHost').default, // [recovery 2026-10-18]
 };
 let _lateReady = (() => { try { return globalThis.__chatyy_late_overlays === false; } catch { return false; } })();
 const _lateSubs = new Set();
@@ -2286,6 +2287,8 @@ export default function RootLayout() {
                   <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="privacy-personalization" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-13 consent-lgpd] */ }} />
                   <Stack.Screen name="passkeys" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 passkeys] */ }} />
+                  <Stack.Screen name="recovery-options" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [recovery 2026-10-18] */ }} />
+                  <Stack.Screen name="recovery-approve" options={{ presentation: 'modal', animation: _PUSH, headerShown: false /* [recovery 2026-10-18] */ }} />
                   {/* [2026-10-14 piscada-nav] Sub-telas de Ajustes que NÃO tinham rota declarada: nasciam sem header
                       (headerShown:false do default) e o header nativo "caía" depois do push, empurrando o conteúdo. */}
                   <Stack.Screen name="settings-blocked" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS }} />
@@ -2426,6 +2429,8 @@ export default function RootLayout() {
                 <Late name="TermsUpdateGate" />
                 {/* [phone-obrigatorio 2026-10-15] conta antiga sem telefone → "Adicione seu número" (Agora não = 7 dias) */}
                 <Late name="AddPhoneGate" />
+                {/* [recovery 2026-10-18] prompt "É você recuperando a conta?" + lembrete sem opções de recuperação */}
+                <Late name="RecoveryPromptHost" />
                 {/* [2026-10-07 native-polish] push pre-permission sheet (gap P0-6) */}
                 <Late name="PushPermissionPrimer" />
                 <Suspense fallback={null}>
