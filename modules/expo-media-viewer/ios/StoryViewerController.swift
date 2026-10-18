@@ -421,6 +421,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     let p = SVGroupView(group: groups[i], labels: labels)
     p.delegate = self
     p.likeHoldEnabled = reactionHold
+    p.viewerRows = { [weak self] id in self?.viewersCache[id] }
     p.setMuted(muted)
     pager.addSubview(p)
     place(p, i)
@@ -1416,6 +1417,8 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
 
   func setViewers(id: String, rows: [[String: Any]], loading: Bool) {
     viewersCache[id] = rows
+    // [2026-10-18 status-telegram] Rostos de quem viu na pílula do próprio status.
+    if !loading { for (_, p) in pages where p.group.isSelf && p.currentItem?.id == id { p.refreshCounters() } }
     guard sheetOpen, sheetItemId == id else { return }
     sheetRows = rows
     sheetTable.reloadData()

@@ -843,6 +843,40 @@ class MGGridView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   fun getSelection(): List<String> = selected.toList()
 
+  /**
+   * [2026-10-18 tg-viewer] Frame da célula `key` (dp, relativo à área visível da
+   * janela — mesmo referencial do sourceRect do viewer) p/ o "voltar voando".
+   * Fora da tela + reveal: rola até ela e mede depois do layout. null = não achou.
+   */
+  fun frameOfKey(key: String, reveal: Boolean, done: (Map<String, Double>?) -> Unit) {
+    val pos = entries.indexOfFirst { e -> e is MGEntry.Cell && e.item.key == key }
+    if (pos < 0 || key.isEmpty() || !isAttachedToWindow) { done(null); return }
+    fun measure(): Map<String, Double>? {
+      val v = layoutManager.findViewByPosition(pos) ?: return null
+      if (v.width < 2 || v.height < 2) return null
+      val loc = IntArray(2)
+      v.getLocationOnScreen(loc)
+      val vis = Rect()
+      v.getWindowVisibleDisplayFrame(vis)
+      return mapOf(
+        "x" to ((loc[0] - vis.left) / density).toDouble(),
+        "y" to ((loc[1] - vis.top) / density).toDouble(),
+        "width" to (v.width / density).toDouble(),
+        "height" to (v.height / density).toDouble(),
+      )
+    }
+    val first = layoutManager.findFirstCompletelyVisibleItemPosition()
+    val last = layoutManager.findLastCompletelyVisibleItemPosition()
+    val visible = first != RecyclerView.NO_POSITION && pos in first..last
+    if (visible || !reveal) { done(if (visible) measure() else null); return }
+    val cellH = layoutManager.findViewByPosition(first)?.height ?: 0
+    layoutManager.scrollToPositionWithOffset(pos, max(0, (recycler.height - cellH) / 2))
+    recycler.postDelayed({
+      val r = try { measure() } catch (_: Throwable) { null }
+      done(r)
+    }, 48)
+  }
+
   fun scrollToTop(animated: Boolean) {
     if (animated) recycler.smoothScrollToPosition(0) else recycler.scrollToPosition(0)
   }

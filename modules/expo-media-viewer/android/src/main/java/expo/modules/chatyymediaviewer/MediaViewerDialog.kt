@@ -64,6 +64,9 @@ data class MVFlags(
   // FLAG_SECURE na janela do Dialog (o FLAG_SECURE da Activity NÃO cobre o
   // Dialog, que é outra janela) → print/gravação saem pretos.
   val secure: Boolean = false,
+  // [2026-10-18 tg-viewer] Responder / Apagar (padrão desligado: o JS liga quando tem o fluxo).
+  val allowReply: Boolean = false,
+  val allowDelete: Boolean = false,
 )
 
 /**
@@ -80,6 +83,12 @@ class MediaViewerDialog(
   private val flags: MVFlags,
   private val listener: Listener,
 ) : Dialog(host, android.R.style.Theme_Translucent_NoTitleBar), MVPageView.Host {
+
+  companion object {
+    // [2026-10-18 tg-viewer] célula da faixa de miniaturas (dp)
+    private const val STRIP_W = 32f
+    private const val STRIP_H = 44f
+  }
 
   interface Listener {
     fun onIndexChange(index: Int)
@@ -106,6 +115,13 @@ class MediaViewerDialog(
   private lateinit var timeView: TextView
   private lateinit var durView: TextView
   private lateinit var barPlay: ImageButton
+  // [2026-10-18 tg-viewer] velocidade + som (valem p/ todos os vídeos da sessão) e faixa de miniaturas
+  private lateinit var speedView: TextView
+  private lateinit var muteBtn: ImageButton
+  private lateinit var strip: RecyclerView
+  private var stripSide = 0
+  private var speed = 1f
+  private var muted = false
   private val actionButtons = HashMap<String, ImageButton>()
   private val actionSpinners = HashMap<String, ProgressBar>()
   private val actionResets = HashMap<String, Runnable>()
@@ -364,7 +380,18 @@ class MediaViewerDialog(
     seek.max = 1000
     seek.progressTintList = ColorStateList.valueOf(Color.WHITE)
     seek.thumbTintList = ColorStateList.valueOf(Color.WHITE)
-    seek.progressBackgroundTintList = ColorStateList.valueOf(Color.argb(90, 255, 255, 255))
+    seek.progressBackgroundTintList = ColorStateList.valueOf(Color.argb(72, 255, 255, 255))
+    // [2026-10-18 tg-viewer] trilho fino (3 dp) + polegar pequeno (Telegram)
+    if (Build.VERSION.SDK_INT >= 29) {
+      seek.minHeight = dp(3f)
+      seek.maxHeight = dp(3f)
+    }
+    seek.thumb = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.WHITE)
+      setSize(dp(12f), dp(12f))
+    }
+    seek.splitTrack = false
     seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
       override fun onStartTrackingTouch(sb: SeekBar) {
         val p = player ?: return
@@ -392,15 +419,55 @@ class MediaViewerDialog(
     durView = label(12f, false)
     durView.text = "0:00"
     videoBar.addView(durView)
+    speedView = TextView(context)
+    speedView.setTextColor(Color.WHITE)
+    speedView.textSize = 12f
+    speedView.paint.isFakeBoldText = true
+    speedView.gravity = Gravity.CENTER
+    speedView.setPadding(dp(5f), dp(1f), dp(5f), dp(1f))
+    speedView.background = GradientDrawable().apply {
+      cornerRadius = dp(5f).toFloat()
+      setStroke(max(1, dp(1.2f)), Color.argb(220, 255, 255, 255))
+      setColor(Color.TRANSPARENT)
+    }
+    speedView.setOnClickListener { cycleSpeed() }
+    videoBar.addView(speedView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(12f) })
+    muteBtn = iconButton(R.drawable.mv_ic_volume_on, labels["mute"])
+    muteBtn.setOnClickListener { toggleMute() }
+    videoBar.addView(muteBtn, LinearLayout.LayoutParams(dp(40f), dp(40f)).apply { leftMargin = dp(2f) })
+    updateSpeedUi()
     bottomBar.addView(videoBar, LinearLayout.LayoutParams(-1, dp(40f)))
+
+    strip = RecyclerView(context)
+    strip.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(context, RecyclerView.HORIZONTAL, false)
+    strip.adapter = StripAdapter()
+    strip.clipToPadding = false
+    strip.overScrollMode = View.OVER_SCROLL_NEVER
+    strip.itemAnimator = null
+    strip.visibility = if (items.size > 1) View.VISIBLE else View.GONE
+    strip.addOnLayoutChangeListener { v, l, _, r, _, ol, _, or_, _ ->
+      if (r - l != or_ - ol) {
+        val side = max(0, (r - l - dp(STRIP_W)) / 2)
+        v.post {
+          stripSide = side
+          v.setPadding(side, 0, side, 0)
+          centerStrip(false)
+        }
+      }
+    }
+    bottomBar.addView(strip, LinearLayout.LayoutParams(-1, dp(STRIP_H)).apply { topMargin = dp(4f); bottomMargin = dp(4f) })
 
     val actions = LinearLayout(context)
     actions.orientation = LinearLayout.HORIZONTAL
+    // [2026-10-18 tg-viewer] Ordem Telegram: Encaminhar, Compartilhar, Salvar,
+    // Favoritar, Responder, Apagar.
     val acts = ArrayList<String>()
+    if (flags.allowForward) acts.add("forward")
     if (flags.allowShare) acts.add("share")
     if (flags.allowSave) acts.add("save")
-    if (flags.allowForward) acts.add("forward")
     if (flags.allowStar) acts.add("star")
+    if (flags.allowReply) acts.add("reply")
+    if (flags.allowDelete) acts.add("delete")
     for (a in acts) {
       val cell = FrameLayout(context)
       val b = iconButton(iconFor(a), labels[a])
@@ -434,6 +501,8 @@ class MediaViewerDialog(
     "share" -> R.drawable.mv_ic_share
     "save" -> R.drawable.mv_ic_save
     "forward" -> R.drawable.mv_ic_forward
+    "reply" -> R.drawable.mv_ic_reply
+    "delete" -> R.drawable.mv_ic_delete
     "star" -> if (current in items.indices && items[current].starred) R.drawable.mv_ic_star else R.drawable.mv_ic_star_border
     "done" -> R.drawable.mv_ic_check
     else -> R.drawable.mv_ic_close
@@ -464,6 +533,130 @@ class MediaViewerDialog(
     timeView.text = "0:00"
     durView.text = "0:00"
     barPlay.setImageResource(R.drawable.mv_ic_play)
+    refreshStrip()
+  }
+
+  // ─── Faixa de miniaturas [2026-10-18 tg-viewer] ─────────────────────────
+
+  private var stripCurrent = -1
+
+  private fun refreshStrip() {
+    if (!this::strip.isInitialized || items.size < 2) return
+    val old = stripCurrent
+    stripCurrent = current
+    val ad = strip.adapter ?: return
+    if (old in items.indices) ad.notifyItemChanged(old)
+    ad.notifyItemChanged(current)
+    centerStrip(old >= 0)
+  }
+
+  private fun centerStrip(smooth: Boolean) {
+    if (!this::strip.isInitialized || current !in items.indices || strip.width <= 0) return
+    val lm = strip.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
+    val v = lm.findViewByPosition(current)
+    if (smooth && v != null && !MVMotion.reduceMotion) {
+      strip.smoothScrollBy(v.left - stripSide, 0)
+    } else {
+      lm.scrollToPositionWithOffset(current, 0)
+    }
+  }
+
+  private fun jumpTo(i: Int) {
+    if (closed || i !in items.indices || i == current) return
+    pager.setCurrentItem(i, false)
+    if (!MVMotion.reduceMotion) {
+      pager.alpha = 0.35f
+      pager.animate().alpha(1f).setDuration(180).start()
+    }
+    pager.post { settle() }
+  }
+
+  private class StripHolder(val img: android.widget.ImageView, val glyph: android.widget.ImageView, root: View) : RecyclerView.ViewHolder(root)
+
+  private inner class StripAdapter : RecyclerView.Adapter<StripHolder>() {
+    override fun getItemCount(): Int = items.size
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): StripHolder {
+      val cell = FrameLayout(context)
+      val lp = RecyclerView.LayoutParams(dp(STRIP_W), dp(STRIP_H))
+      lp.rightMargin = dp(3f)
+      cell.layoutParams = lp
+      val img = android.widget.ImageView(context)
+      img.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+      img.setBackgroundColor(Color.argb(26, 255, 255, 255))
+      img.clipToOutline = true
+      img.outlineProvider = object : android.view.ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: android.graphics.Outline) {
+          outline.setRoundRect(0, 0, view.width, view.height, dp(5f).toFloat())
+        }
+      }
+      cell.addView(img, FrameLayout.LayoutParams(-1, -1))
+      val glyph = android.widget.ImageView(context)
+      glyph.setImageResource(R.drawable.mv_ic_play)
+      glyph.setColorFilter(Color.WHITE)
+      cell.addView(glyph, FrameLayout.LayoutParams(dp(12f), dp(12f), Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(3f); bottomMargin = dp(3f) })
+      return StripHolder(img, glyph, cell)
+    }
+
+    override fun onBindViewHolder(holder: StripHolder, position: Int) {
+      val it = items.getOrNull(position) ?: return
+      val on = position == current
+      holder.itemView.alpha = if (on) 1f else 0.55f
+      holder.itemView.foreground = if (on) GradientDrawable().apply {
+        cornerRadius = dp(5f).toFloat()
+        setStroke(dp(2f), Color.WHITE)
+        setColor(Color.TRANSPARENT)
+      } else null
+      holder.glyph.visibility = if (it.isVideo) View.VISIBLE else View.GONE
+      holder.itemView.setOnClickListener {
+        val p = holder.bindingAdapterPosition
+        if (p != RecyclerView.NO_POSITION) jumpTo(p)
+      }
+      val src = if (it.thumbUri.isNotEmpty()) it.thumbUri else if (it.isVideo) "" else (if (MVItem.existingFile(it.localUri) != null) it.localUri else it.uri)
+      val model = MVItem.glideModel(src)
+      val g = Glide.with(context.applicationContext)
+      if (model == null) {
+        g.clear(holder.img)
+        holder.img.setImageDrawable(null)
+        return
+      }
+      try {
+        g.load(model).override(MVPageView.THUMB_PX, MVPageView.THUMB_PX).centerCrop()
+          .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).into(holder.img)
+      } catch (_: Throwable) {}
+    }
+
+    override fun onViewRecycled(holder: StripHolder) {
+      try { Glide.with(context.applicationContext).clear(holder.img) } catch (_: Throwable) {}
+    }
+  }
+
+  // ─── Velocidade / som [2026-10-18 tg-viewer] ─────────────────────────────
+
+  private fun cycleSpeed() {
+    speed = when (speed) {
+      1f -> 1.5f
+      1.5f -> 2f
+      2f -> 0.5f
+      else -> 1f
+    }
+    try { player?.setPlaybackSpeed(speed) } catch (_: Throwable) {}
+    updateSpeedUi()
+  }
+
+  private fun toggleMute() {
+    muted = !muted
+    try { player?.volume = if (muted) 0f else 1f } catch (_: Throwable) {}
+    updateSpeedUi()
+  }
+
+  private fun updateSpeedUi() {
+    if (!this::speedView.isInitialized) return
+    val t = when (speed) { 1.5f -> "1.5x"; 2f -> "2x"; 0.5f -> "0.5x"; else -> "1x" }
+    speedView.text = t
+    speedView.contentDescription = ((labels["speed"] ?: "") + " " + t).trim()
+    muteBtn.setImageResource(if (muted) R.drawable.mv_ic_volume_off else R.drawable.mv_ic_volume_on)
+    muteBtn.contentDescription = if (muted) labels["unmute"] else labels["mute"]
   }
 
   private fun setChrome(visible: Boolean) {
@@ -507,7 +700,8 @@ class MediaViewerDialog(
     if (closed || !chromeVisible) return
     val idx = current
     when (a) {
-      "forward" -> finish("forward", true) { listener.onAction("forward", idx, emptyMap()) }
+      // Fecha (voltando à bolha) e só então o JS abre o fluxo.
+      "forward", "reply", "delete" -> finish(a, true) { listener.onAction(a, idx, emptyMap()) }
       "star" -> {
         if (idx !in items.indices) return
         items[idx].starred = !items[idx].starred
@@ -732,6 +926,10 @@ class MediaViewerDialog(
     val b = MediaItem.Builder().setUri(uri.toString())
     if (uri.toString().lowercase().contains(".m3u8")) b.setMimeType("application/x-mpegURL")
     p.setMediaItem(b.build())
+    try {
+      p.setPlaybackSpeed(speed)
+      p.volume = if (muted) 0f else 1f
+    } catch (_: Throwable) {}
     p.prepare()
     p.playWhenReady = true
     playerPage = page

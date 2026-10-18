@@ -775,6 +775,36 @@ public final class MGGridView: ExpoView, UICollectionViewDataSource, UICollectio
     }
   }
 
+  /// [2026-10-18 tg-viewer] Frame (coordenadas de janela, pt) da célula `key`
+  /// — destino do "voltar voando" do viewer. Fora da tela: rola até ela (sem
+  /// animação, a grade está coberta pelo viewer) antes de medir. nil = não achou.
+  func frameOfKey(_ key: String, reveal: Bool) -> [String: Double]? {
+    guard !key.isEmpty else { return nil }
+    var found: IndexPath?
+    for (si, sec) in mgSections.enumerated() {
+      if let ii = sec.items.firstIndex(where: { $0.key == key }) { found = IndexPath(item: ii, section: si); break }
+    }
+    guard let ip = found, window != nil else { return nil }
+    if collectionView.cellForItem(at: ip) == nil || !isFullyVisible(ip) {
+      guard reveal else { return nil }
+      collectionView.scrollToItem(at: ip, at: .centeredVertically, animated: false)
+      collectionView.layoutIfNeeded()
+    }
+    guard let cell = collectionView.cellForItem(at: ip) else { return nil }
+    let r = cell.convert(cell.bounds, to: nil)
+    guard r.width >= 2, r.height >= 2 else { return nil }
+    return ["x": Double(r.origin.x), "y": Double(r.origin.y), "width": Double(r.width), "height": Double(r.height)]
+  }
+
+  private func isFullyVisible(_ ip: IndexPath) -> Bool {
+    guard let a = collectionView.layoutAttributesForItem(at: ip) else { return false }
+    let vis = CGRect(x: collectionView.contentOffset.x,
+                     y: collectionView.contentOffset.y + collectionView.contentInset.top,
+                     width: collectionView.bounds.width,
+                     height: collectionView.bounds.height - collectionView.contentInset.top - collectionView.contentInset.bottom)
+    return vis.contains(a.frame.insetBy(dx: 1, dy: 1))
+  }
+
   private func item(at ip: IndexPath) -> MGItem? {
     guard ip.section < mgSections.count, ip.item < mgSections[ip.section].items.count else { return nil }
     return mgSections[ip.section].items[ip.item]

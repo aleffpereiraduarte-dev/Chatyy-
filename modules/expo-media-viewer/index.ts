@@ -51,6 +51,12 @@ export type MediaViewerLabels = {
   retry?: string;
   /** Texto do escudo durante gravação/espelhamento (iOS, `secure`). */
   protected?: string;
+  /** [2026-10-18 tg-viewer] apiVersion >= 4 */
+  reply?: string;
+  delete?: string;
+  speed?: string;
+  mute?: string;
+  unmute?: string;
 };
 
 export type MediaViewerOpenOptions = {
@@ -61,6 +67,9 @@ export type MediaViewerOpenOptions = {
   allowSave?: boolean;
   allowForward?: boolean;
   allowStar?: boolean;
+  /** [2026-10-18 tg-viewer] Responder / Apagar no rodapé — só apiVersion >= 4 (supportsV4()). */
+  allowReply?: boolean;
+  allowDelete?: boolean;
   /**
    * [2026-10-14 adv-privacy] Privacidade avançada / view-once. Android:
    * FLAG_SECURE no Dialog. iOS: tela preta enquanto grava/espelha. Só em
@@ -79,7 +88,7 @@ export type MediaViewerOpenOptions = {
 
 export type HeroRect = { x: number; y: number; width: number; height: number };
 
-export type MediaViewerAction = 'share' | 'save' | 'forward' | 'star';
+export type MediaViewerAction = 'share' | 'save' | 'forward' | 'star' | 'reply' | 'delete';
 
 export type MediaViewerEvents = {
   onIndexChange: (e: { session: number; index: number }) => void;
@@ -142,6 +151,16 @@ export function supportsHero(): boolean {
   try { return Number(m.apiVersion()) >= 3; } catch { return false; }
 }
 
+/**
+ * [2026-10-18 tg-viewer] apiVersion >= 4: ações reply/delete, velocidade + mudo
+ * no vídeo, faixa de miniaturas.
+ */
+export function supportsV4(): boolean {
+  const m = mod();
+  if (!m || typeof m.apiVersion !== 'function') return false;
+  try { return Number(m.apiVersion()) >= 4; } catch { return false; }
+}
+
 function _validRect(r: any): HeroRect | null {
   if (!r) return null;
   const x = Number(r.x), y = Number(r.y), width = Number(r.width), height = Number(r.height);
@@ -170,8 +189,12 @@ export async function open(options: MediaViewerOpenOptions): Promise<number> {
   try {
     // Binário antigo (apiVersion < 3) ou kill switch: nada novo atravessa a ponte.
     let opts: any = options;
-    if ('sourceRect' in (options as any) || 'sourceRadius' in (options as any)) {
-      const { sourceRect, sourceRadius, ...rest } = options as any;
+    if (!supportsV4() && ('allowReply' in (options as any) || 'allowDelete' in (options as any))) {
+      const { allowReply, allowDelete, ...rest0 } = options as any;
+      opts = rest0;
+    }
+    if ('sourceRect' in opts || 'sourceRadius' in opts) {
+      const { sourceRect, sourceRadius, ...rest } = opts;
       opts = rest;
       const sr = _validRect(sourceRect);
       if (sr && supportsHero()) {
@@ -216,4 +239,4 @@ export function addListener<K extends keyof MediaViewerEvents>(name: K, cb: Medi
 
 export { syncMotion };
 
-export default { isAvailable, supportsHero, open, close, setActionState, setReturnRect, prefetch, addListener, syncMotion };
+export default { isAvailable, supportsHero, supportsV4, open, close, setActionState, setReturnRect, prefetch, addListener, syncMotion };

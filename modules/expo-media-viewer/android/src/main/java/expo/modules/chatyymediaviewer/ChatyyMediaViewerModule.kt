@@ -31,7 +31,9 @@ class ChatyyMediaViewerModule : Module() {
 
     // 2 = aceita `secure` (FLAG_SECURE no Dialog) [2026-10-14 adv-privacy]
     // 3 = `sourceRect`/`sourceRadius` + setReturnRect (hero bolha ↔ viewer) [2026-10-15 hero]
-    Function("apiVersion") { 3 }
+    // 4 = ações "reply"/"delete" (allowReply/allowDelete), velocidade + mudo no
+    //     vídeo, faixa de miniaturas [2026-10-18 tg-viewer]
+    Function("apiVersion") { 4 }
 
     // [2026-10-16 motion] Kill switches globalThis.__chatyy_motion_* (viewer,
     // stories, grades). Chaves ausentes mantêm o valor atual (padrão: ligado).
@@ -68,6 +70,8 @@ class ChatyyMediaViewerModule : Module() {
         allowForward = (options["allowForward"] as? Boolean) ?: true,
         allowStar = (options["allowStar"] as? Boolean) ?: true,
         secure = (options["secure"] as? Boolean) ?: false,
+        allowReply = (options["allowReply"] as? Boolean) ?: false,
+        allowDelete = (options["allowDelete"] as? Boolean) ?: false,
       )
       val index = when (val v = options["index"]) {
         is Number -> v.toInt()

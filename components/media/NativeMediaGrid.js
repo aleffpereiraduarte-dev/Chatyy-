@@ -56,6 +56,11 @@ function nativeView() {
   return _View;
 }
 
+/** [2026-10-18 tg-viewer] apiVersion do binário (0 = sem a grade). 2 = frameOfKey. */
+export function nativeMediaGridApi() {
+  return gridModule() ? _api : 0;
+}
+
 export function isNativeMediaGridAvailable() {
   try { if (globalThis.__chatyy_native_media_grid === false) return false; } catch {}
   return !!nativeView();
@@ -100,6 +105,22 @@ const NativeMediaGrid = forwardRef(function NativeMediaGrid(props, ref) {
     setSelectionMode: (on) => { try { return viewRef.current?.setSelectionMode?.(!!on); } catch {} return null; },
     getSelection: async () => { try { return (await viewRef.current?.getSelection?.()) || []; } catch { return []; } },
     scrollToTop: (animated = true) => { try { return viewRef.current?.scrollToTop?.(!!animated); } catch {} return null; },
+    // [2026-10-18 tg-viewer] Frame (janela) da célula `key` → Promise<rect|null>;
+    // reveal = rola a grade até ela antes (viewer por cima). Binário < 2 → null.
+    frameOfKey: (key, reveal = true) => {
+      if (_api < 2 || key == null) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => { if (!done) { done = true; resolve(v); } };
+        const tm = setTimeout(() => finish(null), 250);
+        try {
+          Promise.resolve(viewRef.current?.frameOfKey?.(String(key), !!reveal)).then((r) => {
+            clearTimeout(tm);
+            finish(r && r.width > 1 && r.height > 1 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null);
+          }, () => { clearTimeout(tm); finish(null); });
+        } catch { clearTimeout(tm); finish(null); }
+      });
+    },
   }), []);
 
   // Lista por função nativa (não prop): re-render do pai (cabeçalho do perfil)

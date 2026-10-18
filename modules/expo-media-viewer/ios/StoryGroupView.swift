@@ -70,6 +70,72 @@ final class SVProgressBars: UIView {
   }
 }
 
+/// [2026-10-18 status-telegram] Até 3 rostos sobrepostos de quem viu (Telegram/IG).
+final class SVFacesView: UIView {
+  static let side: CGFloat = 24
+  static let step: CGFloat = 15
+  private var faces: [(UIImageView, UILabel)] = []
+  private var uris: [String] = []
+
+  func configure(_ rows: [[String: Any]]) -> CGFloat {
+    let n = min(3, rows.count)
+    while faces.count < n {
+      let iv = UIImageView()
+      iv.contentMode = .scaleAspectFill
+      iv.clipsToBounds = true
+      iv.backgroundColor = UIColor(white: 0.32, alpha: 1)
+      iv.layer.cornerRadius = SVFacesView.side / 2
+      iv.layer.borderWidth = 1.5
+      iv.layer.borderColor = UIColor(white: 0.08, alpha: 1).cgColor
+      let lb = UILabel()
+      lb.textColor = .white
+      lb.font = .systemFont(ofSize: 10, weight: .bold)
+      lb.textAlignment = .center
+      iv.addSubview(lb)
+      // O 1º fica por cima (ordem de leitura: mais recente à esquerda).
+      insertSubview(iv, at: 0)
+      faces.append((iv, lb))
+    }
+    uris = Array(repeating: "", count: faces.count)
+    for (i, f) in faces.enumerated() {
+      f.0.isHidden = i >= n
+      guard i < n else { continue }
+      let row = rows[i]
+      let email = (row["email"] as? String) ?? ""
+      let name = (row["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? email
+      f.1.text = name.first.map { String($0).uppercased() } ?? ""
+      f.1.isHidden = false
+      f.0.image = nil
+      let av = (row["avatar"] as? String) ?? ""
+      uris[i] = av
+      guard !av.isEmpty else { continue }
+      if let img = MVImageLoader.shared.cachedImage(av, maxPixel: 96) {
+        f.0.image = img
+        f.1.isHidden = true
+      } else {
+        let idx = i
+        MVImageLoader.shared.load(av, maxPixel: 96) { [weak self] img in
+          guard let self = self, idx < self.uris.count, self.uris[idx] == av, let img = img, idx < self.faces.count else { return }
+          self.faces[idx].0.image = img
+          self.faces[idx].1.isHidden = true
+        }
+      }
+    }
+    setNeedsLayout()
+    return n == 0 ? 0 : SVFacesView.side + CGFloat(n - 1) * SVFacesView.step
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    let s = SVFacesView.side
+    let y = (bounds.height - s) / 2
+    for (i, f) in faces.enumerated() {
+      f.0.frame = CGRect(x: CGFloat(i) * SVFacesView.step, y: y, width: s, height: s)
+      f.1.frame = f.0.bounds
+    }
+  }
+}
+
 final class SVGradientView: UIView {
   override class var layerClass: AnyClass { return CAGradientLayer.self }
   var gradient: CAGradientLayer { return layer as! CAGradientLayer }
@@ -102,10 +168,21 @@ final class SVPill: UIControl {
     didSet { alpha = isHighlighted ? 0.7 : 1 }
   }
 
+  /// [2026-10-18 status-telegram] Vista à esquerda do texto (ex.: rostos de quem viu).
+  var lead: UIView? {
+    didSet {
+      guard lead !== oldValue else { return }
+      oldValue?.removeFromSuperview()
+      if let l = lead { l.isUserInteractionEnabled = false; addSubview(l) }
+      setNeedsLayout()
+    }
+  }
+  var leadWidth: CGFloat = 0
+
   func preferredWidth(max maxW: CGFloat) -> CGFloat {
     let tw = ceil(label.sizeThatFits(CGSize(width: 1000, height: 32)).width)
-    let iw: CGFloat = icon.image == nil ? 0 : 22
-    return min(maxW, 12 + iw + tw + 14)
+    let iw: CGFloat = lead != nil ? leadWidth + 8 : (icon.image == nil ? 0 : 22)
+    return min(maxW, (lead != nil ? 6 : 12) + iw + tw + 14)
   }
 
   override func layoutSubviews() {
@@ -113,7 +190,12 @@ final class SVPill: UIControl {
     blur.frame = bounds
     blur.layer.cornerRadius = bounds.height / 2
     var x: CGFloat = 12
-    if icon.image != nil {
+    if let l = lead {
+      let lh = min(bounds.height - 8, 24)
+      l.frame = CGRect(x: 6, y: (bounds.height - lh) / 2, width: leadWidth, height: lh)
+      icon.frame = .zero
+      x = 6 + leadWidth + 8
+    } else if icon.image != nil {
       icon.frame = CGRect(x: x, y: (bounds.height - 16) / 2, width: 16, height: 16)
       x += 22
     } else {
@@ -189,6 +271,9 @@ final class SVGroupView: UIView {
   private let linkPill = SVPill()
   // Próprio: "visto por"
   private let viewersPill = SVPill()
+  /// [2026-10-18 status-telegram] Linhas de "Visualizações" já carregadas (controller) → rostos na pílula.
+  var viewerRows: ((String) -> [[String: Any]]?)?
+  private let viewerFaces = SVFacesView()
   // Outros: pílula de resposta + curtir
   let replyPill = UIControl()
   private let replyPillLabel = UILabel()
@@ -679,6 +764,15 @@ final class SVGroupView: UIView {
     guard let item = currentItem else { return }
     if group.isSelf {
       viewersPill.label.text = labels.views(item.viewsCount)
+      let rows = viewerRows?(item.id) ?? []
+      if rows.isEmpty {
+        viewersPill.lead = nil
+        viewersPill.icon.image = symbol("eye", 14)
+      } else {
+        viewersPill.leadWidth = viewerFaces.configure(Array(rows.prefix(3)))
+        viewersPill.lead = viewerFaces
+        viewersPill.icon.image = nil
+      }
     } else {
       let liked = !item.myReaction.isEmpty
       // [2026-10-17 status-reacoes] reagiu com outro emoji → o botão mostra o emoji (WhatsApp).

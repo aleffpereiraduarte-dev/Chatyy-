@@ -1,6 +1,7 @@
 package expo.modules.chatyymediaviewer
 
 import android.view.View
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -13,7 +14,8 @@ class ChatyyMediaGridModule : Module() {
 
     // 1 = [2026-10-16] itens por URL, seções por mês, selos, 1º quadro de vídeo,
     //     seleção nativa, filhos RN cabeçalho/rodapé.
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-18 tg-viewer] frameOfKey (viewer volta voando p/ a célula).
+    Function("apiVersion") { 2 }
 
     View(MGGridView::class) {
       Events("onItemPress", "onItemLongPress", "onSelectionChange", "onEndReached", "onScrollBegin", "onReady")
@@ -54,6 +56,15 @@ class ChatyyMediaGridModule : Module() {
 
       AsyncFunction("getSelection") { view: MGGridView ->
         view.getSelection()
+      }.runOnQueue(Queues.MAIN)
+
+      // {} = não achou / fora da tela.
+      AsyncFunction("frameOfKey") { view: MGGridView, key: String, reveal: Boolean, promise: Promise ->
+        try {
+          view.frameOfKey(key, reveal) { r -> promise.resolve(r ?: emptyMap<String, Double>()) }
+        } catch (_: Throwable) {
+          promise.resolve(emptyMap<String, Double>())
+        }
       }.runOnQueue(Queues.MAIN)
 
       AsyncFunction("scrollToTop") { view: MGGridView, animated: Boolean ->

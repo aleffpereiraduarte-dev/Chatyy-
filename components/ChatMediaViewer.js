@@ -2017,7 +2017,7 @@ function _nvItems(list, ctx) {
       type: isVid ? 'video' : 'image',
       messageId: mid != null ? String(mid) : '',
       caption: cap,
-      senderName: ctx.senderName || '',
+      senderName: it.senderName || ctx.senderName || '', // [2026-10-18 tg-viewer] galeria: remetente por item
       dateLabel: _nvDate(it.createdAt || it.created_at || ctx.createdAt),
       width: Number(it.width || it.videoWidth || 0) || 0,
       height: Number(it.height || it.videoHeight || 0) || 0,
@@ -2078,7 +2078,7 @@ const _AlbumPage = memo(function _AlbumPage({ item, isActive, pageW, webH, conve
   return true;
 });
 
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors, placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri, secure: _secureProp }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, onReply, onDelete, heroMeasure, heroRadiusOf, t, colors, placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri, secure: _secureProp }) {
   const insets = useSafeAreaInsets();
   // [2026-10-14 adv-privacy] secure = prop OU flag da conversa (store). Protegido
   // (view-once ou privacidade avançada) → sem salvar/compartilhar/encaminhar/OCR.
@@ -2218,7 +2218,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const _nvActRef = useRef(null);
   const _nvCtxRef = useRef(null);
   _nvCtxRef.current = {
-    list: _list, onClose, onForward, t, messageId, caption, createdAt, secure: _secure,
+    list: _list, onClose, onForward, onReply, onDelete, heroMeasure, heroRadiusOf, t, messageId, caption, createdAt, secure: _secure,
     placeholderUri: _propPlaceholderUri, thumbUri: _propThumbUri,
     senderName: isAssistantSender(senderName, senderEmail) ? 'Bia' : (senderName || (senderEmail || '').split('@')[0] || ''),
   };
@@ -2246,6 +2246,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       NV.setActionState('save', ok ? 'done' : 'idle');
     } else if (e.action === 'forward') {
       try { if (typeof ctx.onForward === 'function') ctx.onForward(it); } catch {}
+    } else if (e.action === 'reply') {
+      // [2026-10-18 tg-viewer] viewer já fechou (voltando à bolha) → compositor.
+      try { if (typeof ctx.onReply === 'function') ctx.onReply(it); } catch {}
+    } else if (e.action === 'delete') {
+      try { if (typeof ctx.onDelete === 'function') ctx.onDelete(it); } catch {}
     } else if (e.action === 'star') {
       _setStarred(!!e.starred);
       try { require('../services/haptics').HapticsCompat.selectionAsync?.(); } catch {}
@@ -2278,6 +2283,18 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     // bolha da página atual (se ela ainda está na tela) ao fechar.
     let _hero = null;
     try { if (NV.supportsHero && NV.supportsHero()) _hero = require('../services/mediaHero'); } catch { _hero = null; }
+    // [2026-10-18 tg-viewer] Dono com geometria própria (grade de "Mídia, links e
+    // docs"): mede/volta para a CÉLULA da grade — não para a bolha do chat que
+    // está atrás da folha.
+    if (_hero && typeof ctx.heroMeasure === 'function') {
+      const _m = ctx.heroMeasure;
+      const _r = ctx.heroRadiusOf;
+      _hero = {
+        measureHero: (mid) => { try { return Promise.resolve(_m(mid)).then((r) => r || null, () => null); } catch { return Promise.resolve(null); } },
+        heroRadius: (mid) => { try { return typeof _r === 'function' ? (Number(_r(mid)) || 0) : 0; } catch { return 0; } },
+      };
+    }
+    const _v4 = (() => { try { return !!(NV.supportsV4 && NV.supportsV4()); } catch { return false; } })();
     _nvCleanup();
     _nvSubsRef.current = [
       NV.addListener('onIndexChange', (e) => {
@@ -2320,11 +2337,21 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         loadFailed: _tt('nativeViewer.loadFailed'),
         retry: _tt('nativeViewer.retry'),
         protected: _tt('advPriv.protectedTitle'),
+        reply: _tt('nativeViewer.reply'),
+        delete: _tt('nativeViewer.delete'),
+        speed: _tt('nativeViewer.speed'),
+        mute: _tt('nativeViewer.mute'),
+        unmute: _tt('nativeViewer.unmute'),
       },
       allowShare: !ctx.secure,
       allowSave: !ctx.secure,
       allowForward: !ctx.secure && typeof ctx.onForward === 'function',
       allowStar: true,
+      // [2026-10-18 tg-viewer] Responder / Apagar no rodapé (binário apiVersion >= 4).
+      ...(_v4 ? {
+        allowReply: typeof ctx.onReply === 'function',
+        allowDelete: typeof ctx.onDelete === 'function',
+      } : {}),
       secure: !!ctx.secure,
     }))).then((sid) => {
       if (sid > 0) {

@@ -21,8 +21,10 @@ public class ChatyyMediaViewerModule: Module {
 
     // 2 = aceita `secure` (escudo durante gravação/espelhamento) [2026-10-14 adv-privacy]
     // 3 = `sourceRect`/`sourceRadius` + setReturnRect (hero bolha ↔ viewer) [2026-10-15 hero]
+    // 4 = ações "reply"/"delete" (allowReply/allowDelete), velocidade + mudo no
+    //     vídeo, faixa de miniaturas [2026-10-18 tg-viewer]
     Function("apiVersion") { () -> Int in
-      return 3
+      return 4
     }
 
     // [2026-10-16 motion] Kill switches globalThis.__chatyy_motion_* (viewer,
@@ -54,6 +56,8 @@ public class ChatyyMediaViewerModule: Module {
       flags.allowSave = (options["allowSave"] as? Bool) ?? true
       flags.allowForward = (options["allowForward"] as? Bool) ?? true
       flags.allowStar = (options["allowStar"] as? Bool) ?? true
+      flags.allowReply = (options["allowReply"] as? Bool) ?? false
+      flags.allowDelete = (options["allowDelete"] as? Bool) ?? false
       flags.secure = (options["secure"] as? Bool) ?? false
       let startIndex = MVItem.intValue(options["index"]) ?? 0
 
@@ -128,6 +132,9 @@ struct MVFlags {
   var allowSave = true
   var allowForward = true
   var allowStar = true
+  // [2026-10-18 tg-viewer] Responder / Apagar (padrão desligado: JS liga se tem o fluxo)
+  var allowReply = false
+  var allowDelete = false
   // [2026-10-14 adv-privacy] Privacidade avançada / view-once: tela preta com
   // "Conteúdo protegido" enquanto UIScreen.isCaptured (gravação/espelhamento)
   // e o vídeo pausa. Print não dá para bloquear no iOS (o JS avisa a conversa).

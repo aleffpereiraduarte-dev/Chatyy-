@@ -21,11 +21,23 @@ final class MVGradientView: UIView {
   }
 }
 
+/// [2026-10-18 tg-viewer] Trilho fino (3 pt) estilo Telegram; o polegar cresce ao arrastar.
+final class MVSlimSlider: UISlider {
+  override func trackRect(forBounds bounds: CGRect) -> CGRect {
+    let r = super.trackRect(forBounds: bounds)
+    return CGRect(x: r.minX, y: bounds.midY - 1.5, width: r.width, height: 3)
+  }
+}
+
 final class MVVideoBar: UIView {
   let playButton = UIButton(type: .system)
-  let slider = UISlider()
+  let slider = MVSlimSlider()
   let timeLabel = UILabel()
   let durationLabel = UILabel()
+  // [2026-10-18 tg-viewer] velocidade (1x → 1.5x → 2x → 0.5x) e som — valem
+  // para todos os vídeos da sessão (Telegram).
+  let speedButton = UIButton(type: .system)
+  let muteButton = UIButton(type: .system)
   var onToggle: (() -> Void)?
 
   private var player: AVPlayer?
@@ -33,6 +45,9 @@ final class MVVideoBar: UIView {
   private var tcsObs: NSKeyValueObservation?
   private var scrubbing = false
   private var wasPlaying = false
+  private(set) var speed: Float = 1
+  private(set) var muted = false
+  private static let speeds: [Float] = [1, 1.5, 2, 0.5]
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -50,7 +65,7 @@ final class MVVideoBar: UIView {
     setPlayIcon(playing: false)
 
     for l in [timeLabel, durationLabel] {
-      l.textColor = .white
+      l.textColor = UIColor.white.withAlphaComponent(0.92)
       l.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
       l.text = "0:00"
       l.setContentHuggingPriority(.required, for: .horizontal)
@@ -59,16 +74,35 @@ final class MVVideoBar: UIView {
     slider.minimumValue = 0
     slider.maximumValue = 1
     slider.minimumTrackTintColor = .white
-    slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.35)
-    slider.setThumbImage(MVVideoBar.thumbImage(), for: .normal)
+    slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.28)
+    slider.setThumbImage(MVVideoBar.thumbImage(12), for: .normal)
+    slider.setThumbImage(MVVideoBar.thumbImage(18), for: .highlighted)
     slider.addTarget(self, action: #selector(scrubBegan), for: .touchDown)
     slider.addTarget(self, action: #selector(scrubChanged), for: .valueChanged)
     slider.addTarget(self, action: #selector(scrubEnded), for: [.touchUpInside, .touchUpOutside, .touchCancel])
 
-    let row = UIStackView(arrangedSubviews: [playButton, timeLabel, slider, durationLabel])
+    speedButton.tintColor = .white
+    speedButton.titleLabel?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+    speedButton.setTitleColor(.white, for: .normal)
+    speedButton.layer.cornerRadius = 6
+    speedButton.layer.borderWidth = 1.2
+    speedButton.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
+    speedButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 5, bottom: 2, right: 5)
+    speedButton.addTarget(self, action: #selector(tapSpeed), for: .touchUpInside)
+    speedButton.setContentHuggingPriority(.required, for: .horizontal)
+    speedButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+    updateSpeedTitle()
+
+    muteButton.tintColor = .white
+    muteButton.addTarget(self, action: #selector(tapMute), for: .touchUpInside)
+    updateMuteIcon()
+
+    let row = UIStackView(arrangedSubviews: [playButton, timeLabel, slider, durationLabel, speedButton, muteButton])
     row.axis = .horizontal
     row.alignment = .center
     row.spacing = 10
+    row.setCustomSpacing(14, after: durationLabel)
+    row.setCustomSpacing(6, after: speedButton)
     row.translatesAutoresizingMaskIntoConstraints = false
     addSubview(row)
     NSLayoutConstraint.activate([
@@ -78,11 +112,12 @@ final class MVVideoBar: UIView {
       row.bottomAnchor.constraint(equalTo: bottomAnchor),
       playButton.widthAnchor.constraint(equalToConstant: 36),
       playButton.heightAnchor.constraint(equalToConstant: 36),
+      muteButton.widthAnchor.constraint(equalToConstant: 32),
+      muteButton.heightAnchor.constraint(equalToConstant: 36),
     ])
   }
 
-  private static func thumbImage() -> UIImage {
-    let d: CGFloat = 14
+  private static func thumbImage(_ d: CGFloat) -> UIImage {
     let r = UIGraphicsImageRenderer(size: CGSize(width: d, height: d))
     return r.image { ctx in
       UIColor.white.setFill()
@@ -97,11 +132,40 @@ final class MVVideoBar: UIView {
   }
   private var playLabel: String?
   private var pauseLabel: String?
+  var speedLabel: String? { didSet { updateSpeedTitle() } }
+  var muteLabel: String? { didSet { updateMuteIcon() } }
+  var unmuteLabel: String? { didSet { updateMuteIcon() } }
 
   private func setPlayIcon(playing: Bool) {
     let cfg = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
     playButton.setImage(UIImage(systemName: playing ? "pause.fill" : "play.fill", withConfiguration: cfg), for: .normal)
     playButton.accessibilityLabel = playing ? pauseLabel : playLabel
+  }
+
+  private func updateSpeedTitle() {
+    let t: String
+    if speed == 1.5 { t = "1.5x" } else if speed == 0.5 { t = "0.5x" } else if speed == 2 { t = "2x" } else { t = "1x" }
+    UIView.performWithoutAnimation {
+      speedButton.setTitle(t, for: .normal)
+      speedButton.layoutIfNeeded()
+    }
+    speedButton.accessibilityLabel = (speedLabel ?? "") + " " + t
+  }
+
+  private func updateMuteIcon() {
+    let cfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+    muteButton.setImage(UIImage(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill", withConfiguration: cfg), for: .normal)
+    muteButton.accessibilityLabel = muted ? unmuteLabel : muteLabel
+  }
+
+  /// Aplica velocidade/som ao player atual. Só mexe em `rate` quando tocando
+  /// (rate > 0 num player pausado daria play).
+  private func applyPlayback(_ p: AVPlayer) {
+    p.isMuted = muted
+    if #available(iOS 16.0, *) { p.defaultRate = speed }
+    if p.timeControlStatus != .paused && abs(p.rate - speed) > 0.01 {
+      p.rate = speed
+    }
   }
 
   func bind(_ p: AVPlayer?) {
@@ -115,12 +179,20 @@ final class MVVideoBar: UIView {
       setPlayIcon(playing: false)
       return
     }
+    applyPlayback(p)
     timeObs = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
       self?.update(time: t)
     }
     tcsObs = p.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] pl, _ in
       let playing = pl.timeControlStatus != .paused
-      DispatchQueue.main.async { self?.setPlayIcon(playing: playing) }
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        self.setPlayIcon(playing: playing)
+        // play() volta a 1x no iOS < 16 → reaplica a velocidade escolhida.
+        if playing, self.player === pl, !self.scrubbing, abs(pl.rate - self.speed) > 0.01, pl.rate > 0 {
+          pl.rate = self.speed
+        }
+      }
     }
     update(time: p.currentTime())
   }
@@ -159,6 +231,21 @@ final class MVVideoBar: UIView {
 
   @objc private func tapToggle() { onToggle?() }
 
+  @objc private func tapSpeed() {
+    let i = MVVideoBar.speeds.firstIndex(of: speed) ?? 0
+    speed = MVVideoBar.speeds[(i + 1) % MVVideoBar.speeds.count]
+    updateSpeedTitle()
+    if let p = player { applyPlayback(p) }
+    UISelectionFeedbackGenerator().selectionChanged()
+  }
+
+  @objc private func tapMute() {
+    muted.toggle()
+    updateMuteIcon()
+    player?.isMuted = muted
+    UISelectionFeedbackGenerator().selectionChanged()
+  }
+
   @objc private func scrubBegan() {
     guard let p = player else { return }
     scrubbing = true
@@ -178,7 +265,10 @@ final class MVVideoBar: UIView {
   @objc private func scrubEnded() {
     guard let p = player else { scrubbing = false; return }
     scrubbing = false
-    if wasPlaying { p.play() }
+    if wasPlaying {
+      p.play()
+      if abs(p.rate - speed) > 0.01 { p.rate = speed }
+    }
   }
 }
 
@@ -214,6 +304,8 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
   private let counterLabel = UILabel()
   private let captionLabel = UILabel()
   private let videoBar = MVVideoBar()
+  // [2026-10-18 tg-viewer] faixa de miniaturas (só com 2+ mídias)
+  private let thumbStrip = MVThumbStrip()
   private let actionsRow = UIStackView()
   private var actionButtons: [String: UIButton] = [:]
   private var actionSpinners: [String: UIActivityIndicatorView] = [:]
@@ -661,18 +753,30 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     captionLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleCaption)))
 
     videoBar.setLabels(play: labels["play"], pause: labels["pause"])
+    videoBar.speedLabel = labels["speed"]
+    videoBar.muteLabel = labels["mute"]
+    videoBar.unmuteLabel = labels["unmute"]
     videoBar.onToggle = { [weak self] in self?.currentCell()?.togglePlay() }
     videoBar.heightAnchor.constraint(equalToConstant: 36).isActive = true
+
+    thumbStrip.heightAnchor.constraint(equalToConstant: MVThumbStrip.height).isActive = true
+    thumbStrip.isHidden = items.count < 2
+    thumbStrip.setItems(items, current: currentIndex)
+    thumbStrip.onSelect = { [weak self] i in self?.jump(to: i) }
 
     actionsRow.axis = .horizontal
     actionsRow.distribution = .fillEqually
     actionsRow.alignment = .center
     actionsRow.heightAnchor.constraint(equalToConstant: 48).isActive = true
+    // [2026-10-18 tg-viewer] Ordem Telegram: Encaminhar, Compartilhar, Salvar,
+    // Favoritar, Responder, Apagar (as duas últimas só com apiVersion >= 4 no JS).
     var acts: [String] = []
+    if flags.allowForward { acts.append("forward") }
     if flags.allowShare { acts.append("share") }
     if flags.allowSave { acts.append("save") }
-    if flags.allowForward { acts.append("forward") }
     if flags.allowStar { acts.append("star") }
+    if flags.allowReply { acts.append("reply") }
+    if flags.allowDelete { acts.append("delete") }
     for a in acts {
       let b = UIButton(type: .system)
       b.tintColor = .white
@@ -695,7 +799,7 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
       actionsRow.addArrangedSubview(b)
     }
 
-    let stack = UIStackView(arrangedSubviews: [captionLabel, videoBar, actionsRow])
+    let stack = UIStackView(arrangedSubviews: [captionLabel, videoBar, thumbStrip, actionsRow])
     stack.axis = .vertical
     stack.spacing = 8
     stack.translatesAutoresizingMaskIntoConstraints = false
@@ -718,6 +822,8 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     case "share": return symbol("square.and.arrow.up")
     case "save": return symbol("square.and.arrow.down")
     case "forward": return symbol("arrowshape.turn.up.right")
+    case "reply": return symbol("arrowshape.turn.up.left")
+    case "delete": return symbol("trash")
     case "star":
       let starred = currentIndex < items.count ? items[currentIndex].starred : false
       return symbol(starred ? "star.fill" : "star")
@@ -738,6 +844,7 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     captionLabel.numberOfLines = 4
     captionLabel.isHidden = it.caption.isEmpty
     videoBar.isHidden = !it.isVideo
+    thumbStrip.setCurrent(currentIndex, animated: true)
     if let star = actionButtons["star"], actionSpinners["star"]?.isAnimating != true {
       star.setImage(icon(for: "star"), for: .normal)
       star.accessibilityLabel = it.starred ? (labels["unstar"] ?? labels["star"]) : labels["star"]
@@ -791,10 +898,12 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     guard let a = sender.accessibilityIdentifier else { return }
     let idx = currentIndex
     switch a {
-    case "forward":
+    case "forward", "reply", "delete":
+      // Fecha (voltando à bolha) e só então o JS abre o fluxo (lista de
+      // conversas / resposta no compositor / confirmação de apagar).
       let cb = onAction
-      finish(reason: "forward", animated: true) {
-        cb?("forward", idx, [:])
+      finish(reason: a, animated: true) {
+        cb?(a, idx, [:])
       }
     case "star":
       guard idx < items.count else { return }
@@ -837,6 +946,24 @@ final class MediaViewerController: UIViewController, UICollectionViewDataSource,
     actionSpinners[action]?.stopAnimating()
     b.isEnabled = true
     b.setImage(icon(for: action), for: .normal)
+  }
+
+  /// [2026-10-18 tg-viewer] Toque na faixa de miniaturas: troca de página com
+  /// um crossfade curto (sem rolar por todas as fotos do meio).
+  private func jump(to i: Int) {
+    guard !closed, i >= 0, i < items.count, i != currentIndex, let cv = collectionView else { return }
+    let w = cv.bounds.width
+    guard w > 0 else { return }
+    let apply = {
+      cv.setContentOffset(CGPoint(x: CGFloat(i) * w, y: 0), animated: false)
+      cv.layoutIfNeeded()
+    }
+    if MVMotion.reduceMotion {
+      apply()
+    } else {
+      UIView.transition(with: cv, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction], animations: apply, completion: nil)
+    }
+    DispatchQueue.main.async { [weak self] in self?.settle() }
   }
 
   // MARK: - Close

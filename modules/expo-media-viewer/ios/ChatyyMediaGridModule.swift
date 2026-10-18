@@ -9,8 +9,9 @@ public class ChatyyMediaGridModule: Module {
 
     // 1 = [2026-10-16] itens por URL, seções por mês, selos, 1º quadro de vídeo,
     //     seleção nativa, filhos RN cabeçalho/rodapé.
+    // 2 = [2026-10-18 tg-viewer] frameOfKey (viewer volta voando p/ a célula).
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(MGGridView.self) {
@@ -46,6 +47,11 @@ public class ChatyyMediaGridModule: Module {
 
       AsyncFunction("getSelection") { (view: MGGridView) -> [String] in
         return view.getSelection()
+      }.runOnQueue(.main)
+
+      // {} = não achou / fora da janela.
+      AsyncFunction("frameOfKey") { (view: MGGridView, key: String, reveal: Bool) -> [String: Double] in
+        return view.frameOfKey(key, reveal: reveal) ?? [:]
       }.runOnQueue(.main)
 
       AsyncFunction("scrollToTop") { (view: MGGridView, animated: Bool) in

@@ -38641,6 +38641,7 @@ function ChatConversationInner() {
         initialTab={mediaGalleryTab}
         onJumpToMessage={(id) => { setShowMediaGallery(false); setMediaGalleryTab('image'); setTimeout(() => { try { safeScrollToMsg({ id }); } catch {} }, Platform.OS === 'ios' ? 380 : 60); }}
         conversationId={conversationId}
+        senderNameOf={(email) => _friendlySenderName(email, '', currentEmail, t)}
         colors={colors}
         t={t}
       />)}</LazyMount>
@@ -40197,6 +40198,21 @@ function ChatConversationInner() {
               // [2026-10-15 native-sheets-v2] visualizador = <Modal> RN descendo → afterRNModal;
               // handleForward carrega as conversas (antes abria a lista vazia/velha).
               if (msg) afterRNModal(() => handleForward(msg));
+            }}
+            // [2026-10-18 tg-viewer] Responder / Apagar no rodapé do viewer nativo
+            // (binário apiVersion >= 4). O viewer fecha voltando à bolha e só então
+            // abre o compositor / a confirmação de apagar. View-once fica de fora.
+            onReply={mv.viewOnce ? undefined : (item) => {
+              const mid = item?.messageId || item?.id || mv.messageId;
+              const msg = messages.find(m => String(m.id) === String(mid));
+              setMediaViewer(v => ({ ...v, visible: false }));
+              if (msg) afterRNModal(() => { try { handleReply(msg); } catch {} });
+            }}
+            onDelete={mv.viewOnce ? undefined : (item) => {
+              const mid = item?.messageId || item?.id || mv.messageId;
+              const msg = messages.find(m => String(m.id) === String(mid));
+              setMediaViewer(v => ({ ...v, visible: false }));
+              if (msg) afterRNModal(() => { try { handleDelete(msg.id); } catch {} });
             }}
             t={t}
           />

@@ -155,6 +155,10 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
   private val linkPill = LinearLayout(context)
   private val linkText = TextView(context)
   private val viewersPill = LinearLayout(context)
+  /** [2026-10-18 status-telegram] Linhas de "Visualizações" já carregadas (dialog) → rostos na pílula. */
+  var viewerRows: ((String) -> List<Map<String, Any?>>?)? = null
+  private val viewerFaces = FrameLayout(context)
+  private var viewerFaceKey = ""
   private val viewersText = TextView(context)
   private val replyRow = LinearLayout(context)
   private val replyPill = TextView(context)
@@ -358,6 +362,8 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     }
     bottom.addView(linkPill, LinearLayout.LayoutParams(wc, dp(34f)).apply { bottomMargin = dp(12f); leftMargin = dp(24f); rightMargin = dp(24f) })
     pill(viewersPill, R.drawable.sv_ic_eye, viewersText)
+    viewerFaces.visibility = View.GONE
+    viewersPill.addView(viewerFaces, 0, LinearLayout.LayoutParams(dp(24f), dp(24f)).apply { rightMargin = dp(8f) })
     viewersPill.isClickable = true
     viewersPill.setOnClickListener { host?.onTapViewers(this) }
     bottom.addView(viewersPill, LinearLayout.LayoutParams(wc, dp(36f)).apply { bottomMargin = dp(8f) })
@@ -667,6 +673,7 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     val it = currentItem ?: return
     if (g.isSelf) {
       viewersText.text = labels.views(it.viewsCount)
+      bindViewerFaces(viewerRows?.invoke(it.id).orEmpty())
     } else {
       val liked = it.myReaction.isNotEmpty()
       if (liked && !it.myReaction.startsWith("\u2764")) {
@@ -680,6 +687,58 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
         likeBtn.setImageResource(R.drawable.sv_ic_heart_outline)
         likeBtn.setColorFilter(Color.WHITE)
       }
+    }
+  }
+
+  /** [2026-10-18 status-telegram] Até 3 rostos sobrepostos de quem viu (Telegram/IG) no lugar do olho. */
+  private fun bindViewerFaces(rows: List<Map<String, Any?>>) {
+    val eye = viewersPill.getChildAt(1)
+    val top = rows.take(3)
+    val key = top.joinToString("|") { r -> ((r["email"] as? String) ?: "") + "#" + ((r["avatar"] as? String) ?: "") }
+    if (top.isEmpty()) {
+      viewerFaces.visibility = View.GONE
+      eye?.visibility = View.VISIBLE
+      viewersPill.setPadding(dp(12f), 0, dp(14f), 0)
+      viewerFaceKey = ""
+      return
+    }
+    eye?.visibility = View.GONE
+    viewerFaces.visibility = View.VISIBLE
+    viewersPill.setPadding(dp(6f), 0, dp(14f), 0)
+    val side = dp(24f)
+    val step = dp(15f)
+    viewerFaces.layoutParams = (viewerFaces.layoutParams as LinearLayout.LayoutParams).apply {
+      width = side + step * (top.size - 1)
+      height = side
+    }
+    if (key == viewerFaceKey) return
+    viewerFaceKey = key
+    viewerFaces.removeAllViews()
+    // O 1º por cima: adiciona do último para o primeiro.
+    for (i in top.indices.reversed()) {
+      val r = top[i]
+      val email = (r["email"] as? String) ?: ""
+      val name = ((r["name"] as? String) ?: "").ifEmpty { email }
+      val cell = FrameLayout(context)
+      cell.background = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.rgb(82, 82, 82))
+        setStroke(dp(1.5f), Color.rgb(20, 20, 20))
+      }
+      val ini = TextView(context)
+      ini.text = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+      ini.setTextColor(Color.WHITE)
+      ini.textSize = 10f
+      ini.setTypeface(ini.typeface, Typeface.BOLD)
+      ini.gravity = Gravity.CENTER
+      cell.addView(ini, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+      val iv = ImageView(context)
+      val pad = dp(1.5f)
+      cell.addView(iv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT).apply { setMargins(pad, pad, pad, pad) })
+      MVItem.glideModel((r["avatar"] as? String) ?: "")?.let { m ->
+        try { Glide.with(context.applicationContext).load(m).override(96, 96).circleCrop().into(iv) } catch (_: Throwable) {}
+      }
+      viewerFaces.addView(cell, FrameLayout.LayoutParams(side, side).apply { leftMargin = step * i })
     }
   }
 

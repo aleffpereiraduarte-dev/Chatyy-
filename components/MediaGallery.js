@@ -10,12 +10,17 @@ import { BASE_URL } from '../services/api';
 import ChatMediaViewer from './ChatMediaViewer';
 // [2026-10-16 native-media-grid] Fotos/Vídeos em grade NATIVA (seções por mês,
 // 1º quadro + duração do vídeo, seleção) — kill __chatyy_native_media_grid.
-import NativeMediaGrid, { isNativeMediaGridAvailable } from './media/NativeMediaGrid';
+import NativeMediaGrid, { isNativeMediaGridAvailable, nativeMediaGridApi } from './media/NativeMediaGrid';
 import { useLanguage } from '../context/LanguageContext';
 
 // [busca-conversa 2026-10-16] + 'link' (servidor chat_shared_items, paginado).
-const TABS = ['image', 'video', 'audio', 'file', 'link'];
+// [2026-10-18 tg-viewer] Abas do Telegram: Mídia (fotos + vídeos juntos, seções
+// por mês) / Links / Docs / Áudio. 'image'/'video' de quem chama → 'media'.
+const TABS = ['media', 'link', 'file', 'audio'];
 const PAGE = 60;
+const _normTab = (x) => (x === 'image' || x === 'video' ? 'media' : (TABS.includes(x) ? x : 'media'));
+const _isVid = (it) => !!it && (it.type === 'video' || it.type === 'video_note');
+const _isVisual = (it) => !!it && !!it.file_url && (it.type === 'image' || _isVid(it) || it.type === 'photo');
 
 // Chatyy brand purple. The whole screen reads as ONE coherent purple set —
 // the active-pill, empty-state circle, list icons and accents are all the
@@ -24,6 +29,7 @@ const PAGE = 60;
 const BRAND = '#111111';
 const BRAND_SOFT = 'rgba(17, 17, 17,0.12)';
 const TAB_THEME = {
+  media: { color: BRAND, soft: BRAND_SOFT, Icon: IconImage },
   image: { color: BRAND, soft: BRAND_SOFT, Icon: IconImage },
   video: { color: BRAND, soft: BRAND_SOFT, Icon: IconFilm },
   audio: { color: BRAND, soft: BRAND_SOFT, Icon: IconMusic },
@@ -80,9 +86,9 @@ function _ts(d) {
 }
 
 function _nativeItems(items, type) {
-  const isVideo = type === 'video';
   return (items || []).filter(it => it && it.file_url).map((it) => {
     const url = resolveUrl(it.file_url);
+    const isVideo = type === 'video' || _isVid(it); // [2026-10-18 tg-viewer] aba Mídia mista
     return isVideo
       ? { k: String(it.id), u: '', vu: url, v: true, ad: true, tr: 'video', t: _ts(it.created_at), a: it.file_name || '' }
       : { k: String(it.id), u: url, t: _ts(it.created_at), a: it.file_name || '' };
@@ -90,14 +96,19 @@ function _nativeItems(items, type) {
 }
 
 function EmptyState({ type, colors, t }) {
-  const { color, soft, Icon } = TAB_THEME[type] || TAB_THEME.file;
+  const { Icon } = TAB_THEME[type] || TAB_THEME.file;
+  // [2026-10-18 tg-viewer] P&B que segue o tema (antes #111 fixo: sumia no escuro).
+  const color = colors.text;
+  const soft = colors.surface;
   const _tr = (k, fb) => { try { const v = t && t(k); return v && v !== k ? v : fb; } catch { return fb; } };
   const emptyLabel = type === 'link' ? _tr('chat.noLinksYet', 'Nenhum link ainda')
+    : type === 'media' ? _tr('chat.noMediaYet', 'Nenhuma mídia ainda')
     : type === 'image' ? 'Nenhuma foto ainda'
     : type === 'video' ? 'Nenhum vídeo ainda'
     : type === 'audio' ? 'Nenhum áudio ainda'
     : 'Nenhum documento ainda';
   const emptyHint = type === 'link' ? _tr('chat.noLinksHint', 'Os links compartilhados nesta conversa aparecem aqui.')
+    : type === 'media' ? _tr('chat.noMediaHint', 'As fotos e os vídeos desta conversa aparecem aqui.')
     : type === 'image' ? 'As fotos enviadas nesta conversa aparecem aqui.'
     : type === 'video' ? 'Os vídeos enviados nesta conversa aparecem aqui.'
     : type === 'audio' ? 'As mensagens de voz e áudios aparecem aqui.'
@@ -107,7 +118,7 @@ function EmptyState({ type, colors, t }) {
       <View style={{
         width: 92, height: 92, borderRadius: 46, backgroundColor: soft,
         alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(17, 17, 17,0.22)',
+        borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
       }}>
         <Icon size={38} color={color} />
       </View>
@@ -141,13 +152,13 @@ function LinkRow({ item, colors, t, onOpen, onJump }) {
         borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
       }}
     >
-      <View style={{ width: 52, height: 52, borderRadius: 12, overflow: 'hidden', backgroundColor: BRAND_SOFT, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+      <View style={{ width: 52, height: 52, borderRadius: 12, overflow: 'hidden', backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
         {thumb ? (
           <FastImage source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} resizeMode="cover" onError={() => setImgOk(false)} />
         ) : fav ? (
           <FastImage source={{ uri: fav }} style={{ width: 24, height: 24 }} resizeMode="contain" onError={() => setFavOk(false)} />
         ) : (
-          <IconLink size={20} color={BRAND} />
+          <IconLink size={20} color={colors.text} />
         )}
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -178,6 +189,85 @@ function ListFooter({ busy, colors }) {
   return busy ? <View style={{ paddingVertical: 18 }}><ActivityIndicator size="small" color={colors.textTertiary} /></View> : null;
 }
 
+function _monthTitle(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    const same = d.getFullYear() === new Date().getFullYear();
+    const s = d.toLocaleDateString(undefined, same ? { month: 'long' } : { month: 'long', year: 'numeric' });
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  } catch { return ''; }
+}
+
+function _gridRows(items, cols) {
+  const rows = [];
+  let curKey = null;
+  let row = null;
+  for (const it of items || []) {
+    if (!it || !it.file_url) continue;
+    const ts = _ts(it.created_at);
+    const d = ts ? new Date(ts) : null;
+    const mk = d ? `${d.getFullYear()}-${d.getMonth()}` : '';
+    if (mk !== curKey) {
+      curKey = mk;
+      rows.push({ k: `h|${mk}|${rows.length}`, header: _monthTitle(ts) });
+      row = null;
+    }
+    if (!row || row.items.length >= cols) {
+      row = { k: `r|${it.id}`, items: [] };
+      rows.push(row);
+    }
+    row.items.push(it);
+  }
+  return rows;
+}
+
+function SectionedMediaGrid({ items, type, colors, onView, onEndReached, loadingMore }) {
+  const COLS = 3;
+  const rows = useMemo(() => _gridRows(items, COLS), [items]);
+  return (
+    <FlatList
+      key={`grid-${type}`}
+      data={rows}
+      keyExtractor={(r) => r.k}
+      contentContainerStyle={{ paddingBottom: 28 }}
+      showsVerticalScrollIndicator={false}
+      onEndReached={onEndReached}
+      onEndReachedThreshold={0.6}
+      removeClippedSubviews={Platform.OS === 'android'}
+      windowSize={7}
+      initialNumToRender={10}
+      ListFooterComponent={<ListFooter busy={loadingMore} colors={colors} />}
+      renderItem={({ item: r }) => (r.header !== undefined ? (
+        <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700', letterSpacing: 0.2, paddingHorizontal: 14, paddingTop: 16, paddingBottom: 8 }} numberOfLines={1}>
+          {r.header}
+        </Text>
+      ) : (
+        <View style={{ flexDirection: 'row', paddingHorizontal: 1 }}>
+          {r.items.map((it) => (
+            <TouchableOpacity key={String(it.id)} onPress={() => onView(it)} activeOpacity={0.85}
+              style={{ width: `${100 / COLS}%`, aspectRatio: 1, padding: 1 }}>
+              <View style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.surface }}>
+                {_isVid(it) ? (
+                  <View style={{ flex: 1, backgroundColor: '#000' }} />
+                ) : (
+                  <FastImage source={{ uri: resolveUrl(it.file_url) }} style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover" recyclingKey={it.file_url} />
+                )}
+                {_isVid(it) ? (
+                  <View style={{ position: 'absolute', right: 5, bottom: 4, flexDirection: 'row', alignItems: 'center' }}>
+                    <IconPlay size={11} color="#fff" />
+                  </View>
+                ) : null}
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ))}
+    />
+  );
+}
+
 function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, onOpenLink, onJump }) {
   if (items.length === 0) return <EmptyState type={type} colors={colors} t={t} />;
 
@@ -198,55 +288,16 @@ function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, 
     );
   }
 
-  if (type === 'image' || type === 'video') {
-    return (
-      <FlatList
-        key={`grid-${type}`}
-        data={items}
-        numColumns={3}
-        keyExtractor={item => String(item.id)}
-        contentContainerStyle={{ padding: 3 }}
-        showsVerticalScrollIndicator={false}
-        onEndReached={onEndReached}
-        onEndReachedThreshold={0.6}
-        ListFooterComponent={<ListFooter busy={loadingMore} colors={colors} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            onPress={() => onView(item)}
-            style={{ flex: 1 / 3, aspectRatio: 1, padding: 1.5 }}
-            activeOpacity={0.8}
-          >
-            <View style={{ flex: 1, borderRadius: 10, overflow: 'hidden', backgroundColor: colors.surface }}>
-              <FastImage
-                source={{ uri: resolveUrl(item.file_url) }}
-                style={{ width: '100%', height: '100%' }}
-                resizeMode="cover"
-                recyclingKey={item.file_url}
-              />
-              {type === 'video' && (
-                <View style={{
-                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                  alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: 'rgba(0,0,0,0.18)',
-                }}>
-                  <View style={{
-                    width: 34, height: 34, borderRadius: 17,
-                    backgroundColor: 'rgba(0,0,0,0.45)',
-                    alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <IconPlay size={16} color="#fff" />
-                  </View>
-                </View>
-              )}
-            </View>
-          </TouchableOpacity>
-        )}
-      />
-    );
+  if (type === 'media' || type === 'image' || type === 'video') {
+    // [2026-10-18 tg-viewer] Fallback JS (web / binário sem a grade nativa): seções
+    // por mês (como a nativa) + linhas de 3; células quadradas sem cantos (Telegram).
+    return <SectionedMediaGrid items={items} type={type} colors={colors} onView={onView}
+      onEndReached={onEndReached} loadingMore={loadingMore} />;
   }
 
   // List view for audio and files
-  const { color: accent, soft: accentBg } = TAB_THEME[type] || TAB_THEME.file;
+  const accent = colors.text;
+  const accentBg = colors.background;
   return (
     <FlatList
       key={`list-${type}`}
@@ -322,15 +373,15 @@ function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, 
   );
 }
 
-export default function MediaGallery({ visible, onClose, conversationId, colors, t, initialTab, onJumpToMessage }) {
-  const [activeTab, setActiveTab] = useState(TABS.includes(initialTab) ? initialTab : 'image');
+export default function MediaGallery({ visible, onClose, conversationId, colors, t, initialTab, onJumpToMessage, senderNameOf }) {
+  const [activeTab, setActiveTab] = useState(_normTab(initialTab));
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   // [busca-conversa 2026-10-16] paginação no servidor (chat_shared_items, cursor).
   const cursorRef = useRef(null);
   const moreBusyRef = useRef(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  useEffect(() => { if (visible && TABS.includes(initialTab)) setActiveTab(initialTab); }, [visible, initialTab]);
+  useEffect(() => { if (visible && initialTab) setActiveTab(_normTab(initialTab)); }, [visible, initialTab]);
   const [viewerItem, setViewerItem] = useState(null);
   // Guards against a slow request for a previous tab resolving after the user
   // switched tabs (stale response would overwrite the active tab's items).
@@ -338,7 +389,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const { language } = useLanguage() || {};
   // [2026-10-16 native-media-grid] grade nativa p/ Fotos/Vídeos + seleção.
   const gridRef = useRef(null);
-  const useNativeGrid = (activeTab === 'image' || activeTab === 'video') && isNativeMediaGridAvailable();
+  const useNativeGrid = (activeTab === 'media' || activeTab === 'image' || activeTab === 'video') && isNativeMediaGridAvailable();
   const [sel, setSel] = useState({ active: false, keys: [], count: 0 });
   const [selBusy, setSelBusy] = useState(false);
   const nativeItems = useMemo(() => (useNativeGrid ? _nativeItems(items, activeTab) : []), [useNativeGrid, items, activeTab]);
@@ -358,15 +409,15 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     try { gridRef.current?.clearSelection?.(); } catch {}
   }, [activeTab, visible]);
 
+  const _tl = (k, fb) => { try { const v = t && t(k); return v && v !== k ? v : fb; } catch { return fb; } };
   const tabLabels = {
-    image: t?.('chat.photos') || 'Fotos',
-    video: t?.('chat.videos') || 'Vídeos',
-    audio: t?.('chat.audioFiles') || 'Áudios',
+    media: _tl('chat.mediaTab', 'Mídia'),
+    audio: _tl('chat.audioTab', 'Áudio'),
     // [wave14a 2026-10-16] rótulo curto: 5 abas não cabem "Documentos" (truncava).
-    file: t?.('chat.docsShort') || 'Docs',
-    link: t?.('chat.nprofile.links') || 'Links',
+    file: _tl('chat.docsShort', 'Docs'),
+    link: _tl('chat.nprofile.links', 'Links'),
   };
-  const tabA11y = { ...tabLabels, file: t?.('chat.documents') || 'Documentos' };
+  const tabA11y = { ...tabLabels, file: _tl('chat.documents', 'Documentos') };
 
   useEffect(() => {
     if (visible && conversationId) loadMedia(activeTab);
@@ -386,6 +437,16 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
       if (seq !== loadSeqRef.current) return;
       if (r && r.success) {
         cursorRef.current = r.data?.has_more ? (r.data?.next_cursor || null) : null;
+      } else if (type === 'media') {
+        // servidor velho: fotos + vídeos em duas chamadas, mais recentes primeiro.
+        const [a, b] = await Promise.all([
+          api.chatMediaGallery(conversationId, 'image').catch(() => null),
+          api.chatMediaGallery(conversationId, 'video').catch(() => null),
+        ]);
+        if (seq !== loadSeqRef.current) return;
+        const all = [...((a && a.success && a.data?.items) || []), ...((b && b.success && b.data?.items) || [])];
+        all.sort((x, y) => _ts(y.created_at) - _ts(x.created_at));
+        r = { success: true, data: { items: all } };
       } else if (type !== 'link') {
         r = await api.chatMediaGallery(conversationId, type);
         if (seq !== loadSeqRef.current) return;
@@ -428,22 +489,68 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   };
   const jumpFromLink = onJumpToMessage ? (item) => { try { onJumpToMessage(item.id); } catch {} } : null;
 
-  const handleView = (item) => {
+  // [2026-10-18 tg-viewer] Mídia: o viewer recebe TODAS as fotos/vídeos carregados
+  // da aba (paginação horizontal + faixa de miniaturas) e abre/fecha voando da/para
+  // a célula da grade nativa (frameOfKey, grade apiVersion >= 2).
+  const heroHintRef = useRef(null);
+  const handleView = (item, pressRect) => {
     if (!item?.file_url) return;
-    // Inline viewer with pinch/zoom/pan (avoids shoving the user into Safari).
-    setViewerItem({
+    const _name = (it) => {
+      try { return typeof senderNameOf === 'function' ? (senderNameOf(it.sender_email) || '') : String(it.sender_email || '').split('@')[0]; } catch { return ''; }
+    };
+    const base = {
       fileUrl: item.file_url,
       fileName: item.file_name || 'media',
       fileSize: item.file_size || 0,
-      type: item.type || activeTab,
+      type: _isVid(item) ? 'video' : (item.type || activeTab),
       messageId: item.id || item.message_id || 0,
-    });
+      senderName: _name(item),
+      senderEmail: item.sender_email || '',
+      createdAt: item.created_at || null,
+    };
+    let mediaList = null;
+    let initialIndex = 0;
+    if (activeTab === 'media' && _isVisual(item)) {
+      const vis = (items || []).filter(_isVisual);
+      const idx = vis.findIndex(x => String(x.id) === String(item.id));
+      if (vis.length > 1 && idx >= 0) {
+        mediaList = vis.map((it) => {
+          const c = String(it.content || '').trim();
+          return {
+            fileUrl: it.file_url,
+            fileName: it.file_name || (_isVid(it) ? 'video.mp4' : 'image.jpg'),
+            fileSize: it.file_size || 0,
+            type: _isVid(it) ? 'video' : 'image',
+            messageId: it.id,
+            createdAt: it.created_at || null,
+            senderName: _name(it),
+            caption: (c && c !== (it.file_name || '') && !/^https?:\/\//i.test(c) && !/^\{/.test(c)) ? c : '',
+          };
+        });
+        initialIndex = idx;
+      }
+    }
+    heroHintRef.current = pressRect && Platform.OS === 'ios' ? { key: String(item.id), rect: pressRect, at: Date.now() } : null;
+    setViewerItem({ ...base, mediaList, initialIndex });
   };
+  const _gridHeroOn = useNativeGrid && nativeMediaGridApi() >= 2;
+  const heroMeasure = useCallback((mid) => {
+    const key = String(mid);
+    const h = heroHintRef.current;
+    if (h && h.key === key && Date.now() - h.at < 2000) {
+      heroHintRef.current = null;
+      return Promise.resolve(h.rect);
+    }
+    if (!_gridHeroOn || !gridRef.current?.frameOfKey) return Promise.resolve(null);
+    return gridRef.current.frameOfKey(key, true);
+  }, [_gridHeroOn]);
+  const heroRadiusOf = useCallback(() => 0, []);
 
   const onNativePress = useCallback((e) => {
     const it = itemsById.get(String(e?.key));
-    if (it) handleView(it);
-  }, [itemsById, activeTab]);
+    const r = (e && e.width > 1 && e.height > 1) ? { x: e.x, y: e.y, width: e.width, height: e.height } : null;
+    if (it) handleView(it, r);
+  }, [itemsById, activeTab, items, senderNameOf]);
   const onNativeLongPress = useCallback((e) => {
     if (e?.key == null || e?.selectionActive) return;
     try { gridRef.current?.beginSelection?.(String(e.key)); } catch {}
@@ -493,7 +600,6 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
 
   if (!visible) return null;
 
-  const activeTheme = TAB_THEME[activeTab] || TAB_THEME.image;
 
   return (
     // [2026-10-17 drag-dismiss] iOS pageSheet = arrasto NATIVO p/ baixo de qualquer
@@ -540,7 +646,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
             </View>
           ) : (
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11, fontWeight: '700', color: activeTheme.color, letterSpacing: 0.6, textTransform: 'uppercase' }}>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textTertiary, letterSpacing: 0.6, textTransform: 'uppercase' }}>
               {t?.('chat.sharedInChat') || 'Compartilhado nesta conversa'}
             </Text>
             <Text style={{ fontSize: 21, fontWeight: '800', color: colors.text, letterSpacing: -0.5, marginTop: 1 }}>
@@ -550,57 +656,45 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
           )}
         </View>
 
-        {/* Tabs — segmented control on a tray */}
+        {/* [2026-10-18 tg-viewer] Abas estilo Telegram: texto + traço sob a ativa (P&B do tema). */}
         <View style={{
-          paddingHorizontal: 14, paddingTop: 4, paddingBottom: 12,
+          flexDirection: 'row', paddingHorizontal: 8,
           backgroundColor: colors.surface,
           borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
         }}>
-          <View style={{
-            flexDirection: 'row',
-            backgroundColor: colors.background,
-            borderRadius: 14, padding: 4, gap: 2,
-          }}>
-            {TABS.map(tab => {
-              const active = activeTab === tab;
-              const th = TAB_THEME[tab];
-              return (
-                <TouchableOpacity
-                  key={tab}
-                  onPress={() => setActiveTab(tab)}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: active }}
-                  accessibilityLabel={tabA11y[tab]}
-                  style={{
-                    flex: 1, paddingVertical: 9, paddingHorizontal: 4,
-                    borderRadius: 11,
-                    alignItems: 'center',
-                    backgroundColor: active ? th.color : 'transparent',
-                    ...(active ? {
-                      shadowColor: BRAND, shadowOpacity: 0.25,
-                      shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
-                      elevation: 2,
-                    } : null),
-                  }}
-                  activeOpacity={0.75}
-                >
-                  <Text style={{
-                    fontSize: 12.5, fontWeight: '700',
-                    color: active ? '#fff' : colors.textSecondary,
-                    letterSpacing: -0.2,
-                  }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                    {tabLabels[tab]}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          {TABS.map(tab => {
+            const active = activeTab === tab;
+            return (
+              <TouchableOpacity
+                key={tab}
+                onPress={() => setActiveTab(tab)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={tabA11y[tab]}
+                style={{ flex: 1, alignItems: 'center', paddingTop: 10 }}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  fontSize: 14.5, fontWeight: active ? '700' : '600',
+                  color: active ? colors.text : colors.textTertiary,
+                  letterSpacing: -0.2, paddingBottom: 10,
+                }} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                  {tabLabels[tab]}
+                </Text>
+                <View style={{
+                  height: 2.5, borderTopLeftRadius: 2, borderTopRightRadius: 2,
+                  alignSelf: 'stretch', marginHorizontal: 14,
+                  backgroundColor: active ? colors.text : 'transparent',
+                }} />
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         {/* Content */}
         {loading ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="large" color={activeTheme.color} />
+            <ActivityIndicator size="large" color={colors.textTertiary} />
           </View>
         ) : (useNativeGrid && nativeItems.length > 0) ? (
           <NativeMediaGrid
@@ -628,6 +722,13 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
         fileName={viewerItem?.fileName}
         fileSize={viewerItem?.fileSize}
         type={viewerItem?.type}
+        mediaList={viewerItem?.mediaList || undefined}
+        initialIndex={viewerItem?.initialIndex || 0}
+        senderName={viewerItem?.senderName}
+        senderEmail={viewerItem?.senderEmail}
+        createdAt={viewerItem?.createdAt}
+        heroMeasure={heroMeasure}
+        heroRadiusOf={heroRadiusOf}
         onClose={() => setViewerItem(null)}
         colors={colors}
         t={t}

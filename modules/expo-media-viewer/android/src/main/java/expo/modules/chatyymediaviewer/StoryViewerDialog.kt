@@ -600,6 +600,7 @@ class StoryViewerDialog(
       p.layoutParams = RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.MATCH_PARENT)
       p.host = this@StoryViewerDialog
       p.likeHoldEnabled = reactionHold
+      p.viewerRows = { id -> viewersCache[id] }
       return PageVH(p)
     }
 
@@ -1784,6 +1785,11 @@ class StoryViewerDialog(
 
   fun setViewers(id: String, rows: List<Map<String, Any?>>, loading: Boolean) {
     viewersCache[id] = rows
+    // [2026-10-18 status-telegram] Rostos de quem viu na pílula do próprio status.
+    if (!loading) groups.indices.forEach { gi ->
+      val pg = pageAt(gi) ?: return@forEach
+      if (pg.group?.isSelf == true && pg.currentItem?.id == id) pg.refreshCounters()
+    }
     if (!sheetOpen || sheetItemId != id) return
     sheetRows = rows
     renderRows()
