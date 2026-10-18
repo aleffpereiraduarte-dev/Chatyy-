@@ -300,6 +300,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // the call as seen → isRinging would always be true afterwards).
             // [2026-10-17 ring-dedupe] retry = nº do re-envio do servidor (0 = convite original).
             val ringRetry = data["ring_retry"]?.takeIf { it.isNotBlank() } ?: "0"
+            if (type == "incoming_call") { try { CallDiag.setRole(callId, "callee") } catch (_: Throwable) {} } // [2026-10-18 calls-data]
             CallDiag.log("push_received", callId, "src=fcm type=$type prio=${message.priority}/${message.originalPriority} sent=${message.sentTime} video=${if (hasVideo) 1 else 0} lk=${if (preLkToken != null) 1 else 0} retry=$ringRetry", applicationContext)
             // [2026-10-11 double-banner] Call already declined / cancelled /
             // missed on this device → a late duplicate push must not re-ring.

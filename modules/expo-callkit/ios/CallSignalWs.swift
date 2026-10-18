@@ -922,6 +922,7 @@ final class CallSignalWs: NSObject {
             return
         }
         seenIncomingInvites.append(callId)
+        CallDiagRole.set(callId, "callee") // [2026-10-18 calls-data]
         while seenIncomingInvites.count > kSeenInvitesMax {
             seenIncomingInvites.removeFirst()
         }

@@ -793,6 +793,21 @@ public class ExpoCallKitModule: Module {
       return CallResilience.save(json: json)
     }
 
+    // [2026-10-18 calls-data] JS hands the signed-in email to native once per
+    // login / hydrate. NOTHING writes App Group `user_email`, so native
+    // voip_diag lines were anonymous (user=-). Stored under a DIAG-ONLY key
+    // on purpose (see nativeCallDiag).
+    Function("setNativeUserEmail") { (email: String) -> Bool in
+      guard let ud = UserDefaults(suiteName: kAppGroupId) else { return false }
+      let e = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if e.isEmpty {
+        ud.removeObject(forKey: "diag_user_email")
+      } else {
+        ud.set(e, forKey: "diag_user_email")
+      }
+      return true
+    }
+
     Function("getCallResilienceFlags") { () -> String in
       return UserDefaults(suiteName: CallResilience.appGroup)?.string(forKey: CallResilience.flagsKey) ?? ""
     }
@@ -1178,6 +1193,7 @@ public class ExpoCallKitModule: Module {
       // tagged with `[CallTrace][3/12]` so the same grep on console works:
       //   log stream --predicate 'eventMessage contains "CallTrace"'
       let __ct_callId = (params["call_id"] as? String) ?? "<gen>"
+      CallDiagRole.set(__ct_callId, "caller") // [2026-10-18 calls-data]
       let __ct_hasToken = !((params["lk_token"] as? String) ?? "").isEmpty
       NSLog("[CallTrace][3/12] native startOutgoingCall callId=\(__ct_callId) callee=\(calleeEmail) video=\(params["is_video"] as? Bool ?? false) hasLkToken=\(__ct_hasToken)")
       let calleeAvatar = (params["callee_avatar"] as? String) ?? ""
@@ -1718,6 +1734,7 @@ public class ExpoCallKitModule: Module {
     // emits them directly when CXStartCallAction fulfils. Kept so OTA-
     // shipped JS bundles still work; new code paths must NOT call this.
     Function("fireCallInviteNative") { (callId: String, conversationId: String, calleeEmail: String, hasVideo: Bool) -> Void in
+      CallDiagRole.set(callId, "caller") // [2026-10-18 calls-data]
       CallSignalWs.shared.fireCallInvite(
         callId: callId,
         conversationId: conversationId,
@@ -3737,9 +3754,17 @@ extension ExpoCallKitModule: NativeCallRoomListener {
 // EXACTLY where the answer UI dies from the server (voip_diag.log). Drops
 // silently on any error — must never block the call flow.
 func nativeCallDiag(_ event: String, _ callId: String, _ detail: String = "") {
+    let diagIdentity = CallResilience.flags().diagIdentity
     let userEmail: String = {
         if let ud = UserDefaults(suiteName: kAppGroupId),
            let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+        // [2026-10-18 calls-data] user_email is never written (nothing sets
+        // it) → every native line logged user=-. setNativeUserEmail stores a
+        // diag-only copy (own key: populating user_email would switch on
+        // RelayWake / self-echo / group identity paths nobody tested).
+        if diagIdentity,
+           let ud = UserDefaults(suiteName: kAppGroupId),
+           let e = ud.string(forKey: "diag_user_email"), !e.isEmpty { return e }
         return ""
     }()
     guard let url = URL(string: "https://chatyy.com.br/api/voip_diag.php") else { return }
@@ -3747,11 +3772,21 @@ func nativeCallDiag(_ event: String, _ callId: String, _ detail: String = "") {
     req.httpMethod = "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.timeoutInterval = 8
+    // [2026-10-18 calls-data] Who + which side, on EVERY event (flag
+    // "diag_identity"). `user` = plain email (what voip_diag.php logs);
+    // the role rides in `detail` (the server only logs event/call/user/detail).
+    var detailOut = detail
+    var roleOut = ""
+    if diagIdentity {
+        roleOut = CallDiagRole.get(callId, event: event)
+        detailOut = detail.isEmpty ? "role=\(roleOut)" : "\(detail) role=\(roleOut)"
+    }
     let payload: [String: Any] = [
         "event": "native_ios_\(event)",
         "call_id": callId,
         "user": userEmail,
-        "detail": detail,
+        "detail": detailOut,
+        "role": roleOut,
         "platform": "ios-native",
         "ts": Int(Date().timeIntervalSince1970 * 1000),
     ]

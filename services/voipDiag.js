@@ -13,14 +13,54 @@ export function setVoipDiagUser(email) {
   _userEmail = String(email || '');
 }
 
+// [2026-10-18 calls-data] Lado da ligação em TODO evento (server só grava
+// event/call/user/detail → o papel vai dentro do detail). Desliga via OTA:
+// globalThis.__chatyy_call_res = { diag_identity: false } (ou enabled:false).
+const _roles = new Map(); // callId → 'caller' | 'callee'
+export function setVoipDiagRole(callId, role) {
+  try {
+    const c = String(callId || '');
+    if (!c || (role !== 'caller' && role !== 'callee')) return;
+    _roles.set(c, role);
+    if (_roles.size > 32) _roles.delete(_roles.keys().next().value);
+  } catch {}
+}
+function _diagIdentityOn() {
+  try {
+    const f = globalThis.__chatyy_call_res;
+    if (f && typeof f === 'object' && (f.enabled === false || f.diag_identity === false)) return false;
+  } catch {}
+  return true;
+}
+function _roleFor(event, callId) {
+  const c = String(callId || '');
+  const m = c.match(/call_[A-Za-z0-9_]+/);
+  const k = m ? m[0] : c;
+  if (k && _roles.has(k)) return _roles.get(k);
+  const e = String(event || '').toLowerCase();
+  if (/outgoing|caller_|invite_sent|start_call|native_only/.test(e)) return 'caller';
+  if (/incoming|invite_recei|ws_call_invite|answer|accept|decline|callkit|callkeep|push|ring|listener|navigate|poll|token|show_call|phantom/.test(e)) return 'callee';
+  return 'unknown';
+}
+function _withRole(detail, role) {
+  if (detail == null) return { role };
+  if (typeof detail === 'object' && !Array.isArray(detail)) return { ...detail, role };
+  return `${typeof detail === 'string' ? detail : JSON.stringify(detail)} role=${role}`;
+}
+
 export function voipDiag(event, callId, detail) {
   if (Platform.OS === 'web') return;
   try {
+    const idOn = _diagIdentityOn();
+    const role = idOn ? _roleFor(event, callId) : '';
+    let user = _userEmail;
+    if (!user && idOn) { try { user = String(globalThis.__chatyyMyEmail || ''); } catch {} }
     const body = JSON.stringify({
       event: String(event || ''),
       call_id: String(callId || ''),
-      user: _userEmail,
-      detail: detail ?? null,
+      user,
+      detail: idOn ? _withRole(detail, role) : (detail ?? null),
+      role,
       ts: Date.now(),
       platform: Platform.OS,
     });

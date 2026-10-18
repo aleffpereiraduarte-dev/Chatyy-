@@ -911,6 +911,8 @@ class CallActivity : ComponentActivity() {
     lkUrl = extras.getString(EXTRA_LK_URL)
     lkToken = extras.getString(EXTRA_LK_TOKEN)
     isOutgoing = extras.getBoolean(EXTRA_IS_OUTGOING, false)
+    // [2026-10-18 calls-data] role tag for every voip_diag event of this call.
+    try { CallDiag.setRole(callId, if (isOutgoing) "caller" else "callee") } catch (_: Throwable) {}
     conversationId = extras.getString(EXTRA_CONVERSATION_ID) ?: ""
     val callerAvatarUrl = extras.getString(EXTRA_CALLER_AVATAR) ?: ""
 
@@ -4680,6 +4682,7 @@ class CallActivity : ComponentActivity() {
   // the exact same path. `desired` = mic ENABLED.
   private fun applyMuteToggle(desired: Boolean) {
     state.isMuted = !desired
+    if (!desired) { try { NativeCallRoom.cancelEarlyMic(callId) } catch (_: Throwable) {} } // [2026-10-18 calls-data]
     // [2026-10-10 p2p-android] Ligação indo P2P: o mic é do motor P2P.
     p2p?.let { s ->
       try { s.setMicEnabled(desired && !heldByTelecom && !state.isOnHold) } catch (_: Throwable) {}

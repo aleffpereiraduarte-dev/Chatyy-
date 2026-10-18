@@ -570,6 +570,10 @@ object LkTokenFetcher {
 
         var conn: HttpURLConnection? = null
         var code = -1
+        // [2026-10-18 calls-data] lk_fast_connect: body fully read → leave the
+        // socket in HttpURLConnection's keep-alive pool (disconnect() closes
+        // it) so the next fetch / diag to the same host skips DNS+TCP+TLS.
+        var keepAlive = false
         return try {
             conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -614,12 +618,15 @@ object LkTokenFetcher {
             Log.d(TAG, "doFetchOnce: OK for room=$roomName url=$url ice=${ice.size}")
             val result = Result(token, url, ice)
             setCached(ctx, roomName, token, url, iceJson)
+            keepAlive = try { CallResilience.flags(ctx).lkFastConnect } catch (_: Throwable) { false }
             FetchAttempt(result, code)
         } catch (t: Throwable) {
             Log.w(TAG, "doFetchOnce threw: ${t.message}")
             FetchAttempt(null, code)
         } finally {
-            try { conn?.disconnect() } catch (_: Exception) {}
+            if (!keepAlive) {
+                try { conn?.disconnect() } catch (_: Exception) {}
+            }
         }
     }
 }

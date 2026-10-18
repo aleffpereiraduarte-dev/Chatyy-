@@ -71,17 +71,17 @@ enum CallStrings {
     // [2026-10-15 chamadas-dnd] Callee com Foco/Não Perturbe (CallKit recusou o
     // toque): status na tela de quem liga + notificação local do callee.
     private static let peerStatusTable: [String: [String: String]] = [
-        "pt-BR": ["peerDnd": "Não perturbe ativo", "dndIncomingBody": "Ligação de {name} — toque para atender"],
-        "pt-PT": ["peerDnd": "Não incomodar ativo", "dndIncomingBody": "Chamada de {name} — toque para atender"],
-        "en": ["peerDnd": "Do Not Disturb is on", "dndIncomingBody": "Call from {name} — tap to answer"],
-        "es": ["peerDnd": "No molestar activado", "dndIncomingBody": "Llamada de {name}: toca para contestar"],
-        "fr": ["peerDnd": "Ne pas déranger activé", "dndIncomingBody": "Appel de {name} — touchez pour répondre"],
-        "de": ["peerDnd": "Nicht stören ist aktiv", "dndIncomingBody": "Anruf von {name} – zum Annehmen tippen"],
-        "it": ["peerDnd": "Non disturbare attivo", "dndIncomingBody": "Chiamata da {name}: tocca per rispondere"],
-        "ja": ["peerDnd": "おやすみモードがオンです", "dndIncomingBody": "{name}さんからの着信 — タップして応答"],
-        "ar": ["peerDnd": "وضع عدم الإزعاج مفعّل", "dndIncomingBody": "مكالمة من {name} — اضغط للرد"],
-        "id": ["peerDnd": "Mode Jangan Ganggu aktif", "dndIncomingBody": "Panggilan dari {name} — ketuk untuk menjawab"],
-        "hi": ["peerDnd": "परेशान न करें चालू है", "dndIncomingBody": "{name} की कॉल — जवाब देने के लिए टैप करें"],
+        "pt-BR": ["missedCallFrom": "Chamada perdida de {name}", "missedVideoCallFrom": "Chamada de vídeo perdida de {name}", "peerDnd": "Não perturbe ativo", "dndIncomingBody": "Ligação de {name} — toque para atender"],
+        "pt-PT": ["missedCallFrom": "Chamada perdida de {name}", "missedVideoCallFrom": "Videochamada perdida de {name}", "peerDnd": "Não incomodar ativo", "dndIncomingBody": "Chamada de {name} — toque para atender"],
+        "en": ["missedCallFrom": "Missed call from {name}", "missedVideoCallFrom": "Missed video call from {name}", "peerDnd": "Do Not Disturb is on", "dndIncomingBody": "Call from {name} — tap to answer"],
+        "es": ["missedCallFrom": "Llamada perdida de {name}", "missedVideoCallFrom": "Videollamada perdida de {name}", "peerDnd": "No molestar activado", "dndIncomingBody": "Llamada de {name}: toca para contestar"],
+        "fr": ["missedCallFrom": "Appel manqué de {name}", "missedVideoCallFrom": "Appel vidéo manqué de {name}", "peerDnd": "Ne pas déranger activé", "dndIncomingBody": "Appel de {name} — touchez pour répondre"],
+        "de": ["missedCallFrom": "Verpasster Anruf von {name}", "missedVideoCallFrom": "Verpasster Videoanruf von {name}", "peerDnd": "Nicht stören ist aktiv", "dndIncomingBody": "Anruf von {name} – zum Annehmen tippen"],
+        "it": ["missedCallFrom": "Chiamata persa da {name}", "missedVideoCallFrom": "Videochiamata persa da {name}", "peerDnd": "Non disturbare attivo", "dndIncomingBody": "Chiamata da {name}: tocca per rispondere"],
+        "ja": ["missedCallFrom": "{name}さんからの不在着信", "missedVideoCallFrom": "{name}さんからの不在ビデオ通話", "peerDnd": "おやすみモードがオンです", "dndIncomingBody": "{name}さんからの着信 — タップして応答"],
+        "ar": ["missedCallFrom": "مكالمة فائتة من {name}", "missedVideoCallFrom": "مكالمة فيديو فائتة من {name}", "peerDnd": "وضع عدم الإزعاج مفعّل", "dndIncomingBody": "مكالمة من {name} — اضغط للرد"],
+        "id": ["missedCallFrom": "Panggilan tak terjawab dari {name}", "missedVideoCallFrom": "Panggilan video tak terjawab dari {name}", "peerDnd": "Mode Jangan Ganggu aktif", "dndIncomingBody": "Panggilan dari {name} — ketuk untuk menjawab"],
+        "hi": ["missedCallFrom": "{name} की मिस्ड कॉल", "missedVideoCallFrom": "{name} की मिस्ड वीडियो कॉल", "peerDnd": "परेशान न करें चालू है", "dndIncomingBody": "{name} की कॉल — जवाब देने के लिए टैप करें"],
     ]
 
     /// Texto da chave no idioma atual; {name} etc. substituídos por `args`.

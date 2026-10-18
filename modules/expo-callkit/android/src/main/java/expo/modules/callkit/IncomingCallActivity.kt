@@ -102,6 +102,7 @@ class IncomingCallActivity : AppCompatActivity() {
     super.onCreate(savedInstanceState)
 
     callId = intent.getStringExtra("call_id")
+    try { CallDiag.setRole(callId, "callee") } catch (_: Throwable) {} // [2026-10-18 calls-data]
     val emailExtra = intent.getStringExtra("caller_email") ?: ""
     callerEmail = emailExtra
     // [#978-2] Email-local-part fallback so JS never receives the literal
@@ -700,6 +701,11 @@ class IncomingCallActivity : AppCompatActivity() {
       val startMuted = getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
         .getBoolean("pending_call_mic_muted", false)
       if (!isGroup && cid.isNotEmpty() && micGranted && !startMuted &&
+          NativeCallRoom.publishMicOnAnswer(applicationContext, cid, "incoming_accept")) {
+        // [2026-10-18 calls-data] early_mic ON: armed on the warm Room even
+        // while it is still CONNECTING (publishes the instant it connects).
+        Log.i("CallTrace", "[7d/12] IncomingCallActivity accept: early mic armed on warm Room callId=$cid ts=${System.currentTimeMillis()}")
+      } else if (!isGroup && cid.isNotEmpty() && micGranted && !startMuted &&
           NativeCallRoom.isConnected() && NativeCallRoom.currentCallId() == cid) {
         Log.i("CallTrace", "[7d/12] IncomingCallActivity accept: early mic publish on warm Room callId=$cid ts=${System.currentTimeMillis()}")
         NativeCallRoom.setMicEnabled(true)

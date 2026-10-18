@@ -175,6 +175,8 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // "" = defaults). Binaries before 2026-10-18 lack it.
   setCallResilienceFlags?(json: string): boolean;
   getCallResilienceFlags?(): string;
+  // [2026-10-18 calls-data] Signed-in email for native voip_diag (diag-only key).
+  setNativeUserEmail?(email: string): boolean;
   openNativeGroupCall?(params: Record<string, any>): Promise<boolean>;
 
   // [2026-05-17 RNNoise] Per-user ML noise suppression toggle. Default ON.
@@ -912,6 +914,9 @@ export function setCallEffectsEnabled(enabled: boolean): boolean {
  *  "conexão perdida" notice, camera auto-pause). `flags` = null/undefined →
  *  native defaults. Keys: enabled, reconnect_tone, peer_grace_s, hold_cap_s,
  *  end_notice, video_autopause, vpause_after_s, vresume_after_s.
+ *  [2026-10-18 calls-data] + iOS: preconn_reuse, preconn_retry_s,
+ *  voip_stale_s, dnd_missed_notif; Android: early_mic, lk_fast_connect,
+ *  fcm_first_launch; both: diag_identity. enabled:false = all OFF.
  *  Older binaries lack it → false. */
 export function setCallResilienceFlags(flags?: Record<string, any> | null): boolean {
   const m = getModule();
@@ -919,6 +924,19 @@ export function setCallResilienceFlags(flags?: Record<string, any> | null): bool
     if (m && typeof m.setCallResilienceFlags === 'function') {
       const json = flags && typeof flags === 'object' ? JSON.stringify(flags) : '';
       return !!m.setCallResilienceFlags(json);
+    }
+  } catch {}
+  return false;
+}
+
+/** [2026-10-18 calls-data] Hand the signed-in email to native so native
+ *  voip_diag events are attributable (stored under a diag-only key; "" clears).
+ *  Older binaries lack it → false. */
+export function setNativeUserEmail(email?: string | null): boolean {
+  const m = getModule();
+  try {
+    if (m && typeof m.setNativeUserEmail === 'function') {
+      return !!m.setNativeUserEmail(String(email || '').trim().toLowerCase());
     }
   } catch {}
   return false;

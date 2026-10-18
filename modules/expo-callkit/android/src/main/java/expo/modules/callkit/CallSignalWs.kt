@@ -768,6 +768,7 @@ object CallSignalWs {
         // is the richer source — lk creds + avatar — so nothing is lost).
         // NOTE: read isRinging BEFORE markInviteSeen (which marks the call as
         // seen → isRinging would always be true afterwards).
+        try { CallDiag.setRole(callId, "callee") } catch (_: Throwable) {} // [2026-10-18 calls-data]
         CallDiag.log("push_received", callId, "src=ws", ctx)
         // [2026-10-11 double-banner] Already declined/cancelled here → stale.
         if (IncomingCallRegistry.isEnded(ctx, callId)) {
@@ -881,7 +882,20 @@ object CallSignalWs {
             )
             // [2026-10-15 dnd] Tell the caller the ring is silenced (once per
             // call_id; the FCM path then also skips its preconnect).
-            try { CallRingGate.checkAndReport(ctx, callId, "ws") } catch (_: Throwable) {}
+            val wsSilenced = try { CallRingGate.checkAndReport(ctx, callId, "ws") } catch (_: Throwable) { false }
+            // [2026-10-18 calls-data] lk_fast_connect: join the SFU while it
+            // rings from the WS invite (usually ~0.5 s before the FCM push),
+            // fetching a token in parallel if the frame carries none.
+            if (!wsSilenced) {
+                try {
+                    NativeCallRoom.kickRingPreconnect(
+                        ctx, callId,
+                        obj.optString("lk_url").takeIf { it.isNotBlank() },
+                        obj.optString("lk_token").takeIf { it.isNotBlank() },
+                        "ws"
+                    )
+                } catch (_: Throwable) {}
+            }
         } catch (e: Throwable) {
             Log.e(TAG, "call_invite $callId: startForegroundService failed — falling back to notification", e)
             try {

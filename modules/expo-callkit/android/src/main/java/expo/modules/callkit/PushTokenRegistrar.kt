@@ -32,6 +32,10 @@ object PushTokenRegistrar {
     private const val KEY_APP_VERSION = "push_app_version"
     private const val KEY_TOKENS = "chat_auth_tokens"             // ChatNotifStore: {email: bearer}
     private const val KEY_LAST_FLUSH = "push_fcm_native_last_flush"
+    // [2026-10-18 calls-data] "<token sha1 prefix>|<email>" já gravados (2xx).
+    private const val KEY_DONE = "push_fcm_native_done"
+    @Volatile private var ensureInFlight = false
+    @Volatile private var lastEnsureAt = 0L
 
     fun setInfo(ctx: Context, deviceId: String?, appVersion: String?) {
         try {
@@ -58,6 +62,82 @@ object PushTokenRegistrar {
             Log.w(TAG, "persist failed: ${t.message}")
         }
         Thread({ flushNow(ctx.applicationContext) }, "chatyy-push-reg").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * [2026-10-18 calls-data] fcm_first_launch (call_res_flags). Instalação nova:
+     * o onNewToken roda ANTES do login (nenhuma conta → nada pendente) e o
+     * fcm_device só subia pelo JS — que perdia corridas (4xpub0bxw, 6s4pjdjtu:
+     * 21 min só com token Expo → sem toque nativo). Agora, assim que há bearer
+     * (persistAuthForNativeCall / setNativeUserEmail / setPushRegistrationInfo):
+     * pega o token FCM do SO e registra fcm_device p/ cada conta que AINDA não
+     * tem ESTE token gravado (marca por token+conta; depois disso é no-op).
+     * Nunca lança; ≤ 1×/20 s.
+     */
+    fun ensureRegistered(ctx: Context, reason: String) {
+        try {
+            val app = ctx.applicationContext
+            if (!CallResilience.flags(app).fcmFirstLaunch) return
+            val now = System.currentTimeMillis()
+            if (ensureInFlight || now - lastEnsureAt < 20_000L) return
+            lastEnsureAt = now
+            ensureInFlight = true
+            val done: (String?) -> Unit = { tok ->
+                try {
+                    if (!tok.isNullOrBlank()) {
+                        Thread({
+                            try { queueMissing(app, tok, reason) } catch (_: Throwable) {}
+                            ensureInFlight = false
+                        }, "chatyy-push-reg").apply { isDaemon = true }.start()
+                    } else {
+                        ensureInFlight = false
+                    }
+                } catch (_: Throwable) { ensureInFlight = false }
+            }
+            try {
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+                    .addOnCompleteListener { t ->
+                        val tok = try { if (t.isSuccessful) t.result else null } catch (_: Throwable) { null }
+                        done(tok)
+                    }
+            } catch (t: Throwable) {
+                Log.w(TAG, "ensureRegistered: FCM token unavailable: ${t.message}")
+                // Firebase não inicializado: usa o último token persistido.
+                val cached = try { app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_TOKEN, null) } catch (_: Throwable) { null }
+                done(cached)
+            }
+        } catch (_: Throwable) { ensureInFlight = false }
+    }
+
+    private fun tokenTag(token: String): String = try {
+        val md = java.security.MessageDigest.getInstance("SHA-1")
+        md.digest(token.toByteArray(StandardCharsets.UTF_8)).take(6).joinToString("") { "%02x".format(it) }
+    } catch (_: Throwable) { token.takeLast(8) }
+
+    private fun queueMissing(ctx: Context, token: String, reason: String) {
+        val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val accounts = accountBearers(ctx)
+        if (accounts.isEmpty()) return
+        val tag = tokenTag(token)
+        val doneArr = try { JSONArray(sp.getString(KEY_DONE, "[]") ?: "[]") } catch (_: Throwable) { JSONArray() }
+        val doneSet = HashSet<String>()
+        for (i in 0 until doneArr.length()) doneSet.add(doneArr.optString(i, ""))
+        val pendArr = try { JSONArray(sp.getString(KEY_PENDING, "[]") ?: "[]") } catch (_: Throwable) { JSONArray() }
+        val pendSet = LinkedHashSet<String>()
+        for (i in 0 until pendArr.length()) pendArr.optString(i, "").takeIf { it.isNotBlank() }?.let { pendSet.add(it) }
+        val oldTok = sp.getString(KEY_TOKEN, "") ?: ""
+        var added = 0
+        for (email in accounts.keys) {
+            if (doneSet.contains("$tag|$email")) continue
+            if (pendSet.add(email)) added++
+        }
+        if (added == 0 && oldTok == token) return
+        val out = JSONArray()
+        for (e in pendSet) out.put(e)
+        sp.edit().putString(KEY_TOKEN, token).putString(KEY_PENDING, out.toString()).apply()
+        Log.d(TAG, "ensureRegistered($reason): queued=$added pending=${pendSet.size}")
+        try { CallDiag.log("push_fcm_ensure", "", "reason=$reason queued=$added", ctx) } catch (_: Throwable) {}
+        if (pendSet.isNotEmpty()) flushNow(ctx)
     }
 
     /** Re-tenta registros pendentes (barato quando não há nada; ≤ 1×/5 min). */
@@ -87,6 +167,7 @@ object PushTokenRegistrar {
             // Sempre o master US (tokens.json mora lá; o edge só repassaria).
             val base = "https://chatyy.com.br"
             val still = JSONArray()
+            val doneNow = ArrayList<String>()
             val all = JSONArray()
             for (e in bearers.keys) all.put(e)
             for (i in 0 until pendArr.length()) {
@@ -102,9 +183,25 @@ object PushTokenRegistrar {
                     .put("device_accounts", all)
                 if (deviceId.isNotBlank()) body.put("device_id", deviceId)
                 if (appVer.isNotBlank()) body.put("app_version", appVer)
-                if (!post("$base/api/email.php?action=register_push_token", bearer, body)) still.put(email)
+                val code = post("$base/api/email.php?action=register_push_token", bearer, body)
+                if (code in 200..299) {
+                    doneNow.add("${tokenTag(token)}|$email")
+                } else if (code != 401 && code != 403) {
+                    still.put(email) // rede / 5xx → tenta de novo; 401/403 = bearer morto
+                }
             }
-            sp.edit().putString(KEY_PENDING, still.toString()).apply()
+            val ed = sp.edit().putString(KEY_PENDING, still.toString())
+            if (doneNow.isNotEmpty()) {
+                // [2026-10-18 calls-data] marca token+conta gravados (≤ 24 entradas).
+                val prev = try { JSONArray(sp.getString(KEY_DONE, "[]") ?: "[]") } catch (_: Throwable) { JSONArray() }
+                val all2 = ArrayList<String>()
+                for (i in 0 until prev.length()) prev.optString(i, "").takeIf { it.isNotBlank() && it !in doneNow }?.let { all2.add(it) }
+                all2.addAll(doneNow)
+                val keep = JSONArray()
+                for (x in all2.takeLast(24)) keep.put(x)
+                ed.putString(KEY_DONE, keep.toString())
+            }
+            ed.apply()
             Log.d(TAG, "flush done pending=${still.length()}")
         } catch (t: Throwable) {
             Log.w(TAG, "flush failed: ${t.message}")
@@ -127,12 +224,19 @@ object PushTokenRegistrar {
                 val act = ChatNotifStore.activeEmail(ctx)
                 val legacy = sp.getString("auth_token", "") ?: ""
                 if (act.isNotBlank() && legacy.isNotBlank()) out[act] = legacy
+                // [2026-10-18 calls-data] 1º launch: ChatNotifStore ainda vazio →
+                // e-mail do setNativeUserEmail + bearer do persistAuthForNativeCall.
+                if (out.isEmpty() && legacy.isNotBlank() && CallResilience.flags(ctx).fcmFirstLaunch) {
+                    val de = sp.getString("diag_user_email", "") ?: ""
+                    if (de.isNotBlank()) out[ChatNotifStore.normEmail(de)] = legacy
+                }
             }
         } catch (_: Throwable) {}
         return out
     }
 
-    private fun post(url: String, bearer: String, body: JSONObject): Boolean {
+    /** HTTP status (-1 = rede). */
+    private fun post(url: String, bearer: String, body: JSONObject): Int {
         var conn: HttpURLConnection? = null
         return try {
             conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -148,10 +252,10 @@ object PushTokenRegistrar {
             val code = conn.responseCode
             Log.d(TAG, "register_push_token HTTP $code")
             // 2xx = gravado; 401/403 = bearer morto (conta saiu) → não insiste.
-            code in 200..299 || code == 401 || code == 403
+            code
         } catch (t: Throwable) {
             Log.w(TAG, "post failed: ${t.message}")
-            false
+            -1
         } finally {
             try { conn?.disconnect() } catch (_: Throwable) {}
         }

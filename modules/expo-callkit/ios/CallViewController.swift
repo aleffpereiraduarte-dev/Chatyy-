@@ -657,6 +657,63 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    // MARK: - [2026-10-18 calls-data] "Sem conexão — tentando…"
+
+    private var preconnSlowObserver: NSObjectProtocol?
+    private var preconnSlowShown = false
+
+    /// Answered incoming call on an adopted Room that is not connected yet:
+    /// after `preconn_retry_s` (or at once when the preconnect check already
+    /// saw it stuck) say so instead of a silent "Conectando…"; back to
+    /// "Conectando…" as soon as the Room connects. Never touches the Room.
+    private func startPreconnSlowWatch() {
+        let delay = CallResilience.flags().preconnRetryS
+        guard delay > 0, preconnSlowObserver == nil else { return }
+        let cid = callId
+        preconnSlowObserver = NotificationCenter.default.addObserver(
+            forName: CallViewController.preconnectSlowNotification, object: nil, queue: .main
+        ) { [weak self] n in
+            guard let self = self, (n.userInfo?["callId"] as? String) == cid else { return }
+            self.checkPreconnSlow(source: "preconnect_check")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.checkPreconnSlow(source: "callvc_timer")
+        }
+    }
+
+    private func checkPreconnSlow(source: String) {
+        guard !didHangup, callConnectedAt == nil, session.status != "Conectado" else { return stopPreconnSlowWatch() }
+        guard let r = room else { return }
+        if r.connectionState == .connected {
+            if preconnSlowShown {
+                preconnSlowShown = false
+                statusDotsBase = "Conectando"
+                nativeCallDiag("no_conn_retrying_cleared", callId, "src=\(source)")
+            }
+            return stopPreconnSlowWatch()
+        }
+        if !preconnSlowShown {
+            preconnSlowShown = true
+            statusDotsBase = CallResilience.text("noConnRetrying", lang: GroupCallStrings.lang)
+            if let lbl = view.viewWithTag(9001) as? UILabel {
+                lbl.text = CallViewController.dotsBase(statusDotsBase)
+            }
+            nativeCallDiag("no_conn_retrying_shown", callId,
+                           "src=\(source) lk=\(NativeCallRoom.stateName(r.connectionState))")
+        }
+        // Poll until connected / media / hangup (the 8 s / 25 s watchdog still decides).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.checkPreconnSlow(source: "poll")
+        }
+    }
+
+    private func stopPreconnSlowWatch() {
+        if let o = preconnSlowObserver {
+            NotificationCenter.default.removeObserver(o)
+            preconnSlowObserver = nil
+        }
+    }
+
     /// Single place that commits "Conectado": opens the caller gate, stops
     /// ringback, starts the duration timer (via the statusObserver sink) and
     /// tells CallKit the outgoing call connected. Idempotent.
@@ -1818,6 +1875,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // to bind self as a RoomDelegate (CallView reads `session` which
         // mirrors the NativeCallRoom state). This is what makes audio hot
         // the instant the user taps Accept.
+        // [2026-10-18 calls-data] Ring-window Room orphaned by another call's
+        // publish → reclaim it (never a 2nd join with the same identity).
+        if !isOutgoing {
+            NativeCallRoom.shared.reclaimPreconnect(callId: callId, reason: "callvc")
+        }
         if NativeCallRoom.shared.isPreconnected(callId: callId) {
             print("[CallVC] STAGE-A: adopting preconnected Room for \(callId)")
             // Take over the Room reference + register as RoomDelegate so
@@ -1865,6 +1927,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             } else {
                 self.statusDotsBase = "Conectando"
                 self.scheduleOutgoingConnectFallback(reason: "adopt", seconds: 8)
+                self.startPreconnSlowWatch()
             }
             // [2026-05-22 #1330 fix] PUBLISH-ON-ANSWER. Because preconnectRoom
             // is now subscribe-only (no setMicrophone during the ring window
@@ -1967,6 +2030,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // from the view's lifetime via the captured `r` reference so the
         // suspend chain survives even if the VC is dismissed mid-handshake.
         if let url = lkUrl, let token = lkToken, !url.isEmpty, !token.isEmpty {
+            // [2026-10-18 calls-data] A live ring-window Room of this call that
+            // could not be reclaimed must LEAVE before we join again.
+            if !isOutgoing && CallResilience.flags().preconnReuse {
+                NativeCallRoom.shared.retireOrphanPreconnect(callId: callId, keep: nil, reason: "callvc_fresh")
+            }
             startFreshRoomConnect(url: url, token: token)
         } else {
             // [2026-10-15 call-open-fast] Outgoing screen presented BEFORE the
@@ -5210,6 +5278,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             broadcastStopToken = nil
         }
         if let o = screenSharePendingObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = preconnSlowObserver { NotificationCenter.default.removeObserver(o) } // [2026-10-18 calls-data]
         screenShareLandscape?.detach()   // [2026-10-15]
         stopOutgoingCameraPreview() // [2026-10-14 self-view]
         gridHeaderTimer?.invalidate() // [2026-10-14 group-ui]
@@ -5433,7 +5502,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-11 publisher-nil] Keep url/token so a Room that dies during
         // the ring can be REJOINED on answer (NativeCallRoom.rejoinIfDead).
         NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId, url: url, token: token)
+        // [2026-10-18 calls-data] By-callId registry → the answer can reclaim
+        // this Room even if another call repoints the singleton meanwhile.
+        NativeCallRoom.shared.registerPreconnect(callId: callId, room: r, url: url, token: token)
         kPreconnectRoomLock.unlock()
+        runPreconnectConnect(r, url: url, token: token, callId: callId, attempt: 1)
+    }
+
+    /// [2026-10-18 calls-data] Connect body of the ring-window preconnect
+    /// (was inline in preconnectRoom; shared with the slow-connect retry).
+    private static func runPreconnectConnect(_ r: Room, url: String, token: String, callId: String, attempt: Int) {
+        armPreconnectSlowCheck(r, callId: callId, attempt: attempt)
         Task.detached(priority: .userInitiated) {
             do {
                 // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — iOS dials the
@@ -5494,6 +5573,93 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 } else {
                     nativeCallDiag("preconnect_failed_not_current", callId, "\(error)")
                 }
+                NativeCallRoom.shared.unregisterPreconnect(callId: callId, room: r) // [2026-10-18 calls-data]
+            }
+        }
+    }
+
+    // MARK: - [2026-10-18 calls-data] Slow ring-window preconnect
+
+    /// Notification posted when an ANSWERED call's adopted Room is still not
+    /// connected after `preconn_retry_s` (userInfo["callId"]). The call screen
+    /// shows "Sem conexão — tentando…" instead of a silent "Conectando…".
+    static let preconnectSlowNotification = Notification.Name("ChatyyPreconnectSlow")
+
+    /// Field 17/10 13:11Z: 5 callee preconnects stuck "connecting" (−1001
+    /// timeout) — the answer adopted a Room that never connected and the user
+    /// sat on "Conectando…" until the 8 s watchdog. After `preconn_retry_s`
+    /// (default 3) without .connected:
+    ///   - still ringing → retry ONCE with a FRESH token (the server may pick
+    ///     another region/node): new Room published + registered, then the
+    ///     stuck one LEAVEs (never two joins with one identity at once);
+    ///   - already answered → never touch the adopted Room (a forced reconnect
+    ///     ends the call); just tell the screen.
+    private static func armPreconnectSlowCheck(_ r: Room, callId: String, attempt: Int) {
+        let delay = CallResilience.flags().preconnRetryS
+        guard delay > 0, attempt <= 2 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard NativeCallRoom.shared.currentRoom() === r,
+                  NativeCallRoom.shared.currentCallId() == callId else { return }
+            let st = r.connectionState
+            if st == .connected { return }
+            if NativeCallRoom.shared.isAnsweredIncoming(callId: callId) {
+                nativeCallDiag("preconnect_slow_answered", callId, "attempt=\(attempt) lk=\(NativeCallRoom.stateName(st)) after_s=\(Int(delay))")
+                NotificationCenter.default.post(name: CallViewController.preconnectSlowNotification, object: nil, userInfo: ["callId": callId])
+                return
+            }
+            guard attempt == 1, !IncomingCallFilter.isFiltered(callId) else { return }
+            nativeCallDiag("preconnect_slow_retry", callId, "lk=\(NativeCallRoom.stateName(st)) after_s=\(Int(delay))")
+            CallViewController.retryPreconnectFresh(stuck: r, callId: callId)
+        }
+    }
+
+    private static func retryPreconnectFresh(stuck: Room, callId: String) {
+        let identity = UserDefaults(suiteName: "group.com.onemundo.mail")?.string(forKey: "user_email") ?? ""
+        Task.detached(priority: .userInitiated) {
+            let t0 = Date()
+            let fresh: (url: String, token: String)
+            do {
+                let tok = try await NativeCallTokenFetcher.shared.fetchToken(
+                    roomName: callId, identity: identity.isEmpty ? callId : identity, role: "publisher")
+                fresh = (url: tok.url, token: tok.token)
+            } catch {
+                nativeCallDiag("preconnect_retry_token_failed", callId, "err=\(error)")
+                return
+            }
+            await MainActor.run {
+                // Answered / cancelled / connected / replaced meanwhile → keep it.
+                kPreconnectRoomLock.lock()
+                guard NativeCallRoom.shared.currentRoom() === stuck,
+                      stuck.connectionState != .connected,
+                      !NativeCallRoom.shared.isAnsweredIncoming(callId: callId),
+                      !IncomingCallFilter.isFiltered(callId),
+                      !voipCallIdRecentlyEnded(callId) else {
+                    kPreconnectRoomLock.unlock()
+                    nativeCallDiag("preconnect_retry_skipped", callId, "lk=\(NativeCallRoom.stateName(stuck.connectionState))")
+                    return
+                }
+                let r2 = Room(delegate: nil, roomOptions: RoomOptions(
+                    defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
+                    defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
+                    defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
+                    defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
+                    adaptiveStream: !CallVideoQuality.isDataSaver,
+                    dynacast: true,
+                    reportRemoteTrackStatistics: true
+                ))
+                NativeCallRoom.shared.publish(room: r2, callId: callId, roomName: callId, url: fresh.url, token: fresh.token)
+                NativeCallRoom.shared.registerPreconnect(callId: callId, room: r2, url: fresh.url, token: fresh.token)
+                kPreconnectRoomLock.unlock()
+                if let ud = UserDefaults(suiteName: "group.com.onemundo.mail") {
+                    ud.set(fresh.token, forKey: "lk_token_\(callId)")
+                    ud.set(fresh.url, forKey: "lk_url_\(callId)")
+                }
+                nativeCallDiag("preconnect_retry_start", callId,
+                               "tokenMs=\(Int(Date().timeIntervalSince(t0) * 1000)) host=\(URL(string: fresh.url)?.host ?? "-")")
+                // The stuck Room leaves FIRST; the fresh one joins right after.
+                LKLeave.leave(stuck, callId: callId, reason: "preconnect_slow_retry", timeout: 0.8) {
+                    CallViewController.runPreconnectConnect(r2, url: fresh.url, token: fresh.token, callId: callId, attempt: 2)
+                }
             }
         }
     }
@@ -5510,6 +5676,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         conversationId: String = "",
         replacingStale: Bool = false
     ) {
+        CallDiagRole.set(callId, isOutgoing ? "caller" : "callee") // [2026-10-18 calls-data]
         // [2026-10-09 native-group-call] A CallKit-answered GROUP call gets the
         // native N-way screen (GroupCallViewController adopts the preconnected
         // Room) instead of this 1:1 UI. Gated by the App Group flag JS sets

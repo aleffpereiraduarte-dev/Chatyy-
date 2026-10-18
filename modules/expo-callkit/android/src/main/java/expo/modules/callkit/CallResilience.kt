@@ -25,7 +25,22 @@ import org.json.JSONObject
  *    "end_notice":true,       "Chamada encerrada — conexão perdida"
  *    "video_autopause":true,  pause OUR camera when the uplink is very poor
  *    "vpause_after_s":12,     poor/lost this long → pause
- *    "vresume_after_s":8}     good this long → resume (x2, x4 after flaps)
+ *    "vresume_after_s":8,     good this long → resume (x2, x4 after flaps)
+ *    // [2026-10-18 calls-data] (master enabled=false ⇒ all of these false)
+ *    "early_mic":true,        answer tap publishes the mic on the warm ring
+ *                             Room even while it is still CONNECTING (waits
+ *                             for CONNECTED in NativeCallRoom, no UI wait)
+ *    "lk_fast_connect":true,  WS call_invite also starts the ring-window
+ *                             preconnect (fetching a token if needed);
+ *                             race-free preconnect dedupe; DNS pre-warm of
+ *                             the LK host; keep-alive token fetch
+ *    "fcm_first_launch":true, native FCM token → register_push_token
+ *                             (fcm_device) as soon as a bearer exists
+ *                             (persistAuthForNativeCall / setNativeUserEmail /
+ *                             setPushRegistrationInfo), once per token+account
+ *    "diag_identity":true}    CallDiag sends user email (prefs
+ *                             "diag_user_email", then "user_email") and
+ *                             appends " role=caller|callee|unknown" to detail
  */
 object CallResilience {
   private const val TAG = "CallResilience"
@@ -41,6 +56,11 @@ object CallResilience {
     val videoAutoPause: Boolean = true,
     val videoPauseAfterMs: Long = 12_000L,
     val videoResumeAfterMs: Long = 8_000L,
+    // [2026-10-18 calls-data]
+    val earlyMic: Boolean = true,
+    val lkFastConnect: Boolean = true,
+    val fcmFirstLaunch: Boolean = true,
+    val diagIdentity: Boolean = true,
   )
 
   private fun clampS(v: Double, lo: Double, hi: Double): Long {
@@ -63,6 +83,7 @@ object CallResilience {
         Flags(
           enabled = false, reconnectTone = false, peerGraceMs = 15_000L, holdCapMs = 0L,
           endNotice = false, videoAutoPause = false,
+          earlyMic = false, lkFastConnect = false, fcmFirstLaunch = false, diagIdentity = false,
         )
       } else {
         val hold = o.optDouble("hold_cap_s", def.holdCapMs / 1000.0)
@@ -75,6 +96,10 @@ object CallResilience {
           videoAutoPause = o.optBoolean("video_autopause", def.videoAutoPause),
           videoPauseAfterMs = clampS(o.optDouble("vpause_after_s", def.videoPauseAfterMs / 1000.0), 4.0, 60.0),
           videoResumeAfterMs = clampS(o.optDouble("vresume_after_s", def.videoResumeAfterMs / 1000.0), 3.0, 60.0),
+          earlyMic = o.optBoolean("early_mic", def.earlyMic),
+          lkFastConnect = o.optBoolean("lk_fast_connect", def.lkFastConnect),
+          fcmFirstLaunch = o.optBoolean("fcm_first_launch", def.fcmFirstLaunch),
+          diagIdentity = o.optBoolean("diag_identity", def.diagIdentity),
         )
       }
     } catch (t: Throwable) {

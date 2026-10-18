@@ -86,6 +86,12 @@ object NativeCallRoom {
     // is the bulk of the gap between Chatyy and WhatsApp today.
     @Volatile private var preconnectingCallId: String? = null
     @Volatile private var preconnectJob: Job? = null
+    // [2026-10-18 calls-data] lk_fast_connect: preconnect() is reached from the
+    // FCM thread, the WS reader thread and the JS bridge; the old dedupe
+    // (`preconnectingCallId == callId && room != null`) let a 2nd call through
+    // while the 1st job had not published its Room yet → 2 Rooms, same
+    // identity (DUPLICATE_IDENTITY). Serialised + "job still active" counts.
+    private val preconnectLock = Any()
 
     // [P0 audio-drop fix 2026-10-04] Guards against starting the in-call
     // foreground service more than once for the same accepted call (a repeated
@@ -489,6 +495,8 @@ object NativeCallRoom {
         preconnectJob?.cancel()
         preconnectJob = null
         preconnectingCallId = null
+        earlyMicCallId = null // [2026-10-18 calls-data]
+        earlyMicCancelled = false
         // [P0 audio-drop fix 2026-10-04] Allow the warm-path FGS to start again
         // for the next call. The FGS itself is stopped by the end-call cleanup.
         fgsStartedForCallId = null
@@ -555,6 +563,73 @@ object NativeCallRoom {
                 Log.w(TAG, "setMicEnabled($enabled) threw: ${t.message}")
             }
         }
+    }
+
+    // [2026-10-18 calls-data] early_mic (call_res_flags). zkca2agc0: the
+    // answer-tap early publish (IncomingCallActivity) only ran when the warm
+    // Room was ALREADY CONNECTED; at the tap it was still CONNECTING, so the
+    // mic waited for CallActivity (launch → compose → finishWarmAdopt poll →
+    // publishLocalMediaAfterConnect) and the caller heard us ~8 s later.
+    // Now the tap arms a single-flight publish on the SAME warm Room that
+    // fires the instant it reaches CONNECTED, independent of any UI. A mute
+    // tap in the call screen before that cancels it (cancelEarlyMic).
+    @Volatile private var earlyMicCallId: String? = null
+    @Volatile private var earlyMicCancelled: Boolean = false
+
+    /** Arm/run the early mic publish for [forCallId] on the warm Room.
+     *  Returns true when the Room exists for that call (armed or published). */
+    fun publishMicOnAnswer(ctx: Context, forCallId: String, reason: String): Boolean {
+        try {
+            if (forCallId.isEmpty()) return false
+            val app = ctx.applicationContext
+            if (!CallResilience.flags(app).earlyMic) return false
+            val r = room ?: return false
+            if (callId != forCallId) return false
+            val st0 = r.state
+            if (st0 != Room.State.CONNECTED && st0 != Room.State.CONNECTING && st0 != Room.State.RECONNECTING) return false
+            if (earlyMicCallId == forCallId) return true
+            earlyMicCallId = forCallId
+            earlyMicCancelled = false
+            val t0 = System.currentTimeMillis()
+            try { CallDiag.log("early_mic_armed", forCallId, "reason=$reason lk=$st0", app) } catch (_: Throwable) {}
+            if (st0 == Room.State.CONNECTED) {
+                setMicEnabled(true)
+                return true
+            }
+            scope.launch {
+                var waited = 0L
+                while (waited < 12_000L) {
+                    if (room !== r || callId != forCallId || earlyMicCancelled) break
+                    val s = r.state
+                    if (s == Room.State.CONNECTED || s == Room.State.DISCONNECTED) break
+                    kotlinx.coroutines.delay(40)
+                    waited += 40
+                }
+                val ours = room === r && callId == forCallId
+                val muted = try {
+                    app.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                        .getBoolean("pending_call_mic_muted", false)
+                } catch (_: Throwable) { false }
+                if (ours && !earlyMicCancelled && !muted && r.state == Room.State.CONNECTED) {
+                    setMicEnabled(true)
+                    try { CallDiag.log("early_mic_published", forCallId, "reason=$reason waited_ms=$waited since_tap_ms=${System.currentTimeMillis() - t0}", app) } catch (_: Throwable) {}
+                } else {
+                    try { CallDiag.log("early_mic_skip", forCallId, "reason=$reason ours=$ours cancelled=$earlyMicCancelled muted=$muted lk=${r.state} waited_ms=$waited", app) } catch (_: Throwable) {}
+                    // Let CallActivity's normal publish own it.
+                    if (earlyMicCallId == forCallId) earlyMicCallId = null
+                }
+            }
+            return true
+        } catch (t: Throwable) {
+            Log.w(TAG, "publishMicOnAnswer failed: ${t.message}")
+            return false
+        }
+    }
+
+    /** The call screen took over the mic decision (mute toggle) → never let a
+     *  pending early publish re-open it. */
+    fun cancelEarlyMic(forCallId: String?) {
+        if (forCallId != null && earlyMicCallId == forCallId) earlyMicCancelled = true
     }
 
     // [2026-10-06 android-incoming] Single source of truth for the Android
@@ -799,12 +874,83 @@ object NativeCallRoom {
      *     LkTokenFetcher.setCached).
      */
     fun preconnect(ctx: Context, url: String, token: String, callId: String) {
+        val fast = try { CallResilience.flags(ctx.applicationContext).lkFastConnect } catch (_: Throwable) { false }
+        if (fast) {
+            synchronized(preconnectLock) { preconnectImpl(ctx, url, token, callId, true) }
+        } else {
+            preconnectImpl(ctx, url, token, callId, false)
+        }
+    }
+
+    /**
+     * [2026-10-18 calls-data] lk_fast_connect: start the ring-window preconnect
+     * from a source that may carry NO LiveKit creds (native WS call_invite —
+     * it usually beats the FCM push by ~0.5 s, zkca2agc0: ws 20:09:04.5, fcm
+     * 05.1). Uses inline creds → cached → a token fetch on IO, in parallel with
+     * the ringing UI. 1:1 only. No-op if a preconnect for the call already runs.
+     */
+    fun kickRingPreconnect(ctx: Context, forCallId: String, url: String?, token: String?, src: String) {
+        try {
+            val app = ctx.applicationContext
+            if (!CallResilience.flags(app).lkFastConnect) return
+            if (forCallId.isEmpty() || !forCallId.startsWith("call_")) return
+            if (CallRingGate.isSilenced(forCallId)) return
+            if (isPreconnected(forCallId) || preconnectingCallId == forCallId) return
+            if (!url.isNullOrBlank() && !token.isNullOrBlank()) {
+                try { CallDiag.log("fast_preconnect", forCallId, "src=$src creds=inline", app) } catch (_: Throwable) {}
+                preconnect(app, url, token, forCallId)
+                return
+            }
+            val cached = try { LkTokenFetcher.getCached(app, forCallId) } catch (_: Throwable) { null }
+            if (cached != null) {
+                try { CallDiag.log("fast_preconnect", forCallId, "src=$src creds=cache", app) } catch (_: Throwable) {}
+                preconnect(app, cached.url, cached.token, forCallId)
+                return
+            }
+            scope.launch(Dispatchers.IO) {
+                val t0 = System.currentTimeMillis()
+                val identity = try {
+                    app.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                        .getString("diag_user_email", null)?.takeIf { it.isNotBlank() }
+                } catch (_: Throwable) { null } ?: "android-native"
+                val tk = try { LkTokenFetcher.fetch(app, forCallId, identity) } catch (_: Throwable) { null }
+                val ms = System.currentTimeMillis() - t0
+                if (tk == null) {
+                    try { CallDiag.log("fast_preconnect_skip", forCallId, "src=$src reason=token_fetch_failed ms=$ms", app) } catch (_: Throwable) {}
+                    return@launch
+                }
+                val stillRinging = try {
+                    !IncomingCallRegistry.isEnded(app, forCallId) && IncomingCallRegistry.isRinging(forCallId) &&
+                        !CallRingGate.isSilenced(forCallId) &&
+                        // Accepted during the fetch → CallActivity owns the join
+                        // (a late preconnect would be a 2nd Room, same identity).
+                        !IncomingCallRegistry.isAcceptedHere(app, forCallId)
+                } catch (_: Throwable) { false }
+                if (!stillRinging || isPreconnected(forCallId) || preconnectingCallId == forCallId) {
+                    try { CallDiag.log("fast_preconnect_skip", forCallId, "src=$src reason=${if (stillRinging) "already" else "not_ringing"} ms=$ms", app) } catch (_: Throwable) {}
+                    return@launch
+                }
+                try { CallDiag.log("fast_preconnect", forCallId, "src=$src creds=fetch ms=$ms", app) } catch (_: Throwable) {}
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    try { preconnect(app, tk.url, tk.token, forCallId) } catch (_: Throwable) {}
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "kickRingPreconnect failed: ${t.message}")
+        }
+    }
+
+    private fun preconnectImpl(ctx: Context, url: String, token: String, callId: String, fast: Boolean) {
         if (url.isBlank() || token.isBlank() || callId.isBlank()) {
             Log.w(TAG, "preconnect: missing params (url=${url.isNotBlank()} tk=${token.isNotBlank()} id=${callId.isNotBlank()})")
             return
         }
         if (preconnectingCallId == callId && room != null) {
             Log.d(TAG, "preconnect: already in-flight or done for callId=$callId")
+            return
+        }
+        if (fast && preconnectingCallId == callId && preconnectJob?.isActive == true) {
+            Log.d(TAG, "preconnect: job still starting for callId=$callId — skip (no 2nd Room)")
             return
         }
         // [2026-10-15 dnd] Ring silenced by Do Not Disturb (CallRingGate) →
@@ -887,7 +1033,11 @@ object NativeCallRoom {
                 Log.w(TAG, "preconnect failed for callId=$callId: ${t.message}")
                 // Don't clear() — the cached token still lets onAnswer's
                 // fallback launch CallActivity cleanly.
-                preconnectingCallId = null
+                // [2026-10-18 calls-data] Only forget OUR call id: a cancelled
+                // job (switch to another call) must not wipe the new call's.
+                if (!fast || (preconnectingCallId == callId && t !is kotlinx.coroutines.CancellationException)) {
+                    preconnectingCallId = null
+                }
             }
         }
     }

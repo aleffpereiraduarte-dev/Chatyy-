@@ -108,6 +108,15 @@ enum IncomingCallFilter {
             // Pré-conexão que já estava em voo (ex.: convite WS em paralelo) sai da sala.
             NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "ring_filtered")
             postLocalNotification(e)
+            // [2026-10-18 calls-data] Foco engoliu o toque → se ninguém atender,
+            // fica "Chamada perdida de X" (antes clear() apagava o "toque para
+            // atender" e não sobrava NADA). Agendada p/ o fim da janela de toque
+            // (dispara mesmo com o app suspenso); clear() antecipa/cancela.
+            if CallResilience.flags().dndMissedNotif {
+                postMissedNotification(callId: e.callId, callerName: e.callerName, callerEmail: e.callerEmail,
+                                       conversationId: e.conversationId, hasVideo: e.hasVideo,
+                                       after: 50, source: "dnd_scheduled")
+            }
         }
         postPeerStatus(callId: callId, status: "dnd", reason: reason)
         return true
@@ -118,8 +127,9 @@ enum IncomingCallFilter {
     static func clear(callId: String, reason: String) {
         guard !callId.isEmpty else { return }
         lock.lock()
-        let had = entries.removeValue(forKey: callId) != nil
+        let removed = entries.removeValue(forKey: callId)
         lock.unlock()
+        let had = removed != nil
         let ud = UserDefaults(suiteName: appGroup)
         if let d = ud?.dictionary(forKey: persistKey), (d["callId"] as? String) == callId {
             ud?.removeObject(forKey: persistKey)
@@ -128,6 +138,63 @@ enum IncomingCallFilter {
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [nid])
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [nid])
         if had { nativeCallDiag("ring_filter_clear", callId, "reason=\(reason)") }
+        // [2026-10-18 calls-data] Desfecho do toque filtrado: atendida/recusada
+        // (aqui ou em outro aparelho) ou re-tocou → cancela a "perdida"
+        // agendada; caller desistiu / perdida → posta já.
+        let r = reason.lowercased()
+        let notMissed = r.contains("answered") || r.contains("declined") || r.contains("rering_ok") || r.contains("accepted")
+        if notMissed {
+            let mid = missedNotificationId(callId)
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [mid])
+        } else if let e = removed, CallResilience.flags().dndMissedNotif {
+            postMissedNotification(callId: e.callId, callerName: e.callerName, callerEmail: e.callerEmail,
+                                   conversationId: e.conversationId, hasVideo: e.hasVideo,
+                                   after: 0, source: "dnd_" + reason)
+        }
+    }
+
+    // MARK: - [2026-10-18 calls-data] "Chamada perdida de X" (local)
+
+    private static func missedNotificationId(_ callId: String) -> String {
+        return "chatyy_call_missed_\(callId)"
+    }
+
+    /// Local missed-call notification (same id per call → re-post replaces,
+    /// never duplicates). `after` > 0 = scheduled (fires even if the app is
+    /// suspended); 0 = now. Tap → conversation (pushNotifications.js
+    /// `missed_call`). Used for Focus-filtered rings and stale VoIP pushes.
+    static func postMissedNotification(callId: String, callerName: String, callerEmail: String,
+                                       conversationId: String, hasVideo: Bool,
+                                       after: TimeInterval, source: String) {
+        guard !callId.isEmpty else { return }
+        let name = callerName.isEmpty ? (callerEmail.isEmpty ? "Chatyy" : callerEmail) : callerName
+        let c = UNMutableNotificationContent()
+        c.title = name
+        c.body = CallStrings.s(hasVideo ? "missedVideoCallFrom" : "missedCallFrom", ["name": name])
+        c.sound = .default
+        c.threadIdentifier = "chatyy_calls"
+        c.interruptionLevel = .active
+        c.userInfo = [
+            "type": "missed_call",
+            "call_id": callId,
+            "caller_email": callerEmail,
+            "caller_name": callerName,
+            "conversation_id": conversationId,
+            "video": hasVideo ? "1" : "0",
+            "local": "1",
+        ]
+        let trigger: UNNotificationTrigger? = after > 0
+            ? UNTimeIntervalNotificationTrigger(timeInterval: after, repeats: false)
+            : nil
+        let mid = missedNotificationId(callId)
+        if after <= 0 {
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [mid])
+        }
+        let req = UNNotificationRequest(identifier: mid, content: c, trigger: trigger)
+        UNUserNotificationCenter.current().add(req) { err in
+            nativeCallDiag("missed_notif", callId,
+                           "src=\(source) after=\(Int(after)) " + (err == nil ? "ok" : "err=\(err!.localizedDescription)"))
+        }
     }
 
     /// Instalado no boot (VoipPushAppDelegateSubscriber.installOnce) e na 1ª

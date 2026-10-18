@@ -671,7 +671,29 @@ class ExpoCallKitModule : Module() {
       try {
         PushTokenRegistrar.setInfo(context, deviceId, appVersion)
         PushTokenRegistrar.flushPending(context)
+        // [2026-10-18 calls-data] fcm_first_launch: native fcm_device register.
+        PushTokenRegistrar.ensureRegistered(context, "push_info")
       } catch (_: Throwable) {}
+    }
+
+    // [2026-10-18 calls-data] Signed-in email for native call diagnostics
+    // (CallDiag `user`). Stored under "diag_user_email" ON PURPOSE — NOT
+    // "user_email": nothing ever wrote "user_email" and several native paths
+    // (RelayWakeService, CallSignalWs self-echo, GroupCallActivity,
+    // LkTokenFetcher identity) read it; filling it would switch those on
+    // untested. "" = forget. Also lets PushTokenRegistrar pair the legacy
+    // bearer with an account on a fresh install.
+    Function("setNativeUserEmail") { email: String ->
+      try {
+        val e = email.trim().lowercase()
+        val ed = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        if (e.isEmpty()) ed.remove("diag_user_email") else ed.putString("diag_user_email", e.take(160))
+        ed.apply()
+        if (e.isNotEmpty()) {
+          try { PushTokenRegistrar.ensureRegistered(context, "user_email") } catch (_: Throwable) {}
+        }
+        true
+      } catch (_: Throwable) { false }
     }
 
     // [2026-10-07 bgsync] Background message journal + periodic bg sync.
@@ -1096,6 +1118,10 @@ class ExpoCallKitModule : Module() {
           .putString("api_base", baseUrl)
           .apply()
         Log.d(TAG, "persistAuthForNativeCall: stashed token len=${token.length} base=$baseUrl")
+        // [2026-10-18 calls-data] fcm_first_launch: a bearer exists now → make
+        // sure THIS install's native FCM token is registered (fcm_device) so a
+        // brand-new install rings natively, not only via the Expo token.
+        try { PushTokenRegistrar.ensureRegistered(context.applicationContext, "persist_auth") } catch (_: Throwable) {}
         // [P0 2026-05-18 #1132] Now that we have a fresh bearer in prefs,
         // open the native CallSignalWs eagerly so inbound `call_invite`
         // frames can launch CallRingingService even if the JS WS path is

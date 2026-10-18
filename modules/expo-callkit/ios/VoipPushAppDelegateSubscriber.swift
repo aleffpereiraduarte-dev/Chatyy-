@@ -142,6 +142,24 @@ func voipNoteCallIdEnded(_ callId: String, reason: String) {
     UserDefaults(suiteName: kAppGroupId)?.set(snap, forKey: kEndedCallIdsKey)
 }
 
+/// [2026-10-18 calls-data] Clock-skew floor for the VoIP push lag: returns the
+/// smallest lag of the last 10 pushes BEFORE this one (nil = no history) and
+/// records `lagMs`. App Group "voip_lag_hist" (ms ints). Thread-safe.
+private let kVoipLagLock = NSLock()
+func voipLagFloorMsAndRecord(_ lagMs: Int) -> Int? {
+    kVoipLagLock.lock()
+    defer { kVoipLagLock.unlock() }
+    let ud = UserDefaults(suiteName: "group.com.onemundo.mail")
+    var hist: [Int] = (ud?.array(forKey: "voip_lag_hist") as? [NSNumber])?.map { $0.intValue } ?? []
+    let floor = hist.min()
+    if lagMs >= -6 * 3600 * 1000 && lagMs <= 6 * 3600 * 1000 {
+        hist.append(lagMs)
+        if hist.count > 10 { hist.removeFirst(hist.count - 10) }
+        ud?.set(hist, forKey: "voip_lag_hist")
+    }
+    return floor
+}
+
 /// True when `callId` ended on this device within the last 2 min.
 func voipCallIdRecentlyEnded(_ callId: String) -> Bool {
     guard !callId.isEmpty else { return false }
@@ -373,8 +391,15 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             serverTs = d
         }
         let pushLagMs: Int = serverTs > 0 ? Int((Date().timeIntervalSince1970 - serverTs) * 1000) : -1
+        // [2026-10-18 calls-data] Skew-corrected lag: the device clock may be
+        // off, so subtract the smallest lag seen on the previous pushes (a
+        // clock 30 s ahead makes EVERY push look 30 s late). Recorded before
+        // the decision so the floor keeps learning.
+        let lagFloorMs: Int? = serverTs > 0 ? voipLagFloorMsAndRecord(pushLagMs) : nil
+        let pushLagCorrMs: Int = pushLagMs < 0 ? -1 : max(0, pushLagMs - max(0, lagFloorMs ?? 0))
+        if !isCancelPush { CallDiagRole.set(callId, "callee") }
         nativeCallDiag("voip_push_recv", callId,
-                       "type=\(pushType.isEmpty ? "invite" : pushType) lag_ms=\(pushLagMs)")
+                       "type=\(pushType.isEmpty ? "invite" : pushType) lag_ms=\(pushLagMs) lag_corr_ms=\(pushLagCorrMs)")
 
         if isCancelPush {
             kCallIdToUUIDLock.lock()
@@ -550,6 +575,65 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     if CXCallObserver().calls.contains(where: { $0.uuid == throwaway && !$0.hasEnded }) {
                         nativeCallDiag("voip_dup_push_throwaway_reend", callId, "")
+                        tProvider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                    }
+                }
+            }
+            completion()
+            return
+        }
+
+        // [2026-10-18 calls-data] STALE invite (trzb8fu8d: delivered 69 s late,
+        // the caller had long given up → phantom ring nobody could answer).
+        // Older than voip_stale_s (skew-corrected, see above) → never ring:
+        // report-then-end a throwaway (PushKit contract), mark the call ended
+        // (a late WS invite won't ring either) and leave a "Chamada perdida".
+        // Lag > 6 h = broken clock, not a late push → ring as before. No lag
+        // history yet (first push of an install) = skew unknown → ring.
+        let staleS = CallResilience.flags().voipStaleS
+        if staleS > 0, lagFloorMs != nil, pushLagCorrMs >= 0, pushLagMs < 6 * 3600 * 1000,
+           Double(pushLagCorrMs) > staleS * 1000 {
+            let sName = ((dict["caller_name"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let sEmail = (dict["caller_email"] as? String) ?? ""
+            let sVideo = (dict["video"] as? String) == "1" || (dict["call_type"] as? String) == "video"
+            let sConv: String = {
+                if let s = dict["conversation_id"] as? String { return s }
+                if let n = dict["conversation_id"] as? NSNumber { return n.stringValue }
+                return ""
+            }()
+            voipNoteCallIdEnded(callId, reason: "stale_push")
+            nativeCallDiag("voip_stale_push_drop", callId,
+                           "lag_ms=\(pushLagMs) lag_corr_ms=\(pushLagCorrMs) floor_ms=\(lagFloorMs ?? -1) limit_s=\(Int(staleS)) retry=\(ringRetry)")
+            if CallResilience.flags().dndMissedNotif {
+                DispatchQueue.main.async {
+                    IncomingCallFilter.postMissedNotification(callId: callId, callerName: sName, callerEmail: sEmail,
+                                                              conversationId: sConv, hasVideo: sVideo,
+                                                              after: 0, source: "stale_push")
+                }
+            }
+            if CXCallObserver().calls.contains(where: { !$0.hasEnded }) {
+                // A live call already satisfies the PushKit contract; a
+                // throwaway would show as call-waiting "Unknown".
+                completion()
+                return
+            }
+            let throwaway = UUID()
+            kThrowawayUUIDsLock.lock()
+            kThrowawayUUIDs.insert(throwaway)
+            kThrowawayUUIDsLock.unlock()
+            let upd = CXCallUpdate()
+            let tName = sName.isEmpty ? "Chatyy" : sName
+            upd.remoteHandle = CXHandle(type: .generic, value: tName)
+            upd.localizedCallerName = tName
+            upd.hasVideo = false
+            let tProvider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
+            tProvider.reportNewIncomingCall(with: throwaway, update: upd) { err in
+                tProvider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                if let err = err {
+                    nativeCallDiag("voip_stale_throwaway_report_err", callId, err.localizedDescription)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    if CXCallObserver().calls.contains(where: { $0.uuid == throwaway && !$0.hasEnded }) {
                         tProvider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
                     }
                 }

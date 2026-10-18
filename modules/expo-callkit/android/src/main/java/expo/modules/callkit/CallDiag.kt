@@ -40,6 +40,33 @@ object CallDiag {
   private val sentAt = ArrayDeque<Long>()
   private val lastByKey = LinkedHashMap<String, Long>()
 
+  // [2026-10-18 calls-data] callId → "caller" | "callee" (bounded, thread-safe).
+  private val roles = object : LinkedHashMap<String, String>(16, 0.75f, false) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 32
+  }
+
+  /** Remember our role in [callId] ("caller" / "callee"). First writer wins
+   *  except that an explicit "caller" always overrides a heuristic. */
+  fun setRole(callId: String?, role: String) {
+    val cid = callId ?: return
+    if (cid.isEmpty() || (role != "caller" && role != "callee")) return
+    try { synchronized(lock) { if (roles[cid] == null || role == "caller") roles[cid] = role } } catch (_: Throwable) {}
+  }
+
+  private fun roleFor(callId: String, event: String): String {
+    if (callId.isNotEmpty()) {
+      val r = synchronized(lock) { roles[callId] }
+      if (r != null) return r
+    }
+    val e = event.lowercase()
+    return when {
+      e.contains("outgoing") || e.startsWith("invite_") || e.contains("ringback") -> "caller"
+      e.contains("push_received") || e.contains("incoming") || e.contains("ring") ||
+        e.contains("preconnect") || e.contains("caller_cancel") || e.contains("dedupe") -> "callee"
+      else -> "unknown"
+    }
+  }
+
   /** Optional: remember the app context so callers without one still get the user email. */
   fun init(ctx: Context?) {
     if (ctx != null && appCtx == null) appCtx = ctx.applicationContext
@@ -68,15 +95,30 @@ object CallDiag {
         if (sentAt.size >= MAX_PER_MIN) return
         sentAt.addLast(now)
       }
-      Log.i(TAG, "native_android_$event call=$cid $detail")
+      // [2026-10-18 calls-data] diag_identity (call_res_flags): plain email
+      // (voip_diag.php logs `user` as-is) + role appended to detail.
+      val fl = try { CallResilience.flags(appCtx) } catch (_: Throwable) { null }
+      val ident = fl?.diagIdentity ?: false
+      val keepAliveOn = fl?.lkFastConnect ?: false
+      val sp = try { appCtx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE) } catch (_: Throwable) { null }
       val user = try {
-        appCtx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.getString("user_email", "") ?: ""
+        if (ident) {
+          (sp?.getString("diag_user_email", null)?.takeIf { it.isNotBlank() }
+            ?: sp?.getString("user_email", "") ?: "")
+        } else {
+          sp?.getString("user_email", "") ?: ""
+        }
       } catch (_: Throwable) { "" }
+      val fullDetail = if (ident) {
+        val roleTag = " role=" + roleFor(cid, event)
+        detail.take(900 - roleTag.length) + roleTag
+      } else detail
+      Log.i(TAG, "native_android_$event call=$cid $fullDetail")
       val body = JSONObject().apply {
         put("event", "native_android_$event".take(110))
         put("call_id", cid.take(110))
         put("user", user)
-        put("detail", detail.take(900))
+        put("detail", fullDetail.take(900))
         put("platform", "android-native")
         put("device", "${Build.MODEL}/${Build.VERSION.SDK_INT}")
         put("ts", now)
@@ -90,11 +132,15 @@ object CallDiag {
             readTimeout = 5000
             setRequestProperty("Content-Type", "application/json")
           }
+          var reuse = false
           try {
             OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
-            conn.responseCode
-            try { conn.inputStream.close() } catch (_: Throwable) {}
-          } finally { try { conn.disconnect() } catch (_: Throwable) {} }
+            val code = conn.responseCode
+            try { conn.inputStream.use { s -> s.readBytes() } } catch (_: Throwable) {}
+            // [2026-10-18 calls-data] lk_fast_connect: keep the warm TLS socket
+            // to chatyy.com.br for the token fetch that follows push_received.
+            reuse = code in 200..299 && keepAliveOn
+          } finally { if (!reuse) { try { conn.disconnect() } catch (_: Throwable) {} } }
         } catch (_: Throwable) {}
       }
     } catch (_: Throwable) {}

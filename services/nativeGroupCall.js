@@ -64,6 +64,14 @@ export function syncNativeGroupCallFlag(email) {
   if (Platform.OS === 'web') return false;
   try { globalThis.__chatyyMyEmail = String(email || '').toLowerCase() || globalThis.__chatyyMyEmail; } catch {}
   const m = _callkit();
+  // [2026-10-18 calls-data] e-mail p/ o voip_diag nativo (antes user=- em
+  // TODA linha nativa: nada gravava user_email no App Group / prefs).
+  try {
+    if (m && typeof m.setNativeUserEmail === 'function') {
+      const em = String(email || globalThis.__chatyyMyEmail || '').toLowerCase();
+      if (em) m.setNativeUserEmail(em);
+    }
+  } catch {}
   // [2026-10-16 wave13-B] Efeitos em chamada — kill switch OTA/console:
   // globalThis.__chatyy_call_fx = false desliga (nativo para de mexer nos
   // frames da câmera e some a linha "Efeitos"). Padrão = ligado.

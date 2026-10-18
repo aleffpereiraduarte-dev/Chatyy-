@@ -136,6 +136,112 @@ public enum NativeCallRoomEvent {
     /// publication (its track dies with the Room if the Room later drops).
     private var micPublishFinished = false
 
+    // [2026-10-18 calls-data] Ring-window preconnect registry, by callId.
+    // The singleton holds ONE Room; a 2nd call's Room published meanwhile
+    // (glare / redial / call-waiting) orphaned the ring-window Room of the
+    // call the user then answered → the answer saw isPreconnected()==false
+    // and built a 2nd Room with the SAME identity → SFU DUPLICATE_IDENTITY
+    // kicked the preconnect (call_1791936673403_xp5wqaoxn, SFU US 00:11:30Z).
+    // The registry lets the answer path RECLAIM that Room (flag
+    // "preconn_reuse"). Own lock: written from preconnectRoom's detached task.
+    private let preconnLock = NSLock()
+    private var preconnRooms: [String: Room] = [:]
+    private var preconnCreds: [String: (url: String, token: String)] = [:]
+
+    public func registerPreconnect(callId: String, room: Room, url: String, token: String) {
+        guard !callId.isEmpty else { return }
+        preconnLock.lock()
+        preconnRooms[callId] = room
+        preconnCreds[callId] = (url: url, token: token)
+        if preconnRooms.count > 4 {
+            // Bounded: forget other calls' entries (their Rooms are owned elsewhere).
+            for k in Array(preconnRooms.keys) where k != callId {
+                preconnRooms.removeValue(forKey: k)
+                preconnCreds.removeValue(forKey: k)
+            }
+        }
+        preconnLock.unlock()
+    }
+
+    /// Forget the entry of `callId` (only if it is `room`, when given).
+    public func unregisterPreconnect(callId: String, room: Room? = nil) {
+        guard !callId.isEmpty else { return }
+        preconnLock.lock()
+        if let r = room, let cur = preconnRooms[callId], cur !== r {
+            preconnLock.unlock()
+            return
+        }
+        preconnRooms.removeValue(forKey: callId)
+        preconnCreds.removeValue(forKey: callId)
+        preconnLock.unlock()
+    }
+
+    public func registeredPreconnectRoom(callId: String) -> Room? {
+        preconnLock.lock()
+        defer { preconnLock.unlock() }
+        return preconnRooms[callId]
+    }
+
+    /// MAIN THREAD. Answer path (CXAnswer + CallViewController.viewDidLoad):
+    /// if the singleton lost the ring-window Room of `callId` but that Room is
+    /// still alive (connecting / reconnecting / connected), put it back so the
+    /// adopt path reuses it instead of joining again. A DEAD orphan is only
+    /// forgotten (it already left the SFU, a fresh join is safe). Returns true
+    /// when the Room was reclaimed.
+    @discardableResult
+    public func reclaimPreconnect(callId: String, reason: String) -> Bool {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { _ = self.reclaimPreconnect(callId: callId, reason: reason) }
+            return false
+        }
+        guard !callId.isEmpty, CallResilience.flags().preconnReuse else { return false }
+        preconnLock.lock()
+        let orphan = preconnRooms[callId]
+        let creds = preconnCreds[callId]
+        preconnLock.unlock()
+        guard let r = orphan else { return false }
+        if room === r { return false } // still the singleton → nothing to do
+        let st = r.connectionState
+        if st == .disconnected {
+            unregisterPreconnect(callId: callId, room: r)
+            nativeCallDiag("preconnect_reclaim_dead", callId, "reason=\(reason) current=\(_callId ?? "-")")
+            return false
+        }
+        let prev = _callId ?? "-"
+        if (_callId ?? callId) != callId {
+            // The singleton belongs to another call that CallKit is ending
+            // (maximumCallGroups=1). Its screen owns + tears down its own Room;
+            // only the outgoing watcher lives here.
+            disarmOutgoingAnswerWatcher()
+        }
+        publish(room: r, callId: callId, roomName: callId, url: creds?.url, token: creds?.token)
+        nativeCallDiag("preconnect_reclaimed", callId,
+                       "reason=\(reason) lk=\(NativeCallRoom.stateName(st)) prev=\(prev)")
+        return true
+    }
+
+    /// MAIN THREAD. A fresh Room is about to join `callId` (no reclaim was
+    /// possible / allowed): LEAVE any other live ring-window Room of the same
+    /// call first so the two can't ping-pong DUPLICATE_IDENTITY.
+    public func retireOrphanPreconnect(callId: String, keep: Room?, reason: String) {
+        guard !callId.isEmpty else { return }
+        preconnLock.lock()
+        let orphan = preconnRooms[callId]
+        preconnLock.unlock()
+        guard let r = orphan, r !== keep, r !== room else { return }
+        unregisterPreconnect(callId: callId, room: r)
+        if r.connectionState != .disconnected {
+            nativeCallDiag("preconnect_orphan_leave", callId, "reason=\(reason) lk=\(NativeCallRoom.stateName(r.connectionState))")
+            LKLeave.leave(r, callId: callId, reason: "orphan_" + reason)
+        }
+    }
+
+    /// The answer for `callId` was taken on this device (main-thread state).
+    public func isAnsweredIncoming(callId: String) -> Bool {
+        if Thread.isMainThread { return answeredIncomingCallId == callId }
+        return DispatchQueue.main.sync { answeredIncomingCallId == callId }
+    }
+
     // --- Publication API (called from CallViewController) ---------------------
 
     /// CallViewController calls this AFTER its own Room.connect await
@@ -176,6 +282,8 @@ public enum NativeCallRoomEvent {
         // restore automatic LK audio mode with the Room (idempotent).
         disarmOutgoingAnswerWatcher()
         LKAudioSessionCallKitBridge.disarm(reason: "room_clear")
+        // [2026-10-18 calls-data] The registry must not keep the dropped Room.
+        if let c = _callId { unregisterPreconnect(callId: c, room: room) }
         // [2026-10-08 call-connect-fast] Forget the per-call answer state
         // (main-thread-only members).
         if Thread.isMainThread {
@@ -270,8 +378,14 @@ public enum NativeCallRoomEvent {
     /// answered on this device (the CallViewController owns that teardown) or
     /// the singleton already points at another call.
     public func teardownUnansweredPreconnect(callId: String, reason: String) {
+        // [2026-10-18 calls-data] An ORPHANED ring-window Room of this call
+        // (singleton repointed to another call) never got this LEAVE → zombie.
+        if !callId.isEmpty, answeredIncomingCallId != callId, CallResilience.flags().preconnReuse {
+            retireOrphanPreconnect(callId: callId, keep: nil, reason: reason)
+        }
         guard !callId.isEmpty, let r = room, let active = _callId, active == callId else { return }
         guard answeredIncomingCallId != callId else { return }
+        unregisterPreconnect(callId: callId, room: r) // [2026-10-18 calls-data]
         nativeCallDiag("preconnect_teardown", callId, "reason=\(reason) state=\(state.rawValue)")
         clear()
         LKLeave.leave(r, callId: callId, reason: "preconnect_" + reason) // [2026-10-14 leave-first]
@@ -287,6 +401,9 @@ public enum NativeCallRoomEvent {
             return
         }
         answeredIncomingCallId = callId
+        // [2026-10-18 calls-data] Ring-window Room orphaned by another call's
+        // publish → reclaim it BEFORE anything decides to join again.
+        reclaimPreconnect(callId: callId, reason: "cxanswer")
         let pre = isPreconnected(callId: callId)
         nativeCallDiag("fast_answer_armed", callId, "preconnected=\(pre) state=\(state.rawValue)")
         if answeredAudioObserver == nil {

@@ -17,6 +17,20 @@
 //    "vpause_after_s":12,       poor/lost this long → pause
 //    "vresume_after_s":8}       good this long → resume (x2, x4 after repeated flaps)
 //
+// [2026-10-18 calls-data] More keys (same JSON; master enabled=false = all OFF):
+//    "preconn_reuse":true,      answer REUSES the ring-window preconnect Room even
+//                               when the singleton lost it (no 2nd join with the
+//                               same identity → no DUPLICATE_IDENTITY ping-pong)
+//    "preconn_retry_s":3,       preconnect not .connected after N s → retry it
+//                               (fresh token) while ringing; answered → "Sem
+//                               conexão — tentando…" status (0 = off, 2…10)
+//    "voip_stale_s":45,         drop incoming_call VoIP pushes older than N s or
+//                               for a call already ended/cancelled (report + end
+//                               silently, PushKit rule) (0 = off, 20…180)
+//    "dnd_missed_notif":true,   CallKit refused the ring (Focus/DND, code 3) →
+//                               local "Chamada perdida de X" notification
+//    "diag_identity":true       voip_diag events carry user email + role
+//
 // Pieces:
 //   CallResilience.flags()      — read (cheap; UserDefaults is cached)
 //   CallReconnectGuard          — polls the screen's "reconnecting" state
@@ -41,6 +55,12 @@ final class CallResilience {
         var videoAutoPause: Bool = true
         var videoPauseAfterS: Double = 12
         var videoResumeAfterS: Double = 8
+        // [2026-10-18 calls-data]
+        var preconnReuse: Bool = true
+        var preconnRetryS: Double = 3
+        var voipStaleS: Double = 45
+        var dndMissedNotif: Bool = true
+        var diagIdentity: Bool = true
     }
 
     private static func num(_ v: Any?) -> Double? {
@@ -73,6 +93,11 @@ final class CallResilience {
         if let v = bool(obj["video_autopause"]) { f.videoAutoPause = v }
         if let v = num(obj["vpause_after_s"]) { f.videoPauseAfterS = min(60, max(4, v)) }
         if let v = num(obj["vresume_after_s"]) { f.videoResumeAfterS = min(60, max(3, v)) }
+        if let v = bool(obj["preconn_reuse"]) { f.preconnReuse = v }
+        if let v = num(obj["preconn_retry_s"]) { f.preconnRetryS = (v <= 0) ? 0 : min(10, max(2, v)) }
+        if let v = num(obj["voip_stale_s"]) { f.voipStaleS = (v <= 0) ? 0 : min(180, max(20, v)) }
+        if let v = bool(obj["dnd_missed_notif"]) { f.dndMissedNotif = v }
+        if let v = bool(obj["diag_identity"]) { f.diagIdentity = v }
         if !f.enabled {
             // Master OFF = exactly the pre-2026-10-18 behaviour.
             f.reconnectTone = false
@@ -80,6 +105,11 @@ final class CallResilience {
             f.holdCapS = 0
             f.endNotice = false
             f.videoAutoPause = false
+            f.preconnReuse = false
+            f.preconnRetryS = 0
+            f.voipStaleS = 0
+            f.dndMissedNotif = false
+            f.diagIdentity = false
         }
         return f
     }
@@ -106,17 +136,17 @@ final class CallResilience {
     // MARK: - Strings (own table: CallStrings stays untouched)
 
     private static let table: [String: [String: String]] = [
-        "pt-BR": ["connectionLost": "Chamada encerrada — conexão perdida", "videoPaused": "Vídeo pausado — conexão fraca"],
-        "pt-PT": ["connectionLost": "Chamada terminada — ligação perdida", "videoPaused": "Vídeo em pausa — ligação fraca"],
-        "en": ["connectionLost": "Call ended — connection lost", "videoPaused": "Video paused — poor connection"],
-        "es": ["connectionLost": "Llamada finalizada — se perdió la conexión", "videoPaused": "Video en pausa — conexión débil"],
-        "fr": ["connectionLost": "Appel terminé — connexion perdue", "videoPaused": "Vidéo en pause — connexion faible"],
-        "de": ["connectionLost": "Anruf beendet — Verbindung verloren", "videoPaused": "Video pausiert — schwache Verbindung"],
-        "it": ["connectionLost": "Chiamata terminata — connessione persa", "videoPaused": "Video in pausa — connessione debole"],
-        "ja": ["connectionLost": "通話終了 — 接続が切れました", "videoPaused": "ビデオ一時停止 — 接続が不安定です"],
-        "ar": ["connectionLost": "انتهت المكالمة — انقطع الاتصال", "videoPaused": "تم إيقاف الفيديو مؤقتًا — اتصال ضعيف"],
-        "id": ["connectionLost": "Panggilan berakhir — koneksi terputus", "videoPaused": "Video dijeda — koneksi lemah"],
-        "hi": ["connectionLost": "कॉल समाप्त — कनेक्शन टूट गया", "videoPaused": "वीडियो रुका — कमज़ोर कनेक्शन"],
+        "pt-BR": ["noConnRetrying": "Sem conexão — tentando", "connectionLost": "Chamada encerrada — conexão perdida", "videoPaused": "Vídeo pausado — conexão fraca"],
+        "pt-PT": ["noConnRetrying": "Sem ligação — a tentar", "connectionLost": "Chamada terminada — ligação perdida", "videoPaused": "Vídeo em pausa — ligação fraca"],
+        "en": ["noConnRetrying": "No connection — retrying", "connectionLost": "Call ended — connection lost", "videoPaused": "Video paused — poor connection"],
+        "es": ["noConnRetrying": "Sin conexión — reintentando", "connectionLost": "Llamada finalizada — se perdió la conexión", "videoPaused": "Video en pausa — conexión débil"],
+        "fr": ["noConnRetrying": "Pas de connexion — nouvel essai", "connectionLost": "Appel terminé — connexion perdue", "videoPaused": "Vidéo en pause — connexion faible"],
+        "de": ["noConnRetrying": "Keine Verbindung — neuer Versuch", "connectionLost": "Anruf beendet — Verbindung verloren", "videoPaused": "Video pausiert — schwache Verbindung"],
+        "it": ["noConnRetrying": "Nessuna connessione — riprovo", "connectionLost": "Chiamata terminata — connessione persa", "videoPaused": "Video in pausa — connessione debole"],
+        "ja": ["noConnRetrying": "接続なし — 再試行中", "connectionLost": "通話終了 — 接続が切れました", "videoPaused": "ビデオ一時停止 — 接続が不安定です"],
+        "ar": ["noConnRetrying": "لا يوجد اتصال — جارٍ إعادة المحاولة", "connectionLost": "انتهت المكالمة — انقطع الاتصال", "videoPaused": "تم إيقاف الفيديو مؤقتًا — اتصال ضعيف"],
+        "id": ["noConnRetrying": "Tidak ada koneksi — mencoba lagi", "connectionLost": "Panggilan berakhir — koneksi terputus", "videoPaused": "Video dijeda — koneksi lemah"],
+        "hi": ["noConnRetrying": "कनेक्शन नहीं — फिर से कोशिश", "connectionLost": "कॉल समाप्त — कनेक्शन टूट गया", "videoPaused": "वीडियो रुका — कमज़ोर कनेक्शन"],
     ]
 
     static func text(_ key: String, lang: String) -> String {
@@ -460,5 +490,55 @@ enum CallEndNotice {
             if let w = ws.windows.first { return w }
         }
         return nil
+    }
+}
+
+// MARK: - [2026-10-18 calls-data] Role of this device per call (voip_diag)
+
+/// callId → "caller" / "callee". Set where the native side KNOWS the role
+/// (outgoing screen / invite = caller; VoIP push / WS invite / CXAnswer =
+/// callee). Read by nativeCallDiag (flag "diag_identity"). Thread-safe, bounded.
+final class CallDiagRole {
+    private static let lock = NSLock()
+    private static var roles: [String: String] = [:]
+    private static var order: [String] = []
+
+    static func set(_ callId: String, _ role: String) {
+        let cid = normalize(callId)
+        guard !cid.isEmpty, role == "caller" || role == "callee" else { return }
+        lock.lock()
+        if roles[cid] == nil {
+            order.append(cid)
+            if order.count > 32 {
+                let drop = order.removeFirst()
+                roles.removeValue(forKey: drop)
+            }
+        }
+        roles[cid] = role
+        lock.unlock()
+    }
+
+    /// Known role, else a guess from the event name, else "unknown".
+    static func get(_ callId: String, event: String) -> String {
+        let cid = normalize(callId)
+        if !cid.isEmpty {
+            lock.lock()
+            let r = roles[cid]
+            lock.unlock()
+            if let r = r { return r }
+        }
+        let e = event.lowercased()
+        if e.contains("outgoing") || e.contains("caller_") || e.hasPrefix("invite_") { return "caller" }
+        if e.contains("incoming") || e.contains("voip_push") || e.contains("answer")
+            || e.contains("preconnect") || e.contains("ws_invite") || e.contains("callee") || e.contains("decline") {
+            return "callee"
+        }
+        return "unknown"
+    }
+
+    /// Some events use "prefix:callId" as call id — keep the call part.
+    private static func normalize(_ s: String) -> String {
+        if let r = s.range(of: "call_") { return String(s[r.lowerBound...]) }
+        return s
     }
 }
