@@ -93,7 +93,8 @@ function injectShimmer() {
   try { const el = document.createElement('style'); el.textContent = SHIMMER_CSS; document.head.appendChild(el); } catch {}
 }
 
-export const BiaShimmerText = memo(function BiaShimmerText({ text, isDark, style }) {
+// [2026-10-18 bia-voz-centro] `align` (padrão 'flex-start' = comportamento antigo); a tela de voz passa 'center'.
+export const BiaShimmerText = memo(function BiaShimmerText({ text, isDark, style, align = 'flex-start' }) {
   const rm = useReducedMotion();
   const base = isDark ? '#7C7C82' : '#8E8E95';
   const hi = isDark ? '#FFFFFF' : '#0D0D0D';
@@ -118,7 +119,7 @@ export const BiaShimmerText = memo(function BiaShimmerText({ text, isDark, style
   const tx = x.interpolate({ inputRange: [0, 1], outputRange: [-band, w] });
   const ntx = x.interpolate({ inputRange: [0, 1], outputRange: [band, -w] });
   return (
-    <View style={{ alignSelf: 'flex-start' }} accessibilityLiveRegion="polite" accessible accessibilityLabel={text}>
+    <View style={{ alignSelf: align }} accessibilityLiveRegion="polite" accessible accessibilityLabel={text}>
       <Text style={[style, { color: base }]} numberOfLines={1} onLayout={(e) => setW(Math.ceil(e.nativeEvent.layout.width))}>{text}</Text>
       {w > 0 && !rm ? (
         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: band, overflow: 'hidden', transform: [{ translateX: tx }] }}>
@@ -906,15 +907,19 @@ export function BiaVoiceScreen({ isDark, t, voiceState, transcript, onStop, onKe
           <View style={[vs.liveDot, { backgroundColor: P.fg }]} />
           <Text style={[vs.liveText, { color: P.sub }]}>{elapsed}</Text>
         </View>
-        <Text style={[vs.brand, { color: P.fg }]}>Bia</Text>
+        {/* [2026-10-18 bia-voz-centro] título centrado de verdade (absoluto), independe da largura do cronômetro */}
+        <View pointerEvents="none" style={vs.brandWrap}><Text style={[vs.brand, { color: P.fg }]}>Bia</Text></View>
         <View style={{ width: 64 }} />
       </View>
       <View style={vs.center}>
         <Animated.View style={{ transform: [{ scale: sc }] }}>
           <BiaOrb size={size} mode={orbMode} getLevel={getLevel} isDark={isDark} />
         </Animated.View>
-        <View style={{ height: 36 }} />
-        <BiaShimmerText text={label} isDark={isDark} style={vs.state} />
+        {/* [2026-10-18 bia-voz-centro] status CENTRADO logo abaixo do orb (antes: alignSelf flex-start → "Ouvindo..." à esquerda
+            e a legenda centrada). Linha de altura fixa: trocar Ouvindo/Pensando/Falando não pula o layout. */}
+        <View style={vs.stateRow}>
+          <BiaShimmerText text={label} isDark={isDark} style={vs.state} align="center" />
+        </View>
         <View style={vs.captionWrap}>
           {transcript ? (
             <BiaFadeIn key={transcript.slice(0, 24)} dy={6} duration={260}>
@@ -943,10 +948,12 @@ const vs = StyleSheet.create({
   livePill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: 28, borderRadius: 14, minWidth: 64 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
   liveText: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  brandWrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   brand: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
-  state: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2, textAlign: 'center' },
-  captionWrap: { minHeight: 110, marginTop: 18, alignItems: 'center', justifyContent: 'flex-start', alignSelf: 'stretch' },
+  stateRow: { alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center', height: 24, marginTop: 36 },
+  state: { fontSize: 16, fontWeight: '600', letterSpacing: -0.2, textAlign: 'center' },
+  captionWrap: { minHeight: 120, marginTop: 14, alignItems: 'center', justifyContent: 'flex-start', alignSelf: 'stretch' },
   caption: { fontSize: 22, lineHeight: 30, fontWeight: '500', textAlign: 'center', letterSpacing: -0.3 },
   bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 40 },
   side: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
