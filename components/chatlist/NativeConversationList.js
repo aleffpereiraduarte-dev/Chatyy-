@@ -16,6 +16,7 @@ import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, createPatcher } from './nativeAdapter';
 import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
+import { listMetrics } from './listDensity';
 
 class NativeListBoundary extends React.Component {
   constructor(props) {
@@ -334,6 +335,16 @@ function NativeConversationListInner(props) {
     }
   } catch {}
 
+  // [2026-10-18 compact-list] linha 72 / avatar 52 / vão 12 (WhatsApp) no
+  // binário com a prop `density` (iOS api >= 8 / Android api >= 9). Antigo:
+  // nem recebe (segue 76 / 54); o header RN acima já fica compacto via OTA.
+  let densityProps = null;
+  try {
+    if (_clApiVersion() >= (Platform.OS === 'android' ? 9 : 8)) {
+      densityProps = { density: listMetrics().compact ? 'compact' : 'regular' };
+    }
+  } catch {}
+
   if (!Native) return null;
   return (
     <Native
@@ -355,6 +366,7 @@ function NativeConversationListInner(props) {
       {...(homeStore ? { store: homeStore } : null)}
       {...wave8Props}
       {...peekHeightProps}
+      {...densityProps}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>

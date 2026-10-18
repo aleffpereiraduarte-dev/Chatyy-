@@ -28,7 +28,9 @@ class ChatyyConversationListModule : Module() {
     //     "Arquivadas" escondida (Telegram). Sem prop nova.
     // 8 = [2026-10-18 peek-full] prévia (CLPeekDialog) com até 15 balões e o
     //     FUNDO da conversa (chave opcional `bg` na prop `peek`). Sem prop nova.
-    Function("apiVersion") { 8 }
+    // 9 = [2026-10-18 compact-list] prop `density` ("compact" = linha 72 /
+    //     avatar 52 / vão 12, WhatsApp; ausente/"regular" = 76 / 54 / 14).
+    Function("apiVersion") { 9 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -51,6 +53,7 @@ class ChatyyConversationListModule : Module() {
       Prop("dark") { view: ChatyyConversationListView, v: Boolean? -> view.setDark(v ?: false) }
       Prop("selectionMode") { view: ChatyyConversationListView, v: Boolean? -> view.setSelectionModeProp(v ?: false) }
       Prop("labels") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setLabelsProp(v) }
+      Prop("density") { view: ChatyyConversationListView, v: String? -> view.setDensityProp(v) }
       Prop("authToken") { view: ChatyyConversationListView, v: String? -> view.setAuthToken(v) }
       Prop("headerHeight") { view: ChatyyConversationListView, v: Double? -> view.setHeaderHeightHint(v ?: 0.0) }
       Prop("footerHeight") { view: ChatyyConversationListView, v: Double? -> view.setFooterHeightHint(v ?: 0.0) }

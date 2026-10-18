@@ -112,6 +112,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   private var labelsDirty = false
   private var selectionMode = false
   private var selectionDirty = false
+  private var compact = false // [2026-10-18 compact-list] prop `density`
   var swipeEnabled = true
   var menuEnabled = true
   var collapseOffset: CGFloat = 34
@@ -197,7 +198,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
 
   private func bind(_ cell: CLConversationCell, id: String) {
     guard let row = rows[id] else { return }
-    cell.configure(row, theme: theme, labels: labels, selectionMode: selectionMode)
+    cell.configure(row, theme: theme, labels: labels, selectionMode: selectionMode, compact: compact)
     cell.onAvatarTap = { [weak self] rid in
       self?.onAvatarPress(["id": rid])
     }
@@ -214,7 +215,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     sep.color = theme.hair
     sep.topSeparatorVisibility = .hidden
     // Linha fina a partir do nome (16 + 54 + 14), como no JS.
-    let lead: CGFloat = (selectionMode ? 36 : 0) + 16 + CLAvatarView.box + 14
+    let lead: CGFloat = (selectionMode ? 36 : 0) + 16 + CLConversationCell.avatarBox(compact: compact) + CLConversationCell.avatarGap(compact: compact)
     sep.bottomSeparatorInsets = NSDirectionalEdgeInsets(top: 0, leading: lead, bottom: 0, trailing: 0)
     cfg.separatorConfiguration = sep
     cfg.leadingSwipeActionsConfigurationProvider = { [weak self] indexPath in
@@ -299,6 +300,16 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   func setSelectionMode(_ on: Bool) {
     if on == selectionMode { return }
     selectionMode = on
+    selectionDirty = true
+  }
+
+  // [2026-10-18 compact-list] "compact" = linha 72 / avatar 52 (WhatsApp);
+  // qualquer outro valor = regular 76 / 54. Reaproveita o caminho do modo
+  // seleção (layout novo + reconfigura as células visíveis).
+  func setDensity(_ v: String?) {
+    let c = (v == "compact")
+    if c == compact { return }
+    compact = c
     selectionDirty = true
   }
 

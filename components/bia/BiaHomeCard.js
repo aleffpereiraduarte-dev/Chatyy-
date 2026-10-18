@@ -13,11 +13,11 @@ function suggestion(t) {
   return { hello: t('one.goodEvening'), tip: t('one.tomorrowAgenda') };
 }
 
-function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, nameStyle, previewStyle }) {
+function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, compact = false, nameStyle, previewStyle }) {
   const sug = useMemo(() => suggestion(t), [t]);
   const open = (q) => { try { router.push(q ? `/one?${q}` : '/one'); } catch {} };
   return (
-    <BiaPressScale onPress={() => open()} scaleTo={0.985} accessibilityLabel={`${t('one.title')}, ${sug.tip}`} style={hc.row}>
+    <BiaPressScale onPress={() => open()} scaleTo={0.985} accessibilityLabel={`${t('one.title')}, ${sug.tip}`} style={[hc.row, compact && hc.rowCompact]}>
       <BiaOrb size={avatarSize} lite isDark={isDark} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={hc.titleRow}>
@@ -26,7 +26,7 @@ function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, nameStyle, preview
             <Text maxFontSizeMultiplier={1.1} style={[hc.badgeText, { color: P.sub }]}>{t('chat.aiBadge')}</Text>
           </View>
         </View>
-        <Text maxFontSizeMultiplier={1.3} style={[previewStyle, { color: P.sub, marginTop: 3, marginRight: 0 }]} numberOfLines={1}>
+        <Text maxFontSizeMultiplier={1.3} style={[previewStyle, { color: P.sub, marginTop: compact ? 2 : 3, marginRight: 0 }]} numberOfLines={1}>
           <Text style={{ color: P.text, fontWeight: '500' }}>{sug.hello}</Text>
           {` · ${sug.tip}`}
         </Text>
@@ -46,6 +46,8 @@ function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, nameStyle, preview
 
 const hc = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10, minHeight: 74 },
+  // [2026-10-18 compact-list] mesmo ritmo das linhas compactas (72 / vão 12)
+  rowCompact: { gap: 12, paddingVertical: 9, minHeight: 72 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   badge: { borderRadius: 5, paddingHorizontal: 5, paddingVertical: 1 },
   badgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },

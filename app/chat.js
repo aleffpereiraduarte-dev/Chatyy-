@@ -68,6 +68,7 @@ import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBot
 import AppsDrawerModal from '../components/apps/AppsSheet'; // [2026-10-15 apps-v3]
 import HomeDiscoverPills from '../components/home/HomeDiscoverPills'; // [2026-10-16 wave12-c]
 import CollapsedStoriesStack from '../components/chatlist/CollapsedStoriesStack'; // [2026-10-18 tg-list]
+import { compactListOn as _compactListOn } from '../components/chatlist/listDensity'; // [2026-10-18 compact-list]
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -1585,6 +1586,9 @@ function ChatHub() {
         ...glassHeader,
         ...(reelsImmersive ? { display: 'none' } : null),
         paddingLeft: 14,
+        // [2026-10-18 compact-list] Conversas: barra 48 pt (era 54 + 11/11) —
+        // botões 36 + hitSlop 6 seguem com alvo ≥ 44. Kill: __chatyy_compact_list=false.
+        ...(activeTab === 'chats' && _compactListOn() ? { paddingTop: 6, paddingBottom: 6, minHeight: 48 } : null),
         // [2026-10-07 native-ui-build] large title: sem hairline fixa — ela
         // aparece (fade) só quando a lista rola por baixo do header.
         ...(LIST_LARGE_TITLE && (activeTab === 'chats' || _ltTab) ? { borderBottomWidth: 0 } : {}),

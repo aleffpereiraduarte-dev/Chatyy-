@@ -27,7 +27,13 @@ final class CLConversationCell: UICollectionViewListCell {
   private var theme = CLTheme(dark: false)
   private var labels = CLLabels()
   private var selectionMode = false
+  // [2026-10-18 compact-list] densidade WhatsApp: linha 72 / avatar 52 / vão 12
+  // (prop `density: 'compact'` da lista; regular = 76 / 54 / 14).
+  private var compact = false
   private var fontsCategory: UIContentSizeCategory?
+
+  static func avatarBox(compact: Bool) -> CGFloat { compact ? 52 : CLAvatarView.box }
+  static func avatarGap(compact: Bool) -> CGFloat { compact ? 12 : 14 }
 
   // [2026-10-17 wa-cells] Tamanhos do WhatsApp iOS: nome 17 semibold (sem
   // engrossar quando não lida), prévia 15, hora 14, contador 13 em círculo 20.
@@ -75,16 +81,16 @@ final class CLConversationCell: UICollectionViewListCell {
 
   // MARK: - Altura
 
-  static func height(for traits: UITraitCollection) -> CGFloat {
+  static func height(for traits: UITraitCollection, compact: Bool = false) -> CGFloat {
     let name = CLFonts.scaled(17, .semibold, cap: 1.35, traits: traits)
     let prev = CLFonts.scaled(15, .regular, cap: 1.3, traits: traits)
     let content = ceil(name.lineHeight) + 3 + ceil(prev.lineHeight) + 2
-    return max(76, ceil(content + 22))
+    return compact ? max(72, ceil(content + 18)) : max(76, ceil(content + 22))
   }
 
   override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
     let attrs = super.preferredLayoutAttributesFitting(layoutAttributes)
-    attrs.frame.size.height = CLConversationCell.height(for: traitCollection)
+    attrs.frame.size.height = CLConversationCell.height(for: traitCollection, compact: compact)
     return attrs
   }
 
@@ -114,13 +120,18 @@ final class CLConversationCell: UICollectionViewListCell {
 
   // MARK: - Configuração
 
-  func configure(_ newRow: CLRow, theme: CLTheme, labels: CLLabels, selectionMode: Bool) {
+  func configure(_ newRow: CLRow, theme: CLTheme, labels: CLLabels, selectionMode: Bool, compact: Bool = false) {
     let previous: CLRow? = (row.id == newRow.id && !row.id.isEmpty) ? row : nil
     let themeChanged = theme.dark != self.theme.dark
     self.row = newRow
     self.theme = theme
     self.labels = labels
     self.selectionMode = selectionMode
+    if compact != self.compact {
+      self.compact = compact
+      avatar.boxSize = CLConversationCell.avatarBox(compact: compact)
+      setNeedsLayout()
+    }
     reloadFonts()
     apply(animated: previous != nil && !themeChanged && window != nil, previous: previous)
     setNeedsUpdateConfiguration()
@@ -371,9 +382,9 @@ final class CLConversationCell: UICollectionViewListCell {
       check.frame = CGRect(x: x, y: (H - 26) / 2, width: 26, height: 26)
       x += 36
     }
-    let box = CLAvatarView.box
+    let box = CLConversationCell.avatarBox(compact: compact)
     avatar.frame = CGRect(x: x, y: (H - box) / 2, width: box, height: box)
-    let textX = x + box + 14
+    let textX = x + box + CLConversationCell.avatarGap(compact: compact)
     let right = W - 16
 
     let nf = nameLabel.font ?? nameFont

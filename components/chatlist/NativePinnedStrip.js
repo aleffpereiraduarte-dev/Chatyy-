@@ -63,15 +63,19 @@ export function createPinBridge() {
 }
 
 /** Tamanho automático: ≤ 4 fixados = grandes (colunas), mais = menores + rolagem. */
-export function autoPinAvatarSize(count, width) {
+export function autoPinAvatarSize(count, width, compact = false) {
   const w = Math.max(280, Number(width) || 360);
+  // [2026-10-18 compact-list] ritmo compacto: 60 (≤ 4, colunas) / 52 (rolagem)
+  // em vez de até 76 / 58 — a fileira caía de ~150 pt p/ ~100 pt.
+  if (compact) return count <= 4 ? 60 : 52;
   if (count <= 4) return Math.max(60, Math.min(76, Math.floor((w - 16) / 4) - 20));
   return 58;
 }
 
-/** Altura da fileira nativa para um tamanho de avatar (respiro p/ contador e nome). */
-export function pinStripHeight(avatarSize) {
-  return Math.round(avatarSize + 34);
+/** Altura da fileira nativa para um tamanho de avatar (respiro p/ contador e nome).
+ *  Nativo: topo 8 (contador/anel saem 4 pt) + avatar + 6 + nome 18 = avatar + 32. */
+export function pinStripHeight(avatarSize, compact = false) {
+  return Math.round(avatarSize + (compact ? 32 : 34));
 }
 
 class PinsBoundary extends React.Component {

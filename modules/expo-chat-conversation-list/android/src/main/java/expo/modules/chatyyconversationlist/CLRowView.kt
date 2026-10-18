@@ -91,6 +91,10 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   private val a11yIds = ArrayList<Int>()
 
   private val rowHeight: Int
+  // [2026-10-18 compact-list] densidade WhatsApp: linha 72 / avatar 52 / vão 12
+  // (prop `density: "compact"` da lista; regular = 76 / 54 / 14).
+  private val rowHeightCompact: Int
+  private var compact = false
 
   init {
     clipChildren = false
@@ -123,6 +127,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val nameLine = nameTv.lineHeight
     val prevLine = previewTv.lineHeight
     rowHeight = max(px(76f), px(22f) + nameLine + px(3f) + prevLine + px(2f))
+    rowHeightCompact = max(px(72f), px(18f) + nameLine + px(3f) + prevLine + px(2f))
 
     setOnClickListener { listener?.onPress(row.id) }
     setOnLongClickListener {
@@ -156,8 +161,13 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     return false
   }
 
-  fun bind(r: CLRow, t: CLTheme, l: CLLabels, selection: Boolean, animate: Boolean) {
+  fun bind(r: CLRow, t: CLTheme, l: CLLabels, selection: Boolean, animate: Boolean, compactDensity: Boolean = false) {
     val prev: CLRow? = if (animate && r.id == row.id && row.id.isNotEmpty()) row else null
+    if (compactDensity != compact) {
+      compact = compactDensity
+      avatar.setBoxDp(if (compactDensity) 52f else 54f)
+      requestLayout()
+    }
     row = r
     theme = t
     labels = l
@@ -407,7 +417,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
     val w = MeasureSpec.getSize(widthMeasureSpec)
-    val h = rowHeight
+    val h = if (compact) rowHeightCompact else rowHeight
     var x = px(16f)
     if (selectionMode) {
       check.measure(exactly(px(26f)), exactly(px(26f)))
@@ -415,9 +425,9 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     } else {
       check.measure(exactly(0), exactly(0))
     }
-    val box = px(54f)
+    val box = px(if (compact) 52f else 54f)
     avatar.measure(exactly(box), exactly(box))
-    val textX = x + box + px(14f)
+    val textX = x + box + px(if (compact) 12f else 14f)
     val right = w - px(16f)
 
     timeTv.measure(unspec, unspec)
@@ -494,7 +504,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     } else {
       check.layout(0, 0, 0, 0)
     }
-    val box = px(54f)
+    val box = px(if (compact) 52f else 54f)
     val ay = (h - box) / 2
     avatar.layout(x, ay, x + box, ay + box)
     val textX = cTextX

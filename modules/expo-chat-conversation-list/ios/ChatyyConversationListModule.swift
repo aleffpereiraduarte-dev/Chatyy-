@@ -38,9 +38,11 @@ public class ChatyyConversationListModule: Module {
     // 7 = [2026-10-18 peek-full] prévia do toque longo desenha até 15 balões e
     //     o FUNDO da conversa (chave opcional `bg` na prop `peek`: cor, padrão
     //     vetorial, foto, cores dos balões). Sem prop nova (binário antigo ignora).
+    // 8 = [2026-10-18 compact-list] prop `density` ("compact" = linha 72 /
+    //     avatar 52 / vão 12, WhatsApp; ausente/"regular" = 76 / 54 / 14).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 7
+      return 8
       #else
       return 1
       #endif
@@ -71,6 +73,9 @@ public class ChatyyConversationListModule: Module {
       }
       Prop("selectionMode") { (view: ChatyyConversationListView, value: Bool?) in
         view.setSelectionMode(value ?? false)
+      }
+      Prop("density") { (view: ChatyyConversationListView, value: String?) in
+        view.setDensity(value)
       }
       Prop("labels") { (view: ChatyyConversationListView, value: [String: Any]?) in
         view.setLabels(value)

@@ -123,6 +123,7 @@ import { isAvailable as _nativeHomeAvailable, apiVersion as _nativeHomeApi } fro
 import FolderGlyph from './chatlist/FolderGlyph';
 import { useChatFolders, setFolderItems, loadFolders, folderMatcher, publishConversations } from './chatlist/chatFoldersStore'; // [2026-10-16 wave12-B pastas]
 import PinnedStripSlot, { createPinBridge, autoPinAvatarSize, pinStripHeight } from './chatlist/NativePinnedStrip';
+import { listMetrics } from './chatlist/listDensity'; // [2026-10-18 compact-list] ritmo WhatsApp (kill: __chatyy_compact_list=false)
 import { isPinnedStripAvailable as _pinsNativeAvailable } from '../modules/expo-chat-conversation-list';
 import { haptic } from '../constants/theme';
 import { humanizeSystemText } from '../utils/systemMessageText';
@@ -174,6 +175,14 @@ const SWIPE_C = { read: '#1c1c1e', mute: '#3a3a3c', pin: '#636366', email: '#8e8
 // Row rhythm: avatar 54 + gutter 16 + gap 14 → separator inset 84 (iOS).
 const ROW_AVATAR = 54;
 const SEP_INSET = 16 + ROW_AVATAR + 14;
+// [2026-10-18 compact-list] Ritmo compacto (72 / 52 / 12) em runtime — os
+// estilos estáticos acima/abaixo ficam como o modo antigo (kill switch).
+const _ROW_COMPACT = { minHeight: 72, paddingVertical: 9 };
+const _AVW_COMPACT = { marginRight: 12 };
+function _rowAvatar() { return listMetrics().avatar; }
+function _sepInset() { return listMetrics().sepInset; }
+function _rowDensity() { return listMetrics().compact ? _ROW_COMPACT : null; }
+function _avatarWrapDensity() { return listMetrics().compact ? _AVW_COMPACT : null; }
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
 
 // [2026-10-07 receipts2] Recibos ao vivo na LISTA, com regra de GRUPO igual à
@@ -771,9 +780,9 @@ function SkeletonRow({ isDark, index }) {
   }, []);
   const bg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   return (
-    <Animated.View style={[s.row, { opacity }]}>
+    <Animated.View style={[s.row, _rowDensity(), { opacity }]}>
       <View style={[{
-        width: ROW_AVATAR, height: ROW_AVATAR, borderRadius: ROW_AVATAR / 2, backgroundColor: bg, marginRight: 14,
+        width: _rowAvatar(), height: _rowAvatar(), borderRadius: _rowAvatar() / 2, backgroundColor: bg, marginRight: listMetrics().avatarGap,
         ...(isWeb ? { background: isDark
           ? 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)'
           : 'linear-gradient(135deg, rgba(0,0,0,0.06) 0%, rgba(0,0,0,0.03) 100%)'
@@ -1108,7 +1117,7 @@ function _a11yPreviewPlain(str) {
 function _rowEstimate() {
   let fs = 1;
   try { fs = require('react-native').PixelRatio.getFontScale() || 1; } catch {}
-  return Math.round(74 * Math.min(Math.max(fs, 1), 1.35));
+  return Math.round(listMetrics().rowMinH * Math.min(Math.max(fs, 1), 1.35));
 }
 
 // [2026-10-14 native-home] Derivação da prévia (texto, remetente, recibo) da
@@ -1811,6 +1820,7 @@ const ConversationRow = React.memo(function ConversationRow({
           } : {})}
           style={[
             s.row,
+            _rowDensity(),
             {
               backgroundColor: isSelected ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)') : rowBg,
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
@@ -1863,10 +1873,10 @@ const ConversationRow = React.memo(function ConversationRow({
             </View>
           )}
           {/* Avatar area */}
-          <View style={s.avatarWrap}>
+          <View style={[s.avatarWrap, _avatarWrapDensity()]}>
             {isChannel ? (
               <View style={{
-                width: ROW_AVATAR, height: ROW_AVATAR, borderRadius: ROW_AVATAR / 2,
+                width: _rowAvatar(), height: _rowAvatar(), borderRadius: _rowAvatar() / 2,
                 backgroundColor: P.card,
                 alignItems: 'center', justifyContent: 'center',
               }}>
@@ -1876,7 +1886,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 </Svg>
               </View>
             ) : isGroup ? (
-              <GroupAvatarStack conversation={conversation} size={ROW_AVATAR} isDark={isDark} />
+              <GroupAvatarStack conversation={conversation} size={_rowAvatar()} isDark={isDark} />
             ) : (
               <View>
                 {/* [beauty 2026-10-01] Removed the unread "halo" ring and the
@@ -1884,11 +1894,11 @@ const ConversationRow = React.memo(function ConversationRow({
                     Unread is carried by the bold name + count pill. Flatter,
                     cleaner column of avatars. */}
                 {/* [status-rever 2026-10-14] arco (segmentado por status) em volta da foto */}
-                <AvatarStatusRing size={ROW_AVATAR - 8} ring={_statusRing} isDark={isDark} gap={2} inset={4} testID="row-status-ring" />
+                <AvatarStatusRing size={_rowAvatar() - 8} ring={_statusRing} isDark={isDark} gap={2} inset={4} testID="row-status-ring" />
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
-                  size={_statusRing ? ROW_AVATAR - 8 : ROW_AVATAR}
+                  size={_statusRing ? _rowAvatar() - 8 : _rowAvatar()}
                   style={_statusRing ? { margin: 4 } : undefined}
                   // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
                   // chats; group/channel avatars don't have a single photo to
@@ -3013,8 +3023,100 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     return null;
   }
 
+  // [2026-10-18 compact-list] toque no "Seu status" (faixa ou linha fina abaixo).
+  const _onOwnStatusPress = () => {
+    const openComposer = () => {
+      if (Platform.OS === 'web') {
+        (async () => {
+          try {
+            const ImagePicker = await import('expo-image-picker');
+            const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
+            if (!r.canceled && r.assets?.[0]) {
+              const asset = r.assets[0];
+              const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
+              setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
+              setStatusCaption('');
+            }
+          } catch {}
+        })();
+      } else {
+        setShowCustomCamera(true);
+      }
+    };
+
+    // [2026-05-30 STATUS CONSOLIDATION] One status system. Whether
+    // viewing your active story or creating a new one, the chat-list
+    // strip routes to the canonical status tab (ChatStatusTab) — it
+    // owns the viewer AND the full composer (camera, filters, music,
+    // text gradients). The home strip no longer carries its own
+    // duplicate composer/editor/StoryViewer.
+    const group = statuses.find(s => s.email === user?.email);
+    const hasItems = group?.items?.length > 0;
+    if (myStatus && hasItems) {
+      // Active story → open it on the status tab.
+      openStatus(user?.email);
+      return;
+    }
+    // Envio de status falhou → tocar tenta de novo (antes de qualquer coisa).
+    if (pubFailed) {
+      try { const Q = require('../services/statusPublishQueue'); Q.getStatusJobs(user?.email).filter(j => j.status === 'failed').forEach(j => Q.retryStatusJob(j.id)); } catch {}
+      return;
+    }
+    // No active story → open the status tab's composer.
+    if (typeof requestNewStatus === 'function') { requestNewStatus(); return; }
+    try { setActiveTab?.('status'); } catch {}
+    try { router?.push?.('/chat?tab=status&new=1'); } catch {}
+  };
+
+  // [2026-10-18 compact-list] Ritmo compacto. Só o "Seu status" (sem status
+  // próprio/nota/ao vivo/contatos) = linha fina estilo WhatsApp ("Meu status ·
+  // Toque para adicionar status", 52 pt) em vez de um círculo solto num bloco
+  // de ~115 pt. A entrada pro status continua sempre visível (2026-10-09).
+  const _LMs = listMetrics();
+  const _soloOwn = _LMs.compact && !hasLives && !myStatus && !myNote?.content
+    && otherStatuses.length === 0 && notesOnly.length === 0 && liveOnlyEntries.length === 0
+    && pubProgress == null && !pubFailed
+    // sobreposições (nota, compositor, câmera, visualizador) moram no render completo
+    && !showNoteModal && !showStatusComposer && !showCustomCamera && !statusViewerEmail && !statusEditor;
+  if (_soloOwn) {
+    return (
+      <View style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+        <TouchableOpacity
+          onPress={_onOwnStatusPress}
+          onLongPress={() => setShowNoteModal(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`${t('status.yourStory')}. ${t('status.tapToAdd')}`}
+          testID="status-strip-own-slim"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 6, minHeight: 52 }}
+        >
+          <View style={{ width: _LMs.avatar, alignItems: 'center' }}>
+            <StoryRingAvatar
+              name={myDisplayName}
+              email={user?.email}
+              size={40}
+              ringStyle="none"
+              badge="plus"
+              badgeAccessibilityLabel={t('status.ring.newStatus')}
+              isDark={isDark}
+              colors={colors}
+            />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 15, fontWeight: '600', letterSpacing: -0.2, color: colors.text }} numberOfLines={1}>
+              {t('status.yourStory')}
+            </Text>
+            <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 13, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
+              {t('status.tapToAdd')}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
-    <View style={{ paddingTop: stripHasContent ? 14 : 0, paddingBottom: stripHasContent ? 12 : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+    <View style={{ paddingTop: stripHasContent ? _LMs.storyPadTop : 0, paddingBottom: stripHasContent ? _LMs.storyPadBottom : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
       {/* Dedicated live bar — prepended above the story strip so contacts
           who are streaming RIGHT NOW are the very first thing the user
           sees on the chat list. Renders only when at least one host is
@@ -3030,60 +3132,18 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
         />
       )}
       {stripHasContent ? (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 16 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: _LMs.storyGap }}>
         {/* Your story/note */}
         <TouchableOpacity
-          onPress={() => {
-            const openComposer = () => {
-              if (Platform.OS === 'web') {
-                (async () => {
-                  try {
-                    const ImagePicker = await import('expo-image-picker');
-                    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
-                    if (!r.canceled && r.assets?.[0]) {
-                      const asset = r.assets[0];
-                      const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
-                      setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
-                      setStatusCaption('');
-                    }
-                  } catch {}
-                })();
-              } else {
-                setShowCustomCamera(true);
-              }
-            };
-
-            // [2026-05-30 STATUS CONSOLIDATION] One status system. Whether
-            // viewing your active story or creating a new one, the chat-list
-            // strip routes to the canonical status tab (ChatStatusTab) — it
-            // owns the viewer AND the full composer (camera, filters, music,
-            // text gradients). The home strip no longer carries its own
-            // duplicate composer/editor/StoryViewer.
-            const group = statuses.find(s => s.email === user?.email);
-            const hasItems = group?.items?.length > 0;
-            if (myStatus && hasItems) {
-              // Active story → open it on the status tab.
-              openStatus(user?.email);
-              return;
-            }
-            // Envio de status falhou → tocar tenta de novo (antes de qualquer coisa).
-            if (pubFailed) {
-              try { const Q = require('../services/statusPublishQueue'); Q.getStatusJobs(user?.email).filter(j => j.status === 'failed').forEach(j => Q.retryStatusJob(j.id)); } catch {}
-              return;
-            }
-            // No active story → open the status tab's composer.
-            if (typeof requestNewStatus === 'function') { requestNewStatus(); return; }
-            try { setActiveTab?.('status'); } catch {}
-            try { router?.push?.('/chat?tab=status&new=1'); } catch {}
-          }}
+          onPress={_onOwnStatusPress}
           onLongPress={() => setShowNoteModal(true)}
           activeOpacity={0.7}
-          style={{ alignItems: 'center', width: 70 }}
+          style={{ alignItems: 'center', width: _LMs.storyItemW }}
         >
           <StoryRingAvatar
             name={myDisplayName}
             email={user?.email}
-            size={56}
+            size={_LMs.storyOwn}
             ringStyle={myStatus ? 'solid' : 'none'}
             badge="plus"
             onBadgePress={myStatus ? () => { try { requestNewStatus?.(); } catch {} } : undefined}
@@ -3095,7 +3155,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             isDark={isDark}
             colors={colors}
           />
-          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 7, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
+          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: _LMs.storyLabelGap, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
             {/* [2026-10-09 status-composer] sempre "Seu status" (Instagram: "Seu story") */}
             {pubProgress != null ? t('status.ring.uploading') : t('status.yourStory')}
           </Text>
@@ -3117,7 +3177,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           <View style={{ width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1C1C1E' : '#F2F2F7', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)' }}>
             <IconPencil size={22} color={colors.text} />
           </View>
-          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 7, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
+          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: _LMs.storyLabelGap, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
             {t('status.text.openEditor')}
           </Text>
         </TouchableOpacity>
@@ -3126,7 +3186,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             with the red AO VIVO ring + tap routes to /live-viewer. Prepended
             so they always sit at the head of the strip (after Your Story). */}
         {liveOnlyEntries.map((l) => (
-          <View key={`live-only-${l.email}`} style={{ alignItems: 'center', width: 68 }}>
+          <View key={`live-only-${l.email}`} style={{ alignItems: 'center', width: _LMs.storyOtherW }}>
             <TouchableOpacity
               onPress={() => openLiveViewer(l.email, l.session_id, l.name)}
               activeOpacity={0.7}
@@ -3135,14 +3195,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               <StoryRingAvatar
                 name={l.name}
                 email={l.email}
-                size={54}
+                size={_LMs.storyOther}
                 ringStyle="none"
                 isLive
                 liveLabel={liveAoVivo}
                 isDark={isDark}
                 colors={colors}
               />
-              <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
+              <Text style={{ fontSize: 11.5, color: colors.text, marginTop: _LMs.storyLabelGap, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
                 {l.name}
               </Text>
             </TouchableOpacity>
@@ -3157,7 +3217,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           const liveInfo = livesByEmail[(s.email || '').toLowerCase()];
           const isLive = !!liveInfo;
           return (
-            <View key={`st-${s.email}`} style={{ alignItems: 'center', width: 68 }}>
+            <View key={`st-${s.email}`} style={{ alignItems: 'center', width: _LMs.storyOtherW }}>
               <TouchableOpacity
                 onPress={() => isLive ? openLiveViewer(s.email, liveInfo.id) : openStatus(s.email)}
                 onPressIn={() => {
@@ -3220,7 +3280,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 <StoryRingAvatar
                   name={s.name || s.email}
                   email={s.email}
-                  size={54}
+                  size={_LMs.storyOther}
                   ringStyle="solid"
                   allViewed={allViewed}
                   isLive={isLive}
@@ -3233,7 +3293,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   closeFriends={!isLive && (s.items || []).some(it => (it?.meta?.privacy || it?.privacy) === 'close_friends')}
                   textPreview={isLive ? null : textPreviewOf(s.items) /* [status-texto 2026-10-14] */}
                 />
-                <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
+                <Text style={{ fontSize: 11.5, color: colors.text, marginTop: _LMs.storyLabelGap, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
                   {/* [2026-10-11 qa-sweep2] humanized like the rows ("apitest" → "Apitest") */}
                   {emailToDisplayName(s.name || s.email?.split('@')[0] || '')}
                 </Text>
@@ -3244,7 +3304,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
 
         {/* Notes only (no status) */}
         {notesOnly.map((n) => (
-          <TouchableOpacity key={`note-${n.email}`} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}
+          <TouchableOpacity key={`note-${n.email}`} activeOpacity={0.7} style={{ alignItems: 'center', width: _LMs.storyOtherW }}
             onPress={() => {
               const convEmail = n.email;
               try {
@@ -3254,14 +3314,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               } catch {}
             }}>
             <View style={{ padding: 2.5, position: 'relative' }}>
-              <AvatarCircle name={n.name || n.email} email={n.email} size={54} />
+              <AvatarCircle name={n.name || n.email} email={n.email} size={_LMs.storyOther} />
               {n.content && (
                 <View style={{ position: 'absolute', top: -4, left: -6, right: -6, backgroundColor: isDark ? '#2c2c2e' : '#fff', borderRadius: 14, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }}>
                   <Text style={{ fontSize: 10, color: colors.text, textAlign: 'center' }} numberOfLines={2}>{n.content}</Text>
                 </View>
               )}
             </View>
-            <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
+            <Text style={{ fontSize: 11.5, color: colors.text, marginTop: _LMs.storyLabelGap, fontWeight: '500', letterSpacing: -0.1 }} numberOfLines={1}>
               {n.name || n.email?.split('@')[0]}
             </Text>
           </TouchableOpacity>
@@ -7269,7 +7329,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }
     return Platform.OS === 'ios';
   })();
-  const ARCH_ROW_H = 76;
+  const _lmCompact = listMetrics().compact; // [2026-10-18 compact-list] deps dos memos do topo
+  const ARCH_ROW_H = _lmCompact ? 72 : 76;
   const [archRevealed, setArchRevealed] = useState(false);
   const archRevealedRef = useRef(false);
   const archRevealAnim = useRef(new Animated.Value(0)).current;
@@ -8176,9 +8237,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // [2026-10-15 native-pins] Tamanho AUTOMÁTICO (sem lápis/configuração):
       // até 4 fixados = avatares grandes; mais que isso = menores + rolagem.
       // Vale p/ a fileira nativa e p/ a JS (web/binário antigo).
+      const _pinLM = listMetrics(); // [2026-10-18 compact-list]
       const _autoPx = autoPinAvatarSize(
         pinnedConversations.length,
         Math.min(Dimensions.get('window').width || 360, CONTENT_MAX_WIDTH || 9999),
+        _pinLM.compact,
       );
       const wiggleRotate = pinWiggleAnim.interpolate({
         inputRange: [-1, 1], outputRange: ['-1.8deg', '1.8deg'],
@@ -8274,8 +8337,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // [7173 polish 2026-05-22] Dropped purple tint wash + bumped vertical
           // padding (14→16) to give bigger avatars breathing room. iOS Messages
           // has no chip/background around pinned tiles — just clean separation.
-          paddingTop: 16,
-          paddingBottom: _useNativePins ? 8 : 18, // [native-pins] a fileira nativa já traz o respiro
+          paddingTop: _pinLM.pinPadTop,
+          paddingBottom: _useNativePins ? _pinLM.pinPadBottom : _pinLM.pinPadBottomJs, // [native-pins] a fileira nativa já traz o respiro
           paddingLeft: 14,
           backgroundColor: 'transparent',
           borderBottomWidth: StyleSheet.hairlineWidth,
@@ -8285,7 +8348,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               the dismiss/Pronto control. Both states render the strip ABOVE
               the horizontal pin scroll, so nothing overlaps a pin card.
               Long-press tambem continua funcionando. */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: pinnedEditMode ? 10 : 6, minHeight: pinnedEditMode ? 32 : 16 }}>
+          {/* [2026-10-18 compact-list] compacto: sem o rótulo "FIXADAS" fora do modo
+              reorganizar (iMessage) — os avatares grandes no topo já dizem o que são. */}
+          {(_pinLM.pinLabel || pinnedEditMode) ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: pinnedEditMode ? 10 : _pinLM.pinLabelGap, minHeight: pinnedEditMode ? 32 : 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
               {/* IconPin removido (bug print 3 — 2026-05-08): mesmo em size 14
                   o SVG continuava parecendo bullet/blob esfumado antes do
@@ -8330,12 +8396,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               </TouchableOpacity>
             ) : null /* [2026-10-17 polish-chat] sem o vão fixo de 32pt entre "FIXADAS" e os avatares (print iOS) */}
           </View>
+          ) : null}
           {_useNativePins ? (
             <View style={{ marginLeft: -14 }}>
               <PinnedStripSlot
                 bridge={_pinBridgeRef.current}
                 avatarSize={_autoPx}
-                height={pinStripHeight(_autoPx)}
+                height={pinStripHeight(_autoPx, _pinLM.compact)}
               />
             </View>
           ) : (
@@ -8558,7 +8625,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         accessibilityLabel={t('chat.hiddenSection') || 'Conversas trancadas'}
         accessibilityRole="button"
       >
-        <View style={s.archivedHeaderIcon}>
+        <View style={[s.archivedHeaderIcon, listMetrics().compact && { width: 52, marginRight: 12 }]}>
           <IconLock size={20} color={P.sub} />
         </View>
         <View style={{ flex: 1 }}>
@@ -8591,7 +8658,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           : (t('chat.archived') || 'Arquivadas')}
         testID="chat-archived-row"
       >
-        <View style={[s.archivedAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#ebebed' }]}>
+        <View style={[s.archivedAvatar, listMetrics().compact && { width: 52, height: 52, borderRadius: 26, marginRight: 12 }, { backgroundColor: isDark ? '#2c2c2e' : '#ebebed' }]}>
           <IconArchive size={24} color={P.text} />
         </View>
         <View style={s.archivedBody}>
@@ -8630,7 +8697,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         style={{ height: _archRevealHeight, opacity: _archRevealOpacity, overflow: 'hidden' }}
       >
         {row}
-        <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET, position: 'absolute', left: 0, right: 0, bottom: 0 }]} />
+        <View style={[s.separator, { backgroundColor: P.hair, marginLeft: _sepInset(), position: 'absolute', left: 0, right: 0, bottom: 0 }]} />
       </Animated.View>
     );
   };
@@ -8865,14 +8932,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {/* Chatyy One AI quick access (like Snapchat's My AI)
           [2026-10-15 bia-design] mini-orb vivo + sugestão do momento + atalho de voz */}
       {!(searchQuery || '').trim() && (
-        <BiaHomeCard isDark={isDark} t={t} router={router} P={P} avatarSize={ROW_AVATAR} nameStyle={s.rowName} previewStyle={s.rowPreview} />
+        <BiaHomeCard isDark={isDark} t={t} router={router} P={P} avatarSize={_rowAvatar()} compact={listMetrics().compact} nameStyle={s.rowName} previewStyle={s.rowPreview} />
       )}
       {/* [2026-10-08 chat-beauty-list] Same inset hairline as the rows (was
           a full-bleed border that broke the list rhythm).
           [2026-10-16 wave13 swipe-ios] Android também (a lista nativa agora
           desenha a mesma linha inset entre as conversas, igual ao iOS). */}
       {!(searchQuery || '').trim() && (
-        <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET }]} />
+        <View style={[s.separator, { backgroundColor: P.hair, marginLeft: _sepInset() }]} />
       )}
 
       {/* Status stories (Instagram-style) — only when not searching.
@@ -8978,7 +9045,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // from the deps → their show/hide only landed on an unrelated re-render.
     wsDownBanner, netOffline, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount,
     // [2026-10-18 tg-list] linha Arquivadas (nomes + puxar p/ revelar)
-    archivedPreview, archRevealed, _archPullOn]);
+    archivedPreview, archRevealed, _archPullOn,
+    // [2026-10-18 compact-list] kill switch reflete sem esperar outra mudança
+    _lmCompact]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -9172,7 +9241,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // column (starts where the name starts). Android/Material: no dividers —
   // the 74pt rhythm + whitespace separates rows (WhatsApp Android).
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET, marginRight: 0 }]} />
+    <View style={[s.separator, { backgroundColor: P.hair, marginLeft: _sepInset(), marginRight: 0 }]} />
   ), [P]);
   const _itemSeparator = Platform.OS === 'android' ? undefined : ItemSeparatorComponent;
 
@@ -9188,8 +9257,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0, flexShrink: 0, height: 98 }}
-          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 10, alignItems: 'center' }}
+          style={{ flexGrow: 0, flexShrink: 0, height: listMetrics().notesH }}
+          contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: listMetrics().compact ? 4 : 8, gap: 10, alignItems: 'center' }}
         >
           {/* Set your note button */}
           <TouchableOpacity
@@ -9246,8 +9315,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // [2026-10-11 visual polish] Web/tablet: the list column is centered at
         // CONTENT_MAX_WIDTH but the chips hugged the far left of the pane, so
         // "Todas" didn't line up with the avatars below. Same column as the list.
-        style={[{ flexGrow: 0, flexShrink: 0, height: 46 }, (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' }]}
-        contentContainerStyle={s.filtersRow}
+        style={[{ flexGrow: 0, flexShrink: 0, height: listMetrics().chipsH }, (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' }]}
+        contentContainerStyle={[s.filtersRow, { paddingTop: listMetrics().chipsPadTop, paddingBottom: listMetrics().chipsPadBottom }]}
         ref={_filtersScrollRef}
         onLayout={_onFiltersLayout}
         onContentSizeChange={_onFiltersContentSize}
@@ -9279,7 +9348,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router, _lmCompact]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer
@@ -9290,10 +9359,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     <SyncStatusTitle
       title={largeTitle}
       announce
-      containerStyle={s.largeTitleWrap}
+      containerStyle={_lmCompact ? [s.largeTitleWrap, { paddingBottom: 4 }] : s.largeTitleWrap}
       titleStyle={[s.largeTitleText, { color: colors.text }]}
     />
-  ) : null), [largeTitle, colors.text]);
+  ) : null), [largeTitle, colors.text, _lmCompact]);
   // [2026-10-16 wave8-list] altura real do título grande → snap nativo (soltar
   // no meio termina aberto/fechado) acompanha a fonte do sistema.
   const [_ltH, _setLtH] = useState(0);

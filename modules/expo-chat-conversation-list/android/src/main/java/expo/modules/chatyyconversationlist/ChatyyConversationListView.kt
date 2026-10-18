@@ -214,6 +214,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private var labelsDirty = false
   private var selectionMode = false
   private var selectionDirty = false
+  private var compactDensity = false // [2026-10-18 compact-list] prop `density`
   var swipeEnabled = true
   var menuEnabled = true
   var collapseOffsetDp = 34f
@@ -383,6 +384,15 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     if (on == selectionMode) return
     selectionMode = on
     selectionDirty = true
+  }
+
+  // [2026-10-18 compact-list] "compact" = linha 72 / avatar 52 (WhatsApp);
+  // qualquer outro valor = regular 76 / 54. Rebind de tudo (mesmo caminho dos rótulos).
+  fun setDensityProp(v: String?) {
+    val c = v == "compact"
+    if (c == compactDensity) return
+    compactDensity = c
+    labelsDirty = true
   }
 
   fun setLabelsProp(m: Map<String, Any?>?) {
@@ -740,7 +750,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       val item = items.getOrNull(position) as? Item.Row ?: return
       val row = rows[item.id] ?: return
       try {
-        holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow)
+        holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow, compactDensity)
         swipe.onBound(holder.rowView)
       } catch (e: Throwable) {
         onNativeError(mapOf("message" to ("bind: " + (e.message ?: e.javaClass.simpleName))))
@@ -1285,7 +1295,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     private fun drawSeparators(c: Canvas, parent: RecyclerView) {
       hairPaint.color = if (theme.dark) 0x17FFFFFF else 0x14000000
       val hh = max(1f, density * 0.5f)
-      val lead = ((if (selectionMode) 36f else 0f) + 16f + 54f + 14f) * density
+      val lead = ((if (selectionMode) 36f else 0f) + 16f + (if (compactDensity) 52f + 12f else 54f + 14f)) * density
       val rtl = rtl()
       for (i in 0 until parent.childCount) {
         val ch = parent.getChildAt(i)
