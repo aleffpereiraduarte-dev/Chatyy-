@@ -62,6 +62,11 @@ final class CMLCell: UICollectionViewCell {
   private var albumTokens: [String] = []
   /// [2026-10-18 vthumb] slot (-1 mídia única, 0..3 álbum) → URL do vídeo cujo 1º frame está em voo
   private var vfReq: [Int: String] = [:]
+  /// [2026-10-18 lqip] slot → token cuja imagem DEFINITIVA (não a LQIP) já está na tela
+  private var fullTok: [Int: String] = [:]
+  /// [2026-10-18 lqip] slot → tentativas de recarga do pôster que falhou (2 s, 6 s, 15 s)
+  private var retryN: [Int: Int] = [:]
+  private var retryArmed: Set<Int> = []
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -176,6 +181,9 @@ final class CMLCell: UICollectionViewCell {
     albumTokens = []
     for (_, v) in vfReq { CMLVideoFrameLoader.shared.cancel(v) }
     vfReq = [:]
+    fullTok = [:]
+    retryN = [:]
+    retryArmed = []
     media.image = nil
     reply.thumb.image = nil
     reply.thumbToken = ""
@@ -606,14 +614,22 @@ final class CMLCell: UICollectionViewCell {
     let vfUse = (uri.isEmpty && thumb.isEmpty) ? vf : ""
     let tok = uri + "#" + thumb + (vfUse.isEmpty ? "" : "#vf:" + vfUse)
     let cur = slot < 0 ? mediaToken : (slot < albumTokens.count ? albumTokens[slot] : "")
-    if cur == tok && iv.image != nil { return }
+    // [2026-10-18 lqip] mesmo token mas só a LQIP na tela (pôster falhou) → tenta de novo
+    if cur == tok && iv.image != nil && (uri.isEmpty || fullTok[slot] == tok) { return }
+    let keepLQIP = cur == tok && iv.image != nil
+    if cur != tok {
+      fullTok.removeValue(forKey: slot)
+      retryN.removeValue(forKey: slot)
+    }
     if slot < 0 { mediaToken = tok } else if slot < albumTokens.count { albumTokens[slot] = tok }
     let loader = CMLImageLoader.shared
-    if let img = loader.cached(uri, maxPixel: maxPixel) { iv.image = img; return }
-    if !thumb.isEmpty, let t = loader.cached(thumb, maxPixel: 96) { iv.image = t } else { iv.image = nil }
+    if let img = loader.cached(uri, maxPixel: maxPixel) { iv.image = img; fullTok[slot] = tok; return }
+    if !keepLQIP {
+      if !thumb.isEmpty, let t = loader.cachedBlurred(thumb) { iv.image = t } else { iv.image = nil }
+    }
     let myTok = tok
     if !thumb.isEmpty && iv.image == nil {
-      loader.load(thumb, maxPixel: 96) { [weak iv] img in
+      loader.loadBlurred(thumb) { [weak iv] img in
         guard let iv = iv, iv.image == nil, let img = img else { return }
         if self.currentToken(for: iv) == myTok { iv.image = img }
       }
@@ -642,13 +658,36 @@ final class CMLCell: UICollectionViewCell {
     }
     _ = trackVF(slot, "")
     loader.load(uri, maxPixel: maxPixel, animated: animated) { [weak self, weak iv] img in
-      guard let self = self, let iv = iv, let img = img else { return }
+      guard let self = self, let iv = iv else { return }
       guard self.currentToken(for: iv) == myTok else { return }
+      guard let img = img else {
+        self.scheduleRetry(iv, slot: slot, tok: myTok, uri: uri, thumb: thumb, maxPixel: maxPixel, animated: animated)
+        return
+      }
+      self.fullTok[slot] = myTok
       if iv.image != nil {
         UIView.transition(with: iv, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction], animations: { iv.image = img })
       } else {
         iv.image = img
       }
+    }
+  }
+
+  /// [2026-10-18 lqip] pôster falhou (404/rede): tenta de novo em 2 s, 6 s, 15 s
+  /// enquanto a célula ainda mostra a mesma linha (token igual).
+  private func scheduleRetry(_ iv: UIImageView, slot: Int, tok: String, uri: String, thumb: String, maxPixel: CGFloat, animated: Bool) {
+    if retryArmed.contains(slot) { return }
+    let n = retryN[slot] ?? 0
+    let delays: [Double] = [2, 6, 15]
+    guard n < delays.count else { return }
+    retryN[slot] = n + 1
+    retryArmed.insert(slot)
+    DispatchQueue.main.asyncAfter(deadline: .now() + delays[n]) { [weak self, weak iv] in
+      guard let self = self else { return }
+      self.retryArmed.remove(slot)
+      guard let iv = iv, !iv.isHidden else { return }
+      guard self.currentToken(for: iv) == tok, self.fullTok[slot] != tok else { return }
+      self.setImage(iv, slot: slot, uri: uri, thumb: thumb, maxPixel: maxPixel, animated: animated)
     }
   }
 

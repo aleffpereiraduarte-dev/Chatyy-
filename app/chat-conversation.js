@@ -10090,12 +10090,24 @@ function ConvTypingBubble({ store, colors, t, hideLabel = false }) {
 // Mesmo JSX e mesma regra de antes (presenceText), só que com estado próprio.
 const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
   typingStore, conversationType, presenceStore, members, t, wsConnected, currentEmail, presenceUpdatedAtRef,
-  colors, conversationName, e2eEnabled, advPrivEnabled,
+  colors, conversationName, e2eEnabled, advPrivEnabled, netReachable, wsReconnecting,
 }) {
   const presence = useSyncExternalStore(presenceStore.subscribe, presenceStore.get, presenceStore.get);
   const { typingUsers, typingUser, typingIsRecording } = useTypingInfo(typingStore, t);
   const isTyping = !!typingUser;
   const presenceText = useMemo(() => {
+    // [2026-10-17 header-offline-wa] sem rede / socket reconectando: WhatsApp troca o
+    // subtítulo por "Aguardando rede" / "Conectando…" (nunca "visto há 12m" velho).
+    // Mesmas chaves/cópias da SyncBar. Preview (sem as props) = comportamento antigo.
+    const _hdrOff = globalThis.__chatyy_header_offline !== false;
+    if (_hdrOff && netReachable === false) {
+      const v = t('syncStatus.waitingNetwork');
+      return v && v !== 'syncStatus.waitingNetwork' ? v : 'Aguardando rede';
+    }
+    if (_hdrOff && wsReconnecting === true) {
+      const v = t('syncStatus.connecting');
+      return v && v !== 'syncStatus.connecting' ? v : 'Conectando…';
+    }
     // GROUP: typing/recording > member names > fallback
     if (conversationType === 'group') {
       if (typingUser) {
@@ -10150,7 +10162,7 @@ const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
       }
     }
     return '';
-  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected, currentEmail]);
+  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected, currentEmail, netReachable, wsReconnecting]);
   return (
           <HeaderStackReveal hasSub={presenceText !== ''} style={_HDR_STACK_STYLE}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
@@ -34468,6 +34480,7 @@ function ChatConversationInner() {
             typingStore={typingStore} conversationType={conversationType} presenceStore={presenceStore} members={members}
             t={t} wsConnected={wsConnected} currentEmail={currentEmail} presenceUpdatedAtRef={presenceUpdatedAtRef}
             colors={colors} conversationName={conversationName} e2eEnabled={e2eEnabled} advPrivEnabled={!!_advPriv.enabled}
+            netReachable={netReachable} wsReconnecting={!wsConnected && hasEverConnectedRef.current}
           />
         </TouchableOpacity>
         {/* Pin counter chip — only when there are pinned messages AND the
@@ -34959,7 +34972,8 @@ function ChatConversationInner() {
           (1-2s on open / on return from background) is invisible; the messages
           are already on screen from SQLite. Only a genuine mid-session drop —
           after the 5s grace timer — surfaces the subtle "Reconectando..." row. */}
-      {(!netReachable || !wsConnected && !hasEverConnectedRef.current) ? null : !wsConnected ? (
+      {/* [2026-10-18 header-offline-wa] o cabeçalho já mostra "Conectando…" (WhatsApp: só lá) → faixa só se o kill switch desligar o cabeçalho. */}
+      {(globalThis.__chatyy_header_offline !== false || !netReachable || !wsConnected && !hasEverConnectedRef.current) ? null : !wsConnected ? (
         // [2026-10-10 conv-polish] faixa neutra (era âmbar) — WhatsApp mostra "Conectando…" discreto.
         <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size={12} color={colors.textSecondary} />

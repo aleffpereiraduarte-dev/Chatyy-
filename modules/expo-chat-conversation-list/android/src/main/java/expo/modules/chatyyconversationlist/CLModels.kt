@@ -82,6 +82,7 @@ internal data class CLRow(
   val icon: String = "",
   val receipt: Int = 0,
   val scheduled: Boolean = false,
+  val pending: Boolean = false, // [2026-10-17] na fila sem rede → relógio (receipt 0)
   val typing: String = "",
   val draft: String = "",
   val draftLabel: String = "",
@@ -124,6 +125,7 @@ internal data class CLRow(
         icon = CLVal.str(m["icon"]),
         receipt = CLVal.int(m["receipt"]),
         scheduled = CLVal.bool(m["scheduled"]),
+        pending = CLVal.bool(m["pending"]),
         typing = CLVal.str(m["typing"]),
         draft = CLVal.str(m["draft"]),
         draftLabel = CLVal.str(m["draftLabel"]),

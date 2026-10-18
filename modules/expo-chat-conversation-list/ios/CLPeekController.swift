@@ -106,7 +106,7 @@ final class CLPeekController: UIViewController {
   private func seedFromRow() {
     let txt = row.locked ? row.text : (row.text.isEmpty ? row.empty : row.text)
     if txt.isEmpty { return }
-    let mine = row.receipt > 0
+    let mine = row.receipt > 0 || row.pending
     messages = [CLPeekMessage(mine: mine, text: txt, time: row.time, sender: mine ? "" : (row.isGroupish ? row.sender : ""), receipt: row.receipt)]
   }
 

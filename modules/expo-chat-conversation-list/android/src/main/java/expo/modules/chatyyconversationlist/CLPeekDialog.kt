@@ -323,7 +323,7 @@ internal class CLPeekDialog(
   private fun seedFromRow() {
     val txt = if (row.locked) row.text else (if (row.text.isEmpty()) row.empty else row.text)
     if (txt.isEmpty()) return
-    val mine = row.receipt > 0
+    val mine = row.receipt > 0 || row.pending
     messages = listOf(Msg(mine, txt, row.time, if (!mine && row.isGroupish) row.sender else "", row.receipt))
   }
 

@@ -75,6 +75,7 @@ struct CLRow {
   var icon: String = ""              // camera | video | mic | … (glifo da prévia)
   var receipt: Int = 0               // 0 nada · 1 enviado · 2 entregue · 3 lido
   var scheduled: Bool = false
+  var pending: Bool = false             // [2026-10-17] na fila sem rede → relógio (receipt 0)
   var typing: String = ""            // "Ana digitando..." (vazio = ninguém)
   var draft: String = ""
   var draftLabel: String = ""
@@ -113,6 +114,7 @@ struct CLRow {
     icon = CLVal.str(d["icon"])
     receipt = CLVal.int(d["receipt"])
     scheduled = CLVal.bool(d["scheduled"])
+    pending = CLVal.bool(d["pending"])
     typing = CLVal.str(d["typing"])
     draft = CLVal.str(d["draft"])
     draftLabel = CLVal.str(d["draftLabel"])

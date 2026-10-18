@@ -1,5 +1,6 @@
 import UIKit
 import ImageIO
+import CoreImage
 import CryptoKit
 
 // [2026-10-14 native-list] Carregador de imagem das células.
@@ -61,6 +62,48 @@ final class CMLImageLoader {
 
   func prefetch(_ uri: String, maxPixel: CGFloat) {
     load(uri, maxPixel: maxPixel) { _ in }
+  }
+
+  // [2026-10-18 lqip] miniatura (LQIP) com desfoque gaussiano: nunca "pixelada".
+  // Blur na imagem pequena (64 px), fora da main, cacheado na mesma NSCache.
+  private static let ciContext = CIContext(options: nil)
+
+  func cachedBlurred(_ uri: String) -> UIImage? {
+    if uri.isEmpty { return nil }
+    return memory.object(forKey: ("blur|" + uri) as NSString)
+  }
+
+  /// completion SEMPRE na main.
+  func loadBlurred(_ uri: String, completion: @escaping (UIImage?) -> Void) {
+    if uri.isEmpty { completion(nil); return }
+    let bk = "blur|" + uri
+    if let img = memory.object(forKey: bk as NSString) { completion(img); return }
+    load(uri, maxPixel: 96) { [weak self] small in
+      guard let self = self, let small = small else { completion(nil); return }
+      if let img = self.memory.object(forKey: bk as NSString) { completion(img); return }
+      self.decodeQueue.async {
+        let out = CMLImageLoader.blur(small) ?? small
+        DispatchQueue.main.async {
+          self.memory.setObject(out, forKey: bk as NSString, cost: CMLImageLoader.cost(out))
+          completion(out)
+        }
+      }
+    }
+  }
+
+  private static func blur(_ img: UIImage) -> UIImage? {
+    guard let cg = img.cgImage else { return nil }
+    let side = CGFloat(max(cg.width, cg.height))
+    if side < 1 { return nil }
+    let s: CGFloat = 64 / side
+    let ci = CIImage(cgImage: cg).transformed(by: CGAffineTransform(scaleX: s, y: s))
+    let extent = ci.extent.integral
+    guard let f = CIFilter(name: "CIGaussianBlur") else { return nil }
+    f.setValue(ci.clampedToExtent(), forKey: kCIInputImageKey)
+    f.setValue(3.0, forKey: kCIInputRadiusKey)
+    guard let out = f.outputImage?.cropped(to: extent) else { return nil }
+    guard let res = ciContext.createCGImage(out, from: extent) else { return nil }
+    return UIImage(cgImage: res, scale: 1, orientation: .up)
   }
 
   private func key(_ uri: String, _ maxPixel: CGFloat) -> String {

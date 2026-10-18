@@ -680,11 +680,43 @@ export function setUserLanguage(lang) {
 }
 export function getUserLanguage() { return _userLanguage; }
 
+// [2026-10-17 session-label] "modelo|SO versão" (ex.: "iPhone 15 Pro|iOS 18.1") p/ o
+// rótulo em "Aparelhos conectados". SÓ nativo — no web um header custom dispara
+// preflight CORS. Calculado 1x; ASCII saneado (header não-ASCII quebra o fetch).
+let _chatyyDeviceHdr = null;
+function _chatyyDeviceHeader() {
+  if (Platform.OS === 'web') return '';
+  if (_chatyyDeviceHdr !== null) return _chatyyDeviceHdr;
+  let v = '';
+  try {
+    let model = '';
+    let osv = '';
+    let osn = Platform.OS === 'ios' ? 'iOS' : 'Android';
+    try {
+      const D = require('expo-device');
+      model = String((D && D.modelName) || '');
+      osv = String((D && D.osVersion) || '');
+      if (D && D.osName === 'iPadOS') osn = 'iPadOS';
+    } catch {}
+    const pc = Platform.constants || {};
+    if (!model) model = String(pc.Model || pc.model || '');
+    if (!osv) osv = String(pc.Release || pc.osVersion || Platform.Version || '');
+    const clean = (x) => String(x || '').replace(/[^\x20-\x7E]/g, '').replace(/\|/g, ' ').trim();
+    model = clean(model);
+    osv = clean(osv);
+    if (model || osv) v = `${model}|${osn}${osv ? ' ' + osv : ''}`.slice(0, 80);
+  } catch {}
+  _chatyyDeviceHdr = v;
+  return v;
+}
+
 export function getAuthHeaders() {
   const h = {};
   if (authToken) h['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) h['X-CSRF-Token'] = csrfToken;
   if (_userLanguage) h['X-User-Language'] = _userLanguage;
+  const _dev = _chatyyDeviceHeader();
+  if (_dev) h['X-Chatyy-Device'] = _dev;
   return h;
 }
 
@@ -1732,6 +1764,8 @@ async function _rawApiCallOnce(action, params = {}, method = 'GET', _baseOverrid
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (method === 'POST' && csrfToken) headers['X-CSRF-Token'] = csrfToken;
   if (deviceTrustToken) headers['X-Device-Trust-Token'] = deviceTrustToken;
+  const _devHdr = _chatyyDeviceHeader();
+  if (_devHdr) headers['X-Chatyy-Device'] = _devHdr;
 
   let url = `${_baseOverride ? _baseOverride + '/api/email.php' : API_URL}?action=${action}`;
   // [rodada3 2026-10-11] Capacidade: este app desenha a mensagem apagada pelo flag

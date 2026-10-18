@@ -172,7 +172,7 @@ final class CLConversationCell: UICollectionViewListCell {
     receipt.readColor = theme.receiptRead
     receipt.setState(showReceipt ? r.receipt : 0, animated: animated && (previous?.receipt ?? 0) != r.receipt)
 
-    clockIcon.isHidden = !(r.scheduled && !typing && !drafting && !r.locked)
+    clockIcon.isHidden = !((r.scheduled || (r.pending && r.receipt <= 0)) && !typing && !drafting && !r.locked)
     if !clockIcon.isHidden {
       clockIcon.image = CLSymbols.image("clock", pointSize: 11, weight: .medium, color: theme.sub)
     }

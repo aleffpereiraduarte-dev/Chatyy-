@@ -210,7 +210,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     receipt.readColor = t.receiptRead
     receipt.update(if (showReceipt) r.receipt else 0, prev != null && prev.receipt != r.receipt)
 
-    val sched = r.scheduled && !isTyping && !drafting && !r.locked
+    val sched = (r.scheduled || (r.pending && r.receipt <= 0)) && !isTyping && !drafting && !r.locked
     clockIv.visibility = if (sched) VISIBLE else GONE
     if (sched) clockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_clock, t.sub))
 

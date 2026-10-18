@@ -56,11 +56,17 @@ class MLImageSlot(private val owner: View) {
   // [2026-10-18 vthumb] 1º frame de vídeo sem pôster (MLVideoFrames): URL em voo + fade de entrada
   private var vfUrl: String = ""
   private var frameFadeAt = 0L
+  // [2026-10-18 lqip] pôster falhou (404/rede) → nova tentativa em 2 s, 6 s, 15 s
+  private var failed = false
+  private var retryN = 0
+  private var retryRun: Runnable? = null
 
   fun set(uri: String, thumbUri: String, w: Int, h: Int, animated: Boolean, fit: Boolean = false, vf: String = "") {
     val vfUse = if (uri.isEmpty() && thumbUri.isEmpty()) vf else ""
     val key = if (vfUse.isNotEmpty()) "vf:$vfUse" else uri
-    if (key == model && thumbUri == thumbModel && (drawable != null || target != null || vfUrl.isNotEmpty())) return
+    // [2026-10-18 lqip] mesma chave mas o pôster falhou → recarrega (não fica preso na LQIP)
+    if (key == model && thumbUri == thumbModel && (drawable != null || (target != null && !failed) || vfUrl.isNotEmpty())) return
+    val keepRetryN = if (key == model) retryN else 0
     // [native-media-dl] mesma miniatura, foto nova (baixou agora) → mantém a
     // miniatura na tela enquanto a foto decodifica (cross-fade em draw)
     val keepThumb = thumbUri.isNotEmpty() && thumbUri == thumbModel && thumb != null && drawable == null
@@ -68,23 +74,38 @@ class MLImageSlot(private val owner: View) {
     val keptThumbTarget = if (keepThumb) thumbTarget else null
     if (keepThumb) thumbTarget = null
     clear()
+    retryN = keepRetryN
     model = key
     thumbModel = thumbUri
     setAt = android.os.SystemClock.uptimeMillis()
     fadeAt = 0L
     val ctx = owner.context.applicationContext
     if (keepThumb) { thumb = keptThumb; thumbTarget = keptThumbTarget }
-    if (thumbUri.isNotEmpty() && !keepThumb) {
+    val blurHit = if (thumbUri.isNotEmpty() && !keepThumb) MLBlur.cached(thumbUri) else null
+    if (blurHit != null) thumb = BitmapDrawable(owner.resources, blurHit)
+    if (thumbUri.isNotEmpty() && !keepThumb && blurHit == null) {
       val t = object : CustomTarget<Drawable>(64, 64) {
         override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
           if (thumbModel != thumbUri) return
-          thumb = resource
-          if (drawable == null) owner.invalidate()
+          // [2026-10-18 lqip] desfoque suave (fora da main) antes de mostrar
+          val bmp = (resource as? BitmapDrawable)?.bitmap
+          val copy = try { bmp?.copy(Bitmap.Config.ARGB_8888, false) } catch (_: Throwable) { null }
+          if (copy == null) {
+            thumb = resource
+            if (drawable == null) owner.invalidate()
+            return
+          }
+          MLBlur.blur(thumbUri, copy) { out ->
+            if (thumbModel == thumbUri) {
+              thumb = if (out != null) BitmapDrawable(owner.resources, out) else resource
+              if (drawable == null) owner.invalidate()
+            }
+          }
         }
         override fun onLoadCleared(placeholder: Drawable?) { thumb = null }
       }
       thumbTarget = t
-      try { Glide.with(ctx).load(modelOf(thumbUri)).into(t) } catch (_: Throwable) {}
+      try { Glide.with(ctx).load(modelOf(thumbUri)).disallowHardwareConfig().into(t) } catch (_: Throwable) {}
     }
     if (uri.isEmpty()) {
       if (vfUse.isNotEmpty()) loadFrame(vfUse, key, max(w, h))
@@ -110,6 +131,11 @@ class MLImageSlot(private val owner: View) {
         if (d is Animatable) (d as Animatable).stop()
         drawable = null
       }
+      override fun onLoadFailed(errorDrawable: Drawable?) {
+        if (model != uri || target !== this) return
+        failed = true
+        scheduleRetry(uri, thumbUri, w, h, animated, fit)
+      }
     }
     target = t
     try {
@@ -118,6 +144,18 @@ class MLImageSlot(private val owner: View) {
       if (!animated) rb = rb.dontAnimate()
       rb.into(t)
     } catch (_: Throwable) {}
+  }
+
+  private fun scheduleRetry(uri: String, thumbUri: String, w: Int, h: Int, animated: Boolean, fit: Boolean) {
+    if (retryRun != null || retryN >= RETRY_MS.size) return
+    val delay = RETRY_MS[retryN]
+    retryN += 1
+    val r = Runnable {
+      retryRun = null
+      if (model == uri && drawable == null && failed) set(uri, thumbUri, w, h, animated, fit)
+    }
+    retryRun = r
+    owner.postDelayed(r, delay)
   }
 
   private fun loadFrame(url: String, key: String, px: Int) {
@@ -147,6 +185,10 @@ class MLImageSlot(private val owner: View) {
       vfUrl = ""
     }
     frameFadeAt = 0L
+    retryRun?.let { owner.removeCallbacks(it) }
+    retryRun = null
+    failed = false
+    retryN = 0
     target?.let { try { Glide.with(ctx).clear(it) } catch (_: Throwable) {} }
     thumbTarget?.let { try { Glide.with(ctx).clear(it) } catch (_: Throwable) {} }
     val d = drawable
@@ -215,6 +257,8 @@ class MLImageSlot(private val owner: View) {
   }
 
   companion object {
+    private val RETRY_MS = longArrayOf(2000L, 6000L, 15000L)
+
     fun modelOf(s: String): Any = when {
       s.startsWith("file://") || s.startsWith("content://") -> Uri.parse(s)
       s.startsWith("/") -> java.io.File(s)
