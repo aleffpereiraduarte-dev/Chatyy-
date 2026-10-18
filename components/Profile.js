@@ -69,6 +69,7 @@ import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-1
 import { useNativeProfileEdit, isNativeProfileEditEnabled } from './profile/nativeProfileEdit'; // [2026-10-18 profile-edit-native]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
 import HighlightShareSheet from './HighlightShareSheet';
+import { ProfileHighlightMenuSheet, ProfileMoreMenuSheet, ProfileNicknameDialog, ProfileAvatarActionsSheet, profileNativeSheetsOn } from './profile/ProfileSheets'; // [2026-10-18 profile-sheets]
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit, IconUser,
@@ -1195,12 +1196,8 @@ export default function Profile({
   initialTab,              // aba inicial da grade JS ('posts' | 'reels' | 'lives' | 'media')
   colors, isDark, t, router,
 }) {
-  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
-  const _drag4163 = useDragToDismiss({ onDismiss: () => { const f = () => setAvatarActionOpen(false); f(); } });
-  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
-  const _drag3819 = useDragToDismiss({ onDismiss: () => { const f = () => setMenuOpen(false); f(); } });
-  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
-  const _drag3698 = useDragToDismiss({ onDismiss: () => { const f = () => setHighlightSheet({ open: false, highlight: null }); f(); } });
+  // [2026-10-18 profile-sheets] arrasto/estado das folhas (destaque, mais, apelido, avatar)
+  // moraram aqui até 18/10 — agora em components/profile/ProfileSheets.js (estado local).
   // Current session's user — needed so the embedded FeedComments sheet
   // knows whose avatar to stamp on new comments. Kept internal so callers
   // don't have to pass user through every layer.
@@ -1271,7 +1268,15 @@ export default function Profile({
   // into either the inline edit sheet (rename/cover/items) or the share
   // sheet (public link / native share). State is held at this level so
   // both sheets can be toggled without re-mounting the row.
-  const [highlightSheet, setHighlightSheet] = useState({ open: false, highlight: null });
+  // [2026-10-18 profile-sheets] folhas com estado LOCAL, abertas por ref: abrir/fechar
+  // não re-renderiza o perfil inteiro. Mesmas assinaturas dos setters antigos.
+  const _hlSheetRef = useRef(null);
+  const _moreSheetRef = useRef(null);
+  const _nickDialogRef = useRef(null);
+  const _avatarSheetRef = useRef(null);
+  const setHighlightSheet = useCallback((v) => {
+    if (v && v.open) _hlSheetRef.current?.open?.(v.highlight); else _hlSheetRef.current?.close?.();
+  }, []);
   const [highlightEdit, setHighlightEdit] = useState({ open: false, highlight: null });
   const [highlightShare, setHighlightShare] = useState({ open: false, highlight: null });
   // [feat-11] Avatar tap action sheet + StatusCamera visibility. The avatar
@@ -1282,7 +1287,9 @@ export default function Profile({
   //     spot, no way to just "see" their own avatar)
   // The action sheet disambiguates: status creator (with filters), profile
   // photo edit, view photo full-screen, cancel.
-  const [avatarActionOpen, setAvatarActionOpen] = useState(false);
+  const setAvatarActionOpen = useCallback((v) => {
+    if (v) _avatarSheetRef.current?.open?.(); else _avatarSheetRef.current?.close?.();
+  }, []);
   const [statusCameraOpen, setStatusCameraOpen] = useState(false);
   const [statusPublishing, setStatusPublishing] = useState(false);
   // autoOpenStory path: chat status_reply tap routes here with the intent to
@@ -1299,7 +1306,9 @@ export default function Profile({
     openStoriesAt(0);
   }, [autoOpenStory, data?.stories]);
   const [editOpen, setEditOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const setMenuOpen = useCallback((v) => {
+    if (v) _moreSheetRef.current?.open?.(); else _moreSheetRef.current?.close?.();
+  }, []);
   const [reportOpen, setReportOpen] = useState(false); // [central-moderacao 2026-10-14]
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Auto-open settings sheet when arriving via deeplink (?openSettings=1).
@@ -1322,10 +1331,9 @@ export default function Profile({
   // Per-user contact nickname (WhatsApp-style rename). Loaded from the
   // chat_nickname_list endpoint on mount; overrides display name locally.
   const [nicknameValue, setNicknameValue] = useState('');
-  // Cross-platform nickname edit modal — Alert.prompt only works on iOS,
-  // so Android needs a real modal. State here so the menu can open it.
-  const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
-  const [nicknameDraft, setNicknameDraft] = useState('');
+  // Cross-platform nickname edit dialog — Alert.prompt only works on iOS,
+  // so Android needs a real dialog ([2026-10-18 profile-sheets] ProfileNicknameDialog,
+  // rascunho local: digitar não re-renderiza o perfil).
   // Per-contact "hide my status from this person" toggle (WhatsApp parity).
   // Backed by chat_user_privacy_contacts (email, contact_email, field='status',
   // visibility='hide'|'show'). Optimistic UI — flips immediately on tap,
@@ -3709,97 +3717,68 @@ export default function Profile({
     />
   );
 
+  // ── [2026-10-18 profile-sheets] ações das folhas (rodam DEPOIS que a folha fechou;
+  // no nativo, depois que o sheet do sistema desceu — runAfterNativeSheet na folha).
+  const _profSheetsNative = profileNativeSheetsOn(mode);
+  // (50 ms como antes: no Modal JS o iOS precisa que a folha saia antes do próximo Modal)
+  const _onHighlightEdit = useCallback((h) => { setTimeout(() => setHighlightEdit({ open: true, highlight: h }), 50); }, []);
+  const _onHighlightShare = useCallback((h) => { setTimeout(() => setHighlightShare({ open: true, highlight: h }), 50); }, []);
+  const _onHighlightDelete = useCallback(async (h) => {
+    if (!h) return;
+    try { await api.statusHighlightDelete?.(h.id); } catch {}
+    setHighlights(prev => prev.filter(x => x.id !== h.id));
+  }, []);
+  const saveNickname = useCallback(async (val) => {
+    const em = identity?.email;
+    if (!em) return;
+    try {
+      const { setNicknameLocal } = require('../services/nicknames');
+      const v = String(val || '').trim();
+      await api.chatNicknameSet(em, v);
+      setNicknameLocal(em, v);
+      setNicknameValue(v);
+    } catch {}
+  }, [identity?.email]);
+  const handleNicknameFromMenu = useCallback(() => {
+    if (!identity?.email) return;
+    if (WEB) {
+      if (typeof window === 'undefined' || !window.prompt) return;
+      const current = window.prompt(t?.('profile.nicknamePrompt') || 'Como você quer chamar essa pessoa? (deixa vazio pra remover)', nicknameValue || '');
+      if (current !== null) saveNickname(current);
+      return;
+    }
+    if (Platform.OS === 'ios') {
+      try {
+        Alert.prompt(
+          t?.('profile.nickname') || 'Apelido',
+          t?.('profile.nicknameHint') || 'Só você vê este nome.',
+          [
+            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+            { text: t?.('common.save') || 'Salvar', onPress: (txt) => saveNickname(txt) },
+          ],
+          'plain-text', nicknameValue || ''
+        );
+        return;
+      } catch {}
+    }
+    // Android (ou Alert.prompt indisponível): diálogo próprio.
+    _nickDialogRef.current?.open?.(nicknameValue || '');
+  }, [identity?.email, nicknameValue, saveNickname, t]);
+
   // [2026-05-18 IG-Pro] Action sheet for highlight long-press. For owners
   // we show Edit + Share + Delete; for viewers only Share. Routing into
   // HighlightEditSheet / HighlightShareSheet keeps Profile.js lean.
   const highlightActionSheetNode = (
-    <Modal
-      visible={!!highlightSheet.open}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setHighlightSheet({ open: false, highlight: null })}
-    >
-      <DragSheetRoot>
-      <Pressable
-        style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
-        onPress={() => setHighlightSheet({ open: false, highlight: null })}
-      >
-        <DragBackdrop drag={_drag3698} color="rgba(0,0,0,0.45)" />
-        <DragPanel drag={_drag3698} onStartShouldSetResponder={() => true}
-          
-          style={{
-            backgroundColor: colors?.background || (isDark ? '#1a1a1a' : '#fff'),
-            borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14), paddingTop: 8,
-          }}
-        >
-          <View style={{ alignItems: 'center', paddingBottom: 8 }}>
-            <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }} />
-          </View>
-          <Text style={{ textAlign: 'center', color: colors?.textSecondary, fontSize: 13, fontWeight: '600', paddingVertical: 8 }} numberOfLines={1}>
-            {highlightSheet.highlight?.title || ''}
-          </Text>
-          {highlightSheet.highlight?.isSelf ? (
-            <TouchableOpacity
-              onPress={() => {
-                const h = highlightSheet.highlight;
-                setHighlightSheet({ open: false, highlight: null });
-                setTimeout(() => setHighlightEdit({ open: true, highlight: h }), 50);
-              }}
-              style={menuItemStyle(colors)}
-            >
-              <IconEdit size={20} color={colors?.text} />
-              <Text style={{ color: colors?.text, fontSize: 16, fontWeight: '500' }}>
-                {t?.('profile.editHighlight') || 'Editar destaque'}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-          <TouchableOpacity
-            onPress={() => {
-              const h = highlightSheet.highlight;
-              setHighlightSheet({ open: false, highlight: null });
-              setTimeout(() => setHighlightShare({ open: true, highlight: h }), 50);
-            }}
-            style={menuItemStyle(colors)}
-          >
-            <IconShare size={20} color={colors?.text} />
-            <Text style={{ color: colors?.text, fontSize: 16, fontWeight: '500' }}>
-              {t?.('profile.shareHighlight') || 'Compartilhar destaque'}
-            </Text>
-          </TouchableOpacity>
-          {highlightSheet.highlight?.isSelf ? (
-            <TouchableOpacity
-              onPress={() => {
-                const h = highlightSheet.highlight;
-                setHighlightSheet({ open: false, highlight: null });
-                Alert.alert(
-                  t?.('profile.deleteHighlightTitle') || 'Apagar destaque?',
-                  t?.('profile.deleteHighlightHint') || 'Os status originais não são afetados.',
-                  [
-                    { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                    {
-                      text: t?.('common.delete') || 'Apagar',
-                      style: 'destructive',
-                      onPress: async () => {
-                        try { await api.statusHighlightDelete?.(h.id); } catch {}
-                        setHighlights(prev => prev.filter(x => x.id !== h.id));
-                      },
-                    },
-                  ]
-                );
-              }}
-              style={menuItemStyle(colors)}
-            >
-              <IconTrash size={20} color="#dc2626" />
-              <Text style={{ color: '#dc2626', fontSize: 16, fontWeight: '500' }}>
-                {t?.('common.delete') || 'Apagar'}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-        </DragPanel>
-      </Pressable>
-      </DragSheetRoot>
-    </Modal>
+    <ProfileHighlightMenuSheet
+      ref={_hlSheetRef}
+      native={_profSheetsNative}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      onEdit={_onHighlightEdit}
+      onShare={_onHighlightShare}
+      onDelete={_onHighlightDelete}
+    />
   );
 
   const highlightEditNode = (
@@ -3832,200 +3811,35 @@ export default function Profile({
   );
 
   const menuNode = !actions.is_self && identity ? (
-    <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-      <DragSheetRoot>
-      <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setMenuOpen(false)}>
-        <DragBackdrop drag={_drag3819} color="rgba(0,0,0,0.45)" />
-        <DragPanel drag={_drag3819} onStartShouldSetResponder={() => true}
-          
-          style={{
-            backgroundColor: colors?.background || '#fff',
-            borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14),
-          }}
-        >
-          <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
-            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-          </View>
-          <TouchableOpacity onPress={handleShareProfile} style={menuItemStyle(colors)}>
-            <IconShare size={20} color={colors?.text} />
-            <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>
-              {t?.('profile.share') || 'Compartilhar perfil'}
-            </Text>
-          </TouchableOpacity>
-          {identity?.email && identity.email !== currentUser?.email && (
-            <TouchableOpacity
-              onPress={() => {
-                setMenuOpen(false);
-                const current = typeof window !== 'undefined' && window.prompt
-                  ? window.prompt(t?.('profile.nicknamePrompt') || 'Como você quer chamar essa pessoa? (deixa vazio pra remover)', nicknameValue || '')
-                  : null;
-                // Native: use Alert.prompt (iOS only) or inline modal — fallback
-                // to a simple alert telling the user to edit via a future modal.
-                if (typeof window !== 'undefined' && current !== null) {
-                  (async () => {
-                    try {
-                      const api = require('../services/api');
-                      const { setNicknameLocal } = require('../services/nicknames');
-                      const val = String(current || '').trim();
-                      await api.chatNicknameSet(identity.email, val);
-                      setNicknameLocal(identity.email, val);
-                      setNicknameValue(val);
-                    } catch {}
-                  })();
-                } else if (Platform.OS === 'ios') {
-                  try {
-                    Alert.prompt(
-                      t?.('profile.nickname') || 'Apelido',
-                      t?.('profile.nicknameHint') || 'Só você vê este nome.',
-                      [
-                        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                        { text: t?.('common.save') || 'Salvar', onPress: async (txt) => {
-                          try {
-                            const api = require('../services/api');
-                            const { setNicknameLocal } = require('../services/nicknames');
-                            const val = String(txt || '').trim();
-                            await api.chatNicknameSet(identity.email, val);
-                            setNicknameLocal(identity.email, val);
-                            setNicknameValue(val);
-                          } catch {}
-                        }},
-                      ],
-                      'plain-text', nicknameValue || ''
-                    );
-                  } catch {}
-                } else {
-                  // Android: Alert.prompt doesn't exist. Open our custom
-                  // <NicknameEditModal> sheet (rendered below) so the user
-                  // can edit. Was an empty branch before, which made the
-                  // menu item look broken on Android phones.
-                  setNicknameDraft(nicknameValue || '');
-                  setNicknameModalOpen(true);
-                }
-              }}
-              style={menuItemStyle(colors)}
-            >
-              <IconEdit3 size={20} color={colors?.text} />
-              <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>
-                {nicknameValue
-                  ? `${t?.('profile.nicknameEdit') || 'Editar apelido'}: ${nicknameValue}`
-                  : (t?.('profile.nicknameAdd') || 'Adicionar apelido')}
-              </Text>
-            </TouchableOpacity>
-          )}
-          {identity?.email && identity.email !== currentUser?.email && (
-            // WhatsApp-style per-contact privacy: hide my status updates from
-            // just this person without going to Settings → Privacy → Status.
-            // Tapping the row anywhere flips the Switch (matches the rest of
-            // the sheet's tap target). Optimistic UI, see handleToggleHideStatus.
-            <TouchableOpacity
-              onPress={() => handleToggleHideStatus()}
-              activeOpacity={0.7}
-              style={[menuItemStyle(colors), { justifyContent: 'space-between' }]}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: hideStatusFromContact }}
-              accessibilityLabel={t?.('profile.hideStatusFromContact') || 'Ocultar status deste contato'}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
-                <IconEyeOff size={20} color={colors?.text} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>
-                    {t?.('profile.hideStatusFromContact') || 'Ocultar status deste contato'}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }}>
-                    {t?.('profile.hideStatusFromContactDesc') || 'Este contato não verá seus status'}
-                  </Text>
-                </View>
-              </View>
-              <NativeSwitch
-                value={hideStatusFromContact}
-                onValueChange={handleToggleHideStatus}
-                disabled={hideStatusSaving}
-                trackColor={{ false: '#767577', true: colors?.primary || '#111111' }}
-                thumbColor={Platform.OS === 'android' ? (hideStatusFromContact ? '#fff' : '#f4f3f4') : undefined}
-              />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={handleBlock} style={menuItemStyle(colors)}>
-            <IconLock size={20} color={colors?.text} />
-            <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>
-              {t?.('profile.block') || 'Bloquear'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleReport} style={menuItemStyle(colors)}>
-            <IconAlertTriangle size={20} color={colors?.error || '#ef4444'} />
-            <Text style={{ fontSize: 15, color: '#ef4444', fontWeight: '500' }}>
-              {t?.('profile.report') || 'Denunciar'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setMenuOpen(false)} style={{ alignItems: 'center', paddingVertical: 14, marginTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors?.border }}>
-            <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
-          </TouchableOpacity>
-        </DragPanel>
-      </Pressable>
-      </DragSheetRoot>
-    </Modal>
+    <ProfileMoreMenuSheet
+      ref={_moreSheetRef}
+      native={_profSheetsNative}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      showContactRows={!!identity?.email && identity.email !== currentUser?.email}
+      nicknameValue={nicknameValue}
+      hideStatusFromContact={hideStatusFromContact}
+      hideStatusSaving={hideStatusSaving}
+      onShare={handleShareProfile}
+      onNickname={handleNicknameFromMenu}
+      onToggleHideStatus={handleToggleHideStatus}
+      onBlock={handleBlock}
+      onReport={handleReport}
+    />
   ) : null;
 
-  // WhatsApp-style nickname editor — cross-platform Modal so Android
-  // also has a way to rename contacts (iOS-only Alert.prompt was the
-  // gap user reported as "não dá pra trocar nome").
+  // WhatsApp-style nickname editor — cross-platform so Android also has a way
+  // to rename contacts (iOS-only Alert.prompt was the gap "não dá pra trocar nome").
   const nicknameModalNode = !actions.is_self && identity?.email ? (
-    <Modal visible={nicknameModalOpen} transparent animationType="fade" onRequestClose={() => setNicknameModalOpen(false)}>
-      <Pressable onPress={() => setNicknameModalOpen(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-        <Pressable onPress={(e) => e.stopPropagation?.()} style={{
-          width: '100%', maxWidth: 360,
-          backgroundColor: colors?.surface || '#fff',
-          borderRadius: 18, padding: 20,
-          borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.08)',
-        }}>
-          <Text style={{ fontSize: 17, fontWeight: '700', color: colors?.text, marginBottom: 6 }}>
-            {t?.('profile.nickname') || 'Apelido'}
-          </Text>
-          <Text style={{ fontSize: 13, color: colors?.textSecondary, marginBottom: 14 }}>
-            {t?.('profile.nicknameHint') || 'Só você vê este nome. Pode trocar quando quiser.'}
-          </Text>
-          <TextInput
-            value={nicknameDraft}
-            onChangeText={setNicknameDraft}
-            placeholder={identity?.name || identity?.email?.split('@')[0] || ''}
-            placeholderTextColor={colors?.textTertiary}
-            autoFocus
-            maxLength={60}
-            style={{
-              fontSize: 16, color: colors?.text,
-              borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.12)',
-              borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
-              backgroundColor: colors?.background, height: 42, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
-            }}
-          />
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-            <TouchableOpacity
-              onPress={() => setNicknameModalOpen(false)}
-              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: colors?.background, borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.08)' }}
-            >
-              <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={async () => {
-                const val = nicknameDraft.trim();
-                setNicknameModalOpen(false);
-                try {
-                  const api = require('../services/api');
-                  const { setNicknameLocal } = require('../services/nicknames');
-                  await api.chatNicknameSet(identity.email, val);
-                  setNicknameLocal(identity.email, val);
-                  setNicknameValue(val);
-                } catch {}
-              }}
-              style={{ flex: 1, paddingVertical: 12, minHeight: 44, justifyContent: 'center', borderRadius: 12, alignItems: 'center', backgroundColor: colors?.primary || '#111111' }}
-            >
-              <Text style={{ fontSize: 15, color: colors?.onPrimary || '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    <ProfileNicknameDialog
+      ref={_nickDialogRef}
+      native={_profSheetsNative}
+      colors={colors}
+      t={t}
+      placeholder={identity?.name || identity?.email?.split('@')[0] || ''}
+      onSave={saveNickname}
+    />
   ) : null;
 
   // Inline self-profile edit. Updates identity locally on save so the UI
@@ -4173,85 +3987,25 @@ export default function Profile({
     }
   }, [fetchKey, t]);
 
+  const _onAvatarAddStatus = useCallback(() => { setStatusCameraOpen(true); }, []);
+  const _onAvatarEditPhoto = () => { if (_npEditOn && _npEdit.start()) return; setEditOpen(true); };
+  const _onAvatarViewPhoto = () => {
+    // Bug 7174: AvatarLightbox (foto em tela cheia c/ pinça e arrastar p/ fechar),
+    // não StoryViewer/HighlightViewer (cromado de story).
+    const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+    if (url) setAvatarLightboxOpen(true);
+  };
   const avatarActionNode = actions?.is_self ? (
-    <Modal visible={avatarActionOpen} transparent animationType="fade" onRequestClose={() => setAvatarActionOpen(false)}>
-      <DragSheetRoot>
-      <Pressable
-        style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
-        onPress={() => setAvatarActionOpen(false)}
-      >
-        <DragBackdrop drag={_drag4163} color="rgba(0,0,0,0.45)" />
-        <DragPanel drag={_drag4163} onStartShouldSetResponder={() => true}
-          
-          style={{
-            backgroundColor: colors?.background || '#fff',
-            borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14),
-            paddingTop: 8,
-          }}
-        >
-          <View style={{ alignItems: 'center', paddingTop: 6, paddingBottom: 10 }}>
-            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
-          </View>
-          {[
-            {
-              key: 'addStatus',
-              label: t?.('profile.avatarAddStatus') || 'Adicionar ao status',
-              hint: t?.('profile.avatarAddStatusHint') || 'Câmera + filtros, stickers e texto',
-              icon: <IconPlus size={20} color={colors?.text} />,
-              onPress: () => { setAvatarActionOpen(false); setStatusCameraOpen(true); },
-            },
-            {
-              key: 'editPhoto',
-              label: t?.('profile.avatarEditPhoto') || 'Mudar foto de perfil',
-              hint: t?.('profile.avatarEditPhotoHint') || 'Atualizar foto, nome, bio',
-              icon: <IconEdit size={20} color={colors?.text} />,
-              onPress: () => { setAvatarActionOpen(false); if (_npEditOn && _npEdit.start()) return; setEditOpen(true); },
-            },
-            {
-              key: 'viewPhoto',
-              label: t?.('profile.avatarView') || 'Ver foto',
-              hint: t?.('profile.avatarViewHint') || 'Em tela cheia',
-              icon: <IconGrid size={20} color={colors?.text} />,
-              onPress: () => {
-                setAvatarActionOpen(false);
-                // Bug 7174: was routing into StoryViewer / HighlightViewer
-                // which surfaced story chrome (progress bar, "0 visualizações"
-                // footer, purple bg) — user just wants to see THEIR profile
-                // photo full-screen. Use AvatarLightbox: plain dark fullscreen
-                // photo with pinch-zoom and swipe-down to dismiss, same UX
-                // as when viewing another user's avatar (WAVE 95).
-                const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
-                if (url) setAvatarLightboxOpen(true);
-              },
-            },
-          ].map((row) => (
-            <TouchableOpacity
-              key={row.key}
-              onPress={row.onPress}
-              activeOpacity={0.7}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
-            >
-              <View style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
-                {row.icon}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '600' }}>{row.label}</Text>
-                {!!row.hint && <Text style={{ fontSize: 12, color: isDark ? '#888' : '#999', marginTop: 2 }}>{row.hint}</Text>}
-              </View>
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity
-            onPress={() => setAvatarActionOpen(false)}
-            activeOpacity={0.7}
-            style={{ marginTop: 6, paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
-          >
-            <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
-          </TouchableOpacity>
-        </DragPanel>
-      </Pressable>
-      </DragSheetRoot>
-    </Modal>
+    <ProfileAvatarActionsSheet
+      ref={_avatarSheetRef}
+      native={_profSheetsNative}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      onAddStatus={_onAvatarAddStatus}
+      onEditPhoto={_onAvatarEditPhoto}
+      onViewPhoto={_onAvatarViewPhoto}
+    />
   ) : null;
 
   // [2026-05-26 P0 Android] StatusCamera is a heavy native component — it calls

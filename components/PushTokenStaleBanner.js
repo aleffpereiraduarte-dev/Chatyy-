@@ -29,8 +29,11 @@ const POLL_MS = 5000; // [perf 2026-10-06] was 1000 — the flag flips rarely; a
 // a cada 3 dias e 5 vezes no total por aparelho (era: some 7 dias ao fechar,
 // sem teto). Uma "vez" = uma sessão do app em que o aviso apareceu; dentro
 // dela continua visível até fechar. Sessão = processo JS (módulo).
+// [2026-10-18 notif-perm-card] o aviso de "negado" virou o CARTÃO no topo da lista de
+// conversas (NotifPermissionCard abaixo, mesmo limitador): no máximo 1× a cada 7 dias.
+// O cartão flutuante deste arquivo ficou só p/ o token velho (stale).
 const DENIED_RATE_KEY = 'push_denied_banner_v2';
-const DENIED_EVERY_MS = 3 * 24 * 3600e3;
+const DENIED_EVERY_MS = 7 * 24 * 3600e3;
 const DENIED_MAX_SHOWS = 5;
 let _deniedShownThisSession = false;
 let _deniedClosedThisSession = false;
@@ -56,6 +59,22 @@ function _markDeniedShown() {
 }
 function _markDeniedDismissed() {
   _deniedClosedThisSession = true;
+}
+// Permissão voltou (Ajustes / diálogo)? limpa o flag e re-registra o token na hora.
+async function _healIfGranted() {
+  try {
+    const Notifications = require('expo-notifications');
+    const perm = await Notifications.getPermissionsAsync();
+    if (perm?.status === 'granted') {
+      try { globalThis.__chatyy_push_denied = false; } catch {}
+      try {
+        const { retryPushTokenRegistration } = require('../services/pushNotifications');
+        retryPushTokenRegistration().catch(() => {});
+      } catch {}
+      return { granted: true, perm };
+    }
+    return { granted: false, perm };
+  } catch { return { granted: false, perm: null }; }
 }
 
 // [2026-10-14 redesign] Era uma faixa amarela colada no topo de TODAS as telas
@@ -84,9 +103,7 @@ export default function PushTokenStaleBanner() {
       if (!mounted) return;
       let flag = false;
       try { flag = !!globalThis.__chatyy_push_token_stale; } catch {}
-      try {
-        if (!flag && globalThis.__chatyy_push_denied && _deniedAllowed()) flag = true;
-      } catch {}
+      // [2026-10-18 notif-perm-card] "negado" agora é o NotifPermissionCard (topo da lista).
       setVisible(flag);
       // Auto-clear local dismiss state when the flag flips back to false
       // so a future recurrence shows the banner again.
@@ -104,16 +121,8 @@ export default function PushTokenStaleBanner() {
         let denied = false;
         try { denied = !!globalThis.__chatyy_push_denied; } catch {}
         if (!denied) return;
-        try {
-          const Notifications = require('expo-notifications');
-          const perm = await Notifications.getPermissionsAsync();
-          if (perm?.status === 'granted') {
-            try { globalThis.__chatyy_push_denied = false; } catch {}
-            if (mounted) setVisible(false);
-            const { retryPushTokenRegistration } = require('../services/pushNotifications');
-            retryPushTokenRegistration().catch(() => {});
-          }
-        } catch {}
+        const r = await _healIfGranted();
+        if (r.granted && mounted) setVisible(false);
       });
     } catch {}
     return () => { mounted = false; stopPoll(); try { sub?.remove?.(); } catch {} };
@@ -175,9 +184,7 @@ export default function PushTokenStaleBanner() {
 
   if (!HOME_PATHS.has(pathname || '')) return null;
 
-  let _deniedMode = false;
-  try { _deniedMode = !!globalThis.__chatyy_push_denied && !globalThis.__chatyy_push_token_stale; } catch {}
-  if (_deniedMode) _markDeniedShown();
+  const _deniedMode = false; // [2026-10-18 notif-perm-card] negado → NotifPermissionCard
   const title = (openSettingsMode || _deniedMode) ? t('pushBanner.offTitle') : t('pushBanner.staleTitle');
   const sub = retrying ? t('pushBanner.retrying') : (_deniedMode ? t('pushBanner.offSub') : t('pushBanner.sub'));
   const cta = t('pushBanner.ctaRetry');
@@ -228,7 +235,136 @@ export default function PushTokenStaleBanner() {
   );
 }
 
+// ── [2026-10-18 notif-perm-card] Cartão discreto no TOPO da lista de conversas ──
+// ~11% Android / ~20% iOS com notificações negadas. Explica o porquê e:
+//   • Android 13+ com canAskAgain → mostra o diálogo do SO de novo;
+//   • senão (iOS negado, Android bloqueado/<13) → Linking.openSettings().
+// Mesmo limitador do aviso antigo (1× a cada 7 dias, teto por aparelho);
+// "fechar" some na sessão. Sem emoji (ícone SVG).
+export function NotifPermissionCard() {
+  const { t } = useLanguage();
+  const { colors, isDark } = useTheme();
+  const [visible, setVisible] = useState(false);
+  const [askMode, setAskMode] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let mounted = true;
+    const tick = () => {
+      if (!mounted) return;
+      let on = false;
+      try { on = !!globalThis.__chatyy_push_denied && _deniedAllowed(); } catch {}
+      setVisible((v) => (v === on ? v : on));
+    };
+    tick();
+    const stopPoll = setActiveInterval(tick, POLL_MS);
+    let sub = null;
+    try {
+      sub = AppState.addEventListener('change', async (st) => {
+        if (st !== 'active' || !mounted) return;
+        let denied = false;
+        try { denied = !!globalThis.__chatyy_push_denied; } catch {}
+        if (!denied) return;
+        const r = await _healIfGranted();
+        if (r.granted && mounted) setVisible(false);
+      });
+    } catch {}
+    return () => { mounted = false; stopPoll(); try { sub?.remove?.(); } catch {} };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    _markDeniedShown();
+    let alive = true;
+    (async () => {
+      const r = await _healIfGranted();
+      if (!alive) return;
+      if (r.granted) { setVisible(false); return; }
+      const canAsk = Platform.OS === 'android' && Number(Platform.Version) >= 33 && r.perm?.canAskAgain !== false;
+      setAskMode(!!canAsk);
+    })();
+    return () => { alive = false; };
+  }, [visible]);
+
+  if (Platform.OS === 'web' || !visible) return null;
+
+  const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  const onPress = async () => {
+    if (busy) return;
+    if (askMode) {
+      setBusy(true);
+      try {
+        const Notifications = require('expo-notifications');
+        const res = await Notifications.requestPermissionsAsync();
+        if (res?.status === 'granted') {
+          await _healIfGranted();
+          setVisible(false);
+        } else if (res?.canAskAgain === false) {
+          setAskMode(false); // SO bloqueou de vez → próximo toque vai aos Ajustes
+        }
+      } catch {}
+      setBusy(false);
+      return;
+    }
+    try { await Linking.openSettings(); } catch {}
+  };
+  const onClose = () => { _markDeniedDismissed(); setVisible(false); };
+  const fg = colors.text;
+  const muted = colors.textSecondary;
+
+  return (
+    <View style={s.inlineWrap}>
+      <View
+        style={[s.inlineCard, {
+          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+          borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+        }]}
+        accessibilityLiveRegion="polite"
+      >
+        <View style={[s.iconWrap, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
+          {IconBell ? <IconBell size={18} color={fg} /> : null}
+        </View>
+        <View style={s.textCol}>
+          <Text style={[s.title, { color: fg }]} numberOfLines={1}>{tr('notifCard.title', 'Notificações desativadas')}</Text>
+          <Text style={[s.sub, { color: muted }]} numberOfLines={3}>
+            {tr('notifCard.body', 'Ative para receber mensagens e chamadas na hora, mesmo com o app fechado.')}
+          </Text>
+          <Pressable
+            onPress={onPress}
+            disabled={busy}
+            style={({ pressed }) => [s.inlineCta, { backgroundColor: colors.primary, opacity: pressed ? 0.8 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={askMode ? tr('notifCard.allow', 'Ativar notificações') : tr('notifCard.openSettings', 'Abrir ajustes')}
+          >
+            {busy
+              ? <ActivityIndicator size="small" color={colors.onPrimary} />
+              : <Text style={[s.ctaText, { color: colors.onPrimary }]} numberOfLines={1}>
+                  {askMode ? tr('notifCard.allow', 'Ativar notificações') : tr('notifCard.openSettings', 'Abrir ajustes')}
+                </Text>}
+          </Pressable>
+        </View>
+        <TouchableOpacity
+          onPress={onClose}
+          style={s.closeBtn}
+          accessibilityLabel={tr('pushBanner.dismiss', 'Fechar')}
+          accessibilityRole="button"
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          {IconX ? <IconX size={14} color={muted} /> : null}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
+  inlineWrap: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 6 },
+  inlineCard: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    paddingVertical: 12, paddingLeft: 12, paddingRight: 6, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth,
+  },
+  inlineCta: { alignSelf: 'flex-start', marginTop: 10, paddingHorizontal: 14, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', minWidth: 96 },
   wrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: 12, zIndex: 9999 },
   card: {
     width: '100%', maxWidth: 520, flexDirection: 'row', alignItems: 'center', gap: 12,

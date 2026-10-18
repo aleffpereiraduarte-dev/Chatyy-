@@ -3265,6 +3265,12 @@ function _navigateForNotification(data) {
       }
       return;
     }
+    // [2026-10-18 group-call-tap] Toque em "Chamada em grupo de X": entra na
+    // chamada se ainda estiver ativa; senão abre a conversa do grupo (antes: nada).
+    if (data.type === 'incoming_group_call') {
+      _openGroupCallFromPush(data).catch(() => {});
+      return;
+    }
     // [2026-10-17 notif-audit] Types that used to fall through to the e-mail
     // Inbox (reaction, missed call, status, wallet, security, group requests…).
     const _extra = _extraNotificationTarget(data);
@@ -3310,6 +3316,49 @@ function _feedPostTarget(data) {
 function _convHref(cid, extra) {
   return `/chat-conversation?id=${encodeURIComponent(_str(cid))}${extra || ''}`;
 }
+// [2026-10-18 group-call-tap] incoming_group_call → entrar (nativo ou /call joiner)
+// ou abrir a conversa do grupo quando a chamada já acabou / foi trancada.
+let _gcTapInflight = false;
+async function _openGroupCallFromPush(data) {
+  if (_gcTapInflight) return;
+  _gcTapInflight = true;
+  try {
+    const cid = _str(data.conversation_id).trim();
+    const gname = _str(data.group_name || data.conversation_name).trim();
+    const isVideo = data.video === '1' || data.video === true || data.is_video === '1' || data.is_video === true;
+    const convTarget = cid ? _convHref(cid, `&type=group${gname ? `&name=${encodeURIComponent(gname)}` : ''}`) : '';
+    let st = null;
+    if (cid) {
+      try {
+        const api = require('./api');
+        const r = await api.chatCallStateActive(cid);
+        const d = r?.data || r;
+        if (d && typeof d === 'object' && typeof d.active !== 'undefined') st = d;
+      } catch {}
+    }
+    const room = _str((st && (st.room || st.call_id)) || data.room_id || data.call_id).trim();
+    // Servidor respondeu "sem chamada" / trancada, ou não há sala → só abre o grupo.
+    if (!room || (st && (!st.active || st.locked))) {
+      if (convTarget) openConversation(convTarget, cid);
+      else _pushOverHome('/chat?tab=calls');
+      return;
+    }
+    let me = '';
+    try { me = String(globalThis.__chatyyMyEmail || '').toLowerCase(); } catch {}
+    try {
+      const ngc = require('./nativeGroupCall');
+      if (ngc.canUseNativeGroupCall(me)) {
+        const opened = await ngc.openNativeGroupCall({ callId: room, conversationId: cid, isVideo, isCaller: false, email: me });
+        if (opened) return;
+      }
+    } catch {}
+    const title = gname || _str(data.caller_name);
+    _pushOverHome(`/call?callId=${encodeURIComponent(room)}&conversationId=${encodeURIComponent(cid)}&isVideo=${isVideo ? '1' : '0'}&isCaller=0&groupCall=1&joining=1${title ? `&contactName=${encodeURIComponent(title)}` : ''}${gname ? `&groupName=${encodeURIComponent(gname)}` : ''}`);
+  } finally {
+    setTimeout(() => { _gcTapInflight = false; }, 1500);
+  }
+}
+
 // Returns {conv, cid} | {href} | false (handled, no navigation) | null (unknown).
 function _extraNotificationTarget(data) {
   const t = _str(data?.type);
@@ -3341,7 +3390,6 @@ function _extraNotificationTarget(data) {
         return { conv: _convHref(cid, `&type=direct${nm ? `&name=${encodeURIComponent(nm)}` : ''}${data.caller_email ? `&email=${encodeURIComponent(data.caller_email)}` : ''}`), cid };
       }
       return { href: '/chat?tab=calls' };
-    case 'incoming_group_call':
     case 'call_cancel':
     case 'call_end':
     case 'answered_elsewhere':

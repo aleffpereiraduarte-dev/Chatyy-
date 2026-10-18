@@ -45,6 +45,9 @@ const PROBE_MODULES = [
   // [2026-10-18 perf-telemetry] quadros/memória/saída
   'ChatyyPerf',
 ];
+// [2026-10-18] módulos que só existem num SO — sondá-los no outro gera falso "ausente"
+// (ChatyyNotifActions é Apple-only: 109/109 relatórios Android vinham com 0).
+const PROBE_ONLY_ON = { ChatyyNotifActions: 'ios' };
 // flags globais de fallback já usadas pelas telas (ErrorBoundary → JS)
 const FAILED_FLAGS = [
   'home', 'pins', 'inbox', 'status_list', 'calls', 'contacts', 'feed', 'channels', 'communities',
@@ -347,6 +350,7 @@ function _probeModules() {
     const { requireOptionalNativeModule } = require('expo-modules-core');
     if (typeof requireOptionalNativeModule !== 'function') return out;
     for (const m of PROBE_MODULES) {
+      if (PROBE_ONLY_ON[m] && PROBE_ONLY_ON[m] !== Platform.OS) continue;
       let v = 0;
       try {
         const mod = requireOptionalNativeModule(m);

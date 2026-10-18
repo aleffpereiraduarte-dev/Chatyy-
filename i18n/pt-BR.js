@@ -13629,4 +13629,10 @@ export default {
   "settings.nat.forwardTo": "Encaminhar para",
   "settings.nat.notSet": "Não definido",
   "settings.nat.timeHint": "Use o formato HH:MM (24 h).",
+  // [2026-10-18 notif-perm-card / group-info-page]
+  "notifCard.title": "Notificações desativadas",
+  "notifCard.body": "Ative para receber mensagens e chamadas na hora, mesmo com o app fechado.",
+  "notifCard.allow": "Ativar notificações",
+  "notifCard.openSettings": "Abrir ajustes",
+  "group.members.showMore": "Mostrar mais membros",
 };

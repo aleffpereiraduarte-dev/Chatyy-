@@ -87,6 +87,16 @@ function _payloadIsGroupCall(d) {
     || (typeof d.group_name === 'string' && d.group_name.length > 0);
 }
 
+// [2026-10-18 group-call-name] nome do grupo do 1º payload que tiver (group_name/groupName).
+function _groupNameOf(...objs) {
+  for (const d of objs) {
+    if (!d) continue;
+    const v = (typeof d.group_name === 'string' && d.group_name.trim()) || (typeof d.groupName === 'string' && d.groupName.trim());
+    if (v) return v;
+  }
+  return '';
+}
+
 export function triggerIncomingCall(data) {
   // Don't force-reset _callActive: a real call already in progress must
   // suppress further triggers (was a primary contributor to the double-UI
@@ -923,6 +933,7 @@ function IncomingCallListenerWeb() {
               call_id: data.call_id || data.room_id,
               room_id: data.room_id || data.call_id,
               video: _isVideoFlag(data.video),
+              ...(data.group_name ? { group_name: String(data.group_name), is_group: '1' } : null), // [2026-10-18 group-call-name]
             };
           }
           return;
@@ -1648,7 +1659,10 @@ function IncomingCallListenerWeb() {
                 // now (isGroupCall branch). Route the answerer there instead of
                 // the WebView /group-call. Same params as the 1:1 push below +
                 // groupCall=1 (mirrors app/call/[id].js:112-116).
-                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0&groupCall=1`);
+                // [2026-10-18 group-call-name] tela de grupo mostra o NOME DO GRUPO (não o de quem ligou).
+                const _gName = _groupNameOf(updatedCall, data);
+                const _gTitle = _gName || finalCallerName;
+                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(_gTitle)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0&groupCall=1${_gName ? `&groupName=${encodeURIComponent(_gName)}` : ''}`);
               } else {
                 router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
               }
@@ -1895,7 +1909,8 @@ function IncomingCallListenerWeb() {
                 // [group-native 2026-09-30] Native group grid in /call.js —
                 // route here instead of the WebView /group-call. Mirrors the
                 // 1:1 push below + groupCall=1.
-                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1&groupCall=1`);
+                const _gName = _groupNameOf(pending, callStateRef.current); // [2026-10-18 group-call-name]
+                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(_gName || callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1&groupCall=1${_gName ? `&groupName=${encodeURIComponent(_gName)}` : ''}`);
               } else {
                 router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
               }
@@ -2116,6 +2131,7 @@ function IncomingCallListenerWeb() {
     // Navigate to call screen as callee. Capture group flag from currentCall
     // before callStateRef is nulled above (group-answer grid routing).
     const _routeGroup = _payloadIsGroupCall(currentCall);
+    const _gName = _routeGroup ? _groupNameOf(currentCall) : ''; // [2026-10-18 group-call-name]
     setTimeout(() => {
       try {
         // [#1359 group-answer routing] Group answers → /group-call (LiveKit
@@ -2127,7 +2143,7 @@ function IncomingCallListenerWeb() {
         // grid inside /call.js (isGroupCall branch) instead of the WebView
         // /group-call. Same native /call params as the 1:1 branch + groupCall=1.
         const url = _routeGroup
-          ? `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}&groupCall=1`
+          ? `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(_gName || callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}&groupCall=1${_gName ? `&groupName=${encodeURIComponent(_gName)}` : ''}`
           : `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}`;
         router.push(url);
       } catch {}
@@ -2253,6 +2269,8 @@ function IncomingCallListenerWeb() {
     || call.caller_email?.split('@')[0]
     || '?';
   const callerEmail = call.caller_email || '';
+  // [2026-10-18 group-call-name] chamada de grupo: título = nome do grupo, subtítulo = quem ligou
+  const _ringGroupName = _payloadIsGroupCall(call) ? _groupNameOf(call) : '';
   const isVideo = _isVideoFlag(call.video);
   // Trust the backend flag — set when the caller has completed Telnyx
   // caller-id verification (PIN-confirmed phone in profile/data.json).
@@ -2299,8 +2317,8 @@ function IncomingCallListenerWeb() {
             <AvatarCircle name={callerName} email={callerEmail} size={110} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            <Text style={styles.callerName} numberOfLines={1}>{callerName}</Text>
-            {callerVerified && (
+            <Text style={styles.callerName} numberOfLines={1}>{_ringGroupName || callerName}</Text>
+            {callerVerified && !_ringGroupName && (
               <View
                 accessibilityLabel={t('call.verifiedCaller') || 'Verificado'}
                 accessibilityRole="image"
@@ -2311,7 +2329,7 @@ function IncomingCallListenerWeb() {
             )}
           </View>
           {callerPhone ? <Text style={[styles.callerEmail, { fontSize: 16, marginBottom: 2 }]}>{callerPhone}</Text> : null}
-          <Text style={styles.callerEmail}>{callerEmail}</Text>
+          <Text style={styles.callerEmail}>{_ringGroupName ? callerName : callerEmail}</Text>
         </View>
 
         {/* Bottom - Accept / Decline */}

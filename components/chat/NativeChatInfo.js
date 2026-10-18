@@ -279,7 +279,8 @@ export default function NativeChatInfo(props) {
 // Servidor velho (sem members_total) → lista completa filtrada aqui.
 const PAGE = 80;
 
-export function useGroupMembersPager({ api, conversationId, enabled, version, fallback }) {
+export function useGroupMembersPager({ api, conversationId, enabled, version, fallback, pageSize }) {
+  const _page = (Number(pageSize) > 0 ? Math.min(500, Math.floor(Number(pageSize))) : PAGE); // [2026-10-18 group-info-page] JS fallback usa 50
   const [state, setState] = useState({ items: [], total: 0, next: null, loading: false, q: '' });
   const reqRef = useRef(0);
   const qRef = useRef('');
@@ -299,7 +300,7 @@ export function useGroupMembersPager({ api, conversationId, enabled, version, fa
     let r = null;
     try {
       r = await (api.chatMembersPage
-        ? api.chatMembersPage(conversationId, { limit: PAGE, offset, q })
+        ? api.chatMembersPage(conversationId, { limit: _page, offset, q })
         : api.chatMembers(conversationId));
     } catch { r = null; }
     if (my !== reqRef.current) return;
@@ -322,7 +323,7 @@ export function useGroupMembersPager({ api, conversationId, enabled, version, fa
       const add = d.members.filter((m) => { const k = String(m.email || '').toLowerCase(); if (!k || seen.has(k)) return false; seen.add(k); return true; });
       return { items: base.concat(add), total: Number(d.members_total) || 0, next: d.members_next_offset == null ? null : Number(d.members_next_offset), loading: false, q };
     });
-  }, [api, conversationId, localSlice]);
+  }, [api, conversationId, localSlice, _page]);
 
   useEffect(() => {
     if (!enabled || !conversationId) return;

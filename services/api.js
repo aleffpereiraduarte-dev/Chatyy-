@@ -8073,8 +8073,17 @@ export async function callScheduleJoin(id) {
   return apiCall('call_schedule_join', { id }, 'POST');
 }
 
-export async function chatGroupInfo(conversationId) {
-  return apiCall('chat_group_info', { conversation_id: conversationId });
+// [2026-10-18 group-info-page] opts.membersLimit (1..500) → servidor devolve só a
+// 1ª página (eu, admins, A–Z) + members_total/members_next_offset. Sem opts = lista
+// completa (comportamento antigo; servidor velho ignora o param e devolve todos).
+export async function chatGroupInfo(conversationId, opts = null) {
+  const params = { conversation_id: conversationId };
+  const lim = opts && Number(opts.membersLimit);
+  if (lim > 0) {
+    params.members_limit = Math.min(500, Math.floor(lim));
+    if (opts.membersOffset > 0) params.members_offset = Math.floor(Number(opts.membersOffset));
+  }
+  return apiCall('chat_group_info', params);
 }
 
 export async function chatUpdateGroup(conversationId, updates) {

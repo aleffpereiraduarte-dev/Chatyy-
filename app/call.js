@@ -26,12 +26,12 @@
 //     setCameraEnabled)
 //   - Manual audio session juggling per-toggle (LiveKit AudioSession owns it)
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
   Modal, Pressable, ScrollView, ActivityIndicator,
-  PermissionsAndroid, ActionSheetIOS,
+  PermissionsAndroid, ActionSheetIOS, FlatList,
 } from 'react-native';
 
 // [2026-05-15 #976] Android needs explicit runtime CAMERA permission grant.
@@ -350,6 +350,94 @@ function _nudgeKeyframe(pub) {
     }
   } catch {}
 }
+
+// ───── [2026-10-18 group-grid-perf] estado POR PARTICIPANTE da grade ─────
+// Antes: cada mudança (falando, mic, câmera) fazia setGroupPeers(new Map(...)) →
+// re-render da tela inteira + de TODOS os tiles. Agora o Map (groupPeersRef)
+// guarda entradas imutáveis por identidade, cada tile assina só a SUA entrada
+// (useSyncExternalStore) e a tela só re-renderiza quando o ROSTER muda
+// (entrou/saiu/tela compartilhada).
+function _createGroupPeerStore(mapRef) {
+  const subs = new Map();
+  return {
+    get: (id) => mapRef.current.get(id),
+    subscribe: (id, cb) => {
+      let set = subs.get(id);
+      if (!set) { set = new Set(); subs.set(id, set); }
+      set.add(cb);
+      return () => { set.delete(cb); if (!set.size) subs.delete(id); };
+    },
+    notify: (id) => {
+      const set = subs.get(id);
+      if (set) set.forEach((cb) => { try { cb(); } catch {} });
+    },
+  };
+}
+function _groupRosterOf(map) {
+  const ids = [];
+  const shares = [];
+  for (const [id, p] of map.entries()) {
+    ids.push(id);
+    if (p && p.screenTrack) shares.push(id + '@' + String(p.screenTrack.sid || p.screenTrack.mediaStreamTrack?.id || '1'));
+  }
+  return { ids, shares, key: ids.join('|') + '#' + shares.join('|') };
+}
+const _NOOP_UNSUB = () => {};
+const _noopSubscribe = () => _NOOP_UNSUB;
+function _gridTilePropsEqual(a, b) {
+  if (a.tileKey !== b.tileKey || a.store !== b.store || a.w !== b.w || a.h !== b.h
+    || a.pinned !== b.pinned || a.onTogglePin !== b.onTogglePin || a.youLabel !== b.youLabel) return false;
+  const sa = a.self; const sb = b.self;
+  if (sa === sb) return true;
+  if (!sa || !sb) return false;
+  return sa.name === sb.name && sa.email === sb.email && sa.videoTrack === sb.videoTrack
+    && sa.mirror === sb.mirror && sa.micMuted === sb.micMuted;
+}
+const GroupGridTile = React.memo(function GroupGridTile({ tileKey, store, self, w, h, pinned, onTogglePin, youLabel }) {
+  const sub = useCallback((cb) => (self || !store ? _NOOP_UNSUB : store.subscribe(tileKey, cb)), [store, tileKey, self]);
+  const snap = useCallback(() => (self || !store ? null : store.get(tileKey)), [store, tileKey, self]);
+  const p = useSyncExternalStore(self ? _noopSubscribe : sub, snap, snap);
+  if (!self && !p) return null;
+  let name; let email; let videoTrack; let mirror = false; let isSpeaking = false; let micMuted = false;
+  if (self) {
+    ({ name, email, videoTrack, mirror, micMuted } = self);
+  } else {
+    const vt = p.videoTrack || null;
+    name = p.name || String(tileKey || '').split('@')[0];
+    email = tileKey;
+    // Mesma regra do tile único: vídeo só com câmera viva e não mutada; senão avatar.
+    videoTrack = (vt && !p.videoMuted && !vt.isMuted) ? vt : null;
+    isSpeaking = !!p.isSpeaking;
+    micMuted = !!p.micMuted;
+  }
+  const avatarSize = Math.min(84, Math.round(Math.min(w, h) * 0.42));
+  return (
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onPress={() => onTogglePin(tileKey)}
+      style={[
+        styles.groupTile,
+        { width: w, height: h },
+        isSpeaking && styles.groupTileSpeaking,
+        pinned && styles.groupTilePinned,
+      ]}
+    >
+      {videoTrack && LK_VideoView ? (
+        <LK_VideoView videoTrack={videoTrack} style={StyleSheet.absoluteFill} objectFit="cover" zOrder={0} mirror={!!mirror} />
+      ) : (
+        <View style={styles.groupTileAvatar}>
+          <AvatarCircle email={email} name={name} size={avatarSize} />
+        </View>
+      )}
+      <View pointerEvents="none" style={styles.groupTileLabelWrap}>
+        {micMuted
+          ? <IconMicOff size={12} color="#f87171" />
+          : (isSpeaking && <View style={styles.groupTileSpeakingDot} />)}
+        <Text style={styles.groupTileName} numberOfLines={1}>{self ? youLabel : name}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}, _gridTilePropsEqual);
 
 function CallScreenInner() {
   useEffect(() => { initCallModules(); }, []);
@@ -925,8 +1013,28 @@ function CallScreenInner() {
   const [localVideoTrack, setLocalVideoTrack] = useState(null);
   // Group: keep a map of remote participant identity → { participant, videoTrack, name }
   // The 1:1 UI ignores this; the group renderer can read it.
-  const [groupPeers, setGroupPeers] = useState(new Map());
+  // [2026-10-18 group-grid-perf] roster (ids + telas) no estado; dados por peer no store.
   const groupPeersRef = useRef(new Map());
+  const groupPeerStore = useMemo(() => _createGroupPeerStore(groupPeersRef), []);
+  const [groupRoster, setGroupRoster] = useState(() => ({ ids: [], shares: [], key: '#' }));
+  const groupRosterKeyRef = useRef('#');
+  const _syncGroupRoster = useCallback(() => {
+    const r = _groupRosterOf(groupPeersRef.current);
+    if (r.key === groupRosterKeyRef.current) return;
+    groupRosterKeyRef.current = r.key;
+    setGroupRoster(r);
+  }, []);
+  const [gridPage, setGridPage] = useState(0);
+  const gridListRef = useRef(null);
+  // callback ESTÁVEL p/ os tiles memoizados (ref → nunca muda de identidade)
+  const _gridTogglePinRef = useRef(null);
+  if (!_gridTogglePinRef.current) {
+    _gridTogglePinRef.current = (k) => {
+      setPinnedPeerKey((prev) => (prev === k ? null : k));
+      setGridPage(0);
+      try { gridListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
+    };
+  }
   // [group-grid 2026-09-30] Tap-to-pin (grid focus) for the native N-tile group
   // grid. Render-only: selects which tile spans full-width; never touches
   // publish/subscribe. 1:1 path ignores this entirely.
@@ -937,8 +1045,8 @@ function CallScreenInner() {
   // de 1:1 via isGroupCall. Grudento: não volta para 1:1 se alguém sair.
   const [promotedGroup, setPromotedGroup] = useState(false);
   useEffect(() => {
-    if (!promotedGroup && groupPeers.size >= 2) setPromotedGroup(true);
-  }, [groupPeers, promotedGroup]);
+    if (!promotedGroup && groupRoster.ids.length >= 2) setPromotedGroup(true);
+  }, [groupRoster, promotedGroup]);
   const gridMode = isGroupCall || promotedGroup;
 
   // [WAVE 68 2026-05-21] Progressive connect-phase state machine.
@@ -1591,17 +1699,20 @@ function CallScreenInner() {
   // ───── Group: maintain a peer map ─────
   const _updateGroupPeer = useCallback((identity, updates) => {
     if (!identity) return;
-    const existing = groupPeersRef.current.get(identity) || {};
-    groupPeersRef.current.set(identity, { ...existing, ...updates });
-    setGroupPeers(new Map(groupPeersRef.current));
-  }, []);
+    const existing = groupPeersRef.current.get(identity);
+    if (existing && updates && Object.keys(updates).every((k) => existing[k] === updates[k])) return; // nada mudou
+    groupPeersRef.current.set(identity, { ...(existing || {}), ...updates });
+    groupPeerStore.notify(identity);
+    _syncGroupRoster();
+  }, [groupPeerStore, _syncGroupRoster]);
   const _removeGroupPeer = useCallback((identity) => {
     if (!identity) return;
     if (groupPeersRef.current.has(identity)) {
       groupPeersRef.current.delete(identity);
-      setGroupPeers(new Map(groupPeersRef.current));
+      groupPeerStore.notify(identity);
+      _syncGroupRoster();
     }
-  }, []);
+  }, [groupPeerStore, _syncGroupRoster]);
   // [group-call 2026-10-04] Re-derive a peer's live video track + mic-muted
   // state from the CURRENT publication set and push it into the grid entry.
   // Called on TrackSubscribed/Unsubscribed/Muted/Unmuted so a remote toggling
@@ -1624,6 +1735,7 @@ function CallScreenInner() {
       participant,
       name: participant.name || participant.identity,
       videoTrack: cam || null,
+      videoMuted: !!(cam && cam.isMuted), // [2026-10-18 group-grid-perf] mute da câmera muda a entrada (mesmo track)
       screenTrack: screen || null, // [chamadas-grupo 2026-10-14] tela compartilhada vira tile próprio
       micMuted,
     });
@@ -2960,16 +3072,15 @@ function CallScreenInner() {
         // Group: mark `isSpeaking` on every known peer so the renderer can
         // dim non-speakers (opacity 0.6 vs 1.0) and float a "X está falando"
         // tag over the active tile.
+        // [2026-10-18 group-grid-perf] só os tiles que mudaram re-renderizam (sem re-render da tela).
         const speakingIds = new Set(remoteSpeakers.map(p => p.identity));
-        let changed = false;
         for (const [identity, entry] of groupPeersRef.current.entries()) {
           const next = speakingIds.has(identity);
           if (!!entry.isSpeaking !== next) {
             groupPeersRef.current.set(identity, { ...entry, isSpeaking: next });
-            changed = true;
+            groupPeerStore.notify(identity);
           }
         }
-        if (changed) setGroupPeers(new Map(groupPeersRef.current));
       } catch {}
     });
 
@@ -5697,45 +5808,32 @@ function CallScreenInner() {
           / status strip (zIndex 10/11 inside the overlay) and the control bar
           (zIndex 20, root sibling) stay visible and on top. */}
       {gridMode && LK_VideoView && peerConnected && (() => {
-        const tiles = [];
-        // [chamadas-grupo 2026-10-14] tela compartilhada = tile próprio, primeiro e largura total.
+        // [2026-10-18 group-grid-perf] tiles memoizados por identidade (GroupGridTile assina a
+        // própria entrada no store) e PÁGINAS de até 6 (4 com tela compartilhada) em vez de
+        // ScrollView: páginas fora da tela desmontam (menos decodificação de vídeo).
         const shareTiles = [];
-        for (const [ident, p] of groupPeers.entries()) {
-          if (p?.screenTrack) shareTiles.push({ key: ident + '::screen', isScreen: true, name: p?.name || (ident || '').split('@')[0], email: ident, videoTrack: p.screenTrack });
+        for (const ident of groupRoster.ids) {
+          const p = groupPeersRef.current.get(ident);
+          if (p?.screenTrack) shareTiles.push({ key: ident + '::screen', name: p?.name || (ident || '').split('@')[0], videoTrack: p.screenTrack });
         }
         // Local participant first (self-view). Video only when the camera is on.
-        tiles.push({
-          key: '__self__',
-          isLocal: true,
+        const selfTile = {
           name: user?.name || (user?.email || '').split('@')[0] || (t('call.you') || 'Você'),
           email: user?.email || '',
           videoTrack: (videoEnabled && localVideoTrack) ? localVideoTrack : null,
           mirror: facingFront,
-          isSpeaking: false,
           micMuted: audioMuted,
-        });
-        for (const [ident, p] of groupPeers.entries()) {
-          const vt = p?.videoTrack || null;
-          tiles.push({
-            key: ident,
-            isLocal: false,
-            name: p?.name || (ident || '').split('@')[0],
-            email: ident,
-            // Mirror the single-tile guard: show video when a live, unmuted
-            // camera track exists; otherwise fall back to the avatar.
-            videoTrack: (vt && !vt.isMuted) ? vt : null,
-            mirror: false,
-            isSpeaking: !!p?.isSpeaking,
-            micMuted: !!p?.micMuted,
-          });
-        }
+        };
+        const keys = ['__self__', ...groupRoster.ids];
+        const youLabel = t('call.you') || 'Você';
+        const _togglePin = _gridTogglePinRef.current;
 
-        // [chamadas-grupo 2026-10-14] Grade estilo WhatsApp: 2 pessoas = uma em cima da outra (tela
-        // cheia cada metade), 3–4 = 2x2, 5–9 = 3 colunas, 10+ = 3 colunas com
-        // rolagem (antes: 2 colunas até 4, sem rolagem → tiles saíam da tela).
+        // [chamadas-grupo 2026-10-14] Grade estilo WhatsApp: 2 pessoas = uma em cima da outra,
+        // 3–4 = 2x2, 5–6 = 3 colunas; acima disso, páginas de 6 (2x3) com deslize lateral.
         // Com tela compartilhada, ela ocupa o topo e as câmeras viram faixa menor.
-        const n = tiles.length;
-        const cols = n <= 2 ? 1 : (n <= 4 ? 2 : 3);
+        const n = keys.length;
+        const perPage = shareTiles.length ? 4 : 6;
+        const paged = n > perPage;
         const gap = 6;
         const topPad = insets.top + 52;
         const botPad = insets.bottom + 150;
@@ -5743,68 +5841,97 @@ function CallScreenInner() {
         const availH0 = Math.max(160, SCREEN_H - topPad - botPad);
         const shareH = shareTiles.length ? Math.round(availH0 * (n <= 2 ? 0.6 : 0.5)) : 0;
         const availH = Math.max(120, availH0 - (shareTiles.length ? (shareH + gap) * shareTiles.length : 0));
-        const rowsFit = n > 9 ? 4 : Math.max(1, Math.ceil(n / cols));
-        const tileW = Math.floor((availW - gap * (cols - 1)) / cols);
-        const tileH = Math.max(90, Math.min(cols === 1 ? availH : Math.round(tileW * 1.35), Math.floor((availH - gap * (rowsFit - 1)) / rowsFit)));
-        const scroll = n > 9 || (shareTiles.length > 0 && n > 4);
-        const Grid = scroll ? ScrollView : View;
-        const gridProps = scroll
-          ? { contentContainerStyle: [styles.groupGridContent, { flex: 0, paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }], showsVerticalScrollIndicator: false, style: StyleSheet.absoluteFill }
-          : { pointerEvents: 'box-none', style: [styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }] };
+        const renderShare = (st) => (
+          <View key={st.key} style={[styles.groupTile, { width: availW, height: shareH, backgroundColor: '#000' }]}>
+            <LK_VideoView videoTrack={st.videoTrack} style={StyleSheet.absoluteFill} objectFit="contain" zOrder={0} mirror={false} />
+            <View pointerEvents="none" style={styles.groupTileLabelWrap}>
+              <Text style={styles.groupTileName} numberOfLines={1}>{(t('call.screenOf') || 'Tela de {name}').replace('{name}', st.name)}</Text>
+            </View>
+          </View>
+        );
+        const renderTile = (k, w, h) => (
+          <GroupGridTile
+            key={k}
+            tileKey={k}
+            store={groupPeerStore}
+            self={k === '__self__' ? selfTile : null}
+            w={w}
+            h={h}
+            pinned={pinnedPeerKey === k}
+            onTogglePin={_togglePin}
+            youLabel={youLabel}
+          />
+        );
 
+        if (!paged) {
+          const cols = n <= 2 ? 1 : (n <= 4 ? 2 : 3);
+          const rowsFit = Math.max(1, Math.ceil(n / cols));
+          const tileW = Math.floor((availW - gap * (cols - 1)) / cols);
+          const tileH = Math.max(90, Math.min(cols === 1 ? availH : Math.round(tileW * 1.35), Math.floor((availH - gap * (rowsFit - 1)) / rowsFit)));
+          return (
+            <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 6 }]}>
+              <View pointerEvents="box-none" style={[styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }]}>
+                {shareTiles.map(renderShare)}
+                {keys.map((k) => {
+                  const pinned = pinnedPeerKey === k;
+                  return renderTile(k, pinned ? availW : tileW, pinned ? Math.round(availH * 0.55) : tileH);
+                })}
+              </View>
+            </View>
+          );
+        }
+
+        // Paginado: tile fixado = página própria (tela cheia) na frente; resto em blocos.
+        const pinnedK = pinnedPeerKey && keys.includes(pinnedPeerKey) ? pinnedPeerKey : null;
+        const rest = pinnedK ? keys.filter((k) => k !== pinnedK) : keys;
+        const pages = pinnedK ? [[pinnedK]] : [];
+        for (let i = 0; i < rest.length; i += perPage) pages.push(rest.slice(i, i + perPage));
+        const rows = perPage / 2;
+        const pTileW = Math.floor((availW - gap) / 2);
+        const pTileH = Math.max(90, Math.floor((availH - gap * (rows - 1)) / rows));
+        const shareBlock = shareTiles.length ? (shareH + gap) * shareTiles.length : 0;
+        const pageTop = topPad + shareBlock;
+        const curPage = Math.min(gridPage, pages.length - 1);
         return (
           <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 6 }]}>
-            <Grid {...gridProps}>
-              {shareTiles.map((st) => (
-                <View key={st.key} style={[styles.groupTile, { width: availW, height: shareH, backgroundColor: '#000' }]}>
-                  <LK_VideoView videoTrack={st.videoTrack} style={StyleSheet.absoluteFill} objectFit="contain" zOrder={0} mirror={false} />
-                  <View pointerEvents="none" style={styles.groupTileLabelWrap}>
-                    <Text style={styles.groupTileName} numberOfLines={1}>{(t('call.screenOf') || 'Tela de {name}').replace('{name}', st.name)}</Text>
-                  </View>
+            {shareTiles.length > 0 && (
+              <View pointerEvents="box-none" style={{ position: 'absolute', top: topPad, left: gap, right: gap, gap }}>
+                {shareTiles.map(renderShare)}
+              </View>
+            )}
+            <FlatList
+              ref={gridListRef}
+              horizontal
+              pagingEnabled
+              data={pages}
+              keyExtractor={(pg, i) => (pg.length === 1 && pg[0] === pinnedK ? 'pin' : 'p' + i)}
+              extraData={`${pinnedPeerKey || ''}|${selfTile.videoTrack ? 1 : 0}|${selfTile.micMuted ? 1 : 0}|${selfTile.mirror ? 1 : 0}`}
+              getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
+              initialNumToRender={1}
+              maxToRenderPerBatch={1}
+              windowSize={3}
+              removeClippedSubviews={Platform.OS === 'android'}
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(e) => {
+                const x = e?.nativeEvent?.contentOffset?.x || 0;
+                setGridPage(Math.max(0, Math.round(x / SCREEN_W)));
+              }}
+              style={{ position: 'absolute', left: 0, right: 0, top: pageTop, height: availH }}
+              renderItem={({ item: pg }) => (
+                <View style={{ width: SCREEN_W, height: availH, paddingHorizontal: gap, flexDirection: 'row', flexWrap: 'wrap', alignContent: 'center', justifyContent: 'center', gap }}>
+                  {pg.length === 1 && pg[0] === pinnedK
+                    ? renderTile(pg[0], availW, availH)
+                    : pg.map((k) => renderTile(k, pTileW, pTileH))}
                 </View>
-              ))}
-              {tiles.map((tile) => {
-                const pinned = pinnedPeerKey === tile.key;
-                const w = pinned ? availW : tileW;
-                const h = pinned ? Math.round(availH * 0.55) : tileH;
-                const avatarSize = Math.min(84, Math.round(Math.min(w, h) * 0.42));
-                return (
-                  <TouchableOpacity
-                    key={tile.key}
-                    activeOpacity={0.9}
-                    onPress={() => setPinnedPeerKey(prev => (prev === tile.key ? null : tile.key))}
-                    style={[
-                      styles.groupTile,
-                      { width: w, height: h },
-                      tile.isSpeaking && styles.groupTileSpeaking,
-                      pinned && styles.groupTilePinned,
-                    ]}
-                  >
-                    {tile.videoTrack ? (
-                      <LK_VideoView
-                        videoTrack={tile.videoTrack}
-                        style={StyleSheet.absoluteFill}
-                        objectFit="cover"
-                        zOrder={0}
-                        mirror={tile.mirror}
-                      />
-                    ) : (
-                      <View style={styles.groupTileAvatar}>
-                        <AvatarCircle email={tile.email} name={tile.name} size={avatarSize} />
-                      </View>
-                    )}
-                    <View pointerEvents="none" style={styles.groupTileLabelWrap}>
-                      {tile.micMuted
-                        ? <IconMicOff size={12} color="#f87171" />
-                        : (tile.isSpeaking && <View style={styles.groupTileSpeakingDot} />)}
-                      <Text style={styles.groupTileName} numberOfLines={1}>
-                        {tile.isLocal ? (t('call.you') || 'Você') : tile.name}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </Grid>
+              )}
+            />
+            {pages.length > 1 && (
+              <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, top: pageTop + availH + 8, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
+                {pages.map((_, i) => (
+                  <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: i === curPage ? '#FFFFFF' : 'rgba(255,255,255,0.35)' }} />
+                ))}
+              </View>
+            )}
           </View>
         );
       })()}

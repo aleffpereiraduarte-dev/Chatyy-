@@ -24934,10 +24934,35 @@ function ChatConversationInner() {
     try {
       // [2026-10-07 group-admin] chatMembers and chatGroupInfo hit the SAME
       // endpoint (chat_info alias) — one round-trip is enough.
-      const info = await api.chatGroupInfo(conversationId);
+      // [2026-10-18 group-info-page] só a 1ª página (50) a cada abertura — antes
+      // vinha o roster INTEIRO. Resposta paginada (members_total) NÃO substitui
+      // o roster do chat (menções/nomes): só atualiza/adiciona as linhas da página.
+      const info = await api.chatGroupInfo(conversationId, { membersLimit: 50 });
       if (info?.success) {
         const conv = info.data?.conversation || info.data || {};
-        if (Array.isArray(conv.members)) setMembers(conv.members);
+        if (Array.isArray(conv.members)) {
+          if (conv.members_total == null) setMembers(conv.members);
+          else {
+            const page = conv.members;
+            setMembers((prev) => {
+              const base = Array.isArray(prev) ? prev : [];
+              if (!base.length) return page;
+              const byEmail = new Map(page.map((m) => [String(m?.email || '').toLowerCase(), m]));
+              let changed = false;
+              const next = base.map((m) => {
+                const k = String(m?.email || '').toLowerCase();
+                const u = byEmail.get(k);
+                if (!u) return m;
+                byEmail.delete(k);
+                if (u.role === m.role && u.display_name === m.display_name) return m;
+                changed = true;
+                return { ...m, ...u };
+              });
+              byEmail.forEach((u) => { if (u && u.email) { next.push(u); changed = true; } });
+              return changed ? next : prev;
+            });
+          }
+        }
         applyGroupFlags(conv);
         // Pending join requests — admins only (non-admin would just 403).
         const meRow = (conv.members || []).find(m => (m?.email || '').toLowerCase() === (currentEmail || '').toLowerCase());
@@ -25513,13 +25538,26 @@ function ChatConversationInner() {
   };
   const [groupEditor, setGroupEditor] = _useStateT(null); // 'name' | 'description' | null
   const _ciRosterKey = `${(members || []).length}|${(members || []).filter((m) => m && m.role === 'admin').map((m) => m.email).join(',')}`;
+  // [2026-10-18 group-info-page] o pager também alimenta a folha JS (fallback):
+  // antes ela renderizava o roster inteiro num ScrollView a cada abertura.
   const _ciPager = useGroupMembersPager({
     api,
     conversationId,
-    enabled: _ciOn && showGroupInfo && conversationType === 'group' && !exMember,
+    enabled: showGroupInfo && conversationType === 'group' && !exMember,
     version: _ciRosterKey,
     fallback: members,
+    pageSize: _ciOn ? 80 : 50,
   });
+  // Busca da folha JS → servidor (members_q), com debounce; a nativa chama onMemberQuery.
+  const _giSentQRef = useRef('');
+  useEffect(() => {
+    if (_ciOn || !showGroupInfo || conversationType !== 'group') return undefined;
+    const q = String(memberSearchQuery || '').trim();
+    if (q === _giSentQRef.current) return undefined;
+    const id = setTimeout(() => { _giSentQRef.current = q; try { _ciPager.setQuery(q); } catch {} }, 280);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberSearchQuery, _ciOn, showGroupInfo, conversationType]);
   const _ciTr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
   // ── [2026-10-18 chat-info-push] Dados do contato/grupo como ROTA EMPURRADA
   // (app/chat-info/[id].js): swipe-back nativo, pilha de verdade. Esta tela
@@ -41979,7 +42017,7 @@ function ChatConversationInner() {
               {/* Member search box — only renders when there are enough members
                   to make filtering useful (4+). Below that, a search row is more
                   visual chrome than help. */}
-              {members.length >= 4 && (
+              {Math.max((members || []).length, Number(_ciPager.total) || 0) >= 4 && (
                 <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 6 }}>
                   <View style={{
                     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -42030,7 +42068,7 @@ function ChatConversationInner() {
                 </View>
               )}
               {/* [2026-10-10] Só separa a BUSCA da lista — sem busca, o divisor de "Adicionar" já basta (era linha dupla). */}
-              {members.length >= 4 && <GroupDivider colors={colors} inset={0} />}
+              {Math.max((members || []).length, Number(_ciPager.total) || 0) >= 4 && <GroupDivider colors={colors} inset={0} />}
             {/* Sort members: current user first, then admins, then others alphabetically by display name.
                 Server ordering is creation-time which is stable but not particularly helpful — putting
                 "você" at the top mirrors WhatsApp/Telegram convention and makes it easier to spot
@@ -42040,7 +42078,12 @@ function ChatConversationInner() {
               // then role chip narrow-down. Done BEFORE the sort so the
               // role-first ordering still works on the filtered subset.
               const q = (memberSearchQuery || '').trim().toLowerCase();
-              const filtered = (members || []).filter(m => {
+              // [2026-10-18 group-info-page] fonte = pager do servidor (50/página, já
+              // ordenado eu → admins → A–Z, busca members_q); sem resposta ainda → roster local.
+              const _gpItems = Array.isArray(_ciPager.items) ? _ciPager.items : [];
+              const _gpPaged = _gpItems.length > 0;
+              const _gpHasMore = _gpPaged && !!_ciPager.hasMore;
+              const filtered = (_gpPaged ? _gpItems : (members || [])).filter(m => {
                 if (memberRoleFilter === 'admins' && m.role !== 'admin') return false;
                 if (memberRoleFilter === 'members' && m.role === 'admin') return false;
                 if (!q) return true;
@@ -42059,7 +42102,7 @@ function ChatConversationInner() {
               }
               if (_npGroup) {
                 // [2026-10-15 native-profile] lista nativa (mesma ordem: você, admins, A–Z)
-                const sorted = [...filtered].sort((a, b) => {
+                const sorted = _gpHasMore ? filtered : [...filtered].sort((a, b) => {
                   const aIsMe = a.email === user?.email;
                   const bIsMe = b.email === user?.email;
                   if (aIsMe !== bIsMe) return aIsMe ? -1 : 1;
@@ -42069,10 +42112,19 @@ function ChatConversationInner() {
                   return String(a.display_name || a.email || '').localeCompare(String(b.display_name || b.email || ''));
                 });
                 return (
-                  <NativeProfileList theme={_npTheme} rows={sorted.map(buildMemberRow)} onRowAction={onNativeMemberAction} onFatal={_npOff} />
+                  <>
+                    <NativeProfileList theme={_npTheme} rows={sorted.map(buildMemberRow)} onRowAction={onNativeMemberAction} onFatal={_npOff} />
+                    {_gpHasMore && (
+                      <TouchableOpacity onPress={_ciPager.loadMore} disabled={!!_ciPager.loading} style={{ paddingVertical: 14, alignItems: 'center' }} accessibilityRole="button">
+                        {_ciPager.loading
+                          ? <ActivityIndicator size="small" color={GI_ACCENT} />
+                          : <Text style={{ color: GI_ACCENT, fontWeight: '600', fontSize: 14 }}>{t('group.members.showMore') || 'Mostrar mais membros'}</Text>}
+                      </TouchableOpacity>
+                    )}
+                  </>
                 );
               }
-              return filtered.sort((a, b) => {
+              const _gpSorted = _gpHasMore ? filtered : filtered.sort((a, b) => {
               const aIsMe = a.email === user?.email;
               const bIsMe = b.email === user?.email;
               if (aIsMe !== bIsMe) return aIsMe ? -1 : 1;
@@ -42080,7 +42132,8 @@ function ChatConversationInner() {
               const bAdmin = b.role === 'admin';
               if (aAdmin !== bAdmin) return aAdmin ? -1 : 1;
               return String(a.display_name || a.email || '').localeCompare(String(b.display_name || b.email || ''));
-            }).map((m, i) => {
+            });
+              const _gpRow = (m, i) => {
               const isMe = m.email === user?.email;
               // [2026-10-10 qa-sweep] Nome humanizado/apelido (antes "qa2" cru).
               let _mNick = '';
@@ -42154,10 +42207,34 @@ function ChatConversationInner() {
                       </View>
                     )}
                   </View>
-                  {i < filtered.length - 1 && <GroupDivider colors={colors} inset={68} />}
+                  {(i < _gpSorted.length - 1 || _gpHasMore) && <GroupDivider colors={colors} inset={68} />}
                 </View>
               );
-            });
+              };
+              // Grupo pequeno: render direto (barato). Grande/paginado: FlashList com
+              // altura limitada dentro da folha (virtualiza; rolagem aninhada) e a
+              // próxima página carrega ao chegar no fim.
+              if (!_gpHasMore && _gpSorted.length <= 15) return _gpSorted.map(_gpRow);
+              const _gpH = Math.round(Math.min(Dimensions.get('window').height * 0.62, Math.max(_gpSorted.length, 4) * 64 + (_gpHasMore ? 56 : 0)));
+              return (
+                <View style={{ height: _gpH }}>
+                  <FlashList
+                    data={_gpSorted}
+                    keyExtractor={(m, i) => String(m?.email || i)}
+                    renderItem={({ item, index }) => _gpRow(item, index)}
+                    extraData={`${isGroupAdmin ? 1 : 0}|${memberRoleFilter}|${user?.email || ''}`}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator
+                    onEndReachedThreshold={0.6}
+                    onEndReached={() => { if (_gpHasMore && !_ciPager.loading) _ciPager.loadMore(); }}
+                    ListFooterComponent={_gpHasMore ? (
+                      <View style={{ height: 56, alignItems: 'center', justifyContent: 'center' }}>
+                        <ActivityIndicator size="small" color={GI_ACCENT} />
+                      </View>
+                    ) : null}
+                  />
+                </View>
+              );
             })()}
               {/* Funções e permissões — footer note; the actual "Editar
                   permissões" link lives next to each admin badge above.
@@ -42731,8 +42808,14 @@ function ChatConversationInner() {
                 </Text>
               </View>
             ) : (
-              <ScrollView style={{ maxHeight: 420 }}>
-                {pendingMembers.map((p, i) => {
+              // [2026-10-18 group-info-page] FlashList (virtualiza) em vez de mapear tudo num ScrollView.
+              <View style={{ height: Math.min(420, Math.max(1, pendingMembers.length) * 65) }}>
+              <FlashList
+                data={pendingMembers}
+                keyExtractor={(p, i) => String(p?.email || i)}
+                extraData={pendingActionEmail}
+                nestedScrollEnabled
+                renderItem={({ item: p, index: i }) => {
                   const inflight = pendingActionEmail === p.email;
                   return (
                     <View key={p.email || i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
@@ -42765,8 +42848,9 @@ function ChatConversationInner() {
                       </TouchableOpacity>
                     </View>
                   );
-                })}
-              </ScrollView>
+                }}
+              />
+              </View>
             )}
       </NativeSheetDialog>)}</LazyMount>
 

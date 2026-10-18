@@ -42,6 +42,7 @@ import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
 import BackgroundSyncPill from './BackgroundSyncPill'; // [2026-10-18 bg-sync] "Sincronizando mensagens…" discreto
 import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync]
 import WaImportBanner from './WaImportBanner'; // [2026-10-13] importação do WhatsApp visível na home
+import { NotifPermissionCard } from './PushTokenStaleBanner'; // [2026-10-18 notif-perm-card] notificações negadas → cartão no topo
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 // [2026-10-18 battery] Polls da lista em primeiro plano duplicavam o que o WS já
 // entrega. Com o socket AUTENTICADO eles viram rede de segurança lenta (5 min);
@@ -9305,10 +9306,16 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       <View onLayout={_onLtLayout}>{_largeTitleEl}</View>
       {!selectionMode && <BackgroundSyncPill />}
       {!selectionMode && <WaImportBanner global />}
+      {!selectionMode && <NotifPermissionCard />}
       {!selectionMode && _topChromeEl}
       {ListHeaderComponent}
     </>
-  ) : ListHeaderComponent), [largeTitle, _largeTitleEl, _onLtLayout, selectionMode, _topChromeEl, ListHeaderComponent]);
+  ) : (
+    <>
+      {!selectionMode && <NotifPermissionCard />}
+      {ListHeaderComponent}
+    </>
+  )), [largeTitle, _largeTitleEl, _onLtLayout, selectionMode, _topChromeEl, ListHeaderComponent]);
   const _ltCollapsedRef = useRef(false);
   const _ltCbRef = useRef(onLargeTitleCollapsedChange);
   _ltCbRef.current = onLargeTitleCollapsedChange;
