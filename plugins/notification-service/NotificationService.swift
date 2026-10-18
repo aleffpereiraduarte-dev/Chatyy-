@@ -257,6 +257,7 @@ class NotificationService: UNNotificationServiceExtension {
         // "mentions only" for groups, and tells the system the group size.
         let meta = INSendMessageIntentDonationMetadata()
         meta.mentionsCurrentUser = (Self.str(p, "type") == "chat_mention") || Self.isTrue(Self.str(p, "mentions_me"))
+            || Self.isTrue(Self.str(p, "mentioned"))
         meta.isReplyToCurrentUser = Self.isTrue(Self.str(p, "reply_to_me"))
         meta.recipientCount = isGroup ? max(2, Int(Self.str(p, "member_count") ?? "") ?? 2) : 1
         intent.donationMetadata = meta
@@ -578,6 +579,12 @@ class NotificationService: UNNotificationServiceExtension {
         let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: downloadTimeout)
         let task = URLSession.shared.downloadTask(with: req) { location, response, _ in
             guard let location = location else { completion(nil); return }
+            // [notif-ios 2026-10-18] 404/403 (pôster ainda não gerado, R2) vinha com
+            // o XML de erro e virava anexo .jpg quebrado → só 2xx com mídia real.
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let mime = response?.mimeType?.lowercased() ?? ""
+            let mediaMime = mime.hasPrefix("image/") || mime.hasPrefix("video/") || mime == "application/octet-stream" || mime.isEmpty
+            guard (200..<300).contains(code), mediaMime else { completion(nil); return }
             completion(makeAttachment(from: location, response: response, url: url))
         }
         task.resume()
@@ -656,16 +663,27 @@ class NotificationService: UNNotificationServiceExtension {
         }
     }
 
+    /// [notif-ios 2026-10-18] MIME first (".../email.php?action=wa_import_file"
+    /// gave "php" → UNNotificationAttachment rejected it); the URL extension only
+    /// when it is a known media type.
+    private static let mediaExts: Set<String> = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif",
+                                                 "mp4", "mov", "m4v"]
+
     private static func fileExtension(url: URL, response: URLResponse?) -> String {
-        let pathExt = url.pathExtension
-        if !pathExt.isEmpty, pathExt.count <= 5 { return pathExt }
         switch response?.mimeType?.lowercased() {
-        case "image/jpeg": return "jpg"
+        case "image/jpeg", "image/jpg": return "jpg"
         case "image/png":  return "png"
         case "image/gif":  return "gif"
         case "image/webp": return "webp"
         case "image/heic": return "heic"
-        default:           return "jpg"
+        case "image/heif": return "heif"
+        case "video/mp4":  return "mp4"
+        case "video/quicktime": return "mov"
+        case "video/x-m4v": return "m4v"
+        default: break
         }
+        let pathExt = url.pathExtension.lowercased()
+        if mediaExts.contains(pathExt) { return pathExt }
+        return "jpg"
     }
 }
