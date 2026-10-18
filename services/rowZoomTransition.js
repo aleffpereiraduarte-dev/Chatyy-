@@ -20,7 +20,7 @@
 // Qualquer falha (módulo ausente, frame velho, begin=false/timeout, push que
 // virou dedup/pop/replace) → push padrão, como antes.
 //
-// Kill switch (OTA): globalThis.__chatyy_row_zoom_transition = false
+// Opt-in (OTA): globalThis.__chatyy_row_zoom_transition = 'on' (padrão: off desde 18/10)
 //   'always' = também quando a conversa não tem casca leve (abre a tela cheia).
 import { Platform, Dimensions } from 'react-native';
 
@@ -41,8 +41,11 @@ function _killState() {
     const o = globalThis.__chatyy_row_zoom_transition;
     if (o === false || o === 0 || o === 'off') return 'off';
     if (o === 'always') return 'always';
+    if (o === true || o === 1 || o === 'on') return 'on';
   } catch {}
-  return 'on';
+  // [2026-10-18] padrão DESLIGADO: founder quer abrir a conversa igual WhatsApp
+  // (push nativo deslizando da direita). Zoom só com __chatyy_row_zoom_transition='on'.
+  return 'off';
 }
 
 export function rowZoomEnabled() {
