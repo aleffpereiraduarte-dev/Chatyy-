@@ -11353,6 +11353,26 @@ function ChatConversationInner() {
   // — sem isso, refresh do app traz o unread badge de volta. markReadUpTo só
   // dispara em scroll (debounce), então uma conversa curta que abre sem scroll
   // ficava marcada como unread no servidor.
+  // [2026-10-18 read-id] chat_mark_read SEMPRE com message_id = a msg mais nova
+  // realmente exibida (maior id real carregado na tela). message_id=0 fazia o
+  // servidor usar MAX(id) e marcava como lida msg que chegou depois e nunca
+  // apareceu (e o outro aparelho zerava o contador por isso).
+  const _newestShownMsgId = () => {
+    try {
+      const arr = messagesRef.current;
+      if (!Array.isArray(arr)) return 0;
+      let mx = 0;
+      for (let i = 0; i < arr.length; i++) {
+        const m = arr[i];
+        const n = m && typeof m.id === 'number' ? m.id : 0;
+        if (!n || (m.conversation_id != null && conversationId != null && String(m.conversation_id) !== String(conversationId))) continue;
+        if (n > mx) mx = n;
+      }
+      return mx;
+    } catch { return 0; }
+  };
+  const _newestShownMsgIdRef = useRef(_newestShownMsgId);
+  _newestShownMsgIdRef.current = _newestShownMsgId;
   useEffect(() => {
     if (!conversationId) return;
     // [2026-10-15 unread-instant] Zera NA HORA linha da lista (JS+nativa, via
@@ -11373,12 +11393,21 @@ function ChatConversationInner() {
     // perigoso: uma montagem sem a tela visível pintava a conversa INTEIRA de
     // azul. [2026-10-06] Só dispara com app ativo + tela focada; senão fica
     // deferido e o flush manda quando a tela realmente aparecer.
-    const t = setTimeout(() => {
+    // [2026-10-18 read-id] espera as msgs aparecerem (até ~3 s) p/ mandar o id
+    // real; sem nenhuma na tela, o markReadUpTo do load/onViewable cobre.
+    let _tries = 0;
+    let t = null;
+    const _fire = () => {
       if (!canAckReadNowRef.current()) {
         deferredReadRef.current.all = true;
         return;
       }
-      api.chatRead?.(conversationId, 0).catch(() => {});
+      const _mid = _newestShownMsgIdRef.current();
+      if (!_mid) { if (++_tries <= 10) t = setTimeout(_fire, 300); return; }
+      api.chatRead?.(conversationId, _mid).catch(() => {});
+    };
+    t = setTimeout(() => {
+      _fire();
       // [2026-10-08 receipts-speed] 250ms → 50ms: message_id=0 o servidor já
       // resolve pro MAX(id) — não precisa esperar as msgs carregarem. Eram
       // 200ms parados no caminho "abri a conversa → azul no remetente". O gate
@@ -13083,7 +13112,10 @@ function ChatConversationInner() {
     deferredReadRef.current = { id: 0, all: false };
     if (all && conversationId) {
       try { require('../services/unreadBadge').markConversationReadLocal(conversationId, { email: (user?.email || '').toLowerCase() }); } catch {} // [2026-10-15 unread-instant]
-      try { api.chatRead?.(conversationId, 0).catch(() => {}); } catch {}
+      // [2026-10-18 read-id] id real exibido (nunca 0); sem msgs ainda → fica deferido.
+      const _mid = _newestShownMsgIdRef.current?.() || 0;
+      if (_mid) { try { api.chatRead?.(conversationId, Math.max(_mid, Number(id) || 0)).catch(() => {}); } catch {} }
+      else deferredReadRef.current.all = true;
     }
     if (id) markReadUpTo(id);
   }, [conversationId, markReadUpTo]);
@@ -38411,7 +38443,7 @@ function ChatConversationInner() {
           onClose={() => setShowSummarizeModal(false)}
           onMarkRead={() => {
             try {
-              const lastId = messages.length ? messages[messages.length - 1].id : 0;
+              const lastId = _newestShownMsgIdRef.current?.() || 0; // [2026-10-18 read-id] maior id real (último pode ser tmp_)
               if (lastId) api.chatRead?.(conversationId, lastId).catch(() => {});
             } catch {}
             firstUnreadIdRef.current = null;
@@ -39668,7 +39700,10 @@ function ChatConversationInner() {
               })() && (
                 (() => {
                   const createdAt = selectedMsg?.created_at;
-                  const canEdit = createdAt ? (Date.now() - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
+                  // [2026-10-18 server-clock] relógio do SERVIDOR (offset do WS), não o do aparelho.
+                  let _nowSrv = Date.now();
+                  try { _nowSrv = require('../services/websocket').default?.serverNow?.() || _nowSrv; } catch {}
+                  const canEdit = createdAt ? (_nowSrv - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
                   return canEdit ? (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={ctxS.ctxSecondaryItem}
@@ -43303,7 +43338,7 @@ function ChatConversationInner() {
           onJumpToMessage={(id) => { try { safeScrollToMsg({ id }); } catch {} }}
           onMarkRead={() => {
             try {
-              const lastId = messages.length ? messages[messages.length - 1].id : 0;
+              const lastId = _newestShownMsgIdRef.current?.() || 0; // [2026-10-18 read-id] maior id real (último pode ser tmp_)
               if (lastId) api.chatRead?.(conversationId, lastId).catch(() => {});
             } catch {}
             firstUnreadIdRef.current = null;
