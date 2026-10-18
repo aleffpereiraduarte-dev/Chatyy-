@@ -38,6 +38,13 @@ export default function SyncBar() {
   // Without this we'd conflate a flaky local radio with a server outage and
   // show the wrong copy (e.g. "Conectando…" forever while in airplane mode).
   const deviceOnlineRef = useRef(true);
+  // [2026-10-17 offline-wa] Na conversa esta barra É a indicação de rede: o
+  // OfflineNotice raiz deixa de pintar a 2ª faixa "Sem conexão com a internet"
+  // (QA: duas faixas empilhadas offline; WhatsApp mostra UMA). A fila/replay do
+  // OfflineNotice continua rodando — só o visual é omitido (mesmo contrato da home).
+  useEffect(() => {
+    try { return require('../services/syncStatus').claimHomeSyncSurface(); } catch { return undefined; }
+  }, []);
   // [2026-06-28] handleBootstrap lives inside the deps:[] effect below, so any
   // `status` it reads is captured at mount (always 'hidden') — the guard
   // `status === 'hidden'` was therefore ALWAYS true. Track the live value in a
@@ -242,8 +249,22 @@ export default function SyncBar() {
     let netUnsub;
     let offlineDebounce;
     if (Platform.OS === 'web') {
-      const onOff = () => { clearTimeout(graceTimer.current); deviceOnlineRef.current = false; show('offline'); };
+      // [2026-10-17 offline-wa] Debounce também na web (nativo já tinha 4 s): QA
+      // Playwright com troca de rede de 1,5 s (Wi-Fi↔4G) pintava "Sem internet"
+      // na hora e por ~2 s. WhatsApp atravessa quedas curtas em silêncio. Só
+      // pinta se continuar offline (e sem socket vivo) após 2,5 s.
+      const onOff = () => {
+        clearTimeout(graceTimer.current);
+        clearTimeout(offlineDebounce);
+        deviceOnlineRef.current = false;
+        offlineDebounce = setTimeout(() => {
+          if (!mountedRef.current) return;
+          if (mailWs?.authenticated && navigator.onLine !== false) return;
+          if (navigator.onLine === false) show('offline');
+        }, 2500);
+      };
       const onOn = () => {
+        clearTimeout(offlineDebounce);
         deviceOnlineRef.current = true;
         // Server not reachable yet → arm the SAME grace path instead of
         // flashing 'connecting' instantly, so a fast reconnect stays silent.
@@ -378,8 +399,10 @@ export default function SyncBar() {
   const textColor = isOffline ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#93c5fd' : '#111111');
 
   let label;
-  if (status === 'offline') label = t('sync.offline') || 'No internet';
-  else if (status === 'connecting') label = t('sync.connecting') || 'Connecting...';
+  // [2026-10-17 offline-wa] Mesma cópia do título da home (WhatsApp: "Aguardando rede"/"Conectando…").
+  const _tr = (k, fb) => { try { const v = t(k); if (v && v !== k) return v; } catch {} return fb; };
+  if (status === 'offline') label = _tr('syncStatus.waitingNetwork', 'Aguardando rede');
+  else if (status === 'connecting') label = _tr('syncStatus.connecting', 'Conectando…');
   else if (isBootstrap) {
     const tmpl = t('sync.history') || 'Syncing history';
     if (bootConvTotal > 0) label = `${tmpl} • ${bootConvDone}/${bootConvTotal}`;

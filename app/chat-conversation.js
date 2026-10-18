@@ -998,6 +998,64 @@ const _SEND_MOTION_ND = Platform.OS !== 'web';
 // leitura…) criavam um array novo mesmo quando nada mudava → re-render da tela
 // inteira + re-enrich da lista por evento WS sem efeito. Nenhum callback muta o
 // item in-place (auditado), então identidade igual ⇔ nada mudou.
+// [2026-10-17 offline-wa] WEB: a fila durável de envio NÃO é o messageOutbox
+// (SQLite, só nativo → getPending() = [] na web) e sim chatCache pending
+// (chat_pending_<conv>) + a fila do offlineCache (chat_send). QA Playwright:
+// 3 textos digitados offline → aba fechada → reaberta offline = a conversa
+// abria SEM as 3 bolhas (só voltavam depois de sair pela rede) — WhatsApp
+// mostra na hora com o relógio. Esta função devolve as pendentes da web no
+// MESMO formato das linhas do outbox (state/payload) p/ o _rehydrateOutbox.
+// Só exibição: o reenvio continua com o pump do offlineCache/outboxDrainer.
+// Texto cifrado (E2E) nunca vira bolha (sem texto puro guardado → pula).
+const _WEB_PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+function _looksCipher(s) {
+  if (typeof s !== 'string') return false;
+  try { if (require('../services/e2eeV4').isV4Blob?.(s)) return true; } catch {}
+  return /^\s*\{\s*"(e2e|v|ct|ciphertext|envelope|sessions|header)"/.test(s);
+}
+async function _webPendingOutboxRows(conversationId, me) {
+  if (Platform.OS !== 'web' || conversationId == null) return [];
+  const byCmi = new Map();
+  const now = Date.now();
+  const meLc = String(me || '').toLowerCase();
+  const textish = (t) => !t || t === 'text' || t === 'emoji' || t === 'gif' || t === 'sticker' || t === 'link';
+  const put = (cmi, src, created) => {
+    if (!cmi) return;
+    const prev = byCmi.get(cmi);
+    if (prev && !_looksCipher(prev.payload.display_content)) return; // 1ª fonte com texto puro vence
+    byCmi.set(cmi, { client_message_id: cmi, state: 'queued', lane: 'msg', created_at: created || now, payload: src });
+  };
+  try {
+    const pend = (await require('../services/chatCache').getPendingMessages(conversationId)) || [];
+    for (const p of pend) {
+      if (!p || p._e2e || p.e2e) continue;
+      const cmi = String(p.client_message_id || p.temp_id || '');
+      const created = Date.parse(p.created_at || '') || 0;
+      if (created && now - created > _WEB_PENDING_TTL_MS) continue;
+      const snd = String(p.sender_email || '').toLowerCase();
+      if (snd && meLc && snd !== meLc) continue;
+      const fu = String(p.file_url || '');
+      if (!textish(p.type) && !/^https?:\/\//i.test(fu)) continue; // blob: morreu no reload
+      if (_looksCipher(p.content)) continue;
+      put(cmi, { temp_id: p.temp_id, client_message_id: cmi, content: p.content, display_content: p.content, type: p.type || 'text', reply_to_id: p.reply_to_id || null, file_url: fu || null, created_at: p.created_at, sender_email: p.sender_email || me }, created);
+    }
+  } catch {}
+  try {
+    const q = (await require('../services/offlineCache').getOfflineQueue()) || [];
+    for (const a of q) {
+      if (!a || a.type !== 'chat_send' || String(a.conversation_id) !== String(conversationId)) continue;
+      const cmi = String(a.client_message_id || '');
+      if (!cmi || byCmi.has(cmi)) continue;
+      if (_looksCipher(a.content)) continue;
+      const fu = String(a.file_url || '');
+      if (!textish(a.msgType) && !/^https?:\/\//i.test(fu)) continue;
+      const created = Number(a.ts) || 0;
+      put(cmi, { temp_id: a.temp_id, client_message_id: cmi, content: a.content, display_content: a.content, type: a.msgType || 'text', reply_to_id: a.reply_to_id || null, file_url: fu || null, created_at: created ? new Date(created).toISOString() : undefined, sender_email: me }, created);
+    }
+  } catch {}
+  return [...byCmi.values()].sort((x, y) => (x.created_at || 0) - (y.created_at || 0));
+}
+
 function _mapKeep(arr, fn) {
   if (!Array.isArray(arr)) return arr;
   let out = null;
@@ -16175,7 +16233,7 @@ function ChatConversationInner() {
     //    a row the server already confirmed never doubles. The sendWorker /
     //    replayOfflineQueue (above) still own the actual retry.
     const _rehydrateOutbox = () => { try {
-      messageOutbox.getPending(conversationId).then((rows) => {
+      (Platform.OS === 'web' ? _webPendingOutboxRows(conversationId, currentEmail) : messageOutbox.getPending(conversationId)).then((rows) => {
         if (!mountedRef.current || !Array.isArray(rows) || rows.length === 0) return;
         const bubbles = rows.map((row) => {
           const p = row?.payload || {};
@@ -34831,7 +34889,7 @@ function ChatConversationInner() {
         <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size={12} color={colors.textSecondary} />
           <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '500' }}>
-            {t('chat.reconnecting') || 'Reconectando...'}
+            {(() => { const v = t('syncStatus.connecting'); return v && v !== 'syncStatus.connecting' ? v : 'Conectando…'; })() /* [2026-10-17 offline-wa] mesma cópia da home/SyncBar (WhatsApp) */}
           </Text>
         </View>
       ) : null}

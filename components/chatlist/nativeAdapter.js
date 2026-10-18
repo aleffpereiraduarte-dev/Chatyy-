@@ -329,6 +329,7 @@ export function buildRow(conv, ctx) {
     if (statusType) {
       const st = statusType === 'read' ? _tx(t, 'a11y.msgRead', 'Lida')
         : statusType === 'delivered' ? _tx(t, 'a11y.msgDelivered', 'Entregue')
+        : statusType === 'pending' ? _tx(t, 'chat.sending', 'Enviando...')
         : _tx(t, 'a11y.msgSent', 'Enviada');
       parts.push(`${_tx(t, 'common.you', 'Você')}: ${text}`, st);
     } else if (previewSender) parts.push(`${previewSender}: ${text}`);
@@ -357,6 +358,9 @@ export function buildRow(conv, ctx) {
     text: locked ? _tx(t, 'chat.lockedChat', 'Chat bloqueado') : text,
     icon: locked ? '' : icon,
     receipt: locked ? 0 : receipt,
+    // [2026-10-17 offline-wa] na fila sem rede: receipt 0 (nunca ✓ falso); o binário
+    // novo desenha o relógio por esta chave (binários atuais ignoram chave extra).
+    pending: !locked && statusType === 'pending',
     scheduled,
     typing,
     draft: draftText,

@@ -195,6 +195,22 @@ function _lmExtrasFromEvent(d) {
   if (d.deleted_at || d.deleted === true || d.is_deleted) { o.deleted = true; o.deleted_at = d.deleted_at || new Date().toISOString(); }
   return o;
 }
+// [2026-10-17 offline-wa] Prévia da lista com RELÓGIO (não ✓) para o envio
+// local que ainda não saiu do aparelho (WhatsApp: "Você: oi 🕓" offline).
+// Só o eco LOCAL do próprio envio (chat_local_outbound) com o aparelho SEM
+// rede — aí o HTTP certamente falhou e a msg está na fila. O sucesso do
+// reenvio (sendWorker/_publishServerRow, offlineCache replay) emite
+// 'chat_message' com a linha do servidor → a prévia é reconstruída sem a flag;
+// o refresh do chat_list pós-reconexão (id real ≠ tmp) também limpa.
+function _lmPendingFlag(d) {
+  if (!d || !d._local) return undefined;
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    } else if (require('../services/networkInfo').isConnected() === false) return true;
+  } catch {}
+  return undefined;
+}
 function _rcMergeListRow(old, c) {
   if (!old || !c || !old.last_message || !c.last_message) return c;
   const lm = _rcMergeListLm(old.last_message, c.last_message);
@@ -866,6 +882,10 @@ function ListReceiptIcon({ statusType, isDark }) {
   const grayColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)';
   const sentColor = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)';
 
+  // [2026-10-17 offline-wa] Ainda na fila (sem rede) → relógio, nunca ✓ falso.
+  if (statusType === 'pending') {
+    return <View style={{ marginRight: 3 }}><IconClockMini size={13} color={sentColor} /></View>;
+  }
   // Single check (sent) — no crossfade, just the faint single tick.
   if (rank === 0) {
     return <IconCheck size={15} color={sentColor} style={{ marginRight: 3 }} />;
@@ -1008,6 +1028,7 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
       const _deliv = !!lastMsg.delivered_at || !!lastMsg.read_at;
       if (lastMsg.read_at && _deliv && (!isGroup || lastMsg.all_read)) statusType = 'read';
       else if (_deliv) statusType = 'delivered';
+      else if (lastMsg._pending) statusType = 'pending'; // [2026-10-17 offline-wa] relógio
       else statusType = 'sent';
     }
 
@@ -1624,6 +1645,7 @@ const ConversationRow = React.memo(function ConversationRow({
       if (statusType) {
         const st = statusType === 'read' ? _a11yT(t, 'a11y.msgRead', 'Lida')
           : statusType === 'delivered' ? _a11yT(t, 'a11y.msgDelivered', 'Entregue')
+          : statusType === 'pending' ? _a11yT(t, 'chat.sending', 'Enviando...')
           : _a11yT(t, 'a11y.msgSent', 'Enviada');
         parts.push(`${_a11yT(t, 'common.you', 'Você')}: ${pv}`, st);
       } else if (previewSender) {
@@ -5309,7 +5331,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   // the thread correctly showed ✓. Same fix in all 4
                   // last_message constructions below.
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                  client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5348,7 +5370,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 last_message: {
                   ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                  client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5388,7 +5410,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
                 last_message: {
                   id: data.id ?? data.message_id ?? null,
-                  client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                  client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                   read_at: data.read_at || null,
                   delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
@@ -5423,7 +5445,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               last_message: {
                 ..._lmExtrasFromEvent(data), // [2026-10-14 lista-apagada] NUNCA herda campos da msg anterior (deleted/caption/all_read…)
                 id: data.id ?? data.message_id ?? null,
-                client_message_id: data.client_message_id || data._client_id || null, // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
+                client_message_id: data.client_message_id || data._client_id || null, _pending: _lmPendingFlag(data), // [2026-10-17 offline-wa] // [2026-10-14 lista-eco-envio] nunca herda o cmi da msg anterior; relay otimista do peer traz _client_id
                 read_at: data.read_at || null,
                 delivered_at: data.delivered_at || null,
                 content: data.content || data.message,
