@@ -12854,20 +12854,55 @@ function ChatConversationInner() {
         });
       }
     } catch { sharedFiles = null; }
+    let previewFiles = null;
     if (sharedFiles && sharedFiles.length) {
-      setMediaPreview({ visible: true, files: sharedFiles });
+      previewFiles = sharedFiles;
     } else if (sharedUri && (sharedType === 'image' || sharedType === 'video')) {
-      setMediaPreview({
-        visible: true,
-        files: [{
-          uri: sharedUri,
-          name: sharedName || sharedUri.split('/').pop() || 'shared',
-          type: sharedType === 'image' ? 'image/jpeg' : 'video/mp4',
-        }],
-      });
+      previewFiles = [{
+        uri: sharedUri,
+        name: sharedName || sharedUri.split('/').pop() || 'shared',
+        type: sharedType === 'image' ? 'image/jpeg' : 'video/mp4',
+      }];
     } else if (sharedText) {
       setInputText(prev => prev || sharedText);
     }
+    if (!previewFiles) return undefined;
+    if (Platform.OS === 'web') { setMediaPreview({ visible: true, files: previewFiles }); return undefined; }
+    // [2026-10-18 share-black] Esta tela chega por REPLACE do /share-receive, que
+    // no iOS é fullScreenModal. Abrir a prévia (<Modal> RN = present do UIKit) na
+    // montagem caía no meio do dismiss desse modal nativo + push desta tela
+    // (Modal sobre modal / transição): a lista nativa nem ficava pronta
+    // (native_list ready-timeout no aparelho do founder) e, no Enviar, a prévia
+    // descia e sobrava a TELA PRETA. Agora: espera o share-receive sair da pilha,
+    // esta tela estar em foco, um respiro mínimo (iOS) e o fim das interações.
+    let cancelled = false;
+    let tm = null;
+    let ih = null;
+    const t0 = Date.now();
+    const MIN_MS = Platform.OS === 'ios' ? 650 : 250;
+    const MAX_MS = 4000;
+    const shareModalGone = () => {
+      try {
+        const info = require('../services/openConversation').getConversationStackInfo();
+        const names = Array.isArray(info?.names) ? info.names : [];
+        return !names.includes('share-receive');
+      } catch { return true; }
+    };
+    const focused = () => { try { return !_kbNav || typeof _kbNav.isFocused !== 'function' || _kbNav.isFocused(); } catch { return true; } };
+    const open = () => {
+      if (cancelled || !mountedRef.current) return;
+      setMediaPreview(prev => (prev && prev.visible) ? prev : { visible: true, files: previewFiles });
+    };
+    const check = () => {
+      tm = null;
+      if (cancelled) return;
+      const waited = Date.now() - t0;
+      const ready = waited >= MIN_MS && shareModalGone() && focused();
+      if (!ready && waited < MAX_MS) { tm = setTimeout(check, 120); return; }
+      try { ih = InteractionManager.runAfterInteractions(() => { tm = setTimeout(open, Platform.OS === 'ios' ? 60 : 0); }); } catch { open(); }
+    };
+    tm = setTimeout(check, MIN_MS);
+    return () => { cancelled = true; if (tm) clearTimeout(tm); try { ih && ih.cancel && ih.cancel(); } catch {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
 

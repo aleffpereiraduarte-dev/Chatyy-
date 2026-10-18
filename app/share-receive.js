@@ -19,9 +19,9 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image, StyleSheet, Platform,
-  ActivityIndicator, TextInput, ScrollView, KeyboardAvoidingView,
+  ActivityIndicator, TextInput, ScrollView, KeyboardAvoidingView, InteractionManager,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -290,6 +290,31 @@ export default function ShareReceiveScreen() {
   const hasPayload = hasMedia || !!sharedText || !!sharedContact;
   const shareTargetRef = useRef(undefined);
   const directOpenedRef = useRef(false);
+  // [2026-10-18 share-black] Founder (iOS 722, OTA 01a15092): Fotos → avatar do
+  // contato → Enviar → TELA PRETA. A abertura direta disparava no 1º commit (a
+  // lista local já tem a conversa) = com este fullScreenModal AINDA SUBINDO
+  // (o vazio do deep link acabou de ser trocado por este) → o replace pedia o
+  // dismiss do modal no meio da apresentação (UIKit ignora) e a conversa abria a
+  // prévia (<Modal> RN) por cima dessa transição (Modal sobre modal) → depois do
+  // Enviar sobrava o container do modal vazio por cima de tudo. Agora só navega
+  // com esta tela ASSENTADA (transitionEnd ou teto) + fim das interações; a
+  // conversa ainda espera este modal sair antes de abrir a prévia.
+  // Kill switch: globalThis.__chatyy_share_direct_open = false → contato pré-selecionado.
+  const navigation = useNavigation();
+  const [screenSettled, setScreenSettled] = useState(Platform.OS === 'web');
+  useEffect(() => {
+    if (screenSettled) return undefined;
+    let done = false;
+    const settle = () => { if (done) return; done = true; setScreenSettled(true); };
+    let unsub = null;
+    try {
+      unsub = navigation && typeof navigation.addListener === 'function'
+        ? navigation.addListener('transitionEnd', (e) => { if (!e || !e.data || e.data.closing !== true) settle(); })
+        : null;
+    } catch { unsub = null; }
+    const tm = setTimeout(settle, Platform.OS === 'ios' ? 900 : 450);
+    return () => { done = true; clearTimeout(tm); try { typeof unsub === 'function' && unsub(); } catch {} };
+  }, [screenSettled, navigation]);
   if (shareTargetRef.current === undefined) shareTargetRef.current = fromCloud ? null : _readShareTarget();
   useEffect(() => () => { if (hasPayload && !fromCloud) _clearShareTarget(); }, [hasPayload, fromCloud]);
   useEffect(() => {
@@ -304,7 +329,9 @@ export default function ShareReceiveScreen() {
       const gid = handle.slice(6);
       match = conversations.find(c => String(c.id) === gid) || null;
     }
-    const directOk = !sharedContact && (
+    let directOn = true;
+    try { directOn = globalThis.__chatyy_share_direct_open !== false; } catch { directOn = true; }
+    const directOk = directOn && !sharedContact && (
       (hasMedia && files.every(f => f.kind === 'image' || f.kind === 'video'))
       || (!hasMedia && !!sharedText));
     if (!match && directOk && /^\d+$/.test(cid) && netState !== 'loading') {
@@ -313,6 +340,7 @@ export default function ShareReceiveScreen() {
     }
     if (!match) return;
     if (directOk) {
+      if (!screenSettled) return; // re-roda quando assentar (deps)
       directOpenedRef.current = true;
       shareTargetRef.current = null;
       _clearShareTarget();
@@ -329,12 +357,18 @@ export default function ShareReceiveScreen() {
         _shared_text: hasMedia ? '' : sharedText,
         ...(visual.length ? { _shared_files: JSON.stringify(visual) } : {}),
       };
-      try { require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: p }, { replace: true }); } catch {}
+      const go = () => {
+        if (!mountedRef.current) return;
+        try { require('../services/crashReporter').reportStep('share_direct_open', `n=${visual.length} txt=${hasMedia ? 0 : 1} ${Platform.OS}`); } catch {}
+        try { require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: p }, { replace: true }); } catch {}
+      };
+      if (Platform.OS === 'web') go();
+      else { try { InteractionManager.runAfterInteractions(go); } catch { go(); } }
       return;
     }
     if (!selected.length) setSelected([match]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversations, selected.length, hasPayload, hasMedia, files, sharedText, sharedContact, netState]);
+  }, [conversations, selected.length, hasPayload, hasMedia, files, sharedText, sharedContact, netState, screenSettled]);
 
   const displayNameOf = useCallback((c) => {
     if (!c) return '';
