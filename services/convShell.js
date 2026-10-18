@@ -17,7 +17,7 @@
 // (também desliga com globalThis.__chatyy_native_store = false).
 import { Platform } from 'react-native';
 
-const SHELL_DEFAULT_ON = true;
+const SHELL_DEFAULT_ON = false; // [2026-10-18] desligado: casca→conversa real trocava na frente do usuário (~600 ms). Opt-in: __chatyy_conv_light_shell = true
 const MAX_RECORDS = 80;
 const KEY = 'conv_shell_v1:';
 
