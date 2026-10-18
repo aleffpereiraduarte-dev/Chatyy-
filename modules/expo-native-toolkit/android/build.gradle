@@ -66,6 +66,9 @@ dependencies {
   // seletor nativo de numero no cadastro. MESMA versao que expo-chat-backup ja traz
   // (play-services-auth 21.2.0) -> nenhuma dependencia nova no grafo.
   implementation 'com.google.android.gms:play-services-auth:21.2.0'
+  // [2026-10-18 wa-onetap] Meta WhatsApp OTP SDK (Maven Central, ~12 KB, deps: appcompat
+  // already in the graph). Handshake for one-tap/zero-tap autofill (ExpoWaOtpModule).
+  implementation 'com.whatsapp.otp:whatsapp-otp-android-sdk:1.0.0'
 
   // [2026-10-08 sticker-maker] ExpoStickerCutoutModule — recorte do objeto
   // (subject segmentation) p/ o criador de figurinhas. Modelo NÃO vai no APK:

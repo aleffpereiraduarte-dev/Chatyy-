@@ -47,6 +47,7 @@
       "expo.modules.nativetoolkit.ExpoNativePdfViewModule",
       "expo.modules.nativetoolkit.ChatyyMapViewModule",
       "expo.modules.nativetoolkit.ExpoSmsOtpModule",
+      "expo.modules.nativetoolkit.ExpoWaOtpModule",
       "expo.modules.nativetoolkit.ExpoAppShortcutsModule",
       "expo.modules.nativetoolkit.ExpoStickerCutoutModule",
       "expo.modules.nativetoolkit.ExpoChatyySystemModule",

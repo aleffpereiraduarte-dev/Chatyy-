@@ -29,6 +29,8 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import { useSmsOtpAutofill, requestPhoneHint } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts] [2026-10-15 phone-hint]
+import { useOtpAutofillAssist, primeWhatsAppOtp } from '../services/otpAutofill'; // [2026-10-18 otp-autofill]
+import OtpAssist from '../components/OtpAssist';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone, toE164, E164_RE, countryDisplayName } from '../constants/countries'; // [2026-10-06 UX2] countryDisplayName
@@ -221,6 +223,7 @@ function SignupPhoneLegacy() {
   // "WhatsApp e SMS" — wrong for intl numbers (WhatsApp OR SMS) and for the
   // existing-account path (phone_login_request = SMS only).
   const [otpChannels, setOtpChannels] = useState({ wa: true, sms: true });
+  const [otpProvider, setOtpProvider] = useState(null); // [2026-10-18 otp-autofill] twilio|baileys|local
   // Registration-lock (anti-SIM-swap) PIN state. lockRequired flips true when
   // server returns requires_lock=true after a successful OTP verify; the OTP
   // step then renders an extra PIN input below the OTP boxes. lockPin holds
@@ -569,6 +572,7 @@ function SignupPhoneLegacy() {
       //    account is missing, so skip this guard.
       if (accountExists === null && step !== 'otp') {
         try {
+          primeWhatsAppOtp(); // [2026-10-18 otp-autofill] login_request já envia o código (conta existe)
           const lr = await api.phoneLoginRequest(fullPhone);
           if (mountedRef.current) {
             const exists = !!(lr?.data?.exists);
@@ -599,6 +603,7 @@ function SignupPhoneLegacy() {
               // (checkOtp logs existing accounts in via the token branch).
               // [otp-global 2026-10-15] login_request agora diz o canal real (WhatsApp ou SMS).
               setOtpChannels({ wa: !!lr?.data?.whatsapp_sent, sms: !lr?.data?.whatsapp_sent && lr?.data?.sms_sent !== false });
+              setOtpProvider(lr?.data?.provider || null);
               setSentVia('sms');
               setResendCountdown(60);
               setCode('');
@@ -624,10 +629,11 @@ function SignupPhoneLegacy() {
           r = { success: true, data: { sms_sent: true } };
         }
       }
-      if (!r) r = await api.verifySend(fullPhone, channel);
+      if (!r) { primeWhatsAppOtp(); r = await api.verifySend(fullPhone, channel); } // [2026-10-18 otp-autofill]
       if (!mountedRef.current) return;
       if (r?.success) {
         setResendCountdown(60);
+        setOtpProvider(r?.data?.provider || null);
         // [2026-06-19] Só SMS ou voz no cadastro (WhatsApp removido).
         if (channel === 'voice') setSentVia('voice');
         else setSentVia('sms');
@@ -766,6 +772,17 @@ function SignupPhoneLegacy() {
     setCode(smsCode);
     setTimeout(() => { try { checkOtpRef.current?.(smsCode); } catch {} }, 150);
   }, resendCountdown > 0);
+  // [2026-10-18 otp-autofill] WhatsApp: one-tap (Android) + clipboard ao voltar + "Abrir WhatsApp".
+  const otpAssist = useOtpAutofillAssist({
+    active: step === 'otp' && !lockRequired,
+    viaWhatsapp: sentVia !== 'voice' && !!otpChannels.wa && !phoneViaFirebaseRef.current,
+    provider: otpProvider,
+    onCode: (waCode) => {
+      setCode(waCode);
+      setTimeout(() => { try { checkOtpRef.current?.(waCode); } catch {} }, 150);
+    },
+    rearmKey: resendCountdown > 0,
+  });
   // [2026-10-15 native-otp] Teclado numérico já aberto no passo do código
   // (autoFocus se perde quando o input monta durante a transição de passo).
   // Kill switch: globalThis.__chatyy_native_otp = false.
@@ -1528,6 +1545,7 @@ function SignupPhoneLegacy() {
                     </View>
                   </View>
                 )}
+                <OtpAssist assist={otpAssist} colors={colors} style={{ marginBottom: 6 }} />
                 {/* [2026-10-07 signup-ux] "Trocar número" now lives inline in
                     the subtitle ("…para +55 (11) 9… Editar"). */}
                 <TouchableOpacity

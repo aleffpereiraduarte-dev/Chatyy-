@@ -2165,6 +2165,10 @@ export default {
   'login.otpSentWhatsapp': 'Enviado pelo WhatsApp.',
   'login.otpSentBoth': 'Enviado pelo WhatsApp e por SMS.',
   'login.otpViaWhatsapp': 'Receber pelo WhatsApp',
+  // [2026-10-18 otp-autofill]
+  'otpAssist.openWhatsapp': 'Abrir WhatsApp',
+  'otpAssist.pasteCode': 'Colar código',
+  'otpAssist.copyHint': 'No WhatsApp, toque em "Copiar código" e volte aqui: o código é preenchido automaticamente.',
   'login.tabQr': 'QR code',
   'login.tabPhoneEmail': 'Telemóvel ou e-mail',
   'forgot.emailLabel': 'E-mail ou utilizador',

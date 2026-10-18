@@ -2286,6 +2286,10 @@ export default {
   'login.otpSentWhatsapp': 'Sent on WhatsApp.',
   'login.otpSentBoth': 'Sent on WhatsApp and by SMS.',
   'login.otpViaWhatsapp': 'Get it on WhatsApp',
+  // [2026-10-18 otp-autofill]
+  'otpAssist.openWhatsapp': 'Open WhatsApp',
+  'otpAssist.pasteCode': 'Paste code',
+  'otpAssist.copyHint': 'In WhatsApp, tap "Copy code" and come back here: the code fills in by itself.',
   'login.tabQr': 'QR code',
   'login.tabPhoneEmail': 'Phone or email',
   'forgot.emailLabel': 'Email or username',

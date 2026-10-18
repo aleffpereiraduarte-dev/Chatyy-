@@ -30,6 +30,8 @@ import { useAuth } from '../../context/AuthContext';
 import * as api from '../../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../../services/firebasePhone';
 import { useSmsOtpAutofill, requestPhoneHint } from '../../services/smsOtp';
+import { useOtpAutofillAssist, primeWhatsAppOtp } from '../../services/otpAutofill'; // [2026-10-18 otp-autofill]
+import OtpAssist from '../OtpAssist';
 import { selection as hSelection, tap as hTap, success as hSuccess, error as hError } from '../../services/haptics';
 import useDebouncedCallback from '../../hooks/useDebouncedCallback';
 import useIsMounted from '../../hooks/useIsMounted';
@@ -137,6 +139,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const [waUnavailable, setWaUnavailable] = useState(false);
   const [sentVia, setSentVia] = useState('sms');
   const [otpChannels, setOtpChannels] = useState({ wa: true, sms: true });
+  const [otpProvider, setOtpProvider] = useState(null); // [2026-10-18 otp-autofill] twilio|baileys|local
   const [accountExists, setAccountExists] = useState(null);
   const [codeAlreadySent, setCodeAlreadySent] = useState(false); // [2026-10-15 onb-existing]
   const [moreOpen, setMoreOpen] = useState(false); // [2026-10-15 onb-existing] menu "⋯" (e-mail de conta antiga)
@@ -295,6 +298,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     try {
       if (accountExists === null && stepRef.current !== 'otp') {
         let lr = null;
+        primeWhatsAppOtp(); // [2026-10-18 otp-autofill] login_request já envia o código (conta existe)
         try { lr = await api.phoneLoginRequest(fullPhone); } catch { lr = null; }
         if (!mountedRef.current) return;
         if (lr?.success && lr?.data?.exists === true) {
@@ -303,6 +307,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           setAccountExists(true);
           const wa = !!lr.data.whatsapp_sent;
           setOtpChannels({ wa, sms: !wa && lr.data.sms_sent !== false });
+          setOtpProvider(lr.data.provider || null);
           if (lr.data.whatsapp_available === false) setWaUnavailable(true);
           setSentVia('sms');
           setCode('');
@@ -337,10 +342,11 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           r = { success: true, data: { sms_sent: true } };
         }
       }
-      if (!r) r = await api.verifySend(fullPhone, channel);
+      if (!r) { primeWhatsAppOtp(); r = await api.verifySend(fullPhone, channel); } // [2026-10-18 otp-autofill]
       if (!mountedRef.current) return;
       if (r?.success) {
         setResendCountdown(60);
+        setOtpProvider(r?.data?.provider || null);
         setSentVia(channel === 'voice' ? 'voice' : 'sms');
         const wa = r?.data?.whatsapp_sent; const sms = r?.data?.sms_sent;
         setOtpChannels((wa === undefined && sms === undefined) ? { wa: true, sms: true } : { wa: !!wa, sms: !!sms });
@@ -440,6 +446,17 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     setCode(smsCode);
     setTimeout(() => { try { checkOtpRef.current?.(smsCode); } catch {} }, 150);
   }, resendCountdown > 0);
+  // [2026-10-18 otp-autofill] WhatsApp: one-tap (Android) + clipboard ao voltar + "Abrir WhatsApp".
+  const otpAssist = useOtpAutofillAssist({
+    active: step === 'otp' && !lockRequired,
+    viaWhatsapp: sentVia !== 'voice' && !!otpChannels.wa && !phoneViaFirebaseRef.current,
+    provider: otpProvider,
+    onCode: (waCode) => {
+      setCode(waCode);
+      setTimeout(() => { try { checkOtpRef.current?.(waCode); } catch {} }, 150);
+    },
+    rearmKey: resendCountdown > 0,
+  });
 
   // Teclado numérico aberto no passo do código (autoFocus se perde na transição).
   useEffect(() => {
@@ -945,6 +962,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
             <Text style={[st.channelSub, { color: sub }]}>{T('otp.mayTakeMinute', 'Pode levar até 1 minuto para chegar.')}</Text>
           </View>
         </View>
+        <OtpAssist assist={otpAssist} colors={{ ...colors, primary: fg, onPrimary: colors.background }} />
         {lockRequired && (
           <View style={{ marginTop: 18 }}>
             <Text style={[st.pinTitle, { color: fg }]}>{T('signupPhone.lockPinTitle', 'Digite seu PIN de segurança')}</Text>

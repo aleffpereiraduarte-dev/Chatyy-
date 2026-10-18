@@ -28,6 +28,8 @@ import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import { useSmsOtpAutofill } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts]
+import { useOtpAutofillAssist, primeWhatsAppOtp } from '../services/otpAutofill'; // [2026-10-18 otp-autofill]
+import OtpAssist from '../components/OtpAssist';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
 // local COUNTRY_CODES list above (dial-keyed) handles the picker chip; we
@@ -108,6 +110,7 @@ export default function LoginScreen() {
   const [busyEmail, setBusyEmail] = useState(''); // remembered row doing a one-tap login
   const [bioReadyEmail, setBioReadyEmail] = useState(''); // Face ID usable for THIS email
   const [otpChannelNote, setOtpChannelNote] = useState(''); // "Enviamos por WhatsApp e SMS"
+  const [otpProvider, setOtpProvider] = useState(null); // [2026-10-18 otp-autofill] twilio|baileys|local
   const identifierRef = useRef(null);
   const goToPasswordRef = useRef(null);
   const { colors, isDark, toggle } = useAuthTheme();
@@ -1591,9 +1594,10 @@ export default function LoginScreen() {
           r = { success: true };
         }
       }
-      if (!r) r = await api.verifySend(fullPhone, ch);
+      if (!r) { primeWhatsAppOtp(); r = await api.verifySend(fullPhone, ch); } // [2026-10-18 otp-autofill] handshake one-tap antes do envio
       if (!mountedRef.current) return;
       if (r.success) {
+        setOtpProvider(r.data?.provider || null);
         // Tell the user WHERE the code went (verify_send reports both flags).
         const wa = !!r.data?.whatsapp_sent; const sms = !!r.data?.sms_sent;
         setOtpChannelNote(
@@ -1820,6 +1824,14 @@ export default function LoginScreen() {
   // [2026-10-08 android-otp-shortcuts] Android SMS User Consent → fill + auto-submit.
   // Re-arms when a (re)send starts the 60s cooldown.
   useSmsOtpAutofill(loginMode === 'phone' && phoneStep === 'otp', (code) => handlePhoneOtpFullChange(code), phoneResendTimer > 0);
+  // [2026-10-18 otp-autofill] WhatsApp: one-tap (Android) + clipboard ao voltar + "Abrir WhatsApp".
+  const otpAssist = useOtpAutofillAssist({
+    active: loginMode === 'phone' && phoneStep === 'otp' && !phoneRequiresLock,
+    viaWhatsapp: otpChannelNote === t('login.otpSentBoth') || otpChannelNote === t('login.otpSentWhatsapp'),
+    provider: otpProvider,
+    onCode: (code) => handlePhoneOtpFullChange(code),
+    rearmKey: phoneResendTimer > 0,
+  });
   // [2026-10-15 native-otp] Teclado numérico JÁ aberto ao chegar no código: o
   // autoFocus do TextInput se perde quando ele monta durante a transição de
   // passo (Android sobretudo) → reforça o foco depois da animação.
@@ -2605,6 +2617,8 @@ export default function LoginScreen() {
                             busy: phoneVerifying,
                             disabled: phoneRequiresLock ? (phoneLockPin.length < 4) : (phoneOtp.join('').length !== 6),
                           })}
+
+                          <OtpAssist assist={otpAssist} colors={colors} />
 
                           {/* (generic "Código enviado por WhatsApp e SMS" row removed —
                               it was false on the Firebase SMS-only path; the header

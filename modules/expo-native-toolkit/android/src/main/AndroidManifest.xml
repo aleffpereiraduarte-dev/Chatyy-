@@ -5,8 +5,35 @@
     <intent>
       <action android:name="android.speech.RecognitionService" />
     </intent>
+    <!-- [2026-10-18 wa-onetap] WhatsApp OTP handshake (OTP_REQUESTED broadcast) +
+         isWhatsAppInstalled need package visibility on Android 11+. -->
+    <package android:name="com.whatsapp" />
+    <package android:name="com.whatsapp.w4b" />
   </queries>
   <application>
+    <!-- [2026-10-18 wa-onetap] One-tap autofill: WhatsApp starts this with the code
+         (Meta: exported + launchMode standard). Invisible trampoline back to the app. -->
+    <activity
+      android:name="expo.modules.nativetoolkit.WaOtpCodeActivity"
+      android:exported="true"
+      android:launchMode="standard"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:noHistory="true"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter>
+        <action android:name="com.whatsapp.otp.OTP_RETRIEVED" />
+      </intent-filter>
+    </activity>
+    <!-- [2026-10-18 wa-onetap] Zero-tap: code broadcast without user interaction. -->
+    <receiver
+      android:name="expo.modules.nativetoolkit.WaOtpCodeReceiver"
+      android:enabled="true"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="com.whatsapp.otp.OTP_RETRIEVED" />
+      </intent-filter>
+    </receiver>
     <!-- [2026-10-09 system-integration] Home-screen widget "Conversas do Chatyy"
          (expo.modules.nativetoolkit.widget.ChatyyConversationsWidget). -->
     <receiver

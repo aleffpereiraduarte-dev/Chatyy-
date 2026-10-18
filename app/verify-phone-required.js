@@ -18,6 +18,9 @@ import * as api from '../services/api';
 import { IconSmartphone } from '../components/Icons';
 // [2026-10-18 otp-haptics] toque leve por dígito, erro/sucesso na verificação.
 import { tap as hTap, success as hSuccess, error as hError } from '../services/haptics';
+import { useSmsOtpAutofill } from '../services/smsOtp';
+import { useOtpAutofillAssist, primeWhatsAppOtp } from '../services/otpAutofill'; // [2026-10-18 otp-autofill]
+import OtpAssist from '../components/OtpAssist';
 
 export default function VerifyPhoneRequiredScreen() {
   const { colors } = useTheme();
@@ -30,6 +33,7 @@ export default function VerifyPhoneRequiredScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const codeRef = useRef(null);
+  const [via, setVia] = useState({ wa: false, provider: null, n: 0 }); // [2026-10-18 otp-autofill]
 
   const requestOtp = async () => {
     setError('');
@@ -50,8 +54,10 @@ export default function VerifyPhoneRequiredScreen() {
       // when phone isn't registered yet, which is exactly the case for users
       // bounced here (they have an account but no phone). Use the dedicated
       // authenticated endpoint that doesn't gate on existing registry rows.
+      primeWhatsAppOtp(); // [2026-10-18 otp-autofill] handshake one-tap antes do envio
       const r = await api.verifyPhoneSend(normalized);
       if (r?.success) {
+        setVia((v) => ({ wa: !!r?.data?.whatsapp_sent, provider: r?.data?.provider || null, n: v.n + 1 }));
         setPhone(normalized);
         setStep('code');
         setTimeout(() => codeRef.current?.focus(), 100);
@@ -65,7 +71,8 @@ export default function VerifyPhoneRequiredScreen() {
     }
   };
 
-  const verifyCode = async () => {
+  const verifyCode = async (codeArg) => {
+    const code = typeof codeArg === 'string' ? codeArg : codeStateRef.current;
     setError('');
     if (code.length !== 6) { try { hError(); } catch {} setError(t('verifyPhoneReq.codeLength')); return; }
     setLoading(true);
@@ -87,6 +94,25 @@ export default function VerifyPhoneRequiredScreen() {
       setLoading(false);
     }
   };
+
+  // [2026-10-18 otp-autofill] SMS (Android User Consent) + WhatsApp (one-tap / clipboard)
+  // preenchem e enviam; verifyCode recebe o código fresco (estado ainda não renderizou).
+  const codeStateRef = useRef(code);
+  codeStateRef.current = code;
+  const verifyRef = useRef(null);
+  verifyRef.current = verifyCode;
+  const autoFill = (c) => {
+    setCode(c);
+    setTimeout(() => { try { verifyRef.current?.(c); } catch {} }, 150);
+  };
+  useSmsOtpAutofill(step === 'code', autoFill, via.n);
+  const otpAssist = useOtpAutofillAssist({
+    active: step === 'code',
+    viaWhatsapp: via.wa,
+    provider: via.provider,
+    onCode: autoFill,
+    rearmKey: via.n,
+  });
 
   return (
     <KeyboardAvoidingView
@@ -158,7 +184,11 @@ export default function VerifyPhoneRequiredScreen() {
               placeholder="000000"
               placeholderTextColor={colors.textTertiary}
               keyboardType="number-pad"
+              inputMode="numeric"
               maxLength={6}
+              textContentType="oneTimeCode"
+              autoComplete={Platform.OS === 'web' ? 'one-time-code' : 'sms-otp'}
+              importantForAutofill="yes"
               style={{
                 backgroundColor: colors.surface,
                 color: colors.text,
@@ -174,7 +204,7 @@ export default function VerifyPhoneRequiredScreen() {
             />
             {error ? <Text style={{ color: '#ef4444', marginBottom: 12 }}>{error}</Text> : null}
             <TouchableOpacity
-              onPress={verifyCode}
+              onPress={() => verifyCode()}
               disabled={loading || code.length !== 6}
               style={{
                 backgroundColor: colors.primary,
@@ -191,6 +221,7 @@ export default function VerifyPhoneRequiredScreen() {
             <TouchableOpacity onPress={() => setStep('phone')} style={{ marginTop: 12, alignItems: 'center' }}>
               <Text style={{ color: colors.primary, fontSize: 14 }}>{t('login.phoneChangeNumber')}</Text>
             </TouchableOpacity>
+            <OtpAssist assist={otpAssist} colors={colors} />
           </>
         )}
 
