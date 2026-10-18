@@ -24,12 +24,26 @@ export function voipDiag(event, callId, detail) {
       ts: Date.now(),
       platform: Platform.OS,
     });
-    fetch(ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      // Tight timeout so a stuck request never blocks the call flow
-    }).catch(() => {});
+    const send = () => {
+      try {
+        fetch(ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          // Tight timeout so a stuck request never blocks the call flow
+        }).catch(() => {});
+      } catch {}
+    };
+    // [perf 2026-10-17 boot-fanout] eventos SEM chamada (listener_mounted, registro
+    // de token…) no boot esperam o bootIdle (~25 s); com call_id = ligação real →
+    // na hora (o fluxo de atender a frio precisa do rastro imediato).
+    if (!callId) {
+      try {
+        const bi = require('./bootIdle');
+        if (bi.inBootWindow()) { bi.runWhenBootIdle(send); return; }
+      } catch {}
+    }
+    send();
   } catch {}
 }
 

@@ -53,13 +53,22 @@ function send(event, page, referrer) {
     screen: Platform.OS === 'web' && typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : '',
     language: Platform.OS === 'web' && typeof navigator !== 'undefined' ? (navigator.language || '') : '',
   });
+  const fire = () => {
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon(TRACK_URL(), new Blob([payload], { type: 'application/json' }));
+      } else {
+        fetch(TRACK_URL(), { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(() => {});
+      }
+    } catch {}
+  };
+  // [perf 2026-10-17 boot-fanout] no boot (track ×1,6 nos primeiros 15 s) espera a
+  // 1ª pintura + ~4 s + ocioso — sai antes de quase todo "abriu e fechou".
   try {
-    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.sendBeacon) {
-      navigator.sendBeacon(TRACK_URL(), new Blob([payload], { type: 'application/json' }));
-    } else {
-      fetch(TRACK_URL(), { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true }).catch(() => {});
-    }
+    const bi = require('./bootIdle');
+    if (bi.inBootWindow(4000)) { bi.runWhenBootIdle(fire, { minMs: 4000 }); return; }
   } catch {}
+  fire();
 }
 
 export function trackPageview(page) { send('pageview', page); }

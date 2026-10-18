@@ -52,6 +52,16 @@ export function setBackupDebugEmail(email) { if (email) _dbgEmail = String(email
 export function setBackupDebugEnabled(v) { _dbgEnabled = !!v; }
 function _bdbg(tag, data) {
   if (!_dbgEnabled) return;
+  // [perf 2026-10-17 boot-fanout] no boot (1ª pintura + ~25 s) o beacon espera a
+  // fila do bootIdle (teto de 80 itens, descarta os mais velhos) — antes saía
+  // no meio da rajada de abertura (backup_debug ×1,7 nos primeiros 15 s).
+  try {
+    const bi = require('./bootIdle');
+    if (bi.inBootWindow()) { bi.runWhenBootIdle(() => _bdbgSend(tag, data)); return; }
+  } catch {}
+  _bdbgSend(tag, data);
+}
+function _bdbgSend(tag, data) {
   try {
     fetch('https://chatyy.com.br/api/email.php?action=backup_debug', {
       method: 'POST',

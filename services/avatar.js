@@ -66,7 +66,12 @@ export function buildAvatarUrl(email, opts = {}) {
   if (!e) return null;
   const api = _api();
   let base = FALLBACK_API;
-  try { base = (api && typeof api.getApiUrl === 'function' && api.getApiUrl()) || FALLBACK_API; } catch {}
+  // [perf 2026-10-17 boot-fanout] host fixo na sessão (getAvatarApiUrl) — antes o
+  // host mudava com a escolha de região e a mesma foto baixava 2-3×.
+  try {
+    base = (api && typeof api.getAvatarApiUrl === 'function' && api.getAvatarApiUrl())
+      || (api && typeof api.getApiUrl === 'function' && api.getApiUrl()) || FALLBACK_API;
+  } catch {}
   let viewer = '';
   try { viewer = (api && typeof api.getAvatarViewerEmail === 'function' && api.getAvatarViewerEmail()) || ''; } catch {}
   let v = getAvatarVersion(e) || 0;

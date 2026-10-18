@@ -1708,9 +1708,17 @@ function AppInit({ onNotification, setOtaToast }) {
     if (Platform.OS !== 'web') {
       // [2026-10-07 coldstart] 2 s after first paint (was 2 s after mount,
       // which on a slow device still landed inside the first-paint window).
+      // [perf 2026-10-17 boot-fanout] A passada de backup (drive_precheck/init/
+      // register/confirm ≈ 14 requests nos primeiros 15 s) competia com chat_list/
+      // chat_sync/chat_messages. Agora: 1ª pintura + ~12 s desde o início do JS +
+      // ocioso (bootIdle). Ainda cedo p/ "usuário minimiza logo", e o BG task/
+      // listener de fotos novas cobrem o resto. Kill switch __chatyy_boot_dedupe=false
+      // → volta a 2 s após a pintura.
       afterFirstPaint(() => {
-        initAutoBackup().catch(() => {});
-      }, 2000); // Start backup quickly (was 10s - too slow, user minimizes before)
+        try {
+          require('../services/bootIdle').runWhenBootIdle(() => { initAutoBackup().catch(() => {}); }, { minMs: 12000, key: 'auto_backup_init' });
+        } catch { initAutoBackup().catch(() => {}); }
+      }, 2000);
     }
 
     // OTA disabled in app — updates via TestFlight/Play Store builds only

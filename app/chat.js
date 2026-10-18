@@ -812,17 +812,26 @@ function ChatHub() {
   // CONTAGEM) no mount e a cada 60s. Silencioso; nunca derruba a UI.
   useEffect(() => {
     let cancelled = false; let timer = null;
+    let lastFetchAt = 0; // [perf 2026-10-17 boot-fanout]
     const fetchEmailUnread = async () => {
       try {
         const api = require('../services/api');
         if (!api.inboxUnreadCount) return;
+        lastFetchAt = Date.now();
         const r = await api.inboxUnreadCount().catch(() => null);
         if (cancelled) return;
         const n = Number(r?.data?.unread || r?.data?.count || 0);
         setEmailBadge(Number.isFinite(n) && n > 0 ? n : 0);
       } catch {}
     };
-    fetchEmailUnread();
+    // [perf 2026-10-17 boot-fanout] folder_counts (p50 145 ms) não é da 1ª tela:
+    // sai depois da 1ª pintura (+1,5 s) e o recount do 1º 'authenticated' do WS
+    // logo em seguida não repete o que acabou de ser contado (folder_counts ×2 no boot).
+    let firstT = null;
+    try {
+      if (globalThis.__chatyy_boot_dedupe === false) fetchEmailUnread();
+      else require('../services/bootTrace').afterFirstPaint(() => { firstT = setTimeout(() => { if (!cancelled) fetchEmailUnread(); }, 1500); }, 0);
+    } catch { fetchEmailUnread(); }
     // [2026-10-15 ws-badge] Era HTTP a cada 60 s. O hub já avisa e-mail novo no
     // canal `mail_{email}` (MailContext assina) → reconta no aviso (debounce) e
     // ao (re)autenticar o WS (cobre o que chegou desconectado). O poll vira
@@ -833,7 +842,12 @@ function ChatHub() {
     try {
       const ws = require('../services/websocket').default;
       offWsNew = ws.on('new_email', () => scheduleRecount(1500));
-      offWsConn = ws.on('connection', (ev) => { if (ev && ev.status === 'authenticated') scheduleRecount(800); });
+      offWsConn = ws.on('connection', (ev) => {
+        if (!(ev && ev.status === 'authenticated')) return;
+        // boot: o fetch inicial (pendente ou de <15 s) já cobre esta (re)autenticação
+        if (globalThis.__chatyy_boot_dedupe !== false && (!lastFetchAt || Date.now() - lastFetchAt < 15000)) return;
+        scheduleRecount(800);
+      });
     } catch {}
     const stopPoll = setActiveInterval(fetchEmailUnread, 300000);
     timer = null;
@@ -848,7 +862,7 @@ function ChatHub() {
     const appSub = AppState.addEventListener('change', (st) => { if (st === 'active') fetchEmailUnread(); });
     return () => {
       cancelled = true; if (timer) clearInterval(timer); if (recount) clearTimeout(recount);
-      if (wsRecount) clearTimeout(wsRecount);
+      if (wsRecount) clearTimeout(wsRecount); if (firstT) clearTimeout(firstT);
       try { stopPoll(); } catch {} try { offWsNew && offWsNew(); } catch {} try { offWsConn && offWsConn(); } catch {}
       try { sub.remove(); } catch {} try { appSub.remove(); } catch {}
     };

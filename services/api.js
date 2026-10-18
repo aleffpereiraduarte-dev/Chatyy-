@@ -150,6 +150,21 @@ try {
 // (TDZ) ReferenceError on web when MMKV had a cached edge server.
 let API_URL = 'https://chatyy.com.br/api/email.php';
 export function getApiUrl() { return API_URL; }
+// [perf 2026-10-17 boot-fanout] Host FIXO das fotos de perfil na sessão. A URL do
+// avatar usava o API_URL do momento: boot com o fallback US → região restaurada /
+// probe → br/br2 → a MESMA foto saía com 2-3 hosts (get_avatar ×2-3 por abertura,
+// cada uma um download e uma entrada de cache). Agora o host é fixado na 1ª vez em
+// que a região está decidida e só muda se aquela origem cair (_markEdgeDown).
+// Kill switch: globalThis.__chatyy_boot_dedupe = false (volta a seguir o API_URL).
+let _avatarApi = null; // { url, origin }
+export function getAvatarApiUrl() {
+  try { if (globalThis.__chatyy_boot_dedupe === false) return API_URL; } catch {}
+  const a = _avatarApi;
+  if (a && !(a.origin && a.origin !== 'us' && _originIsDown(a.origin))) return a.url;
+  if (!_bestServer) return API_URL; // região ainda não decidida → não fixa
+  _avatarApi = { url: API_URL, origin: _originOf(_bestServer) };
+  return API_URL;
+}
 
 // parseServerDate — safe Date() for backend datetime strings.
 //
@@ -1763,6 +1778,9 @@ async function _rawApiCallOnce(action, params = {}, method = 'GET', _baseOverrid
     const text = await res.text();
     clearTimeout(timeout);
     if (res.status > 0 && res.status < 500) _wsNudgeOnHttpOk();
+    // [perf 2026-10-17 retry-storm] Retry-After (429/503) → o breaker de leituras respeita.
+    let _ra = 0;
+    if (res.status === 429 || res.status >= 500) { try { _ra = _parseRetryAfterMs(res.headers.get('retry-after')); } catch {} }
     try {
       const data = JSON.parse(text);
       const respToken = data?.data?.token;
@@ -1773,9 +1791,9 @@ async function _rawApiCallOnce(action, params = {}, method = 'GET', _baseOverrid
       // Store CSRF token from login/check_auth responses
       const respCsrf = data?.data?.csrf_token;
       if (respCsrf) csrfToken = respCsrf;
-      return { data: _withHttpStatus(data, res.status), status: res.status, url };
+      return { data: _withHttpStatus(data, res.status), status: res.status, url, retryAfterMs: _ra };
     } catch {
-      return { data: _withHttpStatus({ success: false, message: 'Servidor indisponivel' }, res.status), status: res.status, url };
+      return { data: _withHttpStatus({ success: false, message: 'Servidor indisponivel' }, res.status), status: res.status, url, retryAfterMs: _ra };
     }
   } catch (err) {
     clearTimeout(timeout);
@@ -1945,6 +1963,9 @@ const CHAT_READ_NO_INVALIDATE = new Set([
   'chat_storage_usage', 'chat_get_notes',
   // chat_sync: só invalida quando trouxe eventos (ver _apiCallCore).
   'chat_sync',
+  // [perf 2026-10-17 boot-fanout] ✓✓ de entrega das mensagens RECEBIDAS não muda a
+  // minha lista (no boot o catch-up manda vários lotes → chat_list ×2).
+  'chat_delivery_ack',
 ]);
 
 // [2026-10-15 boot-dedupe] Janela de revalidação por action. O fresh-path do
@@ -2416,6 +2437,34 @@ async function _apiCallCore(action, params = {}, method = 'GET', opts = {}) {
     _inflightAt.set(key, Date.now());
     return promise;
   }
+  // [perf 2026-10-17 boot-fanout] Single-flight de POSTs idempotentes: o MESMO
+  // corpo já em voo (chat_sync de 2-3 chamadores no boot — orquestrador, tela,
+  // prefetch —, register_push/voip_token do boot + permissão, ack repetido)
+  // pega carona na mesma promessa em vez de abrir outra request. Só junta
+  // enquanto está em voo (nada de reaproveitar resposta já terminada).
+  // Kill switch: globalThis.__chatyy_boot_dedupe = false.
+  if (_SF_POST.has(action) && !_bootDedupeOff()) {
+    const sfKey = 'sf:' + _inflightKey(action, params);
+    const sfEx = _inflight.get(sfKey);
+    if (sfEx && (Date.now() - (_inflightAt.get(sfKey) || 0)) < _INFLIGHT_JOIN_MAX_MS) return sfEx;
+    const sfP = (async () => {
+      try { return await _apiCallMutation(action, params, method); }
+      finally { if (_inflight.get(sfKey) === sfP) { _inflight.delete(sfKey); _inflightAt.delete(sfKey); } }
+    })();
+    _inflight.set(sfKey, sfP);
+    _inflightAt.set(sfKey, Date.now());
+    return sfP;
+  }
+  return _apiCallMutation(action, params, method);
+}
+
+const _SF_POST = new Set([
+  'chat_sync', 'register_push_token', 'register_voip_token', 'push_permission_report',
+  'chat_delivery_ack', 'chat_read_receipt', 'e2ee_v4_status',
+]);
+function _bootDedupeOff() { try { return globalThis.__chatyy_boot_dedupe === false; } catch { return false; } }
+
+function _apiCallMutation(action, params, method) {
   // Mutation — invalidate any cached reads that look related so the next
   // GET fetches fresh data. Pure chat_* READS (settings/privacy/metadata
   // peeks) must NOT drop the hot chat_list cache — doing so on every read
@@ -2448,6 +2497,121 @@ const _IDEMPOTENT_RETRY_POST = new Set([
   'chat_user_privacy', 'get_settings', 'profile_get', 'get_profile',
 ]);
 
+// ─── [perf 2026-10-17 retry-storm] Breaker de leituras com backoff exponencial ───
+// Incidente 17/10: php-fpm do api-br parado ~4 h → UM iPhone (build 704) fez 9.310
+// chat_messages com 502 (≈0,65/s). Cada laço de tela (poll de 3 s com WS caído,
+// poll de segurança, retries de loadMessages, SWR) chamava apiCall de novo e cada
+// chamada ainda fazia o retry-once → o aparelho martelava o edge sem parar.
+// Agora toda leitura (GET / POST de leitura / POST idempotente / chat_sync) que
+// volta 5xx ou falha de transporte abre um breaker POR ação+host:
+//   espera = min(60 s, 1 s·2^(n-1)) com jitter "igual" (50–100 %), e nunca menos
+//   que o Retry-After do servidor (teto 5 min). Enquanto aberto, a chamada NÃO sai:
+//   devolve na hora o mesmo corpo de um 5xx ({success:false,'Servidor indisponivel'},
+//   __httpStatus = último status) — quem chama já trata isso (cache/last-known/erro).
+// Falha de infraestrutura (502/503/504/0) = chave action@host; 500/501/505+
+// (erro do PHP, pode ser só daquela conversa) = chave action@host|params.
+// Fecha: 1ª resposta não-transitória da mesma chave; transporte (status 0) também
+// fecha com qualquer resposta OK do MESMO host ou com a rede voltando (NetInfo).
+// O failover edge→irmã→US (_rawApiCall/_markEdgeDown) troca o API_URL → host novo
+// = chave nova, então o breaker nunca prende o app num edge que já foi trocado.
+// Mutações (chat_send etc.) ficam de fora: outbox/sendWorker já têm backoff próprio.
+// Kill switch (OTA): globalThis.__chatyy_api_backoff = false.
+const _BO_BASE_MS = 1000;
+const _BO_CAP_MS = 60000;
+const _BO_RA_CAP_MS = 5 * 60 * 1000;
+const _BO_MAX_KEYS = 300;
+const _boState = new Map(); // key → { n, until, status, host }
+const _BO_EXEMPT = new Set([
+  'login', 'signup', 'check_auth', 'auth_refresh', 'logout', 'region_hint',
+  'phone_otp_request', 'phone_otp_verify', 'verify_check', 'qr_login_status',
+]);
+let _boNetSub = null;
+function _boOff() { try { return globalThis.__chatyy_api_backoff === false; } catch { return false; } }
+function _parseRetryAfterMs(v) {
+  if (v == null || v === '') return 0;
+  const n = Number(v);
+  if (Number.isFinite(n)) return Math.max(0, Math.min(_BO_RA_CAP_MS, n * 1000));
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? Math.max(0, Math.min(_BO_RA_CAP_MS, t - Date.now())) : 0;
+}
+function _boHost(u) { try { return String(u || API_URL).split('/')[2] || ''; } catch { return ''; } }
+function _boEligible(action, method) {
+  if (_boOff() || _BO_EXEMPT.has(action)) return false;
+  const m = String(method || 'GET').toUpperCase();
+  return m === 'GET' || _isReadablePost(action) || _IDEMPOTENT_RETRY_POST.has(action) || action === 'chat_sync';
+}
+function _boKeys(action, params, host) {
+  let pk = '';
+  try { pk = JSON.stringify(params || {}).slice(0, 240); } catch {}
+  return { infra: action + '@' + host, app: action + '@' + host + '|' + pk };
+}
+function _boIsTransient(r) {
+  if (!r) return false;
+  if (r.status >= 500) return true;
+  if (r.status === 429) return true; // rate limit: espera (Retry-After quando vier)
+  if (r.status !== 0) return false;
+  const m = (r.data && r.data.message) || '';
+  return m === 'Tempo limite excedido' || m === 'Connection error';
+}
+function _boOpen(keys) {
+  const now = Date.now();
+  for (const k of [keys.infra, keys.app]) {
+    const e = _boState.get(k);
+    if (e && e.until > now) return e;
+  }
+  return null;
+}
+function _boArmNet() {
+  if (_boNetSub) return;
+  _boNetSub = true;
+  try {
+    const ni = require('./networkInfo');
+    if (typeof ni.onNetworkChange === 'function') {
+      let was = null;
+      _boNetSub = ni.onNetworkChange((st) => {
+        const on = !!(st && st.isConnected);
+        if (on && was === false) {
+          for (const [k, e] of _boState) if (e.status === 0) _boState.delete(k);
+        }
+        was = on;
+      });
+    }
+  } catch {}
+}
+function _boFail(keys, r) {
+  const infra = !r || r.status === 0 || r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504;
+  const k = infra ? keys.infra : keys.app;
+  const prev = _boState.get(k);
+  const n = Math.min(20, ((prev && prev.n) || 0) + 1);
+  const exp = Math.min(_BO_CAP_MS, _BO_BASE_MS * Math.pow(2, n - 1));
+  const wait = Math.max(Math.round(exp * (0.5 + Math.random() * 0.5)), Number(r && r.retryAfterMs) || 0);
+  if (!prev && _boState.size >= _BO_MAX_KEYS) {
+    const now = Date.now();
+    for (const [kk, e] of _boState) if (e.until <= now) _boState.delete(kk);
+    if (_boState.size >= _BO_MAX_KEYS) _boState.delete(_boState.keys().next().value);
+  }
+  _boState.set(k, { n, until: Date.now() + wait, status: (r && r.status) || 0, host: keys.host });
+  if (r && r.status === 0) _boArmNet();
+  if (n === 1 || n % 5 === 0) { try { console.warn('[API] backoff ' + k.split('|')[0] + ' n=' + n + ' ' + Math.round(wait / 1000) + 's (HTTP ' + ((r && r.status) || 0) + ')'); } catch {} }
+}
+function _boOk(keys, host) {
+  _boState.delete(keys.infra);
+  _boState.delete(keys.app);
+  // Transporte voltou neste host → libera as outras leituras paradas por status 0.
+  if (_boState.size) for (const [k, e] of _boState) if (e.status === 0 && e.host === host) _boState.delete(k);
+}
+function _boShortCircuit(e) {
+  const st = e.status || 0;
+  const body = { success: false, message: st === 0 ? 'Connection error' : 'Servidor indisponivel', backoff: true, retry_in_ms: Math.max(0, e.until - Date.now()) };
+  return _withHttpStatus(body, st);
+}
+/** Diagnóstico/QA: estado atual do breaker (chave → {n, em_ms, status}). */
+export function getApiBackoffState() {
+  const out = {}; const now = Date.now();
+  for (const [k, e] of _boState) if (e.until > now) out[k] = { n: e.n, in_ms: e.until - now, status: e.status };
+  return out;
+}
+
 async function _apiCallImpl(action, params = {}, method = 'GET') {
   // [incidente-sessao 2026-10-14] bearer com que a chamada SAIU (p/ remover do
   // aparelho a conta guardada cujo token o servidor declarar revogado).
@@ -2456,6 +2620,15 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
   // morto NÃO desloga, mas o polling para (sem rede) até o token mudar.
   if (_deadParkedFp && _tokenFingerprint() === _deadParkedFp && !_DEAD_PARK_PASS.has(action)) {
     return { success: false, message: 'Not authenticated', parked: true };
+  }
+  // [perf 2026-10-17 retry-storm] breaker aberto p/ esta leitura neste host → não sai.
+  const _boOn = _boEligible(action, method);
+  const _boH = _boOn ? _boHost() : '';
+  const _boK = _boOn ? _boKeys(action, params, _boH) : null;
+  if (_boK) {
+    _boK.host = _boH;
+    const _open = _boOpen(_boK);
+    if (_open) return _boShortCircuit(_open);
   }
   let result = await _rawApiCall(action, params, method);
 
@@ -2475,10 +2648,15 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       (result.status >= 500) ||
       (result.status === 0 && (_msg === 'Tempo limite excedido' || _msg === 'Connection error'));
     const _retryable = (_m === 'GET') || _IDEMPOTENT_RETRY_POST.has(action);
-    if (_isTransient && _retryable && action !== 'login' && action !== 'signup') {
+    // [perf 2026-10-17 retry-storm] sem retry-once quando esta chave já vinha falhando
+    // (o breaker cuida do espaçamento) ou quando o servidor pediu Retry-After > 3 s.
+    const _boPrev = _boK ? (_boState.get(_boK.infra) || _boState.get(_boK.app)) : null;
+    const _raMs = Number(result && result.retryAfterMs) || 0;
+    const _skipRetry = !!_boPrev || _raMs > 3000;
+    if (_isTransient && _retryable && !_skipRetry && action !== 'login' && action !== 'signup') {
       // [2026-10-09 net-resilience] jitter (400–1200ms): N telas que falharam
       // juntas na mesma queda não voltam todas no mesmo milissegundo.
-      await new Promise(r => setTimeout(r, 400 + Math.floor(Math.random() * 800)));
+      await new Promise(r => setTimeout(r, Math.max(_raMs, 400 + Math.floor(Math.random() * 800))));
       const _retry = await _rawApiCall(action, params, method);
       // Never-worse: only adopt the retry if it is NOT itself transient
       // (2xx/3xx or a definitive 4xx). Otherwise keep the original result so
@@ -2490,6 +2668,12 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       if (!_retryTransient) result = _retry;
     }
   } catch {}
+  if (_boK) {
+    try {
+      if (_boIsTransient(result)) _boFail(_boK, result);
+      else if (result && result.status > 0) _boOk(_boK, _boH);
+    } catch {}
+  }
 
   // Reset the consecutive-401 counter on any non-401 response — even errors
   // count, since they prove the network/host is alive. This way only a

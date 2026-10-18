@@ -140,7 +140,33 @@ const DEBOUNCE_MS = 500;
 const COLD_TAIL_EVENTS = 300;
 const _PTS_PROBE = 9007199254740991;
 const _smallConv = new Map(); // id -> ts: probed, ≤ COLD_TAIL_EVENTS events → plain pts-0 sync is already a tail
+// [perf 2026-10-17 boot-fanout] o mapa era só de memória → todo boot (inclusive o
+// 2º boot do reload de OTA, segundos depois) refazia a sonda chat_sync p/ as
+// conversas sem cursor (sem eventos ainda): chat_sync ×3 no boot. Persistido com o
+// MESMO prazo de 10 min. Kill switch: globalThis.__chatyy_boot_dedupe = false.
+const _SMALL_KEY = 'chat_sync_small_conv_v1';
+let _smallLoaded = false;
+function _smallLoad() {
+  if (_smallLoaded) return;
+  _smallLoaded = true;
+  try {
+    if (globalThis.__chatyy_boot_dedupe === false) return;
+    const raw = require('./mmkv').getString?.(_SMALL_KEY);
+    if (!raw) return;
+    const o = JSON.parse(raw); const now = Date.now();
+    for (const k of Object.keys(o || {})) { const t = Number(o[k]) || 0; if (now - t < 10 * 60 * 1000 && !_smallConv.has(Number(k))) _smallConv.set(Number(k), t); }
+  } catch {}
+}
+function _smallSave() {
+  try {
+    if (globalThis.__chatyy_boot_dedupe === false) return;
+    const now = Date.now(); const o = {}; let n = 0;
+    for (const [k, t] of _smallConv) { if (now - t < 10 * 60 * 1000 && n < 500) { o[k] = t; n++; } }
+    require('./mmkv').setString?.(_SMALL_KEY, JSON.stringify(o));
+  } catch {}
+}
 async function _coldTailSince(rows) {
+  _smallLoad();
   const tails = new Map(); // id -> since
   const now = Date.now();
   const cold = rows.filter(x => !x.since_pts && !(now - (_smallConv.get(x.id) || 0) < 10 * 60 * 1000));
@@ -156,6 +182,7 @@ async function _coldTailSince(rows) {
       if (latest > COLD_TAIL_EVENTS) tails.set(Number(c.id), latest - COLD_TAIL_EVENTS);
       else _smallConv.set(Number(c.id), now);
     }
+    _smallSave();
   } catch {}
   return tails;
 }

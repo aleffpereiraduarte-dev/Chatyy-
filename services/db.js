@@ -681,7 +681,21 @@ async function _initOnce() {
     // sqlite_self_check so we can confirm on real devices that the
     // unified schema (#1206) actually persists writes. See server log at
     // /var/www/mail/data/sqlite-diag/YYYY-MM-DD.log.
-    _runSelfCheck();
+    // [perf 2026-10-17 boot-fanout] PRAGMA + escrita-sonda + COUNT(*) na tabela de
+    // mensagens + POST sqlite_self_check rodavam no meio do boot (disputando o
+    // SQLite com a hidratação da lista e a rede com chat_list). Agora: depois da
+    // 1ª pintura + ~30 s ocioso e no máximo 1×/24 h por aparelho.
+    try {
+      require('./bootIdle').runWhenBootIdle(() => {
+        try {
+          const mm = require('./mmkv');
+          const last = Number(mm.getString?.('sqlite_self_check_at') || 0) || 0;
+          if (last && Date.now() - last < 24 * 60 * 60 * 1000 && globalThis.__chatyy_boot_dedupe !== false) return;
+          try { mm.setString?.('sqlite_self_check_at', String(Date.now())); } catch {}
+        } catch {}
+        _runSelfCheck();
+      }, { minMs: 30000, key: 'sqlite_self_check' });
+    } catch { _runSelfCheck(); }
   } catch (err) {
     const msg = sqliteErrMsg(err);
     console.warn('[DB] Init failed:', msg);

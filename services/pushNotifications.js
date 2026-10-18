@@ -480,6 +480,12 @@ let _diagWindowStart = 0;
 let _diagWindowCount = 0;
 const _diagLastByStep = Object.create(null);
 async function _diagPush(step, info) {
+  // [perf 2026-10-17 boot-fanout] no boot os ~8 passos do registro de push saíam
+  // como 8 POSTs nos primeiros segundos → vão no lote único do crashReporter
+  // (diag_batch, após ~25 s; passo vira `push_<step>`). Fora da janela = como antes.
+  try {
+    if (require('./crashReporter').deferBootDiag?.('push_' + String(step || ''), info ? String(info).slice(0, 220) : '')) return;
+  } catch {}
   try {
     const _now = Date.now();
     if (_now - _diagWindowStart > 60 * 1000) { _diagWindowStart = _now; _diagWindowCount = 0; }

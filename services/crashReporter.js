@@ -280,12 +280,74 @@ function _send(body, urgent) {
   } catch { return Promise.resolve(); }
 }
 
+// ─── [perf 2026-10-17 boot-fanout] Lote de diagnóstico do boot ───────────────
+// Cada abertura mandava ~9-18 push_diag nos primeiros 15 s (identity,
+// hydrate_*, callkit_diag, mmkv_*, os passos do registro de push…), cada um uma
+// request competindo com chat_list/chat_sync/chat_messages. Passos de DIAGNÓSTICO
+// (lista abaixo) dentro da janela de boot vão para uma fila e saem JUNTOS depois
+// de BOOT_DIAG_WINDOW_MS como `diag_batch_KofN` (info = "passo+1.2s:info || …").
+// FICAM imediatos (sinais do canário/bootgap e de crash): boot_start,
+// boot_alive_*, crash_*, upd_log*, boot_reload, chunk_reload, coldstart_marks e
+// tudo `urgent`. Crash (urgent) esvazia a fila antes de sair.
+// Kill switch (OTA): globalThis.__chatyy_boot_dedupe = false → tudo imediato.
+const BOOT_DIAG_WINDOW_MS = 25000;
+const _BOOT_DIAG_DEFER_RE = /^(identity|hydrate_|callkit_diag|mmkv_|push_|native_fallback|ws_|net_|e2ee_|sqlite_|backup_|bg_|lk_)/;
+const _bootDiagQ = [];
+let _bootDiagTimer = null;
+function _bootDiagOff() { try { return globalThis.__chatyy_boot_dedupe === false; } catch { return false; } }
+function _bootDiagDefers(step, urgent) {
+  if (urgent || _bootDiagOff()) return false;
+  if (Date.now() - _bootAt >= BOOT_DIAG_WINDOW_MS) return false;
+  return _BOOT_DIAG_DEFER_RE.test(String(step || ''));
+}
+function _bootDiagPush(step, info, tsMs) {
+  if (_bootDiagQ.length >= 40) _bootDiagQ.shift();
+  _bootDiagQ.push({ s: String(step || '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40), i: String(info || '').replace(/[\r\n]+/g, ' ').slice(0, 220), t: tsMs || Date.now() });
+  if (!_bootDiagTimer) {
+    const wait = Math.max(0, _bootAt + BOOT_DIAG_WINDOW_MS - Date.now()) + Math.floor(Math.random() * 3000);
+    try { _bootDiagTimer = setTimeout(() => { _bootDiagTimer = null; _flushBootDiag(); }, wait); } catch {}
+  }
+}
+function _flushBootDiag(urgent = false) {
+  try {
+    if (_bootDiagTimer) { try { clearTimeout(_bootDiagTimer); } catch {} _bootDiagTimer = null; }
+    if (!_bootDiagQ.length) return Promise.resolve();
+    const items = _bootDiagQ.splice(0, _bootDiagQ.length);
+    const parts = [];
+    let cur = '';
+    for (const it of items) {
+      const sec = ((it.t - _bootAt) / 1000).toFixed(1);
+      const piece = `${it.s}+${sec}s${it.i ? ':' + it.i : ''}`;
+      if (cur && (cur.length + 4 + piece.length) > 470) { parts.push(cur); cur = ''; }
+      cur = cur ? `${cur} || ${piece}` : piece.slice(0, 470);
+    }
+    if (cur) parts.push(cur);
+    const anonP = _anonId ? Promise.resolve(_anonId) : _ensureAnonId();
+    return anonP.then((anon) => Promise.all(parts.map((p, idx) => {
+      // Fora do teto de 30/min do _post (é UM lote no lugar de N posts que já iriam).
+      const step = parts.length > 1 ? `diag_batch_${idx + 1}of${parts.length}` : 'diag_batch';
+      return _send(_buildBody(step, p, anon || 'boot-' + _bootAt.toString(36), Date.now()), urgent);
+    }))).catch(() => {});
+  } catch { return Promise.resolve(); }
+}
+/** Diagnóstico de outro módulo (ex.: push) que pode ir no lote do boot. true = enfileirado. */
+export function deferBootDiag(step, info) {
+  try {
+    if (!_bootDiagDefers(step, false)) return false;
+    addBreadcrumb(step, info);
+    _bootDiagPush(step, info, Date.now());
+    return true;
+  } catch { return false; }
+}
+
 // Returns a promise that resolves when the POST has been handed to the
 // network layer (or dropped). `urgent` bypasses the per-step 5s dedup (a
 // crash's ctx + stack share a step name with the previous crash).
 async function _post(step, info, urgent = false) {
   try {
     const _now = Date.now();
+    if (_bootDiagDefers(step, urgent)) { _bootDiagPush(step, info, _now); return; }
+    if (urgent && _bootDiagQ.length) { try { _flushBootDiag(true); } catch {} }
     if (_now - _postWindowStart > 60 * 1000) { _postWindowStart = _now; _postWindowCount = 0; }
     if (_postWindowCount >= 30) return;
     const _stepKey = String(step || '');
@@ -620,6 +682,14 @@ async function _reportUpdatesLog() {
   for (const e of entries) { const ts = Number(e && e.timestamp) || 0; if (ts > maxTs) maxTs = ts; }
   try { if (AS && maxTs > last) await AS.setItem(UPDLOG_KEY, String(maxTs)); } catch {}
   if (!hits.length) return;
+  // [perf 2026-10-17 boot-fanout] 3 posts urgentes aos ~8 s de TODO boot (o RX pega
+  // "failureCount = 0"). Só sai já quando há sinal real p/ o canário (ErrorRecovery,
+  // rollback, emergência, erro/fatal); o resto espera a janela de boot passar.
+  const critical = hits.some((e) => /ErrorRecovery|roll ?back|emergency|corrupt/i.test(String(e.message || '')) || e.level === 'error' || e.level === 'fatal');
+  const waitMs = _bootAt + BOOT_DIAG_WINDOW_MS - Date.now();
+  if (!critical && waitMs > 0 && !_bootDiagOff()) {
+    await new Promise((res) => setTimeout(res, waitMs + Math.floor(Math.random() * 3000)));
+  }
   const lines = hits.slice(-6).map((e) => {
     const ago = Math.round((Date.now() - Number(e.timestamp)) / 1000);
     const uid = e.updateId ? String(e.updateId).slice(0, 8) : '-';

@@ -93,9 +93,10 @@ function _send(kind, info, data) {
     if (!tok) return; // callkit_diag exige login; antes do login = 401 inútil
     const body = { kind, info: String(info || '').slice(0, 400), platform: Platform.OS, dev: _dev(), b: _build() };
     if (data && typeof data === 'object') body.data = data;
-    setTimeout(() => {
-      try { api.apiCall?.('callkit_diag', body, 'POST')?.catch?.(() => {}); } catch {}
-    }, 0);
+    // [perf 2026-10-17 boot-fanout] no boot espera a 1ª pintura + ~25 s + ocioso
+    // (bootIdle) — beacon de telemetria não disputa rede com a lista/conversa.
+    const fire = () => { try { api.apiCall?.('callkit_diag', body, 'POST')?.catch?.(() => {}); } catch {} };
+    try { require('./bootIdle').runWhenBootIdle(fire); } catch { setTimeout(fire, 0); }
   } catch {}
 }
 

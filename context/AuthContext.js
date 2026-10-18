@@ -1332,7 +1332,18 @@ export function AuthProvider({ children }) {
     }, 4000);
     // [2026-10-14 offline-first] perfil/carteira/notificações/contatos salvos no aparelho.
     try { require('../services/screenPrefetch').scheduleScreenPrefetch(email); } catch {}
-    api.getProfile().then(r => {
+    // [perf 2026-10-17 boot-fanout] get_profile (p95 1,4 s) saía junto do
+    // check_auth, no caminho crítico da 1ª lista. Só atualiza o nome exibido (já
+    // vem do cache/conta guardada) → no boot espera 1ª pintura + ~8 s + ocioso.
+    // Aparelho/conta sem versão de foto conhecida (1º login aqui) → busca já: é o
+    // get_profile que traz a versão (sem ela a foto fica nas iniciais e baixa 2×).
+    const _runProfile = (fn) => {
+      try {
+        if (!require('../services/avatarVersions').getAvatarVersion(String(email).trim().toLowerCase())) { fn(); return; }
+        require('../services/bootIdle').runWhenBootIdle(fn, { minMs: 8000, key: 'auth_prefetch_profile' });
+      } catch { fn(); }
+    };
+    _runProfile(() => api.getProfile().then(r => {
       if (r && r.success && r.data && typeof r.data === 'object') {
         import('../services/cache').then(({ setCache }) => {
           setCache('user_profile', r.data, 600000);
@@ -1347,10 +1358,10 @@ export function AuthProvider({ children }) {
         const rawName = r.data.display_name != null ? r.data.display_name : r.data.name;
         const profileName = typeof rawName === 'string' ? rawName.trim() : '';
         if (profileName) {
-          setUser(prev => prev ? { ...prev, name: profileName } : prev);
+          setUser(prev => (prev && String(prev.email || '').toLowerCase() === String(email).toLowerCase()) ? { ...prev, name: profileName } : prev);
         }
       }
-    }).catch(() => {});
+    }).catch(() => {}));
   }, []);
 
   // Pre-fetch avatar on login so it's cached before profile screen
