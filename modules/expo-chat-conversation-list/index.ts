@@ -173,6 +173,24 @@ export function getNativeContactListView(): any { return _probeNamed(CONTACT_LIS
 export function isContactListAvailable(): boolean { return !!getNativeContactListView(); }
 export function getNativeSettingsListView(): any { return _probeNamed(SETTINGS_LIST_VIEW_NAME); }
 export function isSettingsListAvailable(): boolean { return !!getNativeSettingsListView(); }
+// [2026-10-18 settings-sub-native] apiVersion da ChatyySettingsList (0 = ausente).
+// 2 = linhas com valor/check/spinner/desabilitada/rodapé + scrollToId → as
+// sub-páginas das Configurações podem ir para o nativo.
+let _settingsApi = -1;
+export function settingsListApiVersion(): number {
+  if (_settingsApi >= 0) return _settingsApi;
+  _settingsApi = 0;
+  if (Platform.OS === 'web') return 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function'
+      ? core.requireOptionalNativeModule(SETTINGS_LIST_VIEW_NAME)
+      : null;
+    if (mod && typeof mod.apiVersion === 'function') _settingsApi = Number(mod.apiVersion()) || 0;
+  } catch { _settingsApi = 0; }
+  return _settingsApi;
+}
 
 // [2026-10-15 native-search-notifs] Lista de RESULTADOS (busca global +
 // central de notificações) — components/native/NativeResultList.js.

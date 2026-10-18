@@ -3055,10 +3055,7 @@ export default function Profile({
               isDark={isDark}
             />
           </View>
-            {/* [2026-10-15 carteira-v2] cartão da carteira abaixo da linha de ações. */}
-            {DIAMONDS_ENABLED ? (
-              <ProfileWalletChip colors={colors} isDark={isDark} t={t} onPress={() => { try { router?.push('/wallet'); } catch {} }} />
-            ) : null}
+            {/* [2026-10-18 settings-sub-native] Carteira saiu do perfil: mora em Configurações (sem duplicar). */}
           </View>
         )}
 

@@ -16,6 +16,8 @@
 //
 // Linhas: { id, k: 'c' categoria | 'q' resultado de busca | 'a' ação | 't' toggle,
 //           sid, hd (cabeçalho da seção), title, sub?, icon?, kw?, dest?, center?, on? }
+// [2026-10-18 settings-sub-native] api ≥ 2 (sub-páginas): k 'i' (só info),
+//   val, acc ('c'|'n'|'k'|'u'|'s'), dis, tl, sl, ft + prop scrollToId "id|token".
 // Desligar (OTA): globalThis.__chatyy_native_settings = false. Erro de
 // render/nativo → onFailure() e a raiz volta para a lista JS.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -50,7 +52,7 @@ class Boundary extends React.Component {
 const PALETTE_KEYS = ['pageBg', 'cardBg', 'separator', 'header', 'text', 'secondary', 'tertiary', 'chipBg', 'chipFg', 'destructive', 'fill'];
 
 function Inner(props) {
-  const { rows, query, header, isDark, palette, labels, maxWidth, bottomInset = 0, autoInset, refreshing } = props;
+  const { rows, query, header, isDark, palette, labels, maxWidth, bottomInset = 0, autoInset, refreshing, scrollToId } = props;
   const Native = getNativeSettingsListView();
   const patcherRef = useRef(null);
   const headerTouchGuard = useNativeHeaderTouchGuard();
@@ -126,6 +128,7 @@ function Inner(props) {
       maxContentWidth={maxWidth || 0}
       autoInset={!!autoInset}
       refreshing={!!refreshing}
+      scrollToId={scrollToId || ''}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>

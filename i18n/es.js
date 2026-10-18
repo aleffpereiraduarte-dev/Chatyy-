@@ -13221,4 +13221,7 @@ export default {
   "apps.files": "Archivos",
   "apps.entertainment": "Entretenimiento",
   "apps.pinned": "Fijados",
+  // [2026-10-18 settings-sub-native] linha compacta "Meu perfil" no topo das Configurações
+  "settings.myProfile": "Mi perfil",
+  "settings.viewProfile": "Ver perfil",
 };

@@ -42,6 +42,10 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
 
   // Montagem do snapshot atual: textos de cabeçalho e posição no cartão.
   private var headerTexts: [String: String] = [:]
+  private var footerTexts: [String: String] = [:]
+  // [2026-10-18 settings-sub-native] rolar até uma linha (âncora da busca).
+  private var pendingScrollId = ""
+  private var lastScrollToken = ""
   private var positions: [String: (first: Bool, last: Bool)] = [:]
   private var emptyText = ""
 
@@ -86,6 +90,10 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
       guard let self = self else { return }
       cell.configure(self.headerTexts[id] ?? "", palette: self.palette)
     }
+    let footReg = UICollectionView.CellRegistration<STFooterCell, String> { [weak self] cell, _, id in
+      guard let self = self else { return }
+      cell.configure(self.footerTexts[id] ?? "", palette: self.palette)
+    }
     let emptyReg = UICollectionView.CellRegistration<STEmptyCell, String> { [weak self] cell, _, _ in
       guard let self = self else { return }
       cell.configure(self.emptyText, palette: self.palette)
@@ -96,6 +104,9 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
       }
       if id.hasPrefix("e|") {
         return collectionView.dequeueConfiguredReusableCell(using: emptyReg, for: indexPath, item: id)
+      }
+      if id.hasPrefix("f|") {
+        return collectionView.dequeueConfiguredReusableCell(using: footReg, for: indexPath, item: id)
       }
       return collectionView.dequeueConfiguredReusableCell(using: rowReg, for: indexPath, item: id)
     }
@@ -126,17 +137,21 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
     let w = env.container.effectiveContentSize.width
     var h: CGFloat = 16
     if maxContentWidth > 0 && w > maxContentWidth { h = max(16, (w - maxContentWidth) / 2 + 16) }
-    let est: CGFloat = sid.hasPrefix("h|") ? 22 : 52
+    let est: CGFloat = sid.hasPrefix("h|") ? 22 : (sid.hasPrefix("f|") ? 30 : 52)
     let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(est)))
     let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(est)), subitems: [item])
     let section = NSCollectionLayoutSection(group: group)
     if sid.hasPrefix("c|") {
-      // Cartão: decoração arredondada atrás das linhas; 24 pt até o próximo grupo.
-      let insets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: 24, trailing: h)
+      // Cartão: decoração arredondada atrás das linhas; 24 pt até o próximo grupo
+      // (com rodapé, os 24 pt vão depois do rodapé).
+      let hasFooter = footerTexts["f|" + String(sid.dropFirst(2))] != nil
+      let insets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: hasFooter ? 0 : 24, trailing: h)
       section.contentInsets = insets
       let bg = NSCollectionLayoutDecorationItem.background(elementKind: STCardBackground.kind)
       bg.contentInsets = insets
       section.decorationItems = [bg]
+    } else if sid.hasPrefix("f|") {
+      section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: 24, trailing: h)
     } else {
       section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: 0, trailing: h)
     }
@@ -236,6 +251,24 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
     syncContentScrollView()
   }
 
+  /// "id|token": rola até a linha `id` uma vez por token (âncora da busca).
+  func setScrollToId(_ v: String) {
+    if v.isEmpty || v == lastScrollToken { return }
+    lastScrollToken = v
+    // token no fim ("…|<n>"): o id pode conter "|".
+    if let r = v.range(of: "|", options: .backwards) { pendingScrollId = String(v[v.startIndex..<r.lowerBound]) } else { pendingScrollId = v }
+    if appliedOnce { DispatchQueue.main.async { [weak self] in self?.performPendingScroll() } }
+  }
+
+  private func performPendingScroll() {
+    let id = pendingScrollId
+    if id.isEmpty { return }
+    guard let ip = dataSource.indexPath(for: id) else { return }
+    pendingScrollId = ""
+    collectionView.layoutIfNeeded()
+    collectionView.scrollToItem(at: ip, at: .centeredVertically, animated: true)
+  }
+
   func setRefreshing(_ on: Bool) {
     if !on && refresher.isRefreshing { refresher.endRefreshing() }
   }
@@ -275,8 +308,9 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
 
     var snap = NSDiffableDataSourceSnapshot<String, String>()
     var heads: [String: String] = [:]
+    var foots: [String: String] = [:]
     var pos: [String: (first: Bool, last: Bool)] = [:]
-    func addCard(_ key: String, _ header: String, _ items: [String]) {
+    func addCard(_ key: String, _ header: String, _ items: [String], _ footer: String = "") {
       if items.isEmpty { return }
       if !header.isEmpty {
         let hid = "h|" + key
@@ -288,26 +322,35 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
       snap.appendSections([cid])
       snap.appendItems(items, toSection: cid)
       for (i, id) in items.enumerated() { pos[id] = (first: i == 0, last: i == items.count - 1) }
+      if !footer.isEmpty {
+        let fid = "f|" + key
+        snap.appendSections([fid])
+        snap.appendItems([fid], toSection: fid)
+        foots[fid] = footer
+      }
     }
 
     if query.isEmpty {
       // Grupos = trechos contíguos com o mesmo `sid` (resultados de busca ficam de fora).
       var curSid: String? = nil
       var curHeader = ""
+      var curFooter = ""
       var bucket: [String] = []
       var n = 0
       for id in ids {
         guard let r = rows[id], r.kind != "q" else { continue }
         if curSid == nil || curSid! != r.sid {
-          addCard("\(n)|\(curSid ?? "")", curHeader, bucket)
+          addCard("\(n)|\(curSid ?? "")", curHeader, bucket, curFooter)
           n += 1
           bucket = []
           curSid = r.sid
           curHeader = r.header
+          curFooter = ""
         }
+        if curFooter.isEmpty && !r.footer.isEmpty { curFooter = r.footer }
         bucket.append(id)
       }
-      addCard("\(n)|\(curSid ?? "")", curHeader, bucket)
+      addCard("\(n)|\(curSid ?? "")", curHeader, bucket, curFooter)
     } else {
       let hits = ids.filter { id in
         guard let r = rows[id], r.kind == "q" else { return false }
@@ -325,6 +368,7 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
     let old = dataSource.snapshot()
     let oldIds = Set(old.itemIdentifiers)
     headerTexts = heads
+    footerTexts = foots
     positions = pos
     // Reconfigura o que continua na tela (dados, cantos/separador, tema).
     let keep = snap.itemIdentifiers.filter { oldIds.contains($0) }
@@ -340,6 +384,7 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
 
   private func afterApply() {
     layoutHosts()
+    performPendingScroll()
     if !firstPaintSent {
       firstPaintSent = true
       DispatchQueue.main.async { [weak self] in
@@ -465,7 +510,7 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
 
   private func isPressable(_ id: String) -> Bool {
     guard let r = rows[id] else { return false }
-    return r.kind != "t"
+    return r.pressable
   }
 
   public func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {

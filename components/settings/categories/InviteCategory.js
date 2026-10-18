@@ -36,6 +36,7 @@ export default function InviteCategory() {
           <SettingsRow
             title={t('referral.yourCode') || 'Seu código'}
             accessibilityLabel={t('referral.copyCode') || 'Tocar pra copiar código'}
+            native={{ val: code, acc: 'n' }}
             onPress={async () => {
               try {
                 const Clipboard = require('expo-clipboard');
@@ -54,7 +55,7 @@ export default function InviteCategory() {
           <SettingsRow title={t('referral.yourCode') || 'Seu código'} right={<ActivityIndicator size="small" color={colors.text} />} />
         )}
         {!!code && (
-          <SettingsRow title={t('settings.rd.shareInvite') || 'Compartilhar convite'} onPress={share} chevron={false} right={<IconShare size={18} color={gc.secondary} />} />
+          <SettingsRow title={t('settings.rd.shareInvite') || 'Compartilhar convite'} onPress={share} chevron={false} right={<IconShare size={18} color={gc.secondary} />} native={{ acc: 'c' }} />
         )}
       </SettingsGroup>
     </View>

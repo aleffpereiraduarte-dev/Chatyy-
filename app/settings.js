@@ -1,5 +1,12 @@
 // /settings — hub das Configurações.
 //
+// [2026-10-18 settings-sub-native] Sem duplicar o Meu perfil: a raiz NÃO tem
+// mais hero (foto grande/nome/QR/Editar) nem cartões Chatyy Plus/Carteira/
+// Contas — começa com UMA linha compacta "Meu perfil" (avatar 40 + nome +
+// "Ver perfil" ›, um toque → /u/<eu>, perfil nativo Telegram) e segue com as
+// categorias + atalhos (Aparelhos conectados, Mensagens favoritas, Carteira)
+// + Sair. Foto/QR/editar/status ficam só no perfil.
+//
 // [2026-10-15 settings-split] A raiz agora só renderiza o HERO (perfil +
 // cartões Chatyy One/Carteira/Contas/Dispositivos) e a LISTA de categorias
 // (+ busca). Cada categoria é um componente em components/settings/categories/
@@ -22,7 +29,9 @@ import { HapticsCompat as Haptics } from '../services/haptics';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } from '../components/settings/SettingsKit';
-import { SettingsHero, SettingsSpecialCards } from '../components/settings/SettingsHero';
+import AvatarCircle from '../components/AvatarCircle';
+import PressableRow from '../components/PressableRow';
+import { PLAN_NAME } from '../services/brandPlan';
 import { isReduceMotionEnabled } from '../components/reducedMotion';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset, nativeListLargeTitleOn } from '../components/nativeHeader';
@@ -37,6 +46,7 @@ import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/the
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
+  IconChevronRight, IconMonitor, IconStar, IconCreditCard,
 } from '../components/Icons';
 import * as settingsCache from '../services/settingsCache';
 import { useWallet, refreshWallet } from '../services/diamonds';
@@ -50,13 +60,42 @@ import { SettingsHostContext, normalizePrivacy, privacyValueLabel, pushLevelOf, 
 import { buildSearchIndex, filterSearchIndex } from '../components/settings/categories/searchIndex';
 import NativeSettingsList, { isNativeSettingsListAvailable } from '../components/settings/NativeSettingsList';
 import SettingsCategoryScreen from '../components/settings/SettingsCategoryScreen';
-import { isNativeProfileEnabled } from '../components/chat/NativeChatInfo'; // [2026-10-18 profile-native]
 import { pushOnce, useReleaseNavLockOnFocus } from '../services/navOnce';
 
 const CAT_ICONS = {
   user: IconUser, shield: IconShield, message: IconMessageSquare, bell: IconBell, database: IconDatabase,
   type: IconType, globe: IconGlobe, mail: IconMail, sparkles: IconSparkles, help: IconHelpCircle, userPlus: IconUserPlus,
 };
+
+// [2026-10-18 settings-sub-native] Linha compacta "Meu perfil" no topo da raiz
+// (WhatsApp/Telegram): avatar 40 + nome + "Ver perfil" + seta. Um toque abre o
+// perfil (nativo Telegram no app; JS no web). Sem foto grande, sem QR/editar.
+function MyProfileRow({ user, profile, avatarKey, onPress, t }) {
+  const g = useGroupedColors();
+  const name = (profile?.name || user?.name || user?.display_name || '').trim()
+    || (user?.email ? user.email.split('@')[0] : '');
+  const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  const sub = tr('settings.viewProfile', 'Ver perfil');
+  return (
+    <View style={[s.meCard, { backgroundColor: g.cardBg }]}>
+      <PressableRow
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${tr('settings.myProfile', 'Meu perfil')}: ${name}`}
+        testID="settings-profile-card"
+      >
+        <View style={s.meRow}>
+          <AvatarCircle key={avatarKey} email={user?.email} name={name || user?.email} size={40} />
+          <View style={s.meText}>
+            <Text style={[s.meName, { color: g.text }]} numberOfLines={1} maxFontSizeMultiplier={1.6}>{name}</Text>
+            <Text style={[s.meSub, { color: g.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.6}>{sub}</Text>
+          </View>
+          <IconChevronRight size={17} color={g.tertiary} />
+        </View>
+      </PressableRow>
+    </View>
+  );
+}
 
 function appVersionLabel() {
   const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
@@ -89,7 +128,7 @@ function SettingsScreenInner() {
   const { colors, isDark, themeMode } = useTheme();
   const gc = useGroupedColors();
   const { t, language } = useLanguage();
-  const { logout, user, accounts } = useAuth();
+  const { logout, user } = useAuth();
   const confirm = useConfirm();
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -153,8 +192,6 @@ function SettingsScreenInner() {
     if (isReduceMotionEnabled()) { searchAnim.setValue(to); return; }
     Animated.spring(searchAnim, { toValue: to, useNativeDriver: false, tension: 220, friction: 24 }).start();
   }, [searchFocused, searchQuery, searchAnim]);
-  const heroScrollY = useRef(new Animated.Value(0)).current;
-  const onHeroScroll = useRef(Animated.event([{ nativeEvent: { contentOffset: { y: heroScrollY } } }], { useNativeDriver: true })).current;
 
   // ── Saldo de diamantes p/ o cartão da Carteira (some se desativado) ─────
   // [2026-10-17 carteira-sem-piscar] Antes: estado local null + fetch 500 ms
@@ -325,7 +362,7 @@ function SettingsScreenInner() {
     privacy: `${t('settings.privacyLastSeen')}: ${privacyValueLabel(t, normalizePrivacy(privData), 'last_seen')}`,
     chat: `${t('settings.theme.label') || ''}: ${themeLabel}`,
     notifications: pushLabel,
-    storage_data: storageSub,
+    storage_data: [PLAN_NAME, storageSub].filter(Boolean).join(' · '),
     accessibility: `${t('settings.fontSize')}: ${fontLabel}`,
     language: langLabel,
     email: user?.email || '',
@@ -349,30 +386,26 @@ function SettingsScreenInner() {
     setNativeFailed(true);
   }, []);
 
+  const openMyProfile = useCallback(() => {
+    if (!user?.email) { safeNav('/edit-profile'); return; }
+    safeNav(`/u/${encodeURIComponent(user.email)}`);
+  }, [user?.email, safeNav]);
   const heroNode = (
-    <>
-      <SettingsHero
-        user={user}
-        profile={myProfile}
-        avatarKey={avatarKey}
-        scrollY={twoPane || useNativeRoot ? null : heroScrollY}
-        onEdit={() => safeNav('/edit-profile')}
-        onAvatar={(Platform.OS !== 'web' && user?.email && isNativeProfileEnabled()) ? () => safeNav(`/u/${encodeURIComponent(user.email)}`) : undefined}
-        onQr={() => safeNav('/profile-qr')}
-        onSwitch={openAccountSwitcher}
-      />
-      <SettingsSpecialCards
-        user={user}
-        accounts={accounts}
-        walletDiamonds={walletDiamonds}
-        onOne={() => safeNav('/settings-one')}
-        onWallet={() => safeNav('/wallet')}
-        onAccounts={openAccountSwitcher}
-        onDevices={() => safeNav('/linked-devices')}
-        onStarred={() => safeNav('/starred-messages')}
-      />
-    </>
+    <MyProfileRow user={user} profile={myProfile} avatarKey={avatarKey} onPress={openMyProfile} t={t} />
   );
+
+  // Atalhos da raiz (rotas próprias): Aparelhos conectados, Mensagens
+  // favoritas, Carteira (some se desligada no servidor).
+  const _fmtNum = (n) => { try { return Number(n).toLocaleString(); } catch { return String(n); } };
+  const shortcuts = [
+    { key: 'devices', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices'), route: '/linked-devices' },
+    { key: 'starred', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
+    (walletDiamonds !== null && walletDiamonds !== undefined) ? {
+      key: 'wallet', icon: 'wallet', Icon: IconCreditCard, title: t('wallet.title') || 'Carteira',
+      sub: walletDiamonds === '' ? '' : `${_fmtNum(walletDiamonds)} ${t('wallet.diamondsLabel') || ''}`.trim(),
+      route: '/wallet',
+    } : null,
+  ].filter(Boolean);
 
   const searchBarNode = (
     <View style={s.searchWrap}>
@@ -427,7 +460,7 @@ function SettingsScreenInner() {
               title={r.title}
               subtitle={categoryTitle(t, r.cat)}
               subtitleLines={1}
-              onPress={() => openCategory(r.cat, r.anchor)}
+              onPress={() => (r.route ? safeNav(r.route) : openCategory(r.cat, r.anchor))}
             />
           );
         })}
@@ -440,7 +473,22 @@ function SettingsScreenInner() {
     )
   ) : null;
 
-  const categoryGroupsNode = CATEGORY_GROUPS.map((keys, gi) => (
+  const shortcutsNode = (
+    <SettingsGroup key="shortcuts" inset={62}>
+      {shortcuts.map((sc) => (
+        <SettingsRow
+          key={sc.key}
+          icon={sc.Icon}
+          title={sc.title}
+          subtitle={sc.sub || undefined}
+          subtitleLines={1}
+          testID={'settings-row-' + sc.key}
+          onPress={() => safeNav(sc.route)}
+        />
+      ))}
+    </SettingsGroup>
+  );
+  const categoryGroupsNode = CATEGORY_GROUPS.map((keys, gi) => [
     <SettingsGroup key={gi} inset={62} header={t(GROUP_HEADER_KEYS[gi])}>
       {keys.map((key) => (
         <SettingsRow
@@ -455,8 +503,9 @@ function SettingsScreenInner() {
           onPress={() => openCategory(key)}
         />
       ))}
-    </SettingsGroup>
-  ));
+    </SettingsGroup>,
+    gi === 0 ? shortcutsNode : null,
+  ]);
   const logoutNode = (
     <SettingsGroup>
       <SettingsRow title={t('settings.logoutAccount')} destructive center onPress={handleSettingsLogout} />
@@ -481,6 +530,11 @@ function SettingsScreenInner() {
           title: categoryTitle(t, key), sub: catSubtitle[key] || '', icon: CATEGORY_META[key].icon,
         });
       }
+      if (gi === 0) {
+        for (const sc of shortcuts) {
+          rows.push({ id: 's:' + sc.key, k: 'c', sid: 'shortcuts', hd: '', title: sc.title, sub: sc.sub || '', icon: sc.icon });
+        }
+      }
     });
     rows.push({ id: 'a:logout', k: 'a', sid: 'logout', hd: '', title: t('settings.logoutAccount'), dest: true, center: true });
     for (const e of searchIndex) {
@@ -488,7 +542,7 @@ function SettingsScreenInner() {
     }
     return rows;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useNativeRoot, t, searchIndex, JSON.stringify(catSubtitle)]);
+  }, [useNativeRoot, t, searchIndex, JSON.stringify(catSubtitle), JSON.stringify(shortcuts.map((x) => [x.key, x.title, x.sub || '']))]);
   const searchIndexById = useMemo(() => {
     const m = new Map();
     for (const e of searchIndex) m.set(e.id, e);
@@ -498,10 +552,15 @@ function SettingsScreenInner() {
     if (!id) return;
     if (id === 'a:logout') { handleSettingsLogout(); return; }
     if (id.startsWith('c:')) { openCategory(id.slice(2)); return; }
+    if (id.startsWith('s:')) {
+      const sc = shortcuts.find((x) => x.key === id.slice(2));
+      if (sc) safeNav(sc.route);
+      return;
+    }
     const e = searchIndexById.get(id);
-    if (e) openCategory(e.cat, e.anchor);
+    if (e) { if (e.route) safeNav(e.route); else openCategory(e.cat, e.anchor); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchIndexById, openCategory]);
+  }, [searchIndexById, openCategory, safeNav, shortcuts.map((x) => x.key).join('|')]);
 
   const nativeLabels = useMemo(() => ({
     results: t('settings.matchesFound') || 'Resultados',
@@ -572,10 +631,7 @@ function SettingsScreenInner() {
             <IconArrowLeft size={24} color={colors.text} />
           </TouchableOpacity>
           <Animated.Text
-            style={[s.headerTitle, { color: colors.text },
-              (activeCategory === null && !twoPane && !isReduceMotionEnabled())
-                ? { opacity: heroScrollY.interpolate({ inputRange: [90, 170], outputRange: [0, 1], extrapolate: 'clamp' }) }
-                : null]}
+            style={[s.headerTitle, { color: colors.text }]}
             numberOfLines={1}
             accessibilityRole="header"
           >{activeCategory !== null && !twoPane ? activeCategoryTitle : t('settings.title')}</Animated.Text>
@@ -621,8 +677,6 @@ function SettingsScreenInner() {
                   <Animated.ScrollView
                     key={activeCategory || 'root'}
                     ref={scrollRef}
-                    onScroll={activeCategory === null && !twoPane ? onHeroScroll : undefined}
-                    scrollEventThrottle={16}
                     contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -672,6 +726,11 @@ const s = StyleSheet.create({
   searchBar: { flex: 1, flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 12, height: 42, gap: 8, borderWidth: 1 },
   searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, height: 40, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
   searchCancel: { paddingLeft: 12, paddingVertical: 8, ...Platform.select({ web: { cursor: 'pointer' }, default: {} }) },
+  meCard: { borderRadius: BorderRadius.card, overflow: 'hidden', marginBottom: 24 },
+  meRow: { flexDirection: 'row', alignItems: 'center', minHeight: 60, paddingHorizontal: 16, paddingVertical: 10, gap: 12 },
+  meText: { flex: 1, minWidth: 0 },
+  meName: { fontSize: Platform.OS === 'ios' ? 17 : 16, fontWeight: '600', letterSpacing: Platform.OS === 'ios' ? -0.41 : -0.2 },
+  meSub: { fontSize: 13, marginTop: 2, letterSpacing: -0.05 },
 });
 
 // [2026-10-17 settings-light] Nativo: link antigo /settings?section=<cat|bloco>

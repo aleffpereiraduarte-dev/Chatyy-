@@ -11,7 +11,9 @@ class ChatyySettingsListModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyySettingsList")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-18 settings-sub-native] val/acc/dis/tl/sl/ft, k "i", ícones do
+    //     ChatInfo e prop scrollToId (sub-páginas das Configurações em nativo).
+    Function("apiVersion") { 2 }
 
     View(ChatyySettingsListView::class) {
       Events(
@@ -34,6 +36,7 @@ class ChatyySettingsListModule : Module() {
       // iOS-only (inset automático do header nativo); aceito e ignorado aqui.
       Prop("autoInset") { _: ChatyySettingsListView, _: Boolean? -> }
       Prop("refreshing") { view: ChatyySettingsListView, v: Boolean? -> view.setRefreshing(v ?: false) }
+      Prop("scrollToId") { view: ChatyySettingsListView, v: String? -> view.setScrollToId(v) }
 
       OnViewDidUpdateProps { view: ChatyySettingsListView -> view.commitProps() }
 

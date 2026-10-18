@@ -8,7 +8,7 @@ import UIKit
 //         colors {pageBg, cardBg, separator, header, text, secondary, tertiary,
 //         chipBg, chipFg, destructive, press} (ARGB), dark, labels
 //         {results, noResults}, headerHeight, bottomInset, maxContentWidth,
-//         autoInset, refreshing
+//         autoInset, refreshing, scrollToId ("id|token", api 2)
 // Events: onRowPress {id}, onToggle {id, value}, onRefresh, onResync {seq},
 //         onFirstPaint {count}, onNativeError {message}
 public class ChatyySettingsListModule: Module {
@@ -16,7 +16,9 @@ public class ChatyySettingsListModule: Module {
     Name("ChatyySettingsList")
 
     Function("apiVersion") { () -> Int in
-      return 1
+      // 2 = [2026-10-18 settings-sub-native] val/acc/dis/tl/sl/ft, k "i",
+      //     ícones do ChatInfo e prop scrollToId (sub-páginas nativas).
+      return 2
     }
 
     View(ChatyySettingsListView.self) {
@@ -58,6 +60,9 @@ public class ChatyySettingsListModule: Module {
       }
       Prop("refreshing") { (view: ChatyySettingsListView, value: Bool?) in
         view.setRefreshing(value ?? false)
+      }
+      Prop("scrollToId") { (view: ChatyySettingsListView, value: String?) in
+        view.setScrollToId(value ?? "")
       }
 
       OnViewDidUpdateProps { (view: ChatyySettingsListView) in

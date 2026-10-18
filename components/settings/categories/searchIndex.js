@@ -7,12 +7,15 @@ import { Platform } from 'react-native';
 import { PLAN_NAME } from '../../../services/brandPlan'; // [2026-10-17 brand-plan]
 
 // [cat, chave i18n do título, fallback, âncora?, palavras extras, plataforma?]
+// [2026-10-18 settings-sub-native] âncora começando com "/" = ROTA (o resultado
+// abre a tela direto: Meu perfil/editar, Chatyy Plus, aparelhos, favoritas).
 const ENTRIES = [
-  ['account', 'settings.editProfile', 'Editar perfil', 'account', 'perfil profile foto photo nome name'],
+  ['account', 'settings.editProfile', 'Editar perfil', '/edit-profile', 'perfil profile foto photo nome name recado bio'],
   ['account', 'account.switch', 'Trocar conta', 'account', 'contas accounts'],
-  ['account', null, PLAN_NAME, 'account', 'plano plan assinatura premium one plus armazenamento storage'],
+  ['storage_data', null, PLAN_NAME, '/settings-one', 'plano plan assinatura premium one plus armazenamento storage'],
   ['account', 'linkedPhones.title', 'Números', 'account', 'telefone phone'],
-  ['account', 'settings.linkedDevices', 'Dispositivos conectados', 'account', 'aparelhos devices'],
+  ['account', 'settings.linkedDevices', 'Aparelhos conectados', '/linked-devices', 'aparelhos dispositivos devices web desktop'],
+  ['chat', 'chat.starredMessages', 'Mensagens favoritas', '/starred-messages', 'favoritas estrela starred star'],
   ['account', 'settings.exportData', 'Exportar dados', 'account', 'lgpd export'],
   ['account', 'profile.creatorDashboard', 'Painel do criador', 'account', 'creator'],
   ['account', 'settings.biometricLock', 'Bloqueio biométrico', 'security', 'face id touch id biometric digital', 'native'],
@@ -126,7 +129,8 @@ export function buildSearchIndex(t) {
     const id = 'q:' + cat + ':' + (key || fb);
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, cat, title: String(title), anchor: anchor || null, kw: kw || '' });
+    const route = typeof anchor === 'string' && anchor.startsWith('/') ? anchor : null;
+    out.push({ id, cat, title: String(title), anchor: route ? null : (anchor || null), route, kw: kw || '' });
   }
   return out;
 }

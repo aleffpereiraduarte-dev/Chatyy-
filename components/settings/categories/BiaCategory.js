@@ -23,7 +23,7 @@ export default function BiaCategory() {
   });
   return (
     <View>
-      <SettingsGroup>
+      <SettingsGroup nativeHeader>
         <View style={st.header}>
           <SettingsIconTile Icon={IconSparkles} size={64} />
           <Text style={[st.name, { color: colors.text }]} numberOfLines={1}>Bia</Text>

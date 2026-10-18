@@ -4,10 +4,13 @@ package expo.modules.chatyyconversationlist
 // Configurações. Mesmo contrato do iOS (ios/STModels.swift):
 //   id, k ("c" categoria · "q" resultado de busca · "a" ação · "t" toggle),
 //   sid (seção), hd (cabeçalho), title, sub, icon, kw, dest, center, on.
+// [2026-10-18 settings-sub-native] apiVersion 2 (sub-páginas): k "i" (só
+//   informação), val, acc ("" · "c" · "n" · "k" · "u" · "s"), dis, tl, sl, ft.
 
 import android.graphics.Color
 import java.text.Normalizer
 import java.util.Locale
+import kotlin.math.max
 
 internal data class STRow(
   val id: String = "",
@@ -21,8 +24,27 @@ internal data class STRow(
   val destructive: Boolean = false,
   val center: Boolean = false,
   val on: Boolean = false,
+  val value: String = "",
+  val acc: String = "",
+  val disabled: Boolean = false,
+  val titleLines: Int = 1,
+  val subLines: Int = 1,
+  val footer: String = "",
   val hay: String = ""
 ) {
+  /** Acessório efetivo: "t" interruptor · "c" seta · "n" nada · "k" check · "u" vazio · "s" spinner. */
+  val accessory: String
+    get() = when {
+      kind == "t" -> "t"
+      acc.isNotEmpty() -> acc
+      center || destructive -> "n"
+      else -> "c"
+    }
+
+  /** Toque abre/aciona (o toggle alterna pelo próprio interruptor). */
+  val pressable: Boolean
+    get() = kind != "t" && kind != "i" && !disabled
+
   companion object {
     fun from(m: Map<String, Any?>): STRow {
       val title = CLVal.str(m["title"])
@@ -41,6 +63,12 @@ internal data class STRow(
         destructive = CLVal.bool(m["dest"]),
         center = CLVal.bool(m["center"]),
         on = CLVal.bool(m["on"]),
+        value = CLVal.str(m["val"]),
+        acc = CLVal.str(m["acc"]),
+        disabled = CLVal.bool(m["dis"]),
+        titleLines = if (m.containsKey("tl")) max(0, CLVal.int(m["tl"])) else 1,
+        subLines = if (m.containsKey("sl")) max(0, CLVal.int(m["sl"])) else 1,
+        footer = CLVal.str(m["ft"]),
         hay = STText.normalize("$title $sub $kw")
       )
     }
@@ -69,7 +97,10 @@ internal object STText {
     "help" -> R.drawable.cst_ic_help
     "userPlus" -> R.drawable.cct_ic_user_plus
     "search" -> R.drawable.cst_ic_search
-    else -> 0
+    // [2026-10-18 settings-sub-native] atalhos da raiz + ícones das sub-páginas.
+    "wallet" -> R.drawable.ap_ic_wallet
+    "plus" -> R.drawable.ap_ic_plus
+    else -> CIText.drawable(name)
   }
 }
 

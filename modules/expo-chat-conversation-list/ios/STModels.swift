@@ -5,6 +5,11 @@ import UIKit
 // Mesmo contrato do Android (STModels.kt). Linhas planas vindas do JS:
 //   id, k ("c" categoria · "q" resultado de busca · "a" ação · "t" toggle),
 //   sid (seção), hd (cabeçalho da seção), title, sub, icon, kw, dest, center, on.
+// [2026-10-18 settings-sub-native] apiVersion 2 (sub-páginas das Configurações):
+//   k "i" = linha só informativa (sem toque); val (texto de valor à direita),
+//   acc ("" padrão · "c" seta · "n" nada · "k" check · "u" vazio · "s" spinner),
+//   dis (desabilitada), tl / sl (linhas do título / subtítulo; 0 = sem limite),
+//   ft (rodapé da seção — o 1º não vazio do grupo).
 
 struct STRow {
   var id: String = ""
@@ -18,8 +23,26 @@ struct STRow {
   var destructive = false
   var center = false
   var on = false
+  var value: String = ""
+  var acc: String = ""
+  var disabled = false
+  var titleLines = 1
+  var subLines = 1
+  var footer: String = ""
   /// Texto normalizado (minúsculas, sem acento) p/ a busca nativa.
   var hay: String = ""
+
+  /// Acessório efetivo: "t" interruptor · "c" seta · "n" nada · "k" check ·
+  /// "u" vazio (radio desmarcado) · "s" spinner. Sem `acc` = regra da api 1
+  /// (seta, exceto centrada/destrutiva).
+  var accessory: String {
+    if kind == "t" { return "t" }
+    if !acc.isEmpty { return acc }
+    return (center || destructive) ? "n" : "c"
+  }
+
+  /// Toque abre/aciona (toggle alterna pelo próprio UISwitch).
+  var pressable: Bool { return kind != "t" && kind != "i" && !disabled }
 
   init(_ d: [String: Any]) {
     id = CLVal.str(d["id"])
@@ -34,6 +57,12 @@ struct STRow {
     destructive = CLVal.bool(d["dest"])
     center = CLVal.bool(d["center"])
     on = CLVal.bool(d["on"])
+    value = CLVal.str(d["val"])
+    acc = CLVal.str(d["acc"])
+    disabled = CLVal.bool(d["dis"])
+    if d["tl"] != nil { titleLines = max(0, CLVal.int(d["tl"])) }
+    if d["sl"] != nil { subLines = max(0, CLVal.int(d["sl"])) }
+    footer = CLVal.str(d["ft"])
     hay = STText.normalize("\(title) \(sub) \(keywords)")
   }
 }
@@ -60,7 +89,10 @@ enum STText {
     case "help": return "questionmark.circle"
     case "userPlus": return "person.badge.plus"
     case "search": return "magnifyingglass"
-    default: return nil
+    // [2026-10-18 settings-sub-native] atalhos da raiz + ícones das sub-páginas.
+    case "wallet": return "creditcard"
+    case "plus": return "plus"
+    default: return CIText.symbol(name)
     }
   }
 }

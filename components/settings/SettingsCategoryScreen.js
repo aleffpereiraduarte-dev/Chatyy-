@@ -11,7 +11,16 @@
 // Aqui monta só: header nativo + ScrollView + o componente da categoria (que já
 // assina/revalida o que ele mesmo mostra) + o contexto do hub que as
 // categorias usam (registerAnchor/openCategory/openAccountSwitcher).
-import { Suspense, useCallback, useMemo, useRef, useState } from 'react';
+//
+// [2026-10-18 settings-sub-native] Categorias só-de-linhas (Privacidade,
+// Notificações, Acessibilidade, Ajuda, Convidar, Bia) desenhadas pela MESMA
+// lista nativa da raiz (ChatyySettingsList api ≥ 2: cartões agrupados, valor à
+// direita, check, interruptor nativo, rodapés). A categoria JS segue montada
+// numa árvore invisível em "modo coleta" (components/settings/nativeCollect.js)
+// → estado/folhas/handlers são os mesmos. Conteúdo fora do kit, erro nativo
+// ou kill switch (globalThis.__chatyy_native_settings_sub = false) → volta
+// sozinho para a tela JS abaixo.
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, Platform, BackHandler, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,11 +32,13 @@ import * as settingsCache from '../../services/settingsCache';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useResponsive } from '../../utils/responsive';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../nativeHeader';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset, nativeListLargeTitleOn } from '../nativeHeader';
+import NativeSettingsList from './NativeSettingsList';
+import { SettingsCollectContext, createCollector, nativeSettingsCategoryOn, markNativeCategoryFailed } from './nativeCollect';
 import { SettingsSearchContext, useGroupedColors } from './SettingsKit';
 import { categoryTitle, sectionToCategory, getCategoryComponent } from './categories';
 import { SettingsHostContext, emitSettingsRefresh } from './categories/shared';
-import { Spacing } from '../../constants/theme';
+import { Spacing, BorderRadius } from '../../constants/theme';
 
 const IOS_AUTO_INSET = USE_NATIVE_HEADER && Platform.OS === 'ios';
 
@@ -68,6 +79,31 @@ function SettingsCategoryScreenInner() {
   const [cat] = useState(() => sectionToCategory(section));
   useReleaseNavLockOnFocus();
 
+  // ── Lista nativa (sub-página) ─────────────────────────────────────────
+  const [startNative] = useState(() => nativeSettingsCategoryOn(cat));
+  const [native, setNative] = useState(startNative);
+  const nativeRef = useRef(native);
+  nativeRef.current = native;
+  const [nat, setNat] = useState({ rows: [], headers: [] });
+  const [scrollToId, setScrollToId] = useState('');
+  const collectorRef = useRef(null);
+  const dropNative = useCallback((why) => {
+    if (!nativeRef.current) return;
+    markNativeCategoryFailed(cat, why);
+    try { collectorRef.current?.dispose(); } catch {}
+    nativeRef.current = false;
+    setNative(false);
+  }, [cat]);
+  if (startNative && !collectorRef.current) {
+    collectorRef.current = createCollector({
+      onChange: (snap) => {
+        if (snap.failed) { dropNative(snap.failed); return; }
+        setNat({ rows: snap.rows, headers: snap.headers });
+      },
+    });
+  }
+  useEffect(() => () => { try { collectorRef.current?.dispose(); } catch {} }, []);
+
   // ── Âncora: só quando pedida (busca → bloco; link antigo ?section=<bloco>).
   // Abrir a categoria pela lista NÃO rola: antes ?section=<cat> virava âncora
   // da própria categoria (1º bloco) → scrollTo({y:0}) com inset automático do
@@ -81,6 +117,18 @@ function SettingsCategoryScreenInner() {
   const scrollRef = useRef(null);
   const registerAnchor = useCallback((key) => {
     if (!key || key !== pendingAnchorRef.current) return undefined;
+    if (nativeRef.current) {
+      // Nativo: âncora → 1ª linha do 1º grupo dela → a lista nativa rola até lá.
+      return (node) => {
+        if (!node) return;
+        setTimeout(async () => {
+          let rid = null;
+          try { rid = await collectorRef.current?.resolveAnchor(node); } catch {}
+          setPendingAnchor((cur) => (cur === key ? null : cur));
+          if (rid) setScrollToId(`${rid}|${Date.now()}`);
+        }, 160);
+      };
+    }
     return (node) => {
       if (!node) return;
       setTimeout(() => {
@@ -157,6 +205,22 @@ function SettingsCategoryScreenInner() {
 
   const title = cat ? categoryTitle(t, cat) : (t('settings.title') || 'Configurações');
   const bottomPad = IOS_AUTO_INSET ? 40 : 80 + insets.bottom;
+  // iOS: título grande só na tela JS (lista nativa como content scroll view do
+  // título grande = loop de layout, watchdog 0x8BADF00D build 704 — mesma regra
+  // da raiz). Decidido na montagem (= _layout), sem troca de header depois.
+  const largeTitle = Platform.OS === 'ios' && (!startNative || nativeListLargeTitleOn());
+  const nativeAutoInset = IOS_AUTO_INSET && largeTitle && native;
+  const body = useMemo(() => (cat ? <CategoryBody cat={cat} /> : null), [cat]);
+  const onNativeRowPress = useCallback((id) => { try { collectorRef.current?.press(id); } catch {} }, []);
+  const onNativeToggle = useCallback((id, v) => { try { collectorRef.current?.toggle(id, v); } catch {} }, []);
+  const onNativeFailure = useCallback((msg) => dropNative('native: ' + String(msg || '')), [dropNative]);
+  const nativeHeaderNode = nat.headers.length ? (
+    <View>
+      {nat.headers.map((el, i) => (
+        <View key={i} style={[st.headCard, { backgroundColor: gc.cardBg }]}>{el}</View>
+      ))}
+    </View>
+  ) : <View />;
 
   return (
     <View style={[st.container, { backgroundColor: gc.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
@@ -169,12 +233,12 @@ function SettingsCategoryScreenInner() {
           gestureEnabled: true,
           fullScreenGestureEnabled: true,
           contentStyle: { backgroundColor: gc.pageBg },
-          ...(Platform.OS === 'ios' ? {
+          ...(largeTitle ? {
             headerLargeTitle: true,
             headerLargeTitleShadowVisible: false,
             headerLargeStyle: { backgroundColor: gc.pageBg },
             headerLargeTitleStyle: { color: colors.text },
-          } : {}),
+          } : (Platform.OS === 'ios' ? { headerLargeTitle: false, headerShadowVisible: false, headerStyle: { backgroundColor: gc.pageBg } } : {})),
           ...(!canGoBackNow ? {
             headerLeft: () => <HeaderBackButton onPress={exit} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
             headerBackVisible: false,
@@ -190,7 +254,39 @@ function SettingsCategoryScreenInner() {
       <SettingsHostContext.Provider value={hostValue}>
         <SettingsSearchContext.Provider value="">
           <View style={st.flex1}>
-            {cat ? (
+            {cat && native ? (
+              <>
+                <NativeSettingsList
+                  rows={nat.rows}
+                  header={nativeHeaderNode}
+                  isDark={isDark}
+                  palette={gc}
+                  maxWidth={contentMaxWidth}
+                  bottomInset={nativeAutoInset ? 40 : 40 + insets.bottom}
+                  autoInset={nativeAutoInset}
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  onRowPress={onNativeRowPress}
+                  onToggle={onNativeToggle}
+                  onFailure={onNativeFailure}
+                  scrollToId={scrollToId}
+                />
+                {/* Árvore da categoria em modo coleta: fora da tela, sem toque, fora do leitor de tela. */}
+                <View
+                  pointerEvents="none"
+                  collapsable={false}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                  style={st.collect}
+                  ref={(n) => { if (n) collectorRef.current?.setContainer(n); }}
+                  onLayout={(e) => collectorRef.current?.setContainerHeight(e?.nativeEvent?.layout?.height || 0)}
+                >
+                  <SettingsCollectContext.Provider value={collectorRef.current}>
+                    {body}
+                  </SettingsCollectContext.Provider>
+                </View>
+              </>
+            ) : cat ? (
               <ScrollViewHost
                 scrollRef={scrollRef}
                 bottomPad={bottomPad}
@@ -200,7 +296,7 @@ function SettingsCategoryScreenInner() {
                 tint={gc.secondary}
                 primary={colors.primary}
               >
-                <CategoryBody cat={cat} />
+                {body}
               </ScrollViewHost>
             ) : null}
           </View>
@@ -235,6 +331,9 @@ const st = StyleSheet.create({
   scroll: { paddingHorizontal: 16, paddingTop: Spacing.md, paddingBottom: 80 },
   webTitle: { flex: 1, fontSize: 20, fontWeight: '700', marginLeft: 4 },
   webHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, minHeight: 56, borderBottomWidth: StyleSheet.hairlineWidth },
+  // Fora da tela (não opacidade 0: Modal/folha aberta pela categoria continua visível).
+  collect: { position: 'absolute', left: 0, right: 0, top: 0, transform: [{ translateX: -100000 }] },
+  headCard: { borderRadius: BorderRadius.card, overflow: 'hidden', marginBottom: 24 },
 });
 
 export default function SettingsCategoryScreen() {

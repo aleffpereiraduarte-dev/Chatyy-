@@ -33,18 +33,24 @@ final class STRowCell: UICollectionViewCell {
   private let glyph = UIImageView()
   private let titleLabel = UILabel()
   private let subLabel = UILabel()
+  private let textStack = UIStackView()
+  // [2026-10-18 settings-sub-native] lado direito = pilha de acessórios
+  // (valor · spinner · check · seta · interruptor); escondidos não ocupam espaço.
+  private let accStack = UIStackView()
+  private let valueLabel = UILabel()
+  private let spinner = UIActivityIndicatorView(style: .medium)
+  private let check = UIImageView()
   private let chevron = UIImageView()
   private let toggle = UISwitch()
   private let separator = UIView()
-  private let textStack = UIStackView()
 
-  private var chipW: NSLayoutConstraint!
   private var textLeadingToChip: NSLayoutConstraint!
   private var textLeadingToEdge: NSLayoutConstraint!
   private var textCenterX: NSLayoutConstraint!
-  private var textTrailingToChevron: NSLayoutConstraint!
-  private var textTrailingToSwitch: NSLayoutConstraint!
-  private var textTrailingToEdge: NSLayoutConstraint!
+  private var textTrailingToAcc: NSLayoutConstraint!
+  private var textTrailingMax: NSLayoutConstraint!
+  private var textFillToAcc: NSLayoutConstraint!
+  private var textFillToEdge: NSLayoutConstraint!
   private var sepLeading: NSLayoutConstraint!
 
   private var palette = STPalette(dark: false)
@@ -78,49 +84,77 @@ final class STRowCell: UICollectionViewCell {
     textStack.translatesAutoresizingMaskIntoConstraints = false
     textStack.addArrangedSubview(titleLabel)
     textStack.addArrangedSubview(subLabel)
+    textStack.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     contentView.addSubview(textStack)
 
-    chevron.translatesAutoresizingMaskIntoConstraints = false
+    valueLabel.font = UIFont.systemFont(ofSize: 17, weight: .regular)
+    valueLabel.numberOfLines = 1
+    valueLabel.textAlignment = .right
+    valueLabel.lineBreakMode = .byTruncatingTail
+    // O título vence: o valor encolhe/trunca primeiro.
+    valueLabel.setContentCompressionResistancePriority(UILayoutPriority(249), for: .horizontal)
+    valueLabel.setContentHuggingPriority(.required, for: .horizontal)
+    spinner.hidesWhenStopped = false
+    check.contentMode = .center
+    check.setContentHuggingPriority(.required, for: .horizontal)
     chevron.contentMode = .center
     chevron.setContentHuggingPriority(.required, for: .horizontal)
-    contentView.addSubview(chevron)
-
-    toggle.translatesAutoresizingMaskIntoConstraints = false
     toggle.addTarget(self, action: #selector(toggled), for: .valueChanged)
-    contentView.addSubview(toggle)
+    toggle.setContentHuggingPriority(.required, for: .horizontal)
+    toggle.setContentCompressionResistancePriority(.required, for: .horizontal)
+    accStack.axis = .horizontal
+    accStack.alignment = .center
+    accStack.spacing = 6
+    accStack.translatesAutoresizingMaskIntoConstraints = false
+    for v in [valueLabel, spinner, check, chevron, toggle] as [UIView] { accStack.addArrangedSubview(v) }
+    contentView.addSubview(accStack)
 
     separator.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(separator)
 
     let px = 1 / max(1, UIScreen.main.scale)
-    chipW = chip.widthAnchor.constraint(equalToConstant: 30)
     textLeadingToChip = textStack.leadingAnchor.constraint(equalTo: chip.trailingAnchor, constant: 14)
     textLeadingToEdge = textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
     textCenterX = textStack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
     let textLeadingMin = textStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16)
-    textTrailingToChevron = textStack.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -6)
-    textTrailingToSwitch = textStack.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -10)
-    textTrailingToEdge = textStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16)
+    textTrailingToAcc = textStack.trailingAnchor.constraint(lessThanOrEqualTo: accStack.leadingAnchor, constant: -10)
+    textTrailingMax = textStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16)
     sepLeading = separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 60)
     let minH = contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 52)
     minH.priority = .required
     let topC = textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 11)
     let botC = textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -11)
+    let valueMax = valueLabel.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.5)
+    // Check vazio (radio desmarcado) reserva a largura do check. 999: o
+    // UIStackView zera a largura das vistas escondidas (sem conflito no log).
+    let checkW = check.widthAnchor.constraint(equalToConstant: 20)
+    checkW.priority = UILayoutPriority(999)
+    let checkH = check.heightAnchor.constraint(equalToConstant: 20)
+    checkH.priority = UILayoutPriority(999)
+    // Texto ocupa a largura livre (quebra de linha estável no auto-dimensionamento);
+    // prioridade baixa: o valor (249) e o título (750) vencem.
+    textFillToAcc = textStack.trailingAnchor.constraint(equalTo: accStack.leadingAnchor, constant: -10)
+    textFillToAcc.priority = UILayoutPriority(200)
+    textFillToEdge = textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+    textFillToEdge.priority = UILayoutPriority(200)
 
     NSLayoutConstraint.activate([
       chip.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
       chip.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-      chipW,
+      chip.widthAnchor.constraint(equalToConstant: 30),
       chip.heightAnchor.constraint(equalToConstant: 30),
       glyph.centerXAnchor.constraint(equalTo: chip.centerXAnchor),
       glyph.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
       textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
       textLeadingMin,
+      textTrailingMax,
       topC, botC, minH,
-      chevron.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-      chevron.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-      toggle.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-      toggle.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      accStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+      accStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+      accStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
+      valueMax,
+      checkW,
+      checkH,
       separator.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
       separator.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
       separator.heightAnchor.constraint(equalToConstant: px),
@@ -145,8 +179,9 @@ final class STRowCell: UICollectionViewCell {
   func configure(_ row: STRow, palette p: STPalette, first: Bool, last: Bool, showSeparator: Bool) {
     rowId = row.id
     palette = p
-    let isToggle = row.kind == "t"
-    tappable = !isToggle
+    let acc = row.accessory
+    let isToggle = acc == "t"
+    tappable = row.pressable
     var corners: CACornerMask = []
     if first { corners.formUnion([.layerMinXMinYCorner, .layerMaxXMinYCorner]) }
     if last { corners.formUnion([.layerMinXMaxYCorner, .layerMaxXMaxYCorner]) }
@@ -155,6 +190,7 @@ final class STRowCell: UICollectionViewCell {
 
     // Ícone (chip suave) — linhas sem ícone/centradas (Sair) não têm chip.
     var hasIcon = false
+    glyph.image = nil
     if !row.center, let sym = STText.symbol(row.icon) {
       let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
       glyph.image = UIImage(systemName: sym, withConfiguration: cfg)?.withTintColor(p.chipFg, renderingMode: .alwaysOriginal)
@@ -166,25 +202,43 @@ final class STRowCell: UICollectionViewCell {
     let para = NSMutableParagraphStyle()
     para.alignment = row.center ? .center : .natural
     para.lineBreakMode = .byTruncatingTail
+    titleLabel.numberOfLines = row.titleLines
     titleLabel.attributedText = NSAttributedString(string: row.title, attributes: [
       .font: UIFont.systemFont(ofSize: 17, weight: .regular),
       .foregroundColor: row.destructive ? p.destructive : p.text,
       .kern: -0.2,
       .paragraphStyle: para,
     ])
+    subLabel.numberOfLines = row.subLines
     subLabel.text = row.sub
     subLabel.textColor = p.secondary
     subLabel.isHidden = row.sub.isEmpty
     textStack.alignment = row.center ? .center : .leading
 
-    // Acessório: disclosure (padrão), interruptor (toggle) ou nada (ação).
-    let showChevron = !row.center && !row.destructive && !isToggle
+    // Acessórios à direita.
+    valueLabel.text = row.value
+    valueLabel.textColor = p.secondary
+    valueLabel.isHidden = row.value.isEmpty || row.center
+    let showSpin = acc == "s"
+    spinner.isHidden = !showSpin
+    spinner.color = p.secondary
+    if showSpin { spinner.startAnimating() } else { spinner.stopAnimating() }
+    let showCheck = acc == "k" || acc == "u"
+    check.isHidden = !showCheck
+    if acc == "k" {
+      let cfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+      check.image = UIImage(systemName: "checkmark", withConfiguration: cfg)?.withTintColor(p.text, renderingMode: .alwaysOriginal)
+    } else {
+      check.image = nil
+    }
+    let showChevron = acc == "c" && !row.center
     chevron.isHidden = !showChevron
     if showChevron {
       let cfg = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
       chevron.image = UIImage(systemName: "chevron.right", withConfiguration: cfg)?.withTintColor(p.tertiary, renderingMode: .alwaysOriginal)
     }
     toggle.isHidden = !isToggle
+    toggle.isEnabled = !row.disabled
     if isToggle {
       toggle.onTintColor = p.switchOn
       toggle.backgroundColor = p.switchOff
@@ -192,22 +246,36 @@ final class STRowCell: UICollectionViewCell {
       toggle.thumbTintColor = row.on ? p.switchThumb : .white
       if toggle.isOn != row.on { toggle.setOn(row.on, animated: window != nil) }
     }
+    let anyAcc = !valueLabel.isHidden || showSpin || showCheck || showChevron || isToggle
+    accStack.isHidden = !anyAcc
+
     // Desliga tudo antes de religar (nunca 2 regras de borda ativas juntas).
-    NSLayoutConstraint.deactivate([textLeadingToChip, textLeadingToEdge, textCenterX, textTrailingToChevron, textTrailingToSwitch, textTrailingToEdge])
+    NSLayoutConstraint.deactivate([textLeadingToChip, textLeadingToEdge, textCenterX, textTrailingToAcc, textFillToAcc, textFillToEdge])
     var active: [NSLayoutConstraint] = []
     if hasIcon { active.append(textLeadingToChip) } else if !row.center { active.append(textLeadingToEdge) }
     if row.center { active.append(textCenterX) }
-    if showChevron { active.append(textTrailingToChevron) } else if isToggle { active.append(textTrailingToSwitch) } else { active.append(textTrailingToEdge) }
+    if anyAcc { active.append(textTrailingToAcc) }
+    if !row.center { active.append(anyAcc ? textFillToAcc : textFillToEdge) }
     NSLayoutConstraint.activate(active)
     separator.backgroundColor = p.separator
     separator.isHidden = !showSeparator
     // Categorias: recuo 60 (16 + tile 30 + 14 = alinha com o texto); resultados/ações: 16.
-    sepLeading.constant = (hasIcon && row.kind == "c") ? 60 : 16
+    sepLeading.constant = (hasIcon && row.kind != "q") ? 60 : 16
+
+    let dim: CGFloat = row.disabled ? 0.45 : 1
+    textStack.alpha = dim
+    chip.alpha = dim
+    valueLabel.alpha = dim
 
     // Toggle: o UISwitch é o elemento acessível (VoiceOver alterna direto).
     isAccessibilityElement = !isToggle
-    accessibilityLabel = row.sub.isEmpty ? row.title : "\(row.title), \(row.sub)"
-    accessibilityTraits = .button
+    var a11y = row.sub.isEmpty ? row.title : "\(row.title), \(row.sub)"
+    if !row.value.isEmpty { a11y += ", \(row.value)" }
+    accessibilityLabel = a11y
+    var traits: UIAccessibilityTraits = row.pressable ? .button : .staticText
+    if acc == "k" { traits.insert(.selected) }
+    if row.disabled { traits.insert(.notEnabled) }
+    accessibilityTraits = traits
     toggle.accessibilityLabel = row.title
     applyBackground()
   }
@@ -250,6 +318,40 @@ final class STHeaderCell: UICollectionViewCell {
       .font: UIFont.systemFont(ofSize: 13, weight: .regular),
       .foregroundColor: p.header,
       .kern: 0.3,
+    ])
+    accessibilityLabel = text
+  }
+}
+
+// [2026-10-18 settings-sub-native] rodapé da seção (texto explicativo abaixo
+// do cartão, como o footer do UITableView inset-grouped / SettingsGroup JS).
+final class STFooterCell: UICollectionViewCell {
+  private let label = UILabel()
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.numberOfLines = 0
+    contentView.addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
+      label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
+      label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+      label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+    ])
+    isAccessibilityElement = true
+    accessibilityTraits = .staticText
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  func configure(_ text: String, palette p: STPalette) {
+    let para = NSMutableParagraphStyle()
+    para.lineSpacing = 1
+    label.attributedText = NSAttributedString(string: text, attributes: [
+      .font: UIFont.systemFont(ofSize: 13, weight: .regular),
+      .foregroundColor: p.header,
+      .paragraphStyle: para,
     ])
     accessibilityLabel = text
   }

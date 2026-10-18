@@ -28,6 +28,10 @@ import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../nat
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-09 native-sheets]
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
 import { Typography, BorderRadius, Elevation, hairlineColor } from '../../constants/theme'; // [2026-10-18 elegance]
+// [2026-10-18 settings-sub-native] modo "coleta": dentro de uma sub-página
+// nativa (SettingsCategoryScreen + ChatyySettingsList api ≥ 2) grupo/linha
+// não desenham — viram descritores da lista nativa (components/settings/nativeCollect.js).
+import { SettingsCollectContext, CollectGroup, CollectRow } from './nativeCollect';
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
@@ -122,7 +126,15 @@ function _autoInset(child) {
   return p.iconTile === false ? 54 : 62;
 }
 
-export function SettingsGroup({ header, footer, children, inset, style, cardStyle, testID }) {
+export function SettingsGroup(props) {
+  const col = useContext(SettingsCollectContext);
+  if (col) return <CollectGroup col={col} {...props} />;
+  return <SettingsGroupJS {...props} />;
+}
+
+// `nativeHeader`: no modo coleta o conteúdo vai como cartão RN no topo da
+// lista nativa (ex.: cabeçalho da Bia); na lista JS é um grupo normal.
+function SettingsGroupJS({ header, footer, children, inset, style, cardStyle, testID }) {
   const g = useGroupedColors();
   const delay = useCascadeDelay();
   const items = React.Children.toArray(children).filter(Boolean);
@@ -158,6 +170,7 @@ export function SettingsValueText({ children, color, style, numberOfLines = 1 })
   const g = useGroupedColors();
   return <Text style={[st.value, { marginLeft: 0, color: color || g.secondary }, style]} numberOfLines={numberOfLines}>{children}</Text>;
 }
+SettingsValueText.__nativeValueText = true; // modo coleta: `right` = valor em texto
 
 // Generic row. Right side priority: `right` node > `checked` > value + chevron.
 // [2026-10-09 geo-qa] RTL (árabe/hebraico/persa/urdu no web: <html dir="rtl">):
@@ -167,7 +180,15 @@ function _docRTL() {
   try { return Platform.OS === 'web' && typeof document !== 'undefined' && document.documentElement && document.documentElement.dir === 'rtl'; } catch { return false; }
 }
 
-export function SettingsRow({
+// `native` (opcional, só modo coleta): { val, acc } substitui um `right`
+// próprio na lista nativa (ex.: código do convite como valor, sem seta).
+export function SettingsRow(props) {
+  const col = useContext(SettingsCollectContext);
+  if (col) return <CollectRow col={col} rowProps={props} />;
+  return <SettingsRowJS {...props} />;
+}
+
+function SettingsRowJS({
   title, subtitle, value, icon: Icon, iconTile = true, onPress, onLongPress, chevron,
   right, destructive, disabled, checked, titleStyle, numberOfLines = 1, subtitleLines = 2,
   accessibilityLabel, accessibilityRole, center, testID, children,

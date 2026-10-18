@@ -10,8 +10,10 @@
 //                 para a barra / expande puxando (carrossel foto + capa),
 //                 "Editar" na barra, celular / @usuário / recado, Definir foto,
 //                 Editar perfil, Meu QR, Compartilhar, Meus status, Destaques,
-//                 Publicações, Chatyy Plus / Carteira / Favoritas / Aparelhos,
-//                 categorias das Configurações e Sair.
+//                 Seguidores/Seguindo, Publicações.
+//                 [2026-10-18 settings-sub-native] SEM itens das Configurações
+//                 (Chatyy Plus, Carteira, Favoritas, Aparelhos, categorias, Sair):
+//                 moram só em /settings — perfil e Configurações não se repetem.
 //   mode 'user' → perfil público de outra pessoa: Mensagem / Ligar / Vídeo /
 //                 Seguir, celular / @usuário / recado / site, faixa de
 //                 publicações, mídia compartilhada, grupos em comum (lista
@@ -20,7 +22,6 @@
 // Ícones = nomes lógicos (CIText.symbol no iOS / CIText.drawable no Android).
 import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail, avatarRefForUrl } from '../chat/NativeProfileBridge';
-import { CATEGORY_GROUPS, CATEGORY_META, categoryTitle } from '../settings/categories';
 
 function _pic(ref, name, email) {
   const pic = { i: initialsOf(name, email), g: gradientIndex(name || email || '') };
@@ -210,25 +211,6 @@ export function buildNativeProfileInfo(ctx) {
     rows.push({ id: 'more', k: 'a', sid: 'acts', icon: 'more', title: tr('nativeProfile.more', 'Mais opções'), onPress: () => on.menu?.() });
     rows.push({ id: 'block', k: 'a', sid: 'danger', dest: true, icon: 'block', title: tr('chat.blockUser', 'Bloquear usuário'), onPress: () => on.block?.() });
     rows.push({ id: 'report', k: 'a', sid: 'danger', dest: true, icon: 'flag', title: tr('chat.reportUser', 'Denunciar usuário'), onPress: () => on.report?.() });
-  }
-
-  // ── Meu perfil: Chatyy Plus / Carteira / atalhos + categorias + Sair ──
-  if (self) {
-    rows.push({ id: 'plus', sid: 'plus', icon: 'sparkles', title: String(ctx.planName || 'Chatyy Plus'), sub: String(ctx.planDesc || ''), onPress: () => on.go?.('/settings-one') });
-    if (ctx.diamonds) rows.push({ id: 'wallet', sid: 'plus', icon: 'gift', title: tr('wallet.title', 'Carteira'), onPress: () => on.go?.('/wallet') });
-    rows.push({ id: 'starred', sid: 'plus', icon: 'star', title: tr('chat.starredMessages', 'Mensagens favoritas'), onPress: () => on.go?.('/starred-messages') });
-    rows.push({ id: 'devices', sid: 'plus', icon: 'device', title: tr('settings.linkedDevices', 'Aparelhos conectados'), onPress: () => on.go?.('/linked-devices') });
-    CATEGORY_GROUPS.forEach((keys, gi) => {
-      for (const key of keys) {
-        const meta = CATEGORY_META[key];
-        if (!meta) continue;
-        rows.push({
-          id: 'cat:' + key, sid: 'cat' + gi, icon: meta.icon, title: categoryTitle(t, key),
-          onPress: () => on.go?.({ pathname: '/settings-section', params: { section: key } }),
-        });
-      }
-    });
-    rows.push({ id: 'logout', k: 'a', sid: 'out', dest: true, icon: 'logout', title: tr('settings.logoutAccount', 'Sair da conta'), onPress: () => on.logout?.() });
   }
 
   return {

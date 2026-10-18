@@ -59,8 +59,9 @@ export default function AccountCategory() {
   return (
     <View>
       <View ref={registerAnchor('account')}>
+        {/* [2026-10-18 settings-sub-native] "Editar perfil" saiu daqui (está no Meu perfil:
+            Editar / Definir foto) e "Aparelhos conectados" virou linha da raiz — sem duplicar. */}
         <SettingsGroup>
-          <SettingsRow title={t('settings.editProfile')} subtitle={t('settings.editProfileSub')} onPress={() => safeNav('/edit-profile')} testID="settings-row-edit-profile" />
           <SettingsRow
             title={t('account.switch') || 'Trocar conta'}
             value={(accounts?.length || 0) > 1 ? String(accounts.length) : undefined}
@@ -69,7 +70,6 @@ export default function AccountCategory() {
         </SettingsGroup>
         <SettingsGroup>
           <SettingsRow title={t('linkedPhones.title')} onPress={() => safeNav('/linked-phones')} />
-          <SettingsRow title={t('settings.linkedDevices')} onPress={() => safeNav('/linked-devices')} />
         </SettingsGroup>
         <SettingsGroup>
           <SettingsRow title={t('settings.exportData')} onPress={() => safeNav('/settings-export')} />

@@ -57,6 +57,9 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
   private var hInsetPx = 0
   private var bottomInsetPx = 0
   private var headerHintPx = 0
+  // [2026-10-18 settings-sub-native] rolar até uma linha (âncora da busca).
+  private var pendingScrollId = ""
+  private var lastScrollToken = ""
 
   private val rnChildren = ArrayList<View>()
   private val headerHost = CLChildHost(context) { headerHintPx }
@@ -160,6 +163,25 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
     updateInset(width)
   }
 
+  /** "id|token": rola até a linha `id` uma vez por token. */
+  fun setScrollToId(v: String?) {
+    val s = v ?: ""
+    if (s.isEmpty() || s == lastScrollToken) return
+    lastScrollToken = s
+    val cut = s.lastIndexOf('|')
+    pendingScrollId = if (cut >= 0) s.substring(0, cut) else s
+    if (firstPaintSent) recycler.post { performPendingScroll() }
+  }
+
+  private fun performPendingScroll() {
+    val id = pendingScrollId
+    if (id.isEmpty()) return
+    val pos = items.indexOfFirst { it is Item.Row && it.row.id == id }
+    if (pos < 0) return
+    pendingScrollId = ""
+    try { layoutManager.scrollToPositionWithOffset(pos, max(0, height / 3)) } catch (_: Throwable) {}
+  }
+
   fun setRefreshing(v: Boolean) {
     if (!v && refresher.isRefreshing) refresher.isRefreshing = false
   }
@@ -183,7 +205,8 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
   private sealed class Item {
     object Header : Item()
     data class Section(val key: String, val title: String) : Item()
-    data class Row(val row: STRow, val first: Boolean, val last: Boolean, val inset: Int) : Item()
+    data class Row(val row: STRow, val first: Boolean, val last: Boolean, val inset: Int, val gapBelow: Boolean = last) : Item()
+    data class Footer(val key: String, val text: String, val inset: Int) : Item()
     data class Empty(val text: String) : Item()
   }
 
@@ -204,29 +227,36 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
 
       val next = ArrayList<Item>(ids.size + 10)
       next.add(Item.Header)
-      fun addCard(key: String, header: String, list: List<STRow>) {
+      fun addCard(key: String, header: String, list: List<STRow>, footer: String = "") {
         if (list.isEmpty()) return
         if (header.isNotEmpty()) next.add(Item.Section(key, header))
-        list.forEachIndexed { i, r -> next.add(Item.Row(r, i == 0, i == list.size - 1, hInsetPx)) }
+        list.forEachIndexed { i, r ->
+          val last = i == list.size - 1
+          next.add(Item.Row(r, i == 0, last, hInsetPx, last && footer.isEmpty()))
+        }
+        if (footer.isNotEmpty()) next.add(Item.Footer(key, footer, hInsetPx))
       }
       if (query.isEmpty()) {
         var curSid: String? = null
         var curHeader = ""
+        var curFooter = ""
         val bucket = ArrayList<STRow>()
         var n = 0
         for (id in ids) {
           val r = rows[id] ?: continue
           if (r.kind == "q") continue
           if (curSid == null || curSid != r.sid) {
-            addCard("$n|${curSid ?: ""}", curHeader, ArrayList(bucket))
+            addCard("$n|${curSid ?: ""}", curHeader, ArrayList(bucket), curFooter)
             n++
             bucket.clear()
             curSid = r.sid
             curHeader = r.header
+            curFooter = ""
           }
+          if (curFooter.isEmpty() && r.footer.isNotEmpty()) curFooter = r.footer
           bucket.add(r)
         }
-        addCard("$n|${curSid ?: ""}", curHeader, ArrayList(bucket))
+        addCard("$n|${curSid ?: ""}", curHeader, ArrayList(bucket), curFooter)
       } else {
         val hits = ids.mapNotNull { rows[it] }.filter { it.kind == "q" && it.hay.contains(query) }
         if (hits.isEmpty()) next.add(Item.Empty(labels.get("noResults", "Nenhum resultado")))
@@ -244,6 +274,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
           return when {
             a is Item.Row && b is Item.Row -> a.row.id == b.row.id
             a is Item.Section && b is Item.Section -> a.key == b.key
+            a is Item.Footer && b is Item.Footer -> a.key == b.key
             a is Item.Empty && b is Item.Empty -> true
             else -> a === b
           }
@@ -263,6 +294,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
         firstPaintSent = true
         recycler.post { onFirstPaint(mapOf("count" to ids.size)) }
       }
+      if (pendingScrollId.isNotEmpty()) recycler.post { performPendingScroll() }
     } catch (e: Throwable) {
       onNativeError(mapOf("message" to ("apply: " + (e.message ?: e.javaClass.simpleName))))
     }
@@ -313,6 +345,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
   private class HostHolder(v: View) : RecyclerView.ViewHolder(v)
   private class SectionHolder(val tv: TextView) : RecyclerView.ViewHolder(tv)
   private class EmptyHolder(val tv: TextView) : RecyclerView.ViewHolder(tv)
+  private class FooterHolder(val tv: TextView) : RecyclerView.ViewHolder(tv)
   private class RowHolder(val rowView: STRowView) : RecyclerView.ViewHolder(rowView)
 
   private val rowListener = object : STRowView.Listener {
@@ -331,6 +364,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
       is Item.Section -> TYPE_SECTION
       is Item.Row -> TYPE_ROW
       is Item.Empty -> TYPE_EMPTY
+      is Item.Footer -> TYPE_FOOTER
     }
 
     override fun getItemId(position: Int): Long = when (val it = items[position]) {
@@ -338,6 +372,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
       is Item.Empty -> 2L
       is Item.Section -> stableId("s:" + it.key)
       is Item.Row -> stableId("r:" + it.row.id)
+      is Item.Footer -> stableId("f:" + it.key)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -360,6 +395,15 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
           tv.includeFontPadding = false
           tv.layoutParams = RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT)
           return SectionHolder(tv)
+        }
+        TYPE_FOOTER -> {
+          val tv = TextView(parent.context)
+          tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+          tv.typeface = CLType.weight(400)
+          tv.includeFontPadding = false
+          tv.setLineSpacing(px(2f).toFloat(), 1f)
+          tv.layoutParams = RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT)
+          return FooterHolder(tv)
         }
         TYPE_EMPTY -> {
           val tv = TextView(parent.context)
@@ -399,10 +443,17 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
             if (lp != null) {
               lp.leftMargin = it.inset
               lp.rightMargin = it.inset
-              lp.bottomMargin = if (it.last) px(24f) else 0
+              lp.bottomMargin = if (it.gapBelow) px(24f) else 0
               rh.rowView.layoutParams = lp
             }
             rh.rowView.bind(it.row, palette, it.first, it.last)
+          }
+          is Item.Footer -> {
+            val fh = holder as? FooterHolder ?: return
+            fh.tv.text = it.text
+            fh.tv.setTextColor(palette.header)
+            fh.tv.setPadding(it.inset + px(18f), px(8f), it.inset + px(18f), px(24f))
+            fh.tv.contentDescription = it.text
           }
           is Item.Empty -> {
             val eh = holder as? EmptyHolder ?: return
@@ -440,6 +491,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
     private const val TYPE_ROW = 1
     private const val TYPE_SECTION = 2
     private const val TYPE_EMPTY = 3
+    private const val TYPE_FOOTER = 4
     private val PAYLOAD_BIND = Any()
   }
 }

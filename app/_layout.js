@@ -86,6 +86,17 @@ import '../services/disableLayoutAnimationIOS';
 import '../services/modalGuardIOS'; // [2026-10-17 freeze] serializa present/dismiss dos <Modal> no iOS (Modal órfão = toque bloqueado)
 import { setFreezeRoute as _setFreezeRoute, noteRootTouch as _noteRootTouch } from '../services/freezeWatch';
 import { nativeListLargeTitleOn as _nativeListLargeTitleOn } from '../components/nativeHeader'; // [2026-10-17 freeze 0x8BADF00D]
+// [2026-10-18 settings-sub-native] /settings-section desenhada pela lista NATIVA
+// (sem título grande no iOS, mesma regra da raiz) — decide igual à tela
+// (components/settings/nativeCollect.js), sem troca de header após o push.
+function _settingsSubNative(route) {
+  try {
+    if (Platform.OS !== 'ios' || _nativeListLargeTitleOn()) return false;
+    const sec = route?.params?.section;
+    const cat = require('../components/settings/categories').sectionToCategory(typeof sec === 'string' ? sec : '');
+    return !!cat && require('../components/settings/nativeCollect').nativeSettingsCategoryOn(cat);
+  } catch { return false; }
+}
 // [2026-10-07 coldstart] Boot trace + native-splash owner + after-first-paint
 // scheduler. Imported this early so its T0 is as close to bundle start as
 // possible (imports evaluate in order).
@@ -2222,7 +2233,7 @@ export default function RootLayout() {
                   <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH, fullScreenGestureEnabled: false /* [2026-10-17 swipe-back] arrastar lateral no corpo troca de e-mail (read.js) → voltar pela BORDA */ }} />
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="settings" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? ((route?.params?.section || _nativeListLargeTitleOn()) ? _LARGE_TITLE_HDR : { headerStyle: { backgroundColor: _GROUPED_BG }, headerShadowVisible: false }) : {}) })} />{/* [2026-10-17 settings-light] raiz SEM título grande no iOS: lista nativa (UICollectionView) como content scroll view do título grande = loop de layout (watchdog 0x8BADF00D build 704). Categorias = rota leve /settings-section (abaixo) */}
-                  <Stack.Screen name="settings-section" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-17 settings-light] UMA categoria (components/settings/SettingsCategoryScreen.js): título grande que colapsa + swipe-back nativo */}{/* [2026-10-15 nav-motion] nasce c/ título grande (o settings.js aplica o mesmo). [2026-10-17 swipe-back] categorias = /settings?section=<cat> empurradas (swipe-back nativo), também c/ título grande que colapsa */}
+                  <Stack.Screen name="settings-section" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? (_settingsSubNative(route) ? { headerStyle: { backgroundColor: _GROUPED_BG }, headerShadowVisible: false } : _LARGE_TITLE_HDR) : {}) })} />{/* [2026-10-17 settings-light] UMA categoria (components/settings/SettingsCategoryScreen.js): título grande que colapsa + swipe-back nativo */}{/* [2026-10-15 nav-motion] nasce c/ título grande (o settings.js aplica o mesmo). [2026-10-17 swipe-back] categorias = /settings?section=<cat> empurradas (swipe-back nativo), também c/ título grande que colapsa */}
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
