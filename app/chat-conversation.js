@@ -154,6 +154,15 @@ import SuggestPopIn from '../components/chat/SuggestPopIn'; // [2026-10-16 motio
 import NowTicker from '../components/chat/NowTicker'; // [2026-10-15 conv-lite] // [2026-10-15 conv-lite] sheets/modais montados só na 1ª abertura
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetModal, NativeSheetKeyboardView, afterRNModal, runAfterNativeSheet, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2] +Modal drop-in/teclado
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+// [2026-10-18 conv-native-sheets] Leva Modal→sheet do sistema da conversa
+// (reações completas, histórico de edição, citar trecho, lembrar-me, estatísticas,
+// QR de convite, cadeado). Kill switch (OTA, vale na hora):
+// globalThis.__chatyy_conv_native_sheets = false → os <Modal> de antes.
+function _convSheetsOn() {
+  if (!USE_NATIVE_SHEETS) return false;
+  try { if (globalThis.__chatyy_conv_native_sheets === false) return false; } catch {}
+  return true;
+}
 import ReactionBurst from '../components/ReactionBurst';
 import ShareContactPicker from '../components/chat/ShareContactPicker'; // [2026-10-17 share-contact] seletor Chatyy + agenda, até 5
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
@@ -13403,6 +13412,7 @@ function ChatConversationInner() {
   // WhatsApp: derruba ao abrir e devolve o foco se o menu for fechado sem ação.
   const _ctxKbRestoreRef = useRef(false); // composer tinha foco quando o menu abriu
   const _ctxMenuOpenRef = useRef(false);  // menu aberto → nada re-foca o composer
+  const _reactPickMsgRef = useRef(null); // [2026-10-18 conv-native-sheets] alvo do seletor completo de reações (menu JS já fechado)
   const _ctxMenuDropKeyboard = () => {
     let had = false;
     try { had = !!inputRef.current?.isFocused?.(); } catch {}
@@ -14335,12 +14345,13 @@ function ChatConversationInner() {
     setChatUnlocked(true);
     setShowLockSetup(false);
     setLockPassInput('');
-    safeAlert(
+    // [2026-10-18 conv-native-sheets] alerta só depois que o sheet do cadeado desce (sem sheet = imediato)
+    runAfterNativeSheet(() => safeAlert(
       t('chatConv.lockSet') || 'Lock set',
       useBiometric
         ? (t('chatConv.lockBioSet') || 'Este chat agora pede Face ID / digital')
         : (t('chatConv.lockSetDesc') || 'This chat is now password protected')
-    );
+    ));
   };
 
   const handleRemoveChatLock = async () => {
@@ -25719,7 +25730,7 @@ function ChatConversationInner() {
         val: activeTopic ? String(activeTopic.name || '') : '',
         onPress: async () => {
           try { const r = await api.chatTopicList(conversationId); if (r?.success) setTopics(r.data?.topics || r.data?.items || []); } catch {}
-          go(() => setShowTopicsModal(true), true);
+          go(() => setShowTopicsModal(true), !_convSheetsOn() /* [2026-10-18 conv-native-sheets] sheet nativo: info fecha antes */);
         },
       });
     }
@@ -25765,7 +25776,7 @@ function ChatConversationInner() {
             try { const r = await api.chatGroupInviteLink(conversationId, false); const link = r?.data?.link || r?.data?.url || ''; if (r?.success && link) setInviteLink(link); } catch {}
             setInviteLinkLoading(false);
           }
-          go(() => setShowInviteQr(true), true);
+          go(() => setShowInviteQr(true), !_convSheetsOn() /* [2026-10-18 conv-native-sheets] sheet nativo: info fecha antes (nunca sob Modal) */);
         },
       });
     } else if (canEdit) {
@@ -26737,7 +26748,18 @@ function ChatConversationInner() {
               index={_qr.length}
               colors={colors}
               isDark={isDark}
-              onPress={() => openComposerPanel('emoji')}
+              onPress={() => {
+                // [2026-10-18 conv-native-sheets] sheet nativo: o menu JS (<Modal>) desce
+                // primeiro e o seletor abre depois (iOS: nunca apresentar sobre Modal);
+                // a mensagem-alvo fica no ref. Kill switch/web → igual a antes.
+                if (_convSheetsOn() && selectedMsg) {
+                  _reactPickMsgRef.current = selectedMsg;
+                  setSelectedMsg(null);
+                  afterRNModal(() => openComposerPanel('emoji'));
+                  return;
+                }
+                openComposerPanel('emoji');
+              }}
             />
           </>
         );
@@ -34872,7 +34894,7 @@ function ChatConversationInner() {
       });
       if (!p || typeof p.then !== 'function') return false;
       p.then((sel) => {
-        if (sel === null) { setQuoteSelectModal({ msg, draft: '' }); return; }
+        if (sel === null) { if (_convSheetsOn()) afterRNModal(() => setQuoteSelectModal({ msg, draft: '' })); else setQuoteSelectModal({ msg, draft: '' }); return; } // [2026-10-18 conv-native-sheets] seletor nativo já desceu
         if (!sel) return;
         setReplyTo({ ..._replyTargetOf(msg), quoteText: String(sel).slice(0, 240) });
         try { inputRef.current?.focus(); } catch {}
@@ -36674,12 +36696,13 @@ function ChatConversationInner() {
           already drains the queue. Web uses a native datetime-local
           input; native uses a quick chip menu (1h / tonight / tomorrow
           / next week) so we don't have to hard-bundle a date picker. */}
-      <LazyMount when={showSavedReminder}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="fade" onRequestClose={() => setShowSavedReminder(false)}>
-        <Pressable
-          onPress={() => setShowSavedReminder(false)}
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}
+      {/* [2026-10-18 conv-native-sheets] NativeSheetDialog: sheet do sistema no nativo; web/kill switch = Modal de antes. */}
+      <LazyMount when={showSavedReminder}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowSavedReminder(false)} animationType="fade"
+          disableNative={!_convSheetsOn()}
+          overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}
+          panelStyle={{ backgroundColor: colors.background, borderRadius: 16, padding: 18 }}
+          stopPropagation={false}
         >
-          <Pressable onPress={() => {}} style={{ backgroundColor: colors.background, borderRadius: 16, padding: 18 }}>
             <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 4 }}>{t('chatConv.rememberMeAt')}</Text>
             <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
               {t('chatConv.savedReminderDesc')}
@@ -36733,9 +36756,7 @@ function ChatConversationInner() {
             <TouchableOpacity onPress={() => setShowSavedReminder(false)} style={{ marginTop: 12, alignSelf: 'flex-end' }}>
               <Text style={{ color: colors.primary, fontWeight: '600' }}>{_mt('common.cancel', 'Cancelar')}</Text>
             </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>)}</LazyMount>
+      </NativeSheetDialog>)}</LazyMount>
 
       {/* Contact Picker (WhatsApp-style) */}
       {/* [2026-10-15 native-sheets-v2] Nativo: sheet grande do sistema (arrastar p/ fechar, fundo escala); web = Modal tela cheia de sempre. */}
@@ -36905,17 +36926,10 @@ function ChatConversationInner() {
           OS native text-selection handles work on iOS/Android/web). User
           highlights a substring, hits "Citar" → that snippet becomes the
           reply quote. Empty selection falls back to a normal reply. */}
-      {!!quoteSelectModal && (
-        <Modal
-          visible
-          transparent
-          animationType="fade"
-          onRequestClose={() => setQuoteSelectModal(null)}
-        >
-          {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-          <SheetKeyboardAvoider style={{ flex: 1 }}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
-            <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18 }}>
+      {!!quoteSelectModal && (() => {
+        // [2026-10-18 conv-native-sheets] Citar trecho: nativo = sheet do sistema
+        // (fitToContents: o próprio sistema sobe o sheet com o teclado); web/kill switch = Modal de antes.
+        const _qsBody = (<>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
                   {t('chatConv.selectQuote') || 'Selecione o trecho a citar'}
@@ -36963,28 +36977,44 @@ function ChatConversationInner() {
                     if (!m) return;
                     // Empty trimmed selection falls through to a regular reply.
                     setReplyTo(trimmed ? { ...m, quoteText: trimmed.slice(0, 240) } : m);
-                    inputRef.current?.focus();
+                    runAfterNativeSheet(() => { try { inputRef.current?.focus(); } catch {} }); // [2026-10-18 conv-native-sheets] foco depois que o sheet desce
                   }}
                   style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: colors.primary }}
                 >
                   <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('chatConv.quote') || 'Citar'}</Text>
                 </TouchableOpacity>
               </View>
+        </>);
+        if (_convSheetsOn()) {
+          return (
+            <NativeSheet visible onClose={() => setQuoteSelectModal(null)} detents="fitToContents" backgroundColor={colors.surface}>
+              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 18, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>{_qsBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setQuoteSelectModal(null)}
+        >
+          {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+          <SheetKeyboardAvoider style={{ flex: 1 }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18 }}>
+              {_qsBody}
             </View>
           </View>
           </SheetKeyboardAvoider>
         </Modal>
-      )}
+        );
+      })()}
 
       {/* Edit history modal */}
-      <LazyMount when={editHistoryModal.visible}>{(_lmV) => (<Modal
-        visible={_lmV}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })}
-      >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
-          <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18, maxHeight: '80%' }}>
+      <LazyMount when={editHistoryModal.visible}>{(_lmV) => {
+        // [2026-10-18 conv-native-sheets] Histórico de edições: nativo = sheet do sistema; web/kill switch = Modal de antes.
+        const _cvBody = (<>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
                 {t('chatConv.editHistory') || 'Histórico de edições'}
@@ -37052,9 +37082,29 @@ function ChatConversationInner() {
                 </View>
               </ScrollView>
             )}
+        </>);
+        if (_convSheetsOn()) {
+          return (
+            <NativeSheet visible={!!_lmV} onClose={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })} detents={"fitToContents"} backgroundColor={colors.surface}>
+              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 18, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>{_cvBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal
+        visible={_lmV}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 18, maxHeight: '80%' }}>
+        {_cvBody}
           </View>
         </View>
-      </Modal>)}</LazyMount>
+      </Modal>
+        );
+      }}</LazyMount>
 
       {/* Floating today/date pill — appears while scrolling.
           Top must clear safe-area + header (~56) + small breath, otherwise
@@ -39241,7 +39291,11 @@ function ChatConversationInner() {
               {!selectedMsg?.deleted_at && typeof selectedMsg?.content === 'string' && selectedMsg.content.trim().length > 12 && (
                 <PressableScale haptic={false}
                   style={ctxS.ctxIconBtn}
-                  onPress={() => { setQuoteSelectModal({ msg: selectedMsg, draft: '' }); setSelectedMsg(null); }}
+                  onPress={() => {
+                    // [2026-10-18 conv-native-sheets] sheet nativo só depois que o menu (<Modal>) desce.
+                    if (_convSheetsOn()) { const _qm = selectedMsg; setSelectedMsg(null); afterRNModal(() => setQuoteSelectModal({ msg: _qm, draft: '' })); return; }
+                    setQuoteSelectModal({ msg: selectedMsg, draft: '' }); setSelectedMsg(null);
+                  }}
                   activeOpacity={0.6}
                 >
                   <View style={[ctxS.ctxIconCircle, { backgroundColor: _ctxCircleBg }]}>
@@ -39866,19 +39920,16 @@ function ChatConversationInner() {
       </Modal>)}</LazyMount>
 
       {/* Full Emoji Picker Modal */}
-      <LazyMount when={showFullEmojiPicker}>{(_lmV) => (<Modal
-        visible={_lmV}
-        transparent
-        animationType="slide"
-        onRequestClose={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}
-      >
-        <DragSheetRoot>
-        <Pressable style={[styles.modalOverlay, { backgroundColor: 'transparent' }]} onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}>
-          <DragBackdrop drag={_drag38258} color="rgba(0,0,0,0.5)" />
-          <DragPanel drag={_drag38258} onStartShouldSetResponder={() => true} style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} >
+      {/* [2026-10-18 conv-native-sheets] Nativo: sheet do sistema (detents 60%/100%,
+          alça e arrastar do sistema). Aberto pelo "+" do menu JS: o menu fecha ANTES
+          (openFullReactionPicker guarda a mensagem-alvo) → nunca Modal sobre Modal.
+          Web / __chatyy_conv_native_sheets=false → o Modal de antes. */}
+      <LazyMount when={showFullEmojiPicker}>{(_lmV) => {
+        const _fepClose = () => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); _reactPickMsgRef.current = null; };
+        const _fepHead = (<>
             <View style={styles.emojiPickerHeader}>
               <Text style={[styles.emojiPickerTitle, { color: colors.text }]}>{t('chatConv.reactions') || 'Reactions'}</Text>
-              <TouchableOpacity onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }} style={{ padding: 4 }}>
+              <TouchableOpacity onPress={_fepClose} style={{ padding: 4 }}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -39913,7 +39964,8 @@ function ChatConversationInner() {
                 </View>
               </TouchableOpacity>
             </View>
-            <DragScroll drag={_drag38258}><ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+        </>);
+        const _fepList = (<>
             {reactionPickerTab === 'mine' ? (
               // "Meus emojis" — user's custom animated WebPs (custom_animated_emoji).
               // Same reaction wire format as stickers: encoded server-side as
@@ -39953,7 +40005,7 @@ function ChatConversationInner() {
                         // Reuse sticker reaction wire path: 3rd arg = URL.
                         // Backend stores `sticker:<url>` and the bubble's
                         // sticker:-prefix branch renders it as an <Image>.
-                        handleReact(selectedMsg?.id, null, em.webp_url);
+                        handleReact((selectedMsg || _reactPickMsgRef.current)?.id, null, em.webp_url);
                         setShowFullEmojiPicker(false);
                         setReactionPickerTab('emoji');
                         setSelectedMsg(null);
@@ -40006,7 +40058,7 @@ function ChatConversationInner() {
                             key={s.id || url}
                             style={[styles.emojiBtn, { width: 56, height: 56 }]}
                             onPress={() => {
-                              handleReact(selectedMsg?.id, null, url);
+                              handleReact((selectedMsg || _reactPickMsgRef.current)?.id, null, url);
                               setShowFullEmojiPicker(false);
                               setReactionPickerTab('emoji');
                               setSelectedMsg(null);
@@ -40025,7 +40077,7 @@ function ChatConversationInner() {
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiSmileys') || 'Smileys'}</Text>
               <View style={styles.emojiGrid}>
                 {'😀😃😄😁😅😂🤣😊😇🥰😍🤩😘😗😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹️😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬'.match(/./gu).map(em => (
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
                 ))}
@@ -40033,7 +40085,7 @@ function ChatConversationInner() {
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiGestures') || 'Gestures'}</Text>
               <View style={styles.emojiGrid}>
                 {'👍👎👋🤚✋🖐️👌🤌🤏✌️🤞🤟🤘🤙👈👉👆👇☝️✊👊🤛🤜👏🙌👐🤲🤝🙏💪'.match(/./gu).map(em => (
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
                 ))}
@@ -40041,7 +40093,7 @@ function ChatConversationInner() {
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiHearts') || 'Hearts'}</Text>
               <View style={styles.emojiGrid}>
                 {'❤️🧡💛💚💙💜🖤🤍🤎💔❣️💕💞💓💗💖💝💘💟'.match(/./gu).map(em => (
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
                 ))}
@@ -40049,18 +40101,47 @@ function ChatConversationInner() {
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiObjects') || 'Objects'}</Text>
               <View style={styles.emojiGrid}>
                 {'🎉🎊🎈🎁🎂🍰🥂🍾🎶🎵🔥⭐💯✅❌⚡💡💤🎯🏆🥇🎖️🏅'.match(/./gu).map(em => (
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact(selectedMsg?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
+                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
               </>
             )}
+        </>);
+        if (_convSheetsOn()) {
+          return (
+            <NativeSheet visible={!!_lmV} onClose={_fepClose} detents={[0.6, 1]} backgroundColor={colors.surface}>
+              <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: 18, paddingHorizontal: 12 }}>
+                {_fepHead}
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: nativeSheetBottomPad(insets, 16) }} showsVerticalScrollIndicator={false}>
+                  {_fepList}
+                </ScrollView>
+              </View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal
+        visible={_lmV}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}
+      >
+        <DragSheetRoot>
+        <Pressable style={[styles.modalOverlay, { backgroundColor: 'transparent' }]} onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); }}>
+          <DragBackdrop drag={_drag38258} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag38258} onStartShouldSetResponder={() => true} style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} >
+            {_fepHead}
+            <DragScroll drag={_drag38258}><ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+            {_fepList}
             </ScrollView></DragScroll>
           </DragPanel>
         </Pressable>
         </DragSheetRoot>
-      </Modal>)}</LazyMount>
+      </Modal>
+        );
+      }}</LazyMount>
       {/* Message Info Modal (delivery/read timestamps) */}
       <LazyMount when={!!messageInfoModal}>{(_lmV) => (<NativeSheetDialog
         visible={_lmV}
@@ -41926,7 +42007,7 @@ function ChatConversationInner() {
                       } catch {}
                       setInviteLinkLoading(false);
                     }
-                    groupInfoGo(() => setShowInviteQr(true), true); // [2026-10-07 group-admin]
+                    groupInfoGo(() => setShowInviteQr(true), !_convSheetsOn() /* [2026-10-18 conv-native-sheets] sheet nativo: info fecha antes (nunca sob Modal) */); // [2026-10-07 group-admin]
                   }}
                   activeOpacity={0.7}
                   style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 11, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f0f2f5', gap: 7 }}
@@ -42028,7 +42109,7 @@ function ChatConversationInner() {
                         const r = await api.chatTopicList(conversationId);
                         if (r?.success) setTopics(r.data?.topics || r.data?.items || []); // [2026-10-07 group-admin] server returned only `items` → sheet was always empty
                       } catch {}
-                      groupInfoGo(() => setShowTopicsModal(true), true);
+                      groupInfoGo(() => setShowTopicsModal(true), !_convSheetsOn() /* [2026-10-18 conv-native-sheets] sheet nativo: info fecha antes */);
                     }}
                     activeOpacity={0.6}
                     style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}
@@ -42057,7 +42138,7 @@ function ChatConversationInner() {
                         setNewTopicName('');
                         setNewTopicIcon('');
                         setNewTopicColor('#111111');
-                        groupInfoGo(() => setShowTopicCreate(true), true); // [2026-10-07 group-admin]
+                        groupInfoGo(() => setShowTopicCreate(true), !_convSheetsOn() /* [2026-10-18 conv-native-sheets] sheet nativo: info fecha antes */); // [2026-10-07 group-admin]
                       }}
                       accessibilityLabel={t('chat.createTopic') || 'Criar tópico'}
                       style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}
@@ -42499,13 +42580,11 @@ function ChatConversationInner() {
       </NativeSheetDialog>)}</LazyMount>
 
       {/* Topics Modal */}
-      <LazyMount when={showTopicsModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
-        <DragSheetRoot>
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShowTopicsModal(false)}>
-          <DragBackdrop drag={_drag40809} color="rgba(0,0,0,0.5)" />
-          <DragPanel drag={_drag40809} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} >
+      <LazyMount when={showTopicsModal}>{(_lmV) => {
+        // [2026-10-18 conv-native-sheets] Tópicos: nativo = sheet do sistema (fitToContents: o
+        // sistema sobe o sheet com o teclado); web/kill switch = folha JS de antes.
+        const _cvNative = _convSheetsOn();
+        const _cvBody = (<>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
               <IconHash size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -42528,7 +42607,7 @@ function ChatConversationInner() {
               {!activeTopic && <IconCheck size={16} color={colors.primary} />}
             </TouchableOpacity>
 
-            <DragScroll drag={_drag40809}><ScrollView style={{ maxHeight: 280 }}>
+            <DragScroll drag={_drag40809} disabled={_cvNative}><ScrollView style={{ maxHeight: 280 }}>
               {topics.map(topic => (
                 <View key={topic.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
                   <TouchableOpacity
@@ -42607,11 +42686,30 @@ function ChatConversationInner() {
                 </View>
               </View>
             )}
+        </>);
+        if (_cvNative) {
+          return (
+            <NativeSheet visible={!!_lmV} onClose={() => setShowTopicsModal(false)} detents="fitToContents" backgroundColor={colors.surface}>
+              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 24, paddingBottom: nativeSheetBottomPad(insets, 20) }}>{_cvBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicsModal(false)}>
+        <DragSheetRoot>
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShowTopicsModal(false)}>
+          <DragBackdrop drag={_drag40809} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag40809} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} >
+            {_cvBody}
           </DragPanel>
         </Pressable>
         </SheetKeyboardAvoider>
         </DragSheetRoot>
-      </Modal>)}</LazyMount>
+      </Modal>
+        );
+      }}</LazyMount>
 
       {/* Per-conversation notification settings sheet (Notificações entry in header menu) */}
       <LazyMount when={showNotifSettingsSheet}>{(_lmV) => (<ChatNotificationSettingsSheet
@@ -42627,13 +42725,11 @@ function ChatConversationInner() {
       {/* Topic Create Modal — admin-only sheet launched from the "+" button
           on the topics row. Color picker + emoji + name input. Optimistic
           append so the new topic shows up instantly. */}
-      <LazyMount when={showTopicCreate}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
-        <DragSheetRoot>
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShowTopicCreate(false)}>
-          <DragBackdrop drag={_drag40939} color="rgba(0,0,0,0.5)" />
-          <DragPanel drag={_drag40939} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} >
+      <LazyMount when={showTopicCreate}>{(_lmV) => {
+        // [2026-10-18 conv-native-sheets] Criar tópico: nativo = sheet do sistema (fitToContents: o
+        // sistema sobe o sheet com o teclado); web/kill switch = folha JS de antes.
+        const _cvNative = _convSheetsOn();
+        const _cvBody = (<>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <IconHash size={22} color={colors.primary} />
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
@@ -42724,11 +42820,30 @@ function ChatConversationInner() {
                 {t('common.save') || 'Salvar'}
               </Text>
             </TouchableOpacity>
+        </>);
+        if (_cvNative) {
+          return (
+            <NativeSheet visible={!!_lmV} onClose={() => setShowTopicCreate(false)} detents="fitToContents" backgroundColor={colors.surface}>
+              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 24, paddingBottom: nativeSheetBottomPad(insets, 20) }}>{_cvBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
+        <DragSheetRoot>
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
+        <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setShowTopicCreate(false)}>
+          <DragBackdrop drag={_drag40939} color="rgba(0,0,0,0.5)" />
+          <DragPanel drag={_drag40939} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 20 + androidNavPad, maxHeight: '80%' }} >
+            {_cvBody}
           </DragPanel>
         </Pressable>
         </SheetKeyboardAvoider>
         </DragSheetRoot>
-      </Modal>)}</LazyMount>
+      </Modal>
+        );
+      }}</LazyMount>
 
       {/* Custom roles / permissions sheet — opened from the "Editar
           permissões" link on each admin row. Toggles are persisted both
@@ -42884,18 +42999,11 @@ function ChatConversationInner() {
       </NativeSheetDialog>)}</LazyMount>
 
       {/* Chat Lock Setup Modal */}
-      <LazyMount when={showLockSetup}>{(_lmV) => (<Modal
-        visible={_lmV}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLockSetup(false)}
-      >
-        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
-        <SheetKeyboardAvoider style={{ flex: 1 }}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
-          {/* [2026-10-17 lock-ui] Cartão no padrão do app (P&B, raio de folha, campo com
-              caixa própria + TextInput de altura fixa = texto centrado no iOS). Mesmo fluxo. */}
-          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#ffffff', borderRadius: 20, paddingTop: 24, paddingHorizontal: 20, paddingBottom: 20, width: 320, maxWidth: '88%', alignItems: 'center', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
+      <LazyMount when={showLockSetup}>{(_lmV) => {
+        // [2026-10-18 conv-native-sheets] Cadeado: nativo = sheet do sistema (fitToContents → o
+        // sistema sobe o sheet junto com o teclado); web/kill switch = cartão central de antes.
+        const _lkBg = isDark ? '#1c1c1e' : '#ffffff';
+        const _lkBody = (<>
             <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' }}>
               <IconLock size={24} color={colors.text} />
             </View>
@@ -42936,10 +43044,34 @@ function ChatConversationInner() {
                 <Text style={{ color: isDark ? '#000000' : '#ffffff', fontSize: 16, fontWeight: '600' }}>{t('chatConv.setLock') || 'Set Lock'}</Text>
               </TouchableOpacity>
             </View>
+        </>);
+        if (_convSheetsOn()) {
+          return (
+            <NativeSheet visible={!!_lmV} onClose={() => setShowLockSetup(false)} detents="fitToContents" backgroundColor={_lkBg}>
+              <View style={{ backgroundColor: _lkBg, paddingTop: 28, paddingHorizontal: 24, paddingBottom: nativeSheetBottomPad(insets, 20), alignItems: 'center' }}>{_lkBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal
+        visible={_lmV}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLockSetup(false)}
+      >
+        {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+          {/* [2026-10-17 lock-ui] Cartão no padrão do app (P&B, raio de folha, campo com
+              caixa própria + TextInput de altura fixa = texto centrado no iOS). Mesmo fluxo. */}
+          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#ffffff', borderRadius: 20, paddingTop: 24, paddingHorizontal: 20, paddingBottom: 20, width: 320, maxWidth: '88%', alignItems: 'center', ...(Platform.OS === 'ios' ? { borderCurve: 'continuous' } : null) }}>
+            {_lkBody}
           </View>
         </View>
         </SheetKeyboardAvoider>
-      </Modal>)}</LazyMount>
+      </Modal>
+        );
+      }}</LazyMount>
 
       {/* Disappearing Messages Modal */}
       <LazyMount when={showDisappearingModal}>{(_lmV) => (<NativeSheetDialog visible={_lmV} onClose={() => setShowDisappearingModal(false)} panelStyle={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}>
@@ -43083,20 +43215,15 @@ function ChatConversationInner() {
           scannable QR for in-person joins. Renders LOCALLY via InviteQRCode
           (react-native-qrcode-svg); api.qrserver.com is only the no-svg
           fallback (e.g. web SSR). */}
-      <LazyMount when={showInviteQr}>{(_lmV) => (<Modal
+      {/* [2026-10-18 conv-native-sheets] NativeSheetDialog: sheet do sistema no nativo; web/kill switch = Modal de antes. */}
+      <LazyMount when={showInviteQr}>{(_lmV) => (<NativeSheetDialog
         visible={_lmV}
-        transparent
         animationType="fade"
-        onRequestClose={() => setShowInviteQr(false)}
+        onClose={() => setShowInviteQr(false)}
+        disableNative={!_convSheetsOn()}
+        overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
+        panelStyle={{ backgroundColor: colors.background, borderRadius: 22, padding: 22, width: '100%', maxWidth: 360, alignItems: 'center' }}
       >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
-          onPress={() => setShowInviteQr(false)}
-        >
-          <Pressable
-            onPress={e => e.stopPropagation()}
-            style={{ backgroundColor: colors.background, borderRadius: 22, padding: 22, width: '100%', maxWidth: 360, alignItems: 'center' }}
-          >
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 6 }}>
               {t('chat.showQr') || 'Mostrar QR'}
             </Text>
@@ -43154,9 +43281,7 @@ function ChatConversationInner() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </Pressable>
-        </Pressable>
-      </Modal>)}</LazyMount>
+      </NativeSheetDialog>)}</LazyMount>
 
       {showWallpaperPicker && (
         <WallpaperPicker
@@ -43176,11 +43301,10 @@ function ChatConversationInner() {
       )}
 
       {/* Chat Stats Modal — redesigned with hero cards, colorful bars */}
-      <LazyMount when={showStatsModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
-        <DragSheetRoot>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-          <DragFade drag={_drag41492}><Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} /></DragFade>
-          <DragPanel drag={_drag41492} style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '85%', overflow: 'hidden' }}>
+      <LazyMount when={showStatsModal}>{(_lmV) => {
+        // [2026-10-18 conv-native-sheets] Estatísticas: nativo = sheet do sistema (60%/100%,
+        // alça + arrastar nativos); web/kill switch = folha JS de antes.
+        const _stHead = (<>
             {/* [beauty 2026-10-02] Header neutralized (was green wash + green circle) */}
             <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: colors.background, zIndex: 2, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -43196,9 +43320,8 @@ function ChatConversationInner() {
               </View>
             </View>
 
-            {/* [2026-10-17 stats-header] flexShrink: a lista cabe ABAIXO do cabeçalho (antes podia
-                exceder o maxHeight da folha e o topo dos cartões sumia sob o header). */}
-            <DragScroll drag={_drag41492}><ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 }} showsVerticalScrollIndicator={false}>
+        </>);
+        const _stList = (<>
               {_statsMemo(() => {
                 const msgs = (messages || []).filter(m => !m._pending && m.type !== 'system');
                 const total = msgs.length;
@@ -43347,11 +43470,37 @@ function ChatConversationInner() {
                   </>
                 );
               }, [messages, colors, isDark, t, currentEmail])}
+        </>);
+        if (_convSheetsOn()) {
+          return (
+            <NativeSheet visible={!!_lmV} onClose={() => setShowStatsModal(false)} detents={[0.6, 1]} backgroundColor={colors.background}>
+              <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: 8 }}>
+                {_stHead}
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: nativeSheetBottomPad(insets, 18) }} showsVerticalScrollIndicator={false}>
+                  {_stList}
+                </ScrollView>
+              </View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowStatsModal(false)}>
+        <DragSheetRoot>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+          <DragFade drag={_drag41492}><Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} /></DragFade>
+          <DragPanel drag={_drag41492} style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: Platform.OS === 'android' ? androidNavPad + 16 : 34, maxHeight: '85%', overflow: 'hidden' }}>
+            {_stHead}
+            {/* [2026-10-17 stats-header] flexShrink: a lista cabe ABAIXO do cabeçalho (antes podia
+                exceder o maxHeight da folha e o topo dos cartões sumia sob o header). */}
+            <DragScroll drag={_drag41492}><ScrollView style={{ flexShrink: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 }} showsVerticalScrollIndicator={false}>
+              {_stList}
             </ScrollView></DragScroll>
           </DragPanel>
         </View>
         </DragSheetRoot>
-      </Modal>)}</LazyMount>
+      </Modal>
+        );
+      }}</LazyMount>
 
       {/* [2026-10-13 bia-summary] "Resumir com a Bia" — folha extraída p/
           components/chat/ConversationSummarySheet.js (cabeçalho fixo de fundo

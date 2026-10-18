@@ -35,6 +35,14 @@ import useStatuses, { isAllowedGifUrl } from '../hooks/useStatuses';
 import GifPickerPanel from './GifPicker';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
+// [2026-10-18 conv-native-sheets] Arquivo de status no sheet do SISTEMA (detents, alça,
+// arrastar nativos). Web / globalThis.__chatyy_conv_native_sheets === false → Modal de antes.
+import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet';
+function _statusSheetsOn() {
+  if (!USE_NATIVE_SHEETS) return false;
+  try { if (globalThis.__chatyy_conv_native_sheets === false) return false; } catch {}
+  return true;
+}
 import { Sheet as UISheet, ActionList as UIActionList } from './ui'; // [2026-10-17 p2] menu web do Meu status
 // (cache helpers moved into useStatuses hook)
 // Lazy import to avoid circular dependency / initialization errors on web
@@ -5192,25 +5200,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       </Modal>
 
       {/* ─── Archive Sheet (own old statuses, long-press to repost) ─── */}
-      <Modal
-        visible={archiveSheetOpen}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setArchiveSheetOpen(false)}
-      >
-        <DragSheetRoot>
-        <Pressable
-          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
-          onPress={() => setArchiveSheetOpen(false)}
-        >
-          <DragBackdrop drag={_drag5238} color="rgba(0,0,0,0.55)" />
-          <DragPanel drag={_drag5238} onStartShouldSetResponder={() => true} style={{
-            backgroundColor: isDark ? '#1c1c1e' : '#fff',
-            borderTopLeftRadius: 20, borderTopRightRadius: 20,
-            paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
-            maxHeight: '78%',
-          }}>
-            <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 14 }} />
+      {(() => {
+        const _arNative = _statusSheetsOn();
+        const _arBg = isDark ? '#1c1c1e' : '#fff';
+        const _arBody = (<>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, marginBottom: 12 }}>
               <IconArchive size={20} color={isDark ? '#fff' : '#111'} />
               <Text style={{ fontSize: 18, fontWeight: '800', color: isDark ? '#fff' : '#111' }}>
@@ -5232,7 +5225,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 style={{ backgroundColor: 'transparent' }}
               />
             ) : (
-              <DragScroll drag={_drag5238}><ScrollView>
+              <DragScroll drag={_drag5238} disabled={_arNative}><ScrollView>
                 {/* Grid of archived rows — 3 cols on phone, more on
                     tablet. Each tile shows the media thumb (or bg color
                     for text statuses) + a tiny date. Long-press fires
@@ -5327,10 +5320,41 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 </View>
               </ScrollView></DragScroll>
             )}
+        </>);
+        if (_arNative) {
+          return (
+            <NativeSheet visible={!!archiveSheetOpen} onClose={() => setArchiveSheetOpen(false)} detents={[0.6, 1]} backgroundColor={_arBg}>
+              <View style={{ flex: 1, backgroundColor: _arBg, paddingHorizontal: 16, paddingTop: 24, paddingBottom: nativeSheetBottomPad(insets, 12) }}>{_arBody}</View>
+            </NativeSheet>
+          );
+        }
+        return (
+      <Modal
+        visible={archiveSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setArchiveSheetOpen(false)}
+      >
+        <DragSheetRoot>
+        <Pressable
+          style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}
+          onPress={() => setArchiveSheetOpen(false)}
+        >
+          <DragBackdrop drag={_drag5238} color="rgba(0,0,0,0.55)" />
+          <DragPanel drag={_drag5238} onStartShouldSetResponder={() => true} style={{
+            backgroundColor: isDark ? '#1c1c1e' : '#fff',
+            borderTopLeftRadius: 20, borderTopRightRadius: 20,
+            paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
+            maxHeight: '78%',
+          }}>
+            <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 14 }} />
+            {_arBody}
           </DragPanel>
         </Pressable>
         </DragSheetRoot>
       </Modal>
+        );
+      })()}
 
       {/* ─── Forward to Chat Modal ─── */}
       <Modal visible={forwardModalVisible} transparent animationType="slide" onRequestClose={() => { setForwardModalVisible(false); setIsPaused(false); }}>

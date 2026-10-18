@@ -26,9 +26,10 @@ export default function NativeSheetDialog({
   detents = 'fitToContents',
   nativePanelStyle,
   stopPropagation = true,
+  disableNative = false, // [2026-10-18 conv-native-sheets] true = Modal original (kill switch do dono)
 }) {
   const insets = useSafeAreaInsets();
-  if (USE_NATIVE_SHEETS) {
+  if (USE_NATIVE_SHEETS && !disableNative) {
     const flat = StyleSheet.flatten(panelStyle) || {};
     const native = {};
     Object.keys(flat).forEach((k) => { if (!DROP.includes(k)) native[k] = flat[k]; });
