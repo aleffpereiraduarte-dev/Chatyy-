@@ -46,9 +46,13 @@ function fmt(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
-function fmtRate(r) {
+// [2026-10-17 p2] "1,5×" in pt/es, "1.5×" in en — same label as the bubble pill.
+function fmtRate(r, lang) {
   const n = Number(r) || 1;
-  return `${Number.isInteger(n) ? n : n.toFixed(1).replace(/\.0$/, '')}x`;
+  const s = Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, '');
+  const l = String(lang || '').toLowerCase();
+  const dec = /^(en|ja|zh|ko|hi|th|he)/.test(l) ? '.' : ',';
+  return s.replace('.', dec) + '\u00D7';
 }
 
 // Tiny live "wave" (4 bars) — breathes while playing, flat when paused.
@@ -80,7 +84,7 @@ export default function VoiceMiniPlayer() {
   const callBarH = useCallBarHeight();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const theme = _useTheme ? _useTheme() : { isDark: false };
   const isDark = !!theme?.isDark;
   const reduce = useReducedMotion();
@@ -289,10 +293,10 @@ export default function VoiceMiniPlayer() {
             onPress={() => cycleVoiceRate()}
             style={({ pressed }) => [s.speed, { backgroundColor: pal.chip, opacity: pressed ? 0.6 : 1 }]}
             accessibilityRole="button"
-            accessibilityLabel={`${t('chatConv.playbackSpeed') || 'Velocidade de reprodução'} ${fmtRate(sst.rate)}`}
+            accessibilityLabel={`${t('chatConv.playbackSpeed') || 'Velocidade de reprodução'} ${fmtRate(sst.rate, language)}`}
             hitSlop={{ top: 10, bottom: 10, left: 6, right: 4 }}
           >
-            <Text style={[s.speedTxt, { color: pal.text }]}>{fmtRate(sst.rate)}</Text>
+            <Text style={[s.speedTxt, { color: pal.text }]}>{fmtRate(sst.rate, language)}</Text>
           </Pressable>
           <Pressable
             onPress={() => stopVoiceNote()}

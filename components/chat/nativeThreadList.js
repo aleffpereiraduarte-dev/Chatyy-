@@ -825,6 +825,14 @@ function _appendAfter(row, node) {
 function _voiceTxOn() { try { return globalThis.__chatyy_native_voice_tx !== false; } catch { return true; } }
 function _voiceRateFbOn() { try { return globalThis.__chatyy_native_voice_rate !== false; } catch { return true; } }
 /** Rótulo da velocidade (1×, 1,5×, 2×) — separador decimal do idioma. */
+// [2026-10-17 p2] decimal separator by APP language, never Intl (Hermes may
+// ship without full locale data → (1.5).toLocaleString('pt-BR') === '1.5').
+// English uses '.', pt/es (and other Latin languages) use ','.
+export function voiceRateDecimal(lang) {
+  const l = String(lang || '').toLowerCase();
+  if (!l) return ',';
+  return /^(en|ja|zh|ko|hi|th|he)/.test(l) ? '.' : ',';
+}
 export function voiceRateLabel(rate, dec) {
   const r = Number(rate) || 1;
   const s = Number.isInteger(r) ? String(r) : String(r).replace('.', dec === ',' ? ',' : '.');

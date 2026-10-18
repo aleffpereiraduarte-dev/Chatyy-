@@ -72,7 +72,7 @@ export function takeEmailUndoRestore() {
 //   'sending'→ "Enviando…" while attachments finish uploading (no Undo yet;
 //              the outbox drain swaps in the real Undo bar once queued)
 //   'sent'   → "E-mail enviado" (an outbox entry went out later)
-export function showEmailNotice(kind) {
+export function showEmailNotice(kind, csid) {
   if (_state && _state.phase === 'pending') return; // never hide a live Undo
   // [2026-10-17 email-send-gmail] a "Não enviada · Tentar de novo" stays put
   // until the user acts or it times out — a late 'outbox' notice for another
@@ -80,10 +80,21 @@ export function showEmailNotice(kind) {
   if (_state && _state.phase === 'failed' && kind === 'outbox') return;
   if (_timer) clearTimeout(_timer);
   const phase = kind === 'outbox' ? 'outbox' : kind === 'sending' ? 'sending' : 'sent';
-  _state = { sid: null, until: Date.now(), restore: null, phase };
+  _state = { sid: null, csid: phase === 'sending' ? (csid || null) : null, until: Date.now(), restore: null, phase };
   _emit();
   const mine = _state;
-  _timer = setTimeout(() => { if (_state === mine) { _state = null; _emit(); } }, phase === 'sending' ? 60000 : phase === 'outbox' ? 5000 : 2500);
+  _timer = setTimeout(() => {
+    if (_state !== mine) return;
+    // [2026-10-17 p2] a retry ("Enviando…" for a known outbox entry) that is
+    // still unsent when the notice times out must not just vanish: put the
+    // "Não enviada · Tentar de novo" bar back.
+    if (phase === 'sending' && mine.csid) {
+      let still = false;
+      try { still = (require('./emailOutbox').getEmailOutbox() || []).some((e) => e && e.csid === mine.csid); } catch {}
+      if (still) { showEmailFailed(mine.csid); return; }
+    }
+    _state = null; _emit();
+  }, phase === 'sending' ? 60000 : phase === 'outbox' ? 5000 : 2500);
 }
 
 // Outbox "Editar": hand a restore payload to the composer opened with

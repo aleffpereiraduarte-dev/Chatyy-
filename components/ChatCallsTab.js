@@ -19,7 +19,7 @@ import { useCall } from '../context/CallContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext'; // [2026-10-08 polish-leftovers]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-17 brand-plan]
-import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
+import { ensureContactIndex, lookupName as lookupDeviceContactName, noteContactsPermission, contactsDeniedForever, openContactsSettings, alertContactsDenied } from '../services/deviceContactLookup';
 import { CallListSkeleton } from './SkeletonLoader';
 import { haptic } from '../constants/theme';
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
@@ -135,7 +135,9 @@ async function loadPhoneContacts() {
   _phoneContactsLoading = true;
   try {
     const Contacts = require('expo-contacts');
-    const { status } = await Contacts.requestPermissionsAsync();
+    const _perm = await Contacts.requestPermissionsAsync();
+    noteContactsPermission(_perm);
+    const status = _perm?.status;
     if (status !== 'granted') { _phoneContactsLoading = false; return []; }
     const { data } = await Contacts.getContactsAsync({
       fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.Image, Contacts.Fields.Emails],
@@ -2579,6 +2581,18 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             </TouchableOpacity>
           )}
 
+          {/* [2026-10-17 p2] agenda negada de vez → explica + "Abrir ajustes" */}
+          {!number && showContacts && phoneContactsList.length === 0 && Platform.OS !== 'web' && contactsDeniedForever() && (
+            <View style={{ marginHorizontal: 16, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7', alignItems: 'center', gap: 8 }}>
+              <Text style={{ fontSize: 13, color: subColor, textAlign: 'center' }}>
+                {t?.('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.'}
+              </Text>
+              <TouchableOpacity onPress={openContactsSettings} accessibilityRole="button" hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={{ color: blueInk(isDark), fontSize: 14, fontWeight: '600' }}>{t?.('common.openSettings') || 'Abrir ajustes'}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Phone contacts list */}
           {!number && showContacts && phoneContactsList.length > 0 && (
             <FlatList
@@ -2659,7 +2673,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
                     try {
                       if (Platform.OS !== 'web') {
                         const Contacts = require('expo-contacts');
-                        const { status } = await Contacts.requestPermissionsAsync();
+                        const _perm = await Contacts.requestPermissionsAsync();
+                        noteContactsPermission(_perm);
+                        const status = _perm?.status;
+                        // [2026-10-17 p2] negado de vez → "Abrir ajustes" (antes caía no tel: sem explicar)
+                        if (status !== 'granted' && contactsDeniedForever()) { alertContactsDenied(t); return; }
                         if (status === 'granted') {
                           await Contacts.presentFormAsync(null, {
                             [Contacts.Fields.PhoneNumbers]: [{ number: phoneNum, label: 'mobile' }],

@@ -21,6 +21,52 @@ import { getCachedEntrySync, setCache } from '../services/cache';
 // [2026-10-14 offline-first] lista salva lida com idade máx. 7 dias (o prewarm do
 // _layout grava com expiry de 10 min → depois disso getCachedSync dava null e a
 // tela voltava ao spinner; getCached ainda APAGAVA a cópia expirada).
+// [2026-10-17 p2] "Meus contatos" vazio p/ quem usa só o chat: contacts_list é
+// a agenda de E-MAIL (profile/contacts.json da caixa) — contas phone-first
+// nunca gravam nada lá. A lista passa a somar quem o usuário já conversa
+// (conversas diretas do cache) + as pessoas Chatyy da agenda sincronizada,
+// sem duplicar (o contato salvo vence; e-mail em minúsculas é a chave).
+let _peopleExtras = []; // último resultado (pinta na hora no próximo mount)
+const _skipEmail = (em, me) => !em || em === me || !em.includes('@') || em.endsWith('@bots.chatyy') || em === 'ai@chatyy.com.br';
+async function _gatherChatPeople(me) {
+  const meL = String(me || '').toLowerCase();
+  const by = new Map();
+  const put = (email, name, phone, avatar) => {
+    const em = String(email || '').trim().toLowerCase();
+    if (_skipEmail(em, meL)) return;
+    const cur = by.get(em) || { email: em, name: '', phone: '', auto: true };
+    const nm = String(name || '').trim();
+    if (nm && nm !== 'Unknown' && (!cur.name || cur.name === em.split('@')[0])) cur.name = nm;
+    if (phone && !cur.phone) cur.phone = String(phone);
+    if (avatar && /^https:\/\//i.test(String(avatar)) && !cur.avatar) cur.avatar = String(avatar);
+    by.set(em, cur);
+  };
+  // agenda sincronizada (nome da agenda é o melhor nome)
+  try {
+    const synced = await require('../services/contactSync').getCachedChatyyContactsAnyAge();
+    for (const c of synced || []) put(c && c.email, c && c.name, c && c.phone, c && c.avatar);
+  } catch {}
+  // conversas diretas (cache local; sem rede)
+  try {
+    const convs = await require('../services/chatCache').getCachedConversations();
+    for (const c of Array.isArray(convs) ? convs : []) {
+      if (!c || (c.type && c.type !== 'direct') || c.is_group) continue;
+      const em = c.other_email || c.contact_email
+        || (Array.isArray(c.members) ? (c.members.find((m) => m && String(m.email || '').toLowerCase() !== meL) || {}).email : '');
+      put(em, c.display_name || c.name, c.other_phone || c.phone, c.avatar || c.other_avatar);
+    }
+  } catch {}
+  const out = Array.from(by.values()).map((x) => ({ ...x, name: x.name || x.email.split('@')[0] }));
+  _peopleExtras = out;
+  return out;
+}
+function _mergePeople(saved, extras) {
+  const base = Array.isArray(saved) ? saved : [];
+  const seen = new Set(base.map((c) => String((c && c.email) || '').toLowerCase()).filter(Boolean));
+  const add = [];
+  for (const x of extras || []) { if (x && x.email && !seen.has(x.email)) { seen.add(x.email); add.push(x); } }
+  return add.length ? base.concat(add) : base;
+}
 const _contactsDisk = () => { try { const e = getCachedEntrySync('contacts'); return e && e.data && Array.isArray(e.data.data) ? e.data.data : null; } catch { return null; } };
 import { ListSkeleton } from '../components/SkeletonLoader';
 import {
@@ -358,7 +404,8 @@ function ContactsScreenInner() {
     try {
       if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
         const cached = _contactsDisk();
-        if (cached) return cached;
+        const extras = _peopleExtras.length && _peopleExtras._acct === api.getActiveAccountEmail() ? _peopleExtras : [];
+        if (cached || extras.length) return _mergePeople(cached || [], extras);
       }
     } catch {}
     return [];
@@ -517,17 +564,22 @@ function ContactsScreenInner() {
     // Show cached contacts instantly
     const cached = _contactsDisk();
     if (cached) {
-      setContacts(cached);
+      setContacts((prev) => _mergePeople(cached, (prev || []).filter((c) => c && c.auto)));
       setLoading(false);
     }
+    const me = myEmailRef.current;
+    const extrasP = _gatherChatPeople(me).then((x) => { try { x._acct = api.getActiveAccountEmail?.() || ''; _peopleExtras = x; } catch {} return x; }).catch(() => []);
+    // pessoas das conversas/agenda aparecem já, sem esperar a rede
+    extrasP.then((x) => { if (x && x.length) { setContacts((prev) => _mergePeople((prev || []).filter((c) => c && !c.auto), x)); setLoading(false); } });
     try {
       const r = await api.getContactsList();
       if (r.success) {
-        setContacts(r.data || []);
+        const extras = await extrasP;
+        setContacts(_mergePeople(r.data || [], extras));
         setCache('contacts', r, 7776000000).catch(() => {});
       }
     } catch {
-      if (!contacts.length) setLoadError(true);
+      if (!contacts.length && !_peopleExtras.length) setLoadError(true);
     } finally { setLoading(false); }
   };
 

@@ -198,6 +198,7 @@ function SendButton({ size, sending, onPress, onLongPress, colors, label }) {
         style={[
           s.sendBtn,
           size === 'large' && s.sendBtnLarge,
+          size === 'compact' && s.sendBtnCompact,
           { backgroundColor: colors.primary },
           sending && s.sendBtnDisabled,
         ]}
@@ -2082,7 +2083,7 @@ export default function ComposeScreen() {
   // anim layers on top without touching elevation/shadow.
   const renderSendButton = (size = 'default') => (
     <SendButton
-      size={size}
+      size={size === 'default' && compactHeader ? 'compact' : size}
       sending={sending}
       onPress={handleSend}
       onLongPress={() => { if (!sending) setShowSendOptions(true); }}
@@ -2363,19 +2364,23 @@ export default function ComposeScreen() {
     >
       <View style={[s.container, { paddingTop: insets.top }]}>
         {/* ── Modern Header — clean WHITE bar, dark iconography (2026 light) ── */}
-        <View style={[s.header, { flex: undefined, marginLeft: 0, backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
-          <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.close')}>
+        {/* [2026-10-17 p2] celular (<480): título "Nova mensagem" saía "Nova me…"
+            (rascunho + 2 ícones + Enviar comiam a barra) → barra compacta:
+            padding/gaps menores, ícones 32, Enviar mais estreito, título com
+            largura mínima garantida. */}
+        <View style={[s.header, { flex: undefined, marginLeft: 0, backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }, compactHeader && s.headerCompact]}>
+          <TouchableOpacity onPress={handleClose} style={[s.backBtn, compactHeader && s.backBtnCompact]} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityRole="button" accessibilityLabel={t('common.close')}>
             <IconX size={20} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[s.headerTitle, { color: colors.text, flex: 1, marginLeft: Spacing.sm }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+          <Text style={[s.headerTitle, { color: colors.text, flex: 1, flexShrink: 1, minWidth: compactHeader ? 116 : 0, marginLeft: compactHeader ? 2 : Spacing.sm }, compactHeader && { fontSize: 16, letterSpacing: -0.5 }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
             {isForward ? t('compose.forward') : t('compose.title')}
           </Text>
-          <View style={s.headerRight}>
+          <View style={[s.headerRight, compactHeader && { gap: 4 }]}>
             {renderDraftStatusIndicator()}
-            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('compose.scheduleSend')}>
+            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, compactHeader && s.headerActionBtnCompact, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('compose.scheduleSend')}>
               <IconClock size={16} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('compose.templates')}>
+            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, compactHeader && s.headerActionBtnCompact, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} accessibilityRole="button" accessibilityLabel={t('compose.templates')}>
               <IconFileText size={16} color={colors.text} />
             </TouchableOpacity>
             {renderSendButton()}
@@ -2681,6 +2686,10 @@ const s = StyleSheet.create({
       default: {},
     }),
   },
+  sendBtnCompact: { paddingHorizontal: 12, gap: 5, marginLeft: 0, height: 36, borderRadius: 18 },
+  headerCompact: { paddingHorizontal: 8 },
+  backBtnCompact: { width: 38, height: 40 },
+  headerActionBtnCompact: { width: 32, height: 32, borderRadius: 16 },
   sendBtnLarge: {
     paddingHorizontal: 28, height: 44, borderRadius: 22, gap: 8,
   },

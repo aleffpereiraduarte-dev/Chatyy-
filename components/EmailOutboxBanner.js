@@ -20,7 +20,25 @@ export default function EmailOutboxBanner({ variant = 'banner', onPress }) {
   const _visible = (list) => (list || []).filter((e) => !(e && e.reason === 'send' && !e.attempts
     && (e.status === 'queued' || e.status === 'sending') && Date.now() - (e.createdAt || 0) < 15000));
   const [items, setItems] = useState(() => _visible(getEmailOutbox()));
-  useEffect(() => subscribeEmailOutbox((list) => setItems(_visible(list))), []);
+  // [2026-10-17 p2] the 15 s rule is time-based: an entry stuck in its first
+  // attempt (no outbox event fires while it waits) must appear once it ages
+  // past 15 s, so re-evaluate on a timer while anything is being hidden.
+  const [hiddenCount, setHiddenCount] = useState(0);
+  useEffect(() => subscribeEmailOutbox((list) => {
+    const v = _visible(list);
+    setItems(v);
+    setHiddenCount(Math.max(0, (list || []).length - v.length));
+  }), []);
+  useEffect(() => {
+    if (!hiddenCount) return undefined;
+    const id = setInterval(() => {
+      const list = getEmailOutbox();
+      const v = _visible(list);
+      setItems(v);
+      setHiddenCount(Math.max(0, (list || []).length - v.length));
+    }, 2000);
+    return () => clearInterval(id);
+  }, [hiddenCount]);
   if (!items.length) return null;
   const failed = items.some((e) => e.status === 'failed');
   const go = () => {

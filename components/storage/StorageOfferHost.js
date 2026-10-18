@@ -5,11 +5,11 @@
 // Sheet do sistema (NativeSheetDialog) no celular; Modal só na web. A loja
 // abre DEPOIS do sheet descer, na tela do plano (/settings-one?offer=<tier>),
 // então nunca há Modal empilhado sobre Modal no iOS.
-import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, AppState, Platform } from 'react-native';
 import { router } from 'expo-router';
 import NativeSheetDialog from '../NativeSheetDialog';
-import { runAfterNativeSheet } from '../NativeSheet';
+import { runAfterNativeSheet, nativeSheetsOpenCount, nativeSheetRecentlyClosed } from '../NativeSheet';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { IconCloud, IconCloudUpload } from '../Icons';
@@ -24,11 +24,60 @@ export default function StorageOfferHost() {
   const [ev, setEv] = useState(null);
   const [plan, setPlan] = useState(null);
 
-  useEffect(() => subscribeOffers((e) => {
-    setPlan(getCachedPlanState());
-    setEv(e);
-    loadPlanState({ force: true }).then((p) => { if (p) setPlan(p); }).catch(() => {});
-  }), []);
+  // [2026-10-17 p2] a oferta nasce de falhas em 2º plano (upload/backup) em
+  // QUALQUER tela. Abrir a folha com outro Modal/folha na tela = Modal sobre
+  // Modal no iOS (pode derrubar o outro), e com o app em 2º plano o present é
+  // recusado. Então só abre com o app ativo e nada aberto; senão fica UMA
+  // pendente (a mais recente) e sai no próximo momento livre, uma vez.
+  const pendingRef = useRef(null);
+  const evRef = useRef(null);
+  evRef.current = ev;
+  useEffect(() => {
+    let timer = null;
+    const busy = () => {
+      if (evRef.current) return true;
+      try { if (AppState.currentState && AppState.currentState !== 'active') return true; } catch {}
+      try { if (nativeSheetsOpenCount() > 0 || nativeSheetRecentlyClosed()) return true; } catch {}
+      if (Platform.OS === 'ios') {
+        try { if (require('../../services/modalGuardIOS').getOpenModals().length > 0) return true; } catch {}
+      }
+      return false;
+    };
+    const show = (e) => {
+      setPlan(getCachedPlanState());
+      setEv(e);
+      loadPlanState({ force: true }).then((p) => { if (p) setPlan(p); }).catch(() => {});
+    };
+    const flush = () => {
+      timer = null;
+      const p = pendingRef.current;
+      if (!p) return;
+      if (Date.now() - p.at > 30 * 60 * 1000) { pendingRef.current = null; return; } // velha demais
+      if (busy()) { timer = setTimeout(flush, 1500); return; }
+      pendingRef.current = null;
+      show(p.e);
+    };
+    const unsub = subscribeOffers((e) => {
+      if (evRef.current) return; // já está na tela
+      if (!busy()) { pendingRef.current = null; show(e); return; }
+      pendingRef.current = { e, at: Date.now() };
+      if (!timer) timer = setTimeout(flush, 1500);
+    });
+    let appSub = null;
+    try {
+      appSub = AppState.addEventListener('change', (s) => {
+        if (s === 'active' && pendingRef.current) {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(flush, 800);
+        }
+      });
+    } catch {}
+    return () => {
+      try { unsub && unsub(); } catch {}
+      try { appSub && appSub.remove(); } catch {}
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   const close = () => setEv(null);
   const visible = !!ev;

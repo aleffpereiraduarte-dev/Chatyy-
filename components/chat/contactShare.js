@@ -214,7 +214,11 @@ export async function saveToPhonebook(c, t) {
     } catch {}
     return;
   }
-  const deny = () => _alert(_tr(t, 'chatConv.permission', 'Permissão'), _tr(t, 'chatConv.contactsPermission', 'Permita acesso aos contatos.'));
+  // [2026-10-17 p2] negado de vez → aviso com "Abrir ajustes" (padrão de app/contacts.js)
+  const deny = (perm) => {
+    try { require('../../services/deviceContactLookup').alertContactsDenied(t, perm); return; } catch {}
+    _alert(_tr(t, 'chatConv.permission', 'Permissão'), _tr(t, 'chatConv.contactsPermission', 'Permita acesso aos contatos.'));
+  };
   try {
     const Contacts = require('expo-contacts');
     const parts = String(c.name || '').trim().split(/\s+/);
@@ -229,15 +233,15 @@ export async function saveToPhonebook(c, t) {
       try {
         if (Platform.OS !== 'ios') {
           const perm = await Contacts.requestPermissionsAsync();
-          if (perm?.status !== 'granted') { deny(); return; }
+          if (perm?.status !== 'granted') { deny(perm); return; }
         }
         await Contacts.presentFormAsync(null, form, { isNew: true });
         ok = true;
       } catch {}
       if (ok) return;
     }
-    const { status } = await Contacts.requestPermissionsAsync();
-    if (status !== 'granted') { deny(); return; }
+    const _perm = await Contacts.requestPermissionsAsync();
+    if (_perm?.status !== 'granted') { deny(_perm); return; }
     await Contacts.addContactAsync(form);
     _alert(_tr(t, 'common.success', 'Sucesso'), _tr(t, 'chatConv.contactSaved', 'Contato salvo'));
   } catch {

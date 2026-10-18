@@ -13127,4 +13127,7 @@ export default {
   "androidReady.batteryTitle": "Get calls and messages instantly",
   "androidReady.batteryBody": "Android is limiting Chatyy in the background, so calls and messages may arrive late. Under Battery, choose \"Unrestricted\".",
   "androidReady.openSettings": "Open settings",
+  "chatyyOne.yourPlanLabel": "Your plan",
+  "chatyyOne.yourPlanValue": "{name}, {size}",
+  "chatyyOne.yourPlanLine": "Your plan: {name}, {size}",
 };

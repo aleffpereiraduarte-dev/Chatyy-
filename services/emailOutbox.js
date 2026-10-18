@@ -211,8 +211,15 @@ export async function retryOutboxEmail(csid) {
   const acct = _activeAccount();
   await _load(acct);
   const e = (_lists.get(acct) || []).find((x) => x.csid === csid);
-  if (!e || e.status === 'sending') return;
-  await _update(acct, csid, { status: 'queued', nextAt: 0, lastError: '' });
+  if (!e) return;
+  // [2026-10-17 p2] the user is watching this retry (global bar says
+  // "Enviando…"): whatever the outcome of the NEXT attempt, report it —
+  // failure swaps the bar back to "Não enviada · Tentar de novo".
+  if (e.status === 'sending') { e.watch = true; return; }
+  // Device offline → drain bails before trying; say so right away instead of
+  // leaving "Enviando…" up until its timeout.
+  if (_isOffline()) { await _update(acct, csid, { status: 'queued', nextAt: 0 }); _noticeFailed(csid); return; }
+  await _update(acct, csid, { status: 'queued', nextAt: 0, lastError: '', watch: true });
   drainEmailOutbox().catch(() => {});
 }
 
@@ -352,13 +359,15 @@ async function _sendOne(acct, e) {
   await _update(acct, e.csid, { status: 'sending' });
   const prep = await _prepareAttachments(acct, e);
   if (prep !== 'ok') {
-    if (prep === 'offline') { await _update(acct, e.csid, { status: 'queued', nextAt: 0 }); return 'stop'; }
+    const watched = !!e.watch;
+    if (prep === 'offline') { await _update(acct, e.csid, { status: 'queued', nextAt: 0, watch: false }); if (watched) _noticeFailed(e.csid); return 'stop'; }
     if (prep === 'transient') {
       const attempts = (e.attempts || 0) + 1;
-      await _update(acct, e.csid, { status: 'queued', attempts, nextAt: Date.now() + _backoff(attempts), lastError: 'upload' });
+      await _update(acct, e.csid, { status: 'queued', attempts, nextAt: Date.now() + _backoff(attempts), lastError: 'upload', watch: false });
+      if (watched) _noticeFailed(e.csid);
       return 'next';
     }
-    await _update(acct, e.csid, { status: 'failed', lastError: 'attachment_lost', lastErrorDetail: prep.slice(5) });
+    await _update(acct, e.csid, { status: 'failed', lastError: 'attachment_lost', lastErrorDetail: prep.slice(5), watch: false });
     _noticeFailed(e.csid);
     return 'next';
   }
@@ -392,7 +401,7 @@ async function _sendOne(acct, e) {
     const attachments = (e.attachments || []).map((a) => (bad ? a.server_id === bad : !!a.server_id) ? { ...a, server_id: undefined } : a);
     const attempts = (e.attempts || 0) + 1;
     if (attempts > 6) {
-      await _update(acct, e.csid, { status: 'failed', attachments, attempts, lastError: 'attachment_lost' });
+      await _update(acct, e.csid, { status: 'failed', attachments, attempts, lastError: 'attachment_lost', watch: false });
       _noticeFailed(e.csid);
       return 'next';
     }
@@ -400,20 +409,25 @@ async function _sendOne(acct, e) {
     return 'next';
   }
   if (k === 'offline') {
-    await _update(acct, e.csid, { status: 'queued', nextAt: 0, lastError: 'offline' });
-    if (e.reason === 'send') { try { require('./emailUndo').showEmailNotice('outbox'); } catch {} }
+    const watched = !!e.watch;
+    await _update(acct, e.csid, { status: 'queued', nextAt: 0, lastError: 'offline', watch: false });
+    if (watched) _noticeFailed(e.csid);
+    else if (e.reason === 'send') { try { require('./emailUndo').showEmailNotice('outbox'); } catch {} }
     return 'stop';
   }
   if (k === 'transient') {
     const attempts = (e.attempts || 0) + 1;
-    await _update(acct, e.csid, { status: 'queued', attempts, nextAt: Date.now() + _backoff(attempts), lastError: String(r?.message || err?.message || 'network') });
+    const watched = !!e.watch;
+    await _update(acct, e.csid, { status: 'queued', attempts, nextAt: Date.now() + _backoff(attempts), lastError: String(r?.message || err?.message || 'network'), watch: false });
     // [2026-10-17 email-send-gmail] composer already closed: the first network
     // failure of a just-tapped Send swaps "Enviando…" for "Não enviada ·
     // Tentar de novo" (it keeps auto-retrying with backoff in the outbox).
-    if (attempts === 1 && e.reason === 'send') _noticeFailed(e.csid);
+    // [2026-10-17 p2] …and so does EVERY failed attempt the user is watching
+    // (tapped "Tentar de novo"), not only the first one.
+    if ((attempts === 1 && e.reason === 'send') || watched) _noticeFailed(e.csid);
     return 'next';
   }
-  await _update(acct, e.csid, { status: 'failed', lastError: String(r?.message || 'send_failed') });
+  await _update(acct, e.csid, { status: 'failed', lastError: String(r?.message || 'send_failed'), watch: false });
   _noticeFailed(e.csid);
   return 'next';
 }

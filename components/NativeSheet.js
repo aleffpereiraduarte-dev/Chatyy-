@@ -98,6 +98,15 @@ export function nativeSheetBoundedOn() {
   return _boundedBin;
 }
 
+// [2026-10-17 p2] quantas folhas nativas estão abertas/abrindo agora (hosts
+// globais esperam 0 antes de abrir a sua — nunca folha sobre folha).
+export function nativeSheetsOpenCount() {
+  let n = 0;
+  _entries.forEach((e) => { if (e && !e.closeRequested) n += 1; });
+  return n;
+}
+export function nativeSheetRecentlyClosed(ms = 600) { return Date.now() - _lastCloseAt < ms; }
+
 export function getNativeSheetEntry(id) {
   return _entries.get(String(id || '')) || null;
 }

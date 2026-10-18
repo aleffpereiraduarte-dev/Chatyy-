@@ -64,7 +64,7 @@ export default function EmailUndoBar() {
             onPress={() => {
               const csid = st.csid;
               if (!csid) { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} return; }
-              try { showEmailNotice('sending'); } catch {}
+              try { showEmailNotice('sending', csid); } catch {}
               retryOutboxEmail(csid).catch(() => {});
             }}
             onLongPress={() => { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} }}

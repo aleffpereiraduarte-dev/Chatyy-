@@ -34,6 +34,7 @@ import useStatuses, { isAllowedGifUrl } from '../hooks/useStatuses';
 import GifPickerPanel from './GifPicker';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
+import { Sheet as UISheet, ActionList as UIActionList } from './ui'; // [2026-10-17 p2] menu web do Meu status
 // (cache helpers moved into useStatuses hook)
 // Lazy import to avoid circular dependency / initialization errors on web
 let mailWs = null;
@@ -1042,6 +1043,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
   // Viewers modal state
   const [viewersModal, setViewersModal] = useState(false);
+  const [myWebMenu, setMyWebMenu] = useState(null); // [2026-10-17 p2] web: menu ao segurar Meu status
   // [2026-10-13 status-viewers] Menu "…" do próprio status (salvar/estatísticas/
   // repostar/apagar) — substitui a fileira de 6 botões no topo do viewer.
   const [ownMenuOpen, setOwnMenuOpen] = useState(false);
@@ -3255,7 +3257,33 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   const _openMyStatusMenu = () => {
     try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Medium); } catch {}
     const last = hasMyStatus ? myStatuses[myStatuses.length - 1] : null;
-    if (Platform.OS === 'web') { openArchiveSheet(); return; }
+    // [2026-10-17 p2] web: mesmo menu do nativo (Quem viu / Ver arquivo /
+    // Arquivar / Excluir) num Sheet do design system; Alert.alert com botoes
+    // nao existe no react-native-web (antes abria direto o arquivo).
+    if (Platform.OS === 'web') {
+      const items = [];
+      if (last?.id && myViewCount > 0) {
+        items.push({ key: 'viewers', label: _viewCountLabel(t, myViewCount), onPress: async () => {
+          viewersModalStatusIdRef.current = last.id;
+          try {
+            const r = await statusViewers(last.id);
+            setViewersList(r?.data?.viewers || r?.viewers || []);
+            setViewersModal(true);
+          } catch {}
+        } });
+      }
+      items.push({ key: 'archiveOpen', label: t?.('status.openArchive') || 'Abrir arquivo', onPress: openArchiveSheet });
+      if (last?.id) {
+        items.push({ key: 'archive', label: t?.('status.archive') || 'Arquivar', onPress: () => archiveMyStatus(last.id) });
+        items.push({ key: 'delete', label: t?.('common.delete') || 'Excluir', destructive: true, onPress: () => {
+          let ok = false;
+          try { ok = window.confirm(`${t?.('status.deleteTitle') || 'Apagar status'}\n\n${t?.('status.deleteConfirm') || 'Apagar este status?'}`); } catch {}
+          if (ok) deleteMyStatus(last.id);
+        } });
+      }
+      setMyWebMenu(items);
+      return;
+    }
     const buttons = [];
     if (last?.id && myViewCount > 0) {
       buttons.push({ text: _viewCountLabel(t, myViewCount), onPress: async () => {
@@ -6338,6 +6366,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         </View>
         </DragSheetRoot>
       </Modal>
+      {Platform.OS === 'web' ? (
+        <UISheet visible={!!myWebMenu} onClose={() => setMyWebMenu(null)} title={t?.('status.myStatus') || 'Meu status'}>
+          <UIActionList items={myWebMenu || []} onDone={() => setMyWebMenu(null)} />
+        </UISheet>
+      ) : null}
     </View>
   );
 }

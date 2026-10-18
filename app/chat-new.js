@@ -224,7 +224,11 @@ function foldSearchText(s) {
 const ContactRow = React.memo(function ContactRow({
   item, colors, searchText, mode, selected, invitingEmail, t,
   onMessageYourself, onSelect, onInviteByEmail, onInviteShare, onInviteViaWhatsApp, onShowInviteInput, onInvitePhone,
+  indexPad = false,
 }) {
+  // [2026-10-17 p2] índice A–Z agora flutua sobre a lista (cabeçalhos de seção
+  // vão até a borda, como no iOS) → o conteúdo da linha recua p/ não ficar sob as letras.
+  const padR = indexPad ? sty.contactRowIndexPad : null;
   // [2026-10-07 discovery] Section label inside the flat search-results list.
   if (item._isSearchHeader) {
     return (
@@ -238,7 +242,7 @@ const ContactRow = React.memo(function ContactRow({
   // row (WhatsApp "Convidar para o WhatsApp": SMS / WhatsApp / compartilhar).
   if (item._isPhoneInvite) {
     return (
-      <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
+      <View style={[sty.contactRow, padR, { borderBottomColor: colors.border }]}>
         <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 0 }]}>
           <IconUserPlus size={18} color="#fff" />
         </View>
@@ -263,7 +267,7 @@ const ContactRow = React.memo(function ContactRow({
   if (item._isMessageYourself) {
     return (
       <PressableRow
-        style={[sty.contactRow, { borderBottomColor: colors.border }]}
+        style={[sty.contactRow, padR, { borderBottomColor: colors.border }]}
         onPress={onMessageYourself}
         activeOpacity={0.7}
         accessibilityLabel={t('chat.messageYourself') || 'Message yourself'}
@@ -292,7 +296,7 @@ const ContactRow = React.memo(function ContactRow({
   // Placeholder item for web invite section
   if (item._isInvitePlaceholder) {
     return (
-      <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
+      <View style={[sty.contactRow, padR, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
         <View style={[sty.quickActionIcon, { backgroundColor: colors.onPrimary === '#000000' ? '#2C2C2E' : '#111111', marginRight: 0 }]}>
           <IconUserPlus size={18} color="#fff" />
         </View>
@@ -345,7 +349,7 @@ const ContactRow = React.memo(function ContactRow({
       }
     };
     return (
-      <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
+      <View style={[sty.contactRow, padR, { borderBottomColor: colors.border }]}>
         <AvatarCircle email={item.email || ''} name={item.name || item.phone || '?'} size={46} colors={colors} />
         <View style={sty.contactInfo}>
           <HighlightText
@@ -380,7 +384,7 @@ const ContactRow = React.memo(function ContactRow({
   // Registered Chatyy user
   return (
     <PressableRow
-      style={[sty.contactRow, { borderBottomColor: colors.border }]}
+      style={[sty.contactRow, padR, { borderBottomColor: colors.border }]}
       onPress={() => onSelect(item)}
       activeOpacity={0.7}
     >
@@ -1842,6 +1846,7 @@ export default function ChatNewScreen() {
   // Thin adapter: computes the per-row `selected` flag and hands the row its
   // props. The heavy markup + invite-pill logic now lives in the memoized
   // module-level ContactRow, so typing/scrolling no longer re-renders every cell.
+  const _alphaIndexShown = !searchText && Array.isArray(alphabetLetters) && alphabetLetters.length > 5;
   const renderContact = useCallback(({ item }) => {
     const selected = selectedMembers.some(m => m.email === item.email);
     return (
@@ -1860,9 +1865,10 @@ export default function ChatNewScreen() {
         onInviteViaWhatsApp={onInviteViaWhatsAppRow}
         onShowInviteInput={setShowInviteInput}
         onInvitePhone={onInvitePhoneRow}
+        indexPad={_alphaIndexShown}
       />
     );
-  }, [colors, searchText, mode, selectedMembers, invitingEmail, t, handleMessageYourself, onSelectRow, onInviteByEmailRow, onInviteShareRow, onInviteViaWhatsAppRow, onInvitePhoneRow]);
+  }, [colors, searchText, mode, selectedMembers, invitingEmail, t, handleMessageYourself, onSelectRow, onInviteByEmailRow, onInviteShareRow, onInviteViaWhatsAppRow, onInvitePhoneRow, _alphaIndexShown]);
 
   // Section header renderer — hoisted to a stable useCallback (was an inline
   // arrow on the SectionList). Only depends on isDark.
@@ -3319,6 +3325,7 @@ const sty = StyleSheet.create({
 
   loaderWrap: { paddingVertical: 40, alignItems: 'center' },
   contactList: { paddingBottom: 100 },
+  contactRowIndexPad: { paddingRight: Spacing.md + 18 },
   contactRow: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, paddingVertical: 14,
@@ -3457,7 +3464,9 @@ const sty = StyleSheet.create({
   // the flexDirection:'row' container, so the list (and its header rows) end
   // before the index and nothing overlaps.
   alphabetSidebar: {
-    width: 22, marginRight: 2,
+    // [2026-10-17 p2] flutua por cima (antes ocupava uma coluna e os cabeçalhos de seção paravam antes dela)
+    position: 'absolute', top: 0, bottom: 0, right: 2, zIndex: 2,
+    width: 22,
     justifyContent: 'center', alignItems: 'center',
   },
   alphabetInner: {

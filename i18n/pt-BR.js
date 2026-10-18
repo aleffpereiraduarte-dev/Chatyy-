@@ -13205,4 +13205,7 @@ export default {
   "androidReady.batteryTitle": "Receba ligações e mensagens na hora",
   "androidReady.batteryBody": "O Android está limitando o Chatyy em segundo plano, então ligações e mensagens podem atrasar. Em Bateria, escolha \"Sem restrições\".",
   "androidReady.openSettings": "Abrir configurações",
+  "chatyyOne.yourPlanLabel": "Seu plano",
+  "chatyyOne.yourPlanValue": "{name}, {size}",
+  "chatyyOne.yourPlanLine": "Seu plano: {name}, {size}",
 };

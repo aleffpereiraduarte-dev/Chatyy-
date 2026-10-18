@@ -27,7 +27,45 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { Platform, Alert, Linking } from 'react-native';
+
+// ── [2026-10-17 p2] Agenda negada DE VEZ → só os Ajustes destravam ──────────
+// Mesmo padrão de app/contacts.js (botão "Abrir ajustes"). Os pontos que pedem
+// a agenda (discador, compartilhar/salvar contato, índice de nomes) registram
+// o resultado aqui; a UI usa contactsDeniedForever() p/ trocar o pedido por
+// "Abrir ajustes", e alertContactsDenied() mostra o aviso com a ação.
+let _deniedForever = false;
+/** Registra o resultado de requestPermissionsAsync/getPermissionsAsync. */
+export function noteContactsPermission(perm) {
+  try {
+    if (!perm) return;
+    if (perm.status === 'granted' || perm.accessPrivileges === 'limited') { _deniedForever = false; return; }
+    // iOS: depois de responder "Não permitir" o SO nunca mais pergunta (status
+    // 'denied' ⇒ canAskAgain=false). Android: canAskAgain=false após "não perguntar".
+    if (perm.canAskAgain === false || (Platform.OS === 'ios' && perm.status === 'denied')) _deniedForever = true;
+  } catch {}
+}
+export function contactsDeniedForever() { return _deniedForever; }
+export function openContactsSettings() {
+  try { const p = Linking.openSettings(); if (p && p.catch) p.catch(() => {}); } catch {}
+}
+/**
+ * Aviso de permissão da agenda. Negado de vez → botões "Agora não" +
+ * "Abrir ajustes"; senão só o OK. `t` = função de tradução (opcional).
+ */
+export function alertContactsDenied(t, perm, opts = {}) {
+  if (perm) noteContactsPermission(perm);
+  const tr = (k, fb) => { try { const v = typeof t === 'function' ? t(k) : ''; return v && v !== k ? v : fb; } catch { return fb; } };
+  const title = opts.title || tr('chatConv.permission', 'Permissão');
+  const msg = opts.message || tr('chatConv.contactsPermission', 'Permita acesso aos contatos nas configurações.');
+  const forever = _deniedForever || Platform.OS === 'ios';
+  try {
+    if (Platform.OS === 'web') { (globalThis.alert || (() => {}))(`${title}\n\n${msg}`); return; }
+    Alert.alert(title, msg, forever
+      ? [{ text: tr('common.notNow', 'Agora não'), style: 'cancel' }, { text: tr('common.openSettings', 'Abrir ajustes'), onPress: openContactsSettings }]
+      : [{ text: tr('common.ok', 'OK') }]);
+  } catch {}
+}
 
 const CACHE_KEY = '@dialer_contact_index_v1';
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
@@ -62,6 +100,7 @@ async function loadFromDevice() {
     try {
       const NativeContacts = require('../modules/expo-native-contacts').default;
       const granted = await NativeContacts?.requestContactsPermission?.();
+      if (granted) _deniedForever = false;
       if (granted) {
         const list = await NativeContacts.getAllContacts();
         raw = (list || []).map(c => ({
@@ -74,7 +113,10 @@ async function loadFromDevice() {
   if (raw.length === 0) {
     try {
       const Contacts = require('expo-contacts');
+      // Índice em 2º plano: negado de vez → nem chama o pedido (não abre nada).
+      if (_deniedForever) throw new Error('denied_forever');
       const perm = await Contacts.requestPermissionsAsync();
+      noteContactsPermission(perm);
       if (perm?.status === 'granted') {
         const { data } = await Contacts.getContactsAsync({
           fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers, Contacts.Fields.FirstName, Contacts.Fields.LastName],

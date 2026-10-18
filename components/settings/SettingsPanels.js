@@ -393,6 +393,25 @@ export function ChatyyOnePanel() {
     const tm = setTimeout(() => { setShopTier(offerParam); setShop(true); }, 350); // depois da transição de entrada
     return () => clearTimeout(tm);
   }, [offerParam]);
+  // [2026-10-17 p2] assinatura Stripe existe? stripe_subscription_info responde
+  // 404 "No active subscription" p/ quem não tem (grátis, Apple, admin) → trata
+  // como "nenhuma" em silêncio e esconde Cobrança/Forma de pagamento.
+  // null = ainda não sabemos (seções Stripe ficam escondidas até confirmar).
+  const [stripeSub, setStripeSub] = useState(null);
+  const _paidForStripe = !!planSnap && normalizePlanState(plan, usage).isPaid;
+  useEffect(() => {
+    if (!_paidForStripe) { setStripeSub(false); return undefined; }
+    let alive = true;
+    (async () => {
+      let has = false;
+      try {
+        const r = await api.stripeSubscriptionInfo();
+        has = !!(r && r.success && r.data);
+      } catch { has = false; }
+      if (alive) setStripeSub(has);
+    })();
+    return () => { alive = false; };
+  }, [_paidForStripe]);
   if (loading) return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={g.secondary} /></View>;
 
   const planNorm = normalizePlanState(plan, usage);
@@ -432,9 +451,12 @@ export function ChatyyOnePanel() {
             <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: g.tileBg, alignItems: 'center', justifyContent: 'center' }}>
               <IconCloud size={22} color={g.tileFg} />
             </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ fontSize: 19, fontWeight: '700', color: g.text }}>{planDisplayName(planNorm.planId, t)}</Text>
-              <Text style={{ fontSize: 13, color: g.secondary, marginTop: 2 }}>{`${gbTxt} ${t('chatyyOne.included')}`}</Text>
+            {/* [2026-10-17 p2] título da tela = marca ({plan}); aqui o plano ATUAL numa linha clara */}
+            <View style={{ flex: 1, minWidth: 0 }} accessible accessibilityLabel={t('chatyyOne.yourPlanLine', { name: planDisplayName(planNorm.planId, t), size: gbTxt })}>
+              <Text style={{ fontSize: 13, color: g.secondary }}>{t('chatyyOne.yourPlanLabel')}</Text>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: g.text, marginTop: 2 }} numberOfLines={2}>
+                {t('chatyyOne.yourPlanValue', { name: planDisplayName(planNorm.planId, t), size: gbTxt })}
+              </Text>
             </View>
             <Text style={{ fontSize: 12, fontWeight: '700', color: isPaid ? g.ink : g.secondary }}>
               {isPaid ? t('chatyyOne.statusActive') : t('chatyyOne.statusFree')}
@@ -480,7 +502,7 @@ export function ChatyyOnePanel() {
       {isPaid ? (
         <SettingsGroup header={t('chatyyOne.subscription')} footer={MONETIZATION_ENABLED ? (t('storage.cancelAnytime') || undefined) : undefined}>
           <SettingsRow title={t('chatyyOne.status')} value={t('chatyyOne.statusActive')} />
-          <SettingsRow title={t('chatyyOne.billing')} value={period} />
+          {stripeSub ? <SettingsRow title={t('chatyyOne.billing')} value={period} /> : null}
           {renews ? <SettingsRow title={t('chatyyOne.renewal')} value={renews} /> : null}
           {isIOS ? (
             // Assinatura feita no iPhone (IAP) = gerenciada na conta Apple (permitido pela Apple).
@@ -493,6 +515,7 @@ export function ChatyyOnePanel() {
           ) : null}
         </SettingsGroup>
       ) : null}
+      {stripeSub ? (
       <SettingsGroup header={t('chatyyOne.payment')} footer={isIOS ? t('chatyyOne.iosFootnote') : t('chatyyOne.footnote')}>
         {isIOS ? (
           <SettingsRow title={t('chatyyOne.manageOnWeb')} subtitle={t('chatyyOne.iosNote')} onPress={() => { Linking.openURL('https://chatyy.com.br').catch(() => {}); }} />
@@ -509,6 +532,7 @@ export function ChatyyOnePanel() {
           </>
         )}
       </SettingsGroup>
+      ) : null}
       {MONETIZATION_ENABLED && ShopSheet ? (
         <ShopSheet
           visible={shop}

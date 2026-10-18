@@ -56,7 +56,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
-import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
+import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
@@ -23033,7 +23033,8 @@ function ChatConversationInner() {
         if (Platform.OS !== 'ios') {
           const perm = await Contacts.requestPermissionsAsync();
           if (perm?.status !== 'granted') {
-            safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.');
+            // [2026-10-17 p2] negado de vez → aviso com "Abrir ajustes"
+            try { require('../services/deviceContactLookup').alertContactsDenied(t, perm); } catch { safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.'); }
             return;
           }
         }
@@ -23049,8 +23050,10 @@ function ChatConversationInner() {
       if (_pickerOk) return;
     }
     let status;
+    let _permRes = null;
     try {
       const res = await Contacts.requestPermissionsAsync();
+      _permRes = res;
       status = res?.status;
     } catch (e) {
       console.warn('Contacts permission error:', e);
@@ -23058,7 +23061,7 @@ function ChatConversationInner() {
       return;
     }
     if (status !== 'granted') {
-      safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.');
+      try { require('../services/deviceContactLookup').alertContactsDenied(t, _permRes); } catch { safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.'); }
       return;
     }
     try {
@@ -30533,7 +30536,7 @@ function ChatConversationInner() {
                   if (Platform.OS !== 'ios') {
                     const perm = await Contacts.requestPermissionsAsync();
                     if (perm?.status !== 'granted') {
-                      safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.');
+                      try { require('../services/deviceContactLookup').alertContactsDenied(t, perm); } catch { safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.'); }
                       return;
                     }
                   }
@@ -30544,9 +30547,9 @@ function ChatConversationInner() {
                 }
                 if (_formOk) return;
               }
-              const { status } = await Contacts.requestPermissionsAsync();
-              if (status !== 'granted') {
-                safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.');
+              const _permSave = await Contacts.requestPermissionsAsync();
+              if (_permSave?.status !== 'granted') {
+                try { require('../services/deviceContactLookup').alertContactsDenied(t, _permSave); } catch { safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.'); }
                 return;
               }
               const newContact = {
@@ -33918,7 +33921,7 @@ function ChatConversationInner() {
     let rlRef = '';
     const _oldBin = nativeListApi() < 8;
     let _rateDec = '.';
-    try { _rateDec = (1.5).toLocaleString(language || undefined).charAt(1) === ',' ? ',' : '.'; } catch {}
+    try { _rateDec = voiceRateDecimal(language); } catch {}
     const push = () => {
       try {
         const st = VoiceNote.getVoiceState();
