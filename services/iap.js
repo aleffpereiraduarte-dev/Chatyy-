@@ -64,6 +64,48 @@ export const PRODUCT_IDS = [
   'com.onemundo.mail.storage_2000',
 ];
 
+// [2026-10-18 iap-store] Android Plus/Pro: 1 assinatura por plano no Play Console com base
+// plans 'monthly' / 'annual' (servidor: iap-store-lib.php iapsGoogleEntitlement).
+export const ANDROID_PLAN_SKUS = ['chatyy_plus', 'chatyy_pro'];
+
+/** iOS productId (canônico na UI) → { sku, basePlanId } do Play. null = sem equivalente. */
+export function androidSkuFor(productId) {
+  const id = String(productId || '');
+  const annual = /_annual$/.test(id);
+  const basePlanId = annual ? 'annual' : 'monthly';
+  if (/\.(plus|one)_(monthly|annual)$/.test(id)) return { sku: 'chatyy_plus', basePlanId };
+  if (/\.(pro|family)_(monthly|annual)$/.test(id)) return { sku: 'chatyy_pro', basePlanId };
+  const st = id.match(/\.storage_(\d+)(?:_annual)?$/);
+  if (st) {
+    const m = { '100': 'chatyy_storage_100', '500': 'chatyy_storage_500', '1000': 'chatyy_storage_1tb', '2000': 'chatyy_storage_2tb', '5000': 'chatyy_storage_5tb' };
+    if (m[st[1]]) return { sku: m[st[1]], basePlanId };
+  }
+  if (ANDROID_PLAN_SKUS.includes(id) || id.indexOf('chatyy_storage_') === 0) return { sku: id, basePlanId };
+  return null;
+}
+
+// [2026-10-18 iap-store] UUID da conta no servidor → appAccountToken (iOS) /
+// obfuscatedAccountId (Android). As notificações da loja (ASSN V2 / RTDN) chegam com
+// esse UUID e o servidor acha o usuário mesmo antes do app confirmar o recibo.
+// Sem cache entre chamadas (troca de conta não pode vazar o token de outra).
+// Falha = compra segue sem token (o recibo continua vinculando a conta).
+async function _accountToken() {
+  try {
+    const r = await apiCall('iap_account_token', {}, 'POST');
+    const t = r?.data?.app_account_token;
+    return (typeof t === 'string' && /^[0-9a-f-]{36}$/i.test(t)) ? t.toLowerCase() : null;
+  } catch { return null; }
+}
+
+function _androidOfferToken(products, sku, basePlanId) {
+  const product = (products || []).find(p => (p?.id || p?.productId) === sku);
+  const offers = product?.subscriptionOfferDetailsAndroid || product?.subscriptionOfferDetails || [];
+  // prefere a oferta "pura" do base plan (sem offerId) e cai p/ qualquer uma do base plan
+  const own = offers.filter(o => o?.basePlanId === basePlanId);
+  const pick = own.find(o => !o?.offerId) || own[0];
+  return pick?.offerToken || null;
+}
+
 // 2026-05-18 — Consumable diamond top-up SKUs (BRL pricing, +bonus tiers).
 // Must be registered manually in App Store Connect (Consumable type) +
 // Google Play Console (Managed product / Consumable). Backend pack table
@@ -235,7 +277,16 @@ async function _doInitIAP() {
         }
       }
     } else {
+      // [2026-10-18 iap-store] Android: Plus/Pro (chatyy_plus / chatyy_pro, base plans monthly/annual).
       _products = [];
+      try {
+        const subs = await mod.fetchProducts({ skus: ANDROID_PLAN_SKUS, type: 'subs' });
+        _products = Array.isArray(subs) ? subs : [];
+        _lastDiagnostic = _products.length ? null : 'no_products_returned';
+      } catch (fetchErr) {
+        _products = [];
+        _lastDiagnostic = 'fetch_failed:' + (fetchErr?.message || 'unknown');
+      }
     }
 
     // Diamond top-ups are consumables (type:'inapp'), not subscriptions —
@@ -523,20 +574,20 @@ export async function purchaseStorage(tierId, cycle = 'monthly') {
     }
   }, 120000);
   try {
+    const acct = await _accountToken();
     const androidReq = { skus: [sku] };
+    const iosReq = { sku };
+    if (acct) { iosReq.appAccountToken = acct; androidReq.obfuscatedAccountId = acct; }
     // For Play subscriptions the basePlanId selects monthly vs annual
     // under one product; expo-iap surfaces it via subscriptionOffers.
     if (Platform.OS === 'android') {
-      const product = _storageProducts.find(p => (p?.id || p?.productId) === sku);
-      const offer = (product?.subscriptionOfferDetails || []).find(
-        o => o?.basePlanId === (cycle === 'annual' ? 'annual' : 'monthly')
-      );
-      if (offer?.offerToken) {
-        androidReq.subscriptionOffers = [{ sku, offerToken: offer.offerToken }];
+      const offerToken = _androidOfferToken(_storageProducts, sku, cycle === 'annual' ? 'annual' : 'monthly');
+      if (offerToken) {
+        androidReq.subscriptionOffers = [{ sku, offerToken }];
       }
     }
     await mod.requestPurchase({
-      request: { ios: { sku }, android: androidReq },
+      request: { ios: iosReq, android: androidReq },
       type: 'subs',
     });
   } catch (e) {
@@ -698,7 +749,10 @@ export function isDiamondSkuAvailable(productId) {
 /** Start a subscription purchase via StoreKit sheet. */
 export async function purchaseSubscription(productId) {
   const mod = _getIAP();
-  if (Platform.OS !== 'ios' || !mod || !_available) {
+  if (mod && !_available && (Platform.OS === 'ios' || Platform.OS === 'android')) {
+    try { await initIAP(); } catch {}
+  }
+  if ((Platform.OS !== 'ios' && Platform.OS !== 'android') || !mod || !_available) {
     // [2026-10-18 stripe-off] Sem checkout na web (compra só nas lojas): não abre mais
     // /plans no navegador (viraria laço "Assine pelo app"). Só com o kill switch ligado.
     let stripeOn = false;
@@ -710,9 +764,24 @@ export async function purchaseSubscription(productId) {
     return { success: false, message: 'iap_unavailable' };
   }
   try {
+    const acct = await _accountToken();
+    if (Platform.OS === 'android') {
+      // [2026-10-18 iap-store] UI usa o productId iOS → Play: chatyy_plus/chatyy_pro (+ storage) e base plan.
+      const a = androidSkuFor(productId);
+      if (!a) return { success: false, message: 'sku_not_in_catalog', sku: productId };
+      const pool = a.sku.indexOf('chatyy_storage_') === 0 ? _storageProducts : _products;
+      const offerToken = _androidOfferToken(pool, a.sku, a.basePlanId);
+      if (!offerToken) return { success: false, message: 'sku_not_in_catalog', sku: a.sku };
+      const androidReq = { skus: [a.sku], subscriptionOffers: [{ sku: a.sku, offerToken }] };
+      if (acct) androidReq.obfuscatedAccountId = acct;
+      await mod.requestPurchase({ request: { android: androidReq }, type: 'subs' });
+      return { success: true };
+    }
+    const iosReq = { sku: productId };
+    if (acct) iosReq.appAccountToken = acct;
     await mod.requestPurchase({
       request: {
-        ios: { sku: productId },
+        ios: iosReq,
         android: { skus: [productId] },
       },
       type: 'subs',
