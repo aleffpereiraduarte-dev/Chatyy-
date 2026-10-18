@@ -54,6 +54,11 @@ function markSyncComplete() {
 }
 
 function emit(phase, progress = 0) {
+  // [2026-10-18 bg-sync] A 1ª sync (contatos, e-mails, agenda, arquivos,
+  // perfil) é só aquecimento de cache em 2º plano: não pinta mais
+  // "Atualizando…" no título da home por 10-20 s no aparelho novo (a lista já
+  // está na tela). Religar: globalThis.__chatyy_initial_sync_banner = true.
+  if (globalThis.__chatyy_initial_sync_banner !== true && phase !== 'done' && phase !== 'error') return;
   mailWs?._emit?.('sync_progress', { phase, progress });
 }
 

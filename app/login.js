@@ -193,6 +193,10 @@ export default function LoginScreen() {
     // (i.e. local SQLite is materially short of what the server has).
     const maybeShowHistoryPromptThenNav = async (emailLc) => {
       if (Platform.OS === 'web') { return false; }
+      // [2026-10-18 bg-sync] Sem pergunta/espera: o histórico baixa sozinho em
+      // 2º plano (services/fullHistorySync — recentes primeiro, pílula discreta
+      // na lista). "Baixar tudo com mídia" continua em Ajustes → Armazenamento.
+      if (globalThis.__chatyy_bg_history !== false) return false;
       try {
         const skip = await AsyncStorage.getItem('@chatyy_skip_history');
         if (skip === '1') return false;

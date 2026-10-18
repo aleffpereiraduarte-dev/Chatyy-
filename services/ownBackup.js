@@ -870,7 +870,75 @@ export async function unlockBackup({ uid, manifest, password, recoveryKey }, ema
 async function _writeLocal(cid, msgs) {
   const ldb = require('./localDb');
   if (Platform.OS === 'web') { if (ldb.webSaveMessages) await ldb.webSaveMessages(cid, msgs); }
-  else if (ldb.saveMessages) await ldb.saveMessages(cid, msgs);
+  else if (ldb.saveMessages) {
+    // [2026-10-18 bg-sync] A restauração agora corre em 2º plano junto com o WS
+    // e a sincronização de histórico → não substitui linha que já chegou do
+    // servidor (mais nova: recibos, edição, local_path). Exceção: E2EE, em que
+    // o backup é a única fonte do texto claro.
+    let rows = msgs;
+    try {
+      const have = await require('./db').dbExistingMessageIds(msgs.map((m) => m && m.id));
+      if (have && have.size) rows = msgs.filter((m) => m && (m._restored_e2e || !have.has(Number(m.id))));
+    } catch {}
+    if (rows.length) await ldb.saveMessages(cid, rows);
+  }
+}
+
+// ─── [2026-10-18 bg-sync] restauração em 2º plano, retomável ──────────────
+// O aparelho novo não espera mais na tela "Restaurando… 37%": depois de
+// destravar (senha/chave — rápido, com erro na hora), a restauração segue em
+// 2º plano com a pílula discreta da lista (components/BackgroundSyncPill). Os
+// blocos já gravados ficam em AsyncStorage → app morto retoma de onde parou
+// (a chave fica no SecureStore após o unlock, o manifesto é rebaixado).
+const _PEND_PREFIX = '@ownbk_restore_pending:';
+async function _pendingGet(em) {
+  try { const v = await AsyncStorage.getItem(_PEND_PREFIX + _tag(em)); return v ? JSON.parse(v) : null; } catch { return null; }
+}
+async function _pendingSet(em, val) {
+  try {
+    if (val) await AsyncStorage.setItem(_PEND_PREFIX + _tag(em), JSON.stringify(val));
+    else await AsyncStorage.removeItem(_PEND_PREFIX + _tag(em));
+  } catch {}
+}
+async function _bgYield() {
+  // cede a vez enquanto o usuário rola/digita e espera a rede voltar (teto 60 s)
+  for (let i = 0; i < 80; i++) {
+    let busy = false;
+    try { busy = require('./userActivity').isUserActive(2500); } catch {}
+    try { if (require('./networkInfo').isConnected?.() === false) busy = true; } catch {}
+    if (!busy) return;
+    await new Promise((r) => setTimeout(r, 750));
+  }
+}
+
+/**
+ * Dispara a restauração SEM bloquear a tela (fire-and-forget). Erros
+ * recuperáveis (rede) mantêm o pendente p/ retomar na próxima abertura;
+ * chave/manifesto inválidos limpam o pendente.
+ */
+export function restoreInBackground(uid, opts = {}) {
+  if (_running) return _running.catch(() => null);
+  const p = restoreBackup(uid, { ...opts, background: true });
+  p.catch((e) => {
+    const code = e?.code || '';
+    if (code === 'ERR_BAD_KEY' || code === 'ERR_CORRUPT' || code === 'ERR_NOT_SETUP') _pendingSet(_email(opts.email), null);
+    try { require('./crashReporter').addBreadcrumb?.('ownbk_bg_restore_err', { code, m: String(e?.message || '').slice(0, 80) }); } catch {}
+  });
+  return p.catch(() => null);
+}
+
+/** Retoma uma restauração interrompida (app morto / sem rede). No-op se nada pendente. */
+export async function resumePendingRestore(email) {
+  try {
+    if (_running) return false;
+    const em = _email(email);
+    if (!em) return false;
+    const pend = await _pendingGet(em);
+    if (!pend?.uid) return false;
+    if (!(await _loadK(em))) { await _pendingSet(em, null); return false; }
+    restoreInBackground(pend.uid, { email: em });
+    return true;
+  } catch { return false; }
 }
 async function _writeConvs(convs) {
   // Só preenche a lista local se ela estiver vazia (aparelho novo) — não
@@ -916,11 +984,24 @@ async function _restore(uid, opts) {
     for (const c of convs) for (const b of (c.b || [])) jobs.push({ cid: c.meta?.id, obj: b[0], n: b[3] || 0 });
     const total = jobs.reduce((a, j) => a + j.n, 0);
     let done = 0;
-    prog({ phase: 'restore', done: 0, total });
+    // [2026-10-18 bg-sync] retomada: pula blocos já gravados nesta restauração.
+    const pend = await _pendingGet(em);
+    const doneObjs = new Set(pend && pend.uid === uid && Array.isArray(pend.done) ? pend.done : []);
+    const todo = doneObjs.size ? jobs.filter((j) => !doneObjs.has(j.obj)) : jobs;
+    for (const j of jobs) if (doneObjs.has(j.obj)) done += j.n;
+    await _pendingSet(em, { uid, done: [...doneObjs], at: Date.now() });
+    let _lastPersist = 0;
+    const persist = async (force) => {
+      if (!force && Date.now() - _lastPersist < 1500) return;
+      _lastPersist = Date.now();
+      await _pendingSet(em, { uid, done: [...doneObjs], at: Date.now() });
+    };
+    prog({ phase: 'restore', done, total, background: !!opts.background });
     try {
       await _writeConvs(convs.map((c) => ({ ...(c.meta || {}), id: c.meta?.id, _restored: 1 })).filter((c) => c.id));
     } catch {}
-    await _pool(jobs, DOWNLOAD_CONCURRENCY, async (j) => {
+    await _pool(todo, opts.background ? 2 : DOWNLOAD_CONCURRENCY, async (j) => {
+      if (opts.background) await _bgYield();
       const blk = _parsePlain(_open(keys, await _withRetry(() => _getObj(uid, j.obj))));
       if (blk?.t !== 'blk' || blk.a !== man.a) throw _err('ERR_CORRUPT', 'block mismatch');
       const msgs = (blk.m || []).map((m) => {
@@ -931,8 +1012,11 @@ async function _restore(uid, opts) {
       await _restoreLocalMedia(msgs, man, keys, uid);
       await _writeLocal(blk.c, msgs);
       done += msgs.length;
-      prog({ phase: 'restore', done, total });
+      doneObjs.add(j.obj);
+      persist(false).catch?.(() => {});
+      prog({ phase: 'restore', done, total, background: !!opts.background });
     });
+    await _pendingSet(em, null);
     if (man.settings) {
       try {
         const st = _parsePlain(_open(keys, await _getObj(uid, man.settings)));
@@ -974,4 +1058,5 @@ export default {
   setBackupPassword, formatRecoveryKey, parseRecoveryKey, runBackup, maybeRunAutoBackup,
   startAutoBackupRunner, listBackups, deleteAllBackups, forgetLocalKey, findRestoreCandidate,
   unlockBackup, restoreBackup, getKeyBytes, unlockKeyOnly,
+  restoreInBackground, resumePendingRestore,
 };

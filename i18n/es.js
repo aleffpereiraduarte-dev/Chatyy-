@@ -13421,4 +13421,6 @@ export default {
   "activity.recoveryLocked": "Recuperación pausada por intentos",
   "activity.recoveryEmailSet": "Correo de recuperación confirmado",
   "activity.recoveryEmailRemoved": "Correo de recuperación quitado",
+  "bgSync.syncing": "Sincronizando mensajes… {pct}%",
+  "bgSync.restoring": "Restaurando copia… {pct}%",
 };

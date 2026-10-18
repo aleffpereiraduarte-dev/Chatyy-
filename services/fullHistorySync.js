@@ -56,6 +56,30 @@
 //   SyncBar mirrors via the `mailWs` event bus so the chat list paints a
 //   thin progress strip while it runs.
 
+// ─── [2026-10-18 bg-sync] Nível WhatsApp: 2 passadas, sempre em 2º plano ───
+// Antes: 1 passada que drenava o histórico INTEIRO de cada conversa (1000
+// páginas × 100) uma conversa por vez, na ordem do servidor, com o título da
+// home virando "Baixando conversas 37%" e, no login, um modal "Baixar
+// histórico completo" com cartão de progresso em tela cheia. A conversa nº 30
+// só recebia alguma coisa depois das 29 anteriores terem baixado TUDO.
+// Agora:
+//   Passada A "recentes" — conversas na ordem da lista (mais recente 1º,
+//     arquivadas por último), as últimas RECENT_PER_CONV mensagens de cada uma,
+//     2 em paralelo (1 em enlace lento), pausa enquanto o usuário rola/digita,
+//     sem rede ou em 2º plano. Progresso por conversa em sync_state
+//     (`chat_recent_synced:<id>`) → app morto retoma de onde parou. É a única
+//     fase com indicador (pílula discreta "Sincronizando mensagens…" no topo da
+//     lista — components/BackgroundSyncPill), nunca bloqueante.
+//   Passada B "profunda" — o drain antigo (até o início do histórico), em
+//     silêncio, SÓ em Wi-Fi não tarifado (ou force do Ajustes), também pausando
+//     com interação/bateria baixa. Fora do Wi-Fi para e volta quando o Wi-Fi
+//     voltar (listener de rede). Histórico antigo de uma conversa aberta já vem
+//     sob demanda (chat-conversation: before_id ao rolar p/ cima).
+//   Gravação SÓ do que falta (dbExistingMessageIds): página de fundo nunca
+//   substitui linha mais nova vinda do WS / recibo / local_path / envio
+//   confirmado → sem duplicata e sem regressão quando página e WS se cruzam.
+// Kill switch: globalThis.__chatyy_bg_history = false → comportamento antigo
+// (só a passada profunda, sem gate de Wi-Fi).
 import { Platform, AppState } from 'react-native';
 import * as localDb from './localDb';
 import { cacheMessages } from './chatCache';
@@ -70,6 +94,16 @@ const CONV_DELAY_MS = 200;        // gap between conversations
 const MAX_PAGES_PER_CONV = 1000;  // 1000 × 100 = 100k msg ceiling per conv
 const MAX_RUNTIME_MS = 30 * 60 * 1000; // 30min cap per bootstrap session
 const RESUME_POLL_MS = 5000;      // re-check battery/AppState every 5s while paused
+// [2026-10-18 bg-sync] passada A
+const RECENT_PER_CONV = 50;       // últimas N msgs por conversa na 1ª passada
+const RECENT_CONCURRENCY = 2;     // conversas em paralelo (1 em enlace lento)
+const RECENT_GAP_MS = 120;        // folga entre conversas de um mesmo worker
+const RECENT_MEDIA_TOP = 15;      // só as N conversas do topo pré-baixam mídia (política auto-DL)
+const ACTIVE_WINDOW_MS = 2500;    // interação mais recente que isso → pausa
+const ACTIVE_POLL_MS = 700;
+const OFFLINE_POLL_MS = 4000;
+
+function _bgOn() { return globalThis.__chatyy_bg_history !== false; }
 
 // ─── State ─────────────────────────────────────────────────────────────────
 let _running = false;             // true while loop is in flight
@@ -82,6 +116,26 @@ let _silent = false;              // true once the bar has been shown once
 let _forceAllMedia = false;       // when true, media prefetch bypasses the
                                   // per-bucket auto-DL gate (user explicitly
                                   // pressed "Baixar tudo agora")
+// [2026-10-18 bg-sync] progresso da passada A (pílula discreta da home).
+let _recent = { running: false, done: 0, total: 0, at: 0 };
+const _recentListeners = new Set();
+function _setRecent(p) {
+  _recent = { ..._recent, ...p, at: Date.now() };
+  _recentListeners.forEach((fn) => { try { fn(_recent); } catch {} });
+}
+/** Assina o progresso da 1ª passada ({running, done, total}). Retorna unsubscribe. */
+export function subscribeRecentSync(fn) {
+  if (typeof fn !== 'function') return () => {};
+  _recentListeners.add(fn);
+  return () => { _recentListeners.delete(fn); };
+}
+export function getRecentSyncProgress() { return _recent; }
+let _deferredFor = '';           // conta cuja passada profunda ficou esperando Wi-Fi
+let _deferredAt = 0;
+const DEFERRED_RECHECK_MS = 10 * 60 * 1000;
+let _lastArgs = null;             // { apiCall, email } p/ re-armar no Wi-Fi / volta
+let _netSub = null;
+let _netWasUnmetered = false;
 let _lastProgress = {             // mirror of the last progress payload —
   phase: 'idle',                  // exposed via getBootstrapProgress() so
   convDone: 0,                    // late mounters (Settings → Storage)
@@ -112,6 +166,13 @@ export async function bootstrapFullHistoryOnce(apiCall, email, opts = {}) {
   const emailLc = email.toLowerCase();
   const gateKey = `chat_full_bootstrap:${emailLc}`;
   const force = !!opts.force;
+  // [2026-10-18 bg-sync] Recentes já completas e só falta a passada profunda,
+  // que espera Wi-Fi: não refaz o chat_conversations a cada volta do 2º plano
+  // em dados móveis (o listener de rede re-arma quando o Wi-Fi chegar).
+  if (!force && _bgOn() && _deferredFor === emailLc && !_isUnmetered()
+      && Date.now() - _deferredAt < DEFERRED_RECHECK_MS) {
+    return { skipped: 'deferred_until_wifi' };
+  }
   // Persist a "force-include media on cellular" flag for the duration of the
   // loop so prefetchIncomingMessageMedia bypasses the per-bucket auto-DL
   // gate. Cleared when the loop finishes (or aborts).
@@ -158,19 +219,33 @@ export async function bootstrapFullHistoryOnce(apiCall, email, opts = {}) {
   // until AFTER the first conversation successfully drains (see
   // _runBootstrap). The user sees real progress on first run; once any
   // chunk of work lands, subsequent cold starts go silent as designed.
-  emit('start', { convDone: 0, convTotal: 0 });
+  _lastArgs = { apiCall, email };
+  _ensureNetWatch();
 
   try {
     await localDb.setSyncState(gateKey, 'started');
-    const result = await _runBootstrap(apiCall, { barShownKey, seenBarBefore });
+    // [2026-10-18 bg-sync] lista uma vez só (inclui arquivadas), ordenada como
+    // a home: as conversas que o usuário vê primeiro recebem mensagens primeiro.
+    const convs = await _fetchAllConversations(apiCall);
+    let recentRes = null;
+    if (_bgOn()) recentRes = await _runRecentPass(apiCall, convs);
+    emit('start', { convDone: 0, convTotal: convs.length });
+    const result = (_abort || recentRes?.stopped)
+      ? { convDone: 0, convTotal: convs.length, timedOut: false, deferred: true, failedConvs: [] }
+      : await _runBootstrap(apiCall, convs, { barShownKey, seenBarBefore });
     // Only flip gate to 'done' if the loop finished cleanly with NO per-conv
     // failures. If any conv errored (network blip, 403, etc.) the gate stays
     // 'pending'/'started' so the next mount / AppState resume retries the
     // failed convs. Idempotent — convs that already flipped
     // `chat_full_synced:<id>` are skipped on the retry pass.
-    if (!_abort && !result.timedOut && (result.failedConvs?.length || 0) === 0) {
+    // [bg-sync] passada profunda adiada (fora do Wi-Fi / bateria) também não sela.
+    if (!_abort && !result.timedOut && !result.deferred && (result.failedConvs?.length || 0) === 0
+        && !(recentRes && recentRes.failed > 0) && convs.length > 0) {
       await localDb.setSyncState(gateKey, 'done');
     }
+    const recentClean = !recentRes || (!recentRes.failed && !recentRes.stopped);
+    if (result.deferred && recentClean && !_abort) { _deferredFor = emailLc; _deferredAt = Date.now(); }
+    else { _deferredFor = ''; _deferredAt = 0; }
     emit('done', { convDone: result.convDone, convTotal: result.convTotal });
     return { success: true, ...result };
   } catch (e) {
@@ -218,6 +293,10 @@ export function nudgeFullHistorySync(apiCall, email) {
 /** Abort the in-flight loop (logout / cache clear). */
 export function abortFullHistorySync() {
   _abort = true;
+  // [2026-10-18 bg-sync] logout/troca de conta: o listener de rede não re-arma a conta anterior.
+  _lastArgs = null;
+  _deferredFor = ''; _deferredAt = 0;
+  _setRecent({ running: false, done: 0, total: 0 });
   nudgeFullHistorySync();
 }
 
@@ -235,10 +314,9 @@ export async function isConvFullySynced(convId) {
 
 // ─── Core loop ─────────────────────────────────────────────────────────────
 
-async function _runBootstrap(apiCall, opts = {}) {
+async function _runBootstrap(apiCall, convs, opts = {}) {
   const { barShownKey, seenBarBefore } = opts;
-  // 1. Pull the full conversation list (server caps at 500/page; we paginate).
-  const convs = await _fetchAllConversations(apiCall);
+  // 1. Conversation list já buscada pelo chamador (server caps at 500/page; paginated).
   const convTotal = convs.length;
   emit('start', { convDone: 0, convTotal });
 
@@ -265,6 +343,12 @@ async function _runBootstrap(apiCall, opts = {}) {
     if (Date.now() - _startedAt > MAX_RUNTIME_MS) {
       return { convDone, convTotal, timedOut: true, failedConvs };
     }
+    // [2026-10-18 bg-sync] passada profunda só em Wi-Fi não tarifado (ou
+    // force), parada enquanto o usuário interage. Saiu do Wi-Fi → adia; o
+    // listener de rede re-arma quando voltar.
+    if (_bgOn() && !(await _waitWhilePaused({ deep: true }))) {
+      return { convDone, convTotal, timedOut: false, deferred: true, failedConvs };
+    }
 
     const convId = Number(conv?.id);
     if (!convId) { convDone++; continue; }
@@ -284,7 +368,10 @@ async function _runBootstrap(apiCall, opts = {}) {
     });
 
     try {
-      await _drainConv(apiCall, convId);
+      const drained = await _drainConv(apiCall, convId);
+      if (drained === 'deferred') {
+        return { convDone, convTotal, timedOut: false, deferred: true, failedConvs };
+      }
       await localDb.setSyncState(`chat_full_synced:${convId}`, '1');
       // First successful drain → seal the bar-shown sentinel. Subsequent
       // cold starts will be silent even if the loop never reaches 'done'
@@ -317,9 +404,10 @@ async function _drainConv(apiCall, convId) {
   } catch {}
 
   for (let page = 0; page < MAX_PAGES_PER_CONV; page++) {
-    if (_abort) return;
-    await _waitWhilePaused();
-    if (Date.now() - _startedAt > MAX_RUNTIME_MS) return;
+    if (_abort) return 'deferred';
+    if (_bgOn()) { if (!(await _waitWhilePaused({ deep: true }))) return 'deferred'; }
+    else await _waitWhilePaused();
+    if (Date.now() - _startedAt > MAX_RUNTIME_MS) return 'deferred';
 
     // Use the api wrapper so the request goes through the same auth/retry
     // path the rest of the app uses. apiCall name: 'chat_messages'.
@@ -356,7 +444,8 @@ async function _drainConv(apiCall, convId) {
 
     // Save into SQLite + MMKV mirror via the canonical cacheMessages path so
     // dedup/upsert semantics match WS-driven inserts.
-    try { await cacheMessages(convId, msgs); } catch (e) {
+    // [2026-10-18 bg-sync] só as que faltam (nunca rebaixa linha mais nova).
+    try { await _saveMissing(convId, msgs); } catch (e) {
       console.warn(`[fullHistorySync] cacheMessages conv ${convId}:`, e?.message);
     }
 
@@ -439,12 +528,15 @@ async function _drainConv(apiCall, convId) {
 async function _fetchAllConversations(apiCall) {
   const PAGE = 500;
   const out = [];
+  const seen = new Set();
   let offset = 0;
   while (true) {
     if (_abort) break;
     let r;
     try {
-      r = await apiCall('chat_conversations', { limit: PAGE, offset });
+      // [2026-10-18 bg-sync] include_archived=1: arquivadas vêm na 1ª página
+      // (limite próprio no servidor) → também ganham histórico local.
+      r = await apiCall('chat_conversations', { limit: PAGE, offset, include_archived: 1 });
     } catch (e) {
       console.warn('[fullHistorySync] chat_conversations:', e?.message);
       break;
@@ -458,12 +550,185 @@ async function _fetchAllConversations(apiCall) {
     else if (Array.isArray(r.data?.conversations)) list = r.data.conversations;
     else if (Array.isArray(r.conversations)) list = r.conversations;
     if (!list.length) break;
-    out.push(...list);
-    if (list.length < PAGE) break;
-    offset += list.length;
+    let active = 0;
+    for (const c of list) {
+      const id = c && c.id != null ? String(c.id) : '';
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(c);
+      if (!c.archived && !c.is_archived) active++;
+    }
+    // Paginação conta só as ativas (as arquivadas extras não entram no LIMIT).
+    if (active < PAGE) break;
+    offset += active;
     await _sleep(100);
   }
-  return out;
+  return _sortLikeHome(out);
+}
+
+// [2026-10-18 bg-sync] Mesma ordem que o usuário vê: fixadas, depois a mais
+// recente primeiro; arquivadas no fim. Estável p/ empate.
+function _lastTs(c) {
+  const v = c?.last_message_at || c?.last_message?.created_at || c?.last_message_time || c?.updated_at || c?.created_at;
+  if (!v) return 0;
+  const t = Date.parse(typeof v === 'string' && !/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v.replace(' ', 'T') + 'Z' : v);
+  return Number.isFinite(t) ? t : 0;
+}
+function _sortLikeHome(list) {
+  return list
+    .map((c, i) => ({ c, i, a: (c?.archived || c?.is_archived) ? 1 : 0, p: c?.pinned ? 1 : 0, t: _lastTs(c) }))
+    .sort((x, y) => (x.a - y.a) || (y.p - x.p) || (y.t - x.t) || (x.i - y.i))
+    .map((x) => x.c);
+}
+
+// ─── [2026-10-18 bg-sync] Passada A: recentes de cada conversa ─────────────
+
+function _isUnmetered() {
+  try {
+    const ni = require('./networkInfo');
+    return ni.getNetworkType?.() === 'wifi';
+  } catch { return false; }
+}
+function _isOnline() {
+  try { return require('./networkInfo').isConnected?.() !== false; } catch { return true; }
+}
+function _slowLink() {
+  try { return !!require('./networkInfo').isSlowLink?.(); } catch { return false; }
+}
+function _userActive() {
+  try { return require('./userActivity').isUserActive(ACTIVE_WINDOW_MS); } catch { return false; }
+}
+
+// Grava só as mensagens que ainda não estão no aparelho (dedupe por id; o
+// envio otimista tmp_* nunca entra no SQLite). Linha já existente — vinda do
+// WS ao vivo, de um recibo, do envio confirmado ou de mídia baixada — fica
+// intacta. Erro na consulta → grava tudo (caminho antigo, INSERT OR REPLACE).
+async function _saveMissing(convId, msgs) {
+  if (!Array.isArray(msgs) || !msgs.length) return 0;
+  let existing = null;
+  try { existing = await require('./db').dbExistingMessageIds(msgs.map((m) => m && m.id)); } catch {}
+  const fresh = [];
+  for (const m of msgs) {
+    if (!m || m.id == null) continue;
+    if (existing && existing.has(Number(m.id))) continue;
+    fresh.push(m.conversation_id == null ? { ...m, conversation_id: convId } : m);
+  }
+  if (fresh.length) await cacheMessages(convId, fresh);
+  return fresh.length;
+}
+
+async function _fetchRecent(apiCall, conv, idx) {
+  const convId = Number(conv?.id);
+  if (!convId) return 'skip';
+  // Já tem o suficiente localmente (conversa aberta durante a sync, WS) → sem rede.
+  try {
+    const n = await require('./db').dbCountMessages(convId);
+    if (n >= RECENT_PER_CONV) {
+      await localDb.setSyncState(`chat_recent_synced:${convId}`, '1');
+      return 'local';
+    }
+  } catch {}
+  const args = { conversation_id: convId, limit: RECENT_PER_CONV, before_id: 0 };
+  let r;
+  try { r = await apiCall('chat_messages', args); }
+  catch {
+    await _sleep(2000);
+    if (_abort) return 'abort';
+    r = await apiCall('chat_messages', args); // 2ª falha → lança (conta como falha, refaz depois)
+  }
+  if (!r) throw new Error('chat_messages_empty');
+  if (!r.success) {
+    // Servidor respondeu "não" (403 não-membro etc.): não insiste a cada
+    // abertura — a conversa, se aberta, busca sob demanda.
+    await localDb.setSyncState(`chat_recent_synced:${convId}`, '1');
+    return 'denied';
+  }
+  const msgs = Array.isArray(r.data?.messages) ? r.data.messages : (Array.isArray(r.messages) ? r.messages : []);
+  if (msgs.length) {
+    await _saveMissing(convId, msgs);
+    // Marca d'água p/ a passada profunda continuar DAQUI (só se ainda não existe).
+    try {
+      const prev = parseInt((await localDb.getSyncState(`chat_full_oldest:${convId}`)) || '0', 10);
+      if (!(prev > 0)) {
+        let minId = 0;
+        for (const m of msgs) { const id = Number(m?.id); if (id > 0 && (!minId || id < minId)) minId = id; }
+        if (minId > 0) await localDb.setSyncState(`chat_full_oldest:${convId}`, String(minId));
+      }
+    } catch {}
+    // Mídia: só as conversas do topo, pela política auto-DL (Wi-Fi/dados) e
+    // nunca p/ a galeria. Voz (pequena) segue o prefetch próprio.
+    if (idx < RECENT_MEDIA_TOP) {
+      try {
+        const { prefetchIncomingMessageMedia } = require('./mediaCache');
+        for (const m of msgs) {
+          if (!m) continue;
+          try { prefetchIncomingMessageMedia?.(m.conversation_id == null ? { ...m, conversation_id: convId } : m, { noGallery: true }); } catch {}
+        }
+      } catch {}
+    }
+    try { require('./voicePrefetch').prefetchVoiceMessages?.(msgs); } catch {}
+  }
+  // Menos que uma página = a conversa inteira já está no aparelho.
+  if (msgs.length < RECENT_PER_CONV) {
+    try { await localDb.setSyncState(`chat_full_synced:${convId}`, '1'); } catch {}
+  }
+  await localDb.setSyncState(`chat_recent_synced:${convId}`, '1');
+  return 'ok';
+}
+
+async function _runRecentPass(apiCall, convs) {
+  const todo = [];
+  for (let i = 0; i < convs.length; i++) {
+    const id = Number(convs[i]?.id);
+    if (!id) continue;
+    try {
+      if ((await localDb.getSyncState(`chat_recent_synced:${id}`)) === '1') continue;
+      if ((await localDb.getSyncState(`chat_full_synced:${id}`)) === '1') continue;
+    } catch {}
+    todo.push({ conv: convs[i], idx: i });
+  }
+  const total = todo.length;
+  let done = 0;
+  let failed = 0;
+  let stopped = false;
+  if (!total) { _setRecent({ running: false, done: 0, total: 0 }); return { done, total, failed, stopped }; }
+  _setRecent({ running: true, done: 0, total });
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < todo.length) {
+      if (_abort) { stopped = true; return; }
+      if (!(await _waitWhilePaused())) { stopped = true; return; }
+      const job = todo[cursor++];
+      try { await _fetchRecent(apiCall, job.conv, job.idx); }
+      catch (e) { failed++; if (__DEV__) console.warn('[fullHistorySync] recent', job.conv?.id, e?.message); }
+      done++;
+      _setRecent({ running: true, done, total });
+      await _sleep(RECENT_GAP_MS);
+    }
+  };
+  const n = _slowLink() ? 1 : RECENT_CONCURRENCY;
+  try { await Promise.all(Array.from({ length: n }, () => worker())); }
+  finally { _setRecent({ running: false, done, total }); }
+  return { done, total, failed, stopped };
+}
+
+// Re-arma o loop quando a rede volta / entra no Wi-Fi (a passada profunda
+// adiada fora do Wi-Fi recomeça sozinha). Uma assinatura por processo.
+function _ensureNetWatch() {
+  if (_netSub || Platform.OS === 'web') return;
+  try {
+    const ni = require('./networkInfo');
+    _netWasUnmetered = _isUnmetered();
+    _netSub = ni.onNetworkChange?.(() => {
+      const now = _isUnmetered();
+      const became = now && !_netWasUnmetered;
+      _netWasUnmetered = now;
+      if (!became || _running || !_lastArgs) return;
+      setTimeout(() => {
+        try { if (!_running && _lastArgs) nudgeFullHistorySync(_lastArgs.apiCall, _lastArgs.email); } catch {}
+      }, 3000);
+    }) || null;
+  } catch {}
 }
 
 // ─── Lifecycle: pause/resume on AppState + battery ─────────────────────────
@@ -504,28 +769,47 @@ async function _checkBattery() {
   }
 }
 
-async function _waitWhilePaused() {
-  // Background pause
-  if (_pausedReason === 'background') {
-    await new Promise(res => {
-      _resumeWaiters.push(res);
-      // Also poll periodically in case the AppState listener missed it.
-      setTimeout(() => {
-        if (AppState.currentState === 'active') {
-          _pausedReason = null;
-          res();
-        }
-      }, RESUME_POLL_MS);
-    });
+// Retorna true = pode seguir; false = parar esta passada (abort; ou, na
+// passada profunda, saiu do Wi-Fi / bateria baixa → adiada).
+async function _waitWhilePaused(opts = {}) {
+  const deep = !!opts.deep && _bgOn();
+  for (;;) {
+    if (_abort) return false;
+    // Background pause
+    if (_pausedReason === 'background' || (Platform.OS !== 'web' && AppState.currentState === 'background')) {
+      _pausedReason = 'background';
+      await new Promise(res => {
+        _resumeWaiters.push(res);
+        // Also poll periodically in case the AppState listener missed it.
+        setTimeout(() => {
+          if (AppState.currentState === 'active') {
+            _pausedReason = null;
+            res();
+          }
+        }, RESUME_POLL_MS);
+      });
+      continue;
+    }
+    if (!_bgOn()) break; // caminho antigo: só 2º plano + bateria
+    // [2026-10-18 bg-sync] sem rede → espera (não queima tentativas).
+    if (!_isOnline()) { await _sleep(OFFLINE_POLL_MS); continue; }
+    // Passada profunda: só Wi-Fi não tarifado, a menos que o usuário tenha pedido.
+    if (deep && !_forceAllMedia && !_isUnmetered()) return false;
+    // Usuário rolando/digitando/tocando → cede a vez.
+    if (_userActive()) { await _sleep(ACTIVE_POLL_MS); continue; }
+    break;
   }
+  if (_bgOn() && !deep) return true; // passada A é leve: não para por bateria
   // Battery pause (re-check on every page boundary)
   const batteryOk = await _checkBattery();
   if (!batteryOk) {
+    if (deep && !_forceAllMedia) { _pausedReason = null; return false; }
     _pausedReason = 'battery';
     await _sleep(RESUME_POLL_MS);
-    return _waitWhilePaused();
+    return _waitWhilePaused(opts);
   }
   if (_pausedReason === 'battery') _pausedReason = null;
+  return true;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────

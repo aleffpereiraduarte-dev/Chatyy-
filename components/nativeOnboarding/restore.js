@@ -72,6 +72,8 @@ export async function probeRestore(accountEmail) {
   // 3. histórico completo do servidor
   const histP = (async () => {
     try {
+      // [2026-10-18 bg-sync] histórico do servidor baixa sozinho em 2º plano → sem modal.
+      if (globalThis.__chatyy_bg_history !== false) return false;
       if ((await AsyncStorage.getItem('@chatyy_skip_history')) === '1' || !email) return false;
       const api = require('../../services/api');
       const { isBootstrapNeeded } = require('../../services/fullHistorySync');

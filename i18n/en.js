@@ -13422,4 +13422,6 @@ export default {
   "activity.recoveryLocked": "Recovery paused after attempts",
   "activity.recoveryEmailSet": "Recovery email confirmed",
   "activity.recoveryEmailRemoved": "Recovery email removed",
+  "bgSync.syncing": "Syncing messages… {pct}%",
+  "bgSync.restoring": "Restoring backup… {pct}%",
 };

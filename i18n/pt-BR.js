@@ -13500,4 +13500,6 @@ export default {
   "activity.recoveryLocked": "Recuperação pausada por tentativas",
   "activity.recoveryEmailSet": "E-mail de recuperação confirmado",
   "activity.recoveryEmailRemoved": "E-mail de recuperação removido",
+  "bgSync.syncing": "Sincronizando mensagens… {pct}%",
+  "bgSync.restoring": "Restaurando backup… {pct}%",
 };

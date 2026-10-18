@@ -85,6 +85,8 @@ import { isNativeTabletSplit } from '../utils/responsive'; // [2026-10-10 tablet
 import '../services/disableLayoutAnimationIOS';
 import '../services/modalGuardIOS'; // [2026-10-17 freeze] serializa present/dismiss dos <Modal> no iOS (Modal órfão = toque bloqueado)
 import { setFreezeRoute as _setFreezeRoute, noteRootTouch as _noteRootTouch } from '../services/freezeWatch';
+import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync] pausa o download de fundo durante toque/rolagem
+function _noteRootTouchAndActivity(e) { _noteRootTouch(e); _noteUserActivity(); }
 import { nativeListLargeTitleOn as _nativeListLargeTitleOn } from '../components/nativeHeader'; // [2026-10-17 freeze 0x8BADF00D]
 // [2026-10-18 settings-sub-native] /settings-section desenhada pela lista NATIVA
 // (sem título grande no iOS, mesma regra da raiz) — decide igual à tela
@@ -1244,6 +1246,11 @@ function AppInit({ onNotification, setOtaToast }) {
           bootstrapFullHistoryOnce(apiMod.apiCall, auth.user.email).catch(() => {});
         } catch {}
       }, 2000);
+      // [2026-10-18 bg-sync] restauração de backup interrompida (app morto /
+      // sem rede) retoma sozinha em 2º plano — pílula discreta na lista.
+      afterFirstPaint(() => {
+        try { require('../services/ownBackup').resumePendingRestore(auth.user.email).catch(() => {}); } catch {}
+      }, 3500);
       // Stage E (#1247, 2026-05-21): WhatsApp-grade BACKGROUND media auto-sync.
       // Separate from the bootstrap loop — that one walks message history; this
       // one fills any media row whose local_path stayed NULL after WS push +
@@ -2175,7 +2182,7 @@ export default function RootLayout() {
     // [2026-10-14 piscada-android] Raiz pintada com a cor do tema do app: qualquer
     // pixel não coberto por tela durante transição/abertura mostra o tema, não o
     // windowBackground nativo (cinza #303030 do DayNight no escuro em builds antigos).
-    <GestureHandlerRootView onTouchStart={_noteRootTouch} style={Platform.OS === 'web' ? { flex: 1 } : { flex: 1, backgroundColor: _navBg }}>
+    <GestureHandlerRootView onTouchStart={_noteRootTouchAndActivity} onTouchMove={_noteUserActivity} style={Platform.OS === 'web' ? { flex: 1 } : { flex: 1, backgroundColor: _navBg }}>
     <ChatyyKeyboardProvider>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

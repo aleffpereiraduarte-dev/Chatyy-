@@ -94,7 +94,11 @@ function _wsLive() {
 
 function _rawState() {
   if (!_wsLive()) return { kind: _netOnline ? 'connecting' : 'offline', progress: null };
-  if (_boot.running && _boot.total > 0) {
+  // [2026-10-18 bg-sync] O download de histórico NÃO toma mais o título
+  // ("Baixando conversas 37%" passava a ideia de "espere"). Ele roda em 2º
+  // plano e aparece só na pílula discreta da lista (components/BackgroundSyncPill).
+  // Religar o modo antigo: globalThis.__chatyy_bootstrap_title = true.
+  if (_boot.running && _boot.total > 0 && globalThis.__chatyy_bootstrap_title === true) {
     const pct = Math.max(0, Math.min(99, Math.floor((_boot.done / _boot.total) * 100)));
     return { kind: 'bootstrap', progress: pct };
   }

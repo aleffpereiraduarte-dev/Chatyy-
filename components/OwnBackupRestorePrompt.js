@@ -38,6 +38,12 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
         password: passwordMode && !ownBackup.parseRecoveryKey(secret) ? secret : undefined,
         recoveryKey: !passwordMode || ownBackup.parseRecoveryKey(secret) ? secret : undefined,
       }, candidate.email);
+      // [2026-10-18 bg-sync] destravou → restaura em 2º plano e fecha (faixa discreta na lista).
+      if (globalThis.__chatyy_bg_restore !== false) {
+        ownBackup.restoreInBackground(set.uid, { manifest: u.manifest, email: candidate.email });
+        onClose?.();
+        return;
+      }
       const r = await ownBackup.restoreBackup(set.uid, { manifest: u.manifest, email: candidate.email, onProgress: setProgress });
       setResult(r); setStage('done');
     } catch (e) {
@@ -45,7 +51,7 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
       setError(errorText(t, e) + (left != null && e?.code === 'ERR_BAD_PASSWORD' ? ` ${t('ownBackup.attemptsLeft', { n: left })}` : ''));
       setStage('ask');
     }
-  }, [set, secret, passwordMode, candidate, t]);
+  }, [set, secret, passwordMode, candidate, t, onClose]);
 
   if (!visible || !set) return null;
   const busy = stage === 'restoring';

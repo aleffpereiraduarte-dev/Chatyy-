@@ -38,6 +38,17 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
         password: isKey ? undefined : secret,
         recoveryKey: isKey ? secret : undefined,
       }, candidate.email);
+      // [2026-10-18 bg-sync] Senha/chave conferidas (unlock) → a restauração
+      // segue em 2º plano e o usuário entra direto nas conversas; o progresso
+      // aparece só na faixa discreta da lista (BackgroundSyncPill). Antes: tela
+      // "Restaurando… 37%" até o último bloco. Kill switch:
+      // globalThis.__chatyy_bg_restore = false.
+      if (globalThis.__chatyy_bg_restore !== false) {
+        ownBackup.restoreInBackground(set.uid, { manifest: u.manifest, email: candidate.email });
+        try { require('../../services/haptics').success?.(); } catch {}
+        onFinished?.('restoring');
+        return;
+      }
       const r = await ownBackup.restoreBackup(set.uid, {
         manifest: u.manifest, email: candidate.email,
         onProgress: (p) => { if (p && (p.phase === 'restore' || p.phase === 'done')) setProgress({ done: p.done || 0, total: p.total || 0 }); },
@@ -50,7 +61,7 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
       setStage('ask');
       try { require('../../services/haptics').error?.(); } catch {}
     }
-  }, [set, secret, stage, passwordMode, candidate, t]);
+  }, [set, secret, stage, passwordMode, candidate, t, onFinished]);
 
   if (!set) return null;
   const busy = stage === 'restoring';

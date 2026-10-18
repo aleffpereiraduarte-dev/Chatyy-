@@ -1011,6 +1011,38 @@ export async function dbGetLastMessageId(conversationId) {
   return row?.max_id || 0;
 }
 
+// [2026-10-18 bg-sync] Quais destes ids JÁ estão no SQLite (qualquer conta —
+// id é PK global). O download em 2º plano grava só o que falta: nunca troca
+// uma linha mais nova (WS ao vivo / recibo / local_path / envio otimista
+// confirmado) por um snapshot de página antigo. Erro → Set vazio (= grava tudo,
+// comportamento anterior).
+export async function dbExistingMessageIds(ids) {
+  const out = new Set();
+  if (isWeb || !_db || !Array.isArray(ids) || !ids.length) return out;
+  try {
+    const nums = ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    for (let i = 0; i < nums.length; i += 400) {
+      const part = nums.slice(i, i + 400);
+      const rows = await _db.getAllAsync(
+        `SELECT id FROM messages WHERE id IN (${part.map(() => '?').join(',')})`, part);
+      for (const r of rows || []) out.add(Number(r.id));
+    }
+  } catch {}
+  return out;
+}
+
+// [2026-10-18 bg-sync] Quantas mensagens desta conversa já estão no aparelho.
+export async function dbCountMessages(conversationId) {
+  if (isWeb || !_db) return 0;
+  try {
+    let sql = 'SELECT COUNT(*) as n FROM messages WHERE conversation_id = ?';
+    const params = [conversationId];
+    if (_acctScoped()) { const ac = _acctSql(); sql += ac.sql; params.push(...ac.params); }
+    const row = await _db.getFirstAsync(sql, params);
+    return Number(row?.n) || 0;
+  } catch { return 0; }
+}
+
 export async function dbDeleteMessage(conversationId, messageId) {
   _nsMirror('mirrorDeleteMessage', conversationId, messageId);
   if (isWeb || !_db) return;

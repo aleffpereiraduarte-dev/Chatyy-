@@ -39,6 +39,8 @@ import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import BiaHomeCard from './bia/BiaHomeCard'; // [2026-10-15 bia-design]
 import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
+import BackgroundSyncPill from './BackgroundSyncPill'; // [2026-10-18 bg-sync] "Sincronizando mensagens…" discreto
+import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync]
 import WaImportBanner from './WaImportBanner'; // [2026-10-13] importação do WhatsApp visível na home
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 // [2026-10-11 boot-split] Heavy, rarely-opened surfaces are code-split: the chat
@@ -9135,6 +9137,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _listHeaderEl = useMemo(() => (largeTitle ? (
     <>
       <View onLayout={_onLtLayout}>{_largeTitleEl}</View>
+      {!selectionMode && <BackgroundSyncPill />}
       {!selectionMode && <WaImportBanner global />}
       {!selectionMode && _topChromeEl}
       {ListHeaderComponent}
@@ -9149,6 +9152,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _onListBeginDrag = useCallback(() => { _listDraggingRef.current = true; }, []);
   const _onListEndDrag = useCallback(() => { _listDraggingRef.current = false; }, []);
   const _onListScroll = useCallback((e) => {
+    _noteUserActivity(); // [2026-10-18 bg-sync] rolando (inclui inércia) → download de fundo cede a vez
     const y = e?.nativeEvent?.contentOffset?.y || 0;
     if (y < -64 && _listDraggingRef.current) { try { onListPullReveal(); } catch {} }
     const c = y > LARGE_TITLE_COLLAPSE_Y;

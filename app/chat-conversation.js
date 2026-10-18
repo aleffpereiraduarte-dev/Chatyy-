@@ -420,6 +420,7 @@ import { peekCached as _ciPeek, putCached as _ciPut } from '../hooks/useCachedAc
 import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
+import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync]
 import ErrorBoundary from '../components/ErrorBoundary';
 import { heroRef as _heroRef } from '../services/mediaHero'; // [2026-10-15 hero] miniatura → viewer nativo
 // Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
@@ -37033,6 +37034,7 @@ function ChatConversationInner() {
       // (digitando, menções, /bot, emoji custom, foco, barra de formatação).
       const _onComposerText = (text) => {
                 lastKeystrokeRef.current = Date.now();
+                _noteUserActivity(); // [2026-10-18 bg-sync] digitando → download de fundo cede a vez
                 setInputText(text);
                 // Custom animated emoji (Telegram Premium-style): when the
                 // input contains a `:handle:` token and we haven't hydrated
