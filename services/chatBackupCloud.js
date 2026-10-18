@@ -16,9 +16,9 @@
  * Layout on disk:
  *   [magic 4B 'CYB2'][salt 16B][nonce 24B][ciphertext+poly1305tag]
  *
- * The passphrase NEVER leaves the device. Chatyy servers receive only the
- * decrypted JSON (in `chat_restore_from_blob`) and they immediately re-insert
- * rows skipping duplicates by client_msg_id.
+ * The passphrase NEVER leaves the device. Restore decrypts in-process and
+ * writes into the local store (restoreBundle); nothing decrypted goes back
+ * to the server.
  */
 
 import { Platform } from 'react-native';
@@ -141,6 +141,81 @@ function _safeTimestamp() {
   return new Date().toISOString().replace(/[-:.]/g, '').replace(/\..*/, '') + 'Z';
 }
 
+// ─── 0. Coleta compartilhada (conversas + mensagens) ───────────────────
+// [2026-10-18 backup-legado] As 3 cópias do laço de coleta liam
+// `resp.conversations` / `page.messages`, mas api.chatConversations/chatMessages
+// devolvem { success, data:[...] } → lista vazia → o .enc do iCloud/Drive saía
+// com 0 conversas e 0 mensagens. Também pediam 200 por página (servidor limita a
+// 100 → parava na 1ª página) e usavam a MAIS NOVA da página como cursor.
+// Agora: desembrulha { success, data }, pagina conversas (inclusive arquivadas)
+// e mensagens (100/página, cursor = a mais antiga da página, ordem do servidor).
+function _apiData(r) {
+  if (r && typeof r === 'object' && !Array.isArray(r) && 'success' in r) {
+    if (!r.success) throw new Error(r.message || r.error || 'api error');
+    return r.data;
+  }
+  return r;
+}
+function _rowsOf(d, key) {
+  if (Array.isArray(d)) return d;
+  if (d && Array.isArray(d[key])) return d[key];
+  return [];
+}
+async function _listAllConversations() {
+  const out = [];
+  const seen = new Set();
+  const PAGE_C = 500;
+  for (let pg = 0; pg < 40; pg++) {
+    let list;
+    if (typeof api.apiCall === 'function') {
+      list = _rowsOf(_apiData(await api.apiCall('chat_list', { include_archived: 1, limit: PAGE_C, offset: pg * PAGE_C })), 'conversations');
+    } else {
+      list = _rowsOf(_apiData(await api.chatConversations('', true)), 'conversations');
+    }
+    let active = 0;
+    for (const c of list) {
+      const id = c && (c.id || c.conversation_id);
+      if (!id) continue;
+      if (!(c.archived || c.is_archived)) active++;
+      if (seen.has(String(id))) continue;
+      seen.add(String(id));
+      out.push(c);
+    }
+    if (typeof api.apiCall !== 'function' || active < PAGE_C) break;
+  }
+  return out;
+}
+async function _drainConversationMessages(cid, onEach) {
+  const PAGE_M = 100; // máximo do chat_messages no servidor
+  const pages = [];
+  let beforeId = null;
+  for (let safety = 0; safety < 3000; safety++) {
+    let rows;
+    try { rows = _rowsOf(_apiData(await api.chatMessages(cid, PAGE_M, beforeId, 0)), 'messages'); }
+    catch { break; } // tolerante: pula o resto da conversa em vez de abortar o backup
+    if (!rows.length) break;
+    pages.unshift(rows);
+    const cursor = rows[0]?.id; // página crescente → [0] = a mais antiga
+    if (rows.length < PAGE_M || cursor == null || String(cursor) === String(beforeId)) break;
+    beforeId = cursor;
+  }
+  const seen = new Set();
+  for (const pg of pages) for (const m of pg) {
+    if (!m || m.id == null || seen.has(String(m.id))) continue;
+    seen.add(String(m.id));
+    onEach(m);
+  }
+}
+function _bundleConv(c) {
+  return {
+    id: c.id || c.conversation_id,
+    name: c.name || null,
+    type: c.type || 'direct',
+    members: c.members || null,
+    archived: c.archived ?? c.is_archived ?? null,
+  };
+}
+
 // ─── 1. Export — pull all chat_messages, build the encrypted blob ──────
 //
 // Pulls every conversation the user is in via chatConversations(), then
@@ -174,17 +249,11 @@ export async function exportChatBundle(passphrase, opts = {}) {
   // Conversation roster — used for restore so we can recreate threads that
   // were deleted on the server but the user wants back.
   onProgress({ stage: 'list_conversations' });
-  const convResp = await api.chatConversations('', true);
-  const conversations = Array.isArray(convResp?.conversations)
-    ? convResp.conversations
-    : Array.isArray(convResp)
-      ? convResp
-      : [];
+  const conversations = await _listAllConversations();
 
   const messages = [];
   let lastTs = null;
   let convCount = 0;
-  const pageSize = 200;
 
   for (const conv of conversations) {
     const cid = conv.id || conv.conversation_id;
@@ -192,24 +261,8 @@ export async function exportChatBundle(passphrase, opts = {}) {
     convCount++;
     onProgress({ stage: 'drain_conv', conv_id: cid, conv_index: convCount, total_convs: conversations.length });
 
-    // Paginate from newest → oldest via beforeId until empty page.
-    let beforeId = null;
-    let safety = 200; // hard cap 200 pages × 200 msgs = 40k per conv
-    while (safety-- > 0) {
-      let page;
-      try {
-        page = await api.chatMessages(cid, pageSize, beforeId, 0);
-      } catch (e) {
-        // Tolerant: skip the conversation rather than abort the whole backup.
-        break;
-      }
-      const rows = Array.isArray(page?.messages)
-        ? page.messages
-        : Array.isArray(page)
-          ? page
-          : [];
-      if (!rows.length) break;
-      for (const m of rows) {
+    await _drainConversationMessages(cid, (m) => {
+        if (m.is_view_once && Number(m.is_view_once)) return;
         // Trim to only the fields we need to faithfully restore. Heavy fields
         // (file_data inline base64) are intentionally dropped — file_url is
         // enough since media lives in R2.
@@ -229,10 +282,7 @@ export async function exportChatBundle(passphrase, opts = {}) {
           mentions: m.mentions || null,
         });
         if (!lastTs || (m.created_at && m.created_at > lastTs)) lastTs = m.created_at;
-      }
-      beforeId = rows[rows.length - 1].id;
-      if (rows.length < pageSize) break;
-    }
+    });
   }
 
   const manifest = {
@@ -246,12 +296,7 @@ export async function exportChatBundle(passphrase, opts = {}) {
 
   const bundle = {
     manifest,
-    conversations: conversations.map((c) => ({
-      id: c.id || c.conversation_id,
-      name: c.name || null,
-      type: c.type || 'direct',
-      members: c.members || null,
-    })),
+    conversations: conversations.map(_bundleConv),
     messages,
   };
 
@@ -339,29 +384,15 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
   // but we need access to the bundle object (not just the encrypted blob).
   // Build it inline so we can mutate messages before encryption.
   onProgress({ stage: 'list_conversations' });
-  const convResp = await api.chatConversations('', true);
-  const conversations = Array.isArray(convResp?.conversations)
-    ? convResp.conversations
-    : Array.isArray(convResp)
-      ? convResp
-      : [];
+  const conversations = await _listAllConversations();
 
   const messages = [];
   let lastTs = null;
-  const pageSize = 200;
   for (const conv of conversations) {
     const cid = conv.id || conv.conversation_id;
     if (!cid) continue;
-    let beforeId = null;
-    let safety = 200;
-    while (safety-- > 0) {
-      let page;
-      try { page = await api.chatMessages(cid, pageSize, beforeId, 0); } catch { break; }
-      const rows = Array.isArray(page?.messages)
-        ? page.messages
-        : Array.isArray(page) ? page : [];
-      if (!rows.length) break;
-      for (const m of rows) {
+    await _drainConversationMessages(cid, (m) => {
+        if (m.is_view_once && Number(m.is_view_once)) return;
         messages.push({
           id: m.id,
           conversation_id: cid,
@@ -379,10 +410,7 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
           mentions: m.mentions || null,
         });
         if (!lastTs || (m.created_at && m.created_at > lastTs)) lastTs = m.created_at;
-      }
-      beforeId = rows[rows.length - 1].id;
-      if (rows.length < pageSize) break;
-    }
+    });
   }
 
   // Media re-pack pass — only if the caller asked for it. Done after the
@@ -538,12 +566,7 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
 
   const bundle = {
     manifest,
-    conversations: conversations.map((c) => ({
-      id: c.id || c.conversation_id,
-      name: c.name || null,
-      type: c.type || 'direct',
-      members: c.members || null,
-    })),
+    conversations: conversations.map(_bundleConv),
     messages,
   };
 
@@ -624,24 +647,14 @@ export async function buildPlainBundle(opts = {}) {
 
   // Light path — same loop as exportChatBundle but no encryption.
   onProgress({ stage: 'list_conversations' });
-  const convResp = await api.chatConversations('', true);
-  const conversations = Array.isArray(convResp?.conversations)
-    ? convResp.conversations
-    : Array.isArray(convResp) ? convResp : [];
+  const conversations = await _listAllConversations();
   const messages = [];
   let lastTs = null;
-  const pageSize = 200;
   for (const conv of conversations) {
     const cid = conv.id || conv.conversation_id;
     if (!cid) continue;
-    let beforeId = null;
-    let safety = 200;
-    while (safety-- > 0) {
-      let page;
-      try { page = await api.chatMessages(cid, pageSize, beforeId, 0); } catch { break; }
-      const rows = Array.isArray(page?.messages) ? page.messages : Array.isArray(page) ? page : [];
-      if (!rows.length) break;
-      for (const m of rows) {
+    await _drainConversationMessages(cid, (m) => {
+        if (m.is_view_once && Number(m.is_view_once)) return;
         messages.push({
           id: m.id,
           conversation_id: cid,
@@ -658,10 +671,7 @@ export async function buildPlainBundle(opts = {}) {
           mentions: m.mentions || null,
         });
         if (!lastTs || (m.created_at && m.created_at > lastTs)) lastTs = m.created_at;
-      }
-      beforeId = rows[rows.length - 1].id;
-      if (rows.length < pageSize) break;
-    }
+    });
   }
   return {
     manifest: {
@@ -672,12 +682,7 @@ export async function buildPlainBundle(opts = {}) {
       msg_count: messages.length,
       last_msg_at: lastTs,
     },
-    conversations: conversations.map((c) => ({
-      id: c.id || c.conversation_id,
-      name: c.name || null,
-      type: c.type || 'direct',
-      members: c.members || null,
-    })),
+    conversations: conversations.map(_bundleConv),
     messages,
   };
 }
@@ -1304,18 +1309,9 @@ export async function exportBundleLocally(payload, opts = {}) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// 3. Restore — push the decrypted bundle to the backend.
+// 3. Restore — write the decrypted bundle into the LOCAL store (SQLite /
+//    IndexedDB). [2026-10-18] No longer POSTs to chat_restore_from_blob.
 // ═════════════════════════════════════════════════════════════════════════
-//
-// The backend endpoint chat_restore_from_blob accepts the manifest + the
-// list of conversations + messages and performs a bulk INSERT skipping
-// duplicates by client_msg_id (so a restore that overlaps with messages
-// the user has received since the backup is idempotent).
-//
-// We chunk by 1000 messages per request to dodge PHP's post_max_size on
-// large restores.
-
-const RESTORE_CHUNK = 1000;
 
 export async function restoreBundle(bundle, opts = {}) {
   if (!bundle?.manifest || !Array.isArray(bundle.messages)) {
@@ -1323,41 +1319,49 @@ export async function restoreBundle(bundle, opts = {}) {
   }
   const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
   const total = bundle.messages.length;
-  let inserted = 0;
-  let skipped = 0;
-
-  // First call: send manifest + conversations. Subsequent calls: just chunks.
-  const firstResp = await api.apiCall(
-    'chat_restore_from_blob',
-    {
-      manifest: bundle.manifest,
-      conversations: bundle.conversations || [],
-      messages: bundle.messages.slice(0, RESTORE_CHUNK),
-      chunk_index: 0,
-      total_chunks: Math.max(1, Math.ceil(total / RESTORE_CHUNK)),
-    },
-    'POST',
-  );
-  inserted += firstResp?.inserted || 0;
-  skipped += firstResp?.skipped || 0;
-  onProgress({ stage: 'restore', done: Math.min(RESTORE_CHUNK, total), total });
-
-  for (let i = RESTORE_CHUNK; i < total; i += RESTORE_CHUNK) {
-    const resp = await api.apiCall(
-      'chat_restore_from_blob',
-      {
-        manifest: bundle.manifest,
-        messages: bundle.messages.slice(i, i + RESTORE_CHUNK),
-        chunk_index: Math.floor(i / RESTORE_CHUNK),
-        total_chunks: Math.ceil(total / RESTORE_CHUNK),
-      },
-      'POST',
-    );
-    inserted += resp?.inserted || 0;
-    skipped += resp?.skipped || 0;
-    onProgress({ stage: 'restore', done: Math.min(i + RESTORE_CHUNK, total), total });
+  // [2026-10-18 backup-legado] Restaura NO APARELHO (mesmo modelo do ownBackup),
+  // nunca re-posta no servidor. chat_restore_from_blob regrava cada linha com
+  // remetente = quem restaura e data = agora (o servidor não confia no cliente
+  // — SECFIX 2026-10-02) → duplicaria a conversa para TODOS os participantes; e
+  // como o .enc não trazia client_msg_id, na prática ele pulava tudo ("0
+  // restauradas"). As mensagens já estão no servidor; o que falta num aparelho
+  // novo é a cópia local (SQLite / IndexedDB), que é o que gravamos aqui.
+  const ldb = require('./localDb');
+  const isWeb = Platform.OS === 'web';
+  const byConv = new Map();
+  for (const m of bundle.messages) {
+    if (!m || m.id == null || !m.conversation_id) continue;
+    const r = { ...m, _restored: 1 };
+    delete r.file_b64; delete r.file_b64_size; // mídia embutida não vai pro banco local
+    if (r.client_message_id == null && r.client_msg_id) r.client_message_id = r.client_msg_id;
+    const k = r.conversation_id;
+    if (!byConv.has(k)) byConv.set(k, []);
+    byConv.get(k).push(r);
   }
-  return { inserted, skipped, total };
+  try {
+    const convs = (bundle.conversations || []).filter((c) => c && c.id).map((c) => ({ ...c, _restored: 1 }));
+    if (convs.length) {
+      const cur = isWeb ? (ldb.webGetConversations ? await ldb.webGetConversations() : null)
+        : (ldb.getConversations ? await ldb.getConversations() : null);
+      if (!cur?.length) {
+        if (isWeb && ldb.webSaveConversations) await ldb.webSaveConversations(convs);
+        else if (!isWeb && ldb.saveConversations) await ldb.saveConversations(convs);
+      }
+    }
+  } catch {}
+  let inserted = 0;
+  const CHUNK = 500;
+  for (const [cid, msgs] of byConv) {
+    for (let i = 0; i < msgs.length; i += CHUNK) {
+      const part = msgs.slice(i, i + CHUNK);
+      if (isWeb) { if (ldb.webSaveMessages) await ldb.webSaveMessages(cid, part); }
+      else if (ldb.saveMessages) await ldb.saveMessages(cid, part);
+      inserted += part.length;
+      onProgress({ stage: 'restore', done: inserted, total });
+    }
+  }
+  onProgress({ stage: 'restore', done: total, total });
+  return { inserted, skipped: total - inserted, total };
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1609,8 +1613,7 @@ export async function runBackup(opts = {}) {
 // that the RestoreBackupPrompt (post-login on a new device) calls. The
 // bundle is fetched as a CYB2 envelope, decrypted with the user passphrase
 // in-process (server never sees it), and the JSON manifest + messages list
-// is POSTed back to chat_restore_from_blob in 1000-row chunks (handled
-// inside restoreBundle).
+// is written into the local store by restoreBundle (never re-posted).
 //
 // Returns { inserted, skipped, total, manifest } so the UI can render the
 // "X mensagens restauradas" confirmation. Throws with .code = 'ERR_DECRYPT'
@@ -1678,7 +1681,7 @@ export async function downloadAndRestore(backupId, passphrase, opts = {}) {
     throw err;
   }
 
-  // Restore — chunked POST to chat_restore_from_blob with progress.
+  // Restore — local store write with progress (see restoreBundle).
   const result = await restoreBundle(bundle, {
     onProgress: (p) => onProgress({ ...p, stage: 'restore' }),
   });

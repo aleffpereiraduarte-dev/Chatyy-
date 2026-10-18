@@ -116,6 +116,23 @@ class ExpoChatBackupModule : Module() {
       }.start()
     }
 
+    // [2026-10-18 backup-kdf] SHA-512 iterado nativo (mesmo KDF do services/
+    // ownBackup._kek / e2e.js): out = H(input); repete H(out) iterations-1 vezes.
+    // Em JS (Hermes, sem JIT) 100k iterações levavam dezenas de segundos travando a tela.
+    AsyncFunction("sha512Iterate") { inputB64: String, iterations: Int, promise: Promise ->
+      Thread {
+        try {
+          val md = java.security.MessageDigest.getInstance("SHA-512")
+          var out = md.digest(Base64.decode(inputB64, Base64.NO_WRAP))
+          val n = if (iterations < 1) 1 else iterations
+          for (i in 1 until n) { out = md.digest(out) }
+          promise.resolve(Base64.encodeToString(out, Base64.NO_WRAP))
+        } catch (e: Exception) {
+          promise.reject("ERR_KDF", e.message ?: "kdf failed", e)
+        }
+      }.start()
+    }
+
     AsyncFunction("listBackups") { promise: Promise ->
       Thread {
         try {

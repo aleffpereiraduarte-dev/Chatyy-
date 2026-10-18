@@ -58,6 +58,30 @@ public class ExpoChatBackupModule: Module {
             }
         }
 
+        // [2026-10-18 backup-kdf] SHA-512 iterado nativo (mesmo KDF de
+        // services/ownBackup._kek): out = H(input); repete H(out) iterations-1 vezes.
+        AsyncFunction("sha512Iterate") { (inputB64: String, iterations: Int, promise: Promise) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let input = Data(base64Encoded: inputB64) else {
+                    promise.reject("ERR_KDF", "invalid base64")
+                    return
+                }
+                var out = [UInt8](repeating: 0, count: Int(CC_SHA512_DIGEST_LENGTH))
+                var buf = [UInt8](input)
+                _ = buf.withUnsafeBytes { p in CC_SHA512(p.baseAddress, CC_LONG(buf.count), &out) }
+                let n = max(1, iterations)
+                if n > 1 {
+                    var tmp = [UInt8](repeating: 0, count: Int(CC_SHA512_DIGEST_LENGTH))
+                    for _ in 1..<n {
+                        buf = out
+                        _ = buf.withUnsafeBytes { p in CC_SHA512(p.baseAddress, CC_LONG(buf.count), &tmp) }
+                        out = tmp
+                    }
+                }
+                promise.resolve(Data(out).base64EncodedString())
+            }
+        }
+
         AsyncFunction("listBackups") { (promise: Promise) in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {

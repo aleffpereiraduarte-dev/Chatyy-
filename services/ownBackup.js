@@ -130,10 +130,35 @@ function _parsePlain(pt) {
 }
 
 // KDF da senha — mesmo esquema de services/e2e.js (SHA-512 iterado + sal).
-function _kek(password, salt, iters) {
-  const pw = decodeUTF8(String(password));
-  let out = nacl.hash(_cat([pw, salt]));
-  for (let i = 1; i < iters; i++) out = nacl.hash(out);
+// [2026-10-18 backup-kdf] Em JS puro (Hermes, sem JIT) 100k SHA-512 levam
+// dezenas de segundos e TRAVAVAM a tela (sem progresso, parecia congelado) ao
+// criar a senha / restaurar num aparelho novo. Agora: (1) caminho nativo
+// sha512Iterate do expo-chat-backup quando o binário tem (build novo) — mesmo
+// resultado byte a byte; (2) senão JS em fatias, cedendo a vez ao app a cada
+// ~1.500 iterações para a UI continuar respondendo.
+function _kekNative() {
+  if (Platform.OS === 'web') return null;
+  try {
+    const { requireOptionalNativeModule } = require('expo');
+    const m = requireOptionalNativeModule('ExpoChatBackupModule');
+    return m && typeof m.sha512Iterate === 'function' ? m : null;
+  } catch { return null; }
+}
+async function _kek(password, salt, iters) {
+  const n = Math.max(1, Number(iters) || KDF_ITERS);
+  const input = _cat([decodeUTF8(String(password)), salt]);
+  const nat = _kekNative();
+  if (nat) {
+    try {
+      const out = decodeBase64(await nat.sha512Iterate(encodeBase64(input), n));
+      if (out && out.length === 64) return out.slice(0, 32);
+    } catch {}
+  }
+  let out = nacl.hash(input);
+  for (let i = 1; i < n; i++) {
+    out = nacl.hash(out);
+    if (i % 1500 === 0) await new Promise((res) => setTimeout(res, 0));
+  }
   return out.slice(0, 32);
 }
 
@@ -322,7 +347,7 @@ export async function setBackupPassword(password, email) {
   const K = await _loadK(em);
   if (!K) throw _err('ERR_NOT_SETUP', 'backup key missing');
   const salt = nacl.randomBytes(16);
-  const kek = _kek(password, salt, KDF_ITERS);
+  const kek = await _kek(password, salt, KDF_ITERS);
   const nonce = nacl.randomBytes(NONCE_LEN);
   const wrapped = _cat([nonce, nacl.secretbox(K, nonce, kek)]);
   await _call('chat_backup_vault_put', {
@@ -354,7 +379,7 @@ export async function unlockKeyOnly({ password, recoveryKey, verify } = {}, emai
     attemptsLeft = v.attempts_left;
     wrappedB64 = v.wrapped_key; saltB64 = v.kdf_salt; params = v.kdf_params || {};
     const wrapped = decodeBase64(wrappedB64);
-    const kek = _kek(password, decodeBase64(saltB64), Number(params.iter) || KDF_ITERS);
+    const kek = await _kek(password, decodeBase64(saltB64), Number(params.iter) || KDF_ITERS);
     K = nacl.secretbox.open(wrapped.subarray(NONCE_LEN), wrapped.subarray(0, NONCE_LEN), kek);
     if (!K) throw _err('ERR_BAD_PASSWORD', 'wrong password', { attemptsLeft });
   } else throw _err('ERR_BAD_KEY', 'password or key required');
@@ -435,28 +460,78 @@ function _unwrap(r) {
   return r;
 }
 
-/** Mensagens (asc) com id >= minId (0 = todas). */
-async function _fetchConv(cid, minId, onPage) {
-  const out = [];
+/**
+ * [2026-10-18 backup-ordem] Mensagens na ORDEM DO SERVIDOR (mais antiga → mais
+ * nova; chatMessages pede order=time → (sort_ts, id)). Antes: cursor = menor id
+ * da página e corte incremental "id < minId" — com ids mistos (serial ~5e4 e
+ * Snowflake ~1e14 da fase 2, intercalados no tempo) o incremental parava cedo e
+ * PERDIA as mensagens novas de id serial até o rescan semanal.
+ * anchor (opcional) = id da 1ª mensagem do último bloco do backup anterior: anda
+ * de trás pra frente até achar a âncora e devolve só a cauda a partir dela.
+ * Retorna { rows, tail } — tail=false → conversa inteira (âncora sumiu/sem âncora).
+ */
+async function _fetchConv(cid, anchor, onPage) {
+  const pages = [];
   let before = null;
+  let n = 0;
+  const anchorS = anchor != null && anchor !== '' ? String(anchor) : null;
+  let found = false;
   for (let page = 0; page < 3000; page++) {
     const r = await _withRetry(async () => _unwrap(await api.chatMessages(cid, PAGE, before, 0)));
     const rows = Array.isArray(r?.messages) ? r.messages : (Array.isArray(r) ? r : []);
     if (!rows.length) break;
-    let stop = false;
-    for (const m of rows) {
-      if (m?.id == null || !Number.isFinite(Number(m.id))) continue;
-      if (minId && Number(m.id) < minId) { stop = true; continue; }
-      out.push(m);
-    }
-    onPage?.(out.length);
-    const oldest = rows.reduce((a, m) => (Number(m.id) < a ? Number(m.id) : a), Infinity);
-    if (stop || rows.length < PAGE || !Number.isFinite(oldest) || r?.has_more === false) break;
-    before = oldest;
+    const valid = rows.filter((m) => m?.id != null && Number.isFinite(Number(m.id)));
+    pages.unshift(valid);
+    n += valid.length;
+    onPage?.(n);
+    if (anchorS && valid.some((m) => String(m.id) === anchorS)) { found = true; break; }
+    // Página vem crescente → rows[0] = a mais antiga (cursor do order=time; no
+    // servidor antigo, ordem por id, rows[0] também é o menor id).
+    const cursor = rows[0]?.id;
+    if (rows.length < PAGE || r?.has_more === false || cursor == null) break;
+    if (before != null && String(cursor) === String(before)) break; // sem progresso
+    before = cursor;
   }
   const seen = new Set();
-  return out.filter((m) => (seen.has(String(m.id)) ? false : seen.add(String(m.id)))) // [ids-53bit] chave string
-    .sort((a, b) => Number(a.id) - Number(b.id));
+  let out = [];
+  for (const pg of pages) for (const m of pg) { const k = String(m.id); if (!seen.has(k)) { seen.add(k); out.push(m); } } // [ids-53bit] chave string
+  if (anchorS && found) {
+    const i = out.findIndex((m) => String(m.id) === anchorS);
+    if (i >= 0) return { rows: out.slice(i), tail: true };
+  }
+  return { rows: out, tail: false };
+}
+
+/**
+ * [2026-10-18 backup-convs] TODAS as conversas, inclusive arquivadas. chat_list
+ * devolve no máx. 100 ativas por padrão (limit/offset) e as arquivadas só com
+ * include_archived=1 (1ª página) → quem tinha >100 conversas ficava com o resto
+ * fora do backup. Pagina com limit=500 até a página de ativas vir incompleta.
+ */
+const CONV_PAGE = 500;
+async function _listAllConvs() {
+  const out = [];
+  const seen = new Set();
+  for (let pg = 0, off = 0; pg < 40; pg++, off += CONV_PAGE) {
+    let d;
+    if (typeof api.apiCall === 'function') {
+      d = await _withRetry(async () => _unwrap(await api.apiCall('chat_list', { include_archived: 1, limit: CONV_PAGE, offset: off })));
+    } else {
+      d = await _withRetry(async () => _unwrap(await api.chatConversations('', true)));
+    }
+    const list = Array.isArray(d?.conversations) ? d.conversations : (Array.isArray(d) ? d : []);
+    let active = 0;
+    for (const c of list) {
+      const id = c && (c.id || c.conversation_id);
+      if (!id) continue;
+      if (!(c.archived || c.is_archived)) active++;
+      if (seen.has(String(id))) continue;
+      seen.add(String(id));
+      out.push(c);
+    }
+    if (typeof api.apiCall !== 'function' || active < CONV_PAGE) break;
+  }
+  return out;
 }
 
 async function _collectSettings() {
@@ -525,14 +600,14 @@ async function _runBackup(opts) {
 
   try {
     const prev = opts.forceFull ? null : await _prevManifest(keys, em);
-    const full = !prev || !prev.full_at || (Date.now() - Date.parse(prev.full_at) > FULL_RESCAN_MS);
+    // [2026-10-18 backup-ordem] manifesto sem ord:'time' = blocos antigos por id
+    // → um backup completo (blocos iguais continuam deduplicados pelo id do conteúdo).
+    const full = !prev || !prev.full_at || prev.ord !== 'time' || (Date.now() - Date.parse(prev.full_at) > FULL_RESCAN_MS);
     const objects = new Map(); // id → Uint8Array (texto em claro) | null (já no servidor)
     const add = (plain) => { const id = _objId(keys, plain); if (!objects.has(id) || objects.get(id) === null) objects.set(id, plain); return id; };
     const reuse = (id) => { if (id && !objects.has(id)) objects.set(id, null); return id; };
 
-    const convResp = await _withRetry(async () => _unwrap(await api.chatConversations('', true)));
-    const convList = (Array.isArray(convResp?.conversations) ? convResp.conversations : Array.isArray(convResp) ? convResp : [])
-      .filter((c) => c && (c.id || c.conversation_id));
+    const convList = await _listAllConvs();
     const manConvs = {};
     let msgCount = 0; let mediaCount = 0;
     const mediaMap = {};
@@ -543,23 +618,32 @@ async function _runBackup(opts) {
       _emit({ phase: 'scan', done: ci, total: convList.length });
       const meta = { id: cid, type: c.type || 'direct', name: c.name || null, avatar: c.avatar || null,
         other_email: c.other_email || null, members: Array.isArray(c.members) ? c.members.map((m) => ({ email: m.email, role: m.role, display_name: m.display_name })) : null,
-        archived: c.archived ?? null, pinned: c.pinned ?? null, muted: c.muted ?? null, created_at: c.created_at || null };
+        archived: c.archived ?? c.is_archived ?? null, pinned: c.pinned ?? null, muted: c.muted ?? null, created_at: c.created_at || null };
       const pc = prev?.convs?.[cid];
-      const serverLast = Number(c.last_message?.id || c.last_message_id || 0);
+      // [2026-10-18 backup-ordem] "não mudou" = MESMA última mensagem (id exato,
+      // em string). Antes era serverLast <= last numérico — com ids serial e
+      // Snowflake misturados, mensagem nova de id menor parecia "já salva".
+      const lm = String(c.last_message?.id ?? c.last_message_id ?? '');
       let blocks = [];
-      if (pc && !full && serverLast && serverLast <= Number(pc.last || 0)) {
+      if (pc && !full && Array.isArray(pc.b) && pc.lm != null && String(pc.lm) === lm) {
         for (const b of pc.b) { reuse(b[0]); msgCount += b[3] || 0; mediaCount += b[4] || 0; }
         manConvs[cid] = { ...pc, meta };
         continue;
       }
-      let keep = []; let minId = 0;
-      if (pc && !full && pc.b.length) {
+      let keep = []; let anchor = null;
+      // Histórico importado (wai:) entra com data antiga no meio da conversa →
+      // a cauda não basta; relê a conversa inteira (blocos iguais não sobem de novo).
+      if (pc && !full && !pc.imp && Array.isArray(pc.b) && pc.b.length) {
         keep = pc.b.slice(0, -1);
-        minId = Number(pc.b[pc.b.length - 1][1]) || 0;
+        anchor = pc.b[pc.b.length - 1][1];
       }
-      const raw = await _fetchConv(cid, minId);
+      const fetched = await _fetchConv(cid, anchor);
+      if (!fetched.tail) keep = [];
+      const raw = fetched.rows;
+      let imp = 0;
       const picked = [];
       for (const m of raw) {
+        if (typeof m.client_message_id === 'string' && m.client_message_id.startsWith('wai:')) imp = 1;
         if (m.is_view_once && Number(m.is_view_once)) continue;
         const o = _pickMsg(m, cid);
         const pt = await _e2eePlain(m, cid);
@@ -578,13 +662,13 @@ async function _runBackup(opts) {
         blocks.push([id, blk[0].id, blk[blk.length - 1].id, blk.length, nMedia]);
       }
       for (const b of blocks) { msgCount += b[3] || 0; mediaCount += b[4] || 0; }
-      manConvs[cid] = { meta, b: blocks, last: blocks.length ? blocks[blocks.length - 1][2] : 0 };
+      manConvs[cid] = { meta, b: blocks, last: blocks.length ? blocks[blocks.length - 1][2] : 0, lm, ...((imp || pc?.imp) ? { imp: 1 } : {}) };
     }
 
     const settings = await _collectSettings();
     const settingsId = Object.keys(settings).length ? add(_jsonPlain({ t: 'set', a: tag, s: settings })) : null;
     const manifest = {
-      t: 'man', v: 3, a: tag, created_at: new Date().toISOString(),
+      t: 'man', v: 3, ord: 'time', a: tag, created_at: new Date().toISOString(),
       full_at: full ? new Date().toISOString() : prev.full_at,
       platform: Platform.OS, app_version: _appVersion(),
       counts: { conv: convList.length, msg: msgCount, media: mediaCount },
@@ -762,7 +846,7 @@ export async function unlockBackup({ uid, manifest, password, recoveryKey }, ema
     wrappedB64 = v.wrapped_key; saltB64 = v.kdf_salt; params = v.kdf_params || {};
     const iters = Number(params.iter) || KDF_ITERS;
     const wrapped = decodeBase64(wrappedB64);
-    const kek = _kek(password, decodeBase64(saltB64), iters);
+    const kek = await _kek(password, decodeBase64(saltB64), iters);
     K = nacl.secretbox.open(wrapped.subarray(NONCE_LEN), wrapped.subarray(0, NONCE_LEN), kek);
     if (!K) throw _err('ERR_BAD_PASSWORD', 'wrong password', { attemptsLeft });
   } else throw _err('ERR_BAD_KEY', 'password or key required');
