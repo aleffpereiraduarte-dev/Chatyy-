@@ -84,25 +84,68 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
   const fetchPage = useCallback(async (cur) => {
     const myReq = cur ? reqRef.current : ++reqRef.current;
     if (cur) setLoadingMore(true); else { setLoading(true); setError(false); }
+    // [busca-wa 2026-10-18] LOCAL primeiro (SQLite FTS5 do aparelho, prefixo
+    // por palavra, sem acento): pinta na hora e funciona OFFLINE; o servidor
+    // substitui quando responde. Só texto puro (tipo/data = servidor).
+    let localShown = null; // linhas locais já pintadas (null = nenhuma)
+    if (!cur && !kind && !range && q.length >= 2) {
+      try {
+        const { dbSearchMessages } = require('../services/db');
+        const loc = await dbSearchMessages(q, 40, null, { prefix: true });
+        if (myReq !== reqRef.current) return;
+        if (Array.isArray(loc) && loc.length) {
+          const seen = new Set();
+          const out = [];
+          for (const m0 of loc) {
+            const m = m0 && m0._row ? { ...m0, id: m0.id ?? m0._row.id, conversation_id: m0.conversation_id ?? m0._row.conversation_id, created_at: m0.created_at ?? m0._row.created_at } : m0;
+            if (!m || m.id == null || m.conversation_id == null || seen.has(String(m.id))) continue;
+            seen.add(String(m.id));
+            out.push({ id: m.id, conversation_id: m.conversation_id, sender_email: m.sender_email, sender_name: m.sender_name, content: m.content, type: m.type || 'text', file_name: m.file_name, file_url: m.file_url, thumbnail_url: m.thumbnail_url, duration: m.duration, created_at: m.created_at, kind: 'text', _local: true });
+          }
+          out.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+          let cv = {};
+          try {
+            const list = require('../services/chatStore').getConversationsSync() || [];
+            const want = new Set(out.map(m => String(m.conversation_id)));
+            for (const c of list) {
+              if (!c || !want.has(String(c.id))) continue;
+              cv[String(c.id)] = { type: c.type || (c.is_group ? 'group' : 'direct'), name: c.display_name || c.name || '', peer_email: c.other_email || c.contact_email || c.peer_email || '', avatar_url: c.avatar_url || c.group_avatar || c.avatar || null };
+            }
+          } catch { cv = {}; }
+          setConvs(cv);
+          setRows(out);
+          localShown = out;
+        }
+      } catch {}
+    }
     try {
       const r = await api.chatSearchAdvanced({
         query: q, types: kind ? [kind] : [], dateFrom: range?.from, dateTo: range?.to, cursor: cur || undefined,
       });
       if (myReq !== reqRef.current) return;
-      if (!r?.success) { if (!cur) { setRows([]); setError(true); } return; }
+      if (!r?.success) { if (!cur && !localShown) { setRows([]); setError(true); } return; }
       const d = r.data || {};
       const msgs = Array.isArray(d.messages) ? d.messages : [];
       const cv = d.conversations && typeof d.conversations === 'object' ? d.conversations : {};
-      setConvs((prev) => (cur ? { ...prev, ...cv } : cv));
+      setConvs((prev) => (cur || localShown ? { ...prev, ...cv } : cv));
       setRows((prev) => {
-        if (!cur) return msgs;
+        if (!cur) {
+          // Conversa E2E só existe no aparelho (servidor não lê) → soma os
+          // achados locais que o servidor não trouxe (só dentro da 1ª página).
+          if (!localShown || !localShown.length) return msgs;
+          const ids = new Set(msgs.map((m) => String(m.id)));
+          const oldest = msgs.length && d.has_more ? String(msgs[msgs.length - 1].created_at || '') : '';
+          const extra = localShown.filter((m) => !ids.has(String(m.id)) && (!oldest || String(m.created_at || '') >= oldest));
+          if (!extra.length) return msgs;
+          return msgs.concat(extra).sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || '')));
+        }
         const seen = new Set(prev.map((m) => m.id));
         return prev.concat(msgs.filter((m) => !seen.has(m.id)));
       });
       setHasMore(!!d.has_more && !!d.next_cursor);
       setCursor(d.next_cursor || null);
     } catch {
-      if (myReq === reqRef.current && !cur) { setRows([]); setError(true); }
+      if (myReq === reqRef.current && !cur && !localShown) { setRows([]); setError(true); }
     } finally {
       if (myReq === reqRef.current) { setLoading(false); setLoadingMore(false); }
     }

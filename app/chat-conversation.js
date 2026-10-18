@@ -24132,10 +24132,17 @@ function ChatConversationInner() {
     const isLinkMsg = (m) => /https?:\/\//i.test(m?.content || '');
     const isDocMsg = (m) => m?.type === 'file' || DOC_EXT_RE.test(m?.file_name || '');
 
+    // [busca-wa 2026-10-18] Cada palavra casa em qualquer ordem (WhatsApp):
+    // "acao sao" acha "Ação de marketing para São Paulo" — antes exigia a frase
+    // contígua (e um espaço no fim zerava tudo). Nome do arquivo conta também.
+    const _qToks = lower.split(/\s+/).filter(Boolean).slice(0, 8);
     let localResults = messages.filter(m => {
       // Text filter
-      if (!m.content || m._type || m.type === 'system') return false;
-      if (!_fold(m.content).includes(lower)) return false;
+      if (m._type || m.type === 'system' || m.is_view_once) return false;
+      const _c = typeof m.content === 'string' ? m.content : '';
+      if (_c.slice(0, 6) === '{"e2e"') return false;
+      const _hay = _fold(_c + (m.file_name ? ' ' + m.file_name : ''));
+      if (!_hay.trim() || !_qToks.length || !_qToks.every(tk => _hay.includes(tk))) return false;
 
       // Date range filter
       if (filters.dateFrom || filters.dateTo) {

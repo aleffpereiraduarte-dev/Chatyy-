@@ -1530,6 +1530,26 @@ function ftsPrefixQuery(query) {
   return toks.slice(0, 8).map(x => '"' + x + '"*').join(' ');
 }
 
+// [busca-wa 2026-10-18] Paridade com o servidor (chat_search): a busca GLOBAL
+// nunca mostra conversa TRANCADA (chat_locks; a linha do chat_list vem com
+// `locked`), e nenhuma busca devolve envelope E2E cifrado / visualização única.
+async function _searchLockedConvIds() {
+  try {
+    const rows = await _db.getAllAsync(
+      `SELECT id FROM conversations WHERE raw_json LIKE '%"locked":true%' OR raw_json LIKE '%"locked":1%' OR raw_json LIKE '%"locked":"1"%'`, []);
+    return new Set((rows || []).map(r => String(r.id)));
+  } catch { return null; }
+}
+function _searchDropHidden(list, lockedIds) {
+  return (list || []).filter(m => {
+    if (!m) return false;
+    if (lockedIds && lockedIds.size && lockedIds.has(String(m.conversation_id ?? m._row?.conversation_id))) return false;
+    if (m.is_view_once === 1 || m.is_view_once === true || m.is_view_once === '1') return false;
+    const c = typeof m.content === 'string' ? m.content : '';
+    return c.slice(0, 6) !== '{"e2e"';
+  });
+}
+
 export async function dbSearchMessages(query, limit = 50, conversationId = null, opts = null) {
   if (isWeb || !_db) return [];
   const q = String(query || '').trim();
@@ -1547,10 +1567,11 @@ export async function dbSearchMessages(query, limit = 50, conversationId = null,
          ORDER BY m.id DESC LIMIT ?`;
     const args = conversationId ? [ftsQ, conversationId, limit] : [ftsQ, limit];
     const rows = await _db.getAllAsync(sql, args);
-    return rows.map(r => {
+    const out = rows.map(r => {
       try { return r.raw_json ? { ...JSON.parse(r.raw_json), _row: r } : r; }
       catch { return r; }
     });
+    return conversationId ? _searchDropHidden(out) : _searchDropHidden(out, await _searchLockedConvIds());
   } catch {
     const like = `%${q.replace(/[%_]/g, '\\$&')}%`;
     const sql = conversationId
@@ -1559,7 +1580,8 @@ export async function dbSearchMessages(query, limit = 50, conversationId = null,
     const args = conversationId ? [like, conversationId, limit] : [like, limit];
     try {
       const rows = await _db.getAllAsync(sql, args);
-      return rows.map(r => { try { return r.raw_json ? JSON.parse(r.raw_json) : r; } catch { return r; } });
+      const out = rows.map(r => { try { return r.raw_json ? JSON.parse(r.raw_json) : r; } catch { return r; } });
+      return conversationId ? _searchDropHidden(out) : _searchDropHidden(out, await _searchLockedConvIds());
     } catch {
       return [];
     }

@@ -765,6 +765,19 @@ export async function clearConversationMessages(id) {
  */
 export async function searchMessagesFTS(query, limit = 50, conversationId = null) {
   if (Platform.OS === 'web' || !query || !query.trim()) return [];
+  // [busca-wa 2026-10-18] Mesmo motor da busca global (services/db.js): cada
+  // palavra é PREFIXO ("reun joa" acha "Reunião com João"), sem acento, termo
+  // com aspas/pontuação não quebra o MATCH (antes ia cru pro FTS5: "reun" não
+  // achava nada do histórico em disco e "100%"/"a:b" caíam no LIKE com acento).
+  try {
+    const dbMod = require('./db');
+    if (dbMod && typeof dbMod.dbSearchMessages === 'function') {
+      const rows = await dbMod.dbSearchMessages(query, limit, conversationId, { prefix: true });
+      if (Array.isArray(rows) && rows.length) {
+        return rows.map(r => (r && r._row ? { ...r, id: r.id ?? r._row.id, conversation_id: r.conversation_id ?? r._row.conversation_id, created_at: r.created_at ?? r._row.created_at, _row: undefined } : r)).filter(Boolean);
+      }
+    }
+  } catch {}
   try {
     await _ensureDb();
     const q = query.trim();
