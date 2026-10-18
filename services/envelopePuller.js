@@ -387,10 +387,17 @@ export function startEnvelopePuller() {
   // recipient may wait minutes/forever to see a message even when both
   // devices are foreground + connected. Telegram/WhatsApp both keep a
   // background poll as belt-and-suspenders; matching that pattern.
+  // [2026-10-18 battery] Com o WS autenticado (pull imediato no authenticated /
+  // foreground / envelope_available) o tick só puxa se o último pull tiver >5 min;
+  // sem WS segue a cada 30 s. Sem rede quando o modo envelope está OFF (default).
+  let _lastSafetyPull = Date.now();
   _pullSafetyTimer = setInterval(() => {
-    if (AppState.currentState === 'active') {
-      pullOnce();
-    }
+    if (AppState.currentState !== 'active') return;
+    let authed = false;
+    try { const w = require('./websocket').default; authed = !!(w && w.authenticated && w.isConnected); } catch {}
+    if (authed && Date.now() - _lastSafetyPull < 5 * 60 * 1000) return;
+    _lastSafetyPull = Date.now();
+    pullOnce();
   }, 30000);
 }
 

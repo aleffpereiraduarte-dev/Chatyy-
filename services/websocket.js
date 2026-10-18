@@ -139,7 +139,13 @@ const PING_TIMEOUT = 12000;
 // ou qualquer outro) até o deadline → socket morto → reconecta. Pior caso idle
 // = 20s+10s, thread = 5s+6s.
 const PING_IDLE_MS = 20000;
-const PING_CHAT_MS = 5000;
+// [2026-10-18 battery] thread aberta 5 s → 25 s: ping de app a cada 5 s mantinha o
+// rádio LTE/5G permanentemente acordado com a conversa aberta. O hub Go (main.go
+// PongWait 90 s, deadline reseta em qualquer leitura; PingPeriod 25 s de protocolo)
+// tolera folgado. Socket morto continua detectado por: pong deadline (25 s + 6 s),
+// sonda ao ENVIAR (_send → _probe('send'): 1 ping, sem frame em ~6 s → reconecta) e
+// sonda ao voltar ao primeiro plano / trocar de rede.
+const PING_CHAT_MS = 25000;
 const PING_CALL_MS = 8000;
 const PONG_DEADLINE_IDLE_MS = 10000;
 const PONG_DEADLINE_CHAT_MS = 6000;
@@ -1702,6 +1708,13 @@ class MailWebSocket {
     } catch {}
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(this._encodeOutbound(data));
+      // [2026-10-18 battery] "send-ack timeout": com o ping da thread a 25 s, um
+      // envio do usuário num socket sem tráfego recente arma UMA sonda (coalescida)
+      // → socket half-open é derrubado em ~6 s em vez de esperar o próximo ping.
+      if (data && (data.type === 'chat_message' || data.type === 'chat_message_relay' || data.type === 'reaction') &&
+          (Date.now() - Math.max(this.lastInboundAt || 0, this.lastPongTime || 0)) > 5000) {
+        try { this._probe('send', PONG_DEADLINE_CHAT_MS); } catch {}
+      }
     } else if (data && (
       data.type === 'chat_message' ||
       data.type === 'chat_message_relay' ||
@@ -3551,7 +3564,13 @@ class MailWebSocket {
   get isHealthy() {
     if (!this.connected || !this.authenticated) return false;
     if (!this.lastPongTime) return this.connected;
-    return (Date.now() - this.lastPongTime) < PING_INTERVAL * 3;
+    // [2026-10-18 battery] Janela acompanha o perfil de heartbeat (thread 25 s):
+    // "saudável" = nenhum ping ficou sem resposta além do deadline. Antes era
+    // fixo 15 s (PING_INTERVAL×3), o que com ping de 25 s marcaria todo socket
+    // vivo como doente.
+    let win = PING_INTERVAL * 3;
+    try { const hp = this._heartbeatProfile(); win = Math.max(win, hp.interval + hp.deadline + 2000); } catch {}
+    return (Date.now() - Math.max(this.lastPongTime, this.lastInboundAt || 0)) < win;
   }
 
   // Connection quality: 'good' | 'warn' | 'bad'

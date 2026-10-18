@@ -417,7 +417,11 @@ export default function ChildRestrictionGuard({ children }) {
 
   useEffect(() => {
     checkRestrictions();
-    const interval = setInterval(checkRestrictions, 60000);
+    // [2026-10-18 battery] Só checa em primeiro plano (o listener abaixo já
+    // re-checa na volta p/ 'active'); antes rodava 60 s também em 2º plano.
+    const interval = setInterval(() => {
+      if (AppState.currentState === 'active') checkRestrictions();
+    }, 60000);
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') checkRestrictions();
     });

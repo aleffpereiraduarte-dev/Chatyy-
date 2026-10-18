@@ -10271,7 +10271,7 @@ const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
       // be receiving live presence and showing green would be a lie — and (b)
       // the presence data is fresh (<35s old). Stale/disconnected → fall back
       // to the last-seen text without mutating the presence state itself.
-      const presenceFresh = (Date.now() - presenceUpdatedAtRef.current) < 35000;
+      const presenceFresh = (Date.now() - presenceUpdatedAtRef.current) < 100000; // [2026-10-18] poll 45 s (era 10 s / 35 s)
       if (presence.status === 'online' && wsConnected && presenceFresh) {
         return t('chatConv.online') || 'online';
       }
@@ -14983,9 +14983,15 @@ function ChatConversationInner() {
     // Initial query
     queryPresenceViaWS();
 
-    // Poll presence via WS every 10 seconds (lightweight - just a WS message, not HTTP)
+    // [2026-10-18 battery] Presença chega por evento WS (watchPresence →
+    // 'presence'); a consulta periódica é só fallback: 10 s → 45 s (cada frame
+    // acordava o rádio) e só com o app em primeiro plano. Frescor do "online"
+    // no header foi de 35 s → 100 s para acompanhar (ver presenceFresh).
     if (presenceIntervalRef.current) clearInterval(presenceIntervalRef.current);
-    presenceIntervalRef.current = setInterval(queryPresenceViaWS, 10000);
+    presenceIntervalRef.current = setInterval(() => {
+      if (appActiveRef.current === false) return;
+      queryPresenceViaWS();
+    }, 45000);
 
     return () => {
       unsubResult?.();
@@ -17092,13 +17098,16 @@ function ChatConversationInner() {
       // since last seen). Used by both the foreground hook and a 15s safety
       // poll below.
       const runDeltaSync = () => {
-        if (!mountedRef.current || !conversationId) return;
-        (async () => {
+        if (!mountedRef.current || !conversationId) return Promise.resolve(true);
+        // [2026-10-18 poll-backoff] Devolve true/false (sucesso do chat_sync) p/ o
+        // poller único abaixo aplicar backoff exponencial em 5xx/offline.
+        return (async () => {
           try {
             const { syncConversations, applyEvents, observePts } = require('../services/chatSync');
             const results = await syncConversations([conversationId]);
             const c = results?.[0];
-            if (!c || c.denied) return;
+            if (!c) return false; // chatSync devolve [] quando todas as tentativas falharam
+            if (c.denied) return true;
             if (Array.isArray(c.events) && c.events.length > 0) {
               applyEvents(c.events, null, setMessages, c.messages || []);
               applyRosterEvents(c.events);
@@ -17117,7 +17126,8 @@ function ChatConversationInner() {
               observePts(conversationId, c.has_more ? evMax : Number(c.latest_pts));
             }
             if (c.needsFullReload) loadMessages(false);
-          } catch {}
+            return true;
+          } catch { return false; }
         })();
       };
       const unsubFg = mailWs.on('foreground', runDeltaSync);
@@ -17164,6 +17174,26 @@ function ChatConversationInner() {
       // sync is pts-based → O(0) when nothing new, so this is near-free and
       // only runs for the single OPEN conversation.
       let _lastPollAt = Date.now();
+      // [2026-10-18 poll-backoff] POLLER ÚNICO da conversa aberta (o poll de 3 s
+      // "WS caído" mais abaixo não faz mais HTTP). Incidente: um iPhone fez 9.836
+      // chat_messages em 4,5 h (a cada 1,5 s) contra 502. Agora: falha (5xx/offline
+      // → chatSync devolve []) dobra o intervalo 3 s → 6 → 12 → 24 → 48 → 60 s,
+      // respeita o Retry-After (breaker do api.js), não polla fora de 'active' e
+      // zera no 1º sucesso ou quando o WS autentica.
+      let _pollFailGap = 0;
+      let _pollInFlight = false;
+      const _pollRetryAfterMs = () => {
+        try {
+          const st = require('../services/api').getApiBackoffState?.() || {};
+          let m = 0;
+          for (const k of Object.keys(st)) if (k.indexOf('chat_sync@') === 0) m = Math.max(m, Number(st[k]?.in_ms) || 0);
+          return m;
+        } catch { return 0; }
+      };
+      const unsubPollReset = mailWs.on('connection', (d) => {
+        if (d?.status === 'authenticated') _pollFailGap = 0;
+      });
+      wsUnsubs.push(() => { try { unsubPollReset?.(); } catch {} });
       const safetyPoll = setInterval(() => {
         // [2026-10-06 rt-client] Poll de segurança ADAPTATIVO (era 3.5 s fixo /
         // 2 s zumbi = 17-30 chat_sync/min por conversa aberta, mesmo com o socket
@@ -17176,17 +17206,30 @@ function ChatConversationInner() {
         //     invisível na thread aberta quando o WS morre em silêncio;
         //   • socket saudável → 10 s (rede de segurança, ~O(0) pts-based).
         if (!appActiveRef.current) return;
+        if (_pollInFlight) return;
         const inbound = mailWs?.lastInboundAt || 0;
-        const looksZombie = !mailWs?.authenticated || (Date.now() - inbound) > 10000;
+        // [2026-10-18 battery] ping da thread aberta passou de 5 s → 25 s
+        // (websocket.js PING_CHAT_MS), então silêncio inbound de até ~31 s é
+        // normal num socket saudável; zumbi = sem frame há >40 s (o próprio pong
+        // deadline já derruba o socket morto antes disso).
+        const looksZombie = !mailWs?.authenticated || (Date.now() - inbound) > 40000;
         // [2026-10-09 net-resilience] enlace lento (2G/3G/RTT alto): socket
         // saudável → 30 s (cada poll disputa o uplink com envio/recibo); zumbi
         // → 6 s (um chat_sync leva >3.5 s nesse enlace; não empilha).
         let _lk = 'fast';
         try { _lk = require('../services/networkInfo').getLinkClass?.() || 'fast'; } catch {}
-        const gap = looksZombie ? (_lk === 'fast' ? 3500 : 6000) : (_lk === 'fast' ? 10000 : 30000);
+        // [2026-10-18 battery] socket saudável: 10 s → 30 s (cada chat_sync acorda
+        // o rádio LTE ~10 s; o WS entrega em <100 ms — isto é só rede de segurança).
+        let gap = looksZombie ? (_lk === 'fast' ? 3500 : 6000) : (_lk === 'fast' ? 30000 : 60000);
+        if (_pollFailGap > 0) gap = Math.max(gap, _pollFailGap, _pollRetryAfterMs());
         if (Date.now() - _lastPollAt >= gap) {
           _lastPollAt = Date.now();
-          runDeltaSync();
+          _pollInFlight = true;
+          Promise.resolve(runDeltaSync()).then((ok) => {
+            _pollFailGap = ok === false ? Math.min(60000, _pollFailGap ? _pollFailGap * 2 : 3000) : 0;
+          }, () => {
+            _pollFailGap = Math.min(60000, _pollFailGap ? _pollFailGap * 2 : 3000);
+          }).finally(() => { _pollInFlight = false; _lastPollAt = Date.now(); });
         }
       }, 2000);
       wsUnsubs.push(() => clearInterval(safetyPoll));
@@ -18643,15 +18686,23 @@ function ChatConversationInner() {
       // em ~167ms). A cada 2.5s reconcilia com o estado REAL do socket:
       //   • autenticado de verdade → destrava o banner na hora;
       //   • morto/sem auth → resurrect() (idempotente) força reconectar.
+      // [2026-10-18 poll-backoff] O check de estado segue a cada 2,5 s (local,
+      // sem rede), mas o resurrect só roda com o app 'active' e com backoff
+      // 2,5 s → 5 → 10 → 20 → 40 → 60 s enquanto o socket não autentica
+      // (zera quando autentica) — numa queda longa não martela o handshake.
+      let _wdKickGap = 0, _wdLastKick = 0;
       const _wsWatchdog = setInterval(() => {
         if (!mountedRef.current) return;
         try {
           if (mailWs.authenticated && mailWs.isConnected) {
+            _wdKickGap = 0;
             if (!wsConnectedRef.current) {
               if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
               setWsConnected(true); wsConnectedRef.current = true; hasEverConnectedRef.current = true;
             }
-          } else {
+          } else if (appActiveRef.current && Date.now() - _wdLastKick >= _wdKickGap) {
+            _wdLastKick = Date.now();
+            _wdKickGap = Math.min(60000, _wdKickGap ? _wdKickGap * 2 : 2500);
             try { mailWs.resurrect && mailWs.resurrect('chat-conectando-watchdog'); } catch {}
           }
         } catch {}
@@ -19193,11 +19244,17 @@ function ChatConversationInner() {
   // refresh. Poll every 6 seconds while disconnected, stop when the WS
   // comes back (the reconnect handler runs a one-shot catchup loadMessages).
   // Keeps cross-device sync (web ↔ mobile) zero-loss even under flaky WS.
+  // [2026-10-18 poll-backoff] Este laço NÃO faz mais HTTP: o poller único com
+  // backoff (safetyPoll, no effect do WS) já cobre WS caído (3,5 s → até 60 s
+  // em 5xx/offline). Aqui fica só o auto-reparo do banner (local) e o kick de
+  // reconexão, gated por AppState e com backoff próprio (3 s → 60 s).
   useEffect(() => {
     if (wsConnected) return;
     if (!conversationId) return;
+    let _kickGap = 0, _lastKick = 0;
     const iv = setInterval(() => {
       if (!mountedRef.current) return;
+      if (!appActiveRef.current) return;
       // Watchdog: if the socket actually came back but the 'authenticated'
       // event got lost (iOS suspend race, NetInfo no-fire), self-heal the
       // UI here so the "Reconectando..." banner never lingers past the
@@ -19215,12 +19272,12 @@ function ChatConversationInner() {
         }
         // Net was up but socket dead — kick a reconnect attempt so we don't
         // wait for the next NetInfo event (which on iOS often never fires).
-        if (mailWs?.ensureHealthy) {
+        if (mailWs?.ensureHealthy && Date.now() - _lastKick >= _kickGap) {
+          _lastKick = Date.now();
+          _kickGap = Math.min(60000, _kickGap ? _kickGap * 2 : 3000);
           mailWs.ensureHealthy(1000).catch(() => {});
         }
       } catch {}
-      if (wsConnectedRef.current) return;
-      try { loadMessages(false); } catch {}
     }, 3000);
     return () => clearInterval(iv);
   }, [wsConnected, conversationId, loadMessages]);

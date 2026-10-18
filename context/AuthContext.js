@@ -1252,8 +1252,17 @@ export function AuthProvider({ children }) {
     const sendLocation = async () => {
       try {
         if (Platform.OS === 'web') return;
-        const { getCurrentPositionAsync, requestForegroundPermissionsAsync } = require('expo-location');
-        const { status } = await requestForegroundPermissionsAsync();
+        // [2026-10-18 battery] Só em primeiro plano, e pede permissão UMA vez
+        // (depois só consulta) — antes pedia a cada 2 min, também em 2º plano.
+        if (AppState.currentState !== 'active') return;
+        const { getCurrentPositionAsync, requestForegroundPermissionsAsync, getForegroundPermissionsAsync } = require('expo-location');
+        let status;
+        if (!globalThis.__chatyyChildLocPermAsked) {
+          globalThis.__chatyyChildLocPermAsked = true;
+          ({ status } = await requestForegroundPermissionsAsync());
+        } else {
+          ({ status } = await getForegroundPermissionsAsync());
+        }
         if (status !== 'granted') return;
         const loc = await getCurrentPositionAsync({ accuracy: 4 }); // balanced
         const battery = -1; // TODO: get battery level

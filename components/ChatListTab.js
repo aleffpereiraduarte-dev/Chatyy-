@@ -43,6 +43,30 @@ import BackgroundSyncPill from './BackgroundSyncPill'; // [2026-10-18 bg-sync] "
 import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync]
 import WaImportBanner from './WaImportBanner'; // [2026-10-13] importação do WhatsApp visível na home
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
+// [2026-10-18 battery] Polls da lista em primeiro plano duplicavam o que o WS já
+// entrega. Com o socket AUTENTICADO eles viram rede de segurança lenta (5 min);
+// sem WS seguem na cadência antiga.
+const _LIST_SAFETY_MS = 5 * 60 * 1000;
+function _listWsAuthed() {
+  try { const w = require('../services/websocket').default; return !!(w && w.authenticated && w.isConnected); } catch { return false; }
+}
+// chat_get_notes era buscado 2× por minuto (StatusStoriesRow + ChatListTab).
+// Agora um fetch compartilhado (single-flight + reaproveita dentro de maxAgeMs),
+// por bearer (troca de conta = cache novo).
+const _notesNet = { key: '', inflight: null, at: 0, res: null };
+function _sharedNotes(maxAgeMs) {
+  let key = '';
+  try { key = String(api.getAuthToken?.() || '').slice(-24); } catch {}
+  if (_notesNet.key !== key) { _notesNet.key = key; _notesNet.inflight = null; _notesNet.at = 0; _notesNet.res = null; }
+  if (_notesNet.inflight) return _notesNet.inflight;
+  if (_notesNet.res && maxAgeMs > 0 && Date.now() - _notesNet.at < maxAgeMs) return Promise.resolve(_notesNet.res);
+  const p = Promise.resolve().then(() => api.chatGetNotes?.()).then((r) => {
+    if (_notesNet.key === key && r?.success) { _notesNet.at = Date.now(); _notesNet.res = r; }
+    return r;
+  }).finally(() => { if (_notesNet.inflight === p) _notesNet.inflight = null; });
+  _notesNet.inflight = p;
+  return p;
+}
 // [2026-10-11 boot-split] Heavy, rarely-opened surfaces are code-split: the chat
 // list is the boot screen, so StatusCamera (native-only here), the group/channel
 // creation flow, channel discovery and broadcast lists load on first open
@@ -2435,8 +2459,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // Notes still has its own loader — different endpoint, different cadence
   // (60s vs 120s), no WS. Kept inline; if/when chatGetNotes also gets a
   // WS event we can extract a `useNotes` hook.
-  const loadNotes = useCallback(() => {
-    api.chatGetNotes?.().then(r => {
+  const loadNotes = useCallback((maxAgeMs = 0) => {
+    _sharedNotes(typeof maxAgeMs === 'number' ? maxAgeMs : 0).then(r => {
       if (r?.success && r.data) {
         const list = Array.isArray(r.data) ? r.data : (r.data.notes || []);
         setNotes(list);
@@ -2451,10 +2475,11 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     loadNotes();
   }, [refetchStatuses, loadNotes]);
   // Notes mount+interval (statuses are owned by the hook).
+  // [2026-10-18 battery] Sem poll próprio: o poll de notas é o do ChatListTab
+  // (fetch compartilhado). Aqui só a carga do mount, reaproveitando um fetch
+  // recente (30 s) da outra instância.
   useEffect(() => {
-    loadNotes();
-    const stopNotesPoll = setActiveInterval(loadNotes, 60000); // [2026-10-10 perf-battery] fg-only
-    return () => stopNotesPoll();
+    loadNotes(30000);
   }, [loadNotes]);
 
   // [WAVE 93 2026-05-21] Pull-to-refresh bus subscription. Parent's onRefresh
@@ -2513,7 +2538,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       }
     };
     tick();
-    const stopLivePoll = setActiveInterval(tick, 45000); // [2026-10-10 perf-battery] fg-only
+    // [2026-10-18 battery] live_started/live_ended chegam pelo WS → com o socket
+    // autenticado o poll vira rede de segurança de 5 min; sem WS segue 45 s.
+    let _lastLiveTick = Date.now();
+    const stopLivePoll = setActiveInterval(() => {
+      if (_listWsAuthed() && Date.now() - _lastLiveTick < _LIST_SAFETY_MS) return;
+      _lastLiveTick = Date.now();
+      tick();
+    }, 45000); // [2026-10-10 perf-battery] fg-only
     return () => { cancelled = true; stopLivePoll(); };
   }, [user?.email]);
   // [2026-10-11 bughunt] Atualização instantânea do anel AO VIVO via WS
@@ -4215,8 +4247,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // Load Instagram Notes
   useEffect(() => {
     let alive = true;
-    const loadNotes = () => {
-      api.chatGetNotes().then(r => {
+    const loadNotes = (maxAgeMs = 0) => {
+      _sharedNotes(maxAgeMs).then(r => {
         if (!alive) return;
         if (r?.success) {
           setNotes(r.data?.notes || []);
@@ -4224,8 +4256,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         }
       }).catch(() => {});
     };
-    loadNotes();
-    const stopNotesPoll = setActiveInterval(loadNotes, 60000); // refresh every 60s — [2026-10-10 perf-battery] fg-only
+    loadNotes(30000);
+    // [2026-10-18 battery] ÚNICO poll de notas (o do StatusStoriesRow saiu):
+    // 60 s sem WS, 5 min com o WS autenticado.
+    const stopNotesPoll = setActiveInterval(() => {
+      loadNotes(_listWsAuthed() ? _LIST_SAFETY_MS : 50000);
+    }, 60000); // [2026-10-10 perf-battery] fg-only
     return () => { alive = false; stopNotesPoll(); };
   }, []);
 
@@ -4842,8 +4878,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     let mailWs;
     try { mailWs = require('../services/websocket').default; } catch {}
     let appActive = AppState.currentState === 'active';
+    // [2026-10-18 battery] (d) com o WS autenticado (recibos chegam em tempo
+    // real + pass imediato no resume/reconexão) o backstop vai a 5 min; sem WS 60 s.
+    let _lastReconcile = Date.now();
     const id = setInterval(() => {
-      if (appActive) { try { reconcileReceipts(); } catch {} }
+      if (!appActive) return;
+      if (_listWsAuthed() && Date.now() - _lastReconcile < _LIST_SAFETY_MS) return;
+      _lastReconcile = Date.now();
+      try { reconcileReceipts(); } catch {}
     }, 60000);
     const appSub = AppState.addEventListener('change', (s) => {
       const nowActive = (s === 'active');

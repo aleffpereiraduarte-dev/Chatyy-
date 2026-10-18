@@ -37,7 +37,11 @@ import { Platform, AppState } from 'react-native';
 // = 60s (OS may suspend us anyway, but while we're alive keep it fresh).
 // The previous 5-min cadence made pins look "1 day ago" on long sessions.
 const HEARTBEAT_FG_MS = 30 * 1000; // 30s while app is in foreground
-const HEARTBEAT_BG_MS = 60 * 1000; // 60s while app is backgrounded
+// [2026-10-18 battery] Em 2º plano o timer JS NÃO roda mais (GPS a cada 60 s
+// pelo JS = rádio+GPS acordados sem filtro de distância). Lá quem publica é a
+// tarefa do sistema (services/backgroundLocationTask.js, distanceInterval 100 m /
+// friendMapShare nativo), reconciliada uma vez ao ir p/ background.
+const HEARTBEAT_BG_MS = 60 * 1000; // (legado; não usado — ver acima)
 const MIN_POST_GAP_MS = 15 * 1000; // safety floor against overlapping posts
 
 export default function LiveLocationHeartbeat() {
@@ -166,7 +170,9 @@ export default function LiveLocationHeartbeat() {
     // against overlapping timers: if an interval at the desired period is
     // already running, it's a no-op; otherwise the old one is cleared first.
     function startInterval() {
-      const desired = appStateRef.current === 'active' ? HEARTBEAT_FG_MS : HEARTBEAT_BG_MS;
+      // [2026-10-18 battery] background → sem timer JS (a tarefa do SO assume).
+      if (appStateRef.current === 'background') { stopInterval(); return; }
+      const desired = HEARTBEAT_FG_MS;
       if (intervalRef.current && intervalMsRef.current === desired) return;
       stopInterval();
       intervalMsRef.current = desired;
@@ -181,6 +187,11 @@ export default function LiveLocationHeartbeat() {
       // = 30s, background = 60s). We keep ticking in background while alive;
       // the OS-managed task in reconcileBackground handles true suspension.
       startInterval();
+      if (next === 'background') {
+        // Garante a tarefa do SO ligada/desligada conforme as razões antes de
+        // o JS parar (sem GPS/HTTP aqui).
+        reconcileBackground().catch(() => {});
+      }
       if (next === 'active') {
         // Reconcilia a razão do mapa (cacheado 10 min) antes do tick.
         Promise.resolve(fms?.syncFriendMapShare?.()).catch(() => {}).then(() => tick().catch(() => {}));

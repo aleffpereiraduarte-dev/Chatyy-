@@ -41,6 +41,31 @@ import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf
 let _mailWs = null;
 try { _mailWs = require('../services/websocket').default; } catch {}
 
+// [2026-10-18 battery] Busca de status_list COMPARTILHADA entre instâncias do
+// hook (faixa do Feed, ChatStatusTab, ChatListTab → até 3 polls de 45 s sem
+// dedupe = ~240 status_list/h). Agora: single-flight + resultado reaproveitado
+// dentro de `maxAgeMs`, por conta. O poll de cada instância só sai pra rede se
+// o último fetch (de QUALQUER instância) estiver velho: 45 s com o WS caído,
+// 5 min (rede de segurança) com o WS autenticado — status_new/update/deleted/
+// view já chegam pelo socket.
+const STATUS_SAFETY_MS = 5 * 60 * 1000;
+const _statusNet = { email: '', inflight: null, at: 0, res: null };
+function _wsAuthed() {
+  try { return !!(_mailWs && _mailWs.authenticated && _mailWs.isConnected); } catch { return false; }
+}
+function _sharedStatusList(email, maxAgeMs) {
+  const em = String(email || '').toLowerCase();
+  if (_statusNet.email !== em) { _statusNet.email = em; _statusNet.inflight = null; _statusNet.at = 0; _statusNet.res = null; }
+  if (_statusNet.inflight) return _statusNet.inflight;
+  if (_statusNet.res && maxAgeMs > 0 && (Date.now() - _statusNet.at) < maxAgeMs) return Promise.resolve(_statusNet.res);
+  const p = Promise.resolve().then(() => api.statusList?.()).then((r) => {
+    if (_statusNet.email === em && r?.success && r.data) { _statusNet.at = Date.now(); _statusNet.res = r; }
+    return r;
+  }).finally(() => { if (_statusNet.inflight === p) _statusNet.inflight = null; });
+  _statusNet.inflight = p;
+  return p;
+}
+
 let _cacheMedia = null;
 try { _cacheMedia = require('../services/mediaCache').cacheMedia; } catch {}
 
@@ -360,6 +385,12 @@ function _broadcastViewed(statusId, stamp, origin) {
   _viewedListeners.forEach((fn) => { if (fn !== origin) { try { fn(statusId, stamp); } catch {} } });
 }
 
+// [2026-10-18 battery] Mesmo fetch compartilhado p/ o contador da aba (app/chat.js).
+export function getSharedStatusList(email, maxAgeMs) {
+  return _sharedStatusList(email, maxAgeMs);
+}
+export function isStatusWsAuthed() { return _wsAuthed(); }
+
 export default function useStatuses(currentEmail, opts = {}) {
   const {
     warmCacheVideos = true,
@@ -609,10 +640,14 @@ export default function useStatuses(currentEmail, opts = {}) {
   }, []);
   const refetchRef = useRef(null);
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (opts) => {
     if (!enabled) return;
     try {
-      const r = await api.statusList?.();
+      // [2026-10-18 battery] poll → reaproveita o fetch recente de outra
+      // instância; demais chamadas (mount, evento WS, retry) só deduplicam o
+      // que está em voo / acabou de chegar (3 s).
+      const _poll = !!(opts && opts.poll === true);
+      const r = await _sharedStatusList(currentEmail, _poll ? (_wsAuthed() ? STATUS_SAFETY_MS : Math.round(pollMs * 0.8)) : 3000);
       if (!mountedRef.current) return;
       if (!r?.success || !r.data) {
         // [silent-fail-w3] Non-success response with no data: arrange a single
@@ -666,7 +701,7 @@ export default function useStatuses(currentEmail, opts = {}) {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [currentEmail, enabled, warmCacheVideos, scheduleRetry]);
+  }, [currentEmail, enabled, warmCacheVideos, scheduleRetry, pollMs]);
 
   // Keep ref in sync so scheduleRetry can call the latest refetch without
   // depending on it (would cause a re-create loop).
@@ -729,7 +764,9 @@ export default function useStatuses(currentEmail, opts = {}) {
 
     // Belt-and-suspenders polling against a missed WS frame.
     // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
-    const stopPoll = setActiveInterval(refetch, pollMs);
+    // [2026-10-18 battery] Com o WS autenticado o tick vira no-op até o fetch
+    // compartilhado ficar com >5 min (ver _sharedStatusList).
+    const stopPoll = setActiveInterval(() => refetch({ poll: true }), pollMs);
     return () => {
       stopPoll();
       if (wsTimer) clearTimeout(wsTimer);

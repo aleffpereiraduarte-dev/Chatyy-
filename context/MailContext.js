@@ -205,9 +205,14 @@ async function getAISummaryForNotification(email, Notifications) {
 
 const MailContext = createContext(null);
 
-// Polling interval: 30s when WS connected (safety net), 10s when WS down
-const POLL_CONNECTED = 30000;
+// Polling interval: 10s when WS down. [2026-10-18 battery] Com o WS autenticado
+// o new_email chega pelo socket → o poll de 30 s (120/h com o e-mail aberto)
+// virou rede de segurança de 5 min (lista e contadores de pasta).
+const POLL_CONNECTED = 5 * 60 * 1000;
 const POLL_DISCONNECTED = 10000;
+// Refresh ao voltar p/ 'active' (ou aba visível): no máximo 1× a cada 30 s —
+// trocas rápidas de app disparavam silentRefresh + loadFolders toda vez.
+const FG_REFRESH_MIN_MS = 30000;
 // Janela em que uma resposta de /folders pode ainda não refletir uma ação local
 // (Desfazer = 5 s + POST). Ver loadFolders.
 const FOLDER_SETTLE_MS = 6500;
@@ -1833,6 +1838,7 @@ export function MailProvider({ children }) {
   // session, this whole effect stays torn down: no silentRefresh, no loadFolders
   // poll, no AppState/visibility listeners — the chat-only session stops paying.
   const folderRefreshRef = useRef(null);
+  const fgRefreshAtRef = useRef(0);
   useEffect(() => {
     if (!user?.email || !emailPollingEnabled) {
       // Paused: clear the "was enabled" latch so re-entering email does an
@@ -1854,8 +1860,8 @@ export function MailProvider({ children }) {
       clearInterval(refreshRef.current);
       clearInterval(folderRefreshRef.current);
       refreshRef.current = setInterval(silentRefresh, interval);
-      // Refresh folder counts less frequently (every 2 min when WS connected, 30s otherwise)
-      const folderInterval = wsStatus === 'authenticated' ? 120000 : 30000;
+      // Refresh folder counts less frequently (5 min when WS connected, 30s otherwise)
+      const folderInterval = wsStatus === 'authenticated' ? POLL_CONNECTED : 30000;
       folderRefreshRef.current = setInterval(loadFolders, folderInterval);
     };
     const stop = () => {
@@ -1865,9 +1871,18 @@ export function MailProvider({ children }) {
 
     start();
 
+    // [2026-10-18 battery] throttle do refresh de retorno ao primeiro plano.
+    const fgRefresh = () => {
+      const now = Date.now();
+      if (now - (fgRefreshAtRef.current || 0) < FG_REFRESH_MIN_MS) return;
+      fgRefreshAtRef.current = now;
+      try { silentRefresh(); } catch {}
+      try { loadFolders(); } catch {}
+    };
+
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const onVis = () => {
-        if (document.hidden) { stop(); } else { silentRefresh(); loadFolders(); start(); }
+        if (document.hidden) { stop(); } else { fgRefresh(); start(); }
       };
       document.addEventListener('visibilitychange', onVis);
       return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
@@ -1885,8 +1900,7 @@ export function MailProvider({ children }) {
       if (AppState.currentState === 'background') stop();
       const sub = AppState.addEventListener('change', (next) => {
         if (next === 'active') {
-          try { silentRefresh(); } catch {}
-          try { loadFolders(); } catch {}
+          fgRefresh();
           start();
         } else if (next === 'background') {
           stop();

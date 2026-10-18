@@ -28,6 +28,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { IconPhone, IconVideo } from './Icons';
+import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-18 battery]
 
 const POLL_MS = 20000;
 
@@ -68,11 +69,14 @@ export default function OngoingCallChip({ conversationId, refreshKey }) {
   useFocusEffect(useCallback(() => {
     aliveRef.current = true;
     probe();
-    pollTimerRef.current = setInterval(probe, POLL_MS);
+    // [2026-10-18 battery] setActiveInterval: pausa em 2º plano (o foco da tela
+    // não muda quando o app vai p/ background, então o poll de 20 s seguia
+    // rodando) e re-sonda ao voltar se ≥20 s passaram.
+    pollTimerRef.current = setActiveInterval(probe, POLL_MS);
     return () => {
       aliveRef.current = false;
       if (pollTimerRef.current) {
-        try { clearInterval(pollTimerRef.current); } catch {}
+        try { pollTimerRef.current(); } catch {}
         pollTimerRef.current = null;
       }
     };

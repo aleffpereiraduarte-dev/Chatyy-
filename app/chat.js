@@ -670,7 +670,13 @@ function ChatHub() {
         // Status: count groups (other users) with at least one unseen item.
         if (activeTab !== 'status') {
           try {
-            const r = await api.statusList?.().catch(() => null);
+            // [2026-10-18 battery] fetch compartilhado com os useStatuses montados
+            // (sem status_list duplicado): reaproveita até 5 min com WS autenticado.
+            let r = null;
+            try {
+              const us = require('../hooks/useStatuses');
+              r = await us.getSharedStatusList(user?.email || '', us.isStatusWsAuthed() ? 300000 : 50000).catch(() => null);
+            } catch { r = await api.statusList?.().catch(() => null); }
             if (!cancelled) {
               const groups = r?.data?.statuses || r?.data?.groups || r?.data || [];
               const me = (user?.email || '').toLowerCase();
@@ -731,7 +737,15 @@ function ChatHub() {
     const last = badgeLastRefreshRef.current;
     if (!last) firstTimer = setTimeout(refresh, 1500);
     else if (Date.now() - last >= 15000) refresh();
-    const stopPoll = setActiveInterval(refresh, 60000);
+    // [2026-10-18 battery] Com o WS autenticado o contador de conversas já vem
+    // do estado local (unreadBadge) e status pelo socket → loop vira rede de
+    // segurança de 5 min; sem WS segue 60 s.
+    const stopPoll = setActiveInterval(() => {
+      let authed = false;
+      try { const w = require('../services/websocket').default; authed = !!(w && w.authenticated && w.isConnected); } catch {}
+      if (authed && Date.now() - (badgeLastRefreshRef.current || 0) < 300000) return;
+      refresh();
+    }, 60000);
     return () => { cancelled = true; if (firstTimer) clearTimeout(firstTimer); stopPoll(); };
   }, [activeTab, user?.email]);
 
