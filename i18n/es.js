@@ -5880,6 +5880,8 @@ export default {
   'chatConv.quoteText': 'Fragmento (máx 240 caracteres)',
   'chatConv.quotePlaceholder': 'Pega o escribe el fragmento aquí...',
   'chatConv.scrollToBottom': 'Ir al final',
+  'chatConv.jumpToMention': 'Ir a la mención',
+  'chatConv.jumpToReaction': 'Ir a la reacción',
   'chatConv.stickers': 'Stickers',
   'chatConv.gif': 'GIF',
   'chatConv.attach': 'Adjuntar',

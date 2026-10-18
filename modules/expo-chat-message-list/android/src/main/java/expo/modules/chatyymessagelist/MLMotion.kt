@@ -33,6 +33,8 @@ object MLMotion {
   var react = true
   var sticky = true
   var audio = true
+  /** [2026-10-18 tg-list, apiVersion 11] c: ponteiros do relógio do pendente giram após ~300 ms */
+  var clock = true
 
   fun apply(m: Map<String, Any?>?) {
     fun on(k: String): Boolean {
@@ -45,6 +47,7 @@ object MLMotion {
     react = on("r")
     sticky = on("s")
     audio = on("a")
+    clock = on("c")
   }
 
   /** Animações do sistema ligadas (Acessibilidade → remover animações = false). */
@@ -66,6 +69,13 @@ object MLMotion {
  */
 class MLItemAnimator(private val sideOf: (RecyclerView.ViewHolder) -> Int) : DefaultItemAnimator() {
   var style = 0
+  /**
+   * [2026-10-18 tg-list, apiVersion 11] morph do envio (prepareSend): devolve o
+   * início {dx, dy, scaleX, pivotX, pivotY} da célula enviada mais nova (o balão
+   * sai do retângulo do compositor) ou null = entrada padrão.
+   */
+  var morphFrom: ((RecyclerView.ViewHolder) -> FloatArray?)? = null
+  private val morphing = HashSet<RecyclerView.ViewHolder>()
 
   private class Run(val holder: RecyclerView.ViewHolder, val kind: Int) {
     // kind: 0 add, 1 remove, 2 move
@@ -105,10 +115,20 @@ class MLItemAnimator(private val sideOf: (RecyclerView.ViewHolder) -> Int) : Def
     } else {
       when (sideOf(holder)) {
         1 -> {
-          // enviada: sai do composer (34 dp abaixo, .9 ancorada direita-baixo)
-          v.pivotX = b?.right ?: w; v.pivotY = b?.bottom ?: h
-          v.scaleX = 0.9f; v.scaleY = 0.9f
-          v.translationX = -dp(v, 14f); v.translationY = dp(v, 34f)
+          val m = try { morphFrom?.invoke(holder) } catch (_: Throwable) { null }
+          if (m != null && m.size >= 5) {
+            // [tg-list] balão nasce no retângulo do compositor e vai ao lugar (mola sem overshoot)
+            v.pivotX = m[3]; v.pivotY = m[4]
+            v.scaleX = m[2]; v.scaleY = 1f
+            v.translationX = m[0]; v.translationY = m[1]
+            v.alpha = 0.6f
+            morphing.add(holder)
+          } else {
+            // enviada: sai do composer (34 dp abaixo, .9 ancorada direita-baixo)
+            v.pivotX = b?.right ?: w; v.pivotY = b?.bottom ?: h
+            v.scaleX = 0.9f; v.scaleY = 0.9f
+            v.translationX = -dp(v, 14f); v.translationY = dp(v, 34f)
+          }
         }
         0 -> {
           v.pivotX = b?.left ?: 0f; v.pivotY = b?.bottom ?: h
@@ -209,13 +229,16 @@ class MLItemAnimator(private val sideOf: (RecyclerView.ViewHolder) -> Int) : Def
       val v = h.itemView
       val run = Run(h, 0)
       running[h] = run
-      if (v.translationX != 0f) spring(v, DynamicAnimation.TRANSLATION_X, 0f, stiff, damp, 1f, run)
-      if (v.translationY != 0f) spring(v, DynamicAnimation.TRANSLATION_Y, 0f, stiff, damp, 1f, run)
-      if (v.scaleX != 1f) spring(v, DynamicAnimation.SCALE_X, 1f, stiff, damp, DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE, run)
-      if (v.scaleY != 1f) spring(v, DynamicAnimation.SCALE_Y, 1f, stiff, damp, DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE, run)
+      val morph = morphing.remove(h)
+      val st = if (morph) 380f else stiff
+      val dm = if (morph) 0.95f else damp
+      if (v.translationX != 0f) spring(v, DynamicAnimation.TRANSLATION_X, 0f, st, dm, 1f, run)
+      if (v.translationY != 0f) spring(v, DynamicAnimation.TRANSLATION_Y, 0f, st, dm, 1f, run)
+      if (v.scaleX != 1f) spring(v, DynamicAnimation.SCALE_X, 1f, st, dm, DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE, run)
+      if (v.scaleY != 1f) spring(v, DynamicAnimation.SCALE_Y, 1f, st, dm, DynamicAnimation.MIN_VISIBLE_CHANGE_SCALE, run)
       // opacidade chega a 1 cedo (≈ 35% da mola, como o JS)
       val a = ValueAnimator.ofFloat(v.alpha, restAlpha(v))
-      a.duration = if (edit) 200 else 110
+      a.duration = if (edit) 200 else if (morph) 160 else 110
       a.addUpdateListener { v.alpha = it.animatedValue as Float }
       run.left++
       a.addListener(object : AnimatorListenerAdapter() {
@@ -258,6 +281,7 @@ class MLItemAnimator(private val sideOf: (RecyclerView.ViewHolder) -> Int) : Def
   /** Encerra (vai ao estado final) o que estiver rodando/pendente nesta célula. */
   private fun endMine(holder: RecyclerView.ViewHolder) {
     val v = holder.itemView
+    morphing.remove(holder)
     if (pendingAdds.remove(holder)) {
       v.alpha = restAlpha(v); v.translationX = 0f; v.translationY = 0f; v.scaleX = 1f; v.scaleY = 1f
       dispatchAddFinished(holder)

@@ -103,6 +103,29 @@ final class CMLSwipeDelegate: NSObject, UIGestureRecognizerDelegate {
   }
 }
 
+/// [2026-10-18 tg-list] toque simples espera o duplo SÓ nas bolhas de texto/figurinha.
+final class CMLTapDelegate: NSObject, UIGestureRecognizerDelegate {
+  weak var owner: CMLListView?
+  func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    owner?.noteTapTouch(touch)
+    return true
+  }
+  func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+    return owner?.tapShouldWait(for: other) ?? false
+  }
+}
+
+/// [2026-10-18 tg-list] toque duplo (reação rápida) e arrastar-p/-selecionar.
+final class CMLTgGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+  weak var owner: CMLListView?
+  func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    return owner?.tgShouldBegin(g) ?? false
+  }
+  func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    return owner?.tgShouldReceive(g, touch) ?? false
+  }
+}
+
 public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching, CMLTransferObserver {
   let onReady = EventDispatcher()
   let onNativeError = EventDispatcher()
@@ -121,6 +144,10 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   let onStore = EventDispatcher()
   // [native-media-dl] download nativo de mídia (apiVersion 5)
   let onMediaTransfer = EventDispatcher()
+  // [2026-10-18 tg-list] apiVersion 11
+  let onSelectRange = EventDispatcher()
+  let onOverlayPress = EventDispatcher()
+  let onQuickReact = EventDispatcher()
   private let hapticSoft = UIImpactFeedbackGenerator(style: .light)
 
   private let flow = CMLFlowLayout()
@@ -217,6 +244,37 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   // VoiceOver (prop a11y {reply, react, copy, forward, more, hint}); vazio =
   // binário novo com JS antigo → sem ações (só o rótulo, como antes).
   private var a11yNames: [String: String] = [:]
+  // MARK: [2026-10-18 tg-list, apiVersion 11] estado
+  // busca
+  private var searchTokens: [String] = []
+  private var searchIds = Set<String>()
+  private var searchCur = ""
+  private var searchCache: [String: (String, [NSRange])] = [:]
+  // modo seleção (alguma linha com sel > 0) / arrastar-p/-selecionar
+  private var selMode = false
+  private var dragSelectOn = false
+  private var selPan: UIPanGestureRecognizer!
+  private let tgDelegate = CMLTgGestureDelegate()
+  private var dragAnchorKey: String?
+  private var dragOn = true
+  private var dragRange: [String] = []
+  private var dragPreview: [String: Int] = [:]
+  private var dragLastPoint: CGPoint = .zero  // coordenadas da própria view
+  private var dragLink: CADisplayLink?
+  private let selHaptic = UISelectionFeedbackGenerator()
+  // overlay inferior
+  private let overlay = CMLOverlayView()
+  // morph do envio
+  private var sendRect: CGRect?
+  private var sendRectAt: CFTimeInterval = 0
+  private var morphKey: String?
+  private var morphGhost: UIView?
+  // toque duplo
+  private var quickOn = false
+  private var quickEmoji = "\u{2764}\u{FE0F}"
+  private var dblTap: UITapGestureRecognizer!
+  private let tapDelegate = CMLTapDelegate()
+  private var tapWaits = false
   private static let a11yOrder: [(Int, String)] = [(1, "reply"), (2, "react"), (4, "copy"), (8, "forward"), (16, "more")]
 
   public required init(appContext: AppContext? = nil) {
@@ -252,8 +310,10 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
         return cell
       }
       cell.isHidden = false
-      let extra = CMLCellExtra(revealed: self.revealedKeys.contains(key), lifted: self.liftedKey == key)
+      let extra = CMLCellExtra(revealed: self.revealedKeys.contains(key), lifted: self.liftedKey == key || self.morphKey == key)
       cell.configure(key: key, row: row, layout: L, style: s, audioState: self.audioState, extra: extra)
+      self.applySearchTo(cell, key: key, row: row)
+      if let pv = self.dragPreview[key] { cell.previewSel(pv) }
       cell.onVideoNote = { [weak self] k, st in
         guard let self = self else { return }
         self.onRowPress(["key": k, "part": "vnote", "url": st])
@@ -283,10 +343,28 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     cv.addGestureRecognizer(longPress)
     cv.addGestureRecognizer(swipe)
     cv.panGestureRecognizer.require(toFail: swipe)
+    // [2026-10-18 tg-list] toque duplo (reação rápida) — o simples só espera por ele
+    // nas bolhas elegíveis (delegate shouldRequireFailureOf); foto/vídeo seguem na hora.
+    tapDelegate.owner = self
+    tap.delegate = tapDelegate
+    tgDelegate.owner = self
+    dblTap = UITapGestureRecognizer(target: self, action: #selector(onDoubleTap(_:)))
+    dblTap.numberOfTapsRequired = 2
+    dblTap.cancelsTouchesInView = false
+    dblTap.delegate = tgDelegate
+    cv.addGestureRecognizer(dblTap)
+    // [2026-10-18 tg-list] arrastar na calha esquerda no modo seleção
+    selPan = UIPanGestureRecognizer(target: self, action: #selector(onSelPan(_:)))
+    selPan.maximumNumberOfTouches = 1
+    selPan.delegate = tgDelegate
+    cv.addGestureRecognizer(selPan)
+    cv.panGestureRecognizer.require(toFail: selPan)
     applyInsets()
     sticky.isHidden = true
     sticky.alpha = 0
     addSubview(sticky)
+    overlay.onPress = { [weak self] k in self?.onOverlayPress(["kind": k]) }
+    addSubview(overlay)
     CMLListView.cleanupLiftFiles()
     CMLTransfers.shared.addObserver(self)
     // [wave13-C a11y] Dynamic Type / "Escurecer cores" mudados com a tela aberta → refaz o estilo
@@ -551,6 +629,8 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
 
   func setTheme(_ d: [String: Any]) {
     theme = CMLTheme(dict: d)
+    overlay.wall = theme.wall
+    overlay.refreshLook()
     markStyleDirty()
   }
 
@@ -569,6 +649,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   func setInsets(bottom: Double?, top: Double?) {
     if let b = bottom { bottomInset = CGFloat(b) }
     if let t = top { topInset = CGFloat(t) }
+    overlay.bottomInset = bottomInset
     applyInsets()
   }
 
@@ -590,6 +671,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
 
   public override func layoutSubviews() {
     super.layoutSubviews()
+    if overlay.frame != bounds { overlay.frame = bounds }
     if !sticky.isHidden {
       let sz = sticky.intrinsic
       // bounds+center: [motion-conv] a pílula pode estar com transform (entrada/saída)
@@ -793,12 +875,21 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     if !reconf.isEmpty { snap.reconfigureItems(reconf) }
 
     applied = newKeys
+    updateSelMode()
     for k in changedSinceApply { if let h = layouts[k]?.height { appliedHeights[k] = h } }
     for k in newKeys where appliedHeights[k] == nil { appliedHeights[k] = layouts[k]?.height }
     changedSinceApply.removeAll()
     pendingAnim = false
 
     if heightChanged { flow.invalidateLayout() }
+    // [2026-10-18 tg-list] morph do envio: a enviada nova "sai" do campo do compositor
+    var morph: String? = nil
+    if animate && CMLMotion.insert, let k = newKeys.first, !oldSet.contains(k), let r = rows[k], r.kind == .msg, r.own,
+       sendRect != nil, CACurrentMediaTime() - sendRectAt < 1.5 {
+      morph = k
+      morphKey = k
+    }
+    if !orderSame, let k = newKeys.first, !oldSet.contains(k), rows[k]?.own == true, morph == nil { sendRect = nil }
     flow.animateInsert = animate || editAnim
     flow.motionStyle = editAnim ? 2 : (animate && CMLMotion.insert ? 1 : 0)
     if animate || editAnim {
@@ -821,6 +912,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       }
       // fica grudado no fim enquanto anima
       if animate || atBottom { cv.setContentOffset(CGPoint(x: 0, y: -cv.adjustedContentInset.top), animated: false) }
+      if let mk = morph { runSendMorph(mk) }
     } else {
       UIView.performWithoutAnimation {
         ds.apply(snap, animatingDifferences: false)
@@ -1082,6 +1174,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
 
   private func emitScroll(force: Bool) {
     let d = max(0, distanceFromLatest)
+    if overlay.isOn { overlay.setFar(d > 300) }
     let cls = d <= 6 ? 0 : (d <= 120 ? 1 : (d <= 300 ? 2 : 3))
     let now = CACurrentMediaTime()
     if !force && cls == lastDistClass && now - lastScrollEmit < 0.066 { return }
@@ -1314,11 +1407,13 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     ov.onDismissed = { [weak self, weak ov] reason in
       guard let self = self else { return }
       if let o = ov, self.ctxOverlay === o { self.ctxOverlay = nil }
+      self.overlay.setBlocked(self.selMode || self.ctxOverlay != nil)
       if self.liftedKey == key { self.setLiftedKey("") }
       self.onMenuDismiss(["key": key, "reason": reason])
       self.checkPendingPop()
     }
     ctxOverlay = ov
+    overlay.setBlocked(true)
     setLiftedKey(key)
     ov.present(in: win)
     return true
@@ -1369,6 +1464,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       ov.dismiss(reason: "detach", animated: false)
     }
     if window == nil { persistNow() } // [native-store] saiu da conversa → grava já
+    if window == nil { stopDragLink(); morphGhost?.removeFromSuperview(); morphGhost = nil; finishMorph() }
   }
 
   func swipeShouldBegin() -> Bool {
@@ -1437,5 +1533,337 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     default:
       break
     }
+  }
+}
+
+// MARK: - [2026-10-18 tg-list, apiVersion 11] busca · arrastar-p/-selecionar ·
+// overlay inferior · morph do envio · toque duplo p/ reagir
+
+extension CMLListView {
+  // MARK: busca
+
+  /// {term, ids, cur, scroll}: realça os termos nas bolhas que bateram; cur = resultado atual.
+  func setSearch(_ d: [String: Any]) {
+    let term = CMLRow.str(d["term"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    searchTokens = term.isEmpty ? [] : CMLSearchHL.tokens(term)
+    var ids = Set<String>()
+    if let arr = d["ids"] as? [Any] {
+      for v in arr {
+        let s = CMLRow.str(v)
+        if !s.isEmpty { ids.insert(s) }
+      }
+    }
+    searchIds = searchTokens.isEmpty ? [] : ids
+    searchCur = searchTokens.isEmpty ? "" : CMLRow.str(d["cur"])
+    searchCache.removeAll()
+    for c in cv.visibleCells {
+      guard let cell = c as? CMLCell, let row = cell.row else { continue }
+      applySearchTo(cell, key: cell.key, row: row)
+    }
+    if CMLRow.bool(d["scroll"]), !searchCur.isEmpty, let k = keyForMessage(searchCur) {
+      _ = scrollToKey(k, viewPosition: 0.5, animated: true)
+    }
+  }
+
+  fileprivate func keyForMessage(_ mid: String) -> String? {
+    for k in applied {
+      guard let r = rows[k], r.kind == .msg else { continue }
+      if r.id == mid { return k }
+      if !r.album.isEmpty && r.album.contains(where: { $0.id == mid }) { return k }
+    }
+    return nil
+  }
+
+  func applySearchTo(_ cell: CMLCell, key: String, row: CMLRow) {
+    guard !searchTokens.isEmpty, row.kind == .msg, !row.deleted, searchIds.contains(row.id),
+          let text = cell.displayedText, !text.isEmpty else {
+      if !cell.textView.marks.isEmpty { cell.applySearch([], cur: false) }
+      return
+    }
+    let r: [NSRange]
+    if let c = searchCache[key], c.0 == text {
+      r = c.1
+    } else {
+      r = CMLSearchHL.ranges(in: text, tokens: searchTokens)
+      if searchCache.count > 500 { searchCache.removeAll() }
+      searchCache[key] = (text, r)
+    }
+    cell.applySearch(r, cur: row.id == searchCur)
+  }
+
+  // MARK: modo seleção
+
+  func updateSelMode() {
+    var sm = false
+    for k in applied {
+      if let r = rows[k], r.kind == .msg { sm = r.sel > 0; break }
+    }
+    if sm != selMode {
+      selMode = sm
+      if !sm { endDrag(cancelled: true) }
+    }
+    overlay.setBlocked(selMode || ctxOverlay != nil)
+  }
+
+  func setDragSelect(_ on: Bool) {
+    dragSelectOn = on
+    if !on { endDrag(cancelled: true) }
+  }
+
+  // MARK: gestos novos (delegate)
+
+  func tgShouldReceive(_ g: UIGestureRecognizer, _ touch: UITouch) -> Bool {
+    // calha decidida no shouldBegin (como o arrastar-p/-responder): recebe sempre,
+    // falha na hora fora da calha/do modo seleção → o scroll não espera nada.
+    if g === selPan { return true }
+    guard storeInteractive else { return false }
+    if g === dblTap {
+      guard quickOn, !selMode else { return false }
+      return quickEligible(at: touch.location(in: cv))
+    }
+    return false
+  }
+
+  func tgShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    guard storeInteractive else { return false }
+    if g === selPan {
+      guard dragSelectOn, selMode, selPan.location(in: self).x < 80 else { return false }
+      // ponto do toque inicial (location - translation)
+      let loc = selPan.location(in: self)
+      let tr = selPan.translation(in: self)
+      let start = CGPoint(x: loc.x - tr.x, y: loc.y - tr.y)
+      if start.x >= 56 { return false }
+      guard let k = keyAtListPoint(start), let r = rows[k], r.kind == .msg, r.sel > 0 else { return false }
+      dragAnchorKey = k
+      return true
+    }
+    if g === dblTap {
+      guard quickOn, !selMode else { return false }
+      return quickEligible(at: g.location(in: cv))
+    }
+    return true
+  }
+
+  /// Linha sob um ponto (coordenadas da própria view); x é ignorado (largura toda).
+  fileprivate func keyAtListPoint(_ p: CGPoint) -> String? {
+    let pcv = cv.convert(CGPoint(x: bounds.midX, y: p.y), from: self)
+    guard let ip = cv.indexPathForItem(at: pcv) else { return nil }
+    return ds.itemIdentifier(for: ip)
+  }
+
+  // MARK: arrastar-p/-selecionar
+
+  @objc func onSelPan(_ g: UIPanGestureRecognizer) {
+    switch g.state {
+    case .began:
+      guard let ak = dragAnchorKey, let r = rows[ak] else { g.isEnabled = false; g.isEnabled = true; return }
+      dragOn = r.sel != 2
+      dragRange = []
+      clearDragPreview()
+      selHaptic.prepare()
+      dragLastPoint = g.location(in: self)
+      updateDragRange()
+      startDragLink()
+    case .changed:
+      dragLastPoint = g.location(in: self)
+      updateDragRange()
+    case .ended, .cancelled, .failed:
+      endDrag(cancelled: false)
+    default:
+      break
+    }
+  }
+
+  fileprivate func updateDragRange() {
+    guard let ak = dragAnchorKey, let aip = ds.indexPath(for: ak) else { return }
+    guard let ck = keyAtListPoint(dragLastPoint), let cip = ds.indexPath(for: ck) else { return }
+    let lo = min(aip.item, cip.item), hi = max(aip.item, cip.item)
+    guard lo >= 0, hi < applied.count else { return }
+    var keys: [String] = []
+    var i = hi
+    // ordem da tela: de cima (mais antiga) p/ baixo
+    while i >= lo {
+      let k = applied[i]
+      if let r = rows[k], r.kind == .msg, r.sel > 0 { keys.append(k) }
+      i -= 1
+    }
+    if keys == dragRange { return }
+    let oldSet = Set(dragRange)
+    let newSet = Set(keys)
+    dragRange = keys
+    selHaptic.selectionChanged()
+    selHaptic.prepare()
+    let v = dragOn ? 2 : 1
+    for k in oldSet.subtracting(newSet) {
+      dragPreview[k] = nil
+      visibleCell(k)?.previewSel(nil)
+    }
+    for k in newSet where dragPreview[k] != v {
+      dragPreview[k] = v
+      visibleCell(k)?.previewSel(v)
+    }
+    onSelectRange(["keys": keys, "on": dragOn ? 1 : 0, "end": 0])
+  }
+
+  fileprivate func endDrag(cancelled: Bool) {
+    stopDragLink()
+    guard dragAnchorKey != nil else { return }
+    dragAnchorKey = nil
+    if !dragRange.isEmpty || !cancelled {
+      onSelectRange(["keys": dragRange, "on": dragOn ? 1 : 0, "end": 1])
+    }
+    dragRange = []
+    // a prévia some quando o JS confirmar (ou em 0,8 s, se não vier nada)
+    let snap = dragPreview
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+      guard let self = self, self.dragAnchorKey == nil else { return }
+      for (k, v) in snap where self.dragPreview[k] == v {
+        self.dragPreview[k] = nil
+        self.visibleCell(k)?.previewSel(nil)
+      }
+    }
+  }
+
+  fileprivate func clearDragPreview() {
+    let ks = Array(dragPreview.keys)
+    dragPreview.removeAll()
+    for k in ks { visibleCell(k)?.previewSel(nil) }
+  }
+
+  fileprivate func startDragLink() {
+    if dragLink != nil { return }
+    let l = CADisplayLink(target: CMLWeakLink(self) { obj in
+      (obj as? CMLListView)?.dragTick()
+    }, selector: #selector(CMLWeakLink.tick(_:)))
+    l.add(to: .main, forMode: .common)
+    dragLink = l
+  }
+
+  func stopDragLink() {
+    dragLink?.invalidate()
+    dragLink = nil
+  }
+
+  /// Auto-rolagem perto das bordas (lista invertida: offset maior = mais antigas = topo).
+  fileprivate func dragTick() {
+    guard dragAnchorKey != nil, window != nil else { stopDragLink(); return }
+    let edge: CGFloat = 60
+    let y = dragLastPoint.y
+    var dy: CGFloat = 0
+    if y < edge { dy = (edge - max(0, y)) / edge * 14 }
+    else if y > bounds.height - edge { dy = -(y - (bounds.height - edge)) / edge * 14 }
+    if abs(dy) < 0.5 { return }
+    let minO = -cv.adjustedContentInset.top
+    let maxO = max(minO, cv.contentSize.height + cv.adjustedContentInset.bottom - cv.bounds.height)
+    let o = max(minO, min(maxO, cv.contentOffset.y + dy))
+    if abs(o - cv.contentOffset.y) < 0.1 { return }
+    cv.contentOffset = CGPoint(x: 0, y: o)
+    updateDragRange()
+  }
+
+  // MARK: overlay inferior
+
+  func setOverlay(_ d: [String: Any]?) {
+    overlay.wall = theme.wall
+    overlay.apply(d)
+    overlay.setFar(distanceFromLatest > 300)
+    overlay.setBlocked(selMode || ctxOverlay != nil)
+    bringSubviewToFront(overlay)
+  }
+
+  // MARK: morph do envio
+
+  func prepareSend(_ d: [String: Any]) {
+    let x = CMLRow.num(d["x"]), y = CMLRow.num(d["y"]), w = CMLRow.num(d["w"]), h = CMLRow.num(d["h"])
+    if let x = x, let y = y, let w = w, let h = h, w > 1, h > 1 {
+      sendRect = CGRect(x: x, y: y, width: w, height: h)
+    } else {
+      sendRect = nil
+    }
+    sendRectAt = CACurrentMediaTime()
+  }
+
+  /// A bolha nova (escondida via morphKey) é desenhada num "fantasma" na janela que
+  /// sai do retângulo do compositor e assenta no lugar final; depois a real aparece.
+  func runSendMorph(_ key: String) {
+    guard let rect = sendRect, window != nil else { finishMorph(); return }
+    sendRect = nil
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+      guard let self = self, self.morphKey == key else { return }
+      self.morphGhost?.removeFromSuperview(); self.morphGhost = nil
+      self.finishMorph()
+    }
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, self.morphKey == key, let win = self.window else { return }
+      guard let ip = self.ds.indexPath(for: key), let cell = self.cv.cellForItem(at: ip) as? CMLCell,
+            let L = cell.layoutInfo, let a = self.cv.layoutAttributesForItem(at: ip), let shot = cell.liftSnapshot() else {
+        self.finishMorph(); return
+      }
+      let cellWin = self.cv.convert(a.frame, to: nil)
+      let dest = CGRect(x: cellWin.minX + L.bubbleFrame.minX, y: cellWin.minY + L.bubbleFrame.minY,
+                        width: L.bubbleFrame.width, height: L.bubbleFrame.height)
+      guard dest.width > 1, dest.height > 1 else { self.finishMorph(); return }
+      let sx = max(0.6, min(1, rect.width / dest.width))
+      let w0 = dest.width * sx
+      let start = CGRect(x: rect.maxX - w0, y: rect.maxY - dest.height, width: w0, height: dest.height)
+      let ghost = UIImageView(image: shot.0)
+      ghost.contentMode = .scaleToFill
+      ghost.isUserInteractionEnabled = false
+      ghost.frame = start
+      ghost.alpha = 0.6
+      win.addSubview(ghost)
+      self.morphGhost?.removeFromSuperview()
+      self.morphGhost = ghost
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        ghost.frame = dest
+        ghost.alpha = 1
+      }, completion: { [weak self, weak ghost] _ in
+        guard let self = self else { ghost?.removeFromSuperview(); return }
+        if self.morphKey == key { self.finishMorph() }
+        ghost?.removeFromSuperview()
+        if self.morphGhost === ghost { self.morphGhost = nil }
+      })
+    }
+  }
+
+  func finishMorph() {
+    guard let k = morphKey else { return }
+    morphKey = nil
+    if liftedKey != k, let c = visibleCell(k) { c.setLifted(false, animated: false) }
+  }
+
+  // MARK: toque duplo p/ reagir
+
+  func setQuickReact(_ d: [String: Any]?) {
+    quickOn = d != nil && CMLRow.bool(d?["on"])
+    let e = CMLRow.str(d?["e"])
+    quickEmoji = e.isEmpty ? "\u{2764}\u{FE0F}" : e
+  }
+
+  fileprivate func quickEligible(at p: CGPoint) -> Bool {
+    guard let ip = cv.indexPathForItem(at: p), let cell = cv.cellForItem(at: ip) as? CMLCell, let row = cell.row else { return false }
+    guard CMLCell.quickReactEligible(row) else { return false }
+    let pc = cell.contentView.convert(p, from: cv)
+    switch cell.part(at: pc) {
+    case .none, .retry, .reaction: return false
+    default: return true
+    }
+  }
+
+  func noteTapTouch(_ touch: UITouch) {
+    tapWaits = quickOn && !selMode && storeInteractive && quickEligible(at: touch.location(in: cv))
+  }
+
+  func tapShouldWait(for other: UIGestureRecognizer) -> Bool {
+    return other === dblTap && tapWaits
+  }
+
+  @objc func onDoubleTap(_ g: UITapGestureRecognizer) {
+    guard g.state == .ended, quickOn, !selMode, storeInteractive else { return }
+    let p = g.location(in: cv)
+    guard quickEligible(at: p), let ip = cv.indexPathForItem(at: p), let cell = cv.cellForItem(at: ip) as? CMLCell, let row = cell.row else { return }
+    hapticSoft.impactOccurred()
+    cell.popQuickReact(quickEmoji)
+    onQuickReact(["key": cell.key, "messageId": row.id, "emoji": quickEmoji])
   }
 }

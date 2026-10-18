@@ -43,8 +43,28 @@ final class CMLTextView: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+  /// [2026-10-18 tg-list, apiVersion 11] realce da busca (intervalos UTF-16 do layout.attr)
+  private(set) var marks: [NSRange] = []
+  private var markColor: UIColor = .clear
+
+  func setMarks(_ r: [NSRange], color: UIColor) {
+    if r == marks && (r.isEmpty || markColor == color) { return }
+    marks = r
+    markColor = color
+    setNeedsDisplay()
+  }
+
   override func draw(_ rect: CGRect) {
     guard let l = layout, let ctx = UIGraphicsGetCurrentContext() else { return }
+    if !marks.isEmpty {
+      ctx.saveGState()
+      ctx.setFillColor(markColor.cgColor)
+      for r in CMLSearchHL.rects(l, marks) {
+        ctx.addPath(UIBezierPath(roundedRect: r, cornerRadius: 3).cgPath)
+      }
+      ctx.fillPath()
+      ctx.restoreGState()
+    }
     CMLTextView.drawText(l, in: ctx, origin: .zero, height: bounds.height, spoiler: spoiler, onMissingEmoji: { [weak self] u, px in
       self?.requestEmoji(u, px)
     })
@@ -193,6 +213,99 @@ final class CMLMetaView: UIView {
   private var link: CADisplayLink?
   private static let statusAnimDur: CFTimeInterval = 0.42
 
+  // MARK: [2026-10-18 tg-list, apiVersion 11] relógio do pendente "vivo":
+  // ponteiros parados nos primeiros ~300 ms; depois minutos 1 volta/1,2 s e
+  // horas 1 volta/7,2 s (CABasicAnimation com beginTime no futuro — sem timer).
+  private var handM: CAShapeLayer?
+  private var handH: CAShapeLayer?
+  private var spinOn = false
+  /// chave → 1ª vez que esta linha foi vista pendente (sobrevive à reciclagem da célula)
+  private static var pendingSince: [String: CFTimeInterval] = [:]
+
+  static func pendingStart(_ key: String) -> CFTimeInterval {
+    let now = CACurrentMediaTime()
+    if let t = pendingSince[key] { return t }
+    if pendingSince.count > 400 { pendingSince = pendingSince.filter { now - $0.value < 120 } }
+    pendingSince[key] = now
+    return now
+  }
+
+  static func clearPending(_ key: String) { pendingSince.removeValue(forKey: key) }
+
+  /// Centro do ícone de status (mesma conta do draw).
+  private func statusCenter() -> CGPoint {
+    var x: CGFloat = pill ? 6 : 0
+    if meta.pin { x += 13 }
+    if meta.timer { x += 13 }
+    if let t = meta.text { x += t.size.width }
+    if meta.star { x += 13 }
+    x += 3
+    return CGPoint(x: x + 6, y: bounds.height / 2)
+  }
+
+  /// on = pendente com animação ligada; key = linha (p/ contar os 300 ms).
+  func setClockSpin(_ on: Bool, key: String) {
+    guard on, meta.status == 0 else {
+      if spinOn {
+        spinOn = false
+        handM?.removeFromSuperlayer(); handM = nil
+        handH?.removeFromSuperlayer(); handH = nil
+        setNeedsDisplay()
+      }
+      return
+    }
+    let t0 = CMLMetaView.pendingStart(key)
+    let m = handM ?? CAShapeLayer()
+    let h = handH ?? CAShapeLayer()
+    let c = statusCenter()
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    for (l, end) in [(m, CGPoint(x: 6, y: 6 - 3.2)), (h, CGPoint(x: 6 + 2.4, y: 6 + 1))] {
+      l.bounds = CGRect(x: 0, y: 0, width: 12, height: 12)
+      l.position = c
+      let p = UIBezierPath()
+      p.move(to: CGPoint(x: 6, y: 6))
+      p.addLine(to: end)
+      l.path = p.cgPath
+      l.strokeColor = meta.color.cgColor
+      l.fillColor = UIColor.clear.cgColor
+      l.lineWidth = 1.2
+      l.lineCap = .round
+      if l.superlayer !== layer { layer.addSublayer(l) }
+    }
+    CATransaction.commit()
+    handM = m
+    handH = h
+    if !spinOn { spinOn = true; setNeedsDisplay() }
+    addSpin(m, 1.2, t0)
+    addSpin(h, 7.2, t0)
+  }
+
+  private func addSpin(_ l: CALayer, _ dur: CFTimeInterval, _ t0: CFTimeInterval) {
+    if l.animation(forKey: "cmlSpin") != nil { return }
+    let a = CABasicAnimation(keyPath: "transform.rotation.z")
+    a.fromValue = 0
+    a.toValue = CGFloat.pi * 2
+    a.duration = dur
+    a.repeatCount = .infinity
+    a.isRemovedOnCompletion = false
+    let start = max(CACurrentMediaTime(), t0 + 0.3)
+    a.beginTime = l.convertTime(start, from: nil)
+    l.add(a, forKey: "cmlSpin")
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    if spinOn, let m = handM, let h = handH {
+      let c = statusCenter()
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      m.position = c
+      h.position = c
+      CATransaction.commit()
+    }
+  }
+
   /// Chamado DEPOIS de `meta` ter o status novo. Só anima avanço (nunca volta).
   func animateStatus(from old: Double) {
     guard let ns = meta.status, ns > old, old >= 0, ns >= 1 else { cancelStatusAnim(); return }
@@ -232,6 +345,11 @@ final class CMLMetaView: UIView {
   override func didMoveToWindow() {
     super.didMoveToWindow()
     if window == nil { cancelStatusAnim() }
+    // animações podem ter sido descartadas fora da janela → recoloca
+    else if spinOn, let m = handM, let h = handH {
+      addSpin(m, 1.2, CACurrentMediaTime() - 1)
+      addSpin(h, 7.2, CACurrentMediaTime() - 1)
+    }
   }
 
   private static func backOut(_ t: CGFloat) -> CGFloat {
@@ -293,7 +411,17 @@ final class CMLMetaView: UIView {
       if s < 0 {
         CMLIcons.alert(ctx, center: CGPoint(x: x + 6, y: cy), color: failedColor)
       } else if s == 0 {
-        CMLIcons.clock(ctx, center: CGPoint(x: x + 6, y: cy), color: meta.color)
+        if spinOn {
+          // [tg-list] ponteiros são as camadas animadas; aqui só o aro
+          ctx.saveGState()
+          ctx.setStrokeColor(meta.color.cgColor)
+          ctx.setLineWidth(1.2)
+          ctx.addEllipse(in: CGRect(x: x + 1, y: cy - 5, width: 10, height: 10))
+          ctx.strokePath()
+          ctx.restoreGState()
+        } else {
+          CMLIcons.clock(ctx, center: CGPoint(x: x + 6, y: cy), color: meta.color)
+        }
       } else if let f = from {
         let toRead = s >= 2 && f < 2
         if toRead { tickColor = CMLMetaView.mix(meta.color, readColor, CMLMetaView.cubicOut(min(1, t * 1.6))) }

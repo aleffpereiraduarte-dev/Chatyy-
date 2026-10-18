@@ -35,9 +35,14 @@ public class ChatyyMessageListModule: Module {
     //     nativo (CMLVideoFrameLoader: AVAssetImageGenerator + cache memória/disco).
     // 10 = [2026-10-18 tg-look] prop `look` {tg: 0/1} → rabicho Telegram na última
     //     bolha do grupo (embaixo), cantos do grupo justos, mídia rente à bolha.
+    // 11 = [2026-10-18 tg-list] setSearch {term,ids,cur,scroll} (realce na bolha) ·
+    //     prop dragSelect (arrastar na calha no modo seleção → onSelectRange) ·
+    //     prop overlay (↓/@/♥ nativos → onOverlayPress) · prepareSend(rect) (morph do
+    //     envio) · motion.c (relógio do pendente gira após 300 ms) · prop quickReact
+    //     (toque duplo em texto/figurinha → pop + onQuickReact).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 10
+      return 11
       #else
       return 3
       #endif
@@ -50,7 +55,7 @@ public class ChatyyMessageListModule: Module {
     }.runOnQueue(.main)
 
     View(CMLListView.self) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore", "onMediaTransfer")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore", "onMediaTransfer", "onSelectRange", "onOverlayPress", "onQuickReact")
 
       Prop("theme") { (view: CMLListView, value: [String: Any]?) in
         view.setTheme(value ?? [:])
@@ -97,6 +102,24 @@ public class ChatyyMessageListModule: Module {
       Prop("look") { (view: CMLListView, value: [String: Any]?) in
         view.setLook(value)
       }
+      // [2026-10-18 tg-list] apiVersion 11
+      Prop("dragSelect") { (view: CMLListView, value: Bool?) in
+        view.setDragSelect(value ?? false)
+      }
+      Prop("overlay") { (view: CMLListView, value: [String: Any]?) in
+        view.setOverlay(value)
+      }
+      Prop("quickReact") { (view: CMLListView, value: [String: Any]?) in
+        view.setQuickReact(value)
+      }
+
+      AsyncFunction("setSearch") { (view: CMLListView, payload: [String: Any]) in
+        view.setSearch(payload)
+      }.runOnQueue(.main)
+
+      AsyncFunction("prepareSend") { (view: CMLListView, rect: [String: Any]) in
+        view.prepareSend(rect)
+      }.runOnQueue(.main)
 
       AsyncFunction("applyRows") { (view: CMLListView, payload: [String: Any]) in
         view.applyRows(payload)

@@ -22,7 +22,11 @@ class ChatyyMessageListModule : Module() {
     //     TalkBack → toque na parte principal.
     // 7 = [motion-conv] prop `motion` {i,e,t,r,s,a} (molas de entrada/edição, ✓✓ animado, pop+faíscas de reação, pílula, onda do áudio)
     // 10 = [2026-10-18 tg-look] prop `look` {tg: 0/1} → rabicho Telegram na última bolha do grupo, mídia rente
-    Function("apiVersion") { 10 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
+    // 11 = [2026-10-18 tg-list] setSearch {term,ids,cur,scroll} (realce na célula), prop dragSelect
+    //      (arrastar na calha p/ selecionar → onSelectRange), prop overlay (↓/@/♥ nativos →
+    //      onOverlayPress), prepareSend(rect) (morph do compositor), motion.c (relógio do
+    //      pendente gira após ~300 ms), prop quickReact (toque duplo em texto/figurinha → onQuickReact)
+    Function("apiVersion") { 11 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.
@@ -31,7 +35,7 @@ class ChatyyMessageListModule : Module() {
     }.runOnQueue(Queues.MAIN)
 
     View(MLListView::class) {
-      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore", "onMediaTransfer")
+      Events("onReady", "onNativeError", "onRowPress", "onRowLongPress", "onSwipeReply", "onLoadOlder", "onScrollState", "onDragState", "onVisible", "onMenuAction", "onReact", "onMenuDismiss", "onStore", "onMediaTransfer", "onSelectRange", "onOverlayPress", "onQuickReact")
 
       Prop("theme") { view: MLListView, v: Map<String, Any?>? -> view.setTheme(v ?: emptyMap()) }
       Prop("fontSize") { view: MLListView, v: Double? -> view.setFontSize(v) }
@@ -50,6 +54,10 @@ class ChatyyMessageListModule : Module() {
       Prop("motion") { view: MLListView, v: Map<String, Any?>? -> view.setMotion(v) }
       // [2026-10-18 tg-look] visual Telegram (apiVersion 10)
       Prop("look") { view: MLListView, v: Map<String, Any?>? -> view.setLook(v) }
+      // [2026-10-18 tg-list] (apiVersion 11)
+      Prop("dragSelect") { view: MLListView, v: Boolean? -> view.setDragSelect(v) }
+      Prop("overlay") { view: MLListView, v: Map<String, Any?>? -> view.setOverlay(v) }
+      Prop("quickReact") { view: MLListView, v: Map<String, Any?>? -> view.setQuickReact(v) }
 
       OnViewDestroys { view: MLListView -> view.destroy() }
 
@@ -76,6 +84,16 @@ class ChatyyMessageListModule : Module() {
       // [native-media-dl] progresso de transferências feitas pelo JS → o mesmo anel
       AsyncFunction("setTransfers") { view: MLListView, list: List<Map<String, Any?>> ->
         view.setTransfers(list)
+      }.runOnQueue(Queues.MAIN)
+
+      // [tg-list] busca na lista nativa: realce + rolar até a atual
+      AsyncFunction("setSearch") { view: MLListView, payload: Map<String, Any?> ->
+        view.setSearch(payload)
+      }.runOnQueue(Queues.MAIN)
+
+      // [tg-list] retângulo do compositor p/ o morph da próxima enviada
+      AsyncFunction("prepareSend") { view: MLListView, rect: Map<String, Any?> ->
+        view.prepareSend(rect)
       }.runOnQueue(Queues.MAIN)
 
       AsyncFunction("setLiftedKey") { view: MLListView, key: String ->

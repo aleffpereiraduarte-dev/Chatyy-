@@ -5877,6 +5877,8 @@ export default {
   'chatConv.quoteText': 'Quoted snippet (max 240 chars)',
   'chatConv.quotePlaceholder': 'Paste or type the snippet here...',
   'chatConv.scrollToBottom': 'Scroll to bottom',
+  'chatConv.jumpToMention': 'Jump to mention',
+  'chatConv.jumpToReaction': 'Jump to reaction',
   'chatConv.stickers': 'Stickers',
   'chatConv.gif': 'GIF',
   'chatConv.attach': 'Attach file',

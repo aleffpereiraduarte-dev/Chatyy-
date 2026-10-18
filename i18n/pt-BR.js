@@ -5915,6 +5915,8 @@ export default {
   'chatConv.quoteText': 'Trecho a citar (máx 240 chars)',
   'chatConv.quotePlaceholder': 'Cole ou digite o trecho aqui...',
   'chatConv.scrollToBottom': 'Ir para o fim',
+  'chatConv.jumpToMention': 'Ir para a menção',
+  'chatConv.jumpToReaction': 'Ir para a reação',
   'chatConv.stickers': 'Figurinhas',
   'chatConv.gif': 'GIF',
   'chatConv.attach': 'Anexar',

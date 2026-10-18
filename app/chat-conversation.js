@@ -56,7 +56,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
-import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
+import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
@@ -10998,6 +10998,11 @@ function ChatConversationInner() {
   const [unreadMentionIds, setUnreadMentionIds] = _useStateT([]);
   const unreadMentionIdsRef = useRef(unreadMentionIds);
   unreadMentionIdsRef.current = unreadMentionIds;
+  // [2026-10-18 tg-list] Reações de outras pessoas às MINHAS mensagens chegando com o
+  // usuário lendo acima (mais antiga primeiro) → botão ♥ do overlay nativo (api 11).
+  const [unreadReactionIds, setUnreadReactionIds] = _useStateT([]);
+  const unreadReactionIdsRef = useRef(unreadReactionIds);
+  unreadReactionIdsRef.current = unreadReactionIds;
 
   // ─────────────────────────────────────────────────────────────────────────
   // [VISTO AZUL FALSO — CAUSA-RAIZ 2026-10-06] Gate de VISIBILIDADE REAL para
@@ -17906,6 +17911,28 @@ function ChatConversationInner() {
         // would blind-replace (wipe) our optimistic reaction. Skip the row —
         // our own HTTP reconcile carries the authoritative merged state.
         if (inflightReactionMsgIdsRef.current.has(String(m.id))) return;
+        // [2026-10-18 tg-list] reação NOVA de outra pessoa numa mensagem minha com a
+        // conversa rolada p/ cima → fila do botão ♥ (overlay nativo).
+        try {
+          if (isScrolledUpRef.current && !unreadReactionIdsRef.current.some(x => String(x) === String(m.id))) {
+            const me = String(currentEmail || '').toLowerCase();
+            const row = (messagesRef.current || []).find(r => r && String(r.id) === String(m.id));
+            if (row && String(row.sender_email || '').toLowerCase() === me) {
+              const usersOf = (list) => {
+                const out = new Set();
+                for (const g of (Array.isArray(list) ? list : [])) {
+                  const us = Array.isArray(g?.users) ? g.users : (typeof g?.users === 'string' ? g.users.split(',') : []);
+                  for (const u of us) { const lc = String(u || '').trim().toLowerCase(); if (lc && lc !== me) out.add(lc + '|' + (g.emoji || g.reaction || '')); }
+                }
+                return out;
+              };
+              const before = usersOf(row.reactions);
+              let fresh = false;
+              for (const k of usersOf(m.reactions)) { if (!before.has(k)) { fresh = true; break; } }
+              if (fresh) setUnreadReactionIds(prev => (prev.some(x => String(x) === String(m.id)) ? prev : [...prev, m.id]));
+            }
+          }
+        } catch {}
         setMessages(prev => _mapKeep(prev, row => String(row.id) === String(m.id) ? { ...row, reactions: m.reactions } : row));
       };
       wsUnsubs.push(_wsOnB('reaction', onWsReaction));
@@ -20048,6 +20075,16 @@ function ChatConversationInner() {
       // [responder-privado 2026-10-15] citação de outra conversa já na bolha otimista
       ...((!replyId && !(e2eEnabled && e2eKeys?.v4)) ? (() => { try { const q = require('../utils/privateReplyQuote').optimisticExtQuoteText(replyTo); return q ? { reply_quote_text: q } : {}; } catch { return {}; } })() : {}),
     };
+    // [2026-10-18 tg-list] morph do envio (lista nativa api 11): retângulo do campo do
+    // compositor ANTES do applyRows da bolha otimista (Fabric mede síncrono).
+    try {
+      const _L = _nlOnRef.current ? flashListRef.current : null;
+      if (_L && typeof _L.prepareSend === 'function') {
+        const _iv = inputRef.current;
+        if (_iv && typeof _iv.measureInWindow === 'function') _iv.measureInWindow((x, y, w, h) => { try { _L.prepareSend({ x, y, w, h }); } catch {} });
+        else _L.prepareSend({});
+      }
+    } catch {}
     setMessages(prev => [...prev, optimisticMsg]);
     // Sender also gets the screen overlay so the effect feels confirmed.
     // Bubble effects already replay via MessageBubbleEffect's first-render hook.
@@ -24451,7 +24488,12 @@ function ChatConversationInner() {
     if (!msg || msg.deleted_at) return;
     // [2026-10-14 feel] Toque duplo desligado nas Configurações → toque simples
     // abre a mídia NA HORA (sem os 310 ms de espera pelo 2º toque).
-    if (!doubleTapReactRef.current) {
+    // [2026-10-18 tg-list] Foto/vídeo: toque simples abre NA HORA (Telegram) —
+    // toque duplo p/ reagir fica só em texto/figurinha. Kill switch OTA:
+    // globalThis.__chatyy_instant_media_tap = false (volta a esperar 310 ms).
+    let _instantMedia = true;
+    try { _instantMedia = globalThis.__chatyy_instant_media_tap !== false; } catch {}
+    if (!doubleTapReactRef.current || (_instantMedia && (msg.type === 'image' || msg.type === 'video'))) {
       const _vo = !!(msg.is_view_once || msg.isViewOnce);
       if (!_vo && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
         setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, messageId: msg.id });
@@ -27600,7 +27642,10 @@ function ChatConversationInner() {
   // [2026-10-11 qa] Busca na conversa: destaca o termo no texto das bolhas
   // que bateram. Só as linhas do resultado ganham `_searchTerm` (o resto do
   // cache de enrich é reaproveitado por referência → sem re-render geral).
-  const _searchHlTerm = showSearchBar && searchResults.length > 0 ? String(searchQuery || '').trim() : '';
+  // [2026-10-18 tg-list] lista nativa api ≥ 11: a busca fica NA lista nativa (realce via
+  // ref.setSearch) → sem _searchTerm nas linhas (viraria cartão-resumo).
+  const _searchNativeHl = Platform.OS !== 'web' && _nlOnRef.current && nativeSearchOn();
+  const _searchHlTerm = showSearchBar && searchResults.length > 0 && !_searchNativeHl ? String(searchQuery || '').trim() : '';
   const _searchHlIds = useMemo(() => {
     if (!_searchHlTerm) return null;
     const ids = new Set();
@@ -28847,6 +28892,7 @@ function ChatConversationInner() {
     }
     if (!scrolledUp && newMsgCountRef.current !== 0) { newMsgCountRef.current = 0; setNewMsgCount(0); }
     if (!scrolledUp && unreadMentionIdsRef.current.length) { unreadMentionIdsRef.current = []; setUnreadMentionIds([]); }
+    if (!scrolledUp && unreadReactionIdsRef.current.length) { unreadReactionIdsRef.current = []; setUnreadReactionIds([]); } // [tg-list]
   }, []);
   // [2026-10-08 open-at-bottom] Conteúdo (rows medidas, imagem/preview que
   // carregou, delta do servidor, digitando) ou viewport (composer/teclado)
@@ -34580,6 +34626,8 @@ function ChatConversationInner() {
     reactBg: isDark ? '#2C2C2E' : '#FFFFFF', reactBorder: chatWallBg,
     selection: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)', highlight: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)',
     failed: '#E5484D',
+    // [tg-list] realce da busca na lista nativa (api 11): termo / resultado atual
+    search: isDark ? 'rgba(255,214,10,0.30)' : 'rgba(255,204,0,0.38)', searchCur: isDark ? 'rgba(255,214,10,0.62)' : 'rgba(255,204,0,0.75)',
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, otherBubbleBg, otherInk, otherMetaColor, chatWallBg]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
   // [2026-10-15 native-store] foto da conversa no store NATIVO (services/nativeChatStore):
@@ -34616,12 +34664,88 @@ function ChatConversationInner() {
       });
     } catch {}
   }, [currentEmail, conversationId]);
-  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!(showSearchBar || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas) || _onlySystemMsgs)); // [2026-10-16 mascote] só-sistema → JS (cartão de saudação) · vazio → estado vazio JS (salvo foto nativa enquanto carrega)
+  const _nl = useNativeThreadList(conversationId, threadListData, _nlCtx, !!((showSearchBar && !_searchNativeHl) || isSavedMode || Platform.OS === 'web' || !threadListData || (threadListData.length === 0 && !_nlStoreHas) || _onlySystemMsgs)); // [2026-10-16 mascote] só-sistema → JS (cartão de saudação) · vazio → estado vazio JS (salvo foto nativa enquanto carrega)
   _nlOnRef.current = !!(_nl && _nl.on); // [native-media-dl]
   useConvOpenMetric(conversationId, _nl, threadListData ? threadListData.length : 0, !loading || !!(threadListData && threadListData.length)); // [wave7] toque→1º frame
   const _nlActRef = useRef(null);
   _nlActRef.current = { handleLongPress, handleDoubleTap, handleMessageInfo, toggleSelection, handleReact, safeScrollToMsg, selectionMode,
     promptFailed: _promptFailedMsg, tapRetry: _tapRetryFailed, smartAction: _onSmartAction }; // [fase 2]
+  // ─── [2026-10-18 tg-list] lista nativa apiVersion 11 (cada recurso com kill switch;
+  // binário < 11 = comportamento JS de sempre) ───────────────────────────────────
+  // Busca: realce do termo + atual NA lista nativa (sem trocar p/ FlashList).
+  useEffect(() => {
+    if (!_nl.on || !_searchNativeHl) return;
+    const L = flashListRef.current;
+    if (!L || typeof L.setSearch !== 'function') return;
+    if (!showSearchBar || !searchResults.length) { L.setSearch({ term: '' }); return; }
+    const cur = searchResults[Math.max(0, Math.min(searchResults.length - 1, searchIdx))];
+    const ids = [];
+    for (let i = 0; i < searchResults.length; i++) { const r = searchResults[i]; if (r && r.id != null) ids.push(r.id); }
+    L.setSearch({ term: String(searchQuery || '').trim(), ids, cur: cur && cur.id != null ? cur.id : '', scroll: 0 });
+  }, [_nl.on, _searchNativeHl, showSearchBar, searchResults, searchIdx, searchQuery]);
+  useEffect(() => () => { try { flashListRef.current?.setSearch?.({ term: '' }); } catch {} }, [conversationId]);
+  // Arrastar na calha (modo seleção): intervalo inteiro a cada evento; base = seleção no início do arrasto.
+  const _nlDragBaseRef = useRef(null);
+  const _nlOnSelectRange = useCallback(({ items, on, end }) => {
+    const ids = [];
+    for (const it of (items || [])) {
+      const m = it && it._type === 'album' ? (it._items || [])[0] : it;
+      if (!m || m.id == null || m.type === 'system' || m.is_view_once || m.deleted_at) continue;
+      ids.push(m.id);
+    }
+    setSelectedIds(prev => {
+      if (!_nlDragBaseRef.current) _nlDragBaseRef.current = new Set(prev);
+      const next = new Set(_nlDragBaseRef.current);
+      for (const id of ids) {
+        if (on) { if (next.size < 100) next.add(id); } else next.delete(id);
+      }
+      if (end) {
+        _nlDragBaseRef.current = null;
+        if (next.size === 0) setSelectionMode(false);
+      }
+      return next;
+    });
+  }, []);
+  const _nlDragSelOn = _nl.on && selectionMode && Platform.OS !== 'web' && nativeDragSelectOn();
+  // Overlay ↓ / @ / ♥ nativo (substitui ScrollDownFabAnim + MentionJumpFab).
+  const _nlOverlayOn = _nl.on && Platform.OS !== 'web' && nativeOverlayOn();
+  const _nlOverlayCfg = useMemo(() => (!_nlOverlayOn ? undefined : {
+    on: 1, unread: newMsgCount || 0, mention: unreadMentionIds.length, reaction: unreadReactionIds.length, b: 12, dark: isDark ? 1 : 0,
+    ax: {
+      down: t('chatConv.scrollToBottom') || 'Scroll to bottom',
+      mention: _a11yT(t, 'chatConv.jumpToMention', 'Ir para a menção'),
+      reaction: _a11yT(t, 'chatConv.jumpToReaction', 'Ir para a reação'),
+    },
+  }), [_nlOverlayOn, newMsgCount, unreadMentionIds.length, unreadReactionIds.length, isDark, t]);
+  const _nlOnOverlayPress = useCallback(({ kind }) => {
+    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+    if (kind === 'down') {
+      threadScroll.jumpToLatest(); // = FAB JS
+      setShowScrollDown(false);
+      setNewMsgCount(0);
+      return;
+    }
+    const isM = kind === 'mention';
+    const ref = isM ? unreadMentionIdsRef : unreadReactionIdsRef;
+    const id = ref.current[0];
+    const rest = ref.current.slice(1);
+    ref.current = rest;
+    if (isM) setUnreadMentionIds(rest); else setUnreadReactionIds(rest);
+    if (id == null) return;
+    try { _nlActRef.current.safeScrollToMsg({ id }); } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Toque duplo p/ reagir nativo (só texto/figurinha; foto/vídeo abrem na hora).
+  const _nlQuickReactOn = _nl.on && !!doubleTapReact && !selectionMode && Platform.OS !== 'web' && nativeQuickReactOn();
+  const _nlQuickReactCfg = useMemo(() => ({ on: _nlQuickReactOn ? 1 : 0, e: '\u2764\uFE0F' }), [_nlQuickReactOn]);
+  const _nlQuickReactOnRef = useRef(false);
+  _nlQuickReactOnRef.current = _nlQuickReactOn;
+  const _nlOnQuickReact = useCallback(({ item, messageId, emoji }) => {
+    const m = item && item._type === 'album' ? (item._items || [])[0] : item;
+    const id = m && m.id != null ? m.id : messageId;
+    if (id == null || id === '' || (m && m.deleted_at)) return;
+    try { _nlActRef.current.handleReact(id, emoji || '\u2764\uFE0F'); } catch {}
+  }, []);
   // [fase 2] Ações de cartões (nativeRowCards): o bloco de cartões define
   // _nlCardActionRef.current = (item, target, action, index) => bool.
   const _nlCardActionRef = useRef(null);
@@ -34835,6 +34959,7 @@ function ChatConversationInner() {
         if (target.deleted_at) return; // JS: toque em lápide não faz nada
         if (target._failed && String(target.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase()) { A.tapRetry(target); return; }
         if ((target.type === 'image' || target.type === 'video' || target.type === 'gif' || target.type === 'sticker') && !target.deleted_at) { _nlOpenMedia(item, 0); return; }
+        if (_nlQuickReactOnRef.current) return; // [tg-list] toque duplo é nativo (onQuickReact)
         A.handleDoubleTap(target);
     }
   }, [_nlOpenMedia, _nlOpenFile, _nlToggleAudio, currentEmail]);
@@ -36575,6 +36700,12 @@ function ChatConversationInner() {
           stickyDate={_nlStickyCfg}
           storeConv={_nlStore}
           shellInfo={_nlShellInfo}
+          dragSelect={_nlDragSelOn}
+          onSelectRange={_nlOnSelectRange}
+          overlay={_nlOverlayCfg}
+          onOverlayPress={_nlOnOverlayPress}
+          quickReact={_nlQuickReactCfg}
+          onQuickReact={_nlOnQuickReact}
         />
         {/* digitando… fica logo acima do composer (a lista invertida mantém o fim) */}
         {listHeader}
@@ -37241,7 +37372,7 @@ function ChatConversationInner() {
       {activeEffect && <MessageEffectOverlay effect={activeEffect} />}
 
       {/* [2026-10-14 grupo-rajada] "@" menções não lidas → pula p/ a mais antiga */}
-      {unreadMentionIds.length > 0 && (
+      {unreadMentionIds.length > 0 && !_nlOverlayOn && (
         <MentionJumpFab
           count={unreadMentionIds.length}
           bottom={showScrollDown ? 142 : 90}
@@ -37263,7 +37394,7 @@ function ChatConversationInner() {
       {/* Scroll to bottom FAB */}
       {/* [2026-10-14 motion] SpringPresence: entra E sai com mola (antes sumia seco) */}
       <View style={_FAB_ANCHOR} pointerEvents="box-none">
-      <SpringPresence visible={!!showScrollDown} from={_FAB_FROM} style={_FAB_WRAP}>
+      <SpringPresence visible={!!showScrollDown && !_nlOverlayOn} from={_FAB_FROM} style={_FAB_WRAP}>
           <ScrollDownFabAnim
             onPress={() => {
               threadScroll.jumpToLatest(); // [2026-10-08 chat-gaps2] longe = salto instantâneo

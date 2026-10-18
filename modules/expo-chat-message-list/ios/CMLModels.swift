@@ -305,6 +305,9 @@ struct CMLTheme {
   var selection = UIColor(white: 0.5, alpha: 0.18)
   var highlight = UIColor(white: 0.5, alpha: 0.28)
   var failed = UIColor(red: 0.9, green: 0.2, blue: 0.2, alpha: 1)
+  /// [2026-10-18 tg-list, apiVersion 11] realce da busca (termos / resultado atual)
+  var search = UIColor(red: 1, green: 0.839, blue: 0.039, alpha: 0.35)
+  var searchCur = UIColor(red: 1, green: 0.839, blue: 0.039, alpha: 0.70)
 
   static func uiColor(_ argb: UInt32) -> UIColor {
     let a = CGFloat((argb >> 24) & 0xFF) / 255
@@ -360,5 +363,7 @@ struct CMLTheme {
     selection = c("selection", selection)
     highlight = c("highlight", highlight)
     failed = c("failed", failed)
+    search = c("search", search)
+    searchCur = c("searchCur", searchCur)
   }
 }

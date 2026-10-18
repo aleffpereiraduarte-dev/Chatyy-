@@ -24,6 +24,8 @@ enum CMLMotion {
   static var react = true
   static var sticky = true
   static var audio = true
+  /// [2026-10-18 tg-list, apiVersion 11] `c`: ponteiros do relógio do pendente giram após ~300 ms
+  static var clock = true
 
   static func apply(_ d: [String: Any]?) {
     let m = d ?? [:]
@@ -37,6 +39,7 @@ enum CMLMotion {
     react = on("r")
     sticky = on("s")
     audio = on("a")
+    clock = on("c")
   }
 
   static var reduce: Bool { return UIAccessibility.isReduceMotionEnabled }

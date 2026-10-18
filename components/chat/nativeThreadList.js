@@ -118,6 +118,26 @@
 //          legenda = sem fundo/rabicho). Binário < 10 não recebe a prop (visual
 //          antigo). Kill switch: globalThis.__chatyy_tg_look = false.
 //
+//   tg-list [apiVersion 11, 2026-10-18] nível Telegram (tudo opt-in pelo JS):
+//          busca  ref.setSearch({term, ids, cur, scroll}) → realce do termo nas
+//                 bolhas que bateram (cur mais forte); a busca NÃO troca mais de
+//                 motor (posição preservada). Kill: __chatyy_native_search = false.
+//          seleção por arrasto  prop dragSelect → pan na calha esquerda no modo
+//                 seleção; onSelectRange {keys, on, end} (+ háptico por linha).
+//                 Kill: __chatyy_drag_select = false.
+//          overlay  prop overlay {on, unread, mention, reaction, b, dark, ax} →
+//                 ↓ (com não-lidas), @ e ♥ nativos (mostra/esconde pelo
+//                 contentOffset nativo); onOverlayPress {kind}. Kill:
+//                 __chatyy_native_overlay = false (volta aos FABs JS).
+//          envio  ref.prepareSend({x,y,w,h}) = retângulo do compositor → o balão
+//                 enviado nasce dele (morph). Kill: __chatyy_send_morph = false.
+//                 motion.c = ponteiros do relógio giram após ~300 ms pendente
+//                 (kill: __chatyy_motion_clock = false).
+//          toque duplo  prop quickReact {on, e} → reconhecedor SÓ em texto/
+//                 figurinha (foto/vídeo = toque instantâneo); onQuickReact
+//                 {key, messageId, emoji} + pop no balão. Kill:
+//                 __chatyy_native_quick_react = false.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -170,6 +190,18 @@ function _motionFlag(name) {
 function _motionSig() {
   return '' + _motionFlag('insert') + _motionFlag('edit') + _motionFlag('ticks') + _motionFlag('react') + _motionFlag('sticky') + _motionFlag('audio');
 }
+/** [tg-list] recursos apiVersion 11 — padrão ligado; kill switch OTA por recurso. */
+function _sw11(name) { try { return globalThis[name] !== false; } catch { return true; } }
+/** Busca dentro da lista nativa (sem trocar p/ FlashList). */
+export function nativeSearchOn() { _getNativeView(); return _api >= 11 && !!_NativeView && _sw11('__chatyy_native_search'); }
+/** Arrastar na calha p/ selecionar várias. */
+export function nativeDragSelectOn() { _getNativeView(); return _api >= 11 && _sw11('__chatyy_drag_select'); }
+/** ↓ / @ / ♥ nativos sobre a lista. */
+export function nativeOverlayOn() { _getNativeView(); return _api >= 11 && !!_NativeView && _sw11('__chatyy_native_overlay'); }
+/** Toque duplo p/ reagir nativo (só texto/figurinha). */
+export function nativeQuickReactOn() { _getNativeView(); return _api >= 11 && _sw11('__chatyy_native_quick_react'); }
+/** Morph do envio a partir do compositor. */
+export function nativeSendMorphOn() { _getNativeView(); return _api >= 11 && _sw11('__chatyy_send_morph'); }
 /** [tg-look] visual Telegram (apiVersion 10) — padrão ligado; kill switch OTA. */
 export function tgLookOn() { try { return globalThis.__chatyy_tg_look !== false; } catch { return true; } }
 function _a11ySwitchOn() { try { return globalThis.__chatyy_native_list_a11y !== false; } catch { return true; } }
@@ -1119,7 +1151,7 @@ export function unsupportedReason(item, ctx) {
   if (_isViewOnce(item)) return 'view-once';
   if (item._blurred) return 'blurred';
   if (item._filtered && item._hidden) return 'filtered';
-  if (item._searchTerm) return 'search';
+  if (item._searchTerm && !nativeSearchOn()) return 'search'; // [tg-list] api 11: realce é nativo (setSearch)
   // Falhou: o JS tem o fluxo de "tocar p/ reenviar" (fila offline/outbox).
   // Fase 2: nativo chama o MESMO reenvio (_tapRetryFailed/_promptFailedMsg).
   if (item._failed && _api < 2) return 'failed';
@@ -1577,6 +1609,8 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     // [native-store fase 3] shell = lista da CASCA LEVE (só pinta a foto; não
     // registra nada); shellInfo = dados da tela p/ o registro da casca.
     shell = false, shellInfo,
+    // [tg-list] api 11
+    dragSelect = false, overlay, quickReact,
   } = props;
   const Native = _getNativeView();
   const nativeRef = useRef(null);
@@ -1587,7 +1621,8 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const keyIndexRef = useRef(new Map());
   const readyRef = useRef(false);
   const cbRef = useRef({});
-  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer, onA11yAction: props.onA11yAction };
+  cbRef.current = { onRowPress, onRowLongPress, onSwipeReply, onLoadOlder, onScroll, onScrollBeginDrag, onScrollEndDrag, onViewableItemsChanged, onFallback, onMenuAction, onReact, onMenuDismiss, onMediaTransfer: props.onMediaTransfer, onA11yAction: props.onA11yAction,
+    onSelectRange: props.onSelectRange, onOverlayPress: props.onOverlayPress, onQuickReact: props.onQuickReact }; // [tg-list]
   const failRef = useRef(false);
   // [2026-10-18 vthumb] 1º frame local ficou pronto → rebuild das linhas de vídeo
   const [vfTick, setVfTick] = useState(0);
@@ -1925,6 +1960,23 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       try { cbRef.current.onSwipeReply && cbRef.current.onSwipeReply({ item, key: ne.key, dir: ne.dir === 'info' ? 'info' : 'reply' }); } catch {}
     },
     onLoadOlder: () => { try { cbRef.current.onLoadOlder && cbRef.current.onLoadOlder(); } catch {} },
+    // [tg-list] arrastar na calha (modo seleção): keys = intervalo atual inteiro
+    onSelectRange: (e) => {
+      const ne = e?.nativeEvent || {};
+      const keys = Array.isArray(ne.keys) ? ne.keys : [];
+      const items = [];
+      for (const k of keys) { const it = itemOf(String(k)); if (it) items.push(it); }
+      try { cbRef.current.onSelectRange && cbRef.current.onSelectRange({ items, keys, on: !!ne.on, end: !!ne.end }); } catch {}
+    },
+    onOverlayPress: (e) => {
+      const kind = String(e?.nativeEvent?.kind || '');
+      try { cbRef.current.onOverlayPress && cbRef.current.onOverlayPress({ kind }); } catch {}
+    },
+    onQuickReact: (e) => {
+      const ne = e?.nativeEvent || {};
+      const item = itemOf(String(ne.key || ''));
+      try { cbRef.current.onQuickReact && cbRef.current.onQuickReact({ item, key: ne.key, messageId: String(ne.messageId || ''), emoji: String(ne.emoji || '') }); } catch {}
+    },
     onScrollState: (e) => {
       // Evento sintético no formato que threadScroll.distanceFromLatest e
       // handleFlatListScroll já entendem (layout oldest-first).
@@ -2010,6 +2062,25 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
           : null), () => null);
       },
       setAudioState: (s) => { call('setAudioState', s || {}); },
+      // [tg-list] busca na lista nativa (api 11). false = binário sem suporte.
+      setSearch: (p) => {
+        if (_api < 11) return false;
+        const o = p || {};
+        call('setSearch', {
+          term: String(o.term || ''),
+          ids: Array.isArray(o.ids) ? o.ids.slice(0, 2000).map(String) : [],
+          cur: o.cur != null ? String(o.cur) : '',
+          scroll: o.scroll ? 1 : 0,
+        });
+        return true;
+      },
+      // [tg-list] retângulo do compositor (janela) p/ o morph do próximo envio
+      prepareSend: (r) => {
+        if (_api < 11 || !nativeSendMorphOn()) return;
+        const o = r && Number(r.w) > 1 && Number(r.h) > 1
+          ? { x: Number(r.x) || 0, y: Number(r.y) || 0, w: Number(r.w), h: Number(r.h) } : {};
+        call('prepareSend', o);
+      },
       computeVisibleIndices: () => null,
     };
     return api;
@@ -2044,11 +2115,28 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     };
   }, [_p2Label]);
   // [motion-conv] prop motion (apiVersion 7): objeto novo só quando a assinatura muda
-  const _mSig = _api >= 7 ? _motionSig() : '';
+  const _mSig = _api >= 7 ? _motionSig() + (_api >= 11 ? _motionFlag('clock') : '') : '';
   const nativeMotion = useMemo(() => {
     if (!_mSig) return undefined;
-    return { i: +_mSig[0], e: +_mSig[1], t: +_mSig[2], r: +_mSig[3], s: +_mSig[4], a: +_mSig[5] };
+    const o = { i: +_mSig[0], e: +_mSig[1], t: +_mSig[2], r: +_mSig[3], s: +_mSig[4], a: +_mSig[5] };
+    if (_mSig.length > 6) o.c = +_mSig[6]; // [tg-list] relógio do pendente (api 11)
+    return o;
   }, [_mSig]);
+  // [tg-list] props api 11 — objetos estáveis por valor
+  const _dragSel = _api >= 11 && !!dragSelect && nativeDragSelectOn();
+  const _ov = _api >= 11 && overlay && overlay.on ? overlay : null;
+  const _ovSig = _ov ? JSON.stringify([_ov.unread | 0, _ov.mention | 0, _ov.reaction | 0, Number(_ov.b) || 12, _ov.dark ? 1 : 0, _ov.ax || null]) : '';
+  const nativeOverlay = useMemo(() => {
+    if (_api < 11) return undefined;
+    if (!_ovSig) return { on: 0 };
+    const a = JSON.parse(_ovSig);
+    const o = { on: 1, unread: Math.max(0, a[0]), mention: Math.max(0, a[1]), reaction: Math.max(0, a[2]), b: a[3], dark: a[4] };
+    if (a[5]) o.ax = a[5];
+    return o;
+  }, [_ovSig]);
+  const _qrOn = _api >= 11 && !!(quickReact && quickReact.on) && nativeQuickReactOn() ? 1 : 0;
+  const _qrE = (quickReact && quickReact.e) || '\u2764\uFE0F';
+  const nativeQuickReact = useMemo(() => (_api < 11 ? undefined : { on: _qrOn, e: String(_qrE) }), [_qrOn, _qrE]);
   // [tg-look] prop look (apiVersion 10): objeto estável por valor
   const _tg = _api >= 10 ? (tgLookOn() ? 1 : 0) : -1;
   const nativeLook = useMemo(() => (_tg < 0 ? undefined : { tg: _tg }), [_tg]);
@@ -2156,6 +2244,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       {...(nativeA11y ? { a11y: nativeA11y } : null)}
       {...(nativeMotion ? { motion: nativeMotion } : null)}
       {...(nativeLook ? { look: nativeLook } : null)}
+      {...(_api >= 11 ? { dragSelect: _dragSel, quickReact: nativeQuickReact, overlay: nativeOverlay } : null)}
       {...handlers}
     />
   );

@@ -382,6 +382,66 @@ class MLCellView(context: Context) : ViewGroup(context) {
     return super.performAccessibilityAction(action, arguments)
   }
 
+  // ─── [2026-10-18 tg-list, apiVersion 11] ────────────────────────────────
+  /** busca ativa (null = sem realce); a lista troca e chama invalidate(). */
+  var search: MLSearchState? = null
+    set(v) { if (field !== v) { field = v; invalidate() } }
+  private var hlFor: Any? = null
+  private var hlVer = -1
+  private var hlRanges: List<IntArray> = emptyList()
+  private val hlPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  /** estado otimista do arrastar-p/-selecionar (-1 = o do modelo; 1/2). */
+  var selOverride = -1
+    set(v) { if (field != v) { field = v; isSelected = (row?.kind == MLKind.MSG) && effSel() == 2; invalidate() } }
+  fun effSel(): Int { val r = row ?: return 0; return if (selOverride >= 0 && r.sel > 0) selOverride else r.sel }
+  /** instante (uptime) em que a lista viu a linha pendente (status 0) pela 1ª vez; 0 = agora */
+  var pendingSince = 0L
+  private var clockAnim: ValueAnimator? = null
+  private var clockT = 0f
+  private var clockOn = false
+
+  private fun wantClock(): Boolean {
+    val r = row ?: return false
+    return r.kind == MLKind.MSG && r.status == 0.0 && !r.deleted && MLMotion.clock && MLMotion.systemOn() && isAttachedToWindow
+  }
+
+  private fun syncClock() {
+    if (!wantClock()) { stopClock(); return }
+    if (clockAnim != null) return
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 7200
+    a.repeatCount = ValueAnimator.INFINITE
+    a.interpolator = android.view.animation.LinearInterpolator()
+    val since = if (pendingSince > 0L) pendingSince else SystemClock.uptimeMillis()
+    a.startDelay = max(0L, since + 300L - SystemClock.uptimeMillis())
+    a.addUpdateListener { clockT = it.animatedValue as Float; clockOn = true; invalidate() }
+    clockAnim = a
+    a.start()
+  }
+
+  private fun stopClock() {
+    val a = clockAnim
+    clockAnim = null
+    a?.cancel()
+    if (clockOn) { clockOn = false; clockT = 0f; invalidate() }
+  }
+
+  override fun onDetachedFromWindow() {
+    super.onDetachedFromWindow()
+    stopClock()
+  }
+
+  private fun searchRanges(L: MLRowLayout, r: MLRow): List<IntArray> {
+    val st = search ?: return emptyList()
+    val t = L.text ?: return emptyList()
+    if (!st.matches(r) || r.jumbo > 0f || t.layout.text.length != r.text.length) return emptyList()
+    if (hlFor !== t || hlVer != st.version) {
+      hlFor = t; hlVer = st.version
+      hlRanges = try { MLSearchState.ranges(r.text, st.tokens) } catch (_: Throwable) { emptyList() }
+    }
+    return hlRanges
+  }
+
   fun bind(key: String, row: MLRow, lay: MLRowLayout, style: MLStyle, audio: MLAudioState?, liftedKey: String = "", revealed: Boolean = false) {
     val changedRow = this.key != key
     val prevRow = this.row
@@ -402,6 +462,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
       barAnim?.cancel(); barShown.clear(); barT = 1f
       cancelTickAnim()
       sparkAnim?.cancel(); sparkAnim = null; sparkT = 1f
+      stopClock(); hlFor = null // [tg-list]
       if (vnView != null) onRecycled?.invoke(this)
     } else if (prevRow != null && prevLay != null) {
       // [motion-conv] ✓ → ✓✓ → lida na MESMA linha → transição animada
@@ -440,7 +501,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     }
     for (i in lay.imageOps until nodeSlots.size) nodeSlots[i].clear()
     contentDescription = row.a11yLabel.ifEmpty { listOf(row.name, row.text, row.time).filter { it.isNotEmpty() }.joinToString(", ") }
-    isSelected = row.kind == MLKind.MSG && row.sel == 2
+    isSelected = row.kind == MLKind.MSG && effSel() == 2
+    if (row.status == 0.0) syncClock() else stopClock() // [tg-list]
     // imagens
     val md = row.media
     if (md != null && !lay.mediaFrame.isEmpty) {
@@ -465,6 +527,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     if (jumboPending) post { startJumbo() }
+    if (row?.status == 0.0) post { syncClock() } // [tg-list]
   }
 
   private fun startJumbo() {
@@ -584,6 +647,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
     cancelTickAnim()
     sparkAnim?.cancel(); sparkAnim = null; sparkT = 1f
     swipeX = 0f
+    stopClock(); selOverride = -1; hlFor = null // [tg-list]
   }
 
   fun flash() {
@@ -867,8 +931,9 @@ class MLCellView(context: Context) : ViewGroup(context) {
 
   private fun drawAll(c: Canvas, L: MLRowLayout, r: MLRow, s: MLStyle, th: MLTheme) {
     val snap = snapshotMode
+    val es = if (selOverride >= 0 && r.sel > 0) selOverride else r.sel // [tg-list] arrastar-p/-selecionar
     // seleção / destaque
-    if (!snap && r.sel == 2) { fill.color = th.selection; c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill) }
+    if (!snap && es == 2) { fill.color = th.selection; c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill) }
     if (!snap && flashAlpha > 0f) {
       fill.color = th.highlight
       fill.alpha = (((th.highlight ushr 24) and 0xFF) * flashAlpha).toInt()
@@ -890,10 +955,10 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (!snap && r.sel > 0) {
       val p = if (selAnim != null && selAnim!!.isRunning) selProgress else 1f
       c.save()
-      val sc = (0.6f + 0.4f * p) * (if (r.sel == 2) checkScale else 1f)
+      val sc = (0.6f + 0.4f * p) * (if (es == 2) checkScale else 1f)
       c.scale(sc, sc, L.selCircle.centerX(), L.selCircle.centerY())
       if (p < 1f) c.saveLayerAlpha(L.selCircle.left - 2, L.selCircle.top - 2, L.selCircle.right + 2, L.selCircle.bottom + 2, (255 * p).toInt())
-      drawSelect(c, L.selCircle, r.sel == 2, th)
+      drawSelect(c, L.selCircle, es == 2, th)
       if (p < 1f) c.restore()
       c.restore()
     }
@@ -1018,6 +1083,16 @@ class MLCellView(context: Context) : ViewGroup(context) {
         c.save(); c.scale(jumboScale, jumboScale, px, py); if (jumboRot != 0f) c.rotate(jumboRot, px, py)
       }
       if (L.deletedIcon) drawDeleted(c, L.textFrame.left - s.dp(19f), L.textFrame.top + (s.lineHeightPx - s.dp(15f)) / 2, s.dp(15f), if (r.own) th.ownMeta else th.otherMeta)
+      // [tg-list] realce da busca atrás dos glifos
+      if (!snap && search != null) {
+        val hr = searchRanges(L, r)
+        if (hr.isNotEmpty()) {
+          hlPaint.color = if (search?.cur == r.id) th.searchCur else th.search
+          c.save(); c.translate(L.textFrame.left, L.textFrame.top)
+          MLSearchState.draw(c, t.layout, hr, hlPaint, s.dp(3f), s.dp(1.5f))
+          c.restore()
+        }
+      }
       drawText(c, t, L.textFrame.left, L.textFrame.top)
       if (t.spoilers.isNotEmpty()) { c.save(); c.translate(L.textFrame.left, L.textFrame.top); MLSpoilerDraw.draw(c, t, t.particleColor, s.density); c.restore() }
       if (jfx) c.restore()
@@ -1275,8 +1350,17 @@ class MLCellView(context: Context) : ViewGroup(context) {
       st == 0.0 -> {
         stroke.color = m.color; stroke.strokeWidth = s.dp(1.2f)
         c.drawCircle(x + s.dp(6f), cy, s.dp(5f), stroke)
-        c.drawLine(x + s.dp(6f), cy, x + s.dp(6f), cy - s.dp(3.2f), stroke)
-        c.drawLine(x + s.dp(6f), cy, x + s.dp(8.4f), cy + s.dp(1f), stroke)
+        if (clockOn && !snapshotMode) {
+          // [tg-list] pendente há > 300 ms: minutos 1 volta/1,2 s, horas 1 volta/7,2 s
+          val ox = x + s.dp(6f)
+          val ma = Math.toRadians((clockT * 6f % 1f) * 360.0)
+          val ha = Math.toRadians(112.6 + clockT * 360.0)
+          c.drawLine(ox, cy, ox + s.dp(3.2f) * kotlin.math.sin(ma).toFloat(), cy - s.dp(3.2f) * kotlin.math.cos(ma).toFloat(), stroke)
+          c.drawLine(ox, cy, ox + s.dp(2.6f) * kotlin.math.sin(ha).toFloat(), cy - s.dp(2.6f) * kotlin.math.cos(ha).toFloat(), stroke)
+        } else {
+          c.drawLine(x + s.dp(6f), cy, x + s.dp(6f), cy - s.dp(3.2f), stroke)
+          c.drawLine(x + s.dp(6f), cy, x + s.dp(8.4f), cy + s.dp(1f), stroke)
+        }
       }
       st >= 1.5 -> { drawCheck(c, x, cy - s.dp(5f), tickColor, s); drawCheck(c, x + s.dp(4.5f), cy - s.dp(5f), tickColor, s) }
       else -> drawCheck(c, x + s.dp(1f), cy - s.dp(5f), tickColor, s)

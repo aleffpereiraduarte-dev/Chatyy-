@@ -70,6 +70,10 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   val onStore by EventDispatcher()
   // [native-media-dl] download nativo de mídia (apiVersion 5)
   val onMediaTransfer by EventDispatcher()
+  // [2026-10-18 tg-list, apiVersion 11]
+  val onSelectRange by EventDispatcher()
+  val onOverlayPress by EventDispatcher()
+  val onQuickReact by EventDispatcher()
 
   private val main = Handler(Looper.getMainLooper())
   private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "chatyy-msglist-layout").apply { priority = Thread.NORM_PRIORITY + 1 } }
@@ -151,6 +155,24 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var visibleScheduled = false
   private var lastVisibleSig = ""
 
+  // ─── [2026-10-18 tg-list, apiVersion 11] ────────────────────────────────
+  private var searchState: MLSearchState? = null
+  private var searchVer = 0
+  private var dragSelectOn = false
+  /** estado otimista do arrastar-p/-selecionar: chave → sel (1/2) */
+  private val dragOverride = HashMap<String, Int>()
+  private var dsClearPending = false
+  private val dsClearRunnable = Runnable { clearDragOverrides() }
+  private var quickReactOn = false
+  private var quickEmoji = "❤️"
+  private var morphRect: RectF? = null // dp, relativo à raiz React (= measureInWindow do JS)
+  private var morphAt = 0L
+  /** chave → instante em que a linha foi vista pendente (status 0) pela 1ª vez */
+  private val pendingSeen = HashMap<String, Long>()
+  private var selModeCached = false
+  private val overlay = MLOverlay(context) { kind -> if (!destroyed) onOverlayPress(mapOf("kind" to kind)) }
+  private val popLayer = MLPopLayer(context)
+
   private val itemAnim = MLItemAnimator { h ->
     val r = (h.itemView as? MLCellView)?.row
     when {
@@ -217,8 +239,110 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
       topMargin = dp(stickyTopDp).toInt()
     })
+    // [tg-list] pop do toque duplo + overlay inferior (por cima da lista)
+    frame.addView(popLayer, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    frame.addView(overlay, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.BOTTOM or Gravity.END
+    })
+    itemAnim.morphFrom = { h -> morphStartFor(h) }
     applyInsets()
     MLTransfers.addObserver(this, context)
+  }
+
+  // ─── [2026-10-18 tg-list, apiVersion 11] busca / seleção / overlay / envio ─
+  /** setSearch {term, ids, cur, scroll}: realça os termos nas linhas que bateram. */
+  fun setSearch(p: Map<String, Any?>) {
+    val term = MLRow.str(p["term"])
+    val toks = if (term.isBlank()) emptyList() else MLSearchState.tokensOf(term)
+    val ids = HashSet<String>()
+    (p["ids"] as? List<*>)?.forEach { val v = MLRow.str(it); if (v.isNotEmpty()) ids.add(v) }
+    val cur = MLRow.str(p["cur"])
+    searchVer += 1
+    searchState = if (toks.isEmpty()) null else MLSearchState(toks, ids, cur, searchVer)
+    for (i in 0 until rv.childCount) (rv.getChildAt(i) as? MLCellView)?.search = searchState
+    if (MLRow.bool(p["scroll"]) && cur.isNotEmpty() && searchState != null) {
+      val k = applied.firstOrNull { rows[it]?.id == cur }
+      if (k != null) scrollToKey(k, 0.5, true)
+    }
+  }
+
+  fun setDragSelect(v: Boolean?) { dragSelectOn = v == true }
+
+  fun setQuickReact(m: Map<String, Any?>?) {
+    quickReactOn = m != null && MLRow.bool(m["on"])
+    val e = m?.let { MLRow.str(it["e"]) } ?: ""
+    quickEmoji = e.ifEmpty { "❤️" }
+  }
+
+  fun setOverlay(m: Map<String, Any?>?) {
+    overlay.configure(m, theme.wall)
+    applyInsets()
+    refreshOverlay()
+    if (overlay.on) overlay.setDist(if (applied.isEmpty()) 0f else distanceFromLatest() / resources.displayMetrics.density)
+  }
+
+  /** prepareSend {x,y,w,h}: a PRÓXIMA enviada (até 1,5 s) nasce no retângulo do compositor. */
+  fun prepareSend(m: Map<String, Any?>) {
+    val x = MLRow.num(m["x"]); val y = MLRow.num(m["y"]); val w = MLRow.num(m["w"]); val h = MLRow.num(m["h"])
+    morphAt = SystemClock.uptimeMillis()
+    morphRect = if (x != null && y != null && w != null && h != null && w > 1 && h > 1) RectF(x.toFloat(), y.toFloat(), (x + w).toFloat(), (y + h).toFloat()) else null
+  }
+
+  private fun morphStartFor(h: RecyclerView.ViewHolder): FloatArray? {
+    val mr = morphRect ?: return null
+    if (SystemClock.uptimeMillis() - morphAt > 1500) { morphRect = null; return null }
+    if (h.bindingAdapterPosition != 0) return null
+    val c = h.itemView as? MLCellView ?: return null
+    val r = c.row ?: return null
+    if (r.kind != MLKind.MSG || !r.own) return null
+    val b = c.bubbleRectInCell() ?: return null
+    if (b.width() <= 1f || b.height() <= 1f) return null
+    morphRect = null
+    val d = resources.displayMetrics.density
+    val rl = IntArray(2)
+    reactRoot()?.getLocationInWindow(rl)
+    val loc = IntArray(2)
+    c.getLocationInWindow(loc)
+    val cr = rl[0] + mr.right * d
+    val cb = rl[1] + mr.bottom * d
+    val dx = cr - (loc[0] + b.right)
+    val dy = cb - (loc[1] + b.bottom)
+    // só desce (vem do compositor, embaixo); deslocamento absurdo = layout estranho → padrão
+    if (abs(dy) > rv.height * 1.5f || abs(dx) > rv.width.toFloat()) return null
+    val sx = (mr.width() * d / b.width()).coerceIn(0.6f, 1f)
+    return floatArrayOf(dx, dy, sx, b.right, b.bottom)
+  }
+
+  private fun computeSelMode(): Boolean {
+    for (k in applied) {
+      val r = rows[k] ?: continue
+      if (r.kind == MLKind.MSG) return r.sel > 0
+    }
+    return false
+  }
+
+  private fun refreshOverlay() {
+    overlay.setSuppressed(selModeCached || ctxOverlay != null)
+  }
+
+  private fun setOverride(k: String, v: Int) {
+    if (v < 0) dragOverride.remove(k) else dragOverride[k] = v
+    findCell(k)?.selOverride = v
+  }
+
+  private fun clearDragOverrides() {
+    main.removeCallbacks(dsClearRunnable)
+    dsClearPending = false
+    if (dragOverride.isEmpty()) return
+    val ks = ArrayList(dragOverride.keys)
+    dragOverride.clear()
+    for (k in ks) findCell(k)?.selOverride = -1
+  }
+
+  private fun quickEligible(r: MLRow?): Boolean {
+    if (r == null || r.kind != MLKind.MSG || r.deleted || r.sel > 0 || selModeCached) return false
+    if (r.media?.kind == "sticker") return true
+    return r.text.isNotEmpty() && r.media == null && r.album.isEmpty() && r.audio == null && r.file == null
   }
 
   // ─── [2026-10-15 native-media-dl] transferências ─────────────────────────
@@ -420,6 +544,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     }
     ov.onDismissed = { reason ->
       if (ctxOverlay === ov) ctxOverlay = null
+      refreshOverlay() // [tg-list]
       if (liftedKey == key) setLiftedKey("")
       if (!destroyed) {
         onMenuDismiss(mapOf("key" to key, "reason" to reason))
@@ -429,6 +554,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     if (!ov.present()) { try { bmp.recycle() } catch (_: Throwable) {}; return false }
     ctxOverlay = ov
     setLiftedKey(key)
+    refreshOverlay() // [tg-list]
     return true
   }
 
@@ -570,7 +696,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   }
 
   // ─── props ───────────────────────────────────────────────────────────────
-  fun setTheme(m: Map<String, Any?>) { themeMap = m; theme = MLTheme(m); markStyleDirty() }
+  fun setTheme(m: Map<String, Any?>) { themeMap = m; theme = MLTheme(m); overlay.setWall(theme.wall); markStyleDirty() }
   fun setFontSize(v: Double?) { val n = (v ?: 16.0).toFloat(); if (n != fontSize) { fontSize = n; markStyleDirty() } }
   fun setLineHeight(v: Double?) { val n = (v ?: 21.0).toFloat(); if (n != lineHeight) { lineHeight = n; markStyleDirty() } }
   fun setRadius(v: Double?) { val n = (v ?: 18.0).toFloat(); if (n != radius) { radius = n; markStyleDirty() } }
@@ -586,6 +712,11 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private fun applyInsets() {
     // reverseLayout: paddingBottom = espaço sob a mais nova
     rv.setPadding(0, dp(topInsetDp + 6f).toInt(), 0, dp(bottomInsetDp).toInt())
+    (overlay.layoutParams as? FrameLayout.LayoutParams)?.let {
+      val bm = dp(bottomInsetDp + overlay.extraBottomDp - 2f).toInt()
+      val em = dp(8f).toInt()
+      if (it.bottomMargin != bm || it.marginEnd != em) { it.bottomMargin = bm; it.marginEnd = em; overlay.layoutParams = it }
+    }
   }
 
   private fun markStyleDirty() {
@@ -641,6 +772,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
         }
         val r = MLRow(m)
         if (!r.isValid) return@forEach
+        if (r.status == 0.0) { if (!pendingSeen.containsKey(r.key)) pendingSeen[r.key] = SystemClock.uptimeMillis() } else pendingSeen.remove(r.key) // [tg-list]
         rows[r.key] = r
         layouts.remove(r.key)
         changedSinceApply.add(r.key)
@@ -657,6 +789,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
         target = disp
         if (rows.size > disp.size + 300) {
           rows.keys.retainAll(seen)
+          pendingSeen.keys.retainAll(seen)
           layouts.keys.retainAll(seen)
           rawDicts.keys.retainAll(seen)
         }
@@ -775,6 +908,10 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       emitScroll(true)
       scheduleVisible()
       checkPendingPop()
+      // [tg-list] modo seleção mudou → overlay; fim do arrastar confirmado pelo JS → estado real
+      selModeCached = computeSelMode()
+      refreshOverlay()
+      if (dsClearPending) clearDragOverrides()
     }
   }
 
@@ -944,6 +1081,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     ctxOverlay?.dismiss("destroy", false)
     try { vnPlayer.stop() } catch (_: Throwable) {}
     main.removeCallbacks(stickyHide)
+    main.removeCallbacks(dsClearRunnable) // [tg-list]
+    try { overlay.destroy(); popLayer.cancelAll() } catch (_: Throwable) {}
     try { worker.shutdownNow() } catch (_: Throwable) {}
   }
 
@@ -958,6 +1097,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private fun emitScroll(force: Boolean) {
     val d = distanceFromLatest()
     val dd = d / resources.displayMetrics.density
+    if (overlay.on) overlay.setDist(if (applied.isEmpty()) 0f else dd) // [tg-list] ↓ pelo contentOffset nativo
     val cls = if (dd <= 6) 0 else if (dd <= 120) 1 else if (dd <= 300) 2 else 3
     val now = SystemClock.uptimeMillis()
     if (!force && cls == lastDistClass && now - lastScrollEmit < 66) return
@@ -1038,7 +1178,10 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       holder.cell.onRecycled = { c -> vnPlayer.stopIf(c) }
       holder.cell.a11yActs = a11yActsFor(r)
       holder.cell.onA11yAction = a11yHandler
+      holder.cell.pendingSince = pendingSeen[k] ?: 0L // [tg-list] antes do bind (relógio)
       holder.cell.bind(k, r, l, s, audioState, liftedKey, k in revealedKeys)
+      holder.cell.search = searchState
+      holder.cell.selOverride = dragOverride[k] ?: -1
       if (pendingFlash == k) { pendingFlash = null; holder.cell.post { holder.cell.flash() } }
       // [native-media-dl] auto-download (política) das mídias que entram na tela
       if (holder.cell.transferKeys.isNotEmpty()) holder.cell.autoStartTransfers(this@MLListView)
@@ -1058,29 +1201,145 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     // [2026-10-18 swipe-wa] velocidade p/ o "peteleco" (soltar rápido antes do limiar responde).
     private var vt: VelocityTracker? = null
     private val threshold = dp(64f)
+    private fun qrCellAt(x: Float, y: Float): MLCellView? {
+      if (!quickReactOn) return null
+      val c = rv.findChildViewUnder(x, y) as? MLCellView ?: return null
+      if (!quickEligible(c.row)) return null
+      // só toque no balão (fora dele: ex. calha/espaço vazio → toque normal)
+      return if (c.partAt(x - c.left, y - c.top) is MLCellView.Part.None) null else c
+    }
+
     private val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
       override fun onDown(e: MotionEvent): Boolean = true
-      override fun onSingleTapUp(e: MotionEvent): Boolean { tapAt(e.x, e.y); return true }
+      override fun onSingleTapUp(e: MotionEvent): Boolean {
+        // [tg-list] texto/figurinha com toque duplo p/ reagir: espera o 2º toque falhar
+        if (qrCellAt(e.x, e.y) != null) return true
+        tapAt(e.x, e.y); return true
+      }
+      override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+        if (qrCellAt(e.x, e.y) != null) tapAt(e.x, e.y)
+        return true
+      }
+      override fun onDoubleTap(e: MotionEvent): Boolean {
+        val c = qrCellAt(e.x, e.y) ?: return false
+        quickReact(c)
+        return true
+      }
       override fun onLongPress(e: MotionEvent) { longAt(e.x, e.y) }
     })
 
+    // ─── [tg-list] arrastar na calha p/ selecionar ─────────────────────────
+    private var dsCand = false
+    private var dsActive = false
+    private var dsAnchor = -1
+    private var dsCur = -1
+    private var dsOn = true
+    private var dsKeys: List<String> = emptyList()
+    private var dsLastY = 0f
+    private var dsScrolling = false
+    private val dsAuto = object : Runnable {
+      override fun run() {
+        if (!dsActive || destroyed) { dsScrolling = false; return }
+        val edge = dp(60f)
+        val y = dsLastY
+        val h = rv.height.toFloat()
+        val v = when {
+          y < edge -> -((edge - y) / edge).coerceIn(0f, 1f) * dp(18f)
+          y > h - edge -> ((y - (h - edge)) / edge).coerceIn(0f, 1f) * dp(18f)
+          else -> 0f
+        }
+        if (v == 0f) { dsScrolling = false; return }
+        rv.scrollBy(0, v.toInt())
+        dsUpdate(y)
+        main.postDelayed(this, 16)
+      }
+    }
+
+    private fun inGutter(x: Float): Boolean =
+      if (layoutDirection == View.LAYOUT_DIRECTION_RTL) x > rv.width - dp(56f) else x < dp(56f)
+
+    private fun dsUpdate(y: Float) {
+      val yy = y.coerceIn(rv.paddingTop.toFloat(), (rv.height - rv.paddingBottom - 1).toFloat().coerceAtLeast(0f))
+      val ch = rv.findChildViewUnder(rv.width / 2f, yy) ?: return
+      val pos = rv.getChildAdapterPosition(ch)
+      if (pos == RecyclerView.NO_POSITION || pos == dsCur) return
+      dsCur = pos
+      val lo = min(dsAnchor, pos).coerceAtLeast(0)
+      val hi = max(dsAnchor, pos).coerceAtMost(applied.size - 1)
+      val ks = ArrayList<String>()
+      var i = hi
+      while (i >= lo) { // visual: de cima (mais antiga) p/ baixo
+        val k = applied.getOrNull(i)
+        val r = if (k != null) rows[k] else null
+        if (k != null && r != null && r.kind == MLKind.MSG && r.sel > 0) ks.add(k)
+        i--
+      }
+      if (ks == dsKeys) return
+      val now = ks.toHashSet()
+      for (k in dsKeys) if (k !in now) setOverride(k, -1)
+      val sv = if (dsOn) 2 else 1
+      for (k in ks) setOverride(k, sv)
+      dsKeys = ks
+      try { rv.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } catch (_: Throwable) {}
+      onSelectRange(mapOf("keys" to ks, "on" to (if (dsOn) 1 else 0), "end" to 0))
+    }
+
+    private fun dsEnd() {
+      if (!dsActive) return
+      dsActive = false
+      dsCand = false
+      main.removeCallbacks(dsAuto)
+      dsScrolling = false
+      onSelectRange(mapOf("keys" to dsKeys, "on" to (if (dsOn) 1 else 0), "end" to 1))
+      dsKeys = emptyList()
+      dsClearPending = true
+      main.removeCallbacks(dsClearRunnable)
+      main.postDelayed(dsClearRunnable, 800)
+    }
+
     override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
       if (!storeInteractive) return false // [native-store] só a foto na tela: JS ainda não conhece os itens
+      if (dsActive) return true
       if (!swiping) detector.onTouchEvent(e)
       when (e.actionMasked) {
         MotionEvent.ACTION_DOWN -> {
           downX = e.x; downY = e.y; swiping = false; armed = false
           cell = rv.findChildViewUnder(e.x, e.y) as? MLCellView
           cell?.let { c -> if ((c.row?.sel ?: 0) == 0) c.pressedAction = c.actionIndexAt(e.x - c.left, e.y - c.top) }
+          // [tg-list] candidato a arrastar-p/-selecionar (modo seleção + calha)
+          val cr = cell?.row
+          dsCand = dragSelectOn && cr != null && cr.kind == MLKind.MSG && cr.sel > 0 && inGutter(e.x)
+          if (dsCand) { dsAnchor = rv.getChildAdapterPosition(cell!!); if (dsAnchor == RecyclerView.NO_POSITION) dsCand = false }
         }
         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
           cell?.let { c -> c.postDelayed({ c.pressedAction = -1 }, 90) }
+          dsCand = false
         }
         MotionEvent.ACTION_MOVE -> {
           if (swiping) return true
           val dx = e.x - downX
           val dy = e.y - downY
           if (abs(dx) > slop || abs(dy) > slop) cell?.pressedAction = -1
+          if (dsCand && (abs(dy) > slop || abs(dx) > slop)) {
+            val c0 = cell
+            dsCand = false
+            if (c0 != null) {
+              dsActive = true
+              dsOn = c0.effSel() != 2
+              dsCur = -1
+              dsKeys = emptyList()
+              dsLastY = e.y
+              main.removeCallbacks(dsClearRunnable)
+              rv.parent?.requestDisallowInterceptTouchEvent(true)
+              val cancel = MotionEvent.obtain(e).apply { action = MotionEvent.ACTION_CANCEL }
+              detector.onTouchEvent(cancel)
+              cancel.recycle()
+              rv.stopScroll()
+              dsUpdate(downY) // âncora
+              dsUpdate(e.y)
+              return true
+            }
+          }
           val c = cell ?: return false
           val r = c.row ?: return false
           if (abs(dx) > slop && abs(dx) > abs(dy) * 1.3f && downX > dp(28f) && r.kind == MLKind.MSG && r.sel == 0) {
@@ -1101,6 +1360,18 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     }
 
     override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {
+      if (dsActive) {
+        when (e.actionMasked) {
+          MotionEvent.ACTION_MOVE -> {
+            dsLastY = e.y
+            dsUpdate(e.y)
+            val edge = dp(60f)
+            if (!dsScrolling && (e.y < edge || e.y > rv.height - edge)) { dsScrolling = true; main.postDelayed(dsAuto, 16) }
+          }
+          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> dsEnd()
+        }
+        return
+      }
       val c = cell ?: return
       vt?.addMovement(e)
       when (e.actionMasked) {
@@ -1147,6 +1418,17 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     }
 
     override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
+
+    /** [tg-list] toque duplo no texto/figurinha: haptic + pop do emoji + onQuickReact. */
+    private fun quickReact(c: MLCellView) {
+      val r = c.row ?: return
+      if (!storeInteractive || c.key.isEmpty()) return
+      try { c.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP) } catch (_: Throwable) {}
+      c.bubbleRectInCell()?.let { b ->
+        popLayer.pop(quickEmoji, c.left + c.translationX + b.centerX(), c.top + c.translationY + b.centerY())
+      }
+      onQuickReact(mapOf("key" to c.key, "messageId" to r.id, "emoji" to quickEmoji))
+    }
 
     private fun tapAt(x: Float, y: Float) {
       if (!storeInteractive) return

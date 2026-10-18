@@ -201,4 +201,7 @@ class MLTheme(private val d: Map<String, Any?> = emptyMap()) {
   val selection = c("selection", 0x2E808080)
   val highlight = c("highlight", 0x47808080)
   val failed = c("failed", 0xFFE53333.toInt())
+  // [2026-10-18 tg-list, apiVersion 11] realce da busca (todas / atual)
+  val search = c("search", 0x59FFD60A)
+  val searchCur = c("searchCur", 0xB3FFD60A.toInt())
 }

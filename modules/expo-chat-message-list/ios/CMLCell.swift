@@ -56,6 +56,8 @@ final class CMLCell: UICollectionViewCell {
   var onA11yActivate: ((CMLCell) -> Bool)?
   private var revealed = false
   private var lifted = false
+  /// [tg-list] emoji do toque duplo voando
+  fileprivate var quickPop: UILabel?
   /// [2026-10-15 native-effects] emoji grande aguardando o willDisplay p/ animar 1×
   private var jumboPending = false
 
@@ -172,6 +174,9 @@ final class CMLCell: UICollectionViewCell {
     reacts.transform = .identity
     reacts.alpha = 1
     meta.cancelStatusAnim()
+    meta.setClockSpin(false, key: "")
+    textView.setMarks([], color: .clear)
+    quickPop?.removeFromSuperview(); quickPop = nil
     audio.resetPlayback()
     audio.rateText = nil // [voz-wa]
     replyIcon.alpha = 0
@@ -508,6 +513,13 @@ final class CMLCell: UICollectionViewCell {
     } else if let ps = prevStatus, let ns = L.meta.status, ns > ps, ps >= 0,
               CMLMotion.ticks, !CMLMotion.reduce, window != nil, !meta.isHidden {
       meta.animateStatus(from: ps)
+    }
+    // [2026-10-18 tg-list, apiVersion 11] relógio do pendente gira após ~300 ms
+    if row.kind == .msg && L.meta.status == 0 && !meta.isHidden && CMLMotion.clock && !CMLMotion.reduce {
+      meta.setClockSpin(true, key: key)
+    } else {
+      meta.setClockSpin(false, key: key)
+      if let st = L.meta.status, st != 0 { CMLMetaView.clearPending(key) }
     }
 
     // reações (coordenadas da linha, não do balão)
@@ -1187,5 +1199,87 @@ extension CMLCell {
       let x = T.probe(d)
       if x.state == .none && !x.autoTried && T.allowsAuto(d.bucket) { T.start(d, user: false, owner: owner) }
     }
+  }
+}
+
+
+// MARK: - [2026-10-18 tg-list, apiVersion 11]
+
+extension CMLCell {
+  /// Realce da busca no texto do balão (intervalos do layout.attr).
+  func applySearch(_ r: [NSRange], cur: Bool) {
+    guard let th = style0?.theme else { textView.setMarks([], color: .clear); return }
+    textView.setMarks(r, color: cur ? th.searchCur : th.search)
+  }
+
+  /// Texto exibido no balão (base dos intervalos da busca).
+  var displayedText: String? {
+    return layoutInfo?.text?.attr.string
+  }
+
+  /// Arrastar-p/-selecionar: pinta o estado otimista (2 = marcada, 1 = não) sem
+  /// mexer no modelo; nil volta ao `row.sel`.
+  func previewSel(_ sel: Int?) {
+    guard let row = row, row.kind == .msg, row.sel > 0, let th = style0?.theme else { return }
+    let v = sel ?? row.sel
+    let k: CMLIconView.Kind = v == 2 ? .selectOn : .select
+    if selIcon.kind != k {
+      selIcon.kind = k
+      if !UIAccessibility.isReduceMotionEnabled {
+        selIcon.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        UIView.animate(withDuration: 0.2, delay: 0, usingSpringWithDamping: 0.55, initialSpringVelocity: 0, options: [.allowUserInteraction], animations: {
+          self.selIcon.transform = .identity
+        })
+      }
+    }
+    highlight.layer.removeAllAnimations()
+    highlight.backgroundColor = v == 2 ? th.selection : th.highlight
+    highlight.alpha = v == 2 ? 1 : 0
+  }
+
+  /// Toque duplo = reação rápida: o emoji salta no centro do balão e sobe sumindo.
+  func popQuickReact(_ emoji: String) {
+    guard let L = layoutInfo else { return }
+    quickPop?.removeFromSuperview()
+    let lb = UILabel()
+    lb.text = emoji
+    lb.font = UIFont.systemFont(ofSize: 34)
+    lb.sizeToFit()
+    let c = CGPoint(x: L.bubbleFrame.midX + slide.transform.tx, y: L.bubbleFrame.midY)
+    lb.center = c
+    lb.isUserInteractionEnabled = false
+    contentView.addSubview(lb)
+    quickPop = lb
+    if UIAccessibility.isReduceMotionEnabled {
+      lb.alpha = 1
+      UIView.animate(withDuration: 0.5, delay: 0.25, options: [.allowUserInteraction], animations: { lb.alpha = 0 }, completion: { _ in
+        lb.removeFromSuperview()
+      })
+      return
+    }
+    lb.transform = CGAffineTransform(scaleX: 0.2, y: 0.2)
+    lb.alpha = 0.4
+    UIView.animateKeyframes(withDuration: 0.62, delay: 0, options: [.allowUserInteraction, .calculationModeCubic], animations: {
+      UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
+        lb.transform = CGAffineTransform(scaleX: 1.25, y: 1.25); lb.alpha = 1
+      }
+      UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.2) {
+        lb.transform = .identity
+      }
+      UIView.addKeyframe(withRelativeStartTime: 0.5, relativeDuration: 0.5) {
+        lb.transform = CGAffineTransform(translationX: 0, y: -24).scaledBy(x: 0.9, y: 0.9)
+        lb.alpha = 0
+      }
+    }, completion: { [weak self, weak lb] _ in
+      lb?.removeFromSuperview()
+      if let s = self, s.quickPop === lb { s.quickPop = nil }
+    })
+  }
+
+  /// Bolha elegível ao toque duplo: texto puro ou figurinha.
+  static func quickReactEligible(_ r: CMLRow) -> Bool {
+    guard r.kind == .msg, r.sel == 0, !r.deleted else { return false }
+    if let m = r.media { return m.kind == "sticker" && r.album.isEmpty }
+    return !r.text.isEmpty && r.album.isEmpty && r.audio == nil && r.file == nil
   }
 }
