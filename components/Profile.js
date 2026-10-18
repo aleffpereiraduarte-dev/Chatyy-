@@ -64,6 +64,9 @@ import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import HighlightEditSheet from './HighlightEditSheet';
 import ReportSheet from './ReportSheet'; // [central-moderacao 2026-10-14] motivos padronizados
+import NativeChatInfo, { isNativeProfileEnabled } from './chat/NativeChatInfo'; // [2026-10-18 profile-native]
+import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-10-18 profile-native]
+import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
 import HighlightShareSheet from './HighlightShareSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
@@ -1182,6 +1185,11 @@ export default function Profile({
   headerLeadingSpace = 0,  // px reserved on the left of row 1 so an absolute-positioned back button doesn't cover @username
   autoOpenStory = false,   // when true and stories exist, auto-open the story viewer (chat status_reply tap path)
   autoOpenSettings = false, // when true and is_self, auto-open the settings bottom sheet (Apps drawer "Configurações" entry)
+  // [2026-10-18 profile-native] perfil Telegram NATIVO (view ChatyyChatInfo api ≥ 3).
+  nativeProfile = false,   // rota pede o nativo (modo full); a grade JS completa vem por ?grid=1
+  onNativeActive,          // (bool) → a rota esconde o próprio botão voltar quando o nativo desenha a barra
+  nativeBottomInset = 0,   // respiro inferior (safe area) da lista nativa
+  initialTab,              // aba inicial da grade JS ('posts' | 'reels' | 'lives' | 'media')
   colors, isDark, t, router,
 }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
@@ -1206,7 +1214,7 @@ export default function Profile({
   // route when bearer/cookie went stale (incidente 2026-05-04 prints).
   const [errStatus, setErrStatus] = useState(0);
   const [retryCounter, setRetryCounter] = useState(0);
-  const [activeTab, setActiveTab] = useState('posts');
+  const [activeTab, setActiveTab] = useState(() => (['posts', 'reels', 'lives', 'media', 'email'].includes(initialTab) ? initialTab : 'posts'));
   const [viewer, setViewer] = useState({ open: false, startIdx: 0, list: 'posts' });
   // ─── Lives tab state (2026-05-18) ───
   // Saved CF Stream replays of the profile owner. Loaded lazily the first
@@ -1223,6 +1231,10 @@ export default function Profile({
   // (black screen, no photo). Lightbox gives users a real WhatsApp-style
   // "see the photo big" affordance.
   const [avatarLightboxOpen, setAvatarLightboxOpen] = useState(false);
+  // [2026-10-18 profile-native] foto do carrossel (capa) aberta em tela cheia; null = avatar.
+  const [lightboxUri, setLightboxUri] = useState(null);
+  // [2026-10-18 profile-native] erro na view nativa → esta tela volta ao perfil JS.
+  const [nativeProfileOff, setNativeProfileOff] = useState(false);
   // [feat-10] Highlight viewer state — separate from storyViewer so opening a
   // highlight doesn't clobber the live-stories starting index. items[] mirrors
   // the shape StoryViewer expects (id, media_url, type, bg_color, ...).
@@ -3490,10 +3502,10 @@ export default function Profile({
   const avatarLightboxNode = (
     <AvatarLightbox
       visible={avatarLightboxOpen}
-      email={identity?.email || null}
-      uri={identity?.avatar_url || null}
+      email={lightboxUri ? null : (identity?.email || null)}
+      uri={lightboxUri || identity?.avatar_url || null}
       name={identity?.name || identity?.username || identity?.email || ''}
-      onClose={() => setAvatarLightboxOpen(false)}
+      onClose={() => { setAvatarLightboxOpen(false); setLightboxUri(null); }}
     />
   );
 
@@ -4472,11 +4484,116 @@ export default function Profile({
     createText: isDark ? '#F1F3F5' : '#111111',
   }), [colors?.background, isDark]);
 
+  // ─── [2026-10-18 profile-native] Perfil Telegram NATIVO ────────────────
+  // Mesma view da "Dados do contato" (ChatyyChatInfo, api ≥ 3) com
+  // descritores de perfil (components/profile/nativeProfileInfo.js). Toda
+  // linha chama os MESMOS handlers/folhas da versão JS abaixo. Gate: rota
+  // pediu (nativeProfile) + binário api ≥ 3 + kill switch OTA
+  // globalThis.__chatyy_native_profile = false; erro nativo → volta ao JS.
+  const _npOn = mode === 'full' && !WEB && !!nativeProfile && !nativeProfileOff && isNativeProfileEnabled();
+  const _npActive = _npOn && !loading && !err && !!identity;
+  useEffect(() => { try { onNativeActive?.(_npActive); } catch {} }, [_npActive, onNativeActive]);
+  const _npGo = (href) => { try { if (router?.push) router.push(href); } catch {} };
+  const _npKey = identity?.username || identity?.email || fetchKey || '';
+  const _npGrid = (tab) => _npGo(`/u/${encodeURIComponent(String(_npKey))}?grid=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}`);
+  const _npAvatar = (index, uri) => {
+    if (index > 0 && uri) { setLightboxUri(uri); setAvatarLightboxOpen(true); return; }
+    if (stories.length > 0) { openStoriesAt(0); return; }
+    if (actions?.is_self) { setAvatarActionOpen(true); return; }
+    const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+    if (url) { setLightboxUri(null); setAvatarLightboxOpen(true); }
+  };
+  const _npCopy = async (text) => {
+    if (!text) return;
+    try {
+      const Clipboard = require('expo-clipboard');
+      await Clipboard.setStringAsync(String(text));
+      try { require('../services/haptics').HapticsCompat.selectionAsync?.(); } catch {}
+      const v = t?.('nativeProfile.copied');
+      Alert.alert(v && v !== 'nativeProfile.copied' ? v : 'Copiado', String(text));
+    } catch {}
+  };
+  const _npLogout = () => {
+    const tr = (k, fb) => { const v = t?.(k); return v && v !== k ? v : fb; };
+    Alert.alert(tr('settings.logoutConfirmTitle', 'Sair da conta?'), tr('settings.logoutConfirmMessage', ''), [
+      { text: tr('common.cancel', 'Cancelar'), style: 'cancel' },
+      {
+        text: tr('settings.logout', 'Sair'),
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            if (onLogout) await onLogout();
+            else if (authLogout) { await authLogout(); router?.replace?.('/login'); }
+          } catch {}
+        },
+      },
+    ]);
+  };
+  const _npInfo = _npActive ? buildNativeProfileInfo({
+    t,
+    mode: actions?.is_self ? 'self' : 'user',
+    identity,
+    presenceText,
+    social,
+    actions,
+    nickname: nicknameValue,
+    stories,
+    highlights,
+    posts: combinedPostsAll,
+    postsTotal: (posts.length || 0) + (reels.length || 0),
+    sharedMedia,
+    commonChats,
+    liveSessionId,
+    diamonds: !!DIAMONDS_ENABLED,
+    planName: PLAN_NAME,
+    planDesc: (() => { const v = t?.('chatyyOne.rowDesc'); return v && v !== 'chatyyOne.rowDesc' ? v : ''; })(),
+    abs: resolveMedia,
+    on: {
+      edit: () => setEditOpen(true),
+      avatar: _npAvatar,
+      stories: () => openStoriesAt(0),
+      qr: () => _npGo('/profile-qr'),
+      share: handleShareProfile,
+      follow: handleFollow,
+      chat: handleChat,
+      call: handleCall,
+      video: handleVideo,
+      email: handleEmail,
+      followers: (tab) => (onOpenFollowers ? onOpenFollowers(identity.email, tab) : setFollowersTab(tab)),
+      grid: _npGrid,
+      post: (it) => onGridItemPress(it, 'posts'),
+      group: (c) => { try { require('../services/openConversation').openConversation(`/chat-conversation?id=${c.id}`); } catch {} },
+      menu: () => setMenuOpen(true),
+      block: handleBlock,
+      report: handleReport,
+      live: () => { if (liveSessionId) _npGo(`/live-viewer?sessionId=${encodeURIComponent(liveSessionId)}&hostEmail=${encodeURIComponent(identity.email)}&hostName=${encodeURIComponent(identity.name || (identity.email || '').split('@')[0])}`); },
+      gift: () => setSendDiamondOpen(true),
+      go: _npGo,
+      logout: _npLogout,
+      copy: _npCopy,
+      link: (url) => { try { Linking.openURL(/^https?:\/\//i.test(url) ? url : `https://${url}`); } catch {} },
+    },
+  }) : null;
+  const _npBack = () => { try { if (router?.canGoBack?.()) router.back(); else router?.replace?.('/chat'); } catch {} };
+  const _npFail = (why) => {
+    try { console.warn('[profile-native] fallback JS:', why); require('./../services/crashReporter').reportNativeFallback?.('native_profile_v3', String(why || '')); } catch {}
+    setNativeProfileOff(true);
+  };
+
   // ─── Render ──────────────────────────────────────────────────────────
   if (mode === 'full') {
     return (
       <>
-        {(_nativeGridOn && !loading && !err) ? (
+        {_npInfo ? (
+          <NativeChatInfo
+            {..._npInfo}
+            bottomInset={nativeBottomInset}
+            maxWidth={computeContentMaxWidth(SCREEN_W)}
+            onFailure={_npFail}
+            onClose={_npBack}
+            closeLabel={t?.('common.back') || 'Voltar'}
+          />
+        ) : (_nativeGridOn && !loading && !err) ? (
           <NativeMediaGrid
             style={{ flex: 1, backgroundColor: colors?.background }}
             items={nativeGrid.items}

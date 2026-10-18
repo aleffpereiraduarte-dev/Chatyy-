@@ -14,6 +14,7 @@ import Profile, { prefetchProfile } from '../../components/Profile';
 import { IconArrowLeft } from '../../components/Icons';
 import PressableScale from '../../components/PressableScale'; // [2026-10-08 apps-native]
 import { computeContentMaxWidth } from '../../utils/responsive';
+import { useGroupedColors } from '../../components/settings/SettingsKit'; // [2026-10-18 profile-native]
 
 // [2026-10-15 profile-fast] Web: o chunk desta rota avalia ~250 ms antes do 1o render
 // do Profile (arvore de providers inteira montando) -> o profile_get ja sai daqui e o
@@ -26,7 +27,16 @@ try {
 } catch {}
 
 export default function UserProfileScreen() {
-  const { username, openStatus, openSettings } = useLocalSearchParams();
+  const { username, openStatus, openSettings, grid, tab } = useLocalSearchParams();
+  // [2026-10-18 profile-native] Perfil Telegram NATIVO (meu perfil e perfil
+  // público): a view nativa desenha a própria barra (seta + título que
+  // encolhe) → esta rota esconde o botão voltar flutuante enquanto o nativo
+  // estiver ativo. ?grid=1 = grade completa JS (posts/reels/lives/mídia),
+  // aberta pelo "ver tudo" do nativo. Kill switch: globalThis.__chatyy_native_profile = false.
+  const _one = (v) => (Array.isArray(v) ? v[0] : v);
+  const wantsGrid = _one(grid) === '1' || _one(grid) === 'true';
+  const [nativeActive, setNativeActive] = useState(false);
+  const gc = useGroupedColors();
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -71,7 +81,7 @@ export default function UserProfileScreen() {
 
   // Top padding = safe-area notch + breathing room so avatar/name don't
   // touch the status bar (Instagram/TikTok pattern).
-  const topPad = (insets.top || 0) + 12;
+  const topPad = nativeActive ? (insets.top || 0) : (insets.top || 0) + 12;
   // [2026-10-11 visual polish] Wide web: the profile column is centered (~900px)
   // so the edge-anchored back arrow never overlaps @username — drop the 48px
   // spacer there (it left @handle visibly indented vs. the avatar below).
@@ -85,7 +95,7 @@ export default function UserProfileScreen() {
     // the Profile header's first row. We do that here by passing a prop that Profile.js
     // respects (`headerLeadingSpace`). The container itself stays edge-to-edge so the
     // posts/reels grid gets full width.
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPad }]}>
+    <View style={[styles.container, { backgroundColor: nativeActive ? gc.pageBg : colors.background, paddingTop: topPad }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       <Profile
@@ -99,6 +109,10 @@ export default function UserProfileScreen() {
         t={t}
         router={router}
         headerLeadingSpace={headerLead}
+        nativeProfile={Platform.OS !== 'web' && !wantsGrid}
+        onNativeActive={setNativeActive}
+        nativeBottomInset={(insets.bottom || 0) + 24}
+        initialTab={typeof _one(tab) === 'string' ? _one(tab) : undefined}
         onOpenChat={handleChat}
         onOpenCall={handleCall}
         onOpenEmail={handleEmail}
@@ -108,7 +122,7 @@ export default function UserProfileScreen() {
           [2026-10-11 visual polish] Rendered AFTER <Profile> so it paints on top:
           on web the profile body stacked over it and the arrow was invisible
           (only the 48px gap before @username showed). top aligned with row 1. */}
-      <View style={[styles.backBtnWrap, { top: topPad + 13 }]} pointerEvents="box-none">{/* [polish3] +3: centro da seta = centro do @usuario */}
+      {nativeActive ? null : <View style={[styles.backBtnWrap, { top: topPad + 13 }]} pointerEvents="box-none">{/* [polish3] +3: centro da seta = centro do @usuario */}
         <PressableScale
           onPress={() => { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); }}
           hitSlop={8}
@@ -118,7 +132,7 @@ export default function UserProfileScreen() {
         >
           <IconArrowLeft size={22} color={colors.text} />
         </PressableScale>
-      </View>
+      </View>}
     </View>
   );
 }

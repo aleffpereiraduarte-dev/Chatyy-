@@ -21,8 +21,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
@@ -99,6 +102,46 @@ internal class CIHeroSpacer(ctx: Context) : View(ctx) {
   }
 }
 
+/** [2026-10-18 profile-native] Tracinhos do carrossel no topo da foto expandida. */
+@SuppressLint("ViewConstructor")
+internal class CISegments(ctx: Context) : View(ctx) {
+  private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val rect = RectF()
+  private val gap = 4f * ctx.resources.displayMetrics.density
+  var count = 0
+    set(v) {
+      if (v == field) return
+      field = v
+      invalidate()
+    }
+  var index = 0
+    set(v) {
+      if (v == field) return
+      field = v
+      invalidate()
+    }
+
+  init {
+    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+  }
+
+  override fun onDraw(canvas: Canvas) {
+    super.onDraw(canvas)
+    val n = count
+    if (n < 2) return
+    val w = width.toFloat()
+    val h = height.toFloat()
+    val bw = max(2f, (w - gap * (n - 1)) / n)
+    val r = h / 2f
+    for (i in 0 until n) {
+      val x = i * (bw + gap)
+      rect.set(x, 0f, x + bw, h)
+      paint.color = if (i == index) 0xF2FFFFFF.toInt() else 0x66FFFFFF
+      canvas.drawRoundRect(rect, r, r, paint)
+    }
+  }
+}
+
 @SuppressLint("ViewConstructor")
 internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   private val d = ctx.resources.displayMetrics.density
@@ -126,8 +169,18 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   private val titleTv = TextView(ctx)
   private val subTv = TextView(ctx)
   val closeBtn = ImageView(ctx)
+  // [2026-10-18 profile-native] botão de texto da barra ("Editar") + carrossel.
+  private val navBtn = TextView(ctx)
+  private val segments = CISegments(ctx)
+  private var photoList: List<CIPic> = emptyList()
+  var photoIndex = 0
+    private set
+  private var isBack = false
+  private var navKey = ""
+  private var prevPhotoTarget: CustomTarget<Bitmap>? = null
 
   var onClose: (() -> Unit)? = null
+  var onNav: ((String) -> Unit)? = null
   /** Opacidade atual da barra (barra opaca bloqueia toques nas linhas por baixo). */
   var navAlpha = 0f
     private set
@@ -216,6 +269,25 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     closeBtn.isClickable = true
     closeBtn.isFocusable = true
     addView(closeBtn)
+
+    navBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+    navBtn.typeface = CLType.weight(500)
+    navBtn.includeFontPadding = false
+    navBtn.maxLines = 1
+    navBtn.setSingleLine(true)
+    navBtn.ellipsize = TextUtils.TruncateAt.END
+    navBtn.gravity = Gravity.CENTER
+    val np = dp(8f).toInt()
+    navBtn.setPadding(np, 0, np, 0)
+    navBtn.isClickable = true
+    navBtn.isFocusable = true
+    navBtn.visibility = View.GONE
+    navBtn.setOnClickListener { if (navKey.isNotEmpty()) onNav?.invoke(navKey) }
+    addView(navBtn)
+
+    segments.alpha = 0f
+    segments.visibility = View.GONE
+    addView(segments)
   }
 
   // ─── Geometria (px, conteúdo em repouso) ────────────────────────────────
@@ -255,7 +327,17 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     lastColorE = -1f
     avatar.bind(CLRow(id = "hero", kind = "direct", title = h.title, tiles = listOf(h.pic.tile())), CLTheme(p.dark), p.pageBg)
     avatar.contentDescription = labels.get("photo", "Ver foto")
-    loadPhoto(h.pic)
+    val list = ArrayList<CIPic>()
+    if (h.pic.url.isNotEmpty()) list.add(h.pic)
+    list.addAll(h.photos)
+    val curUrl = photoList.getOrNull(photoIndex)?.url ?: ""
+    photoList = list
+    val keepAt = if (curUrl.isNotEmpty()) list.indexOfFirst { it.url == curUrl } else -1
+    photoIndex = if (keepAt >= 0) keepAt else 0
+    loadPhoto(list.getOrNull(photoIndex) ?: h.pic, false)
+    segments.count = if (list.size > 1) list.size else 0
+    segments.index = photoIndex
+    segments.visibility = if (list.size > 1) View.VISIBLE else View.GONE
 
     titleTv.text = h.title
     subTv.text = h.sub
@@ -303,8 +385,36 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     navBg.setBackgroundColor(p.pageBg)
     hairline.setBackgroundColor(p.separator)
     closeBtn.contentDescription = labels.get("close", "Fechar")
+    isBack = h.back
+    closeBtn.setImageDrawable(tintedIcon(context, if (isBack) R.drawable.cci_ic_back else R.drawable.cci_ic_close, palette.text))
+    navKey = h.navKey
+    navBtn.text = h.navLabel
+    navBtn.contentDescription = h.navLabel
+    navBtn.visibility = if (h.navKey.isNotEmpty() && h.navLabel.isNotEmpty()) View.VISIBLE else View.GONE
     pressedKey = null
     requestLayout()
+  }
+
+  // ─── Carrossel (foto expandida) ─────────────────────────────────────────
+
+  /** Avança/volta uma foto; false = não há para onde ir. */
+  fun cycle(dir: Int): Boolean {
+    val n = photoList.size
+    if (n < 2) return false
+    val next = photoIndex + (if (dir < 0) -1 else 1)
+    if (next < 0 || next >= n) return false
+    photoIndex = next
+    segments.index = next
+    loadPhoto(photoList[next], true)
+    return true
+  }
+
+  /** Volta para a foto principal (ao recolher a foto expandida). */
+  fun resetPhoto() {
+    if (photoIndex == 0 || photoList.isEmpty()) return
+    photoIndex = 0
+    segments.index = 0
+    loadPhoto(photoList[0], true)
   }
 
   private fun makeTile(): LinearLayout {
@@ -336,14 +446,25 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     return t
   }
 
-  private fun loadPhoto(pic: CIPic) {
+  /** keep = true (carrossel): a foto atual continua na tela até a próxima
+   *  chegar; o alvo antigo só é liberado depois (bitmap nunca reciclado em uso). */
+  private fun loadPhoto(pic: CIPic, keep: Boolean) {
     if (pic.url == photoKey) return
     val app = context.applicationContext
-    photoTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+    val keeping = keep && photoReady && photoTarget != null
+    prevPhotoTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+    prevPhotoTarget = null
+    if (keeping) {
+      prevPhotoTarget = photoTarget
+    } else {
+      photoTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+    }
     photoTarget = null
     photoKey = pic.url
-    photoReady = false
-    photo.setImageDrawable(null)
+    if (!keeping) {
+      photoReady = false
+      photo.setImageDrawable(null)
+    }
     if (pic.url.isEmpty()) return
     val model = CICard.glideModel(pic.url, pic.auth) ?: return
     val px = min(1080, max(320, resources.displayMetrics.widthPixels))
@@ -353,6 +474,10 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
         if (photoKey != key) return
         photo.setImageBitmap(resource)
         photoReady = true
+        // Foto anterior do carrossel já saiu da tela → agora pode ser liberada.
+        val prev = prevPhotoTarget
+        prevPhotoTarget = null
+        if (prev != null) { try { Glide.with(app).clear(prev) } catch (_: Throwable) {} }
       }
 
       override fun onLoadCleared(placeholder: Drawable?) {
@@ -393,6 +518,8 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     closeBtn.measure(ciExactly(cb), ciExactly(cb))
     val bs = dp(34f).toInt()
     badge.measure(ciExactly(bs), ciExactly(bs))
+    navBtn.measure(MeasureSpec.makeMeasureSpec(dp(140f).toInt(), MeasureSpec.AT_MOST), ciExactly(cb))
+    segments.measure(ciExactly(max(1, w - dp(16f).toInt())), ciExactly(max(1, dp(3f).toInt())))
     photo.measure(ciExactly(max(1, photo.width)), ciExactly(max(1, photo.height)))
     scrim.measure(ciExactly(max(1, scrim.width)), ciExactly(max(1, scrim.height)))
   }
@@ -405,9 +532,15 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     val hl = hairline.measuredHeight
     hairline.layout(0, navH.toInt() - hl, w, navH.toInt())
     val cb = closeBtn.measuredWidth
-    val cx = w - dp(8f).toInt() - cb
+    val cx = if (isBack) dp(4f).toInt() else w - dp(8f).toInt() - cb
     val cy = ((navH - cb) / 2f).toInt()
     closeBtn.layout(cx, cy, cx + cb, cy + cb)
+    val nw = navBtn.measuredWidth
+    val nh = navBtn.measuredHeight
+    val nx = if (isBack) w - dp(8f).toInt() - nw else dp(8f).toInt()
+    val ny = ((navH - nh) / 2f).toInt()
+    navBtn.layout(nx, ny, nx + nw, ny + nh)
+    segments.layout(0, 0, segments.measuredWidth, segments.measuredHeight)
     apply(lastRel, lastE)
   }
 
@@ -465,10 +598,16 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
       photo.invalidateOutline()
       scrim.layout(l.toInt(), t.toInt(), r.toInt(), b.toInt())
       scrim.alpha = e
+      if (segments.count > 1) {
+        segments.translationX = dp(8f)
+        segments.translationY = t + dp(6f)
+        segments.alpha = ciSmooth(0.6f, 1f, e)
+      }
     } else {
       avatar.alpha = nAlpha
       if (photo.visibility != View.INVISIBLE) photo.visibility = View.INVISIBLE
       scrim.alpha = 0f
+      segments.alpha = 0f
     }
     avL = l
     avT = t
@@ -525,6 +664,8 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
       titleTv.setTextColor(ciMixColor(palette.text, Color.WHITE, e))
       subTv.setTextColor(ciMixColor(palette.secondary, 0xDBFFFFFF.toInt(), e))
       closeBtn.setColorFilter(ciMixColor(palette.text, Color.WHITE, e))
+      navBtn.setTextColor(ciMixColor(palette.text, Color.WHITE, e))
+      navBtn.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb((90f * e).toInt(), 0, 0, 0))
     }
 
     // Ladrilhos: andam com o conteúdo e somem antes da barra.
@@ -569,6 +710,13 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     }
     val pad = dp(6f)
     if (avAlpha > 0.4f && x >= avL - pad && x <= avR + pad && y >= avT - pad && y <= avB + pad && y > navH * navAlpha) {
+      // Foto expandida com várias fotos: terços laterais trocam a foto (Telegram).
+      if (photoList.size > 1 && lastE > 0.5f && photoReady) {
+        val w = max(1f, avR - avL)
+        val lx = x - avL
+        if (lx < w * 0.3f) return "p:-1"
+        if (lx > w * 0.7f) return "p:1"
+      }
       return "avatar"
     }
     return null
@@ -598,6 +746,8 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   override fun onDetachedFromWindow() {
     photoTarget?.let { old -> try { Glide.with(context.applicationContext).clear(old) } catch (_: Throwable) {} }
     photoTarget = null
+    prevPhotoTarget?.let { old -> try { Glide.with(context.applicationContext).clear(old) } catch (_: Throwable) {} }
+    prevPhotoTarget = null
     photoKey = ""
     photoReady = false
     super.onDetachedFromWindow()

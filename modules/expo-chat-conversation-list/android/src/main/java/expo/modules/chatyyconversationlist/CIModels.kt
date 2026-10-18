@@ -95,7 +95,14 @@ internal data class CIHero(
   val pic: CIPic = CIPic(),
   val badge: String = "",
   val busy: Boolean = false,
-  val actions: List<CIAction> = emptyList()
+  val actions: List<CIAction> = emptyList(),
+  // [2026-10-18 profile-native] apiVersion 3 (perfil próprio / público):
+  // photos = fotos extras do carrossel (a 1ª é `tile`); nav = botão de texto
+  // da barra ("Editar") → onAction {key}; back = seta à esquerda no lugar do X.
+  val photos: List<CIPic> = emptyList(),
+  val navKey: String = "",
+  val navLabel: String = "",
+  val back: Boolean = false
 ) {
   companion object {
     fun from(m: Map<String, Any?>?): CIHero {
@@ -106,13 +113,28 @@ internal data class CIHero(
         val a = CIAction.from(am)
         if (a.key.isNotEmpty()) acts.add(a)
       }
+      val main = CIPic.from(m["tile"])
+      val pics = ArrayList<CIPic>()
+      val seen = HashSet<String>()
+      if (main.url.isNotEmpty()) seen.add(main.url)
+      CLVal.list(m["photos"])?.forEach { x ->
+        if (pics.size >= 9) return@forEach
+        val p = CIPic.from(x)
+        if (p.url.isEmpty() || !seen.add(p.url)) return@forEach
+        pics.add(p)
+      }
+      val nav = CLVal.map(m["nav"])
       return CIHero(
         title = CLVal.str(m["title"]),
         sub = CLVal.str(m["sub"]),
-        pic = CIPic.from(m["tile"]),
+        pic = main,
         badge = CLVal.str(m["badge"]),
         busy = CLVal.bool(m["busy"]),
-        actions = acts
+        actions = acts,
+        photos = pics,
+        navKey = if (nav != null) CLVal.str(nav["key"]) else "",
+        navLabel = if (nav != null) CLVal.str(nav["label"]) else "",
+        back = CLVal.bool(m["back"])
       )
     }
   }
@@ -252,6 +274,18 @@ internal object CIText {
     "message" -> R.drawable.ccl_ic_message
     "heart" -> R.drawable.crl_ic_heart
     "check" -> R.drawable.ccl_ic_check
+    // [2026-10-18 profile-native] linhas do perfil próprio (Telegram).
+    "database", "storage" -> R.drawable.cci_ic_database
+    "type" -> R.drawable.cci_ic_type
+    "mail" -> R.drawable.cci_ic_mail
+    "help" -> R.drawable.cci_ic_help
+    "status" -> R.drawable.cci_ic_status
+    "bookmark" -> R.drawable.cci_ic_bookmark
+    "device" -> R.drawable.cci_ic_device
+    "more" -> R.drawable.cci_ic_more
+    "gift" -> R.drawable.cci_ic_gift
+    "at" -> R.drawable.cci_ic_at
+    "followers" -> R.drawable.dv_ic_users
     else -> 0
   }
 }

@@ -11,7 +11,10 @@ class ChatyyChatInfoModule : Module() {
     Name("ChatyyChatInfo")
 
     // [2026-10-18 elegance] 2 = prop headerMode ("collapse") + evento onClose.
-    Function("apiVersion") { 2 }
+    // [2026-10-18 profile-native] 3 = perfil próprio/público: hero.photos
+    // (carrossel), hero.nav {key,label} (botão de texto → onAction), hero.back
+    // (seta à esquerda) e onAvatarPress {index}.
+    Function("apiVersion") { 3 }
 
     View(ChatyyChatInfoView::class) {
       Events(

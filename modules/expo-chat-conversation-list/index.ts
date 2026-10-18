@@ -261,3 +261,27 @@ export function chatInfoApiVersion(): number {
   } catch { _ciApi = 0; }
   return _ciApi;
 }
+
+// ── [2026-10-18 native-apps-grid] Painel "Apps" (aba Apps do /chat) ─────────
+// View `ChatyyAppsGrid` (busca + Recentes + grade por seção, modo editar,
+// reordenar fixados). Binário sem a view → null e o AppsSheet mantém o JS.
+// Kill switch: globalThis.__chatyy_native_apps = false. JS: components/apps/NativeAppsGrid.js.
+export const APPS_GRID_VIEW_NAME = 'ChatyyAppsGrid';
+export function getNativeAppsGridView(): any { return _probeNamed(APPS_GRID_VIEW_NAME); }
+
+let _apApi = -1;
+/** apiVersion da ChatyyAppsGrid (0 = ausente). */
+export function appsGridApiVersion(): number {
+  if (_apApi >= 0) return _apApi;
+  _apApi = 0;
+  if (Platform.OS === 'web') return 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function'
+      ? core.requireOptionalNativeModule(APPS_GRID_VIEW_NAME)
+      : null;
+    if (mod && typeof mod.apiVersion === 'function') _apApi = Number(mod.apiVersion()) || 0;
+  } catch { _apApi = 0; }
+  return _apApi;
+}

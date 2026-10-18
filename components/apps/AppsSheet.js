@@ -30,6 +30,9 @@ import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBot
 import BiaOrb from '../bia/BiaOrb';
 import { GlyphWave } from '../bia/BiaUI';
 import { AppsItem, Jiggle, Pop, TilePress, prepareLayoutChange } from './appsMotion';
+// [2026-10-18 native-apps-grid] Grade NATIVA (UICollectionView / RecyclerView) quando o
+// binário tem a view ChatyyAppsGrid (api ≥ 1). Kill: globalThis.__chatyy_native_apps = false.
+import NativeAppsGrid, { nativeAppsEnabled, markNativeAppsFailed } from './NativeAppsGrid';
 
 // ── Persistência local (MMKV nativo / localStorage web) ─────────────────────
 // MRU dos apps abertos + contador de uso (ordena cada seção) + fixados.
@@ -214,6 +217,8 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   const go = useCallback((path) => () => { onClose(); _afterClose(() => { try { router.push(path); } catch (e) { console.warn('[apps] router.push failed:', e); } }); }, [onClose, router, _afterClose]);
 
   // `kw` = palavras extras de busca (pt/en/es). `featured` = vai no cartão (fica buscável).
+  // [2026-10-18 native-apps-grid] Seções: Comunicação · Arquivos · Produtividade ·
+  // Entretenimento · Ferramentas (mesma lista p/ a grade JS e a nativa).
   const sections = useMemo(() => ([
     {
       key: 'communication',
@@ -223,15 +228,36 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
         { key: 'meet',        label: t('sidebar.meetings'),  ic: I(IconVideo),      route: '/meetings',  kw: 'meet reuniao meeting video chamada call reunion' },
         { key: 'channels',    label: t('channel.title'),     ic: I(IconMegaphone),  action: onOpenChannels,    kw: 'canais channels canales broadcast' },
         { key: 'communities', label: t('community.title'),   ic: I(IconUsersSmall), action: onOpenCommunities, kw: 'comunidades communities grupos groups' },
+        { key: 'contacts',    label: t('sidebar.contacts'),  ic: I(IconUsers),      route: '/contacts',  kw: 'contatos contacts agenda contactos' },
       ],
     },
     {
-      key: 'social',
-      title: t('apps.social'),
+      key: 'files',
+      title: t('apps.files'),
+      items: [
+        { key: 'files',  label: t('sidebar.files'),     ic: I(IconFolder),   route: '/files',      kw: 'arquivos files cloud drive nuvem archivos' },
+        { key: 'photos', label: t('sidebar.photos'),    ic: I(IconImage),    route: '/photos',     kw: 'fotos photos galeria gallery imagens' },
+        { key: 'docs',   label: t('sidebar.documents'), ic: I(IconFileText), route: '/documentos', kw: 'docs documentos documents planilhas sheets' },
+        { key: 'backup', label: t('sidebar.backup'),    ic: I(IconShield),   route: '/backup',     kw: 'backup copia seguranca' },
+      ],
+    },
+    {
+      key: 'productivity',
+      title: t('apps.productivity'),
+      items: [
+        { key: 'one',      label: 'Bia',                 ic: I(IconSparkles),    route: '/one', featured: true, kw: 'bia ia ai assistente assistant one' },
+        { key: 'calendar', label: t('sidebar.calendar'), ic: I(IconCalendar),    route: '/calendar', kw: 'agenda calendario calendar eventos events' },
+        { key: 'notes',    label: t('sidebar.notes'),    ic: I(IconStickyNote),  route: '/notes',    kw: 'notas notes anotacoes' },
+        { key: 'tasks',    label: t('tasks.title'),      ic: I(IconCheckCircle), route: '/tasks',    kw: 'tarefas tasks todo afazeres pendentes tareas' },
+      ],
+    },
+    {
+      key: 'entertainment',
+      title: t('apps.entertainment'),
       items: [
         { key: 'reels',   label: t('apps.reels'),   ic: I(IconReels),     action: onOpenReels,  kw: 'reels videos curtos shorts tiktok video' },
         { key: 'feed',    label: t('apps.feed'),    ic: I(IconGrid),      action: onOpenFeed,   kw: 'feed posts publicacoes timeline' },
-        { key: 'live',    label: t('apps.goLive'),  ic: I(IconBroadcast), route: '/live-broadcast', kw: 'live ao vivo transmissao stream en vivo' },
+        { key: 'live',    label: t('apps.goLive'),  ic: I(IconBroadcast), route: '/live-broadcast', kw: 'live ao vivo transmissao stream en vivo lives' },
         { key: 'snapmap', label: t('snapmap.tile'), ic: I(IconMapPin),    route: '/snap-map',   kw: 'mapa map amigos friends localizacao location' },
       ],
     },
@@ -239,27 +265,12 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
       key: 'tools',
       title: t('apps.tools'),
       items: [
-        { key: 'one',      label: 'Bia',                  ic: I(IconSparkles),   route: '/one', featured: true, kw: 'bia ia ai assistente assistant one' },
-        { key: 'calendar', label: t('sidebar.calendar'),  ic: I(IconCalendar),   route: '/calendar',   kw: 'agenda calendario calendar eventos events' },
-        { key: 'contacts', label: t('sidebar.contacts'),  ic: I(IconUsers),      route: '/contacts',   kw: 'contatos contacts agenda contactos' },
-        { key: 'files',    label: t('sidebar.files'),     ic: I(IconFolder),     route: '/files',      kw: 'arquivos files cloud drive nuvem archivos' },
-        { key: 'docs',     label: t('sidebar.documents'), ic: I(IconFileText),   route: '/documentos', kw: 'docs documentos documents planilhas sheets' },
-        { key: 'notes',    label: t('sidebar.notes'),     ic: I(IconStickyNote), route: '/notes',      kw: 'notas notes anotacoes' },
-        { key: 'tasks',    label: t('tasks.title'),       ic: I(IconCheckCircle), route: '/tasks',     kw: 'tarefas tasks todo afazeres pendentes tareas' },
-        { key: 'photos',   label: t('sidebar.photos'),    ic: I(IconImage),      route: '/photos',     kw: 'fotos photos galeria gallery imagens' },
-      ],
-    },
-    {
-      key: 'account',
-      title: t('apps.account'),
-      items: [
         { key: 'profile', label: t('sidebar.profile'), ic: I(IconUser), kw: 'perfil profile conta account',
           action: () => { onClose(); if (userEmail) _afterClose(() => { try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[apps] router.push failed:', e); } }); } },
         // [2026-05-22 monetization-pause] wallet só com WALLET_ENABLED.
         ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet'), ic: I(IconCreditCard), route: '/wallet', kw: 'carteira wallet saldo pagamentos' }] : []),
         { key: 'notifications', label: t('sidebar.notifications'), ic: I(IconBell),     route: '/notifications', kw: 'alertas notificacoes notifications' },
-        { key: 'backup',        label: t('sidebar.backup'),        ic: I(IconShield),   route: '/backup',        kw: 'backup copia seguranca' },
-        { key: 'settings',      label: t('sidebar.settings'),      ic: I(IconSettings), action: go('/settings'), kw: 'configuracoes settings ajustes preferencias' },
+        { key: 'settings',      label: t('sidebar.settings'),      ic: I(IconSettings), action: go('/settings'), kw: 'configuracoes settings ajustes preferencias conta account' },
       ],
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -471,6 +482,70 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
   const textColor = colors.text || (isDark ? '#F5F5F7' : '#111111');
   const emailUnread = Number(badges?.email || 0);
   const sug = useMemo(() => biaSuggestion(t, emailUnread), [t, emailUnread]);
+
+  // ── [2026-10-18 native-apps-grid] Grade nativa ─────────────────────────────
+  // Busca + Bia + Recentes + seções vêm da view nativa; aqui fica a folha (Modal,
+  // alça, cabeçalho com Concluir) e o MMKV. Falhou → volta p/ a grade JS na hora.
+  const [nativeOk, setNativeOk] = useState(() => nativeAppsEnabled());
+  const useNativeGrid = nativeOk && !_NATIVE_SHEET;
+  const [nativeH, setNativeH] = useState(0);
+  const onNativeFailure = useCallback((msg) => { markNativeAppsFailed(msg); setNativeOk(false); }, []);
+  const nativeSections = useMemo(() => {
+    if (!useNativeGrid) return null;
+    const score = (k) => (usageMap?.[k] || 0);
+    return sections.map((sec) => ({
+      key: sec.key,
+      title: sec.title,
+      items: [...sec.items].sort((a, b) => score(b.key) - score(a.key)).map((it) => ({
+        id: it.key, t: it.label, n: `${it.label} ${it.kw || ''}`, feat: it.featured ? 1 : 0,
+      })),
+    }));
+  }, [useNativeGrid, sections, usageMap]);
+  const nativeLabels = useMemo(() => ({
+    search: t('apps.searchPlaceholder'),
+    recent: t('apps.recent'),
+    pinned: t('apps.pinned'),
+    noResults: t('apps.noResults'),
+    pin: t('apps.pin'),
+    unpin: t('apps.unpin'),
+    clear: t('apps.clearSearch'),
+    badgeNew: t('apps.badgeNew', { count: '{count}' }),
+    biaHello: sug.hello,
+    biaTip: sug.tip,
+    aiBadge: t('chat.aiBadge') || 'IA',
+    voice: t('one.voiceConversation'),
+  }), [t, sug]);
+  const nativeBadges = useMemo(() => {
+    const out = {};
+    if (badges && typeof badges === 'object') {
+      for (const k of Object.keys(badges)) { const n = Number(badges[k]) || 0; if (n > 0) out[k] = n; }
+    }
+    return out;
+  }, [badges]);
+  const onNativeApp = useCallback((id, voice) => {
+    if (voice) { try { _bumpRecentApp('one'); } catch {} go('/one?voice=1')(); return; }
+    const it = itemByKey.get(id);
+    if (it) handlePress(it);
+  }, [itemByKey, handlePress, go]);
+  const onNativePinned = useCallback((ids) => {
+    const next = [];
+    for (const k of ids || []) if (typeof k === 'string' && !next.includes(k)) next.push(k);
+    const capped = next.slice(-STRIP_MAX);
+    _writeJSON(PINNED_APPS_KEY, capped);
+    setPinnedKeys(capped);
+  }, []);
+  const onNativeEditing = useCallback((v) => { setEditing(!!v); }, []);
+  // Altura estimada até o 1º onContentHeight (mesmas medidas do nativo).
+  const nativeEstH = useMemo(() => {
+    if (!useNativeGrid) return 0;
+    let h = 44 + 14 + 98;
+    if (stripItems.length > 0) h += 24 + 98 + 12;
+    for (const sec of sections) {
+      const n = sec.items.filter((i) => !i.featured).length;
+      if (n > 0) h += 24 + Math.ceil(n / COLS) * 110 + 12;
+    }
+    return h + Math.max(insets.bottom, 12) + 12 + 20;
+  }, [useNativeGrid, sections, stripItems, insets.bottom]);
 
   const headerEl = (
     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, paddingHorizontal: 4 }}>
@@ -725,15 +800,34 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
           if (h > 0) { topBlockHRef.current = h; if (Math.abs(h - topBlockH) > 1) setTopBlockH(h); }
         }}
       >
-        <View {...(sheetGesture ? null : dragResponder.panHandlers)}>
+        <View {...(sheetGesture && !useNativeGrid ? null : dragResponder.panHandlers)}>
           <View style={{ alignItems: 'center', marginBottom: 10, paddingTop: 2, paddingBottom: 2 }}>
             <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.14)' }} />
           </View>
           {headerEl}
         </View>
-        {searchEl}
+        {useNativeGrid ? null : searchEl}
       </View>
-      {renderList(false)}
+      {useNativeGrid ? (
+        <NativeAppsGrid
+          style={{ width: '100%', height: Math.max(160, Math.min(nativeH || nativeEstH, listMaxH)) }}
+          sections={nativeSections}
+          recent={recentKeys}
+          pinned={pinnedKeys}
+          badges={nativeBadges}
+          labels={nativeLabels}
+          isDark={isDark}
+          editing={editing}
+          bottomInset={Math.max(insets.bottom, 12) + 12}
+          resetSeq={openSeq}
+          onAppPress={onNativeApp}
+          onEditingChange={onNativeEditing}
+          onPinnedChange={onNativePinned}
+          onContentHeight={setNativeH}
+          onPullDismiss={onClose}
+          onFailure={onNativeFailure}
+        />
+      ) : renderList(false)}
     </Animated.View>
   );
   const Root = GH_OK ? _GH.GestureHandlerRootView : View;
@@ -758,7 +852,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
                 }}
               />
             </Animated.View>
-            {sheetGesture ? <_GH.GestureDetector gesture={sheetGesture.pan}>{sheetEl}</_GH.GestureDetector> : sheetEl}
+            {sheetGesture && !useNativeGrid ? <_GH.GestureDetector gesture={sheetGesture.pan}>{sheetEl}</_GH.GestureDetector> : sheetEl}
           </View>
         </KeyboardAvoidingView>
       </Root>

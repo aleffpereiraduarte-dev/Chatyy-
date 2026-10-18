@@ -247,7 +247,7 @@ import { detectReminder as detectChatReminder, createReminder as createChatRemin
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
-import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
+import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, isNativeProfileEnabled, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
 import GroupInfoEditor from '../components/chat/GroupInfoEditor'; // [2026-10-18 chat-info-native]
 import { contactTile } from '../components/contacts/contactListAdapter'; // [2026-10-18 chat-info-native]
 import { initialsOf, gradientIndex } from '../components/chatlist/nativeAdapter'; // [2026-10-18 chat-info-native]
@@ -25310,7 +25310,8 @@ function ChatConversationInner() {
       rows.push({ id: 'pin', sid: 'misc', k: 'a', icon: 'pin', title: contactPinned ? _ciTr('chatConv.removeFromFavorites', 'Remover das favoritas') : _ciTr('chatConv.addToFavorites', 'Adicionar às favoritas'), onPress: handleToggleContactPinned });
     }
     rows.push(..._ciMoreRows(go).filter((r) => r.sid === 'misc'));
-    rows.push({ id: 'profile', sid: 'misc', icon: 'user', title: _ciTr('chatConv.viewFullProfile', 'Ver perfil'), onPress: () => go(() => setProfileViewer({ name: conversationName, email: peer })) });
+    // [2026-10-18 profile-native] binário api ≥ 3 → perfil público NATIVO em tela cheia (/u/<email>).
+    rows.push({ id: 'profile', sid: 'misc', icon: 'user', title: _ciTr('chatConv.viewFullProfile', 'Ver perfil'), onPress: () => go(() => { if (peer && isNativeProfileEnabled()) { try { router.push(`/u/${encodeURIComponent(peer)}`); return; } catch {} } setProfileViewer({ name: conversationName, email: peer }); }) });
     if (peer) {
       rows.push({
         id: 'shareContact', sid: 'misc', icon: 'share', title: _ciTr('shareContact.shareThis', 'Compartilhar contato'),

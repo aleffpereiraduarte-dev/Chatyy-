@@ -193,6 +193,10 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     if (on) {
       val h = CIHeaderOverlay(context)
       h.onClose = { onClose(mapOf<String, Any>()) }
+      h.onNav = { key ->
+        h.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        onAction(mapOf("key" to key))
+      }
       stack.addView(h, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
       header = h
     } else {
@@ -261,6 +265,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   private fun animateExpand(target: Float) {
     if (expandTarget == target) return
     expandTarget = target
+    if (target == 0f) header?.resetPhoto()
     expandAnim?.cancel()
     val a = ValueAnimator.ofFloat(expandValue, target)
     a.duration = 380
@@ -304,7 +309,11 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
         val target = h.hit(ox, oy)
         h.setPressed(null)
         if (target == "avatar") {
-          onAvatarPress(mapOf<String, Any>())
+          onAvatarPress(mapOf<String, Any>("index" to h.photoIndex))
+        } else if (target != null && target.startsWith("p:")) {
+          // [2026-10-18 profile-native] carrossel da foto expandida.
+          val dir = if (target == "p:-1") -1 else 1
+          if (h.cycle(dir)) sv.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         } else if (target != null && target.startsWith("a:")) {
           sv.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
           onAction(mapOf("key" to target.substring(2)))

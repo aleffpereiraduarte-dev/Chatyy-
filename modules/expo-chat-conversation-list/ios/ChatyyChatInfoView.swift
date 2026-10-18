@@ -347,6 +347,10 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     if on {
       let h = CIHeaderOverlay(frame: bounds)
       h.onClose = { [weak self] in self?.onClose([:]) }
+      h.onNav = { [weak self] key in
+        UISelectionFeedbackGenerator().selectionChanged()
+        self?.onAction(["key": key])
+      }
       addSubview(h)
       header = h
       let tap = UITapGestureRecognizer(target: self, action: #selector(photoAreaTapped(_:)))
@@ -592,6 +596,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   private func setExpand(_ t: CGFloat) {
     if expandTarget == t { return }
     expandTarget = t
+    if t == 0 { header?.resetPhoto() }
     if displayLink == nil {
       let link = CADisplayLink(target: CIWeakLinkTarget(self), selector: #selector(CIWeakLinkTarget.tick(_:)))
       link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
@@ -664,10 +669,17 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   private func fireHeaderHit(_ target: CIHeaderHit) {
     switch target {
     case .avatar:
-      onAvatarPress([:])
+      onAvatarPress(["index": header?.photoIndex ?? 0])
     case .action(let key):
       UISelectionFeedbackGenerator().selectionChanged()
       onAction(["key": key])
+    case .photo(let dir):
+      // [2026-10-18 profile-native] carrossel da foto expandida.
+      if header?.cycle(dir) == true {
+        UISelectionFeedbackGenerator().selectionChanged()
+      } else {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.5)
+      }
     case .empty:
       break
     }

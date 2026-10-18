@@ -16,12 +16,17 @@ import UIKit
 // [2026-10-18 elegance] apiVersion 2: prop headerMode ("collapse" = cabeçalho
 //         Telegram que encolhe p/ a barra + puxar expande a foto; a view
 //         desenha a própria barra com X) + evento onClose. Binário 1 ignora.
+// [2026-10-18 profile-native] apiVersion 3: perfil próprio / público em cima
+//         da mesma view — hero.photos (carrossel na foto expandida; toque nos
+//         terços laterais troca), hero.nav {key,label} (botão de texto na
+//         barra → onAction {key}), hero.back (seta à esquerda no lugar do X),
+//         onAvatarPress {index} (foto visível do carrossel).
 public class ChatyyChatInfoModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatInfo")
 
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
     }
 
     View(ChatyyChatInfoView.self) {

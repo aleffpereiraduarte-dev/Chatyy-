@@ -25,6 +25,17 @@
 // a PRÓPRIA barra com o X (evento onClose) → quem monta esconde o cabeçalho JS
 // quando nativeChatInfoOwnsHeader() = true. Binário 1 = hero estático de antes.
 // Kill switch só do cabeçalho: globalThis.__chatyy_native_chat_info_collapse = false.
+//
+// [2026-10-18 profile-native] apiVersion ≥ 3 → a MESMA view serve o perfil
+// próprio (mode 'self', Telegram Ajustes) e o perfil público de outra pessoa
+// (mode 'user'). Campos novos do hero:
+//   photos [{u, a}]  carrossel da foto expandida (toque nos terços laterais)
+//   nav    {key, label, onPress}  botão de texto na barra ("Editar")
+//   back   true = seta de voltar à esquerda (tela empurrada) no lugar do X
+//   onAvatarPress(index) recebe a foto visível do carrossel.
+// Gate: isNativeProfileEnabled() (api ≥ 3 + cabeçalho que encolhe) e kill
+// switch OTA globalThis.__chatyy_native_profile = false (o mesmo nome desliga
+// também o NativeProfileBridge antigo — ambos são "perfil nativo").
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Platform, StyleSheet, processColor } from 'react-native';
 import { getNativeChatInfoView, chatInfoApiVersion } from '../../modules/expo-chat-conversation-list';
@@ -41,6 +52,13 @@ export function nativeChatInfoOwnsHeader() {
   if (!isNativeChatInfoEnabled()) return false;
   try { if (globalThis.__chatyy_native_chat_info_collapse === false) return false; } catch {}
   try { return chatInfoApiVersion() >= 2; } catch { return false; }
+}
+
+/** Perfil próprio/público nativo (Telegram): binário api ≥ 3 + kill switch. */
+export function isNativeProfileEnabled() {
+  if (!nativeChatInfoOwnsHeader()) return false;
+  try { if (globalThis.__chatyy_native_profile === false) return false; } catch {}
+  try { return chatInfoApiVersion() >= 3; } catch { return false; }
 }
 
 class Boundary extends React.Component {
@@ -122,6 +140,10 @@ function Inner(props) {
       badge: String(h.badge || ''),
       busy: !!h.busy,
       actions: (h.actions || []).filter(Boolean).map((a) => ({ key: String(a.key), icon: String(a.icon || ''), label: String(a.label || ''), active: !!a.active })),
+      // [2026-10-18 profile-native] api ≥ 3 (binários velhos ignoram).
+      photos: Array.isArray(h.photos) ? h.photos.filter((p) => p && p.u).slice(0, 9).map((p) => ({ u: String(p.u), a: p.a ? 1 : 0 })) : [],
+      nav: h.nav && h.nav.key && h.nav.label ? { key: String(h.nav.key), label: String(h.nav.label) } : null,
+      back: !!h.back,
     };
   }, [hero]);
   const heroKey = JSON.stringify(nativeHero);
@@ -170,11 +192,16 @@ function Inner(props) {
       onAction: (e) => {
         const key = String((e?.nativeEvent ?? e)?.key ?? '');
         try {
-          const a = ((propsRef.current.hero && propsRef.current.hero.actions) || []).find((x) => x && String(x.key) === key);
+          const h = propsRef.current.hero || {};
+          if (h.nav && String(h.nav.key) === key && typeof h.nav.onPress === 'function') { h.nav.onPress(); return; }
+          const a = (h.actions || []).find((x) => x && String(x.key) === key);
           if (a && typeof a.onPress === 'function') a.onPress();
         } catch {}
       },
-      onAvatarPress: () => { try { propsRef.current.hero?.onAvatarPress?.(); } catch {} },
+      onAvatarPress: (e) => {
+        const idx = Number((e?.nativeEvent ?? e)?.index) || 0;
+        try { propsRef.current.hero?.onAvatarPress?.(idx); } catch {}
+      },
       onMediaPress: (e) => {
         const key = String((e?.nativeEvent ?? e)?.key ?? '');
         try { propsRef.current.onMediaPress?.(key); } catch {}

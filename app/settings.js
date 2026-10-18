@@ -50,6 +50,7 @@ import { SettingsHostContext, normalizePrivacy, privacyValueLabel, pushLevelOf, 
 import { buildSearchIndex, filterSearchIndex } from '../components/settings/categories/searchIndex';
 import NativeSettingsList, { isNativeSettingsListAvailable } from '../components/settings/NativeSettingsList';
 import SettingsCategoryScreen from '../components/settings/SettingsCategoryScreen';
+import { isNativeProfileEnabled } from '../components/chat/NativeChatInfo'; // [2026-10-18 profile-native]
 import { pushOnce, useReleaseNavLockOnFocus } from '../services/navOnce';
 
 const CAT_ICONS = {
@@ -356,6 +357,7 @@ function SettingsScreenInner() {
         avatarKey={avatarKey}
         scrollY={twoPane || useNativeRoot ? null : heroScrollY}
         onEdit={() => safeNav('/edit-profile')}
+        onAvatar={(Platform.OS !== 'web' && user?.email && isNativeProfileEnabled()) ? () => safeNav(`/u/${encodeURIComponent(user.email)}`) : undefined}
         onQr={() => safeNav('/profile-qr')}
         onSwitch={openAccountSwitcher}
       />

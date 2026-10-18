@@ -70,7 +70,7 @@ function Pill({ icon: Icon, label, onPress, primary, testID, a11y, square }) {
   );
 }
 
-export function SettingsHero({ user, profile, avatarKey, scrollY, onEdit, onQr, onSwitch }) {
+export function SettingsHero({ user, profile, avatarKey, scrollY, onEdit, onQr, onSwitch, onAvatar }) {
   const g = useGroupedColors();
   const { t } = useLanguage();
   const reduce = useReducedMotion();
@@ -98,11 +98,11 @@ export function SettingsHero({ user, profile, avatarKey, scrollY, onEdit, onQr, 
     <View style={st.hero}>
       <Animated.View style={avatarStyle}>
         <PressableScale
-          onPress={onEdit}
+          onPress={onAvatar || onEdit /* [2026-10-18 profile-native] binário api ≥ 3: abre o MEU perfil nativo (Telegram) */}
           haptic="light"
           scaleTo={0.96}
           accessibilityRole="button"
-          accessibilityLabel={`${t('settings.editProfile')}: ${name}`}
+          accessibilityLabel={onAvatar ? `${t('nativeProfile.myProfile') || 'Meu perfil'}: ${name}` : `${t('settings.editProfile')}: ${name}`}
           testID="settings-profile-card"
           style={[st.ring, { borderColor: g.ring }]}
         >

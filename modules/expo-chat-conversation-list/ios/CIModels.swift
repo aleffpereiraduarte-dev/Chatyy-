@@ -89,6 +89,14 @@ struct CIHero: Equatable {
   var badge: String = ""
   var busy = false
   var actions: [CIAction] = []
+  // [2026-10-18 profile-native] apiVersion 3 (perfil próprio / público):
+  //   photos  [{u, a}] fotos extras do carrossel da foto expandida (a 1ª é `tile`)
+  //   nav     {key, label} botão de texto na barra ("Editar") → onAction {key}
+  //   back    true = seta de voltar à esquerda no lugar do X (tela empurrada)
+  var photos: [CIPic] = []
+  var navKey: String = ""
+  var navLabel: String = ""
+  var back = false
 
   init() {}
 
@@ -106,6 +114,22 @@ struct CIHero: Equatable {
         if !a.key.isEmpty { actions.append(a) }
       }
     }
+    if let arr = d["photos"] as? [Any] {
+      var seen = Set<String>()
+      if !pic.url.isEmpty { seen.insert(pic.url) }
+      for x in arr {
+        let p = CIPic(x)
+        if p.url.isEmpty || seen.contains(p.url) { continue }
+        seen.insert(p.url)
+        photos.append(p)
+        if photos.count >= 9 { break }
+      }
+    }
+    if let nav = d["nav"] as? [String: Any] {
+      navKey = CLVal.str(nav["key"])
+      navLabel = CLVal.str(nav["label"])
+    }
+    back = CLVal.bool(d["back"])
   }
 }
 
@@ -240,6 +264,18 @@ enum CIText {
     case "message": return "message"
     case "heart": return "heart"
     case "check": return "checkmark.seal"
+    // [2026-10-18 profile-native] linhas do perfil próprio (Telegram).
+    case "database", "storage": return "internaldrive"
+    case "type": return "textformat.size"
+    case "mail": return "envelope"
+    case "help": return "questionmark.circle"
+    case "status": return "circle.dashed"
+    case "bookmark": return "bookmark"
+    case "device": return "iphone"
+    case "more": return "ellipsis.circle"
+    case "gift": return "gift"
+    case "at": return "at"
+    case "followers": return "person.2.wave.2"
     default: return nil
     }
   }

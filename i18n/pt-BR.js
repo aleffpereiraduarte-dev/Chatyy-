@@ -13279,4 +13279,25 @@ export default {
   "chatInfo.exMemberBanner": "Você não pode enviar mensagens para este grupo porque não é mais membro.",
   "chatInfo.deleteGroup": "Apagar grupo",
   "chatInfo.deleteGroupConfirm": "Apagar este grupo e as mensagens deste aparelho?",
+
+  // [2026-10-18 profile-native] perfil Telegram nativo (meu perfil / perfil público)
+  "nativeProfile.phone": "Celular",
+  "nativeProfile.username": "Nome de usuário",
+  "nativeProfile.bio": "Recado",
+  "nativeProfile.addBio": "Adicionar recado",
+  "nativeProfile.website": "Site",
+  "nativeProfile.setPhoto": "Definir foto de perfil",
+  "nativeProfile.myQr": "Meu QR code",
+  "nativeProfile.myStatus": "Meus status",
+  "nativeProfile.status": "Status",
+  "nativeProfile.highlights": "Destaques",
+  "nativeProfile.posts": "Publicações",
+  "nativeProfile.more": "Mais opções",
+  "nativeProfile.email": "E-mail",
+  "nativeProfile.copied": "Copiado",
+  "nativeProfile.myProfile": "Meu perfil",
+  // [2026-10-18 native-apps-grid]
+  "apps.files": "Arquivos",
+  "apps.entertainment": "Entretenimento",
+  "apps.pinned": "Fixados",
 };

@@ -57,17 +57,19 @@ final class CIAvatarView: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(_ pic: CIPic) {
+  /// keep = true (carrossel da foto expandida): mantém a foto atual até a
+  /// próxima carregar (sem piscar o degradê) e troca sem fade.
+  func configure(_ pic: CIPic, keep: Bool = false) {
     let pair = CLTheme.gradient(pic.grad)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     gradient.colors = [pair.0.cgColor, pair.1.cgColor]
     CATransaction.commit()
-    initialsLabel.text = pic.initials
+    if !pic.initials.isEmpty || !keep { initialsLabel.text = pic.initials }
     if pic.url == currentURL && imageView.image != nil { return }
     currentURL = pic.url
     if pic.url.isEmpty {
-      imageView.image = nil
+      if !keep { imageView.image = nil }
       return
     }
     let px = maxPixel
@@ -76,12 +78,16 @@ final class CIAvatarView: UIView {
       imageView.alpha = 1
       return
     }
-    imageView.image = nil
+    let hadImage = imageView.image != nil
+    if !keep { imageView.image = nil }
     let url = pic.url
     CLImageLoader.shared.load(url, auth: pic.auth, maxPixel: px) { [weak self] img in
       guard let self = self, self.currentURL == url else { return }
+      if keep && hadImage && img == nil { return }
       self.imageView.image = img
-      if img != nil && self.window != nil {
+      if keep && hadImage {
+        self.imageView.alpha = 1
+      } else if img != nil && self.window != nil {
         self.imageView.alpha = 0
         UIView.animate(withDuration: 0.18) { self.imageView.alpha = 1 }
       } else {
@@ -1109,6 +1115,8 @@ enum CIHeaderHit: Equatable {
   case empty
   case avatar
   case action(String)
+  /// [2026-10-18 profile-native] foto expandida: -1 = anterior, 1 = próxima.
+  case photo(Int)
 }
 
 final class CIHeaderOverlay: UIView {
@@ -1130,6 +1138,15 @@ final class CIHeaderOverlay: UIView {
   private let titleLabel = UILabel()
   private let subLabel = UILabel()
   let closeButton = UIButton(type: .system)
+  // [2026-10-18 profile-native] botão de texto da barra ("Editar") + carrossel.
+  let navButton = UIButton(type: .system)
+  private let segRow = UIView()
+  private var segBars: [UIView] = []
+  private var photoList: [CIPic] = []
+  private(set) var photoIndex = 0
+  private var isBack = false
+  private var navKey = ""
+  private var navW: CGFloat = 0
 
   private var palette = STPalette(dark: false)
   private var hasSub = false
@@ -1144,6 +1161,7 @@ final class CIHeaderOverlay: UIView {
   private(set) var navAlpha: CGFloat = 0
 
   var onClose: (() -> Void)?
+  var onNav: ((String) -> Void)?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -1202,6 +1220,20 @@ final class CIHeaderOverlay: UIView {
     closeButton.layer.shadowRadius = 3
     closeButton.layer.shadowOpacity = 0
     addSubview(closeButton)
+
+    navButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .regular)
+    navButton.addTarget(self, action: #selector(navTapped), for: .touchUpInside)
+    navButton.layer.shadowColor = UIColor.black.cgColor
+    navButton.layer.shadowOffset = CGSize(width: 0, height: 1)
+    navButton.layer.shadowRadius = 3
+    navButton.layer.shadowOpacity = 0
+    navButton.isHidden = true
+    addSubview(navButton)
+
+    segRow.isUserInteractionEnabled = false
+    segRow.alpha = 0
+    segRow.isHidden = true
+    addSubview(segRow)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -1241,8 +1273,20 @@ final class CIHeaderOverlay: UIView {
   func configure(_ h: CIHero, palette p: STPalette, labels: CLLabels) {
     palette = p
     lastColorE = -1
-    avatar.configure(h.pic)
+    var list: [CIPic] = []
+    if !h.pic.url.isEmpty { list.append(h.pic) }
+    for x in h.photos {
+      var q = x
+      q.initials = h.pic.initials
+      q.grad = h.pic.grad
+      list.append(q)
+    }
+    let curURL = photoIndex < photoList.count ? photoList[photoIndex].url : ""
+    photoList = list
+    if let i = list.firstIndex(where: { $0.url == curURL }), !curURL.isEmpty { photoIndex = i } else { photoIndex = 0 }
+    avatar.configure(photoIndex < list.count ? list[photoIndex] : h.pic)
     picURL = h.pic.url
+    rebuildSegments()
     avatar.accessibilityLabel = labels.get("photo", "Ver foto")
     titleLabel.text = h.title
     subLabel.text = h.sub
@@ -1280,8 +1324,65 @@ final class CIHeaderOverlay: UIView {
     navBg.backgroundColor = p.pageBg
     hairline.backgroundColor = p.separator
     closeButton.accessibilityLabel = labels.get("close", "Fechar")
+    if h.back != isBack {
+      isBack = h.back
+      let sym = isBack ? "chevron.left" : "xmark"
+      let size: CGFloat = isBack ? 20 : 17
+      closeButton.setImage(UIImage(systemName: sym, withConfiguration: UIImage.SymbolConfiguration(pointSize: size, weight: .semibold)), for: .normal)
+    }
+    navKey = h.navKey
+    navButton.isHidden = h.navKey.isEmpty || h.navLabel.isEmpty
+    navButton.setTitle(h.navLabel, for: .normal)
+    navButton.accessibilityLabel = h.navLabel
+    navW = navButton.isHidden ? 0 : min(140, ceil(navButton.sizeThatFits(CGSize(width: 200, height: 44)).width) + 16)
     pressed = .empty
     setNeedsLayout()
+  }
+
+  // MARK: Carrossel (foto expandida)
+
+  private func rebuildSegments() {
+    let n = photoList.count > 1 ? photoList.count : 0
+    while segBars.count < n {
+      let b = UIView()
+      b.layer.cornerRadius = 1.5
+      b.isUserInteractionEnabled = false
+      segBars.append(b)
+      segRow.addSubview(b)
+    }
+    while segBars.count > n {
+      let b = segBars.removeLast()
+      b.removeFromSuperview()
+    }
+    segRow.isHidden = n == 0
+    paintSegments()
+  }
+
+  private func paintSegments() {
+    for (i, b) in segBars.enumerated() {
+      b.backgroundColor = UIColor(white: 1, alpha: i == photoIndex ? 0.95 : 0.4)
+    }
+  }
+
+  /// Avança/volta uma foto; false = não há para onde ir.
+  @discardableResult
+  func cycle(_ dir: Int) -> Bool {
+    let n = photoList.count
+    if n < 2 { return false }
+    let next = photoIndex + (dir < 0 ? -1 : 1)
+    if next < 0 || next >= n { return false }
+    photoIndex = next
+    avatar.configure(photoList[next], keep: true)
+    paintSegments()
+    return true
+  }
+
+  /// Volta para a foto principal (ao recolher a foto expandida).
+  func resetPhoto() {
+    if photoIndex == 0 || photoList.isEmpty { return }
+    photoIndex = 0
+    avatar.configure(photoList[0], keep: true)
+    paintSegments()
   }
 
   // MARK: Quadro a quadro
@@ -1370,6 +1471,8 @@ final class CIHeaderOverlay: UIView {
       subLabel.textColor = ciMix(palette.secondary, UIColor(white: 1, alpha: 0.86), e)
       closeButton.tintColor = ciMix(palette.text, .white, e)
       closeButton.layer.shadowOpacity = Float(0.35 * e)
+      navButton.tintColor = ciMix(palette.text, .white, e)
+      navButton.layer.shadowOpacity = Float(0.35 * e)
     }
 
     // ── Ladrilhos de ação: andam com o conteúdo e somem antes da barra ──
@@ -1405,7 +1508,26 @@ final class CIHeaderOverlay: UIView {
     navBg.alpha = barA
     hairline.frame = CGRect(x: 0, y: navH - hl, width: W, height: hl)
     hairline.alpha = barA
-    closeButton.frame = CGRect(x: W - 52, y: (navH - 44) / 2, width: 44, height: 44)
+    if isBack {
+      closeButton.frame = CGRect(x: 4, y: (navH - 44) / 2, width: 44, height: 44)
+      navButton.frame = CGRect(x: W - 8 - navW, y: (navH - 44) / 2, width: navW, height: 44)
+    } else {
+      closeButton.frame = CGRect(x: W - 52, y: (navH - 44) / 2, width: 44, height: 44)
+      navButton.frame = CGRect(x: 8, y: (navH - 44) / 2, width: navW, height: 44)
+    }
+
+    // ── Carrossel: tracinhos no topo da foto expandida ──
+    if !segBars.isEmpty {
+      let n = CGFloat(segBars.count)
+      let gap: CGFloat = 4
+      let rowW = max(10, W - 16)
+      let bw = max(2, (rowW - gap * (n - 1)) / n)
+      segRow.frame = CGRect(x: 8, y: aRect.minY + 6, width: rowW, height: 3)
+      for (i, b) in segBars.enumerated() {
+        b.frame = CGRect(x: CGFloat(i) * (bw + gap), y: 0, width: bw, height: 3)
+      }
+      segRow.alpha = ciSmooth(0.6, 1, e)
+    }
   }
 
   // MARK: Toques
@@ -1416,6 +1538,13 @@ final class CIHeaderOverlay: UIView {
       for t in tiles where t.frame.contains(lp) { return .action(t.key) }
     }
     if avatar.alpha > 0.4 && avatar.frame.insetBy(dx: -6, dy: -6).contains(p) && p.y > CIHeaderOverlay.navH * navAlpha {
+      // Foto expandida com várias fotos: terços laterais trocam a foto (Telegram).
+      if photoList.count > 1 && avatar.roundness < 0.5 {
+        let w = max(1, avatar.frame.width)
+        let x = p.x - avatar.frame.minX
+        if x < w * 0.3 { return .photo(-1) }
+        if x > w * 0.7 { return .photo(1) }
+      }
       return .avatar
     }
     return .empty
@@ -1437,9 +1566,15 @@ final class CIHeaderOverlay: UIView {
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     if isHidden || alpha < 0.01 { return nil }
     if !closeButton.isHidden && closeButton.frame.insetBy(dx: -4, dy: -4).contains(point) { return closeButton }
+    if !navButton.isHidden && navButton.frame.insetBy(dx: -4, dy: -4).contains(point) { return navButton }
     if navAlpha > 0.5 && point.y < CIHeaderOverlay.navH { return self }
     return nil
   }
 
   @objc private func closeTapped() { onClose?() }
+
+  @objc private func navTapped() {
+    if navKey.isEmpty { return }
+    onNav?(navKey)
+  }
 }
