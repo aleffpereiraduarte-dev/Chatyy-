@@ -90,6 +90,10 @@ export function studioLabels(t) {
     stickers: tt(t, 'status.studio.stickers', 'Figurinhas'),
     draw: tt(t, 'status.studio.draw', 'Desenhar'),
     filters: tt(t, 'status.studio.filters', 'Filtros'),
+    // [2026-10-18 status-telegram] Cortar (proporção + girar) no estúdio nativo.
+    crop: tt(t, 'photos.crop', 'Cortar'),
+    rotate: tt(t, 'photos.rotate', 'Girar'),
+    cropOriginal: tt(t, 'photoEditor.ratioOriginal', 'Original'),
     music: tt(t, 'status.music', 'Música'),
     gallery: tt(t, 'status.gallery', 'Galeria'),
     camera: tt(t, 'status.camera', 'Câmera'),

@@ -73,6 +73,10 @@ function StoryRingAvatar({
   // [status-texto 2026-10-14] { text, bg, font } → o miolo do anel vira a
   // miniatura colorida do status de texto mais recente (WhatsApp) em vez da foto.
   textPreview = null,
+  // [2026-10-18 status-telegram] true enquanto o toque espera o conteúdo
+  // (grupo só com placeholders do manifest): o anel esmaece e um arco gira
+  // devagar por cima (Telegram). Some sozinho quando o pai volta a false.
+  loading = false,
 }) {
   const _face = textPreview && textPreview.text
     ? <TextStatusThumb text={textPreview.text} bg={textPreview.bg} font={textPreview.font} size={size} />
@@ -92,6 +96,7 @@ function StoryRingAvatar({
   // preto/branco (tinta do tema) + selinho de estrela SVG pra distinguir.
   const _cfInk = closeFriends ? (isDark ? '#F5F5F7' : '#111111') : null;
   const _cfOnInk = isDark ? '#111111' : '#FFFFFF';
+  const _spinOn = !!loading && !isLive;
   const _showCfStar = closeFriends && !isLive && ringStyle !== 'none' && !allViewed;
 
   // Scale-based "live" pulse for unviewed rings. Native-driven (transform
@@ -167,7 +172,7 @@ function StoryRingAvatar({
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
       }, _webPulse]}>
-        {!allViewed && (() => {
+        {!allViewed && !_spinOn && (() => {
           // Suffix the gradient id with the palette + size so we never get
           // an id collision between a close-friends green ring and a brand
           // purple ring on the same screen at the same size (only the LAST
@@ -199,7 +204,7 @@ function StoryRingAvatar({
           </View>
           );
         })()}
-        {allViewed && (
+        {(allViewed || _spinOn) && (
           <View style={{
             position: 'absolute',
             width: ringSize, height: ringSize, borderRadius: ringSize / 2,
@@ -248,7 +253,7 @@ function StoryRingAvatar({
               </LinearGradient>
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
-              const segViewed = allViewed || (itemsViewed && itemsViewed[i]);
+              const segViewed = _spinOn || allViewed || (itemsViewed && itemsViewed[i]);
               // [2026-10-17 polish-status-wa] ponta redonda fechava o vão → desconta o traço.
               const _cap = count > 1 ? _sw : 0;
               const _drawLen = Math.max(0.5, segmentLen - _cap);
@@ -285,6 +290,35 @@ function StoryRingAvatar({
     );
   }
 
+  // [2026-10-18 status-telegram] Arco de carregamento girando (só com loading).
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!_spinOn) return undefined;
+    spinAnim.setValue(0);
+    const loop = Animated.loop(Animated.timing(spinAnim, {
+      toValue: 1, duration: 1100, easing: Easing.linear, useNativeDriver: !IS_WEB,
+    }));
+    loop.start();
+    return () => { try { loop.stop(); } catch {} };
+  }, [_spinOn, spinAnim]);
+  let loadingRing = null;
+  if (_spinOn) {
+    const rs = size + 10;
+    const off = ringStyle !== 'none' ? 0 : -2.5;
+    const r = rs / 2 - 1.5;
+    const circ = 2 * Math.PI * r;
+    const arc = circ * 0.28;
+    const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+    loadingRing = (
+      <Animated.View pointerEvents="none" style={{ position: 'absolute', top: off, left: off, width: rs, height: rs, zIndex: 2, transform: [{ rotate: spin }] }}>
+        <Svg width={rs} height={rs}>
+          <SvgCircle cx={rs / 2} cy={rs / 2} r={r} stroke={_cfInk || _ink} strokeWidth={2.5} fill="none" strokeLinecap="round"
+            strokeDasharray={`${arc} ${circ - arc}`} />
+        </Svg>
+      </Animated.View>
+    );
+  }
+
   const _showUpload = (typeof uploadProgress === 'number' && uploadProgress >= 0) || uploadFailed;
   let uploadRing = null;
   if (_showUpload) {
@@ -314,6 +348,7 @@ function StoryRingAvatar({
   return (
     <View style={{ position: 'relative' }}>
       {inner}
+      {loadingRing}
       {uploadRing}
       {/* Notes overlay (Instagram-style soft pill on top of the avatar).
           Only paints when `note` is truthy — the wrapper itself stays

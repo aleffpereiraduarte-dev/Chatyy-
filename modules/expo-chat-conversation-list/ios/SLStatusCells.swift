@@ -17,6 +17,9 @@ final class SLAvatarView: UIView {
   // [2026-10-16 P&B] Melhores amigos: selinho de estrela (anel não é mais verde).
   private let cfBadge = UIView()
   private let cfStar = UIImageView(image: UIImage(systemName: "star.fill"))
+  // [2026-10-18 status-telegram] Arco girando enquanto o toque espera o conteúdo.
+  private let spinArc = CAShapeLayer()
+  private var spinning = false
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -40,6 +43,40 @@ final class SLAvatarView: UIView {
     cfStar.contentMode = .scaleAspectFit
     cfBadge.addSubview(cfStar)
     addSubview(cfBadge)
+    spinArc.fillColor = UIColor.clear.cgColor
+    spinArc.lineWidth = 2.5
+    spinArc.lineCap = .round
+    spinArc.strokeStart = 0
+    spinArc.strokeEnd = 0.28
+    spinArc.isHidden = true
+    layer.addSublayer(spinArc)
+  }
+
+  private func setSpinning(_ on: Bool, ink: UIColor) {
+    spinArc.strokeColor = ink.cgColor
+    guard on != spinning else { return }
+    spinning = on
+    spinArc.isHidden = !on
+    if on {
+      let a = CABasicAnimation(keyPath: "transform.rotation.z")
+      a.fromValue = 0
+      a.toValue = Double.pi * 2
+      a.duration = 1.1
+      a.repeatCount = .infinity
+      a.isRemovedOnCompletion = false
+      spinArc.add(a, forKey: "spin")
+    } else {
+      spinArc.removeAnimation(forKey: "spin")
+    }
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // Animação some ao sair da janela (reuso/aba) → religa se ainda carregando.
+    if window != nil && spinning && spinArc.animation(forKey: "spin") == nil {
+      spinning = false
+      setSpinning(true, ink: UIColor(cgColor: spinArc.strokeColor ?? UIColor.label.cgColor))
+    }
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -50,7 +87,8 @@ final class SLAvatarView: UIView {
     ring.hot = palette.ink // [2026-10-16 P&B] sem verde nos Melhores amigos
     ring.cold = palette.ringViewed
     let viewed = row.ring.isEmpty ? [true] : row.ring.map { $0 == "1" }
-    ring.viewed = viewed
+    ring.viewed = row.loading ? viewed.map { _ in true } : viewed
+    setSpinning(row.loading, ink: palette.ink)
     cfBadge.isHidden = !(row.closeFriends && viewed.contains(false))
     cfBadge.backgroundColor = palette.ink
     cfBadge.layer.borderColor = palette.card.cgColor
@@ -75,6 +113,12 @@ final class SLAvatarView: UIView {
     let s = SLAvatarView.side
     let i = SLAvatarView.inner
     ring.frame = CGRect(x: 1.5, y: 1.5, width: s - 3, height: s - 3)
+    let sr = ring.frame
+    if spinArc.frame != sr {
+      spinArc.frame = sr
+      let rr = sr.width / 2 - 1.25 // mesmo raio do CLRingView
+      spinArc.path = UIBezierPath(arcCenter: CGPoint(x: sr.width / 2, y: sr.height / 2), radius: rr, startAngle: -.pi / 2, endAngle: .pi * 1.5, clockwise: true).cgPath
+    }
     let off = (s - i) / 2
     clip.frame = CGRect(x: off, y: off, width: i, height: i)
     tileView.frame = clip.bounds

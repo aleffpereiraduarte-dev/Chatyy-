@@ -85,6 +85,11 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   let onResync = EventDispatcher()
   let onFirstPaint = EventDispatcher()
   let onNativeError = EventDispatcher()
+  // [2026-10-18 tg-list] puxar a lista p/ baixo além do limiar (Telegram:
+  // "puxe para ver as Arquivadas"). Um evento por arrasto; o JS decide o que revelar.
+  let onPullReveal = EventDispatcher()
+  private var pullFired = false
+  static let pullThreshold: CGFloat = 64
 
   private var collectionView: CLCollectionView!
   private var dataSource: UICollectionViewDiffableDataSource<Int, String>!
@@ -718,9 +723,19 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     targetContentOffset.pointee.y = (open ? 0 : zone) - top
   }
 
+  public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+    pullFired = false
+  }
+
   public func scrollViewDidScroll(_ scrollView: UIScrollView) {
     updateTopBar()
     let rel = scrollView.contentOffset.y + scrollView.contentInset.top
+    // [2026-10-18 tg-list] puxão no topo (só com o dedo na tela, nunca no
+    // quique da desaceleração) → avisa o JS uma vez por arrasto.
+    if !pullFired && scrollView.isTracking && rel < -ChatyyConversationListView.pullThreshold {
+      pullFired = true
+      onPullReveal(["distance": Double(-rel)])
+    }
     let c = rel > collapseOffset
     if c != collapsed {
       collapsed = c

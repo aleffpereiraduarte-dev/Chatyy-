@@ -151,6 +151,8 @@ function _rowFor(group, ctx, prefix, section) {
   row.tu = tile.u; row.ti = tile.i; row.tg = tile.g;
   if (tile.a) row.ta = 1;
   if (cf) row.cf = 1;
+  // [2026-10-18 status-telegram] Toque esperando o conteúdo → anel gira (binário sem suporte ignora).
+  if (ctx.loadingEmail && ctx.loadingEmail === email.toLowerCase()) row.ld = 1;
   const th = _textThumb(latest);
   if (th) { row.tt = th.t; row.tbg = th.bg; row.tf = th.f; }
   const pu = _peekUrl(latest);
@@ -203,7 +205,7 @@ function NativeStatusListInner(props) {
   const {
     myGroup, recent, viewed, muted, showMuted,
     header, footer, isDark, t, timeAgo, notifySubs, palette,
-    refreshing, bottomInset = 0,
+    refreshing, bottomInset = 0, loadingEmail = null,
   } = props;
   const Native = getNativeStatusListView();
 
@@ -219,7 +221,7 @@ function NativeStatusListInner(props) {
   const groupsRef = useRef(new Map());
 
   const built = useMemo(() => {
-    const ctx = { labels, timeAgo, notifySubs };
+    const ctx = { labels, timeAgo, notifySubs, loadingEmail: loadingEmail ? String(loadingEmail).toLowerCase() : null };
     const rows = buildStatusRows({
       myGroup,
       recent: Array.isArray(recent) ? recent : [],
@@ -235,7 +237,7 @@ function NativeStatusListInner(props) {
     if (myGroup) put('me', myGroup);
     for (const g of [...(recent || []), ...(viewed || []), ...(muted || [])]) put('st', g);
     return { rows, map };
-  }, [myGroup, recent, viewed, muted, showMuted, labels, timeAgo, notifySubs]);
+  }, [myGroup, recent, viewed, muted, showMuted, labels, timeAgo, notifySubs, loadingEmail]);
 
   const { patch, snapshot } = useMemo(
     () => patcherRef.current.diff(built.rows),

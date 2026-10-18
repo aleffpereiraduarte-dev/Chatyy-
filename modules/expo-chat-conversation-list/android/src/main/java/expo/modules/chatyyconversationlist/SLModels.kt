@@ -27,7 +27,8 @@ internal data class SLRow(
   val thumbBg: String = "",
   val thumbFont: String = "",
   val collapsible: Boolean = false,
-  val expanded: Boolean = false
+  val expanded: Boolean = false,
+  val loading: Boolean = false       // [2026-10-18 status-telegram] "ld": anel girando (toque esperando conteúdo)
 ) {
   val isSection: Boolean get() = kind == "section"
 
@@ -54,7 +55,8 @@ internal data class SLRow(
       thumbBg = CLVal.str(m["tbg"]),
       thumbFont = CLVal.str(m["tf"]),
       collapsible = CLVal.bool(m["collapsible"]),
-      expanded = CLVal.bool(m["expanded"])
+      expanded = CLVal.bool(m["expanded"]),
+      loading = CLVal.bool(m["ld"])
     )
   }
 }

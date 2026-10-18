@@ -7035,16 +7035,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // [2026-10-12 chatlist-wa] Chip counts = exactly what tapping the chip shows:
   // locked chats live in their own folder (never in the filtered lists), so
   // they must not inflate "Não lidas (N)" etc. One pass instead of 4 filters.
-  const { unreadCount, groupCount, channelCount, favoritesCount } = useMemo(() => {
-    let u = 0, g = 0, ch = 0, f = 0;
+  // [2026-10-18 tg-list] Telegram: o número de cada aba = conversas COM NÃO
+  // LIDAS daquela aba (antes Grupos/Canais/Favoritas contavam o total). Nova aba
+  // "Pessoais" = conversas diretas (sem grupos/canais).
+  const { unreadCount, groupCount, channelCount, favoritesCount, personalCount } = useMemo(() => {
+    let u = 0, g = 0, ch = 0, f = 0, pe = 0;
     for (const c of conversations) {
       if (!c || c.locked || lockedIds.has(c.id)) continue;
-      if (c.unread_count > 0) u++;
+      if (!(c.unread_count > 0)) continue;
+      u++;
       if (c.type === 'group') g++;
       else if (c.type === 'channel') ch++;
+      else pe++;
       if (c.pinned) f++;
     }
-    return { unreadCount: u, groupCount: g, channelCount: ch, favoritesCount: f };
+    return { unreadCount: u, groupCount: g, channelCount: ch, favoritesCount: f, personalCount: pe };
   }, [conversations, lockedIds]);
   const archivedCount = archivedConversations.length;
   const archivedUnreadCount = useMemo(() => {
@@ -7052,6 +7057,80 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     for (const c of archivedConversations) if (c && (c.unread_count || 0) > 0 && !c.muted) n++;
     return n;
   }, [archivedConversations]);
+
+  // [2026-10-18 tg-list] Linha "Arquivadas" estilo Telegram: avatar redondo +
+  // nomes das arquivadas (as com não lidas primeiro, em negrito) na 2ª linha.
+  const archivedPreview = useMemo(() => {
+    const unreadFirst = [];
+    const rest = [];
+    for (const c of archivedConversations) {
+      if (!c || c.locked || lockedIds.has(c.id)) continue;
+      let name = '';
+      try {
+        name = (c.type === 'group' || c.type === 'channel')
+          ? String(c.name || c.display_name || '')
+          : String(emailToDisplayName(c.display_name || c.name || c.other_email || '') || '');
+      } catch {}
+      name = name.trim();
+      if (!name) continue;
+      const unread = (c.unread_count || 0) > 0 && !c.muted;
+      (unread ? unreadFirst : rest).push({ id: String(c.id), name, unread });
+    }
+    return unreadFirst.concat(rest).slice(0, 5);
+  }, [archivedConversations, lockedIds]);
+
+  // [2026-10-18 tg-list] "Puxe para ver as Arquivadas" (Telegram): na lista
+  // principal a linha Arquivadas fica ESCONDIDA (altura 0) e aparece com mola
+  // quando o usuário puxa a lista além de ~64 pt no topo. Some de novo ao sair
+  // da tela (abrir conversa etc.). O chip "Arquivadas" continua nos filtros.
+  // Só onde o puxão é detectável: lista nativa iOS api ≥ 6 / Android api ≥ 7,
+  // ou FlashList no iOS (quique dá offset negativo). Web, Android FlashList e
+  // binários antigos: linha sempre visível (como antes).
+  // Kill switch: globalThis.__chatyy_archive_pull = false.
+  const _archPullOn = (() => {
+    if (Platform.OS === 'web') return false;
+    try { if (globalThis.__chatyy_archive_pull === false) return false; } catch {}
+    let nativeOn = false;
+    try {
+      nativeOn = !RESP_IS_TABLET && globalThis.__chatyy_native_home !== false
+        && !globalThis.__chatyy_native_home_failed && _nativeHomeAvailable();
+    } catch { nativeOn = false; }
+    if (nativeOn) {
+      try { return _nativeHomeApi() >= (Platform.OS === 'android' ? 7 : 6); } catch { return false; }
+    }
+    return Platform.OS === 'ios';
+  })();
+  const ARCH_ROW_H = 76;
+  const [archRevealed, setArchRevealed] = useState(false);
+  const archRevealedRef = useRef(false);
+  const archRevealAnim = useRef(new Animated.Value(0)).current;
+  const _archRevealHeight = useMemo(() => archRevealAnim.interpolate({ inputRange: [0, 1], outputRange: [0, ARCH_ROW_H], extrapolate: 'clamp' }), [archRevealAnim]);
+  const _archRevealOpacity = useMemo(() => archRevealAnim.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 0.35, 1], extrapolate: 'clamp' }), [archRevealAnim]);
+  const revealArchived = useCallback(() => {
+    if (archRevealedRef.current) return;
+    archRevealedRef.current = true;
+    try { haptic.select(); } catch {}
+    setArchRevealed(true);
+    let reduced = false;
+    try { reduced = !!require('./reducedMotion').isReduceMotionEnabled(); } catch {}
+    archRevealAnim.stopAnimation();
+    if (reduced) archRevealAnim.setValue(1);
+    else Animated.spring(archRevealAnim, { toValue: 1, useNativeDriver: false, damping: 24, stiffness: 260, mass: 1, overshootClamping: true }).start();
+  }, [archRevealAnim]);
+  const hideArchivedRow = useCallback(() => {
+    if (!archRevealedRef.current) return;
+    archRevealedRef.current = false;
+    archRevealAnim.stopAnimation();
+    archRevealAnim.setValue(0);
+    setArchRevealed(false);
+  }, [archRevealAnim]);
+  // Saiu da tela (abriu conversa, outra rota) → volta a ficar escondida.
+  useFocusEffect(useCallback(() => () => { hideArchivedRow(); }, [hideArchivedRow]));
+  const _archPullRef = useRef(false);
+  _archPullRef.current = _archPullOn && filter === 'all' && archivedCount > 0 && !selectionMode;
+  const onListPullReveal = useCallback(() => {
+    if (_archPullRef.current) revealArchived();
+  }, [revealArchived]);
 
   // [2026-10-16 wave12-B pastas] Contador de NÃO LIDAS por lista (conversas com
   // não lidas que a lista mostra — mesmas regras do filtro; trancadas ficam fora).
@@ -7363,6 +7442,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }).filter(c => {
       if (filter === 'unread') return c.unread_count > 0;
       if (filter === 'favorites') return !!c.pinned;
+      if (filter === 'personal') return c.type !== 'group' && c.type !== 'channel'; // [2026-10-18 tg-list]
       if (filter === 'groups') return c.type === 'group';
       if (filter === 'channels') return c.type === 'channel';
       if (folderFilter) {
@@ -7856,7 +7936,20 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // FilterChip acima é recriado a cada troca de filtro = remonta tudo, o que
   // mataria a mola). Kill switch: globalThis.__chatyy_motion_chips = false →
   // FilterChip de sempre. Web: sempre o FilterChip.
-  const _chipRailOn = !isWeb && chipRailEnabled();
+  // [2026-10-18 tg-list] web também (ChipRail.js = pílula com Animated).
+  const _chipRailOn = chipRailEnabled();
+  // Telegram: a aba escolhida desliza p/ o centro da fileira (quando cabe).
+  const _filtersScrollRef = useRef(null);
+  const _filtersGeomRef = useRef({ view: 0, content: 0 });
+  const _onFiltersLayout = useCallback((e) => { _filtersGeomRef.current.view = e?.nativeEvent?.layout?.width || 0; }, []);
+  const _onFiltersContentSize = useCallback((w) => { _filtersGeomRef.current.content = w || 0; }, []);
+  const _onActiveChipLayout = useCallback((l) => {
+    const g = _filtersGeomRef.current;
+    const sv = _filtersScrollRef.current;
+    if (!sv || !l || !(g.view > 0) || !(g.content > g.view)) return;
+    const target = Math.max(0, Math.min(g.content - g.view, l.x + l.width / 2 - g.view / 2));
+    try { sv.scrollTo({ x: target, y: 0, animated: true }); } catch {}
+  }, []);
   const _renderChip = ({ label, value, count, folder }, key) => {
     if (!_chipRailOn) return <FilterChip key={key || value} label={label} value={value} count={count} folder={folder} />;
     const content = (on) => {
@@ -7869,7 +7962,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           </Text>
           {count > 0 ? (
             <View style={[s.chipBadge, { backgroundColor: on ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount }]}>
-              <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: txt }]} value={count > 99 ? '99+' : count} />
+              {isWeb
+                ? <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: txt }]}>{count > 99 ? '99+' : count}</Text>
+                : <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: txt }]} value={count > 99 ? '99+' : count} />}
             </View>
           ) : null}
         </>
@@ -8314,29 +8409,60 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
 
   const renderArchivedHeader = () => {
     if (filter !== 'all' || archivedCount === 0) return null;
-    return (
+    // [2026-10-18 tg-list] Telegram: linha com avatar redondo (caixa de arquivo),
+    // "Arquivadas" + contador cinza de não lidas, e os nomes na 2ª linha.
+    const row = (
       <TouchableOpacity
-        style={s.archivedHeader}
+        style={[s.archivedRow, { height: ARCH_ROW_H }]}
         onPress={() => setFilter('archived')}
         activeOpacity={0.65}
         accessibilityRole="button"
+        accessibilityLabel={archivedUnreadCount > 0
+          ? `${t('chat.archived') || 'Arquivadas'}, ${archivedUnreadCount}`
+          : (t('chat.archived') || 'Arquivadas')}
+        testID="chat-archived-row"
       >
-        <View style={s.archivedHeaderIcon}>
-          <IconArchive size={20} color={P.sub} />
+        <View style={[s.archivedAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#ebebed' }]}>
+          <IconArchive size={24} color={P.text} />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text maxFontSizeMultiplier={1.35} style={[s.archivedHeaderText, { color: P.text }]}>
-            {t('chat.archived') || 'Arquivadas'}
-          </Text>
-        </View>
-        {/* [2026-10-12 chatlist-wa] WhatsApp: the Arquivadas row counts the
-            archived chats with UNREAD messages (bold), not the archive size. */}
-        {archivedUnreadCount > 0 ? (
-          <View style={s.archivedCountBadge}>
-            <Text maxFontSizeMultiplier={1.3} style={[s.archivedCountText, { color: P.text, fontWeight: '700' }]}>{archivedUnreadCount}</Text>
+        <View style={s.archivedBody}>
+          <View style={s.archivedTop}>
+            <Text maxFontSizeMultiplier={1.35} numberOfLines={1} style={[s.archivedHeaderText, { color: P.text, flex: 1 }]}>
+              {t('chat.archived') || 'Arquivadas'}
+            </Text>
+            {/* [2026-10-12 chatlist-wa] conta as arquivadas com NÃO LIDAS (pílula cinza = silenciada, Telegram). */}
+            {archivedUnreadCount > 0 ? (
+              <View style={[s.archivedPill, { backgroundColor: P.mutedPillBg }]}>
+                <Text maxFontSizeMultiplier={1.15} style={[s.archivedPillText, { color: P.mutedPillTxt }]}>
+                  {archivedUnreadCount > 99 ? '99+' : archivedUnreadCount}
+                </Text>
+              </View>
+            ) : null}
           </View>
-        ) : null}
+          {archivedPreview.length ? (
+            <Text maxFontSizeMultiplier={1.3} numberOfLines={1} style={[s.archivedNames, { color: P.sub }]}>
+              {archivedPreview.map((x, i) => (
+                <React.Fragment key={x.id}>
+                  {i ? ', ' : ''}
+                  <Text style={x.unread ? { color: P.text, fontWeight: '600' } : null}>{x.name}</Text>
+                </React.Fragment>
+              ))}
+            </Text>
+          ) : null}
+        </View>
       </TouchableOpacity>
+    );
+    if (!_archPullOn || selectionMode) return row;
+    return (
+      <Animated.View
+        pointerEvents={archRevealed ? 'auto' : 'none'}
+        accessibilityElementsHidden={!archRevealed}
+        importantForAccessibility={archRevealed ? 'auto' : 'no-hide-descendants'}
+        style={{ height: _archRevealHeight, opacity: _archRevealOpacity, overflow: 'hidden' }}
+      >
+        {row}
+        <View style={[s.separator, { backgroundColor: P.hair, marginLeft: SEP_INSET, position: 'absolute', left: 0, right: 0, bottom: 0 }]} />
+      </Animated.View>
     );
   };
 
@@ -8681,7 +8807,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds, _useNativePins,
     // [2026-10-08 offline-first] banners rendered inside this header were missing
     // from the deps → their show/hide only landed on an unrelated re-render.
-    wsDownBanner, netOffline, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount]);
+    wsDownBanner, netOffline, loadError, loading, reactionToast, keepArchived, P, archivedUnreadCount,
+    // [2026-10-18 tg-list] linha Arquivadas (nomes + puxar p/ revelar)
+    archivedPreview, archRevealed, _archPullOn]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -8951,13 +9079,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // "Todas" didn't line up with the avatars below. Same column as the list.
         style={[{ flexGrow: 0, flexShrink: 0, height: 46 }, (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' }]}
         contentContainerStyle={s.filtersRow}
+        ref={_filtersScrollRef}
+        onLayout={_onFiltersLayout}
+        onContentSizeChange={_onFiltersContentSize}
       >
-        <ChipRail activeKey={filter} pillColor={P.pillBg}>
+        <ChipRail activeKey={filter} pillColor={P.pillBg} onActiveLayout={_onActiveChipLayout}>
         {_renderChip({ label: t('chat.filterAll') || 'Todas', value: 'all' })}
         {_renderChip({ label: t('chat.filterUnread') || 'Não lidas', value: 'unread', count: unreadCount })}
-        {_renderChip({ label: t('chat.filterFavorites') || 'Favoritas', value: 'favorites', count: favoritesCount })}
+        {/* [2026-10-18 tg-list] abas Telegram: Todas · Não lidas · Pessoais · Grupos · Canais · Favoritas · listas */}
+        {_renderChip({ label: _a11yT(t, 'chat.filterPersonal', 'Pessoais'), value: 'personal', count: personalCount })}
         {_renderChip({ label: t('chat.filterGroups') || 'Grupos', value: 'groups', count: groupCount })}
         {_renderChip({ label: t('chat.channels') || 'Canais', value: 'channels', count: channelCount })}
+        {_renderChip({ label: t('chat.filterFavorites') || 'Favoritas', value: 'favorites', count: favoritesCount })}
         {chatFolders.map(f => (
           _renderChip({ label: f.name, value: `folder_${f.id}`, folder: f, count: folderUnreadCounts[f.id] || 0 }, String(f.id))
         ))}
@@ -8977,7 +9110,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders, folderUnreadCounts, router]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer
@@ -9010,14 +9143,20 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _ltCollapsedRef = useRef(false);
   const _ltCbRef = useRef(onLargeTitleCollapsedChange);
   _ltCbRef.current = onLargeTitleCollapsedChange;
+  // [2026-10-18 tg-list] FlashList (iOS sem a lista nativa): puxão com o dedo
+  // além de 64 pt no topo revela a linha Arquivadas (o quique de um flick não conta).
+  const _listDraggingRef = useRef(false);
+  const _onListBeginDrag = useCallback(() => { _listDraggingRef.current = true; }, []);
+  const _onListEndDrag = useCallback(() => { _listDraggingRef.current = false; }, []);
   const _onListScroll = useCallback((e) => {
     const y = e?.nativeEvent?.contentOffset?.y || 0;
+    if (y < -64 && _listDraggingRef.current) { try { onListPullReveal(); } catch {} }
     const c = y > LARGE_TITLE_COLLAPSE_Y;
     if (c !== _ltCollapsedRef.current) {
       _ltCollapsedRef.current = c;
       try { _ltCbRef.current?.(c); } catch {}
     }
-  }, []);
+  }, [onListPullReveal]);
   // Lista remontou (skeleton→lista, troca de conta) → título volta expandido.
   useEffect(() => {
     if (!largeTitle) return;
@@ -9291,6 +9430,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           onMore={showLongPressMenu}
           onEnterSelection={_nativeHomeEnterSelection}
           onCollapsedChange={largeTitle ? _nativeHomeCollapsed : undefined}
+          onPullReveal={onListPullReveal} /* [2026-10-18 tg-list] puxar → Arquivadas */
           onFirstPaint={_onListLoad}
           onFailure={_onNativeHomeFailure}
           folders={chatFolders}
@@ -9311,7 +9451,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           contentContainerStyle={bottomInset ? [listContentContainerStyle, { paddingBottom: bottomInset }] : listContentContainerStyle}
           // [2026-10-07 native-ui-build] large title (scroll → título compacto
           // no header) + tab bar translúcida iOS (conteúdo rola por baixo).
-          {...(largeTitle ? { onScroll: _onListScroll, scrollEventThrottle: 32 } : {})}
+          {...(largeTitle ? { onScroll: _onListScroll, scrollEventThrottle: 32, onScrollBeginDrag: _onListBeginDrag, onScrollEndDrag: _onListEndDrag } : {})}
           {...(bottomInset ? { scrollIndicatorInsets: { bottom: bottomInset } } : {})}
           ItemSeparatorComponent={_itemSeparator}
           // [2026-10-06 android-audit] With the search keyboard up, Android's
@@ -10877,6 +11017,28 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 14,
   },
+  // [2026-10-18 tg-list] linha Arquivadas estilo Telegram (mesmo ritmo das conversas)
+  archivedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  archivedAvatar: {
+    width: ROW_AVATAR,
+    height: ROW_AVATAR,
+    borderRadius: ROW_AVATAR / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  archivedBody: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  archivedTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  archivedNames: { fontSize: 15, marginTop: 3, letterSpacing: -0.2 },
+  archivedPill: {
+    minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  archivedPillText: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   archivedHeaderText: {
     fontSize: 17, // [2026-10-17 wa-polish] same size as the conversation names
     fontWeight: '600',

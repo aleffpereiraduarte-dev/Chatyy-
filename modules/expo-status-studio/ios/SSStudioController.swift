@@ -41,6 +41,11 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
   private let audPill = UIButton(type: .custom)
   private let shareBtn = UIButton(type: .custom)
   private var showFilters = false
+  // [2026-10-18 status-telegram] Cortar (proporção + girar), só foto.
+  private let cropBar = UIScrollView()
+  private var cropChips: [(UIButton, CGFloat)] = []
+  private let cropRotate = UIButton(type: .system)
+  private var showCrop = false
   private var filterCache: [Int: UIImage] = [:]
   private var filterThumbs: [Int: UIImage] = [:]
   private var thumbBase: CGImage?
@@ -315,6 +320,7 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
       ("stickers", "face.smiling", L("stickers", "Figurinhas")),
       ("music", "music.note", L("music", "Música")),
       ("draw", "scribble.variable", L("draw", "Desenhar")),
+      ("crop", "crop", L("crop", "Cortar")),
       ("filters", "camera.filters", L("filters", "Filtros")),
     ]
     for (k, sym, label) in defs {
@@ -343,6 +349,7 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     filterStrip.register(SSFilterCell.self, forCellWithReuseIdentifier: "f")
     filterStrip.isHidden = true
     view.addSubview(filterStrip)
+    buildCropBar()
 
     // miniaturas (várias mídias)
     thumbsRow.showsHorizontalScrollIndicator = false
@@ -433,16 +440,26 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     let stageFrame = CGRect(x: (W - sw) / 2, y: safe.top + 6, width: sw, height: sh)
     if stage.frame != stageFrame { stage.frame = stageFrame }
     closeBtn.frame = CGRect(x: stageFrame.minX + 10, y: stageFrame.minY + 10, width: 40, height: 40)
-    let keys = ["text", "stickers", "music", "draw", "filters"].filter { k in
-      if k == "filters" { return !(currentItem?.media.isVideo ?? true) }
+    let keys = ["text", "stickers", "music", "draw", "crop", "filters"].filter { k in
+      if k == "filters" || k == "crop" { return !(currentItem?.media.isVideo ?? true) }
       return true
     }
     for (k, b) in toolBtns { b.isHidden = !keys.contains(k) }
     let rowW = CGFloat(keys.count) * 40 + CGFloat(max(0, keys.count - 1)) * 6
-    for (i, k) in keys.enumerated() {
-      toolBtns[k]?.frame = CGRect(x: CGFloat(i) * 46, y: 0, width: 40, height: 40)
+    // [2026-10-18 status-telegram] Palco estreito (fila encostaria no X) → coluna
+    // vertical à direita, como Instagram/Telegram.
+    if rowW <= stageFrame.width - 70 {
+      for (i, k) in keys.enumerated() {
+        toolBtns[k]?.frame = CGRect(x: CGFloat(i) * 46, y: 0, width: 40, height: 40)
+      }
+      toolRow.frame = CGRect(x: stageFrame.maxX - 10 - rowW, y: stageFrame.minY + 10, width: rowW, height: 40)
+    } else {
+      for (i, k) in keys.enumerated() {
+        toolBtns[k]?.frame = CGRect(x: 0, y: CGFloat(i) * 46, width: 40, height: 40)
+      }
+      toolRow.frame = CGRect(x: stageFrame.maxX - 50, y: stageFrame.minY + 10, width: 40, height: rowW)
     }
-    toolRow.frame = CGRect(x: stageFrame.maxX - 10 - rowW, y: stageFrame.minY + 10, width: rowW, height: 40)
+    layoutCropBar(W: W, stageFrame: stageFrame)
     flashLabel.frame = CGRect(x: stageFrame.minX, y: stageFrame.midY - 50, width: stageFrame.width, height: 40)
     filterStrip.frame = CGRect(x: 0, y: stageFrame.maxY - 96, width: W, height: 88)
 
@@ -491,6 +508,7 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     paintThumbs()
     if it.media.isVideo {
       if showFilters { tapTool("filters") }
+      if showCrop { tapTool("crop") }
       stage.bgView.backgroundColor = .black
       guard let u = SSImage.url(it.media.uri) else { return }
       let asset = AVURLAsset(url: u)
@@ -517,10 +535,12 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
       } else {
         let uri = it.media.uri
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-          let cg = SSImage.load(uri, maxPixel: 1440)
-          let avg = cg.map { SSImage.stageColor($0) }
+          let raw = SSImage.load(uri, maxPixel: 1440)
+          let avg = raw.map { SSImage.stageColor($0) }
           DispatchQueue.main.async {
-            guard let self = self, let cg = cg else { return }
+            guard let self = self, let raw = raw else { return }
+            it.basePreview = raw
+            let cg = SSImage.edited(raw, rotate: it.rotate, aspect: it.aspect)
             it.preview = cg
             it.pixelSize = CGSize(width: cg.width, height: cg.height)
             if let a = avg { it.avgColor = a }
@@ -540,8 +560,11 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     // base pequena p/ as miniaturas dos filtros
     let token = loadToken
     let uri = it.media.uri
+    let rot = it.rotate
+    let asp = it.aspect
+    if showCrop { paintCrop() }
     DispatchQueue.global(qos: .utility).async { [weak self] in
-      let small = SSImage.load(uri, maxPixel: 200)
+      let small = SSImage.load(uri, maxPixel: 200).map { SSImage.edited($0, rotate: rot, aspect: asp) }
       DispatchQueue.main.async {
         guard let self = self, token == self.loadToken else { return }
         self.thumbBase = small
@@ -677,7 +700,25 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     case "stickers": openStickerTray()
     case "music": openMusic()
     case "draw": setDrawing(true)
+    case "crop":
+      // Abrir só em foto; fechar sempre (showItem fecha ao trocar p/ vídeo).
+      if !showCrop && (currentItem?.media.isVideo ?? true) { return }
+      if !showCrop && showFilters { tapTool("filters") }
+      showCrop.toggle()
+      cropBar.isHidden = !showCrop
+      toolBtns["crop"]?.backgroundColor = showCrop ? .white : UIColor(white: 0, alpha: 0.32)
+      toolBtns["crop"]?.tintColor = showCrop ? .black : .white
+      if showCrop {
+        paintCrop()
+        cropBar.alpha = 0
+        cropBar.transform = CGAffineTransform(translationX: 0, y: 10)
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+          self.cropBar.alpha = 1
+          self.cropBar.transform = .identity
+        })
+      }
     case "filters":
+      if !showFilters && showCrop { tapTool("crop") }
       showFilters.toggle()
       filterStrip.isHidden = !showFilters
       toolBtns["filters"]?.backgroundColor = showFilters ? .white : UIColor(white: 0, alpha: 0.32)
@@ -690,12 +731,98 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     }
   }
 
+  // MARK: cortar (proporção + girar)
+
+  private func buildCropBar() {
+    cropBar.showsHorizontalScrollIndicator = false
+    cropBar.isHidden = true
+    cropRotate.setImage(ssSymbol("rotate.right", 16, .semibold), for: .normal)
+    cropRotate.tintColor = .white
+    cropRotate.backgroundColor = UIColor(white: 0, alpha: 0.45)
+    cropRotate.layer.cornerRadius = 17
+    cropRotate.layer.borderWidth = 1
+    cropRotate.layer.borderColor = UIColor(white: 1, alpha: 0.35).cgColor
+    cropRotate.accessibilityLabel = L("rotate", "Girar")
+    cropRotate.addAction(UIAction { [weak self] _ in
+      guard let self = self, let it = self.currentItem else { return }
+      self.setCrop(rotate: (it.rotate + 90) % 360, aspect: nil)
+    }, for: .touchUpInside)
+    cropBar.addSubview(cropRotate)
+    let defs: [(String, CGFloat)] = [
+      (L("cropOriginal", "Original"), 0), ("9:16", 9.0 / 16.0), ("4:5", 4.0 / 5.0), ("1:1", 1), ("16:9", 16.0 / 9.0),
+    ]
+    for (label, a) in defs {
+      let b = UIButton(type: .custom)
+      b.setTitle(label, for: .normal)
+      b.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+      b.layer.cornerRadius = 17
+      b.layer.borderWidth = 1
+      b.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+      b.addAction(UIAction { [weak self] _ in self?.setCrop(rotate: nil, aspect: a) }, for: .touchUpInside)
+      cropBar.addSubview(b)
+      cropChips.append((b, a))
+    }
+    view.addSubview(cropBar)
+  }
+
+  private func layoutCropBar(W: CGFloat, stageFrame: CGRect) {
+    var x: CGFloat = 0
+    cropRotate.frame = CGRect(x: 0, y: 5, width: 34, height: 34)
+    x = 34 + 10
+    for (b, _) in cropChips {
+      let w = max(52, b.intrinsicContentSize.width)
+      b.frame = CGRect(x: x, y: 5, width: w, height: 34)
+      x += w + 8
+    }
+    let contentW = x - 8
+    cropBar.contentSize = CGSize(width: contentW, height: 44)
+    let inset = max(12, (W - contentW) / 2)
+    cropBar.contentInset = UIEdgeInsets(top: 0, left: inset, bottom: 0, right: 12)
+    cropBar.frame = CGRect(x: 0, y: stageFrame.maxY - 58, width: W, height: 44)
+  }
+
+  private func paintCrop() {
+    let a = currentItem?.aspect ?? 0
+    for (b, v) in cropChips {
+      let on = abs(v - a) < 0.001
+      b.backgroundColor = on ? .white : UIColor(white: 0, alpha: 0.45)
+      b.setTitleColor(on ? .black : .white, for: .normal)
+      b.layer.borderColor = on ? UIColor.white.cgColor : UIColor(white: 1, alpha: 0.35).cgColor
+    }
+  }
+
+  private func setCrop(rotate: Int?, aspect: CGFloat?) {
+    guard !busy, let it = currentItem, !it.media.isVideo, let base = it.basePreview else { return }
+    if let r = rotate { it.rotate = r }
+    if let a = aspect {
+      guard abs(a - it.aspect) > 0.001 else { return }
+      it.aspect = a
+    }
+    ssHaptic("select")
+    let ed = SSImage.edited(base, rotate: it.rotate, aspect: it.aspect)
+    it.preview = ed
+    it.pixelSize = CGSize(width: ed.width, height: ed.height)
+    filterCache.removeAll()
+    filterThumbs.removeAll()
+    UIView.transition(with: stage.imageView, duration: 0.2, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+      self.applyPreview(it, ed)
+    })
+    if rotate != nil {
+      cropRotate.transform = .identity
+      UIView.animate(withDuration: 0.25) { self.cropRotate.transform = CGAffineTransform(rotationAngle: .pi / 2) }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { self.cropRotate.transform = .identity }
+    }
+    paintCrop()
+    if idx < thumbViews.count { thumbViews[idx].setImage(UIImage(cgImage: ed), for: .normal) }
+  }
+
   // MARK: SSStageHost
 
   func stageWillMutate() {}
   func stageChanged() { stage.redraw() }
   func stageTappedEmpty() {
     if showFilters { tapTool("filters"); return }
+    if showCrop { tapTool("crop"); return }
     openTextEditor(nil)
   }
   func stageLayerTapped(_ l: SSLayer) {
@@ -711,6 +838,7 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
       self.toolRow.alpha = active ? 0 : 1
       self.closeBtn.alpha = active ? 0 : 1
       self.filterStrip.alpha = active ? 0 : 1
+      self.cropBar.alpha = active ? 0 : 1
     }
   }
 
@@ -849,6 +977,7 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
     toolRow.isHidden = on
     closeBtn.isHidden = on
     if on && showFilters { tapTool("filters") }
+    if on && showCrop { tapTool("crop") }
     paintBrushes()
     view.setNeedsLayout()
   }
@@ -1531,7 +1660,8 @@ final class SSStudioController: UIViewController, SSStageHost, UITextViewDelegat
 
   /// Foto final: com camada queimada → 1080×1920 (palco); senão filtrada no tamanho original.
   nonisolated static func exportPhoto(_ it: SSItemState, filter: SSFilter?, layers: [SSLayer], strokes: [SSStroke], stage s: CGSize) -> (String, Int, Int)? {
-    guard let full = SSImage.load(it.media.uri, maxPixel: 2560) else { return nil }
+    guard let raw = SSImage.load(it.media.uri, maxPixel: 2560) else { return nil }
+    let full = SSImage.edited(raw, rotate: it.rotate, aspect: it.aspect) // [2026-10-18] Cortar
     let filtered = SSImage.filtered(full, filter)
     let burn = layers.filter { $0.kind.burns }
     if burn.isEmpty && strokes.isEmpty {

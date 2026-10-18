@@ -6,7 +6,7 @@ import PressableScale from './PressableScale'; // [2026-10-15 nav-motion]
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
-  Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
+  Modal, TextInput, Image, Animated, Easing, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
   Linking, RefreshControl, FlatList, AppState, Keyboard,
 } from 'react-native';
@@ -812,7 +812,16 @@ function EmptyStatusIllustration({ isDark }) {
 }
 
 /** Renders a segmented ring around an avatar (one arc per status item) */
-const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, closeFriends = false, isDark = false }) {
+const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, closeFriends = false, isDark = false, loading = false }) {
+  // [2026-10-18 status-telegram] loading: segmentos esmaecem e um arco gira (toque esperando conteúdo).
+  const _spin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!loading) return undefined;
+    _spin.setValue(0);
+    const loop = Animated.loop(Animated.timing(_spin, { toValue: 1, duration: 1100, easing: Easing.linear, useNativeDriver: Platform.OS !== 'web' }));
+    loop.start();
+    return () => { try { loop.stop(); } catch {} };
+  }, [loading, _spin]);
   // [2026-10-13 visual] ink follows theme: #111 ring vanished on the dark card.
   const _ink = isDark ? '#F5F5F7' : '#111111';
   const count = items?.length || 1;
@@ -845,7 +854,7 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
           </LinearGradient>
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
-          const isViewed = viewed || items?.[i]?.viewed;
+          const isViewed = loading || viewed || items?.[i]?.viewed;
           // [2026-10-17 polish-status-wa] ponta redonda soma traço/2 em cada lado e
           // FECHAVA o vão de 6° (segmentos colados). Desconta o traço do arco desenhado.
           const _cap = count > 1 ? _sw : 0;
@@ -867,6 +876,14 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
           );
         })}
       </Svg>
+      {loading ? (
+        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: ringSize, height: ringSize, transform: [{ rotate: _spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }}>
+          <Svg width={ringSize} height={ringSize}>
+            <SvgCircle cx={ringSize / 2} cy={ringSize / 2} r={radius} stroke={_ink} strokeWidth={_sw} fill="none" strokeLinecap="round"
+              strokeDasharray={`${circumference * 0.28} ${circumference * 0.72}`} />
+          </Svg>
+        </Animated.View>
+      ) : null}
     </View>
   );
 });
@@ -891,7 +908,7 @@ const CloseFriendsStar = React.memo(function CloseFriendsStar({ size = 18, isDar
 });
 
 /** Horizontal story-style avatar scroller */
-const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpenViewer, onOpenCreator, isDark, colors, t }) {
+const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpenViewer, onOpenCreator, isDark, colors, t, openingEmail = null }) {
   const hasMyStatus = myStatuses.length > 0;
   const myStatusGroup = hasMyStatus
     ? { ownerEmail: currentEmail, ownerName: currentName, items: myStatuses }
@@ -935,6 +952,7 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
                 itemsViewed={group.items.map(it => !!it.viewed)}
                 allViewed={allViewed}
                 closeFriends={isCloseFriends}
+                loading={!!openingEmail && openingEmail === String(group.ownerEmail || '').toLowerCase()}
                 isDark={isDark}
                 colors={colors}
               />
@@ -1009,6 +1027,20 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // a placeholder bubble, this holds the owner email until real items land
   // via hookOthers. Declared up here (before mirror effect) to avoid TDZ.
   const _pendingViewerEmailRef = useRef(null);
+  // [2026-10-18 status-telegram] Espelho em state do toque pendente → o anel
+  // daquele contato gira (StoryRingAvatar/SegmentedRing loading, linha nativa ld).
+  const [openingEmail, setOpeningEmail] = useState(null);
+  const _setPendingOpen = useCallback((em) => {
+    _pendingViewerEmailRef.current = em || null;
+    const lc = em ? String(em).toLowerCase() : null;
+    setOpeningEmail(prev => (prev === lc ? prev : lc));
+  }, []);
+  useEffect(() => {
+    if (!openingEmail) return undefined;
+    // Rede de segurança: o giro nunca fica preso (o fallback de 4 s já abre).
+    const tm = setTimeout(() => setOpeningEmail(null), 6000);
+    return () => clearTimeout(tm);
+  }, [openingEmail]);
   // Long-press preview state — shows the latest status as a small floating
   // card on top of the row, dismissible by tap-outside. Doesn't mark the
   // status as viewed (vs the full viewer modal).
@@ -1798,7 +1830,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           : null);
       if (g && (g.items || []).length > 0 && !(g.items || []).every(it => it?._placeholder)) {
         const target = g;
-        _pendingViewerEmailRef.current = null;
+        _setPendingOpen(null);
         // Open on next tick so the setState above settles first.
         setTimeout(() => openViewer(target), 0);
       }
@@ -1910,15 +1942,16 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // a normal open after 4s if status_list never resolves so the user's
     // tap isn't lost (StoryViewer's per-item _placeholder spinner covers
     // the brief gap). Bug user 2026-05-21: "foto não aparece, se volta aparece".
-    const isPlaceholder = (statusGroup?.items || []).length > 0 && (statusGroup?.items || []).every(it => it?._placeholder);
+    // [2026-10-18] _forcePlaceholderOpen (fallback de 4 s) NÃO volta a esperar — antes reentrava aqui em laço.
+    const isPlaceholder = !statusGroup?._forcePlaceholderOpen && (statusGroup?.items || []).length > 0 && (statusGroup?.items || []).every(it => it?._placeholder);
     if (isPlaceholder) {
-      _pendingViewerEmailRef.current = statusGroup?.ownerEmail || null;
+      _setPendingOpen(statusGroup?.ownerEmail || null);
       try { loadStatuses?.(); } catch {}
       // Light haptic so the user knows the tap registered.
       try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
       setTimeout(() => {
         if (_pendingViewerEmailRef.current === (statusGroup?.ownerEmail || null)) {
-          _pendingViewerEmailRef.current = null;
+          _setPendingOpen(null);
           // Fallback: open with placeholders anyway after 4s so the spinner
           // surface in StoryViewer takes over from this point.
           openViewer({ ...statusGroup, _forcePlaceholderOpen: true });
@@ -1926,6 +1959,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       }, 4000);
       return;
     }
+    // [2026-10-18 status-telegram] Abrindo de verdade: nenhum anel segue girando.
+    if (_pendingViewerEmailRef.current) _setPendingOpen(null);
     if (statusGroup?._forcePlaceholderOpen) {
       // Acceptable: viewer's per-item _placeholder branch will render
       // a spinner + "Carregando…" until items get swapped.
@@ -2076,7 +2111,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     } else {
       // Items not cached yet — stash + force refetch. The hook-sync effect
       // (~line 1569) opens the viewer when the group's real items arrive.
-      _pendingViewerEmailRef.current = target;
+      _setPendingOpen(target);
       try { loadStatuses?.(); } catch {}
     }
     try { onOpenStatusConsumed?.(); } catch {}
@@ -3406,6 +3441,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             viewed={allViewed}
             closeFriends={rowCloseFriends}
             isDark={isDark}
+            loading={!!openingEmail && openingEmail === String(statusGroup.ownerEmail || '').toLowerCase()}
           />
           {textThumbFor(latestItem, 52) || <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />}
           {rowCloseFriends && !allViewed ? (
@@ -3761,6 +3797,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             isDark={isDark}
             colors={colors}
             t={t}
+            openingEmail={openingEmail}
           />
         )}
 
@@ -3789,6 +3826,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               itemsViewed={hasMyStatus ? myStatuses.map(it => !!it.viewed) : null}
               badge={!hasMyStatus ? 'plus' : null}
               closeFriends={hasMyStatus && myStatuses.some((it) => (it?.meta?.privacy || it?.privacy) === 'close_friends')}
+              loading={hasMyStatus && !!openingEmail && openingEmail === String(currentEmail || '').toLowerCase()}
               isDark={isDark}
               colors={colors}
             />
@@ -3892,6 +3930,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           t={t}
           timeAgo={_nsTimeAgo}
           notifySubs={notifySubs}
+          loadingEmail={openingEmail}
           palette={_nsPalette}
           refreshing={refreshing}
           bottomInset={120}

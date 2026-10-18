@@ -463,6 +463,12 @@ export async function _pushRegistrationMeta() {
 // token é registrado MESMO negada (push silencioso, ✓✓ de entrega e VoIP
 // continuam funcionando; o alerta o SO descarta) — e re-enviado quando muda.
 let _lastRegisterPerm = '';
+// [2026-10-18 push-coverage] Por que o último registro não trouxe token de mensagem
+// (vai no push_permission_report → push_device_status.reg_error; '' = tudo ok).
+let _lastRegError = '';
+function _noteRegError(tag, msg) {
+  try { _lastRegError = (_lastRegError ? _lastRegError + '|' : '') + String(tag) + (msg ? ':' + String(msg).replace(/[\r\n|]+/g, ' ').slice(0, 50) : ''); } catch {}
+}
 
 // Remote diagnostic: posts each step of registerForPushNotifications to the
 // backend so we can see WHERE on Android the chain breaks (Android has zero
@@ -966,6 +972,7 @@ const PUSH_PERM_ASKED_KEY = 'push_perm_asked_v1';
 
 export async function registerForPushNotifications(opts = {}) {
   _lastRegisterDeferred = false;
+  _lastRegError = '';
   _diagPush('register_start', Platform.OS);
   try {
     const loaded = await loadModules();
@@ -981,7 +988,23 @@ export async function registerForPushNotifications(opts = {}) {
     }
 
     const _existingPerm = await Notifications.getPermissionsAsync();
-    const existingStatus = _existingPerm?.status;
+    let existingStatus = _existingPerm?.status;
+    // [2026-10-18 push-coverage] Android 13+: o expo-notifications devolve
+    // status 'denied' (canAskAgain=true) para POST_NOTIFICATIONS NUNCA pedida —
+    // NotificationPermissionsModule.kt força DENIED quando
+    // areNotificationsEnabled()=false, e antes do 1º pedido é sempre false.
+    // A regra "pedir 1×" abaixo lia isso como "negado" e NUNCA mostrava o
+    // diálogo (desde 09/10: 6 pedidos no Android inteiro; 25 aparelhos
+    // 'denied:blocked'; cobertura Android 27%). Nunca pedimos neste aparelho +
+    // o SO ainda deixa pedir → é 'undetermined' (primer → diálogo do SO).
+    if (Platform.OS === 'android' && existingStatus === 'denied' && _existingPerm?.canAskAgain !== false) {
+      let _askedBefore = false;
+      try { _askedBefore = !!getJSON(PUSH_PERM_ASKED_KEY, false); } catch {}
+      if (!_askedBefore) {
+        existingStatus = 'undetermined';
+        _diagPush('perm_android_never_asked', 'denied->undetermined');
+      }
+    }
     _diagPush('existing_perm', existingStatus);
     _lastPermStatus = String(existingStatus || '');
     let finalStatus = existingStatus;
@@ -997,6 +1020,7 @@ export async function registerForPushNotifications(opts = {}) {
     const _iosProvisional = Platform.OS === 'ios' && _existingPerm?.ios?.status === 3;
     const _userInitiated = !!(opts.userInitiated || opts.fromPrimer);
     let _primerGate = false;
+    let _androidPrimerExhausted = false;
     try {
       const primer = require('./pushPrimer');
       _primerGate = !!primer.PUSH_PRIMER_ENABLED
@@ -1026,6 +1050,13 @@ export async function registerForPushNotifications(opts = {}) {
         // de POST_NOTIFICATIONS (push de dados / ✓✓ de entrega / ligação).
         _lastRegisterDeferred = true;
         _diagPush('primer_deferred', existingStatus);
+        // [2026-10-18 push-coverage] Primer recusado no teto (4×): sem banner o
+        // usuário nunca mais via como ligar. Liga o aviso da lista de conversas
+        // (rate-limited no PushTokenStaleBanner; "Ativar" = diálogo do SO).
+        try {
+          const _ps = getJSON('push_primer_v1', null);
+          if (_ps && !_ps.done && Number(_ps.offers) >= 4) _androidPrimerExhausted = true;
+        } catch {}
       }
     } else if (existingStatus !== 'granted') {
       // [2026-10-09 wa-real #15] Pedir UMA vez. Um iPhone "pediu" 58× com
@@ -1055,7 +1086,7 @@ export async function registerForPushNotifications(opts = {}) {
       }
     }
     // Aviso persistente que leva aos Ajustes enquanto a permissão estiver negada.
-    try { globalThis.__chatyy_push_denied = (finalStatus !== 'granted' && !_primerGate); } catch {}
+    try { globalThis.__chatyy_push_denied = (finalStatus !== 'granted' && (!_primerGate || _androidPrimerExhausted)); } catch {}
 
     _lastPermStatus = (Platform.OS === 'ios' && _primerGate) ? 'provisional' : String(finalStatus || '');
     _lastRegisterPerm = _lastPermStatus || String(finalStatus || '');
@@ -1301,233 +1332,240 @@ export async function registerForPushNotifications(opts = {}) {
     const _expoErr = (lastErr || !tokenData?.data) ? (lastErr || new Error('no expo token after retries')) : null;
     if (_expoErr) {
       _diagPush('expo_token_err_final', _expoErr.message || String(_expoErr));
+      _noteRegError('expo', _expoErr.message || String(_expoErr));
       tokenData = null;
     } else {
       pushNotificationsState.expoToken = tokenData.data;
     }
 
     // Register notification categories with actions
-    await Notifications.setNotificationCategoryAsync('EMAIL', [
-      {
-        identifier: 'REPLY',
-        buttonTitle: 'Responder',
-        options: { opensAppToForeground: true },
-      },
-      {
-        identifier: 'ARCHIVE',
-        buttonTitle: 'Arquivar',
-        options: { isDestructive: false },
-      },
-      {
-        identifier: 'DELETE',
-        buttonTitle: 'Excluir',
-        options: { isDestructive: true },
-      },
-    ]);
-
-    // [2026-10-05] Action button titles follow the app language (pt/en/es).
-    const L = await _notifActionLabels();
-
-    await Notifications.setNotificationCategoryAsync('CHAT', [
-      {
-        identifier: 'REPLY',
-        buttonTitle: L.reply,
-        textInput: {
-          submitButtonTitle: L.send,
-          placeholder: L.placeholder,
-        },
-      },
-      {
-        identifier: 'MARK_READ',
-        buttonTitle: L.markRead,
-      },
-    ]);
-
-    // chat_message — canonical category sent by backend (firebase_push.php sets
-    // categoryId: 'chat_message' in the FCM data payload when type === 'chat_message').
-    // WhatsApp/iMessage-style quick reply: user types inline without opening app.
-    // expo-notifications maps this to a RemoteInput action on Android FCM too.
-    await Notifications.setNotificationCategoryAsync('chat_message', [
-      {
-        identifier: 'reply',
-        buttonTitle: L.reply,
-        textInput: {
-          submitButtonTitle: L.send,
-          placeholder: L.placeholder,
-        },
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-      {
-        identifier: 'mark_read',
-        buttonTitle: L.markRead,
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-      // [2026-10-12 push-parity] WhatsApp mute options straight from the banner
-      // (iOS shows all 4 on long-press; Android expo-rendered shows the first 3).
-      // Handled natively with the app killed (ChatNotifActions / ChatActionReceiver).
-      {
-        identifier: 'mute_8h',
-        buttonTitle: L.mute8h,
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-      {
-        identifier: 'mute_1w',
-        buttonTitle: L.mute1w,
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-    ]);
-
-    await Notifications.setNotificationCategoryAsync('new_email', [
-      {
-        identifier: 'archive',
-        buttonTitle: 'Arquivar',
-        options: { isDestructive: false },
-      },
-      {
-        identifier: 'mark_read',
-        buttonTitle: 'Marcar como lido',
-        options: { isDestructive: false },
-      },
-    ]);
-
-    // email_new — canonical category ID sent by the backend (matches categoryId in FCM payload)
-    await Notifications.setNotificationCategoryAsync('email_new', [
-      {
-        identifier: 'REPLY',
-        buttonTitle: 'Responder',
-        options: { opensAppToForeground: true },
-      },
-      {
-        identifier: 'ARCHIVE',
-        buttonTitle: 'Arquivar',
-        options: { isDestructive: false },
-      },
-      {
-        identifier: 'DELETE',
-        buttonTitle: 'Excluir',
-        options: { isDestructive: true },
-      },
-    ]);
-
-    // chat_mention — @mention in a group; opens conversation directly
-    await Notifications.setNotificationCategoryAsync('chat_mention', [
-      {
-        identifier: 'REPLY',
-        buttonTitle: L.reply,
-        textInput: {
-          submitButtonTitle: L.send,
-          placeholder: L.replyMention,
-        },
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-      {
-        identifier: 'MARK_READ',
-        buttonTitle: L.markRead,
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-      // [2026-10-12 push-parity] WhatsApp mute options straight from the banner
-      // (iOS shows all 4 on long-press; Android expo-rendered shows the first 3).
-      // Handled natively with the app killed (ChatNotifActions / ChatActionReceiver).
-      {
-        identifier: 'mute_8h',
-        buttonTitle: L.mute8h,
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-      {
-        identifier: 'mute_1w',
-        buttonTitle: L.mute1w,
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
-      },
-    ]);
-
-    // [notif-p0p1] chat_reaction — someone reacted to one of your msgs.
-    // Single action to jump straight to the original message; no reply
-    // (you'd reply via the normal chat_message category if you tap reply
-    // on the threaded conversation).
-    await Notifications.setNotificationCategoryAsync('chat_reaction', [
-      {
-        identifier: 'view',
-        buttonTitle: 'Ver',
-        options: { opensAppToForeground: true },
-      },
-      {
-        identifier: 'reply',
-        buttonTitle: 'Responder',
-        textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' },
-      },
-    ]);
-
-    // [notif-p0p1] Generic mute action on chat — also surfaced inside the
-    // dynamic smart-reply category registered by the NSE per-notification.
-    // This static category is the fallback for clients that haven't
-    // upgraded to the NSE pathway yet (older iOS / web).
-    await Notifications.setNotificationCategoryAsync('chat_with_mute', [
-      {
-        identifier: 'reply',
-        buttonTitle: L.reply,
-        textInput: { submitButtonTitle: L.send, placeholder: L.placeholder },
-      },
-      { identifier: 'mark_read', buttonTitle: L.markRead },
-      { identifier: 'mute_8h', buttonTitle: L.mute8h },
-      { identifier: 'snooze_1h', buttonTitle: L.snooze1h },
-    ]);
-
-    // feed_like / feed_comment / feed_follow — social actions (view only, no text reply)
-    for (const cat of ['feed_like', 'feed_comment', 'feed_follow']) {
-      await Notifications.setNotificationCategoryAsync(cat, [
+    // [2026-10-18 push-coverage] Categorias FORA do caminho do token: eram ~12
+    // chamadas nativas aguardadas ANTES do getDevicePushTokenAsync / envio ao
+    // servidor (≈4 s). Conta nova que fechava o app nesse intervalo ficava sem
+    // token nenhum (Android 10-17: expo_token e nada depois). Rodam em paralelo.
+    (async () => {
+      await Notifications.setNotificationCategoryAsync('EMAIL', [
         {
-          identifier: 'VIEW',
+          identifier: 'REPLY',
+          buttonTitle: 'Responder',
+          options: { opensAppToForeground: true },
+        },
+        {
+          identifier: 'ARCHIVE',
+          buttonTitle: 'Arquivar',
+          options: { isDestructive: false },
+        },
+        {
+          identifier: 'DELETE',
+          buttonTitle: 'Excluir',
+          options: { isDestructive: true },
+        },
+      ]);
+
+      // [2026-10-05] Action button titles follow the app language (pt/en/es).
+      const L = await _notifActionLabels();
+
+      await Notifications.setNotificationCategoryAsync('CHAT', [
+        {
+          identifier: 'REPLY',
+          buttonTitle: L.reply,
+          textInput: {
+            submitButtonTitle: L.send,
+            placeholder: L.placeholder,
+          },
+        },
+        {
+          identifier: 'MARK_READ',
+          buttonTitle: L.markRead,
+        },
+      ]);
+
+      // chat_message — canonical category sent by backend (firebase_push.php sets
+      // categoryId: 'chat_message' in the FCM data payload when type === 'chat_message').
+      // WhatsApp/iMessage-style quick reply: user types inline without opening app.
+      // expo-notifications maps this to a RemoteInput action on Android FCM too.
+      await Notifications.setNotificationCategoryAsync('chat_message', [
+        {
+          identifier: 'reply',
+          buttonTitle: L.reply,
+          textInput: {
+            submitButtonTitle: L.send,
+            placeholder: L.placeholder,
+          },
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        {
+          identifier: 'mark_read',
+          buttonTitle: L.markRead,
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        // [2026-10-12 push-parity] WhatsApp mute options straight from the banner
+        // (iOS shows all 4 on long-press; Android expo-rendered shows the first 3).
+        // Handled natively with the app killed (ChatNotifActions / ChatActionReceiver).
+        {
+          identifier: 'mute_8h',
+          buttonTitle: L.mute8h,
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        {
+          identifier: 'mute_1w',
+          buttonTitle: L.mute1w,
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+      ]);
+
+      await Notifications.setNotificationCategoryAsync('new_email', [
+        {
+          identifier: 'archive',
+          buttonTitle: 'Arquivar',
+          options: { isDestructive: false },
+        },
+        {
+          identifier: 'mark_read',
+          buttonTitle: 'Marcar como lido',
+          options: { isDestructive: false },
+        },
+      ]);
+
+      // email_new — canonical category ID sent by the backend (matches categoryId in FCM payload)
+      await Notifications.setNotificationCategoryAsync('email_new', [
+        {
+          identifier: 'REPLY',
+          buttonTitle: 'Responder',
+          options: { opensAppToForeground: true },
+        },
+        {
+          identifier: 'ARCHIVE',
+          buttonTitle: 'Arquivar',
+          options: { isDestructive: false },
+        },
+        {
+          identifier: 'DELETE',
+          buttonTitle: 'Excluir',
+          options: { isDestructive: true },
+        },
+      ]);
+
+      // chat_mention — @mention in a group; opens conversation directly
+      await Notifications.setNotificationCategoryAsync('chat_mention', [
+        {
+          identifier: 'REPLY',
+          buttonTitle: L.reply,
+          textInput: {
+            submitButtonTitle: L.send,
+            placeholder: L.replyMention,
+          },
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        {
+          identifier: 'MARK_READ',
+          buttonTitle: L.markRead,
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        // [2026-10-12 push-parity] WhatsApp mute options straight from the banner
+        // (iOS shows all 4 on long-press; Android expo-rendered shows the first 3).
+        // Handled natively with the app killed (ChatNotifActions / ChatActionReceiver).
+        {
+          identifier: 'mute_8h',
+          buttonTitle: L.mute8h,
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        {
+          identifier: 'mute_1w',
+          buttonTitle: L.mute1w,
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+      ]);
+
+      // [notif-p0p1] chat_reaction — someone reacted to one of your msgs.
+      // Single action to jump straight to the original message; no reply
+      // (you'd reply via the normal chat_message category if you tap reply
+      // on the threaded conversation).
+      await Notifications.setNotificationCategoryAsync('chat_reaction', [
+        {
+          identifier: 'view',
           buttonTitle: 'Ver',
           options: { opensAppToForeground: true },
         },
+        {
+          identifier: 'reply',
+          buttonTitle: 'Responder',
+          textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' },
+        },
       ]);
-    }
 
-    // live_start — someone started a Live broadcast
-    await Notifications.setNotificationCategoryAsync('live_start', [
-      {
-        identifier: 'JOIN',
-        buttonTitle: 'Entrar ao vivo',
-        options: { opensAppToForeground: true },
-      },
-      {
-        identifier: 'DISMISS',
-        buttonTitle: 'Ignorar',
-        options: { isDestructive: false },
-      },
-    ]);
+      // [notif-p0p1] Generic mute action on chat — also surfaced inside the
+      // dynamic smart-reply category registered by the NSE per-notification.
+      // This static category is the fallback for clients that haven't
+      // upgraded to the NSE pathway yet (older iOS / web).
+      await Notifications.setNotificationCategoryAsync('chat_with_mute', [
+        {
+          identifier: 'reply',
+          buttonTitle: L.reply,
+          textInput: { submitButtonTitle: L.send, placeholder: L.placeholder },
+        },
+        { identifier: 'mark_read', buttonTitle: L.markRead },
+        { identifier: 'mute_8h', buttonTitle: L.mute8h },
+        { identifier: 'snooze_1h', buttonTitle: L.snooze1h },
+      ]);
 
-    // missed_call — fired when caller hung up before we picked up (or we
-    // declined). Single action "Ligar de volta" that dials the caller back
-    // through /call.js as the initiator. Pairs with the Android side handled
-    // by ChatActionReceiver.ACTION_CALL_BACK so both platforms surface the
-    // same shortcut without opening the app first.
-    await Notifications.setNotificationCategoryAsync('missed_call', [
-      {
-        identifier: 'CALL_BACK',
-        // i18n.notif.missedCall.callBack mirrors this — kept here as a
-        // hard-coded fallback because UNNotificationAction titles are
-        // rendered by iOS, not by our JS, so they need the literal string
-        // at registration time. The active language is read from the
-        // running app, but iOS caches the category between launches so
-        // the title only updates after the app foregrounds.
-        buttonTitle: 'Ligar de volta',
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
-      },
-    ]);
+      // feed_like / feed_comment / feed_follow — social actions (view only, no text reply)
+      for (const cat of ['feed_like', 'feed_comment', 'feed_follow']) {
+        await Notifications.setNotificationCategoryAsync(cat, [
+          {
+            identifier: 'VIEW',
+            buttonTitle: 'Ver',
+            options: { opensAppToForeground: true },
+          },
+        ]);
+      }
 
-    await Notifications.setNotificationCategoryAsync('incoming_call', [
-      {
-        identifier: 'accept_call',
-        buttonTitle: 'Accept',
-        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
-      },
-      {
-        identifier: 'decline_call',
-        buttonTitle: 'Decline',
-        options: { isDestructive: true, isAuthenticationRequired: false },
-      },
-    ]);
+      // live_start — someone started a Live broadcast
+      await Notifications.setNotificationCategoryAsync('live_start', [
+        {
+          identifier: 'JOIN',
+          buttonTitle: 'Entrar ao vivo',
+          options: { opensAppToForeground: true },
+        },
+        {
+          identifier: 'DISMISS',
+          buttonTitle: 'Ignorar',
+          options: { isDestructive: false },
+        },
+      ]);
+
+      // missed_call — fired when caller hung up before we picked up (or we
+      // declined). Single action "Ligar de volta" that dials the caller back
+      // through /call.js as the initiator. Pairs with the Android side handled
+      // by ChatActionReceiver.ACTION_CALL_BACK so both platforms surface the
+      // same shortcut without opening the app first.
+      await Notifications.setNotificationCategoryAsync('missed_call', [
+        {
+          identifier: 'CALL_BACK',
+          // i18n.notif.missedCall.callBack mirrors this — kept here as a
+          // hard-coded fallback because UNNotificationAction titles are
+          // rendered by iOS, not by our JS, so they need the literal string
+          // at registration time. The active language is read from the
+          // running app, but iOS caches the category between launches so
+          // the title only updates after the app foregrounds.
+          buttonTitle: 'Ligar de volta',
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
+        },
+      ]);
+
+      await Notifications.setNotificationCategoryAsync('incoming_call', [
+        {
+          identifier: 'accept_call',
+          buttonTitle: 'Accept',
+          options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
+        },
+        {
+          identifier: 'decline_call',
+          buttonTitle: 'Decline',
+          options: { isDestructive: true, isAuthenticationRequired: false },
+        },
+      ]);
+    })().catch((e) => { _diagPush('categories_err', e?.message || String(e)); });
 
     // On Android, also get the raw device FCM token.
     // This is needed for incoming call notifications: data-only FCM messages
@@ -1566,6 +1604,7 @@ export async function registerForPushNotifications(opts = {}) {
         _diagPush('fcm_device_ok', 'type=' + (deviceToken.type || '?'));
       } else {
         _diagPush('fcm_device_missing', 'no fcm token after retry');
+        _noteRegError('fcm_missing');
       }
     }
 
@@ -1600,9 +1639,11 @@ export async function registerForPushNotifications(opts = {}) {
           _diagPush('apns_device_ok', 'len=' + dt.data.length + ' env=' + (env || 'null'));
         } else {
           _diagPush('apns_device_missing', 'type=' + (dt?.type || '?'));
+          _noteRegError('apns_missing');
         }
       } catch (err) {
         _diagPush('apns_device_err', err?.message || String(err));
+        _noteRegError('apns_err', err?.message || String(err));
       }
     }
 
@@ -1620,6 +1661,7 @@ export async function registerForPushNotifications(opts = {}) {
     return tokenData?.data || _nativeTok;
   } catch (err) {
     _diagPush('register_failed', err?.message || String(err));
+    _noteRegError('failed', err?.message || String(err));
     console.warn('[Push] Registration failed:', err.message);
     return null;
   }
@@ -1911,7 +1953,8 @@ async function _reportPushPermission(hasToken) {
     if (Platform.OS === 'web' || !_lastPermStatus) return;
     const email = await _getActiveEmailSafe();
     if (!email) return;
-    const sig = `${email.toLowerCase()}|${_lastPermStatus}|${hasToken ? 1 : 0}|${_pushAppVersion()}`;
+    const _regErr = String(_lastRegError || '').slice(0, 120);
+    const sig = `${email.toLowerCase()}|${_lastPermStatus}|${hasToken ? 1 : 0}|${_pushAppVersion()}|${_regErr}`;
     const prev = getJSON(PUSH_PERM_REPORT_KEY) || {};
     if (prev.sig === sig && Date.now() - Number(prev.at || 0) < PUSH_RESEND_MS) return;
     const { apiCall } = require('./api');
@@ -1921,6 +1964,7 @@ async function _reportPushPermission(hasToken) {
       platform: Platform.OS,
       app_version: _pushAppVersion(),
       has_token: hasToken ? 1 : 0,
+      reg_error: _regErr,
     }, 'POST');
     if (r?.success) setJSON(PUSH_PERM_REPORT_KEY, { sig, at: Date.now() });
   } catch {}

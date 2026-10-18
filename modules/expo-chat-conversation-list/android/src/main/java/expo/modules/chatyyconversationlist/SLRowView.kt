@@ -289,9 +289,19 @@ internal class SLRowView(ctx: Context) : View(ctx) {
     ringPaint.strokeWidth = dp(3f)
     ringPaint.strokeCap = if (n > 1) Paint.Cap.ROUND else Paint.Cap.BUTT
     for (i in 0 until n) {
-      val v = viewed.getOrElse(i) { true }
+      val v = row.loading || viewed.getOrElse(i) { true }
       ringPaint.color = if (v) p.ringViewed else p.ink // [2026-10-16 P&B] sem verde nos Melhores amigos
       canvas.drawArc(tmp, -90f + i * (seg + gapDeg), if (n > 1) seg else 360f, false, ringPaint)
+    }
+    // [2026-10-18 status-telegram] Toque esperando o conteúdo: arco de tinta
+    // girando devagar sobre o anel esmaecido (Telegram). Redesenha por quadro
+    // só enquanto row.loading (o JS limpa "ld" ao abrir / em até 6 s).
+    if (row.loading) {
+      val ang = (android.os.SystemClock.uptimeMillis() % 1100L) / 1100f * 360f
+      ringPaint.color = p.ink
+      ringPaint.strokeCap = Paint.Cap.ROUND
+      canvas.drawArc(tmp, -90f + ang, 100f, false, ringPaint)
+      postInvalidateOnAnimation()
     }
     // [2026-10-16 P&B] Melhores amigos: selinho (tinta P&B) com estrela no canto
     // inferior direito do anel — só enquanto houver parte não vista (igual ao JS).

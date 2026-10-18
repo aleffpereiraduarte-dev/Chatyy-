@@ -25,6 +25,9 @@
 //   api 3 [2026-10-16 wave8-list]: topInset (header do app por cima da lista;
 //          vidro nativo no topo), snapOffset (snap do título grande), peekMode
 //          ('peek' = prévia estilo Telegram no toque longo do Android).
+//   [2026-10-18 tg-list] iOS api 6 / Android api 7: evento onPullReveal
+//          {distance} — puxar a lista além de 64 pt/dp no topo (uma vez por
+//          arrasto); o ChatListTab revela a linha "Arquivadas" escondida.
 
 import { Platform } from 'react-native';
 

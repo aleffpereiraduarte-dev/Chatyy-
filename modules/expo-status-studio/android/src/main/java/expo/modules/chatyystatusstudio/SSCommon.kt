@@ -160,6 +160,9 @@ object SSIcons {
     "eraser" to "M20 20H7L3 16a1 1 0 0 1 0-1.4l9.6-9.6a1 1 0 0 1 1.4 0l6 6a1 1 0 0 1 0 1.4L13 19M9 10l6 6",
     "plus" to line(12f, 5f, 12f, 19f) + line(5f, 12f, 19f, 12f),
     "search" to circle(11f, 11f, 8f) + line(21f, 21f, 16.65f, 16.65f),
+    // [2026-10-18 status-telegram] Cortar / girar
+    "crop" to "M6.13 1L6 16a2 2 0 0 0 2 2h15M1 6.13L16 6a2 2 0 0 1 2 2v15",
+    "rotate" to "M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10",
   )
 
   private val cache = HashMap<String, Path?>()

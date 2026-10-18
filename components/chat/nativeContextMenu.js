@@ -73,8 +73,12 @@ export function buildNativeCtxMenu(key, msg, env) {
   add('reply', _tf(t, 'chatConv.reply', 'Responder'), 'arrowshape.turn.up.left', IconReply);
   if (!deleted) {
     const content = typeof msg.content === 'string' ? msg.content : '';
-    if (content.trim().length > 12) add('quote', _tf(t, 'chatConv.quote', 'Citar'), 'text.quote', IconReply);
-    if (msg.content) add('copy', _tf(t, 'chatConv.copy', 'Copiar'), 'doc.on.doc', IconCopy);
+    // [2026-10-18 citar-texto] Citar/Copiar só p/ texto de verdade: presente, enquete, contato,
+    // figurinha etc. guardam JSON no content (aparecia {"v":1,"gift_id"…} no seletor).
+    const _mtype = String(msg.message_type || msg.type || 'text').toLowerCase();
+    const _isText = (_mtype === 'text' || _mtype === '') && !/^\s*[{[]/.test(content);
+    if (_isText && content.trim().length > 12) add('quote', _tf(t, 'chatConv.quote', 'Citar'), 'text.quote', IconReply);
+    if (msg.content && (_isText || ['image', 'video', 'file'].includes(_mtype) && !/^\s*[{[]/.test(content))) add('copy', _tf(t, 'chatConv.copy', 'Copiar'), 'doc.on.doc', IconCopy);
     // Editar (própria, texto/legenda, até 15 min)
     if (ownStrict && typeof msg.id === 'number') {
       let ek = null;

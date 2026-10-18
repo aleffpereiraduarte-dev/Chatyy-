@@ -25,17 +25,37 @@ const POLL_MS = 5000; // [perf 2026-10-06] was 1000 — the flag flips rarely; a
 // [2026-10-09 wa-real #15] Permissão negada → em vez de pedir de novo a cada
 // boot (58× num iPhone), o app pede 1× e depois só mostra ESTE aviso, que leva
 // aos Ajustes. "Fechar" esconde por 7 dias (persistido).
-const DENIED_DISMISS_KEY = 'push_denied_banner_dismissed_at';
-const DENIED_DISMISS_MS = 7 * 24 * 3600e3;
-function _deniedDismissedRecently() {
+// [2026-10-18 push-coverage] Aviso "notificações desativadas": no máximo 1×
+// a cada 3 dias e 5 vezes no total por aparelho (era: some 7 dias ao fechar,
+// sem teto). Uma "vez" = uma sessão do app em que o aviso apareceu; dentro
+// dela continua visível até fechar. Sessão = processo JS (módulo).
+const DENIED_RATE_KEY = 'push_denied_banner_v2';
+const DENIED_EVERY_MS = 3 * 24 * 3600e3;
+const DENIED_MAX_SHOWS = 5;
+let _deniedShownThisSession = false;
+let _deniedClosedThisSession = false;
+function _deniedAllowed() {
+  if (_deniedClosedThisSession) return false;
+  if (_deniedShownThisSession) return true;
   try {
     const { getJSON } = require('../services/mmkv');
-    const at = Number(getJSON(DENIED_DISMISS_KEY, 0)) || 0;
-    return at > 0 && Date.now() - at < DENIED_DISMISS_MS;
+    const st = getJSON(DENIED_RATE_KEY, null) || {};
+    const n = Number(st.n) || 0;
+    const at = Number(st.at) || 0;
+    return n < DENIED_MAX_SHOWS && (!at || Date.now() - at >= DENIED_EVERY_MS);
   } catch { return false; }
 }
+function _markDeniedShown() {
+  if (_deniedShownThisSession) return;
+  _deniedShownThisSession = true;
+  try {
+    const { getJSON, setJSON } = require('../services/mmkv');
+    const st = getJSON(DENIED_RATE_KEY, null) || {};
+    setJSON(DENIED_RATE_KEY, { n: (Number(st.n) || 0) + 1, at: Date.now() });
+  } catch {}
+}
 function _markDeniedDismissed() {
-  try { require('../services/mmkv').setJSON(DENIED_DISMISS_KEY, Date.now()); } catch {}
+  _deniedClosedThisSession = true;
 }
 
 // [2026-10-14 redesign] Era uma faixa amarela colada no topo de TODAS as telas
@@ -65,7 +85,7 @@ export default function PushTokenStaleBanner() {
       let flag = false;
       try { flag = !!globalThis.__chatyy_push_token_stale; } catch {}
       try {
-        if (!flag && globalThis.__chatyy_push_denied && !_deniedDismissedRecently()) flag = true;
+        if (!flag && globalThis.__chatyy_push_denied && _deniedAllowed()) flag = true;
       } catch {}
       setVisible(flag);
       // Auto-clear local dismiss state when the flag flips back to false
@@ -113,7 +133,9 @@ export default function PushTokenStaleBanner() {
         if (alive) {
           let deniedFlag = false;
           try { deniedFlag = !!globalThis.__chatyy_push_denied; } catch {}
-          setOpenSettingsMode(!!perm && perm.status !== 'granted' && (perm.canAskAgain === false || deniedFlag));
+          // [2026-10-18 push-coverage] Android ainda deixa pedir (canAskAgain) →
+          // "Ativar" mostra o diálogo do SO; só iOS negado / Android bloqueado vão aos Ajustes.
+          setOpenSettingsMode(!!perm && perm.status !== 'granted' && (perm.canAskAgain === false || (Platform.OS === 'ios' && deniedFlag)));
         }
       } catch {}
     })();
@@ -153,9 +175,12 @@ export default function PushTokenStaleBanner() {
 
   if (!HOME_PATHS.has(pathname || '')) return null;
 
-  const title = openSettingsMode ? t('pushBanner.offTitle') : t('pushBanner.staleTitle');
-  const sub = retrying ? t('pushBanner.retrying') : t('pushBanner.sub');
-  const cta = openSettingsMode ? t('pushBanner.ctaSettings') : t('pushBanner.ctaRetry');
+  let _deniedMode = false;
+  try { _deniedMode = !!globalThis.__chatyy_push_denied && !globalThis.__chatyy_push_token_stale; } catch {}
+  if (_deniedMode) _markDeniedShown();
+  const title = (openSettingsMode || _deniedMode) ? t('pushBanner.offTitle') : t('pushBanner.staleTitle');
+  const sub = retrying ? t('pushBanner.retrying') : (_deniedMode ? t('pushBanner.offSub') : t('pushBanner.sub'));
+  const cta = t('pushBanner.ctaRetry');
   const fg = colors.text;
   const muted = colors.textSecondary;
 

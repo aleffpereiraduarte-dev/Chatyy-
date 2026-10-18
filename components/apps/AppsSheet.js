@@ -15,17 +15,15 @@ import { View, Text, ScrollView, StyleSheet, Platform, Animated, Dimensions, Mod
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import {
-  IconMail, IconCalendar, IconFolder, IconFileText, IconStickyNote, IconUsers,
-  IconImage, IconVideo, IconUser, IconSettings, IconBell, IconShield, IconGrid,
-  IconMapPin, IconCreditCard, IconMegaphone, IconUsersSmall, IconReels, IconBroadcast,
+  IconMail, IconCalendar, IconFolder, IconFileText, IconStickyNote,
+  IconImage, IconVideo, IconUser, IconGrid,
+  IconMapPin, IconMegaphone, IconUsersSmall, IconReels, IconBroadcast,
   IconCheckCircle, IconX as IconClose,
 } from '../Icons';
 import PressableScale from '../PressableScale';
-import { WALLET_ENABLED } from '../../constants/featureFlags';
 import { haptic } from '../../constants/theme';
 import { Springs, Durations, Easings, Gestures, motionEnabled } from '../../constants/motion'; // [2026-10-16 motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../NativeSheet';
-import BiaIcon from '../bia/BiaIcon';
 import { AppsItem, Pop, TilePress } from './appsMotion';
 // [2026-10-18 native-apps-grid] Grade NATIVA (UICollectionView / RecyclerView) quando o
 // binário tem a view ChatyyAppsGrid (api ≥ 2). Kill: globalThis.__chatyy_native_apps = false.
@@ -115,7 +113,7 @@ const AppTile = React.memo(function AppTile({ item, badge, onPress, isDark, t, t
   );
 });
 
-function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, badges }) {
+function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, desktop, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, badges }) {
   const insets = useSafeAreaInsets();
   // Cascata só na abertura.
   const [openSeq, setOpenSeq] = useState(0);
@@ -137,9 +135,16 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
 
   // [2026-10-18 apps-compact] Lista ÚNICA, ordem fixa: mais usados primeiro
   // (comunicação → produtividade → arquivos → social → conta).
-  const items = useMemo(() => ([
+  // [2026-10-18 apps-lean] founder: o Apps NÃO repete o que já está a 1 toque
+  // em outro lugar. Fora no celular: E-mail + Reels (barra de baixo), Bia (card
+  // na home), Comunidades + Canais (pílulas da home / chip "Canais" / "+"),
+  // Contatos ("+" → Novo contato; sidebar do e-mail), Perfil + Ajustes +
+  // Carteira + Backup (tudo na tela "Você" = /settings, avatar da home),
+  // Notificações (sino do Feed). No desktop web a barra lateral só tem
+  // Conversas/Ligações/Feed e não há avatar/pílulas → lá ficam E-mail, Reels,
+  // Canais, Comunidades e "Você" (→ /settings); Feed sai (já é aba).
+  const items = useMemo(() => (desktop ? [
     { key: 'email',       label: t('apps.email'),        ic: I(IconMail),        route: '/inbox' },
-    { key: 'one',         label: 'Bia',                  ic: I(BiaIcon),         route: '/one' },
     { key: 'calendar',    label: t('sidebar.calendar'),  ic: I(IconCalendar),    route: '/calendar' },
     { key: 'meet',        label: t('sidebar.meetings'),  ic: I(IconVideo),       route: '/meetings' },
     { key: 'files',       label: t('sidebar.files'),     ic: I(IconFolder),      route: '/files' },
@@ -147,22 +152,25 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, onO
     { key: 'docs',        label: t('sidebar.documents'), ic: I(IconFileText),    route: '/documentos' },
     { key: 'notes',       label: t('sidebar.notes'),     ic: I(IconStickyNote),  route: '/notes' },
     { key: 'tasks',       label: t('tasks.title'),       ic: I(IconCheckCircle), route: '/tasks' },
-    { key: 'contacts',    label: t('sidebar.contacts'),  ic: I(IconUsers),       route: '/contacts' },
     { key: 'channels',    label: t('channel.title'),     ic: I(IconMegaphone),   action: onOpenChannels },
     { key: 'communities', label: t('community.title'),   ic: I(IconUsersSmall),  action: onOpenCommunities },
     { key: 'reels',       label: t('apps.reels'),        ic: I(IconReels),       action: onOpenReels },
+    { key: 'live',        label: t('apps.goLive'),       ic: I(IconBroadcast),   route: '/live-broadcast' },
+    { key: 'snapmap',     label: t('snapmap.tile'),      ic: I(IconMapPin),      route: '/snap-map' },
+    { key: 'profile',     label: t('sidebar.profile'),   ic: I(IconUser),        action: go('/settings') },
+  ] : [
+    { key: 'calendar',    label: t('sidebar.calendar'),  ic: I(IconCalendar),    route: '/calendar' },
+    { key: 'meet',        label: t('sidebar.meetings'),  ic: I(IconVideo),       route: '/meetings' },
+    { key: 'files',       label: t('sidebar.files'),     ic: I(IconFolder),      route: '/files' },
+    { key: 'photos',      label: t('sidebar.photos'),    ic: I(IconImage),       route: '/photos' },
+    { key: 'docs',        label: t('sidebar.documents'), ic: I(IconFileText),    route: '/documentos' },
+    { key: 'notes',       label: t('sidebar.notes'),     ic: I(IconStickyNote),  route: '/notes' },
+    { key: 'tasks',       label: t('tasks.title'),       ic: I(IconCheckCircle), route: '/tasks' },
     { key: 'feed',        label: t('apps.feed'),         ic: I(IconGrid),        action: onOpenFeed },
     { key: 'live',        label: t('apps.goLive'),       ic: I(IconBroadcast),   route: '/live-broadcast' },
     { key: 'snapmap',     label: t('snapmap.tile'),      ic: I(IconMapPin),      route: '/snap-map' },
-    { key: 'backup',      label: t('sidebar.backup'),    ic: I(IconShield),      route: '/backup' },
-    { key: 'notifications', label: t('sidebar.notifications'), ic: I(IconBell), route: '/notifications' },
-    // [2026-05-22 monetization-pause] wallet só com WALLET_ENABLED.
-    ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet'), ic: I(IconCreditCard), route: '/wallet' }] : []),
-    { key: 'profile', label: t('sidebar.profile'), ic: I(IconUser),
-      action: () => { onClose(); if (userEmail) _afterClose(() => { try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[apps] router.push failed:', e); } }); } },
-    { key: 'settings', label: t('sidebar.settings'), ic: I(IconSettings), action: go('/settings') },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]), [t, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, onClose, router, userEmail, go]);
+  ]), [t, desktop, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, go]);
 
   const itemByKey = useMemo(() => {
     const m = new Map();

@@ -57,7 +57,7 @@ export function chipRailEnabled() {
 
 const RailCtx = createContext(null);
 
-export function ChipRail({ activeKey, pillColor, children }) {
+export function ChipRail({ activeKey, pillColor, onActiveLayout, children }) {
   const x = useSharedValue(0);
   const y = useSharedValue(0);
   const w = useSharedValue(0);
@@ -66,6 +66,10 @@ export function ChipRail({ activeKey, pillColor, children }) {
   const layouts = useRef(new Map());
   const activeRef = useRef(activeKey);
   const placedRef = useRef(false);
+  // [2026-10-18 tg-list] avisa o ChatListTab quando o chip ativo muda (centraliza a fileira).
+  const notifiedRef = useRef(null);
+  const cbRef = useRef(onActiveLayout);
+  cbRef.current = onActiveLayout;
 
   const moveTo = useCallback((key) => {
     const l = layouts.current.get(key);
@@ -83,6 +87,10 @@ export function ChipRail({ activeKey, pillColor, children }) {
     }
     placedRef.current = true;
     ready.value = 1;
+    if (notifiedRef.current !== key) {
+      notifiedRef.current = key;
+      try { cbRef.current?.({ x: l.x, width: l.width }); } catch {}
+    }
   }, [x, y, w, h, ready]);
 
   const onChipLayout = useCallback((key, e) => {

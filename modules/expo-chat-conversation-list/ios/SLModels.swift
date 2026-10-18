@@ -33,6 +33,8 @@ struct SLRow {
   // seção
   var collapsible: Bool = false
   var expanded: Bool = false
+  // [2026-10-18 status-telegram] "ld": anel girando (toque esperando o conteúdo)
+  var loading: Bool = false
 
   init() {}
 
@@ -61,6 +63,7 @@ struct SLRow {
     peekURL = CLVal.str(d["peek"])
     collapsible = CLVal.bool(d["collapsible"])
     expanded = CLVal.bool(d["expanded"])
+    loading = CLVal.bool(d["ld"])
   }
 
   var isSection: Bool { kind == "section" }

@@ -3,6 +3,7 @@ import { View, Animated, Image, StyleSheet, Easing, Platform } from 'react-nativ
 // [2026-10-07 coldstart] Splash hide goes through services/bootTrace so the
 // boot trace records who released it (idempotent with the chat-list owner).
 import { hideNativeSplash, isSplashHidden, mark as bootMark } from '../services/bootTrace';
+import { useStableColorScheme } from '../context/ThemeContext';
 
 // [#1239 2026-05-20] Restore Chatyy logo on the JS splash so the cold-start
 // hand-off doesn't show a blank white square. The native splash image lives
@@ -28,6 +29,10 @@ const EYE_W = 12;
 const EYE_H = 6;
 
 export default function AnimatedSplash({ onFinish }) {
+  // [2026-10-18 onb-telegram] Fundo segue o esquema (o splash nativo já é preto
+  // no escuro — app.json splash.dark) → sem "flash branco" no modo escuro.
+  const _scheme = useStableColorScheme();
+  const _bg = _scheme === 'dark' ? '#000000' : '#FFFFFF';
   const fadeOut = useRef(new Animated.Value(1)).current;
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.86)).current;
@@ -126,7 +131,7 @@ export default function AnimatedSplash({ onFinish }) {
 
   return (
     <Animated.View
-      style={[s.container, { opacity: fadeOut }]}
+      style={[s.container, { opacity: fadeOut, backgroundColor: _bg }]}
       onLayout={onLayoutReady}
     >
       <Animated.View

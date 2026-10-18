@@ -3223,6 +3223,7 @@ export default {
   'chat.filterAll': 'Alle',
   'chat.filterUnread': 'Ungelesen',
   'chat.filterGroups': 'Gruppen',
+  'chat.filterPersonal': 'Persönlich',
   'chat.filterArchived': 'Archiviert',
   'chat.archive': 'Archivieren',
   'chat.unarchive': 'Wiederherstellen',

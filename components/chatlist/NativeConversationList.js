@@ -287,6 +287,10 @@ function NativeConversationListInner(props) {
       onCollapsedChange: (e) => {
         try { propsRef.current.onCollapsedChange?.(!!(e?.nativeEvent ?? e)?.collapsed); } catch {}
       },
+      // [2026-10-18 tg-list] puxão no topo (iOS api 6 / Android api 7) → Arquivadas.
+      onPullReveal: (e) => {
+        try { propsRef.current.onPullReveal?.(Number((e?.nativeEvent ?? e)?.distance) || 0); } catch {}
+      },
       onResync: () => {
         patcherRef.current.requestReset();
         setResyncToken(v => v + 1);

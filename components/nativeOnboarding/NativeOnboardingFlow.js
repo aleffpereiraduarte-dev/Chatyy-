@@ -44,14 +44,13 @@ import {
 } from '../signup/signupSmarts';
 import {
   IconArrowLeft, IconChevronDown, IconCheck, IconAlertTriangle, IconCamera, IconGlobe, IconX,
-  IconMessageCircle, IconSmartphone, IconPhone, IconMic, IconAtSign, IconMoreHorizontal,
+  IconMessageCircle, IconSmartphone, IconPhone, IconMic, IconAtSign, IconMoreHorizontal, IconUser,
 } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 import { useReducedMotion } from '../reducedMotion';
 import { useOnbCopy } from '../onboarding/copy';
 import { FriendsArt, BellArt } from '../onboarding/illustrations';
 import { LANGUAGES } from '../../i18n';
-import BrandHero from './BrandHero';
 import FlagIcon from './FlagIcon';
 import CountryPicker from './CountryPicker';
 import LanguageSheet from './LanguageSheet';
@@ -63,6 +62,7 @@ import { probeRestore } from './restore';
 import { hasNativeCircleCrop } from './flag';
 import { fitPhoneFontSize, textEm } from './phoneFit';
 import OpeningScreen from './OpeningScreen';
+import WelcomeIntro from './WelcomeIntro'; // [2026-10-18 onb-telegram]
 
 const FORM_STEPS = ['phone', 'otp', 'profile', 'username'];
 // Nomes do rascunho compartilhado com o fluxo legado (signupSmarts).
@@ -192,12 +192,12 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     if (transPhaseRef.current === 'in') { setStep(next); return; }
     transPhaseRef.current = 'out';
     Animated.parallel([
-      Animated.timing(fade, { toValue: 0, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      Animated.timing(shift, { toValue: -28 * dir, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 0, duration: 130, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(shift, { toValue: -40 * dir, duration: 130, easing: Easing.in(Easing.quad), useNativeDriver: true }),
     ]).start(() => {
       transPhaseRef.current = 'in';
       setStep(targetRef.current);
-      shift.setValue(28 * dir);
+      shift.setValue(40 * dir);
       Animated.parallel([
         Animated.timing(fade, { toValue: 1, duration: 240, easing: Easing.bezier(0.2, 0, 0, 1), useNativeDriver: true }),
         Animated.timing(shift, { toValue: 0, duration: 300, easing: Easing.bezier(0.2, 0, 0, 1), useNativeDriver: true }),
@@ -732,17 +732,17 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   // ── UI helpers ─────────────────────────────────────────────────────────
   const fg = colors.text;
   const sub = colors.textSecondary;
-  const Primary = useCallback(({ label, onPress, loading, disabled, testID }) => (
+  const Primary = useCallback(({ label, onPress, loading, disabled, testID, big }) => (
     <Pressable
       onPress={onPress}
       disabled={!!(loading || disabled)}
-      style={({ pressed }) => [st.primary, { backgroundColor: fg, opacity: disabled ? 0.3 : (pressed ? 0.86 : 1), transform: [{ scale: pressed && !disabled ? 0.985 : 1 }] }]}
+      style={({ pressed }) => [st.primary, big ? st.primaryBig : null, { backgroundColor: fg, opacity: disabled ? 0.3 : (pressed ? 0.86 : 1), transform: [{ scale: pressed && !disabled ? 0.985 : 1 }] }]}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !!(loading || disabled), busy: !!loading }}
       testID={testID}
     >
-      {loading ? <ActivityIndicator color={colors.background} /> : <Text style={[st.primaryText, { color: colors.background }]} maxFontSizeMultiplier={1.3}>{label}</Text>}
+      {loading ? <ActivityIndicator color={colors.background} /> : <Text style={[st.primaryText, big ? st.primaryTextBig : null, { color: colors.background }]} maxFontSizeMultiplier={1.3}>{label}</Text>}
     </Pressable>
   ), [fg, colors.background]);
   const Secondary = useCallback(({ label, onPress, disabled, testID }) => (
@@ -772,7 +772,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
 
   // Texto dos termos com 2 links ({privacy} / {terms}).
   const TermsText = () => {
-    const btn = T('signupPhone.agreeContinue', 'Concordar e continuar');
+    const btn = T('nob.start', 'Começar'); // [2026-10-18 onb-telegram] mesmo rótulo do botão
     const tpl = T('nob.terms', 'Leia nossa {privacy}. Toque em “{button}” para aceitar os {terms}.').split('{button}').join(btn);
     const parts = tpl.split(/(\{privacy\}|\{terms\})/);
     return (
@@ -792,23 +792,17 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
 
   if (step === 'welcome') {
     body = (
+      // [2026-10-18 onb-telegram] marca animada + 4 cartões deslizáveis (Telegram).
       <View style={st.welcome}>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <BrandHero size={Math.min(124, Math.round(winW * 0.3))} fg={fg} bg={colors.background} reduced={reduced} />
-          <Text style={[st.welcomeTitle, { color: fg }]} accessibilityRole="header" maxFontSizeMultiplier={1.3} testID="nob-welcome-title">
-            {titles.welcome}
-          </Text>
-          <Text style={[st.welcomeSub, { color: sub }]} maxFontSizeMultiplier={1.5}>
-            {T('signupPhone.subWelcome', 'Mensagens, ligações e email — tudo num lugar só')}
-          </Text>
-        </View>
+        <WelcomeIntro fg={fg} bg={colors.background} sub={sub} reduced={reduced} T={T} />
       </View>
     );
     footer = (
       <>
         <TermsText />
         <Primary
-          label={T('signupPhone.agreeContinue', 'Concordar e continuar')}
+          label={T('nob.start', 'Começar')}
+          big
           onPress={() => {
             try { AsyncStorage.setItem('chatyy_intro_seen', '1').catch(() => {}); } catch {}
             go('phone', 1);
@@ -1026,11 +1020,11 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
             <Image source={{ uri: avatarUri }} style={[st.avatar, { backgroundColor: colors.surfaceVariant }]} />
           ) : (
             <View style={[st.avatar, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }]}>
-              <IconCamera size={30} color={sub} />
+              <IconUser size={52} color={colors.textTertiary || sub} />
             </View>
           )}
           <View style={[st.avatarBadge, { backgroundColor: fg, borderColor: colors.background }]}>
-            <IconCamera size={14} color={colors.background} />
+            <IconCamera size={17} color={colors.background} />
           </View>
         </Pressable>
         <TextInput
@@ -1304,7 +1298,9 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
           </View>
         )}
         <Animated.View style={{ flex: 1, opacity: fade, transform: [{ translateX: shift }] }}>
-          {step === 'welcome' || step === 'restore' ? (
+          {step === 'welcome' ? (
+            <View style={{ flex: 1 }}>{body}</View>
+          ) : step === 'restore' ? (
             <View style={[st.scroll, { flex: 1 }]}>{body}</View>
           ) : (
             <ScrollView
@@ -1495,6 +1491,8 @@ const st = StyleSheet.create({
   errText: { flex: 1, fontSize: 13, lineHeight: 18 },
   primary: { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   primaryText: { fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+  primaryBig: { height: 56, borderRadius: 16 },
+  primaryTextBig: { fontSize: 17 },
   secondary: { height: 46, alignItems: 'center', justifyContent: 'center' },
   secondaryText: { fontSize: 15, fontWeight: '600' },
   channelCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 14, marginTop: 14 },
@@ -1507,8 +1505,8 @@ const st = StyleSheet.create({
   pinSub: { fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 4, marginBottom: 10 },
   pin: { alignSelf: 'center', width: 180, height: 52, borderRadius: 12, borderWidth: 1.5, textAlign: 'center', fontSize: 22, fontWeight: '700', letterSpacing: 8 },
   avatarWrap: { alignSelf: 'center', marginTop: 24, marginBottom: 18 },
-  avatar: { width: 112, height: 112, borderRadius: 56 },
-  avatarBadge: { position: 'absolute', right: 2, bottom: 2, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', borderWidth: 3 },
+  avatar: { width: 128, height: 128, borderRadius: 64 },
+  avatarBadge: { position: 'absolute', right: 2, bottom: 2, width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 3 },
   field: { fontSize: 18, paddingVertical: 14, borderBottomWidth: 1.5, marginTop: 6 },
   userRow: { flexDirection: 'row', alignItems: 'center', gap: 6, borderBottomWidth: 1.5, marginTop: 22, minHeight: 56 },
   userInput: { flex: 1, minWidth: 0, fontSize: 20, fontWeight: '600', paddingVertical: 12 },

@@ -84,14 +84,20 @@ final class SSItemState {
   var filterIdx = 0
   var layers: [SSLayer] = []
   var strokes: [SSStroke] = []
-  var preview: CGImage?           // decodificada (≤1440) p/ a prévia
+  var preview: CGImage?           // decodificada (≤1440) p/ a prévia — JÁ com giro/recorte
+  // [2026-10-18 status-telegram] Ferramenta Cortar: giro (0/90/180/270, horário)
+  // + proporção central (w/h; 0 = original). basePreview = prévia sem recorte.
+  var basePreview: CGImage?
+  var rotate = 0
+  var aspect: CGFloat = 0
+  var edited: Bool { return rotate % 360 != 0 || aspect > 0 }
   var avgColor: UIColor = UIColor(white: 0.04, alpha: 1)
   var pixelSize: CGSize = .zero
 
   init(_ m: SSMediaIn) { media = m }
 
   var hasBurn: Bool { return !strokes.isEmpty || layers.contains { $0.kind.burns } }
-  var dirty: Bool { return filterIdx != 0 || !layers.isEmpty || !strokes.isEmpty }
+  var dirty: Bool { return filterIdx != 0 || !layers.isEmpty || !strokes.isEmpty || edited }
 }
 
 // MARK: - Fontes (iguais ao visualizador nativo)
@@ -171,6 +177,28 @@ enum SSImage {
       kCGImageSourceThumbnailMaxPixelSize: maxPixel,
     ]
     return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+  }
+
+  /// [2026-10-18 status-telegram] Giro horário (múltiplo de 90) + recorte central na proporção w/h (0 = mantém).
+  static func edited(_ cg: CGImage, rotate: Int, aspect: CGFloat) -> CGImage {
+    let r = ((rotate % 360) + 360) % 360
+    guard r != 0 || aspect > 0 else { return cg }
+    var ci = CIImage(cgImage: cg)
+    if r != 0 { ci = ci.oriented(r == 90 ? .right : (r == 180 ? .down : .left)) }
+    let full = ci.extent
+    var ext = full
+    if aspect > 0, full.width > 0, full.height > 0 {
+      if full.width / full.height > aspect {
+        let w = (full.height * aspect).rounded()
+        ext = CGRect(x: (full.midX - w / 2).rounded(), y: full.minY, width: w, height: full.height)
+      } else {
+        let h = (full.width / aspect).rounded()
+        ext = CGRect(x: full.minX, y: (full.midY - h / 2).rounded(), width: full.width, height: h)
+      }
+      ext = ext.intersection(full)
+    }
+    guard ext.width >= 1, ext.height >= 1 else { return cg }
+    return ciContext.createCGImage(ci.cropped(to: ext), from: ext) ?? cg
   }
 
   static func filtered(_ cg: CGImage, _ f: SSFilter?) -> CGImage {

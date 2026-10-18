@@ -57,6 +57,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -65,8 +66,13 @@ class SSItemState(val src: SSMediaIn) {
   var filterIdx = 0
   val layers = ArrayList<SSLayer>()
   val strokes = ArrayList<SSStroke>()
-  var preview: Bitmap? = null
+  var preview: Bitmap? = null          // já com giro/recorte
   var thumb: Bitmap? = null
+  // [2026-10-18 status-telegram] Cortar: base sem recorte (só da mídia atual), giro e proporção (w/h; 0 = original).
+  var base: Bitmap? = null
+  var rotate = 0
+  var aspect = 0f
+  val edited: Boolean get() = rotate % 360 != 0 || aspect > 0f
   var bgColor = Color.rgb(11, 11, 11)
   var previewLoading = false
   var thumbLoading = false
@@ -145,6 +151,10 @@ class StatusStudioDialog(
   private var filterStrip: HorizontalScrollView? = null
   private var filterRow: LinearLayout? = null
   private var filterOpen = false
+  private var cropToolBtn: View? = null
+  private var cropBar: HorizontalScrollView? = null
+  private var cropRow: LinearLayout? = null
+  private var cropOpen = false
   private var bottomPanel: LinearLayout? = null
   private var itemStrip: HorizontalScrollView? = null
   private var captionInput: EditText? = null
@@ -912,6 +922,7 @@ class StatusStudioDialog(
 
   override fun onTapEmpty() {
     if (filterOpen) { setFilterOpen(false); return }
+    if (cropOpen) { setCropOpen(false); return }
     if (captionInput?.hasFocus() == true || ime > 0) { hideKeyboard(); return }
     openTextEditor(null)
   }
@@ -933,6 +944,7 @@ class StatusStudioDialog(
     val a = if (active) 0f else 1f
     toolsCol?.animate()?.alpha(a)?.setDuration(120)?.start()
     closeBtn?.animate()?.alpha(a)?.setDuration(120)?.start()
+    cropBar?.animate()?.alpha(a)?.setDuration(120)?.start()
     bottomPanel?.animate()?.alpha(if (active) 0.25f else 1f)?.setDuration(120)?.start()
     dirtyMedia = true
   }
@@ -969,6 +981,9 @@ class StatusStudioDialog(
     add(glassText("Aa", L("text", "Texto")) { openTextEditor(null) })
     add(glassBtn("sticker", L("stickers", "Figurinhas")) { openStickerTray() })
     add(glassBtn("draw", L("draw", "Desenhar")) { setDrawing(true) })
+    val crb = glassBtn("crop", L("crop", "Cortar")) { setCropOpen(!cropOpen) }
+    add(crb)
+    cropToolBtn = crb
     val fb = glassBtn("filter", L("filters", "Filtros")) { setFilterOpen(!filterOpen) }
     add(fb)
     filterToolBtn = fb
@@ -978,6 +993,7 @@ class StatusStudioDialog(
 
     buildDrawBar()
     buildFilterStrip()
+    buildCropBar()
     buildBottomPanel()
     layoutMedia(true)
     selectItem(cur.coerceIn(0, max(0, items.size - 1)))
@@ -1007,6 +1023,7 @@ class StatusStudioDialog(
     (drawPalette?.layoutParams as? FrameLayout.LayoutParams)?.let { it.width = sw; it.leftMargin = left; it.topMargin = top + sh - dp(56f) }
     (sizeSlider?.layoutParams as? FrameLayout.LayoutParams)?.let { it.leftMargin = left + dp(6f); it.topMargin = top + sh / 2 - dp(110f) }
     (filterStrip?.layoutParams as? FrameLayout.LayoutParams)?.let { it.width = sw; it.leftMargin = left; it.topMargin = top + sh - dp(104f) }
+    (cropBar?.layoutParams as? FrameLayout.LayoutParams)?.let { it.width = sw; it.leftMargin = left; it.topMargin = top + sh - dp(62f) }
     bottomPanel?.let { bp ->
       (bp.layoutParams as FrameLayout.LayoutParams).let { it.topMargin = top + sh + dp(4f); it.height = panelH }
       itemStrip?.visibility = if (items.size > 1) View.VISIBLE else View.GONE
@@ -1126,7 +1143,9 @@ class StatusStudioDialog(
     cur = i.coerceIn(0, items.size - 1)
     val it = items[cur]
     setFilterOpen(false)
+    setCropOpen(false)
     filterToolBtn?.visibility = if (it.src.isVideo || opts.filters.size <= 1) View.GONE else View.VISIBLE
+    cropToolBtn?.visibility = if (it.src.isVideo) View.GONE else View.VISIBLE
     st.bgView.setBackgroundColor(it.bgColor)
     if (it.src.isVideo) {
       st.bitmap = null
@@ -1147,15 +1166,18 @@ class StatusStudioDialog(
 
   /** Prévia (tela) só da mídia atual — as outras soltam a prévia e ficam com miniatura (memória). */
   private fun ensureLoaded(i: Int) {
-    for ((k, other) in items.withIndex()) if (k != i && other.preview != null) { other.preview = null; other.previewLoading = false }
+    for ((k, other) in items.withIndex()) if (k != i && (other.preview != null || other.base != null)) { other.preview = null; other.base = null; other.previewLoading = false }
     val it = items.getOrNull(i) ?: return
     if (it.src.isVideo) { if (it.thumb == null) ensureThumb(it); return }
     if (it.preview != null || it.previewLoading) return
     it.previewLoading = true
     val dm = context.resources.displayMetrics
     val prevDim = min(2048, max(1280, (max(dm.widthPixels, dm.heightPixels) * 1.05f).toInt()))
+    val rot = it.rotate
+    val asp = it.aspect
     Thread {
-      val b = SSExport.decode(context, it.src.uri, prevDim)
+      val raw = SSExport.decode(context, it.src.uri, prevDim)
+      val b = raw?.let { r -> SSExport.edited(r, rot, asp) }
       val th = b?.let { bb ->
         val k = 160f / max(bb.width, bb.height)
         try { Bitmap.createScaledBitmap(bb, max(1, (bb.width * k).toInt()), max(1, (bb.height * k).toInt()), true) } catch (_: Throwable) { null }
@@ -1165,8 +1187,9 @@ class StatusStudioDialog(
         if (finished) return@post
         it.previewLoading = false
         if (items.getOrNull(cur) !== it) return@post
+        it.base = raw
         it.preview = b
-        if (it.thumb == null) it.thumb = th
+        if (it.thumb == null || it.edited) it.thumb = th
         it.bgColor = bg
         if (stage != null) {
           stage?.bgView?.setBackgroundColor(bg)
@@ -1210,7 +1233,95 @@ class StatusStudioDialog(
     filterRow = row
   }
 
+  // ─── cortar (proporção + girar) ──────────────────────────────────────────
+
+  private fun buildCropBar() {
+    val sc = HorizontalScrollView(context)
+    sc.isHorizontalScrollBarEnabled = false
+    val row = LinearLayout(context)
+    row.orientation = LinearLayout.HORIZONTAL
+    row.gravity = Gravity.CENTER_VERTICAL
+    row.setPadding(dp(12f), dp(5f), dp(12f), dp(5f))
+    sc.addView(row, FrameLayout.LayoutParams(-2, -1))
+    sc.visibility = View.GONE
+    content.addView(sc, FrameLayout.LayoutParams(dp(100f), dp(46f), Gravity.TOP or Gravity.START))
+    cropBar = sc
+    cropRow = row
+  }
+
+  private fun rebuildCropRow() {
+    val row = cropRow ?: return
+    row.removeAllViews()
+    val it = curItem ?: return
+    val rot = SSIconView(context, "rotate", 17f)
+    rot.background = SSUtil.round(0x73000000, dpf(18f), 0x59FFFFFF, dp(1f))
+    rot.contentDescription = L("rotate", "Girar")
+    rot.isClickable = true
+    rot.setOnClickListener { v ->
+      if (busy) return@setOnClickListener
+      v.animate().rotationBy(90f).setDuration(220).withEndAction { v.rotation = 0f }.start()
+      applyCrop((it.rotate + 90) % 360, null)
+    }
+    row.addView(rot, LinearLayout.LayoutParams(dp(36f), dp(36f)).apply { rightMargin = dp(10f) })
+    val defs = listOf(L("cropOriginal", "Original") to 0f, "9:16" to 9f / 16f, "4:5" to 4f / 5f, "1:1" to 1f, "16:9" to 16f / 9f)
+    for ((label, a) in defs) {
+      val on = abs(a - it.aspect) < 0.001f
+      val t = tv(14f, if (on) Color.BLACK else Color.WHITE, true)
+      t.text = label
+      t.gravity = Gravity.CENTER
+      t.minWidth = dp(54f)
+      t.setPadding(dp(14f), 0, dp(14f), 0)
+      t.background = SSUtil.round(if (on) Color.WHITE else 0x73000000, dpf(18f), if (on) Color.WHITE else 0x59FFFFFF, dp(1f))
+      t.contentDescription = label
+      t.setOnClickListener { if (!busy) applyCrop(null, a) }
+      row.addView(t, LinearLayout.LayoutParams(-2, dp(36f)).apply { rightMargin = dp(8f) })
+    }
+  }
+
+  private fun setCropOpen(open: Boolean) {
+    val want = open && curItem?.src?.isVideo == false
+    if (want && filterOpen) setFilterOpen(false)
+    cropOpen = want
+    (cropToolBtn as? SSIconView)?.let {
+      it.background = SSUtil.round(if (cropOpen) Color.WHITE else GLASS, dpf(21f))
+      it.color = if (cropOpen) Color.BLACK else Color.WHITE
+    }
+    val bar = cropBar ?: return
+    if (cropOpen) {
+      rebuildCropRow()
+      bar.visibility = View.VISIBLE
+      bar.alpha = 0f
+      bar.translationY = dpf(10f)
+      bar.animate().alpha(1f).translationY(0f).setDuration(200).start()
+    } else {
+      bar.visibility = View.GONE
+    }
+  }
+
+  private fun applyCrop(rotate: Int?, aspect: Float?) {
+    val it = curItem ?: return
+    if (it.src.isVideo) return
+    val base = it.base ?: return
+    if (aspect != null && abs(aspect - it.aspect) < 0.001f && rotate == null) return
+    if (rotate != null) it.rotate = rotate
+    if (aspect != null) it.aspect = aspect
+    try { root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } catch (_: Throwable) {}
+    val ed = SSExport.edited(base, it.rotate, it.aspect)
+    it.preview = ed
+    val k = 160f / max(ed.width, ed.height)
+    it.thumb = try { Bitmap.createScaledBitmap(ed, max(1, (ed.width * k).toInt()), max(1, (ed.height * k).toInt()), true) } catch (_: Throwable) { it.thumb }
+    stage?.let { st ->
+      st.image.alpha = 0.4f
+      st.bitmap = ed
+      st.image.animate().alpha(1f).setDuration(180).start()
+    }
+    dirtyMedia = true
+    rebuildCropRow()
+    rebuildItemStrip()
+  }
+
   private fun setFilterOpen(open: Boolean) {
+    if (open && cropOpen) setCropOpen(false)
     filterOpen = open && curItem?.src?.isVideo == false
     filterStrip?.visibility = if (filterOpen) View.VISIBLE else View.GONE
     (filterToolBtn as? SSIconView)?.let {
@@ -1321,7 +1432,7 @@ class StatusStudioDialog(
 
   private fun setDrawing(on: Boolean) {
     drawingOn = on
-    if (on) { hideKeyboard(); setFilterOpen(false) }
+    if (on) { hideKeyboard(); setFilterOpen(false); setCropOpen(false) }
     val v = if (on) View.VISIBLE else View.GONE
     drawBar?.visibility = v
     drawPalette?.visibility = v
@@ -1976,7 +2087,9 @@ class StatusStudioDialog(
     if (it.filterIdx > 0 && filter != null) base["filter"] = filter.id
     val m = filter?.androidMatrix()
     val burn = it.layers.any { l -> l.burnable } || it.strokes.isNotEmpty()
-    if (!burn && m == null) {
+    val rot = it.rotate
+    val asp = it.aspect
+    if (!burn && m == null && !it.edited) {
       val w = if (it.src.width > 0) it.src.width else it.preview?.width ?: 0
       val h = if (it.src.height > 0) it.src.height else it.preview?.height ?: 0
       base.putAll(mapOf("kind" to "image", "uri" to it.src.uri, "width" to w, "height" to h, "mime" to "image/jpeg"))
@@ -1984,7 +2097,11 @@ class StatusStudioDialog(
       return
     }
     Thread {
-      val full = SSExport.decode(context, it.src.uri, 2560)
+      val full = SSExport.decode(context, it.src.uri, 2560)?.let { raw ->
+        val e = SSExport.edited(raw, rot, asp) // [2026-10-18] Cortar
+        if (e !== raw) raw.recycle()
+        e
+      }
       main.post {
         if (finished) { full?.recycle(); return@post }
         if (full == null) { cb(null); return@post }

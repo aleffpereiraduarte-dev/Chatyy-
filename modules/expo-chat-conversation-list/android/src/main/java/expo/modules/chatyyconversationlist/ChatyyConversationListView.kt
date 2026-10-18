@@ -190,6 +190,9 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   val onResync by EventDispatcher()
   val onFirstPaint by EventDispatcher()
   val onNativeError by EventDispatcher()
+  // [2026-10-18 tg-list] puxar a lista p/ baixo no topo além do limiar
+  // (Telegram: "puxe para ver as Arquivadas"). Um evento por gesto.
+  val onPullReveal by EventDispatcher()
 
   private val main = Handler(Looper.getMainLooper())
   private val density = context.resources.displayMetrics.density
@@ -1297,6 +1300,41 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
   private val swipe = SwipeController()
 
+  /**
+   * [2026-10-18 tg-list] Detector do puxão no topo: só observa (nunca
+   * intercepta). Com a lista no topo, arrastar o dedo p/ baixo mais que
+   * 64 dp (e mais vertical que horizontal) dispara onPullReveal uma vez por gesto.
+   */
+  private val pullDetector = object : RecyclerView.OnItemTouchListener {
+    private var startY = Float.NaN
+    private var startX = 0f
+    private var fired = false
+    override fun onInterceptTouchEvent(rv: RecyclerView, e: android.view.MotionEvent): Boolean {
+      when (e.actionMasked) {
+        android.view.MotionEvent.ACTION_DOWN -> {
+          fired = false
+          startY = if (!rv.canScrollVertically(-1)) e.y else Float.NaN
+          startX = e.x
+        }
+        android.view.MotionEvent.ACTION_MOVE -> {
+          if (fired) return false
+          if (rv.canScrollVertically(-1)) { startY = Float.NaN; return false }
+          if (startY.isNaN()) { startY = e.y; startX = e.x; return false }
+          val dy = e.y - startY
+          val dx = abs(e.x - startX)
+          if (dy > 64f * density && dy > dx * 1.5f) {
+            fired = true
+            try { onPullReveal(mapOf("distance" to (dy / density).toDouble())) } catch (_: Throwable) {}
+          }
+        }
+        android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> { startY = Float.NaN }
+      }
+      return false
+    }
+    override fun onTouchEvent(rv: RecyclerView, e: android.view.MotionEvent) {}
+    override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
+  }
+
   // init no FIM: todas as propriedades acima já estão inicializadas.
   init {
     recycler.layoutManager = layoutManager
@@ -1323,6 +1361,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     // [wave13 swipe-ios] swipe próprio (pílulas iOS) no lugar do ItemTouchHelper.
     recycler.addItemDecoration(swipe)
     recycler.addOnItemTouchListener(swipe)
+    recycler.addOnItemTouchListener(pullDetector)
     recycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
       override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) { onListScrolled() }
       override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {

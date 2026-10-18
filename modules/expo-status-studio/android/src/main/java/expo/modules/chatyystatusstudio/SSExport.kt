@@ -74,6 +74,38 @@ object SSExport {
   } catch (_: Throwable) { ExifInterface.ORIENTATION_NORMAL }
 
   /** Decodifica com EXIF aplicado, lado maior ≤ maxDim. */
+  /**
+   * [2026-10-18 status-telegram] Ferramenta Cortar: giro horário (múltiplo de 90)
+   * + recorte central na proporção w/h (0 = mantém). Sem mudança → o próprio bm.
+   */
+  fun edited(bm: Bitmap, rotate: Int, aspect: Float): Bitmap {
+    val r = ((rotate % 360) + 360) % 360
+    if (r == 0 && aspect <= 0f) return bm
+    return try {
+      var src = bm
+      if (r != 0) {
+        val m = Matrix()
+        m.postRotate(r.toFloat())
+        src = Bitmap.createBitmap(bm, 0, 0, bm.width, bm.height, m, true)
+      }
+      if (aspect > 0f && src.width > 0 && src.height > 0) {
+        val cur = src.width.toFloat() / src.height
+        var w = src.width
+        var h = src.height
+        if (cur > aspect) w = max(1, min(src.width, (src.height * aspect).roundToInt()))
+        else h = max(1, min(src.height, (src.width / aspect).roundToInt()))
+        if (w != src.width || h != src.height) {
+          val c = Bitmap.createBitmap(src, (src.width - w) / 2, (src.height - h) / 2, w, h)
+          if (src !== bm && c !== src) src.recycle()
+          src = c
+        }
+      }
+      src
+    } catch (t: Throwable) {
+      Log.w(TAG, "edited: ${t.message}"); bm
+    }
+  }
+
   fun decode(ctx: Context, uri: String, maxDim: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     try { open(ctx, uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } } catch (_: Throwable) { return null }

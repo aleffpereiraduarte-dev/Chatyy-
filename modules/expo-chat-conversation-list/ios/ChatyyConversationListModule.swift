@@ -32,9 +32,12 @@ public class ChatyyConversationListModule: Module {
     //     (igual em toda conversa) + prop `peekHeight` (fração da tela).
     // 5 = [2026-10-18 failed-row] linha com `failed:true` desenha "!" vermelho
     //     (exclamação em círculo) no lugar do relógio/✓ (chave extra; sem contrato).
+    // 6 = [2026-10-18 tg-list] evento `onPullReveal` {distance}: puxar a lista
+    //     além de 64 pt no topo (uma vez por arrasto) — o JS revela a linha
+    //     "Arquivadas" escondida (Telegram). Sem prop nova.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 5
+      return 6
       #else
       return 1
       #endif
@@ -53,7 +56,8 @@ public class ChatyyConversationListModule: Module {
         "onEndReached",
         "onResync",
         "onFirstPaint",
-        "onNativeError"
+        "onNativeError",
+        "onPullReveal"
       )
 
       Prop("rowsPatch") { (view: ChatyyConversationListView, value: [String: Any]?) in

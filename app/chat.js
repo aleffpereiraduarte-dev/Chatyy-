@@ -67,6 +67,7 @@ import { useCollapsedTitleAnim } from '../components/LargeTitleHeader'; // [2026
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2]
 import AppsDrawerModal from '../components/apps/AppsSheet'; // [2026-10-15 apps-v3]
 import HomeDiscoverPills from '../components/home/HomeDiscoverPills'; // [2026-10-16 wave12-c]
+import CollapsedStoriesStack from '../components/chatlist/CollapsedStoriesStack'; // [2026-10-18 tg-list]
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -1511,6 +1512,7 @@ function ChatHub() {
             isDark={isDark}
             t={t}
             userEmail={user?.email}
+            desktop
             onOpenFeed={openFeedFromApps}
             onOpenReels={openReelsFromApps}
             onOpenChannels={openChannelsFromApps}
@@ -1568,13 +1570,23 @@ function ChatHub() {
         )}
         {LIST_LARGE_TITLE && activeTab === 'chats' && (
           <>
-            <Animated.View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.compactTitleWrap, _compactTitleMotion(chatTitleAnim)]}>
-              <SyncStatusTitle
-                title={titles.chats}
-                align="center"
-                accessibilityRole="none"
-                titleStyle={[styles.compactTitle, { color: colors.text }]}
-              />
+            {/* [2026-10-18 tg-list] Telegram: com o título compacto, os status
+                não vistos entram no header como pilha de avatares ao lado dele
+                (toque abre o status). Sem status novo → só o título. */}
+            <Animated.View pointerEvents={chatTitleCollapsed ? 'box-none' : 'none'} accessibilityElementsHidden={!chatTitleCollapsed} importantForAccessibility={chatTitleCollapsed ? 'auto' : 'no-hide-descendants'} style={[styles.compactTitleWrap, _compactTitleMotion(chatTitleAnim)]}>
+              <View pointerEvents="box-none" style={styles.compactTitleRow}>
+                {!isKids && !searchOpen && (
+                  <CollapsedStoriesStack isDark={isDark} label={t('status.ring.viewStatus') || 'Ver status'} />
+                )}
+                <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ flexShrink: 1 }}>
+                  <SyncStatusTitle
+                    title={titles.chats}
+                    align="center"
+                    accessibilityRole="none"
+                    titleStyle={[styles.compactTitle, { color: colors.text }]}
+                  />
+                </View>
+              </View>
             </Animated.View>
             {!homeOverlay && (
             <Animated.View
@@ -1589,7 +1601,7 @@ function ChatHub() {
             which duplicated the profile UI inside the chat shell. */}
         {activeTab === 'chats' && (
           <TouchableOpacity
-            onPress={() => user?.email && router.push(`/u/${encodeURIComponent(user.email)}`)}
+            onPress={() => { try { router.push('/settings'); } catch {} }} /* [2026-10-18 apps-lean] avatar → "Você" (perfil+ajustes) */
             activeOpacity={0.7}
             style={{ marginRight: 10 }}
             accessibilityLabel={t('a11y.profile')}
@@ -1597,7 +1609,8 @@ function ChatHub() {
             <AvatarCircle name={user?.name || user?.email} email={user?.email} size={32} />
           </TouchableOpacity>
         )}
-        <View style={[styles.titleWrap, { flex: 1 }]}>
+        {/* [2026-10-18 tg-list] box-none: o vão do título não engole o toque na pilha de status do título compacto (por baixo). */}
+        <View pointerEvents="box-none" style={[styles.titleWrap, { flex: 1 }]}>
           {activeTab === 'chats' ? (
             // WhatsApp iOS "pegada": big bold left-aligned title instead of the
             // Chatyy wordmark. Uses the i18n label already defined in `titles`.
@@ -2195,6 +2208,7 @@ const styles = StyleSheet.create({
   compactTitle: {
     fontSize: 17, fontWeight: '600', letterSpacing: -0.3, textAlign: 'center',
   },
+  compactTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', maxWidth: '100%' },
   headerHairline: {
     position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth,
   },

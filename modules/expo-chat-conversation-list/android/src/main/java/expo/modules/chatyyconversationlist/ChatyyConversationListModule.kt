@@ -23,7 +23,10 @@ class ChatyyConversationListModule : Module() {
     //     FIXA igual em toda conversa + prop `peekHeight` (fração da tela).
     // 6 = [2026-10-18 failed-row] linha com `failed:true` desenha "!" vermelho
     //     (exclamação em círculo) no lugar do relógio/✓ (chave extra; sem contrato).
-    Function("apiVersion") { 6 }
+    // 7 = [2026-10-18 tg-list] evento `onPullReveal` {distance}: puxar a lista
+    //     além de 64 dp no topo (uma vez por gesto) — o JS revela a linha
+    //     "Arquivadas" escondida (Telegram). Sem prop nova.
+    Function("apiVersion") { 7 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -38,7 +41,8 @@ class ChatyyConversationListModule : Module() {
         "onEndReached",
         "onResync",
         "onFirstPaint",
-        "onNativeError"
+        "onNativeError",
+        "onPullReveal"
       )
 
       Prop("rowsPatch") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setRowsPatch(v) }

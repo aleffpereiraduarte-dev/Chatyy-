@@ -3230,6 +3230,7 @@ export default {
   'chat.filterAll': 'Tous',
   'chat.filterUnread': 'Non lus',
   'chat.filterGroups': 'Groupes',
+  'chat.filterPersonal': 'Personnels',
   'chat.filterArchived': 'Archivé',
   'chat.archive': 'Archiver',
   'chat.unarchive': 'Désarchiver',

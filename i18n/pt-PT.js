@@ -3342,6 +3342,7 @@ export default {
   'chat.filterAll': 'Todas',
   'chat.filterUnread': 'Não lidas',
   'chat.filterGroups': 'Grupos',
+  'chat.filterPersonal': 'Pessoais',
   'chat.filterArchived': 'Arquivadas',
   'chat.archive': 'Arquivar',
   'chat.unarchive': 'Desarquivar',
