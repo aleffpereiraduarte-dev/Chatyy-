@@ -942,9 +942,16 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   }
 
   fun focusInput() {
+    // [2026-10-17 kb-pop] tela saindo/fora da janela → não reabre o teclado
+    // (ex.: re-foco atrasado do envio chegando durante o voltar).
+    if (!isAttachedToWindow || !isShown) return
     edit.requestFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    edit.post { imm?.showSoftInput(edit, InputMethodManager.SHOW_IMPLICIT) }
+    edit.post {
+      if (isAttachedToWindow && isShown && edit.hasFocus()) {
+        imm?.showSoftInput(edit, InputMethodManager.SHOW_IMPLICIT)
+      }
+    }
   }
 
   fun blurInput() {
@@ -1161,6 +1168,12 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   }
 
   override fun onDetachedFromWindow() {
+    // [2026-10-17 kb-pop] saindo da janela com o campo focado → esconde o IME
+    // já (windowToken ainda vale antes do super) e solta o foco.
+    if (edit.hasFocus()) {
+      try { hideKeyboard() } catch (_: Throwable) {}
+      try { edit.clearFocus() } catch (_: Throwable) {}
+    }
     flushChange()
     voice.cancel("unmount")
     super.onDetachedFromWindow()

@@ -18,6 +18,13 @@ import UIKit
 final class NCTextView: UITextView {
   let placeholderLabel = UILabel()
   var onPasteImage: ((UIImage, Data?, String) -> Void)?
+  // [2026-10-17 kb-pop] true = tela saindo (pop/swipe) → nada devolve o teclado.
+  var shouldBlockFocus: (() -> Bool)?
+
+  override func becomeFirstResponder() -> Bool {
+    if shouldBlockFocus?() == true { return false }
+    return super.becomeFirstResponder()
+  }
 
   override init(frame: CGRect, textContainer: NSTextContainer?) {
     super.init(frame: frame, textContainer: textContainer)
@@ -470,6 +477,12 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private var kbProbe: UIView?
   private var kbLink: CADisplayLink?
   private var kbLastLift: CGFloat = -1
+  // [2026-10-17 kb-pop] VC filho invisível da tela → recebe viewWillDisappear /
+  // viewDidAppear (a UIView sozinha não sabe do pop). focusBlocked segura o
+  // becomeFirstResponder do pop até a tela reaparecer.
+  private var lifecycleProxy: NCLifecycleProxy?
+  private var focusBlocked = false
+  private var hostTransitionGen = 0
 
   private static let mentionRegex = try? NSRegularExpression(pattern: "@[\\w.\\-]+", options: [])
 
@@ -528,6 +541,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     textView.smartInsertDeleteType = .default
     textView.placeholderLabel.font = font
     textView.onPasteImage = { [weak self] img, data, mime in self?.handlePastedImage(img, data: data, mime: mime) }
+    textView.shouldBlockFocus = { [weak self] in self?.isFocusBlockedNow() ?? false }
     pillView.addSubview(textView)
 
     cameraButton.setImage(UIImage(systemName: "camera", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)), for: .normal)
@@ -1139,6 +1153,12 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   override func willMove(toWindow newWindow: UIWindow?) {
     super.willMove(toWindow: newWindow)
     if newWindow == nil {
+      // [2026-10-17 kb-pop] rede de segurança: saindo da janela sem o proxy ter
+      // visto o pop → derruba o teclado já, sem animação.
+      if textView.isFirstResponder {
+        focusBlocked = true
+        UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() }
+      }
       flushChange()
       voice.cancel(reason: "unmount")
       teardownKeyboardTracking()
@@ -1150,7 +1170,92 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     if window != nil {
       relayout(animated: false)
       updateKeyboardTracking()
+      attachLifecycleProxy()
+      if focusBlocked {
+        // voltou à janela: libera o foco quando a transição em curso acabar.
+        if let coord = nearestViewController()?.transitionCoordinator {
+          _ = coord.animate(alongsideTransition: nil, completion: { [weak self] _ in
+            guard let self = self, self.window != nil else { return }
+            self.focusBlocked = false
+          })
+        } else {
+          focusBlocked = false
+        }
+      }
     }
+  }
+
+  override func willMove(toSuperview newSuperview: UIView?) {
+    super.willMove(toSuperview: newSuperview)
+    if newSuperview == nil { detachLifecycleProxy() }
+  }
+
+  // MARK: Host screen lifecycle (kb-pop)
+
+  private func nearestViewController() -> UIViewController? {
+    var r: UIResponder? = self.next
+    while let cur = r {
+      if let vc = cur as? UIViewController { return vc }
+      r = cur.next
+    }
+    return nil
+  }
+
+  private func attachLifecycleProxy() {
+    guard let vc = nearestViewController() else { return }
+    if let p = lifecycleProxy, p.parent === vc, p.view.superview === self { return }
+    detachLifecycleProxy()
+    let proxy = NCLifecycleProxy()
+    proxy.host = self
+    vc.addChild(proxy)
+    proxy.view.frame = .zero
+    addSubview(proxy.view)
+    proxy.didMove(toParent: vc)
+    lifecycleProxy = proxy
+  }
+
+  private func detachLifecycleProxy() {
+    guard let p = lifecycleProxy else { return }
+    lifecycleProxy = nil
+    p.host = nil
+    p.willMove(toParent: nil)
+    p.view.removeFromSuperview()
+    p.removeFromParent()
+  }
+
+  /// Tela começando a sair (botão voltar, swipe-back interativo, push por cima):
+  /// derruba o teclado UMA vez, sem animação, ANTES da transição andar, e bloqueia
+  /// re-foco. Swipe cancelado → devolve o teclado só se ele estava aberto.
+  fileprivate func hostWillDisappear(_ coord: UIViewControllerTransitionCoordinator?) {
+    let wasFirst = textView.isFirstResponder
+    hostTransitionGen += 1
+    let gen = hostTransitionGen
+    focusBlocked = true
+    if wasFirst {
+      UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() }
+    }
+    guard let coord = coord else { return }
+    _ = coord.animate(alongsideTransition: nil, completion: { [weak self] ctx in
+      guard let self = self, self.hostTransitionGen == gen, ctx.isCancelled else { return }
+      self.focusBlocked = false
+      if wasFirst && self.window != nil && !self.disabled {
+        _ = self.textView.becomeFirstResponder()
+      }
+    })
+  }
+
+  fileprivate func hostDidAppear() {
+    focusBlocked = false
+  }
+
+  /// Bloqueio só vale enquanto a tela está saindo/fora da janela; sem transição
+  /// em curso e de volta na janela ele vence sozinho (o campo nunca fica morto).
+  private func isFocusBlockedNow() -> Bool {
+    guard focusBlocked else { return false }
+    guard window != nil, let vc = nearestViewController() else { return true }
+    if vc.transitionCoordinator != nil || vc.isMovingFromParent || vc.isBeingDismissed { return true }
+    focusBlocked = false
+    return false
   }
 
   // MARK: Voice hooks (NCVoiceController)
@@ -1243,6 +1348,29 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     kbLastLift = lift
     transform = CGAffineTransform(translationX: 0, y: -lift)
     onKeyboardFrame(["height": Double(fromBottom), "lift": Double(lift)])
+  }
+}
+
+/// [2026-10-17 kb-pop] VC filho invisível (0×0, oculto) pendurado na tela que
+/// hospeda o composer só para receber os callbacks de aparição dela.
+final class NCLifecycleProxy: UIViewController {
+  weak var host: ChatyyComposerView?
+
+  override func loadView() {
+    let v = UIView(frame: .zero)
+    v.isHidden = true
+    v.isUserInteractionEnabled = false
+    view = v
+  }
+
+  override func viewWillDisappear(_ animated: Bool) {
+    super.viewWillDisappear(animated)
+    host?.hostWillDisappear(parent?.transitionCoordinator ?? transitionCoordinator)
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    host?.hostDidAppear()
   }
 }
 

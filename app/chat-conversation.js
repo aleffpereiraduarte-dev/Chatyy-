@@ -10973,7 +10973,9 @@ function ChatConversationInner() {
   // down side effects (selection mode, open sheets, keyboard) on the way
   // out so stale state doesn't flicker on the next mount.
   const goBack = useCallback(() => {
-    try { Keyboard.dismiss(); } catch {}
+    // [2026-10-17 kb-pop] Keyboard.dismiss() não alcança o composer NATIVO
+    // (UITextView fora do TextInputState) → blur explícito antes do pop.
+    _kbPopDismiss();
     try { setShowHeaderMenu(false); } catch {}
     try { setShowAttachMenu(false); } catch {}
     try { setShowFullEmojiPicker(false); } catch {}
@@ -11017,6 +11019,56 @@ function ChatConversationInner() {
       try { router.replace('/chat'); } catch {}
     }
   }, [router]);
+
+  // [2026-10-17 kb-pop] "Teclado pisca ao voltar p/ a lista": o re-foco atrasado
+  // do envio (finally → focus 50 ms depois do ack, que pode chegar no meio do
+  // pop) e o restore do menu de contexto chamavam focus() no composer com a
+  // tela saindo → teclado subia e descia. Agora: ao começar a sair (beforeRemove
+  // / transitionStart closing) o teclado desce UMA vez e _kbLeavingRef trava
+  // qualquer re-foco; swipe-back cancelado devolve o teclado só se estava aberto.
+  const _kbNav = useNavigation();
+  const _kbLeavingRef = useRef(false);
+  const _kbHadFocusRef = useRef(false);
+  const _kbPopDismiss = () => {
+    if (!_kbLeavingRef.current) {
+      let had = false;
+      try { had = !!inputRef.current?.isFocused?.(); } catch {}
+      _kbHadFocusRef.current = had;
+    }
+    _kbLeavingRef.current = true;
+    if (Platform.OS === 'web') return;
+    try { inputRef.current?.blur?.(); } catch {}
+    try { Keyboard.dismiss(); } catch {}
+    try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
+  };
+  const _kbPopDismissRef = useRef(null);
+  _kbPopDismissRef.current = _kbPopDismiss;
+  useEffect(() => {
+    if (Platform.OS === 'web' || !_kbNav || typeof _kbNav.addListener !== 'function') return undefined;
+    const subs = [];
+    const add = (ev, fn) => { try { const u = _kbNav.addListener(ev, fn); if (typeof u === 'function') subs.push(u); } catch {} };
+    const stay = (restore) => {
+      if (!_kbLeavingRef.current) return;
+      _kbLeavingRef.current = false;
+      const had = _kbHadFocusRef.current;
+      _kbHadFocusRef.current = false;
+      if (!restore || !had) return;
+      setTimeout(() => {
+        if (_kbLeavingRef.current || !mountedRef.current) return;
+        try { if (_kbNav.isFocused && !_kbNav.isFocused()) return; } catch {}
+        try { inputRef.current?.focus?.(); } catch {}
+      }, 60);
+    };
+    add('beforeRemove', () => { _kbPopDismissRef.current?.(); });
+    add('transitionStart', (e) => { if (e?.data?.closing) _kbPopDismissRef.current?.(); });
+    // swipe-back cancelado (native-stack) → fica na conversa
+    add('gestureCancel', () => { stay(true); });
+    // rede: swipe cancelado sem gestureCancel → onAppear (transitionEnd !closing)
+    add('transitionEnd', (e) => { if (e && e.data && e.data.closing === false) stay(true); });
+    // voltou a ser a tela de cima (push por cima e voltou) → libera sem devolver
+    add('focus', () => { stay(false); });
+    return () => { subs.forEach((u) => { try { u(); } catch {} }); };
+  }, [_kbNav]);
 
   // Android hardware back. [2026-10-06 android-audit] WhatsApp parity: back
   // first closes an inline overlay (GIF/sticker panel, selection mode, reply
@@ -13027,7 +13079,7 @@ function ChatConversationInner() {
     const had = _ctxKbRestoreRef.current;
     _ctxKbRestoreRef.current = false;
     if (!restore || !had || Platform.OS === 'web') return;
-    setTimeout(() => { if (!_ctxMenuOpenRef.current && mountedRef.current) { try { inputRef.current?.focus?.(); } catch {} } }, 60);
+    setTimeout(() => { if (!_ctxMenuOpenRef.current && !_kbLeavingRef.current && mountedRef.current) { try { inputRef.current?.focus?.(); } catch {} } }, 60); // [kb-pop]
   };
   const openNativeEmojiPanel = useCallback((tab) => {
     if (tab) setNativeEmojiTab(tab);
@@ -20275,7 +20327,11 @@ function ChatConversationInner() {
     } finally {
       setSending(false);
       sendingRef.current = false;
-      setTimeout(() => { if (!_ctxMenuOpenRef.current) inputRef.current?.focus(); }, 50); // [ctxmenu-kb] não re-foca com o menu aberto
+      setTimeout(() => { // [ctxmenu-kb] não re-foca com o menu aberto · [kb-pop] nem com a tela saindo/coberta
+        if (_ctxMenuOpenRef.current || _kbLeavingRef.current || !mountedRef.current) return;
+        try { if (_kbNav && _kbNav.isFocused && !_kbNav.isFocused()) return; } catch {}
+        inputRef.current?.focus();
+      }, 50);
     }
   };
 
