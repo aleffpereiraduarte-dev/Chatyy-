@@ -878,7 +878,7 @@ const ss = StyleSheet.create({
 });
 
 // ─── modo voz em tela cheia ──────────────────────────────────────────────────
-export function BiaVoiceScreen({ isDark, t, voiceState, transcript, onStop, onKeyboard, getLevel, insets }) {
+export function BiaVoiceScreen({ isDark, t, voiceState, transcript, transcriptKey, onStop, onKeyboard, getLevel, insets }) {
   const P = biaPalette(isDark);
   const fade = useRef(new Animated.Value(0)).current;
   const [elapsed, setElapsed] = useState('0:00');
@@ -922,7 +922,7 @@ export function BiaVoiceScreen({ isDark, t, voiceState, transcript, onStop, onKe
         </View>
         <View style={vs.captionWrap}>
           {transcript ? (
-            <BiaFadeIn key={transcript.slice(0, 24)} dy={6} duration={260}>
+            <BiaFadeIn key={transcriptKey || transcript.slice(0, 24)} dy={6} duration={260}>
               <Text style={[vs.caption, { color: P.fg }]} numberOfLines={4} accessibilityLiveRegion="polite">{transcript}</Text>
             </BiaFadeIn>
           ) : null}

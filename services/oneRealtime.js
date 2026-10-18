@@ -41,6 +41,61 @@ export function isRealtimeSupported() {
   return !!(RTCPeerConnection && mediaDevices?.getUserMedia);
 }
 
+// [bia-voz 2026-10-18] "o que ela escreve não bate": o STT alucinava frases de
+// legenda em silêncio/ruído ("Tchau.", "Obrigado.", "Legendas pela comunidade
+// Amara.org") e o vídeo em PiP virava "fala do usuário". Filtro em 2 níveis:
+//  - ALWAYS: frases que ninguém diz à Bia (créditos de legenda/YouTube) → sempre lixo.
+//  - SHORT: despedidas/agradecimentos curtos → lixo SÓ se o trecho de áudio foi
+//    curto ou de baixa energia (um "tchau" real, falado perto do mic, passa).
+// ALWAYS_CONTAINS: trechos de crédito de legenda/YouTube — contidos em qualquer
+// lugar já denunciam a alucinação. ALWAYS_EXACT: só se for a frase inteira.
+const HALLU_ALWAYS_CONTAINS = [
+  'amara org', 'legendas pela comunidade', 'legenda pela comunidade', 'obrigado por assistir',
+  'obrigada por assistir', 'obrigado pela atencao e ate', 'inscreva se no canal', 'se inscreva no canal',
+  'ative o sininho', 'legendado por', 'legendas por', 'transcricao por', 'thanks for watching',
+  'thank you for watching', 'subtitles by',
+];
+const HALLU_ALWAYS_EXACT = ['e ai pessoal', 'ate o proximo video', 'ate a proxima', 'ate a proxima pessoal'];
+const HALLU_ALWAYS = HALLU_ALWAYS_CONTAINS.concat(HALLU_ALWAYS_EXACT);
+const HALLU_SHORT = [
+  'tchau', 'tchau tchau', 'tchau tchau tchau', 'obrigado', 'obrigada', 'muito obrigado', 'muito obrigada',
+  'hum', 'hmm', 'ah', 'beijo', 'beijos', 'bye', 'bye bye', 'thank you', 'thanks', 'you',
+  'musica', 'aplausos', 'risos',
+];
+function normTx(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function isHalluCandidatePrefix(n) {
+  // Enquanto o parcial ainda pode virar uma frase-lixo, não mostra (evita piscar "Tchau").
+  if (!n) return true;
+  for (const h of HALLU_ALWAYS) if (h.startsWith(n)) return true;
+  for (const h of HALLU_SHORT) if (h.startsWith(n)) return true;
+  return false;
+}
+// "Tchau" real = ~300 ms de prefix_padding + ~400-700 ms de fala ≈ 0,7-1,4 s.
+const SHORT_SEG_MS = 600;       // menos que isso é só o padding + um estalo
+const LONG_SEG_MS = 2500;       // 2,5 s+ de áudio virando 1-2 palavras = som de fundo (vídeo/TV)
+const LOW_RMS = 0.012;          // ~ -38 dBFS médio no trecho = fundo/longe do mic
+export function classifyUserTranscript(text, seg) {
+  const n = normTx(text);
+  if (!n) return 'empty';
+  // ruído com cara de legenda: "[música]", "♪", "(aplausos)"
+  if (/^[\s\[\]()♪♫*.\-…]+$/.test(String(text)) || /^\s*[\[(].*[\])]\s*$/.test(String(text))) return 'noise_tag';
+  if (HALLU_ALWAYS_EXACT.includes(n) || HALLU_ALWAYS_CONTAINS.some(h => n.includes(h))) return 'hallucination';
+  // repetição "tchau tchau tchau tchau..." / "obrigado obrigado obrigado"
+  const w = n.split(' ');
+  if (w.length >= 3 && new Set(w).size === 1) return 'hallucination';
+  if (HALLU_SHORT.includes(n)) {
+    const dur = seg && seg.durMs != null ? seg.durMs : null;
+    const rms = seg && seg.rms != null ? seg.rms : null;
+    if (rms != null && rms < LOW_RMS) return 'hallucination';
+    if (dur != null && (dur < SHORT_SEG_MS || dur > LONG_SEG_MS)) return 'hallucination';
+    if (dur == null && rms == null) return 'hallucination'; // sem prova de fala real → não confia
+  }
+  return 'ok';
+}
+
 async function mintEphemeralToken() {
   const res = await api.apiCall('realtime_ephemeral_token', {}, 'POST');
   if (!res?.success || !res?.data?.client_secret) {
@@ -54,7 +109,12 @@ async function mintEphemeralToken() {
 
 export class OneRealtimeSession {
   constructor(handlers = {}) {
-    this.handlers = handlers; // onState, onTranscript, onAssistantText, onError, onClose
+    // onState, onTranscript, onUserPartial, onTranscriptDiscarded, onAssistantText, onError, onClose
+    this.handlers = handlers;
+    this._items = new Map(); // item_id → { startMs, endMs, e0, e1, text, shown }
+    this._lastCommittedItem = null;
+    this._responseActive = false;
+    this._audioBufEvents = false; // WebRTC manda output_audio_buffer.started/stopped (GA)
     this.pc = null;
     this.dc = null;
     this.localStream = null;
@@ -97,13 +157,37 @@ export class OneRealtimeSession {
     // Without this the mic prompt may not fire, audio routes to the earpiece,
     // and the silent switch mutes the assistant. shouldRouteThroughEarpiece:false
     // forces speaker — hands-free ChatGPT-style.
-    if (Platform.OS !== 'web') {
+    //
+    // [bia-voz 2026-10-18] Vídeo em PiP / música de outro app vazava pro mic e
+    // virava "fala do usuário". (a) pausa os players de mídia do próprio app
+    // (registry do audioManager); (b) iOS: sessão .playAndRecord + mode
+    // .voiceChat SEM .duckOthers/.mixWithOthers (ExpoAudioSession.activateForCall,
+    // já presente nos builds — é o mesmo da ligação) → o iOS INTERROMPE o áudio de
+    // outros apps (YouTube/PiP do Safari) em vez de só abaixar, e liga o
+    // processamento de voz do sistema. O expo-audio punha mode .default +
+    // duckOthers (o vídeo seguia tocando baixinho no mic). AEC do áudio da
+    // própria Bia já vem do VoiceProcessingIO do WebRTC. Sem BT → alto-falante.
+    try { require('./audioManager').pauseMediaPlayers?.(); } catch {}
+    let sessionOk = false;
+    if (Platform.OS === 'ios') {
+      try {
+        const AS = require('../modules/expo-audio-session').default;
+        if (AS && typeof AS.activateForCall === 'function') {
+          let bt = false;
+          try { bt = !!AS.isBluetoothConnectedSync?.(); } catch {}
+          sessionOk = !!(await AS.activateForCall(!bt));
+          this._iosVoiceSession = sessionOk;
+        }
+      } catch {}
+    }
+    if (Platform.OS !== 'web' && !sessionOk) {
       try {
         const expoAudio = require('expo-audio');
         await expoAudio.setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
-          interruptionMode: 'duckOthers',
+          // Android: doNotMix pede foco de áudio exclusivo (pausa música/vídeo de outros apps).
+          interruptionMode: Platform.OS === 'android' ? 'doNotMix' : 'duckOthers',
           shouldPlayInBackground: false,
           shouldRouteThroughEarpiece: false,
         });
@@ -193,37 +277,155 @@ export class OneRealtimeSession {
     this._setState('listening');
   }
 
+  _send(obj) {
+    try { if (this.dc && this.dc.readyState === 'open') this.dc.send(JSON.stringify(obj)); } catch {}
+  }
+
+  _item(id) {
+    if (!id) return null;
+    let it = this._items.get(id);
+    if (!it) {
+      it = { startMs: null, endMs: null, e0: null, e1: null, text: '', shown: false };
+      this._items.set(id, it);
+      if (this._items.size > 40) { const k = this._items.keys().next().value; this._items.delete(k); }
+    }
+    return it;
+  }
+
+  // Energia do mic (RTCStats media-source: totalAudioEnergy/totalSamplesDuration).
+  // Web (Chrome/Safari) e libwebrtc nativo expõem; se não houver, fica null e o
+  // filtro usa só a duração.
+  async _micEnergy() {
+    try {
+      const st = await this.pc?.getStats?.();
+      let out = null;
+      st?.forEach?.((r) => {
+        if (r && r.type === 'media-source' && (r.kind === 'audio' || r.totalAudioEnergy != null)
+          && typeof r.totalAudioEnergy === 'number' && typeof r.totalSamplesDuration === 'number') {
+          out = { e: r.totalAudioEnergy, d: r.totalSamplesDuration };
+        }
+      });
+      return out;
+    } catch { return null; }
+  }
+
+  _segInfo(it) {
+    if (!it) return null;
+    const durMs = (it.startMs != null && it.endMs != null) ? Math.max(0, it.endMs - it.startMs) : null;
+    let rms = null;
+    if (it.e0 && it.e1) {
+      const dd = it.e1.d - it.e0.d;
+      if (dd > 0.05) rms = Math.sqrt(Math.max(0, (it.e1.e - it.e0.e) / dd));
+    }
+    return { durMs, rms };
+  }
+
+  // Trecho descartado (alucinação/ruído): some da tela e NÃO vira turno — cancela
+  // a resposta que o VAD já disparou p/ esse item e tira o item do contexto.
+  _discardItem(itemId, reason, text) {
+    const it = this._items.get(itemId);
+    const wasShown = !!it?.shown;
+    if (itemId && itemId === this._lastCommittedItem) {
+      if (this._responseActive) this._send({ type: 'response.cancel' });
+      this._send({ type: 'output_audio_buffer.clear' });
+    }
+    if (itemId) this._send({ type: 'conversation.item.delete', item_id: itemId });
+    this._items.delete(itemId);
+    if (__DEV__) console.log('[oneRealtime] descartado', reason, JSON.stringify(text || ''));
+    this._emit('onTranscriptDiscarded', { itemId, reason, text, wasShown });
+  }
+
   _onEvent(raw) {
     let msg;
     try { msg = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return; }
     const t = msg.type;
 
-    if (t === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
-      this._emit('onTranscript', msg.transcript);
-      return;
-    }
-    if (t === 'response.audio_transcript.delta' && msg.delta) {
-      this._emit('onAssistantText', { delta: msg.delta });
-      return;
-    }
-    if (t === 'response.audio_transcript.done' && msg.transcript) {
-      this._emit('onAssistantText', { transcript: msg.transcript, done: true });
-      return;
-    }
+    // ── Usuário (STT) ──────────────────────────────────────────────
     if (t === 'input_audio_buffer.speech_started') {
+      const it = this._item(msg.item_id);
+      if (it) {
+        it.startMs = typeof msg.audio_start_ms === 'number' ? msg.audio_start_ms : null;
+        this._micEnergy().then((e) => { if (e && !it.e0) it.e0 = e; });
+      }
       this._setState('listening');
       return;
     }
-    if (t === 'response.audio.delta') {
+    if (t === 'input_audio_buffer.speech_stopped') {
+      const it = this._item(msg.item_id);
+      if (it) {
+        it.endMs = typeof msg.audio_end_ms === 'number' ? msg.audio_end_ms : null;
+        this._micEnergy().then((e) => { if (e) it.e1 = e; });
+      }
+      return;
+    }
+    if (t === 'input_audio_buffer.committed') {
+      if (msg.item_id) this._lastCommittedItem = msg.item_id;
+      return;
+    }
+    if (t === 'conversation.item.input_audio_transcription.delta' && msg.delta) {
+      const it = this._item(msg.item_id);
+      if (!it) return;
+      it.text += msg.delta;
+      // Parcial ao vivo (estilo ChatGPT voz) — segura enquanto ainda pode ser
+      // uma frase-lixo ("Tch…", "Obriga…") p/ não piscar.
+      if (isHalluCandidatePrefix(normTx(it.text))) return;
+      it.shown = true;
+      this._emit('onUserPartial', { itemId: msg.item_id, text: it.text });
+      return;
+    }
+    if (t === 'conversation.item.input_audio_transcription.completed') {
+      const text = String(msg.transcript || '').trim();
+      const it = this._items.get(msg.item_id);
+      const verdict = classifyUserTranscript(text, this._segInfo(it));
+      if (verdict !== 'ok') { this._discardItem(msg.item_id, verdict, text); return; }
+      if (it) it.text = text;
+      this._emit('onTranscript', text, { itemId: msg.item_id });
+      this._items.delete(msg.item_id);
+      return;
+    }
+    if (t === 'conversation.item.input_audio_transcription.failed') {
+      const it = this._items.get(msg.item_id);
+      if (it?.shown) this._emit('onTranscriptDiscarded', { itemId: msg.item_id, reason: 'failed', wasShown: true });
+      this._items.delete(msg.item_id);
+      return;
+    }
+
+    // ── Bia (resposta) — nomes GA + beta ───────────────────────────
+    if ((t === 'response.output_audio_transcript.delta' || t === 'response.audio_transcript.delta') && msg.delta) {
+      this._emit('onAssistantText', { delta: msg.delta });
+      return;
+    }
+    if ((t === 'response.output_audio_transcript.done' || t === 'response.audio_transcript.done') && msg.transcript) {
+      this._emit('onAssistantText', { transcript: msg.transcript, done: true });
+      return;
+    }
+    if (t === 'response.created') { this._responseActive = true; return; }
+    if (t === 'output_audio_buffer.started') {
+      this._audioBufEvents = true;
       this._setState('speaking');
       return;
     }
-    if (t === 'response.audio.done' || t === 'response.done') {
-      // Playback continues through the audio stream, but mark transition.
-      setTimeout(() => { if (this.active) this._setState('listening'); }, 50);
+    if (t === 'output_audio_buffer.stopped' || t === 'output_audio_buffer.cleared') {
+      this._audioBufEvents = true;
+      if (this.active) this._setState('listening');
+      return;
+    }
+    if (t === 'response.output_audio.delta' || t === 'response.audio.delta') {
+      this._setState('speaking');
+      return;
+    }
+    if (t === 'response.done' || t === 'response.output_audio.done' || t === 'response.audio.done') {
+      if (t === 'response.done') this._responseActive = false;
+      // WebRTC: response.done chega quando a GERAÇÃO acaba, antes do áudio tocar
+      // todo — se o servidor manda output_audio_buffer.*, é ele quem volta p/ "ouvindo".
+      if (!this._audioBufEvents) setTimeout(() => { if (this.active) this._setState('listening'); }, 50);
       return;
     }
     if (t === 'error') {
+      // cancel/delete de item que já não existe → erro benigno, não propaga.
+      const code = String(msg.error?.code || '');
+      const em = String(msg.error?.message || '');
+      if (code === 'response_cancel_not_active' || /no active response|cancel.*not active|item.*(does not exist|not found)/i.test(em)) return;
       this._emit('onError', msg.error || msg);
     }
   }
@@ -243,20 +445,36 @@ export class OneRealtimeSession {
     if (Platform.OS !== 'web') {
       // Return the audio session to normal playback so other sounds (ringtone,
       // notification chimes) aren't stuck ducking once the call ends.
-      try {
-        const expoAudio = require('expo-audio');
-        expoAudio.setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-          interruptionMode: 'mixWithOthers',
-          shouldPlayInBackground: false,
-          shouldRouteThroughEarpiece: false,
-        }).catch(() => {});
-      } catch {}
+      // iOS voiceChat: deactivate() avisa (notifyOthersOnDeactivation) → o
+      // YouTube/Spotify/PiP de outro app volta a tocar.
+      const restore = () => {
+        try {
+          const expoAudio = require('expo-audio');
+          expoAudio.setAudioModeAsync({
+            allowsRecording: false,
+            playsInSilentMode: true,
+            interruptionMode: 'mixWithOthers',
+            shouldPlayInBackground: false,
+            shouldRouteThroughEarpiece: false,
+          }).catch(() => {});
+        } catch {}
+      };
+      let deact = null;
+      if (this._iosVoiceSession) {
+        this._iosVoiceSession = false;
+        try { deact = require('../modules/expo-audio-session').default?.deactivate?.(); } catch {}
+      }
+      // Em série: o deactivate() roda na fila nativa dele; se o expo-audio
+      // rodasse em paralelo, o .ambient do deactivate podia ganhar no fim.
+      if (deact && typeof deact.then === 'function') deact.then(restore, restore);
+      else restore();
     }
     this.dc = null;
     this.pc = null;
     this.localStream = null;
+    this._items.clear();
+    this._lastCommittedItem = null;
+    this._responseActive = false;
     this._setState('idle');
   }
 }

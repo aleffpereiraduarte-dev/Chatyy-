@@ -24,6 +24,20 @@ export function registerMediaPlayer(stopFn) {
   return () => _mediaPlayers.delete(stopFn);
 }
 
+// [bia-voz 2026-10-18] Só pausa vídeo/mídia + notas de voz, sem mexer na
+// AVAudioSession/ringtone (quem chama — o modo voz da Bia — configura a sessão
+// por conta própria). Senão o vídeo em PiP do app vazava pro mic da Bia.
+export function pauseMediaPlayers() {
+  const run = (fn) => {
+    try {
+      const r = fn();
+      if (r && typeof r.catch === 'function') r.catch(() => {});
+    } catch {}
+  };
+  _players.forEach(run);
+  _mediaPlayers.forEach(run);
+}
+
 // Stop every registered voice player EXCEPT the caller's own stop fn.
 // Called by AudioPlayer right before starting playback so two voice notes
 // never play on top of each other (WhatsApp parity). Deliberately does NOT

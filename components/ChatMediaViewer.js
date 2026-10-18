@@ -1165,6 +1165,17 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
       if (!player) return;
       try { if (isActive) player.play(); else player.pause(); } catch {}
     }, [isActive, player]);
+    // [bia-voz 2026-10-18] entra no registry de mídia → ligação/modo voz da Bia
+    // pausam este vídeo (inclusive em PiP), senão o áudio dele vira "fala" no mic.
+    useEffect(() => {
+      if (!player) return undefined;
+      let unregister = null;
+      try {
+        const { registerMediaPlayer } = require('../services/audioManager');
+        unregister = registerMediaPlayer(() => { try { player.pause(); } catch {} });
+      } catch {}
+      return () => { try { unregister?.(); } catch {} };
+    }, [player]);
     // [2026-10-14 offline-media] Vídeo remoto sem internet → expo-video ficava
     // "carregando" p/ sempre. Erro do player + offline = aviso no lugar.
     const { t: _tv } = useLanguage();

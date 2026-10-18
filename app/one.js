@@ -649,6 +649,10 @@ export default function OneScreen() {
   const [voiceMode, setVoiceMode] = useState(false); // Siri-like voice conversation mode
   const [voiceState, setVoiceState] = useState('listening'); // 'listening' | 'thinking' | 'speaking'
   const [voiceTranscript, setVoiceTranscript] = useState('');
+  // [bia-voz 2026-10-18] id da fala atual (Realtime item_id) → a legenda parcial
+  // cresce sem re-animar a cada delta; lastAccepted p/ voltar se a fala for descartada.
+  const [voiceTranscriptKey, setVoiceTranscriptKey] = useState('');
+  const voiceLastAcceptedRef = useRef('');
   const [inputFocused, setInputFocused] = useState(false);
   // [2026-10-15 bia-design] altura da barra flutuante (lista rola por baixo do vidro)
   const [composerH, setComposerH] = useState(72);
@@ -2113,6 +2117,7 @@ export default function OneScreen() {
     setAutoRead(false); // voice mode handles its own TTS
     setVoiceState('listening');
     setVoiceTranscript('');
+    voiceLastAcceptedRef.current = '';
     stopSpeak();
     playActivationSound();
 
@@ -2129,10 +2134,24 @@ export default function OneScreen() {
           if (s === 'listening' || s === 'connecting') setVoiceState('listening');
           else if (s === 'speaking') setVoiceState('speaking');
         },
-        onTranscript: (text) => {
+        // [bia-voz 2026-10-18] parcial ao vivo (estilo ChatGPT voz) + final
+        // filtrado; alucinação/ruído ("Tchau." com vídeo em PiP) é descartado
+        // no oneRealtime e aqui a legenda volta pra última fala válida.
+        onUserPartial: ({ itemId, text }) => {
           if (!voiceModeRef.current) return;
+          if (itemId) setVoiceTranscriptKey(itemId);
+          setVoiceTranscript(text);
+        },
+        onTranscript: (text, meta) => {
+          if (!voiceModeRef.current) return;
+          if (meta?.itemId) setVoiceTranscriptKey(meta.itemId);
+          voiceLastAcceptedRef.current = text;
           setVoiceTranscript(text);
           haptic('light');
+        },
+        onTranscriptDiscarded: ({ wasShown }) => {
+          if (!voiceModeRef.current || !wasShown) return;
+          setVoiceTranscript(voiceLastAcceptedRef.current || '');
         },
         onAssistantText: () => {},
         onError: (e) => {
@@ -2632,6 +2651,7 @@ export default function OneScreen() {
           t={t}
           voiceState={voiceState}
           transcript={voiceTranscript}
+          transcriptKey={voiceTranscriptKey}
           onStop={exitVoiceMode}
           onKeyboard={exitVoiceMode}
           getLevel={getVoiceLevel}
