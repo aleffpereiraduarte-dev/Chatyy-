@@ -2154,6 +2154,12 @@ export default function OneScreen() {
           setVoiceTranscript(voiceLastAcceptedRef.current || '');
         },
         onAssistantText: () => {},
+        // [bia-ferramentas-voz 2026-10-18] ação que pede confirmação: mostra o resumo
+        // na legenda enquanto a Bia lê e pergunta (só servidor c/ o kit manda isso).
+        onToolEvent: ({ phase, summary }) => {
+          if (!voiceModeRef.current) return;
+          if (phase === 'confirm' && summary) { setVoiceTranscript(summary); haptic('light'); }
+        },
         onError: (e) => {
           console.warn('[one] realtime error:', e?.message || e);
         },

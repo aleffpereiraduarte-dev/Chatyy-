@@ -96,15 +96,44 @@ export function classifyUserTranscript(text, seg) {
   return 'ok';
 }
 
+function userTimezone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+}
+
 async function mintEphemeralToken() {
-  const res = await api.apiCall('realtime_ephemeral_token', {}, 'POST');
+  // [bia-ferramentas-voz 2026-10-18] tools=1 = este app sabe executar ferramentas
+  // (one_tool_exec). Servidor sem o kit ignora o campo → sessão sem ferramentas,
+  // nada muda.
+  const res = await api.apiCall('realtime_ephemeral_token', { tools: 1, timezone: userTimezone() }, 'POST');
   if (!res?.success || !res?.data?.client_secret) {
     throw new Error(res?.message || 'token mint failed');
   }
   return {
     token: res.data.client_secret,
     model: res.data.model || 'gpt-realtime',
+    toolsEnabled: Number(res.data.tools_enabled || 0) > 0,
   };
+}
+
+// ── [bia-ferramentas-voz 2026-10-18] ferramentas na voz ──────────────────────
+// O modelo pede a função (response.function_call_arguments.done) → o app chama
+// one_tool_exec (escopo do usuário logado) → devolve function_call_output +
+// response.create. Ações de saída/destrutivas voltam "confirm_required" com um
+// resumo + token: a Bia lê o resumo e pergunta; o app SÓ reenvia com o token se
+// houve uma NOVA fala do usuário depois da pergunta (e não foi um "não").
+const CONFIRM_TTL_MS = 290 * 1000; // servidor: 300 s
+const NEGATIVE_RE = /^(nao|cancela|cancelar|cancele|para|pare|espera|espere|deixa|deixa pra la|melhor nao|nem|negativo|no|nope|stop|wait)\b/;
+function stableStringify(v) {
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stableStringify(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+function clipOutput(obj) {
+  let out = '';
+  try { out = JSON.stringify(obj); } catch { out = '{"error":"bad_result"}'; }
+  return out.length > 16000 ? out.slice(0, 16000) : out;
 }
 
 export class OneRealtimeSession {
@@ -115,6 +144,14 @@ export class OneRealtimeSession {
     this._lastCommittedItem = null;
     this._responseActive = false;
     this._audioBufEvents = false; // WebRTC manda output_audio_buffer.started/stopped (GA)
+    // [bia-ferramentas-voz 2026-10-18]
+    this._toolsEnabled = false;
+    this._toolCalls = new Set();     // call_id já tratados (2 eventos GA p/ a mesma chamada)
+    this._toolInflight = 0;
+    this._needResponse = false;      // mandou function_call_output → falta response.create
+    this._pendingConfirm = new Map(); // tool|args → { token, seq, exp, summary }
+    this._userTurnSeq = 0;           // conta falas VÁLIDAS do usuário
+    this._lastUserText = '';
     this.pc = null;
     this.dc = null;
     this.localStream = null;
@@ -195,7 +232,8 @@ export class OneRealtimeSession {
     }
 
     // 1. Ephemeral token from our backend
-    const { token, model } = await mintEphemeralToken();
+    const { token, model, toolsEnabled } = await mintEphemeralToken();
+    this._toolsEnabled = !!toolsEnabled;
 
     // 2. Mic stream
     this.localStream = await mediaDevices.getUserMedia({
@@ -379,6 +417,8 @@ export class OneRealtimeSession {
       const verdict = classifyUserTranscript(text, this._segInfo(it));
       if (verdict !== 'ok') { this._discardItem(msg.item_id, verdict, text); return; }
       if (it) it.text = text;
+      this._userTurnSeq += 1;
+      this._lastUserText = text;
       this._emit('onTranscript', text, { itemId: msg.item_id });
       this._items.delete(msg.item_id);
       return;
@@ -400,6 +440,15 @@ export class OneRealtimeSession {
       return;
     }
     if (t === 'response.created') { this._responseActive = true; return; }
+    // ── Ferramentas (GA) ───────────────────────────────────────────
+    if (t === 'response.function_call_arguments.done' && msg.call_id) {
+      this._onFunctionCall(msg.call_id, msg.name, msg.arguments);
+      return;
+    }
+    if (t === 'response.output_item.done' && msg.item?.type === 'function_call' && msg.item.call_id) {
+      this._onFunctionCall(msg.item.call_id, msg.item.name, msg.item.arguments);
+      return;
+    }
     if (t === 'output_audio_buffer.started') {
       this._audioBufEvents = true;
       this._setState('speaking');
@@ -415,7 +464,10 @@ export class OneRealtimeSession {
       return;
     }
     if (t === 'response.done' || t === 'response.output_audio.done' || t === 'response.audio.done') {
-      if (t === 'response.done') this._responseActive = false;
+      if (t === 'response.done') {
+        this._responseActive = false;
+        this._maybeContinue();
+      }
       // WebRTC: response.done chega quando a GERAÇÃO acaba, antes do áudio tocar
       // todo — se o servidor manda output_audio_buffer.*, é ele quem volta p/ "ouvindo".
       if (!this._audioBufEvents) setTimeout(() => { if (this.active) this._setState('listening'); }, 50);
@@ -428,6 +480,80 @@ export class OneRealtimeSession {
       if (code === 'response_cancel_not_active' || /no active response|cancel.*not active|item.*(does not exist|not found)/i.test(em)) return;
       this._emit('onError', msg.error || msg);
     }
+  }
+
+  // ── [bia-ferramentas-voz 2026-10-18] ─────────────────────────────
+  _onFunctionCall(callId, name, argsRaw) {
+    if (!callId || this._toolCalls.has(callId)) return;
+    this._toolCalls.add(callId);
+    if (this._toolCalls.size > 60) { const k = this._toolCalls.values().next().value; this._toolCalls.delete(k); }
+    this._toolInflight += 1;
+    this._runTool(String(name || ''), argsRaw)
+      .catch(() => ({ error: 'unavailable', message: 'Nao consegui fazer isso pela voz agora. Ofereca fazer pelo chat de texto.' }))
+      .then((output) => {
+        this._toolInflight = Math.max(0, this._toolInflight - 1);
+        if (!this.active) return;
+        this._send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: clipOutput(output) } });
+        this._needResponse = true;
+        this._maybeContinue();
+      });
+  }
+
+  _maybeContinue() {
+    // Só pede a próxima resposta quando TODAS as funções desta rodada voltaram
+    // e a resposta que as pediu já terminou (senão: "conversation_already_has_active_response").
+    if (!this.active || !this._needResponse || this._toolInflight > 0 || this._responseActive) return;
+    this._needResponse = false;
+    this._send({ type: 'response.create' });
+  }
+
+  async _runTool(name, argsRaw) {
+    if (!this._toolsEnabled || !/^[a-z][a-z0-9_]{1,63}$/.test(name)) return { error: 'unknown_tool' };
+    let args = {};
+    try { args = typeof argsRaw === 'string' ? (argsRaw.trim() ? JSON.parse(argsRaw) : {}) : (argsRaw || {}); } catch { return { error: 'bad_arguments', message: 'Argumentos invalidos; tente de novo.' }; }
+    if (!args || typeof args !== 'object' || Array.isArray(args)) args = {};
+    const key = name + '|' + stableStringify(args);
+    const now = Date.now();
+    for (const [k, p] of this._pendingConfirm) if (p.exp < now) this._pendingConfirm.delete(k);
+
+    const body = { tool: name, args, timezone: userTimezone() };
+    const pending = this._pendingConfirm.get(key);
+    if (pending) {
+      // Confirmação exige uma fala NOVA do usuário depois da pergunta.
+      if (this._userTurnSeq <= pending.seq) {
+        return { status: 'awaiting_user', summary: pending.summary, message: 'O usuario ainda nao respondeu. Leia o resumo, pergunte se pode e espere ele dizer sim.' };
+      }
+      this._pendingConfirm.delete(key);
+      if (NEGATIVE_RE.test(normTx(this._lastUserText))) {
+        this._emit('onToolEvent', { phase: 'cancelled', tool: name });
+        return { status: 'cancelled_by_user', message: 'O usuario nao confirmou. Nao execute; diga que cancelou.' };
+      }
+      body.confirm_token = pending.token;
+    }
+
+    this._emit('onToolEvent', { phase: 'running', tool: name });
+    let res = null;
+    try { res = await api.apiCall('one_tool_exec', body, 'POST'); } catch { res = null; }
+    const d = res?.data || {};
+    if (!res?.success && !d.status) {
+      this._emit('onToolEvent', { phase: 'error', tool: name });
+      return { error: d.error || 'unavailable', message: res?.message || 'Nao consegui fazer isso pela voz agora.' };
+    }
+    if (d.status === 'confirm_required' && d.confirm_token) {
+      this._pendingConfirm.set(key, { token: d.confirm_token, seq: this._userTurnSeq, exp: Date.now() + CONFIRM_TTL_MS, summary: d.summary || '' });
+      this._emit('onToolEvent', { phase: 'confirm', tool: name, summary: d.summary || '' });
+      return {
+        status: 'confirmation_required',
+        summary: d.summary || '',
+        instruction: 'Leia este resumo para o usuario em voz e pergunte se pode fazer. So chame esta ferramenta de novo, com exatamente os mesmos argumentos, depois que ele disser que sim.',
+      };
+    }
+    if (d.status === 'confirm_invalid') {
+      this._emit('onToolEvent', { phase: 'error', tool: name });
+      return { status: 'confirmation_expired', summary: d.summary || '', message: 'A confirmacao expirou ou os dados mudaram. Leia o resumo de novo e pergunte outra vez.' };
+    }
+    this._emit('onToolEvent', { phase: 'done', tool: name, status: d.status });
+    return d.status === 'blocked' ? (d.result || { error: 'data_access_off' }) : (d.result ?? { status: d.status || 'ok' });
   }
 
   stop() {
@@ -475,6 +601,10 @@ export class OneRealtimeSession {
     this._items.clear();
     this._lastCommittedItem = null;
     this._responseActive = false;
+    this._toolCalls.clear();
+    this._pendingConfirm.clear();
+    this._toolInflight = 0;
+    this._needResponse = false;
     this._setState('idle');
   }
 }
