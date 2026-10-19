@@ -931,16 +931,28 @@ function AppInit({ onNotification, setOtaToast }) {
     // checa+baixa em 2º plano no launch. A checagem JS (banner "Nova versão")
     // espera 15 s p/ não duplicar o request no burst do boot; se o nativo já
     // baixou, fetchUpdateAsync só confirma e o banner aparece igual.
+    // [2026-10-19 ota-embedded] Build nova roda o bundle EMBUTIDO: o EAS não tem
+    // base p/ bsdiff → o 1º OTA vem INTEIRO (~14 MB br / 30 MB .hbc, 41º asset).
+    // O download nativo (ON_LOAD) não retoma: app fechado/2º plano no meio = recomeça
+    // do zero no próximo boot → founder ficou horas em embedded=1 (build 729).
+    // Agora: além da tentativa dos 15 s, re-tenta ao voltar p/ frente (≥30 s entre
+    // tentativas, máx. 6 por processo) até baixar; o update baixado vale no próximo
+    // boot mesmo sem tocar no banner. Telemetria ota_js (só embedded/falha/retry).
     let otaCancelled = false;
-    const otaDelay = setTimeout(() => { if (!otaCancelled) (async () => {
+    let otaInFlight = false, otaDone = false, otaLastTry = 0, otaTries = 0;
+    const runOtaCheck = (why) => { if (otaCancelled || otaInFlight || otaDone || otaTries >= 6) return; otaInFlight = true; otaLastTry = Date.now(); otaTries++; (async () => {
+      const _t0 = Date.now();
+      let _outcome = 'err';
+      let _embedded = false;
       try {
         const Updates = require('expo-updates');
-        if (!Updates?.checkForUpdateAsync) return;
+        _embedded = !!Updates?.isEmbeddedLaunch;
+        if (!Updates?.checkForUpdateAsync || Updates.isEnabled === false) { _outcome = 'none'; _embedded = false; otaDone = true; return; }
         // Only surface the toast when there IS work to do (downloading,
         // applying). Silent on "already up to date" and on check errors —
         // user found those noisy and not useful.
         const update = await Updates.checkForUpdateAsync();
-        if (!update.isAvailable) return;
+        if (!update.isAvailable) { _outcome = 'none'; otaDone = true; return; }
         setOtaToast({ textKey: 'uiG.layout.downloadingUpdate', text: 'Baixando atualização…', kind: 'info' });
         // [2026-10-18 ota-stuck] o nativo (ON_LOAD) pode já estar baixando o mesmo
         // update → fetch JS falhava/pendurava e o "Baixando…" ficava eterno.
@@ -952,9 +964,10 @@ function AppInit({ onNotification, setOtaToast }) {
             new Promise((_, rej) => setTimeout(() => rej(new Error('ota_fetch_timeout')), 90000)),
           ]);
           _fetchOk = !!r; // resolveu = baixado (isNew) ou já baixado pelo nativo → banner tocável
-        } catch (_e) { _fetchOk = false; }
+        } catch (_e) { _fetchOk = false; _outcome = String(_e?.message || 'fetch_err').slice(0, 40); }
         if (otaCancelled) return;
         if (!_fetchOk) { setOtaToast(null); return; }
+        otaDone = true; _outcome = 'ok';
         // [2026-10-04] Em vez de recarregar sozinho (invasivo + histórico de
         // "updates empilhados"), mostra um banner PERSISTENTE e TOCÁVEL: o
         // usuário VÊ que a nova versão chegou e aplica quando quiser.
@@ -968,9 +981,27 @@ function AppInit({ onNotification, setOtaToast }) {
             catch { try { Updates.reloadAsync(); } catch {} }
           },
         });
-      } catch (e) {}
-    })(); }, 15000);
-    return () => { otaCancelled = true; clearTimeout(otaDelay); if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
+      } catch (e) { _outcome = 'check:' + String(e?.message || 'err').slice(0, 40); }
+      finally {
+        otaInFlight = false;
+        if (_embedded || _outcome !== 'ok' || otaTries > 1) {
+          if (_outcome !== 'none' || _embedded) {
+            try { require('../services/crashReporter').reportStep('ota_js', `why=${why} try=${otaTries} r=${_outcome} ms=${Date.now() - _t0} embedded=${_embedded ? 1 : 0}`); } catch {}
+          }
+        }
+      }
+    })(); };
+    const otaDelay = setTimeout(() => runOtaCheck('boot'), 15000);
+    let otaAppSub = null;
+    try {
+      const { AppState } = require('react-native');
+      otaAppSub = AppState.addEventListener('change', (st) => {
+        if (st !== 'active' || otaDone || otaInFlight) return;
+        if (!otaLastTry || Date.now() - otaLastTry < 30000) return; // a 1ª é a dos 15 s
+        runOtaCheck('fg');
+      });
+    } catch {}
+    return () => { otaCancelled = true; clearTimeout(otaDelay); try { otaAppSub?.remove?.(); } catch {} if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
   }, [setOtaToast]);
 
   // [2026-05-25] iOS answer → open the rich /call.js. The native CallKit answer

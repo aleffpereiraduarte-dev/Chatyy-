@@ -690,7 +690,14 @@ async function _reportUpdatesLog() {
   if (!critical && waitMs > 0 && !_bootDiagOff()) {
     await new Promise((res) => setTimeout(res, waitMs + Math.floor(Math.random() * 3000)));
   }
-  const lines = hits.slice(-6).map((e) => {
+  // [2026-10-19 ota-embedded] As 6 últimas eram sempre didLoadAsset do boot atual
+  // ("failedAssetCount" casa /fail/) e escondiam o erro real do processo anterior
+  // (ex.: download do bundle cortado no 2º plano). Erros/fatais têm prioridade.
+  const _isErr = (e) => e.level === 'error' || e.level === 'fatal';
+  const _errs = hits.filter(_isErr).slice(-3);
+  const _rest = hits.filter((e) => !_isErr(e)).slice(-(6 - _errs.length));
+  const _pick = _errs.concat(_rest).sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+  const lines = _pick.map((e) => {
     const ago = Math.round((Date.now() - Number(e.timestamp)) / 1000);
     const uid = e.updateId ? String(e.updateId).slice(0, 8) : '-';
     return `${ago}s ${e.level || '?'} ${e.code || '?'} u=${uid} ${String(e.message || '').slice(0, 160)}`;
