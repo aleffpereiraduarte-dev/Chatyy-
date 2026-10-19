@@ -119,9 +119,11 @@ const _useKbHandlerAndroid = (_IS_ANDROID && KC && typeof KC.useGenericKeyboardH
 // Com painel aberto (emoji nativo/figurinhas/GIF) volta o modo padding de
 // sempre; a troca é atômica (mesmo quadro do Reanimated: padding↔transform).
 // Kill switch OTA: globalThis.__chatyy_kb_translate = false (lido ao montar a conversa).
+// [2026-10-19 hotfix] DESLIGADO por padrão: founder viu barra+lista presas no
+// alto com o teclado FECHADO (lift não voltou a 0). Opt-in: __chatyy_kb_translate = true.
 function _kbTranslateOn() {
-  try { if (globalThis.__chatyy_kb_translate === false) return false; } catch {}
-  return true;
+  try { if (globalThis.__chatyy_kb_translate === true) return true; } catch {}
+  return false;
 }
 const ThreadKbCtx = React.createContext(null);
 let _restLift = 0;
