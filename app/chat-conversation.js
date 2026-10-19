@@ -148,6 +148,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { useSharedNow } from '../hooks/useSharedNow';
 // [2026-10-14 adv-privacy] Privacidade avançada da conversa.
 import useConversationPrivacy from '../components/chat/useConversationPrivacy';
+import useVanishMode, { VanishSwipeArea, VanishThemeScope, IconVanish } from '../components/chat/useVanishMode'; // [vanish 2026-10-19]
 import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
 import LazyMount from '../components/chat/LazyMount';
@@ -10467,7 +10468,11 @@ function _useStateTraced(init) {
 }
 const _useStateT = _PERF_WHY_ON ? _useStateTraced : useState;
 
+// [vanish 2026-10-19] modo temporário: tema escuro só nesta conversa (escopo acima do useTheme da tela).
 function ChatConversationInner() {
+  return <VanishThemeScope><ChatConversationInnerBody /></VanishThemeScope>;
+}
+function ChatConversationInnerBody() {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag41492 = useDragToDismiss({ onDismiss: () => { const f = () => setShowStatsModal(false); f(); } });
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
@@ -14312,6 +14317,34 @@ function ChatConversationInner() {
       try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Error); } catch {}
     }
   }, [conversationId, vanishMode]);
+
+  // [vanish 2026-10-19] Modo temporário (Instagram Vanish Mode) na MESMA conversa —
+  // components/chat/useVanishMode.js (tema escuro, proteção de print, some ao sair).
+  const _vanMsgsRef = useRef(messages);
+  _vanMsgsRef.current = messages;
+  const _vanishPurgedLocal = useCallback((ids) => {
+    if (!Array.isArray(ids) || !ids.length) return;
+    const set = new Set(ids.map(String));
+    setMessages(prev => (Array.isArray(prev) && prev.some(m => m && set.has(String(m.id))) ? prev.filter(m => !(m && set.has(String(m.id)))) : prev));
+  }, []);
+  const _vanishAtBottom = useCallback(() => (threadScrollStateRef.current.lastDistance || 0) <= 12, []);
+  const _vanish = useVanishMode({
+    conversationId, conversationType, vanishMode, setVanishMode, t, isFocused: isScreenFocused,
+    onPurged: _vanishPurgedLocal,
+    hasVanishMsgs: () => (_vanMsgsRef.current || []).some(m => m && m.vanish && !m.deleted_at),
+    getLastReadId: () => {
+      // Só confirma leitura se a conversa está no fim (o leitor viu a última).
+      if ((threadScrollStateRef.current.lastDistance || 0) > 24) return 0;
+      const list = _vanMsgsRef.current || [];
+      for (let i = list.length - 1; i >= 0; i--) {
+        const m = list[i];
+        if (!m || m.sender_email === currentEmail) continue;
+        const n = Number(m.id);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 0;
+    },
+  });
 
   // Wallpaper — per-conversation override. Try API first (synced across devices),
   // fall back to local AsyncStorage for offline.
@@ -18255,6 +18288,7 @@ function ChatConversationInner() {
             waveform: null,
             deleted_by: m.deleted_by || '',
             _tombIn: true, // [2026-10-08 send-motion] lápide entra com colapso
+            vanish: !!(row.vanish || m.vanish), // [vanish 2026-10-19] some em vez de lápide
           };
         }));
         // Cache invalidation: drop the deleted row from every persistence
@@ -26083,7 +26117,10 @@ function ChatConversationInner() {
     if (!!peer && peer.toLowerCase() !== (currentEmail || '').toLowerCase()) {
       rows.push({ id: 'liveLoc', sid: 'more', k: 'a', icon: 'mapPin', title: _ciTr('location.requestLive', 'Pedir localização ao vivo'), onPress: () => go(requestPeerLiveLocation) });
     }
-    if (!e2eEnabled) rows.push({ id: 'secret', sid: 'more', icon: 'secret', title: _ciTr('chat.startSecret', 'Chat secreto'), onPress: () => go(startSecretChat) });
+    // [vanish 2026-10-19] "Chat secreto" → liga/desliga o modo temporário NESTA conversa (Instagram).
+    if (!e2eEnabled) rows.push(_vanish.eligible
+      ? { id: 'secret', sid: 'more', icon: 'secret', title: _vanish.rowTitle, val: _vanish.rowValue, onPress: () => go(handleToggleVanishMode) }
+      : { id: 'secret', sid: 'more', icon: 'secret', title: _ciTr('chat.startSecret', 'Chat secreto'), onPress: () => go(startSecretChat) });
     if (contactPinned !== null) {
       rows.push({ id: 'pin', sid: 'misc', k: 'a', icon: 'pin', title: contactPinned ? _ciTr('chatConv.removeFromFavorites', 'Remover das favoritas') : _ciTr('chatConv.addToFavorites', 'Adicionar às favoritas'), onPress: handleToggleContactPinned });
     }
@@ -27975,6 +28012,8 @@ function ChatConversationInner() {
       // (WS 'delete' + DELETE físico) — some da conversa em vez de virar lápide "mensagem apagada".
       if (msg && msg.deleted_at && msg.type === 'status_reply' && (msg.status_reply?.reaction
         || (typeof msg.meta === 'string' ? msg.meta.includes('"status_reaction"') : msg.meta?.kind === 'status_reaction'))) continue;
+      // [vanish 2026-10-19] mensagem do modo temporário que já sumiu → some (sem lápide).
+      if (msg && msg.deleted_at && (msg.vanish === true || msg.deleted_by === 'vanish')) continue;
       const ca = msg.created_at || '';
       const d = new Date(_normalizeIso(ca));
       // Include the message index so each separator has a UNIQUE key even
@@ -36264,7 +36303,7 @@ function ChatConversationInner() {
       {vanishMode && (
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => setShowDisappearingModal(true) /* [2026-10-10 contact-info] abre Temporárias (onde "Ao ler" é explicado) em vez de desligar às cegas */}
+          onPress={() => (_vanish.eligible ? handleToggleVanishMode() /* [vanish 2026-10-19] Instagram: toque desliga */ : setShowDisappearingModal(true)) /* [2026-10-10 contact-info] abre Temporárias (onde "Ao ler" é explicado) em vez de desligar às cegas */}
           accessibilityRole="button"
           style={[styles.disappearingBanner, {
             backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.12)',
@@ -36274,7 +36313,9 @@ function ChatConversationInner() {
         >
           <IconClock size={14} color={colors.text} />
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#F1F3F5' : '#111111' }]}>
-            {t('chatConv.vanishBannerV2') || 'Mensagens temporárias: somem ao serem lidas. Toque para mudar.'}
+            {_vanish.eligible
+              ? _axT('vanish.banner', 'Modo temporário ativado. As mensagens somem depois de vistas e quando a conversa é fechada. Toque para desativar.')
+              : (t('chatConv.vanishBannerV2') || 'Mensagens temporárias: somem ao serem lidas. Toque para mudar.')}
           </Text>
         </TouchableOpacity>
       )}
@@ -37265,7 +37306,9 @@ function ChatConversationInner() {
         // dados (threadListData, mais antiga → mais nova) e mesmos handlers de
         // rolagem/visibilidade/recibos que a FlashList; o ref implementa o
         // subconjunto do FlashList usado pelo threadScroll.
-        <View style={{ flex: 1 }}>
+        // [vanish 2026-10-19] arrastar p/ cima no fim liga/desliga o modo temporário.
+        <VanishSwipeArea style={{ flex: 1 }} enabled={_vanish.eligible && !selectionMode} active={_vanish.active} onActivate={handleToggleVanishMode}
+          isAtBottom={_vanishAtBottom} t={t} isDark={isDark}>
         <ChatyyMessageList
           ref={flashListRef}
           data={threadListData}
@@ -37306,7 +37349,7 @@ function ChatConversationInner() {
         {listHeader}
         {/* "carregando antigas" no topo */}
         <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center' }}>{listFooter}</View>
-        </View>
+        </VanishSwipeArea>
         ) : THREAD_IS_FLASH ? (
         // [2026-10-07 flashlist] FlashList v2 thread (see THREAD_LIST_ENGINE).
         // FlatList-only props (windowSize, maxToRenderPerBatch, initialNumToRender,
@@ -41770,8 +41813,9 @@ function ChatConversationInner() {
                         <>
                           <GroupDivider colors={colors} />
                           <GroupRow colors={colors} Icon={IconLock}
-                            title={t('chat.startSecret') || 'Chat secreto'} right="chevron"
-                            onPress={() => contactInfoGo(startSecretChat)} />
+                            title={_vanish.eligible ? _vanish.rowTitle : (t('chat.startSecret') || 'Chat secreto')} right="chevron"
+                            subtitle={_vanish.eligible ? _vanish.rowValue : undefined /* [vanish 2026-10-19] */}
+                            onPress={() => contactInfoGo(_vanish.eligible ? handleToggleVanishMode : startSecretChat)} />
                         </>
                       )}
                     </GroupCard>
@@ -41970,6 +42014,7 @@ function ChatConversationInner() {
                   { Icon: IconMoreHorizontal, label: t('common.more') || 'Mais', chevron: true, keepOpen: true, onPress: () => setHeaderMenuMore(true) },
                 ]},
               ] : [
+                  ...(_vanish.eligible ? [{ Icon: IconVanish, label: _vanish.rowTitle, subtitle: _vanish.rowValue, badge: _vanish.active, onPress: () => { closeMenu(); handleToggleVanishMode(); }}] : []), // [vanish 2026-10-19]
                 { divider: false, items: [
                   { Icon: IconChevronLeft, label: t('chatConv.moreOptions') || 'Mais opções', back: true, keepOpen: true, onPress: () => setHeaderMenuMore(false) },
                 ]},

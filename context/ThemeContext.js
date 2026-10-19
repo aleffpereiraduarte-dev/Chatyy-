@@ -244,6 +244,48 @@ export function primeThemeMode(mode) {
   if (THEME_MODES.has(mode)) _primedThemeMode = mode;
 }
 
+// [vanish 2026-10-19] montagem das cores extraída (pura) p/ o ForceDarkTheme reusar.
+function _composeThemeColors(baseColors, accentHex, isDark, _hc) {
+  let c = baseColors;
+  const ink = c.primary;
+  if (accentHex) {
+    const on = onAccentFor(accentHex);
+    const [r, g, b] = _rgb(accentHex);
+    c = {
+      ...c,
+      primary: accentHex, chatPrimary: accentHex, primaryDark: accentHex,
+      onPrimary: on, textOnPrimary: on,
+      badge: accentHex, onBadge: on, unreadAccent: accentHex,
+      chipActiveBg: accentHex, chipActiveText: on,
+      selectedCheckbox: accentHex, focusBorder: accentHex,
+      composeBg: accentHex, composeText: on,
+      accentSoft: `rgba(${r},${g},${b},${isDark ? 0.22 : 0.12})`,
+    };
+  } else {
+    c = { ...c, accentSoft: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.07)' };
+  }
+  c.accent = accentHex || ink;
+  c.onAccent = accentHex ? onAccentFor(accentHex) : c.onPrimary;
+  c.accentOn = !!accentHex;
+  // ✓✓ lido: destaque quando há cor; Grafite mantém o azul clássico.
+  c.tickRead = accentHex || '#53BDEB';
+  if (_hc) {
+    c = {
+      ...c,
+      textSecondary: isDark ? '#D1D1D6' : '#3A3A3F',
+      textTertiary: isDark ? '#AEAEB2' : '#55555B',
+      chipText: isDark ? '#D1D1D6' : '#3A3A3F',
+      border: isDark ? '#545458' : '#B8B8BE',
+      borderLight: isDark ? '#3A3A3C' : '#D1D1D6',
+      divider: isDark ? '#48484A' : '#C6C6C8',
+      headerBorder: isDark ? '#48484A' : '#C6C6C8',
+      starEmpty: isDark ? '#8E8E93' : '#8E8E93',
+      highContrast: true,
+    };
+  }
+  return c;
+}
+
 export function ThemeProvider({ children }) {
   // Nativo: semeia do SO já no 1º frame (antes: false → 1 frame claro no escuro).
   const [systemIsDark, setSystemIsDark] = useState(() => Platform.OS !== 'web' && _readScheme() === 'dark');
@@ -652,46 +694,7 @@ export function ThemeProvider({ children }) {
   // divisórias mais escuros (claro) / mais claros (escuro).
   const accentHex = resolveAccent(accentValue, isDark);
   const _hc = !!(a11y && a11y.highContrast);
-  const colors = useMemo(() => {
-    let c = baseColors;
-    const ink = c.primary;
-    if (accentHex) {
-      const on = onAccentFor(accentHex);
-      const [r, g, b] = _rgb(accentHex);
-      c = {
-        ...c,
-        primary: accentHex, chatPrimary: accentHex, primaryDark: accentHex,
-        onPrimary: on, textOnPrimary: on,
-        badge: accentHex, onBadge: on, unreadAccent: accentHex,
-        chipActiveBg: accentHex, chipActiveText: on,
-        selectedCheckbox: accentHex, focusBorder: accentHex,
-        composeBg: accentHex, composeText: on,
-        accentSoft: `rgba(${r},${g},${b},${isDark ? 0.22 : 0.12})`,
-      };
-    } else {
-      c = { ...c, accentSoft: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.07)' };
-    }
-    c.accent = accentHex || ink;
-    c.onAccent = accentHex ? onAccentFor(accentHex) : c.onPrimary;
-    c.accentOn = !!accentHex;
-    // ✓✓ lido: destaque quando há cor; Grafite mantém o azul clássico.
-    c.tickRead = accentHex || '#53BDEB';
-    if (_hc) {
-      c = {
-        ...c,
-        textSecondary: isDark ? '#D1D1D6' : '#3A3A3F',
-        textTertiary: isDark ? '#AEAEB2' : '#55555B',
-        chipText: isDark ? '#D1D1D6' : '#3A3A3F',
-        border: isDark ? '#545458' : '#B8B8BE',
-        borderLight: isDark ? '#3A3A3C' : '#D1D1D6',
-        divider: isDark ? '#48484A' : '#C6C6C8',
-        headerBorder: isDark ? '#48484A' : '#C6C6C8',
-        starEmpty: isDark ? '#8E8E93' : '#8E8E93',
-        highContrast: true,
-      };
-    }
-    return c;
-  }, [baseColors, accentHex, isDark, _hc]);
+  const colors = useMemo(() => _composeThemeColors(baseColors, accentHex, isDark, _hc), [baseColors, accentHex, isDark, _hc]);
   _accentSnap = { value: accentValue, hex: accentHex, on: !!accentHex, onAccent: colors.onAccent, isDark: !!isDark };
   try { globalThis.__chatyy_accent = _accentSnap; } catch {}
   // compat: consumidores antigos (lista nativa → listAccentHex) esperam #111 p/ "sem cor".
@@ -717,6 +720,23 @@ export function ThemeProvider({ children }) {
       ) : null}
     </ThemeContext.Provider>
   );
+}
+
+/**
+ * [vanish 2026-10-19] Força o tema escuro só para um pedaço da árvore (modo
+ * temporário da conversa, estilo Instagram). Mesmo destaque/contraste do app.
+ */
+export function ForceDarkTheme({ active, children }) {
+  const ctx = useContext(ThemeContext);
+  const on = !!active && !!ctx && !ctx.isDark;
+  const accentV = ctx ? ctx.accent : null;
+  const hc = !!(ctx && ctx.a11y && ctx.a11y.highContrast);
+  const value = useMemo(() => {
+    if (!on) return ctx;
+    const colors = _composeThemeColors(DarkColors, resolveAccent(accentV, true), true, hc);
+    return { ...ctx, isDark: true, colors };
+  }, [on, ctx, accentV, hc]);
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

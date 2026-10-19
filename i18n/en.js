@@ -1,4 +1,14 @@
 export default {
+  // [vanish 2026-10-19] Modo temporário (Instagram Vanish Mode) na mesma conversa
+  "vanish.rowTitle": "Vanish mode",
+  "vanish.stateOn": "On",
+  "vanish.stateOff": "Off",
+  "vanish.pullHint": "Swipe up to turn on vanish mode",
+  "vanish.pullHintOff": "Swipe up to turn off vanish mode",
+  "vanish.release": "Release to turn on vanish mode",
+  "vanish.releaseOff": "Release to turn off vanish mode",
+  "vanish.banner": "Vanish mode is on. Messages disappear after they are seen and the chat is closed. Tap to turn off.",
+  "vanish.protectedTitle": "Vanish mode",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "New call",
   "calls.freeViaChatyy": "Free Chatyy calls, voice and video",
@@ -2780,6 +2790,10 @@ export default {
   // Undo
   'undo.deleted': 'Message deleted',
   'undo.archived': 'Message archived',
+  'undo.emailTrashed': 'Email moved to Trash',
+  'undo.emailsTrashed': '{n} emails moved to Trash',
+  'undo.emailArchived': 'Email archived',
+  'undo.emailsArchived': '{n} emails archived',
   'undo.button': 'Undo',
 
   // Snooze

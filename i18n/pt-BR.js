@@ -1,4 +1,14 @@
 export default {
+  // [vanish 2026-10-19] Modo temporário (Instagram Vanish Mode) na mesma conversa
+  "vanish.rowTitle": "Modo temporário",
+  "vanish.stateOn": "Ativado",
+  "vanish.stateOff": "Desativado",
+  "vanish.pullHint": "Deslize para cima para ativar o modo temporário",
+  "vanish.pullHintOff": "Deslize para cima para desativar o modo temporário",
+  "vanish.release": "Solte para ativar o modo temporário",
+  "vanish.releaseOff": "Solte para desativar o modo temporário",
+  "vanish.banner": "Modo temporário ativado. As mensagens somem depois de vistas e quando a conversa é fechada. Toque para desativar.",
+  "vanish.protectedTitle": "Modo temporário",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nova chamada",
   "calls.freeViaChatyy": "Ligações grátis pelo Chatyy, voz e vídeo",
@@ -2760,6 +2770,10 @@ export default {
   // Undo
   'undo.deleted': 'Mensagem excluída',
   'undo.archived': 'Mensagem arquivada',
+  'undo.emailTrashed': 'E-mail movido para a lixeira',
+  'undo.emailsTrashed': '{n} e-mails movidos para a lixeira',
+  'undo.emailArchived': 'E-mail arquivado',
+  'undo.emailsArchived': '{n} e-mails arquivados',
   'undo.button': 'Desfazer',
 
   // Snooze

@@ -7732,6 +7732,13 @@ export async function chatSetVanishMode(conversationId, enabled) {
   const on = !!enabled;
   return apiCall('chat_set_vanish_mode', { conversation_id: conversationId, enabled: on, vanish: on }, 'POST');
 }
+// [vanish 2026-10-19] Leitor saiu da conversa → o servidor apaga (p/ os dois) as
+// mensagens do modo temporário já vistas. Devolve { purged: [ids] }.
+export async function chatVanishSeenClose(conversationId, lastReadId) {
+  const p = { conversation_id: conversationId };
+  if (lastReadId) p.last_read_id = lastReadId;
+  return apiCall('chat_vanish_seen_close', p, 'POST');
+}
 
 // Username system
 export async function setUsername(username) {
