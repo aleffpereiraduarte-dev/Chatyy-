@@ -616,7 +616,9 @@ export async function markSent(cmi, serverId = null) {
       now,
       String(cmi),
     );
-    _notify(cmi, await getStatus(cmi));
+    const _st = await getStatus(cmi);
+    _notify(cmi, _st);
+    _beaconSlowSend(_st, now);
     return true;
   } catch (e) {
     try { console.warn('[messageOutbox] markSent:', e?.message); } catch {}
@@ -731,6 +733,22 @@ function _beaconSendFail(kind, attempts, errStr) {
     _sendFailBeacons++;
     const cls = String(errStr || '').replace(/\S+@\S+/g, 'E').replace(/\d+/g, 'N').replace(/\s+/g, ' ').slice(0, 80);
     require('./crashReporter').reportStep('outbox_fail', `k=${kind} n=${attempts} e=${cls}`);
+  } catch {}
+}
+
+// [confiabilidade 2026-10-19] Tempo de "relógio" era invisível: só havia beacon de
+// FALHA (outbox_fail). Agora, quando uma mensagem fica ≥ 8 s no relógio até o ✓,
+// 1 beacon agregado (sem conteúdo): ms do relógio, tentativas, lane, offline agora.
+// Teto 8/sessão. Kill: globalThis.__chatyy_outbox_slow_beacon = false.
+let _slowSendBeacons = 0;
+function _beaconSlowSend(st, now) {
+  try {
+    if (globalThis.__chatyy_outbox_slow_beacon === false) return;
+    if (!st || !st.created_at || _slowSendBeacons >= 8) return;
+    const ms = (now || Date.now()) - st.created_at;
+    if (!(ms >= 8000) || ms > 7 * 86400000) return;
+    _slowSendBeacons++;
+    require('./crashReporter').reportStep('outbox_slow', `ms=${Math.round(ms)} n=${st.attempts | 0} lane=${st.lane || 'msg'} off=${_isDeviceOffline() ? 1 : 0}`);
   } catch {}
 }
 
