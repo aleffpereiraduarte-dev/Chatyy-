@@ -28,7 +28,20 @@ final class ChatTransport {
   // 75 s) SONDA o socket em vez de derrubar; prazos de handshake/auth adaptativos
   // (RTT, duração do último handshake, timeouts seguidos); 'authed' traz
   // hsMs/connectMs/authMs. Kill switch: cfg adaptiveTimeouts=false / bgStaleMs=20000.
-  static let version = 5
+  // v6 (2026-10-19 bg-grace/resume): (a) graça de 2º plano — beginBackgroundTask
+  //     segura o processo ~28 s com o socket autenticado (troca rápida de app não
+  //     mata o fio; o iOS só "defuncta" o socket quando SUSPENDE o app → era o
+  //     'Software caused connection abort' da telemetria); (b) volta: dentro da graça
+  //     / < bgStaleMs / frame recebido há < 30 s → 1 ping e reusa; stale só se a
+  //     sonda falhar ou > bgStaleMs; evento 'resume' {kept, probeMs, reason, bgMs,
+  //     grace}; (c) DNS pré-resolvido no willEnterForeground / troca de rede;
+  //     (d) URLSession compartilhada (retomada de sessão TLS) — renovada na troca de
+  //     rede / falha antes do open / idade; (e) 1ª tentativa com prazo curto (≥ 4 s)
+  //     quando o último handshake na MESMA rede foi rápido.
+  //     Tudo atrás de chaves do cfg que o JS manda (binário v6 + JS antigo = v5):
+  //     bgGrace (kill switch JS __chatyy_ws_bg_grace=false), dnsPrewarm,
+  //     reuseSession, fastFirst.
+  static let version = 6
 
   let q = DispatchQueue(label: "chatyy.transport", qos: .userInitiated)
   private lazy var opQueue: OperationQueue = {
@@ -60,6 +73,29 @@ final class ChatTransport {
   private(set) var stats: [String: Int64] = [:]
 
   private var bgTask: UIBackgroundTaskIdentifier = .invalid
+  /// [v6] ciclo de 2º plano (só main thread): timer/expiração de um ciclo velho
+  /// nunca encerra a task de um ciclo novo.
+  private var mainBgCycle: Int = 0
+
+  // [v6] knobs de processo (do cfg da sessão mais recente; só na fila q).
+  private var bgGraceOn = false
+  private var bgGraceMs: Double = 28000
+  private var dnsPrewarmOn = false
+  private var reuseSessionOn = false
+  /// [v6] graça de 2º plano em curso (processo ainda rodando) — fila q.
+  private var graceActive = false
+  private var graceCycle: Int = -1
+  private var lastDnsAt: Double = 0
+  // [v6] último handshake bom do PROCESSO (prazo curto da 1ª tentativa).
+  var lastGoodConnectMs: Double = -1
+  var lastGoodRttMs: Double = -1
+  var netEpoch: Int = 0
+  var lastGoodNetEpoch: Int = -1
+  // [v6] URLSession compartilhada (retomada TLS) + roteador de delegates.
+  private var sharedSession: URLSession?
+  private var sharedSessionUses: Int = 0
+  private var sharedSessionBornAt: Double = 0
+  private lazy var router: TransportWSRouter = TransportWSRouter()
 
   static func now() -> Double {
     return Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000.0
@@ -103,32 +139,61 @@ final class ChatTransport {
   private func appDidEnterBackground() {
     // Main thread. Segura alguns segundos de execução para o que o JS mandar
     // ao ir pro fundo (presence offline, stopped_typing, fila pendente) sair.
+    // [v6] Com a graça ligada e o socket autenticado, segura ~28 s: o iOS só
+    // derruba (defuncta) o socket quando SUSPENDE o processo — troca rápida de
+    // app (responder notificação, copiar código, câmera) volta com o fio vivo.
+    mainBgCycle += 1
+    let cyc: Int = mainBgCycle
     if bgTask == .invalid {
       bgTask = UIApplication.shared.beginBackgroundTask(withName: "chatyy.transport.flush") { [weak self] in
-        self?.endBackgroundTask()
+        // Tempo de 2º plano acabou: encerra JÁ (task não encerrada = app morto).
+        guard let self = self else { return }
+        self.endBackgroundTask()
+        self.q.async { self.graceEnded(cyc, expired: true) }
       }
     }
     q.async {
       self.setForeground(false)
       let pending = self.session?.hasPendingOutbound() ?? false
+      let grace: Bool = self.bgGraceOn && self.bgGraceMs > 0 && (self.session?.isAuthed() ?? false)
+      self.graceCycle = cyc
+      self.graceActive = grace
+      if grace { self.bump("bgGraces") }
       // [fase 4] fila nativa com pendência: segura até ~25 s drenando e agenda o
       // BGAppRefreshTask p/ o que sobrar (texto); mídia segue na sessão de 2º plano.
       let outboxPending = ChatOutbox.shared.pendingCountLocked() > 0
       if outboxPending {
         ChatOutboxBackground.schedule()
-        ChatOutbox.shared.drain(maxMs: 25000) { _ in DispatchQueue.main.async { self.endBackgroundTask() } }
-        return
+        ChatOutbox.shared.drain(maxMs: 25000) { _ in
+          self.q.async {
+            // [v6] com a graça ativa quem encerra é o prazo dela (ou a expiração).
+            if self.graceActive && self.graceCycle == cyc { return }
+            DispatchQueue.main.async { self.endBackgroundTask(ifCycle: cyc) }
+          }
+        }
+        if !grace { return }
       }
-      self.q.asyncAfter(deadline: .now() + (pending ? 8.0 : 2.0)) {
-        DispatchQueue.main.async { self.endBackgroundTask() }
+      var holdMs: Double = pending ? 8000.0 : 2000.0
+      if grace { holdMs = min(29000.0, outboxPending ? max(self.bgGraceMs, 26000.0) : self.bgGraceMs) }
+      self.q.asyncAfter(deadline: .now() + holdMs / 1000.0) {
+        self.graceEnded(cyc, expired: false)
+        DispatchQueue.main.async { self.endBackgroundTask(ifCycle: cyc) }
       }
     }
   }
 
   private func appWillEnterForeground() {
     // Dispara ANTES do AppState 'active' do JS: a sonda/reconexão começa já.
-    DispatchQueue.main.async { self.endBackgroundTask() }
-    q.async { self.setForeground(true) }
+    mainBgCycle += 1
+    endBackgroundTask()
+    q.async {
+      // [v6] graça ainda ativa = o processo nunca foi suspenso → socket vivo.
+      let inGrace: Bool = self.graceActive
+      self.graceActive = false
+      self.graceCycle = -1
+      self.prewarmDns("foreground")
+      self.setForeground(true, inGrace: inGrace)
+    }
   }
 
   private func endBackgroundTask() {
@@ -138,17 +203,55 @@ final class ChatTransport {
     }
   }
 
+  /// Main thread: encerra só se ainda for o mesmo ciclo de 2º plano.
+  private func endBackgroundTask(ifCycle cyc: Int) {
+    if mainBgCycle == cyc { endBackgroundTask() }
+  }
+
+  /// [v6] fila q: fim da graça (prazo ou expiração do iOS) — o processo vai ser
+  /// suspenso; o socket provavelmente morre (defunct) e a volta reconecta.
+  private func graceEnded(_ cyc: Int, expired: Bool) {
+    guard graceCycle == cyc, graceActive else { return }
+    graceActive = false
+    if !foreground { bump(expired ? "bgGraceExpired" : "bgGraceEnded") }
+  }
+
   private var bgAt: Double = 0
 
-  private func setForeground(_ fg: Bool) {
+  private func setForeground(_ fg: Bool, inGrace: Bool = false) {
     if foreground == fg { return }
     foreground = fg
     // Relógio de parede: o uptime (mach) não anda com o aparelho dormindo.
     let wall = Date().timeIntervalSince1970 * 1000
     let bgMs = (fg && bgAt > 0) ? max(0, wall - bgAt) : 0
     if !fg { bgAt = wall }
-    session?.onForeground(fg, bgMs: bgMs)
+    session?.onForeground(fg, bgMs: bgMs, inGrace: inGrace)
     if fg { ChatOutbox.shared.kick("foreground") }
+  }
+
+  // MARK: [v6] DNS pré-resolvido
+
+  /// getaddrinfo numa fila de fundo esquenta o cache do mDNSResponder (o mesmo
+  /// que o URLSession consulta) antes de precisarmos reconectar. Fila q.
+  func prewarmDns(_ why: String) {
+    guard dnsPrewarmOn, let s = session else { return }
+    let t: Double = ChatTransport.now()
+    if t - lastDnsAt < 1500 { return }
+    lastDnsAt = t
+    let hosts: [String] = s.dnsHosts()
+    if hosts.isEmpty { return }
+    bump("dnsPrewarms")
+    DispatchQueue.global(qos: .userInitiated).async {
+      for h in hosts { ChatTransport.resolveHost(h) }
+    }
+  }
+
+  static func resolveHost(_ host: String) {
+    var hints = addrinfo()
+    hints.ai_family = AF_UNSPEC
+    var res: UnsafeMutablePointer<addrinfo>? = nil
+    let rc: Int32 = getaddrinfo(host, "443", &hints, &res)
+    if rc == 0, let r = res { freeaddrinfo(r) }
   }
 
   // MARK: [fase 4] porta WS da fila nativa (chamado na fila q)
@@ -187,6 +290,9 @@ final class ChatTransport {
       netUp = true
       primaryIface = iface
       bump("netChanges")
+      netEpoch += 1
+      retireSharedSession("net_up")
+      prewarmDns("net_up")
       session?.onNetwork("net_up")
       ChatOutbox.shared.onNetworkUp()
       return
@@ -194,6 +300,10 @@ final class ChatTransport {
     if iface != primaryIface {
       primaryIface = iface
       bump("netChanges")
+      // [v6] rede nova: sessão TLS/conexões da interface velha não servem.
+      netEpoch += 1
+      retireSharedSession("net_change")
+      prewarmDns("net_change")
       session?.onNetwork("net_change")
       // [2026-10-18 net-change] request do outbox em voo na interface velha →
       // cancela e reenfileira sem contar tentativa (+ kick).
@@ -224,12 +334,22 @@ final class ChatTransport {
       fgProbeMs: ChatTransport.num(config["fgProbeMs"], 2500, 1000, 10000),
       bgStaleMs: ChatTransport.num(config["bgStaleMs"], 20000, 5000, 600000),
       adaptiveTimeouts: (config["adaptiveTimeouts"] as? Bool) ?? true,
+      bgGrace: (config["bgGrace"] as? Bool) == true,
+      bgGraceMs: ChatTransport.num(config["bgGraceMs"], 28000, 0, 29000),
+      dnsPrewarm: (config["dnsPrewarm"] as? Bool) == true,
+      reuseSession: (config["reuseSession"] as? Bool) == true,
+      fastFirst: (config["fastFirst"] as? Bool) == true,
       batchMs: ChatTransport.num(config["batchMs"], 16, 0, 250),
       outboxMax: Int(ChatTransport.num(config["outboxMax"], 500, 10, 2000)),
       account: ((config["account"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
       storeIngest: (config["storeIngest"] as? Bool) == true
     )
     q.async {
+      self.bgGraceOn = cfg.bgGrace
+      self.bgGraceMs = cfg.bgGraceMs
+      self.dnsPrewarmOn = cfg.dnsPrewarm
+      if !cfg.reuseSession { self.retireSharedSession("off") }
+      self.reuseSessionOn = cfg.reuseSession
       self.session?.close(code: 1000, reason: "replaced", emitClosed: false)
       let s = TransportSession(sid: sid, cfg: cfg, owner: self)
       self.session = s
@@ -285,6 +405,8 @@ final class ChatTransport {
       out["foreground"] = self.foreground
       out["netUp"] = self.netUp
       out["regionalBlockedMs"] = max(0, self.regionalBlockedUntil - ChatTransport.now())
+      out["bgGraceActive"] = self.graceActive
+      out["sharedSession"] = self.sharedSession != nil
       if let s = self.session { for (k, v) in s.snapshot() { out[k] = v } }
       sem.signal()
     }
@@ -306,6 +428,50 @@ final class ChatTransport {
     return URLSession(configuration: c, delegate: delegate, delegateQueue: opQueue)
   }
 
+  /// [v6] Task de WebSocket nova. Com reuseSession, todas saem da MESMA URLSession
+  /// (cache de sessão TLS → handshake de retomada, 1 RTT a menos) e os callbacks
+  /// são roteados por task até o delegate da geração. Sem reuse: 1 URLSession por
+  /// socket (v5). Devolve a sessão DEDICADA (a invalidar no teardown) ou nil.
+  func makeSocketTask(url: URL, delegate d: TransportWSDelegate) -> (URLSessionWebSocketTask, URLSession?) {
+    if reuseSessionOn {
+      let t0: Double = ChatTransport.now()
+      if sharedSession != nil && (sharedSessionUses >= 200 || t0 - sharedSessionBornAt > 6.0 * 3600.0 * 1000.0) {
+        retireSharedSession("age")
+      }
+      let s: URLSession
+      if let cur = sharedSession {
+        s = cur
+      } else {
+        s = makeURLSession(delegate: router)
+        sharedSession = s
+        sharedSessionUses = 0
+        sharedSessionBornAt = t0
+        bump("urlSessions")
+      }
+      sharedSessionUses += 1
+      let t = s.webSocketTask(with: url)
+      router.add(t, d)
+      return (t, nil)
+    }
+    let s = makeURLSession(delegate: d)
+    return (s.webSocketTask(with: url), s)
+  }
+
+  /// [v6] Socket descartado: solta a rota (callbacks atrasados viram no-op).
+  func releaseSocketTask(_ t: URLSessionTask) {
+    router.remove(t)
+  }
+
+  /// [v6] Aposenta a URLSession compartilhada (troca de rede, falha antes do
+  /// open, idade). Tasks em curso terminam; a próxima conexão cria outra.
+  func retireSharedSession(_ why: String) {
+    guard let s = sharedSession else { return }
+    sharedSession = nil
+    sharedSessionUses = 0
+    bump("urlSessionRetired")
+    s.finishTasksAndInvalidate()
+  }
+
   // MARK: - helpers
 
   static func isAllowed(_ u: URL) -> Bool {
@@ -318,6 +484,24 @@ final class ChatTransport {
     let d = n.doubleValue
     if d.isNaN || d.isInfinite { return def }
     return min(hi, max(lo, d))
+  }
+
+  /// [v6] classe curta do motivo de queda (telemetria 'resume').
+  static func dropClass(_ reason: String) -> String {
+    let r = reason.lowercased()
+    if r.contains("abort") { return "abort" }
+    if r.contains("connection was lost") { return "lost" }
+    if r.contains("timed out") || r.contains("timeout") { return "timeout" }
+    if r.contains("not connected") || r.contains("offline") { return "offline" }
+    if r.contains("reset") { return "reset" }
+    if r.contains("pong") { return "pong" }
+    if r.contains("probe") { return "probe" }
+    var out = ""
+    for ch in r.unicodeScalars {
+      if out.count >= 16 { break }
+      if CharacterSet.alphanumerics.contains(ch) || ch == "_" { out.unicodeScalars.append(ch) }
+    }
+    return out.isEmpty ? "other" : out
   }
 
   static func topType(_ text: String) -> String? {
@@ -343,6 +527,15 @@ struct TransportConfig {
   let bgStaleMs: Double
   /// [v5] prazos de handshake/auth crescem com RTT / timeouts seguidos.
   let adaptiveTimeouts: Bool
+  /// [v6] graça de 2º plano + regra de volta nova + evento 'resume'.
+  let bgGrace: Bool
+  let bgGraceMs: Double
+  /// [v6] pré-resolver DNS no willEnterForeground / troca de rede.
+  let dnsPrewarm: Bool
+  /// [v6] URLSession compartilhada (retomada TLS).
+  let reuseSession: Bool
+  /// [v6] 1ª tentativa com prazo curto quando o último handshake foi rápido.
+  let fastFirst: Bool
   let batchMs: Double
   let outboxMax: Int
   /// [2b] conta da sessão (JS) — confirmada pelo e-mail do auth_success.
@@ -360,7 +553,7 @@ final class TransportWSDelegate: NSObject, URLSessionWebSocketDelegate {
     self.gen = gen
   }
 
-  func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+  func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol proto: String?) {
     owner?.onOpen(gen)
   }
 
@@ -376,6 +569,37 @@ final class TransportWSDelegate: NSObject, URLSessionWebSocketDelegate {
     // Handshake respondido com HTTP não-101 (400/401/403/5xx) → status aqui.
     let http = (task.response as? HTTPURLResponse)?.statusCode ?? 0
     owner?.onDrop(gen, code: code, reason: "complete: " + (error?.localizedDescription ?? "nil"), http: http == 101 ? 0 : http)
+  }
+}
+
+/// [v6] Delegate ÚNICO da URLSession compartilhada: encaminha cada callback ao
+/// delegate da geração dona da task. Só tocado na fila q (delegateQueue roda em q).
+/// Chave = identidade do objeto task (taskIdentifier só é único POR sessão).
+final class TransportWSRouter: NSObject, URLSessionWebSocketDelegate {
+  private var routes: [ObjectIdentifier: TransportWSDelegate] = [:]
+
+  func add(_ t: URLSessionTask, _ d: TransportWSDelegate) {
+    routes[ObjectIdentifier(t)] = d
+  }
+
+  func remove(_ t: URLSessionTask) {
+    routes.removeValue(forKey: ObjectIdentifier(t))
+  }
+
+  func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol proto: String?) {
+    routes[ObjectIdentifier(webSocketTask)]?.urlSession(session, webSocketTask: webSocketTask, didOpenWithProtocol: proto)
+  }
+
+  func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                  didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+    routes[ObjectIdentifier(webSocketTask)]?.urlSession(session, webSocketTask: webSocketTask, didCloseWith: closeCode, reason: reason)
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    let k = ObjectIdentifier(task)
+    let d: TransportWSDelegate? = routes[k]
+    routes.removeValue(forKey: k)
+    d?.urlSession(session, task: task, didCompleteWithError: error)
   }
 }
 
@@ -439,9 +663,40 @@ final class TransportSession {
   private var authTimeoutStreak: Int = 0
   private var lastConnectMs: Double = -1
   private var openedAt: Double = 0
+  // [v6] volta do 2º plano: sonda única + telemetria 'resume'.
+  private var lastInboundWall: Double = 0
+  private var lastDropWhy: String = "-"
+  private var resumePending = false
+  private var resumeSentAt: Double = 0
+  private var resumeGen: Int = -1
+  private var resumeWhy: String = ""
+  private var resumeBgMs: Double = 0
+  private var resumeGrace = false
+  private var connectFast = false
+
+  private static func wallMs() -> Double { return Date().timeIntervalSince1970 * 1000.0 }
+
+  /// [v6] Prazo CURTO da 1ª tentativa: último handshake do processo na MESMA rede
+  /// foi rápido (< 1,5 s, RTT < 400 ms) e nenhum timeout seguido → max(4 s, 3×hs+1,5 s).
+  /// Errou → connectTimeoutStreak=1 → próxima tentativa já usa o prazo cheio ×1,5.
+  private func fastFirstTimeoutMs(_ base: Double) -> Double? {
+    if !cfg.fastFirst || connectTimeoutStreak > 0 || base > 10000 { return nil }
+    let hs: Double = owner.lastGoodConnectMs
+    let rtt: Double = owner.lastGoodRttMs
+    if hs <= 0 || hs >= 1500 || owner.lastGoodNetEpoch != owner.netEpoch { return nil }
+    if rtt >= 400 { return nil }
+    var v: Double = max(4000.0, hs * 3.0 + 1500.0)
+    if rtt > 0 { v = max(v, rtt * 6.0 + 1500.0) }
+    return min(base, v)
+  }
 
   private func effConnectTimeoutMs() -> Double {
     let base: Double = cfg.connectTimeoutMs
+    connectFast = false
+    if let f = fastFirstTimeoutMs(base), f < base {
+      connectFast = true
+      return f
+    }
     if !cfg.adaptiveTimeouts { return base }
     var v: Double = base
     if lastRttMs > 0 { v = max(v, lastRttMs * 6.0 + 2000.0) }
@@ -470,6 +725,17 @@ final class TransportSession {
   private var authedAccount: String?
   private var nativeSendCap = false
   private var ingestBuf: [String] = []
+
+  func isAuthed() -> Bool { return !closed && phys == .authed && task != nil }
+
+  /// [v6] hosts p/ pré-resolver (regional + US).
+  func dnsHosts() -> [String] {
+    var out: [String] = []
+    for u in cfg.urls {
+      if let h = u.host, !out.contains(h) { out.append(h) }
+    }
+    return out
+  }
 
   func nativeSendReady(_ account: String) -> Bool {
     guard !closed, phys == .authed, task != nil, nativeSendCap, let a = authedAccount else { return false }
@@ -545,16 +811,17 @@ final class TransportSession {
     owner.bump("connects")
     emitState("connecting", ["url": url.absoluteString, "attempt": attempt, "reason": reason])
     let d = TransportWSDelegate(owner: self, gen: g)
-    let s = owner.makeURLSession(delegate: d)
-    let t = s.webSocketTask(with: url)
+    let made: (URLSessionWebSocketTask, URLSession?) = owner.makeSocketTask(url: url, delegate: d)
+    let t: URLSessionWebSocketTask = made.0
     t.maximumMessageSize = 16 * 1024 * 1024 // initial_data/resume podem passar de 1 MB (padrão)
-    urlSession = s
+    urlSession = made.1
     task = t
     t.resume()
     receiveLoop(t, g)
     connectTimeoutWork = after(effConnectTimeoutMs()) { [weak self] in
       guard let self = self, g == self.gen, self.phys == .connecting else { return }
       self.owner.bump("connectTimeouts")
+      if self.connectFast { self.owner.bump("connectTimeoutsFast") }
       self.connectTimeoutStreak += 1
       self.onDrop(g, code: 0, reason: "connect_timeout")
     }
@@ -593,6 +860,8 @@ final class TransportSession {
     openedAt = now()
     lastConnectMs = openedAt - connectStartedAt
     connectTimeoutStreak = 0
+    owner.lastGoodConnectMs = lastConnectMs
+    owner.lastGoodNetEpoch = owner.netEpoch
     owner.bump("opens")
     let first = !everOpened
     everOpened = true
@@ -636,6 +905,11 @@ final class TransportSession {
   private func onText(_ g: Int, _ text: String) {
     guard g == gen, !closed else { return }
     lastInboundAt = now()
+    lastInboundWall = TransportSession.wallMs()
+    // [v6] qualquer frame depois do ping da volta prova o socket vivo → reusado.
+    if resumePending && g == resumeGen && resumeSentAt > 0 {
+      finishResume(kept: true, probeMs: now() - resumeSentAt, reason: "probe_ok")
+    }
     owner.bump("framesIn")
     owner.bump("bytesIn", Int64(text.utf8.count))
     var type: String? = nil
@@ -646,6 +920,7 @@ final class TransportSession {
     case "pong"?:
       let rtt = lastPingSentAt > 0 ? Int(now() - lastPingSentAt) : -1
       lastRttMs = Double(rtt)
+      if rtt > 0 { owner.lastGoodRttMs = Double(rtt) }
       owner.bump("pongs")
       enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":\(rtt)}")
     case "auth_success"?:
@@ -710,8 +985,13 @@ final class TransportSession {
     guard g == gen, !closed else { return }
     let was = phys
     let url = curUrl
+    let cls: String = ChatTransport.dropClass(reason)
+    lastDropWhy = cls
+    if resumePending { finishResume(kept: false, probeMs: -1, reason: "probe_drop_" + cls) }
     teardownSocket(closeCode: nil)
     if was == .connecting || was == .open { noteFailedBeforeAuth(url) }
+    // [v6] falhou antes do open: não reusa a sessão TLS/conexões (podem estar ruins).
+    if was == .connecting { owner.retireSharedSession("connect_fail") }
     owner.bump("drops")
     if http >= 400 && http <= 499 {
       owner.bump("httpRejects")
@@ -767,13 +1047,15 @@ final class TransportSession {
     connectTimeoutWork?.cancel(); connectTimeoutWork = nil
     authWatchdogWork?.cancel(); authWatchdogWork = nil
     if let t = t {
+      owner.releaseSocketTask(t)
       if let c = closeCode {
         t.cancel(with: URLSessionWebSocketTask.CloseCode(rawValue: c) ?? .normalClosure, reason: nil)
       } else {
         t.cancel()
       }
     }
-    // URLSession segura o delegate (forte) até ser invalidada → sem isso vaza.
+    // URLSession DEDICADA segura o delegate (forte) até ser invalidada → sem isso
+    // vaza. A compartilhada (v6) fica viva (rota já solta acima).
     s?.invalidateAndCancel()
   }
 
@@ -879,9 +1161,16 @@ final class TransportSession {
     if let it = item { deadlineWorks.append(it) }
   }
 
-  func probe(_ ms: Double, reason: String) {
-    if closed { return }
-    if phys != .authed { kick(reason: reason, force: false); return }
+  @discardableResult
+  func probe(_ ms: Double, reason: String) -> Double {
+    if closed { return 0 }
+    if phys != .authed { kick(reason: reason, force: false); return 0 }
+    // [v6] sonda da volta já em voo (nativo dispara no willEnterForeground, antes
+    // do AppState do JS): a do JS não manda outro ping.
+    if reason == "js_probe" && resumePending && gen == resumeGen && resumeSentAt > 0 && now() - resumeSentAt < 10000 {
+      owner.bump("probesCoalesced")
+      return resumeSentAt
+    }
     let g = gen
     let sent = sendPing()
     let dl = min(20000, max(1000, ms.isFinite ? ms : 2500))
@@ -892,7 +1181,45 @@ final class TransportSession {
       if self.lastInboundAt >= sent { return }
       self.owner.bump("zombies")
       self.owner.bump("probeDead")
+      if self.resumePending && g == self.resumeGen { self.finishResume(kept: false, probeMs: -1, reason: "probe_dead") }
       self.forceReconnect("probe_dead_" + reason)
+    }
+    return sent
+  }
+
+  // MARK: [v6] volta do 2º plano
+
+  private func beginResume(bgMs: Double, why: String, grace: Bool) {
+    resumePending = true
+    resumeGen = gen
+    resumeSentAt = 0
+    resumeBgMs = bgMs
+    resumeWhy = why
+    resumeGrace = grace
+  }
+
+  private func finishResume(kept: Bool, probeMs: Double, reason: String) {
+    guard resumePending else { return }
+    resumePending = false
+    resumeSentAt = 0
+    owner.bump(kept ? "resumeKept" : "resumeLost")
+    emitState("resume", [
+      "kept": kept, "probeMs": probeMs, "reason": reason, "why": resumeWhy,
+      "bgMs": resumeBgMs, "grace": resumeGrace,
+    ])
+  }
+
+  private func resumeProbe(bgMs: Double, why: String, grace: Bool) {
+    startHeartbeat()
+    var dl: Double = cfg.fgProbeMs
+    if cfg.adaptiveTimeouts && lastRttMs > 0 { dl = max(cfg.fgProbeMs, lastRttMs * 3.0 + 1000.0) }
+    owner.bump("fgProbes")
+    beginResume(bgMs: bgMs, why: why, grace: grace)
+    let sent: Double = probe(dl, reason: "foreground")
+    if sent <= 0 {
+      finishResume(kept: false, probeMs: -1, reason: "probe_unsent")
+    } else {
+      resumeSentAt = sent
     }
   }
 
@@ -941,14 +1268,20 @@ final class TransportSession {
     emitState("offline", ["reason": "net_down", "wasAuthed": wasAuthed])
   }
 
-  func onForeground(_ fg: Bool, bgMs: Double = 0) {
+  func onForeground(_ fg: Bool, bgMs: Double = 0, inGrace: Bool = false) {
     if closed { return }
     if !fg {
+      resumePending = false
+      resumeSentAt = 0
       stopHeartbeat()
       if phys == .idle {
         reconnectWork?.cancel(); reconnectWork = nil
         emitState("paused", ["reason": "background"])
       }
+      return
+    }
+    if cfg.bgGrace {
+      onForegroundV6(bgMs: bgMs, inGrace: inGrace)
       return
     }
     switch phys {
@@ -972,6 +1305,36 @@ final class TransportSession {
       scheduleReconnect(reason: "foreground", code: 0, wasAuthed: false)
     default:
       break
+    }
+  }
+
+  /// [v6] Volta do 2º plano. Socket autenticado: graça ainda ativa (processo
+  /// nunca suspenso), fora < bgStaleMs (JS: 75 s, dentro dos 90 s de PongWait do
+  /// hub) ou frame recebido há < 30 s → 1 ping e REUSA; só reconecta se a sonda
+  /// falhar (ou o socket cair — defunct chega como erro na hora). Fora mais que
+  /// isso → stale (reconecta já). Emite 'resume' com o desfecho.
+  private func onForegroundV6(bgMs: Double, inGrace: Bool) {
+    switch phys {
+    case .authed:
+      let inboundRecent: Bool = lastInboundWall > 0 && TransportSession.wallMs() - lastInboundWall < 30000
+      if inGrace || bgMs < cfg.bgStaleMs || inboundRecent {
+        let why: String = inGrace ? "grace" : (bgMs < cfg.bgStaleMs ? "short" : "inbound")
+        resumeProbe(bgMs: bgMs, why: why, grace: inGrace)
+      } else {
+        owner.bump("fgReconnects")
+        beginResume(bgMs: bgMs, why: "long", grace: inGrace)
+        finishResume(kept: false, probeMs: -1, reason: "stale")
+        forceReconnect("foreground_stale", resetAttempt: true)
+      }
+    case .idle:
+      // Caiu em 2º plano (paused): reconecta já (DNS pré-resolvido, TLS retomado).
+      beginResume(bgMs: bgMs, why: inGrace ? "grace" : "bg", grace: inGrace)
+      finishResume(kept: false, probeMs: -1, reason: "dropped_bg_" + lastDropWhy)
+      attempt = 0
+      scheduleReconnect(reason: "foreground", code: 0, wasAuthed: false)
+    default:
+      beginResume(bgMs: bgMs, why: "bg", grace: inGrace)
+      finishResume(kept: false, probeMs: -1, reason: "in_flight")
     }
   }
 
@@ -1147,6 +1510,7 @@ final class TransportSession {
       "pingIntervalMs": pingIntervalMs,
       "pongDeadlineMs": pongDeadlineMs,
       "authRejected": authRejected,
+      "lastDropWhy": lastDropWhy,
     ]
   }
 

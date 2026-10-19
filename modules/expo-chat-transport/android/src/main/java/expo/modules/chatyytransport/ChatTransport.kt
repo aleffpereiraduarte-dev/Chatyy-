@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.util.Log
 import expo.modules.chatyychatstore.ChatyyStoreDB
 import expo.modules.chatyychatstore.StoreIngest
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -18,7 +19,11 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONObject
+import java.net.InetAddress
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.ArrayDeque
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
@@ -75,7 +80,16 @@ internal object ChatTransport {
   // 75 s) SONDA o socket em vez de derrubar; prazos de handshake/auth adaptativos
   // (RTT, duração do último handshake, timeouts seguidos); 'authed' traz
   // hsMs/connectMs/authMs. Kill switch: cfg adaptiveTimeouts=false / bgStaleMs=20000.
-  const val VERSION = 5
+  // v6 (2026-10-19 bg-grace/resume, gêmeo do iOS v6): volta do 2º plano com o
+  //     socket autenticado → < bgStaleMs (JS: 75 s) ou frame recebido há < 30 s →
+  //     1 ping e REUSA; stale só se a sonda falhar ou > bgStaleMs; evento 'resume'
+  //     {kept, probeMs, reason, bgMs, grace}; sonda do JS coalesce com a nativa;
+  //     DNS pré-resolvido na volta / troca de rede (cache 30 s por rede, Dns do
+  //     OkHttp); 1ª tentativa com prazo curto (≥ 4 s) quando o último handshake na
+  //     MESMA rede foi rápido. TLS: o OkHttpClient único já reaproveita o cache de
+  //     sessão SSL (reuseSession é aceito e ignorado aqui). Chaves do cfg: bgGrace
+  //     (kill switch JS __chatyy_ws_bg_grace=false), dnsPrewarm, fastFirst.
+  const val VERSION = 6
 
   private val exec = ScheduledThreadPoolExecutor(1) { r ->
     Thread(r, "chatyy-transport").apply { isDaemon = true }
@@ -102,8 +116,16 @@ internal object ChatTransport {
 
   internal val stats = HashMap<String, Long>()
 
+  // [v6] último handshake bom do PROCESSO (prazo curto da 1ª tentativa).
+  internal var lastGoodConnectMs = -1L
+  internal var lastGoodRttMs = -1L
+  internal var netEpoch = 0
+  internal var lastGoodNetEpoch = -1
+  private var lastDnsAt = 0L
+
   internal val client: OkHttpClient by lazy {
     OkHttpClient.Builder()
+      .dns(PrewarmDns)
       .connectTimeout(10, TimeUnit.SECONDS)
       .readTimeout(0, TimeUnit.MILLISECONDS)
       .writeTimeout(15, TimeUnit.SECONDS)
@@ -224,6 +246,10 @@ internal object ChatTransport {
     currentNetwork = network
     netUp = true
     bump("netChanges")
+    // [v6] rede nova: endereços resolvidos na velha não valem; pré-resolve na nova.
+    netEpoch++
+    PrewarmDns.newEpoch(netEpoch)
+    prewarmDns(if (wasDown) "net_up" else "net_change", network)
     session?.onNetwork(if (wasDown) "net_up" else "net_change")
     // [2026-10-18 net-change] request do outbox em voo na interface velha →
     // cancela e reenfileira sem contar tentativa (+ kick). Cobre net_up também.
@@ -245,9 +271,23 @@ internal object ChatTransport {
     foreground = fg
     val bgMs = if (fg && bgAt > 0) now() - bgAt else 0L
     if (!fg) bgAt = now()
+    if (fg) prewarmDns("foreground", currentNetwork)
     session?.onForeground(fg, bgMs)
     // [fase 4] fila nativa: indo pro fundo com pendência → Worker garante o envio
     if (!fg) NativeOutbox.onBackground() else NativeOutbox.peek()?.kick("foreground")
+  }
+
+  /** [v6] Pré-resolve os hosts da sessão numa thread de fundo (cache do PrewarmDns). */
+  internal fun prewarmDns(why: String, network: Network?) {
+    if (!PrewarmDns.enabled) return
+    val s = session ?: return
+    val t = now()
+    if (t - lastDnsAt < 1500) return
+    lastDnsAt = t
+    val hosts = s.dnsHosts()
+    if (hosts.isEmpty()) return
+    bump("dnsPrewarms")
+    PrewarmDns.prewarm(hosts, network)
   }
 
   // ─── [fase 4] porta WS da fila nativa (chamado no MESMO executor) ────────
@@ -272,11 +312,16 @@ internal object ChatTransport {
       batchMs = num(cfg["batchMs"], 16L, 0L, 250L),
       bgStaleMs = num(cfg["bgStaleMs"], 20000L, 5000L, 600000L),
       adaptiveTimeouts = cfg["adaptiveTimeouts"] != false,
+      bgGrace = cfg["bgGrace"] == true,
+      bgGraceMs = num(cfg["bgGraceMs"], 28000L, 0L, 29000L),
+      dnsPrewarm = cfg["dnsPrewarm"] == true,
+      fastFirst = cfg["fastFirst"] == true,
       outboxMax = num(cfg["outboxMax"], 500L, 10L, 2000L).toInt(),
       account = ((cfg["account"] as? String) ?: "").trim().lowercase(),
       storeIngest = cfg["storeIngest"] == true,
     )
     post {
+      PrewarmDns.enabled = c.dnsPrewarm
       session?.close(1000, "replaced", emitClosed = false)
       val s = Session(sid, c)
       session = s
@@ -335,6 +380,8 @@ internal object ChatTransport {
       m["foreground"] = foreground
       m["netUp"] = netUp
       m["regionalBlockedMs"] = max(0L, regionalBlockedUntil - now()).toDouble()
+      m["dnsCacheHits"] = PrewarmDns.hits.get().toDouble()
+      m["dnsCacheMisses"] = PrewarmDns.misses.get().toDouble()
       session?.let { m.putAll(it.snapshot()) }
       m
     }.get(300, TimeUnit.MILLISECONDS)
@@ -350,6 +397,59 @@ internal object ChatTransport {
     val d = (v as? Number)?.toDouble() ?: return def
     if (d.isNaN() || d.isInfinite()) return def
     return min(hi, max(lo, d.toLong()))
+  }
+}
+
+/**
+ * [v6] Dns do OkHttp com cache CURTO (30 s) por época de rede, alimentado pelo
+ * pré-resolve da volta ao 1º plano / troca de rede. Fora disso = Dns.SYSTEM.
+ * Falha de conexão antes do open invalida o host (IP velho nunca fica preso).
+ */
+internal object PrewarmDns : Dns {
+  private class Entry(val addrs: List<InetAddress>, val at: Long, val epoch: Int)
+  private const val TTL_MS = 30_000L
+  private val cache = ConcurrentHashMap<String, Entry>()
+  private val bg = Executors.newSingleThreadExecutor { r -> Thread(r, "chatyy-dns").apply { isDaemon = true } }
+  @Volatile var enabled = false
+  @Volatile private var epoch = 0
+  val hits = AtomicLong(0)
+  val misses = AtomicLong(0)
+
+  override fun lookup(hostname: String): List<InetAddress> {
+    if (enabled) {
+      val e = cache[hostname]
+      if (e != null && e.epoch == epoch && SystemClock.elapsedRealtime() - e.at < TTL_MS && e.addrs.isNotEmpty()) {
+        hits.incrementAndGet()
+        return e.addrs
+      }
+      misses.incrementAndGet()
+    }
+    val r = Dns.SYSTEM.lookup(hostname)
+    if (enabled && r.isNotEmpty()) cache[hostname] = Entry(r, SystemClock.elapsedRealtime(), epoch)
+    return r
+  }
+
+  fun newEpoch(e: Int) {
+    epoch = e
+    cache.clear()
+  }
+
+  fun invalidate(host: String?) {
+    if (host != null) cache.remove(host)
+  }
+
+  fun prewarm(hosts: List<String>, network: Network?) {
+    val ep = epoch
+    try {
+      bg.execute {
+        for (h in hosts) {
+          try {
+            val r: List<InetAddress> = (network?.getAllByName(h) ?: InetAddress.getAllByName(h)).toList()
+            if (r.isNotEmpty() && ep == epoch) cache[h] = Entry(r, SystemClock.elapsedRealtime(), ep)
+          } catch (_: Throwable) {}
+        }
+      }
+    } catch (_: Throwable) {}
   }
 }
 
@@ -371,6 +471,13 @@ internal data class SessionConfig(
   val bgStaleMs: Long = 20_000L,
   /** [v5] prazos de handshake/auth crescem com RTT / timeouts seguidos. */
   val adaptiveTimeouts: Boolean = true,
+  /** [v6] regra de volta nova + evento 'resume' (Android: "graça" = fora < bgGraceMs). */
+  val bgGrace: Boolean = false,
+  val bgGraceMs: Long = 28_000L,
+  /** [v6] pré-resolver DNS na volta / troca de rede. */
+  val dnsPrewarm: Boolean = false,
+  /** [v6] 1ª tentativa com prazo curto quando o último handshake foi rápido. */
+  val fastFirst: Boolean = false,
 )
 
 /** Uma sessão LÓGICA (= um `new WebSocket()` do JS). Só tocada na thread do transporte. */
@@ -424,9 +531,37 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private var authTimeoutStreak = 0
   private var lastConnectMs = -1L
   private var openedAt = 0L
+  // [v6] volta do 2º plano: sonda única + telemetria 'resume'.
+  private var lastDropWhy = "-"
+  private var resumePending = false
+  private var resumeSentAt = 0L
+  private var resumeGen = -1
+  private var resumeWhy = ""
+  private var resumeBgMs = 0L
+  private var resumeGrace = false
+  private var connectFast = false
+
+  /** [v6] Prazo CURTO da 1ª tentativa (ver iOS): último handshake do processo na
+   *  MESMA rede < 1,5 s e RTT < 400 ms, sem timeout seguido → max(4 s, 3×hs+1,5 s). */
+  private fun fastFirstTimeoutMs(base: Long): Long? {
+    if (!cfg.fastFirst || connectTimeoutStreak > 0 || base > 10_000L) return null
+    val hs = ChatTransport.lastGoodConnectMs
+    val rtt = ChatTransport.lastGoodRttMs
+    if (hs <= 0 || hs >= 1500 || ChatTransport.lastGoodNetEpoch != ChatTransport.netEpoch) return null
+    if (rtt >= 400) return null
+    var v = max(4000L, hs * 3 + 1500)
+    if (rtt > 0) v = max(v, rtt * 6 + 1500)
+    return min(base, v)
+  }
 
   private fun effConnectTimeoutMs(): Long {
     val base = cfg.connectTimeoutMs
+    connectFast = false
+    val f = fastFirstTimeoutMs(base)
+    if (f != null && f < base) {
+      connectFast = true
+      return f
+    }
     if (!cfg.adaptiveTimeouts) return base
     var v = base
     if (lastRttMs > 0) v = max(v, lastRttMs * 6 + 2000)
@@ -453,6 +588,16 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private var authedAccount: String? = null
   private var nativeSendCap = false
   private val ingestBuf = ArrayList<String>()
+
+  /** [v6] hosts p/ pré-resolver (regional + US). */
+  fun dnsHosts(): List<String> {
+    val out = ArrayList<String>()
+    for (u in cfg.urls) {
+      val h = try { URI(u).host } catch (_: Throwable) { null }
+      if (!h.isNullOrEmpty() && !out.contains(h)) out.add(h)
+    }
+    return out
+  }
 
   fun nativeSendReady(account: String): Boolean =
     !closed && phys == Phys.AUTHED && ws != null && nativeSendCap && authedAccount != null && authedAccount == account.trim().lowercase()
@@ -490,6 +635,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     connectTimeoutTask = ChatTransport.schedule(effConnectTimeoutMs()) {
       if (g == gen && phys == Phys.CONNECTING) {
         ChatTransport.bump("connectTimeouts")
+        if (connectFast) ChatTransport.bump("connectTimeoutsFast")
         connectTimeoutStreak++
         onDrop(g, 0, "connect_timeout")
       }
@@ -533,6 +679,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     openedAt = now()
     lastConnectMs = openedAt - connectStartedAt
     connectTimeoutStreak = 0
+    ChatTransport.lastGoodConnectMs = lastConnectMs
+    ChatTransport.lastGoodNetEpoch = ChatTransport.netEpoch
     ChatTransport.bump("opens")
     val first = !everOpened
     everOpened = true
@@ -567,6 +715,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private fun onText(g: Int, text: String) {
     if (g != gen || closed) return
     lastInboundAt = now()
+    // [v6] qualquer frame depois do ping da volta prova o socket vivo → reusado.
+    if (resumePending && g == resumeGen && resumeSentAt > 0) finishResume(true, now() - resumeSentAt, "probe_ok")
     ChatTransport.bump("framesIn")
     ChatTransport.bump("bytesIn", text.length.toLong())
     // Classificação barata: só frames pequenos com a "agulha" passam pelo parser.
@@ -580,6 +730,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
       "pong" -> {
         val rtt = if (lastPingSentAt > 0) now() - lastPingSentAt else -1L
         lastRttMs = rtt
+        if (rtt > 0) ChatTransport.lastGoodRttMs = rtt
         ChatTransport.bump("pongs")
         enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":$rtt}")
       }
@@ -670,8 +821,13 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     if (g != gen || closed) return
     val was = phys
     val url = curUrl
+    val cls = dropClass(reason)
+    lastDropWhy = cls
+    if (resumePending) finishResume(false, -1L, "probe_drop_$cls")
     teardownSocket(null)
     if (was == Phys.CONNECTING || was == Phys.OPEN) noteFailedBeforeAuth(url)
+    // [v6] falhou antes do open: endereço pré-resolvido desse host não é mais confiável.
+    if (was == Phys.CONNECTING) PrewarmDns.invalidate(try { URI(url ?: "").host } catch (_: Throwable) { null })
     ChatTransport.bump("drops")
     if (http in 400..499) {
       ChatTransport.bump("httpRejects")
@@ -831,9 +987,15 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     task?.let { deadlineTasks.add(it) }
   }
 
-  fun probe(ms: Long, reason: String) {
-    if (closed) return
-    if (phys != Phys.AUTHED) { kick(reason, false); return }
+  fun probe(ms: Long, reason: String): Long {
+    if (closed) return 0L
+    if (phys != Phys.AUTHED) { kick(reason, false); return 0L }
+    // [v6] sonda da volta já em voo (nativo dispara no onActivityStarted, antes do
+    // AppState do JS): a do JS não manda outro ping.
+    if (reason == "js_probe" && resumePending && gen == resumeGen && resumeSentAt > 0 && now() - resumeSentAt < 10_000L) {
+      ChatTransport.bump("probesCoalesced")
+      return resumeSentAt
+    }
     val g = gen
     val sent = sendPing()
     val dl = min(20000L, max(1000L, ms))
@@ -844,8 +1006,88 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
       if (lastInboundAt >= sent) return@schedule
       ChatTransport.bump("zombies")
       ChatTransport.bump("probeDead")
+      if (resumePending && g == resumeGen) finishResume(false, -1L, "probe_dead")
       forceReconnect("probe_dead_$reason")
     }
+    return sent
+  }
+
+  // ─── [v6] volta do 2º plano ──────────────────────────────────────────────
+
+  private fun beginResume(bgMs: Long, why: String, grace: Boolean) {
+    resumePending = true
+    resumeGen = gen
+    resumeSentAt = 0L
+    resumeBgMs = bgMs
+    resumeWhy = why
+    resumeGrace = grace
+  }
+
+  private fun finishResume(kept: Boolean, probeMs: Long, reason: String) {
+    if (!resumePending) return
+    resumePending = false
+    resumeSentAt = 0L
+    ChatTransport.bump(if (kept) "resumeKept" else "resumeLost")
+    emitState("resume", mapOf(
+      "kept" to kept, "probeMs" to probeMs, "reason" to reason, "why" to resumeWhy,
+      "bgMs" to resumeBgMs, "grace" to resumeGrace,
+    ))
+  }
+
+  private fun resumeProbe(bgMs: Long, why: String, grace: Boolean) {
+    startHeartbeat()
+    val dl = if (cfg.adaptiveTimeouts && lastRttMs > 0) max(cfg.fgProbeMs, lastRttMs * 3 + 1000) else cfg.fgProbeMs
+    ChatTransport.bump("fgProbes")
+    beginResume(bgMs, why, grace)
+    val sent = probe(dl, "foreground")
+    if (sent <= 0L) finishResume(false, -1L, "probe_unsent") else resumeSentAt = sent
+  }
+
+  /** [v6] Volta do 2º plano (ver iOS onForegroundV6). Android não suspende o
+   *  processo como o iOS: o socket costuma sobreviver; "graça" = fora < bgGraceMs. */
+  private fun onForegroundV6(bgMs: Long) {
+    val grace = bgMs < cfg.bgGraceMs
+    when (phys) {
+      Phys.AUTHED -> {
+        val inboundRecent = lastInboundAt > 0 && now() - lastInboundAt < 30_000L
+        if (bgMs < cfg.bgStaleMs || inboundRecent) {
+          val why = if (grace) "grace" else if (bgMs < cfg.bgStaleMs) "short" else "inbound"
+          resumeProbe(bgMs, why, grace)
+        } else {
+          ChatTransport.bump("fgReconnects")
+          beginResume(bgMs, "long", grace)
+          finishResume(false, -1L, "stale")
+          forceReconnect("foreground_stale", true)
+        }
+      }
+      Phys.IDLE -> {
+        beginResume(bgMs, if (grace) "grace" else "bg", grace)
+        finishResume(false, -1L, "dropped_bg_$lastDropWhy")
+        attempt = 0
+        scheduleReconnect("foreground", 0, false)
+      }
+      else -> {
+        beginResume(bgMs, "bg", grace)
+        finishResume(false, -1L, "in_flight")
+      }
+    }
+  }
+
+  private fun dropClass(reason: String): String {
+    val r = reason.lowercase()
+    if (r.contains("abort")) return "abort"
+    if (r.contains("timeout") || r.contains("timed out")) return "timeout"
+    if (r.contains("reset")) return "reset"
+    if (r.contains("unreachable") || r.contains("unable to resolve") || r.contains("offline")) return "offline"
+    if (r.contains("pong")) return "pong"
+    if (r.contains("probe")) return "probe"
+    if (r.contains("eof") || r.contains("closed")) return "eof"
+    val out = StringBuilder()
+    for (ch in r) {
+      if (out.length >= 16) break
+      if (ch.isLetterOrDigit() || ch == '_') out.append(ch)
+    }
+    return if (out.isEmpty()) "other" else out.toString()
   }
 
   fun kick(reason: String, force: Boolean) {
@@ -897,6 +1139,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   fun onForeground(fg: Boolean, bgMs: Long = 0L) {
     if (closed) return
     if (!fg) {
+      resumePending = false
+      resumeSentAt = 0L
       stopHeartbeat()
       if (phys == Phys.IDLE) {
         cancel(reconnectTask); reconnectTask = null
@@ -904,6 +1148,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
       }
       return
     }
+    if (cfg.bgGrace) { onForegroundV6(bgMs); return }
     when (phys) {
       Phys.AUTHED -> {
         if (bgMs >= cfg.bgStaleMs) {
@@ -1098,6 +1343,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     "pingIntervalMs" to pingIntervalMs.toDouble(),
     "pongDeadlineMs" to pongDeadlineMs.toDouble(),
     "authRejected" to authRejected,
+    "lastDropWhy" to lastDropWhy,
   )
 
   // ─── endpoint regional ───────────────────────────────────────────────────

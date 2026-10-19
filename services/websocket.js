@@ -646,6 +646,17 @@ class MailWebSocket {
           }
         } catch {}
         break;
+      case 'resume':
+        // [2026-10-19 bg-grace] nativo v6: desfecho da volta do 2º plano (socket
+        // reusado após 1 ping ou motivo da reconexão) → telemetria ws_ttc.
+        try {
+          this._emit('ws_resume', {
+            kept: !!ev.kept, probeMs: typeof ev.probeMs === 'number' ? ev.probeMs : -1,
+            reason: String(ev.reason || ''), why: String(ev.why || ''),
+            bgMs: Number(ev.bgMs) || 0, grace: !!ev.grace,
+          });
+        } catch {}
+        break;
       case 'reconnecting':
       case 'offline':
       case 'paused':
@@ -1096,6 +1107,17 @@ class MailWebSocket {
             // globalThis.__chatyy_native_resume_probe = false → comportamento antigo.
             bgStaleMs: (globalThis.__chatyy_native_resume_probe === false) ? 20000 : 75000,
             adaptiveTimeouts: globalThis.__chatyy_native_adaptive_timeouts !== false,
+            // [2026-10-19 bg-grace] nativo v6 (BUILD; binário < v6 ignora). Kill
+            // switches (OTA/console), valem no próximo connect():
+            //   __chatyy_ws_bg_grace = false   → sem graça de 2º plano / regra de volta v5
+            //   __chatyy_ws_dns_prewarm = false → sem DNS pré-resolvido
+            //   __chatyy_ws_session_reuse = false → 1 URLSession por socket (iOS)
+            //   __chatyy_ws_fast_first = false → prazo cheio já na 1ª tentativa
+            bgGrace: globalThis.__chatyy_ws_bg_grace !== false,
+            bgGraceMs: 28000,
+            dnsPrewarm: globalThis.__chatyy_ws_dns_prewarm !== false,
+            reuseSession: globalThis.__chatyy_ws_session_reuse !== false,
+            fastFirst: globalThis.__chatyy_ws_fast_first !== false && !_linkDegraded(),
             // [2026-10-15 fase 2b] o nativo grava mensagens/recibos direto no
             // store nativo (sem esperar o JS); conta confirmada pelo auth_success.
             account: String(this.email || '').trim().toLowerCase(),

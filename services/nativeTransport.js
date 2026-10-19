@@ -167,6 +167,14 @@ class NativeTransportSocket {
       // [2026-10-19 resume-reuse] nativo v5+ (versões antigas ignoram as chaves).
       bgStaleMs: opts.bgStaleMs || 20000,
       adaptiveTimeouts: opts.adaptiveTimeouts !== false,
+      // [2026-10-19 bg-grace] nativo v6+: graça de 2º plano (iOS ~28 s) + volta
+      // sonda/reusa + evento 'resume'; DNS pré-resolvido; URLSession compartilhada
+      // (retomada TLS, iOS); 1ª tentativa com prazo curto. Ausente/false = v5.
+      bgGrace: opts.bgGrace === true,
+      bgGraceMs: opts.bgGraceMs || 28000,
+      dnsPrewarm: opts.dnsPrewarm === true,
+      reuseSession: opts.reuseSession === true,
+      fastFirst: opts.fastFirst === true,
       batchMs: 16,
       outboxMax: 500,
       // [2026-10-15 fase 2b] conta da sessão + gravação direta no store nativo

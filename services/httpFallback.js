@@ -95,6 +95,7 @@ let _modeSince = Date.now();
 let _modeBeaconAt = {};
 
 let _ttc = null;             // medição da volta ao 1º plano em curso
+let _lastResume = null;      // [bg-grace] último evento 'resume' do nativo v6 {at, kept, probeMs, reason, grace}
 let _uiKind = 'idle';
 let _uiSince = 0;
 
@@ -210,14 +211,40 @@ function _ttcStart(why, bgMs) {
     why, t0: _now(), bgMs: bgMs || 0, net: _netDesc(), tr: _transportDesc(),
     wsAt: 0, httpAt: 0, sawDown: false, uiMs: 0, uiFrom: (_uiKind === 'connecting' || _uiKind === 'offline') ? _now() : 0,
     authedAtStart: _wsAuthed(), timer: null,
+    // [bg-grace] o nativo decide no willEnterForeground/onActivityStarted — o
+    // evento costuma chegar ANTES do AppState 'active' do JS.
+    nres: (why === 'resume' && _lastResume && _now() - _lastResume.at < 5000) ? _lastResume : null,
   };
   const me = _ttc;
   me.timer = setTimeout(() => { if (_ttc === me) _ttcFinish('timeout'); }, TTC_MAX_MS);
   // Socket que sobreviveu à volta (nenhuma queda em TTC_KEPT_MS) = 0 ms.
-  setTimeout(() => {
+  // Nativo v6 com a sonda ainda em voo: espera o veredito dela (até +3 s).
+  const keptCheck = (waited) => {
     if (_ttc !== me) return;
-    if (!me.sawDown && _wsAuthed()) { me.wsAt = me.t0; _ttcFinish('kept'); }
-  }, TTC_KEPT_MS);
+    if (me.sawDown || !_wsAuthed()) return;
+    if (why === 'resume' && !me.nres && _nativeResumeCapable() && waited < 3000) {
+      setTimeout(() => keptCheck(waited + 500), 500);
+      return;
+    }
+    me.wsAt = me.t0;
+    _ttcFinish('kept');
+  };
+  setTimeout(() => keptCheck(0), TTC_KEPT_MS);
+}
+
+function _nativeResumeCapable() {
+  try {
+    const w = _ws();
+    if (!w || w.transportKind !== 'native') return false;
+    return Number(require('./nativeTransport').nativeTransportVersion()) >= 6 && globalThis.__chatyy_ws_bg_grace !== false;
+  } catch { return false; }
+}
+
+function _onNativeResume(d) {
+  if (!d) return;
+  _lastResume = { at: _now(), kept: !!d.kept, probeMs: Number(d.probeMs), reason: String(d.reason || '-'), grace: !!d.grace, why: String(d.why || '') };
+  const m = _ttc;
+  if (m && m.why === 'resume' && !m.nres) m.nres = _lastResume;
 }
 
 function _ttcFinish(how) {
@@ -230,7 +257,13 @@ function _ttcFinish(how) {
   const ws = m.wsAt ? m.wsAt - m.t0 : -1;
   const http = m.httpAt ? m.httpAt - m.t0 : -1;
   const first = (ws >= 0 && (http < 0 || ws <= http)) ? 'ws' : (http >= 0 ? 'http' : 'none');
-  _beacon('ws_ttc', `why=${m.why} how=${how} ws=${ws} http=${http} first=${first} ui=${Math.round(m.uiMs)} kept=${how === 'kept' ? 1 : 0} bg=${Math.round(m.bgMs / 1000)}s hs=${_lastHsMs} hrtt=${Math.round(_rttEwma)} srtt=${_srtt()} deg=${_degraded ? _degraded.reason : 0} net=${m.net} tr=${m.tr}`);
+  // [bg-grace] kept/probe_ms/reason: veredito do NATIVO v6 quando houver (socket
+  // reusado após 1 ping); senão a heurística do JS (sem queda em 3 s).
+  const nr = m.nres;
+  const kept = nr ? (nr.kept ? 1 : 0) : (how === 'kept' ? 1 : 0);
+  const probeMs = nr && nr.probeMs >= 0 ? Math.round(nr.probeMs) : -1;
+  const reason = nr ? nr.reason : (how === 'kept' ? 'js_kept' : '-');
+  _beacon('ws_ttc', `why=${m.why} how=${how} ws=${ws} http=${http} first=${first} ui=${Math.round(m.uiMs)} kept=${kept} probe_ms=${probeMs} reason=${reason} grace=${nr ? (nr.grace ? 1 : 0) : '-'} ksrc=${nr ? 'n' : 'js'} bg=${Math.round(m.bgMs / 1000)}s hs=${_lastHsMs} hrtt=${Math.round(_rttEwma)} srtt=${_srtt()} deg=${_degraded ? _degraded.reason : 0} net=${m.net} tr=${m.tr}`);
 }
 
 function _ttcNote(kind) {
@@ -465,6 +498,7 @@ export function startHttpFallback() {
     if (w && typeof w.on === 'function') {
       w.on('connection', _onConnection);
       w.on('ws_handshake', _onHandshake);
+      w.on('ws_resume', _onNativeResume);
       if (w.authenticated) { _wsAuthedAt = _now(); _mode = 'ws'; }
     }
   } catch {}
