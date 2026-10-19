@@ -551,6 +551,12 @@ function ChatHub() {
   // sobre o conteúdo e a lista de conversas rola por baixo (bottomInset).
   // Android/web/binário sem expo-blur: barra sólida no fluxo, como antes.
   const GLASS_TAB_BAR = Platform.OS === 'ios' && canNativeBlur();
+  // [2026-10-18 tabbar-glass] Barra JS no iOS = cápsula FLUTUANTE estilo iOS 26
+  // (vidro + hairline + sombra suave + pílula atrás do item ativo), o mais perto
+  // possível da UITabBar nativa (que o build 728/api 3 não usa). Android/web
+  // seguem a barra reta Material. Kill switch: globalThis.__chatyy_float_tabbar = false.
+  const FLOAT_TAB_BAR = Platform.OS === 'ios' && (() => { try { return globalThis.__chatyy_float_tabbar !== false; } catch { return true; } })();
+  const TAB_ICON = FLOAT_TAB_BAR ? 24 : 22;
   const [tabBarH, setTabBarH] = useState(0);
   const onTabBarLayout = useCallback((e) => {
     const h = Math.round(e?.nativeEvent?.layout?.height || 0);
@@ -1822,7 +1828,11 @@ function ChatHub() {
           style={GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : null}
         />
       ) : (
-      <View accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={[styles.tabBar, {
+      <View accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={FLOAT_TAB_BAR ? [styles.tabBarFloatOuter, {
+        ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
+        // iOS 26: a cápsula fica ~insets-10 acima da borda (home indicator por baixo).
+        paddingBottom: insets.bottom > 0 ? Math.max(insets.bottom - 10, 8) : 10,
+      }] : [styles.tabBar, {
         backgroundColor: GLASS_TAB_BAR ? 'transparent' : (barDark ? SHELL_DARK : '#ffffff'),
         ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
         paddingBottom: Platform.OS === 'web' ? (insets.bottom || 10) : Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8),
@@ -1847,7 +1857,8 @@ function ChatHub() {
             só a cor do ícone/label. Mantida no Android/web. */}
         {/* [2026-10-07 native-ui-build] iOS: material translúcido do sistema
             (systemChromeMaterial, igual UITabBar) atrás dos itens. */}
-        {GLASS_TAB_BAR && <BarMaterial isDark={barDark} solidColor={barDark ? SHELL_DARK : '#ffffff'} />}
+        <FloatingTabCapsule enabled={FLOAT_TAB_BAR} isDark={barDark}>
+        {!FLOAT_TAB_BAR && GLASS_TAB_BAR && <BarMaterial isDark={barDark} solidColor={barDark ? SHELL_DARK : '#ffffff'} />}
         {/* [2026-10-13 design-system] A barrinha deslizante de 3px no topo
             (Android/web) foi trocada pela pílula M3 atrás do ícone ativo
             (TabBarItem). A barra ficava "estacionada" sob Conversas quando a
@@ -1861,6 +1872,7 @@ function ChatHub() {
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
               badge={0}
             />
             <TabBarItem
@@ -1877,6 +1889,7 @@ function ChatHub() {
               active={activeTab === 'learn'}
               onPress={() => handleTabPress('learn')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
             />
             <TabBarItem
               icon={(active) => {
@@ -1892,6 +1905,7 @@ function ChatHub() {
               active={activeTab === 'tv'}
               onPress={() => handleTabPress('tv')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
             />
             {/* Kids: "Perfil" tab now opens the unified profile, no more
                 separate ChatProfileTab duplicate. */}
@@ -1909,17 +1923,19 @@ function ChatHub() {
               active={false}
               onPress={() => user?.email && router.push(`/u/${encodeURIComponent(user.email)}`)}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
             />
           </>
         ) : (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconChatsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabChats') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
               onLongPress={requestNewStatus /* [2026-10-09 status-composer] segurar = câmera do status (Instagram) */}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
               badge={chatsBadge}
             />
             {/* [2026-10-03] Email no lugar do Reels — diferencial do super-app
@@ -1927,28 +1943,31 @@ function ChatHub() {
             {/* [2026-10-15] No web, quando o chat está no painel lateral (iframe) do inbox, o e-mail já está aberto ao lado — esconde a aba. */}
             {!(Platform.OS === 'web' && typeof window !== 'undefined' && (() => { try { return window.self !== window.top; } catch { return true; } })()) && (
             <TabBarItem
-              icon={(active) => <IconEmailTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconEmailTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabEmail') || 'Email'}
               active={false}
               onPress={() => handleTabPress('email')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
               badge={emailBadge}
             />
             )}
             {/* [reels-v1 2026-10-13] Reels no centro da barra (tela cheia + ranking "Para você"). */}
             <TabBarItem
-              icon={(active) => <IconReelsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconReelsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('reels.title') || 'Reels'}
               active={activeTab === 'reels'}
               onPress={() => handleTabPress('reels')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
             />
             <TabBarItem
-              icon={(active) => <IconCallsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconCallsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabCalls') || 'Ligações'}
               active={activeTab === 'calls'}
               onPress={() => handleTabPress('calls')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
               badge={missedCallBadge}
             />
             {YOU_TAB ? (() => {
@@ -1958,12 +1977,14 @@ function ChatHub() {
             // (aba de perfil do Instagram); VoiceOver/TalkBack leem "Você".
             // Kill switch __chatyy_you_tab_avatar=false → foto 26 + rótulo (antes).
             const noLabel = (() => { try { return globalThis.__chatyy_you_tab_avatar !== false; } catch { return true; } })();
-            const box = noLabel ? 30 : 26;
+            // [2026-10-18 you-tab-bigger] founder: foto um pouco maior → 34 (era 30) com
+            // anel sutil sempre (hairline translúcido; 1,5 na cor ativa se ativa).
+            const box = noLabel ? 34 : 26;
             return (
             <TabBarItem
               icon={(active) => (
-                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: barDark ? TAB_ON_DARK : TAB_ON_LIGHT }}>
-                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? box - 5 : box - 2} />
+                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 1, borderColor: active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.12)') }}>
+                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? box - 6 : box - 4} />
                 </View>
               )}
               label={t('chat.tabYou') || 'Você'}
@@ -1971,19 +1992,22 @@ function ChatHub() {
               active={false}
               onPress={() => handleTabPress('you')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
             />
             );
             })() : (
             <TabBarItem
-              icon={(active) => <IconAppsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconAppsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabApps') || 'Apps'}
               active={showAppsDrawer}
               onPress={() => handleTabPress('apps')}
               isDark={barDark}
+              floating={FLOAT_TAB_BAR}
             />
             )}
           </>
         )}
+        </FloatingTabCapsule>
       </View>
       )}
       <AppsDrawerModal
@@ -2123,7 +2147,24 @@ function PulseBadge({ badge, isDark, style }) {
 }
 
 // ── Mobile tab bar item with dot indicator ──
-function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, dot, hideLabel }) {
+// [2026-10-18 tabbar-glass] Cápsula flutuante iOS 26 em volta dos itens da barra
+// JS: sombra suave (fora) + vidro recortado (dentro: blur thin material + véu
+// translúcido + hairline). Sem expo-blur no binário → véu quase opaco.
+function FloatingTabCapsule({ enabled, isDark, children }) {
+  if (!enabled) return <>{children}</>;
+  const hasBlur = canNativeBlur();
+  return (
+    <View style={[styles.tabFloatShadow, { shadowOpacity: isDark ? 0.38 : 0.14 }]}>
+      <View style={[styles.tabFloatClip, { borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)' }]}>
+        <BarMaterial isDark={isDark} intensity={90} tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'} solidColor={isDark ? 'rgba(28,28,30,0.97)' : 'rgba(250,250,252,0.97)'} />
+        {hasBlur && <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? 'rgba(28,28,30,0.30)' : 'rgba(255,255,255,0.42)' }]} />}
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, dot, hideLabel, floating }) {
   const { colors } = useTheme();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
@@ -2133,7 +2174,9 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
   const isWeb = Platform.OS === 'web';
   // [2026-10-13 design-system] Android/web: pílula M3 atrás do ícone ativo
   // (fade + leve expansão horizontal). iOS segue UITabBar: só cor/preenchimento.
-  const showPill = Platform.OS !== 'ios';
+  // [2026-10-18 tabbar-glass] iOS flutuante: pílula de vidro atrás do item INTEIRO
+  // (ícone + rótulo), como a seleção da tab bar do iOS 26.
+  const showPill = Platform.OS !== 'ios' || !!floating;
   const pillAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
   // [2026-10-18 elegance] Cross-fade do ícone (contorno ↔ preenchido) + leve
   // "assentar" de escala no ativo — estilo Telegram. Os dois estados do ícone
@@ -2164,12 +2207,13 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
   // role=tab + selected (VoiceOver/TalkBack anunciam "aba, selecionada"),
   // haptic leve em TODO toque (antes só na troca real de aba; Email/Apps mudos).
   const handlePress = () => {
-    if (!active && Platform.OS !== 'web') { try { haptic.select(); } catch {} }
+    // [2026-10-18 tabbar-glass] haptic em todo toque (inclusive re-toque na aba ativa → topo).
+    if (Platform.OS !== 'web') { try { haptic.select(); } catch {} }
     onPress && onPress();
   };
   return (
     <Pressable
-      style={styles.tabItem}
+      style={floating ? styles.tabItemFloat : styles.tabItem}
       onPress={handlePress}
       onLongPress={onLongPress ? () => { try { haptic.select(); } catch {} onLongPress(); } : undefined}
       delayLongPress={380}
@@ -2181,11 +2225,18 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
       android_ripple={Platform.OS === 'android' ? { borderless: true, radius: 34, color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)' } : undefined}
       hitSlop={4}
     >
-      <Animated.View style={[styles.tabIconWrap, {
+      {floating && (
+        <Animated.View pointerEvents="none" style={[styles.tabPillFloat, {
+          backgroundColor: isDark ? 'rgba(255,255,255,0.13)' : 'rgba(120,120,128,0.16)',
+          opacity: pillAnim,
+          transform: [{ scale: pillAnim.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] }) }],
+        }]} />
+      )}
+      <Animated.View style={[styles.tabIconWrap, floating && styles.tabIconWrapFloat, hideLabel && { height: 38 }, {
         transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
         backgroundColor: 'transparent',
       }]}>
-        {showPill && (
+        {showPill && !floating && (
           <Animated.View pointerEvents="none" style={[styles.tabPill, {
             backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)',
             opacity: pillAnim,
@@ -2214,7 +2265,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
         )}
       </Animated.View>
       {/* [2026-10-18 you-tab-nolabel] sem rótulo → o tabItem (justifyContent center) centraliza o ícone na altura da barra. */}
-      {!hideLabel && <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, {
+      {!hideLabel && <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, floating && styles.tabLabelFloat, {
         color: active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT),
         // [2026-10-17 wa-polish] 700↔500 made labels jump width on switch; UITabBar keeps one weight.
         fontWeight: active ? '600' : '500',
@@ -2364,6 +2415,52 @@ const styles = StyleSheet.create({
     width: 32,
     height: 3,
     borderRadius: 1.5,
+  },
+  // [2026-10-18 tabbar-glass] iOS 26 flutuante: margem lateral 20, cápsula
+  // ~62 pt (r 31), itens com pílula de 54 pt.
+  tabBarFloatOuter: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingTop: 6,
+    backgroundColor: 'transparent',
+  },
+  tabFloatShadow: {
+    flex: 1,
+    borderRadius: 31,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 18,
+  },
+  tabFloatClip: {
+    flexDirection: 'row',
+    borderRadius: 31,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 4,
+  },
+  tabItemFloat: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 54,
+    paddingVertical: 5,
+    position: 'relative',
+  },
+  tabPillFloat: {
+    position: 'absolute',
+    top: 0, bottom: 0, left: 1, right: 1,
+    borderRadius: 27,
+  },
+  tabIconWrapFloat: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+  },
+  tabLabelFloat: {
+    fontSize: 10,
+    lineHeight: 12,
+    marginTop: 2,
+    letterSpacing: 0.1,
   },
   tabItem: {
     flex: 1,

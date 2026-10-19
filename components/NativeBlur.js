@@ -55,13 +55,14 @@ export function BlurBackdrop({ isDark, dim = 0.4, intensity = 30, style, childre
 
 // Fundo de barra (tab bar / toolbar): iOS = material translúcido do sistema
 // (claro/escuro), demais = cor sólida passada em `solidColor`.
-export function BarMaterial({ isDark, solidColor, style, intensity = 80 }) {
+// [2026-10-18 tabbar-glass] `tint` opcional (barra JS flutuante estilo iOS 26).
+export function BarMaterial({ isDark, solidColor, style, intensity = 80, tint }) {
   const BlurView = getNativeBlurView();
   if (BlurView) {
     return (
       <BlurView
         intensity={intensity}
-        tint={isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight'}
+        tint={tint || (isDark ? 'systemChromeMaterialDark' : 'systemChromeMaterialLight')}
         style={[StyleSheet.absoluteFillObject, style]}
         pointerEvents="none"
       />

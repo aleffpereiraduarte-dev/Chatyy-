@@ -48,6 +48,10 @@ import kotlin.math.roundToInt
  * anel de 1,5 dp na cor ativa quando a aba está selecionada (+ contorno 0,5 dp
  * quase invisível p/ foto clara em fundo claro não "sumir"). Sem tint.
  */
+/** [2026-10-18 you-tab-bigger] Foto da aba "Você" sem rótulo (api 4): 30 → 33 dp
+ *  (founder: "a foto um pouco maior"). Cabe na caixa de 40 dp do iconWrap. */
+internal const val NTB_AVATAR_NOLABEL_DP = 33f
+
 internal class NTBAvatarDrawable(
   private val photo: Bitmap,
   private val ring: Int?,
@@ -291,7 +295,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
       record = r
       label.text = r.label
       // [2026-10-18 you-tab-nolabel] api 4: sem rótulo → só o ícone/foto, centralizado
-      // na célula (root gravity CENTER) e com caixa maior p/ caber a foto de 30 dp.
+      // na célula (root gravity CENTER) e com caixa maior p/ caber a foto de 33 dp.
       label.visibility = if (r.hideLabel) View.GONE else View.VISIBLE
       (iconWrap.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
         val h = dp(if (r.hideLabel) 40f else 32f)
@@ -329,14 +333,14 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
     fun updateIcon() {
       val bmp = avatarBmp
       if (bmp != null) {
-        setIconSizeDp(if (record.hideLabel) 30f else 28f)
+        setIconSizeDp(if (record.hideLabel) NTB_AVATAR_NOLABEL_DP else 28f) // [2026-10-18 you-tab-bigger] 30→33 dp
         icon.imageTintList = null
         val edge = if (isDarkTheme) 0x24FFFFFF else 0x1A000000
         icon.setImageDrawable(NTBAvatarDrawable(bmp, if (active) cActive else null, edge, density))
         avatarShown = true
         return
       }
-      setIconSizeDp(if (record.hideLabel) 28f else 24f)
+      setIconSizeDp(if (record.hideLabel) 29f else 24f)
       val res = iconRes(record.androidIcon ?: record.key, active)
       if (res != 0) icon.setImageResource(res) else icon.setImageDrawable(null)
       if (avatarShown) {
@@ -362,7 +366,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
         }
         return
       }
-      val px = dp(if (record.hideLabel) 30f else 28f)
+      val px = dp(if (record.hideLabel) NTB_AVATAR_NOLABEL_DP else 28f)
       val target = object : CustomTarget<Bitmap>(px, px) {
         override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
           if (avatarTarget !== this) return

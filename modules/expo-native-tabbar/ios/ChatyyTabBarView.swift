@@ -19,7 +19,7 @@ import UIKit
 // - [2026-10-18 you-tab-nolabel] api 4: `hideLabel` → item sem título (só a
 //   foto/ícone, como a aba de perfil do Instagram), imagem empurrada para o
 //   centro vertical (imageInsets, o espaço do rótulo some) e um pouco maior
-//   (foto 30 pt). accessibilityLabel continua = label ("Você").
+//   (foto 33 pt). accessibilityLabel continua = label ("Você").
 // - [2026-10-18 tabbar-invisivel] api 4: build 728 (api 3) montava a barra
 //   mas às vezes ela sumia ao reabrir o app. Única mudança nativa do 728 =
 //   foto da aba Você trocando `item.image/selectedImage` IN PLACE num
@@ -289,10 +289,10 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
 
   // MARK: - Sem rótulo (api 4)
 
-  /// SF Symbol do item; sem rótulo um pouco maior (26 pt ≈ foto de 30 pt).
+  /// SF Symbol do item; sem rótulo um pouco maior (28 pt ≈ foto de 33 pt).
   private static func symbolImages(_ r: NTBItemRecord) -> (UIImage?, UIImage?) {
     let cfg: UIImage.SymbolConfiguration? = r.hideLabel
-      ? UIImage.SymbolConfiguration(pointSize: 26, weight: .regular, scale: .medium) : nil
+      ? UIImage.SymbolConfiguration(pointSize: 28, weight: .regular, scale: .medium) : nil
     func sym(_ name: String) -> UIImage? {
       if let cfg = cfg { return UIImage(systemName: name, withConfiguration: cfg) }
       return UIImage(systemName: name)
