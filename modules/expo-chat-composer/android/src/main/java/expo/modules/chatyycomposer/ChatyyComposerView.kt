@@ -501,6 +501,13 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
 
   internal fun onAppBackground() {
     if (!appInBackground) resumeHadFocus = try { edit.hasFocus() } catch (_: Throwable) { false }
+    // [2026-10-19 core-chat] Gravação TRAVADA + app p/ 2º plano: sem FGS de microfone o
+    // Android 11+ corta o mic e o áudio seguia gravando SILÊNCIO. WhatsApp pausa → ao
+    // voltar a pessoa ouve a prévia / continua. Segurando já cancela (toque perdido).
+    if (voiceBgPause) {
+      val r = Runnable { try { voice.pauseForBackground() } catch (_: Throwable) {} }
+      if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) r.run() else post(r)
+    }
   }
 
   private fun inResumeWindow(): Boolean =
@@ -508,6 +515,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
 
   companion object {
     @Volatile internal var appInBackground = false
+    @Volatile internal var voiceBgPause = true
     @Volatile internal var appForegroundAt = 0L
     internal val live: MutableSet<ChatyyComposerView> =
       java.util.Collections.newSetFromMap(java.util.WeakHashMap<ChatyyComposerView, Boolean>())

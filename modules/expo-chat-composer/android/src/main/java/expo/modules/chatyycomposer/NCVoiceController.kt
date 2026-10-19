@@ -629,6 +629,11 @@ internal class NCVoiceController(private val host: ChatyyComposerView) {
     try { rec.maxAmplitude } catch (_: Throwable) {} // 1ª leitura sempre 0
   }
 
+  /** [2026-10-19 core-chat] App foi p/ 2º plano com gravação travada → pausa (mic cortado). */
+  internal fun pauseForBackground() {
+    if (isActive && isLocked && !isPaused) pause()
+  }
+
   /** Ligação/outro app pegou o áudio: segurando = cancela; travado = PAUSA (WhatsApp). */
   private fun onInterrupted() {
     if (!isActive) return

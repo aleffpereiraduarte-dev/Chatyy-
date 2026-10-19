@@ -167,21 +167,49 @@ function NativeConversationListInner(props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me, t, language, helpers, typingUsers, drafts, draftTimes, presenceToken, ringToken, avatarToken, socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap]);
 
+  // [2026-10-19 core-chat] Cache por linha: "digitando"/rascunho mudam UMA conversa,
+  // mas trocavam o ctx e refaziam buildRow (~30 t() + a11y) de TODAS as linhas a cada
+  // evento — o maior custo JS da aba no Android. Agora a geração só muda quando algo
+  // GLOBAL muda (idioma, presença, anel, avatar, seleção, cadeados, socket); typing/
+  // rascunho invalidam só a linha delas (mesmo objeto da conversa = mesma linha).
+  // Kill switch: globalThis.__chatyy_list_row_cache = false (refaz tudo como antes).
+  const rowGen = useMemo(() => ({}),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [me, t, language, helpers, presenceToken, ringToken, avatarToken, socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap]);
+  const rowCacheRef = useRef(new Map());
+
   const built = useMemo(() => {
     const rows = [];
     const meta = new Map();
     if (deferBuild) return { rows, meta, deferred: true };
     avKickRef.current = 40; // só as ~40 primeiras linhas disparam download (o resto: prefetch/rolagem)
+    const useCache = globalThis.__chatyy_list_row_cache !== false;
+    const prev = rowCacheRef.current;
+    const next = new Map();
+    const minute = Math.floor(Date.now() / 60000); // horário/"ontem"/idade do rascunho
     for (const c of (Array.isArray(conversations) ? conversations : [])) {
       if (!c || c.id == null) continue;
+      const k = String(c.id);
+      const typ = ctx.typingUsers ? ctx.typingUsers[c.id] : undefined;
+      const dr = ctx.drafts ? ctx.drafts[k] : undefined;
+      const dt = ctx.draftTimes ? ctx.draftTimes[k] : undefined;
+      const hit = useCache ? prev.get(k) : null;
+      if (hit && hit.c === c && hit.g === rowGen && hit.typ === typ && hit.dr === dr && hit.dt === dt && hit.mn === minute) {
+        rows.push(hit.row);
+        meta.set(hit.row.id, hit.m);
+        next.set(k, hit);
+        continue;
+      }
       try {
         const { row, meta: m } = buildRow(c, ctx);
         rows.push(row);
         meta.set(row.id, m);
+        next.set(k, { c, g: rowGen, typ, dr, dt, mn: minute, row, m });
       } catch {}
     }
+    rowCacheRef.current = next;
     return { rows, meta };
-  }, [conversations, ctx, deferBuild]);
+  }, [conversations, ctx, rowGen, deferBuild]);
 
   const { patch, snapshot } = useMemo(
     () => (built.deferred ? { patch: undefined, snapshot: null } : patcherRef.current.diff(built.rows)),

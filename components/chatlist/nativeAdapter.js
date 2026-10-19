@@ -218,7 +218,9 @@ export function buildRow(conv, ctx) {
   const muted = !!conv.muted;
   const pinned = !!conv.pinned;
   const archived = !!conv.archived;
-  const locked = !!(ctx.lockedIds && ctx.lockedIds.has(conv.id) && !(ctx.unlockedIds && ctx.unlockedIds.has(conv.id)));
+  // [2026-10-19 core-chat] ids string (linha inserida pelo WS) também batem no Set numérico.
+  const _hasId = (set) => !!(set && (set.has(conv.id) || set.has(Number(conv.id)) || set.has(String(conv.id))));
+  const locked = _hasId(ctx.lockedIds) && !_hasId(ctx.unlockedIds);
   const lastMsg = conv.last_message;
 
   // Prévia (mesma função do ConversationRow)

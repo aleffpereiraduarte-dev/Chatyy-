@@ -4151,6 +4151,15 @@ function _sameConvRow(a, b) {
   for (const k of ka) if (!_sameVal(a[k], b[k])) return false;
   return true;
 }
+// [2026-10-19 core-chat] Silenciar/fixar/arquivar/não-lida de OUTRO aparelho (ou
+// silêncio de 8 h que venceu) não mudava a impressão digital → o sync em 2º plano
+// pulava o setState e o sino/alfinete ficavam velhos até outra mensagem chegar.
+function _convFlagsFp(c) {
+  if (globalThis.__chatyy_list_fp_flags === false) return '';
+  const mu = c.muted_until || '';
+  const muOn = c.muted ? 1 : 0;
+  return `${muOn}${mu ? '~' + mu : ''}:${c.pinned ? 1 : 0}:${c.archived ? 1 : 0}:${c.marked_unread ? 1 : 0}`;
+}
 function _reuseConvRows(prev, next) {
   if (!Array.isArray(prev) || !Array.isArray(next) || prev.length === 0) return next;
   const byId = new Map();
@@ -4831,7 +4840,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         }
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         if (!convs.length) return;
-        const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
+        const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}:${_convFlagsFp(c)}`).join('|');
         if (fpNew === lastConvsRef.current) return; // unchanged — skip setState
         lastConvsRef.current = fpNew;
         // Single-pass partition: was 2× filter (one for active, one for
@@ -4885,7 +4894,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         setLoading(false);
         // Background delta sync
         if (!searchText) {
-          const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
+          const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}:${_convFlagsFp(c)}`).join('|');
           api.chatConversations('', true).then(r => {
             if (!isFresh()) return;
             if (!r?.success) return;
@@ -5322,7 +5331,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // Fast dedup: fingerprint includes id + unread_count + updated_at
           // so we re-render when a new message arrives or unread count changes,
           // but skip the setState (and flicker) when nothing actually changed.
-          const newFingerprint = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
+          const newFingerprint = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}:${_convFlagsFp(c)}`).join('|');
           if (convs.length > 0 && newFingerprint !== focusConvsRef.current) {
             focusConvsRef.current = newFingerprint;
             // Refresh BOTH buckets — back-out from an archived chat must repaint
@@ -6664,6 +6673,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       }
     };
 
+    function _bumpPresenceRt() {
+      if (presenceRtTimerRef.current) clearTimeout(presenceRtTimerRef.current);
+      presenceRtTimerRef.current = setTimeout(() => {
+        presenceRtTimerRef.current = null;
+        setPresenceRtToken(v => (v + 1) % 1000000);
+      }, 500);
+    }
+
     // Listen for presence_result (from queryPresence)
     const unsubResult = mailWs.on('presence_result', (presences) => {
       if (!presences || typeof presences !== 'object') return;
@@ -6688,7 +6705,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           merged.set(email, val);
         }
         presencesRef.current = merged;
-        setPresenceVersion(v => v + 1);
+        // [2026-10-19 core-chat] Uma rodada só: antes o poll subia presenceVersion
+        // (re-render da aba inteira + rebuild de TODAS as linhas nativas) e o
+        // evento ao vivo subia version + token 500 ms depois (2 rebuilds). Agora
+        // os dois passam pelo mesmo token com debounce. Kill switch:
+        // globalThis.__chatyy_list_presence_coalesce = false (volta ao antigo).
+        if (globalThis.__chatyy_list_presence_coalesce === false) setPresenceVersion(v => v + 1);
+        else _bumpPresenceRt();
       }
     });
 
@@ -6705,17 +6728,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           const merged = new Map(presencesRef.current);
           merged.set(data.email, newVal);
           presencesRef.current = merged;
-          setPresenceVersion(v => v + 1);
+          if (globalThis.__chatyy_list_presence_coalesce === false) setPresenceVersion(v => v + 1);
           // [FIX P2] Real-time dot repaint — DEBOUNCED token into extraData so
           // the FlashList actually re-diffs rows (presenceVersion alone never
           // reaches extraData). Only here, in the real-time `presence` handler;
           // the 45s poll (presence_result above) deliberately does NOT bump it,
           // so steady-state churn stays dead. 500ms coalesces presence bursts.
-          if (presenceRtTimerRef.current) clearTimeout(presenceRtTimerRef.current);
-          presenceRtTimerRef.current = setTimeout(() => {
-            presenceRtTimerRef.current = null;
-            setPresenceRtToken(v => (v + 1) % 1000000);
-          }, 500);
+          _bumpPresenceRt();
         }
       }
     });
@@ -6948,10 +6967,17 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         setConversations(prev => [{ ...conv, archived: 0 }, ...prev.filter(c => c.id !== conv.id)]);
       }
     };
+    // [2026-10-19 core-chat] WhatsApp: arquivar uma conversa fixada a desafixa —
+    // antes ela voltava fixada ao desarquivar e passava do teto de 3 fixadas.
+    const _unpinOnArchive = newArchived && !!conv.pinned && globalThis.__chatyy_archive_unpin !== false;
+    if (_unpinOnArchive) conv = { ...conv, pinned: false };
     move(newArchived);
     try {
       const r = await api.chatArchive(conv.id, newArchived);
       if (!r?.success) move(!newArchived);
+      else if (_unpinOnArchive) {
+        try { await api.apiCall('chat_pin_conversation', { conversation_id: conv.id, pinned: false }, 'POST'); } catch {}
+      }
     } catch { move(!newArchived); }
   }, []);
 
@@ -6971,7 +6997,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }
   }, [loadConversations]);
 
-  const handlePinConversation = useCallback(async (conv) => {
+  const handlePinConversation = useCallback(async (conv, pinOpts) => {
     const willPin = !conv.pinned;
 
     // WhatsApp parity: at most MAX_PINNED_CHATS (3) conversations can be
@@ -6996,7 +7022,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // [2026-10-14 feel] A linha SOBE/DESCE deslizando até o lugar novo (como o
     // arquivar), em vez de teleportar pro topo; + toque leve de confirmação.
     try { LayoutAnimation.configureNext(LayoutAnimation.create(260, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity)); } catch {}
-    try { haptic.select(); } catch {}
+    try { if (!(pinOpts && pinOpts.noHaptic)) haptic.select(); } catch {}
     // Optimistic toggle (plus displacement) so swipe feels instant.
     setConversations(prev => prev.map(c => {
       if (c.id === conv.id) return { ...c, pinned: willPin };
@@ -9685,10 +9711,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // Ações do swipe / menu nativo (toque longo) → MESMOS handlers do sheet JS
   // (lpActions), incluindo as confirmações (Alert nativo / biometria).
   const _nativeHomeAction = useCallback((action, conv, ev) => {
-    try { if (action === 'toggleRead' || action === 'mute') haptic.select(); else if (action === 'archive') haptic.success(); } catch {}
+    // [2026-10-19 core-chat] O swipe nativo (iOS UIContextualAction / Android fire())
+    // já dá o toque ao executar — o JS repetia (2 vibrações por swipe; pin = 3).
+    const _nativeBuzzed = ev && ev.source === 'swipe' && globalThis.__chatyy_list_swipe_haptic_dedupe !== false;
+    try { if (!_nativeBuzzed) { if (action === 'toggleRead' || action === 'mute') haptic.select(); else if (action === 'archive') haptic.success(); } } catch {}
     const A = lpActions.current || {};
     if (action === 'toggleRead') handleMarkUnreadConversation(conv);
-    else if (action === 'pin') handlePinConversation(conv);
+    else if (action === 'pin') handlePinConversation(conv, _nativeBuzzed ? { noHaptic: true } : undefined);
     else if (action === 'mute') {
       const until = Number(ev?.until) || 0;
       if (until > 0) handleMuteConversation(conv, until); else handleMuteConversation(conv);

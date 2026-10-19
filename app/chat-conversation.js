@@ -10285,8 +10285,18 @@ function _createValueStore(initial) {
 function useTypingInfo(store, t) {
   const typingUsers = useSyncExternalStore(store.subscribe, store.get, store.get);
   const typingEntries = useMemo(
-    () => [...typingUsers.entries()].map(([email, v]) => ({ email, name: v?.name, recording: !!v?.recording })),
-    [typingUsers]
+    // [2026-10-19 core-chat] TCP/WS sem `name` mandavam o local-part cru ("joao.silva82
+    // digitando…" no grupo). Apelido > nome real > emailToDisplayName (= remetente).
+    () => [...typingUsers.entries()].map(([email, v]) => {
+      let name = v?.name;
+      if (globalThis.__chatyy_typing_friendly_name !== false) {
+        let nn = '';
+        try { nn = require('../services/nicknames').getNickname?.(email) || ''; } catch {}
+        name = nn || _friendlySenderName(email, v?.name, '', t) || v?.name;
+      }
+      return { email, name, recording: !!v?.recording };
+    }),
+    [typingUsers, t]
   );
   const typingUser = useMemo(() => {
     if (typingEntries.length === 0) return null;
@@ -14527,6 +14537,19 @@ function ChatConversationInnerBody() {
   const [searchResults, setSearchResults] = _useStateT([]);
   const [searchIdx, setSearchIdx] = _useStateT(0);
   const searchInputRef = useRef(null);
+  // [2026-10-19 core-chat] FTS/servidor chegam DEPOIS e re-ordenam a lista: o índice
+  // ficava o mesmo → "3 de 12" e o destaque apontavam p/ outra mensagem que não a da
+  // tela. Mantém o foco no MESMO id. Kill switch: __chatyy_search_keep_focus = false.
+  const searchFocusRef = useRef({ results: [], idx: 0 });
+  searchFocusRef.current = { results: searchResults, idx: searchIdx };
+  const _setSearchResultsKeep = (merged) => {
+    const cur = searchFocusRef.current;
+    const focusId = cur.results && cur.results[cur.idx] ? cur.results[cur.idx].id : null;
+    setSearchResults(merged);
+    if (focusId == null || globalThis.__chatyy_search_keep_focus === false) return;
+    const ni = merged.findIndex(m => m && String(m.id) === String(focusId));
+    if (ni >= 0 && ni !== cur.idx) setSearchIdx(ni);
+  };
 
   // Pinned messages
   const [pinnedMessages, setPinnedMessages] = _useStateT([]);
@@ -17349,9 +17372,19 @@ function ChatConversationInnerBody() {
       const finishedIsOwn = finished.sender_email === currentEmail;
       for (let i = idx + 1; i < list.length; i++) {
         const m = list[i];
-        const ts = +new Date(m.created_at || 0);
-        if (ts && finishedTs && (ts - finishedTs) > 60_000) break;
-        if (m.type !== 'audio' && m.type !== 'voice') continue;
+        // [2026-10-19 core-chat] WhatsApp: toca o PRÓXIMO áudio CONSECUTIVO, sem limite de
+        // tempo; qualquer mensagem de verdade no meio (texto/foto da pessoa) quebra a
+        // corrente. Antes: texto no meio era pulado e 2 áudios com > 60 s de diferença
+        // paravam. Kill switch: globalThis.__chatyy_voice_chain_wa = false (regra antiga).
+        if (globalThis.__chatyy_voice_chain_wa === false) {
+          const ts = +new Date(m.created_at || 0);
+          if (ts && finishedTs && (ts - finishedTs) > 60_000) break;
+          if (m.type !== 'audio' && m.type !== 'voice') continue;
+        } else {
+          if (!m || m.type === 'system' || m._type === 'date' || m._type === 'unread' || m.type === 'date_separator') continue;
+          if (m.type !== 'audio' && m.type !== 'voice') break;
+          if (m.deleted_at) break;
+        }
         if (m.sender_email !== finished.sender_email) break;
         if (!finishedIsOwn && (m.sender_email === currentEmail)) break;
         if (m.is_view_once || m._uploading || m._pending) break;
@@ -19222,6 +19255,41 @@ function ChatConversationInnerBody() {
             } catch {}
           }
           if (!mountedRef.current) return;
+          // [2026-10-19 core-chat] Mensagem que chegou PRIMEIRO pelo TCP: o WS chega depois,
+          // bate no _recvIdSet e sai cedo — então os efeitos de "mensagem nova" que só
+          // viviam no caminho WS nunca rodavam: o FAB ficava sem número, o "@" sem menção,
+          // o "digitando…" ficava 4–5 s na tela depois da mensagem e o ✓✓ azul esperava
+          // o onViewable. Mesma lógica do WS. Kill switch: __chatyy_tcp_new_fx = false.
+          if (globalThis.__chatyy_tcp_new_fx !== false) {
+            try {
+              const _me = String(currentEmail || '').toLowerCase();
+              const _snd = String(msg.sender_email || '').toLowerCase();
+              const _other = !!_snd && _snd !== _me;
+              if (_other) {
+                setTypingUsers(prev => {
+                  if (!prev.has(_snd)) return prev;
+                  const next = new Map(prev);
+                  const entry = next.get(_snd);
+                  if (entry?.timer) clearTimeout(entry.timer);
+                  next.delete(_snd);
+                  return next;
+                });
+              }
+              if (msg.id && isScrolledUpRef.current && _msgMentionsMe(msg, currentEmail)) {
+                setUnreadMentionIds(prev => (prev.includes(msg.id) ? prev : [...prev, msg.id]));
+              }
+              if (_other && msg.id && !String(msg.id).startsWith('tmp_')) {
+                if (isScrolledUpRef.current) {
+                  setNewMsgCount(c => c + 1);
+                } else if (settingsRef.current?.read_receipts !== false) {
+                  if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
+                  const _rid = msg.id;
+                  pendingReadMsgIdRef.current = _rid;
+                  readDebounceRef.current = setTimeout(() => { readDebounceRef.current = null; pendingReadMsgIdRef.current = null; markReadUpTo(_rid); }, 0);
+                }
+              }
+            } catch {}
+          }
           // Trigger receive sound only for genuinely new messages from others
           if (isFromOther) {
             if (msg.type === 'gift') { try { require('../components/gifts/giftFx').celebrateGiftReceived(msg); } catch {} } // [gift-premium 2026-10-16]
@@ -24660,7 +24728,7 @@ function ChatConversationInnerBody() {
   // needs the brief "appearance" cue so the icon doesn't just snap in.
   const reactionBounceOpacity = useRef(new Animated.Value(1)).current;
 
-  const handleReact = async (msgId, emoji, stickerUrl) => {
+  const handleReact = async (msgId, emoji, stickerUrl, reactOpts) => {
     const isSticker = typeof stickerUrl === 'string' && stickerUrl.length > 0;
     if (!isSticker) {
       // Validate emoji length (max 20 chars)
@@ -24673,12 +24741,32 @@ function ChatConversationInnerBody() {
 
     // Mini-vibração iMessage style — Light é o "tap na pele" que o usuário
     // quer, Medium dá a impressão de bug. Reação é sempre feedback sutil.
-    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-    // Premium animated burst (Chatyy One = bigger, all plans get a small burst).
-    // For sticker reactions, encode as 'sticker:<url>' so the burst overlay's
-    // emoji-detection branch falls through to the sticker render path.
-    const burstKey = isSticker ? ('sticker:' + stickerUrl) : emoji;
-    setBurst({ emoji: burstKey, key: Date.now(), premium: isPremium });
+    // [2026-10-19 core-chat] (a) Reação vinda da lista/menu NATIVO: o nativo já deu o
+    // toque e o voo/pop do emoji → aqui repetia vibração + explosão por cima (2×).
+    // (b) Tirar a PRÓPRIA reação (toggle) não explode nem vibra (WhatsApp).
+    // Kill switch: globalThis.__chatyy_react_fx_dedupe = false.
+    let _reactQuiet = false;
+    if (globalThis.__chatyy_react_fx_dedupe !== false) {
+      if (reactOpts && reactOpts.fromNative) _reactQuiet = true;
+      else {
+        try {
+          const _meQ = String(currentEmail || '').toLowerCase();
+          const _keyQ = isSticker ? ('sticker:' + stickerUrl) : emoji;
+          const _curQ = (messagesRef?.current || []).find(m => m && m.id === msgId);
+          const _rq = ((_curQ && _curQ.reactions) || []).find(r => (r?.emoji || r?.reaction) === _keyQ);
+          const _uq = _rq ? (Array.isArray(_rq.users) ? _rq.users : (typeof _rq.users === 'string' ? _rq.users.split(',') : [])) : [];
+          if (_uq.some(u => String(u || '').toLowerCase() === _meQ)) _reactQuiet = true;
+        } catch {}
+      }
+    }
+    if (!_reactQuiet) {
+      try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+      // Premium animated burst (Chatyy One = bigger, all plans get a small burst).
+      // For sticker reactions, encode as 'sticker:<url>' so the burst overlay's
+      // emoji-detection branch falls through to the sticker render path.
+      const burstKey = isSticker ? ('sticker:' + stickerUrl) : emoji;
+      setBurst({ emoji: burstKey, key: Date.now(), premium: isPremium });
+    }
     // iMessage-style reaction bounce: slower entry with overshoot, gentle
     // settle. Prior timings (tension 400 / friction 5) snapped too fast and
     // felt like a flicker. Now:
@@ -25150,7 +25238,7 @@ function ChatConversationInnerBody() {
             // Sort newest-first to match the reverse() applied to localResults.
             merged.sort((a, b) => (new Date(b.created_at).getTime()) - (new Date(a.created_at).getTime()));
             mergedSoFar = merged;
-            setSearchResults(merged);
+            _setSearchResultsKeep(merged);
             if (merged.length > localResults.length && localResults.length === 0) {
               safeScrollToMsg(merged[0]);
             }
@@ -25199,7 +25287,7 @@ function ChatConversationInnerBody() {
             // Newest first (ids temporários "tmp_*" não são numéricos → data)
             const _k = (m) => { const n = Number(m.id); return Number.isFinite(n) && n > 0 ? n : Number.MAX_SAFE_INTEGER; };
             merged.sort((a, b) => (_k(b) - _k(a)) || ((new Date(b.created_at).getTime() || 0) - (new Date(a.created_at).getTime() || 0)));
-            setSearchResults(merged);
+            _setSearchResultsKeep(merged);
           }
         }
       } catch {}
@@ -35413,7 +35501,7 @@ function ChatConversationInnerBody() {
     const m = item && item._type === 'album' ? (item._items || [])[0] : item;
     const id = m && m.id != null ? m.id : messageId;
     if (id == null || id === '' || (m && m.deleted_at)) return;
-    try { _nlActRef.current.handleReact(id, emoji || '\u2764\uFE0F'); } catch {}
+    try { _nlActRef.current.handleReact(id, emoji || '\u2764\uFE0F', undefined, { fromNative: true }); } catch {} // [2026-10-19 core-chat] nativo já deu haptic+pop
   }, []);
   // [fase 2] Ações de cartões (nativeRowCards): o bloco de cartões define
   // _nlCardActionRef.current = (item, target, action, index) => bool.
@@ -35727,7 +35815,7 @@ function ChatConversationInnerBody() {
   const _nlOnReact = useCallback(({ key, emoji }) => {
     const cur = _nlCtxMsgRef.current;
     if (!cur || cur.key !== key || !emoji) return;
-    try { _nlActRef.current.handleReact(cur.msg.id, emoji); } catch {}
+    try { _nlActRef.current.handleReact(cur.msg.id, emoji, undefined, { fromNative: true }); } catch {}
   }, []);
   // [wave13-C a11y] copiar/encaminhar pelo VoiceOver/TalkBack (lista nativa, api 6)
   // → MESMOS handlers do menu (responder/reagir/mais chegam por swipe/long-press).
@@ -39242,11 +39330,15 @@ function ChatConversationInnerBody() {
               if (showStickerPicker) { setShowStickerPicker(false); return; }
               openComposerPanel('sticker');
             }}
-            onVideoNote={() => { if (blockRecordingDuringCall('video')) return; setShowVideoNoteRecorder(true); }}
+            onVideoNote={() => { if (blockRecordingDuringCall('video')) return; try { VoiceNote.pauseVoiceNote(); } catch {} setShowVideoNoteRecorder(true); }}
             onVoiceRecorded={(audioData) => { handleSendAudio(audioData); }}
             onVoiceState={(state, reason) => {
               if (state === 'recording') {
                 if (blockRecordingDuringCall('voice')) { try { inputRef.current?.cancelVoice?.(); } catch {} return; }
+                // [2026-10-19 core-chat] gravação NATIVA também pausa o áudio tocando (o JS já
+                // pausava; no iOS o setCategory(.playAndRecord) não interrompe nosso player →
+                // o áudio tocava junto e entrava na gravação).
+                try { VoiceNote.pauseVoiceNote(); } catch {}
                 if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
                 typingLastSentAt.current = 0;
                 try { const ws = _ncWs(); ws?.sendStoppedTyping?.(conversationId); ws?.sendTyping?.(conversationId, true); } catch {}
@@ -39257,6 +39349,7 @@ function ChatConversationInnerBody() {
               if (state === 'paused') { try { _ncWs()?.sendStoppedTyping?.(conversationId); } catch {} return; }
               if (state === 'resumed') {
                 if (blockRecordingDuringCall('voice')) { try { inputRef.current?.cancelVoice?.(); } catch {} return; }
+                try { VoiceNote.pauseVoiceNote(); } catch {}
                 try { _ncWs()?.sendTyping?.(conversationId, true); } catch {}
                 return;
               }

@@ -177,6 +177,11 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   } = props;
 
   const NativeView = useMemo(() => {
+    // [2026-10-19 core-chat] Android: gravação travada pausa ao ir p/ 2º plano (nativo).
+    // Kill switch OTA: globalThis.__chatyy_voice_bg_pause = false (binário antigo ignora).
+    if (globalThis.__chatyy_voice_bg_pause === false) {
+      try { require('expo').requireOptionalNativeModule('ChatyyComposer')?.setVoiceBgPause?.(false); } catch {}
+    }
     const m = _nativeModule();
     return m && m.getNativeComposerView ? m.getNativeComposerView() : null;
   }, []);

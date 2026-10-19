@@ -98,6 +98,9 @@ class ChatyyComposerModule : Module() {
     //     reabre sozinho — só por toque no compositor ou focus() explícito.
     // (7 = iOS attachRestore "none": no Android o padrão já é o JS não devolver.)
     Function("apiVersion") { 6 }
+    // [2026-10-19 core-chat] kill switch da pausa ao ir p/ 2º plano (JS:
+    // globalThis.__chatyy_voice_bg_pause = false → setVoiceBgPause(false)).
+    Function("setVoiceBgPause") { on: Boolean -> ChatyyComposerView.voiceBgPause = on }
 
     // [2026-10-18 kb-resume] fundo/frente → guarda de foco do compositor.
     OnActivityEntersBackground { ChatyyComposerView.notifyBackground() }
