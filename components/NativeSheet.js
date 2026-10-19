@@ -86,16 +86,33 @@ export function nativeSheetBoundedOn() {
     if (g === true) return true;
     if (g === false) return false;
   } catch {}
-  // [2026-10-16 hotfix] build 697: folha "bounded" cortava o conteúdo no meio (painel Apps) → opt-in até corrigir.
-  if (true) return false;
+  // [2026-10-16 hotfix] build 697: folha "bounded" cortava o conteúdo no meio (painel Apps) → opt-in.
+  // [2026-10-19 sheet-layout] LIGADO de novo p/ detents numéricos: sem altura real
+  // o conteúdo fica do tamanho natural (lista não rola) e a "caça ao ScrollView"
+  // do rn-screens jogava a lista p/ (0,0)/fora da folha (Notificações em branco,
+  // Estatísticas). Calibração agora só aceita medida coerente (nunca encolhe >40 pt).
+  // Kill: globalThis.__chatyy_sheet_bounded = false. Painel Apps segue no modal próprio.
   if (_boundedBin == null) {
     try {
       const m = require('../modules/expo-chat-composer');
       const f = m && (m.apiVersion || (m.default && m.default.apiVersion));
-      _boundedBin = typeof f === 'function' && Number(f()) >= 2;
-    } catch { _boundedBin = false; }
+      _boundedBin = typeof f !== 'function' || Number(f()) >= 2;
+    } catch { _boundedBin = true; }
   }
   return _boundedBin;
+}
+
+// [2026-10-19 sheet-layout] iOS: a rota embrulha TODO conteúdo num container
+// não-achatável cujo 1º filho é vazio → o react-native-screens 4.23 não acha
+// ScrollView nenhum (nem filho direto do wrapper/SafeArea, nem pela cadeia de
+// 1º filhos) e não força frame = folha em (0,0). Era isso que punha o cabeçalho
+// por cima da 1ª opção (Exportar conversa), o título sobre o texto e o texto
+// atrás da alça (Privacidade avançada) e a lista fora da tela (Notificações).
+// Kill: globalThis.__chatyy_sheet_hunt_stop = false (conteúdo cru, como antes).
+export function nativeSheetHuntStopOn() {
+  if (Platform.OS !== 'ios') return false;
+  try { if (globalThis.__chatyy_sheet_hunt_stop === false) return false; } catch {}
+  return true;
 }
 
 // [2026-10-17 p2] quantas folhas nativas estão abertas/abrindo agora (hosts

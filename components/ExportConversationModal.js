@@ -393,7 +393,7 @@ function ExportConversationModalInner({
   if (USE_NATIVE_SHEETS) {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={sheetBg}>
-        <View style={{ backgroundColor: sheetBg, paddingTop: 22, paddingHorizontal: 18, paddingBottom: Platform.OS === 'ios' ? 16 : androidBottomInset(20) }}>
+        <View style={{ backgroundColor: sheetBg, paddingTop: 22, paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 16 : androidBottomInset(20) }}>
           {body}
         </View>
       </NativeSheet>

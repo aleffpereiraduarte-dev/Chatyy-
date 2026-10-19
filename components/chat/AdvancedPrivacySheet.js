@@ -101,7 +101,7 @@ export default function AdvancedPrivacySheet({
   if (USE_NATIVE_SHEETS) {
     return (
       <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={bg}>
-        <View style={{ paddingHorizontal: 18, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 8) }}>
+        <View style={{ paddingHorizontal: 20, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 8) }}>
           {content}
         </View>
       </NativeSheet>

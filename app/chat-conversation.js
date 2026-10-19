@@ -37613,7 +37613,7 @@ function ChatConversationInner() {
         if (_convSheetsOn()) {
           return (
             <NativeSheet visible onClose={() => setQuoteSelectModal(null)} detents="fitToContents" backgroundColor={colors.surface}>
-              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 18, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>{_qsBody}</View>
+              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>{_qsBody}</View>
             </NativeSheet>
           );
         }
@@ -37711,7 +37711,7 @@ function ChatConversationInner() {
         if (_convSheetsOn()) {
           return (
             <NativeSheet visible={!!_lmV} onClose={() => setEditHistoryModal({ visible: false, loading: false, versions: [], currentContent: '' })} detents={"fitToContents"} backgroundColor={colors.surface}>
-              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 18, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>{_cvBody}</View>
+              <View style={{ backgroundColor: colors.surface, paddingHorizontal: 20, paddingTop: 22, paddingBottom: nativeSheetBottomPad(insets, 16) }}>{_cvBody}</View>
             </NativeSheet>
           );
         }
@@ -44038,7 +44038,7 @@ function ChatConversationInner() {
         // alça + arrastar nativos); web/kill switch = folha JS de antes.
         const _stHead = (<>
             {/* [beauty 2026-10-02] Header neutralized (was green wash + green circle) */}
-            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: colors.background, zIndex: 2, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+            <View style={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, backgroundColor: colors.background, zIndex: 2, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <IconBarChart size={20} color={colors.onPrimary || '#fff'} />
@@ -44060,7 +44060,7 @@ function ChatConversationInner() {
             <NativeSheet visible={!!_lmV} onClose={() => setShowStatsModal(false)} detents={[0.6, 1]} backgroundColor={colors.background}>
               <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: 8 }}>
                 {_stHead}
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: nativeSheetBottomPad(insets, 18) }} showsVerticalScrollIndicator={false}>
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: nativeSheetBottomPad(insets, 18) }} showsVerticalScrollIndicator={false}>
                   {_stList}
                 </ScrollView>
               </View>

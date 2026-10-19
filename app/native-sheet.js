@@ -9,8 +9,10 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { StackActions, useRoute } from '@react-navigation/native';
 import {
   getNativeSheetEntry, subscribeNativeSheet, attachNativeSheetRoute, detachNativeSheetRoute,
-  nativeSheetBoundedOn,
+  nativeSheetBoundedOn, nativeSheetHuntStopOn,
 } from '../components/NativeSheet';
+
+const _HUNT_STOP = { height: 0, width: 0 };
 
 export default function NativeSheetRoute() {
   const params = useLocalSearchParams();
@@ -63,7 +65,10 @@ export default function NativeSheetRoute() {
   // padrão no binário da wave 7+; kill: globalThis.__chatyy_sheet_bounded = false.
   const entry = getNativeSheetEntry(id);
   const detents = entry && Array.isArray(entry.detents) ? entry.detents : null;
-  const bounded = !!detents && detents.length > 0 && Platform.OS === 'ios' && nativeSheetBoundedOn();
+  const huntStop = nativeSheetHuntStopOn();
+  // [2026-10-19 sheet-layout] bounded exige o hunt-stop (sem ele o rn-screens
+  // ainda força o frame do 1º ScrollView por cima da altura calculada).
+  const bounded = huntStop && !!detents && detents.length > 0 && Platform.OS === 'ios' && nativeSheetBoundedOn();
   const [detIdx, setDetIdx] = useState(() => {
     const i = Number(entry && entry.initialDetent) || 0;
     return detents ? Math.max(0, Math.min(detents.length - 1, i)) : 0;
@@ -114,7 +119,16 @@ export default function NativeSheetRoute() {
   }, [bounded, navigation, remeasure]);
 
   if (content == null) return <View />;
-  if (!bounded) return content;
+  if (!huntStop) return content;
+  if (!bounded) {
+    // fitToContents (ou bounded desligado): altura = conteúdo; só desarma a caça.
+    return (
+      <View collapsable={false}>
+        <View collapsable={false} pointerEvents="none" style={_HUNT_STOP} />
+        {content}
+      </View>
+    );
+  }
   const di = Math.min(detIdx, detents.length - 1);
   const frac = Math.max(0.1, Math.min(1, Number(detents[di]) || 1));
   // Estimativa: detent grande começa ~10 pt abaixo da safe area de cima
@@ -125,10 +139,12 @@ export default function NativeSheetRoute() {
   const est = Math.round(maxDetent * frac);
   const got = measured && measured[di];
   // Medida só vale se coerente com o detent (rotação/teclado/medida no meio do arrasto).
-  const h = Math.max(160, (got && Math.abs(got - est) < 80) ? got : est);
+  // [2026-10-19 sheet-layout] encolher pela medida só até 40 pt (medida no meio da
+  // subida/arrasto lê topo baixo demais → "cortava no meio" no 697); crescer até 80.
+  const h = Math.max(160, (got && got - est < 80 && est - got < 40) ? got : est);
   return (
     <View ref={wrapRef} collapsable={false} style={{ height: h }} onLayout={remeasure}>
-      <View collapsable={false} pointerEvents="none" style={{ height: 0 }} />
+      <View collapsable={false} pointerEvents="none" style={_HUNT_STOP} />
       <View collapsable={false} style={{ flex: 1 }}>{content}</View>
     </View>
   );
