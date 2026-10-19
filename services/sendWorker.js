@@ -230,6 +230,18 @@ function _nativeOn() {
 // [2026-10-15 fase 4] Linha entregue à fila nativa (sem segurar a conversa no
 // JS: o nativo faz o FIFO). O resultado chega depois (evento) e concilia.
 const _nativeHanded = new Set(); // cmi
+// [2026-10-19 bugs native-loop] cmi → ts da última recusa do nativo. Telemetria
+// 19/10 (iOS b728): outbox_fail e=native_unavailable e outbox_slow ms=3322613
+// n=4535 — a linha voltava à fila nativa NA HORA (o ramo nativo ignorava o
+// next_retry_at e nunca caía no envio JS) → 55 min presa, ~1,4 tentativa/s.
+const _nativeRefused = new Map();
+const NATIVE_REFUSED_TTL_MS = 10 * 60 * 1000;
+function _nativeRecentlyRefused(cmi) {
+  const t = _nativeRefused.get(cmi);
+  if (!t) return false;
+  if (Date.now() - t > NATIVE_REFUSED_TTL_MS) { _nativeRefused.delete(cmi); return false; }
+  return true;
+}
 function _nativeEligible(row) {
   try {
     const no = require('./nativeOutbox');
@@ -253,7 +265,12 @@ async function _handToNative(row) {
   const pr = no ? no.sendRowAndWait(row, MEDIA_TYPES.has(ptype) ? _mediaMetaFields(p, ptype) : null) : Promise.resolve(null);
   pr.then(async (r) => {
     if (r) await _applyNativeResult(row, r);
-    else await markFailed(cmi, 'native_unavailable', { kind: 'transient' });
+    else {
+      // [2026-10-19 bugs native-loop] nativo recusou (submit vazio) → as próximas
+      // tentativas desta linha vão pelo caminho JS (HTTP/WS) por 10 min.
+      _nativeRefused.set(cmi, Date.now());
+      await markFailed(cmi, 'native_unavailable', { kind: 'transient' });
+    }
   }).catch(() => {}).finally(() => { _nativeHanded.delete(cmi); setTimeout(() => { poke(); }, 0); });
   return true;
 }
@@ -276,7 +293,13 @@ async function _drainAllConversations() {
       if (row.state === 'sending' && (_nativeHanded.has(row.client_message_id) || _isNativeOwned(row.client_message_id))) {
         nativeAhead.add(conv); continue;
       }
-      if (row.state === 'queued' && _nativeEligible(row)) {
+      // [2026-10-19 bugs native-loop] linha em backoff → segura a conversa
+      // (FIFO) em vez de reentregar ao nativo a cada poke; recusada há pouco
+      // pelo nativo → segue para o caminho JS abaixo.
+      if (row.state === 'queued' && (Number(row.next_retry_at) || 0) > now && !nativeAhead.has(conv)) {
+        startedThisPass.add(conv); continue;
+      }
+      if (row.state === 'queued' && !_nativeRecentlyRefused(row.client_message_id) && _nativeEligible(row)) {
         if (await _handToNative(row)) { nativeAhead.add(conv); launched++; continue; }
       }
       // linha que o JS envia, atrás de linhas no nativo → espera elas saírem

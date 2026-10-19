@@ -864,6 +864,23 @@ class MailWebSocket {
       if (ws.readyState === CONNECTING && age < _netAdapt(CONNECT_TIMEOUT_MS, 8)) return 'in_flight';
       if (ws.readyState === OPEN && !this.authenticated && age < (_netAdapt(AUTH_WATCHDOG_MS, 4) + 2000)) return 'in_flight';
     }
+    // [2026-10-19 bugs ws400-park] Fio estacionado por 400 de proxy (sem
+    // "Upgrade"): os chamadores urgentes (foreground/visible/resurrect/
+    // ensureHealthy) cancelavam o timer longo e reabriam na hora — telemetria
+    // 19/10: 1 aparelho com 101 recusas em ~20 min (uma a cada ~8 s) apesar de
+    // retry_ms=300000. Dentro da janela só token NOVO (troca de conta/login)
+    // libera; troca de rede (net_up/net_change) pode tentar 1×/min (rede nova
+    // pode não ter o proxy). O HTTP de reserva segue entregando.
+    if (this._hs400Park && !ws) {
+      const pk = this._hs400Park;
+      if (token !== pk.token || Date.now() >= pk.until) {
+        this._hs400Park = null;
+      } else {
+        const isNet = /^net_(up|change)/.test(String(reason || ''));
+        if (!isNet || Date.now() - (pk.netTry || 0) < 60000) return 'scheduled';
+        pk.netTry = Date.now();
+      }
+    }
     if (!force && !ws && this.reconnectTimer) {
       if (!urgent) return 'scheduled';
       clearTimeout(this.reconnectTimer);
@@ -2101,9 +2118,11 @@ class MailWebSocket {
       this._hs400Count = (this._hs400Count || 0) + 1;
       const delay = Math.min(300000, 90000 * this._hs400Count) + Math.floor(Math.random() * 15000);
       try { require('./crashReporter').reportStep?.('ws_handshake_400_soft', `n=${this._hs400Count} retry_ms=${delay}`); } catch {}
+      this._hs400Park = { token, until: Date.now() + delay, netTry: 0 }; // [2026-10-19 bugs ws400-park]
       this._emit('connection', { status: 'disconnected', reason: 'proxy_400' });
       this.reconnectTimer = setTimeout(() => {
         this.reconnectTimer = null;
+        this._hs400Park = null;
         if (this.destroyed || this._hsStopped) return;
         this._hsRefreshTried = false;
         try { this.connect(token); } catch {}
@@ -2359,6 +2378,8 @@ class MailWebSocket {
         this._hadSession = true;
         this._hsRefreshTried = false;
         this._hsStopped = null;
+        this._hs400Park = null; // [2026-10-19 bugs ws400-park]
+        this._hs400Count = 0;
         // [2026-10-08 regions-fast] Desfecho da tentativa (fallback regional→US).
         if (this._wsAttempt) {
           this._wsAttempt.authed = true;

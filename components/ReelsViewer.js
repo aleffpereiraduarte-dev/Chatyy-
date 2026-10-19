@@ -3885,7 +3885,16 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     AsyncStorage.setItem(REELS_MUTED_KEY, v ? '1' : '0').catch(() => {});
   }, []);
   const handleNativeError = useCallback((e) => {
-    _reportReels('player_error', { state: 'native', code: 'native_play' });
+    // [2026-10-19 bugs] Leva o id do reel (o nativo manda {id}) + formato do
+    // vídeo: 35 player_error/2 dias sem dizer QUAL vídeo falhou.
+    let extra = {};
+    try {
+      const id = e?.nativeEvent?.id ?? e?.id;
+      const reel = id != null ? findReelRef.current?.(id) : null;
+      const u = String(reel?.video_hls_url || (typeof reel?.media_urls === 'string' ? reel.media_urls : JSON.stringify(reel?.media_urls || '')) || '');
+      extra = { id: id != null ? String(id).slice(0, 40) : '', hls: /\.m3u8/i.test(u) ? 1 : 0, src: (u.match(/\/reels\/catalog\/([a-z]+)\//i) || [])[1] || (u ? 'own' : '-') };
+    } catch {}
+    _reportReels('player_error', { state: 'native', code: 'native_play', ...extra });
   }, []);
   const handleNativeFallback = useCallback((reason) => {
     _reportReels('native_feed_fallback', { state: 'fallback', code: _reelErrCode(reason) });
