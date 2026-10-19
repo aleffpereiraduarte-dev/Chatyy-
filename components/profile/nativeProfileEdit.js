@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 import * as api from '../../services/api';
+import { normalizeCoverUrl, prepareCoverFile } from '../../services/profileCover';
 import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail } from '../chat/NativeProfileBridge';
 import { isNativeProfileEditEnabled } from '../chat/NativeChatInfo';
@@ -108,7 +109,7 @@ export function useNativeProfileEdit(ctx) {
       link: String(id.website || id.link || ''),
       about: String(id.about || id.recado || ''),
     };
-    const cv = String(id.cover_url || id.coverUrl || '');
+    const cv = normalizeCoverUrl(String(id.cover_url || id.coverUrl || '')); // [capa-2026-10-19]
     initialRef.current = { values: v, cover: cv };
     draftRef.current = { ...v };
     setValues(v);
@@ -193,13 +194,21 @@ export function useNativeProfileEdit(ctx) {
     try { a = await pickImage(t, [3, 1]); } catch (e) { setErrors((x) => ({ ...x, general: e?.message || tr('common.networkError', 'Erro de rede') })); return; }
     if (!a) return;
     const prev = cover;
+    // [capa-2026-10-19] prévia otimista + JPEG ≤1600 px (HEIC/PNG/12 MP → JPEG leve).
     setCover(a.uri);
     setBusyCover(true);
     setErrors((x) => ({ ...x, general: '' }));
     try {
-      const r = await api.uploadCover({ uri: a.uri, name: 'cover.jpg', type: 'image/jpeg' });
-      if (r?.success && r?.data?.cover_url) setCover(String(r.data.cover_url));
-      else {
+      const file = (await prepareCoverFile(a)) || { uri: a.uri, name: 'cover.jpg', type: 'image/jpeg' };
+      const r = await api.uploadCover(file);
+      if (r?.success && r?.data?.cover_url) {
+        const url = normalizeCoverUrl(String(r.data.cover_url));
+        setCover(url);
+        // O upload já grava a capa no perfil — atualiza o cabeçalho na hora,
+        // mesmo se a pessoa fechar o editor sem tocar em Salvar.
+        initialRef.current = { ...initialRef.current, cover: url };
+        try { ctxRef.current.onSaved?.({ cover_url: url }); } catch {}
+      } else {
         setCover(prev);
         setErrors((x) => ({ ...x, general: r?.message || tr('profile.coverUploadFailed', 'Falha ao enviar capa') }));
       }

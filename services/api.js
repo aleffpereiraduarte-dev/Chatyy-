@@ -4486,7 +4486,9 @@ export async function updateProfile(data) {
 // multipart with the `cover` field. Backend resizes to 1500×500 and ships
 // to R2 (chatyy-media bucket, profile-covers/<email>/<ts>.jpg) so the
 // CDN serves it directly without round-tripping through PHP every render.
-export async function uploadCover(file) {
+// [capa-2026-10-19] opts.onProgress(0..1) via XHR (fetch não expõe progresso de upload);
+// cover_url da resposta passa por normalizeCoverUrl (host antigo chatyy.com.br → media).
+export async function uploadCover(file, opts = {}) {
   const formData = new FormData();
   formData.append('action', 'upload_cover');
   if (typeof File !== 'undefined' && file instanceof File) {
@@ -4513,14 +4515,48 @@ export async function uploadCover(file) {
   if (sessionCookie) headers['Cookie'] = sessionCookie;
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const _fixCover = (j) => {
+    try {
+      if (j?.data?.cover_url) {
+        const { normalizeCoverUrl } = require('./profileCover');
+        j.data.cover_url = normalizeCoverUrl(j.data.cover_url, BASE_URL);
+      }
+    } catch {}
+    return j;
+  };
+  const _parse = (status, text) => {
+    try { return _fixCover(JSON.parse(text)); }
+    catch {
+      if (status === 413) return { success: false, message: 'Imagem muito grande' };
+      return { success: false, message: 'Servidor indisponivel' };
+    }
+  };
+  const onProgress = typeof opts?.onProgress === 'function' ? opts.onProgress : null;
+  if (onProgress && typeof XMLHttpRequest !== 'undefined') {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      let done = false;
+      const finish = (r) => { if (!done) { done = true; resolve(r); } };
+      try {
+        xhr.open('POST', `${API_URL}?action=upload_cover`);
+        Object.keys(headers).forEach((k) => { try { xhr.setRequestHeader(k, headers[k]); } catch {} });
+        xhr.withCredentials = true;
+        xhr.timeout = 60000;
+        if (xhr.upload) xhr.upload.onprogress = (e) => { if (e && e.lengthComputable && e.total > 0) { try { onProgress(Math.min(1, e.loaded / e.total)); } catch {} } };
+        xhr.onload = () => finish(_parse(xhr.status, xhr.responseText || ''));
+        xhr.onerror = () => finish({ success: false, message: 'Connection error' });
+        xhr.ontimeout = () => finish({ success: false, message: 'Tempo limite excedido' });
+        xhr.send(formData);
+      } catch { finish({ success: false, message: 'Connection error' }); }
+    });
+  }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const res = await fetch(`${API_URL}?action=upload_cover`, { method: 'POST', headers, body: formData, credentials: 'include', signal: controller.signal });
     clearTimeout(timeout);
     const text = await res.text();
-    try { return JSON.parse(text); }
-    catch { return { success: false, message: 'Servidor indisponivel' }; }
+    return _parse(res.status, text);
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') return { success: false, message: 'Tempo limite excedido' };

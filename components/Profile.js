@@ -29,6 +29,7 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
+import { normalizeCoverUrl } from '../services/profileCover';
 import { getCachedEntrySync, setCache, hasCacheUser, cacheUserScope, invalidate as _invalidateCached } from '../services/cache';
 import { cachedKey, CACHED_MAX_AGE } from '../hooks/useCachedAction';
 import { profileCacheKey } from '../services/screenData';
@@ -81,7 +82,7 @@ const IconTrash2 = IconTrash;
 
 // Gradient halo + empty illustration. Loaded lazily so a missing peer dep
 // can't crash the screen — fall back to plain View borders when unavailable.
-let _Svg = null, _SvgDefs = null, _SvgLinearGradient = null, _SvgStop = null, _SvgCircle = null, _SvgPath = null;
+let _Svg = null, _SvgDefs = null, _SvgLinearGradient = null, _SvgStop = null, _SvgCircle = null, _SvgPath = null, _SvgRect = null;
 try {
   const _svg = require('react-native-svg');
   _Svg = _svg.Svg || _svg.default;
@@ -90,6 +91,7 @@ try {
   _SvgStop = _svg.Stop;
   _SvgCircle = _svg.Circle;
   _SvgPath = _svg.Path;
+  _SvgRect = _svg.Rect;
 } catch (e) {}
 
 const WEB = Platform.OS === 'web';
@@ -1207,6 +1209,7 @@ export default function Profile({
   // Seed state from cache so the first paint is instant when re-opening a
   // profile within TTL. Network revalidation still runs below.
   const [data, setData] = useState(() => _cacheGet(fetchKey)?.data || null);
+  const [coverFailedUrl, setCoverFailedUrl] = useState(""); // [capa-2026-10-19]
   const [loading, setLoading] = useState(() => !_cacheGet(fetchKey));
   const [err, setErr] = useState(null);
   // 401 surfaces as an "expired session" state with a Sign-out CTA instead of
@@ -2568,7 +2571,10 @@ export default function Profile({
   const renderHeader = () => {
     if (!identity) return null;
     const postsTotal = (posts.length || 0) + (reels.length || 0);
-    const coverUrl = identity.cover_url || '';
+    // [capa-2026-10-19] host antigo chatyy.com.br/profile-covers (404) → media; relativo → absoluto.
+    // Capa que não carrega (objeto apagado) some em vez de virar retângulo cinza.
+    const _coverRaw = normalizeCoverUrl(identity.cover_url || '', BASE_URL);
+    const coverUrl = _coverRaw && _coverRaw !== coverFailedUrl ? _coverRaw : '';
     const accountType = identity.account_type || 'personal';
     return (
       <View>
@@ -2584,9 +2590,9 @@ export default function Profile({
             overflow: 'hidden',
           }}>
             {_ExpoImage ? (
-              <_ExpoImage source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+              <_ExpoImage source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" transition={180} onError={() => setCoverFailedUrl(coverUrl)} />
             ) : (
-              <Image source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              <Image source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" onError={() => setCoverFailedUrl(coverUrl)} />
             )}
             {/* Bottom scrim so the @handle + avatar that follow never lose
                 contrast against a bright cover. Web uses a real CSS gradient;
@@ -2597,6 +2603,20 @@ export default function Profile({
                 position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%',
                 backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,0), ${isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.22)'})`,
               }} />
+            ) : (_Svg && _SvgDefs && _SvgLinearGradient && _SvgStop && _SvgRect) ? (
+              // [capa-2026-10-19] degradê real (transparente → escuro) no nativo,
+              // igual à web — o texto/ícones sobre/abaixo da capa ficam legíveis.
+              <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '60%' }}>
+                <_Svg width="100%" height="100%" preserveAspectRatio="none">
+                  <_SvgDefs>
+                    <_SvgLinearGradient id="coverScrim" x1="0" y1="0" x2="0" y2="1">
+                      <_SvgStop offset="0" stopColor="#000" stopOpacity="0" />
+                      <_SvgStop offset="1" stopColor="#000" stopOpacity={isDark ? 0.5 : 0.28} />
+                    </_SvgLinearGradient>
+                  </_SvgDefs>
+                  <_SvgRect x="0" y="0" width="100%" height="100%" fill="url(#coverScrim)" />
+                </_Svg>
+              </View>
             ) : (
               <View pointerEvents="none" style={{
                 position: 'absolute', left: 0, right: 0, bottom: 0, height: '45%',

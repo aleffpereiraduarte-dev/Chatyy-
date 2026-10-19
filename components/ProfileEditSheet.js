@@ -52,6 +52,7 @@ export async function ensurePhotoPermission(t) {
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconCamera, IconLink, IconPlus, IconTrash, IconCheck } from './Icons';
 import { Image as ExpoImage } from 'expo-image';
+import { normalizeCoverUrl, prepareCoverFile } from '../services/profileCover';
 
 const MAX_BIO = 150;
 
@@ -238,6 +239,7 @@ export default function ProfileEditSheet({
   const [coverUrl, setCoverUrl] = useState('');
   const [coverPreview, setCoverPreview] = useState(null);
   const [uploadingCover, setUploadingCover] = useState(false);
+  const [coverProgress, setCoverProgress] = useState(0);
   const [links, setLinks] = useState([]); // array of { label, url }
   const [accountType, setAccountType] = useState('personal'); // personal | creator | business
   const _initialLinksRef = useRef('[]');
@@ -269,8 +271,8 @@ export default function ProfileEditSheet({
     setProCategory(initial?.proCategory || '');
     setProContact(initial?.proContact || '');
     // Profile-upgrade combo hydrate
-    setCoverUrl(initial?.cover_url || initial?.coverUrl || '');
-    _initialCoverRef.current = initial?.cover_url || initial?.coverUrl || '';
+    setCoverUrl(normalizeCoverUrl(initial?.cover_url || initial?.coverUrl || ''));
+    _initialCoverRef.current = normalizeCoverUrl(initial?.cover_url || initial?.coverUrl || '');
     setCoverPreview(null);
     const initLinks = Array.isArray(initial?.links) ? initial.links.slice(0, 5) : [];
     setLinks(initLinks);
@@ -312,7 +314,7 @@ export default function ProfileEditSheet({
         });
         if (result.canceled || !result.assets?.[0]) return;
         const a = result.assets[0];
-        file = { uri: a.uri, name: 'cover.jpg', type: 'image/jpeg' };
+        file = a;
       }
       if (!file) return;
       // Optimistic preview swap — we paint the local URI immediately so the
@@ -322,10 +324,15 @@ export default function ProfileEditSheet({
         : (file.uri || null);
       if (localUri) setCoverPreview(localUri);
       setUploadingCover(true);
+      setCoverProgress(0);
       try {
-        const r = await api.uploadCover(file);
+        // [capa-2026-10-19] HEIC/PNG/12 MP → JPEG ≤1600 px antes de subir;
+        // progresso real via XHR; URL normalizada (host antigo → media).
+        const up = (await prepareCoverFile(file)) || file;
+        const r = await api.uploadCover(up, { onProgress: (p) => setCoverProgress(p) });
         if (r?.success && r?.data?.cover_url) {
-          setCoverUrl(r.data.cover_url);
+          setCoverUrl(normalizeCoverUrl(r.data.cover_url));
+          _initialCoverRef.current = normalizeCoverUrl(r.data.cover_url);
           // Keep coverPreview around until the new URL has had a tick to
           // load — the cross-fade reads cleaner than a hard cut.
         } else {
@@ -693,6 +700,12 @@ export default function ProfileEditSheet({
                     backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center',
                   }}>
                     <ActivityIndicator color="#fff" />
+                    {coverProgress > 0 ? (
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 6 }}>
+                        {`${Math.round(coverProgress * 100)}%`}
+                      </Text>
+                    ) : null}
+                    <View style={{ position: 'absolute', left: 0, bottom: 0, height: 3, width: `${Math.round(Math.max(0.03, coverProgress) * 100)}%`, backgroundColor: '#fff' }} />
                   </View>
                 )}
                 {/* "Alterar capa" floating pill — bottom-right of the banner */}

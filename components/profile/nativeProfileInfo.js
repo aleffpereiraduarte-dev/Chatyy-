@@ -22,6 +22,7 @@
 // Ícones = nomes lógicos (CIText.symbol no iOS / CIText.drawable no Android).
 import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail, avatarRefForUrl } from '../chat/NativeProfileBridge';
+import { normalizeCoverUrl } from '../../services/profileCover';
 
 function _pic(ref, name, email) {
   const pic = { i: initialsOf(name, email), g: gradientIndex(name || email || '') };
@@ -75,7 +76,7 @@ export function buildNativeProfileInfo(ctx) {
   const avatarRef = email ? avatarRefForEmail(email, name, 'full') : (id.avatar_url ? avatarRefForUrl(id.avatar_url, 'full') : null);
   const photos = [];
   const photoUris = [avatarRef && avatarRef.uri ? avatarRef.uri : ''];
-  const cover = String(id.cover_url || '').trim();
+  const cover = normalizeCoverUrl(String(id.cover_url || '').trim()); // [capa-2026-10-19] host antigo → media
   if (cover && avatarRef && avatarRef.uri) {
     const u = abs(cover);
     if (u) {
