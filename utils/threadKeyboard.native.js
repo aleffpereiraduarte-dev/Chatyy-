@@ -20,7 +20,7 @@
 // the TurboModules before touching the JS packages; if any is missing we fall
 // back to RN's KeyboardAvoidingView with the same geometry (no crash).
 import React, { useEffect } from 'react';
-import { AppState, Keyboard, KeyboardAvoidingView, Platform, TurboModuleRegistry } from 'react-native';
+import { AppState, Keyboard, KeyboardAvoidingView, Platform, TurboModuleRegistry, View } from 'react-native';
 import { isAppResuming, kbResumeGuardOn as isAppResumingGuardOn } from './kbResumeGuard';
 import { kbNativeTransitionsOn, subscribeKeyboardSync } from './kbNativeTransitions'; // [2026-10-19 kb-native]
 
@@ -100,6 +100,53 @@ const _useKbHandlerAndroid = (_IS_ANDROID && KC && typeof KC.useGenericKeyboardH
   ? KC.useGenericKeyboardHandler
   : _noopKbHandler;
 
+// [2026-10-19 kb-translate] iOS: teclado "arrastando" ao fechar (founder).
+// RAIZ: o avoider mexia no paddingBottom do container (prop de LAYOUT) a cada
+// quadro. No Fabric isso é um commit do Reanimated + Yoga da tela inteira +
+// mount por quadro, e a lista nativa muda de altura a cada quadro
+// (CMLListView.layoutSubviews re-crava o contentOffset → briga com o dedo no
+// dismiss interativo). E o commit do Reanimated é ADIADO enquanto o React
+// commita (blur → setInputFocused re-renderiza a conversa no início do
+// fechamento) = barra e lista param e depois pulam.
+// AGORA (modo "translate", iOS, lista nativa, sem painel de emoji/figurinha/GIF
+// aberto): o layout NÃO muda durante o movimento. Barra de digitar (ThreadKeyboardBar)
+// e lista (ThreadKeyboardGestureArea = recorte + miolo) andam só por
+// transform translateY = -lift, no UI thread (worklet do keyboard-controller,
+// onMove/onInteractive), igual iMessage/Telegram: a lista sobe/desce em bloco
+// e o topo dela some sob o cabeçalho (recorte). Em repouso, o espaço escondido
+// no topo vira inset do lado das antigas na lista nativa (useThreadKbRestLift),
+// publicado pelo JS SÓ depois do movimento (didShow/didHide).
+// Com painel aberto (emoji nativo/figurinhas/GIF) volta o modo padding de
+// sempre; a troca é atômica (mesmo quadro do Reanimated: padding↔transform).
+// Kill switch OTA: globalThis.__chatyy_kb_translate = false (lido ao montar a conversa).
+function _kbTranslateOn() {
+  try { if (globalThis.__chatyy_kb_translate === false) return false; } catch {}
+  return true;
+}
+const ThreadKbCtx = React.createContext(null);
+let _restLift = 0;
+const _restSubs = new Set();
+function _setRestLift(v) {
+  const n = Math.max(0, Math.round(Number(v) || 0));
+  if (n === _restLift) return;
+  _restLift = n;
+  _restSubs.forEach((fn) => { try { fn(n); } catch {} });
+}
+/** [kb-translate] px do topo da lista escondidos sob o recorte com o teclado
+ *  aberto (0 fora do modo translate). Só muda em repouso. */
+export function useThreadKbRestLift() {
+  const [v, setV] = React.useState(_restLift);
+  useEffect(() => {
+    const fn = (n) => setV(n);
+    _restSubs.add(fn);
+    setV(_restLift);
+    return () => { _restSubs.delete(fn); };
+  }, []);
+  return v;
+}
+const _clipStyle = { flex: 1, overflow: 'hidden' };
+const _flex1 = { flex: 1 };
+
 // Ref-count of mounted threads (chat → chat pushes) so unmounting one thread
 // doesn't disable KC under another that is still on the stack.
 let _enabledRefs = 0;
@@ -124,7 +171,7 @@ let _enabledRefs = 0;
 //   • qualquer movimento real do teclado (height muda no UI thread) limpa o
 //     `settled` na hora (useAnimatedReaction), então abrir o teclado continua
 //     colado frame-a-frame, sem esperar a thread JS.
-function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
+function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }) {
   const { setEnabled } = KC.useKeyboardController();
   // height: 0 → -keyboardHeight (measured from the screen bottom, so it
   // includes the home indicator / Android nav bar). The composer keeps a
@@ -137,6 +184,20 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
   const insetRef = React.useRef(bottomInset || 0);
   insetRef.current = bottomInset || 0;
   const nav = _useOptionalNavigation(); // [2026-10-19 kb-native]
+  // [2026-10-19 kb-translate] base (wrappers montados) decidida 1x na montagem;
+  // tmode (padding ↔ transform) segue a prop ao vivo, no UI thread.
+  const [kbBase] = React.useState(() => Platform.OS === 'ios' && _kbTranslateOn());
+  const tOn = !!(kbBase && translateMode);
+  const tmode = Rea.useSharedValue(tOn ? 1 : 0);
+  const tOnRef = React.useRef(tOn);
+  tOnRef.current = tOn;
+  // Publica o "repouso" (fora do movimento): altura do teclado − inset.
+  const pubRest = React.useRef(null);
+  pubRest.current = (kh) => {
+    if (!tOnRef.current) { _setRestLift(0); return; }
+    const k = Number(kh) || 0;
+    _setRestLift(k > 1 ? Math.max(0, k - (insetRef.current || 0)) : 0);
+  };
 
   // [2026-10-13 android-kbd-flicker] ANDROID: o KC só sai do `settled` quando
   // uma ABERTURA começa (onStart com altura > 0) ou num arraste interativo — no
@@ -160,6 +221,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     setEnabled(true);
     const settle = () => {
       settled.value = 1;
+      try { pubRest.current(0); } catch {} // [kb-translate]
       // Also clear KC's stale value so the NEXT open is a real change (a
       // stuck -336 followed by an open to -336 wouldn't fire the reaction).
       try { if (height.value !== 0) { height.value = 0; progress.value = 0; } } catch {}
@@ -191,6 +253,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       if (h <= 1) {
         if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
         if (cur > 1 || settled.value !== 1) settle();
+        try { pubRest.current(0); } catch {} // [kb-translate]
         return;
       }
       // Aberto: só corrige se o teclado é DO composer (teclado de outra tela
@@ -201,6 +264,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
         try { height.value = -h; progress.value = 1; } catch {}
       }
       settled.value = 0;
+      try { pubRest.current(h); } catch {} // [kb-translate]
     };
     const unsubSync = subscribeKeyboardSync(onNativeSync);
     // [2026-10-19 kb-native] Tela voltou a ser a de cima / fim de transição:
@@ -269,6 +333,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       }
       if (showTimer) { clearTimeout(showTimer); showTimer = null; }
       if (hideTimer) clearTimeout(hideTimer);
+      try { pubRest.current(0); } catch {} // [kb-translate] teclado já desceu
       hideTimer = setTimeout(() => {
         hideTimer = null;
         // KC still reports a keyboard (UI thread) → a re-open may be in
@@ -317,6 +382,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
         return;
       }
       restoreIfLost(kh);
+      try { pubRest.current(kh); } catch {} // [kb-translate] fim da subida
     };
     const subHide = Keyboard.addListener('keyboardDidHide', onHide);
     const subShow = Platform.OS === 'ios' ? Keyboard.addListener('keyboardWillShow', onWillShow) : null;
@@ -355,6 +421,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       if (navTimer) clearTimeout(navTimer);
       _enabledRefs = Math.max(0, _enabledRefs - 1);
       if (_enabledRefs === 0) {
+        _setRestLift(0); // [kb-translate]
         setEnabled(false);
         // KC stops observing now — don't leave a keyboard height behind for
         // the next thread to inherit.
@@ -376,14 +443,65 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
   );
 
   const inset = bottomInset || 0;
+  // [2026-10-19 kb-translate] lift = quanto a barra sobe (teclado − inset).
+  const lift = Rea.useDerivedValue(() => {
+    'worklet';
+    if (settled.value === 1) return 0;
+    return Math.max(0, -height.value - inset);
+  }, [inset]);
+  // Troca padding ↔ transform: o shared value muda no UI thread e TODOS os
+  // estilos (container, barra, lista) saem no mesmo quadro/commit = sem pulo.
+  useEffect(() => {
+    tmode.value = tOn ? 1 : 0;
+    let kh = 0;
+    try { if (Keyboard.isVisible()) kh = Number(Keyboard.metrics()?.height) || 0; } catch {}
+    try { pubRest.current(kh); } catch {}
+  }, [tOn, tmode]);
   const animatedStyle = Rea.useAnimatedStyle(() => {
     'worklet';
-    if (settled.value === 1) return { paddingBottom: 0 };
-    return { paddingBottom: Math.max(0, -height.value - inset) };
-  }, [inset]);
+    if (tmode.value === 1) return { paddingBottom: 0 };
+    return { paddingBottom: lift.value };
+  }, []);
+  const kbCtx = React.useMemo(() => (kbBase ? { base: true, lift, tmode } : null), [kbBase, lift, tmode]);
 
   const AnimatedView = Rea.default.View;
-  return <AnimatedView style={[style, animatedStyle]}>{children}</AnimatedView>;
+  const body = <AnimatedView style={[style, animatedStyle]}>{children}</AnimatedView>;
+  return kbCtx ? <ThreadKbCtx.Provider value={kbCtx}>{body}</ThreadKbCtx.Provider> : body;
+}
+
+// [2026-10-19 kb-translate] transform da barra/lista (UI thread, só transform).
+function _useLiftTransform(ctx) {
+  const lift = ctx.lift;
+  const tmode = ctx.tmode;
+  return Rea.useAnimatedStyle(() => {
+    'worklet';
+    return { transform: [{ translateY: tmode.value === 1 ? -lift.value : 0 }] };
+  }, []);
+}
+
+function ThreadKbBarInner({ ctx, children }) {
+  const st = _useLiftTransform(ctx);
+  const AV = Rea.default.View;
+  return <AV style={st} pointerEvents="box-none" collapsable={false}>{children}</AV>;
+}
+
+function ThreadKbListClip({ ctx, children }) {
+  const st = _useLiftTransform(ctx);
+  const AV = Rea.default.View;
+  return (
+    <View style={_clipStyle} collapsable={false}>
+      <AV style={[_flex1, st]} collapsable={false}>{children}</AV>
+    </View>
+  );
+}
+
+/** [2026-10-19 kb-translate] Envolve o que fica ABAIXO da lista e precisa subir
+ *  com o teclado (prévia de link, resposta, ↓, compositor). Fora do modo
+ *  (Android, web, sem KC, kill switch) = os filhos direto (árvore de antes). */
+export function ThreadKeyboardBar({ children }) {
+  const ctx = React.useContext(ThreadKbCtx);
+  if (!ctx || !ctx.base) return children;
+  return <ThreadKbBarInner ctx={ctx}>{children}</ThreadKbBarInner>;
 }
 
 function RNThreadKeyboardAvoider({ style, bottomInset, children }) {
@@ -427,6 +545,10 @@ export function getThreadReanimated() {
 // keyboardDismissMode="interactive" (KC tracks it), so no wrapper there —
 // keeps the iOS/web layout tree identical.
 export function ThreadKeyboardGestureArea({ children }) {
+  const kbCtx = React.useContext(ThreadKbCtx); // [2026-10-19 kb-translate]
+  if (Platform.OS === 'ios' && kbCtx && kbCtx.base) {
+    return <ThreadKbListClip ctx={kbCtx}>{children}</ThreadKbListClip>;
+  }
   if (!KEYBOARD_CONTROLLER_ACTIVE || Platform.OS !== 'android' || Platform.Version < 30) {
     return children;
   }

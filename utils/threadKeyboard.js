@@ -24,6 +24,15 @@ export function ThreadKeyboardGestureArea({ children }) {
   return children;
 }
 
+// [2026-10-19 kb-translate] mesmas exports do .native.js (web: sem teclado virtual).
+export function ThreadKeyboardBar({ children }) {
+  return children;
+}
+
+export function useThreadKbRestLift() {
+  return 0;
+}
+
 export const THREAD_LIST_KEYBOARD_DISMISS_MODE = 'on-drag';
 export const THREAD_COMPOSER_NATIVE_ID = 'chatyy-thread-composer';
 

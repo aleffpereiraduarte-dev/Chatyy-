@@ -54,7 +54,7 @@ import { wasImageLoaded, seenAwareTransition, markImageLoaded } from '../utils/i
 import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, getCachedLocalPrefs, setCachedLocalPrefs, getCachedPresence, setCachedPresence } from '../utils/chatOpenHandoff'; // [2026-10-08 chat-open-flicker]
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
-import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
+import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
@@ -1487,6 +1487,11 @@ const _fabCountFmt = (n) => (n > 99 ? '99+' : String(n));
 // [2026-10-14 motion] âncora em fluxo (altura 0, mesmo lugar do wrapper antigo)
 // + caixa absoluta do tamanho do FAB → a mola escala em torno do CENTRO do FAB.
 const _FAB_ANCHOR = { height: 0, zIndex: 10 };
+// [2026-10-19 kb-translate] iOS: o blur do composer re-renderizava a conversa
+// inteira no 1º quadro do fechamento do teclado (commit do React segura o do
+// Reanimated = barra "arrastando"). setInputFocused(false) sai depois da descida.
+// Kill switch OTA: globalThis.__chatyy_kb_blur_defer = false.
+let _kbBlurDeferTm = null;
 const _FAB_WRAP = { position: 'absolute', right: 12, bottom: 90, width: 44, height: 44, zIndex: 10 };
 const _FAB_INNER = { position: 'relative', right: 0, bottom: 0 };
 const _FAB_FROM = { translateY: 14, scale: 0.5 };
@@ -35951,6 +35956,8 @@ function ChatConversationInnerBody() {
       // Android) with keyboardVerticalOffset=-bottomInset. See
       // utils/threadKeyboard(.native).js.
       bottomInset={composerBottomPad}
+      // [2026-10-19 kb-translate] iOS: barra + lista nativa andam por transform (UI thread) — com painel aberto, padding de sempre
+      translateMode={!!_nl.on && !showStickerPicker && !showGifPicker && !showNativeEmoji}
       style={[styles.container, { backgroundColor: chatWallBg /* [2026-10-08 chat-beauty-bubbles] */ }]}
     >
       {/* Drag-and-drop overlay (web only) — appears while the user is
@@ -37908,6 +37915,7 @@ function ChatConversationInnerBody() {
         </Animated.View>
       )) || null} />
 
+      <ThreadKeyboardBar>{/* [2026-10-19 kb-translate] sobe c/ o teclado por transform (iOS) */}
       {/* [linkpreview 2026-10-18] faixa de prévia do link digitado (JS, acima do compositor JS ou nativo) */}
       <ComposerLinkPreviewStrip store={composerStore} colors={colors} isDark={isDark} enabled={!editingMsg && !composerBlocked && !(e2eEnabled && e2eKeys)} skip={_lpShouldSkip} cacheGet={_lpCacheGet} cacheSet={_lpCacheSet} />
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
@@ -38007,6 +38015,7 @@ function ChatConversationInnerBody() {
           <Text style={[styles.uploadText, { color: colors.textSecondary }]}>{t('chatConv.sending') || 'Sending...'}</Text>
         </View>
       )}
+      </ThreadKeyboardBar>
 
       {/* Message Effects Overlay */}
       {activeEffect && <MessageEffectOverlay effect={activeEffect} />}
@@ -38031,6 +38040,7 @@ function ChatConversationInnerBody() {
         />
       )}
 
+      <ThreadKeyboardBar>{/* [2026-10-19 kb-translate] ↓ + compositor sobem c/ o teclado por transform (iOS) */}
       {/* Scroll to bottom FAB */}
       {/* [2026-10-14 motion] SpringPresence: entra E sai com mola (antes sumia seco) */}
       <View style={_FAB_ANCHOR} pointerEvents="box-none">
@@ -38193,6 +38203,7 @@ function ChatConversationInnerBody() {
                 }
       };
       const _onComposerFocus = () => {
+                if (_kbBlurDeferTm) { clearTimeout(_kbBlurDeferTm); _kbBlurDeferTm = null; } // [2026-10-19 kb-translate]
                 setInputFocused(true);
                 // [2026-10-10] Tocar no campo com figurinhas/GIF abertos = teclado no lugar do painel.
                 setShowStickerPicker(false);
@@ -38201,7 +38212,13 @@ function ChatConversationInnerBody() {
                 if (showNativeEmoji) closeNativeEmojiToKeyboard();
       };
       const _onComposerBlur = () => {
-                setInputFocused(false);
+                // [2026-10-19 kb-translate] iOS: estado só depois da descida do teclado.
+                if (_kbBlurDeferTm) { clearTimeout(_kbBlurDeferTm); _kbBlurDeferTm = null; }
+                if (Platform.OS === 'ios' && globalThis.__chatyy_kb_blur_defer !== false) {
+                  _kbBlurDeferTm = setTimeout(() => { _kbBlurDeferTm = null; setInputFocused(false); }, 420);
+                } else {
+                  setInputFocused(false);
+                }
                 // WhatsApp parity: kill "X está digitando…" on the peer's
                 // screen IMMEDIATELY when the user taps away, instead of
                 // letting it linger up to TYPING_STOP_MS (3s) on the idle
@@ -39250,6 +39267,7 @@ function ChatConversationInnerBody() {
       </View>)}
       </>);
       }} />
+      </ThreadKeyboardBar>
 
       <LazyMount when={!!scheduleToast}>{(_lmV) => (<ScheduleToast visible={_lmV} message={scheduleToast} colors={colors} />)}</LazyMount>
       <LazyMount when={!!reminderSheet}>{(_lmV) => (<ReminderSheet

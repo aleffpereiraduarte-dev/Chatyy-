@@ -155,6 +155,7 @@
 // expiração (disableNativeThreadListForConv) — nunca a sessão [wave10-A].
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet } from 'react-native';
+import { useThreadKbRestLift } from '../../utils/threadKeyboard'; // [2026-10-19 kb-translate]
 
 // Padrão LIGADO quando o binário tem o módulo. Kill switch acima.
 const NATIVE_LIST_DEFAULT_ON = true;
@@ -2202,14 +2203,19 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   // [tg-style] prop tgStyle (apiVersion 12): objeto estável por valor
   const _ts = _api >= 12 ? (tgBubblesOn() ? 1 : 0) : -1;
   const nativeTgStyle = useMemo(() => (_ts < 0 ? undefined : { on: _ts }), [_ts]);
+  // [2026-10-19 kb-translate] iOS c/ teclado aberto a lista anda por transform
+  // (sobe em bloco sob o recorte do cabeçalho): o topo escondido (= lift em
+  // repouso) vira inset do lado das antigas + desce a pílula de data. 0 fora do
+  // modo translate; só muda em repouso (fim da subida/descida do teclado).
+  const kbRest = useThreadKbRestLift();
   const nativeSticky = useMemo(() => {
     if (!stickyDate || _api < 2) return undefined;
-    const o = { on: stickyDate.on ? 1 : 0, top: Number(stickyDate.top) || 0 };
+    const o = { on: stickyDate.on ? 1 : 0, top: (Number(stickyDate.top) || 0) + kbRest };
     if (stickyDate.bg != null) o.bg = toArgb(stickyDate.bg);
     if (stickyDate.fg != null) o.fg = toArgb(stickyDate.fg);
     if (stickyDate.shadow != null) o.shadow = stickyDate.shadow ? 1 : 0;
     return o;
-  }, [stickyDate]);
+  }, [stickyDate, kbRest]);
 
   // [native-store] {a, c, r, n}: r = assinatura do formato das linhas (api +
   // ROW_SCHEMA + tema/fonte/escuro + idioma/grupo) — foto de outro formato não é
@@ -2329,7 +2335,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       dark={!!isDark}
       keyboardDismissMode={keyboardDismissMode}
       bottomInset={bottomInset}
-      topInset={topInset}
+      topInset={topInset + kbRest}
       {...(nativeSticky ? { stickyDate: nativeSticky } : null)}
       {...(_api >= 3 ? { ctxMenu: !!ctxMenu && _ctxMenuSwitchOn() } : null)}
       {...(nativeStore ? { store: nativeStore } : null)}
