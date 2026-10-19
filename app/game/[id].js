@@ -2,8 +2,10 @@
 // Visual P&B premium; o SERVIDOR valida tudo (o app manda a intenção e redesenha com a visão que volta).
 // Tempo real pelo evento WS game_update (services/games.js) + atualização de segurança a cada 12 s.
 // Faixa de mensagens rápidas manda texto normal para a conversa.
+// Polish 2: tablet/web largo (>= 900) = tabuleiro centralizado + painel lateral (jogadores + conversa);
+// pódio animado no fim (Quiz/Forca/Cartas em grupo); "reduzir movimento" desliga pulsos e confete.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, StyleSheet, AppState, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, StyleSheet, AppState, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withSequence, withTiming, withSpring } from 'react-native-reanimated';
@@ -12,8 +14,10 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { IconChevronLeft } from '../../components/Icons';
 import { GameTypeIcon, IconTrophy, IconRematch, IconFlagResign } from '../../components/games/GameIcons';
-import { gamePalette, hWin, hErr, hTurn } from '../../components/games/fx';
+import { gamePalette, hWin, hErr, hTurn, hEnd, hTap } from '../../components/games/fx';
 import Confetti from '../../components/games/Confetti';
+import Podium from '../../components/games/Podium';
+import { useRM, PressScale } from '../../components/games/motion';
 import RulesSheet from '../../components/games/RulesSheet';
 import { loadSoundPref, soundOn, setSoundOn, onSoundPref, releaseSfx } from '../../components/games/sound';
 import Svg, { Path } from 'react-native-svg';
@@ -27,12 +31,12 @@ import {
   gameTitle, gameStatusLine, resultHeadline, gameErrorText, gameCardActions, gameActionLabel, nameOf, playerStatusLabel, isMyTurn, tr,
 } from '../../services/games';
 
-function TurnPill({ on, label, pal }) {
+function TurnPill({ on, label, pal, rm }) {
   const s = useSharedValue(1);
   useEffect(() => {
-    if (on) s.value = withRepeat(withSequence(withTiming(1.06, { duration: 520 }), withTiming(1, { duration: 520 })), -1, false);
+    if (on && !rm) s.value = withRepeat(withSequence(withTiming(1.06, { duration: 520 }), withTiming(1, { duration: 520 })), -1, false);
     else s.value = withTiming(1, { duration: 150 });
-  }, [on]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [on, rm]); // eslint-disable-line react-hooks/exhaustive-deps
   const st = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
   return (
     <Animated.View style={[styles.pill, { backgroundColor: on ? pal.strong : pal.card, borderColor: on ? pal.strong : pal.line }, st]}>
@@ -41,12 +45,14 @@ function TurnPill({ on, label, pal }) {
   );
 }
 
-function PlayersBar({ view, me, pal, t }) {
+function PlayersBar({ view, me, pal, t, vertical }) {
   const S = view.state || {};
   const seats = Array.isArray(view.seats) ? view.seats : [];
   if (!seats.length) return null;
+  const Wrap = vertical ? View : ScrollView;
+  const wrapProps = vertical ? { style: { gap: 8, marginTop: 8 } } : { horizontal: true, showsHorizontalScrollIndicator: false, contentContainerStyle: { paddingHorizontal: 16, gap: 8 }, style: { flexGrow: 0, marginTop: 8 } };
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }} style={{ flexGrow: 0, marginTop: 8 }}>
+    <Wrap {...wrapProps}>
       {seats.map((e, i) => {
         const turn = view.status === 'active' && view.turn && String(view.turn).toLowerCase() === String(e).toLowerCase();
         const won = (view.winners || []).some((w) => String(w).toLowerCase() === String(e).toLowerCase());
@@ -57,14 +63,14 @@ function PlayersBar({ view, me, pal, t }) {
         if (view.type === 'cartas') badge = <Text style={{ color: pal.sub, fontWeight: '700', fontSize: 11.5 }}>{(S.counts || [])[i] ?? ''}</Text>;
         if (view.type === 'quiz' || view.type === 'forca') badge = <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 12 }}>{(S.sc || [])[i] || 0}</Text>;
         return (
-          <View key={e} style={[styles.chip, { borderColor: turn || won ? pal.strong : pal.line, backgroundColor: turn ? pal.hl : 'transparent', opacity: out ? 0.45 : 1 }]}>
+          <View key={e} style={[styles.chip, vertical && styles.chipV, { borderColor: turn || won ? pal.strong : pal.line, backgroundColor: turn ? pal.hl : 'transparent', opacity: out ? 0.45 : 1 }]}>
             {won ? <IconTrophy size={13} color={pal.ink} /> : null}
-            <Text style={{ color: pal.ink, fontWeight: i === view.me ? '800' : '600', fontSize: 13, maxWidth: 110 }} numberOfLines={1}>{nameOf(view, e, me, t)}</Text>
+            <Text style={[{ color: pal.ink, fontWeight: i === view.me ? '800' : '600', fontSize: 13, maxWidth: vertical ? undefined : 110 }, vertical && { flex: 1 }]} numberOfLines={1}>{nameOf(view, e, me, t)}</Text>
             {badge}
           </View>
         );
       })}
-    </ScrollView>
+    </Wrap>
   );
 }
 
@@ -93,41 +99,55 @@ function WaitingDots({ pal }) {
   return <View style={{ flexDirection: 'row', gap: 6, marginTop: 10 }}>{[0, 1, 2].map((k) => <Dot key={k} a={a} k={k} pal={pal} />)}</View>;
 }
 
-function ResultPanel({ view, me, pal, t, onRematch, onOpenRematch, busy }) {
-  const s = useSharedValue(0.6);
-  useEffect(() => { s.value = withSpring(1, { damping: 9, stiffness: 160 }); if ((view.winners || []).some((w) => String(w).toLowerCase() === me)) hWin(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+function ResultPanel({ view, me, pal, t, onRematch, onOpenRematch, busy, rm, fresh }) {
+  const s = useSharedValue(rm ? 1 : 0.6);
+  const e = useSharedValue(rm ? 1 : 0);
+  useEffect(() => {
+    if (!rm) { s.value = withSpring(1, { damping: 9, stiffness: 160 }); e.value = withTiming(1, { duration: 280 }); }
+    const seat = view.me !== null && view.me !== undefined;
+    if (fresh && seat) { if ((view.winners || []).some((w) => String(w).toLowerCase() === me)) hWin(); else hEnd(); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const st = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
+  const enterSt = useAnimatedStyle(() => ({ opacity: e.value, transform: [{ translateY: (1 - e.value) * 24 }] }));
   const rk = Array.isArray(view.ranking) ? view.ranking : [];
   const showSc = view.type === 'quiz' || view.type === 'forca' || view.type === 'cartas';
   const seat = view.me !== null && view.me !== undefined;
+  const scoreTx = (r) => (view.type === 'cartas' ? tr(t, 'games.cartas.nCards', '{n} cartas', { n: r.sc }) : tr(t, 'games.points', '{n} pts', { n: r.sc }));
+  const podium = showSc && rk.length >= 2 && !view.draw && !(view.type === 'forca' && view.hanged) && (view.type !== 'cartas' || rk.length >= 3);
+  const rest = podium ? rk.slice(3, 8) : rk.slice(0, 6);
+  const off = podium ? 3 : 0;
   return (
-    <View style={[styles.result, { backgroundColor: pal.card, borderColor: pal.line }]}>
+    <Animated.View style={[styles.result, { backgroundColor: pal.card, borderColor: pal.line }, enterSt]}>
       <Animated.View style={[styles.trophy, { backgroundColor: pal.strong }, st]}><IconTrophy size={30} color={pal.onStrong} /></Animated.View>
       <Text style={{ color: pal.ink, fontSize: 18, fontWeight: '900', textAlign: 'center', marginTop: 10 }}>{resultHeadline(t, view, me)}</Text>
       {view.type === 'forca' && view.state && view.state.word ? <Text style={{ color: pal.sub, marginTop: 4 }}>{tr(t, 'games.forca.wordWas', 'A palavra era {w}', { w: view.state.word })}</Text> : null}
-      {rk.length > 1 ? (
+      {podium ? <Podium pal={pal} rows={rk.map((r) => ({ e: r.e, name: nameOf(view, r.e, me, t), score: scoreTx(r) }))} /> : null}
+      {rk.length > 1 && rest.length ? (
         <View style={{ alignSelf: 'stretch', marginTop: 12 }}>
-          {rk.slice(0, 6).map((r, i) => (
-            <View key={r.e} style={[styles.rankRow, { borderTopColor: pal.line }]}>
-              <Text style={{ color: i === 0 ? pal.ink : pal.sub, fontWeight: '900', width: 22 }}>{i + 1}</Text>
-              <Text style={{ color: pal.ink, flex: 1, fontWeight: i === 0 ? '800' : '600' }} numberOfLines={1}>{nameOf(view, r.e, me, t)}</Text>
-              {showSc ? <Text style={{ color: pal.sub, fontWeight: '700' }}>{view.type === 'cartas' ? tr(t, 'games.cartas.nCards', '{n} cartas', { n: r.sc }) : tr(t, 'games.points', '{n} pts', { n: r.sc })}</Text> : null}
-            </View>
-          ))}
+          {rest.map((r, k) => {
+            const i = k + off;
+            return (
+              <View key={r.e} style={[styles.rankRow, { borderTopColor: pal.line }]}>
+                <Text style={{ color: i === 0 ? pal.ink : pal.sub, fontWeight: '900', width: 22 }}>{i + 1}</Text>
+                <Text style={{ color: pal.ink, flex: 1, fontWeight: i === 0 ? '800' : '600' }} numberOfLines={1}>{nameOf(view, r.e, me, t)}</Text>
+                {showSc ? <Text style={{ color: pal.sub, fontWeight: '700' }}>{scoreTx(r)}</Text> : null}
+              </View>
+            );
+          })}
         </View>
       ) : null}
       {view.rematch_id ? (
-        <Pressable onPress={onOpenRematch} style={[styles.cta, { backgroundColor: pal.strong }]} accessibilityRole="button">
+        <PressScale onPress={() => { hTap(); onOpenRematch(); }} rm={rm} style={[styles.cta, { backgroundColor: pal.strong }]} accessibilityRole="button">
           <IconRematch size={18} color={pal.onStrong} />
           <Text style={{ color: pal.onStrong, fontWeight: '800', fontSize: 15 }}>{tr(t, 'games.act.openRematch', 'Ver revanche')}</Text>
-        </Pressable>
+        </PressScale>
       ) : seat ? (
-        <Pressable onPress={onRematch} disabled={busy} style={[styles.cta, { backgroundColor: pal.strong, opacity: busy ? 0.5 : 1 }]} accessibilityRole="button">
+        <PressScale onPress={() => { hTap(); onRematch(); }} disabled={busy} rm={rm} style={[styles.cta, { backgroundColor: pal.strong, opacity: busy ? 0.5 : 1 }]} accessibilityRole="button">
           <IconRematch size={18} color={pal.onStrong} />
           <Text style={{ color: pal.onStrong, fontWeight: '800', fontSize: 15 }}>{gameActionLabel(t, 'rematch')}</Text>
-        </Pressable>
+        </PressScale>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -146,6 +166,8 @@ export default function GameScreen() {
   const me = String((user && user.email) || '').toLowerCase();
   const ins = useSafeAreaInsets();
   const pal = useMemo(() => gamePalette(colors, isDark), [colors, isDark]);
+  const { width: winW, height: winH } = useWindowDimensions();
+  const rm = useRM();
   const [view, setView] = useState(() => getGameView(gid));
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
@@ -158,6 +180,9 @@ export default function GameScreen() {
   const [sfx, setSfx] = useState(soundOn());
   const [celebrate, setCelebrate] = useState(false);
   const prevStatus = useRef(view ? view.status : null);
+  // viu a partida em andamento nesta tela → o fim é "ao vivo" (som de vitória/fim só nesse caso)
+  const sawActive = useRef(false);
+  if (view && view.status === 'active') sawActive.current = true;
   useEffect(() => { loadSoundPref().then(setSfx).catch(() => {}); const off = onSoundPref(setSfx); return () => { off(); releaseSfx(); }; }, []);
   // confete quando a partida termina COM vencedor enquanto a tela está aberta
   useEffect(() => {
@@ -296,9 +321,14 @@ export default function GameScreen() {
 
   const status = gameStatusLine(t, view, me);
   const myTurn = isMyTurn(view, me);
+  // largo (tablet/web): tabuleiro no centro + painel lateral com jogadores e a conversa
+  const wide = winW >= 900;
+  const colW = wide ? Math.min(winW - SIDE_W - 32, 820) : winW;
+  const fitH = Math.max(300, winH - ins.top - ins.bottom - 150);
   let board = null;
   if (view.status === 'active' || view.status === 'finished') {
-    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick };
+    const sq = view.type === 'damas' || view.type === 'velha';
+    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : undefined };
     if (view.type === 'velha') board = <VelhaBoard {...P} />;
     else if (view.type === 'damas') board = <DamasBoard {...P} />;
     else if (view.type === 'cartas') board = <CartasBoard {...P} />;
@@ -306,74 +336,119 @@ export default function GameScreen() {
     else if (view.type === 'forca') board = <ForcaBoard {...P} />;
   }
   const pendingActs = view.status === 'pending' ? gameCardActions(view, me) : [];
+  const sendTyped = () => { const x = chatText; setChatText(''); sendQuick(x); };
+
+  const statusRow = (
+    <View style={styles.statusRow}>
+      <TurnPill on={myTurn} label={status} pal={pal} rm={rm} />
+      {view.spectator && view.status === 'active' ? <Text style={{ color: pal.sub, fontSize: 12.5 }}>{tr(t, 'games.spectating', 'Você está assistindo')}</Text> : null}
+    </View>
+  );
+  const content = (
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 12, width: '100%', maxWidth: wide ? colW : 680, alignSelf: 'center', justifyContent: wide ? 'center' : undefined }} keyboardShouldPersistTaps="handled">
+      {view.status === 'pending' ? (
+        <View style={[styles.result, { backgroundColor: pal.card, borderColor: pal.line }, wide && { maxWidth: 520, alignSelf: 'center', width: '100%' }]}>
+          <GameTypeIcon type={view.type} size={34} color={pal.ink} />
+          <Text style={{ color: pal.ink, fontSize: 17, fontWeight: '800', marginTop: 10, textAlign: 'center' }}>{status}</Text>
+          <WaitingDots pal={pal} />
+          <View style={{ alignSelf: 'stretch', marginTop: 10 }}>
+            {(view.players || []).map((p) => (
+              <View key={p.e} style={[styles.rankRow, { borderTopColor: pal.line }]}>
+                <Text style={{ color: pal.ink, flex: 1, fontWeight: '600' }} numberOfLines={1}>{nameOf(view, p.e, me, t)}</Text>
+                <Text style={{ color: pal.sub, fontSize: 12.5 }}>{playerStatusLabel(t, p.s)}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, alignSelf: 'stretch' }}>
+            {pendingActs.map((a) => {
+              const prim = a === 'accept' || a === 'join' || a === 'start';
+              return (
+                <PressScale key={a} disabled={busy} rm={rm} scaleTo={0.96} onPress={() => { hTap(); act(a); }} style={[styles.btn, prim ? { backgroundColor: pal.strong } : { borderWidth: 1, borderColor: pal.line }]} accessibilityRole="button">
+                  <Text style={{ color: prim ? pal.onStrong : pal.ink, fontWeight: '800' }}>{gameActionLabel(t, a)}</Text>
+                </PressScale>
+              );
+            })}
+          </View>
+        </View>
+      ) : null}
+      {view.status === 'cancelled' ? <Text style={[styles.centerTx, { color: pal.sub }]}>{status}</Text> : null}
+      {board}
+      {view.status === 'finished' ? (
+        <View style={wide ? { maxWidth: 560, width: '100%', alignSelf: 'center' } : null}>
+          <ResultPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} fresh={sawActive.current} onRematch={() => act('rematch')}
+            onOpenRematch={() => router.replace({ pathname: '/game/[id]', params: { id: String(view.rematch_id), cid: String(view.conversation_id || '') } })} />
+        </View>
+      ) : null}
+    </ScrollView>
+  );
+  const quickChips = QUICK.map(([k, fb]) => (
+    <PressScale key={k} rm={rm} scaleTo={0.95} onPress={() => { hTap(); sendQuick(tr(t, k, fb)); }} style={[styles.quick, { borderColor: pal.line }]} accessibilityRole="button">
+      <Text style={{ color: pal.ink, fontSize: 13, fontWeight: '600' }}>{tr(t, k, fb)}</Text>
+    </PressScale>
+  ));
+  const inputRow = (
+    <View style={[styles.inputRow, { backgroundColor: pal.card }]}>
+      <TextInput value={chatText} onChangeText={setChatText} placeholder={tr(t, 'games.quick.placeholder', 'Mensagem para a conversa')} placeholderTextColor={pal.sub}
+        style={{ flex: 1, color: pal.ink, fontSize: 15, paddingVertical: Platform.OS === 'ios' ? 9 : 5 }} returnKeyType="send" onSubmitEditing={sendTyped} />
+      <PressScale onPress={sendTyped} disabled={!chatText.trim()} rm={rm} style={[styles.sendBtn, { backgroundColor: chatText.trim() ? pal.strong : pal.card2 }]}
+        accessibilityRole="button" accessibilityLabel={tr(t, 'games.quick.send', 'Enviar')}>
+        <Text style={{ color: chatText.trim() ? pal.onStrong : pal.sub, fontWeight: '800', fontSize: 13 }}>{tr(t, 'games.quick.send', 'Enviar')}</Text>
+      </PressScale>
+    </View>
+  );
+  const overlays = (
+    <>
+      {celebrate && !rm ? <Confetti dark={isDark} /> : null}
+      <RulesSheet visible={rulesOpen} onClose={() => setRulesOpen(false)} type={view.type} t={t} pal={pal} />
+      {toast ? <View pointerEvents="none" style={[styles.toast, { backgroundColor: pal.strong, bottom: ins.bottom + 76 }]}><Text style={{ color: pal.onStrong, fontWeight: '700' }}>{toast}</Text></View> : null}
+    </>
+  );
+
+  if (wide) {
+    return (
+      <KeyboardAvoidingView style={[styles.fill, { backgroundColor: pal.bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <Stack.Screen options={{ headerShown: false }} />
+        {header}
+        <View style={styles.wideRow}>
+          <View style={styles.wideMain}>
+            {statusRow}
+            {content}
+          </View>
+          <View style={[styles.side, { width: SIDE_W, borderLeftColor: pal.line, paddingBottom: Math.max(ins.bottom, 12) }]}>
+            <Text style={[styles.sideTitle, { color: pal.sub }]}>{tr(t, 'games.side.players', 'JOGADORES')}</Text>
+            <ScrollView style={{ flexGrow: 0, maxHeight: '45%' }} contentContainerStyle={{ paddingHorizontal: 14 }}>
+              <PlayersBar view={view} me={me} pal={pal} t={t} vertical />
+            </ScrollView>
+            <View style={{ flex: 1 }} />
+            <Text style={[styles.sideTitle, { color: pal.sub }]}>{tr(t, 'games.side.chat', 'CONVERSA')}</Text>
+            <View style={styles.quickWrap}>{quickChips}</View>
+            <View style={{ marginTop: 8 }}>{inputRow}</View>
+          </View>
+        </View>
+        {overlays}
+      </KeyboardAvoidingView>
+    );
+  }
 
   return (
     <KeyboardAvoidingView style={[styles.fill, { backgroundColor: pal.bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Stack.Screen options={{ headerShown: false }} />
       {header}
-      <View style={styles.statusRow}>
-        <TurnPill on={myTurn} label={status} pal={pal} />
-        {view.spectator && view.status === 'active' ? <Text style={{ color: pal.sub, fontSize: 12.5 }}>{tr(t, 'games.spectating', 'Você está assistindo')}</Text> : null}
-      </View>
+      {statusRow}
       <PlayersBar view={view} me={me} pal={pal} t={t} />
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 12, width: '100%', maxWidth: 680, alignSelf: 'center' }} keyboardShouldPersistTaps="handled">
-        {view.status === 'pending' ? (
-          <View style={[styles.result, { backgroundColor: pal.card, borderColor: pal.line }]}>
-            <GameTypeIcon type={view.type} size={34} color={pal.ink} />
-            <Text style={{ color: pal.ink, fontSize: 17, fontWeight: '800', marginTop: 10, textAlign: 'center' }}>{status}</Text>
-            <WaitingDots pal={pal} />
-            <View style={{ alignSelf: 'stretch', marginTop: 10 }}>
-              {(view.players || []).map((p) => (
-                <View key={p.e} style={[styles.rankRow, { borderTopColor: pal.line }]}>
-                  <Text style={{ color: pal.ink, flex: 1, fontWeight: '600' }} numberOfLines={1}>{nameOf(view, p.e, me, t)}</Text>
-                  <Text style={{ color: pal.sub, fontSize: 12.5 }}>{playerStatusLabel(t, p.s)}</Text>
-                </View>
-              ))}
-            </View>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, alignSelf: 'stretch' }}>
-              {pendingActs.map((a) => {
-                const prim = a === 'accept' || a === 'join' || a === 'start';
-                return (
-                  <Pressable key={a} disabled={busy} onPress={() => act(a)} style={[styles.btn, prim ? { backgroundColor: pal.strong } : { borderWidth: 1, borderColor: pal.line }]} accessibilityRole="button">
-                    <Text style={{ color: prim ? pal.onStrong : pal.ink, fontWeight: '800' }}>{gameActionLabel(t, a)}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        ) : null}
-        {view.status === 'cancelled' ? <Text style={[styles.centerTx, { color: pal.sub }]}>{status}</Text> : null}
-        {board}
-        {view.status === 'finished' ? (
-          <ResultPanel view={view} me={me} pal={pal} t={t} busy={busy} onRematch={() => act('rematch')}
-            onOpenRematch={() => router.replace({ pathname: '/game/[id]', params: { id: String(view.rematch_id), cid: String(view.conversation_id || '') } })} />
-        ) : null}
-      </ScrollView>
-      {celebrate ? <Confetti /> : null}
-      <RulesSheet visible={rulesOpen} onClose={() => setRulesOpen(false)} type={view.type} t={t} pal={pal} />
-      {toast ? <View pointerEvents="none" style={[styles.toast, { backgroundColor: pal.strong, bottom: ins.bottom + 76 }]}><Text style={{ color: pal.onStrong, fontWeight: '700' }}>{toast}</Text></View> : null}
+      {content}
+      {overlays}
       <View style={[styles.chatStrip, { borderTopColor: pal.line, paddingBottom: Math.max(ins.bottom, 8) }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12 }} keyboardShouldPersistTaps="handled">
-          {QUICK.map(([k, fb]) => (
-            <Pressable key={k} onPress={() => sendQuick(tr(t, k, fb))} style={[styles.quick, { borderColor: pal.line }]} accessibilityRole="button">
-              <Text style={{ color: pal.ink, fontSize: 13, fontWeight: '600' }}>{tr(t, k, fb)}</Text>
-            </Pressable>
-          ))}
+          {quickChips}
         </ScrollView>
-        <View style={[styles.inputRow, { backgroundColor: pal.card }]}>
-          <TextInput value={chatText} onChangeText={setChatText} placeholder={tr(t, 'games.quick.placeholder', 'Mensagem para a conversa')} placeholderTextColor={pal.sub}
-            style={{ flex: 1, color: pal.ink, fontSize: 15, paddingVertical: Platform.OS === 'ios' ? 9 : 5 }} returnKeyType="send"
-            onSubmitEditing={() => { const x = chatText; setChatText(''); sendQuick(x); }} />
-          <Pressable onPress={() => { const x = chatText; setChatText(''); sendQuick(x); }} disabled={!chatText.trim()} style={[styles.sendBtn, { backgroundColor: chatText.trim() ? pal.strong : pal.card2 }]}
-            accessibilityRole="button" accessibilityLabel={tr(t, 'games.quick.send', 'Enviar')}>
-            <Text style={{ color: chatText.trim() ? pal.onStrong : pal.sub, fontWeight: '800', fontSize: 13 }}>{tr(t, 'games.quick.send', 'Enviar')}</Text>
-          </Pressable>
-        </View>
+        {inputRow}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
+const SIDE_W = 320;
 const styles = StyleSheet.create({
   fill: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -385,6 +460,12 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, marginTop: 2 },
   pill: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, maxWidth: '78%' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1.5, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 },
+  chipV: { paddingVertical: 9, borderRadius: 12 },
+  wideRow: { flex: 1, flexDirection: 'row' },
+  wideMain: { flex: 1, paddingHorizontal: 16 },
+  side: { borderLeftWidth: StyleSheet.hairlineWidth, paddingTop: 6 },
+  sideTitle: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.6, paddingHorizontal: 14, marginTop: 8 },
+  quickWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, marginTop: 8 },
   result: { margin: 16, borderRadius: 20, borderWidth: 1, padding: 18, alignItems: 'center' },
   trophy: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
   rankRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth },

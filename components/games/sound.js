@@ -34,8 +34,13 @@ export function setSoundOn(v) {
   try { AsyncStorage.setItem(KEY, _on ? '1' : '0').catch(() => {}); } catch {}
   for (const fn of Array.from(_subs)) { try { fn(_on); } catch {} }
 }
+const _lastAt = {};
 export function playSfx(name) {
   if (!_on || !SRC[name]) return;
+  // mesmo som 2x em < 70 ms (ex.: lance + eco do WS) soa como estalo: toca 1 vez só
+  const now = Date.now();
+  if (_lastAt[name] && now - _lastAt[name] < 70) return;
+  _lastAt[name] = now;
   try {
     let p = _players[name];
     if (!p) {

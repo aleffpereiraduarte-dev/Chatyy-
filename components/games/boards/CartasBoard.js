@@ -1,12 +1,17 @@
 // components/games/boards/CartasBoard.js — [jogos 2026-10-18] "Cartas Coloridas" (descarte por cor ou número).
 // Arte e nome ORIGINAIS. Mão em leque embaixo (jogáveis sobem), monte para comprar, mesa com a cor atual.
 // O servidor manda só a MINHA mão (`hand`), as jogáveis (`playable`) e a contagem dos outros (`counts`).
-import React, { useEffect, useState } from 'react';
+// Polish 2: carta VOA da mão (ou da cadeira do adversário) até o descarte e do monte até quem comprou;
+// carta que não serve treme; adversários com versos em leque + número; seta de sentido girando em volta
+// da mesa (meia-volta no Inverter); seletor de cor em pétalas; selo "Última carta!".
+// Voo = 1 shared value por carta (UI thread); o JS só mede (measureInWindow) no início e desmonta no fim.
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Modal, StyleSheet, useWindowDimensions } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, withSequence, withDelay } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, withSequence, withDelay, withRepeat, cancelAnimation, runOnJS, Easing } from 'react-native-reanimated';
 import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
-import { CARD_COLORS, hTap, hCard, hDraw } from '../fx';
+import { CARD_COLORS, hTap, hCard, hDraw, hNope, hLast } from '../fx';
 import { tr, nameOf } from '../../../services/games';
+import { PressScale, shake, pop, useRM } from '../motion';
 
 const COLOR_NAME_FB = { r: 'Vermelho', y: 'Amarelo', g: 'Verde', b: 'Azul' };
 export function colorName(t, c) { return tr(t, 'games.cartas.color.' + c, COLOR_NAME_FB[c] || c); }
@@ -76,76 +81,363 @@ export function CardBack({ w = 62, h = 92 }) {
   );
 }
 
-function HandCard({ code, x, y, rot, playable, myTurn, onPress, w, h, drawn, delay }) {
+function hashAng(s, k) { let h = 7; const x = String(s) + k; for (let i = 0; i < x.length; i++) h = (h * 31 + x.charCodeAt(i)) | 0; return ((Math.abs(h) % 25) - 12); }
+function measure(ref) {
+  return new Promise((res) => {
+    try { if (!ref || !ref.current || !ref.current.measureInWindow) { res(null); return; } ref.current.measureInWindow((x, y, w, h) => res(Number.isFinite(x) && w ? { x, y, w, h } : null)); } catch { res(null); }
+  });
+}
+
+// Carta voando (jogar/comprar). Um progresso 0→1 no UI thread; o JS só monta e desmonta.
+function Flight({ f, onDone, rm }) {
+  const p = useSharedValue(0);
+  useEffect(() => {
+    const dur = rm ? 1 : (f.dur || 340);
+    p.value = withDelay(f.delay || 0, withTiming(1, { duration: dur, easing: Easing.out(Easing.cubic) }, (fin) => { if (fin) runOnJS(onDone)(f.id); }));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const { from, to } = f;
+  const st = useAnimatedStyle(() => {
+    const k = p.value;
+    const cx = from.cx + (to.cx - from.cx) * k;
+    const cy = from.cy + (to.cy - from.cy) * k - Math.sin(Math.PI * k) * (f.arc || 46);
+    const s = (from.w / to.w) + (1 - from.w / to.w) * k;
+    return {
+      opacity: k <= 0 && (f.delay || 0) > 0 ? 0 : 1,
+      transform: [{ translateX: cx - to.w / 2 }, { translateY: cy - to.h / 2 }, { rotate: `${from.rot + (to.rot - from.rot) * k}deg` }, { scale: s }],
+    };
+  });
+  return (
+    <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0, width: to.w, height: to.h, zIndex: 50 }, st]}>
+      {f.code ? <CardFace code={f.code} w={to.w} h={to.h} /> : <CardBack w={to.w} h={to.h} />}
+    </Animated.View>
+  );
+}
+
+function HandCard({ code, x, y, rot, playable, myTurn, onTap, w, h, drawn, delay, hidden, rm, pal }) {
   const lift = useSharedValue(0);
-  const enter = useSharedValue(0);
-  useEffect(() => { enter.value = withDelay(delay || 0, withSpring(1, { damping: 16, stiffness: 140 })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const enter = useSharedValue(rm ? 1 : 0);
+  const sx = useSharedValue(0);
+  useEffect(() => { enter.value = rm ? 1 : withDelay(delay || 0, withSpring(1, { damping: 16, stiffness: 140 })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { lift.value = withSpring(playable ? -18 : 0, { damping: 15, stiffness: 180 }); }, [playable]); // eslint-disable-line react-hooks/exhaustive-deps
   // entra "voando" do monte (distribuição / compra) e sobe quando é jogável
-  const st = useAnimatedStyle(() => ({ opacity: enter.value, transform: [{ translateY: lift.value - (1 - enter.value) * 220 }, { scale: 0.7 + 0.3 * enter.value }] }));
+  const st = useAnimatedStyle(() => ({ opacity: hidden ? 0 : enter.value, transform: [{ translateX: sx.value }, { translateY: lift.value - (1 - enter.value) * 220 }, { scale: 0.7 + 0.3 * enter.value }] }));
+  const press = () => {
+    if (playable) { onTap(); return; }
+    hNope(); shake(sx, 7, rm);
+  };
   return (
     <View style={{ position: 'absolute', left: x, bottom: 8 - y, transform: [{ rotate: `${rot}deg` }] }}>
       <Animated.View style={st}>
-        <Pressable disabled={!playable} onPress={onPress} accessibilityRole="button" accessibilityState={{ disabled: !playable }}>
+        <Pressable onPress={press} disabled={hidden} accessibilityRole="button" accessibilityState={{ disabled: !playable }}>
           <CardFace code={code} w={w} h={h} dim={myTurn && !playable} />
-          {drawn ? <View style={{ position: 'absolute', left: -3, right: -3, top: -3, bottom: -3, borderRadius: w * 0.16, borderWidth: 2.5, borderColor: '#FFD60A' }} /> : null}
+          {drawn ? <View style={{ position: 'absolute', left: -3, right: -3, top: -3, bottom: -3, borderRadius: w * 0.16, borderWidth: 2.5, borderColor: pal.accent }} /> : null}
         </Pressable>
       </Animated.View>
     </View>
   );
 }
 
-function Pile({ top, color, k, pal, othersPlayed }) {
+function Pile({ top, color, k, pal, othersPlayed, under, pileRef, rm }) {
   const sc = useSharedValue(1);
   const rot = useSharedValue(0);
-  const first = React.useRef(true);
+  const halo = useSharedValue(1);
+  const first = useRef(true);
+  const prevColor = useRef(color);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
     if (othersPlayed) { try { require('../sound').playSfx('card'); } catch {} }
+    if (rm) return;
     rot.value = withSequence(withTiming((Math.random() - 0.5) * 16, { duration: 1 }), withSpring(0, { damping: 11 }));
-    sc.value = withSequence(withTiming(1.16, { duration: 110 }), withSpring(1, { damping: 12 }));
+    sc.value = withSequence(withTiming(1.12, { duration: 100 }), withSpring(1, { damping: 12 }));
   }, [k]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (color !== prevColor.current) { prevColor.current = color; pop(halo, 1.14, rm); } }, [color]); // eslint-disable-line react-hooks/exhaustive-deps
   const st = useAnimatedStyle(() => ({ transform: [{ scale: sc.value }, { rotate: `${rot.value}deg` }] }));
+  const haloSt = useAnimatedStyle(() => ({ transform: [{ scale: halo.value }] }));
   return (
-    <View style={{ alignItems: 'center' }}>
-      <View style={{ padding: 5, borderRadius: 16, borderWidth: 3, borderColor: CARD_COLORS[color] || pal.line }}>
-        <Animated.View style={st}><CardFace code={top} w={74} h={110} /></Animated.View>
-      </View>
+    <View style={{ alignItems: 'center', justifyContent: 'center', width: 96, height: 132 }}>
+      <Animated.View style={[{ position: 'absolute', width: 92, height: 128, borderRadius: 18, borderWidth: 3, borderColor: CARD_COLORS[color] || pal.line }, haloSt]} />
+      {under.map((c, i) => (
+        <View key={c + i} style={{ position: 'absolute', transform: [{ rotate: `${hashAng(c, i)}deg` }, { translateX: (i - under.length) * 2 }] }}>
+          <CardFace code={c} w={74} h={110} dim />
+        </View>
+      ))}
+      <View ref={pileRef} collapsable={false}><Animated.View style={st}><CardFace code={top} w={74} h={110} /></Animated.View></View>
     </View>
   );
 }
 
-export default function CartasBoard({ view, onMove, pal, busy, t, me }) {
-  const { width } = useWindowDimensions();
+// Seta circular em volta da mesa: gira devagar no sentido do jogo; no "Inverter" dá meia-volta.
+function DirRing({ dir, pal, rm, size }) {
+  const r = useSharedValue(0);
+  const flip = useSharedValue(dir === -1 ? -1 : 1);
+  const first = useRef(true);
+  useEffect(() => {
+    const d = dir === -1 ? -1 : 1;
+    if (!first.current && !rm) flip.value = withSequence(withTiming(0, { duration: 140 }), withTiming(d, { duration: 180 }));
+    else flip.value = d;
+    first.current = false;
+    if (rm) { cancelAnimation(r); return; }
+    cancelAnimation(r);
+    const base = r.value % 360;
+    r.value = base;
+    r.value = withRepeat(withTiming(base + 360 * d, { duration: 16000, easing: Easing.linear }), -1, false);
+  }, [dir, rm]); // eslint-disable-line react-hooks/exhaustive-deps
+  const st = useAnimatedStyle(() => ({ transform: [{ rotate: `${r.value}deg` }, { scaleX: flip.value }] }));
+  const R = size / 2 - 3;
+  const c = size / 2;
+  const arc = (a0, a1) => {
+    const p0 = [c + R * Math.cos(a0), c + R * Math.sin(a0)]; const p1 = [c + R * Math.cos(a1), c + R * Math.sin(a1)];
+    return `M${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A${R} ${R} 0 0 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`;
+  };
+  const head = (a) => {
+    const p = [c + R * Math.cos(a), c + R * Math.sin(a)];
+    const tx = -Math.sin(a); const ty = Math.cos(a); // tangente (sentido horário)
+    const nx = Math.cos(a); const ny = Math.sin(a);
+    const L = 7;
+    return `M${(p[0] - tx * L + nx * L * 0.7).toFixed(1)} ${(p[1] - ty * L + ny * L * 0.7).toFixed(1)} L${p[0].toFixed(1)} ${p[1].toFixed(1)} L${(p[0] - tx * L - nx * L * 0.7).toFixed(1)} ${(p[1] - ty * L - ny * L * 0.7).toFixed(1)}`;
+  };
+  return (
+    <Animated.View pointerEvents="none" style={[{ position: 'absolute', width: size, height: size }, st]}>
+      <Svg width={size} height={size}>
+        {[0, 1].map((k) => {
+          const a0 = k * Math.PI + 0.35; const a1 = k * Math.PI + Math.PI - 0.35;
+          return (
+            <React.Fragment key={k}>
+              <Path d={arc(a0, a1)} stroke={pal.sub} strokeWidth={2} fill="none" strokeLinecap="round" opacity={0.45} strokeDasharray={[2, 6]} />
+              <Path d={head(a1)} stroke={pal.sub} strokeWidth={2.2} fill="none" strokeLinecap="round" strokeLinejoin="round" opacity={0.7} />
+            </React.Fragment>
+          );
+        })}
+      </Svg>
+    </Animated.View>
+  );
+}
+
+// Verso pequeno em leque para cada adversário (até 7 visíveis + número).
+function FanBack({ k, m, rm }) {
+  const e = useSharedValue(rm ? 1 : 0);
+  const ang = (k - (m - 1) / 2) * Math.min(12, 46 / Math.max(1, m));
+  const a = useSharedValue(ang);
+  useEffect(() => { e.value = rm ? 1 : withSpring(1, { damping: 14, stiffness: 180 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { a.value = rm ? ang : withSpring(ang, { damping: 15, stiffness: 170 }); }, [ang]); // eslint-disable-line react-hooks/exhaustive-deps
+  const st = useAnimatedStyle(() => ({ opacity: e.value, transform: [{ translateY: 14 }, { rotate: `${a.value * e.value}deg` }, { translateY: -14 }, { scale: 0.6 + 0.4 * e.value }] }));
+  return <Animated.View style={[{ position: 'absolute', left: 0, top: 0 }, st]}><CardBack w={20} h={30} /></Animated.View>;
+}
+function OppFan({ n, rm }) {
+  const m = Math.min(n, 7);
+  return (
+    <View style={{ width: 20, height: 34, marginBottom: 2 }}>
+      {Array.from({ length: m }).map((_, k) => <FanBack key={k} k={k} m={m} rm={rm} />)}
+    </View>
+  );
+}
+function Opp({ name, n, turn, out, pal, rm, oppRef, one }) {
+  const s = useSharedValue(1);
+  useEffect(() => { if (one) pop(s, 1.18, rm); }, [one]); // eslint-disable-line react-hooks/exhaustive-deps
+  const badgeSt = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
+  return (
+    <View ref={oppRef} collapsable={false} style={[st.opp, { borderColor: turn ? pal.strong : pal.line, backgroundColor: pal.card, opacity: out ? 0.4 : 1 }]}>
+      <OppFan n={n} rm={rm} />
+      <Text style={{ color: pal.ink, fontWeight: '700', fontSize: 12.5, maxWidth: 90 }} numberOfLines={1}>{name}</Text>
+      <Animated.View style={[st.badge, { backgroundColor: one ? pal.accent : pal.card2 }, badgeSt]}>
+        <Text style={{ color: one ? '#111' : pal.sub, fontSize: 11.5, fontWeight: '800' }}>{n}</Text>
+      </Animated.View>
+    </View>
+  );
+}
+
+// "Última carta!" — selo que pula no meio da mesa e some sozinho.
+function Callout({ text, sub, pal, rm }) {
+  const e = useSharedValue(rm ? 1 : 0);
+  useEffect(() => { if (!rm) e.value = withSequence(withSpring(1, { damping: 9, stiffness: 220 }), withDelay(1300, withTiming(0, { duration: 220 }))); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const s = useAnimatedStyle(() => ({ opacity: Math.min(1, e.value * 1.5), transform: [{ scale: 0.6 + 0.4 * e.value }, { rotate: `${(1 - e.value) * -8}deg` }] }));
+  return (
+    <Animated.View pointerEvents="none" style={[st.callout, { backgroundColor: pal.accent }, s]}>
+      <Text style={{ color: '#111', fontWeight: '900', fontSize: 17, letterSpacing: 0.3 }}>{text}</Text>
+      {sub ? <Text style={{ color: '#111', fontWeight: '700', fontSize: 12.5, opacity: 0.8 }} numberOfLines={1}>{sub}</Text> : null}
+    </Animated.View>
+  );
+}
+
+// Seletor de cor do coringa: 4 pétalas saem do centro em cascata; a escolhida cresce, as outras somem.
+function Petal({ c, i, picked, onPick, t, rm }) {
+  const e = useSharedValue(rm ? 1 : 0);
+  const sel = useSharedValue(0);
+  useEffect(() => { if (!rm) e.value = withDelay(60 + i * 55, withSpring(1, { damping: 12, stiffness: 190 })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (picked) sel.value = withTiming(picked === c ? 1 : -1, { duration: 160 }); }, [picked]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dx = i % 2 === 0 ? -1 : 1; const dy = i < 2 ? -1 : 1;
+  const stl = useAnimatedStyle(() => ({
+    opacity: e.value * (sel.value < 0 ? 1 + sel.value * 0.8 : 1),
+    transform: [{ translateX: -dx * 40 * (1 - e.value) }, { translateY: -dy * 40 * (1 - e.value) }, { scale: (0.3 + 0.7 * e.value) * (1 + Math.max(0, sel.value) * 0.1) }],
+  }));
+  const R = 64;
+  const radius = { borderTopLeftRadius: dx < 0 && dy < 0 ? R : 10, borderTopRightRadius: dx > 0 && dy < 0 ? R : 10, borderBottomLeftRadius: dx < 0 && dy > 0 ? R : 10, borderBottomRightRadius: dx > 0 && dy > 0 ? R : 10 };
+  return (
+    <Animated.View style={stl}>
+      <PressScale onPress={() => onPick(c)} disabled={!!picked} rm={rm} scaleTo={0.92} accessibilityRole="button" accessibilityLabel={colorName(t, c)}
+        style={[{ width: 92, height: 92, backgroundColor: CARD_COLORS[c], alignItems: 'center', justifyContent: 'center' }, radius]}>
+        <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 13 }}>{colorName(t, c)}</Text>
+      </PressScale>
+    </Animated.View>
+  );
+}
+function ColorPicker({ visible, onPick, onClose, pal, t, rm }) {
+  const [picked, setPicked] = useState(null);
+  const e = useSharedValue(0);
+  useEffect(() => { if (visible) { setPicked(null); e.value = rm ? 1 : withTiming(1, { duration: 180 }); } else e.value = 0; }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  const bd = useAnimatedStyle(() => ({ opacity: e.value }));
+  const box = useAnimatedStyle(() => ({ transform: [{ scale: 0.9 + 0.1 * e.value }] }));
+  if (!visible) return null;
+  const pick = (c) => { if (picked) return; setPicked(c); hTap(); setTimeout(() => onPick(c), rm ? 0 : 200); };
+  return (
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <Animated.View style={[st.backdrop, bd]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={tr(t, 'common.cancel', 'Cancelar')} />
+        <Animated.View style={[st.colorBox, { backgroundColor: pal.bg, borderColor: pal.line }, box]}>
+          <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 16, marginBottom: 16 }}>{tr(t, 'games.cartas.pickColor', 'Escolha a cor')}</Text>
+          <View style={{ width: 196, flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {['r', 'y', 'g', 'b'].map((c, i) => <Petal key={c} c={c} i={i} picked={picked} onPick={pick} t={t} rm={rm} />)}
+          </View>
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+export default function CartasBoard({ view, onMove, pal, busy, t, me, maxW }) {
+  const win = useWindowDimensions();
+  const width = maxW || win.width;
+  const rm = useRM();
   const S = view.state || {};
   const seats = Array.isArray(view.seats) ? view.seats : [];
   const hand = Array.isArray(S.hand) ? S.hand : [];
+  const handSig = hand.join(',');
   const playable = new Set(Array.isArray(S.playable) ? S.playable : []);
   const myTurn = view.status === 'active' && view.me !== null && view.me !== undefined && S.turn === view.me;
   const [wildFor, setWildFor] = useState(null);
-  const dealtRef = React.useRef(false);
-  useEffect(() => { const tm = setTimeout(() => { dealtRef.current = true; }, 900); return () => clearTimeout(tm); }, []);
+  const [hidden, setHidden] = useState(null); // {key, sig}: carta que já saiu voando (espera o servidor)
+  const [flights, setFlights] = useState([]);
+  // o que o descarte MOSTRA por cima do servidor: {top, color} antigo enquanto a carta voa e, ao pousar
+  // antes da resposta, a carta jogada (otimista) até o servidor confirmar — nunca some/pisca.
+  const [hold, setHold] = useState(null);
+  const [landKey, setLandKey] = useState('0');
+  const [callout, setCallout] = useState(null);
+  const dealtRef = useRef(false);
+  const rootRef = useRef(null); const pileRef = useRef(null); const deckRef = useRef(null); const handRef = useRef(null);
+  const oppRefs = useRef({});
+  const prevTop = useRef({ top: S.top, color: S.color });
+  const latest = useRef(S);
+  latest.current = S;
+  const holdRef = useRef(null);
+  holdRef.current = hold;
+  const seenMoves = useRef(S.moves);
+  const prevCounts = useRef(Array.isArray(S.counts) ? S.counts.slice() : []);
+  const prevDir = useRef(S.dir);
+  const calloutT = useRef(null);
+  useEffect(() => { const tm = setTimeout(() => { dealtRef.current = true; }, 900); return () => { clearTimeout(tm); if (calloutT.current) clearTimeout(calloutT.current); }; }, []);
   const counts = Array.isArray(S.counts) ? S.counts : [];
 
-  const play = (code) => {
-    if (busy) return;
-    if (code === 'WW' || code === 'W4') { hTap(); setWildFor(code); return; }
-    hCard(); onMove({ a: 'play', card: code });
-  };
-  const chooseColor = (c) => { const code = wildFor; setWildFor(null); hCard(); onMove({ a: 'play', card: code, color: c }); };
-
   // leque
-  const W = Math.min(width - 16, 520);
-  const cw = 62; const ch = 92;
+  const W = Math.min(width - 16, maxW ? 720 : 520);
+  const cw = 62; const ch = 92; const handH = ch + 44;
   const n = hand.length;
   const step = n > 1 ? Math.min(44, (W - cw) / (n - 1)) : 0;
   const total = cw + step * Math.max(0, n - 1);
   const x0 = (W - total) / 2;
   const angle = Math.min(5, 36 / Math.max(1, n));
 
+  const flightsRef = useRef([]);
+  const doneFlight = useCallback((id) => {
+    const f = flightsRef.current.find((z) => z.id === id);
+    flightsRef.current = flightsRef.current.filter((z) => z.id !== id);
+    setFlights(flightsRef.current);
+    if (f && f.toPile) {
+      setLandKey(id);
+      if (!flightsRef.current.some((z) => z.toPile)) {
+        const cur = latest.current;
+        setHold(cur.top === f.code ? null : { top: f.code, color: f.color || cur.color, optimistic: true });
+      }
+    }
+  }, []);
+  // servidor confirmou a carta otimista → solta sem "pular" de novo
+  useEffect(() => { const h = holdRef.current; if (h && h.optimistic && h.top === S.top) setHold(null); }, [S.top, S.moves]);
+  // rede de segurança: o topo "segurado" nunca fica preso
+  useEffect(() => { if (!hold) return undefined; const tm = setTimeout(() => setHold(null), 1500); return () => clearTimeout(tm); }, [hold]);
+  const fly = useCallback(async (fromRef, toRef, opts) => {
+    const [root, a, b] = await Promise.all([measure(rootRef), measure(fromRef), measure(toRef)]);
+    if (!root || !a || !b) { if (opts.toPile) { setHold(null); setLandKey('x' + Date.now()); } return; }
+    const from = opts.from ? { ...opts.from, cx: a.x - root.x + opts.from.cx, cy: a.y - root.y + opts.from.cy } : { cx: a.x - root.x + a.w / 2, cy: a.y - root.y + a.h / 2, w: opts.fromW || 22, rot: 0 };
+    const to = { cx: b.x - root.x + b.w / 2, cy: b.y - root.y + b.h / 2, w: opts.toW || 74, h: (opts.toW || 74) * 1.486, rot: opts.toRot || 0 };
+    const id = Math.random().toString(36).slice(2);
+    flightsRef.current = flightsRef.current.concat([{ id, from, to, code: opts.code || null, color: opts.color || null, delay: opts.delay || 0, dur: opts.dur, toPile: !!opts.toPile, arc: opts.arc }]);
+    setFlights(flightsRef.current);
+  }, []);
+
+  const playFrom = (code, key, i, color) => {
+    const off = i - (n - 1) / 2;
+    const y = Math.abs(off) * Math.abs(off) * 0.9;
+    const from = { cx: x0 + i * step + cw / 2, cy: handH - 8 + y - ch / 2 - 18, w: cw, rot: off * angle };
+    setHidden({ key, sig: handSig });
+    if (!rm && S.top) { setHold({ top: S.top, color: S.color }); fly(handRef, pileRef, { from, code, color: color || code[0], toPile: true, toRot: (Math.random() - 0.5) * 10, dur: 320, arc: 60 }); }
+    hCard();
+    onMove(color ? { a: 'play', card: code, color } : { a: 'play', card: code }).then((ok) => { if (!ok) { setHidden(null); setHold(null); } });
+  };
+  const play = (code, key, i) => {
+    if (busy) return;
+    if (code === 'WW' || code === 'W4') { hTap(); setWildFor({ code, key, i }); return; }
+    playFrom(code, key, i);
+  };
+  const chooseColor = (c) => { const w = wildFor; setWildFor(null); if (w) playFrom(w.code, w.key, w.i, c); };
+
+  // lances dos OUTROS: carta voa da cadeira até o descarte; compras voam do monte até a cadeira
+  const L = S.last;
+  useEffect(() => {
+    if (S.moves === seenMoves.current) return;
+    seenMoves.current = S.moves;
+    const old = prevTop.current;
+    prevTop.current = { top: S.top, color: S.color };
+    const mine = !!L && L.by === view.me;
+    const flying = flightsRef.current.some((z) => z.toPile) || !!holdRef.current;
+    if (!L || L.by === undefined || rm) { if (L && L.a === 'play' && !flying) setLandKey('m' + S.moves); return; }
+    if (L.a === 'play' && mine && !flying) setLandKey('m' + S.moves);
+    if (L.a === 'play' && !mine && !oppRefs.current[L.by]) setLandKey('m' + S.moves);
+    if (L.a === 'play' && !mine && oppRefs.current[L.by]) {
+      if (old.top) setHold({ top: old.top, color: old.color });
+      fly({ current: oppRefs.current[L.by] }, pileRef, { code: L.card, toPile: true, toRot: (Math.random() - 0.5) * 10, fromW: 22, dur: 360 });
+    }
+    if (L.a === 'draw' && !mine && oppRefs.current[L.by]) fly(deckRef, { current: oppRefs.current[L.by] }, { toW: 22, fromW: 74, dur: 320, arc: 30 });
+    if (L.victim !== undefined && L.drew && L.victim !== view.me && oppRefs.current[L.victim]) {
+      for (let k = 0; k < Math.min(4, L.drew); k++) fly(deckRef, { current: oppRefs.current[L.victim] }, { toW: 22, fromW: 74, dur: 300, delay: 360 + k * 110, arc: 30 });
+    }
+  }, [S.moves]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Última carta!" quando alguém fica com 1 · "Sentido invertido" no Inverter
+  useEffect(() => {
+    const prev = prevCounts.current;
+    let who = -1;
+    counts.forEach((c, i) => { if (c === 1 && (prev[i] === undefined || prev[i] > 1) && view.status === 'active') who = i; });
+    prevCounts.current = counts.slice();
+    if (who >= 0) {
+      hLast();
+      const nm = who === view.me ? tr(t, 'games.you', 'Você') : nameOf(view, seats[who], me, t);
+      setCallout({ id: Date.now(), text: tr(t, 'games.cartas.lastCard', 'Última carta!'), sub: nm });
+    }
+  }, [counts.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (prevDir.current !== undefined && S.dir !== prevDir.current && seats.length > 2) {
+      setCallout({ id: Date.now(), text: tr(t, 'games.cartas.reversed', 'Sentido invertido'), sub: '' });
+    }
+    prevDir.current = S.dir;
+  }, [S.dir]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!callout) return undefined;
+    if (calloutT.current) clearTimeout(calloutT.current);
+    calloutT.current = setTimeout(() => setCallout(null), rm ? 1600 : 1900);
+    return undefined;
+  }, [callout && callout.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // último lance em texto
   let lastTx = '';
-  const L = S.last;
   if (L && L.by !== undefined && seats[L.by]) {
     const who = nameOf(view, seats[L.by], me, t);
     if (L.a === 'play') lastTx = tr(t, 'games.cartas.lastPlay', '{name} jogou {card}', { name: who, card: cardLabel(t, L.card) });
@@ -158,44 +450,49 @@ export default function CartasBoard({ view, onMove, pal, busy, t, me }) {
     if ((L.card === 'WW' || L.card === 'W4') && L.color) lastTx += ' · ' + colorName(t, L.color);
   }
 
+  const shownTop = hold ? hold.top : S.top;
+  const shownColor = hold ? hold.color : S.color;
+  const pileK = landKey;
+  const tail = Array.isArray(S.discard_tail) ? S.discard_tail : [];
+  const ti = tail.lastIndexOf(shownTop);
+  const under = ti > 0 ? tail.slice(Math.max(0, ti - 2), ti) : [];
+  const hideKey = hidden && hidden.sig === handSig ? hidden.key : null;
+  const one = view.me !== null && view.me !== undefined && hand.length === 1 && view.status === 'active';
+
   return (
-    <View style={{ flex: 1 }}>
+    <View ref={rootRef} collapsable={false} style={{ flex: 1 }}>
       {/* adversários */}
       <View style={st.opps}>
         {seats.map((e, i) => {
           if (i === view.me) return null;
-          const turn = view.status === 'active' && S.turn === i;
-          const out = Array.isArray(S.out) && S.out[i];
           return (
-            <View key={e} style={[st.opp, { borderColor: turn ? pal.strong : pal.line, backgroundColor: pal.card, opacity: out ? 0.4 : 1 }]}>
-              <View style={{ flexDirection: 'row', height: 30, width: 18 + Math.min(counts[i] || 0, 6) * 5 }}>
-                {Array.from({ length: Math.min(counts[i] || 0, 6) }).map((_, k) => (
-                  <View key={k} style={{ position: 'absolute', left: k * 5 }}><CardBack w={18} h={27} /></View>
-                ))}
-              </View>
-              <Text style={{ color: pal.ink, fontWeight: '700', fontSize: 12.5, maxWidth: 90 }} numberOfLines={1}>{nameOf(view, e, me, t)}</Text>
-              <Text style={{ color: pal.sub, fontSize: 11.5 }}>{tr(t, 'games.cartas.nCards', '{n} cartas', { n: counts[i] || 0 })}</Text>
-            </View>
+            <Opp key={e} name={nameOf(view, e, me, t)} n={counts[i] || 0} turn={view.status === 'active' && S.turn === i} out={Array.isArray(S.out) && S.out[i]}
+              pal={pal} rm={rm} one={counts[i] === 1 && view.status === 'active'} oppRef={(r) => { oppRefs.current[i] = r; }} />
           );
         })}
       </View>
 
       {/* mesa */}
       <View style={st.table}>
-        <Pressable disabled={!S.can_draw || busy} onPress={() => { hDraw(); onMove({ a: 'draw' }); }} accessibilityRole="button"
+        <PressScale disabled={!S.can_draw || busy} onPress={() => { hDraw(); onMove({ a: 'draw' }); }} rm={rm} scaleTo={0.95} accessibilityRole="button"
           accessibilityLabel={tr(t, 'games.cartas.draw', 'Comprar')} style={{ alignItems: 'center' }}>
-          <View>
+          <View ref={deckRef} collapsable={false}>
             <View style={{ position: 'absolute', left: 4, top: 4 }}><CardBack w={74} h={110} /></View>
             <View style={{ position: 'absolute', left: 2, top: 2 }}><CardBack w={74} h={110} /></View>
             <CardBack w={74} h={110} />
+            {S.can_draw ? <View pointerEvents="none" style={{ position: 'absolute', left: -4, top: -4, right: -4, bottom: -4, borderRadius: 14, borderWidth: 2, borderColor: pal.accent }} /> : null}
           </View>
           <Text style={{ color: S.can_draw ? pal.ink : pal.sub, fontWeight: '800', marginTop: 8, fontSize: 13 }}>
             {S.can_draw ? tr(t, 'games.cartas.draw', 'Comprar') : tr(t, 'games.cartas.deck', 'Monte ({n})', { n: S.deck || 0 })}
           </Text>
-        </Pressable>
+        </PressScale>
         <View style={{ alignItems: 'center' }}>
-          {S.top ? <Pile top={S.top} color={S.color} k={`${S.top}-${S.moves}`} pal={pal} othersPlayed={!!(S.last && S.last.a === 'play' && S.last.by !== view.me)} /> : null}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+          <View style={{ alignItems: 'center', justifyContent: 'center', width: 160, height: 160 }}>
+            {seats.length > 2 ? <DirRing dir={S.dir} pal={pal} rm={rm} size={160} /> : null}
+            {shownTop ? <Pile top={shownTop} color={shownColor} k={pileK} pal={pal} under={under} pileRef={pileRef} rm={rm}
+              othersPlayed={!!(S.last && S.last.a === 'play' && S.last.by !== view.me)} /> : null}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
             <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: CARD_COLORS[S.color] || pal.sub }} />
             <Text style={{ color: pal.ink, fontWeight: '700', fontSize: 13 }}>{colorName(t, S.color)}</Text>
             <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={pal.sub} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" style={{ transform: [{ scaleX: S.dir === -1 ? -1 : 1 }] }}>
@@ -206,22 +503,24 @@ export default function CartasBoard({ view, onMove, pal, busy, t, me }) {
       </View>
       {lastTx ? <Text style={[st.last, { color: pal.sub }]} numberOfLines={2}>{lastTx}</Text> : null}
       {S.can_pass ? (
-        <Pressable onPress={() => { hTap(); onMove({ a: 'pass' }); }} disabled={busy} style={[st.passBtn, { borderColor: pal.strong }]} accessibilityRole="button">
+        <PressScale onPress={() => { hTap(); onMove({ a: 'pass' }); }} disabled={busy} rm={rm} style={[st.passBtn, { borderColor: pal.strong }]} accessibilityRole="button">
           <Text style={{ color: pal.ink, fontWeight: '800' }}>{tr(t, 'games.cartas.pass', 'Passar a vez')}</Text>
-        </Pressable>
+        </PressScale>
       ) : null}
 
       {/* mão */}
       {view.me !== null && view.me !== undefined ? (
-        <View style={{ height: ch + 44, width: W, alignSelf: 'center', marginTop: 'auto' }}>
+        <View ref={handRef} collapsable={false} style={{ height: handH, width: W, alignSelf: 'center', marginTop: 'auto' }}>
+          {one ? <View pointerEvents="none" style={[st.oneTag, { backgroundColor: pal.accent }]}><Text style={{ color: '#111', fontWeight: '900', fontSize: 12 }}>{tr(t, 'games.cartas.lastCard', 'Última carta!')}</Text></View> : null}
           {hand.map((code, i) => {
             const off = i - (n - 1) / 2;
             const occ = hand.slice(0, i).filter((c) => c === code).length; // chave estável por exemplar
+            const key = code + '#' + occ;
             return (
-              <HandCard key={code + '#' + occ} code={code} w={cw} h={ch} delay={dealtRef.current ? 0 : i * 70}
-                x={x0 + i * step} y={Math.abs(off) * Math.abs(off) * 0.9} rot={off * angle}
-                playable={myTurn && playable.has(code)} myTurn={myTurn} drawn={S.drawn === code && i === hand.lastIndexOf(code)}
-                onPress={() => play(code)} />
+              <HandCard key={key} code={code} w={cw} h={ch} delay={dealtRef.current ? 0 : i * 70} rm={rm} pal={pal}
+                x={x0 + i * step} y={Math.abs(off) * Math.abs(off) * 0.9} rot={off * angle} hidden={hideKey === key}
+                playable={myTurn && playable.has(code) && !busy} myTurn={myTurn} drawn={S.drawn === code && i === hand.lastIndexOf(code)}
+                onTap={() => play(code, key, i)} />
             );
           })}
         </View>
@@ -229,31 +528,24 @@ export default function CartasBoard({ view, onMove, pal, busy, t, me }) {
         <Text style={[st.last, { color: pal.sub, marginTop: 'auto', marginBottom: 20 }]}>{tr(t, 'games.spectating', 'Você está assistindo')}</Text>
       )}
 
-      <Modal visible={!!wildFor} transparent animationType="fade" onRequestClose={() => setWildFor(null)}>
-        <Pressable style={st.backdrop} onPress={() => setWildFor(null)}>
-          <View style={[st.colorBox, { backgroundColor: pal.bg }]}>
-            <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 16, marginBottom: 14 }}>{tr(t, 'games.cartas.pickColor', 'Escolha a cor')}</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'center' }}>
-              {['r', 'y', 'g', 'b'].map((c) => (
-                <Pressable key={c} onPress={() => chooseColor(c)} style={{ alignItems: 'center', width: 70 }} accessibilityRole="button" accessibilityLabel={colorName(t, c)}>
-                  <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: CARD_COLORS[c], borderWidth: 3, borderColor: '#fff' }} />
-                  <Text style={{ color: pal.ink, marginTop: 6, fontWeight: '600' }}>{colorName(t, c)}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        </Pressable>
-      </Modal>
+      {flights.map((f) => <Flight key={f.id} f={f} onDone={doneFlight} rm={rm} />)}
+      {callout ? <View pointerEvents="none" style={st.calloutWrap}><Callout key={callout.id} text={callout.text} sub={callout.sub} pal={pal} rm={rm} /></View> : null}
+
+      <ColorPicker visible={!!wildFor} onPick={chooseColor} onClose={() => setWildFor(null)} pal={pal} t={t} rm={rm} />
     </View>
   );
 }
 
 const st = StyleSheet.create({
   opps: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 6 },
-  opp: { alignItems: 'center', borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7, minWidth: 86 },
-  table: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 34, marginTop: 18 },
-  last: { textAlign: 'center', marginTop: 12, fontSize: 13, paddingHorizontal: 20 },
+  opp: { alignItems: 'center', borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 10, paddingTop: 7, paddingBottom: 6, minWidth: 86 },
+  badge: { minWidth: 22, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, marginTop: 3 },
+  table: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 22, marginTop: 10 },
+  last: { textAlign: 'center', marginTop: 8, fontSize: 13, paddingHorizontal: 20 },
   passBtn: { alignSelf: 'center', marginTop: 10, borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 8 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
-  colorBox: { borderRadius: 20, padding: 20, width: 320, alignItems: 'center' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  colorBox: { borderRadius: 24, padding: 22, alignItems: 'center', borderWidth: StyleSheet.hairlineWidth },
+  calloutWrap: { position: 'absolute', left: 0, right: 0, top: 96, alignItems: 'center', zIndex: 60 },
+  callout: { borderRadius: 18, paddingHorizontal: 18, paddingVertical: 9, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6 },
+  oneTag: { position: 'absolute', top: -6, alignSelf: 'center', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3, zIndex: 5 },
 });

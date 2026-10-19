@@ -5,6 +5,8 @@ import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withDelay, withTiming, Easing } from 'react-native-reanimated';
 
 const COLORS = ['#0A0A0A', '#FFFFFF', '#E5484D', '#F0B400', '#22A55B', '#2F6FEB', '#9A9A9E'];
+// tema escuro: o preto some no fundo preto → vira cinza claro
+const COLORS_DARK = ['#D4D4D8', '#FFFFFF', '#E5484D', '#F0B400', '#22A55B', '#2F6FEB', '#9A9A9E'];
 
 function Bit({ x, w, h, color, delay, dur, drift, spin, H }) {
   const p = useSharedValue(0);
@@ -20,13 +22,13 @@ function Bit({ x, w, h, color, delay, dur, drift, spin, H }) {
   return <Animated.View style={[{ position: 'absolute', left: 0, top: 0, width: w, height: h, borderRadius: 2, backgroundColor: color, borderWidth: color === '#FFFFFF' ? 0.5 : 0, borderColor: '#C7C7CC' }, st]} />;
 }
 
-export default function Confetti({ count = 46 }) {
+export default function Confetti({ count = 46, dark = false }) {
   const { width, height } = useWindowDimensions();
   const bits = useMemo(() => Array.from({ length: count }).map((_, i) => ({
     k: i, x: Math.random() * width, w: 6 + Math.random() * 6, h: 9 + Math.random() * 8,
-    color: COLORS[i % COLORS.length], delay: Math.random() * 500, dur: 2200 + Math.random() * 1200,
+    color: (dark ? COLORS_DARK : COLORS)[i % COLORS.length], delay: Math.random() * 500, dur: 2200 + Math.random() * 1200,
     drift: 20 + Math.random() * 40, spin: (Math.random() < 0.5 ? -1 : 1) * (360 + Math.random() * 540),
-  })), [count, width]);
+  })), [count, width, dark]);
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       {bits.map((b) => <Bit key={b.k} {...b} H={height} />)}
