@@ -52,6 +52,10 @@ final class STRowCell: UICollectionViewCell {
   private var textFillToAcc: NSLayoutConstraint!
   private var textFillToEdge: NSLayoutConstraint!
   private var sepLeading: NSLayoutConstraint!
+  // [2026-10-19 tg-settings] alturas 44/52 (modo "solid") × 52/11 (padrão).
+  private var minH: NSLayoutConstraint!
+  private var topC: NSLayoutConstraint!
+  private var botC: NSLayoutConstraint!
 
   private var palette = STPalette(dark: false)
   private(set) var rowId = ""
@@ -120,10 +124,10 @@ final class STRowCell: UICollectionViewCell {
     textTrailingToAcc = textStack.trailingAnchor.constraint(lessThanOrEqualTo: accStack.leadingAnchor, constant: -10)
     textTrailingMax = textStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16)
     sepLeading = separator.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 60)
-    let minH = contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 52)
+    minH = contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 52)
     minH.priority = .required
-    let topC = textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 11)
-    let botC = textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -11)
+    topC = textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 11)
+    botC = textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -11)
     let valueMax = valueLabel.widthAnchor.constraint(lessThanOrEqualTo: contentView.widthAnchor, multiplier: 0.5)
     // Check vazio (radio desmarcado) reserva a largura do check. 999: o
     // UIStackView zera a largura das vistas escondidas (sem conflito no log).
@@ -197,9 +201,19 @@ final class STRowCell: UICollectionViewCell {
       chip.backgroundColor = .clear
       hasIcon = true
     } else if !row.center, let sym = STText.symbol(row.icon) {
-      let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-      glyph.image = UIImage(systemName: sym, withConfiguration: cfg)?.withTintColor(p.chipFg, renderingMode: .alwaysOriginal)
-      chip.backgroundColor = p.chipBg
+      if p.solidIcons {
+        // [2026-10-19 tg-settings] glifo branco em quadrado grafite cheio
+        // (Ajustes do iOS / Telegram, P&B); destrutiva = quadrado vermelho.
+        let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .medium)
+        let fillName = sym + ".fill"
+        let img = UIImage(systemName: fillName, withConfiguration: cfg) ?? UIImage(systemName: sym, withConfiguration: cfg)
+        glyph.image = img?.withTintColor(.white, renderingMode: .alwaysOriginal)
+        chip.backgroundColor = row.destructive ? p.destructive : (row.tint ?? p.solidChip)
+      } else {
+        let cfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        glyph.image = UIImage(systemName: sym, withConfiguration: cfg)?.withTintColor(p.chipFg, renderingMode: .alwaysOriginal)
+        chip.backgroundColor = p.chipBg
+      }
       hasIcon = glyph.image != nil
     }
     chip.isHidden = !hasIcon
@@ -262,6 +276,16 @@ final class STRowCell: UICollectionViewCell {
     if anyAcc { active.append(textTrailingToAcc) }
     if !row.center { active.append(anyAcc ? textFillToAcc : textFillToEdge) }
     NSLayoutConstraint.activate(active)
+    // [2026-10-19 tg-settings] modo "solid": 44 sem subtítulo · 52 com (iOS).
+    if p.solidIcons {
+      minH.constant = row.sub.isEmpty ? 44 : 52
+      topC.constant = row.sub.isEmpty ? 7 : 9
+      botC.constant = row.sub.isEmpty ? -7 : -9
+    } else {
+      minH.constant = 52
+      topC.constant = 11
+      botC.constant = -11
+    }
     separator.backgroundColor = p.separator
     separator.isHidden = !showSeparator
     // Categorias: recuo 60 (16 + tile 30 + 14 = alinha com o texto); resultados/ações: 16.

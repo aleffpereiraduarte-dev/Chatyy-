@@ -34,6 +34,7 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
   private var queryDirty = false
   private var palette = STPalette(dark: false)
   private var paletteDirty = true
+  private var solidIcons = false // [2026-10-19 tg-settings] prop `iconStyle`
   private var dark = false
   private var colorsRaw: [String: Any]? = nil
   private var labels = CLLabels()
@@ -222,6 +223,13 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
     paletteDirty = true
   }
 
+  func setIconStyle(_ v: String?) {
+    let on = (v == "solid")
+    if on == solidIcons { return }
+    solidIcons = on
+    paletteDirty = true
+  }
+
   func setColors(_ d: [String: Any]?) {
     colorsRaw = d
     paletteDirty = true
@@ -278,6 +286,7 @@ public final class ChatyySettingsListView: ExpoView, UICollectionViewDelegate {
     if paletteDirty {
       paletteDirty = false
       palette = STPalette(dark: dark, colors: colorsRaw)
+      palette.solidIcons = solidIcons
       STCardBackground.color = palette.cardBg
       backgroundColor = palette.pageBg
       collectionView.backgroundColor = palette.pageBg

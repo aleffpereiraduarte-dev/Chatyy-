@@ -40,9 +40,13 @@ public class ChatyyConversationListModule: Module {
     //     vetorial, foto, cores dos balões). Sem prop nova (binário antigo ignora).
     // 8 = [2026-10-18 compact-list] prop `density` ("compact" = linha 72 /
     //     avatar 52 / vão 12, WhatsApp; ausente/"regular" = 76 / 54 / 14).
+    // 9 = [2026-10-19 tg-list] density "telegram" (linha 78 / avatar 58 /
+    //     prévia em 2 linhas, ✓✓ junto da hora, remetente do grupo em linha
+    //     própria, alfinete no lugar do contador, swipe com glifo cheio) +
+    //     prop `accent` ("#RRGGBB": cor do "digitando…").
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 8
+      return 9
       #else
       return 1
       #endif
@@ -76,6 +80,9 @@ public class ChatyyConversationListModule: Module {
       }
       Prop("density") { (view: ChatyyConversationListView, value: String?) in
         view.setDensity(value)
+      }
+      Prop("accent") { (view: ChatyyConversationListView, value: String?) in
+        view.setAccent(value)
       }
       Prop("labels") { (view: ChatyyConversationListView, value: [String: Any]?) in
         view.setLabels(value)

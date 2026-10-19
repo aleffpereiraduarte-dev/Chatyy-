@@ -172,8 +172,14 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
     } else {
       if (chip.background !== chipBg) chip.background = chipBg
       if (hasIcon) {
-        chipBg.setColor(p.chipBg)
-        glyph.setImageDrawable(tintedIcon(context, res, p.chipFg))
+        if (p.solidIcons) {
+          // [2026-10-19 tg-settings] glifo branco em quadrado grafite cheio; destrutiva = vermelho.
+          chipBg.setColor(if (r.destructive) p.destructive else (r.tint ?: p.solidChip))
+          glyph.setImageDrawable(tintedIcon(context, res, Color.WHITE))
+        } else {
+          chipBg.setColor(p.chipBg)
+          glyph.setImageDrawable(tintedIcon(context, res, p.chipFg))
+        }
       }
     }
 
@@ -246,7 +252,10 @@ internal class STRowView(ctx: Context) : ViewGroup(ctx) {
     if (subTv.visibility != GONE) subTv.measure(tw, unspec)
     var textH = titleTv.measuredHeight
     if (subTv.visibility != GONE) textH += px(2f) + subTv.measuredHeight
-    val h = max(px(52f), px(22f) + textH)
+    // [2026-10-19 tg-settings] modo "solid": 44 sem subtítulo · 52 com.
+    val h = if (palette.solidIcons) {
+      if (subTv.visibility != GONE) max(px(52f), px(18f) + textH) else max(px(44f), px(14f) + textH)
+    } else max(px(52f), px(22f) + textH)
     setMeasuredDimension(w, h)
   }
 

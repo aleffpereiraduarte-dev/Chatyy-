@@ -17,6 +17,8 @@ final class CLConversationCell: UICollectionViewListCell {
   private let receipt = CLReceiptView()
   private let typingDots = CLTypingDots()
   private let previewLabel = UILabel()
+  // [2026-10-19 tg-list] Telegram: nome de quem mandou (grupo) em linha própria.
+  private let senderLabel = UILabel()
   private let muteIcon = UIImageView()
   private let pinIcon = UIImageView()
   private let mentionPill = CLPillView()
@@ -30,10 +32,22 @@ final class CLConversationCell: UICollectionViewListCell {
   // [2026-10-18 compact-list] densidade WhatsApp: linha 72 / avatar 52 / vão 12
   // (prop `density: 'compact'` da lista; regular = 76 / 54 / 14).
   private var compact = false
+  // [2026-10-19 tg-list] densidade "telegram" (prop `density: "telegram"`, api 9):
+  // linha 78 / avatar 58 / margem 12 / vão 10 (texto e separador em 80),
+  // prévia em 2 linhas (grupo: remetente numa linha + texto na outra),
+  // ✓✓ ao lado da hora, silenciado ao lado do nome, alfinete no lugar do
+  // contador, "digitando…" na cor de destaque e "Rascunho:" em vermelho.
+  private var tg = false
+  private var accent: UIColor?
   private var fontsCategory: UIContentSizeCategory?
 
-  static func avatarBox(compact: Bool) -> CGFloat { compact ? 52 : CLAvatarView.box }
-  static func avatarGap(compact: Bool) -> CGFloat { compact ? 12 : 14 }
+  static func avatarBox(compact: Bool, tg: Bool = false) -> CGFloat { tg ? 58 : (compact ? 52 : CLAvatarView.box) }
+  static func avatarGap(compact: Bool, tg: Bool = false) -> CGFloat { tg ? 10 : (compact ? 12 : 14) }
+  static func leftInset(tg: Bool) -> CGFloat { tg ? 12 : 16 }
+  /// x do texto (e do separador) sem o modo seleção.
+  static func textInset(compact: Bool, tg: Bool) -> CGFloat {
+    return leftInset(tg: tg) + avatarBox(compact: compact, tg: tg) + avatarGap(compact: compact, tg: tg)
+  }
 
   // [2026-10-17 wa-cells] Tamanhos do WhatsApp iOS: nome 17 semibold (sem
   // engrossar quando não lida), prévia 15, hora 14, contador 13 em círculo 20.
@@ -55,7 +69,7 @@ final class CLConversationCell: UICollectionViewListCell {
     let cv = contentView
     cv.addSubview(check)
     cv.addSubview(avatar)
-    for l in [nameLabel, activityLabel, timeLabel, previewLabel] {
+    for l in [nameLabel, activityLabel, timeLabel, previewLabel, senderLabel] {
       l.numberOfLines = 1
       l.lineBreakMode = .byTruncatingTail
       l.adjustsFontForContentSizeCategory = false
@@ -81,16 +95,20 @@ final class CLConversationCell: UICollectionViewListCell {
 
   // MARK: - Altura
 
-  static func height(for traits: UITraitCollection, compact: Bool = false) -> CGFloat {
+  static func height(for traits: UITraitCollection, compact: Bool = false, tg: Bool = false) -> CGFloat {
     let name = CLFonts.scaled(17, .semibold, cap: 1.35, traits: traits)
     let prev = CLFonts.scaled(15, .regular, cap: 1.3, traits: traits)
+    if tg {
+      let block = ceil(name.lineHeight) + 3 + ceil(prev.lineHeight) * 2
+      return max(78, ceil(block + 18))
+    }
     let content = ceil(name.lineHeight) + 3 + ceil(prev.lineHeight) + 2
     return compact ? max(72, ceil(content + 18)) : max(76, ceil(content + 22))
   }
 
   override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
     let attrs = super.preferredLayoutAttributesFitting(layoutAttributes)
-    attrs.frame.size.height = CLConversationCell.height(for: traitCollection, compact: compact)
+    attrs.frame.size.height = CLConversationCell.height(for: traitCollection, compact: compact, tg: tg)
     return attrs
   }
 
@@ -107,7 +125,7 @@ final class CLConversationCell: UICollectionViewListCell {
     previewFont = CLFonts.scaled(15, .regular, cap: 1.3, traits: tc)
     previewSemibold = CLFonts.scaled(15, .semibold, cap: 1.3, traits: tc)
     previewMedium = CLFonts.scaled(15, .medium, cap: 1.3, traits: tc)
-    pillFont = CLFonts.scaled(13, .semibold, cap: 1.15, traits: tc, mono: true)
+    pillFont = CLFonts.scaled(13, tg ? .bold : .semibold, cap: 1.15, traits: tc, mono: true)
   }
 
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -120,17 +138,21 @@ final class CLConversationCell: UICollectionViewListCell {
 
   // MARK: - Configuração
 
-  func configure(_ newRow: CLRow, theme: CLTheme, labels: CLLabels, selectionMode: Bool, compact: Bool = false) {
+  func configure(_ newRow: CLRow, theme: CLTheme, labels: CLLabels, selectionMode: Bool, compact: Bool = false, tg: Bool = false, accent: UIColor? = nil) {
     let previous: CLRow? = (row.id == newRow.id && !row.id.isEmpty) ? row : nil
     let themeChanged = theme.dark != self.theme.dark
     self.row = newRow
     self.theme = theme
     self.labels = labels
     self.selectionMode = selectionMode
-    if compact != self.compact {
+    self.accent = accent
+    if compact != self.compact || tg != self.tg {
+      let tgChanged = tg != self.tg
       self.compact = compact
-      avatar.boxSize = CLConversationCell.avatarBox(compact: compact)
+      self.tg = tg
+      avatar.boxSize = CLConversationCell.avatarBox(compact: compact, tg: tg)
       setNeedsLayout()
+      if tgChanged { reloadFonts(force: true) }
     }
     reloadFonts()
     apply(animated: previous != nil && !themeChanged && window != nil, previous: previous)
@@ -164,7 +186,8 @@ final class CLConversationCell: UICollectionViewListCell {
     activityLabel.textColor = theme.sub
 
     timeLabel.text = r.time
-    let timeStrong = r.timeBold
+    // Telegram: hora sempre cinza/regular (o contador já marca a não lida).
+    let timeStrong = r.timeBold && !tg
     timeLabel.font = timeStrong ? timeBoldFont : timeFont
     timeLabel.textColor = timeStrong ? theme.text : theme.sub
 
@@ -175,12 +198,13 @@ final class CLConversationCell: UICollectionViewListCell {
     let typing = !r.typing.isEmpty && !r.locked
     let drafting = !typing && !r.draft.isEmpty && !r.locked
     typingDots.isHidden = !typing
-    typingDots.color = theme.text
+    typingDots.color = tg ? typingTint : theme.text
     if typing { typingDots.start() } else { typingDots.stop() }
 
     let showReceipt = !typing && !drafting && !r.locked && r.receipt > 0
-    receipt.sentColor = theme.receiptSent
-    receipt.grayColor = theme.receiptGray
+    // tg: enviado/entregue no MESMO cinza da hora (✓✓ e hora lidos como um bloco).
+    receipt.sentColor = tg ? theme.sub : theme.receiptSent
+    receipt.grayColor = tg ? theme.sub : theme.receiptGray
     receipt.readColor = theme.receiptRead
     receipt.setState(showReceipt ? r.receipt : 0, animated: animated && (previous?.receipt ?? 0) != r.receipt)
 
@@ -197,7 +221,17 @@ final class CLConversationCell: UICollectionViewListCell {
       clockIcon.image = CLSymbols.image("clock", pointSize: 11, weight: .medium, color: theme.sub)
     }
 
-    previewLabel.attributedText = buildPreview(typing: typing, drafting: drafting, unread: unread)
+    // tg: remetente do grupo numa linha própria (cor do texto), mensagem embaixo.
+    let senderLine = tg && !typing && !drafting && !r.locked && r.isGroupish && !r.sender.isEmpty
+    senderLabel.isHidden = !senderLine
+    if senderLine {
+      senderLabel.attributedText = NSAttributedString(string: r.sender, attributes: [.font: previewFont, .foregroundColor: theme.text])
+    } else {
+      senderLabel.attributedText = nil
+    }
+    let ownMark = showReceipt || showFailed || !clockIcon.isHidden
+    previewLabel.numberOfLines = (tg && !senderLine && !typing) ? 2 : 1
+    previewLabel.attributedText = buildPreview(typing: typing, drafting: drafting, unread: unread, senderLine: senderLine, ownMark: ownMark)
     // [2026-10-16 wave8-list] "digitando…" entra/sai em crossfade curto (sem
     // trocar o texto num corte seco).
     if animated, let p = previous, p.typing.isEmpty != r.typing.isEmpty, !CLMotion.reduced {
@@ -209,7 +243,9 @@ final class CLConversationCell: UICollectionViewListCell {
 
     muteIcon.isHidden = !r.muted
     if r.muted {
-      muteIcon.image = CLSymbols.image("bell.slash", pointSize: 13, weight: .regular, color: theme.icon)
+      muteIcon.image = tg
+        ? CLSymbols.image("speaker.slash.fill", pointSize: 11, weight: .regular, color: theme.faint)
+        : CLSymbols.image("bell.slash", pointSize: 13, weight: .regular, color: theme.icon)
     }
     if animated, let p = previous, p.muted != r.muted {
       muteIcon.alpha = r.muted ? 0 : 1
@@ -219,9 +255,12 @@ final class CLConversationCell: UICollectionViewListCell {
         self.muteIcon.isHidden = !self.row.muted
       })
     }
-    pinIcon.isHidden = !r.pinned
-    if r.pinned {
-      pinIcon.image = CLSymbols.image("pin", pointSize: 13, weight: .regular, color: theme.icon)
+    // tg: alfinete só quando não há contador/menção (mesmo lugar, como no Telegram).
+    pinIcon.isHidden = !r.pinned || (tg && (unread || r.mention))
+    if !pinIcon.isHidden {
+      pinIcon.image = tg
+        ? CLSymbols.image("pin.fill", pointSize: 12, weight: .regular, color: theme.faint)
+        : CLSymbols.image("pin", pointSize: 13, weight: .regular, color: theme.icon)
     }
 
     mentionPill.isHidden = !r.mention
@@ -274,7 +313,11 @@ final class CLConversationCell: UICollectionViewListCell {
     return s
   }
 
-  private func buildPreview(typing: Bool, drafting: Bool, unread: Bool) -> NSAttributedString {
+  /// Cor do "digitando…" no modo Telegram: destaque escolhido (o JS já troca
+  /// o preto-tinta por claro no escuro); sem destaque = cor do texto.
+  private var typingTint: UIColor { return accent ?? theme.text }
+
+  private func buildPreview(typing: Bool, drafting: Bool, unread: Bool, senderLine: Bool = false, ownMark: Bool = false) -> NSAttributedString {
     let r = row
     let out = NSMutableAttributedString()
     if r.locked {
@@ -283,19 +326,23 @@ final class CLConversationCell: UICollectionViewListCell {
       return out
     }
     if typing {
-      out.append(NSAttributedString(string: r.typing, attributes: [.font: previewMedium, .foregroundColor: theme.text]))
+      out.append(NSAttributedString(string: r.typing, attributes: [.font: tg ? previewFont : previewMedium, .foregroundColor: tg ? typingTint : theme.text]))
       return out
     }
     if drafting {
-      let tint = r.draftFresh ? theme.text : theme.sub
+      // tg: "Rascunho:" sempre em vermelho (Telegram), corpo em cinza.
+      let tint = tg ? theme.danger : (r.draftFresh ? theme.text : theme.sub)
       var head = r.draftLabel.isEmpty ? labels.get("draft", "Rascunho") : r.draftLabel
       if !r.draftAge.isEmpty { head += " · " + r.draftAge }
-      out.append(NSAttributedString(string: head + ": ", attributes: [.font: previewSemibold, .foregroundColor: tint]))
+      out.append(NSAttributedString(string: head + ": ", attributes: [.font: tg ? previewFont : previewSemibold, .foregroundColor: tint]))
       out.append(NSAttributedString(string: r.draft, attributes: [.font: previewFont, .foregroundColor: theme.sub]))
       return out
     }
-    let bodyColor = unread ? theme.subStrong : theme.sub
-    if !r.sender.isEmpty {
+    let bodyColor = (unread && !tg) ? theme.subStrong : theme.sub
+    // tg: no grupo o remetente vai na linha de cima; numa conversa direta o
+    // "Você:" sai quando ✓/relógio/"!" já dizem que a mensagem é minha.
+    let inlineSender = !r.sender.isEmpty && !senderLine && !(tg && !r.isGroupish && ownMark)
+    if inlineSender {
       out.append(NSAttributedString(string: r.sender + ": ", attributes: [.font: previewMedium, .foregroundColor: unread ? theme.text : theme.sub]))
     }
     if let sym = CLSymbols.name(forPreviewIcon: r.icon), let a = attachment(sym, color: bodyColor, font: previewFont) {
@@ -374,6 +421,10 @@ final class CLConversationCell: UICollectionViewListCell {
 
   override func layoutSubviews() {
     super.layoutSubviews()
+    if tg {
+      layoutTelegram()
+      return
+    }
     let b = contentView.bounds
     let W = b.width
     let H = b.height
@@ -461,5 +512,115 @@ final class CLConversationCell: UICollectionViewListCell {
       px += w + 3
     }
     previewLabel.frame = CGRect(x: px, y: by, width: max(0, previewRight - px), height: prevH)
+  }
+  // [2026-10-19 tg-list] Layout Telegram iOS:
+  //   [avatar 58]  Nome 🔇 · online …………… 🔒 ✓✓ 14:02
+  //                prévia em até 2 linhas (ou remetente / texto)   (3) | 📌
+  private func layoutTelegram() {
+    let b = contentView.bounds
+    let W = b.width
+    let H = b.height
+    var x: CGFloat = CLConversationCell.leftInset(tg: true)
+    if selectionMode {
+      check.frame = CGRect(x: x, y: (H - 26) / 2, width: 26, height: 26)
+      x += 36
+    }
+    let box = CLConversationCell.avatarBox(compact: compact, tg: true)
+    avatar.frame = CGRect(x: x, y: (H - box) / 2, width: box, height: box)
+    let textX = x + box + CLConversationCell.avatarGap(compact: compact, tg: true)
+    let right = W - 16
+
+    let nf = nameLabel.font ?? nameFont
+    let nameH = ceil(nf.lineHeight)
+    let lineH = ceil(previewFont.lineHeight)
+    let blockH = lineH * 2
+    let total = nameH + 3 + blockH
+    let top = floor((H - total) / 2)
+
+    // ── linha de cima: nome 🔇 online ………… 🔒 ✓✓ hora
+    let tf = timeLabel.font ?? timeFont
+    let tw = ceil(timeLabel.intrinsicContentSize.width)
+    let timeH = ceil(tf.lineHeight)
+    let baseDelta = nf.ascender - tf.ascender
+    timeLabel.frame = CGRect(x: right - tw, y: top + baseDelta, width: tw, height: timeH)
+    let nameMid = top + nameH / 2
+    var rx = right - tw
+    if !receipt.isHidden {
+      let w = receipt.intrinsicWidth
+      if w > 0 {
+        receipt.frame = CGRect(x: rx - 4 - w, y: nameMid - 7.5, width: CLReceiptView.doubleWidth, height: 15)
+        rx -= 4 + w
+      } else {
+        receipt.frame = .zero
+      }
+    }
+    if !failIcon.isHidden {
+      failIcon.frame = CGRect(x: rx - 4 - 14, y: nameMid - 7, width: 14, height: 14)
+      rx -= 4 + 14
+    }
+    if !clockIcon.isHidden {
+      clockIcon.frame = CGRect(x: rx - 4 - 14, y: nameMid - 7, width: 14, height: 14)
+      rx -= 4 + 14
+    }
+    if !lockIcon.isHidden {
+      let s: CGFloat = 13
+      lockIcon.frame = CGRect(x: rx - 5 - s, y: nameMid - s / 2, width: s, height: s)
+      rx -= 5 + s
+    }
+    let nameMax = max(0, rx - 8 - textX)
+    let muteW: CGFloat = muteIcon.isHidden ? 0 : 14
+    var aw: CGFloat = 0
+    if !activityLabel.isHidden {
+      aw = min(ceil(activityLabel.intrinsicContentSize.width), 90)
+    }
+    let extras = (muteW > 0 ? muteW + 4 : 0) + (aw > 0 ? aw + 6 : 0)
+    let nameNatural = ceil(nameLabel.intrinsicContentSize.width)
+    let nameW = min(nameNatural, max(0, nameMax - extras))
+    nameLabel.frame = CGRect(x: textX, y: top, width: nameW, height: nameH)
+    var nx = textX + nameW
+    if muteW > 0 {
+      muteIcon.frame = CGRect(x: nx + 4, y: nameMid - 7, width: muteW, height: 14)
+      nx += 4 + muteW
+    }
+    if aw > 0 {
+      let af = activityLabel.font ?? activityFont
+      activityLabel.frame = CGRect(x: nx + 6, y: top + (nf.ascender - af.ascender), width: aw, height: ceil(af.lineHeight))
+    }
+
+    // ── bloco de baixo (2 linhas): prévia ……… contador / @ / alfinete
+    let by = top + nameH + 3
+    let cy = by + lineH * 1.5   // centro da 2ª linha (Telegram)
+    var bx = right
+    let pillH: CGFloat = 20
+    if !unreadPill.isHidden {
+      let sz = unreadPill.size(height: pillH, padding: 13)
+      unreadPill.frame = CGRect(x: bx - sz.width, y: cy - pillH / 2, width: sz.width, height: pillH)
+      bx -= sz.width + 6
+    }
+    if !mentionPill.isHidden {
+      mentionPill.frame = CGRect(x: bx - pillH, y: cy - pillH / 2, width: pillH, height: pillH)
+      bx -= pillH + 6
+    }
+    if !pinIcon.isHidden {
+      let icon: CGFloat = 16
+      pinIcon.frame = CGRect(x: bx - icon, y: cy - icon / 2, width: icon, height: icon)
+      bx -= icon + 6
+    }
+    let previewRight = (bx < right) ? bx + 6 - 12 : right
+    var px = textX
+    if !typingDots.isHidden {
+      typingDots.frame = CGRect(x: px, y: by + lineH / 2 - 4, width: CLTypingDots.width, height: 8)
+      px += CLTypingDots.width + 6
+    }
+    let pw = max(0, previewRight - px)
+    if !senderLabel.isHidden {
+      senderLabel.frame = CGRect(x: textX, y: by, width: max(0, previewRight - textX), height: lineH)
+      previewLabel.frame = CGRect(x: px, y: by + lineH, width: pw, height: lineH + 2)
+    } else {
+      // UILabel centraliza na vertical: altura = o que o texto ocupa (1 ou 2 linhas).
+      let fit = previewLabel.sizeThatFits(CGSize(width: pw, height: blockH + 4)).height
+      let ph = min(blockH + 2, max(lineH + 2, ceil(fit)))
+      previewLabel.frame = CGRect(x: px, y: by, width: pw, height: ph)
+    }
   }
 }

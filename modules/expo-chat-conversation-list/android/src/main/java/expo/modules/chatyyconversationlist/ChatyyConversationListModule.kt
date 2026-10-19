@@ -30,7 +30,10 @@ class ChatyyConversationListModule : Module() {
     //     FUNDO da conversa (chave opcional `bg` na prop `peek`). Sem prop nova.
     // 9 = [2026-10-18 compact-list] prop `density` ("compact" = linha 72 /
     //     avatar 52 / vão 12, WhatsApp; ausente/"regular" = 76 / 54 / 14).
-    Function("apiVersion") { 9 }
+    // 10 = [2026-10-19 tg-list] density "telegram" (linha 78 / avatar 58 /
+    //      prévia 2 linhas, ✓✓ junto da hora, remetente do grupo em linha
+    //      própria, alfinete no lugar do contador) + prop `accent` ("#RRGGBB").
+    Function("apiVersion") { 10 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -54,6 +57,7 @@ class ChatyyConversationListModule : Module() {
       Prop("selectionMode") { view: ChatyyConversationListView, v: Boolean? -> view.setSelectionModeProp(v ?: false) }
       Prop("labels") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setLabelsProp(v) }
       Prop("density") { view: ChatyyConversationListView, v: String? -> view.setDensityProp(v) }
+      Prop("accent") { view: ChatyyConversationListView, v: String? -> view.setAccentProp(v) }
       Prop("authToken") { view: ChatyyConversationListView, v: String? -> view.setAuthToken(v) }
       Prop("headerHeight") { view: ChatyyConversationListView, v: Double? -> view.setHeaderHeightHint(v ?: 0.0) }
       Prop("footerHeight") { view: ChatyyConversationListView, v: Double? -> view.setFooterHeightHint(v ?: 0.0) }

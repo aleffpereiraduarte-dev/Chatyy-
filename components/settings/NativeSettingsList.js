@@ -23,7 +23,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { StyleSheet, View, processColor } from 'react-native';
-import { getNativeSettingsListView } from '../../modules/expo-chat-conversation-list';
+import { getNativeSettingsListView, settingsListApiVersion } from '../../modules/expo-chat-conversation-list';
 import { createPatcher } from '../chatlist/nativeAdapter';
 import { Spacing } from '../../constants/theme';
 
@@ -47,6 +47,16 @@ class Boundary extends React.Component {
     if (this.state.failed) return null;
     return this.props.children;
   }
+}
+
+// [2026-10-19 tg-settings] ícones Ajustes/Telegram em P&B: glifo branco em
+// quadrado grafite cheio + linhas 44/52 (binário com api >= 5; antigo ignora).
+// Kill switch único da leva Telegram: globalThis.__chatyy_tg_list = false.
+function solidIconsProps() {
+  try {
+    if (globalThis.__chatyy_tg_list === false) return null;
+    return settingsListApiVersion() >= 5 ? { iconStyle: 'solid' } : null;
+  } catch { return null; }
 }
 
 const PALETTE_KEYS = ['pageBg', 'cardBg', 'separator', 'header', 'text', 'secondary', 'tertiary', 'chipBg', 'chipFg', 'destructive', 'fill'];
@@ -129,6 +139,7 @@ function Inner(props) {
       autoInset={!!autoInset}
       refreshing={!!refreshing}
       scrollToId={scrollToId || ''}
+      {...solidIconsProps()}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>

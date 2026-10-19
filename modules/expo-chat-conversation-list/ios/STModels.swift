@@ -32,6 +32,9 @@ struct STRow {
   var subLines = 1
   var footer: String = ""
   var valueDestructive = false
+  /// [2026-10-19 tg-settings] cor do quadradinho do ícone (ARGB; nil = grafite
+  /// padrão) — só vale com a prop `iconStyle: "solid"` (api 5).
+  var tint: UIColor? = nil
   /// Texto normalizado (minúsculas, sem acento) p/ a busca nativa.
   var hay: String = ""
 
@@ -67,6 +70,7 @@ struct STRow {
     if d["sl"] != nil { subLines = max(0, CLVal.int(d["sl"])) }
     footer = CLVal.str(d["ft"])
     valueDestructive = CLVal.bool(d["vd"])
+    tint = CTColor.of(d["tint"])
     hay = STText.normalize("\(title) \(sub) \(keywords)")
   }
 }
@@ -116,6 +120,9 @@ struct STPalette {
   var chipFg: UIColor
   var destructive: UIColor
   var press: UIColor
+  /// [2026-10-19 tg-settings] prop `iconStyle: "solid"` (api 5): ícone branco em
+  /// quadrado grafite cheio (Ajustes do iOS / Telegram, em P&B) e linhas 44/52.
+  var solidIcons = false
 
   init(dark: Bool) {
     self.dark = dark
@@ -161,6 +168,9 @@ struct STPalette {
     if let c = CTColor.of(d["destructive"]) { destructive = c }
     if let c = CTColor.of(d["press"]) { press = c }
   }
+
+  /// Quadrado do ícone no modo "solid": grafite (claro #2C2C2E · escuro #3A3A3C).
+  var solidChip: UIColor { return dark ? UIColor(clHex: 0x3A3A3C) : UIColor(clHex: 0x2C2C2E) }
 
   // Interruptor igual ao NativeSwitch do JS (P&B).
   var switchOn: UIColor { return dark ? UIColor(clHex: 0xF5F5F7) : UIColor(clHex: 0x111111) }

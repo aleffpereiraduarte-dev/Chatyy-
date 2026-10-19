@@ -123,7 +123,7 @@ import { isAvailable as _nativeHomeAvailable, apiVersion as _nativeHomeApi } fro
 import FolderGlyph from './chatlist/FolderGlyph';
 import { useChatFolders, setFolderItems, loadFolders, folderMatcher, publishConversations } from './chatlist/chatFoldersStore'; // [2026-10-16 wave12-B pastas]
 import PinnedStripSlot, { createPinBridge, autoPinAvatarSize, pinStripHeight } from './chatlist/NativePinnedStrip';
-import { listMetrics } from './chatlist/listDensity'; // [2026-10-18 compact-list] ritmo WhatsApp (kill: __chatyy_compact_list=false)
+import { listMetrics, tgListOn } from './chatlist/listDensity'; // [2026-10-18 compact-list] ritmo WhatsApp (kill: __chatyy_compact_list=false)
 import { isPinnedStripAvailable as _pinsNativeAvailable } from '../modules/expo-chat-conversation-list';
 import { haptic } from '../constants/theme';
 import { humanizeSystemText } from '../utils/systemMessageText';
@@ -2007,7 +2007,8 @@ const ConversationRow = React.memo(function ConversationRow({
                   return [pre, unit, pre ? '' : suf].filter(Boolean).join(' ').trim();
                 })();
                 const muted = P.sub;
-                const tint = isFresh ? P.text : muted;
+                // [2026-10-19 tg-list] Telegram: "Rascunho:" sempre em vermelho.
+                const tint = tgListOn() ? (isDark ? '#FF453A' : '#FF3B30') : (isFresh ? P.text : muted);
                 // [beauty 2026-10-01] Draft preview is now plain inline text
                 // (dropped the filled box) — WhatsApp shows a red "Draft:" prefix
                 // inline, no container, which keeps the row rhythm clean.

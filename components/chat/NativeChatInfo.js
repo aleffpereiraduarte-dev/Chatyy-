@@ -40,6 +40,30 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Platform, StyleSheet, processColor } from 'react-native';
 import { getNativeChatInfoView, chatInfoApiVersion } from '../../modules/expo-chat-conversation-list';
 import { useGroupedColors } from '../settings/SettingsKit';
+import { useLanguage } from '../../context/LanguageContext';
+
+// [2026-10-19 tg-ci] Fileira de botões do Telegram: Áudio · Vídeo · Silenciar ·
+// Buscar. "Silenciar" é derivado da linha 'notif' que quem monta já manda (o
+// toque abre a MESMA folha de silenciar; ativo = conversa silenciada) — sem
+// mexer no chat-conversation.js. Kill switch: globalThis.__chatyy_tg_list = false.
+function _withMuteAction(actions, rows, tr) {
+  const list = Array.isArray(actions) ? actions.filter(Boolean) : [];
+  try { if (globalThis.__chatyy_tg_list === false) return list; } catch {}
+  const keys = list.map((a) => String(a.key));
+  if (!keys.includes('call') || !keys.includes('search') || keys.includes('mute') || list.length >= 5) return list;
+  const notif = (Array.isArray(rows) ? rows : []).find((r) => r && String(r.id) === 'notif' && typeof r.onPress === 'function');
+  if (!notif) return list;
+  const muted = notif.icon === 'bellOff' || !!notif.val;
+  const mute = {
+    key: 'mute',
+    icon: muted ? 'bellOff' : 'bell',
+    label: muted ? tr('chat.unmute', 'Reativar som') : tr('chat.mute', 'Silenciar'),
+    active: muted,
+    onPress: () => { try { notif.onPress(); } catch {} },
+  };
+  const at = keys.indexOf('search');
+  return [...list.slice(0, at), mute, ...list.slice(at)];
+}
 
 export function isNativeChatInfoEnabled() {
   if (Platform.OS === 'web') return false;
@@ -112,6 +136,10 @@ function Inner(props) {
   const ownsHeader = nativeChatInfoOwnsHeader() && typeof props.onClose === 'function';
   const g = useGroupedColors();
   const isDark = !!g.isDark;
+  let _t = null;
+  try { _t = useLanguage()?.t || null; } catch { _t = null; }
+  const tr = (k, fb) => { try { const v = _t ? _t(k) : ''; return v && v !== k ? v : fb; } catch { return fb; } };
+  const heroActions = _withMuteAction(hero?.actions, rows, tr);
 
   const paletteKey = PALETTE_KEYS.map((k) => String(g?.[k] ?? '')).join('|') + (isDark ? '|d' : '|l');
   const colors = useMemo(() => {
@@ -150,13 +178,14 @@ function Inner(props) {
       tile: h.tile || null,
       badge: String(h.badge || ''),
       busy: !!h.busy,
-      actions: (h.actions || []).filter(Boolean).map((a) => ({ key: String(a.key), icon: String(a.icon || ''), label: String(a.label || ''), active: !!a.active })),
+      actions: heroActions.map((a) => ({ key: String(a.key), icon: String(a.icon || ''), label: String(a.label || ''), active: !!a.active })),
       // [2026-10-18 profile-native] api ≥ 3 (binários velhos ignoram).
       photos: Array.isArray(h.photos) ? h.photos.filter((p) => p && p.u).slice(0, 9).map((p) => ({ u: String(p.u), a: p.a ? 1 : 0 })) : [],
       nav: h.nav && h.nav.key && h.nav.label ? { key: String(h.nav.key), label: String(h.nav.label) } : null,
       back: !!h.back,
     };
-  }, [hero]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hero, rows]);
   const heroKey = JSON.stringify(nativeHero);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableHero = useMemo(() => nativeHero, [heroKey]);
@@ -211,7 +240,7 @@ function Inner(props) {
         try {
           const h = propsRef.current.hero || {};
           if (h.nav && String(h.nav.key) === key && typeof h.nav.onPress === 'function') { h.nav.onPress(); return; }
-          const a = (h.actions || []).find((x) => x && String(x.key) === key);
+          const a = _withMuteAction(h.actions, propsRef.current.rows, tr).find((x) => x && String(x.key) === key);
           if (a && typeof a.onPress === 'function') a.onPress();
         } catch {}
       },

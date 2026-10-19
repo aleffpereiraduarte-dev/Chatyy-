@@ -74,13 +74,20 @@ export function SettingsIconTile({ Icon, size = 32, muted = false, solid = false
   if (!Icon) return null;
   // [2026-10-18 bia-orb-icon] Ícone que é a própria forma (orb da Bia): ocupa o ladrilho, sem chip atrás.
   if (Icon.__fillsTile) return <Icon size={size} />;
+  // [2026-10-19 tg-settings] Ajustes/Telegram em P&B: glifo branco em quadrado
+  // grafite cheio (mesmo visual da lista nativa api 5, iconStyle "solid").
+  // Kill switch: globalThis.__chatyy_tg_list = false → chip suave de antes.
+  let graphite = false;
+  try { graphite = !solid && !muted && globalThis.__chatyy_tg_list !== false; } catch {}
+  const bg = solid ? g.tileBg : graphite ? (g.isDark ? '#3A3A3C' : '#2C2C2E') : (muted ? g.fill : g.chipBg);
+  const fg = solid ? g.tileFg : graphite ? '#FFFFFF' : g.chipFg;
   return (
     <View style={{
-      width: size, height: size, borderRadius: Math.round(size * 0.31),
-      backgroundColor: solid ? g.tileBg : (muted ? g.fill : g.chipBg),
+      width: size, height: size, borderRadius: Math.round(size * (graphite ? 0.24 : 0.31)),
+      backgroundColor: bg,
       alignItems: 'center', justifyContent: 'center',
     }}>
-      <Icon size={Math.round(size * 0.56)} color={solid ? g.tileFg : g.chipFg} />
+      <Icon size={Math.round(size * 0.56)} color={fg} />
     </View>
   );
 }

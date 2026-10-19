@@ -32,7 +32,9 @@ internal data class STRow(
   val subLines: Int = 1,
   val footer: String = "",
   val valueDestructive: Boolean = false,
-  val hay: String = ""
+  val hay: String = "",
+  // [2026-10-19 tg-settings] cor do quadrado do ícone (ARGB; null = grafite) — modo "solid".
+  val tint: Int? = null
 ) {
   /** Acessório efetivo: "t" interruptor · "c" seta · "n" nada · "k" check · "u" vazio · "s" spinner. */
   val accessory: String
@@ -72,7 +74,8 @@ internal data class STRow(
         subLines = if (m.containsKey("sl")) max(0, CLVal.int(m["sl"])) else 1,
         footer = CLVal.str(m["ft"]),
         valueDestructive = CLVal.bool(m["vd"]),
-        hay = STText.normalize("$title $sub $kw")
+        hay = STText.normalize("$title $sub $kw"),
+        tint = (m["tint"] as? Number)?.toDouble()?.takeIf { !it.isNaN() && !it.isInfinite() }?.toLong()?.toInt()
       )
     }
   }
@@ -120,8 +123,14 @@ internal data class STPalette(
   val chipBg: Int,
   val chipFg: Int,
   val destructive: Int,
-  val ripple: Int
+  val ripple: Int,
+  // [2026-10-19 tg-settings] prop `iconStyle: "solid"` (api 5): glifo branco em
+  // quadrado grafite cheio (Ajustes / Telegram, P&B) e linhas 44/52.
+  val solidIcons: Boolean = false
 ) {
+  /** Quadrado do ícone no modo "solid": grafite (claro #2C2C2E · escuro #3A3A3C). */
+  val solidChip: Int get() = if (dark) 0xFF3A3A3C.toInt() else 0xFF2C2C2E.toInt()
+
   // Interruptor igual ao NativeSwitch do JS (P&B; Android).
   val switchOnTrack: Int get() = if (dark) 0xFFF5F5F7.toInt() else 0xFF111111.toInt()
   val switchOffTrack: Int get() = if (dark) 0xFF5F6368.toInt() else 0xFFC7C9CC.toInt()

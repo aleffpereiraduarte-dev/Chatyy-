@@ -54,6 +54,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   private val activityTv = label(13f, 1.3f, 500)
   private val timeTv = label(14f, 1.3f, 400)
   private val previewTv = label(15f, 1.3f, 400)
+  // [2026-10-19 tg-list] Telegram: remetente do grupo numa linha própria.
+  private val senderTv = label(15f, 1.3f, 400)
   private val lockIv = ImageView(ctx)
   private val clockIv = ImageView(ctx)
   private val failIv = ImageView(ctx) // [2026-10-18] "!" vermelho (última enviada falhou)
@@ -95,6 +97,15 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   // (prop `density: "compact"` da lista; regular = 76 / 54 / 14).
   private val rowHeightCompact: Int
   private var compact = false
+  // [2026-10-19 tg-list] densidade "telegram" (prop `density: "telegram"`, api 10):
+  // linha 78 / avatar 58 / margem 12 / vão 10 (texto e separador em 80 dp),
+  // prévia em 2 linhas (grupo: remetente + texto), ✓✓ junto da hora,
+  // silenciado ao lado do nome, alfinete no lugar do contador, "digitando…"
+  // na cor de destaque e "Rascunho:" em vermelho.
+  private val rowHeightTg: Int
+  private var tg = false
+  private var accent: Int? = null
+  private var previewTwoLines = false
 
   init {
     clipChildren = false
@@ -105,7 +116,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     addView(check)
     addView(avatar)
-    for (v in listOf(nameTv, activityTv, timeTv, previewTv, mentionTv)) addView(v)
+    for (v in listOf(nameTv, activityTv, timeTv, previewTv, senderTv, mentionTv)) addView(v)
+    senderTv.visibility = GONE
     addView(unreadTv)
     for (iv in listOf(lockIv, clockIv, failIv, muteIv, pinIv)) {
       iv.scaleType = ImageView.ScaleType.FIT_CENTER
@@ -128,6 +140,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val prevLine = previewTv.lineHeight
     rowHeight = max(px(76f), px(22f) + nameLine + px(3f) + prevLine + px(2f))
     rowHeightCompact = max(px(72f), px(18f) + nameLine + px(3f) + prevLine + px(2f))
+    rowHeightTg = max(px(78f), px(18f) + nameLine + px(3f) + prevLine * 2)
 
     setOnClickListener { listener?.onPress(row.id) }
     setOnLongClickListener {
@@ -161,11 +174,14 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     return false
   }
 
-  fun bind(r: CLRow, t: CLTheme, l: CLLabels, selection: Boolean, animate: Boolean, compactDensity: Boolean = false) {
+  fun bind(r: CLRow, t: CLTheme, l: CLLabels, selection: Boolean, animate: Boolean, compactDensity: Boolean = false, tgDensity: Boolean = false, accentColor: Int? = null) {
     val prev: CLRow? = if (animate && r.id == row.id && row.id.isNotEmpty()) row else null
-    if (compactDensity != compact) {
+    accent = accentColor
+    if (compactDensity != compact || tgDensity != tg) {
       compact = compactDensity
-      avatar.setBoxDp(if (compactDensity) 52f else 54f)
+      tg = tgDensity
+      avatar.setBoxDp(if (tgDensity) 58f else if (compactDensity) 52f else 54f)
+      unreadTv.setTypeface(CLType.weight(if (tgDensity) 700 else 600))
       requestLayout()
     }
     row = r
@@ -204,20 +220,23 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     activityTv.setTextColor(t.sub)
 
     timeTv.text = r.time
-    timeTv.typeface = if (r.timeBold) tfTimeBold else tfTime
-    timeTv.setTextColor(if (r.timeBold) t.text else t.sub)
+    // Telegram: hora sempre cinza/regular (o contador já marca a não lida).
+    val timeStrong = r.timeBold && !tg
+    timeTv.typeface = if (timeStrong) tfTimeBold else tfTime
+    timeTv.setTextColor(if (timeStrong) t.text else t.sub)
 
     lockIv.visibility = if (r.locked) VISIBLE else GONE
     if (r.locked) lockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_lock, t.icon))
 
     val isTyping = r.typing.isNotEmpty() && !r.locked
     val drafting = !isTyping && r.draft.isNotEmpty() && !r.locked
-    typing.color = t.text
+    typing.color = if (tg) (accent ?: t.text) else t.text
     typing.setActive(isTyping)
 
     val showReceipt = !isTyping && !drafting && !r.locked && r.receipt > 0
-    receipt.sentColor = t.receiptSent
-    receipt.grayColor = t.receiptGray
+    // tg: enviado/entregue no MESMO cinza da hora (✓✓ + hora = um bloco).
+    receipt.sentColor = if (tg) t.sub else t.receiptSent
+    receipt.grayColor = if (tg) t.sub else t.receiptGray
     receipt.readColor = t.receiptRead
     receipt.update(if (showReceipt) r.receipt else 0, prev != null && prev.receipt != r.receipt)
 
@@ -233,7 +252,27 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     clockIv.visibility = if (sched) VISIBLE else GONE
     if (sched) clockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_clock, t.sub))
 
-    previewTv.text = buildPreview(isTyping, drafting, unread)
+    // tg: remetente do grupo numa linha própria (cor do texto), mensagem embaixo.
+    val senderLine = tg && !isTyping && !drafting && !r.locked && r.isGroupish && r.sender.isNotEmpty()
+    senderTv.visibility = if (senderLine) VISIBLE else GONE
+    if (senderLine) {
+      senderTv.text = r.sender
+      senderTv.setTextColor(t.text)
+    } else senderTv.text = ""
+    val ownMark = showReceipt || showFailed || sched
+    val two = tg && !senderLine && !isTyping
+    if (two != previewTwoLines) {
+      previewTwoLines = two
+      if (two) {
+        previewTv.setSingleLine(false)
+        previewTv.maxLines = 2
+      } else {
+        previewTv.setSingleLine(true)
+        previewTv.maxLines = 1
+      }
+      previewTv.ellipsize = TextUtils.TruncateAt.END
+    }
+    previewTv.text = buildPreview(isTyping, drafting, unread, senderLine, ownMark)
     // [2026-10-16 wave8-list] "digitando…" entra/sai num fade curto.
     if (prev != null && prev.typing.isEmpty() != r.typing.isEmpty() && !CLMotion.reduced(context)) {
       previewTv.alpha = 0.35f
@@ -244,15 +283,17 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
 
     muteIv.visibility = if (r.muted) VISIBLE else GONE
-    if (r.muted) muteIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_bell_off, t.icon))
+    if (r.muted) muteIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_bell_off, if (tg) t.faint else t.icon))
     if (prev != null && prev.muted != r.muted && r.muted) {
       muteIv.alpha = 0f
       muteIv.animate().alpha(1f).setDuration(200).start()
     } else {
       muteIv.alpha = 1f
     }
-    pinIv.visibility = if (r.pinned) VISIBLE else GONE
-    if (r.pinned) pinIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_pin, t.icon))
+    // tg: alfinete só sem contador/menção (mesmo lugar, como no Telegram).
+    val showPin = r.pinned && !(tg && (unread || r.mention))
+    pinIv.visibility = if (showPin) VISIBLE else GONE
+    if (showPin) pinIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_pin, if (tg) t.faint else t.icon))
 
     mentionTv.visibility = if (r.mention) VISIBLE else GONE
     mentionBg.setColor(t.pillBg)
@@ -369,7 +410,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (tf != null) sb.setSpan(CLTypefaceSpan(tf), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
   }
 
-  private fun buildPreview(isTyping: Boolean, drafting: Boolean, unread: Boolean): CharSequence {
+  private fun buildPreview(isTyping: Boolean, drafting: Boolean, unread: Boolean, senderLine: Boolean = false, ownMark: Boolean = false): CharSequence {
     val r = row
     val t = theme
     val sb = SpannableStringBuilder()
@@ -379,18 +420,23 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       return sb
     }
     if (isTyping) {
-      styled(sb, r.typing, t.text, tfMedium)
+      if (tg) styled(sb, r.typing, accent ?: t.text, null) else styled(sb, r.typing, t.text, tfMedium)
       return sb
     }
     if (drafting) {
       var head = if (r.draftLabel.isNotEmpty()) r.draftLabel else labels.get("draft", "Rascunho")
       if (r.draftAge.isNotEmpty()) head += " · " + r.draftAge
-      styled(sb, "$head: ", if (r.draftFresh) t.text else t.sub, tfSemibold)
+      // tg: "Rascunho:" sempre em vermelho (Telegram).
+      if (tg) styled(sb, "$head: ", t.danger, null)
+      else styled(sb, "$head: ", if (r.draftFresh) t.text else t.sub, tfSemibold)
       styled(sb, r.draft, t.sub, null)
       return sb
     }
-    val body = if (unread) t.subStrong else t.sub
-    if (r.sender.isNotEmpty()) styled(sb, r.sender + ": ", if (unread) t.text else t.sub, tfMedium)
+    val body = if (unread && !tg) t.subStrong else t.sub
+    // tg: grupo = remetente na linha de cima; direta = sem "Você:" quando
+    // ✓/relógio/"!" já mostram que a mensagem é minha.
+    val inlineSender = r.sender.isNotEmpty() && !senderLine && !(tg && !r.isGroupish && ownMark)
+    if (inlineSender) styled(sb, r.sender + ": ", if (unread) t.text else t.sub, tfMedium)
     val icon = CLIcons.preview(r.icon)
     if (icon != 0) appendIcon(sb, icon, body)
     val txt = if (r.text.isEmpty() && r.sender.isEmpty() && r.icon.isEmpty()) r.empty else r.text
@@ -416,6 +462,10 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   private var cPrevW = 0
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    if (tg) {
+      measureTg(MeasureSpec.getSize(widthMeasureSpec))
+      return
+    }
     val w = MeasureSpec.getSize(widthMeasureSpec)
     val h = if (compact) rowHeightCompact else rowHeight
     var x = px(16f)
@@ -494,6 +544,10 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+    if (tg) {
+      layoutTg(r - l, b - t)
+      return
+    }
     val w = r - l
     val h = b - t
     var x = px(16f)
@@ -579,6 +633,185 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     val ph = previewTv.measuredHeight
     previewTv.layout(cPrevX, cy - ph / 2, cPrevX + cPrevW, cy - ph / 2 + ph)
+  }
+
+  // ─── [2026-10-19 tg-list] Medida / layout Telegram ───────────────────────
+  //   [avatar 58]  Nome 🔇 · online …………… 🔒 ✓✓ 14:02
+  //                prévia em até 2 linhas (ou remetente / texto)   (3) | 📌
+
+  private var tgTopRightX = 0
+
+  private fun measureTg(w: Int) {
+    val h = rowHeightTg
+    var x = px(12f)
+    if (selectionMode) {
+      check.measure(exactly(px(26f)), exactly(px(26f)))
+      x += px(36f)
+    } else {
+      check.measure(exactly(0), exactly(0))
+    }
+    val box = px(58f)
+    avatar.measure(exactly(box), exactly(box))
+    val textX = x + box + px(10f)
+    val right = w - px(16f)
+
+    timeTv.measure(unspec, unspec)
+    var rx = right - timeTv.measuredWidth
+    if (receipt.visibility == VISIBLE) {
+      receipt.measure(exactly(px(22f)), exactly(px(15f)))
+      if (receipt.contentWidth > 0) rx -= px(4f) + receipt.contentWidth
+    }
+    if (failIv.visibility == VISIBLE) {
+      failIv.measure(exactly(px(14f)), exactly(px(14f)))
+      rx -= px(4f) + px(14f)
+    }
+    if (clockIv.visibility == VISIBLE) {
+      clockIv.measure(exactly(px(14f)), exactly(px(14f)))
+      rx -= px(4f) + px(14f)
+    }
+    if (lockIv.visibility == VISIBLE) {
+      lockIv.measure(exactly(px(13f)), exactly(px(13f)))
+      rx -= px(5f) + px(13f)
+    }
+    tgTopRightX = rx
+    val nameMax = max(0, rx - px(8f) - textX)
+    val muteW = if (muteIv.visibility == VISIBLE) px(14f) else 0
+    if (muteW > 0) muteIv.measure(exactly(muteW), exactly(muteW))
+    var aw = 0
+    if (activityTv.visibility == VISIBLE) {
+      activityTv.measure(unspec, unspec)
+      aw = min(activityTv.measuredWidth, px(90f))
+      activityTv.measure(exactly(aw), unspec)
+    }
+    val extras = (if (muteW > 0) muteW + px(4f) else 0) + (if (aw > 0) aw + px(6f) else 0)
+    nameTv.measure(atMost(max(0, nameMax - extras)), unspec)
+    cNameW = nameTv.measuredWidth
+    cActW = aw
+
+    var bx = right
+    val pillH = px(20f)
+    if (unreadTv.visibility == VISIBLE) {
+      unreadTv.measure(unspec, exactly(pillH))
+      val pw = max(pillH, unreadTv.measuredWidth)
+      unreadTv.measure(exactly(pw), exactly(pillH))
+      bx -= pw + px(6f)
+    }
+    if (mentionTv.visibility == VISIBLE) {
+      mentionTv.measure(exactly(pillH), exactly(pillH))
+      bx -= pillH + px(6f)
+    }
+    val icon = px(15f)
+    if (pinIv.visibility == VISIBLE) {
+      pinIv.measure(exactly(icon), exactly(icon))
+      bx -= icon + px(6f)
+    }
+    val previewRight = if (bx < right) bx + px(6f) - px(12f) else right
+    var pxX = textX
+    if (typing.visibility == VISIBLE) {
+      typing.measure(exactly(px(18f)), exactly(px(8f)))
+      pxX += px(18f) + px(6f)
+    }
+    if (senderTv.visibility == VISIBLE) senderTv.measure(exactly(max(0, previewRight - textX)), unspec)
+    cPrevX = pxX
+    cPrevW = max(0, previewRight - pxX)
+    previewTv.measure(exactly(cPrevW), unspec)
+    cTextX = textX
+    setMeasuredDimension(w, h)
+  }
+
+  private fun layoutTg(w: Int, h: Int) {
+    var x = px(12f)
+    if (selectionMode) {
+      val s = px(26f)
+      check.layout(x, (h - s) / 2, x + s, (h - s) / 2 + s)
+      x += px(36f)
+    } else {
+      check.layout(0, 0, 0, 0)
+    }
+    val box = px(58f)
+    val ay = (h - box) / 2
+    avatar.layout(x, ay, x + box, ay + box)
+    val textX = cTextX
+    val right = w - px(16f)
+
+    val nameH = nameTv.measuredHeight
+    val lineH = previewTv.lineHeight
+    val total = nameH + px(3f) + lineH * 2
+    val top = (h - total) / 2
+    val nameMid = top + nameH / 2
+
+    // Linha de cima
+    val nameBase = top + nameTv.baseline
+    val tw = timeTv.measuredWidth
+    val timeTop = nameBase - timeTv.baseline
+    timeTv.layout(right - tw, timeTop, right, timeTop + timeTv.measuredHeight)
+    var rx = right - tw
+    if (receipt.visibility == VISIBLE && receipt.contentWidth > 0) {
+      val rh = px(15f)
+      val rw = receipt.contentWidth
+      receipt.layout(rx - px(4f) - rw, nameMid - rh / 2, rx - px(4f) - rw + px(22f), nameMid - rh / 2 + rh)
+      rx -= px(4f) + rw
+    } else if (receipt.visibility == VISIBLE) {
+      receipt.layout(0, 0, 0, 0)
+    }
+    if (failIv.visibility == VISIBLE) {
+      val s = px(14f)
+      failIv.layout(rx - px(4f) - s, nameMid - s / 2, rx - px(4f), nameMid - s / 2 + s)
+      rx -= px(4f) + s
+    }
+    if (clockIv.visibility == VISIBLE) {
+      val s = px(14f)
+      clockIv.layout(rx - px(4f) - s, nameMid - s / 2, rx - px(4f), nameMid - s / 2 + s)
+      rx -= px(4f) + s
+    }
+    if (lockIv.visibility == VISIBLE) {
+      val s = px(13f)
+      lockIv.layout(rx - px(5f) - s, nameMid - s / 2, rx - px(5f), nameMid - s / 2 + s)
+      rx -= px(5f) + s
+    }
+    nameTv.layout(textX, top, textX + cNameW, top + nameH)
+    var nx = textX + cNameW
+    if (muteIv.visibility == VISIBLE) {
+      val s = px(14f)
+      muteIv.layout(nx + px(4f), nameMid - s / 2, nx + px(4f) + s, nameMid - s / 2 + s)
+      nx += px(4f) + s
+    }
+    if (activityTv.visibility == VISIBLE) {
+      val ax = nx + px(6f)
+      val at = nameBase - activityTv.baseline
+      activityTv.layout(ax, at, ax + cActW, at + activityTv.measuredHeight)
+    }
+
+    // Bloco de baixo (2 linhas); contador/@/alfinete no centro da 2ª linha.
+    val by = top + nameH + px(3f)
+    val cy = by + lineH + lineH / 2
+    var bx = right
+    val pillH = px(20f)
+    if (unreadTv.visibility == VISIBLE) {
+      val pw = unreadTv.measuredWidth
+      unreadTv.layout(bx - pw, cy - pillH / 2, bx, cy - pillH / 2 + pillH)
+      bx -= pw + px(6f)
+    }
+    if (mentionTv.visibility == VISIBLE) {
+      mentionTv.layout(bx - pillH, cy - pillH / 2, bx, cy - pillH / 2 + pillH)
+      bx -= pillH + px(6f)
+    }
+    if (pinIv.visibility == VISIBLE) {
+      val icon = px(15f)
+      pinIv.layout(bx - icon, cy - icon / 2, bx, cy - icon / 2 + icon)
+      bx -= icon + px(6f)
+    }
+    if (typing.visibility == VISIBLE) {
+      val ty = by + lineH / 2
+      typing.layout(textX, ty - px(4f), textX + px(18f), ty + px(4f))
+    }
+    val ph = previewTv.measuredHeight
+    if (senderTv.visibility == VISIBLE) {
+      senderTv.layout(textX, by, textX + senderTv.measuredWidth, by + senderTv.measuredHeight)
+      previewTv.layout(cPrevX, by + lineH, cPrevX + cPrevW, by + lineH + ph)
+    } else {
+      previewTv.layout(cPrevX, by, cPrevX + cPrevW, by + ph)
+    }
   }
 
   override fun hasOverlappingRendering(): Boolean = false

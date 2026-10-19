@@ -215,6 +215,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private var selectionMode = false
   private var selectionDirty = false
   private var compactDensity = false // [2026-10-18 compact-list] prop `density`
+  private var tgDensity = false      // [2026-10-19 tg-list] density "telegram"
+  private var accentColor: Int? = null // [2026-10-19 tg-list] prop `accent` ("#RRGGBB")
   var swipeEnabled = true
   var menuEnabled = true
   var collapseOffsetDp = 34f
@@ -389,9 +391,24 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   // [2026-10-18 compact-list] "compact" = linha 72 / avatar 52 (WhatsApp);
   // qualquer outro valor = regular 76 / 54. Rebind de tudo (mesmo caminho dos rótulos).
   fun setDensityProp(v: String?) {
+    // [2026-10-19 tg-list] "telegram" = linha 78 / avatar 58 / prévia 2 linhas.
+    val t = v == "telegram"
     val c = v == "compact"
-    if (c == compactDensity) return
+    if (c == compactDensity && t == tgDensity) return
     compactDensity = c
+    tgDensity = t
+    labelsDirty = true
+  }
+
+  // [2026-10-19 tg-list] cor de destaque ("#RRGGBB"; vazio = cor do texto) —
+  // "digitando…" no modo Telegram.
+  fun setAccentProp(v: String?) {
+    val hex = (v ?: "").trim()
+    val c: Int? = if (Regex("^#[0-9A-Fa-f]{6}$").matches(hex)) {
+      try { android.graphics.Color.parseColor(hex) } catch (_: Throwable) { null }
+    } else null
+    if (c == accentColor) return
+    accentColor = c
     labelsDirty = true
   }
 
@@ -750,7 +767,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       val item = items.getOrNull(position) as? Item.Row ?: return
       val row = rows[item.id] ?: return
       try {
-        holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow, compactDensity)
+        holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow, compactDensity, tgDensity, if (tgDensity) accentColor else null)
         swipe.onBound(holder.rowView)
       } catch (e: Throwable) {
         onNativeError(mapOf("message" to ("bind: " + (e.message ?: e.javaClass.simpleName))))
@@ -1295,7 +1312,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     private fun drawSeparators(c: Canvas, parent: RecyclerView) {
       hairPaint.color = if (theme.dark) 0x17FFFFFF else 0x14000000
       val hh = max(1f, density * 0.5f)
-      val lead = ((if (selectionMode) 36f else 0f) + 16f + (if (compactDensity) 52f + 12f else 54f + 14f)) * density
+      // [2026-10-19 tg-list] Telegram: 12 + 58 + 10 = 80 (x do texto).
+      val lead = ((if (selectionMode) 36f else 0f) + (if (tgDensity) 12f + 58f + 10f else 16f + (if (compactDensity) 52f + 12f else 54f + 14f))) * density
       val rtl = rtl()
       for (i in 0 until parent.childCount) {
         val ch = parent.getChildAt(i)

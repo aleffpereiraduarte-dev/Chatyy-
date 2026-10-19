@@ -52,6 +52,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
   private var colorsRaw: Map<String, Any?>? = null
   private var palette = STPalette.defaults(false)
   private var paletteDirty = true
+  private var solidIcons = false // [2026-10-19 tg-settings] prop `iconStyle`
   private var labels = CLLabels()
   private var maxContentWidthDp = 0f
   private var hInsetPx = 0
@@ -133,6 +134,13 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
     paletteDirty = true
   }
 
+  fun setIconStyle(v: String?) {
+    val on = v == "solid"
+    if (on == solidIcons) return
+    solidIcons = on
+    paletteDirty = true
+  }
+
   fun setColors(m: Map<String, Any?>?) {
     colorsRaw = m
     paletteDirty = true
@@ -190,7 +198,7 @@ class ChatyySettingsListView(context: Context, appContext: AppContext) : ExpoVie
     var rebindAll = false
     if (paletteDirty) {
       paletteDirty = false
-      palette = STPalette.from(dark, colorsRaw)
+      palette = STPalette.from(dark, colorsRaw).copy(solidIcons = solidIcons)
       setBackgroundColor(palette.pageBg)
       recycler.setBackgroundColor(palette.pageBg)
       refresher.setColorSchemeColors(palette.text)

@@ -21,7 +21,10 @@ public class ChatyySettingsListModule: Module {
       // 3 = [2026-10-18 bia-orb-icon] ícone "biaOrb" (orb da Bia desenhado).
       // 4 = [2026-10-18 settings-sub-native-2] "vd" (valor na cor destrutiva) —
       //     Conta/Conversas/E-mail/Idioma/Armazenamento em nativo.
-      return 4
+      // 5 = [2026-10-19 tg-settings] prop `iconStyle` ("solid" = glifo branco
+      //     em quadrado grafite cheio, linhas 44 sem subtítulo / 52+ com) +
+      //     chave de linha `tint` (ARGB do quadrado). Binário 4 ignora.
+      return 5
     }
 
     View(ChatyySettingsListView.self) {
@@ -66,6 +69,9 @@ public class ChatyySettingsListModule: Module {
       }
       Prop("scrollToId") { (view: ChatyySettingsListView, value: String?) in
         view.setScrollToId(value ?? "")
+      }
+      Prop("iconStyle") { (view: ChatyySettingsListView, value: String?) in
+        view.setIconStyle(value)
       }
 
       OnViewDidUpdateProps { (view: ChatyySettingsListView) in

@@ -16,7 +16,8 @@ import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
 import { buildRow, buildLabels, createPatcher } from './nativeAdapter';
 import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
-import { listMetrics } from './listDensity';
+import { listMetrics, tgListOn, listAccentHex } from './listDensity';
+import { useTheme } from '../../context/ThemeContext';
 
 class NativeListBoundary extends React.Component {
   constructor(props) {
@@ -76,6 +77,9 @@ function NativeConversationListInner(props) {
   } = props;
   const Native = getNativeConversationListView();
   const me = String(user?.email || '').toLowerCase();
+  // [2026-10-19 tg-list] destaque escolhido em Aparência (cor do "digitando…").
+  let _accent = '';
+  try { _accent = useTheme()?.accentColor || ''; } catch { _accent = ''; }
 
   // [native-store fase 1.5] prop `store` + 1ª montagem SEM buildRow quando a foto
   // gravada bate com o que o JS tem (a lista nativa pinta a foto; o JS monta as
@@ -342,6 +346,13 @@ function NativeConversationListInner(props) {
   try {
     if (_clApiVersion() >= (Platform.OS === 'android' ? 9 : 8)) {
       densityProps = { density: listMetrics().compact ? 'compact' : 'regular' };
+    }
+  } catch {}
+  // [2026-10-19 tg-list] linhas Telegram (iOS api >= 9 / Android api >= 10) +
+  // cor de destaque do "digitando…". Kill switch __chatyy_tg_list = false.
+  try {
+    if (densityProps && tgListOn() && _clApiVersion() >= (Platform.OS === 'android' ? 10 : 9)) {
+      densityProps = { density: 'telegram', accent: listAccentHex(_accent) };
     }
   } catch {}
 

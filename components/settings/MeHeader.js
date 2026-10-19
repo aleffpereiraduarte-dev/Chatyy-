@@ -38,6 +38,11 @@ function PencilGlyph({ size = 18, color }) {
 
 const SLOP = { top: 6, bottom: 6, left: 6, right: 6 };
 
+// [2026-10-19 tg-settings] Kill switch da leva Telegram: globalThis.__chatyy_tg_list = false.
+function _tgHeader() {
+  try { return globalThis.__chatyy_tg_list !== false; } catch { return true; }
+}
+
 function BarButton({ onPress, label, testID, children }) {
   const g = useGroupedColors();
   return (
@@ -89,9 +94,25 @@ export default function MeHeader({
           <QrGlyph size={18} color={g.text} />
         </BarButton>
         <View style={{ width: 10 }} />
-        <BarButton onPress={onEdit} label={tr('settings.editProfile', 'Editar perfil')} testID="settings-me-edit">
-          <PencilGlyph size={18} color={g.text} />
-        </BarButton>
+        {_tgHeader() ? (
+          // [2026-10-19 tg-settings] Telegram: botão de TEXTO "Editar" (pílula) no lugar do lápis.
+          <PressableScale
+            onPress={onEdit}
+            haptic="light"
+            scaleTo={0.94}
+            hitSlop={SLOP}
+            accessibilityRole="button"
+            accessibilityLabel={tr('settings.editProfile', 'Editar perfil')}
+            testID="settings-me-edit"
+            style={[st.editPill, { backgroundColor: g.fill }]}
+          >
+            <Text style={[st.editPillText, { color: g.text }]} maxFontSizeMultiplier={1.3}>{tr('common.edit', 'Editar')}</Text>
+          </PressableScale>
+        ) : (
+          <BarButton onPress={onEdit} label={tr('settings.editProfile', 'Editar perfil')} testID="settings-me-edit">
+            <PencilGlyph size={18} color={g.text} />
+          </BarButton>
+        )}
       </View>
 
       <View style={st.center}>
@@ -161,6 +182,11 @@ const st = StyleSheet.create({
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   center: { alignItems: 'center' },
+  editPill: {
+    height: 34, paddingHorizontal: 16, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
+  editPillText: { fontSize: 15, fontWeight: '600', letterSpacing: -0.2 },
   note: {
     maxWidth: 220, minHeight: 34, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center',

@@ -44,3 +44,23 @@ export function compactListOn() {
 export function listMetrics() {
   return compactListOn() ? COMPACT : REGULAR;
 }
+
+// [2026-10-19 tg-list] Linhas da lista NATIVA no ritmo Telegram iOS (linha 78,
+// avatar 58, texto/separador em 80, prévia em 2 linhas, ✓✓ junto da hora,
+// remetente do grupo em linha própria, alfinete no lugar do contador,
+// "digitando…" na cor de destaque, "Rascunho:" em vermelho). Só no binário
+// com density "telegram" (iOS api >= 9 / Android api >= 10); antigo segue
+// "compact". Kill switch: globalThis.__chatyy_tg_list = false.
+export function tgListOn() {
+  try { return globalThis.__chatyy_tg_list !== false; } catch { return true; }
+}
+
+/** Destaque p/ a lista nativa: "#RRGGBB" de cor de verdade; preto-tinta = '' (cor do texto). */
+export function listAccentHex(accent) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(accent || '').trim());
+  if (!m) return '';
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (r < 0x30 && g < 0x30 && b < 0x30) return '';
+  return '#' + m[1].toUpperCase();
+}

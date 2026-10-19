@@ -16,7 +16,8 @@ class ChatyySettingsListModule : Module() {
     // 3 = [2026-10-18 bia-orb-icon] ícone "biaOrb" (orb da Bia, drawable ccl_bia_orb).
     // 4 = [2026-10-18 settings-sub-native-2] "vd" (valor na cor destrutiva) —
     //     Conta/Conversas/E-mail/Idioma/Armazenamento em nativo.
-    Function("apiVersion") { 4 }
+    // 5 = [2026-10-19 tg-settings] prop `iconStyle` ("solid") + chave `tint`.
+    Function("apiVersion") { 5 }
 
     View(ChatyySettingsListView::class) {
       Events(
@@ -40,6 +41,7 @@ class ChatyySettingsListModule : Module() {
       Prop("autoInset") { _: ChatyySettingsListView, _: Boolean? -> }
       Prop("refreshing") { view: ChatyySettingsListView, v: Boolean? -> view.setRefreshing(v ?: false) }
       Prop("scrollToId") { view: ChatyySettingsListView, v: String? -> view.setScrollToId(v) }
+      Prop("iconStyle") { view: ChatyySettingsListView, v: String? -> view.setIconStyle(v) }
 
       OnViewDidUpdateProps { view: ChatyySettingsListView -> view.commitProps() }
 

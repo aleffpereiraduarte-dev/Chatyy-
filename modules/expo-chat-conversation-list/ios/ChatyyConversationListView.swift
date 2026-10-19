@@ -113,6 +113,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   private var selectionMode = false
   private var selectionDirty = false
   private var compact = false // [2026-10-18 compact-list] prop `density`
+  private var tg = false      // [2026-10-19 tg-list] density "telegram"
+  private var accent: UIColor? // [2026-10-19 tg-list] prop `accent` ("#RRGGBB")
   var swipeEnabled = true
   var menuEnabled = true
   var collapseOffset: CGFloat = 34
@@ -198,7 +200,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
 
   private func bind(_ cell: CLConversationCell, id: String) {
     guard let row = rows[id] else { return }
-    cell.configure(row, theme: theme, labels: labels, selectionMode: selectionMode, compact: compact)
+    cell.configure(row, theme: theme, labels: labels, selectionMode: selectionMode, compact: compact, tg: tg, accent: tg ? accent : nil)
     cell.onAvatarTap = { [weak self] rid in
       self?.onAvatarPress(["id": rid])
     }
@@ -215,7 +217,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     sep.color = theme.hair
     sep.topSeparatorVisibility = .hidden
     // Linha fina a partir do nome (16 + 54 + 14), como no JS.
-    let lead: CGFloat = (selectionMode ? 36 : 0) + 16 + CLConversationCell.avatarBox(compact: compact) + CLConversationCell.avatarGap(compact: compact)
+    // [2026-10-19 tg-list] recuo = x do texto (Telegram: 80 = 12 + 58 + 10).
+    let lead: CGFloat = (selectionMode ? 36 : 0) + CLConversationCell.textInset(compact: compact, tg: tg)
     sep.bottomSeparatorInsets = NSDirectionalEdgeInsets(top: 0, leading: lead, bottom: 0, trailing: 0)
     cfg.separatorConfiguration = sep
     cfg.leadingSwipeActionsConfigurationProvider = { [weak self] indexPath in
@@ -307,9 +310,25 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   // qualquer outro valor = regular 76 / 54. Reaproveita o caminho do modo
   // seleção (layout novo + reconfigura as células visíveis).
   func setDensity(_ v: String?) {
+    // [2026-10-19 tg-list] "telegram" = linha 78 / avatar 58 / prévia 2 linhas.
+    let t = (v == "telegram")
     let c = (v == "compact")
-    if c == compact { return }
+    if c == compact && t == tg { return }
     compact = c
+    tg = t
+    selectionDirty = true
+  }
+
+  // [2026-10-19 tg-list] cor de destaque ("#RRGGBB"; vazio = cor do texto) —
+  // "digitando…" no modo Telegram.
+  func setAccent(_ v: String?) {
+    var c: UIColor? = nil
+    var hex = (v ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if hex.hasPrefix("#") { hex.removeFirst() }
+    if hex.count == 6, let n = UInt32(hex, radix: 16) { c = UIColor(clHex: n) }
+    if c == nil && accent == nil { return }
+    if let a = c, let b = accent, a == b { return }
+    accent = c
     selectionDirty = true
   }
 
@@ -626,8 +645,11 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       self?.emitAction(id, action, source: "swipe")
       done(true)
     }
-    a.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .medium))?
-      .withTintColor(.white, renderingMode: .alwaysOriginal)
+    // [2026-10-19 tg-list] Telegram: glifo cheio, um pouco maior.
+    let cfg = UIImage.SymbolConfiguration(pointSize: tg ? 20 : 18, weight: .medium)
+    let img = (tg ? UIImage(systemName: symbol + ".fill", withConfiguration: cfg) : nil)
+      ?? UIImage(systemName: symbol, withConfiguration: cfg)
+    a.image = img?.withTintColor(.white, renderingMode: .alwaysOriginal)
     a.backgroundColor = UIColor(clHex: color)
     return a
   }
