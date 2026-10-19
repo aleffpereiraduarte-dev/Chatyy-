@@ -1,10 +1,12 @@
 // [2026-10-15 bia-design] Card da Bia no topo da lista de conversas: mini-orb vivo,
 // "Bia · IA", sugestão do momento (muda com a hora do dia) e atalho direto p/ o
-// modo voz. Mesmo footprint das linhas (minHeight 74) — layout da lista não muda.
+// modo voz. [bia-frase 2026-10-19] subtítulo = "Bom dia, Nome · frase de 12 h" (até 2 linhas). Mesmo footprint das linhas (minHeight 74) — layout da lista não muda.
 import React, { memo, useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import BiaOrb from './BiaOrb';
 import { BiaPressScale, GlyphWave } from './BiaUI';
+import { useLanguageOptional } from '../../context/LanguageContext';
+import { useBiaDaily, biaGreetingKey } from '../../services/biaDaily'; // [bia-frase 2026-10-19]
 
 function suggestion(t) {
   const h = new Date().getHours();
@@ -15,9 +17,20 @@ function suggestion(t) {
 
 function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, compact = false, nameStyle, previewStyle }) {
   const sug = useMemo(() => suggestion(t), [t]);
+  // [bia-frase 2026-10-19] "Bom dia, Aleff" + frase de 12 h (servidor bia_daily_line, cache MMKV).
+  // Sem resposta ainda / kill switch globalThis.__chatyy_bia_daily = false → subtítulo antigo.
+  const _lc = useLanguageOptional();
+  const daily = useBiaDaily(_lc?.language || 'pt-BR');
+  let hello = sug.hello;
+  let tip = sug.tip;
+  if (daily && daily.line) {
+    const word = t(biaGreetingKey());
+    hello = daily.name ? `${word}, ${daily.name}` : word;
+    tip = daily.line;
+  }
   const open = (q) => { try { router.push(q ? `/one?${q}` : '/one'); } catch {} };
   return (
-    <BiaPressScale onPress={() => open()} scaleTo={0.985} accessibilityLabel={`${t('one.title')}, ${sug.tip}`} style={[hc.row, compact && hc.rowCompact]}>
+    <BiaPressScale onPress={() => open()} scaleTo={0.985} accessibilityLabel={`${t('one.title')}, ${hello}, ${tip}`} style={[hc.row, compact && hc.rowCompact]}>
       <BiaOrb size={avatarSize} lite isDark={isDark} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={hc.titleRow}>
@@ -26,9 +39,9 @@ function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, compact = false, n
             <Text maxFontSizeMultiplier={1.1} style={[hc.badgeText, { color: P.sub }]}>{t('chat.aiBadge')}</Text>
           </View>
         </View>
-        <Text maxFontSizeMultiplier={1.3} style={[previewStyle, { color: P.sub, marginTop: compact ? 2 : 3, marginRight: 0 }]} numberOfLines={1}>
-          <Text style={{ color: P.text, fontWeight: '500' }}>{sug.hello}</Text>
-          {` · ${sug.tip}`}
+        <Text maxFontSizeMultiplier={1.3} style={[previewStyle, { color: P.sub, marginTop: compact ? 2 : 3, marginRight: 0 }]} numberOfLines={daily ? 2 : 1}>
+          <Text style={{ color: P.text, fontWeight: '500' }}>{hello}</Text>
+          {` · ${tip}`}
         </Text>
       </View>
       <BiaPressScale
