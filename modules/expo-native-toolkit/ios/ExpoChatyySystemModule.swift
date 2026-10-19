@@ -325,10 +325,16 @@ enum ChatyyShareSnapshotWriter {
         "avatar": avatar,
       ])
     }
-    let obj: [String: Any] = [
+    var obj: [String: Any] = [
       "v": 1, "acct": acct, "at": Date().timeIntervalSince1970 * 1000,
       "locked": ExpoChatyySystemModule.bool(opts["locked"]), "items": rows,
     ]
+    // [2026-10-19 media-quality] qualidade de envio (standard|hd|full) por rede
+    let validQ: Set<String> = ["standard", "hd", "full"]
+    let mqWifi = ExpoChatyySystemModule.str(opts["mq_wifi"])
+    let mqCell = ExpoChatyySystemModule.str(opts["mq_cell"])
+    if validQ.contains(mqWifi) { obj["mq_wifi"] = mqWifi }
+    if validQ.contains(mqCell) { obj["mq_cell"] = mqCell }
     guard let data = try? JSONSerialization.data(withJSONObject: obj, options: []) else { return 0 }
     ud.set(data, forKey: snapshotKey)
     q.async { fetchAvatars(downloads) }

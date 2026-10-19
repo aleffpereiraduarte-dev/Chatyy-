@@ -39,6 +39,7 @@ import Intents
 import ImageIO
 import UniformTypeIdentifiers
 import AVFoundation
+import Network
 
 // MARK: - Constantes
 
@@ -75,6 +76,44 @@ enum ChatyyShareConst {
     let b = raw.trimmingCharacters(in: CharacterSet(charactersIn: "/ \n"))
     guard let u = URL(string: b), u.scheme == "https", let h = u.host?.lowercased() else { return defaultBase }
     return (h == "chatyy.com.br" || h.hasSuffix(".chatyy.com.br")) ? b : defaultBase
+  }
+}
+
+// MARK: - [2026-10-19 media-quality] Qualidade de envio (snapshot do app)
+
+/// "Qualidade de envio de mídia" do app (Padrão / HD / Full HD, por rede),
+/// gravada no snapshot (mq_wifi / mq_cell). Snapshot antigo sem as chaves →
+/// o comportamento de sempre (2560 px, q 0,82).
+enum ChatyyShareQuality {
+  private static var wifiLevel: String = ""
+  private static var cellLevel: String = ""
+  private static var onWifi: Bool = false
+  private static var monitor: NWPathMonitor?
+
+  static func load(_ obj: [String: Any]) {
+    wifiLevel = (obj["mq_wifi"] as? String) ?? ""
+    cellLevel = (obj["mq_cell"] as? String) ?? ""
+    if monitor == nil, !(wifiLevel.isEmpty && cellLevel.isEmpty) {
+      let m = NWPathMonitor()
+      m.pathUpdateHandler = { path in
+        // Wi-Fi caro (hotspot) conta como dados móveis, igual ao app.
+        ChatyyShareQuality.onWifi = path.status == .satisfied && path.usesInterfaceType(.wifi) && !path.isExpensive
+      }
+      m.start(queue: DispatchQueue(label: "chatyy.share.path", qos: .utility))
+      monitor = m
+    }
+  }
+
+  /// Lado maior (px) e qualidade JPEG para fotos. Full HD fica em 4096 px na
+  /// extensão (limite de memória do iOS p/ extensões); no app é o original.
+  static func imageProfile() -> (maxPixel: Int, quality: Double) {
+    let level = onWifi ? wifiLevel : cellLevel
+    switch level {
+    case "standard": return (1600, 0.8)
+    case "hd": return (2560, 0.9)
+    case "full": return (4096, 0.92)
+    default: return (ChatyyShareConst.imageMaxPixel, 0.82)
+    }
   }
 }
 
@@ -218,6 +257,7 @@ enum ChatyyShareGate {
       ChatyyShareDiag.log("info", "gate: bloqueio do app (snapshot) → app")
       return nil
     }
+    ChatyyShareQuality.load(obj)
     let acct = ((obj["acct"] as? String) ?? "").lowercased()
     if acct != account {
       ChatyyShareDiag.log("info", "gate: snapshot de outra conta → app")
@@ -434,15 +474,16 @@ final class ChatyyShareLoader {
     } else {
       let dst = dest(i, "jpg")
       guard let source = CGImageSourceCreateWithURL(src as CFURL, nil) else { return nil }
+      let prof = ChatyyShareQuality.imageProfile()
       let opts: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,
         kCGImageSourceCreateThumbnailWithTransform: true,
         kCGImageSourceShouldCacheImmediately: true,
-        kCGImageSourceThumbnailMaxPixelSize: ChatyyShareConst.imageMaxPixel,
+        kCGImageSourceThumbnailMaxPixelSize: prof.maxPixel,
       ]
       guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary),
             let out = CGImageDestinationCreateWithURL(dst as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-      CGImageDestinationAddImage(out, cg, [kCGImageDestinationLossyCompressionQuality: 0.82] as CFDictionary)
+      CGImageDestinationAddImage(out, cg, [kCGImageDestinationLossyCompressionQuality: prof.quality] as CFDictionary)
       guard CGImageDestinationFinalize(out) else { return nil }
       item.fileURL = dst; item.mime = "image/jpeg"; item.fileName = base + ".jpg"
     }

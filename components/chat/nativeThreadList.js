@@ -1241,6 +1241,13 @@ function _status(m, own) {
   return typeof s === 'number' ? s : 1;
 }
 
+function _hdBadge(m, w, h) {
+  try {
+    return require('../../services/mediaUploadQuality').hdBadgeFor(
+      (w > 0 && h > 0 && !(Number(m.width) > 0)) ? { ...m, width: w, height: h } : m) || '';
+  } catch { return ''; }
+}
+
 function _mediaFor(m, ctx) {
   const r = (ctx.resolveMedia && ctx.resolveMedia(m)) || {};
   let w = Number(m.width) || 0; let h = Number(m.height) || 0;
@@ -1254,6 +1261,13 @@ function _mediaFor(m, ctx) {
     const d = Number(m.duration) || 0;
     if (d > 0) out.dur = _fmtDur(d);
     if (!out.uri && !out.th) _vfMedia(m, out, ctx);
+  }
+  // [2026-10-19 media-quality] selo HD/4K na pílula do canto (WhatsApp). Vídeo:
+  // "HD · 0:23" (todo binário desenha a pílula); foto: "HD" (binários com a
+  // pílula em imagem — os antigos ignoram).
+  if (m.type === 'video' || m.type === 'image') {
+    const q = _hdBadge(m, w, h);
+    if (q) out.dur = out.dur ? `${q} · ${out.dur}` : q;
   }
   if (m._uploading || m._compressing) out.up = typeof m._uploadPct === 'number' ? Math.max(0, Math.min(100, Math.round(m._uploadPct))) : -1;
   else if (m._queued && _isTmpId(m.id) && !m._failed) out.up = -1;

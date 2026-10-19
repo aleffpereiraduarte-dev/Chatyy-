@@ -128,12 +128,28 @@ function _flush() {
   if (!job) return;
   const m = getModule();
   if (!m) return;
-  const sig = JSON.stringify([job.opts.enabled, job.opts.account, job.opts.locked, job.items.map((i) => [i.id, i.title, i.avatar_url])]);
+  const sig = JSON.stringify([job.opts.enabled, job.opts.account, job.opts.locked, job.opts.mq_wifi, job.opts.mq_cell, job.items.map((i) => [i.id, i.title, i.avatar_url])]);
   if (sig === _lastSig) return;
   _lastSig = sig;
   try {
     Promise.resolve(m.setShareSnapshot(job.items, job.opts)).catch(() => { _lastSig = null; });
   } catch { _lastSig = null; }
+}
+
+// [2026-10-19 media-quality] Qualidade de envio (Wi-Fi / dados móveis) p/ a
+// extensão nativa comprimir fotos no mesmo nível do app (binários com o
+// snapshot novo; os antigos ignoram as chaves e seguem 2560 px).
+let _lastConvs = null;
+let _lastOpts = null;
+function _mqOpts() {
+  try {
+    const p = require('./mediaUploadQuality').getUploadQualityPrefs();
+    return { mq_wifi: p.wifi, mq_cell: p.cell };
+  } catch { return {}; }
+}
+/** Preferência mudou → regrava o snapshot com a qualidade nova. */
+export function refreshShareSnapshotQuality() {
+  if (_lastConvs) scheduleShareSnapshot(_lastConvs, _lastOpts || {});
 }
 
 /** Debounced; chamado sempre que a lista de conversas muda (services/systemIntegration). */
@@ -147,8 +163,9 @@ export function scheduleShareSnapshot(conversations, opts = {}) {
     try { base = String(api?.getBaseUrl?.() || base); } catch {}
     _pending = {
       items: enabled ? buildShareSnapshot(conversations, { me, lockedIds: opts.lockedIds, blocked: _blockedEmails() }) : [],
-      opts: { enabled, account: me, base, locked: _appLockOn() },
+      opts: { enabled, account: me, base, locked: _appLockOn(), ..._mqOpts() },
     };
+    _lastConvs = conversations; _lastOpts = opts;
   } catch { return; }
   if (_timer) clearTimeout(_timer);
   _timer = setTimeout(_flush, DEBOUNCE_MS);

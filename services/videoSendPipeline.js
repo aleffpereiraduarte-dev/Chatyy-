@@ -95,6 +95,16 @@ const QUALITY_PROFILES = {
     audioBitrate: 128_000,
     fps: 30,
   },
+  // [2026-10-19 media-quality] "Full HD" level: 1080p at a high bitrate. A
+  // source that already fits 1080p at ≤ 12 Mbps is sent untouched (see
+  // shouldPassthroughFull); 4K / higher-bitrate sources come down to this.
+  '1080p_full': {
+    maxWidth: 1920,
+    maxHeight: 1080,
+    bitrate: 8_000_000,
+    audioBitrate: 160_000,
+    fps: 30,
+  },
   '2160p': {
     maxWidth: 3840,
     maxHeight: 2160,
@@ -125,6 +135,22 @@ export function getQualityProfile(label, info = null) {
   const p = QUALITY_PROFILES[label];
   if (p) return p;
   return QUALITY_PROFILES['720p'];
+}
+
+/**
+ * [2026-10-19 media-quality] Full HD: keep the original file when it already
+ * fits the 1080p box, averages ≤ 12 Mbps (video+audio) and is under the cap —
+ * re-encoding it to 8 Mbps would only lose detail. info = getInfo() result.
+ */
+export function shouldPassthroughFull(info) {
+  const w = Number(info?.width) || 0; const h = Number(info?.height) || 0;
+  const size = Number(info?.sizeBytes) || 0; const ms = Number(info?.durationMs) || 0;
+  if (!(w > 0 && h > 0 && size > 0 && ms > 0)) return false;
+  if (Math.max(w, h) > 1920 || Math.min(w, h) > 1080) return false;
+  if (size > VIDEO_SIZE_CAP_BYTES) return false;
+  let maxBps = 12_000_000;
+  try { maxBps = require('./mediaUploadQuality').FULL_PASSTHROUGH_MAX_BPS || maxBps; } catch {}
+  return (size * 8 * 1000) / ms <= maxBps;
 }
 
 /**
@@ -177,6 +203,7 @@ export function nativeCompressOptions(profile, apiVersion) {
  */
 export function resolveVideoLabel(hd = null) {
   try { return require('./mediaUploadQuality').resolveVideoQuality(hd); } catch {}
+  if (hd === 'full') return '1080p_full';
   return hd ? '1080p' : '720p';
 }
 
@@ -248,12 +275,21 @@ export async function prepareCompressed(srcUri, opts = {}, onProgress = null, si
   // Probe info up-front so the wall-clock progress ramp matches reality.
   let durationMs = 0;
   let srcSize = 0;
+  let srcInfo = null;
   try {
-    const info = await mod.getInfo(srcUri);
-    durationMs = info?.durationMs || 0;
-    srcSize = info?.sizeBytes || 0;
+    srcInfo = await mod.getInfo(srcUri);
+    durationMs = srcInfo?.durationMs || 0;
+    srcSize = srcInfo?.sizeBytes || 0;
   } catch {
     /* getInfo failure is non-fatal — we just lose progress fidelity */
+  }
+  // [2026-10-19 media-quality] Full HD + source already ≤1080p/≤12 Mbps → original.
+  if (opts && opts.passthroughFull && shouldPassthroughFull(srcInfo)) {
+    if (typeof onProgress === 'function') { try { onProgress(1); } catch {} }
+    return {
+      uri: srcUri, size: srcSize, width: srcInfo?.width || 0, height: srcInfo?.height || 0,
+      durationMs, skipped: true, passthrough: true,
+    };
   }
 
   // Estimated transcode wall time. iOS exports at ~1.5x realtime for 720p,
@@ -414,6 +450,7 @@ export default {
   suggestHdToggle,
   resolveVideoLabel,
   fitBitrateToCap,
+  shouldPassthroughFull,
   nativeCompressOptions,
   trimVideo,
 };

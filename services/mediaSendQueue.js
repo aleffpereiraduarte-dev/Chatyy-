@@ -48,11 +48,24 @@ import messageOutbox, {
 
 // ─── Tunables ────────────────────────────────────────────────────────────────
 // WhatsApp-like defaults (see report for sources). Longest edge, JPEG quality.
+// [2026-10-19 media-quality] standard/hd/full come from mediaUploadQuality
+// (Padrão 1600/0.8 · HD 2560/0.9 · Full HD original/0.92); `lite` is the
+// automatic 2G/3G downgrade of an AUTO Padrão send.
 export const IMAGE_PROFILES = {
   standard: { maxDim: 1600, quality: 0.8 },   // [2026-10-08 upload-br] WhatsApp-like ~0.8
   lite:     { maxDim: 1280, quality: 0.65 }, // 2g/3g
-  hd:       { maxDim: 4096, quality: 0.85 }, // HD toggle
+  hd:       { maxDim: 2560, quality: 0.9 },  // HD
+  full:     { maxDim: 8192, quality: 0.92 }, // Full HD / original pixels
 };
+/** Level saved on the queued row: `quality` (2026-10-19+) or legacy `hd` boolean. */
+function _rowLevel(p) {
+  try {
+    const q = require('./mediaUploadQuality');
+    return q.normalizeLevel(p.quality) || q.normalizeLevel(p.hd) || null;
+  } catch {
+    return p.quality === 'full' || p.quality === 'hd' || p.quality === 'standard' ? p.quality : (p.hd ? 'hd' : (p.hd === false ? 'standard' : null));
+  }
+}
 // Videos under this size are sent as-is (already small / re-share).
 const VIDEO_COMPRESS_MIN_BYTES = 2 * 1024 * 1024;
 // Server cap (chat_upload + Rust MAX_CHUNKED_SIZE).
@@ -214,7 +227,10 @@ async function _deleteDurable(p) {
 
 // ─── Compression ─────────────────────────────────────────────────────────────
 function _imageProfile(p) {
-  if (p.hd) return IMAGE_PROFILES.hd;
+  const lv = _rowLevel(p);
+  if (lv === 'hd' || lv === 'full') return IMAGE_PROFILES[lv];
+  // Explicit Padrão keeps 1600 px even on a slow link; AUTO (null) may drop to lite.
+  if (lv === 'standard' && p.quality_explicit) return IMAGE_PROFILES.standard;
   try {
     const ni = require('./networkInfo');
     const ns = ni.getNetworkState?.();
@@ -276,13 +292,18 @@ async function _compressVideo(p, uri, signal, onPct) {
     // (true/false); null/undefined (older rows / other callers) → saved
     // "Qualidade de envio de mídia" default, network-aware (1080p unless
     // Padrão / Data Saver / weak link).
-    const label = (p.hd === true || p.hd === false)
-      ? (p.hd ? '1080p' : '720p')
+    // [2026-10-19 media-quality] p.quality = level picked at send time
+    // ('standard'|'hd'|'full'); legacy rows only carry p.hd.
+    const lv = _rowLevel(p);
+    const label = lv
+      ? (lv === 'full' ? '1080p_full' : (lv === 'hd' ? '1080p' : '720p'))
       : (vsp.resolveVideoLabel?.(null) || '720p');
     const base = vsp.getQualityProfile?.(label);
     if (!base) return null;
-    const profile = { ...base, audioBitrate: Math.min(base.audioBitrate || 128000, label === '1080p' ? 128000 : 96000) };
+    const aCap = label === '1080p_full' ? 160000 : (label === '1080p' ? 128000 : 96000);
+    const profile = { ...base, audioBitrate: Math.min(base.audioBitrate || 128000, aCap), ...(label === '1080p_full' ? { passthroughFull: true } : null) };
     const r = await vsp.prepareCompressed(uri, profile, (f) => onPct(Math.round((Number(f) || 0) * 100)), signal);
+    if (r && r.passthrough) return { uri: null, size: 0, width: r.width || 0, height: r.height || 0, durationMs: r.durationMs || 0 };
     if (!r || r.skipped || !r.uri || r.uri === uri) return null;
     return { uri: r.uri, size: r.size || 0, width: r.width || 0, height: r.height || 0, durationMs: r.durationMs || 0 };
   } catch { return null; }
@@ -716,7 +737,8 @@ export async function kick() {
 /**
  * Enqueue an outgoing media message. `payload` must carry client_message_id,
  * conversation_id, type, local_uri; optional temp_id, mime_type, file_name,
- * file_size, caption, view_once, hd, sender_email, created_at, duration.
+ * file_size, caption, view_once, hd, quality ('standard'|'hd'|'full'),
+ * quality_explicit (picked in the preview), sender_email, created_at, duration.
  */
 export async function enqueueMedia(payload) {
   if (Platform.OS === 'web' || !payload) return null;

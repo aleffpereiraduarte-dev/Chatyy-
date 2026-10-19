@@ -43,11 +43,12 @@ export default function StorageCategory() {
   const [lowDataCalls, setLowDataCalls] = useState(false);
   // null = ponte indisponível (web / binário antigo) → vale o AsyncStorage.
   const nativeCallDataSaver = useRef(null);
+  // [2026-10-19 media-quality] { wifi, cell } por conta: Padrão / HD / Full HD.
   const [uploadQuality, setUploadQuality] = useState(() => {
-    try { return require('../../../services/mediaUploadQuality').getMediaUploadQuality(); } catch { return 'hd'; }
+    try { return require('../../../services/mediaUploadQuality').getUploadQualityPrefs(); } catch { return { wifi: 'hd', cell: 'standard' }; }
   });
   useEffect(() => {
-    try { return require('../../../services/mediaUploadQuality').onMediaUploadQualityChange(setUploadQuality); } catch { return undefined; }
+    try { return require('../../../services/mediaUploadQuality').onUploadQualityChange(setUploadQuality); } catch { return undefined; }
   }, []);
   // Chamadas: a pref nativa (a mesma do "Economizar dados" da chamada) manda.
   useEffect(() => {
@@ -129,18 +130,28 @@ export default function StorageCategory() {
         </>
       )}
 
-      <SettingsGroup footer={t('settings.mediaUploadQuality.footer') || 'Vale como padrão para vídeos. No modo economia de dados ou em rede fraca, o envio usa a qualidade padrão. Você pode trocar em cada envio pelo botão HD.'}>
-        <SettingsPickerRow
-          title={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
-          value={uploadQuality}
-          sheetTitle={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
-          cancelLabel={t('common.cancel') || 'Cancelar'}
-          options={[
-            { value: 'standard', label: t('settings.mediaUploadQuality.standard') || 'Padrão', sub: t('settings.mediaUploadQuality.standardDesc') || 'Envio mais rápido, usa menos dados (720p)' },
-            { value: 'hd', label: t('settings.mediaUploadQuality.hd') || 'HD', sub: t('settings.mediaUploadQuality.hdDesc') || 'Melhor qualidade, arquivos até 3x maiores (Full HD 1080p)' },
-          ]}
-          onChange={(v) => { try { setUploadQuality(require('../../../services/mediaUploadQuality').setMediaUploadQuality(v)); } catch {} }}
-        />
+      <SettingsGroup
+        header={t('settings.mediaUploadQuality.title') || 'Qualidade de envio de mídia'}
+        footer={t('settings.mediaUploadQuality.footer2') || 'Padrão: fotos até 1600 px e vídeos 720p. HD: fotos até 2560 px e vídeos 1080p. Full HD: fotos na resolução original e vídeos 1080p em alta qualidade. Com a economia de dados ligada ou em rede fraca, o envio usa Padrão. Você pode trocar em cada envio pelo botão HD.'}
+      >
+        {[
+          { col: 'wifi', title: t('settings.mediaUploadQuality.wifi') || 'No Wi-Fi' },
+          { col: 'cell', title: t('settings.mediaUploadQuality.cell') || 'Nos dados móveis' },
+        ].map(({ col, title }) => (
+          <SettingsPickerRow
+            key={col}
+            title={title}
+            value={uploadQuality?.[col] || (col === 'wifi' ? 'hd' : 'standard')}
+            sheetTitle={title}
+            cancelLabel={t('common.cancel') || 'Cancelar'}
+            options={[
+              { value: 'standard', label: t('settings.mediaUploadQuality.standard') || 'Padrão', sub: t('settings.mediaUploadQuality.standardDesc2') || 'Envio mais rápido, usa menos dados (fotos 1600 px, vídeo 720p)' },
+              { value: 'hd', label: t('settings.mediaUploadQuality.hd') || 'HD', sub: t('settings.mediaUploadQuality.hdDesc2') || 'Mais nítido, arquivos até 4x maiores (fotos 2560 px, vídeo 1080p)' },
+              { value: 'full', label: t('settings.mediaUploadQuality.full') || 'Full HD', sub: t('settings.mediaUploadQuality.fullDesc') || 'Fotos na resolução original, vídeo 1080p em alta qualidade (arquivos bem maiores)' },
+            ]}
+            onChange={(v) => { try { setUploadQuality(require('../../../services/mediaUploadQuality').setUploadQualityPref(col, v)); } catch {} }}
+          />
+        ))}
       </SettingsGroup>
 
       <SettingsGroup header={t('settings.rd.calls') || 'Chamadas'}>

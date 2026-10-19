@@ -188,6 +188,8 @@ export default function NativeAttachSheet({
     const actions = (Array.isArray(p.items) ? p.items : [])
       .filter((it) => it && it.key)
       .map((it) => ({ key: String(it.key), label: String(it.label || it.key) }));
+    let _hdDefault = false;
+    try { _hdDefault = require('../../services/mediaUploadQuality').defaultUploadLevel() !== 'standard'; } catch {}
     (async () => {
       let r = null;
       try {
@@ -197,7 +199,8 @@ export default function NativeAttachSheet({
           dark: th.dark,
           colors: th.colors,
           maxSelect: 30,
-          hdDefault: false,
+          // [2026-10-19 media-quality] chip HD começa no nível salvo (Wi-Fi/dados)
+          hdDefault: _hdDefault,
           allowCamera: true,
           // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
           // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
@@ -218,9 +221,11 @@ export default function NativeAttachSheet({
         if (r.action === 'action' && r.key) {
           cur.onPick && cur.onPick(r.key);
         } else if (r.action === 'send') {
-          // HD desligado = qualidade padrão do app (vídeo segue a preferência
-          // salva); ligado = força HD. "Como arquivo" = original, sem compressão.
-          const files = toFiles(r.items, { ...(r.hd ? { _hd: true } : null), ...(r.asFile ? { _asFile: true } : null) });
+          // [2026-10-19 media-quality] chip intocado = nível salvo (Padrão/HD/Full HD
+          // por rede); mexeu = _hd explícito (ligado = HD ou o Full HD salvo,
+          // desligado = Padrão). "Como arquivo" = original, sem compressão.
+          const _hdTouched = typeof r.hd === 'boolean' && r.hd !== _hdDefault;
+          const files = toFiles(r.items, { ...(_hdTouched ? { _hd: !!r.hd } : null), ...(r.asFile ? { _asFile: true } : null) });
           if (typeof cur.onSendDirect === 'function') cur.onSendDirect(files, { caption: r.caption || '', hd: !!r.hd, asFile: !!r.asFile });
           else if (typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
         } else if (r.action === 'preview') {

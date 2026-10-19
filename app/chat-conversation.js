@@ -151,6 +151,17 @@ import useConversationPrivacy from '../components/chat/useConversationPrivacy';
 import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
 import LazyMount from '../components/chat/LazyMount';
+import MediaQualityPill from '../components/chat/MediaQualityPill';
+import {
+  normalizeLevel as _mqNorm,
+  levelFromHdToggle as _mqFromToggle,
+  defaultUploadLevel as _mqDefaultRaw,
+  photoProfileFor as _mqPhotoProfile,
+  hdBadgeFor as _mqBadgeRaw,
+} from '../services/mediaUploadQuality';
+function _mqBadge(m) { try { return _mqBadgeRaw(m); } catch { return ''; } }
+// [2026-10-19 media-quality] never throws (send path).
+function _mqDefault() { try { return _mqDefaultRaw() || 'standard'; } catch { return 'standard'; } }
 import SuggestPopIn from '../components/chat/SuggestPopIn'; // [2026-10-16 motion-composer] sugestões /bot entram com mola
 import NowTicker from '../components/chat/NowTicker'; // [2026-10-15 conv-lite] // [2026-10-15 conv-lite] sheets/modais montados só na 1ª abertura
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetModal, NativeSheetKeyboardView, afterRNModal, runAfterNativeSheet, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2] +Modal drop-in/teclado
@@ -7502,7 +7513,10 @@ function VideoPreviewNativeInner({ uri, trim, Video, useVideoPlayer }) {
   );
 }
 
-function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMode, onToggleHD, videoHdDefault = false }) {
+// [2026-10-19 media-quality] hdMode = level picked for THIS send ('standard'|
+// 'hd'|'full') or null (= qualityDefault, the saved per-network default);
+// onToggleHD(level) sets it. Applies to every item of the album.
+function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMode, onToggleHD, qualityDefault = 'standard' }) {
   const { t } = useLanguage();
   const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   const [caption, setCaption] = useState('');
@@ -7612,8 +7626,10 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     const f = list[0];
     let alive = true;
     setNativePhase('open');
-    const isVid = _nativeEd.isVideoFile(f);
-    const hdInit = isVid ? (hdMode == null ? !!videoHdDefault : !!hdMode) : hdMode === true;
+    // [2026-10-19 media-quality] o chip HD do editor nativo ainda é booleano:
+    // ligado = nível salvo (HD/Full HD) ou HD; desligado = Padrão.
+    const _lvInit = _mqNorm(hdMode) || qualityDefault || 'standard';
+    const hdInit = _lvInit !== 'standard';
     (async () => {
       const r = await _nativeEd.openNativeMediaEditor({
         file: f, t, mode: 'compose', captionMax: 300,
@@ -7626,9 +7642,10 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
         if (!alive) return;
         const wantHd = !!r.hd;
         const cap = typeof r.caption === 'string' ? r.caption : '';
-        pendingNativeSendRef.current = { caption: cap, viewOnce: !!r.viewOnce, files: [out], hd: wantHd !== hdInit ? wantHd : null };
-        // onToggleHD(cur) grava !cur → hdMode = wantHd; o envio espera o hdMode assentar (efeito abaixo).
-        if (wantHd !== hdInit) onToggleHD?.(!wantHd);
+        const _lvWant = wantHd !== hdInit ? _mqFromToggle(wantHd) : null;
+        pendingNativeSendRef.current = { caption: cap, viewOnce: !!r.viewOnce, files: [out], level: _lvWant };
+        // onToggleHD(level) grava hdMode = level; o envio espera o hdMode assentar (efeito abaixo).
+        if (_lvWant) onToggleHD?.(_lvWant);
         setPendingNativeTick(x => x + 1);
       } else if (r.action === 'cancel' || r.action === 'done') {
         onCloseRef.current?.();
@@ -7644,7 +7661,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   useEffect(() => {
     const p = pendingNativeSendRef.current;
     if (!p) return;
-    if (p.hd != null && (p.hd ? hdMode !== true : hdMode !== false)) return; // espera o setHdMode do pai
+    if (p.level != null && hdMode !== p.level) return; // espera o setHdMode do pai
     pendingNativeSendRef.current = null;
     onSendRef.current?.(p.caption, p.viewOnce, p.files, [p.caption]);
   }, [pendingNativeTick, hdMode]);
@@ -7921,29 +7938,15 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               </TouchableOpacity>
             </View>
           )}
-          {/* [2026-10-11 video-fullhd] HD chip (WhatsApp): visible for photos AND
-              videos (was hidden on videos). Starts from the saved "Qualidade de
-              envio de mídia" default for videos; a tap flips it for this send. */}
-          {(() => {
-            const _hdOn = activeIsVideo ? (hdMode == null ? !!videoHdDefault : !!hdMode) : hdMode === true;
-            return (
-              <TouchableOpacity
-                onPress={() => onToggleHD?.(_hdOn)}
-                style={previewStyles.headerBtn}
-                accessibilityRole="switch"
-                accessibilityState={{ checked: _hdOn }}
-                accessibilityLabel={_hdOn ? (t('chatConv.hdOn') || 'Qualidade HD') : (t('chatConv.hdOff') || 'Qualidade padrão')}
-              >
-                <View style={{
-                  paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 5,
-                  borderWidth: 1.5, borderColor: _hdOn ? '#fff' : 'rgba(255,255,255,0.75)',
-                  backgroundColor: _hdOn ? '#fff' : 'transparent',
-                }}>
-                  <Text style={{ color: _hdOn ? '#111111' : 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>HD</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })()}
+          {/* [2026-10-19 media-quality] HD pill (WhatsApp): Padrão → HD → Full HD
+              for THIS send (all items of the album), starting from the saved
+              per-network default; estimated size → sheet with the 3 levels. */}
+          <MediaQualityPill
+            level={_mqNorm(hdMode) || qualityDefault || 'standard'}
+            onChange={(lv) => onToggleHD?.(lv)}
+            files={files}
+            t={t}
+          />
         </View>
 
         {drawOpen && !activeIsVideo && (
@@ -12920,6 +12923,7 @@ function ChatConversationInner() {
   // THIS send (reset to null every time the preview opens, WhatsApp-style).
   // Photos stay standard unless the chip is explicitly ON (4096px photos by
   // default would multiply the data cost of every photo).
+  // [2026-10-19 media-quality] values: null | 'standard' | 'hd' | 'full'.
   const [hdMode, setHdMode] = _useStateT(null);
   useEffect(() => { if (mediaPreview.visible) setHdMode(null); }, [mediaPreview.visible]);
 
@@ -21770,7 +21774,11 @@ function ChatConversationInner() {
         // so an older expo-image-picker without the enum just ignores it. No
         // "sem perder qualidade" intent here (camera already uses quality:0.8),
         // unlike the gallery picker which keeps 1.0 for the HD toggle.
-        videoQuality: ImagePicker.UIImagePickerControllerQualityType?.Medium,
+        // [2026-10-19 media-quality] HD/Full HD saved → record High (1080p) so the
+        // queue can honour the level; Padrão keeps the small Medium source.
+        videoQuality: _mqDefault() !== 'standard'
+          ? (ImagePicker.UIImagePickerControllerQualityType?.High ?? ImagePicker.UIImagePickerControllerQualityType?.Medium)
+          : ImagePicker.UIImagePickerControllerQualityType?.Medium,
         videoMaxDuration: 60,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -22033,14 +22041,13 @@ function ChatConversationInner() {
       : mimeType.startsWith('audio/') ? 'audio'
       : 'file';
     const _hdOv = typeof file._hd === 'boolean' ? file._hd : null;
-    // [2026-10-11 video-fullhd] Effective quality for THIS send: explicit chip
-    // (true/false) or the saved default (null → 1080p unless Padrão / Data
-    // Saver / weak link). Photos: HD only when the chip was explicitly ON.
-    let _vidHd = _hdOv != null ? _hdOv : hdMode === true;
-    if (_hdOv == null && hdMode == null && fileType === 'video') {
-      try { _vidHd = require('../services/mediaUploadQuality').defaultVideoHd(); } catch { _vidHd = false; }
-    }
-    const _vidLabel = _vidHd ? '1080p' : '720p';
+    // [2026-10-19 media-quality] Level for THIS send (photos AND videos):
+    // file._quality / native chip _hd / preview pill (hdMode) / saved
+    // per-network default (Wi-Fi vs dados móveis; Padrão on Data Saver / weak link).
+    const _mqLvExplicit = _mqNorm(file._quality) || (_hdOv != null ? _mqFromToggle(_hdOv) : null) || _mqNorm(hdMode);
+    const _mqLv = _mqLvExplicit || _mqDefault();
+    const _vidHd = _mqLv !== 'standard';
+    const _vidLabel = _mqLv === 'full' ? '1080p_full' : (_vidHd ? '1080p' : '720p');
     // Use local URI as preview so images/videos show INSTANTLY before upload completes
     const localUri = file.blob ? URL.createObjectURL(file.blob) : file.uri;
     const optimisticMsg = {
@@ -22053,6 +22060,7 @@ function ChatConversationInner() {
       content: caption || '',
       type: fileType,
       ...(fileType === 'video' && _vidHd ? { _hd: true } : null),
+      ...((fileType === 'video' || fileType === 'image') ? { _quality: _mqLv } : null),
       file_name: file.name,
       file_url: localUri || '',
       _localUri: localUri, // Keep reference for display during upload
@@ -22154,7 +22162,9 @@ function ChatConversationInner() {
           file_size: file.size || 0,
           caption: caption || '',
           view_once: forceViewOnce ? 1 : 0,
-          hd: fileType === 'video' ? _vidHd : (_hdOv != null ? _hdOv : hdMode === true),
+          hd: _vidHd,
+          quality: _mqLv,
+          quality_explicit: !!_mqLvExplicit,
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
           batch_id: batchId || null,
@@ -30760,6 +30770,17 @@ function ChatConversationInner() {
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
                     <IconLock size={16} color="#fff" />
                     <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>{_mt('chatConv.protectedMedia', 'Protegido')}</Text>
+                  </View>
+                )}
+                {/* [2026-10-19 media-quality] HD badge (WhatsApp): photo ≥ 2000 px long edge. */}
+                {!imgUploading && !imgSendOverlay && !isAlbumMember && !msg._blurred && _mqBadge(msg) === 'HD' && (
+                  <View pointerEvents="none" style={{
+                    position: 'absolute', top: 8, right: 8, zIndex: 3,
+                    backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 5,
+                    paddingHorizontal: 5, paddingVertical: 1.5,
+                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                  }}>
+                    <Text style={{ fontSize: 10, color: '#fff', fontWeight: '800', letterSpacing: 0.6 }}>HD</Text>
                   </View>
                 )}
                 <MediaSendOverlay
@@ -41074,8 +41095,8 @@ function ChatConversationInner() {
       {/* Media preview before send (WhatsApp style, multi-thumb) */}
       <LazyMount when={mediaPreview.visible}>{(_lmV) => (<MediaPreview
         hdMode={hdMode}
-        videoHdDefault={(() => { try { return require('../services/mediaUploadQuality').defaultVideoHd(); } catch { return false; } })()}
-        onToggleHD={(cur) => setHdMode(typeof cur === 'boolean' ? !cur : (v => !v))}
+        qualityDefault={_mqDefault()}
+        onToggleHD={(lv) => setHdMode(_mqNorm(lv))}
         visible={_lmV}
         files={mediaPreview.files || []}
         colors={colors}
@@ -41141,10 +41162,11 @@ function ChatConversationInner() {
                 // Adaptive compression: cellular drops quality and dimensions
                 // to keep upload time bounded; wifi uses default. HD mode
                 // overrides both with the maximum quality regardless of net.
-                let isWifi = true;
-                try { isWifi = !!require('../services/networkInfo').getNetworkState()?.isWifi; } catch {}
-                const maxDim = hdMode ? 4096 : (isWifi ? 2048 : 1280);
-                const quality = hdMode ? 0.92 : (isWifi ? 0.8 : 0.65);
+                // [2026-10-19 media-quality] same levels as native (Padrão 1600/0.8,
+                // HD 2560/0.9, Full HD original/0.92).
+                const _wq = _mqPhotoProfile(_mqNorm(hdMode) || _mqDefault());
+                const maxDim = _wq.maxDim;
+                const quality = _wq.quality;
                 let compressed = await compressImageWeb(f.blob, maxDim, quality);
                 // EXIF strip path: when compressImageWeb returns null (image
                 // already small enough), force a re-encode at near-lossless
