@@ -12636,6 +12636,8 @@ export async function parentalMarkAlertRead(alertId) { return apiCall('parental_
 export async function parentalUpdateRestrictions(childEmail, restrictions) { return apiCall('parental_update_restrictions', { child_email: childEmail, ...restrictions }, 'POST'); }
 export async function parentalGetRestrictions(childEmail) { return apiCall('parental_get_restrictions', { child_email: childEmail }); }
 export async function parentalMyStatus() { return apiCall('parental_my_status'); }
+// [parental-tempo 2026-10-19] app do FILHO: minutos em 1º plano (0 = só consulta o estado: limite/bônus/graça/pausa)
+export async function parentalScreenHeartbeat(minutes = 0) { return apiCall('parental_screen_heartbeat', { minutes: Math.max(0, Math.min(10, Math.floor(Number(minutes) || 0))) }, 'POST'); }
 export async function parentalRevokeChild(childEmail) { return apiCall('parental_revoke_child', { child_email: childEmail }, 'POST'); }
 export async function parentalScreenTime(childEmail) { return apiCall('parental_screen_time', { child_email: childEmail }); }
 export async function parentalCallHistory(childEmail) { return apiCall('parental_call_history', { child_email: childEmail }); }

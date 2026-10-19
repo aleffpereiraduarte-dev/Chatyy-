@@ -475,6 +475,10 @@ function _teardownSyncEngines() {
 // Child account restrictions (loaded after login)
 let _childRestrictions = null;
 export function getChildRestrictions() { return _childRestrictions; }
+// [parental-tempo 2026-10-19] estado de tempo de tela que veio no último parental_my_status
+// ({ minutes_today, bonus_today, grace_left_s, limit_reached, locked, ... } — null em servidor antigo).
+let _childScreen = null;
+export function getChildScreenStatus() { return _childScreen; }
 export function isChildAccount() { return _childRestrictions !== null; }
 
 // Fetch the latest restrictions from the server (parent may have changed
@@ -489,9 +493,11 @@ export async function refreshChildRestrictions() {
       const r = await api.parentalMyStatus();
       if (r?.success && r?.data?.is_child) {
         _childRestrictions = r.data.restrictions || {};
+        _childScreen = (r.data.screen && typeof r.data.screen === 'object') ? r.data.screen : null;
         return true;
       }
       _childRestrictions = null;
+      _childScreen = null;
       return false;
     } catch { return false; }
   })().finally(() => { _refreshingChild = null; });

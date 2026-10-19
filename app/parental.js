@@ -460,7 +460,8 @@ function ParentalScreenInner() {
         const lk = rd.locked;
         const meta = {
           screen_time_used: usedRaw == null ? null : Number(usedRaw) || 0,
-          screen_time_estimated: !!td,
+          // [parental-tempo 2026-10-19] servidor agora mede de verdade (heartbeats) → só é estimativa em servidor antigo
+          screen_time_estimated: !!td && td.screen_time_source !== 'tracked',
           screen_time_limit: Number(rd.daily_limit_minutes || rd.screen_time_limit || 0) || 0,
           bedtime_start: rd.bedtime_start || null,
           bedtime_end: rd.bedtime_end || null,
@@ -472,7 +473,10 @@ function ParentalScreenInner() {
           battery: hasLoc && loc.battery_level != null && Number(loc.battery_level) > 0 ? Number(loc.battery_level) : null,
           has_location: hasLoc,
         };
-        setChildMeta(prev => ({ ...prev, [c.child_email]: { ...meta, bonus_today: prev[c.child_email]?.bonus_today || 0 } }));
+        // [parental-tempo 2026-10-19] bonus_today real (parental_get_restrictions / child_today); servidor antigo → mantém o local
+        const bonusRaw = rd.bonus_today ?? td?.bonus_today;
+        const bonusSrv = bonusRaw == null ? NaN : Number(bonusRaw);
+        setChildMeta(prev => ({ ...prev, [c.child_email]: { ...meta, bonus_today: Number.isFinite(bonusSrv) ? bonusSrv : (prev[c.child_email]?.bonus_today || 0) } }));
       } catch {}
     }));
   }, [isMountedRef]);
