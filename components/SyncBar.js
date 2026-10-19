@@ -140,6 +140,13 @@ export default function SyncBar() {
       const grace = base + (Platform.OS !== 'web' && sinceFg < 3000 ? 7000 : 0);
       graceTimer.current = setTimeout(() => {
         if (!mountedRef.current || mailWs?.authenticated) return;
+        // [2026-10-19 http-fallback] WS fora mas o HTTP de reserva respondendo
+        // (ou 1ª tentativa ainda em voo) = conectado por HTTP → sem "Conectando…";
+        // reavalia após nova carência (só aparece se o HTTP também falhar).
+        try {
+          const hf = require('../services/httpFallback');
+          if (deviceOnlineRef.current && (hf.isHttpHealthy() || hf.isHttpPending())) { scheduleConnecting(); return; }
+        } catch {}
         // [WA-parity 2026-05-31] Honest copy: only say "Conectando…" when the
         // device actually has internet and it's the server we can't reach. If
         // the device itself is offline, surface "Sem internet" instead so we

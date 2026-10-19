@@ -38,7 +38,7 @@ import { AppState, Platform } from 'react-native';
 const SHOW_DELAY_MS = 1500;
 const SHOW_DELAY_UPDATING_MS = 2000;
 const WAKE_WINDOW_MS = 4000;         // cold start / volta do 2º plano
-const SHOW_DELAY_WAKE_MS = 2500;
+const SHOW_DELAY_WAKE_MS = 2000;     // [2026-10-19 http-fallback] 2,5→2 s (o HTTP de reserva cobre o resto)
 const SHOW_DELAY_UPDATING_WAKE_MS = 3000;
 const MIN_VISIBLE_MS = 600;
 const STALL_UPDATING_MS = 15000;     // sem fim do recovery/delta
@@ -92,8 +92,24 @@ function _wsLive() {
   return _wsAuthedEvt;
 }
 
+// [2026-10-19 http-fallback] WS fora mas o HTTP de reserva (services/httpFallback.js)
+// respondendo = app CONECTADO por HTTP (Wi-Fi de avião/satélite, proxy que derruba
+// WS): nada de "Conectando…". 1ª requisição ainda em voo (até 8 s) também segura o
+// rótulo. Só sem rede do SO → "Aguardando rede"; só com WS E HTTP falhando →
+// "Conectando…". Kill switch: globalThis.__chatyy_http_fallback = false.
+function _httpCovers() {
+  try {
+    const hf = require('./httpFallback');
+    return !!(hf.isHttpHealthy() || hf.isHttpPending());
+  } catch { return false; }
+}
+
 function _rawState() {
-  if (!_wsLive()) return { kind: _netOnline ? 'connecting' : 'offline', progress: null };
+  if (!_wsLive()) {
+    if (!_netOnline) return { kind: 'offline', progress: null };
+    if (_httpCovers()) return { kind: 'idle', progress: null };
+    return { kind: 'connecting', progress: null };
+  }
   // [2026-10-18 bg-sync] O download de histórico NÃO toma mais o título
   // ("Baixando conversas 37%" passava a ideia de "espere"). Ele roda em 2º
   // plano e aparece só na pílula discreta da lista (components/BackgroundSyncPill).
@@ -108,6 +124,7 @@ function _rawState() {
 }
 
 function _emit() {
+  try { require('./httpFallback').noteUiState(_display.kind); } catch {}
   _listeners.forEach((fn) => { try { fn(_display); } catch {} });
 }
 
@@ -204,6 +221,12 @@ function _start() {
   _started = true;
   try { _mailWs = require('./websocket').default; } catch {}
   try { _hasAuthedOnce = _wsLive(); _wsAuthedEvt = _hasAuthedOnce; } catch {}
+  // [2026-10-19 http-fallback] transporte HTTP de reserva + saúde → recompute.
+  try {
+    const hf = require('./httpFallback');
+    hf.startHttpFallback();
+    hf.subscribeHttpFallback(() => _recompute());
+  } catch {}
 
   try {
     _mailWs?.on?.('connection', (d) => {

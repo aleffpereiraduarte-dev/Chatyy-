@@ -331,7 +331,18 @@ export function startOnlineRecovery(apiCall, opts) {
     const ws = require('./websocket').default;
     if (ws && typeof ws.on === 'function') {
       _wsUnsub = ws.on('connection', (evt) => {
-        if (evt?.status === 'authenticated') _schedule('ws_authenticated');
+        if (evt?.status === 'authenticated') {
+          // [2026-10-19 http-fallback] Enlace degradado com WS piscando (Wi-Fi de
+          // avião): o HTTP de reserva já entregou o gap (ws_event_log) e o resume
+          // do WS cobre o resto → não refaz o catch-up pesado (chat_sync de TODAS
+          // as conversas + "Atualizando…") a cada reconexão. A fila de envio tem
+          // dreno próprio (sendWorker) e os outros gatilhos seguem valendo.
+          try {
+            const hf = require('./httpFallback');
+            if (hf.isLinkDegraded() && hf.httpCoveredRecently()) return;
+          } catch {}
+          _schedule('ws_authenticated');
+        }
       });
     }
   } catch {}

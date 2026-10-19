@@ -24,7 +24,11 @@ final class ChatTransport {
   //     upload) + fallback do upload regional → origem US após 2 falhas.
   // v4 (2026-10-18): HTTP 400/401/403 no upgrade é terminal na 1ª recusa
   // (evento handshake_rejected + close 4400/4401). JS lê via version().
-  static let version = 4
+  // v5 (2026-10-19 resume-reuse/adaptive): volta do 2º plano < bgStaleMs (JS manda
+  // 75 s) SONDA o socket em vez de derrubar; prazos de handshake/auth adaptativos
+  // (RTT, duração do último handshake, timeouts seguidos); 'authed' traz
+  // hsMs/connectMs/authMs. Kill switch: cfg adaptiveTimeouts=false / bgStaleMs=20000.
+  static let version = 5
 
   let q = DispatchQueue(label: "chatyy.transport", qos: .userInitiated)
   private lazy var opQueue: OperationQueue = {
@@ -218,6 +222,8 @@ final class ChatTransport {
       authWatchdogMs: ChatTransport.num(config["authWatchdogMs"], 6000, 2000, 30000),
       connectTimeoutMs: ChatTransport.num(config["connectTimeoutMs"], 10000, 3000, 30000),
       fgProbeMs: ChatTransport.num(config["fgProbeMs"], 2500, 1000, 10000),
+      bgStaleMs: ChatTransport.num(config["bgStaleMs"], 20000, 5000, 600000),
+      adaptiveTimeouts: (config["adaptiveTimeouts"] as? Bool) ?? true,
       batchMs: ChatTransport.num(config["batchMs"], 16, 0, 250),
       outboxMax: Int(ChatTransport.num(config["outboxMax"], 500, 10, 2000)),
       account: ((config["account"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
@@ -333,6 +339,10 @@ struct TransportConfig {
   let authWatchdogMs: Double
   let connectTimeoutMs: Double
   let fgProbeMs: Double
+  /// [v5] 2º plano por menos que isto → sonda (1 ping) em vez de reconectar.
+  let bgStaleMs: Double
+  /// [v5] prazos de handshake/auth crescem com RTT / timeouts seguidos.
+  let adaptiveTimeouts: Bool
   let batchMs: Double
   let outboxMax: Int
   /// [2b] conta da sessão (JS) — confirmada pelo e-mail do auth_success.
@@ -421,9 +431,36 @@ final class TransportSession {
   // reconexão. Rejeições HTTP (4xx) no handshake contam à parte.
   private static let stableMs: Double = 10_000
   private static let httpRejectStop = 4
-  private static let bgStaleMs: Double = 20_000
   private var stableWork: DispatchWorkItem?
   private var httpRejects = 0
+  // [v5] prazos adaptativos (enlace de satélite/avião: handshake de 5-9 s era
+  // morto pelo prazo fixo e recomeçava do zero).
+  private var connectTimeoutStreak: Int = 0
+  private var authTimeoutStreak: Int = 0
+  private var lastConnectMs: Double = -1
+  private var openedAt: Double = 0
+
+  private func effConnectTimeoutMs() -> Double {
+    let base: Double = cfg.connectTimeoutMs
+    if !cfg.adaptiveTimeouts { return base }
+    var v: Double = base
+    if lastRttMs > 0 { v = max(v, lastRttMs * 6.0 + 2000.0) }
+    if lastConnectMs > 0 { v = max(v, lastConnectMs * 2.0 + 2000.0) }
+    let k: Double = Double(min(connectTimeoutStreak, 3))
+    v = v * (1.0 + 0.5 * k)
+    return min(30000.0, v)
+  }
+
+  private func effAuthWatchdogMs() -> Double {
+    let base: Double = cfg.authWatchdogMs
+    if !cfg.adaptiveTimeouts { return base }
+    var v: Double = base
+    if lastRttMs > 0 { v = max(v, lastRttMs * 4.0 + 2000.0) }
+    if lastConnectMs > 0 { v = max(v, lastConnectMs + 2000.0) }
+    let k: Double = Double(min(authTimeoutStreak, 3))
+    v = v * (1.0 + 0.5 * k)
+    return min(30000.0, v)
+  }
 
   private var outbox: [Out] = []
   private var buf: [String] = []
@@ -515,9 +552,10 @@ final class TransportSession {
     task = t
     t.resume()
     receiveLoop(t, g)
-    connectTimeoutWork = after(cfg.connectTimeoutMs) { [weak self] in
+    connectTimeoutWork = after(effConnectTimeoutMs()) { [weak self] in
       guard let self = self, g == self.gen, self.phys == .connecting else { return }
       self.owner.bump("connectTimeouts")
+      self.connectTimeoutStreak += 1
       self.onDrop(g, code: 0, reason: "connect_timeout")
     }
   }
@@ -552,6 +590,9 @@ final class TransportSession {
     connectTimeoutWork?.cancel(); connectTimeoutWork = nil
     phys = .open
     lastInboundAt = now()
+    openedAt = now()
+    lastConnectMs = openedAt - connectStartedAt
+    connectTimeoutStreak = 0
     owner.bump("opens")
     let first = !everOpened
     everOpened = true
@@ -584,9 +625,10 @@ final class TransportSession {
   private func armAuthWatchdog() {
     authWatchdogWork?.cancel()
     let g = gen
-    authWatchdogWork = after(cfg.authWatchdogMs) { [weak self] in
+    authWatchdogWork = after(effAuthWatchdogMs()) { [weak self] in
       guard let self = self, g == self.gen, self.phys == .open, !self.authRejected else { return }
       self.owner.bump("authTimeouts")
+      self.authTimeoutStreak += 1
       self.forceReconnect("auth_watchdog")
     }
   }
@@ -642,6 +684,9 @@ final class TransportSession {
     }
     let regionalBlocked = noteAuthed(curUrl)
     let t = now()
+    authTimeoutStreak = 0
+    let hsMs: Double = t - connectStartedAt
+    let authMs: Double = openedAt > 0 ? t - openedAt : -1
     let since = lostAt > 0 ? t - lostAt : t - connectStartedAt
     if everAuthed {
       lastReconnectMs = since
@@ -652,7 +697,10 @@ final class TransportSession {
     lostAt = 0
     flushOutbox()
     startHeartbeat()
-    emitState("authed", ["url": curUrl?.absoluteString, "reconnectMs": since, "regionalBlocked": regionalBlocked])
+    emitState("authed", [
+      "url": curUrl?.absoluteString, "reconnectMs": since, "regionalBlocked": regionalBlocked,
+      "hsMs": hsMs, "connectMs": lastConnectMs, "authMs": authMs, "attempt": attempt,
+    ])
     // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
     if authedAccount != nil { ChatOutbox.shared.kick("ws_authed") }
   }
@@ -905,14 +953,19 @@ final class TransportSession {
     }
     switch phys {
     case .authed:
-      if bgMs >= TransportSession.bgStaleMs {
+      if bgMs >= cfg.bgStaleMs {
         // Ficou fora mais que o ciclo de ping do hub (25 s): o socket quase
         // sempre morreu (iOS suspende o app). Reconecta JÁ em vez de gastar a sonda.
         owner.bump("fgReconnects")
         forceReconnect("foreground_stale", resetAttempt: true)
       } else {
+        // [v5] < bgStaleMs: o hub só fecha após 90 s sem pong → o socket costuma
+        // estar vivo; 1 ping (prazo pelo RTT) poupa um handshake inteiro.
         startHeartbeat()
-        probe(cfg.fgProbeMs, reason: "foreground")
+        var dl: Double = cfg.fgProbeMs
+        if cfg.adaptiveTimeouts && lastRttMs > 0 { dl = max(cfg.fgProbeMs, lastRttMs * 3.0 + 1000.0) }
+        owner.bump("fgProbes")
+        probe(dl, reason: "foreground")
       }
     case .idle:
       attempt = 0

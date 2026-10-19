@@ -71,7 +71,11 @@ internal object ChatTransport {
   //     upload) + fallback do upload regional → origem US após 2 falhas.
   // v4 (2026-10-18): HTTP 400/401/403 no upgrade é terminal na 1ª recusa
   // (evento handshake_rejected + close 4400/4401). JS lê via version().
-  const val VERSION = 4
+  // v5 (2026-10-19 resume-reuse/adaptive): volta do 2º plano < bgStaleMs (JS manda
+  // 75 s) SONDA o socket em vez de derrubar; prazos de handshake/auth adaptativos
+  // (RTT, duração do último handshake, timeouts seguidos); 'authed' traz
+  // hsMs/connectMs/authMs. Kill switch: cfg adaptiveTimeouts=false / bgStaleMs=20000.
+  const val VERSION = 5
 
   private val exec = ScheduledThreadPoolExecutor(1) { r ->
     Thread(r, "chatyy-transport").apply { isDaemon = true }
@@ -266,6 +270,8 @@ internal object ChatTransport {
       connectTimeoutMs = num(cfg["connectTimeoutMs"], 10000L, 3000L, 30000L),
       fgProbeMs = num(cfg["fgProbeMs"], 2500L, 1000L, 10000L),
       batchMs = num(cfg["batchMs"], 16L, 0L, 250L),
+      bgStaleMs = num(cfg["bgStaleMs"], 20000L, 5000L, 600000L),
+      adaptiveTimeouts = cfg["adaptiveTimeouts"] != false,
       outboxMax = num(cfg["outboxMax"], 500L, 10L, 2000L).toInt(),
       account = ((cfg["account"] as? String) ?: "").trim().lowercase(),
       storeIngest = cfg["storeIngest"] == true,
@@ -361,6 +367,10 @@ internal data class SessionConfig(
   val account: String = "",
   /** [2b] gravar mensagens/recibos direto no expo-chat-store. */
   val storeIngest: Boolean = false,
+  /** [v5] 2º plano por menos que isto → sonda (1 ping) em vez de reconectar. */
+  val bgStaleMs: Long = 20_000L,
+  /** [v5] prazos de handshake/auth crescem com RTT / timeouts seguidos. */
+  val adaptiveTimeouts: Boolean = true,
 )
 
 /** Uma sessão LÓGICA (= um `new WebSocket()` do JS). Só tocada na thread do transporte. */
@@ -368,7 +378,6 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   companion object {
     private const val STABLE_MS = 10_000L
     private const val HTTP_REJECT_STOP = 4
-    private const val BG_STALE_MS = 20_000L
   }
 
   private enum class Phys { IDLE, CONNECTING, OPEN, AUTHED }
@@ -409,6 +418,32 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   // reconexão a cada 0-200 ms. Rejeições HTTP no handshake contam à parte.
   private var stableTask: ScheduledFuture<*>? = null
   private var httpRejects = 0
+  // [v5] prazos adaptativos (enlace de satélite/avião: handshake de 5-9 s era
+  // morto pelo prazo fixo e recomeçava do zero).
+  private var connectTimeoutStreak = 0
+  private var authTimeoutStreak = 0
+  private var lastConnectMs = -1L
+  private var openedAt = 0L
+
+  private fun effConnectTimeoutMs(): Long {
+    val base = cfg.connectTimeoutMs
+    if (!cfg.adaptiveTimeouts) return base
+    var v = base
+    if (lastRttMs > 0) v = max(v, lastRttMs * 6 + 2000)
+    if (lastConnectMs > 0) v = max(v, lastConnectMs * 2 + 2000)
+    v += v * min(connectTimeoutStreak, 3) / 2
+    return min(30_000L, v)
+  }
+
+  private fun effAuthWatchdogMs(): Long {
+    val base = cfg.authWatchdogMs
+    if (!cfg.adaptiveTimeouts) return base
+    var v = base
+    if (lastRttMs > 0) v = max(v, lastRttMs * 4 + 2000)
+    if (lastConnectMs > 0) v = max(v, lastConnectMs + 2000)
+    v += v * min(authTimeoutStreak, 3) / 2
+    return min(30_000L, v)
+  }
 
   private val outbox = ArrayDeque<Out>()
   private val buf = ArrayList<String>()
@@ -452,9 +487,10 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
       fail("bad url: " + (t.message ?: "")); return
     }
     ws = ChatTransport.client.newWebSocket(req, Listener(this, g))
-    connectTimeoutTask = ChatTransport.schedule(cfg.connectTimeoutMs) {
+    connectTimeoutTask = ChatTransport.schedule(effConnectTimeoutMs()) {
       if (g == gen && phys == Phys.CONNECTING) {
         ChatTransport.bump("connectTimeouts")
+        connectTimeoutStreak++
         onDrop(g, 0, "connect_timeout")
       }
     }
@@ -494,6 +530,9 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     cancel(connectTimeoutTask); connectTimeoutTask = null
     phys = Phys.OPEN
     lastInboundAt = now()
+    openedAt = now()
+    lastConnectMs = openedAt - connectStartedAt
+    connectTimeoutStreak = 0
     ChatTransport.bump("opens")
     val first = !everOpened
     everOpened = true
@@ -516,9 +555,10 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private fun armAuthWatchdog() {
     cancel(authWatchdogTask)
     val g = gen
-    authWatchdogTask = ChatTransport.schedule(cfg.authWatchdogMs) {
+    authWatchdogTask = ChatTransport.schedule(effAuthWatchdogMs()) {
       if (g == gen && phys == Phys.OPEN && !authRejected) {
         ChatTransport.bump("authTimeouts")
+        authTimeoutStreak++
         forceReconnect("auth_watchdog")
       }
     }
@@ -604,6 +644,9 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     stableTask = ChatTransport.schedule(STABLE_MS) { if (sg == gen && phys == Phys.AUTHED) attempt = 0 }
     val regionalBlocked = noteAuthed(curUrl)
     val t = now()
+    authTimeoutStreak = 0
+    val hsMs = t - connectStartedAt
+    val authMs = if (openedAt > 0) t - openedAt else -1L
     val since = if (lostAt > 0) t - lostAt else t - connectStartedAt
     if (everAuthed) {
       lastReconnectMs = since
@@ -614,7 +657,10 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     lostAt = 0
     flushOutbox()
     startHeartbeat()
-    emitState("authed", mapOf("url" to curUrl, "reconnectMs" to since, "regionalBlocked" to regionalBlocked))
+    emitState("authed", mapOf(
+      "url" to curUrl, "reconnectMs" to since, "regionalBlocked" to regionalBlocked,
+      "hsMs" to hsMs, "connectMs" to lastConnectMs, "authMs" to authMs, "attempt" to attempt,
+    ))
     // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
     if (authedAccount != null) NativeOutbox.peek()?.kick("ws_authed")
   }
@@ -860,13 +906,18 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     }
     when (phys) {
       Phys.AUTHED -> {
-        if (bgMs >= BG_STALE_MS) {
+        if (bgMs >= cfg.bgStaleMs) {
           // Ficou fora mais que o ciclo de ping do hub (25 s): o socket quase
           // sempre morreu (NAT/rádio/SO). Reconecta JÁ em vez de gastar a sonda.
           ChatTransport.bump("fgReconnects")
           forceReconnect("foreground_stale", true)
         } else {
-          startHeartbeat(); probe(cfg.fgProbeMs, "foreground")
+          // [v5] < bgStaleMs: o hub só fecha após 90 s sem pong → o socket
+          // costuma estar vivo; 1 ping (prazo pelo RTT) poupa um handshake inteiro.
+          startHeartbeat()
+          val dl = if (cfg.adaptiveTimeouts && lastRttMs > 0) max(cfg.fgProbeMs, lastRttMs * 3 + 1000) else cfg.fgProbeMs
+          ChatTransport.bump("fgProbes")
+          probe(dl, "foreground")
         }
       }
       Phys.IDLE -> { attempt = 0; scheduleReconnect("foreground", 0, false) }

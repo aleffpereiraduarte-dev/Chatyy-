@@ -182,11 +182,19 @@ const AUTH_WATCHDOG_MS = 6000;
 // 600-1500ms + perda → retransmissões) os prazos fixos acima davam falso
 // "half-open" → reconexão (~5 RTT) em loop. Prazo = max(base, k×srtt + 1s) e,
 // em enlace lento/médio, base × 1.6–2. srtt vem dos próprios pongs.
+// [2026-10-19 http-fallback] Enlace DEGRADADO (services/httpFallback.js: handshake
+// WS > 4 s, quedas curtas repetidas, RTT HTTP > 1,5 s — Wi-Fi de avião/satélite):
+// prazos ×2 (handshake 10→20 s, auth 6→12 s). Enquanto isso o HTTP de reserva
+// mantém o app atualizado, então esperar mais pelo WS não custa nada ao usuário
+// — e matar um handshake que ia completar em 9 s só recomeçava do zero.
+function _linkDegraded() {
+  try { return !!require('./httpFallback').isLinkDegraded(); } catch { return false; }
+}
 function _netAdapt(baseMs, rttMult) {
   try {
     const ni = require('./networkInfo');
     const srtt = (ni.getSrtt && ni.getSrtt()) || 0;
-    const sc = Math.min(2, (ni.timeoutScale && ni.timeoutScale()) || 1);
+    const sc = _linkDegraded() ? 2 : Math.min(2, (ni.timeoutScale && ni.timeoutScale()) || 1);
     // teto 20s: um pico isolado de RTT não pode deixar a detecção de socket morto lenta demais.
     return Math.round(Math.min(Math.max(baseMs, 20000), Math.max(baseMs * sc, rttMult * srtt + 1000)));
   } catch { return baseMs; }
@@ -533,6 +541,7 @@ class MailWebSocket {
           this._emitForeground();
         } else if (nextState === 'background') {
           this._hidden = true;
+          this._hsStartAt = 0; // [2026-10-19 http-fallback] não mede handshake através do 2º plano
           this._stopPing();
           clearTimeout(this.reconnectTimer);
           // Cancel any in-flight foreground zombie-check — if we just
@@ -610,6 +619,9 @@ class MailWebSocket {
     }
     switch (st) {
       case 'connecting':
+        // [2026-10-19 http-fallback] início do handshake FÍSICO (reconexões nativas
+        // não passam pelo connect() do JS).
+        if (!this._hsStartAt) this._hsStartAt = Date.now();
         break;
       case 'open':
         // Reabertura física (a 1ª vira onopen no shim).
@@ -623,11 +635,24 @@ class MailWebSocket {
           try { this._logGhost?.('regional_ws_fallback', { native: true }); } catch {}
         }
         if (typeof ev.reconnectMs === 'number') this._lastNativeReconnectMs = ev.reconnectMs;
+        // [2026-10-19 http-fallback] nativo v5 manda hsMs (connecting→auth_success,
+        // medido fora da thread JS); v4 → relógio do JS desde o 'connecting'.
+        try {
+          const hs = (typeof ev.hsMs === 'number') ? ev.hsMs : (this._hsStartAt ? Date.now() - this._hsStartAt : -1);
+          this._hsStartAt = 0;
+          if (hs >= 0) {
+            this._lastHandshakeMs = hs;
+            this._emit('ws_handshake', { ms: hs, transport: 'native', precise: typeof ev.hsMs === 'number', connectMs: ev.connectMs, authMs: ev.authMs, url: ev.url, attempt: ev.attempt });
+          }
+        } catch {}
         break;
       case 'reconnecting':
       case 'offline':
       case 'paused':
       case 'auth_wait': {
+        // [2026-10-19 http-fallback] pausa/offline: o relógio do handshake não
+        // pode contar o tempo em 2º plano / sem rede (falso "enlace lento").
+        if (st === 'paused' || st === 'offline') this._hsStartAt = 0;
         const wasAuthed = this.authenticated;
         this.connected = false;
         this.authenticated = false;
@@ -1047,6 +1072,7 @@ class MailWebSocket {
       // in the same ~second. Reset to 0 in onclose/onerror so a genuine failure
       // reconnects immediately.
       this._lastConnectAt = Date.now();
+      this._hsStartAt = this._lastConnectAt; // [2026-10-19 http-fallback] telemetria de handshake
       // [2026-10-15 native-transport] Fio NATIVO quando disponível: conecta,
       // reautentica, pinga, detecta zumbi e reconecta (troca de rede / volta
       // do background) fora da thread JS. Só JSON texto → exige CWP e msgpack
@@ -1058,9 +1084,18 @@ class MailWebSocket {
             fallbackUrl: wsUrl !== US_WS_URL ? US_WS_URL : null,
             authFrame: this._authFrame(),
             heartbeat: this._heartbeatProfile(),
-            connectTimeoutMs: CONNECT_TIMEOUT_MS,
-            authWatchdogMs: AUTH_WATCHDOG_MS,
+            // [2026-10-19 http-fallback] enlace degradado → prazos generosos já na
+            // sessão nova (nativo v5 também adapta sozinho por RTT/timeouts).
+            connectTimeoutMs: _linkDegraded() ? 20000 : CONNECT_TIMEOUT_MS,
+            authWatchdogMs: _linkDegraded() ? 15000 : AUTH_WATCHDOG_MS,
             fgProbeMs: FG_PROBE_MS,
+            // [2026-10-19 resume-reuse] nativo v5: volta do 2º plano < 75 s → SONDA o
+            // socket (1 ping) em vez de derrubar (o hub só fecha após 90 s sem pong);
+            // adaptiveTimeouts: prazos de handshake/auth crescem com RTT e timeouts
+            // seguidos. Binário < v5 ignora as chaves. Kill switch (OTA):
+            // globalThis.__chatyy_native_resume_probe = false → comportamento antigo.
+            bgStaleMs: (globalThis.__chatyy_native_resume_probe === false) ? 20000 : 75000,
+            adaptiveTimeouts: globalThis.__chatyy_native_adaptive_timeouts !== false,
             // [2026-10-15 fase 2b] o nativo grava mensagens/recibos direto no
             // store nativo (sem esperar o JS); conta confirmada pelo auth_success.
             account: String(this.email || '').trim().toLowerCase(),
@@ -3362,6 +3397,16 @@ class MailWebSocket {
 
   // Replay queued messages and re-subscribe to tracked channels after reconnect
   _onAuthenticated() {
+    // [2026-10-19 http-fallback] duração do handshake (WebSocket JS; o nativo
+    // reporta no estado 'authed', ver _onNativeState).
+    if (!(this.ws && this.ws.__native) && this._hsStartAt) {
+      try {
+        const hs = Date.now() - this._hsStartAt;
+        this._hsStartAt = 0;
+        this._lastHandshakeMs = hs;
+        this._emit('ws_handshake', { ms: hs, transport: 'js' });
+      } catch {}
+    }
     // [WAVE 66 2026-05-21] Auth landed → cancel any pending resurrect retry
     // and clear sticky banner so UI snaps back to clean.
     if (this._resurrectRetryTimer) {
@@ -3610,5 +3655,8 @@ const mailWs = globalThis.__chatyy_mailWs || (globalThis.__chatyy_mailWs = new M
 // so a double module-eval (web code-splitting) can't start it twice (the flag
 // lives on the shared globalThis-pinned singleton).
 try { mailWs._eagerBootstrapConnect(); } catch {}
+// [2026-10-19 http-fallback] transporte HTTP de reserva (idempotente; o
+// syncStatus também liga). Lazy: sem ciclo de import no carregamento.
+try { setTimeout(() => { try { require('./httpFallback').startHttpFallback(); } catch {} }, 0); } catch {}
 
 export default mailWs;

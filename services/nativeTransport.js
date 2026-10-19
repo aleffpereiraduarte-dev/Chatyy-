@@ -164,6 +164,9 @@ class NativeTransportSocket {
       authWatchdogMs: opts.authWatchdogMs || 6000,
       connectTimeoutMs: opts.connectTimeoutMs || 10000,
       fgProbeMs: opts.fgProbeMs || 2500,
+      // [2026-10-19 resume-reuse] nativo v5+ (versões antigas ignoram as chaves).
+      bgStaleMs: opts.bgStaleMs || 20000,
+      adaptiveTimeouts: opts.adaptiveTimeouts !== false,
       batchMs: 16,
       outboxMax: 500,
       // [2026-10-15 fase 2b] conta da sessão + gravação direta no store nativo
